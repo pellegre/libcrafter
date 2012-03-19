@@ -52,6 +52,9 @@ typedef std::vector<Layer*> LayerStack;
 		static void InitMutex();
 		static void DestroyMutex();
 
+		/* Craft data from the layer pushed into the stack */
+		void Craft();
+
 	public:
 		/* Initialize and clean */
 		friend void InitCrafter();
@@ -91,9 +94,6 @@ typedef std::vector<Layer*> LayerStack;
 		void PushLayer(const Layer& layer);
 		/* Pop and destroy the layer on top */
 		void PopLayer();
-
-		/* Craft data from the layer pushed into the stack */
-		void Craft();
 
 		/* Get size of the packet in bytes */
 		size_t GetSize() const { return bytes_size; };
