@@ -1,0 +1,449 @@
+/*
+Copyright (C) 2012 Pellegrino E.
+
+This file is part of libcrafter
+
+This is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>
+*/
+
+
+#include "ICMP.h"
+#include "IP.h"
+#include "Crafter.h"
+#include "CrafterUtils.h"
+
+using namespace Crafter;
+using namespace std;
+
+//static char def_payload[] = "\x5e\x80\xa7\x4e\x00\x00\x00\x00\x7c\x9f\x09"
+//		                      "\x00\x00\x00\x00\x00\x10\x11\x12\x13\x14\x15"
+//			                  "\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20"
+//		                      "\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b"
+//		                      "\x2c\x2d\x2e\x2f\x30\x31\x32\x33\x34\x35\x36\x37";
+
+ICMP::ICMP() {
+		/* Allocate 2 words */
+		allocate_words(2);
+		/* Name of the protocol */
+		SetName("ICMP");
+		/* Set protocol NUmber */
+		SetprotoID(0x01);
+
+		/* Creates field information for the layer */
+		DefineProtocol();
+
+		/* Always set default values for fields in a layer */
+		SetType(8);
+		SetCode(0);
+		SetCheckSum(0);
+		SetRestOfHeader(0);
+//		SetPayload((const byte *)def_payload,56);
+
+		/* Always call this, reset all fields */
+		ResetFields();
+}
+
+void ICMP::DefineProtocol() {
+	/* Fields of the IP layer */
+	define_field("Type",new NumericField(0,0,7));
+	define_field("Code",new NumericField(0,8,15));
+	define_field("CheckSum",new HexField(0,16,31));
+	define_field("RestOfHeader",new NumericField(1,0,31));
+
+	/* Ping header */
+	define_field("Identifier", new HexField(1,0,15));
+	define_field("SequenceNumber", new HexField(1,16,31));
+
+	/* Pointer in Parameter Problem Message */
+	define_field("Pointer", new NumericField(1,0,7));
+
+	/* Internet Address on Redirect Message */
+	define_field("Gateway", new IPAddress(1,0,31));
+
+}
+
+/* Redefine active fields in function of the type of message */
+void ICMP::ReDefineActiveFields() {
+
+	/* Get the type of message and redefine fields */
+	switch(GetType()) {
+
+	case EchoReply:
+		RedefineField("Identifier");
+		RedefineField("SequenceNumber");
+		break;
+
+	case DestinationUnreachable:
+		break;
+
+	case SourceQuench:
+		break;
+
+	case EchoRedirect:
+		RedefineField("IPAddress");
+		break;
+
+	case EchoRequest:
+		RedefineField("Identifier");
+		RedefineField("SequenceNumber");
+		break;
+
+	case TimeExceeded:
+		break;
+
+	case ParameterProblem:
+		RedefineField("Pointer");
+		break;
+
+	case TimeStampRequest:
+		RedefineField("Identifier");
+		RedefineField("SequenceNumber");
+		break;
+
+	case TimeStampReply:
+		RedefineField("Identifier");
+		RedefineField("SequenceNumber");
+		break;
+
+	case InformationRequest:
+		RedefineField("Identifier");
+		RedefineField("SequenceNumber");
+		break;
+
+	case InformationReply:
+		RedefineField("Identifier");
+		RedefineField("SequenceNumber");
+		break;
+
+	case AddressMaskRequest:
+		RedefineField("Identifier");
+		RedefineField("SequenceNumber");
+		break;
+
+	case AddressMaskReply:
+		RedefineField("Identifier");
+		RedefineField("SequenceNumber");
+		break;
+
+	default:
+		break;
+	}
+}
+
+
+void ICMP::LibnetBuild(libnet_t *l) {
+
+	/* Get the payload */
+	size_t payload_size = GetPayloadSize();
+	byte* payload;
+	if (payload_size) {
+		payload = new byte[payload_size];
+		GetPayload(payload);
+	} else
+		payload = 0;
+
+	int icmp;
+
+	in_addr_t gateway;
+
+	/* Get the type of message and create packet */
+	switch(GetType()) {
+
+	case DestinationUnreachable:
+
+		/* Now write the ICMP header into de libnet context */
+		icmp = libnet_build_icmpv4_unreach	 ( GetType(),
+										       GetCode(),
+										       GetCheckSum(),
+										       payload,
+										       payload_size,
+										       l,
+										       0
+										      );
+
+		/* In case of error */
+		if (icmp == -1) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+					     "ICMP::LibnetBuild()",
+			             "Unable to build ICMP header: " + string(libnet_geterror (l)));
+			exit (1);
+		}
+
+		break;
+
+	case TimeExceeded:
+
+		/* Now write the ICMP header into de libnet context */
+		icmp = libnet_build_icmpv4_timeexceed( GetType(),
+										       GetCode(),
+										       GetCheckSum(),
+										       payload,
+										       payload_size,
+										       l,
+										       0
+										      );
+
+		/* In case of error */
+		if (icmp == -1) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+					     "ICMP::LibnetBuild()",
+			             "Unable to build ICMP header: " + string(libnet_geterror (l)));
+			exit (1);
+		}
+
+		break;
+
+	case ParameterProblem:
+
+		/* Now write the ICMP header into de libnet context */
+		icmp = libnet_build_icmpv4_echo      ( GetType(),
+										       GetCode(),
+										       GetCheckSum(),
+										       htons(GetPointer()),
+										       0,
+										       payload,
+										       payload_size,
+										       l,
+										       0
+										      );
+
+		/* In case of error */
+		if (icmp == -1) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+					     "ICMP::LibnetBuild()",
+			             "Unable to build ICMP header: " + string(libnet_geterror (l)));
+			exit (1);
+		}
+
+		break;
+
+	case SourceQuench:
+
+		/* Now write the ICMP header into de libnet context */
+		icmp = libnet_build_icmpv4_echo      ( GetType(),
+										       GetCode(),
+										       GetCheckSum(),
+										       0,
+										       0,
+										       payload,
+										       payload_size,
+										       l,
+										       0
+										      );
+
+		/* In case of error */
+		if (icmp == -1) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+					     "ICMP::LibnetBuild()",
+			             "Unable to build ICMP header: " + string(libnet_geterror (l)));
+			exit (1);
+		}
+
+		break;
+
+	case EchoRedirect:
+
+		gateway = inet_addr(GetGateway().c_str());           /* Source protocol address */
+		/* Now write the ICMP header into de libnet context */
+		icmp = libnet_build_icmpv4_redirect  ( GetType(),
+										       GetCode(),
+										       GetCheckSum(),
+										       gateway,
+										       payload,
+										       payload_size,
+										       l,
+										       0
+										      );
+
+		/*/*
+ * Field.h
+ *
+ *  Created on: Oct 21, 2011
+ *      Author: larry
+ */ In case of error */
+		if (icmp == -1) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+					     "ICMP::LibnetBuild()",
+			             "Unable to build ICMP header: " + string(libnet_geterror (l)));
+			exit (1);
+		}
+
+		break;
+
+	case EchoReply:
+		/* Now write the data into de libnet context */
+		icmp = libnet_build_icmpv4_echo ( GetType(),
+										  GetCode(),
+										  GetCheckSum(),
+										  GetIdentifier(),
+										  GetSequenceNumber(),
+										  payload,
+										  payload_size,
+										  l,
+										  0
+										);
+
+		/* In case of error */
+		if (icmp == -1) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+					     "ICMP::LibnetBuild()",
+			             "Unable to build ICMP header: " + string(libnet_geterror (l)));
+			exit (1);
+		}
+
+		break;
+
+	case EchoRequest:
+
+		/* Now write the data into de libnet context */
+		icmp = libnet_build_icmpv4_echo ( GetType(),
+										  GetCode(),
+										  GetCheckSum(),
+										  GetIdentifier(),
+										  GetSequenceNumber(),
+										  payload,
+										  payload_size,
+										  l,
+										  0
+										);
+
+		/* In case of error */
+		if (icmp == -1) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+					     "ICMP::LibnetBuild()",
+			             "Unable to build ICMP header: " + string(libnet_geterror (l)));
+			exit (1);
+		}
+
+		break;
+
+	case InformationReply:
+		/* Now write the data into de libnet context */
+		icmp = libnet_build_icmpv4_echo ( GetType(),
+										  GetCode(),
+										  GetCheckSum(),
+										  GetIdentifier(),
+										  GetSequenceNumber(),
+										  payload,
+										  payload_size,
+										  l,
+										  0
+										);
+
+		/* In case of error */
+		if (icmp == -1) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+					     "ICMP::LibnetBuild()",
+			             "Unable to build ICMP header: " + string(libnet_geterror (l)));
+			exit (1);
+		}
+
+		break;
+
+	case InformationRequest:
+
+		/* Now write the data into de libnet context */
+		icmp = libnet_build_icmpv4_echo ( GetType(),
+										  GetCode(),
+										  GetCheckSum(),
+										  GetIdentifier(),
+										  GetSequenceNumber(),
+										  payload,
+										  payload_size,
+										  l,
+										  0
+										);
+
+		/* In case of error */
+		if (icmp == -1) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+					     "ICMP::LibnetBuild()",
+			             "Unable to build ICMP header: " + string(libnet_geterror (l)));
+			exit (1);
+		}
+
+		break;
+
+	default:
+		/* Now write the data into de libnet context */
+		icmp = libnet_build_icmpv4_echo ( GetType(),
+										  GetCode(),
+										  GetCheckSum(),
+										  0,
+										  0,
+										  payload,
+										  payload_size,
+										  l,
+										  0
+										);
+
+		/* In case of error */
+		if (icmp == -1) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+					     "ICMP::LibnetBuild()",
+			             "Unable to build ICMP header: " + string(libnet_geterror (l)));
+			exit (1);
+		}
+
+		break;
+	}
+
+	if(payload)
+		delete [] payload;
+
+}
+
+std::string ICMP::MatchFilter() const {
+	short_word type = GetType();
+
+	if ( type == EchoRequest || type == TimeStampRequest || type == InformationRequest || type == AddressMaskRequest) {
+		short_word ident = GetIdentifier();
+		char* str_ident = new char[6];
+		sprintf(str_ident,"%d",ident);
+		str_ident[5] = 0;
+		string ret_string = "( icmp and icmp[4:2] == " + string(str_ident) + ") ";
+		delete [] str_ident;
+		return ret_string;
+	} else
+		return "";
+}
+
+/* Copy crafted packet to buffer_data */
+void ICMP::Craft () {
+
+	if (!IsFieldSet("CheckSum") || (GetCheckSum() == 0)) {
+
+		/* Total size */
+		size_t total_size = GetRemainingSize();
+		if ( (total_size%2) != 0 ) total_size++;
+
+		byte* buff_data = new byte[total_size];
+
+		buff_data[total_size - 1] = 0x00;
+
+		/* Compute the 16 bit checksum */
+		SetCheckSum(0);
+
+		GetData(buff_data);
+		short_word checksum = CheckSum((unsigned short *)buff_data,total_size/2);
+		SetCheckSum(ntohs(checksum));
+		ResetField("CheckSum");
+
+		delete [] buff_data;
+
+	}
+
+}
+
+ICMP::~ICMP() { /* */ }
