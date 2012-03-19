@@ -1,5 +1,4 @@
-LibCrafter: A high level API for C++ to forge and decode packet of most common 
-            network protocols.
+LibCrafter: A high level API for C++ to forge and decode packet of most common network protocols.
 ==================================
 
 Libcrafter is a high level API for C++ designed to facilitate the creation and 
@@ -76,7 +75,6 @@ int main() {
 	delete world;
 
 	return 0;
-}
 }
 ```
   
@@ -155,6 +153,5 @@ int main() {
 	CleanCrafter();
 
 	return 0;
-}
 }
 ```
