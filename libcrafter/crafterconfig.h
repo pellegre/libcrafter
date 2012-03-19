@@ -1,1 +1,0 @@
-/* crafterconfig.h.  Generated from crafterconfig.h.in by configure.  */
