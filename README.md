@@ -23,8 +23,8 @@ Installation
 --------
 
 The installation of the library into your system should be quite straightforward.
-First download the latest release of the library from download tab or the command
-line:
+First download the latest release of the library from the download tab or the 
+command line:
 
 ```bash
 $ wget https://github.com/downloads/larry1411/libcrafter/crafter-0.1.tar.gz
