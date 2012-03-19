@@ -266,12 +266,7 @@ void ICMP::LibnetBuild(libnet_t *l) {
 										       0
 										      );
 
-		/*/*
- * Field.h
- *
- *  Created on: Oct 21, 2011
- *      Author: larry
- */ In case of error */
+		/* In case of error */
 		if (icmp == -1) {
 			PrintMessage(Crafter::PrintCodes::PrintError,
 					     "ICMP::LibnetBuild()",
