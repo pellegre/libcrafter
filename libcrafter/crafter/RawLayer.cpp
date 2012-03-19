@@ -34,12 +34,7 @@ RawLayer::RawLayer() {
 
 void RawLayer::LibnetBuild(libnet_t *l) {
 
-	/* G/*
- * PrintMessage.h
- *
- *  Created on: Mar 5, 2012
- *      Author: larry
- */et the payload */
+	/* Get the payload */
 	size_t payload_size = GetPayloadSize();
 	byte* payload;
 	if (payload_size) {
