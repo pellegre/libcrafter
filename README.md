@@ -19,6 +19,43 @@ is no handled yet) at user level that enables working with TCP streams. This
 facilitates the creation of tools for data injection on arbitrary connections 
 and TCP/IP session hijacking. 
 
+Installation
+--------
+
+The installation of the library into your system should be quite straightforward.
+First download the latest release of the library from download tab or the command
+line:
+
+```bash
+$ wget https://github.com/downloads/larry1411/libcrafter/crafter-0.1.tar.gz
+```
+
+Extract the source code:
+
+```bash
+$ tar xfvz crafter-0.1.tar.gz
+$ cd crafter-0-1
+```
+
+Configure: 
+
+```bash
+$ ./configure
+```
+
+Compile: 
+
+```bash
+$ make
+```
+
+Install on your system: 
+
+```bash
+$ sudo make install
+$ sudo ldconfig
+```
+
 Examples
 --------
 
