@@ -146,9 +146,6 @@ int main() {
 	cout << "[@] Print after sending: " << endl;
 	packet.Print();
 
-	/* The output is the same as before */
-	//packet.HexDump();
-
 	/* Clean before exit */
 	CleanCrafter();
 
