@@ -22,7 +22,7 @@ and TCP/IP session hijacking.
 Installation
 --------
 
-The installation of the library into your system should be quite straightforward.
+The installation of the library in your system should be quite straightforward.
 First download the latest release of the library from the download tab or the 
 command line:
 
@@ -35,6 +35,13 @@ Extract the source code:
 ```bash
 $ tar xfvz crafter-0.1.tar.gz
 $ cd crafter-0-1
+```
+
+Before configuring and compiling libcrafter you need lipcap an libnet installed 
+in your system. On debian based distros, you should execute:
+
+```bash
+$ sudo apt-get install libnet1 libnet1-dev libpcap0.8 libpcap0.8-dev
 ```
 
 Configure: 
