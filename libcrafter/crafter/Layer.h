@@ -150,9 +150,6 @@ namespace Crafter {
 		/* Clone the layer given as an argument */
 		void Clone(const Layer& layer);
 
-		/* Get data from this layer to the top */
-		size_t GetData(byte* buffer) const;
-
 		/* Put a Layer on the bottom of this one */
 		void PushBottomLayer(Layer* bottom_layer) {
 			BottomLayer = bottom_layer;
@@ -265,6 +262,9 @@ namespace Crafter {
 		 * returns the pointer at the end of the buffer
 		 */
 		size_t PutData(const byte* data);
+
+		/* Get data from this layer to the top */
+		size_t GetData(byte* buffer) const;
 
 		/* Just get the data of this layer */
 		size_t GetRawData(byte* buffer) const;
