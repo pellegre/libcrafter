@@ -72,6 +72,8 @@ namespace Crafter {
 		/* Function type that is called when a read occurs */
 		typedef void ((*ReadHandler)(Payload&,void*));
 
+		static std::string TCPStatus[];
+
 		/* ++++ Connection Data Begin : This data defines univocally a connection ++++ */
 
 		/* Source IP address */
@@ -157,7 +159,7 @@ namespace Crafter {
 		/* Print status change of the connection */
 		void PrintStatus() const{
 			std::cout << "(" << src_ip << ":" << src_port << " ; " << dst_ip << ":" << dst_port << ") : " <<
-					     "Status changed to --> " << status << std::endl;
+					     "Status changed to --> " << TCPStatus[status-1] << std::endl;
 		};
 
 	public:
@@ -252,7 +254,7 @@ namespace Crafter {
 		void SetReadHandler(ReadHandler read_handle, void* read_handle_arg) {
 			this->read_handle = read_handle ; this->read_handle_arg = read_handle_arg;
 		};
-		/* Read function, returns a payload after a PSH packet */
+		/* Read function, put a payload after a PSH packet. If the connection is closed, the functions returns zero */
 		byte Read(Payload& payload);
 
 		/* Hold and unhold the connection */
@@ -264,6 +266,9 @@ namespace Crafter {
 
 		/* Close badly the connection */
 		void Reset();
+
+		/* Get the status of the connection */
+		byte GetStatus() const {return status;};
 
 		virtual ~TCPConnection();
 	};

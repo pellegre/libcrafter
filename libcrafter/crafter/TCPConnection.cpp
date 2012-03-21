@@ -19,10 +19,24 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 
 #include "TCPConnection.h"
-#include<ctime>
+#include <ctime>
 
 using namespace std;
 using namespace Crafter;
+
+std::string TCPConnection::TCPStatus[] = {
+		"LISTEN",
+		"SYN_SENT",
+		"SYN_RECEIVED",
+		"ESTABLISHED",
+		"FIN_WAIT_1",
+		"FIN_WAIT_2",
+		"CLOSE_WAIT",
+		"CLOSING",
+		"LAST_ACK",
+		"TIME_WAIT",
+		"CLOSED"
+};
 
 namespace Crafter {
 	void* ConnectHandler(void* thread_arg);
