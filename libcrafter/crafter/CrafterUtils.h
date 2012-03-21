@@ -77,6 +77,7 @@ namespace Crafter {
 	IP* GetIP(const Packet& packet);
 	TCP* GetTCP(const Packet& packet);
 	UDP* GetUDP(const Packet& packet);
+
 	RawLayer* GetRawLayer(const Packet& packet);
 
 	/* ------------------- Some operators ---------------------- */

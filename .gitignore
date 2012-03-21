@@ -27,6 +27,11 @@
 *.log
 *.sql
 *.sqlite
+make.errors
+.metadata/
+.project
+.settings/
+.cproject
 
 # OS generated files #
 ######################
