@@ -8,6 +8,7 @@
 *.so
 *.la
 *.lo
+*.a
 
 # Packages #
 ############
@@ -32,6 +33,7 @@ make.errors
 .project
 .settings/
 .cproject
+*~
 
 # OS generated files #
 ######################
@@ -39,3 +41,4 @@ make.errors
 ehthumbs.db
 Icon?
 Thumbs.db
+
