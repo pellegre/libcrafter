@@ -103,7 +103,7 @@ void Crafter::Sniffer::SetInterface(const std::string& iface ) {
 	}
 
 	/* Print device information */
-	cout << "[@] Using device: " << device << endl;
+	//cout << "[@] Using device: " << device << endl;
 
 	/* Find out the datalink type of the connection */
 	if (pcap_datalink (handle) != DLT_EN10MB) {
@@ -210,7 +210,7 @@ Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, P
 	}
 
 	/* Print device information */
-	cout << "[@] Using device: " << device << endl;
+	//cout << "[@] Using device: " << device << endl;
 
 	/* Find out the datalink type of the connection */
 	if (pcap_datalink (handle) != DLT_EN10MB) {

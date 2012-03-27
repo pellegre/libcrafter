@@ -84,15 +84,16 @@ libcrafter_la_DEPENDENCIES = $(am__DEPENDENCIES_1) \
 	$(am__DEPENDENCIES_1)
 am__dirstamp = $(am__leading_dot)dirstamp
 am_libcrafter_la_OBJECTS = crafter/PrintMessage.lo crafter/ARP.lo \
-	crafter/ARPSpoofing.lo crafter/ARPSpoofingReply.lo \
-	crafter/ARPSpoofingRequest.lo crafter/BitHandling.lo \
-	crafter/CrafterUtils.lo crafter/DNS.lo crafter/DNSAnswer.lo \
-	crafter/DNSQuery.lo crafter/Ethernet.lo crafter/Field.lo \
-	crafter/ICMP.lo crafter/IP.lo crafter/IPResolver.lo \
-	crafter/IPSeudoHeader.lo crafter/IPv4Parse.lo crafter/Layer.lo \
-	crafter/Packet.lo crafter/Payload.lo crafter/RawLayer.lo \
-	crafter/RawSocket.lo crafter/Sniffer.lo \
-	crafter/TCPConnection.lo crafter/TCP.lo crafter/UDP.lo
+	crafter/ARPPing.lo crafter/ARPSpoofing.lo \
+	crafter/ARPSpoofingReply.lo crafter/ARPSpoofingRequest.lo \
+	crafter/BitHandling.lo crafter/CrafterUtils.lo crafter/DNS.lo \
+	crafter/DNSAnswer.lo crafter/DNSQuery.lo crafter/Ethernet.lo \
+	crafter/Field.lo crafter/ICMP.lo crafter/IP.lo \
+	crafter/IPResolver.lo crafter/IPSeudoHeader.lo \
+	crafter/IPv4Parse.lo crafter/Layer.lo crafter/Packet.lo \
+	crafter/Payload.lo crafter/RawLayer.lo crafter/RawSocket.lo \
+	crafter/Sniffer.lo crafter/TCPConnection.lo crafter/TCP.lo \
+	crafter/UDP.lo
 libcrafter_la_OBJECTS = $(am_libcrafter_la_OBJECTS)
 libcrafter_la_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(AM_CXXFLAGS) \
@@ -256,6 +257,7 @@ ACLOCAL_AMFLAGS = ${ACLOCAL_FLAGS}
 lib_LTLIBRARIES = libcrafter.la
 libcrafter_la_SOURCES = crafter/PrintMessage.cpp \
                         crafter/ARP.cpp \
+                        crafter/ARPPing.cpp \
 						crafter/ARPSpoofing.cpp \
 						crafter/ARPSpoofingReply.cpp \
 						crafter/ARPSpoofingRequest.cpp \
@@ -286,6 +288,7 @@ libcrafter_la_LIBADD = $(PCAPLIB) $(LNETLIB)
 crafter_includedir = $(includedir)
 nobase_crafter_include_HEADERS = crafter.h \
                                 crafter/ARP.h \
+                                crafter/ARPPing.h \
 								crafter/ARPSpoofing.h \
 								crafter/Crafter.h \
 								crafter/CrafterUtils.h \
@@ -425,6 +428,8 @@ crafter/PrintMessage.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/ARP.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
+crafter/ARPPing.lo: crafter/$(am__dirstamp) \
+	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/ARPSpoofing.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/ARPSpoofingReply.lo: crafter/$(am__dirstamp) \
@@ -480,6 +485,8 @@ mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
 	-rm -f crafter/ARP.$(OBJEXT)
 	-rm -f crafter/ARP.lo
+	-rm -f crafter/ARPPing.$(OBJEXT)
+	-rm -f crafter/ARPPing.lo
 	-rm -f crafter/ARPSpoofing.$(OBJEXT)
 	-rm -f crafter/ARPSpoofing.lo
 	-rm -f crafter/ARPSpoofingReply.$(OBJEXT)
@@ -535,6 +542,7 @@ distclean-compile:
 	-rm -f *.tab.c
 
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARP.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARPPing.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARPSpoofing.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARPSpoofingReply.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARPSpoofingRequest.Plo@am__quote@

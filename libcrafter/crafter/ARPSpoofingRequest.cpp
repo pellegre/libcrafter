@@ -17,9 +17,10 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
 
-
-#include "ARPSpoofing.h"
+#include <map>
 #include <signal.h>
+#include "ARPSpoofing.h"
+#include "ARPPing.h"
 
 using namespace std;
 using namespace Crafter;
@@ -159,113 +160,33 @@ ARPContext* Crafter::ARPSpoofingRequest(const std::string& net_target, const std
 	/* Print local MAC addres */
 	cout << "[@] Attacker's MAC address = " << MyMAC << endl;
 
-	/* Create generic headers */
-	Ethernet ether_header;
-	ether_header.SetDestinationMAC("ff:ff:ff:ff:ff:ff");
-	ARP arp_header;
-	arp_header.SetOperation(ARP::Request);
-
 	/* ***************************** ARP ping -> Target net: */
 
-	vector<string>* net = ParseIP(net_target);
-	vector<string>::iterator it_IP;
-
-	/* Create a new packet container */
-	PacketContainer* arp_requests = new PacketContainer;
-
-	for(it_IP = net->begin() ; it_IP != net->end() ; it_IP++) {
-		/* Set Target IP */
-		arp_header.SetTargetIP((*it_IP));
-
-		Packet* arp_packet = new Packet;
-
-		arp_packet->PushLayer(ether_header);
-		arp_packet->PushLayer(arp_header);
-
-		arp_requests->push_back(arp_packet);
-	}
-
-	/* Clear the string container */
-	delete net;
-
-	/* Send request and match replies */
-	PacketContainer* arp_replies = SendRecv(arp_requests,iface,32,3,5);
-
-	PacketContainer::iterator it_replies;
+	map<string,string> TargetTable = ARPPing(net_target,iface,3);
 
 	/* Create container for MAC an IP addresses */
 	vector<string>* TargetIPs = new vector<string>;
 	vector<string>* TargetMACs = new vector<string>;
 
-	for(it_replies = arp_replies->begin() ; it_replies != arp_replies->end() ; it_replies++) {
-		if(*it_replies) {
-			ARP* arp_reply = GetARP(*(*it_replies));
-			if(arp_reply) {
-				TargetIPs->push_back(arp_reply->GetSenderIP());
-				TargetMACs->push_back(arp_reply->GetSenderMAC());
-			}
-			/* Finally, delete this packet */
-			delete (*it_replies);
-		}
+	/* Iterate the IP/MAC table return by the ARPPing function */
+	map<string,string>::iterator it_table;
+	for(it_table = TargetTable.begin() ; it_table != TargetTable.end() ; it_table++) {
+		TargetIPs->push_back((*it_table).first);
+		TargetMACs->push_back((*it_table).second);
 	}
-
-	/* Delete replies container */
-	delete arp_replies;
-
-	PacketContainer::iterator it_request;
-
-	/* Delete request container */
-	for(it_request = arp_requests->begin() ; it_request != arp_requests->end() ; it_request++)
-		delete (*it_request);
-	delete arp_requests;
 
 	/* ***************************** ARP ping -> Victim net: */
 
-	net = ParseIP(net_victim);
-
-	arp_requests = new PacketContainer;
-
-	for(it_IP = net->begin() ; it_IP != net->end() ; it_IP++) {
-		/* Set Target IP */
-		arp_header.SetTargetIP((*it_IP));
-
-		Packet* arp_packet = new Packet;
-
-		arp_packet->PushLayer(ether_header);
-		arp_packet->PushLayer(arp_header);
-
-		arp_requests->push_back(arp_packet);
-	}
-
-	/* Clear the string container */
-	delete net;
-
-	arp_replies = SendRecv(arp_requests,iface,32,3,5);
+	map<string,string> VictimTable = ARPPing(net_victim,iface,3);
 
 	/* Create container for MAC an IP addresses */
 	vector<string>* VictimIPs = new vector<string>;
 	vector<string>* VictimMACs = new vector<string>;
 
-	for(it_replies = arp_replies->begin() ; it_replies != arp_replies->end() ; it_replies++) {
-		if(*it_replies) {
-			ARP* arp_reply = GetARP(*(*it_replies));
-			if(arp_reply) {
-				VictimIPs->push_back(arp_reply->GetSenderIP());
-				VictimMACs->push_back(arp_reply->GetSenderMAC());
-			}
-			/* Finally, delete this packet */
-			delete (*it_replies);
-		}
+	for(it_table = VictimTable.begin() ; it_table != VictimTable.end() ; it_table++) {
+		VictimIPs->push_back((*it_table).first);
+		VictimMACs->push_back((*it_table).second);
 	}
-
-	/* Delete replies container */
-	delete arp_replies;
-
-	/* Delete request container */
-	for(it_request = arp_requests->begin() ; it_request != arp_requests->end() ; it_request++)
-		delete (*it_request);
-
-	delete arp_requests;
 
 	/* Create instance of ARP Spoofing Context */
 	ARPContext* context = new ARPContext;
