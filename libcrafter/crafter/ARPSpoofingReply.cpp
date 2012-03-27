@@ -191,7 +191,7 @@ ARPContext* Crafter::ARPSpoofingReply(const std::string& net_target, const std::
 	delete net;
 
 	/* Send request and match replies */
-	PacketContainer* arp_replies = SendRecv(arp_requests,iface,256,3,5);
+	PacketContainer* arp_replies = SendRecv(arp_requests,iface,32,3,5);
 
 	PacketContainer::iterator it_replies;
 
@@ -242,7 +242,7 @@ ARPContext* Crafter::ARPSpoofingReply(const std::string& net_target, const std::
 	/* Clear the string container */
 	delete net;
 
-	arp_replies = SendRecv(arp_requests,iface,256,3,5);
+	arp_replies = SendRecv(arp_requests,iface,32,3,5);
 
 	/* Create container for MAC an IP addresses */
 	vector<string>* VictimIPs = new vector<string>;
