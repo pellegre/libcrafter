@@ -1,0 +1,103 @@
+/*
+ * ARPPing.cpp
+ *
+ *  Created on: Mar 27, 2012
+ *      Author: larry
+ */
+
+#include "ARPPing.h"
+
+using namespace std;
+using namespace Crafter;
+
+void ARPAlive(Packet* sniff_packet, void* user) {
+	/* Get the ARP header from the sniffed packet */
+	ARP* arp_layer = GetARP(*sniff_packet);
+
+	/* Cast the user pointer */
+	map<string,string>* table = static_cast<map<string,string>* >(user);
+
+	/* Update the table */
+	(*table)[arp_layer->GetSenderIP()] = arp_layer->GetSenderMAC();
+
+}
+
+map<string,std::string> ARPPing(const string& ip_net, const string& iface, size_t send_count) {
+	/* Get the IP address associated to the interface */
+	string MyIP = GetMyIP(iface);
+	/* Get the MAC Address associated to the interface */
+	string MyMAC = GetMyMAC(iface);
+
+	/* --------- Common data to all headers --------- */
+
+	Ethernet ether_header;
+
+	ether_header.SetSourceMAC(MyMAC);
+	ether_header.SetDestinationMAC("ff:ff:ff:ff:ff:ff");   // <-- Set broadcast address
+
+	ARP arp_header;
+
+	arp_header.SetOperation(ARP::Request);                 // <-- Set Operation (ARP Request)
+    arp_header.SetSenderIP(MyIP);                          // <-- Set our network data
+    arp_header.SetSenderMAC(MyMAC);
+
+    /* ---------------------------------------------- */
+
+	/* Define the network to scan */
+	vector<string>* net = ParseIP(ip_net);                 // <-- Create a container of IP addresses from a "wildcard"
+	vector<string>::iterator it_IP;                        // <-- Iterator
+
+	/* Create a PacketContainer to hold all the ARP requests */
+	PacketContainer request_packets;
+
+	/* Iterate to access each string that defines an IP address */
+	for(it_IP = net->begin() ; it_IP != net->end() ; it_IP++) {
+
+		arp_header.SetTargetIP(*it_IP);                    // <-- Set a destination IP address on ARP header
+
+		/* Create a packet on the heap */
+		Packet* packet = new Packet;
+
+		/* Push the layers */
+		packet->PushLayer(ether_header);
+		packet->PushLayer(arp_header);
+
+		/* Finally, push the packet into the container */
+		request_packets.push_back(packet);
+	}
+
+	/* Create a sniffer for listen to ARP traffic of the network specified */
+	Sniffer sniff("arp[7]=2",iface,ARPAlive);
+
+	/* Create a table to hold IP and MAC addresses */
+	map<string,string> table;
+
+	void* sniffer_arg = static_cast<void*>(&table);
+
+	/* Spawn the sniffer, the function returns immediately */
+	sniff.Spawn(-1, sniffer_arg);
+
+	/*
+	 * At this point, we have all the packets into the
+	 * request_packets container. Now we can Send 'Em All <send_count> times.
+	 */
+	for(size_t i = 0 ; i < send_count ; i++) {
+		Send(&request_packets,iface);
+		sleep(1);
+	}
+
+	/* ... and close the sniffer */
+	sniff.Cancel();
+
+	/* Delete the container with the ARP requests */
+	PacketContainer::iterator it_pck;
+	for(it_pck = request_packets.begin() ; it_pck < request_packets.end() ; it_pck++)
+		delete (*it_pck);
+
+	/* Delete the IP address container */
+	delete net;
+
+	/* Return the table */
+	return table;
+}
+

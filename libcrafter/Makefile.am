@@ -22,6 +22,7 @@ lib_LTLIBRARIES = libcrafter.la
 ## which are already listed elsewhere in a _HEADERS variable assignment.
 libcrafter_la_SOURCES = crafter/PrintMessage.cpp \
                         crafter/ARP.cpp \
+                        crafter/ARPPing.cpp \
 						crafter/BitHandling.cpp \
 						crafter/CrafterUtils.cpp \
 						crafter/DNS.cpp \
@@ -58,6 +59,7 @@ libcrafter_la_LIBADD = $(PCAPLIB) $(LNETLIB)
 crafter_includedir = $(includedir)
 nobase_crafter_include_HEADERS =crafter.h \
                                 crafter/ARP.h \
+                                crafter/ARPPing.h \
 								crafter/Crafter.h \
 								crafter/CrafterUtils.h \
 								crafter/BitHandling.h \
