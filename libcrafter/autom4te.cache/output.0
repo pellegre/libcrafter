@@ -704,7 +704,7 @@ PACKAGE_TARNAME='crafter'
 PACKAGE_VERSION='0.1'
 PACKAGE_STRING='libcrafter 0.1'
 PACKAGE_BUGREPORT='pellegre.esteban@gmail.com'
-PACKAGE_URL='http://www.openismus.com/documents/linux/building_libraries/building_libraries'
+PACKAGE_URL='http://code.google.com/p/libcrafter/'
 
 # Factoring default headers for most tests.
 ac_includes_default="\
@@ -1544,7 +1544,7 @@ Use these variables to override the choices made by `configure' or to help
 it to find libraries and programs with nonstandard names/locations.
 
 Report bugs to <pellegre.esteban@gmail.com>.
-libcrafter home page: <http://www.openismus.com/documents/linux/building_libraries/building_libraries>.
+libcrafter home page: <http://code.google.com/p/libcrafter/>.
 _ACEOF
 ac_status=$?
 fi
@@ -14625,7 +14625,7 @@ CRAFTER_API_VERSION=0.1
 
 ## Override the template file name of the generated .pc file, so that there
 ## is no need to rename the template file when the API version changes.
-ac_config_files="$ac_config_files Makefile crafter-${CRAFTER_API_VERSION}.pc:crafter.pc.in"
+ac_config_files="$ac_config_files Makefile crafter.pc:crafter.pc.in"
 
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
@@ -15218,7 +15218,7 @@ Configuration commands:
 $config_commands
 
 Report bugs to <pellegre.esteban@gmail.com>.
-libcrafter home page: <http://www.openismus.com/documents/linux/building_libraries/building_libraries>."
+libcrafter home page: <http://code.google.com/p/libcrafter/>."
 
 _ACEOF
 cat >>$CONFIG_STATUS <<_ACEOF || ac_write_fail=1
@@ -15709,7 +15709,7 @@ do
     "depfiles") CONFIG_COMMANDS="$CONFIG_COMMANDS depfiles" ;;
     "libtool") CONFIG_COMMANDS="$CONFIG_COMMANDS libtool" ;;
     "Makefile") CONFIG_FILES="$CONFIG_FILES Makefile" ;;
-    "crafter-${CRAFTER_API_VERSION}.pc") CONFIG_FILES="$CONFIG_FILES crafter-${CRAFTER_API_VERSION}.pc:crafter.pc.in" ;;
+    "crafter.pc") CONFIG_FILES="$CONFIG_FILES crafter.pc:crafter.pc.in" ;;
 
   *) as_fn_error $? "invalid argument: \`$ac_config_target'" "$LINENO" 5 ;;
   esac

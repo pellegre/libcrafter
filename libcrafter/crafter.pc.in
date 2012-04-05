@@ -7,5 +7,5 @@ Name: @PACKAGE_NAME@
 Description: A C++ Packet manipulation library.
 Version: @PACKAGE_VERSION@
 URL: @PACKAGE_URL@
-Libs: -L${libdir} -lcrafter-@CRAFTER_API_VERSION@
-Cflags: -I${includedir}/crafter-@CRAFTER_API_VERSION@ -I${libdir}/crafter-@crafter_API_VERSION@/include
+Libs: -L${libdir} -lcrafter
+Cflags: -I${includedir}/crafter -I${libdir}/crafter/include
