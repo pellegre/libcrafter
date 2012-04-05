@@ -52,7 +52,7 @@ am__CONFIG_DISTCLEAN_FILES = config.status config.cache config.log \
  configure.lineno config.status.lineno
 mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = config.h crafterconfig.h
-CONFIG_CLEAN_FILES = crafter-${CRAFTER_API_VERSION}.pc
+CONFIG_CLEAN_FILES = crafter.pc
 CONFIG_CLEAN_VPATH_FILES =
 am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
 am__vpath_adj = case $$p in \
@@ -315,7 +315,7 @@ nobase_crafter_include_HEADERS = crafter.h \
 crafter_libincludedir = $(libdir)/crafter-$(CRAFTER_API_VERSION)/include
 nodist_crafter_libinclude_HEADERS = crafterconfig.h
 pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = crafter-$(CRAFTER_API_VERSION).pc
+pkgconfig_DATA = crafter.pc
 AM_CPPFLAGS = $(PCAPINC) $(LNETINC)
 AM_CXXFLAGS = -ansi -pedantic -Wall
 dist_noinst_SCRIPTS = autogen.sh
@@ -385,7 +385,7 @@ stamp-h2: $(srcdir)/crafterconfig.h.in $(top_builddir)/config.status
 
 distclean-hdr:
 	-rm -f config.h stamp-h1 crafterconfig.h stamp-h2
-crafter-${CRAFTER_API_VERSION}.pc: $(top_builddir)/config.status $(srcdir)/crafter.pc.in
+crafter.pc: $(top_builddir)/config.status $(srcdir)/crafter.pc.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
 install-libLTLIBRARIES: $(lib_LTLIBRARIES)
 	@$(NORMAL_INSTALL)

@@ -1,0 +1,64 @@
+= Introduction =
+
+Libcrafter is a high level library for C++ designed to facilitate the creation and 
+decoding of network packets. It is able to craft or decode packets of most 
+common networks protocols, send them on the wire, capture them and match 
+requests and replies.
+It enables the creation of networking tools in a few lines with a interface 
+very similar to [http://www.secdev.org/projects/scapy/ Scapy]. 
+A packet is  described as layers that you stack one upon the other. Fields of 
+each layer have useful default values that you can overload.
+
+The library is designed to be used in multithreaded programs where you can 
+combine several tasks simultaneously. For example, you can easily design 
+something that sniffs, mangles, and sends at the same time you are doing 
+an ARP-Spoofing attack.
+It also contains a very naive implementation of the TCP/IP stack (fragmentation 
+is no handled yet) at user level that enables working with TCP streams. This 
+facilitates the creation of tools for data injection on arbitrary connections, IP spoofing and TCP/IP session hijacking. 
+
+= Installation =
+
+The installation of the library in your system should be quite straightforward.
+First download the latest release of the library from the download tab or the 
+command line:
+
+$ wget http://libcrafter.googlecode.com/files/crafter-0.1.tar.gz
+
+Extract the source code:
+
+$ tar xfvz crafter-0.1.tar.gz
+$ cd crafter-0-1
+
+Before configuring and compiling libcrafter you need lipcap an libnet installed 
+in your system. On debian based distros, you should execute:
+
+
+$ sudo apt-get install libnet1 libnet1-dev libpcap0.8 libpcap0.8-dev
+
+
+Configure: 
+
+
+$ ./configure
+
+
+Compile: 
+
+
+$ make
+
+
+Install on your system: 
+
+
+$ sudo make install
+$ sudo ldconfig
+
+
+Finally, you can download some examples codes and test them:
+
+
+wget http://libcrafter.googlecode.com/files/examples.tar.gz
+
+

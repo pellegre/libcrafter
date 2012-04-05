@@ -105,7 +105,7 @@ nodist_crafter_libinclude_HEADERS = crafterconfig.h
 ## pkg-config files are also used for architecture-independent data packages,
 ## in which case the correct install location would be $(datadir)/pkgconfig.
 pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = crafter-$(CRAFTER_API_VERSION).pc
+pkgconfig_DATA = crafter.pc
 
 ## Put additional flags, including libpcap and libnet linking information
 AM_CPPFLAGS = $(PCAPINC) $(LNETINC)

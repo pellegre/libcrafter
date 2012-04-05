@@ -1,7 +1,7 @@
 ## LibCrafter (Adapted from http://www.openismus.com/documents/linux/building_libraries/building_libraries):
 
 AC_INIT([libcrafter], [0.1], [pellegre.esteban@gmail.com], [crafter],
-        [http://www.openismus.com/documents/linux/building_libraries/building_libraries])
+        [http://code.google.com/p/libcrafter/])
 AC_PREREQ([2.59])
 AM_INIT_AUTOMAKE([1.10 -Wall no-define])
 
@@ -121,5 +121,5 @@ AC_SUBST([CRAFTER_API_VERSION], [0.1])
 ## Override the template file name of the generated .pc file, so that there
 ## is no need to rename the template file when the API version changes.
 AC_CONFIG_FILES([Makefile
-                 crafter-${CRAFTER_API_VERSION}.pc:crafter.pc.in])
+                 crafter.pc:crafter.pc.in])
 AC_OUTPUT
