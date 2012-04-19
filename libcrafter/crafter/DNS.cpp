@@ -90,7 +90,6 @@ Crafter::DNS::DNS() {
 }
 
 void DNS::DefineProtocol() {
-	/* Source Port number */
 	define_field("Identification",new NumericField(0,0,15));
 	define_field("Flags",new NumericField(0,16,31));
 	define_field("TotalQuestions",new NumericField(1,0,15));

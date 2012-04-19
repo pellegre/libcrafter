@@ -115,7 +115,7 @@ void TCP::Craft () {
 		} else {
 			PrintMessage(Crafter::PrintCodes::PrintWarning,
 					     "TCP::Craft()",
-				         "Top Layer of TCP packet is not IP. Cannot calculate TCP checksum.");
+				         "Bottom Layer of TCP packet is not IP. Cannot calculate TCP checksum.");
 			checksum = 0;
 		}
 

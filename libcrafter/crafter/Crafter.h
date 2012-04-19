@@ -20,7 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 #ifndef CRAFTER_H_
 #define CRAFTER_H_
 
-/* Layer inteface */
+/* Layer interface */
 #include "Layer.h"
 
 /* Ethernet Protocol Implementation */
@@ -29,7 +29,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 /* Address Resolution Protocol Implementation */
 #include "ARP.h"
 
-/* UDP Protocol IMplementation */
+/* UDP Protocol Implementation */
 #include "UDP.h"
 
 /* TCP Protocol Implementation */
@@ -38,11 +38,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 /* IP Protocol Implementation */
 #include "IP.h"
 
-/* ICMP Protocol IMplementation */
+/* ICMP Protocol Implementation */
 #include "ICMP.h"
 
 /* DNS Protocol Implementation */
 #include "DNS.h"
+
+/* DHCP Protocol Implementation */
+#include "DHCP.h"
 
 /* Raw Layer, nothing specific */
 #include "RawLayer.h"

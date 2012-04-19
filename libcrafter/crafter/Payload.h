@@ -49,6 +49,8 @@ namespace Crafter {
 	public:
 
 		friend class Layer;
+		friend class DHCPOptionsGeneric;
+		friend class DHCPOptionsParameterList;
 
 		Payload() {
 			/* Clear everything */
