@@ -283,6 +283,12 @@ namespace Crafter {
 		/* Add more stuff to the payload */
 		void AddPayload (const char* data);
 
+		/* Set payload */
+		void SetPayload (const Payload& payload);
+
+		/* Add more stuff to the payload */
+		void AddPayload (const Payload& payload);
+
 		/* Copy the data into the pointer and returns the number of bytes copied */
 		size_t GetPayload(byte* dst) const;
 

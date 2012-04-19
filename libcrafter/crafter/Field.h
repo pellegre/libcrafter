@@ -31,11 +31,11 @@ namespace Crafter {
 
 	class FieldInfo {
 	protected:
-		size_t nword;   /* In wich word is the field */
+		size_t nword;   /* In which word is the field */
 		size_t bitpos;  /* Start bit position of the field inside the word */
 		size_t endpos;  /* Length of the field in bytes */
 		word value;     /* Field value (first <length> bits in word) */
-		byte field_set; /* Flag if field was setted by the user */
+		byte field_set; /* Flag if field was set by the user */
 	public:
 		/* Construct Field */
 		FieldInfo(size_t _nword = 0, size_t _bitpos = 0, size_t _endpos = 0, word _value = 0) :

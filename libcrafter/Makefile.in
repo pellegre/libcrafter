@@ -86,14 +86,14 @@ am__dirstamp = $(am__leading_dot)dirstamp
 am_libcrafter_la_OBJECTS = crafter/PrintMessage.lo crafter/ARP.lo \
 	crafter/ARPPing.lo crafter/ARPSpoofing.lo \
 	crafter/ARPSpoofingReply.lo crafter/ARPSpoofingRequest.lo \
-	crafter/BitHandling.lo crafter/CrafterUtils.lo crafter/DNS.lo \
-	crafter/DNSAnswer.lo crafter/DNSQuery.lo crafter/Ethernet.lo \
-	crafter/Field.lo crafter/ICMP.lo crafter/IP.lo \
-	crafter/IPResolver.lo crafter/IPSeudoHeader.lo \
-	crafter/IPv4Parse.lo crafter/Layer.lo crafter/Packet.lo \
-	crafter/Payload.lo crafter/RawLayer.lo crafter/RawSocket.lo \
-	crafter/Sniffer.lo crafter/TCPConnection.lo crafter/TCP.lo \
-	crafter/UDP.lo
+	crafter/BitHandling.lo crafter/CrafterUtils.lo crafter/DHCP.lo \
+	crafter/DHCPOptions.lo crafter/DNS.lo crafter/DNSAnswer.lo \
+	crafter/DNSQuery.lo crafter/Ethernet.lo crafter/Field.lo \
+	crafter/ICMP.lo crafter/IP.lo crafter/IPResolver.lo \
+	crafter/IPSeudoHeader.lo crafter/IPv4Parse.lo crafter/Layer.lo \
+	crafter/Packet.lo crafter/Payload.lo crafter/RawLayer.lo \
+	crafter/RawSocket.lo crafter/Sniffer.lo \
+	crafter/TCPConnection.lo crafter/TCP.lo crafter/UDP.lo
 libcrafter_la_OBJECTS = $(am_libcrafter_la_OBJECTS)
 libcrafter_la_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(AM_CXXFLAGS) \
@@ -263,6 +263,8 @@ libcrafter_la_SOURCES = crafter/PrintMessage.cpp \
 						crafter/ARPSpoofingRequest.cpp \
 						crafter/BitHandling.cpp \
 						crafter/CrafterUtils.cpp \
+						crafter/DHCP.cpp \
+						crafter/DHCPOptions.cpp \
 						crafter/DNS.cpp \
 						crafter/DNSAnswer.cpp \
 						crafter/DNSQuery.cpp \
@@ -293,6 +295,8 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Crafter.h \
 								crafter/CrafterUtils.h \
 								crafter/BitHandling.h \
+								crafter/DHCP.h \
+								crafter/DHCPOptions.h \
 								crafter/DNS.h \
 								crafter/Ethernet.h \
 								crafter/Field.h \
@@ -440,6 +444,10 @@ crafter/BitHandling.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/CrafterUtils.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
+crafter/DHCP.lo: crafter/$(am__dirstamp) \
+	crafter/$(DEPDIR)/$(am__dirstamp)
+crafter/DHCPOptions.lo: crafter/$(am__dirstamp) \
+	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/DNS.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/DNSAnswer.lo: crafter/$(am__dirstamp) \
@@ -497,6 +505,10 @@ mostlyclean-compile:
 	-rm -f crafter/BitHandling.lo
 	-rm -f crafter/CrafterUtils.$(OBJEXT)
 	-rm -f crafter/CrafterUtils.lo
+	-rm -f crafter/DHCP.$(OBJEXT)
+	-rm -f crafter/DHCP.lo
+	-rm -f crafter/DHCPOptions.$(OBJEXT)
+	-rm -f crafter/DHCPOptions.lo
 	-rm -f crafter/DNS.$(OBJEXT)
 	-rm -f crafter/DNS.lo
 	-rm -f crafter/DNSAnswer.$(OBJEXT)
@@ -548,6 +560,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARPSpoofingRequest.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/BitHandling.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/CrafterUtils.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/DHCP.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/DHCPOptions.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/DNS.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/DNSAnswer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/DNSQuery.Plo@am__quote@

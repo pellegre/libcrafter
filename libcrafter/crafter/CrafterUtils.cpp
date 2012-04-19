@@ -573,6 +573,10 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&dns_dummy);
 
+	DHCP dhcp_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&dhcp_dummy);
+
 	/* Init seed of RNG */
 	srand(time(NULL));
 

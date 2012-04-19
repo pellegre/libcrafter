@@ -163,7 +163,7 @@ void IP::LibnetBuild(libnet_t *l) {
 		}
 	}
 
-	/* Now write the data into de libnet context */
+	/* Now write the data into the libnet context */
 	int ip  = libnet_build_ipv4 ( GetTotalLength(),
 			                      GetDifSerCP(),
 			                      GetIdentification(),

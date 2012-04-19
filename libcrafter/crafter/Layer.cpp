@@ -392,6 +392,18 @@ void Crafter::Layer::AddPayload (const char* data) {
 	bytes_size = size + LayerPayload.GetSize();
 }
 
+/* Set payload */
+void Crafter::Layer::SetPayload (const Payload& data)  {
+	LayerPayload.AddPayload(data);
+	bytes_size = size + LayerPayload.GetSize();
+}
+
+/* Add more stuff to the payload */
+void Crafter::Layer::AddPayload (const Payload& data) {
+	LayerPayload.AddPayload(data);
+	bytes_size = size + LayerPayload.GetSize();
+}
+
 /* Copy the data into the pointer and returns the number of bytes copied */
 size_t Crafter::Layer::GetPayload(byte* dst) const {
 	return LayerPayload.GetPayload(dst);

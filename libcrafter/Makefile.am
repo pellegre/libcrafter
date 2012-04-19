@@ -28,6 +28,8 @@ libcrafter_la_SOURCES = crafter/PrintMessage.cpp \
 						crafter/ARPSpoofingRequest.cpp \
 						crafter/BitHandling.cpp \
 						crafter/CrafterUtils.cpp \
+						crafter/DHCP.cpp \
+						crafter/DHCPOptions.cpp \
 						crafter/DNS.cpp \
 						crafter/DNSAnswer.cpp \
 						crafter/DNSQuery.cpp \
@@ -67,6 +69,8 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Crafter.h \
 								crafter/CrafterUtils.h \
 								crafter/BitHandling.h \
+								crafter/DHCP.h \
+								crafter/DHCPOptions.h \
 								crafter/DNS.h \
 								crafter/Ethernet.h \
 								crafter/Field.h \

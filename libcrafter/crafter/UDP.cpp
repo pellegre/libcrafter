@@ -115,7 +115,7 @@ void UDP::Craft () {
 		} else {
 			PrintMessage(Crafter::PrintCodes::PrintWarning,
 					     "UDP::Craft()",
-				         "Top Layer of UDP packet is not IP. Cannot calculate UDP checksum.");
+				         "Bottom Layer of UDP packet is not IP. Cannot calculate UDP checksum.");
 			checksum = 0;
 		}
 
