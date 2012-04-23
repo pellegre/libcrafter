@@ -168,6 +168,14 @@ void Payload::Print() const{
 
 }
 
+void Payload::RawString() const {
+	/* Print raw data in hexadecimal format */
+	for(size_t i = 0 ; i < size ; i++) {
+		std::cout << "\\x";
+		std::cout << std::hex << (unsigned int)((byte *)storage)[i];
+	}
+}
+
 void Payload::PrintChars() const {
 	for(size_t i = 0 ; i < size ; i++)
 		std::cout << (char)storage[i];
