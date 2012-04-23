@@ -334,7 +334,7 @@ static void zero_buff(char* buff, size_t ndata) {
 		buff[i] = 0x0;
 }
 
-static void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_msg* handle) {
+void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_msg* handle) {
 	/* Allocate memory for buffer */
 	char* buff = new char[MAXDNAME];
 
