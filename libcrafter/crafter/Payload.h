@@ -116,6 +116,9 @@ namespace Crafter {
 		/* Print characters one by one */
 		void PrintChars() const;
 
+		/* Print a raw string of the payload */
+		void RawString() const;
+
 		/* Print Payload */
 		virtual void Print() const;
 
