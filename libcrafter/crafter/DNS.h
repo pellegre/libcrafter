@@ -257,8 +257,6 @@ namespace Crafter {
 			~DNSAnswer() { /*  */ };
 		};
 
-		friend void SetContainerSection(std::vector<DNSAnswer>& container, ns_sect section, ns_msg* handle);
-
 		/* Vector of Queries and Resource Records */
 		std::vector<DNSQuery> Queries;
 		std::vector<DNSAnswer> Answers;
