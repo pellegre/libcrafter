@@ -308,7 +308,7 @@ size_t Packet::GetData(byte* raw_ptr) const {
 }
 
 /* Constructor from raw data */
-void Packet::PacketFromIP(const byte* data) {
+void Packet::PacketFromIP(const byte* data, size_t length) {
 
 	/* First remove bytes for the raw data */
 	if (raw_data) {
@@ -326,16 +326,40 @@ void Packet::PacketFromIP(const byte* data) {
 
 	/* The first bytes are an IP layer */
 	IP ip_layer;
-	/* Put Data */
-	size_t n_ip = ip_layer.PutData(data);
-	/* Verify if the are options on the IP header */
-	if (ip_layer.GetHeaderLength() > 5) {
-		ip_layer.SetPayload(data + n_ip, 4);
-		n_ip += 4;
+
+	/* Check if the data don't fit into an ethernet header */
+	if(ip_layer.GetSize() > length) {
+		/* Create Raw layer */
+		RawLayer rawdata(data, length);
+		PushLayer(rawdata);
+		/* That's all */
+		return;
 	}
 
-	/* Get the total length of the packet */
-	size_t length = ip_layer.GetTotalLength();
+	/* Put Data */
+	size_t n_ip = ip_layer.PutData(data);
+
+
+	/* Get size of the remaining data */
+	length -= n_ip;
+
+	/* Verify if the are options on the IP header */
+	size_t IP_word_size = ip_layer.GetHeaderLength();
+	size_t IP_opt_size = 0;
+
+	if(IP_word_size > 5) IP_opt_size = 4 * (IP_word_size - 5);
+
+	if (IP_opt_size < length && IP_opt_size > 0) {
+		/* The options are set as a payload */
+		ip_layer.SetPayload(data + n_ip, IP_opt_size);
+		length -= IP_opt_size;
+		n_ip += IP_opt_size;
+	} else if (IP_opt_size >= length && IP_opt_size > 0) {
+		ip_layer.SetPayload(data + n_ip, length);
+		PushLayer(ip_layer);
+		/* That's all */
+		return;
+	}
 
 	/* Then, create the next protocol */
 	Layer* trp_layer = Protocol::AccessFactory()->GetLayerByID(ip_layer.GetProtocol());
@@ -344,32 +368,58 @@ void Packet::PacketFromIP(const byte* data) {
 	size_t n_trp = 0;
 
 	if (trp_layer) {
+
+		if(trp_layer->GetSize() > length) {
+			/* Create Raw layer */
+			RawLayer rawdata(data + n_ip, length);
+			PushLayer(ip_layer);
+			PushLayer(rawdata);
+			delete trp_layer;
+			/* That's all */
+			return;
+		}
+
 		n_trp = trp_layer->PutData(data + n_ip);
 		/* Redefine fields in case is necesary */
 		trp_layer->ReDefineActiveFields();
+
+		/* Get size of the remaining data */
+		length -= n_trp;
 
 		/* If we are dealing with a TCP layer, we should check for options */
 		if (trp_layer->GetName() == "TCP") {
 			/* Cast the layer */
 			TCP *tcp_layer = dynamic_cast<TCP *>(trp_layer);
-			size_t TCP_size = tcp_layer->GetDataOffset();
+			size_t TCP_word_size = tcp_layer->GetDataOffset();
 
-			if (TCP_size > 5) {
+			size_t TCP_opt_size = 0;
+
+			if(TCP_word_size > 5) TCP_opt_size = 4 * (TCP_word_size - 5);
+
+			if (TCP_opt_size < length && TCP_opt_size > 0) {
 				/* The options are set as a payload */
-				tcp_layer->SetPayload(data + n_ip + n_trp, 4 * (TCP_size - 5));
-				n_trp += 4 * (TCP_size - 5);
+				tcp_layer->SetPayload(data + n_ip + n_trp, TCP_opt_size);
+				length -= TCP_opt_size;
+				n_trp += TCP_opt_size;
+			} else if (TCP_opt_size >= length && TCP_opt_size > 0) {
+				tcp_layer->SetPayload(data + n_ip + n_trp, length);
+				PushLayer(ip_layer);
+				PushLayer(*trp_layer);
+				delete trp_layer;
+				/* That's all */
+				return;
 			}
 		}
+
 	}
 
-	size_t data_length = length - n_ip - n_trp;
+	size_t data_length = length;
 
 	/* Create a raw payload with the rest of the data */
 	RawLayer raw_layer;
 
 	if(data_length) {
-
-		raw_layer.SetPayload(data + n_ip + n_trp, length - n_ip - n_trp);
+		raw_layer.SetPayload(data + n_ip + n_trp, length);
 	}
 
 	/* Push each layer into the stack */
@@ -584,7 +634,7 @@ void Packet::PacketFromIP(const RawLayer& data) {
 	data.GetRawData(buffer);
 
 	/* Construct the packet from the buffer */
-	PacketFromIP(buffer);
+	PacketFromIP(buffer, data.GetSize());
 
 	/* Delete buffer */
 	delete [] buffer;
@@ -1223,7 +1273,6 @@ void Packet::RawSocketSend(int sd, const string& iface) {
 		exit(1);
 	}
 
-	close(sd);
 }
 
 Packet* Packet::RawSocketSendRecv(int sd, const string& iface, int timeout, int retry, const string& user_filter) {

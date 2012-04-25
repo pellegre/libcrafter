@@ -88,7 +88,7 @@ typedef std::vector<Layer*> LayerStack;
 		Packet& operator/=(const Packet& right);
 
 		/* Construct packet from data */
-		void PacketFromIP(const byte* data);
+		void PacketFromIP(const byte* data, size_t length);
 		void PacketFromEthernet(const byte* data, size_t length);
 
 		/* Construct packet a raw layer */
