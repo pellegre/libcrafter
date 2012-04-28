@@ -1167,7 +1167,7 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 
 }
 
-void Packet::RawSocketSend(int sd) {
+int Packet::RawSocketSend(int sd) {
 	/* IP address in string format */
 	char ip_address[16];
 	/* Get IP Layer */
@@ -1223,12 +1223,14 @@ void Packet::RawSocketSend(int sd) {
 	/* Craft data before sending anything */
 	Craft();
 
-	if(sendto(sd, raw_data, bytes_size, 0, (struct sockaddr *)&din, sizeof(din)) < 0) {
+        int ret = 0;
+	if( (ret = sendto(sd, raw_data, bytes_size, 0, (struct sockaddr *)&din, sizeof(din))) < 0) {
 		PrintMessage(Crafter::PrintCodes::PrintPerror,
 				     "Packet::RawSocketSend()",
 				     "Writing on Raw Socket");
-		exit(1);
 	}
+
+	return ret;
 
 }
 
