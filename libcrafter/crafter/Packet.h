@@ -113,7 +113,7 @@ typedef std::vector<Layer*> LayerStack;
 		Packet* SendRecv(const std::string& iface = "", int timeout = 5, int retry = 3, const std::string& user_filter = " ");
 
 		/* Put a packet into the wire trought a socket */
-		void RawSocketSend(int sd);
+		int RawSocketSend(int sd);
 
 		/* Send a packet and match the answer */
 		Packet* RawSocketSendRecv(int sd, const std::string& iface = "", int timeout = 5, int retry = 3, const std::string& user_filter = " ");
