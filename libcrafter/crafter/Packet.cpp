@@ -1167,13 +1167,7 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 
 }
 
-void Packet::RawSocketSend(int sd, const string& iface) {
-	/* Error messages */
-	char libcap_errbuf[PCAP_ERRBUF_SIZE];
-
-	/* Name of the device */
-	char* device;
-
+void Packet::RawSocketSend(int sd) {
 	/* IP address in string format */
 	char ip_address[16];
 	/* Get IP Layer */
@@ -1189,22 +1183,15 @@ void Packet::RawSocketSend(int sd, const string& iface) {
 		/* Is OK to cast it */
 		IPLayer = dynamic_cast<IP*>(Stack[0]);
 		strncpy(ip_address , (const char *)(IPLayer->GetDestinationIP()).c_str(), 16);
+                int one = 1;
+                const int* val = &one;
+	        if(setsockopt(sd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0) {
+		    PrintMessage(Crafter::PrintCodes::PrintError,
+				 "Packet::RawSocketSend()",
+		                 "Setting IPPROTO_IP option to raw socket");
+		    exit(1);
+	         }
 	}
-
-	/* Find device for sniffing if needed */
-	if (iface == "") {
-	  /* If user hasn't specified a device */
-	  device = pcap_lookupdev (libcap_errbuf); /* let pcap find a compatible device */
-	  cout << "[@] MESSAGE: Packet::Send() -> Using interface: " << device << endl;
-	  if (device == NULL) {
-		  /* there was an error */
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Packet::RawSocketSend()",
-		                 "Opening device -> " + string(libcap_errbuf));
-		  exit (1);
-	  }
-	} else
-	  device = (char *)iface.c_str();
 
 	/* Create structure for destination */
 	struct sockaddr_in din;
@@ -1233,38 +1220,8 @@ void Packet::RawSocketSend(int sd, const string& iface) {
 	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
 	}
 
-	int one = 1;
-	const int *val = &one;
-
- 	/* If the default Source IP Address is set, we should change it with the one corresponding to the iface */
- 	IP* ip_layer = GetIP(*this);
-
- 	if (ip_layer) {
-
- 		/* Set the IP */
- 		if (!ip_layer->IsFieldSet("SourceIP") && (ip_layer->GetSourceIP() == IP::DefaultIP) ) {
-			string LocalIP = GetMyIP(string(device));
-			ip_layer->SetSourceIP(LocalIP);
- 		}
-
- 	}
-
 	/* Craft data before sending anything */
 	Craft();
-
-	if(setsockopt(sd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSend()",
-		             "Setting IPPROTO_IP option to raw socket");
-		exit(1);
-	}
-
-	if (setsockopt(sd, SOL_SOCKET, SO_BINDTODEVICE, device, iface.size())) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSend()",
-		             "Setting IPPROTO_IP option to raw socket");
-		exit(1);
-	}
 
 	if(sendto(sd, raw_data, bytes_size, 0, (struct sockaddr *)&din, sizeof(din)) < 0) {
 		PrintMessage(Crafter::PrintCodes::PrintPerror,
