@@ -59,6 +59,9 @@ namespace Crafter {
 		/* Function that set the payload */
 		virtual void SetPayload() = 0;
 
+		/* Set internal field from the payload of the base class */
+		virtual void SetFields() = 0;
+
 		/* Function that clone a specific DHCP option */
 		virtual DHCPOptions* Clone() const = 0;
 
@@ -198,8 +201,37 @@ namespace Crafter {
 		/* Get the size of the options */
 		size_t GetSize() const { return data.GetSize() + 2; };
 
+		/* Get the code associated to this option */
+		byte GetCode() const { return code; };
+
 		/* Return a payload with all the data */
 		Payload GetData() const;
+
+		/* ---- Manipulation of the contents of the data field (could be and IP, string or just raw data) ---- */
+
+		/* Get data as string */
+		virtual std::string GetString() const;
+
+		/* Get IP addresses */
+		virtual std::vector<std::string> GetIPAddresses() const;
+
+		/* Get a raw pointer to the data */
+		byte* GetRawPointer() const;
+
+		/* Get number value of the data */
+		virtual word GetNumber() const;
+
+		/* Set Payload from string */
+		void SetString(const std::string& str);
+
+		/* Set Payload from IPs */
+		void SetIPAdresses(const std::vector<std::string>& ips);
+
+		/* Set Payload from a raw pointer */
+		void SetRawPointer(const byte* raw_data, size_t length);
+
+		/* Set a number as DHCP data */
+		void SetNumber(word value, byte type);
 
 		virtual ~DHCPOptions();
 	};
@@ -215,6 +247,12 @@ namespace Crafter {
 
 		/* Function that set the payload */
 		virtual void SetPayload();
+
+		/* Set internal field from the payload of the base class */
+		virtual void SetFields();
+
+		/* Get data as string */
+		virtual std::string GetString() const {return str_data;};
 
 		DHCPOptions* Clone() const { return new DHCPOptionsString(code,str_data); };
 	public:
@@ -235,6 +273,12 @@ namespace Crafter {
 		/* Function that set the payload */
 		virtual void SetPayload();
 
+		/* Set internal field from the payload of the base class */
+		virtual void SetFields();
+
+		/* Get IP addresses */
+		virtual std::vector<std::string> GetIPAddresses() const {return ip_addresses;};
+
 		DHCPOptions* Clone() const { return new DHCPOptionsIP(code,ip_addresses); };
 
 	public:
@@ -251,6 +295,9 @@ namespace Crafter {
 
 		/* Function that set the payload */
 		virtual void SetPayload();
+
+		/* Set internal field from the payload of the base class */
+		virtual void SetFields();
 
 		DHCPOptions* Clone() const { return new DHCPOptionsGeneric(code,gen_data.storage,gen_data.size); };
 
@@ -272,6 +319,11 @@ namespace Crafter {
 		/* Function that set the payload */
 		virtual void SetPayload();
 
+		/* Function that set the payload */
+		virtual void SetFields();
+
+		virtual word GetNumber() const {return type;};
+
 		DHCPOptions* Clone() const { return new DHCPOptionsMessageType(code,type); };
 
 	public:
@@ -291,6 +343,9 @@ namespace Crafter {
 
 		/* Function that set the payload */
 		virtual void SetPayload();
+
+		/* Set internal field from the payload of the base class */
+		virtual void SetFields();
 
 		DHCPOptions* Clone() const { return new DHCPOptionsParameterList(code,par_data.storage,par_data.size); };
 
@@ -312,6 +367,11 @@ namespace Crafter {
 
 		/* Print data */
 		void PrintData() const;
+
+		/* Set internal field from the payload of the base class */
+		virtual void SetFields();
+
+		virtual word GetNumber() const {return value;};
 
 		DHCPOptions* Clone() const { return new DHCPOptionsNumber<T>(code,value); };
 
@@ -347,6 +407,26 @@ void Crafter::DHCPOptionsNumber<T>::SetPayload() {
 		net_value = htonl((word)value);
 		data.SetPayload((const byte*)&net_value,sizeof(word));
 	}
+}
+
+template<class T>
+void Crafter::DHCPOptionsNumber<T>::SetFields() {
+
+	if(data.GetSize() >= sizeof(T)) {
+		byte* raw_data = new byte[data.GetSize()];
+		data.GetPayload(raw_data);
+
+		if(sizeof(T) == sizeof(byte))
+			value = *((T *)(raw_data));
+		else if(sizeof(T) == sizeof(short_word))
+			value = ntohs(*((T *)(raw_data)));
+		else if(sizeof(T) == sizeof(word))
+			value = ntohl(*((T *)(raw_data)));
+
+		delete [] raw_data;
+	}
+
+
 }
 
 template<class T>

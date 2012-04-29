@@ -57,6 +57,8 @@ namespace Crafter {
 	public:
 
 		friend class Layer;
+		friend class DHCPOptions;
+		friend class DHCPOptionsMessageType;
 		friend class DHCPOptionsGeneric;
 		friend class DHCPOptionsParameterList;
 

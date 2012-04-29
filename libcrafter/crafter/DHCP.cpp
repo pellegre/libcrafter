@@ -232,6 +232,10 @@ void DHCP::LibnetBuild(libnet_t* l) {
 
 }
 
+/*
+ * Adapted from dhcpdump code
+ * http://dhcpdump.sourcearchive.com/documentation/1.8-2/dhcpdump_8c-source.html
+ */
 void DHCP::FromRaw(const RawLayer& raw_layer) {
 	/* Get size of the raw layer */
 	size_t data_size = raw_layer.GetSize();
@@ -243,7 +247,7 @@ void DHCP::FromRaw(const RawLayer& raw_layer) {
 	/* Create the header */
 	PutData(dhcp_data);
 
-	MacFieldsToString();
+	ClientMAC = MacFieldsToString();
 
 	/* 44 bytes to reach the server host name */
 	size_t servername_shift = 44;
@@ -254,6 +258,13 @@ void DHCP::FromRaw(const RawLayer& raw_layer) {
 
 	ServerHostName = string((const char *)(dhcp_data + servername_shift), filename_shift - servername_shift);
 	BootFileName = string((const char *)(dhcp_data + filename_shift), magicookie_shift - filename_shift);
+
+	/* Delete the Options */
+	std::vector<DHCPOptions*>::const_iterator it_opt;
+
+	for(it_opt = Options.begin() ; it_opt != Options.end() ; it_opt++)
+		delete (*it_opt);
+	Options.clear();
 
 	byte* data = dhcp_data + magicookie_shift + 4;
 
