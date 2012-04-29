@@ -26,7 +26,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "DHCPOptions.h"
-#include <cstdarg>
 
 using namespace std;
 using namespace Crafter;
@@ -199,6 +198,108 @@ void DHCPOptions::Print() const {
 	cout << " > " << endl;
 }
 
+/* Get data as string */
+string DHCPOptions::GetString() const {
+	return string((const char*)data.storage, data.GetSize());
+}
+
+/* Get IP addresses */
+vector<string> DHCPOptions::GetIPAddresses() const {
+	/* Get the payload size of the base class */
+	size_t payload_size = data.GetSize();
+
+	vector<string> ip_addresses;
+
+	if(payload_size > 0) {
+
+		/* Get the number of IPs */
+		size_t nips = payload_size/4;
+
+		if(nips >= 1) {
+
+			/* Now set the string field */
+			ip_addresses.clear();
+			for (size_t i = 0; i < nips ; i++)
+				ip_addresses.push_back(string(inet_ntoa( *((in_addr*)(data.storage + i * 4)) )));
+
+		}
+
+	}
+
+	return ip_addresses;
+}
+
+/* Get a raw pointer to the data */
+byte* DHCPOptions::GetRawPointer() const {
+	byte* raw_data = new byte[data.GetSize()];
+	data.GetPayload(raw_data);
+	return raw_data;
+}
+
+/* Get number value of the data */
+word DHCPOptions::GetNumber() const {
+	if(data.GetSize() == 0)
+		return 0;
+	else if(data.GetSize() == 1)
+		return *((byte *)(data.storage));
+	else if(data.GetSize() == 2)
+		return *((short_word *)(data.storage));
+	else if(data.GetSize() == 3)
+		return *((short_word *)(data.storage));
+	else if(data.GetSize() >= 4)
+		return *((word *)(data.storage));
+	else
+		return 0;
+}
+
+/* Set Payload from string */
+void DHCPOptions::SetString(const string& str) {
+	data.SetPayload((const byte*)str.c_str(), str.size());
+	SetFields();
+}
+
+/* Set Payload from IPs */
+void DHCPOptions::SetIPAdresses(const vector<string>& ips) {
+
+	if(ips.size() > 0) {
+		vector<string>::iterator it_ip;
+		word* raw_data = new word[ips.size()];
+
+		for(size_t i = 0 ; i < ips.size() ; i++)
+			raw_data[i] = inet_addr(ips[i].c_str());
+
+		data.SetPayload((const byte*)raw_data, ips.size() * 4);
+	}
+
+	SetFields();
+}
+
+/* Set Payload from a raw pointer */
+void DHCPOptions::SetRawPointer(const byte* raw_data, size_t length) {
+	data.SetPayload(raw_data,length);
+
+	SetFields();
+}
+
+/* Set a number as DHCP data */
+void DHCPOptions::SetNumber(word value, byte type) {
+	word net_value = 0;
+
+	if (type == DHCPOptions::BYTE) {
+		net_value = value;
+		data.SetPayload((const byte*)&net_value,sizeof(byte));
+	}else if (type == DHCPOptions::SHORT) {
+		net_value = htons((short_word)value);
+		data.SetPayload((const byte*)&net_value,sizeof(short_word));
+	}else if (type == DHCPOptions::WORD) {
+		net_value = htonl((word)value);
+		data.SetPayload((const byte*)&net_value,sizeof(word));
+	}
+
+	SetFields();
+}
+
+
 DHCPOptions::~DHCPOptions() { }
 
 /* -------- DHCP String */
@@ -212,10 +313,30 @@ DHCPOptionsString::DHCPOptionsString(short_word code, const string& str_data) : 
 /* Print string data */
 void DHCPOptionsString::PrintData() const { std::cout << str_data; }
 
+void DHCPOptionsString::SetFields() {
+	/* Get the payload size of the base class */
+	size_t payload_size = data.GetSize();
+
+	if(payload_size > 0) {
+
+		byte* raw_data = new byte[payload_size];
+
+		/* Get the raw data from the payload */
+		data.GetPayload(raw_data);
+
+		/* Now set the string field */
+		str_data = string((const char*)raw_data, payload_size);
+
+		delete [] raw_data;
+
+	} else
+		str_data.clear();
+}
+
 /* Set a payload from a string */
 void DHCPOptionsString::SetPayload() {
 	/* Set the payload from the string */
-	data.SetPayload(str_data.c_str());
+	data.SetPayload((const byte*)str_data.c_str(), str_data.size());
 }
 
 /* Destructor */
@@ -228,6 +349,35 @@ DHCPOptionsIP::DHCPOptionsIP(short_word code, const std::vector<std::string>& ip
 	this->ip_addresses = ip_addresses;
 	/* Now, set the payload */
 	SetPayload();
+}
+
+void DHCPOptionsIP::SetFields() {
+	/* Get the payload size of the base class */
+	size_t payload_size = data.GetSize();
+
+	ip_addresses.clear();
+
+	if(payload_size > 0) {
+
+		/* Get the number of ips */
+		size_t nips = payload_size/4;
+
+		if(nips >= 1) {
+			byte* raw_data = new byte[payload_size];
+
+			/* Get the raw data from the payload */
+			data.GetPayload(raw_data);
+
+			/* Now set the string field */
+			ip_addresses.clear();
+			for (size_t i = 0; i < nips ; i++)
+				ip_addresses.push_back(string(inet_ntoa( *((in_addr*)(raw_data + i * 4)) )));
+
+			delete [] raw_data;
+		}
+
+	}
+
 }
 
 /* Print string data */
@@ -268,6 +418,10 @@ void DHCPOptionsGeneric::SetPayload() {
 	data = gen_data;
 }
 
+void DHCPOptionsGeneric::SetFields() {
+	gen_data = data;
+}
+
 /* Destructor */
 DHCPOptionsGeneric::~DHCPOptionsGeneric() { }
 
@@ -284,6 +438,13 @@ void DHCPOptionsMessageType::SetPayload() {
 	data.SetPayload(&type,sizeof(byte));
 }
 
+void DHCPOptionsMessageType::SetFields() {
+	if(data.GetSize() > 0)
+		type =*((byte *)(data.storage));
+	else
+		type = 0;
+}
+
 /* Print string data */
 void DHCPOptionsMessageType::PrintData() const {
 	map<int,string>::const_iterator it_code = DHCPOptions::mess_table.find(type);
@@ -292,6 +453,8 @@ void DHCPOptionsMessageType::PrintData() const {
 	else
 		cout << "0x" << hex << (word)type;
 }
+
+
 
 /* Destructor */
 DHCPOptionsMessageType::~DHCPOptionsMessageType() { }
@@ -308,6 +471,10 @@ DHCPOptionsParameterList::DHCPOptionsParameterList(short_word code, const byte* 
 /* Set a payload from a string */
 void DHCPOptionsParameterList::SetPayload() {
 	data = par_data;
+}
+
+void DHCPOptionsParameterList::SetFields() {
+	par_data = data;
 }
 
 /* Print string data */
