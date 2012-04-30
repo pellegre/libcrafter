@@ -30,100 +30,46 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace std;
 using namespace Crafter;
 
-/* Allocate more T objects */
-void Payload::inflate(int increase) {
-	/* Check if our buffer is empty */
-	if (!size) {
-		storage = new byte[increase];
-		size = increase;
-		return;
-	}
-
-	/* Get new size */
-	size_t new_size = size + increase;
-
-	/* Allocate new memory */
-	byte* new_buffer = new byte[new_size];
-
-	/* Copy old buffer */
-	for (int unsigned i = 0 ; i < size ; i++)
-		new_buffer[i] = storage[i];
-
-	/* Delete old buffer */
-	delete [] storage;
-
-	/* Asign new address */
-	storage = new_buffer;
-	size = new_size;
-}
-
-/* Clear the Payload */
-void Payload::clear () {
-	if (storage) {
-		/* Set the size to zero */
-		size = 0;
-		delete [] storage;
-		storage = 0;
-		/* By default is readable */
-		IsReadable = 1;
-	}
-}
-
 void Payload::SetPayload (const byte *data, size_t ndata) {
-	/* This overwrite all the data on the payload */
-	clear();
-	/* Get new space */
-	inflate(ndata);
-	/* Now, copy the data */
-	for (size_t i = 0 ; i < ndata ; i++) {
-		if ( (IsReadable) && (!isprint(data[i])) && (!iscntrl(data[i])) ) IsReadable = 0;
-			storage[i] = data[i];
-	}
+	storage.clear();
+	AddPayload(data,ndata);
 }
 
 /* Add more stuff to the payload */
 void Payload::AddPayload (const byte* data, size_t ndata) {
-	/* Get old size */
-	size_t old_size = size;
-	/* Add more space */
-	inflate(ndata);
 	/* Now, copy the data */
 	for (size_t i = 0 ; i < ndata ; i++) {
 		if ( (IsReadable) && (!isprint(data[i])) && (!iscntrl(data[i])) ) IsReadable = 0;
-			storage[old_size + i] = data[i];
+			storage.push_back(data[i]);
 	}
 }
 
 /* Set payload */
 void Payload::SetPayload (const char *data) {
-	/* This overwrite all the data on the payload */
-	clear();
-	/* Get new space */
 	size_t ndata = strlen(data);
-	inflate(ndata);
-	/* Now, copy the data */
-	strncpy((char *)storage,data,ndata);
+	storage = vector<byte>(data, data + ndata);
 }
 
 /* Add more stuff to the payload */
 void Payload::AddPayload (const char* data) {
-	/* Add more space */
 	size_t ndata = strlen(data);
-	inflate(ndata);
-	/* Now, copy the data */
-	strncat((char *)storage,data,ndata);
-}
-
-void Payload::AddPayload (const Payload& payload) {
-	AddPayload(payload.storage,payload.GetSize());
+	for (size_t i = 0 ; i < ndata ; i++)
+		storage.push_back(data[i]);
 }
 
 void Payload::SetPayload (const Payload& payload) {
-	SetPayload(payload.storage,payload.GetSize());
+	storage = payload.storage;
 }
+
+void Payload::AddPayload (const Payload& payload) {
+	for (size_t i = 0 ; i < payload.storage.size() ; i++) {
+		if ( (IsReadable) && (!isprint(payload.storage[i])) && (!iscntrl(payload.storage[i])) ) IsReadable = 0;
+			storage.push_back(payload.storage[i]);
+	}}
 
 /* Copy the data into the pointer and returns the number of bytes copied */
 size_t Payload::GetPayload(byte* dst) const {
+	size_t size = GetSize();
 	for (size_t i = 0 ; i < size ; i++)
 		dst[i] = storage[i];
 
@@ -132,14 +78,21 @@ size_t Payload::GetPayload(byte* dst) const {
 
 size_t Payload::GetPayload(byte* dst, size_t ndata) const {
 	size_t i = 0;
+	size_t size = GetSize();
 	for (; i < size && i < ndata; i++)
 		dst[i] = storage[i];
 
 	return i;
 }
 
+string Payload::GetString() const {
+	return string(storage.begin(),storage.end());
+}
+
 /* Print Payload */
 void Payload::Print() const{
+	size_t size = GetSize();
+
 	/* Print raw data in hexadecimal format */
 	if (IsReadable) {
 
@@ -169,14 +122,18 @@ void Payload::Print() const{
 }
 
 void Payload::RawString() const {
+	size_t size = GetSize();
+
 	/* Print raw data in hexadecimal format */
 	for(size_t i = 0 ; i < size ; i++) {
 		std::cout << "\\x";
-		std::cout << std::hex << (unsigned int)((byte *)storage)[i];
+		std::cout << std::hex << (unsigned int)(storage)[i];
 	}
 }
 
 void Payload::PrintChars() const {
+	size_t size = GetSize();
+
 	for(size_t i = 0 ; i < size ; i++)
 		std::cout << (char)storage[i];
 }

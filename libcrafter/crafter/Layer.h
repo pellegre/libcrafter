@@ -304,7 +304,7 @@ namespace Crafter {
 		const Payload& GetPayload() const { return LayerPayload; };
 
 		/* Returns the payload as a STL string */
-		std::string GetStringPayload() const { return std::string((char*)(LayerPayload.storage),LayerPayload.size); };
+		std::string GetStringPayload() const { return LayerPayload.GetString(); };
 		/* --------------------------------------------------- */
 
 		virtual ~Layer();

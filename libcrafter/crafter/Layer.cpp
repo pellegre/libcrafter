@@ -559,7 +559,7 @@ void Crafter::Layer::ResetField(const std::string& field_name) {
 		exit(1);
 	}
 
-	return ((*it).second)->ResetField();
+	((*it).second)->ResetField();
 }
 
 byte Crafter::RNG8() {return rand()%256; }
