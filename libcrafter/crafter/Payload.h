@@ -30,6 +30,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define PAYLOAD_H_
 
 #include <iostream>
+#include <vector>
+#include <string>
 #include <cstring>
 
 typedef unsigned char byte;
@@ -42,69 +44,51 @@ namespace Crafter {
 		/* Readable payload */
 		byte IsReadable;
 
-		/* Total size, includeng header */
-		size_t size;
-
-		/* Data stored on the Payload */
-		byte* storage;
-
-		/* Allocate more T objects */
-		void inflate(int increase);
+		/* Container of data */
+		std::vector<byte> storage;
 
 		/* Clear the Payload */
-		void clear ();
+		void clear () { storage.clear(); };
+
+		/* Initial reserved size */
+		static const size_t reserved = 128;
 
 	public:
 
-		friend class Layer;
-		friend class DHCPOptions;
-		friend class DHCPOptionsMessageType;
-		friend class DHCPOptionsGeneric;
-		friend class DHCPOptionsParameterList;
-
 		Payload() {
-			/* Clear everything */
-			size = 0;
-			storage = 0;
-
+			/* Reserve */
+			storage.reserve(reserved);
 			/* By default is readable */
 			IsReadable = 1;
 		};
 
 		/* Copy constructor */
 		Payload(const Payload& payload) {
-			/* Clear everything */
-			size = 0;
-			storage = 0;
-
-			/* By default is readable */
-			IsReadable = 1;
-
-			SetPayload(payload.storage,payload.size);
+			/* Reserve */
+			storage.reserve(reserved);
+			storage = payload.storage;
+			IsReadable = payload.IsReadable;
 		};
 
 		/* Equal from a general Layer */
 		Payload& operator=(const Payload& payload) {
-			SetPayload(payload.storage,payload.size);
+			storage = payload.storage;
+			IsReadable = payload.IsReadable;
 			return *this;
 		}
 
 		/* Get size in bytes of the payload */
-		size_t GetSize() const { return size; };
-
-		/* Set payload */
-		void SetPayload (const byte *data, size_t ndata);
-
-		/* Add more stuff to the payload */
-		void AddPayload (const byte* data, size_t ndata);
+		size_t GetSize() const { return storage.size(); };
 
 		/* Set payload */
 		void SetPayload (const char *data);
 		void SetPayload (const Payload& payload);
+		void SetPayload (const byte *data, size_t ndata);
 
 		/* Add more stuff to the payload */
 		void AddPayload (const char* data);
 		void AddPayload (const Payload& payload);
+		void AddPayload (const byte* data, size_t ndata);
 
 		/* Copy the data into the pointer and returns the number of bytes copied */
 		size_t GetPayload(byte* dst) const;
@@ -112,8 +96,11 @@ namespace Crafter {
 		/* Copy the data into the pointer (no more than ndata) and returns the number of bytes copied */
 		size_t GetPayload(byte* dst, size_t ndata) const;
 
+		/* Get payload as a STL string */
+		std::string GetString() const;
+
 		/* Clear the payload */
-		void Clear() { clear(); };
+		void Clear() { storage.clear(); };
 
 		/* Print characters one by one */
 		void PrintChars() const;
@@ -124,10 +111,10 @@ namespace Crafter {
 		/* Print Payload */
 		virtual void Print() const;
 
-		virtual ~Payload() {
-				if (storage)
-					delete [] storage;
-		};
+		/* Return a constante reference to the container */
+		const std::vector<byte>& GetContainer() const { return storage; };
+
+		virtual ~Payload() { /* */ };
 	};
 
 }

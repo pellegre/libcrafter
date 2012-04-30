@@ -200,7 +200,7 @@ void DHCPOptions::Print() const {
 
 /* Get data as string */
 string DHCPOptions::GetString() const {
-	return string((const char*)data.storage, data.GetSize());
+	return data.GetString();
 }
 
 /* Get IP addresses */
@@ -220,7 +220,7 @@ vector<string> DHCPOptions::GetIPAddresses() const {
 			/* Now set the string field */
 			ip_addresses.clear();
 			for (size_t i = 0; i < nips ; i++)
-				ip_addresses.push_back(string(inet_ntoa( *((in_addr*)(data.storage + i * 4)) )));
+				ip_addresses.push_back(string(inet_ntoa( *((in_addr*)(&data.GetContainer()[0] + i * 4)) )));
 
 		}
 
@@ -241,13 +241,13 @@ word DHCPOptions::GetNumber() const {
 	if(data.GetSize() == 0)
 		return 0;
 	else if(data.GetSize() == 1)
-		return *((byte *)(data.storage));
+		return *((byte *)(&data.GetContainer()[0]));
 	else if(data.GetSize() == 2)
-		return *((short_word *)(data.storage));
+		return *((short_word *)(&data.GetContainer()[0]));
 	else if(data.GetSize() == 3)
-		return *((short_word *)(data.storage));
+		return *((short_word *)(&data.GetContainer()[0]));
 	else if(data.GetSize() >= 4)
-		return *((word *)(data.storage));
+		return *((word *)(&data.GetContainer()[0]));
 	else
 		return 0;
 }
@@ -407,8 +407,8 @@ DHCPOptionsIP::~DHCPOptionsIP() { }
 /* -------- DHCP Generic */
 
 /* Constructor */
-DHCPOptionsGeneric::DHCPOptionsGeneric(short_word code, const byte* gen_data, size_t length) : DHCPOptions(code,GenericTag) {
-	this->gen_data.SetPayload(gen_data,length);
+DHCPOptionsGeneric::DHCPOptionsGeneric(short_word code, const vector<byte>& data) : DHCPOptions(code,GenericTag) {
+	this->gen_data.SetPayload(&data[0],data.size());
 	/* Now, set the payload */
 	SetPayload();
 }
@@ -440,7 +440,7 @@ void DHCPOptionsMessageType::SetPayload() {
 
 void DHCPOptionsMessageType::SetFields() {
 	if(data.GetSize() > 0)
-		type =*((byte *)(data.storage));
+		type =*((byte *)(&data.GetContainer()[0]));
 	else
 		type = 0;
 }
@@ -462,8 +462,8 @@ DHCPOptionsMessageType::~DHCPOptionsMessageType() { }
 /* -------- DHCP Parameter List */
 
 /* Constructor */
-DHCPOptionsParameterList::DHCPOptionsParameterList(short_word code, const byte* par_data, size_t length) : DHCPOptions(code,ParameterListTag) {
-	this->par_data.SetPayload(par_data,length);
+DHCPOptionsParameterList::DHCPOptionsParameterList(short_word code, const vector<byte>& data) : DHCPOptions(code,ParameterListTag) {
+	this->par_data.SetPayload(&data[0],data.size());
 	/* Now, set the payload */
 	SetPayload();
 }
@@ -545,9 +545,9 @@ DHCPOptions* Crafter::CreateDHCPOption(short_word code, const byte* raw_data, si
 		if(length >= 1)
 			return new DHCPOptionsMessageType(code,raw_data[0]);
 	} else if(code == DHCPOptions::ParameterList)
-		return new DHCPOptionsParameterList(code,raw_data,length);
+		return new DHCPOptionsParameterList(code,vector<byte>(raw_data,raw_data+length));
 	else
-		return new DHCPOptionsGeneric(code,raw_data,length);
+		return new DHCPOptionsGeneric(code,vector<byte>(raw_data,raw_data+length));
 
 	return 0;
 }

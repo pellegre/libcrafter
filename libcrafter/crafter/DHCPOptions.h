@@ -299,10 +299,10 @@ namespace Crafter {
 		/* Set internal field from the payload of the base class */
 		virtual void SetFields();
 
-		DHCPOptions* Clone() const { return new DHCPOptionsGeneric(code,gen_data.storage,gen_data.size); };
+		DHCPOptions* Clone() const { return new DHCPOptionsGeneric(code,gen_data.GetContainer()); };
 
 	public:
-		DHCPOptionsGeneric(short_word code, const byte* gen_data, size_t length);
+		DHCPOptionsGeneric(short_word code, const std::vector<byte>& data);
 
 		virtual ~DHCPOptionsGeneric();
 	};
@@ -347,10 +347,10 @@ namespace Crafter {
 		/* Set internal field from the payload of the base class */
 		virtual void SetFields();
 
-		DHCPOptions* Clone() const { return new DHCPOptionsParameterList(code,par_data.storage,par_data.size); };
+		DHCPOptions* Clone() const { return new DHCPOptionsParameterList(code,par_data.GetContainer()); };
 
 	public:
-		DHCPOptionsParameterList(short_word code, const byte* par_data, size_t length);
+		DHCPOptionsParameterList(short_word code, const std::vector<byte>& data);
 
 		virtual ~DHCPOptionsParameterList();
 	};
