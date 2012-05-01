@@ -101,8 +101,11 @@ namespace Crafter {
 		void write_bits(size_t ibit, size_t nbits, word value);
 
 		/* Set a Field value */
-		template <class T>
+		template<class T>
 		void SetFieldValue(const std::string& FieldName, T HumanValue);
+		/* Set a Field value and check if the field is overlapping someone else */
+		template<class T>
+		void SetFieldValueCheckOverlap(const std::string& FieldName, T HumanValue);
 		/* Get value of a field */
 		template<class T>
 		T GetFieldValue(const std::string& FieldName) const;
@@ -395,7 +398,7 @@ namespace Crafter {
 }
 
 template<class T>
-void Crafter::Layer::SetFieldValue(const std::string& FieldName, T HumanValue){
+void Crafter::Layer::SetFieldValueCheckOverlap(const std::string& FieldName, T HumanValue){
 
 	/* Set the field value on the table */
 	std::map<std::string,FieldInfo*>::iterator it;
@@ -411,7 +414,7 @@ void Crafter::Layer::SetFieldValue(const std::string& FieldName, T HumanValue){
 
 	/* First, check if the field is active */
 	if(ActiveFields.find(FieldName) == ActiveFields.end()) {
-		/* If the field is not active, it can be ovelarping some other field */
+		/* If the field is not active, it can be overlapping some other field */
 		std::set<std::string>::iterator it_active;
 
 		for (it_active = ActiveFields.begin() ; it_active != ActiveFields.end() ; ++it_active) {
@@ -442,6 +445,39 @@ void Crafter::Layer::SetFieldValue(const std::string& FieldName, T HumanValue){
 
 	for (it_over = OverlappedFields.begin() ; it_over != OverlappedFields.end() ; ++it_over)
 		ActiveFields.erase(*it_over);
+
+	dynamic_cast<GeneralField<T>* >((*it).second)->HumanToNetwork(HumanValue);
+
+	word value = (*it).second->GetNetworkValue();
+
+	if ( !(*it).second->IsFieldSet() )
+		(*it).second->FieldSetted();
+
+	/* Get position information of the field */
+	size_t nword = (*it).second->Get_nword();
+	size_t bitpos = (*it).second->Get_bitpos();
+	size_t endpos = (*it).second->Get_endpos();
+
+	/* Get length of the field */
+	size_t length = endpos - bitpos + 1;
+
+	/* Now, write the value into the raw data */
+	write_bits(sizeof(word)*8*nword + bitpos, length, value);
+
+}
+
+template<class T>
+void Crafter::Layer::SetFieldValue(const std::string& FieldName, T HumanValue){
+
+	/* Set the field value on the table */
+	std::map<std::string,FieldInfo*>::iterator it;
+
+	it = Fields.find(FieldName);
+
+	if (it == Fields.end()) {
+		std::cerr << "[!] ERROR: No field " << "<" << FieldName << ">" << " defined in layer " << name << ". Aborting!" << std::endl;
+		exit(1);
+	}
 
 	dynamic_cast<GeneralField<T>* >((*it).second)->HumanToNetwork(HumanValue);
 
