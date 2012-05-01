@@ -89,36 +89,36 @@ namespace Crafter {
 
 		/* Seters */
 		void SetType(unsigned char type) {
-			SetFieldValue<word>("Type",type);
+			SetFieldValueCheckOverlap<word>("Type",type);
 		};
 
 		void SetCode(unsigned char code) {
-			SetFieldValue<word>("Code",code);
+			SetFieldValueCheckOverlap<word>("Code",code);
 		};
 
 		void SetCheckSum(word checksum) {
-			SetFieldValue<word>("CheckSum",checksum);
+			SetFieldValueCheckOverlap<word>("CheckSum",checksum);
 		};
 
 		void SetRestOfHeader(word rest) {
-			SetFieldValue<word>("RestOfHeader",rest);
+			SetFieldValueCheckOverlap<word>("RestOfHeader",rest);
 		};
 
 		/* Ping Header */
 		void SetIdentifier(word rest) {
-			SetFieldValue<word>("Identifier",rest);
+			SetFieldValueCheckOverlap<word>("Identifier",rest);
 		};
 
 		void SetSequenceNumber(word rest) {
-			SetFieldValue<word>("SequenceNumber",rest);
+			SetFieldValueCheckOverlap<word>("SequenceNumber",rest);
 		};
 
 		void SetPointer(word ptr) {
-			SetFieldValue<word>("Pointer",ptr);
+			SetFieldValueCheckOverlap<word>("Pointer",ptr);
 		};
 
 		void SetGateway(std::string ip) {
-			SetFieldValue<std::string>("Gateway",ip);
+			SetFieldValueCheckOverlap<std::string>("Gateway",ip);
 		};
 
 		/* Geters */
