@@ -1174,7 +1174,7 @@ int Packet::RawSocketSend(int sd) {
 	IP* IPLayer = 0;
 
 	/* Check for Internet Layer protocol. Should be a IP Layer object */
-	if (Stack[0]->GetName() != "IP") {
+	if (Stack[0]->GetID() != 0x0800) {
 		PrintMessage(Crafter::PrintCodes::PrintError,
 				     "Packet::RawSocketSend()",
 		             "No IP layer on packet. Cannot write on Raw Socket. ");
@@ -1197,15 +1197,15 @@ int Packet::RawSocketSend(int sd) {
 	struct sockaddr_in din;
 
 	/* Check for Transport Layer Protocol. Should be TCP, UDP or ICMP */
-	string transport_layer = Stack[1]->GetName();
-	if (transport_layer == "UDP") {
+	short_word transport_layer = Stack[1]->GetID();
+	if (transport_layer == 0x11) {
 		UDP* udp_layer = dynamic_cast<UDP*>(Stack[1]);
 		/* Set destinations structure */
 	    din.sin_family = AF_INET;
 	    din.sin_port = htons(udp_layer->GetDstPort());
 	    din.sin_addr.s_addr = inet_addr(ip_address);
 	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-	} else if (transport_layer == "TCP") {
+	} else if (transport_layer == 0x06) {
 		TCP* tcp_layer = dynamic_cast<TCP*>(Stack[1]);
 		/* Set destinations structure */
 	    din.sin_family = AF_INET;
@@ -1223,9 +1223,9 @@ int Packet::RawSocketSend(int sd) {
 	/* Craft data before sending anything */
 	Craft();
 
-        int ret = 0;
+    int ret = 0;
 	if( (ret = sendto(sd, raw_data, bytes_size, 0, (struct sockaddr *)&din, sizeof(din))) < 0) {
-		PrintMessage(Crafter::PrintCodes::PrintPerror,
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
 				     "Packet::RawSocketSend()",
 				     "Writing on Raw Socket");
 	}

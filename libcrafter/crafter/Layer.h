@@ -90,6 +90,8 @@ namespace Crafter {
 		Layer* BottomLayer;
 		/* Layer on the Top of this one */
 		Layer* TopLayer;
+		/* Flag if the layer support overlapped fields */
+		byte overlap_flag;
 
 		/* ----------- Manipulating data functions ----------- */
 
@@ -103,6 +105,8 @@ namespace Crafter {
 		/* Set a Field value */
 		template<class T>
 		void SetFieldValue(const std::string& FieldName, T HumanValue);
+		template<class T>
+		void SetFieldValue(FieldInfo* field_ptr, T HumanValue);
 		/* Set a Field value and check if the field is overlapping someone else */
 		template<class T>
 		void SetFieldValueCheckOverlap(const std::string& FieldName, T HumanValue);
@@ -149,14 +153,19 @@ namespace Crafter {
 		 */
 		void RedefineField(const std::string& FieldName);
 
+		/* Get a pointer to a field of the layer */
+		FieldInfo* GetFieldPtr(const std::string& field_name);
+
 		/* Check if the field_name was set by the user */
 		byte IsFieldSet(const std::string& FieldName) const;
+		byte IsFieldSet(const FieldInfo* field_ptr) const;
 
 		/* Reset all field */
 		void ResetFields();
 
 		/* Reset all field */
 		void ResetField(const std::string& field_name);
+		void ResetField(FieldInfo* field_ptr);
 
 		/* Clone the layer given as an argument */
 		void Clone(const Layer& layer);
@@ -490,6 +499,29 @@ void Crafter::Layer::SetFieldValue(const std::string& FieldName, T HumanValue){
 	size_t nword = (*it).second->Get_nword();
 	size_t bitpos = (*it).second->Get_bitpos();
 	size_t endpos = (*it).second->Get_endpos();
+
+	/* Get length of the field */
+	size_t length = endpos - bitpos + 1;
+
+	/* Now, write the value into the raw data */
+	write_bits(sizeof(word)*8*nword + bitpos, length, value);
+
+}
+
+template<class T>
+void Crafter::Layer::SetFieldValue(FieldInfo* field_ptr, T HumanValue){
+
+	dynamic_cast<GeneralField<T>* >(field_ptr)->HumanToNetwork(HumanValue);
+
+	word value = field_ptr->GetNetworkValue();
+
+	if ( !field_ptr->IsFieldSet() )
+		field_ptr->FieldSetted();
+
+	/* Get position information of the field */
+	size_t nword = field_ptr->Get_nword();
+	size_t bitpos = field_ptr->Get_bitpos();
+	size_t endpos = field_ptr->Get_endpos();
 
 	/* Get length of the field */
 	size_t length = endpos - bitpos + 1;
