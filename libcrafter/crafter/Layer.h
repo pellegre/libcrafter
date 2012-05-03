@@ -69,6 +69,8 @@ namespace Crafter {
 		size_t bytes_size;
 	protected:
 
+		friend void CraftLayer(Layer* layer);
+
 		/* Layer constructor function definition */
 		typedef Layer(*(*Constructor)());
 		/* Map of Field and the corresponding information */
