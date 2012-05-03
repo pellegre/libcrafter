@@ -51,6 +51,9 @@ ICMP::ICMP() {
 		/* Creates field information for the layer */
 		DefineProtocol();
 
+		/* This header support field overlapping */
+		overlap_flag = 1;
+
 		/* Always set default values for fields in a layer */
 		SetType(8);
 		SetCode(0);

@@ -84,23 +84,29 @@ void IP::DefineProtocol() {
 
 void IP::Craft () {
 	size_t tot_length = GetRemainingSize();
+
+	/* Get some fields pointers */
+	FieldInfo* ptr_totallength = GetFieldPtr("TotalLength");
+	FieldInfo* ptr_protocol = GetFieldPtr("Protocol");
+	FieldInfo* ptr_check = GetFieldPtr("CheckSum");
+
 	/* First, put the total length on the header */
-	if (!IsFieldSet("TotalLength")) {
-		SetTotalLength(tot_length);
-		ResetField("TotalLength");
+	if (!IsFieldSet(ptr_totallength)) {
+		SetFieldValue<word>(ptr_totallength,tot_length);
+		ResetField(ptr_totallength);
 	}
 
 	/* Get transport layer protocol */
 	if(TopLayer) {
-		if(!IsFieldSet("Protocol")) {
+		if(!IsFieldSet(ptr_protocol)) {
 			std::string transport_layer = TopLayer->GetName();
 			/* Set Protocol */
 			if(transport_layer != "RawLayer")
-				SetProtocol(Protocol::AccessFactory()->GetProtoID(transport_layer));
+				SetFieldValue<word>(ptr_protocol,Protocol::AccessFactory()->GetProtoID(transport_layer));
 			else
-				SetProtocol(0x0);
+				SetFieldValue<word>(ptr_protocol,0x0);
 
-			ResetField("Protocol");
+			ResetField(ptr_protocol);
 		}
 	}
 	else {
@@ -111,21 +117,21 @@ void IP::Craft () {
 	/* Check the options and update header length */
 	size_t option_length = (GetSize() - GetHeaderSize())/4;
 	if (option_length)
-		if (!IsFieldSet("VerHdr")) {
-			SetHeaderLength(5 + option_length);
-			ResetField("VerHdr");
-		}
+	if (!IsFieldSet("VerHdr")) {
+		SetHeaderLength(5 + option_length);
+		ResetField("VerHdr");
+	}
 
-	if (!IsFieldSet("CheckSum")) {
+	if (!IsFieldSet(ptr_check)) {
 		/* Compute the 16 bit checksum */
-		SetCheckSum(0);
+		SetFieldValue<word>(ptr_check,0);
 		byte* buffer = new byte[GetSize()];
 		GetRawData(buffer);
 		/* Calculate the checksum */
 		short_word checksum = CheckSum((unsigned short *)buffer,GetSize()/2);
-		SetCheckSum(ntohs(checksum));
+		SetFieldValue<word>(ptr_check,ntohs(checksum));
 		delete [] buffer;
-		ResetField("CheckSum");
+		ResetField(ptr_check);
 	}
 }
 

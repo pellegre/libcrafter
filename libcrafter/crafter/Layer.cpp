@@ -154,7 +154,7 @@ void Crafter::Layer::Print() const {
 	cout << ">" << endl;
 }
 
-/* Allocate a number of octetes into the layer */
+/* Allocate a number of octets into the layer */
 void Crafter::Layer::allocate_words(size_t nwords) {
 	/* Set the size */
 	size = nwords * sizeof(word);
@@ -229,6 +229,9 @@ void Crafter::Layer::define_field(const std::string& FieldName, FieldInfo* field
 	assert((field->Get_endpos() - field->Get_bitpos() + 1) <= 32);
 
 	Fields[FieldName] = field;
+
+	if (!overlap_flag)
+		ActiveFields.insert(FieldName);
 }
 
 size_t Crafter::Layer::GetData(byte* data) const {
@@ -258,7 +261,6 @@ size_t Crafter::Layer::GetRawData(byte* data) const {
 
 	/* Put Payload, if any */
 	size_t npayload = LayerPayload.GetPayload(data + GetHeaderSize());
-
 
 	return GetHeaderSize() + npayload;
 }
@@ -424,6 +426,7 @@ Crafter::Layer::Layer() {
 	/* Init bottom and top layer pointer */
 	BottomLayer = 0;
 	TopLayer = 0;
+	overlap_flag = 0;
 }
 
 Crafter::Layer::Layer(const Layer& layer) {
@@ -436,6 +439,7 @@ Crafter::Layer::Layer(const Layer& layer) {
 	/* Copy Header information */
 	name = layer.name;
 	protoID = layer.protoID;
+	overlap_flag = layer.overlap_flag;
 	ActiveFields = layer.ActiveFields;
 
 	/* Equal size */
@@ -497,6 +501,7 @@ void Crafter::Layer::Clone(const Layer& layer) {
 	/* Copy Header information */
 	name = layer.name;
 	protoID = layer.protoID;
+	overlap_flag = layer.overlap_flag;
 	ActiveFields = layer.ActiveFields;
 
 	/* Equal size */
@@ -525,8 +530,22 @@ void Crafter::Layer::Clone(const Layer& layer) {
 	delete [] payload;
 }
 
-byte Crafter::Layer::IsFieldSet(const std::string& FieldName) const {
+FieldInfo* Crafter::Layer::GetFieldPtr(const std::string& field_name) {
 	/* Return the value that is on teh table */
+	std::map<std::string,FieldInfo*>::const_iterator it;
+
+	it = Fields.find(field_name);
+
+	if (it == Fields.end()) {
+		std::cerr << "[!] ERROR: No field " << "<" << field_name << ">" << " defined in layer " << name << ". Aborting!" << std::endl;
+		exit(1);
+	}
+
+	return ((*it).second);
+}
+
+byte Crafter::Layer::IsFieldSet(const std::string& FieldName) const {
+	/* Return the value that is on the table */
 	std::map<std::string,FieldInfo*>::const_iterator it;
 
 	it = Fields.find(FieldName);
@@ -537,6 +556,10 @@ byte Crafter::Layer::IsFieldSet(const std::string& FieldName) const {
 	}
 
 	return ((*it).second)->IsFieldSet();
+}
+
+byte Crafter::Layer::IsFieldSet(const FieldInfo* field_ptr) const {
+	return field_ptr->IsFieldSet();
 }
 
 void Crafter::Layer::ResetFields() {
@@ -560,6 +583,10 @@ void Crafter::Layer::ResetField(const std::string& field_name) {
 	}
 
 	((*it).second)->ResetField();
+}
+
+void Crafter::Layer::ResetField(FieldInfo* field_ptr) {
+	field_ptr->ResetField();
 }
 
 byte Crafter::RNG8() {return rand()%256; }

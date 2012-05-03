@@ -27,9 +27,31 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 #include "UDP.h"
+#include <netinet/udp.h>
 
 using namespace Crafter;
 using namespace std;
+
+/* Pseudo header for UDP checksum */
+struct psd_udp {
+	struct in_addr src;
+	struct in_addr dst;
+	byte pad;
+	byte proto;
+	short_word udp_len;
+};
+
+/* Setup pseudo header and return the number of bytes copied */
+static void setup_psd (word src, word dst, byte* buffer, size_t udp_size) {
+	struct psd_udp buf;
+	memset(&buf, 0, sizeof(buf));
+	buf.src.s_addr = src;
+	buf.dst.s_addr = dst;
+	buf.pad = 0;
+	buf.proto = IPPROTO_UDP;
+	buf.udp_len = htons(udp_size);
+	memcpy(buffer,(const byte *)&buf,sizeof(buf));
+}
 
 UDP::UDP() {
 	/* Allocate two words */
@@ -66,59 +88,47 @@ void UDP::Craft () {
 	IP* ip_layer = 0;
 	/* Bottom layer name */
 	Layer* bottom_ptr = GetBottomLayer();
-	std::string bottom_layer = "";
-	if(bottom_ptr)  bottom_layer = bottom_ptr->GetName();
+	short_word bottom_layer = 0;
+	if(bottom_ptr)  bottom_layer = bottom_ptr->GetID();
 
 	/* Checksum of UDP packet */
 	short_word checksum;
 
+	/* Get field pointer to some fields */
+	FieldInfo* ptr_length = GetFieldPtr("Length");
+	FieldInfo* ptr_check = GetFieldPtr("CheckSum");
+
+	size_t tot_length = GetRemainingSize();
+
 	/* Set the Length of the UDP packet */
-	if (!IsFieldSet("Length")) {
-		SetLength(GetRemainingSize());
-		ResetField("Length");
+	if (!IsFieldSet(ptr_length)) {
+		SetFieldValue<word>(ptr_length,tot_length);
+		ResetField(ptr_length);
 	}
 
-	if (!IsFieldSet("CheckSum")) {
-
+	if (!IsFieldSet(ptr_check)) {
 		/* Set the checksum to zero */
-		SetCheckSum(0x00);
+		SetFieldValue<word>(ptr_check,0x0);
 
-		if(bottom_layer == "IP") {
+		if(bottom_layer == 0x0800) {
 			/* It's OK */
-			ip_layer = dynamic_cast<IP*>(GetBottomLayer());
+			ip_layer = dynamic_cast<IP*>(bottom_ptr);
 
-			/* Construct the Pseudo Header */
-			IPSeudoHeader* pseudo_header = new IPSeudoHeader;
+			size_t data_length = sizeof(psd_udp) + tot_length;
 
-			pseudo_header->SetSourceIP(ip_layer->GetSourceIP());
-			pseudo_header->SetDestinationIP(ip_layer->GetDestinationIP());
-			pseudo_header->SetZeros(0x00);
-			pseudo_header->SetProtocol(GetID());
-			pseudo_header->SetProtocolLength(GetLength());
+			if(data_length%2 != 0) data_length++;
 
-			/* Now, prepare the payload */
-			byte* payload = new byte[GetRemainingSize()];
+			vector<byte> raw_buffer(data_length,0);
 
-			/* Get the payload */
-			size_t cpy_payload = GetData(payload);
+			/* Setup the pseudo header */
+			setup_psd(inet_addr(ip_layer->GetSourceIP().c_str()),
+					  inet_addr(ip_layer->GetDestinationIP().c_str()),
+					  &raw_buffer[0],tot_length);
 
-			/* Put the payload into the pseudo header */
-			pseudo_header->SetPayload(payload, cpy_payload);
+			/* Setup the rest of the UDP datagram */
+			GetData(&raw_buffer[sizeof(psd_udp)]);
 
-			/* If the layer size is not multiple of 2, padd one more byte */
-			byte padd = 0;
-			if ((pseudo_header->GetSize() %2) != 0) pseudo_header->AddPayload(&padd,1);
-
-			/* That's it. Now get the data and calculate the checksum */
-			byte* data = new byte[pseudo_header->GetSize()];
-			pseudo_header->GetData(data);
-
-			/* 16 bit Checksum */
-			checksum = CheckSum((unsigned short *)data,pseudo_header->GetSize()/2);
-
-			delete pseudo_header;
-			delete [] payload;
-			delete [] data;
+			checksum = CheckSum((unsigned short *)&raw_buffer[0],raw_buffer.size()/2);
 
 		} else {
 			PrintMessage(Crafter::PrintCodes::PrintWarning,
@@ -127,8 +137,9 @@ void UDP::Craft () {
 			checksum = 0;
 		}
 
-		SetCheckSum(ntohs(checksum));
-		ResetField("CheckSum");
+		/* Set the checksum to zero */
+		SetFieldValue<word>(ptr_check,ntohs(checksum));
+		ResetField(ptr_check);
 	}
 }
 
