@@ -547,6 +547,10 @@ const Packet Crafter::operator/(const Layer& left, const Layer& right) {
 	return ret_packet;
 }
 
+void Crafter::CraftLayer(Layer* layer) {
+	layer->Craft();
+}
+
 void Crafter::InitCrafter() {
 
 	IP ip_dummy;
