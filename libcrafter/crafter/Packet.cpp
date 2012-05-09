@@ -300,11 +300,20 @@ void Packet::Craft() {
 
 }
 
-size_t Packet::GetData(byte* raw_ptr) const {
+size_t Packet::GetData(byte* raw_ptr) {
+	/* Craft the data */
+	Craft();
  	if (Stack.size() > 0)
  		return Stack[0]->GetData(raw_ptr);
  	else
  		return 0;
+}
+
+const byte* Packet::GetRawPtr() {
+	/* Craft the data */
+	Craft();
+	/* Return raw pointer */
+	return raw_data;
 }
 
 /* Constructor from raw data */

@@ -95,8 +95,10 @@ typedef std::vector<Layer*> LayerStack;
 		void PacketFromIP(const RawLayer& data);
 		void PacketFromEthernet(const RawLayer& data);
 
-		/* Put raw data on array and resturns the number of bytes copied */
-		size_t GetData(byte* raw_ptr) const;
+		/* Put raw data on array and returns the number of bytes copied */
+		size_t GetData(byte* raw_ptr);
+		/* Get a pointer to the raw buffer inside the packet (wich holds the crafted data) */
+		const byte* GetRawPtr();
 
 		/* Push a Layer into the stack */
 		void PushLayer(const Layer& layer);
