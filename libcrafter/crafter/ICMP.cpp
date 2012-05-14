@@ -53,7 +53,7 @@ ICMP::ICMP() {
 		SetCode(0);
 		SetCheckSum(0);
 		SetRestOfHeader(0);
-
+		SetLength(0);
 		/* Always call this, reset all fields */
 		ResetFields();
 }
