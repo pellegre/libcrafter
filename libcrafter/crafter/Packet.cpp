@@ -332,6 +332,7 @@ void Packet::GetFromIP(const byte* data, size_t length) {
 	/* Put Data */
 	size_t n_ip = ip_layer.PutData(data);
 
+
 	/* Get size of the remaining data */
 	length -= n_ip;
 
@@ -372,7 +373,7 @@ void Packet::GetFromIP(const byte* data, size_t length) {
 		}
 
 		n_trp = trp_layer->PutData(data + n_ip);
-		/* Redefine fields in case is necessary */
+		/* Redefine fields in case is necesary */
 		trp_layer->ReDefineActiveFields();
 
 		/* Get size of the remaining data */
@@ -402,59 +403,64 @@ void Packet::GetFromIP(const byte* data, size_t length) {
 				return;
 			}
 		} else if (trp_layer->GetName() == "ICMP") {
-			/* If we are dealing with an ICMP layer, we should check for extensions */
-			ICMP *icmp_layer = dynamic_cast<ICMP *>(trp_layer);
-			word icmp_type = icmp_layer->GetType();
-			word icmp_length = 4 * icmp_layer->GetLength();
-			/* Non-Compliant applications don't set the Length field. According to RFC4884,
-			 * Compliant applications should assume no extensions in this case. However, it
-			 * is advised to consider a 128-octet original datagram to keep compatibility. */
-			if (icmp_length == 0 && length > 128)
-				icmp_length = 128;
-			/* According to RFC4884, specific types with a length field set have extensions */
-			if ((icmp_type == ICMP::DestinationUnreachable ||
-				 icmp_type == ICMP::TimeExceeded ||
-				 icmp_type == ICMP::ParameterProblem) &&
-				 icmp_length > 0) {
-
-				RawLayer original_payload(data + n_ip + n_trp, icmp_length);
-				length -= icmp_length;
-				PushLayer(ip_layer);
-				PushLayer(*trp_layer);
-				PushLayer(original_payload);
-
-				ICMPExtension icmp_extension;
-				size_t n_ext = icmp_extension.PutData(data + n_ip + n_trp + icmp_length);
-				length -= n_ext;
-				PushLayer(icmp_extension);
-				const byte *extension_data = data + n_ip + n_trp + icmp_length + n_ext;
-
-				while (length > 0) {
-					ICMPExtensionObject icmp_extension_object_header;
-					size_t n_objhdr = icmp_extension_object_header.PutData(extension_data);
-					PushLayer(icmp_extension_object_header);
-					length -= n_objhdr;
-					extension_data += n_objhdr;
-					word icmp_extension_object_length =
-						icmp_extension_object_header.GetLength() - n_objhdr;
-					std::string icmp_extension_object_name =
-						icmp_extension_object_header.GetClassName();
-					/* Some ICMP extensions (such as MPLS) have more than one entry */
-					while (length > 0 && icmp_extension_object_length > 0) {
-						Layer* icmp_extension_layer =
-							Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
-						size_t n_pay = icmp_extension_layer->PutData(extension_data);
-						PushLayer(*icmp_extension_layer);
-						icmp_extension_object_length -= n_pay;
-						length -= n_pay;
-						extension_data += n_pay;
-					}
-				}
-
-				delete trp_layer;
-			    return;
-			}
-		}
+                    /* If we are dealing with an ICMP layer, we should check for extensions */
+                    ICMP *icmp_layer = dynamic_cast<ICMP *>(trp_layer);
+                    word icmp_type = icmp_layer->GetType();
+                    word icmp_length = 4 * icmp_layer->GetLength();
+                    /* Non-Compliant applications don't set the Length field. According to RFC4884,
+                     * Compliant applications should assume no extensions in this case. However, it
+                     * is advised to consider a 128-octet original datagram to keep compatibility. */
+                    if (icmp_length == 0 && length > 128)
+                        icmp_length = 128;
+                    /* According to RFC4884, specific types with a length field set have extensions */
+                    if ((icmp_type == ICMP::DestinationUnreachable ||
+                         icmp_type == ICMP::TimeExceeded ||
+                         icmp_type == ICMP::ParameterProblem) &&
+                        icmp_length > 0) {
+                        PushLayer(ip_layer);
+                        PushLayer(*trp_layer);
+                        if (length >= icmp_length) {
+                            RawLayer original_payload(data + n_ip + n_trp, icmp_length);
+                            length -= icmp_length;
+                            PushLayer(original_payload);
+                        } else {
+                            RawLayer rawdata(data + n_ip + n_trp, length);
+                            PushLayer(rawdata);
+                            delete trp_layer;
+                            return;
+                        }
+                        if (length > 0) {
+                            ICMPExtension icmp_extension;
+                            size_t n_ext = icmp_extension.PutData(data + n_ip + n_trp + icmp_length);
+                            length -= n_ext;
+                            PushLayer(icmp_extension);
+                            const byte *extension_data = data + n_ip + n_trp + icmp_length + n_ext;
+                            while (length > 0) {
+                                ICMPExtensionObject icmp_extension_object_header;
+                                size_t n_objhdr = icmp_extension_object_header.PutData(extension_data);
+                                PushLayer(icmp_extension_object_header);
+                                length -= n_objhdr;
+                                extension_data += n_objhdr;
+                                word icmp_extension_object_length =
+                                    icmp_extension_object_header.GetLength() - n_objhdr;
+                                std::string icmp_extension_object_name =
+                                    icmp_extension_object_header.GetClassName();
+                                /* Some ICMP extensions (such as MPLS) have more than one entry */
+                                while (length > 0 && icmp_extension_object_length > 0) {
+                                    Layer* icmp_extension_layer =
+                                        Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
+                                    size_t n_pay = icmp_extension_layer->PutData(extension_data);
+                                    PushLayer(*icmp_extension_layer);
+                                    icmp_extension_object_length -= n_pay;
+                                    length -= n_pay;
+                                    extension_data += n_pay;
+                                }
+                            }
+                        }
+                        delete trp_layer;
+			return;
+                    }
+                }
 
 	}
 
