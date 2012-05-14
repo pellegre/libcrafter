@@ -121,6 +121,12 @@ namespace Crafter {
 			SetFieldValueCheckOverlap<std::string>("Gateway",ip);
 		};
 
+		/* RFC4884: Destination Unreachable, Time Exceeded and Parameter Problem */
+		void SetLength(word length) {
+			SetFieldValueCheckOverlap<word>("Length", length);
+		};
+                
+
 		/* Geters */
 		word GetType() const {
 			return GetFieldValue<word>("Type");
@@ -153,6 +159,11 @@ namespace Crafter {
 
 		std::string GetGateway() const {
 			return GetFieldValue<std::string>("Gateway");
+		};
+
+		/* RFC4884: Destination Unreachable, Time Exceeded and Parameter Problem */
+		word GetLength() const {
+			return  GetFieldValue<word>("Length");
 		};
 
 		virtual ~ICMP();

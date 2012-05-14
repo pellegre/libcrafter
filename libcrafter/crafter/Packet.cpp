@@ -316,23 +316,7 @@ const byte* Packet::GetRawPtr() {
 	return raw_data;
 }
 
-/* Constructor from raw data */
-void Packet::PacketFromIP(const byte* data, size_t length) {
-
-	/* First remove bytes for the raw data */
-	if (raw_data) {
-		bytes_size = 0;
-		delete [] raw_data;
-		raw_data = 0;
-	}
-
-	/* Delete layer one by one */
-	vector<Layer*>::iterator it_layer;
-	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; ++it_layer)
-		delete (*it_layer);
-
-	Stack.clear();
-
+void Packet::GetFromIP(const byte* data, size_t length) {
 	/* The first bytes are an IP layer */
 	IP ip_layer;
 
@@ -347,7 +331,6 @@ void Packet::PacketFromIP(const byte* data, size_t length) {
 
 	/* Put Data */
 	size_t n_ip = ip_layer.PutData(data);
-
 
 	/* Get size of the remaining data */
 	length -= n_ip;
@@ -389,7 +372,7 @@ void Packet::PacketFromIP(const byte* data, size_t length) {
 		}
 
 		n_trp = trp_layer->PutData(data + n_ip);
-		/* Redefine fields in case is necesary */
+		/* Redefine fields in case is necessary */
 		trp_layer->ReDefineActiveFields();
 
 		/* Get size of the remaining data */
@@ -418,6 +401,59 @@ void Packet::PacketFromIP(const byte* data, size_t length) {
 				/* That's all */
 				return;
 			}
+		} else if (trp_layer->GetName() == "ICMP") {
+			/* If we are dealing with an ICMP layer, we should check for extensions */
+			ICMP *icmp_layer = dynamic_cast<ICMP *>(trp_layer);
+			word icmp_type = icmp_layer->GetType();
+			word icmp_length = 4 * icmp_layer->GetLength();
+			/* Non-Compliant applications don't set the Length field. According to RFC4884,
+			 * Compliant applications should assume no extensions in this case. However, it
+			 * is advised to consider a 128-octet original datagram to keep compatibility. */
+			if (icmp_length == 0 && length > 128)
+				icmp_length = 128;
+			/* According to RFC4884, specific types with a length field set have extensions */
+			if ((icmp_type == ICMP::DestinationUnreachable ||
+				 icmp_type == ICMP::TimeExceeded ||
+				 icmp_type == ICMP::ParameterProblem) &&
+				 icmp_length > 0) {
+
+				RawLayer original_payload(data + n_ip + n_trp, icmp_length);
+				length -= icmp_length;
+				PushLayer(ip_layer);
+				PushLayer(*trp_layer);
+				PushLayer(original_payload);
+
+				ICMPExtension icmp_extension;
+				size_t n_ext = icmp_extension.PutData(data + n_ip + n_trp + icmp_length);
+				length -= n_ext;
+				PushLayer(icmp_extension);
+				const byte *extension_data = data + n_ip + n_trp + icmp_length + n_ext;
+
+				while (length > 0) {
+					ICMPExtensionObject icmp_extension_object_header;
+					size_t n_objhdr = icmp_extension_object_header.PutData(extension_data);
+					PushLayer(icmp_extension_object_header);
+					length -= n_objhdr;
+					extension_data += n_objhdr;
+					word icmp_extension_object_length =
+						icmp_extension_object_header.GetLength() - n_objhdr;
+					std::string icmp_extension_object_name =
+						icmp_extension_object_header.GetClassName();
+					/* Some ICMP extensions (such as MPLS) have more than one entry */
+					while (length > 0 && icmp_extension_object_length > 0) {
+						Layer* icmp_extension_layer =
+							Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
+						size_t n_pay = icmp_extension_layer->PutData(extension_data);
+						PushLayer(*icmp_extension_layer);
+						icmp_extension_object_length -= n_pay;
+						length -= n_pay;
+						extension_data += n_pay;
+					}
+				}
+
+				delete trp_layer;
+			    return;
+			}
 		}
 
 	}
@@ -438,6 +474,26 @@ void Packet::PacketFromIP(const byte* data, size_t length) {
 
 	/* Delete the temporary layer created */
 	if(trp_layer) delete trp_layer;
+}
+
+/* Constructor from raw data */
+void Packet::PacketFromIP(const byte* data, size_t length) {
+
+	/* First remove bytes for the raw data */
+	if (raw_data) {
+		bytes_size = 0;
+		delete [] raw_data;
+		raw_data = 0;
+	}
+
+	/* Delete layer one by one */
+	vector<Layer*>::iterator it_layer;
+	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; ++it_layer)
+		delete (*it_layer);
+
+	Stack.clear();
+
+	GetFromIP(data,length);
 }
 
 /* Constructor from raw data */
@@ -476,117 +532,8 @@ void Packet::PacketFromEthernet(const byte* data, size_t length) {
 
 	/* Construct a network layer */
 	if (ether_layer.GetType() == 0x0800) {
-		/* The first bytes are an IP layer */
-		IP ip_layer;
-
-		/* Check if the data don't fit into an ethernet header */
-		if(ip_layer.GetSize() > length) {
-			/* Create Raw layer */
-			RawLayer rawdata(data + n_ether, length);
-			PushLayer(ether_layer);
-			PushLayer(rawdata);
-			/* That's all */
-			return;
-		}
-
-		/* Put Data */
-		size_t n_ip = ip_layer.PutData(data + n_ether);
-
-
-		/* Get size of the remaining data */
-		length -= n_ip;
-
-		/* Verify if the are options on the IP header */
-		size_t IP_word_size = ip_layer.GetHeaderLength();
-		size_t IP_opt_size = 0;
-
-		if(IP_word_size > 5) IP_opt_size = 4 * (IP_word_size - 5);
-
-		if (IP_opt_size < length && IP_opt_size > 0) {
-			/* The options are set as a payload */
-			ip_layer.SetPayload(data + n_ip + n_ether, IP_opt_size);
-			length -= IP_opt_size;
-			n_ip += IP_opt_size;
-		} else if (IP_opt_size >= length && IP_opt_size > 0) {
-			ip_layer.SetPayload(data + n_ip + n_ether, length);
-			PushLayer(ether_layer);
-			PushLayer(ip_layer);
-			/* That's all */
-			return;
-		}
-
-		/* Then, create the next protocol */
-		Layer* trp_layer = Protocol::AccessFactory()->GetLayerByID(ip_layer.GetProtocol());
-
-		/* Construct transport layer */
-		size_t n_trp = 0;
-
-		if (trp_layer) {
-
-			if(trp_layer->GetSize() > length) {
-				/* Create Raw layer */
-				RawLayer rawdata(data + n_ether + n_ip, length);
-				PushLayer(ether_layer);
-				PushLayer(ip_layer);
-				PushLayer(rawdata);
-				delete trp_layer;
-				/* That's all */
-				return;
-			}
-
-			n_trp = trp_layer->PutData(data + n_ip + n_ether);
-			/* Redefine fields in case is necesary */
-			trp_layer->ReDefineActiveFields();
-
-			/* Get size of the remaining data */
-			length -= n_trp;
-
-			/* If we are dealing with a TCP layer, we should check for options */
-			if (trp_layer->GetName() == "TCP") {
-				/* Cast the layer */
-				TCP *tcp_layer = dynamic_cast<TCP *>(trp_layer);
-				size_t TCP_word_size = tcp_layer->GetDataOffset();
-
-				size_t TCP_opt_size = 0;
-
-				if(TCP_word_size > 5) TCP_opt_size = 4 * (TCP_word_size - 5);
-
-				if (TCP_opt_size < length && TCP_opt_size > 0) {
-					/* The options are set as a payload */
-					tcp_layer->SetPayload(data + n_ip + n_ether + n_trp, TCP_opt_size);
-					length -= TCP_opt_size;
-					n_trp += TCP_opt_size;
-				} else if (TCP_opt_size >= length && TCP_opt_size > 0) {
-					tcp_layer->SetPayload(data + n_ip + n_ether + n_trp, length);
-					PushLayer(ether_layer);
-					PushLayer(ip_layer);
-					PushLayer(*trp_layer);
-					delete trp_layer;
-					/* That's all */
-					return;
-				}
-			}
-		}
-
-		size_t data_length = length;
-
-		/* Create a raw payload with the rest of the data */
-		RawLayer raw_layer;
-
-		if(data_length) {
-
-			raw_layer.SetPayload(data + n_ip + n_trp + n_ether, length);
-		}
-
-		/* Push each layer into the stack */
 		PushLayer(ether_layer);
-		PushLayer(ip_layer);
-		if(trp_layer) PushLayer(*trp_layer);
-		if(data_length) PushLayer(raw_layer);
-
-		/* Delete the temporary layer created */
-		if(trp_layer) delete trp_layer;
-
+		GetFromIP(data + n_ether,length);
 	} else {
 
 		/* Create Network Layer */

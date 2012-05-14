@@ -60,6 +60,9 @@ typedef std::vector<Layer*> LayerStack;
 		static void InitMutex();
 		static void DestroyMutex();
 
+		/* Construct the packet from the IP layer to the top */
+		void GetFromIP(const byte* data, size_t length);
+
 		/* Craft data from the layer pushed into the stack */
 		void Craft();
 
