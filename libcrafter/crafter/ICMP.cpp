@@ -34,12 +34,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace Crafter;
 using namespace std;
 
-//static char def_payload[] = "\x5e\x80\xa7\x4e\x00\x00\x00\x00\x7c\x9f\x09"
-//		                      "\x00\x00\x00\x00\x00\x10\x11\x12\x13\x14\x15"
-//			                  "\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20"
-//		                      "\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b"
-//		                      "\x2c\x2d\x2e\x2f\x30\x31\x32\x33\x34\x35\x36\x37";
-
 ICMP::ICMP() {
 		/* Allocate 2 words */
 		allocate_words(2);
@@ -48,18 +42,17 @@ ICMP::ICMP() {
 		/* Set protocol NUmber */
 		SetprotoID(0x01);
 
-		/* Creates field information for the layer */
-		DefineProtocol();
-
 		/* This header support field overlapping */
 		overlap_flag = 1;
+
+		/* Creates field information for the layer */
+		DefineProtocol();
 
 		/* Always set default values for fields in a layer */
 		SetType(8);
 		SetCode(0);
 		SetCheckSum(0);
 		SetRestOfHeader(0);
-//		SetPayload((const byte *)def_payload,56);
 
 		/* Always call this, reset all fields */
 		ResetFields();
@@ -82,6 +75,8 @@ void ICMP::DefineProtocol() {
 	/* Internet Address on Redirect Message */
 	define_field("Gateway", new IPAddress(1,0,31));
 
+	/* Destination Unreachable, Time Exceeded and Parameter Problem (RFC4884) */
+	define_field("Length", new NumericField(1, 8, 15));
 }
 
 /* Redefine active fields in function of the type of message */
@@ -96,6 +91,7 @@ void ICMP::ReDefineActiveFields() {
 		break;
 
 	case DestinationUnreachable:
+                RedefineField("Length");
 		break;
 
 	case SourceQuench:
@@ -111,10 +107,12 @@ void ICMP::ReDefineActiveFields() {
 		break;
 
 	case TimeExceeded:
+        RedefineField("Length");
 		break;
 
 	case ParameterProblem:
 		RedefineField("Pointer");
+        RedefineField("Length");
 		break;
 
 	case TimeStampRequest:
@@ -174,14 +172,16 @@ void ICMP::LibnetBuild(libnet_t *l) {
 	case DestinationUnreachable:
 
 		/* Now write the ICMP header into de libnet context */
-		icmp = libnet_build_icmpv4_unreach	 ( GetType(),
-										       GetCode(),
-										       GetCheckSum(),
-										       payload,
-										       payload_size,
-										       l,
-										       0
-										      );
+		icmp = libnet_build_icmpv4_echo ( GetType(),
+										  GetCode(),
+										  GetCheckSum(),
+										  GetLength(),
+										  0,
+										  payload,
+										  payload_size,
+										  l,
+										  0
+										);
 
 		/* In case of error */
 		if (icmp == -1) {
@@ -196,14 +196,16 @@ void ICMP::LibnetBuild(libnet_t *l) {
 	case TimeExceeded:
 
 		/* Now write the ICMP header into de libnet context */
-		icmp = libnet_build_icmpv4_timeexceed( GetType(),
-										       GetCode(),
-										       GetCheckSum(),
-										       payload,
-										       payload_size,
-										       l,
-										       0
-										      );
+		icmp = libnet_build_icmpv4_echo ( GetType(),
+										  GetCode(),
+										  GetCheckSum(),
+										  GetLength(),
+										  0,
+										  payload,
+										  payload_size,
+										  l,
+										  0
+										);
 
 		/* In case of error */
 		if (icmp == -1) {
@@ -221,7 +223,7 @@ void ICMP::LibnetBuild(libnet_t *l) {
 		icmp = libnet_build_icmpv4_echo      ( GetType(),
 										       GetCode(),
 										       GetCheckSum(),
-										       htons(GetPointer()),
+										       htons(GetPointer()) | GetLength(),
 										       0,
 										       payload,
 										       payload_size,
@@ -427,6 +429,20 @@ std::string ICMP::MatchFilter() const {
 
 /* Copy crafted packet to buffer_data */
 void ICMP::Craft () {
+	/* Calculates the ICMP original payload length (RFC4884) */
+	word type = GetType();
+	if (type == DestinationUnreachable ||
+		type == TimeExceeded ||
+		type == ParameterProblem) {
+		word length = 0;
+		Layer* layer = GetTopLayer();
+		while (layer && layer->GetName() != "ICMPExtension") {
+			length += layer->GetSize();
+			/* Trick to make every sibling class a friend :) */
+			layer = ((ICMP*) layer)->GetTopLayer();
+		}
+		SetLength(length / 4);
+	}
 
 	if (!IsFieldSet("CheckSum") || (GetCheckSum() == 0)) {
 

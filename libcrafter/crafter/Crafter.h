@@ -49,6 +49,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /* ICMP Protocol Implementation */
 #include "ICMP.h"
 
+/* ICMPExtension Protocol Implementation */
+#include "ICMPExtension.h"
+
+/* ICMPExtensionMPLS Protocol Implementation */
+#include "ICMPExtensionMPLS.h"
+
+/* ICMPExtensionObject Protocol Implementation */
+#include "ICMPExtensionObject.h"
+
 /* DNS Protocol Implementation */
 #include "DNS.h"
 

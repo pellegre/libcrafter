@@ -569,6 +569,18 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&icmp_dummy);
 
+        ICMPExtension icmp_extension_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&icmp_extension_dummy);
+
+        ICMPExtensionMPLS icmp_extension_mpls_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&icmp_extension_mpls_dummy);
+
+        ICMPExtensionObject icmp_extension_object_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&icmp_extension_object_dummy);
+
 	Ethernet ether_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ether_dummy);

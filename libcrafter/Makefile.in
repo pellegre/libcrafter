@@ -89,11 +89,13 @@ am_libcrafter_la_OBJECTS = crafter/PrintMessage.lo crafter/ARP.lo \
 	crafter/BitHandling.lo crafter/CrafterUtils.lo crafter/DHCP.lo \
 	crafter/DHCPOptions.lo crafter/DNS.lo crafter/DNSAnswer.lo \
 	crafter/DNSQuery.lo crafter/Ethernet.lo crafter/Field.lo \
-	crafter/ICMP.lo crafter/IP.lo crafter/IPResolver.lo \
-	crafter/IPSeudoHeader.lo crafter/IPv4Parse.lo crafter/Layer.lo \
-	crafter/Packet.lo crafter/Payload.lo crafter/RawLayer.lo \
-	crafter/RawSocket.lo crafter/Sniffer.lo \
-	crafter/TCPConnection.lo crafter/TCP.lo crafter/UDP.lo
+	crafter/ICMP.lo crafter/ICMPExtension.lo \
+	crafter/ICMPExtensionMPLS.lo crafter/ICMPExtensionObject.lo \
+	crafter/IP.lo crafter/IPResolver.lo crafter/IPSeudoHeader.lo \
+	crafter/IPv4Parse.lo crafter/Layer.lo crafter/Packet.lo \
+	crafter/Payload.lo crafter/RawLayer.lo crafter/RawSocket.lo \
+	crafter/Sniffer.lo crafter/TCPConnection.lo crafter/TCP.lo \
+	crafter/UDP.lo
 libcrafter_la_OBJECTS = $(am_libcrafter_la_OBJECTS)
 libcrafter_la_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(AM_CXXFLAGS) \
@@ -273,6 +275,9 @@ libcrafter_la_SOURCES = crafter/PrintMessage.cpp \
 						crafter/Ethernet.cpp \
 						crafter/Field.cpp \
 						crafter/ICMP.cpp \
+						crafter/ICMPExtension.cpp \
+						crafter/ICMPExtensionMPLS.cpp \
+						crafter/ICMPExtensionObject.cpp \
 						crafter/IP.cpp \
 						crafter/IPResolver.cpp \
 						crafter/IPSeudoHeader.cpp \
@@ -303,6 +308,9 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Ethernet.h \
 								crafter/Field.h \
 								crafter/ICMP.h \
+								crafter/ICMPExtension.h \
+								crafter/ICMPExtensionMPLS.h \
+								crafter/ICMPExtensionObject.h \
 								crafter/IP.h \
 								crafter/IPResolver.h \
 								crafter/IPSeudoHeader.h \
@@ -462,6 +470,12 @@ crafter/Field.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/ICMP.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
+crafter/ICMPExtension.lo: crafter/$(am__dirstamp) \
+	crafter/$(DEPDIR)/$(am__dirstamp)
+crafter/ICMPExtensionMPLS.lo: crafter/$(am__dirstamp) \
+	crafter/$(DEPDIR)/$(am__dirstamp)
+crafter/ICMPExtensionObject.lo: crafter/$(am__dirstamp) \
+	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/IP.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/IPResolver.lo: crafter/$(am__dirstamp) \
@@ -523,6 +537,12 @@ mostlyclean-compile:
 	-rm -f crafter/Field.lo
 	-rm -f crafter/ICMP.$(OBJEXT)
 	-rm -f crafter/ICMP.lo
+	-rm -f crafter/ICMPExtension.$(OBJEXT)
+	-rm -f crafter/ICMPExtension.lo
+	-rm -f crafter/ICMPExtensionMPLS.$(OBJEXT)
+	-rm -f crafter/ICMPExtensionMPLS.lo
+	-rm -f crafter/ICMPExtensionObject.$(OBJEXT)
+	-rm -f crafter/ICMPExtensionObject.lo
 	-rm -f crafter/IP.$(OBJEXT)
 	-rm -f crafter/IP.lo
 	-rm -f crafter/IPResolver.$(OBJEXT)
@@ -570,6 +590,9 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Ethernet.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Field.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ICMP.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ICMPExtension.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ICMPExtensionMPLS.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ICMPExtensionObject.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/IP.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/IPResolver.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/IPSeudoHeader.Plo@am__quote@

@@ -36,6 +36,9 @@ libcrafter_la_SOURCES = crafter/PrintMessage.cpp \
 						crafter/Ethernet.cpp \
 						crafter/Field.cpp \
 						crafter/ICMP.cpp \
+						crafter/ICMPExtension.cpp \
+						crafter/ICMPExtensionMPLS.cpp \
+						crafter/ICMPExtensionObject.cpp \
 						crafter/IP.cpp \
 						crafter/IPResolver.cpp \
 						crafter/IPSeudoHeader.cpp \
@@ -75,6 +78,9 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Ethernet.h \
 								crafter/Field.h \
 								crafter/ICMP.h \
+								crafter/ICMPExtension.h \
+								crafter/ICMPExtensionMPLS.h \
+								crafter/ICMPExtensionObject.h \
 								crafter/IP.h \
 								crafter/IPResolver.h \
 								crafter/IPSeudoHeader.h \
