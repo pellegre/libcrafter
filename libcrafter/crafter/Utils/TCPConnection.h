@@ -29,7 +29,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef TCPCONNECTION_H_
 #define TCPCONNECTION_H_
 
-#include "Crafter.h"
+#include "../Crafter.h"
 #include "CrafterUtils.h"
 
 namespace Crafter {

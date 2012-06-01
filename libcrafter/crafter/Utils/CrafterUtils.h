@@ -88,7 +88,7 @@ namespace Crafter {
 
 	RawLayer* GetRawLayer(const Packet& packet);
 
-	/* Get a copy of the (crafted) layer into a RawLayer */
+	/* Craft the layer */
 	void CraftLayer(Layer* layer);
 
 	/* ------------------- Some operators ---------------------- */

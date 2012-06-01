@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <libnet.h>
 
 #include "Layer.h"
-#include "RawLayer.h"
+#include "Protocols/RawLayer.h"
 
 typedef uint32_t word;
 typedef uint8_t byte;

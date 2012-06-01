@@ -35,7 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <arpa/nameser.h>
 #include <resolv.h>
 
-#include "Layer.h"
+#include "../Layer.h"
 #include "RawLayer.h"
 
 namespace Crafter {

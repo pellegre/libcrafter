@@ -28,8 +28,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "ICMP.h"
 #include "IP.h"
-#include "Crafter.h"
-#include "CrafterUtils.h"
+#include "../Crafter.h"
+#include "../Utils/CrafterUtils.h"
 
 using namespace Crafter;
 using namespace std;
