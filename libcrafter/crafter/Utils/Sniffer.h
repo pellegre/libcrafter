@@ -38,7 +38,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <signal.h>
 #include <pcap.h>
 
-#include "Crafter.h"
+#include "../Crafter.h"
 
 namespace Crafter {
 

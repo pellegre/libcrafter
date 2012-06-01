@@ -19,7 +19,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>
 
 
 #include "DNS.h"
-#include "BitHandling.h"
+#include "../Utils/BitHandling.h"
 #include <arpa/inet.h>
 
 using namespace std;

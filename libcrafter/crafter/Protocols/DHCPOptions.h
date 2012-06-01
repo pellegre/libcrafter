@@ -36,7 +36,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include "Payload.h"
+#include "../Payload.h"
 
 /* -------- DHCP Options */
 

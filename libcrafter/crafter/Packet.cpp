@@ -28,8 +28,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "Packet.h"
 #include "Crafter.h"
-#include "CrafterUtils.h"
-#include "RawSocket.h"
+#include "Utils/CrafterUtils.h"
+#include "Utils/RawSocket.h"
 
 using namespace std;
 using namespace Crafter;

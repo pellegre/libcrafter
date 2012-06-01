@@ -25,14 +25,61 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef ARPPING_H_
-#define ARPPING_H_
 
-#include <string>
-#include <map>
-#include "Crafter.h"
-#include "CrafterUtils.h"
+#ifndef RAWLAYER_H_
+#define RAWLAYER_H_
 
-std::map<std::string,std::string> ARPPing(const std::string& ip_net, const std::string& iface, size_t send_count);
+#include "../Layer.h"
 
-#endif /* ARPPING_H_ */
+namespace Crafter {
+
+		class RawLayer : public Layer {
+
+			/* Define the field of the IP layer */
+			void DefineProtocol() {
+				/* No fields */
+			};
+
+			Constructor GetConstructor() const {
+				return RawLayer::RawLayerConstFunc;
+			};
+
+			static Layer* RawLayerConstFunc() {
+				return new RawLayer;
+			};
+
+			/* Copy crafted packet to buffer_data */
+			void Craft () {
+				/* Nothing to craft */
+			};
+
+			void LibnetBuild(libnet_t *l);
+
+		public:
+
+			RawLayer();
+
+			/* Constructor from raw data */
+			RawLayer(const byte* data, size_t size);
+
+			/* Constructor from string */
+			RawLayer(const char* str);
+
+			/* Constructor from a general Layer */
+			RawLayer(const Layer& layer);
+
+			/* Equal from string */
+			RawLayer& operator=(const char* str);
+
+			/* Equal from a general Layer */
+			RawLayer& operator=(const Layer& layer);
+
+			/* Concatenate to raw layers */
+			const RawLayer operator+(const RawLayer& right) const;
+
+			virtual ~RawLayer() { };
+		};
+
+}
+
+#endif /* RAWLAYER_H_ */

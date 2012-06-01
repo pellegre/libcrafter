@@ -83,19 +83,24 @@ am__DEPENDENCIES_1 =
 libcrafter_la_DEPENDENCIES = $(am__DEPENDENCIES_1) \
 	$(am__DEPENDENCIES_1)
 am__dirstamp = $(am__leading_dot)dirstamp
-am_libcrafter_la_OBJECTS = crafter/PrintMessage.lo crafter/ARP.lo \
-	crafter/ARPPing.lo crafter/ARPSpoofing.lo \
-	crafter/ARPSpoofingReply.lo crafter/ARPSpoofingRequest.lo \
-	crafter/BitHandling.lo crafter/CrafterUtils.lo crafter/DHCP.lo \
-	crafter/DHCPOptions.lo crafter/DNS.lo crafter/DNSAnswer.lo \
-	crafter/DNSQuery.lo crafter/Ethernet.lo crafter/Field.lo \
-	crafter/ICMP.lo crafter/ICMPExtension.lo \
-	crafter/ICMPExtensionMPLS.lo crafter/ICMPExtensionObject.lo \
-	crafter/IP.lo crafter/IPResolver.lo crafter/IPSeudoHeader.lo \
-	crafter/IPv4Parse.lo crafter/Layer.lo crafter/Packet.lo \
-	crafter/Payload.lo crafter/RawLayer.lo crafter/RawSocket.lo \
-	crafter/Sniffer.lo crafter/TCPConnection.lo crafter/TCP.lo \
-	crafter/UDP.lo
+am_libcrafter_la_OBJECTS = crafter/Utils/PrintMessage.lo \
+	crafter/Protocols/ARP.lo crafter/Utils/ARPPing.lo \
+	crafter/Utils/ARPSpoofing.lo crafter/Utils/ARPSpoofingReply.lo \
+	crafter/Utils/ARPSpoofingRequest.lo \
+	crafter/Utils/BitHandling.lo crafter/Utils/CrafterUtils.lo \
+	crafter/Protocols/DHCP.lo crafter/Protocols/DHCPOptions.lo \
+	crafter/Protocols/DNS.lo crafter/Protocols/DNSAnswer.lo \
+	crafter/Protocols/DNSQuery.lo crafter/Protocols/Ethernet.lo \
+	crafter/Field.lo crafter/Protocols/ICMP.lo \
+	crafter/Protocols/ICMPExtension.lo \
+	crafter/Protocols/ICMPExtensionMPLS.lo \
+	crafter/Protocols/ICMPExtensionObject.lo \
+	crafter/Protocols/IP.lo crafter/Utils/IPResolver.lo \
+	crafter/Protocols/IPSeudoHeader.lo crafter/Utils/IPv4Parse.lo \
+	crafter/Layer.lo crafter/Packet.lo crafter/Payload.lo \
+	crafter/Protocols/RawLayer.lo crafter/Utils/RawSocket.lo \
+	crafter/Utils/Sniffer.lo crafter/Utils/TCPConnection.lo \
+	crafter/Protocols/TCP.lo crafter/Protocols/UDP.lo
 libcrafter_la_OBJECTS = $(am_libcrafter_la_OBJECTS)
 libcrafter_la_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(AM_CXXFLAGS) \
@@ -259,72 +264,72 @@ top_srcdir = @top_srcdir@
 AUTOMAKE_OPTIONS = subdir-objects
 ACLOCAL_AMFLAGS = ${ACLOCAL_FLAGS}
 lib_LTLIBRARIES = libcrafter.la
-libcrafter_la_SOURCES = crafter/PrintMessage.cpp \
-                        crafter/ARP.cpp \
-                        crafter/ARPPing.cpp \
-						crafter/ARPSpoofing.cpp \
-						crafter/ARPSpoofingReply.cpp \
-						crafter/ARPSpoofingRequest.cpp \
-						crafter/BitHandling.cpp \
-						crafter/CrafterUtils.cpp \
-						crafter/DHCP.cpp \
-						crafter/DHCPOptions.cpp \
-						crafter/DNS.cpp \
-						crafter/DNSAnswer.cpp \
-						crafter/DNSQuery.cpp \
-						crafter/Ethernet.cpp \
+libcrafter_la_SOURCES = crafter/Utils/PrintMessage.cpp \
+                        crafter/Protocols/ARP.cpp \
+                        crafter/Utils/ARPPing.cpp \
+						crafter/Utils/ARPSpoofing.cpp \
+						crafter/Utils/ARPSpoofingReply.cpp \
+						crafter/Utils/ARPSpoofingRequest.cpp \
+						crafter/Utils/BitHandling.cpp \
+						crafter/Utils/CrafterUtils.cpp \
+						crafter/Protocols/DHCP.cpp \
+						crafter/Protocols/DHCPOptions.cpp \
+						crafter/Protocols/DNS.cpp \
+						crafter/Protocols/DNSAnswer.cpp \
+						crafter/Protocols/DNSQuery.cpp \
+						crafter/Protocols/Ethernet.cpp \
 						crafter/Field.cpp \
-						crafter/ICMP.cpp \
-						crafter/ICMPExtension.cpp \
-						crafter/ICMPExtensionMPLS.cpp \
-						crafter/ICMPExtensionObject.cpp \
-						crafter/IP.cpp \
-						crafter/IPResolver.cpp \
-						crafter/IPSeudoHeader.cpp \
-						crafter/IPv4Parse.cpp \
+						crafter/Protocols/ICMP.cpp \
+						crafter/Protocols/ICMPExtension.cpp \
+						crafter/Protocols/ICMPExtensionMPLS.cpp \
+						crafter/Protocols/ICMPExtensionObject.cpp \
+						crafter/Protocols/IP.cpp \
+						crafter/Utils/IPResolver.cpp \
+						crafter/Protocols/IPSeudoHeader.cpp \
+						crafter/Utils/IPv4Parse.cpp \
 						crafter/Layer.cpp \
 						crafter/Packet.cpp \
 						crafter/Payload.cpp \
-						crafter/RawLayer.cpp \
-						crafter/RawSocket.cpp \
-						crafter/Sniffer.cpp \
-						crafter/TCPConnection.cpp \
-						crafter/TCP.cpp \
-						crafter/UDP.cpp 
+						crafter/Protocols/RawLayer.cpp \
+						crafter/Utils/RawSocket.cpp \
+						crafter/Utils/Sniffer.cpp \
+						crafter/Utils/TCPConnection.cpp \
+						crafter/Protocols/TCP.cpp \
+						crafter/Protocols/UDP.cpp 
 
 libcrafter_la_LDFLAGS = -version-info $(CRAFTER_SO_VERSION)
 libcrafter_la_LIBADD = $(PCAPLIB) $(LNETLIB)
 crafter_includedir = $(includedir)
 nobase_crafter_include_HEADERS = crafter.h \
-                                crafter/ARP.h \
-                                crafter/ARPPing.h \
-								crafter/ARPSpoofing.h \
+                                crafter/Protocols/ARP.h \
+                                crafter/Utils/ARPPing.h \
+								crafter/Utils/ARPSpoofing.h \
 								crafter/Crafter.h \
-								crafter/CrafterUtils.h \
-								crafter/BitHandling.h \
-								crafter/DHCP.h \
-								crafter/DHCPOptions.h \
-								crafter/DNS.h \
-								crafter/Ethernet.h \
+								crafter/Utils/CrafterUtils.h \
+								crafter/Utils/BitHandling.h \
+								crafter/Protocols/DHCP.h \
+								crafter/Protocols/DHCPOptions.h \
+								crafter/Protocols/DNS.h \
+								crafter/Protocols/Ethernet.h \
 								crafter/Field.h \
-								crafter/ICMP.h \
-								crafter/ICMPExtension.h \
-								crafter/ICMPExtensionMPLS.h \
-								crafter/ICMPExtensionObject.h \
-								crafter/IP.h \
-								crafter/IPResolver.h \
-								crafter/IPSeudoHeader.h \
-								crafter/IPv4Parse.h \
+								crafter/Protocols/ICMP.h \
+								crafter/Protocols/ICMPExtension.h \
+								crafter/Protocols/ICMPExtensionMPLS.h \
+								crafter/Protocols/ICMPExtensionObject.h \
+								crafter/Protocols/IP.h \
+								crafter/Utils/IPResolver.h \
+								crafter/Protocols/IPSeudoHeader.h \
+								crafter/Utils/IPv4Parse.h \
 								crafter/Layer.h \
 								crafter/Packet.h \
 								crafter/Payload.h \
-								crafter/PrintMessage.h \
-								crafter/RawLayer.h \
-								crafter/RawSocket.h \
-								crafter/Sniffer.h \
-								crafter/TCPConnection.h \
-								crafter/TCP.h \
-								crafter/UDP.h
+								crafter/Utils/PrintMessage.h \
+								crafter/Protocols/RawLayer.h \
+								crafter/Utils/RawSocket.h \
+								crafter/Utils/Sniffer.h \
+								crafter/Utils/TCPConnection.h \
+								crafter/Protocols/TCP.h \
+								crafter/Protocols/UDP.h
 
 crafter_libincludedir = $(libdir)/crafter-$(CRAFTER_API_VERSION)/include
 nodist_crafter_libinclude_HEADERS = crafterconfig.h
@@ -432,181 +437,195 @@ clean-libLTLIBRARIES:
 	  echo "rm -f \"$${dir}/so_locations\""; \
 	  rm -f "$${dir}/so_locations"; \
 	done
+crafter/Utils/$(am__dirstamp):
+	@$(MKDIR_P) crafter/Utils
+	@: > crafter/Utils/$(am__dirstamp)
+crafter/Utils/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) crafter/Utils/$(DEPDIR)
+	@: > crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/PrintMessage.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/$(am__dirstamp):
+	@$(MKDIR_P) crafter/Protocols
+	@: > crafter/Protocols/$(am__dirstamp)
+crafter/Protocols/$(DEPDIR)/$(am__dirstamp):
+	@$(MKDIR_P) crafter/Protocols/$(DEPDIR)
+	@: > crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/ARP.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/ARPPing.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/ARPSpoofing.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/ARPSpoofingReply.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/ARPSpoofingRequest.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/BitHandling.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/CrafterUtils.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/DHCP.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/DHCPOptions.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/DNS.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/DNSAnswer.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/DNSQuery.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/Ethernet.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/$(am__dirstamp):
 	@$(MKDIR_P) crafter
 	@: > crafter/$(am__dirstamp)
 crafter/$(DEPDIR)/$(am__dirstamp):
 	@$(MKDIR_P) crafter/$(DEPDIR)
 	@: > crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/PrintMessage.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/ARP.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/ARPPing.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/ARPSpoofing.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/ARPSpoofingReply.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/ARPSpoofingRequest.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/BitHandling.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/CrafterUtils.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/DHCP.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/DHCPOptions.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/DNS.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/DNSAnswer.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/DNSQuery.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/Ethernet.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/Field.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/ICMP.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/ICMPExtension.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/ICMPExtensionMPLS.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/ICMPExtensionObject.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/IP.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/IPResolver.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/IPSeudoHeader.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/IPv4Parse.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/ICMP.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/ICMPExtension.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/ICMPExtensionMPLS.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/ICMPExtensionObject.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/IP.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/IPResolver.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/IPSeudoHeader.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/IPv4Parse.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
 crafter/Layer.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/Packet.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/Payload.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/RawLayer.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/RawSocket.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/Sniffer.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/TCPConnection.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/TCP.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
-crafter/UDP.lo: crafter/$(am__dirstamp) \
-	crafter/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/RawLayer.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/RawSocket.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/Sniffer.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/TCPConnection.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/TCP.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/UDP.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 libcrafter.la: $(libcrafter_la_OBJECTS) $(libcrafter_la_DEPENDENCIES) 
 	$(libcrafter_la_LINK) -rpath $(libdir) $(libcrafter_la_OBJECTS) $(libcrafter_la_LIBADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
-	-rm -f crafter/ARP.$(OBJEXT)
-	-rm -f crafter/ARP.lo
-	-rm -f crafter/ARPPing.$(OBJEXT)
-	-rm -f crafter/ARPPing.lo
-	-rm -f crafter/ARPSpoofing.$(OBJEXT)
-	-rm -f crafter/ARPSpoofing.lo
-	-rm -f crafter/ARPSpoofingReply.$(OBJEXT)
-	-rm -f crafter/ARPSpoofingReply.lo
-	-rm -f crafter/ARPSpoofingRequest.$(OBJEXT)
-	-rm -f crafter/ARPSpoofingRequest.lo
-	-rm -f crafter/BitHandling.$(OBJEXT)
-	-rm -f crafter/BitHandling.lo
-	-rm -f crafter/CrafterUtils.$(OBJEXT)
-	-rm -f crafter/CrafterUtils.lo
-	-rm -f crafter/DHCP.$(OBJEXT)
-	-rm -f crafter/DHCP.lo
-	-rm -f crafter/DHCPOptions.$(OBJEXT)
-	-rm -f crafter/DHCPOptions.lo
-	-rm -f crafter/DNS.$(OBJEXT)
-	-rm -f crafter/DNS.lo
-	-rm -f crafter/DNSAnswer.$(OBJEXT)
-	-rm -f crafter/DNSAnswer.lo
-	-rm -f crafter/DNSQuery.$(OBJEXT)
-	-rm -f crafter/DNSQuery.lo
-	-rm -f crafter/Ethernet.$(OBJEXT)
-	-rm -f crafter/Ethernet.lo
 	-rm -f crafter/Field.$(OBJEXT)
 	-rm -f crafter/Field.lo
-	-rm -f crafter/ICMP.$(OBJEXT)
-	-rm -f crafter/ICMP.lo
-	-rm -f crafter/ICMPExtension.$(OBJEXT)
-	-rm -f crafter/ICMPExtension.lo
-	-rm -f crafter/ICMPExtensionMPLS.$(OBJEXT)
-	-rm -f crafter/ICMPExtensionMPLS.lo
-	-rm -f crafter/ICMPExtensionObject.$(OBJEXT)
-	-rm -f crafter/ICMPExtensionObject.lo
-	-rm -f crafter/IP.$(OBJEXT)
-	-rm -f crafter/IP.lo
-	-rm -f crafter/IPResolver.$(OBJEXT)
-	-rm -f crafter/IPResolver.lo
-	-rm -f crafter/IPSeudoHeader.$(OBJEXT)
-	-rm -f crafter/IPSeudoHeader.lo
-	-rm -f crafter/IPv4Parse.$(OBJEXT)
-	-rm -f crafter/IPv4Parse.lo
 	-rm -f crafter/Layer.$(OBJEXT)
 	-rm -f crafter/Layer.lo
 	-rm -f crafter/Packet.$(OBJEXT)
 	-rm -f crafter/Packet.lo
 	-rm -f crafter/Payload.$(OBJEXT)
 	-rm -f crafter/Payload.lo
-	-rm -f crafter/PrintMessage.$(OBJEXT)
-	-rm -f crafter/PrintMessage.lo
-	-rm -f crafter/RawLayer.$(OBJEXT)
-	-rm -f crafter/RawLayer.lo
-	-rm -f crafter/RawSocket.$(OBJEXT)
-	-rm -f crafter/RawSocket.lo
-	-rm -f crafter/Sniffer.$(OBJEXT)
-	-rm -f crafter/Sniffer.lo
-	-rm -f crafter/TCP.$(OBJEXT)
-	-rm -f crafter/TCP.lo
-	-rm -f crafter/TCPConnection.$(OBJEXT)
-	-rm -f crafter/TCPConnection.lo
-	-rm -f crafter/UDP.$(OBJEXT)
-	-rm -f crafter/UDP.lo
+	-rm -f crafter/Protocols/ARP.$(OBJEXT)
+	-rm -f crafter/Protocols/ARP.lo
+	-rm -f crafter/Protocols/DHCP.$(OBJEXT)
+	-rm -f crafter/Protocols/DHCP.lo
+	-rm -f crafter/Protocols/DHCPOptions.$(OBJEXT)
+	-rm -f crafter/Protocols/DHCPOptions.lo
+	-rm -f crafter/Protocols/DNS.$(OBJEXT)
+	-rm -f crafter/Protocols/DNS.lo
+	-rm -f crafter/Protocols/DNSAnswer.$(OBJEXT)
+	-rm -f crafter/Protocols/DNSAnswer.lo
+	-rm -f crafter/Protocols/DNSQuery.$(OBJEXT)
+	-rm -f crafter/Protocols/DNSQuery.lo
+	-rm -f crafter/Protocols/Ethernet.$(OBJEXT)
+	-rm -f crafter/Protocols/Ethernet.lo
+	-rm -f crafter/Protocols/ICMP.$(OBJEXT)
+	-rm -f crafter/Protocols/ICMP.lo
+	-rm -f crafter/Protocols/ICMPExtension.$(OBJEXT)
+	-rm -f crafter/Protocols/ICMPExtension.lo
+	-rm -f crafter/Protocols/ICMPExtensionMPLS.$(OBJEXT)
+	-rm -f crafter/Protocols/ICMPExtensionMPLS.lo
+	-rm -f crafter/Protocols/ICMPExtensionObject.$(OBJEXT)
+	-rm -f crafter/Protocols/ICMPExtensionObject.lo
+	-rm -f crafter/Protocols/IP.$(OBJEXT)
+	-rm -f crafter/Protocols/IP.lo
+	-rm -f crafter/Protocols/IPSeudoHeader.$(OBJEXT)
+	-rm -f crafter/Protocols/IPSeudoHeader.lo
+	-rm -f crafter/Protocols/RawLayer.$(OBJEXT)
+	-rm -f crafter/Protocols/RawLayer.lo
+	-rm -f crafter/Protocols/TCP.$(OBJEXT)
+	-rm -f crafter/Protocols/TCP.lo
+	-rm -f crafter/Protocols/UDP.$(OBJEXT)
+	-rm -f crafter/Protocols/UDP.lo
+	-rm -f crafter/Utils/ARPPing.$(OBJEXT)
+	-rm -f crafter/Utils/ARPPing.lo
+	-rm -f crafter/Utils/ARPSpoofing.$(OBJEXT)
+	-rm -f crafter/Utils/ARPSpoofing.lo
+	-rm -f crafter/Utils/ARPSpoofingReply.$(OBJEXT)
+	-rm -f crafter/Utils/ARPSpoofingReply.lo
+	-rm -f crafter/Utils/ARPSpoofingRequest.$(OBJEXT)
+	-rm -f crafter/Utils/ARPSpoofingRequest.lo
+	-rm -f crafter/Utils/BitHandling.$(OBJEXT)
+	-rm -f crafter/Utils/BitHandling.lo
+	-rm -f crafter/Utils/CrafterUtils.$(OBJEXT)
+	-rm -f crafter/Utils/CrafterUtils.lo
+	-rm -f crafter/Utils/IPResolver.$(OBJEXT)
+	-rm -f crafter/Utils/IPResolver.lo
+	-rm -f crafter/Utils/IPv4Parse.$(OBJEXT)
+	-rm -f crafter/Utils/IPv4Parse.lo
+	-rm -f crafter/Utils/PrintMessage.$(OBJEXT)
+	-rm -f crafter/Utils/PrintMessage.lo
+	-rm -f crafter/Utils/RawSocket.$(OBJEXT)
+	-rm -f crafter/Utils/RawSocket.lo
+	-rm -f crafter/Utils/Sniffer.$(OBJEXT)
+	-rm -f crafter/Utils/Sniffer.lo
+	-rm -f crafter/Utils/TCPConnection.$(OBJEXT)
+	-rm -f crafter/Utils/TCPConnection.lo
 
 distclean-compile:
 	-rm -f *.tab.c
 
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARP.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARPPing.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARPSpoofing.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARPSpoofingReply.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ARPSpoofingRequest.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/BitHandling.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/CrafterUtils.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/DHCP.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/DHCPOptions.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/DNS.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/DNSAnswer.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/DNSQuery.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Ethernet.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Field.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ICMP.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ICMPExtension.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ICMPExtensionMPLS.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/ICMPExtensionObject.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/IP.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/IPResolver.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/IPSeudoHeader.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/IPv4Parse.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Layer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Packet.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Payload.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/PrintMessage.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/RawLayer.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/RawSocket.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Sniffer.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/TCP.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/TCPConnection.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/UDP.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ARP.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/DHCP.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/DHCPOptions.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/DNS.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/DNSAnswer.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/DNSQuery.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/Ethernet.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMP.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPExtension.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPExtensionMPLS.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPExtensionObject.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IP.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPSeudoHeader.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/RawLayer.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCP.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/UDP.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/ARPPing.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/ARPSpoofing.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/ARPSpoofingReply.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/ARPSpoofingRequest.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/BitHandling.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/CrafterUtils.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/IPResolver.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/IPv4Parse.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/PrintMessage.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/RawSocket.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/Sniffer.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/TCPConnection.Plo@am__quote@
 
 .cpp.o:
 @am__fastdepCXX_TRUE@	depbase=`echo $@ | sed 's|[^/]*$$|$(DEPDIR)/&|;s|\.o$$||'`;\
@@ -638,6 +657,8 @@ mostlyclean-libtool:
 clean-libtool:
 	-rm -rf .libs _libs
 	-rm -rf crafter/.libs crafter/_libs
+	-rm -rf crafter/Protocols/.libs crafter/Protocols/_libs
+	-rm -rf crafter/Utils/.libs crafter/Utils/_libs
 
 distclean-libtool:
 	-rm -f libtool config.lt
@@ -935,6 +956,10 @@ distclean-generic:
 	-test . = "$(srcdir)" || test -z "$(CONFIG_CLEAN_VPATH_FILES)" || rm -f $(CONFIG_CLEAN_VPATH_FILES)
 	-rm -f crafter/$(DEPDIR)/$(am__dirstamp)
 	-rm -f crafter/$(am__dirstamp)
+	-rm -f crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+	-rm -f crafter/Protocols/$(am__dirstamp)
+	-rm -f crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+	-rm -f crafter/Utils/$(am__dirstamp)
 
 maintainer-clean-generic:
 	@echo "This command is intended for maintainers to use"
@@ -946,7 +971,7 @@ clean-am: clean-generic clean-libLTLIBRARIES clean-libtool \
 
 distclean: distclean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
-	-rm -rf crafter/$(DEPDIR)
+	-rm -rf crafter/$(DEPDIR) crafter/Protocols/$(DEPDIR) crafter/Utils/$(DEPDIR)
 	-rm -f Makefile
 distclean-am: clean-am distclean-compile distclean-generic \
 	distclean-hdr distclean-libtool distclean-tags
@@ -995,7 +1020,7 @@ installcheck-am:
 maintainer-clean: maintainer-clean-am
 	-rm -f $(am__CONFIG_DISTCLEAN_FILES)
 	-rm -rf $(top_srcdir)/autom4te.cache
-	-rm -rf crafter/$(DEPDIR)
+	-rm -rf crafter/$(DEPDIR) crafter/Protocols/$(DEPDIR) crafter/Utils/$(DEPDIR)
 	-rm -f Makefile
 maintainer-clean-am: distclean-am maintainer-clean-generic
 

@@ -32,6 +32,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "crafter/Crafter.h"
 
-#include "crafter/CrafterUtils.h"
+#include "crafter/Utils/CrafterUtils.h"
 
 #endif

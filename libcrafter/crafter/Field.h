@@ -30,7 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define FIELD_H_
 
 #include <iostream>
-#include "IPResolver.h"
+#include "Utils/IPResolver.h"
 
 typedef uint32_t word;
 typedef uint8_t byte;

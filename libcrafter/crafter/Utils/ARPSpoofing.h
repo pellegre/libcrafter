@@ -39,7 +39,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <signal.h>
 #include <pthread.h>
 
-#include "Crafter.h"
+#include "../Crafter.h"
 #include "CrafterUtils.h"
 
 namespace Crafter {

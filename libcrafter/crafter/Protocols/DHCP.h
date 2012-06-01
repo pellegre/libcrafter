@@ -28,7 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef DHCP_H_
 #define DHCP_H_
 
-#include "Layer.h"
+#include "../Layer.h"
 #include "RawLayer.h"
 #include "DHCPOptions.h"
 
