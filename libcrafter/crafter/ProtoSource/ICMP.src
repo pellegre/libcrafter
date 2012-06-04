@@ -1,0 +1,11 @@
+name ICMP
+protoid 0x01
+ByteField   Type           0 0 8
+ByteField   Code           0 1 0
+XShortField CheckSum       0 2 0
+WordField   RestOfHeader   1 0 0
+XShortField Identifier     1 0 0
+XShortField SequenceNumber 1 2 0
+ByteField   Pointer        1 0 0
+IPAddress   Gateway        1 0 "1.2.3.4"
+ByteField   Length         1 1 0

@@ -32,40 +32,40 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Layer.h"
 
 /* Ethernet Protocol Implementation */
-#include "Ethernet.h"
+#include "Protocols/Ethernet.h"
 
 /* Address Resolution Protocol Implementation */
-#include "ARP.h"
+#include "Protocols/ARP.h"
 
 /* UDP Protocol Implementation */
-#include "UDP.h"
+#include "Protocols/UDP.h"
 
 /* TCP Protocol Implementation */
-#include "TCP.h"
+#include "Protocols/TCP.h"
 
 /* IP Protocol Implementation */
-#include "IP.h"
+#include "Protocols/IP.h"
 
 /* ICMP Protocol Implementation */
-#include "ICMP.h"
+#include "Protocols/ICMP.h"
 
 /* ICMPExtension Protocol Implementation */
-#include "ICMPExtension.h"
+#include "Protocols/ICMPExtension.h"
 
 /* ICMPExtensionMPLS Protocol Implementation */
-#include "ICMPExtensionMPLS.h"
+#include "Protocols/ICMPExtensionMPLS.h"
 
 /* ICMPExtensionObject Protocol Implementation */
-#include "ICMPExtensionObject.h"
+#include "Protocols/ICMPExtensionObject.h"
 
 /* DNS Protocol Implementation */
-#include "DNS.h"
+#include "Protocols/DNS.h"
 
 /* DHCP Protocol Implementation */
-#include "DHCP.h"
+#include "Protocols/DHCP.h"
 
 /* Raw Layer, nothing specific */
-#include "RawLayer.h"
+#include "Protocols/RawLayer.h"
 
 /* Packet Manipulation class */
 #include "Packet.h"
