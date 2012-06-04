@@ -1,5 +1,6 @@
 /*
 Copyright (c) 2012, Bruno Nery
+Copyright (c) 2012, Esteban Pellegrino
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -30,24 +31,33 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace Crafter;
 using namespace std;
 
-ICMPExtension::ICMPExtension() {
-    allocate_words(1);
-    SetName("ICMPExtension");
-    SetprotoID(0xFF);
-    DefineProtocol();
-    SetVersion(2);
-    SetReserved(0);
-    SetChecksum(0);
-    ResetFields();
-}
-
-void ICMPExtension::DefineProtocol() {
-    define_field("VerRes", new BitField<short_word,4,12>(0,0,15,"Version","Reserved"));
-    define_field("Checksum", new HexField(0, 16, 31));
-}
-
 void ICMPExtension::ReDefineActiveFields() {
-    /* empty */
+}
+
+void ICMPExtension::Craft() {
+    SetPayload(NULL, 0);
+
+	if (!IsFieldSet(FieldCheckSum) || (GetCheckSum() == 0)) {
+
+		/* Total size */
+		size_t total_size = GetRemainingSize();
+		if ( (total_size%2) != 0 ) total_size++;
+
+		byte* buff_data = new byte[total_size];
+
+		buff_data[total_size - 1] = 0x00;
+
+		/* Compute the 16 bit checksum */
+		SetCheckSum(0);
+
+		GetData(buff_data);
+		short_word checksum = CheckSum((unsigned short *)buff_data,total_size/2);
+		SetCheckSum(ntohs(checksum));
+		ResetField(FieldCheckSum);
+
+		delete [] buff_data;
+
+	}
 }
 
 void ICMPExtension::LibnetBuild(libnet_t *l) {
@@ -67,35 +77,3 @@ void ICMPExtension::LibnetBuild(libnet_t *l) {
 	}
 }
 
-std::string ICMPExtension::MatchFilter() const {
-    return "";
-}
-
-void ICMPExtension::Craft() {
-    SetPayload(NULL, 0);
-
-	if (!IsFieldSet("Checksum") || (GetChecksum() == 0)) {
-
-		/* Total size */
-		size_t total_size = GetRemainingSize();
-		if ( (total_size%2) != 0 ) total_size++;
-
-		byte* buff_data = new byte[total_size];
-
-		buff_data[total_size - 1] = 0x00;
-
-		/* Compute the 16 bit checksum */
-		SetChecksum(0);
-
-		GetData(buff_data);
-		short_word checksum = CheckSum((unsigned short *)buff_data,total_size/2);
-		SetChecksum(ntohs(checksum));
-		ResetField("Checksum");
-
-		delete [] buff_data;
-
-	}}
-
-ICMPExtension::~ICMPExtension() {
-    /* empty */
-}

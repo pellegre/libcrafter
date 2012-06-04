@@ -1,5 +1,6 @@
 /*
 Copyright (c) 2012, Bruno Nery
+Copyright (c) 2012, Esteban Pellegrino
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -24,7 +25,6 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-
 #ifndef ICMPEXTENSIONMPLS_H_
 #define ICMPEXTENSIONMPLS_H_
 
@@ -32,8 +32,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace Crafter {
 
-    class ICMPExtensionMPLS : public Layer {
-        /* Define the field of the IP layer */
+    class ICMPExtensionMPLS: public Layer {
+
         void DefineProtocol();
 
         Constructor GetConstructor() const {
@@ -44,80 +44,55 @@ namespace Crafter {
             return new ICMPExtensionMPLS;
         };
 
-        /* Copy crafted packet to buffer_data */
         void Craft();
 
-        /* Redefine active fields */
-        void ReDefineActiveFields();
-
-        /* Put Data into libnet context */
         void LibnetBuild(libnet_t* l);
 
-        /* Match filter function */
-        virtual std::string MatchFilter() const;
+        void ReDefineActiveFields();
 
-        void SetAll(word all) {
-            SetFieldValueCheckOverlap<word>("LabelExpBosAndTTL", all);
-        };
-
-        word GetAll() const {
-            return GetFieldValue<word>("LabelExpBosAndTTL");
-        };
+        static const byte FieldLabel = 0;
+        static const byte FieldExperimental = 1;
+        static const byte FieldBottomOfStack = 2;
+        static const byte FieldTTL = 3;
 
     public:
-        /* Constructor */
+
         ICMPExtensionMPLS();
 
-        /* Setters */
-        void SetLabel(word label) {
-            word all = GetAll();
-            all &= 0x00000FFF;
-            all |= ((label << 12) & 0xFFFFF000);
-            SetAll(all);
+        void SetLabel(const word& value) {
+            SetFieldValue(FieldLabel,value);
         };
 
-        void SetExperimental(unsigned char experimental) {
-            word all = GetAll();
-            all &= 0xFFFFF1FF;
-            all |= ((experimental << 9) & 0x00000E00);
-            SetAll(all);
+        void SetExperimental(const word& value) {
+            SetFieldValue(FieldExperimental,value);
         };
 
-        void SetBottomOfStack(bool bottomofstack) {
-            word all = GetAll();
-            all &= 0xFFFFFEFF;
-            all |= ((bottomofstack << 8) & 0x00000100);
-            SetAll(all);
+        void SetBottomOfStack(const word& value) {
+            SetFieldValue(FieldBottomOfStack,value);
         };
 
-        void SetTTL(unsigned char ttl) {
-            word all = GetAll();
-            all &= 0xFFFFFF00;
-            all |= (ttl & 0x000000FF);
-            SetAll(all);
+        void SetTTL(const byte& value) {
+            SetFieldValue(FieldTTL,value);
         };
 
-        /* Getters */
-        word GetLabel() const {
-            return (GetAll() & 0xFFFFF000) >> 12;
+        word  GetLabel() const {
+            return GetFieldValue<word>(FieldLabel);
         };
 
-        word GetExperimental() const {
-            return (GetAll() & 0x00000E00) >> 9;
+        word  GetExperimental() const {
+            return GetFieldValue<word>(FieldExperimental);
         };
 
-        bool GetBottomOfStack() const {
-            return (GetAll() & 0x00000100) >> 8;
+        word  GetBottomOfStack() const {
+            return GetFieldValue<word>(FieldBottomOfStack);
         };
 
-        word GetTTL() const {
-            return (GetAll() & 0x000000FF);
+        byte  GetTTL() const {
+            return GetFieldValue<byte>(FieldTTL);
         };
 
-        /* Print the ICMP MPLS Extension Query */
-        void Print() const;
+        ~ICMPExtensionMPLS() { /* Destructor */ };
 
-        virtual ~ICMPExtensionMPLS();
     };
 
 }

@@ -25,12 +25,21 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-
 #include "TCP.h"
-#include <netinet/tcp.h>
+#include "IP.h"
 
-using namespace std;
 using namespace Crafter;
+using namespace std;
+
+const word TCP::FIN = 1 << 0;
+const word TCP::SYN = 1 << 1;
+const word TCP::RST = 1 << 2;
+const word TCP::PSH = 1 << 3;
+const word TCP::ACK = 1 << 4;
+const word TCP::URG = 1 << 5;
+const word TCP::ECE = 1 << 6;
+const word TCP::CWR = 1 << 7;
+const word TCP::NS  = 1 << 8;
 
 /* Pseudo header for TCP checksum */
 struct psd_tcp {
@@ -53,35 +62,10 @@ static void setup_psd (word src, word dst, byte* buffer, size_t tcp_size) {
 	memcpy(buffer,(const byte *)&buf,sizeof(buf));
 }
 
-TCP::TCP() {
-	/* Allocate five words */
-	allocate_words(5);
-	/* Name of the protocol represented by this layer */
-	SetName("TCP");
-	/* Set the protocol ID */
-	SetprotoID(0x06);
-
-	/* Creates field information for the layer */
-	DefineProtocol();
-
-	/* Always set default values for fields in a layer */
-	SetSrcPort(0);
-	SetDstPort(80);
-	SetSeqNumber(0);
-	SetAckNumber(0);
-	SetDataOffset(5);
-	SetReserved(0);
-	SetFlags(0);
-	SetWindowsSize(5840);
-	SetCheckSum(0);
-	SetUrgPointer(0);
-
-	/* Always call this, reset all fields */
-	ResetFields();
+void TCP::ReDefineActiveFields() {
 }
 
-/* Copy crafted packet to buffer_data */
-void TCP::Craft () {
+void TCP::Craft() {
 	/* Get the layer on the bottom of this one, and verify that is an IP layer */
 	IP* ip_layer = 0;
 	/* Bottom layer name */
@@ -95,18 +79,16 @@ void TCP::Craft () {
 	/* Check the options and update header length */
 	size_t option_length = (GetSize() - GetHeaderSize())/4;
 	if (option_length)
-		if (!IsFieldSet("OffRes")) {
+		if (!IsFieldSet(FieldDataOffset)) {
 			SetDataOffset(5 + option_length);
-			ResetField("OffRes");
+			ResetField(FieldDataOffset);
 		}
-
-	FieldInfo* ptr_check = GetFieldPtr("CheckSum");
 
 	size_t tot_length = GetRemainingSize();
 
-	if (!IsFieldSet(ptr_check)) {
+	if (!IsFieldSet(FieldCheckSum)) {
 		/* Set the checksum to zero */
-		SetFieldValue<word>(ptr_check,0x0);
+		SetCheckSum(0x0);
 
 		if(bottom_layer == 0x0800) {
 			/* It's OK */
@@ -136,13 +118,21 @@ void TCP::Craft () {
 		}
 
 		/* Set the checksum to zero */
-		SetFieldValue<word>(ptr_check,ntohs(checksum));
-		ResetField(ptr_check);
+		SetCheckSum(ntohs(checksum));
+		ResetField(FieldCheckSum);
 	}
-
 }
 
-void TCP::LibnetBuild(libnet_t* l) {
+string TCP::MatchFilter() const {
+	char src_port[6];
+	char dst_port[6];
+	sprintf(src_port,"%d", GetSrcPort());
+	sprintf(dst_port,"%d", GetDstPort());
+	std::string ret_str = "tcp and dst port " + std::string(src_port) + " and src port " + std::string(dst_port);
+	return ret_str;
+}
+
+void TCP::LibnetBuild(libnet_t *l) {
 	/* Get the payload */
 	size_t options_size = (GetDataOffset() - 5) * 4;
 	byte* options = 0;
@@ -155,7 +145,7 @@ void TCP::LibnetBuild(libnet_t* l) {
 
 	if (options) {
 
-		int opt  = libnet_build_tcp_options ( options,
+		int opt  = libnet_build_tcp_options ( (uint8_t *)options,
 											  GetPayloadSize(),
 											  l,
 											  0
@@ -196,19 +186,6 @@ void TCP::LibnetBuild(libnet_t* l) {
 
 	if(options)
 		delete [] options;
-}
 
-
-void TCP::DefineProtocol() {
-	/* Source Port number */
-	define_field("SrcPort",new NumericField(0,0,15));
-	define_field("DstPort",new NumericField(0,16,31));
-	define_field("SeqNumber",new NumericField(1,0,31));
-	define_field("AckNumber",new NumericField(2,0,31));
-	define_field("OffRes",new BitField<byte,4,4>(3,0,7,"DataOffset","Reserved"));
-	define_field("Flags", new ControlFlags(3,8,15));
-	define_field("WindowsSize",new NumericField(3,16,31));
-	define_field("CheckSum",new HexField(4,0,15));
-	define_field("UrgPointer",new NumericField(4,16,31));
 }
 

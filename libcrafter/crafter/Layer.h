@@ -30,6 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define LAYER_H_
 
 #include <iostream>
+#include <ostream>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -42,7 +43,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <netinet/in.h>
 #include <libnet.h>
 
-#include "Field.h"
+#include "Fields/Field.h"
 #include "Payload.h"
 #include "Utils/PrintMessage.h"
 
@@ -73,8 +74,6 @@ namespace Crafter {
 
 		/* Layer constructor function definition */
 		typedef Layer(*(*Constructor)());
-		/* Map of Field and the corresponding information */
-		typedef std::map<std::string,FieldInfo*> MapFieldInfo;
 
 		/* Number that identifies this layer protocol */
 		short_word protoID;
@@ -82,42 +81,23 @@ namespace Crafter {
 		std::string name;
 		/* Raw data from the layer */
 		byte* raw_data;
-		/* List of active fields on the Layer */
-		std::set<std::string> ActiveFields;
 		/* Map of fields values and names */
-		MapFieldInfo Fields;
+		FieldContainer Fields;
 		/* Payload of the Layer */
 		Payload LayerPayload;
 		/* Layer on the top of this one */
 		Layer* BottomLayer;
 		/* Layer on the Top of this one */
 		Layer* TopLayer;
-		/* Flag if the layer support overlapped fields */
-		byte overlap_flag;
 
 		/* ----------- Manipulating data functions ----------- */
 
-		/* Write a byte in the data */
-		void write_byte(size_t nbyte, byte wbyte);
-		/* Set a bunch of bytes on the data */
-		void write_bytes(size_t nbyte, size_t num, const byte* wbyte);
-		/* Write the firts <nbits> bits in <value> to the raw_data from <ibit>*/
-		void write_bits(size_t ibit, size_t nbits, word value);
-
 		/* Set a Field value */
 		template<class T>
-		void SetFieldValue(const std::string& FieldName, T HumanValue);
-		template<class T>
-		void SetFieldValue(FieldInfo* field_ptr, T HumanValue);
-		/* Set a Field value and check if the field is overlapping someone else */
-		template<class T>
-		void SetFieldValueCheckOverlap(const std::string& FieldName, T HumanValue);
+		void SetFieldValue(size_t nfield, T HumanValue);
 		/* Get value of a field */
 		template<class T>
-		T GetFieldValue(const std::string& FieldName) const;
-		/* Get a pointer of this Layer */
-		template<class T>
-		T* GetLayerPtr(const std::string& FieldName) const;
+		T GetFieldValue(size_t nfield) const;
 
 		/* Set name of the layer */
 		void SetName(const std::string& _name) { name = _name; };
@@ -134,18 +114,13 @@ namespace Crafter {
 
 		/* ---------- Field manipulation functions ----------- */
 
-		/* Define a new field for the layer */
-		void define_field(const std::string& FieldName, FieldInfo* field);
-
-		/* --------------------------------------------------- */
-
 		/* Debug field */
 		void PrintFieldsAdd() const {
 			/* Free every Field allocated */
-			std::map<std::string,FieldInfo*>::const_iterator it_field;
+			std::vector<FieldInfo*>::const_iterator it_field;
 
 			for (it_field = Fields.begin() ;  it_field != Fields.end() ; ++it_field) {
-				std::cout << (*it_field).first << " is at " << std::hex << (*it_field).second << std::endl;;
+				std::cout << "field is at " << std::hex << (*it_field) << std::endl;;
 			}
 		};
 
@@ -153,21 +128,19 @@ namespace Crafter {
 		 * Function that checks if the field <FieldName> is active,
 		 * and re-set the value according to the raw_data on the layer
 		 */
-		void RedefineField(const std::string& FieldName);
+		void RedefineField(size_t nfield);
 
 		/* Get a pointer to a field of the layer */
-		FieldInfo* GetFieldPtr(const std::string& field_name);
+		FieldInfo* GetFieldPtr(size_t nfield);
 
 		/* Check if the field_name was set by the user */
-		byte IsFieldSet(const std::string& FieldName) const;
-		byte IsFieldSet(const FieldInfo* field_ptr) const;
+		byte IsFieldSet(size_t nfield) const;
 
 		/* Reset all field */
 		void ResetFields();
 
 		/* Reset all field */
-		void ResetField(const std::string& field_name);
-		void ResetField(FieldInfo* field_ptr);
+		void ResetField(size_t nfield);
 
 		/* Clone the layer given as an argument */
 		void Clone(const Layer& layer);
@@ -228,6 +201,9 @@ namespace Crafter {
 		/* Put data into a libnet context calling the libnet_build* function */
 		virtual void LibnetBuild(libnet_t *l) { };
 
+		virtual void PrintFields(std::ostream& str) const;
+		virtual void PrintPayload(std::ostream& str) const;
+
 	public:
 
 		/* Friend classes */
@@ -272,7 +248,7 @@ namespace Crafter {
 		void HexDump() const;
 
 		/* Print the header in human readable form */
-		virtual void Print() const;
+		void Print(std::ostream& str = std::cout) const;
 
 		/* Print Raw data in string format */
 		void RawString() const;
@@ -409,159 +385,18 @@ namespace Crafter {
 }
 
 template<class T>
-void Crafter::Layer::SetFieldValueCheckOverlap(const std::string& FieldName, T HumanValue){
+void Crafter::Layer::SetFieldValue(size_t nfield, T HumanValue){
+	/* Set the nfield value */
+	Fields.SetField(nfield,HumanValue);
 
-	/* Set the field value on the table */
-	std::map<std::string,FieldInfo*>::iterator it;
-
-	it = Fields.find(FieldName);
-
-	if (it == Fields.end()) {
-		std::cerr << "[!] ERROR: No field " << "<" << FieldName << ">" << " defined in layer " << name << ". Aborting!" << std::endl;
-		exit(1);
-	}
-
-	std::set<std::string> OverlappedFields;
-
-	/* First, check if the field is active */
-	if(ActiveFields.find(FieldName) == ActiveFields.end()) {
-		/* If the field is not active, it can be overlapping some other field */
-		std::set<std::string>::iterator it_active;
-
-		for (it_active = ActiveFields.begin() ; it_active != ActiveFields.end() ; ++it_active) {
-			FieldInfo* FieldPtr = Fields[(*it_active)];
-			/* Get information of the active fields */
-			size_t nword = FieldPtr->Get_nword();
-
-			/* Check if the fields are in the same word */
-			if ((*it).second->Get_nword() == nword) {
-				size_t bitpos = FieldPtr->Get_bitpos();
-				size_t endpos = FieldPtr->Get_endpos();
-
-				/* Check intersection */
-				if  ( ( ((*it).second->Get_bitpos() >= bitpos) && ((*it).second->Get_bitpos() <  endpos) ) ||
-					  ( ((*it).second->Get_endpos() >  bitpos) && ((*it).second->Get_endpos() <= endpos) )  ) {
-					OverlappedFields.insert(*it_active);
-					FieldPtr->Clear();
-				}
-
-			}
-		}
-		/* And push it into the active fields set */
-		ActiveFields.insert(FieldName);
-	}
-
-	/* Remove overlapped fields, if any */
-	std::set<std::string>::iterator it_over;
-
-	for (it_over = OverlappedFields.begin() ; it_over != OverlappedFields.end() ; ++it_over)
-		ActiveFields.erase(*it_over);
-
-	dynamic_cast<GeneralField<T>* >((*it).second)->HumanToNetwork(HumanValue);
-
-	word value = (*it).second->GetNetworkValue();
-
-	if ( !(*it).second->IsFieldSet() )
-		(*it).second->FieldSetted();
-
-	/* Get position information of the field */
-	size_t nword = (*it).second->Get_nword();
-	size_t bitpos = (*it).second->Get_bitpos();
-	size_t endpos = (*it).second->Get_endpos();
-
-	/* Get length of the field */
-	size_t length = endpos - bitpos + 1;
-
-	/* Now, write the value into the raw data */
-	write_bits(sizeof(word)*8*nword + bitpos, length, value);
-
-}
-
-template<class T>
-void Crafter::Layer::SetFieldValue(const std::string& FieldName, T HumanValue){
-
-	/* Set the field value on the table */
-	std::map<std::string,FieldInfo*>::iterator it;
-
-	it = Fields.find(FieldName);
-
-	if (it == Fields.end()) {
-		std::cerr << "[!] ERROR: No field " << "<" << FieldName << ">" << " defined in layer " << name << ". Aborting!" << std::endl;
-		exit(1);
-	}
-
-	dynamic_cast<GeneralField<T>* >((*it).second)->HumanToNetwork(HumanValue);
-
-	word value = (*it).second->GetNetworkValue();
-
-	if ( !(*it).second->IsFieldSet() )
-		(*it).second->FieldSetted();
-
-	/* Get position information of the field */
-	size_t nword = (*it).second->Get_nword();
-	size_t bitpos = (*it).second->Get_bitpos();
-	size_t endpos = (*it).second->Get_endpos();
-
-	/* Get length of the field */
-	size_t length = endpos - bitpos + 1;
-
-	/* Now, write the value into the raw data */
-	write_bits(sizeof(word)*8*nword + bitpos, length, value);
-
-}
-
-template<class T>
-void Crafter::Layer::SetFieldValue(FieldInfo* field_ptr, T HumanValue){
-
-	dynamic_cast<GeneralField<T>* >(field_ptr)->HumanToNetwork(HumanValue);
-
-	word value = field_ptr->GetNetworkValue();
-
-	if ( !field_ptr->IsFieldSet() )
-		field_ptr->FieldSetted();
-
-	/* Get position information of the field */
-	size_t nword = field_ptr->Get_nword();
-	size_t bitpos = field_ptr->Get_bitpos();
-	size_t endpos = field_ptr->Get_endpos();
-
-	/* Get length of the field */
-	size_t length = endpos - bitpos + 1;
-
-	/* Now, write the value into the raw data */
-	write_bits(sizeof(word)*8*nword + bitpos, length, value);
-
+	/* And write the data into this layer */
+	Fields[nfield]->Write(raw_data);
 }
 
 /* Get a pointer to a field */
 template<class T>
-T Crafter::Layer::GetFieldValue(const std::string& FieldName) const {
-	/* Return the value that is on teh table */
-	std::map<std::string,FieldInfo*>::const_iterator it;
-
-	it = Fields.find(FieldName);
-
-	if (it == Fields.end()) {
-		std::cerr << "[!] ERROR: No field " << "<" << FieldName << ">" << " defined in layer " << name << ". Aborting!" << std::endl;
-		exit(1);
-	}
-
-	return dynamic_cast<GeneralField<T>* >((*it).second)->GetHumanRead();
-}
-
-template<class T>
-T* Crafter::Layer::GetLayerPtr(const std::string& FieldName) const {
-	/* Return the value that is on the table */
-	std::map<std::string,FieldInfo*>::const_iterator it;
-
-	it = Fields.find(FieldName);
-
-	if (it == Fields.end()) {
-		std::cerr << "[!] ERROR: No field " << "<" << FieldName << ">" << " defined in layer " << name << ". Aborting!" << std::endl;
-		exit(1);
-	}
-
-	return dynamic_cast<T* >((*it).second);
+T Crafter::Layer::GetFieldValue(size_t nfield) const {
+	return Fields.GetField<T>(nfield);
 }
 
 #endif /* LAYER_H_ */

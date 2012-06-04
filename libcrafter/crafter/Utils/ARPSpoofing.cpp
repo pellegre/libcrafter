@@ -34,9 +34,15 @@ using namespace Crafter;
 
 const std::string Crafter::GetMAC(const std::string& IPAddress, const string& iface) {
 
+	/* Get the IP address associated to the interface */
+	string MyIP = GetMyIP(iface);
+	/* Get the MAC Address associated to the interface */
+	string MyMAC = GetMyMAC(iface);
 	/* Create the Ethernet layer */
 	Ethernet ether_layer;
 
+	/* Set source MAC */
+	ether_layer.SetSourceMAC(MyMAC);
 	/* Set broadcast destination address */
 	ether_layer.SetDestinationMAC("ff:ff:ff:ff:ff:ff");
 
@@ -45,7 +51,8 @@ const std::string Crafter::GetMAC(const std::string& IPAddress, const string& if
 
 	/* We want an ARP request */
 	arp_layer.SetOperation(ARP::Request);
-
+	arp_layer.SetSenderIP(MyIP);
+	arp_layer.SetSenderMAC(MyMAC);
 	/* Set the target IP address */
 	arp_layer.SetTargetIP(IPAddress);
 

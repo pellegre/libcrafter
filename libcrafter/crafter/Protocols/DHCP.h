@@ -24,7 +24,6 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-
 #ifndef DHCP_H_
 #define DHCP_H_
 
@@ -34,47 +33,51 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace Crafter {
 
-	class DHCP : public Layer {
+    class DHCP: public Layer {
 
-		/* String of client MAC address */
-		std::string ClientMAC;
-		/* Name of the boot file */
-		std::string BootFileName;
-		/* Server HostName */
-		std::string ServerHostName;
+        void DefineProtocol();
 
-		/* Convert MAC address in string format to values for each field*/
-		void MacStringToFields(const std::string& mac_address);
+        Constructor GetConstructor() const {
+            return DHCP::DHCPConstFunc;
+        };
 
-		/* Get values of each field an update MAC address */
-		std::string MacFieldsToString();
+        static Layer* DHCPConstFunc() {
+            return new DHCP;
+        };
 
-		void DefineProtocol();
+        void Craft();
 
-		Constructor GetConstructor() const {
-			return DHCP::DHCPConstFunc;
-		};
+        void LibnetBuild(libnet_t* l);
 
-		static Layer* DHCPConstFunc() {
-			return new DHCP;
-		};
+        void ReDefineActiveFields();
 
-		void Craft ();
+        static const byte FieldOperationCode = 0;
+        static const byte FieldHardwareType = 1;
+        static const byte FieldHardwareLength = 2;
+        static const byte FieldHopCount = 3;
+        static const byte FieldTransactionID = 4;
+        static const byte FieldNumberOfSeconds = 5;
+        static const byte FieldFlags = 6;
+        static const byte FieldClientIP = 7;
+        static const byte FieldYourIP = 8;
+        static const byte FieldServerIP = 9;
+        static const byte FieldGatewayIP = 10;
+        static const byte FieldClientMAC = 11;
+        static const byte FieldZeroPadding = 12;
+        static const byte FieldServerHostName = 13;
+        static const byte FieldBootFile = 14;
 
-		/* Put data into LIBNET context */
-		void LibnetBuild(libnet_t* l);
+        void PrintPayload(std::ostream& str) const;
 
-	public:
-		/* Number of bytes on MAC address */
-		static const int n_ether_bytes = 6;
+    public:
 
-		DHCP();
+		/* Some constant of the DHCP protocol */
+		static const byte Request;
+		static const byte Reply;
+
+        DHCP();
 
 		DHCP(const DHCP& dhcp) : Layer(dhcp) {
-			ClientMAC = dhcp.ClientMAC;
-			BootFileName = dhcp.BootFileName;
-			ServerHostName = dhcp.ServerHostName;
-
 			/* Copy the Options */
 			std::vector<DHCPOptions*>::const_iterator it_opt;
 
@@ -84,10 +87,6 @@ namespace Crafter {
 
 		/* Assignment operator of this class */
 		DHCP& operator=(const DHCP& right) {
-			/* Copy the particular data of this class */
-			ClientMAC = right.ClientMAC;
-			BootFileName = right.BootFileName;
-			ServerHostName = right.ServerHostName;
 
 			/* Copy the Options */
 			std::vector<DHCPOptions*>::const_iterator it_opt;
@@ -122,122 +121,125 @@ namespace Crafter {
 			return *this;
 		}
 
-		/* Some constant of the DHCP protocol */
-		static const byte Request = 0x1;
-		static const byte Reply = 0x2;
+        void SetOperationCode(const byte& value) {
+            SetFieldValue(FieldOperationCode,value);
+        };
 
-		void SetOperationCode(byte value) {
-			SetFieldValue<word>("OperationCode",value);
-		};
+        void SetHardwareType(const byte& value) {
+            SetFieldValue(FieldHardwareType,value);
+        };
 
-		void SetHardwareType(byte value) {
-			SetFieldValue<word>("HardwareType",value);
-		};
+        void SetHardwareLength(const byte& value) {
+            SetFieldValue(FieldHardwareLength,value);
+        };
 
-		void SetHardwareLength(byte value) {
-			SetFieldValue<word>("HardwareLength",value);
-		};
+        void SetHopCount(const byte& value) {
+            SetFieldValue(FieldHopCount,value);
+        };
 
-		void SetHopCount(byte value) {
-			SetFieldValue<word>("HopCount",value);
-		};
+        void SetTransactionID(const word& value) {
+            SetFieldValue(FieldTransactionID,value);
+        };
 
-		void SetTransactionID(word value) {
-			SetFieldValue<word>("TransactionID",value);
-		};
+        void SetNumberOfSeconds(const short_word& value) {
+            SetFieldValue(FieldNumberOfSeconds,value);
+        };
 
-		void SetNumberOfSeconds(short_word value) {
-			SetFieldValue<word>("NumberOfSeconds",value);
-		};
+        void SetFlags(const short_word& value) {
+            SetFieldValue(FieldFlags,value);
+        };
 
-		void SetFlags(short_word value) {
-			SetFieldValue<word>("Flags",value);
-		};
+        void SetClientIP(const std::string& value) {
+            SetFieldValue(FieldClientIP,value);
+        };
 
-		void SetClientIP(std::string value) {
-			SetFieldValue<std::string>("ClientIP",value);
-		};
+        void SetYourIP(const std::string& value) {
+            SetFieldValue(FieldYourIP,value);
+        };
 
-		void SetYourIP(std::string value) {
-			SetFieldValue<std::string>("YourIP",value);
-		};
+        void SetServerIP(const std::string& value) {
+            SetFieldValue(FieldServerIP,value);
+        };
 
-		void SetServerIP(std::string value) {
-			SetFieldValue<std::string>("ServerIP",value);
-		};
+        void SetGatewayIP(const std::string& value) {
+            SetFieldValue(FieldGatewayIP,value);
+        };
 
-		void SetGatewayIP(std::string value) {
-			SetFieldValue<std::string>("GatewayIP",value);
-		};
+        void SetClientMAC(const std::string& value) {
+            SetFieldValue(FieldClientMAC,value);
+        };
 
-		void SetClientMAC(std::string value) {
-			ClientMAC = value;
-			MacStringToFields(value);
-		}
+        void SetZeroPadding(const std::vector<byte> & value) {
+            SetFieldValue(FieldZeroPadding,value);
+        };
 
-		void SetBootFile(std::string filename) {
-			BootFileName = filename;
-		}
+        void SetServerHostName(const std::string& value) {
+            SetFieldValue(FieldServerHostName,value);
+        };
 
-		void SetServerHostName(std::string servername) {
-			ServerHostName = servername;
-		}
+        void SetBootFile(const std::string& value) {
+            SetFieldValue(FieldBootFile,value);
+        };
 
-		byte GetOperationCode() const {
-			return GetFieldValue<word>("OperationCode");
-		};
+        byte  GetOperationCode() const {
+            return GetFieldValue<byte>(FieldOperationCode);
+        };
 
-		byte GetHardwareType() const {
-			return GetFieldValue<word>("HardwareType");
-		};
+        byte  GetHardwareType() const {
+            return GetFieldValue<byte>(FieldHardwareType);
+        };
 
-		byte GetHardwareLength() const {
-			return GetFieldValue<word>("HardwareLength");
-		};
+        byte  GetHardwareLength() const {
+            return GetFieldValue<byte>(FieldHardwareLength);
+        };
 
-		byte GetHopCount() const {
-			return GetFieldValue<word>("HopCount");
-		};
+        byte  GetHopCount() const {
+            return GetFieldValue<byte>(FieldHopCount);
+        };
 
-		word GetTransactionID() const {
-			return GetFieldValue<word>("TransactionID");
-		};
+        word  GetTransactionID() const {
+            return GetFieldValue<word>(FieldTransactionID);
+        };
 
-		short_word GetNumberOfSeconds() const {
-			return GetFieldValue<word>("NumberOfSeconds");
-		};
+        short_word  GetNumberOfSeconds() const {
+            return GetFieldValue<short_word>(FieldNumberOfSeconds);
+        };
 
-		short_word GetFlags() const {
-			return GetFieldValue<word>("Flags");
-		};
+        short_word  GetFlags() const {
+            return GetFieldValue<short_word>(FieldFlags);
+        };
 
-		std::string GetClientIP() const {
-			return GetFieldValue<std::string>("ClientIP");
-		};
+        std::string  GetClientIP() const {
+            return GetFieldValue<std::string>(FieldClientIP);
+        };
 
-		std::string GetYourIP() const {
-			return GetFieldValue<std::string>("YourIP");
-		};
+        std::string  GetYourIP() const {
+            return GetFieldValue<std::string>(FieldYourIP);
+        };
 
-		std::string GetServerIP() const {
-			return GetFieldValue<std::string>("ServerIP");
-		};
+        std::string  GetServerIP() const {
+            return GetFieldValue<std::string>(FieldServerIP);
+        };
 
-		std::string GetGatewayIP() const {
-			return GetFieldValue<std::string>("GatewayIP");
-		};
+        std::string  GetGatewayIP() const {
+            return GetFieldValue<std::string>(FieldGatewayIP);
+        };
 
-		std::string GetClientMAC() const {
-			return ClientMAC;
-		}
+        std::string  GetClientMAC() const {
+            return GetFieldValue<std::string>(FieldClientMAC);
+        };
 
-		std::string GetBootFile() const {
-			return BootFileName;
-		}
+        std::vector<byte>   GetZeroPadding() const {
+            return GetFieldValue<std::vector<byte> >(FieldZeroPadding);
+        };
 
-		std::string GetServerHostName() const {
-			return ServerHostName;
-		}
+        std::string  GetServerHostName() const {
+            return GetFieldValue<std::string>(FieldServerHostName);
+        };
+
+        std::string  GetBootFile() const {
+            return GetFieldValue<std::string>(FieldBootFile);
+        };
 
 		/* DHCP Options */
 		std::vector<DHCPOptions*> Options;
@@ -245,10 +247,9 @@ namespace Crafter {
 		/* Set the field values from data of a Raw Layer */
 		void FromRaw(const RawLayer& raw_layer);
 
-		void Print() const;
+        ~DHCP() { /* Destructor */ };
 
-		virtual ~DHCP();
-	};
+    };
 
 }
 

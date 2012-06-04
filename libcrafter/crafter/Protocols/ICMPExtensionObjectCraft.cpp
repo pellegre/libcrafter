@@ -1,5 +1,6 @@
 /*
 Copyright (c) 2012, Bruno Nery
+Copyright (c) 2012, Esteban Pellegrino
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -25,32 +26,58 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "ICMPExtensionMPLS.h"
+#include "ICMPExtensionObject.h"
 
-using namespace std;
 using namespace Crafter;
+using namespace std;
 
-ICMPExtensionMPLS::ICMPExtensionMPLS() {
-    allocate_words(1);
-    SetName("ICMPExtensionMPLS");
-    SetprotoID(0xFF);
-    DefineProtocol();
-    SetLabel(0);
-    SetExperimental(0);
-    SetBottomOfStack(0);
-    SetTTL(0);
-    ResetFields();
+/* Classes (ClassNum) */
+const byte ICMPExtensionObject::MPLS = 1;
+
+/* Types (CType) */
+/* +++ MPLS +++ */
+const byte ICMPExtensionObject::MPLSReserved = 0;
+const byte ICMPExtensionObject::MPLSIncoming = 1;
+
+void ICMPExtensionObject::ReDefineActiveFields() {
 }
 
-void ICMPExtensionMPLS::DefineProtocol() {
-    define_field("LabelExpBosAndTTL", new HexField(0, 0, 31));
+void ICMPExtensionObject::Craft() {
+    SetPayload(NULL, 0);
+
+
+    Layer* layer = GetTopLayer();
+
+    /* Set the extension object type/code */
+    if (layer) {
+        if (layer->GetName() == "ICMPExtensionMPLS") {
+            SetClassNum(MPLS);
+            SetCType(MPLSIncoming);
+        } else {
+            SetClassNum(0);
+            SetCType(0);
+        }
+    }
+
+    /* Set the extension object length */
+    word length = 0;
+    while (layer && layer->GetName() != "ICMPExtensionObject") {
+        length += layer->GetSize();
+        /* Trick to make every sibling class a friend :) */
+        layer = ((ICMPExtensionObject*) layer)->GetTopLayer();
+    }
+    SetLength(GetSize() + length);
 }
 
-void ICMPExtensionMPLS::ReDefineActiveFields() {
-    /* empty */
+std::string ICMPExtensionObject::GetClassName() const {
+    word classnum = GetClassNum();
+    switch (classnum) {
+    case MPLS: return "ICMPExtensionMPLS";
+    default: return "";
+    }
 }
 
-void ICMPExtensionMPLS::LibnetBuild(libnet_t *l) {
+void ICMPExtensionObject::LibnetBuild(libnet_t *l) {
 	/* Now write the data into the libnet context */
 	int pay = libnet_build_data	( raw_data,
 								  GetSize(),
@@ -67,29 +94,3 @@ void ICMPExtensionMPLS::LibnetBuild(libnet_t *l) {
 	}
 }
 
-std::string ICMPExtensionMPLS::MatchFilter() const {
-    return "";
-}
-
-void ICMPExtensionMPLS::Craft() {
-    SetPayload(NULL, 0);
-    Layer* layer = GetTopLayer();
-    if (!layer || layer->GetName() != GetName())
-        SetBottomOfStack(true);
-    else
-        SetBottomOfStack(false);
-}
-
-void ICMPExtensionMPLS::Print() const {
-	cout << "< ";
-        cout << name << " (" << GetSize() << " bytes) " << ":: ";
-        cout << "Label = " << GetLabel() << " ; ";
-        cout << "Experimental = " << GetExperimental() << " ; ";
-        cout << "BottomOfStack = " << GetBottomOfStack() << " ; ";
-        cout << "TTL = " << GetTTL() << " ; ";
-	cout << "Payload = ";
-	cout << ">" << endl;
-}
-
-ICMPExtensionMPLS::~ICMPExtensionMPLS() {
-}

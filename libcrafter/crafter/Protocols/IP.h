@@ -24,151 +24,159 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-
-
 #ifndef IP_H_
 #define IP_H_
 
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <string>
 #include "../Layer.h"
 
 namespace Crafter {
 
-	class IP : public Layer {
+    class IP: public Layer {
 
-		/* Define the field of the IP layer */
-		void DefineProtocol();
+        void DefineProtocol();
 
-		Constructor GetConstructor() const {
-			return IP::IPConstFunc;
-		};
+        Constructor GetConstructor() const {
+            return IP::IPConstFunc;
+        };
 
-		static Layer* IPConstFunc() {
-			return new IP;
-		};
+        static Layer* IPConstFunc() {
+            return new IP;
+        };
 
-		/* Copy crafted packet to buffer_data */
-		void Craft ();
+        void Craft();
 
-		/* Put data into libnet context */
-		void LibnetBuild(libnet_t* l);
+        void LibnetBuild(libnet_t* l);
 
-		virtual std::string MatchFilter() const { return "ip and dst host " + GetSourceIP() + " and src host " + GetDestinationIP(); };
+        std::string MatchFilter() const;
 
-	public:
+        void ReDefineActiveFields();
 
-		static const std::string DefaultIP;
+        static const byte FieldVersion = 0;
+        static const byte FieldHeaderLength = 1;
+        static const byte FieldDiffServicesCP = 2;
+        static const byte FieldExpCongestionNot = 3;
+        static const byte FieldTotalLength = 4;
+        static const byte FieldIdentification = 5;
+        static const byte FieldFlags = 6;
+        static const byte FieldFragmentOffset = 7;
+        static const byte FieldTTL = 8;
+        static const byte FieldProtocol = 9;
+        static const byte FieldCheckSum = 10;
+        static const byte FieldSourceIP = 11;
+        static const byte FieldDestinationIP = 12;
 
-		IP();
+    public:
 
-		/* Seters */
+        IP();
 
-		void SetVersion(unsigned char version) {
-			GetLayerPtr<BitField<byte,4,4> >("VerHdr")->SetLowField(version);
-			SetFieldValue<word>("VerHdr",0);
-		};
+        void SetVersion(const word& value) {
+            SetFieldValue(FieldVersion,value);
+        };
 
-		void SetHeaderLength(unsigned char length) {
-			GetLayerPtr<BitField<byte,4,4> >("VerHdr")->SetHighField(length);
-			SetFieldValue<word>("VerHdr",0);
-		};
+        void SetHeaderLength(const word& value) {
+            SetFieldValue(FieldHeaderLength,value);
+        };
 
-		void SetDifSerCP(short_word code) {
-			SetFieldValue<word>("DifSerCP",code);
-		};
+        void SetDiffServicesCP(const word& value) {
+            SetFieldValue(FieldDiffServicesCP,value);
+        };
 
-		void SetTotalLength(short_word length) {
-			SetFieldValue<word>("TotalLength",length);
-		};
+        void SetExpCongestionNot(const word& value) {
+            SetFieldValue(FieldExpCongestionNot,value);
+        };
 
-		void SetIdentification(short_word id) {
-			SetFieldValue<word>("Identification",id);
-		};
+        void SetTotalLength(const short_word& value) {
+            SetFieldValue(FieldTotalLength,value);
+        };
 
-		void SetFlags(unsigned char flags) {
-			GetLayerPtr<BitField<short_word,3,13> >("Off")->SetLowField(flags);
-			SetFieldValue<word>("Off",0);
-		};
+        void SetIdentification(const short_word& value) {
+            SetFieldValue(FieldIdentification,value);
+        };
 
-		void SetFragmentOffset(short_word offset) {
-			GetLayerPtr<BitField<short_word,3,13> >("Off")->SetHighField(offset);
-			SetFieldValue<word>("Off",0);
-		};
+        void SetFlags(const word& value) {
+            SetFieldValue(FieldFlags,value);
+        };
 
-		void SetTTL(unsigned char ttl) {
-			SetFieldValue<word>("TTL",ttl);
-		};
+        void SetFragmentOffset(const word& value) {
+            SetFieldValue(FieldFragmentOffset,value);
+        };
 
-		void SetProtocol(unsigned char proto) {
-			SetFieldValue<word>("Protocol",proto);
-		};
+        void SetTTL(const byte& value) {
+            SetFieldValue(FieldTTL,value);
+        };
 
-		void SetCheckSum(short_word checksum) {
-			SetFieldValue<word>("CheckSum",checksum);
-		};
+        void SetProtocol(const byte& value) {
+            SetFieldValue(FieldProtocol,value);
+        };
 
-		void SetSourceIP(std::string source_ip) {
-			SetFieldValue<std::string>("SourceIP",source_ip);
-		};
+        void SetCheckSum(const short_word& value) {
+            SetFieldValue(FieldCheckSum,value);
+        };
 
-		void SetDestinationIP(std::string dst_ip) {
-			SetFieldValue<std::string>("DestinationIP",dst_ip);
-		};
+        void SetSourceIP(const std::string& value) {
+            SetFieldValue(FieldSourceIP,value);
+        };
 
-		/* Getters */
+        void SetDestinationIP(const std::string& value) {
+            SetFieldValue(FieldDestinationIP,value);
+        };
 
-		word GetVersion() const {
-			return GetLayerPtr<BitField<byte,4,4> >("VerHdr")->GetLowField();
-		};
+        word  GetVersion() const {
+            return GetFieldValue<word>(FieldVersion);
+        };
 
-		word GetHeaderLength() const {
-			return GetLayerPtr<BitField<byte,4,4> >("VerHdr")->GetHighField();
-		};
+        word  GetHeaderLength() const {
+            return GetFieldValue<word>(FieldHeaderLength);
+        };
 
-		word GetDifSerCP() const {
-			return GetFieldValue<word>("DifSerCP");
-		};
+        word  GetDiffServicesCP() const {
+            return GetFieldValue<word>(FieldDiffServicesCP);
+        };
 
-		word GetTotalLength() const {
-			return GetFieldValue<word>("TotalLength");
-		};
+        word  GetExpCongestionNot() const {
+            return GetFieldValue<word>(FieldExpCongestionNot);
+        };
 
-		word GetIdentification() const {
-			return GetFieldValue<word>("Identification");
-		};
+        short_word  GetTotalLength() const {
+            return GetFieldValue<short_word>(FieldTotalLength);
+        };
 
-		word GetFlags() const {
-			return GetLayerPtr<BitField<short_word,3,13> >("Off")->GetLowField();
-		}
+        short_word  GetIdentification() const {
+            return GetFieldValue<short_word>(FieldIdentification);
+        };
 
-		word GetFragmentOffset() const {
-			return GetLayerPtr<BitField<short_word,3,13> >("Off")->GetHighField();
-		};
+        word  GetFlags() const {
+            return GetFieldValue<word>(FieldFlags);
+        };
 
-		word GetTTL() const {
-			return GetFieldValue<word>("TTL");
-		};
+        word  GetFragmentOffset() const {
+            return GetFieldValue<word>(FieldFragmentOffset);
+        };
 
-		word GetProtocol() const {
-			return GetFieldValue<word>("Protocol");
-		};
+        byte  GetTTL() const {
+            return GetFieldValue<byte>(FieldTTL);
+        };
 
-		word GetCheckSum() const {
-			return GetFieldValue<word>("CheckSum");
-		};
+        byte  GetProtocol() const {
+            return GetFieldValue<byte>(FieldProtocol);
+        };
 
-		std::string GetSourceIP() const {
-			return GetFieldValue<std::string>("SourceIP");
-		};
+        short_word  GetCheckSum() const {
+            return GetFieldValue<short_word>(FieldCheckSum);
+        };
 
-		std::string GetDestinationIP() const {
-			return GetFieldValue<std::string>("DestinationIP");
-		};
+        std::string  GetSourceIP() const {
+            return GetFieldValue<std::string>(FieldSourceIP);
+        };
 
-		virtual ~IP() {/* */};
-	};
+        std::string  GetDestinationIP() const {
+            return GetFieldValue<std::string>(FieldDestinationIP);
+        };
+
+        ~IP() { /* Destructor */ };
+
+    };
 
 }
+
 #endif /* IP_H_ */

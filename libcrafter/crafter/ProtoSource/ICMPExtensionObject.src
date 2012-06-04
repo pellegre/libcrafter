@@ -1,0 +1,5 @@
+name ICMPExtensionObject
+protoid 0xfe
+ShortField  Length    0 0 0
+ByteField   ClassNum  0 2 0
+ByteField   CType     0 3 0

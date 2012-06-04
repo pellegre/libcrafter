@@ -25,47 +25,41 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include "ARP.h"
 
-#include "IPSeudoHeader.h"
-
-using namespace std;
 using namespace Crafter;
+using namespace std;
 
-IPSeudoHeader::IPSeudoHeader() {
-	/* Allocate 5 words */
-	allocate_words(3);
-	/* Name of the protocol */
-	SetName("IPSeudoHeader");
-	/* Set protocol Number */
-	SetprotoID(0xfff0);
+ARP::ARP() {
 
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(this);
+    allocate_bytes(28);
+    SetName("ARP");
+    SetprotoID(0x0806);
+    DefineProtocol();
 
-	/* Creates field information for the layer */
-	DefineProtocol();
+    SetHardwareType(0x01);
+    SetProtocolType(0x0800);
+    SetHardwareLength(0x06);
+    SetProtocolLength(0x04);
+    SetOperation(0x01);
+    SetSenderMAC("00:00:00:00:00:00");
+    SetSenderIP("127.0.0.1");
+    SetTargetMAC("00:00:00:00:00:00");
+    SetTargetIP("127.0.0.1");
 
-	/* Get Local IP Address */
-	struct in_addr local_address;
-	local_address.s_addr = INADDR_ANY;
-	string ip(inet_ntoa (local_address));
-	SetSourceIP(ip);
-	SetDestinationIP("127.0.0.1");
+    ResetFields();
 
-	/* Always set default values for fields in a layer */
-	SetZeros(0x00);
-	SetProtocol(0x06);
-	SetProtocolLength(0);
-
-	/* Always call this, reset all fields */
-	ResetFields();
 }
 
-void IPSeudoHeader::DefineProtocol() {
-	/* Fields of the IP Pseudo Header */
-	define_field("SourceIP",new IPAddress(0,0,31));
-	define_field("DestinationIP",new IPAddress(1,0,31));
-	define_field("Zeros",new NumericField(2,0,7));
-	define_field("Protocol",new NumericField(2,8,15));
-	define_field("ProtocolLength",new NumericField(2,16,31));
+void ARP::DefineProtocol() {
+    Fields.push_back(new XShortField("HardwareType",0,0));
+    Fields.push_back(new XShortField("ProtocolType",0,2));
+    Fields.push_back(new ByteField("HardwareLength",1,0));
+    Fields.push_back(new ByteField("ProtocolLength",1,1));
+    Fields.push_back(new ShortField("Operation",1,2));
+    Fields.push_back(new MACAddress("SenderMAC",2,0));
+    Fields.push_back(new IPAddress("SenderIP",3,2));
+    Fields.push_back(new MACAddress("TargetMAC",4,2));
+    Fields.push_back(new IPAddress("TargetIP",6,0));
 }
+

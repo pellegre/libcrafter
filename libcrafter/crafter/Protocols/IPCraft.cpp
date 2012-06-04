@@ -25,118 +25,67 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-
 #include "IP.h"
 
 using namespace std;
 using namespace Crafter;
 
-const std::string IP::DefaultIP = "127.0.0.1";
-
-IP::IP() {
-		/* Allocate 5 words */
-		allocate_words(5);
-		/* Name of the protocol */
-		SetName("IP");
-		/* Set protocol NUmber */
-		SetprotoID(0x0800);
-
-		/* Creates field information for the layer */
-		DefineProtocol();
-
-		/* Always set default values for fields in a layer */
-		SetVersion(4);
-		SetHeaderLength(5);
-		SetDifSerCP(0);
-		SetTotalLength(0);
-		SetIdentification(0);
-		SetFlags(0x02);
-		SetFragmentOffset(0);
-		SetTTL(64);
-		SetProtocol(0x06);
-		SetCheckSum(0);
-
-		/* Set default IP Addresses */
-		SetSourceIP(DefaultIP);
-		SetDestinationIP(DefaultIP);
-
-		/* Always call this, reset all fields */
-		ResetFields();
+void IP::ReDefineActiveFields() {
 }
 
-void IP::DefineProtocol() {
-	/* Fields of the IP layer */
-	define_field("VerHdr",new BitField<byte,4,4>(0,0,7,"Version","HeaderLength"));
-
-	/* TODO : Fix this stuff */
-	define_field("DifSerCP",new NumericField(0,8,15));
-//	define_field("ExplicitCongNot",new NumericField(0,14,15));
-
-	define_field("TotalLength",new NumericField(0,16,31));
-	define_field("Identification",new HexField(1,0,15));
-	define_field("Off",new BitField<short_word,3,13>(1,16,31,"Flags","FragmentOffset"));
-	define_field("TTL",new NumericField(2,0,7));
-	define_field("Protocol",new HexField(2,8,15));
-	define_field("CheckSum",new HexField(2,16,31));
-	define_field("SourceIP",new IPAddress(3,0,31));
-	define_field("DestinationIP",new IPAddress(4,0,31));
-}
-
-void IP::Craft () {
+void IP::Craft() {
 	size_t tot_length = GetRemainingSize();
 
-	/* Get some fields pointers */
-	FieldInfo* ptr_totallength = GetFieldPtr("TotalLength");
-	FieldInfo* ptr_protocol = GetFieldPtr("Protocol");
-	FieldInfo* ptr_check = GetFieldPtr("CheckSum");
-
 	/* First, put the total length on the header */
-	if (!IsFieldSet(ptr_totallength)) {
-		SetFieldValue<word>(ptr_totallength,tot_length);
-		ResetField(ptr_totallength);
+	if (!IsFieldSet(FieldTotalLength)) {
+		SetTotalLength(tot_length);
+		ResetField(FieldTotalLength);
 	}
 
 	/* Get transport layer protocol */
 	if(TopLayer) {
-		if(!IsFieldSet(ptr_protocol)) {
-			std::string transport_layer = TopLayer->GetName();
+		if(!IsFieldSet(FieldProtocol)) {
+			short_word transport_layer = TopLayer->GetID();
 			/* Set Protocol */
-			if(transport_layer != "RawLayer")
-				SetFieldValue<word>(ptr_protocol,Protocol::AccessFactory()->GetProtoID(transport_layer));
+			if(transport_layer != 0xfff1)
+				SetProtocol(transport_layer);
 			else
-				SetFieldValue<word>(ptr_protocol,0x0);
+				SetProtocol(0x0);
 
-			ResetField(ptr_protocol);
+			ResetField(FieldProtocol);
 		}
 	}
 	else {
 		if (ShowWarnings)
-			std::cerr << "[!] WARNING: No Transport Layer Protocol asociated with IP Layer. " << std::endl;
+			std::cerr << "[!] WARNING: No Transport Layer Protocol associated with IP Layer. " << std::endl;
 	}
 
 	/* Check the options and update header length */
 	size_t option_length = (GetSize() - GetHeaderSize())/4;
 	if (option_length)
-	if (!IsFieldSet("VerHdr")) {
+	if (!IsFieldSet(FieldHeaderLength)) {
 		SetHeaderLength(5 + option_length);
-		ResetField("VerHdr");
+		ResetField(FieldHeaderLength);
 	}
 
-	if (!IsFieldSet(ptr_check)) {
+	if (!IsFieldSet(FieldCheckSum)) {
 		/* Compute the 16 bit checksum */
-		SetFieldValue<word>(ptr_check,0);
+		SetCheckSum(0);
 		byte* buffer = new byte[GetSize()];
 		GetRawData(buffer);
 		/* Calculate the checksum */
 		short_word checksum = CheckSum((unsigned short *)buffer,GetSize()/2);
-		SetFieldValue<word>(ptr_check,ntohs(checksum));
+		SetCheckSum(ntohs(checksum));
 		delete [] buffer;
-		ResetField(ptr_check);
+		ResetField(FieldCheckSum);
 	}
 }
 
-void IP::LibnetBuild(libnet_t *l) {
+string IP::MatchFilter() const {
+	return "ip and dst host " + GetSourceIP() + " and src host " + GetDestinationIP();
+}
 
+void IP::LibnetBuild(libnet_t *l) {
 	in_addr_t src = inet_addr(GetSourceIP().c_str());           /* Source protocol address */
 	in_addr_t dst = inet_addr(GetDestinationIP().c_str());      /* Destination protocol address */
 
@@ -162,7 +111,7 @@ void IP::LibnetBuild(libnet_t *l) {
 
 	/* In case the header has options */
 	if (options) {
-		int opt  = libnet_build_ipv4_options (options,
+		int opt  = libnet_build_ipv4_options ((u_int8_t *)options,
 				                              options_size,
 											  l,
 											  0
@@ -179,7 +128,7 @@ void IP::LibnetBuild(libnet_t *l) {
 
 	/* Now write the data into the libnet context */
 	int ip  = libnet_build_ipv4 ( GetTotalLength(),
-			                      GetDifSerCP(),
+								  GetDiffServicesCP(),
 			                      GetIdentification(),
 			                      *flag_off_pack,
 			                      GetTTL(),
@@ -208,4 +157,3 @@ void IP::LibnetBuild(libnet_t *l) {
 
 }
 
-IPAddress::~IPAddress() {}
