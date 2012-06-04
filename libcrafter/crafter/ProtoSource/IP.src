@@ -1,0 +1,15 @@
+name IP
+protoid 0x0800
+BitsField Version          0  0 4  4
+BitsField HeaderLength     0  4 4  5
+BitsField DiffServicesCP   0  8 6  0
+BitsField ExpCongestionNot 0 14 2  0 
+ShortField TotalLength     0  2    0
+XShortField Identification 1  0    0
+BitsField Flags            1 16 3  0x02
+BitsField FragmentOffset   1 19 13 0
+ByteField TTL              2  0    64
+XByteField Protocol        2  1    0x06
+XShortField CheckSum       2  2    0
+IPAddress SourceIP         3  0    "127.0.0.1"
+IPAddress DestinationIP    4  0    "127.0.0.1"

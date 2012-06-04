@@ -1,0 +1,5 @@
+name Ethernet
+protoid 0xfff2
+MACAddress DestinationMAC 0 0 "ff:ff:ff:ff:ff:ff"
+MACAddress SourceMAC      1 2 "00:00:00:00:00:00"
+XShortField Type          3 0 0x0800

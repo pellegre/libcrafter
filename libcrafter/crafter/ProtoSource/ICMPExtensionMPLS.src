@@ -1,0 +1,6 @@
+name ICMPExtensionMPLS
+protoid 0xfd
+BitsField   Label          0  0 20 0
+BitsField   Experimental   0 20  3 0
+BitsField   BottomOfStack  0 23  1 0 
+ByteField   TTL            0  3    0

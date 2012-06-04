@@ -20,38 +20,52 @@ lib_LTLIBRARIES = libcrafter.la
 ## rules which invoke the C++ compiler to produce a libtool object file (.lo)
 ## from each source file.  Note that it is not necessary to list header files
 ## which are already listed elsewhere in a _HEADERS variable assignment.
-libcrafter_la_SOURCES = crafter/PrintMessage.cpp \
-                        crafter/ARP.cpp \
-                        crafter/ARPPing.cpp \
-						crafter/ARPSpoofing.cpp \
-						crafter/ARPSpoofingReply.cpp \
-						crafter/ARPSpoofingRequest.cpp \
-						crafter/BitHandling.cpp \
-						crafter/CrafterUtils.cpp \
-						crafter/DHCP.cpp \
-						crafter/DHCPOptions.cpp \
-						crafter/DNS.cpp \
-						crafter/DNSAnswer.cpp \
-						crafter/DNSQuery.cpp \
-						crafter/Ethernet.cpp \
-						crafter/Field.cpp \
-						crafter/ICMP.cpp \
-						crafter/ICMPExtension.cpp \
-						crafter/ICMPExtensionMPLS.cpp \
-						crafter/ICMPExtensionObject.cpp \
-						crafter/IP.cpp \
-						crafter/IPResolver.cpp \
-						crafter/IPSeudoHeader.cpp \
-						crafter/IPv4Parse.cpp \
-						crafter/Layer.cpp \
-						crafter/Packet.cpp \
+libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Payload.cpp \
-						crafter/RawLayer.cpp \
-						crafter/RawSocket.cpp \
-						crafter/Sniffer.cpp \
-						crafter/TCPConnection.cpp \
-						crafter/TCP.cpp \
-						crafter/UDP.cpp 
+						crafter/Packet.cpp \
+						crafter/Utils/PrintMessage.cpp \
+						crafter/Utils/BitHandling.cpp \
+						crafter/Utils/IPResolver.cpp \
+						crafter/Utils/IPv4Parse.cpp \
+						crafter/Utils/RawSocket.cpp \
+						crafter/Utils/CrafterUtils.cpp \
+						crafter/Utils/ARPPing.cpp \
+						crafter/Utils/ARPSpoofing.cpp \
+						crafter/Utils/ARPSpoofingReply.cpp \
+						crafter/Utils/ARPSpoofingRequest.cpp \
+						crafter/Utils/Sniffer.cpp \
+						crafter/Utils/TCPConnection.cpp \
+						crafter/Fields/FieldContainer.cpp \
+						crafter/Fields/FieldInfo.cpp \
+						crafter/Fields/IPAddress.cpp \
+						crafter/Fields/MACAddress.cpp \
+						crafter/Fields/NumericFields.cpp \
+						crafter/Protocols/RawLayer.cpp \
+						crafter/Protocols/EthernetConstructor.cpp \
+						crafter/Protocols/EthernetCraft.cpp \
+						crafter/Protocols/ARPConstructor.cpp \
+						crafter/Protocols/ARPCraft.cpp \
+						crafter/Protocols/IPConstructor.cpp \
+						crafter/Protocols/IPCraft.cpp \
+						crafter/Protocols/UDPConstructor.cpp \
+						crafter/Protocols/UDPCraft.cpp \
+						crafter/Protocols/TCPConstructor.cpp \
+						crafter/Protocols/TCPCraft.cpp \
+						crafter/Protocols/ICMPConstructor.cpp \
+						crafter/Protocols/ICMPCraft.cpp \
+						crafter/Protocols/ICMPExtensionConstructor.cpp \
+						crafter/Protocols/ICMPExtensionCraft.cpp \
+						crafter/Protocols/ICMPExtensionMPLSConstructor.cpp \
+						crafter/Protocols/ICMPExtensionMPLSCraft.cpp \
+						crafter/Protocols/ICMPExtensionObjectConstructor.cpp \
+						crafter/Protocols/ICMPExtensionObjectCraft.cpp \
+						crafter/Protocols/DNSConstructor.cpp \
+						crafter/Protocols/DNSCraft.cpp \
+						crafter/Protocols/DNSQuery.cpp \
+						crafter/Protocols/DNSAnswer.cpp \
+						crafter/Protocols/DHCPConstructor.cpp \
+						crafter/Protocols/DHCPCraft.cpp \
+						crafter/Protocols/DHCPOptions.cpp
 
 ## Instruct libtool to include ABI version information in the generated shared
 ## library file (.so).  The library ABI version is defined in configure.ac, so
@@ -66,35 +80,42 @@ libcrafter_la_LIBADD = $(PCAPLIB) $(LNETLIB)
 ## source tree matches the hierarchy at the install location, however.
 crafter_includedir = $(includedir)
 nobase_crafter_include_HEADERS =crafter.h \
-                                crafter/ARP.h \
-                                crafter/ARPPing.h \
-								crafter/ARPSpoofing.h \
 								crafter/Crafter.h \
-								crafter/CrafterUtils.h \
-								crafter/BitHandling.h \
-								crafter/DHCP.h \
-								crafter/DHCPOptions.h \
-								crafter/DNS.h \
-								crafter/Ethernet.h \
-								crafter/Field.h \
-								crafter/ICMP.h \
-								crafter/ICMPExtension.h \
-								crafter/ICMPExtensionMPLS.h \
-								crafter/ICMPExtensionObject.h \
-								crafter/IP.h \
-								crafter/IPResolver.h \
-								crafter/IPSeudoHeader.h \
-								crafter/IPv4Parse.h \
 								crafter/Layer.h \
-								crafter/Packet.h \
 								crafter/Payload.h \
-								crafter/PrintMessage.h \
-								crafter/RawLayer.h \
-								crafter/RawSocket.h \
-								crafter/Sniffer.h \
-								crafter/TCPConnection.h \
-								crafter/TCP.h \
-								crafter/UDP.h
+								crafter/Packet.h \
+								crafter/Fields/BitsField.h \
+								crafter/Fields/BytesField.h \
+								crafter/Fields/FieldContainer.h \
+								crafter/Fields/Field.h \
+								crafter/Fields/FieldInfo.h \
+								crafter/Fields/IPAddress.h \
+								crafter/Fields/MACAddress.h \
+								crafter/Fields/NumericFields.h \
+								crafter/Fields/StringField.h \
+								crafter/Utils/BitHandling.h \
+								crafter/Utils/IPResolver.h \
+								crafter/Utils/IPv4Parse.h \
+								crafter/Utils/PrintMessage.h \
+								crafter/Utils/RawSocket.h \
+								crafter/Utils/CrafterUtils.h \
+								crafter/Utils/ARPPing.h \
+								crafter/Utils/ARPSpoofing.h \
+								crafter/Utils/Sniffer.h \
+								crafter/Utils/TCPConnection.h \
+								crafter/Protocols/RawLayer.h \
+								crafter/Protocols/Ethernet.h \
+								crafter/Protocols/ARP.h \
+								crafter/Protocols/IP.h \
+								crafter/Protocols/UDP.h \
+								crafter/Protocols/TCP.h \
+								crafter/Protocols/ICMP.h \
+								crafter/Protocols/ICMPExtension.h \
+								crafter/Protocols/ICMPExtensionMPLS.h \
+								crafter/Protocols/ICMPExtensionObject.h \
+								crafter/Protocols/DNS.h \
+								crafter/Protocols/DHCP.h \
+								crafter/Protocols/DHCPOptions.h
 
 ## The generated configuration header is installed in its own subdirectory of
 ## $(libdir).  The reason for this is that the configuration information put
