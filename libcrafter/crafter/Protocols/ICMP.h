@@ -24,8 +24,6 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-
-
 #ifndef ICMP_H_
 #define ICMP_H_
 
@@ -33,141 +31,139 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace Crafter {
 
-	class ICMP : public Layer {
+    class ICMP: public Layer {
 
-		/* Define the field of the IP layer */
-		void DefineProtocol();
+        void DefineProtocol();
 
-		Constructor GetConstructor() const {
-			return ICMP::ICMPConstFunc;
-		};
+        Constructor GetConstructor() const {
+            return ICMP::ICMPConstFunc;
+        };
 
-		static Layer* ICMPConstFunc() {
-			return new ICMP;
-		};
+        static Layer* ICMPConstFunc() {
+            return new ICMP;
+        };
 
-		/* Copy crafted packet to buffer_data */
-		void Craft ();
+        void Craft();
 
-		/* Redefine active fields */
-		void ReDefineActiveFields();
+        void LibnetBuild(libnet_t* l);
 
-		/* Put Data into libnet context */
-		void LibnetBuild(libnet_t* l);
+        std::string MatchFilter() const ;
 
-		/* Match filetr function */
-		virtual std::string MatchFilter() const;
+        void ReDefineActiveFields();
 
-	public:
+        static const byte FieldType = 0;
+        static const byte FieldCode = 1;
+        static const byte FieldCheckSum = 2;
+        static const byte FieldRestOfHeader = 3;
+        static const byte FieldIdentifier = 4;
+        static const byte FieldSequenceNumber = 5;
+        static const byte FieldPointer = 6;
+        static const byte FieldGateway = 7;
+        static const byte FieldLength = 8;
+
+    public:
 
 		/* ------- Messages types --------- */
 
 		/* +++ Other +++ */
-		static const byte SourceQuench = 4;
-		static const byte EchoRedirect = 5;
+		static const byte SourceQuench;
+		static const byte EchoRedirect;
 
 		/* +++ Error messages +++ */
-		static const byte DestinationUnreachable = 3;
-		static const byte TimeExceeded = 11;
-		static const byte ParameterProblem = 12;
+		static const byte DestinationUnreachable;
+		static const byte TimeExceeded;
+		static const byte ParameterProblem;
 
 		/* +++ Request and replies +++ */
-		static const byte EchoRequest = 8;
-		static const byte EchoReply = 0;
+		static const byte EchoRequest;
+		static const byte EchoReply;
 
-		static const byte TimeStampRequest = 13;
-		static const byte TimeStampReply = 14;
+		static const byte TimeStampRequest;
+		static const byte TimeStampReply;
 
-		static const byte InformationRequest = 15;
-		static const byte InformationReply = 16;
+		static const byte InformationRequest;
+		static const byte InformationReply;
 
-		static const byte AddressMaskRequest = 17;
-		static const byte AddressMaskReply = 18;
+		static const byte AddressMaskRequest;
+		static const byte AddressMaskReply;
 
-		/* Constructor */
-		ICMP();
+        ICMP();
 
-		/* Seters */
-		void SetType(unsigned char type) {
-			SetFieldValueCheckOverlap<word>("Type",type);
-		};
+        void SetType(const byte& value) {
+            SetFieldValue(FieldType,value);
+        };
 
-		void SetCode(unsigned char code) {
-			SetFieldValueCheckOverlap<word>("Code",code);
-		};
+        void SetCode(const byte& value) {
+            SetFieldValue(FieldCode,value);
+        };
 
-		void SetCheckSum(word checksum) {
-			SetFieldValueCheckOverlap<word>("CheckSum",checksum);
-		};
+        void SetCheckSum(const short_word& value) {
+            SetFieldValue(FieldCheckSum,value);
+        };
 
-		void SetRestOfHeader(word rest) {
-			SetFieldValueCheckOverlap<word>("RestOfHeader",rest);
-		};
+        void SetRestOfHeader(const word& value) {
+            SetFieldValue(FieldRestOfHeader,value);
+        };
 
-		/* Ping Header */
-		void SetIdentifier(word rest) {
-			SetFieldValueCheckOverlap<word>("Identifier",rest);
-		};
+        void SetIdentifier(const short_word& value) {
+            SetFieldValue(FieldIdentifier,value);
+        };
 
-		void SetSequenceNumber(word rest) {
-			SetFieldValueCheckOverlap<word>("SequenceNumber",rest);
-		};
+        void SetSequenceNumber(const short_word& value) {
+            SetFieldValue(FieldSequenceNumber,value);
+        };
 
-		void SetPointer(word ptr) {
-			SetFieldValueCheckOverlap<word>("Pointer",ptr);
-		};
+        void SetPointer(const byte& value) {
+            SetFieldValue(FieldPointer,value);
+        };
 
-		void SetGateway(std::string ip) {
-			SetFieldValueCheckOverlap<std::string>("Gateway",ip);
-		};
+        void SetGateway(const std::string& value) {
+            SetFieldValue(FieldGateway,value);
+        };
 
-		/* RFC4884: Destination Unreachable, Time Exceeded and Parameter Problem */
-		void SetLength(word length) {
-			SetFieldValueCheckOverlap<word>("Length", length);
-		};
-                
+        void SetLength(const byte& value) {
+            SetFieldValue(FieldLength,value);
+        };
 
-		/* Geters */
-		word GetType() const {
-			return GetFieldValue<word>("Type");
-		};
+        byte  GetType() const {
+            return GetFieldValue<byte>(FieldType);
+        };
 
-		word GetCode() const {
-			return GetFieldValue<word>("Code");
-		};
+        byte  GetCode() const {
+            return GetFieldValue<byte>(FieldCode);
+        };
 
-		word GetCheckSum() const {
-			return GetFieldValue<word>("CheckSum");
-		};
+        short_word  GetCheckSum() const {
+            return GetFieldValue<short_word>(FieldCheckSum);
+        };
 
-		word GetRestOfHeader() const {
-			return GetFieldValue<word>("RestOfHeader");
-		};
+        word  GetRestOfHeader() const {
+            return GetFieldValue<word>(FieldRestOfHeader);
+        };
 
-		/* Ping Header */
-		word GetIdentifier() const {
-			return  GetFieldValue<word>("Identifier");
-		};
+        short_word  GetIdentifier() const {
+            return GetFieldValue<short_word>(FieldIdentifier);
+        };
 
-		word GetSequenceNumber() const {
-			return GetFieldValue<word>("SequenceNumber");
-		};
+        short_word  GetSequenceNumber() const {
+            return GetFieldValue<short_word>(FieldSequenceNumber);
+        };
 
-		word GetPointer() const {
-			return GetFieldValue<word>("Pointer");
-		};
+        byte  GetPointer() const {
+            return GetFieldValue<byte>(FieldPointer);
+        };
 
-		std::string GetGateway() const {
-			return GetFieldValue<std::string>("Gateway");
-		};
+        std::string  GetGateway() const {
+            return GetFieldValue<std::string>(FieldGateway);
+        };
 
-		/* RFC4884: Destination Unreachable, Time Exceeded and Parameter Problem */
-		word GetLength() const {
-			return  GetFieldValue<word>("Length");
-		};
+        byte  GetLength() const {
+            return GetFieldValue<byte>(FieldLength);
+        };
 
-		virtual ~ICMP();
-	};
+        ~ICMP() { /* Destructor */ };
+
+    };
 
 }
 

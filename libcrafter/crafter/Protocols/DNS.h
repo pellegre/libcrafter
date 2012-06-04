@@ -24,8 +24,6 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-
-
 #ifndef DNS_H_
 #define DNS_H_
 
@@ -35,43 +33,48 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <arpa/nameser.h>
 #include <resolv.h>
 
-#include "../Layer.h"
 #include "RawLayer.h"
+#include "../Layer.h"
 
 namespace Crafter {
 
-	class DNS : public Layer {
+    class DNS: public Layer {
 
-		/* Strings for print Codes */
-		static std::string flagsOpCode[];
-		static std::string flagsRCode[];
+        void DefineProtocol();
 
-		/* Bit Position for each bit-field of the header */
-		static const byte BitQR = 15;
-		static const byte BitAA = 10;
-		static const byte BitTC = 9;
-		static const byte BitRD = 8;
-		static const byte BitRA = 7;
-		static const byte BitAD = 5;
-		static const byte BitCD = 4;
+        Constructor GetConstructor() const {
+            return DNS::DNSConstFunc;
+        };
 
-		void DefineProtocol();
+        static Layer* DNSConstFunc() {
+            return new DNS;
+        };
 
-		Constructor GetConstructor() const {
-			return DNS::DNSConstFunc;
-		};
+        void Craft();
 
-		static Layer* DNSConstFunc() {
-			return new DNS;
-		};
+        void LibnetBuild(libnet_t* l);
 
-		/* Copy crafted packet to buffer_data */
-		void Craft ();
+        void ReDefineActiveFields();
 
-		/* Put data into LIBNET context */
-		void LibnetBuild(libnet_t* l);
+        static const byte FieldIdentification = 0;
+        static const byte FieldQRFlag = 1;
+        static const byte FieldOpCode = 2;
+        static const byte FieldAAFlag = 3;
+        static const byte FieldTCFlag = 4;
+        static const byte FieldRDFlag = 5;
+        static const byte FieldRAFlag = 6;
+        static const byte FieldZFlag = 7;
+        static const byte FieldADFlag = 8;
+        static const byte FieldCDFlag = 9;
+        static const byte FieldRCode = 10;
+        static const byte FieldTotalQuestions = 11;
+        static const byte FieldTotalAnswer = 12;
+        static const byte FieldTotalAuthority = 13;
+        static const byte FieldTotalAdditional = 14;
 
-	public:
+        void PrintPayload(std::ostream& str) const;
+
+    public:
 
 		/* Typical types */
 		static const short_word TypeA = 0x0001;
@@ -282,87 +285,132 @@ namespace Crafter {
 		static const byte RCodeNotAuth = 0x9;
 		static const byte RCodeNotZone = 0x10;
 
-		void SetIdentification(short_word id) {
-			SetFieldValue<word>("Identification",id);
-		};
+        void SetIdentification(const short_word& value) {
+            SetFieldValue(FieldIdentification,value);
+        };
 
-		void SetFlags(short_word flags) {
-			SetFieldValue<word>("Flags",flags);
-		};
+        void SetQRFlag(const word& value) {
+            SetFieldValue(FieldQRFlag,value);
+        };
 
-		void SetTotalQuestions(short_word questions) {
-			SetFieldValue<word>("TotalQuestions",questions);
-		};
+        void SetOpCode(const word& value) {
+            SetFieldValue(FieldOpCode,value);
+        };
 
-		void SetTotalAnswer(short_word answers) {
-			SetFieldValue<word>("TotalAnswer",answers);
-		};
+        void SetAAFlag(const word& value) {
+            SetFieldValue(FieldAAFlag,value);
+        };
 
-		void SetTotalAuthority(short_word auths) {
-			SetFieldValue<word>("TotalAuthority",auths);
-		};
+        void SetTCFlag(const word& value) {
+            SetFieldValue(FieldTCFlag,value);
+        };
 
-		void SetTotalAdditional(short_word addits) {
-			SetFieldValue<word>("TotalAdditional",addits);
-		};
+        void SetRDFlag(const word& value) {
+            SetFieldValue(FieldRDFlag,value);
+        };
 
-		/* --------------- Functions for manipulating flags --------------- */
+        void SetRAFlag(const word& value) {
+            SetFieldValue(FieldRAFlag,value);
+        };
 
-		void SetQRFlag(short_word value);
-		void SetOpCode(short_word value);
-		void SetAAFlag(short_word value);
-		void SetTCFlag(short_word value);
-		void SetRDFlag(short_word value);
-		void SetRAFlag(short_word value);
-		void SetADFlag(short_word value);
-		void SetCDFlag(short_word value);
-		void SetRCode(short_word value);
+        void SetZFlag(const word& value) {
+            SetFieldValue(FieldZFlag,value);
+        };
 
-		short_word GetQRFlag() const;
-		short_word GetOpCode() const;
-		short_word GetAAFlag() const;
-		short_word GetTCFlag() const;
-		short_word GetRDFlag() const;
-		short_word GetRAFlag() const;
-		short_word GetADFlag() const;
-		short_word GetCDFlag() const;
-		short_word GetRCode() const;
+        void SetADFlag(const word& value) {
+            SetFieldValue(FieldADFlag,value);
+        };
 
-		/* ---------------------------------------------------------------- */
+        void SetCDFlag(const word& value) {
+            SetFieldValue(FieldCDFlag,value);
+        };
 
-		short_word GetIdentification() const {
-			return GetFieldValue<word>("Identification");
-		};
+        void SetRCode(const word& value) {
+            SetFieldValue(FieldRCode,value);
+        };
 
-		short_word GetFlags() const {
-			return GetFieldValue<word>("Flags");
-		};
+        void SetTotalQuestions(const short_word& value) {
+            SetFieldValue(FieldTotalQuestions,value);
+        };
 
-		short_word GetTotalQuestions() const {
-			return GetFieldValue<word>("TotalQuestions");
-		};
+        void SetTotalAnswer(const short_word& value) {
+            SetFieldValue(FieldTotalAnswer,value);
+        };
 
-		short_word GetTotalAnswer() const {
-			return GetFieldValue<word>("TotalAnswer");
-		};
+        void SetTotalAuthority(const short_word& value) {
+            SetFieldValue(FieldTotalAuthority,value);
+        };
 
-		short_word GetTotalAuthority() const {
-			return GetFieldValue<word>("TotalAuthority");
-		};
+        void SetTotalAdditional(const short_word& value) {
+            SetFieldValue(FieldTotalAdditional,value);
+        };
 
-		short_word GetTotalAdditional() const {
-			return GetFieldValue<word>("TotalAdditional");
-		};
+        short_word  GetIdentification() const {
+            return GetFieldValue<short_word>(FieldIdentification);
+        };
 
-		/* Override Print method */
-		void Print() const;
+        word  GetQRFlag() const {
+            return GetFieldValue<word>(FieldQRFlag);
+        };
+
+        word  GetOpCode() const {
+            return GetFieldValue<word>(FieldOpCode);
+        };
+
+        word  GetAAFlag() const {
+            return GetFieldValue<word>(FieldAAFlag);
+        };
+
+        word  GetTCFlag() const {
+            return GetFieldValue<word>(FieldTCFlag);
+        };
+
+        word  GetRDFlag() const {
+            return GetFieldValue<word>(FieldRDFlag);
+        };
+
+        word  GetRAFlag() const {
+            return GetFieldValue<word>(FieldRAFlag);
+        };
+
+        word  GetZFlag() const {
+            return GetFieldValue<word>(FieldZFlag);
+        };
+
+        word  GetADFlag() const {
+            return GetFieldValue<word>(FieldADFlag);
+        };
+
+        word  GetCDFlag() const {
+            return GetFieldValue<word>(FieldCDFlag);
+        };
+
+        word  GetRCode() const {
+            return GetFieldValue<word>(FieldRCode);
+        };
+
+        short_word  GetTotalQuestions() const {
+            return GetFieldValue<short_word>(FieldTotalQuestions);
+        };
+
+        short_word  GetTotalAnswer() const {
+            return GetFieldValue<short_word>(FieldTotalAnswer);
+        };
+
+        short_word  GetTotalAuthority() const {
+            return GetFieldValue<short_word>(FieldTotalAuthority);
+        };
+
+        short_word  GetTotalAdditional() const {
+            return GetFieldValue<short_word>(FieldTotalAdditional);
+        };
 
 		/* Set the field values from data of a Raw Layer */
 		void FromRaw(const RawLayer& raw_layer);
 
-		~DNS() { /* */ };
+        ~DNS() { /* Destructor */ };
 
-	};
+    };
 
 }
 

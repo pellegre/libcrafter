@@ -25,77 +25,43 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include "TCP.h"
 
-#ifndef IPSEUDOHEADER_H_
-#define IPSEUDOHEADER_H_
+using namespace Crafter;
+using namespace std;
 
-#include "IP.h"
+TCP::TCP() {
 
-namespace Crafter {
+    allocate_bytes(20);
+    SetName("TCP");
+    SetprotoID(0x06);
+    DefineProtocol();
 
-	class IPSeudoHeader : public Layer {
+    SetSrcPort(0);
+    SetDstPort(80);
+    SetSeqNumber(0);
+    SetAckNumber(0);
+    SetDataOffset(5);
+    SetReserved(0);
+    SetFlags(0);
+    SetWindowsSize(5840);
+    SetCheckSum(0);
+    SetUrgPointer(0);
 
-	public:
-		/* Constructor */
-		IPSeudoHeader();
-
-		/* Define the field of the IP layer */
-		void DefineProtocol();
-
-		Constructor GetConstructor() const {
-			return IPSeudoHeader::IPSeudoHeaderConstFunc;
-		};
-
-		static Layer* IPSeudoHeaderConstFunc() {
-			return new IPSeudoHeader;
-		};
-
-		/* Seters */
-
-		void SetProtocolLength(short_word length) {
-			SetFieldValue<word>("ProtocolLength",length);
-		};
-
-		void SetZeros(unsigned char zeros) {
-			SetFieldValue<word>("Zeros",zeros);
-		};
-
-		void SetProtocol(unsigned char proto) {
-			SetFieldValue<word>("Protocol",proto);
-		};
-
-		void SetSourceIP(std::string source_ip) {
-			SetFieldValue<std::string>("SourceIP",source_ip);
-		};
-
-		void SetDestinationIP(std::string dst_ip) {
-			SetFieldValue<std::string>("DestinationIP",dst_ip);
-		};
-
-		/* Getters */
-
-		word GetProtocolLength() {
-			return GetFieldValue<word>("ProtocolLength");
-		};
-
-		word GetProtocol() {
-			return GetFieldValue<word>("Protocol");
-		};
-
-		std::string GetSourceIP() {
-			return GetFieldValue<std::string>("SourceIP");
-		};
-
-		std::string GetDestinationIP() {
-			return GetFieldValue<std::string>("DestinationIP");
-		};
-
-		/* Copy crafted packet to buffer_data */
-		void Craft () {/* */};
-
-		~IPSeudoHeader() {/* */};
-
-	};
+    ResetFields();
 
 }
-#endif /* IPSEUDOHEADER_H_ */
+
+void TCP::DefineProtocol() {
+    Fields.push_back(new ShortField("SrcPort",0,0));
+    Fields.push_back(new ShortField("DstPort",0,2));
+    Fields.push_back(new WordField("SeqNumber",1,0));
+    Fields.push_back(new WordField("AckNumber",2,0));
+    Fields.push_back(new BitsField<4,0>("DataOffset",3));
+    Fields.push_back(new BitsField<3,4>("Reserved",3));
+    Fields.push_back(new TCPFlags<7>("Flags",3));
+    Fields.push_back(new ShortField("WindowsSize",3,2));
+    Fields.push_back(new XShortField("CheckSum",4,0));
+    Fields.push_back(new ShortField("UrgPointer",4,2));
+}
+

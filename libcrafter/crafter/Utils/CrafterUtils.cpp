@@ -433,7 +433,7 @@ void Crafter::Send(vector<Packet* >* PacketContainer, const string& iface, int n
 
 		if (rc) {
 			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "BlockARP()",
+					     "Crafter::Send()",
 			             "Creating thread. Returning code = " + StrPort(rc));
 			exit(1);
 		}
@@ -569,15 +569,15 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&icmp_dummy);
 
-        ICMPExtension icmp_extension_dummy;
+    ICMPExtension icmp_extension_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&icmp_extension_dummy);
 
-        ICMPExtensionMPLS icmp_extension_mpls_dummy;
+    ICMPExtensionMPLS icmp_extension_mpls_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&icmp_extension_mpls_dummy);
 
-        ICMPExtensionObject icmp_extension_object_dummy;
+    ICMPExtensionObject icmp_extension_object_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&icmp_extension_object_dummy);
 
@@ -607,7 +607,7 @@ void Crafter::InitCrafter() {
 	/* Put verbose mode as default */
 	ShowWarnings = 1;
 
-	/* Init Mutex variables */
+	/* Initialize Mutex variables */
 	Packet::InitMutex();
 	Sniffer::InitMutex();
 
@@ -616,4 +616,5 @@ void Crafter::InitCrafter() {
 void Crafter::CleanCrafter() {
 	/* Destroy Mutex Varibles */
 	Packet::DestroyMutex();
+	Sniffer::DestroyMutex();
 }

@@ -1,5 +1,6 @@
 /*
 Copyright (c) 2012, Bruno Nery
+Copyright (c) 2012, Esteban Pellegrino
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -24,7 +25,6 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-
 #ifndef ICMPEXTENSION_H_
 #define ICMPEXTENSION_H_
 
@@ -32,8 +32,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace Crafter {
 
-    class ICMPExtension : public Layer {
-        /* Define the field of the IP layer */
+    class ICMPExtension: public Layer {
+
         void DefineProtocol();
 
         Constructor GetConstructor() const {
@@ -44,51 +44,46 @@ namespace Crafter {
             return new ICMPExtension;
         };
 
-        /* Copy crafted packet to buffer_data */
         void Craft();
 
-        /* Redefine active fields */
-        void ReDefineActiveFields();
-
-        /* Put Data into libnet context */
         void LibnetBuild(libnet_t* l);
 
-        /* Match filter function */
-        virtual std::string MatchFilter() const;
+        void ReDefineActiveFields();
+
+        static const byte FieldVersion = 0;
+        static const byte FieldReserved = 1;
+        static const byte FieldCheckSum = 2;
 
     public:
-        /* Constructor */
+
         ICMPExtension();
 
-        /* Setters */
-        void SetVersion(unsigned char version) {
-            GetLayerPtr<BitField<short_word,4,12> >("VerRes")->SetLowField(version);
-            SetFieldValue<word>("VerRes",0);
+        void SetVersion(const word& value) {
+            SetFieldValue(FieldVersion,value);
         };
 
-        void SetReserved(word reserved) {
-            GetLayerPtr<BitField<short_word,4,12> >("VerRes")->SetHighField(reserved);
-            SetFieldValue<word>("VerRes",0);
+        void SetReserved(const word& value) {
+            SetFieldValue(FieldReserved,value);
         };
 
-        void SetChecksum(word checksum) {
-            SetFieldValueCheckOverlap<word>("Checksum", checksum);
+        void SetCheckSum(const short_word& value) {
+            SetFieldValue(FieldCheckSum,value);
         };
 
-        /* Getters */
-        word GetVersion() const {
-            return GetLayerPtr<BitField<short_word,4,12> >("VerRes")->GetLowField();
+        word  GetVersion() const {
+            return GetFieldValue<word>(FieldVersion);
         };
 
-        word GetReserved() const {
-            return GetLayerPtr<BitField<short_word,4,12> >("VerRes")->GetHighField();
+        word  GetReserved() const {
+            return GetFieldValue<word>(FieldReserved);
         };
 
-        word GetChecksum() const {
-            return GetFieldValue<word>("Checksum");
+        short_word  GetCheckSum() const {
+            return GetFieldValue<short_word>(FieldCheckSum);
         };
 
-        virtual ~ICMPExtension();
+        ~ICMPExtension() { /* Destructor */ };
+
     };
 
 }

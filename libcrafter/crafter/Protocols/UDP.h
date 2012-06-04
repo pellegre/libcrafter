@@ -24,91 +24,78 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-
-
 #ifndef UDP_H_
 #define UDP_H_
 
 #include "../Layer.h"
-#include "IPSeudoHeader.h"
 
 namespace Crafter {
 
-	class UDP : public Layer {
+    class UDP: public Layer {
 
-		void DefineProtocol();
+        void DefineProtocol();
 
-		Constructor GetConstructor() const {
-			return UDP::UDPConstFunc;
-		};
+        Constructor GetConstructor() const {
+            return UDP::UDPConstFunc;
+        };
 
-		static Layer* UDPConstFunc() {
-			return new UDP;
-		};
+        static Layer* UDPConstFunc() {
+            return new UDP;
+        };
 
-		/* Copy crafted packet to buffer_data */
-		void Craft ();
+        void Craft();
 
-		/* Put data into libnet context */
-		void LibnetBuild(libnet_t* l);
+        void LibnetBuild(libnet_t* l);
 
-		virtual std::string MatchFilter() const {
-			char* src_port = new char[6];
-			char* dst_port = new char[6];
-			sprintf(src_port,"%d", GetSrcPort());
-			sprintf(dst_port,"%d", GetDstPort());
-			std::string ret_str = "udp and dst port " + std::string(src_port) + " and src port " + std::string(dst_port);
-			delete [] src_port;
-			delete [] dst_port;
-			return ret_str;
-		};
+        std::string MatchFilter() const;
 
-	public:
-		/* Constructor, define number of words and registration */
-		UDP();
+        void ReDefineActiveFields();
 
-		/* Set the source port */
-		void SetSrcPort(short_word dst_port) {
-			SetFieldValue<word>("SrcPort",dst_port);
-		};
+        static const byte FieldSrcPort = 0;
+        static const byte FieldDstPort = 1;
+        static const byte FieldLength = 2;
+        static const byte FieldCheckSum = 3;
 
-		/* Set the destination port */
-		void SetDstPort(short_word src_port) {
-			SetFieldValue<word>("DstPort",src_port);
-		};
+    public:
 
-		/* Set the length of the packet */
-		void SetLength(short_word length) {
-			SetFieldValue<word>("Length",length);
-		};
+        UDP();
 
-		/* Set the value of the checksum */
-		void SetCheckSum(short_word checksum) {
-			SetFieldValue<word>("CheckSum",checksum);
-		};
+        void SetSrcPort(const short_word& value) {
+            SetFieldValue(FieldSrcPort,value);
+        };
 
-		short_word  GetSrcPort() const {
-			return GetFieldValue<word>("SrcPort");
-		};
+        void SetDstPort(const short_word& value) {
+            SetFieldValue(FieldDstPort,value);
+        };
 
-		/* Set the destination port */
-		short_word  GetDstPort() const {
-			return GetFieldValue<word>("DstPort");
-		};
+        void SetLength(const short_word& value) {
+            SetFieldValue(FieldLength,value);
+        };
 
-		/* Set the length of the packet */
-		short_word  GetLength() const {
-			return GetFieldValue<word>("Length");
-		};
+        void SetCheckSum(const short_word& value) {
+            SetFieldValue(FieldCheckSum,value);
+        };
 
-		/* Set the value of the checksum */
-		short_word  GetCheckSum() const {
-			return GetFieldValue<word>("CheckSum");
-		};
+        short_word  GetSrcPort() const {
+            return GetFieldValue<short_word>(FieldSrcPort);
+        };
 
-		~UDP() { };
+        short_word  GetDstPort() const {
+            return GetFieldValue<short_word>(FieldDstPort);
+        };
 
-	};
+        short_word  GetLength() const {
+            return GetFieldValue<short_word>(FieldLength);
+        };
+
+        short_word  GetCheckSum() const {
+            return GetFieldValue<short_word>(FieldCheckSum);
+        };
+
+        ~UDP() { /* Destructor */ };
+
+    };
 
 }
+
 #endif /* UDP_H_ */

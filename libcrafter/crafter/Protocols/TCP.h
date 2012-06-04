@@ -24,58 +24,56 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-
-
 #ifndef TCP_H_
 #define TCP_H_
 
 #include "../Layer.h"
-#include "IPSeudoHeader.h"
 
 namespace Crafter {
 
-	class TCP : public Layer {
+    class TCP: public Layer {
 
-		/* Copy crafted packet to buffer_data */
-		void Craft ();
+        void DefineProtocol();
 
-		/* Put data into libnet context */
-		void LibnetBuild(libnet_t* l);
+        Constructor GetConstructor() const {
+            return TCP::TCPConstFunc;
+        };
 
-		virtual std::string MatchFilter() const {
-			char* src_port = new char[6];
-			char* dst_port = new char[6];
-			sprintf(src_port,"%d", GetSrcPort());
-			sprintf(dst_port,"%d", GetDstPort());
-			std::string ret_str = "tcp and dst port " + std::string(src_port) + " and src port " + std::string(dst_port);
-			delete [] src_port;
-			delete [] dst_port;
-			return ret_str;
-		};
+        static Layer* TCPConstFunc() {
+            return new TCP;
+        };
 
-		void DefineProtocol();
+        void Craft();
 
-		Constructor GetConstructor() const {
-			return TCP::TCPConstFunc;
-		};
+        void LibnetBuild(libnet_t* l);
 
-		static Layer* TCPConstFunc() {
-			return new TCP;
-		};
+        std::string MatchFilter() const ;
 
-	public:
+        void ReDefineActiveFields();
+
+        static const byte FieldSrcPort = 0;
+        static const byte FieldDstPort = 1;
+        static const byte FieldSeqNumber = 2;
+        static const byte FieldAckNumber = 3;
+        static const byte FieldDataOffset = 4;
+        static const byte FieldReserved = 5;
+        static const byte FieldFlags = 6;
+        static const byte FieldWindowsSize = 7;
+        static const byte FieldCheckSum = 8;
+        static const byte FieldUrgPointer = 9;
+
+    public:
+
 		/* Flags */
-		static const byte FIN = 1 << 0;
-		static const byte SYN = 1 << 1;
-		static const byte RST = 1 << 2;
-		static const byte PSH = 1 << 3;
-		static const byte ACK = 1 << 4;
-		static const byte URG = 1 << 5;
-		static const byte ECE = 1 << 6;
-		static const byte CWR = 1 << 7;
-
-		/* Constructor, define number of words and registration */
-		TCP();
+		static const word FIN;
+		static const word SYN;
+		static const word RST;
+		static const word PSH;
+		static const word ACK;
+		static const word URG;
+		static const word ECE;
+		static const word CWR;
+		static const word NS ;
 
 		/* Flag Checkers */
 		byte GetFIN() { return (GetFlags() & TCP::FIN); };
@@ -86,95 +84,93 @@ namespace Crafter {
 		byte GetURG() { return (GetFlags() & TCP::URG); };
 		byte GetECE() { return (GetFlags() & TCP::ECE); };
 		byte GetCWR() { return (GetFlags() & TCP::CWR); };
+		byte GetNS()  { return (GetFlags() & TCP::NS ); };
 
-		/* Set the source port */
-		void SetSrcPort(short_word dst_port) {
-			SetFieldValue<word>("SrcPort",dst_port);
-		};
+        TCP();
 
-		/* Set the destination port */
-		void SetDstPort(short_word src_port) {
-			SetFieldValue<word>("DstPort",src_port);
-		};
+        void SetSrcPort(const short_word& value) {
+            SetFieldValue(FieldSrcPort,value);
+        };
 
-		void SetSeqNumber(word seq) {
-			SetFieldValue<word>("SeqNumber",seq);
-		};
+        void SetDstPort(const short_word& value) {
+            SetFieldValue(FieldDstPort,value);
+        };
 
-		void SetAckNumber(word ack) {
-			SetFieldValue<word>("AckNumber",ack);
-		};
+        void SetSeqNumber(const word& value) {
+            SetFieldValue(FieldSeqNumber,value);
+        };
 
-		void SetDataOffset(byte offset) {
-			GetLayerPtr<BitField<byte,4,4> >("OffRes")->SetLowField(offset);
-			SetFieldValue<word>("OffRes",0);
-		};
+        void SetAckNumber(const word& value) {
+            SetFieldValue(FieldAckNumber,value);
+        };
 
-		void SetReserved(byte reserved) {
-			GetLayerPtr<BitField<byte,4,4> >("OffRes")->SetHighField(reserved);
-			SetFieldValue<word>("OffRes",0);
-		};
+        void SetDataOffset(const word& value) {
+            SetFieldValue(FieldDataOffset,value);
+        };
 
-		void SetFlags(word flags) {
-			SetFieldValue<word>("Flags",flags);
-		};
+        void SetReserved(const word& value) {
+            SetFieldValue(FieldReserved,value);
+        };
 
+        void SetFlags(const word& value) {
+            SetFieldValue(FieldFlags,value);
+        };
 
-		void SetWindowsSize(word wsize) {
-			SetFieldValue<word>("WindowsSize",wsize);
-		};
+        void SetWindowsSize(const short_word& value) {
+            SetFieldValue(FieldWindowsSize,value);
+        };
 
-		void SetCheckSum(word checksum) {
-			SetFieldValue<word>("CheckSum",checksum);
-		};
+        void SetCheckSum(const short_word& value) {
+            SetFieldValue(FieldCheckSum,value);
+        };
 
-		void SetUrgPointer(word checksum) {
-			SetFieldValue<word>("CheckSum",checksum);
-		};
+        void SetUrgPointer(const short_word& value) {
+            SetFieldValue(FieldUrgPointer,value);
+        };
 
-		short_word  GetSrcPort() const {
-			return GetFieldValue<word>("SrcPort");
-		};
+        short_word  GetSrcPort() const {
+            return GetFieldValue<short_word>(FieldSrcPort);
+        };
 
-		/* Set the destination port */
-		short_word  GetDstPort() const {
-			return GetFieldValue<word>("DstPort");
-		};
+        short_word  GetDstPort() const {
+            return GetFieldValue<short_word>(FieldDstPort);
+        };
 
-		word GetSeqNumber() const {
-			return GetFieldValue<word>("SeqNumber");
-		};
+        word  GetSeqNumber() const {
+            return GetFieldValue<word>(FieldSeqNumber);
+        };
 
-		word GetAckNumber() const {
-			return GetFieldValue<word>("AckNumber");
-		};
+        word  GetAckNumber() const {
+            return GetFieldValue<word>(FieldAckNumber);
+        };
 
-		word GetDataOffset() const {
-			return GetLayerPtr<BitField<byte,4,4> >("OffRes")->GetLowField();
-		}
+        word  GetDataOffset() const {
+            return GetFieldValue<word>(FieldDataOffset);
+        };
 
-		word GetReserved() const {
-			return GetLayerPtr<BitField<byte,4,4> >("OffRes")->GetHighField();
-		};
+        word  GetReserved() const {
+            return GetFieldValue<word>(FieldReserved);
+        };
 
-		word GetFlags() const {
-			return GetFieldValue<word>("Flags");
-		};
+        word  GetFlags() const {
+            return GetFieldValue<word>(FieldFlags);
+        };
 
-		word GetWindowsSize() const {
-			return GetFieldValue<word>("WindowsSize");
-		};
+        short_word  GetWindowsSize() const {
+            return GetFieldValue<short_word>(FieldWindowsSize);
+        };
 
-		word GetCheckSum() const {
-			return GetFieldValue<word>("CheckSum");
-		};
+        short_word  GetCheckSum() const {
+            return GetFieldValue<short_word>(FieldCheckSum);
+        };
 
-		word GetUrgPointer() const {
-			return GetFieldValue<word>("UrgPointer");
-		};
+        short_word  GetUrgPointer() const {
+            return GetFieldValue<short_word>(FieldUrgPointer);
+        };
 
-		virtual ~TCP() { /*  */ };
-	};
+        ~TCP() { /* Destructor */ };
+
+    };
 
 }
 

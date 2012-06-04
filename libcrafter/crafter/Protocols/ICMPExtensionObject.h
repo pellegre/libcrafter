@@ -1,5 +1,6 @@
 /*
 Copyright (c) 2012, Bruno Nery
+Copyright (c) 2012, Esteban Pellegrino
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -24,7 +25,6 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-
 #ifndef ICMPEXTENSIONOBJECT_H_
 #define ICMPEXTENSIONOBJECT_H_
 
@@ -32,8 +32,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace Crafter {
 
-    class ICMPExtensionObject : public Layer {
-        /* Define the field of the IP layer */
+    class ICMPExtensionObject: public Layer {
+
         void DefineProtocol();
 
         Constructor GetConstructor() const {
@@ -44,65 +44,56 @@ namespace Crafter {
             return new ICMPExtensionObject;
         };
 
-        /* Copy crafted packet to buffer_data */
         void Craft();
 
-        /* Redefine active fields */
-        void ReDefineActiveFields();
-
-        /* Put Data into libnet context */
         void LibnetBuild(libnet_t* l);
 
-        /* Match filter function */
-        virtual std::string MatchFilter() const;
+        void ReDefineActiveFields();
+
+        static const byte FieldLength = 0;
+        static const byte FieldClassNum = 1;
+        static const byte FieldCType = 2;
 
     public:
+
         /* Classes (ClassNum) */
-        static const byte MPLS = 1;
+        static const byte MPLS;
 
         /* Types (CType) */
         /* +++ MPLS +++ */
-        static const byte MPLSReserved = 0;
-        static const byte MPLSIncoming = 1;
+        static const byte MPLSReserved;
+        static const byte MPLSIncoming;
 
-        /* Constructor */
         ICMPExtensionObject();
 
-        /* Setters */
-        void SetLength(word length) {
-            SetFieldValueCheckOverlap<word>("Length", length);
+        void SetLength(const short_word& value) {
+            SetFieldValue(FieldLength,value);
         };
 
-        void SetClassNum(unsigned char classnum) {
-            SetFieldValueCheckOverlap<word>("ClassNum", classnum);
+        void SetClassNum(const byte& value) {
+            SetFieldValue(FieldClassNum,value);
         };
 
-        void SetCType(unsigned char ctype) {
-            SetFieldValueCheckOverlap<word>("CType", ctype);
+        void SetCType(const byte& value) {
+            SetFieldValue(FieldCType,value);
         };
 
-        /* Getters */
-        word GetLength() const {
-            return GetFieldValue<word>("Length");
+        short_word  GetLength() const {
+            return GetFieldValue<short_word>(FieldLength);
         };
 
-        word GetClassNum() const {
-            return GetFieldValue<word>("ClassNum");
+        byte  GetClassNum() const {
+            return GetFieldValue<byte>(FieldClassNum);
         };
 
-        std::string GetClassName() const {
-            word classnum = GetClassNum();
-            switch (classnum) {
-            case MPLS: return "ICMPExtensionMPLS";
-            default: return "";
-            }
+        byte  GetCType() const {
+            return GetFieldValue<byte>(FieldCType);
         };
 
-        word GetCType() const {
-            return GetFieldValue<word>("CType");
-        };
+        std::string GetClassName() const;
 
-        virtual ~ICMPExtensionObject();
+        ~ICMPExtensionObject() { /* Destructor */ };
+
     };
 
 }

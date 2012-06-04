@@ -25,9 +25,8 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-
 #include "UDP.h"
-#include <netinet/udp.h>
+#include "IP.h"
 
 using namespace Crafter;
 using namespace std;
@@ -53,37 +52,11 @@ static void setup_psd (word src, word dst, byte* buffer, size_t udp_size) {
 	memcpy(buffer,(const byte *)&buf,sizeof(buf));
 }
 
-UDP::UDP() {
-	/* Allocate two words */
-	allocate_words(2);
-	/* Name of the protocol represented by this layer */
-	SetName("UDP");
-	/* Set the protocol ID */
-	SetprotoID(0x11);
+void UDP::ReDefineActiveFields() {
 
-	/* Creates field information for the layer */
-	DefineProtocol();
-
-	/* Always set default values for fields in a layer */
-	SetSrcPort(0);
-	SetDstPort(53);
-	SetLength(0);
-	SetCheckSum(0);
-
-	/* Always call this, reset all fields */
-	ResetFields();
 }
 
-void UDP::DefineProtocol() {
-	/* Source Port number */
-	define_field("SrcPort",new NumericField(0,0,15));
-	define_field("DstPort",new NumericField(0,16,31));
-	define_field("Length",new NumericField(1,0,15));
-	define_field("CheckSum",new HexField(1,16,31));
-}
-
-/* Copy crafted packet to buffer_data */
-void UDP::Craft () {
+void UDP::Craft() {
 	/* Get the layer on the bottom of this one, and verify that is an IP layer */
 	IP* ip_layer = 0;
 	/* Bottom layer name */
@@ -94,21 +67,17 @@ void UDP::Craft () {
 	/* Checksum of UDP packet */
 	short_word checksum;
 
-	/* Get field pointer to some fields */
-	FieldInfo* ptr_length = GetFieldPtr("Length");
-	FieldInfo* ptr_check = GetFieldPtr("CheckSum");
-
 	size_t tot_length = GetRemainingSize();
 
 	/* Set the Length of the UDP packet */
-	if (!IsFieldSet(ptr_length)) {
-		SetFieldValue<word>(ptr_length,tot_length);
-		ResetField(ptr_length);
+	if (!IsFieldSet(FieldLength)) {
+		SetLength(tot_length);
+		ResetField(FieldLength);
 	}
 
-	if (!IsFieldSet(ptr_check)) {
+	if (!IsFieldSet(FieldCheckSum)) {
 		/* Set the checksum to zero */
-		SetFieldValue<word>(ptr_check,0x0);
+		SetCheckSum(0x0);
 
 		if(bottom_layer == 0x0800) {
 			/* It's OK */
@@ -138,13 +107,21 @@ void UDP::Craft () {
 		}
 
 		/* Set the checksum to zero */
-		SetFieldValue<word>(ptr_check,ntohs(checksum));
-		ResetField(ptr_check);
+		SetCheckSum(ntohs(checksum));
+		ResetField(FieldCheckSum);
 	}
 }
 
-void UDP::LibnetBuild(libnet_t *l) {
+string UDP::MatchFilter() const {
+	char src_port[6];
+	char dst_port[6];
+	sprintf(src_port,"%d", GetSrcPort());
+	sprintf(dst_port,"%d", GetDstPort());
+	std::string ret_str = "udp and dst port " + std::string(src_port) + " and src port " + std::string(dst_port);
+	return ret_str;
+}
 
+void UDP::LibnetBuild(libnet_t *l) {
 	/* Get the payload */
 	size_t payload_size = GetPayloadSize();
 	byte* payload;
@@ -176,6 +153,5 @@ void UDP::LibnetBuild(libnet_t *l) {
 
 	if(payload)
 		delete [] payload;
-
 }
 

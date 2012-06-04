@@ -28,7 +28,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "Packet.h"
 #include "Crafter.h"
-#include "Utils/CrafterUtils.h"
 #include "Utils/RawSocket.h"
 
 using namespace std;
@@ -372,8 +371,6 @@ void Packet::GetFromIP(const byte* data, size_t length) {
 		}
 
 		n_trp = trp_layer->PutData(data + n_ip);
-		/* Redefine fields in case is necessary */
-		trp_layer->ReDefineActiveFields();
 
 		/* Get size of the remaining data */
 		length -= n_trp;
@@ -401,7 +398,8 @@ void Packet::GetFromIP(const byte* data, size_t length) {
 				/* That's all */
 				return;
 			}
-		} else if (trp_layer->GetName() == "ICMP") {
+		}
+		else if (trp_layer->GetName() == "ICMP") {
 			/* If we are dealing with an ICMP layer, we should check for extensions */
 			ICMP *icmp_layer = dynamic_cast<ICMP *>(trp_layer);
 			word icmp_type = icmp_layer->GetType();
@@ -411,10 +409,9 @@ void Packet::GetFromIP(const byte* data, size_t length) {
 			 * is advised to consider a 128-octet original datagram to keep compatibility. */
 			if (icmp_length == 0 && length > 128)
 				icmp_length = 128;
+
 			/* According to RFC4884, specific types with a length field set have extensions */
-			if ((icmp_type == ICMP::DestinationUnreachable ||
-				 icmp_type == ICMP::TimeExceeded ||
-				 icmp_type == ICMP::ParameterProblem) &&
+			if ((icmp_type == ICMP::DestinationUnreachable || icmp_type == ICMP::TimeExceeded || icmp_type == ICMP::ParameterProblem) &&
 				 icmp_length > 0) {
 
 				RawLayer original_payload(data + n_ip + n_trp, icmp_length);
@@ -430,19 +427,18 @@ void Packet::GetFromIP(const byte* data, size_t length) {
 				const byte *extension_data = data + n_ip + n_trp + icmp_length + n_ext;
 
 				while (length > 0) {
+
 					ICMPExtensionObject icmp_extension_object_header;
 					size_t n_objhdr = icmp_extension_object_header.PutData(extension_data);
 					PushLayer(icmp_extension_object_header);
 					length -= n_objhdr;
 					extension_data += n_objhdr;
-					word icmp_extension_object_length =
-						icmp_extension_object_header.GetLength() - n_objhdr;
-					std::string icmp_extension_object_name =
-						icmp_extension_object_header.GetClassName();
+					word icmp_extension_object_length = icmp_extension_object_header.GetLength() - n_objhdr;
+					std::string icmp_extension_object_name = icmp_extension_object_header.GetClassName();
+
 					/* Some ICMP extensions (such as MPLS) have more than one entry */
 					while (length > 0 && icmp_extension_object_length > 0) {
-						Layer* icmp_extension_layer =
-							Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
+						Layer* icmp_extension_layer = Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
 						size_t n_pay = icmp_extension_layer->PutData(extension_data);
 						PushLayer(*icmp_extension_layer);
 						icmp_extension_object_length -= n_pay;
@@ -525,8 +521,6 @@ void Packet::PacketFromEthernet(const byte* data, size_t length) {
 
 	size_t n_ether = ether_layer.PutData(data);
 
-	ether_layer.ReDefineActiveFields();
-
 	/* Get size of the remaining data */
 	length -= n_ether;
 
@@ -555,7 +549,6 @@ void Packet::PacketFromEthernet(const byte* data, size_t length) {
 			}
 
 			n_net = net_layer->PutData(data + n_ether);
-			net_layer->ReDefineActiveFields();
 
 		}
 
@@ -698,53 +691,6 @@ void Packet::Send(const string& iface) {
  		return;
  	}
 
- 	Ethernet* ether_layer = GetEthernet(*this);
-
- 	if(ether_layer) {
-
- 		/* Set the source MAC address */
- 		if (!ether_layer->IsFieldSet("SrcMAC1") && (ether_layer->GetSourceMAC() == Ethernet::DefaultMAC) ) {
- 			string LocalMAC = GetMyMAC(iface);
- 			ether_layer->SetSourceMAC(LocalMAC);
- 		}
-
- 	}
-
- 	ARP* arp_layer = GetARP(*this);
-
- 	if(arp_layer) {
-
- 		/* Set the sender MAC address */
- 		if (!arp_layer->IsFieldSet("SndMAC1") && (arp_layer->GetSenderMAC() == ARP::DefaultMAC) ) {
- 			if (ether_layer) {
-				string LocalMAC = ether_layer->GetSourceMAC();
-				arp_layer->SetSenderMAC(LocalMAC);
- 			}
- 		}
-
- 		/* Set the sender IP address */
- 		if (!arp_layer->IsFieldSet("SenderIP") && (arp_layer->GetSenderIP() == ARP::DefaultIP)) {
- 			if (ether_layer) {
- 				string LocalIP = GetMyIP(iface);
- 				arp_layer->SetSenderIP(LocalIP);
- 			}
- 		}
-
- 	}
-
- 	/* If the default Source IP Address is set, we should change it with the one corresponding to the iface */
- 	IP* ip_layer = GetIP(*this);
-
- 	if (ip_layer) {
-
- 		/* Set the IP */
- 		if (!ip_layer->IsFieldSet("SourceIP") && (ip_layer->GetSourceIP() == IP::DefaultIP)) {
-			string LocalIP = GetMyIP(iface);
-			ip_layer->SetSourceIP(LocalIP);
- 		}
-
- 	}
-
 	/* Before doing anything weird, craft the packet */
 	Craft();
 
@@ -873,53 +819,6 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
  		return 0;
  	}
 
- 	Ethernet* ether_layer = GetEthernet(*this);
-
- 	if(ether_layer) {
-
- 		/* Set the source MAC address */
- 		if (!ether_layer->IsFieldSet("SrcMAC1") && (ether_layer->GetSourceMAC() == Ethernet::DefaultMAC) ) {
- 			string LocalMAC = GetMyMAC(iface);
- 			ether_layer->SetSourceMAC(LocalMAC);
- 		}
-
- 	}
-
- 	ARP* arp_layer = GetARP(*this);
-
- 	if(arp_layer) {
-
- 		/* Set the sender MAC address */
- 		if (!arp_layer->IsFieldSet("SndMAC1") && (arp_layer->GetSenderMAC() == ARP::DefaultMAC) ) {
- 			if (ether_layer) {
-				string LocalMAC = ether_layer->GetSourceMAC();
-				arp_layer->SetSenderMAC(LocalMAC);
- 			}
- 		}
-
- 		/* Set the sender IP address */
- 		if (!arp_layer->IsFieldSet("SenderIP") && (arp_layer->GetSenderIP() == ARP::DefaultIP)) {
- 			if (ether_layer) {
- 				string LocalIP = GetMyIP(iface);
- 				arp_layer->SetSenderIP(LocalIP);
- 			}
- 		}
-
- 	}
-
- 	/* If the default Source IP Address is set, we should change it with the one corresponding to the iface */
- 	IP* ip_layer = GetIP(*this);
-
- 	if (ip_layer) {
-
- 		/* Set the IP */
- 		if (!ip_layer->IsFieldSet("SourceIP") && (ip_layer->GetSourceIP() == IP::DefaultIP)) {
-			string LocalIP = GetMyIP(iface);
-			ip_layer->SetSourceIP(LocalIP);
- 		}
-
- 	}
-
 	/* Before doing anything weird, craft the packet */
 	Craft();
 
@@ -976,6 +875,13 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 	}
 
 	string filter = "";
+
+	/* Get the IP layer */
+	IP* ip_layer = 0;
+	LayerStack::iterator it_layer;
+	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; ++it_layer)
+		if ((*it_layer)->GetName() == "IP")
+			ip_layer = dynamic_cast<IP*>( (*it_layer) );
 
 	if (user_filter == " ") {
 		string check_icmp;
@@ -1141,40 +1047,21 @@ int Packet::RawSocketSend(int sd) {
 		strncpy(ip_address , (const char *)(IPLayer->GetDestinationIP()).c_str(), 16);
                 int one = 1;
                 const int* val = &one;
-	        if(setsockopt(sd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0) {
-		    PrintMessage(Crafter::PrintCodes::PrintError,
-				 "Packet::RawSocketSend()",
-		                 "Setting IPPROTO_IP option to raw socket");
-		    exit(1);
-	         }
+		if(setsockopt(sd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0) {
+			PrintMessage(Crafter::PrintCodes::PrintError,
+						"Packet::RawSocketSend()",
+						"Setting IP_HDRINCL option to raw socket");
+			exit(1);
+		}
 	}
 
 	/* Create structure for destination */
 	struct sockaddr_in din;
-
-	/* Check for Transport Layer Protocol. Should be TCP, UDP or ICMP */
-	short_word transport_layer = Stack[1]->GetID();
-	if (transport_layer == 0x11) {
-		UDP* udp_layer = dynamic_cast<UDP*>(Stack[1]);
-		/* Set destinations structure */
-	    din.sin_family = AF_INET;
-	    din.sin_port = htons(udp_layer->GetDstPort());
-	    din.sin_addr.s_addr = inet_addr(ip_address);
-	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-	} else if (transport_layer == 0x06) {
-		TCP* tcp_layer = dynamic_cast<TCP*>(Stack[1]);
-		/* Set destinations structure */
-	    din.sin_family = AF_INET;
-	    din.sin_port = htons(tcp_layer->GetDstPort());
-	    din.sin_addr.s_addr = inet_addr(ip_address);
-	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-	} else {
-		/* Set destinations structure */
-	    din.sin_family = AF_INET;
-	    din.sin_port = htons(0);
-	    din.sin_addr.s_addr = inet_addr(ip_address);
-	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-	}
+	/* Set destinations structure */
+    din.sin_family = AF_INET;
+    din.sin_port = 0;
+    din.sin_addr.s_addr = inet_addr(ip_address);
+    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
 
 	/* Craft data before sending anything */
 	Craft();
@@ -1249,34 +1136,22 @@ Packet* Packet::RawSocketSendRecv(int sd, const string& iface, int timeout, int 
 	    din.sin_port = htons(udp_layer->GetDstPort());
 	    din.sin_addr.s_addr = inet_addr(ip_address_dst);
 	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-	} else if (transport_layer == "TCP") {
-		TCP* tcp_layer = dynamic_cast<TCP*>(Stack[1]);
-		/* Set destinations structure */
-	    din.sin_family = AF_INET;
-	    din.sin_port = htons(tcp_layer->GetDstPort());
-	    din.sin_addr.s_addr = inet_addr(ip_address_dst);
-	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-	} else {
+	}
+//	else if (transport_layer == "TCP") {
+//		TCP* tcp_layer = dynamic_cast<TCP*>(Stack[1]);
+//		/* Set destinations structure */
+//	    din.sin_family = AF_INET;
+//	    din.sin_port = htons(tcp_layer->GetDstPort());
+//	    din.sin_addr.s_addr = inet_addr(ip_address_dst);
+//	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
+//	}
+	else {
 		/* Set destinations structure */
 	    din.sin_family = AF_INET;
 	    din.sin_port = htons(0);
 	    din.sin_addr.s_addr = inet_addr(ip_address_dst);
 	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
 	}
-
- 	/* If the default Source IP Address is set, we should change it with the one corresponding to the iface */
- 	IP* ip_layer = GetIP(*this);
-
- 	if (ip_layer) {
-
- 		/* Set the IP */
- 		if (!ip_layer->IsFieldSet("SourceIP") && (ip_layer->GetSourceIP() == IP::DefaultIP) ) {
-			string LocalIP = GetMyIP(string(device));
-			ip_layer->SetSourceIP(LocalIP);
- 		}
-
- 	}
-
 
 	/* Craft data before sending anything */
 	Craft();
@@ -1343,6 +1218,13 @@ Packet* Packet::RawSocketSendRecv(int sd, const string& iface, int timeout, int 
 	}
 
 	string filter = "";
+
+	/* Get the IP layer */
+	IP* ip_layer = 0;
+	LayerStack::iterator it_layer;
+	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; ++it_layer)
+		if ((*it_layer)->GetName() == "IP")
+			ip_layer = dynamic_cast<IP*>( (*it_layer) );
 
 	if (user_filter == " ") {
 		string check_icmp;

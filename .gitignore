@@ -9,6 +9,7 @@
 *.la
 *.lo
 *.a
+*.sh
 
 # Packages #
 ############
@@ -56,4 +57,4 @@ libtool
 Makefile
 autom4te.cache/
 m4/
-
+protogen

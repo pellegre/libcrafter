@@ -24,14 +24,26 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+#ifndef FIELD_H_
+#define FIELD_H_
 
+/* Generic Field information class */
+#include "FieldInfo.h"
 
-#include "Field.h"
+/* Fields */
+#include "NumericFields.h"
 
-namespace Crafter {
+#include "BytesField.h"
 
-	/* Control flags names */
-	const std::string ControlFlags::flags[] = {"FIN", "SYN", "RST", "PSH", "ACK", "URG", "ECE", "CWR"};
+#include "StringField.h"
 
-}
+#include "IPAddress.h"
 
+#include "MACAddress.h"
+
+#include "BitsField.h"
+
+/* Field container class */
+#include "FieldContainer.h"
+
+#endif /* FIELD_H_ */

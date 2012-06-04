@@ -24,177 +24,125 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-
-
 #ifndef ARP_H_
 #define ARP_H_
 
-#include <string>
-#include <iostream>
 #include "../Layer.h"
 
 namespace Crafter {
 
-	class ARP : public Layer{
+    class ARP: public Layer {
 
-		/* String of destination MAC address */
-		std::string SenderMAC;
-		/* String of source MAC address */
-		std::string TargetMAC;
+        void DefineProtocol();
 
-		/* Convert MAC address in string format to values for each field*/
-		void SndMacStringToFields(const std::string& mac_address);
-		void TrgMacStringToFields(const std::string& mac_address);
+        Constructor GetConstructor() const {
+            return ARP::ARPConstFunc;
+        };
 
-		/* Get values of each field an update MAC address */
-		std::string SndMacFieldsToString();
-		std::string TrgMacFieldsToString();
+        static Layer* ARPConstFunc() {
+            return new ARP;
+        };
 
-		void DefineProtocol();
+        void Craft();
 
-		Constructor GetConstructor() const {
-			return ARP::ARPConstFunc;
-		};
+        void LibnetBuild(libnet_t* l);
 
-		static Layer* ARPConstFunc() {
-			return new ARP;
-		};
+        std::string MatchFilter() const ;
 
-		void Craft ();
+        void ReDefineActiveFields();
 
-		/* Redefine active fields */
-		void ReDefineActiveFields();
+        static const byte FieldHardwareType = 0;
+        static const byte FieldProtocolType = 1;
+        static const byte FieldHardwareLength = 2;
+        static const byte FieldProtocolLength = 3;
+        static const byte FieldOperation = 4;
+        static const byte FieldSenderMAC = 5;
+        static const byte FieldSenderIP = 6;
+        static const byte FieldTargetMAC = 7;
+        static const byte FieldTargetIP = 8;
 
-		/* Put data into a libnet context calling de libnet_build* function */
-		void LibnetBuild(libnet_t *l);
-
-		virtual std::string MatchFilter() const;
-
-	public:
+    public:
 		/* Operation Type */
 		static const byte Request = 1;
 		static const byte Reply = 2;
 
-		static const std::string DefaultIP;
-		static const std::string DefaultMAC;
+        ARP();
 
-		ARP();
+        void SetHardwareType(const short_word& value) {
+            SetFieldValue(FieldHardwareType,value);
+        };
 
-		ARP(const ARP& arp) : Layer(arp) {
-			TargetMAC = arp.TargetMAC;
-			SenderMAC = arp.SenderMAC;
-		};
+        void SetProtocolType(const short_word& value) {
+            SetFieldValue(FieldProtocolType,value);
+        };
 
-		/* Assignament operator of this class */
-		ARP& operator=(const ARP& right) {
-			/* Copy the particular data of this class */
-			TargetMAC = right.TargetMAC;
-			SenderMAC = right.SenderMAC;
-			/* Call the assignament operator of the base class */
-			Layer::operator=(right);
-			/* Return */
-			return *this;
-		}
+        void SetHardwareLength(const byte& value) {
+            SetFieldValue(FieldHardwareLength,value);
+        };
 
-		Layer& operator=(const Layer& right) {
+        void SetProtocolLength(const byte& value) {
+            SetFieldValue(FieldProtocolLength,value);
+        };
 
-			/* Sanity check */
-			if (GetName() != right.GetName()) {
-				std::cout << "[!] ERROR: Cannot convert " << right.GetName()<< " to " << GetName() << std::endl;
-				exit(1);
-			}
+        void SetOperation(const short_word& value) {
+            SetFieldValue(FieldOperation,value);
+        };
 
-			const ARP* right_ptr = dynamic_cast< const ARP* >(&right);
-			ARP::operator=(*right_ptr);
-			/* Call the assignament operator of the base class */
-			Layer::operator=(right);
-			/* Return */
-			return *this;
-		}
+        void SetSenderMAC(const std::string& value) {
+            SetFieldValue(FieldSenderMAC,value);
+        };
 
-		/* Number of bytes on MAC address */
-		static const int n_ether_bytes = 6;
+        void SetSenderIP(const std::string& value) {
+            SetFieldValue(FieldSenderIP,value);
+        };
 
-		void SetSenderMAC(const std::string& dst) {
-			SenderMAC = dst;
-			SndMacStringToFields(dst);
-		}
+        void SetTargetMAC(const std::string& value) {
+            SetFieldValue(FieldTargetMAC,value);
+        };
 
-		void SetTargetMAC(const std::string& src) {
-			TargetMAC = src;
-			TrgMacStringToFields(src);
-		}
+        void SetTargetIP(const std::string& value) {
+            SetFieldValue(FieldTargetIP,value);
+        };
 
-		void SetHardwareType(short_word type) {
-			SetFieldValue<word>("HardwareType",type);
-		}
+        short_word  GetHardwareType() const {
+            return GetFieldValue<short_word>(FieldHardwareType);
+        };
 
-		void SetProtocolType(short_word type) {
-			SetFieldValue<word>("ProtocolType",type);
-		}
+        short_word  GetProtocolType() const {
+            return GetFieldValue<short_word>(FieldProtocolType);
+        };
 
-		void SetHardwareLength(short_word length) {
-			SetFieldValue<word>("HardwareLength",length);
-		}
+        byte  GetHardwareLength() const {
+            return GetFieldValue<byte>(FieldHardwareLength);
+        };
 
-		void SetProtocolLength(short_word length) {
-			SetFieldValue<word>("ProtocolLength",length);
-		}
+        byte  GetProtocolLength() const {
+            return GetFieldValue<byte>(FieldProtocolLength);
+        };
 
-		void SetSenderIP(std::string ip) {
-			SetFieldValue<std::string>("SenderIP",ip);
-		};
+        short_word  GetOperation() const {
+            return GetFieldValue<short_word>(FieldOperation);
+        };
 
-		void SetTargetIP(std::string ip) {
-			SetFieldValue<std::string>("TargetIP",ip);
-		};
+        std::string  GetSenderMAC() const {
+            return GetFieldValue<std::string>(FieldSenderMAC);
+        };
 
-		void SetOperation(short_word op) {
-			SetFieldValue<word>("Operation",op);
-		}
+        std::string  GetSenderIP() const {
+            return GetFieldValue<std::string>(FieldSenderIP);
+        };
 
-		std::string GetSenderMAC() const {
-			//SenderMAC = SndMacFieldsToString();
-			return SenderMAC;
-		}
+        std::string  GetTargetMAC() const {
+            return GetFieldValue<std::string>(FieldTargetMAC);
+        };
 
-		std::string GetTargetMAC() const {
-			//TargetMAC = TrgMacFieldsToString();
-			return TargetMAC;
-		}
+        std::string  GetTargetIP() const {
+            return GetFieldValue<std::string>(FieldTargetIP);
+        };
 
-		short_word GetHardwareType() const {
-			return GetFieldValue<word>("HardwareType");
-		}
+        ~ARP() { /* Destructor */ };
 
-		short_word  GetProtocolType() const  {
-			return GetFieldValue<word>("ProtocolType");
-		}
-
-		short_word GetHardwareLength() const {
-			return GetFieldValue<word>("HardwareLength");
-		}
-
-		short_word GetProtocolLength() const {
-			return GetFieldValue<word>("ProtocolLength");
-		}
-
-		std::string GetSenderIP() const {
-			return GetFieldValue<std::string>("SenderIP");
-		};
-
-		std::string GetTargetIP() const {
-			return GetFieldValue<std::string>("TargetIP");
-		};
-
-		short_word GetOperation() const {
-			return GetFieldValue<word>("Operation");
-		}
-
-		void Print() const;
-
-		virtual ~ARP() {/* */};
-	};
+    };
 
 }
 

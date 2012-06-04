@@ -25,124 +25,97 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-
 #include "ICMP.h"
-#include "IP.h"
-#include "../Crafter.h"
-#include "../Utils/CrafterUtils.h"
 
 using namespace Crafter;
 using namespace std;
 
-ICMP::ICMP() {
-		/* Allocate 2 words */
-		allocate_words(2);
-		/* Name of the protocol */
-		SetName("ICMP");
-		/* Set protocol NUmber */
-		SetprotoID(0x01);
+/* ------- Messages types --------- */
 
-		/* This header support field overlapping */
-		overlap_flag = 1;
+/* +++ Other +++ */
+const byte ICMP::SourceQuench = 4;
+const byte ICMP::EchoRedirect = 5;
 
-		/* Creates field information for the layer */
-		DefineProtocol();
+/* +++ Error messages +++ */
+const byte ICMP::DestinationUnreachable = 3;
+const byte ICMP::TimeExceeded = 11;
+const byte ICMP::ParameterProblem = 12;
 
-		/* Always set default values for fields in a layer */
-		SetType(8);
-		SetCode(0);
-		SetCheckSum(0);
-		SetRestOfHeader(0);
+/* +++ Request and replies +++ */
+const byte ICMP::EchoRequest = 8;
+const byte ICMP::EchoReply = 0;
 
-		/* Always call this, reset all fields */
-		ResetFields();
-}
+const byte ICMP::TimeStampRequest = 13;
+const byte ICMP::TimeStampReply = 14;
 
-void ICMP::DefineProtocol() {
-	/* Fields of the IP layer */
-	define_field("Type",new NumericField(0,0,7));
-	define_field("Code",new NumericField(0,8,15));
-	define_field("CheckSum",new HexField(0,16,31));
-	define_field("RestOfHeader",new NumericField(1,0,31));
+const byte ICMP::InformationRequest = 15;
+const byte ICMP::InformationReply = 16;
 
-	/* Ping header */
-	define_field("Identifier", new HexField(1,0,15));
-	define_field("SequenceNumber", new HexField(1,16,31));
+const byte ICMP::AddressMaskRequest = 17;
+const byte ICMP::AddressMaskReply = 18;
 
-	/* Pointer in Parameter Problem Message */
-	define_field("Pointer", new NumericField(1,0,7));
-
-	/* Internet Address on Redirect Message */
-	define_field("Gateway", new IPAddress(1,0,31));
-
-	/* Destination Unreachable, Time Exceeded and Parameter Problem (RFC4884) */
-	define_field("Length", new NumericField(1, 8, 15));
-}
-
-/* Redefine active fields in function of the type of message */
 void ICMP::ReDefineActiveFields() {
-
 	/* Get the type of message and redefine fields */
 	switch(GetType()) {
 
 	case EchoReply:
-		RedefineField("Identifier");
-		RedefineField("SequenceNumber");
+		RedefineField(FieldIdentifier);
+		RedefineField(FieldSequenceNumber);
 		break;
 
 	case DestinationUnreachable:
-                RedefineField("Length");
+        RedefineField(FieldLength);
 		break;
 
 	case SourceQuench:
 		break;
 
 	case EchoRedirect:
-		RedefineField("IPAddress");
+		RedefineField(FieldGateway);
 		break;
 
 	case EchoRequest:
-		RedefineField("Identifier");
-		RedefineField("SequenceNumber");
+		RedefineField(FieldIdentifier);
+		RedefineField(FieldSequenceNumber);
 		break;
 
 	case TimeExceeded:
-        RedefineField("Length");
+        RedefineField(FieldLength);
 		break;
 
 	case ParameterProblem:
-		RedefineField("Pointer");
-        RedefineField("Length");
+		RedefineField(FieldPointer);
+        RedefineField(FieldLength);
 		break;
 
 	case TimeStampRequest:
-		RedefineField("Identifier");
-		RedefineField("SequenceNumber");
+		RedefineField(FieldIdentifier);
+		RedefineField(FieldSequenceNumber);
 		break;
 
 	case TimeStampReply:
-		RedefineField("Identifier");
-		RedefineField("SequenceNumber");
+		RedefineField(FieldIdentifier);
+		RedefineField(FieldSequenceNumber);
 		break;
 
 	case InformationRequest:
-		RedefineField("Identifier");
-		RedefineField("SequenceNumber");
+		RedefineField(FieldIdentifier);
+		RedefineField(FieldSequenceNumber);
 		break;
 
 	case InformationReply:
-		RedefineField("Identifier");
-		RedefineField("SequenceNumber");
+		RedefineField(FieldIdentifier);
+		RedefineField(FieldSequenceNumber);
 		break;
 
 	case AddressMaskRequest:
-		RedefineField("Identifier");
-		RedefineField("SequenceNumber");
+		RedefineField(FieldIdentifier);
+		RedefineField(FieldSequenceNumber);
 		break;
 
 	case AddressMaskReply:
-		RedefineField("Identifier");
-		RedefineField("SequenceNumber");
+		RedefineField(FieldIdentifier);
+		RedefineField(FieldSequenceNumber);
 		break;
 
 	default:
@@ -150,6 +123,56 @@ void ICMP::ReDefineActiveFields() {
 	}
 }
 
+void ICMP::Craft() {
+	/* Calculates the ICMP original payload length (RFC4884) */
+	word type = GetType();
+	if ( (type == DestinationUnreachable || type == TimeExceeded || type == ParameterProblem) && !IsFieldSet(FieldLength)) {
+		word length = 0;
+		Layer* layer = GetTopLayer();
+		while (layer && layer->GetName() != "ICMPExtension") {
+			length += layer->GetSize();
+			/* Trick to make every sibling class a friend :) */
+			layer = ((ICMP*) layer)->GetTopLayer();
+		}
+		SetLength(length / 4);
+	}
+
+	if (!IsFieldSet(FieldCheckSum)) {
+
+		/* Total size */
+		size_t total_size = GetRemainingSize();
+		if ( (total_size%2) != 0 ) total_size++;
+
+		byte* buff_data = new byte[total_size];
+
+		buff_data[total_size - 1] = 0x00;
+
+		/* Compute the 16 bit checksum */
+		SetCheckSum(0);
+
+		GetData(buff_data);
+		short_word checksum = CheckSum((unsigned short *)buff_data,total_size/2);
+		SetCheckSum(ntohs(checksum));
+		ResetField(FieldCheckSum);
+
+		delete [] buff_data;
+
+	}
+}
+
+string ICMP::MatchFilter() const {
+	short_word type = GetType();
+
+	if ( type == EchoRequest || type == TimeStampRequest || type == InformationRequest || type == AddressMaskRequest) {
+		short_word ident = GetIdentifier();
+		char str_ident[6];
+		sprintf(str_ident,"%d",ident);
+		str_ident[5] = 0;
+		string ret_string = "( icmp and icmp[4:2] == " + string(str_ident) + ") ";
+		return ret_string;
+	} else
+		return "";
+}
 
 void ICMP::LibnetBuild(libnet_t *l) {
 
@@ -409,63 +432,5 @@ void ICMP::LibnetBuild(libnet_t *l) {
 
 	if(payload)
 		delete [] payload;
-
 }
 
-std::string ICMP::MatchFilter() const {
-	short_word type = GetType();
-
-	if ( type == EchoRequest || type == TimeStampRequest || type == InformationRequest || type == AddressMaskRequest) {
-		short_word ident = GetIdentifier();
-		char* str_ident = new char[6];
-		sprintf(str_ident,"%d",ident);
-		str_ident[5] = 0;
-		string ret_string = "( icmp and icmp[4:2] == " + string(str_ident) + ") ";
-		delete [] str_ident;
-		return ret_string;
-	} else
-		return "";
-}
-
-/* Copy crafted packet to buffer_data */
-void ICMP::Craft () {
-	/* Calculates the ICMP original payload length (RFC4884) */
-	word type = GetType();
-	if (type == DestinationUnreachable ||
-		type == TimeExceeded ||
-		type == ParameterProblem) {
-		word length = 0;
-		Layer* layer = GetTopLayer();
-		while (layer && layer->GetName() != "ICMPExtension") {
-			length += layer->GetSize();
-			/* Trick to make every sibling class a friend :) */
-			layer = ((ICMP*) layer)->GetTopLayer();
-		}
-		SetLength(length / 4);
-	}
-
-	if (!IsFieldSet("CheckSum") || (GetCheckSum() == 0)) {
-
-		/* Total size */
-		size_t total_size = GetRemainingSize();
-		if ( (total_size%2) != 0 ) total_size++;
-
-		byte* buff_data = new byte[total_size];
-
-		buff_data[total_size - 1] = 0x00;
-
-		/* Compute the 16 bit checksum */
-		SetCheckSum(0);
-
-		GetData(buff_data);
-		short_word checksum = CheckSum((unsigned short *)buff_data,total_size/2);
-		SetCheckSum(ntohs(checksum));
-		ResetField("CheckSum");
-
-		delete [] buff_data;
-
-	}
-
-}
-
-ICMP::~ICMP() { /* */ }
