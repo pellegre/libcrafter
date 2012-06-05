@@ -349,15 +349,14 @@ int Packet::Send(const string& iface) {
 
 	 }
 
-	/* Check status of the socket */
-	if(socket_open_once) close(raw);
-	else socket_open_once = 1;
-
 	word current_id = Stack[0]->GetID();
 	/* Check for Internet Layer protocol */
 	if (current_id != 0x0800) {
 
 		if(current_id != last_id || iface != last_iface) {
+			/* Check status of the socket */
+			if(socket_open_once) close(raw);
+			else socket_open_once = 1;
 
 			/* Link layer object, or some unknown protocol */
 			raw = CreateLinkSocket(ETH_P_ALL);
@@ -380,6 +379,10 @@ int Packet::Send(const string& iface) {
 		IP* ip_layer = dynamic_cast<IP*>(Stack[0]);
 
 		if(current_id != last_id || iface != last_iface) {
+			/* Check status of the socket */
+			if(socket_open_once) close(raw);
+			else socket_open_once = 1;
+
 			/* Is IP, use a RAW socket */
 			raw = CreateRawSocket(ip_layer->GetProtocol());
 
@@ -442,10 +445,6 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 	/* Before doing anything weird, craft the packet */
 	Craft();
 
-	/* Check status of the socket */
-	if(socket_open_once) close(raw);
-	else socket_open_once = 1;
-
 	word current_id = Stack[0]->GetID();
 
 	/* Check for Link Layer protocol */
@@ -454,6 +453,9 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 		use_packet_socket = 1;
 
 		if(current_id != last_id || iface != last_iface) {
+			/* Check status of the socket */
+			if(socket_open_once) close(raw);
+			else socket_open_once = 1;
 
 			/* Link layer object, or some unknown protocol */
 			raw = CreateLinkSocket(ETH_P_ALL);
@@ -472,6 +474,10 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 		IP* ip_layer = dynamic_cast<IP*>(Stack[0]);
 
 		if(current_id != last_id || iface != last_iface) {
+			/* Check status of the socket */
+			if(socket_open_once) close(raw);
+			else socket_open_once = 1;
+
 			/* Is IP, use a RAW socket */
 			raw = CreateRawSocket(ip_layer->GetProtocol());
 
@@ -621,8 +627,6 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 			filter += ")";
 	} else
 		filter = user_filter;
-
-	//cout << filter << endl;
 
 	/* ----------- Begin Critical area ---------------- */
 

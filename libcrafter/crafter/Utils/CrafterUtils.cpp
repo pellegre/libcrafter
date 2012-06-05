@@ -51,13 +51,13 @@ string Crafter::GetMyMAC(const string& iface) {
 	strcpy(s.ifr_name, iface.c_str());
 
 	if (0 == ioctl(fd, SIOCGIFHWADDR, &s)) {
-
-		const struct ether_addr *ptr = (const struct ether_addr *) (s.ifr_addr.sa_data);
+		struct ether_addr ptr;
+		memcpy(&ptr,s.ifr_addr.sa_data,sizeof(struct ether_addr));
 		char buf[19];
 		sprintf (buf, "%02x:%02x:%02x:%02x:%02x:%02x",
-			  ptr->ether_addr_octet[0], ptr->ether_addr_octet[1],
-			  ptr->ether_addr_octet[2], ptr->ether_addr_octet[3],
-			  ptr->ether_addr_octet[4], ptr->ether_addr_octet[5]);
+			  ptr.ether_addr_octet[0], ptr.ether_addr_octet[1],
+			  ptr.ether_addr_octet[2], ptr.ether_addr_octet[3],
+			  ptr.ether_addr_octet[4], ptr.ether_addr_octet[5]);
 		buf[18] = 0;
 		close(fd);
 		return string(buf);
