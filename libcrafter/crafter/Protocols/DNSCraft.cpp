@@ -122,45 +122,6 @@ void DNS::Craft() {
 	delete [] raw_payload;
 }
 
-void DNS::LibnetBuild(libnet_t* l) {
-	/* Get the payload */
-	size_t payload_size = GetPayloadSize();
-	byte* payload;
-
-	if (payload_size) {
-		payload = new byte[payload_size];
-		GetPayload(payload);
-	} else
-		payload = 0;
-
-	short_word* ptr = (short_word*)raw_data;
-	/* Now write the data into the libnet context */
-	int dns = libnet_build_dnsv4 (  LIBNET_UDP_DNSV4_H,
-								    GetIdentification(),
-								    ntohs(ptr[1]),
-								    GetTotalQuestions(),
-								    GetTotalAnswer(),
-								    GetTotalAuthority(),
-								    GetTotalAdditional(),
-								    payload,
-								    payload_size,
-								    l,
-								    0
-							      );
-
-	/* In case of error */
-	if (dns == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "DNS::LibnetBuild()",
-		             "Unable to build DNS header: " + string(libnet_geterror (l)));
-		exit (1);
-	}
-
-	if(payload)
-		delete [] payload;
-
-}
-
 static void zero_buff(char* buff, size_t ndata) {
 	for(size_t i = 0 ; i < ndata ; i++)
 		buff[i] = 0x0;

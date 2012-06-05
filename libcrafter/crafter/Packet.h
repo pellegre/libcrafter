@@ -28,11 +28,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef PACKET_H_
 #define PACKET_H_
+
 #include <iostream>
 #include <vector>
 #include <sys/socket.h>
 #include <pcap.h>
-#include <libnet.h>
 
 #include "Layer.h"
 #include "Protocols/RawLayer.h"
@@ -112,16 +112,16 @@ typedef std::vector<Layer*> LayerStack;
 		size_t GetSize() const { return bytes_size; };
 
 		/* Put a packet into the wire */
-		void Send(const std::string& iface = "");
+		int Send(const std::string& iface = "");
 
 		/* Send a packet and try to match the answer */
 		Packet* SendRecv(const std::string& iface = "", int timeout = 5, int retry = 3, const std::string& user_filter = " ");
 
-		/* Put a packet into the wire trought a socket */
+		/* Put a packet into the wire trough a raw socket */
 		int RawSocketSend(int sd);
 
-		/* Send a packet and match the answer */
-		Packet* RawSocketSendRecv(int sd, const std::string& iface = "", int timeout = 5, int retry = 3, const std::string& user_filter = " ");
+		/* Put a packet into the wire trough a raw socket */
+		int PacketSocketSend(int sd);
 
 		/* Print each layer of the packet */
 		void Print() const;

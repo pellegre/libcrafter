@@ -612,123 +612,72 @@ void Packet::PacketFromEthernet(const RawLayer& data) {
 }
 
 /* Send a packet */
-void Packet::Send(const string& iface) {
-
-	/* Libnet context */
-	libnet_t *l;                        /* Libnet context */
-	char errbuf[LIBNET_ERRBUF_SIZE];    /* Error messages */
-
-	/* Name of the device */
-	char* device;
-
-	/* Find device for sniffing if needed */
-	if (iface == "") {
-	  /* If user hasn't specified a device */
-	  device = pcap_lookupdev (errbuf); /* let pcap find a compatible device */
-	  cout << "[@] MESSAGE: Packet::Send() -> Using interface: " << device << endl;
-	  if (device == NULL) {
-		  /* there was an error */
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Packet::Send()",
-		                 "Opening device -> " + string(errbuf));
-		  exit (1);
-	  }
-	} else
-	  device = (char *)iface.c_str();
-
-	/* We should find out if the Ethernet layer is or not */
- 	if (Stack.size() > 0) {
- 		string name = Stack[0]->GetName();
- 		if ( name == "Ethernet") {
-
- 			/* Init libnet context */
- 			l = libnet_init (LIBNET_LINK, device, errbuf);
-
- 			/* In case of error */
- 			if (l == 0) {
- 				PrintMessage(Crafter::PrintCodes::PrintError,
- 						     "Packet::Send()",
- 			                 "Opening libnet context -> " + string(errbuf));
- 			  exit (1);
- 			}
-
- 		} else
- 			if (name == "IP") {
-
- 			/* Init libnet context */
- 			l = libnet_init (LIBNET_RAW4, device, errbuf);
-
- 			/* In case of error */
- 			if (l == 0) {
- 				PrintMessage(Crafter::PrintCodes::PrintError,
- 						     "Packet::Send()",
- 			                 "Opening libnet context -> " + string(errbuf));
- 			  exit (1);
- 			}
-
- 		} else {
-			PrintMessage(Crafter::PrintCodes::PrintWarning,
-						 "Packet::Send()",
- 				         "The first layer in the stack (" + name + ") is not IP or Ethernet.");
-
- 			/* Craft the packet */
- 			Craft();
-
- 			/* Create the raw socket */
- 			int raw = CreateRawSocket(ETH_P_ALL);
-
- 			/* Bind raw socket to interface */
- 			BindRawSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
-
-			/* Write the packet on the wire */
- 			if(!SendRawPacket(raw, raw_data, bytes_size)) {
- 				PrintMessage(Crafter::PrintCodes::PrintPerror,
- 						     "Packet::Send()",
- 				             "Sending packet");
- 			}
-
- 			return;
- 		}
-
- 	} else {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "Packet::Send()",
-                     "Not data in the packet. ");
-
- 		return;
- 	}
-
-	/* Before doing anything weird, craft the packet */
+int Packet::Send(const string& iface) {
+	/* Craft the packet, so we fill all the information needed */
 	Craft();
 
- 	/* Put the headers into de libnet context from the top to the bottom */
-	vector<Layer*>::reverse_iterator layer_from_top;
+	if(Stack.size() == 0) {
 
-	for (layer_from_top = Stack.rbegin() ; layer_from_top != Stack.rend() ; layer_from_top++)
-		(*layer_from_top)->LibnetBuild(l);
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+					 "Packet::Send()",
+					 "Not data in the packet. ");
+		return 0;
 
-	if ((libnet_write (l)) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::Send()",
-	                 "Unable to send packet -> " + string(libnet_geterror (l)));
-	  exit (1);
+	 }
+
+	/* Check for Internet Layer protocol */
+	if (Stack[0]->GetID() != 0x0800) {
+
+		/* Link layer object, or some unknown protocol */
+		int raw = CreateLinkSocket(ETH_P_ALL);
+
+		/* Bind raw socket to interface */
+		if(iface.size() > 0)
+			BindLinkSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
+
+		/* Write the packet on the wire */
+		int ret = SendLinkSocket(raw, raw_data, bytes_size);
+
+		close(raw);
+
+		return ret;
+
+	} else {
+
+		IP* ip_layer = dynamic_cast<IP*>(Stack[0]);
+
+		/* Is IP, use a RAW socket */
+		int raw = CreateRawSocket(ip_layer->GetProtocol());
+
+		/* Bind raw socket to interface */
+		if(iface.size() > 0)
+			BindRawSocketToInterface(iface.c_str(), raw);
+
+		/* Create structure for destination */
+		struct sockaddr_in din;
+		/* Set destinations structure */
+	    din.sin_family = AF_INET;
+	    din.sin_port = 0;
+	    din.sin_addr.s_addr = inet_addr(ip_layer->GetDestinationIP().c_str());
+	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
+
+		int ret = sendto(raw, raw_data, bytes_size, 0, (struct sockaddr *)&din, sizeof(din));
+
+		close(raw);
+
+		return ret;
+
 	}
-
-	/* Exit cleanly */
-	libnet_destroy (l);
 
 }
 
 /* Send a packet */
 Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const string& user_filter) {
 
-	/* Libnet context */
-	libnet_t *l = 0;                           /* Libnet context */
-	char libnet_errbuf[LIBNET_ERRBUF_SIZE];    /* Error messages */
 	char libcap_errbuf[PCAP_ERRBUF_SIZE];      /* Error messages */
 
 	/* Name of the device */
-	char* device;
+	const char* device = iface.c_str();
 	/* Handle for the opened pcap session */
 	pcap_t *handle;
 	/* IP address of interface */
@@ -738,106 +687,95 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 	/* Compiled BPF filter */
 	struct bpf_program fp;
 
-	byte use_raw_socket = 0;
+	/* Flag for link layer socket */
+	byte use_packet_socket = 0;
 
-	/* Find device for sniffing if needed */
-	if (iface == "") {
-	  /* If user hasn't specified a device */
-	  device = pcap_lookupdev (libcap_errbuf); /* let pcap find a compatible device */
-	  cout << "[@] MESSAGE: Packet::Send() -> Using interface: " << device << endl;
-	  if (device == NULL) {
-		  /* there was an error */
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Packet::SendRecv()",
-		                 "Opening device -> " + string(libcap_errbuf));
-		  exit (1);
-	  }
-	} else
-	  device = (char *)iface.c_str();
+	/* Socket descriptor */
+	int raw;
+	/* Create structure for destination */
+	struct sockaddr_in din;
 
-	/* We should find out if the Ethernet layer is present */
- 	if (Stack.size() > 0) {
- 		string name = Stack[0]->GetName();
- 		if (name == "Ethernet") {
+	if(Stack.size() == 0) {
 
- 			/* Init libnet context */
- 			l = libnet_init (LIBNET_LINK, device, libnet_errbuf);
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+					 "Packet::SendRecv()",
+					 "Not data in the packet. ");
+		return 0;
 
- 			/* In case of error */
- 			if (l == 0) {
- 				PrintMessage(Crafter::PrintCodes::PrintError,
- 						     "Packet::SendRecv()",
- 			                 "Opening libnet context: " + string(libnet_errbuf));
- 			  exit (1);
- 			}
-
- 		} else if (name == "IP") {
-
- 			/* Init libnet context */
- 			l = libnet_init (LIBNET_RAW4, device, libnet_errbuf);
-
- 			/* In case of error */
- 			if (l == 0) {
- 				PrintMessage(Crafter::PrintCodes::PrintError,
- 						     "Packet::SendRecv()",
- 			                 "Opening libnet context: " + string(libnet_errbuf));
- 			  exit (1);
- 			}
-
- 		} else {
- 			if (user_filter == " ") {
- 				PrintMessage(Crafter::PrintCodes::PrintWarning,
- 						     "Packet::SendRecv()",
- 					         "The first layer in the stack (" + name + ") is not IP or Ethernet and you didn't supply a filter expression. Don't expect any answer.");
- 			}else {
- 				PrintMessage(Crafter::PrintCodes::PrintWarning,
- 						     "Packet::SendRecv()",
- 					         "The first layer in the stack (" + name + ") is not IP or Ethernet.");
- 			}
- 			use_raw_socket = 1;
-
- 			if (user_filter == " ") {
-				/* Craft the packet */
-				Craft();
-
-				/* Create the raw socket */
-				int raw = CreateRawSocket(ETH_P_ALL);
-
-				/* Bind raw socket to interface */
-				BindRawSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
-
-				/* Write the packet on the wire */
-				if(!SendRawPacket(raw, raw_data, bytes_size)) {
-					PrintMessage(Crafter::PrintCodes::PrintPerror,
-							     "Packet::SendRecv()",
-					             "Sending packet");
-				}
-
-				close(raw);
-
-				return 0;
- 			}
- 		}
-
- 	} else {
-			PrintMessage(Crafter::PrintCodes::PrintWarning,
-					     "Packet::SendRecv()",
-			             "Not data in the packet. ");
- 		return 0;
- 	}
+	 }
 
 	/* Before doing anything weird, craft the packet */
 	Craft();
 
-	if (!use_raw_socket) {
-		/* Put the headers into de libnet context from the top to the bottom */
-		vector<Layer*>::reverse_iterator layer_from_top;
+	/* Check for Link Layer protocol */
+	if (Stack[0]->GetID() == 0xfff2) {
 
-		for (layer_from_top = Stack.rbegin() ; layer_from_top != Stack.rend() ; layer_from_top++)
-			(*layer_from_top)->LibnetBuild(l);
-	}
 
-	/* Set errbuf to 0 length string to check for warnings */
+		use_packet_socket = 1;
+
+		/* Create the raw socket */
+		raw = CreateLinkSocket(ETH_P_ALL);
+
+		/* Bind raw socket to interface */
+		if(iface.size() > 0)
+			BindLinkSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
+
+
+	/* Check for IP protocol */
+	} else if (Stack[0]->GetID() == 0x0800){
+
+		IP* ip_layer = dynamic_cast<IP*>(Stack[0]);
+
+		raw = CreateRawSocket(ip_layer->GetProtocol());
+
+		/* Bind raw socket to interface */
+		if(iface.size() > 0)
+			BindRawSocketToInterface(iface.c_str(), raw);
+
+		/* Set destinations structure */
+	    din.sin_family = AF_INET;
+	    din.sin_port = 0;
+	    din.sin_addr.s_addr = inet_addr(ip_layer->GetDestinationIP().c_str());
+	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
+
+ 	} else {
+
+		if (user_filter == " ") {
+			PrintMessage(Crafter::PrintCodes::PrintWarning,
+						 "Packet::SendRecv()",
+						 "The first layer in the stack (" + Stack[0]->GetName() + ") is not IP or Ethernet and you didn't supply a filter expression. Don't expect any answer.");
+		}else {
+			PrintMessage(Crafter::PrintCodes::PrintWarning,
+						 "Packet::SendRecv()",
+						 "The first layer in the stack (" + Stack[0]->GetName() + ") is not IP or Ethernet.");
+		}
+
+		use_packet_socket = 1;
+
+		/* Create the raw socket */
+		raw = CreateLinkSocket(ETH_P_ALL);
+
+		/* Bind raw socket to interface */
+		if(iface.size() > 0)
+			BindLinkSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
+
+		if (user_filter == " ") {
+
+			/* Write the packet on the wire */
+			if(SendLinkSocket(raw, raw_data, bytes_size) < 0) {
+				PrintMessage(Crafter::PrintCodes::PrintWarning,
+							 "Packet::SendRecv()",
+							 "Sending packet (PF_PACKET socket)");
+			}
+
+			close(raw);
+
+			return 0;
+
+		}
+ 	}
+
+	/* Set error buffer to 0 length string to check for warnings */
 	libcap_errbuf[0] = 0;
 
 	/* Open device for sniffing */
@@ -973,28 +911,28 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 
 	while (count < retry) {
 
-		if (!use_raw_socket) {
-			if ((libnet_write (l)) == -1) {
-				PrintMessage(Crafter::PrintCodes::PrintError,
+		if (!use_packet_socket) {
+			/* Write the packet on the wire */
+			if(SendRawSocket(raw,(sockaddr *)&din, raw_data, bytes_size) < 0) {
+				PrintMessage(Crafter::PrintCodes::PrintWarning,
 						     "Packet::SendRecv()",
-			                 "Unable to send packet -> " + string(libnet_geterror (l)));
-			  exit (1);
+				             "Sending packet (PF_INET)");
+				/* Exit cleanly */
+				close(raw);
+				return 0;
 			}
 		} else {
-			/* Create the raw socket */
-			int raw = CreateRawSocket(ETH_P_ALL);
-
-			/* Bind raw socket to interface */
-			BindRawSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
 
 			/* Write the packet on the wire */
-			if(!SendRawPacket(raw, raw_data, bytes_size)) {
-				PrintMessage(Crafter::PrintCodes::PrintPerror,
+			if(SendLinkSocket(raw, raw_data, bytes_size) < 0) {
+				PrintMessage(Crafter::PrintCodes::PrintWarning,
 						     "Packet::SendRecv()",
-				             "Sending packet");
+				             "Sending packet (PF_PACKET)");
+				/* Exit cleanly */
+				close(raw);
+				return 0;
 			}
-			/* Close Raw Socket */
-			close(raw);
+
 		}
 
 		struct pcap_pkthdr *header;
@@ -1022,8 +960,7 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 	}
 
 	/* Exit cleanly */
-	if (!use_raw_socket)
-		libnet_destroy (l);
+	close(raw);
 
 	pcap_close (handle);
 
@@ -1037,10 +974,11 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 }
 
 int Packet::RawSocketSend(int sd) {
-	/* IP address in string format */
-	char ip_address[16];
+	/* Craft data before sending anything */
+	Craft();
+
 	/* Get IP Layer */
-	IP* IPLayer = 0;
+	IP* ip_layer = 0;
 
 	/* Check for Internet Layer protocol. Should be a IP Layer object */
 	if (Stack[0]->GetID() != 0x0800) {
@@ -1050,10 +988,9 @@ int Packet::RawSocketSend(int sd) {
 		exit(1);
 	} else {
 		/* Is OK to cast it */
-		IPLayer = dynamic_cast<IP*>(Stack[0]);
-		strncpy(ip_address , (const char *)(IPLayer->GetDestinationIP()).c_str(), 16);
-                int one = 1;
-                const int* val = &one;
+		ip_layer = dynamic_cast<IP*>(Stack[0]);
+		int one = 1;
+		const int* val = &one;
 		if(setsockopt(sd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0) {
 			PrintMessage(Crafter::PrintCodes::PrintError,
 						"Packet::RawSocketSend()",
@@ -1067,286 +1004,20 @@ int Packet::RawSocketSend(int sd) {
 	/* Set destinations structure */
     din.sin_family = AF_INET;
     din.sin_port = 0;
-    din.sin_addr.s_addr = inet_addr(ip_address);
+    din.sin_addr.s_addr = inet_addr(ip_layer->GetDestinationIP().c_str());
     memset(din.sin_zero, '\0', sizeof (din.sin_zero));
 
-	/* Craft data before sending anything */
-	Craft();
-
-    int ret = 0;
-	if( (ret = sendto(sd, raw_data, bytes_size, 0, (struct sockaddr *)&din, sizeof(din))) < 0) {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "Packet::RawSocketSend()",
-				     "Writing on Raw Socket");
-	}
-
-	return ret;
-
+	return sendto(sd, raw_data, bytes_size, 0, (struct sockaddr *)&din, sizeof(din));
 }
 
-Packet* Packet::RawSocketSendRecv(int sd, const string& iface, int timeout, int retry, const string& user_filter) {
-	/* Error messages */
-	char libcap_errbuf[PCAP_ERRBUF_SIZE];
-
-	/* Name of the device */
-	char* device;
-	/* Handle for the opened pcap session */
-	pcap_t *handle;
-	/* IP address of interface */
-	bpf_u_int32 netp;
-	/* Subnet mask of interface */
-	bpf_u_int32 maskp;
-	/* Compiled BPF filter */
-	struct bpf_program fp;
-
-	/* IP address in string format */
-	char ip_address_dst[16];
-	/* Get IP Layer */
-	IP* IPLayer = 0;
-
-	/* Check for Internet Layer protocol. Should be a IP Layer object */
-	if (Stack[0]->GetName() != "IP") {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSendRecv()",
-		             "No IP layer on packet. Cannot write on Raw Socket.");
-		exit(1);
-	} else {
-		/* Is OK to cast it */
-		IPLayer = dynamic_cast<IP*>(Stack[0]);
-		strncpy(ip_address_dst, (const char *)(IPLayer->GetDestinationIP()).c_str(), 16);
-	}
-
-	/* Find device for sniffing if needed */
-	if (iface == "") {
-	  /* If user hasn't specified a device */
-	  device = pcap_lookupdev (libcap_errbuf); /* let pcap find a compatible device */
-	  cout << "[@] MESSAGE: Packet::Send() -> Using interface: " << device << endl;
-	  if (device == NULL) {
-		  /* there was an error */
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Packet::RawSocketSendRecv()",
-		                 "Opening device -> " + string(libcap_errbuf));
-		  exit (1);
-	  }
-	} else
-	  device = (char *)iface.c_str();
-
-	/* Create structure for destination */
-	struct sockaddr_in din;
-
-	/* Check for Transport Layer Protocol. Should be TCP, UDP or ICMP */
-	string transport_layer = Stack[1]->GetName();
-	if ( transport_layer == "UDP") {
-		UDP* udp_layer = dynamic_cast<UDP*>(Stack[1]);
-		/* Set destinations structure */
-	    din.sin_family = AF_INET;
-	    din.sin_port = htons(udp_layer->GetDstPort());
-	    din.sin_addr.s_addr = inet_addr(ip_address_dst);
-	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-	}
-//	else if (transport_layer == "TCP") {
-//		TCP* tcp_layer = dynamic_cast<TCP*>(Stack[1]);
-//		/* Set destinations structure */
-//	    din.sin_family = AF_INET;
-//	    din.sin_port = htons(tcp_layer->GetDstPort());
-//	    din.sin_addr.s_addr = inet_addr(ip_address_dst);
-//	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-//	}
-	else {
-		/* Set destinations structure */
-	    din.sin_family = AF_INET;
-	    din.sin_port = htons(0);
-	    din.sin_addr.s_addr = inet_addr(ip_address_dst);
-	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-	}
-
-	/* Craft data before sending anything */
+int Packet::PacketSocketSend(int sd) {
+	/* Craft the packet */
 	Craft();
 
-	int one = 1;
-	const int *val = &one;
-
-	if(setsockopt(sd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSendRecv()",
-		             "Setting IPPROTO_IP option to raw socket");
-		exit(1);
-	}
-
-	if (setsockopt(sd, SOL_SOCKET, SO_BINDTODEVICE, device, iface.size())) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSendRecv()",
-		             "Setting SOL_SOCKET option to raw socket");
-		exit(1);
-	}
-
-	/* Set errbuf to 0 length string to check for warnings */
-	libcap_errbuf[0] = 0;
-
-	/* Open device for sniffing */
-	handle = pcap_open_live (device,  /* device to sniff on */
-						     BUFSIZ,  /* maximum number of bytes to capture per packet */
-									  /* BUFSIZE is defined in pcap.h */
-						     1,       /* promisc - 1 to set card in promiscuous mode, 0 to not */
-				  timeout*1000,       /* to_ms - amount of time to perform packet capture in milliseconds */
-									  /* 0 = sniff until error */
-				      libcap_errbuf); /* error message buffer if something goes wrong */
-
-
-	if (handle == NULL) {
-	  /* There was an error */
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSendRecv()",
-	                 "Listening device -> " + string(libcap_errbuf));
-	  exit (1);
-	}
-	if (strlen (libcap_errbuf) > 0) {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "Packet::RawSocketSendRecv()",
-			         string(libcap_errbuf));
-
-	  libcap_errbuf[0] = 0;    /* re-set error buffer */
-	}
-
-	/* Find out the datalink type of the connection */
-	if (pcap_datalink (handle) != DLT_EN10MB) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSendRecv()",
-	                 "This sniffer only supports Ethernet cards!");
-	  exit (1);
-	}
-
-	/* Get the IP subnet mask of the device, so we set a filter on it */
-	if (pcap_lookupnet (device, &netp, &maskp, libcap_errbuf) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSendRecv()",
-                     "[!] Error getting information of the device -> " + string(libcap_errbuf));
-	  exit (1);
-	}
-
-	string filter = "";
-
-	/* Get the IP layer */
-	IP* ip_layer = 0;
-	LayerStack::iterator it_layer;
-	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "IP")
-			ip_layer = dynamic_cast<IP*>( (*it_layer) );
-
-	if (user_filter == " ") {
-		string check_icmp;
-
-		if (ip_layer) {
-			short_word ident = ip_layer->GetIdentification();
-			char* str_ident = new char[6];
-			sprintf(str_ident,"%d",ident);
-			str_ident[5] = 0;
-			check_icmp = "( ( (icmp[icmptype] == icmp-unreach) or (icmp[icmptype] == icmp-timxceed) or "
-						 "    (icmp[icmptype] == icmp-paramprob) or (icmp[icmptype] == icmp-sourcequench) or "
-						 "    (icmp[icmptype] == icmp-redirect) ) and (icmp[12:2] == " + string(str_ident)  + " ) ) ";
-
-		} else
-			check_icmp = " ";
-
-		vector<string> layer_filter;
-
-		/* Construct the filter for matching packets */
-		vector<Layer*>::iterator it_layer;
-
-		for (it_layer = Stack.begin() ; it_layer != Stack.end(); it_layer++) {
-			layer_filter.push_back((*it_layer)->MatchFilter());
-		}
-
-		filter = "(" + layer_filter[0];
-
-		vector<string>::iterator it_f;
-
-		for(it_f = layer_filter.begin() + 1 ; it_f != layer_filter.end() ; it_f++) {
-			vector<string>::iterator last = it_f - 1;
-			if ( (*it_f) != " " && (*last) != " " )
-				filter += " and " + (*it_f);
-			else if ( (*it_f) != " " && (*last) == " ")
-				filter += (*it_f);
-		}
-
-		if (check_icmp != " ")
-			filter += ") or " + check_icmp;
-		else
-			filter += ")";
-	} else
-		filter = user_filter;
-
-	/* ----------- Begin Critical area ---------------- */
-
-    pthread_mutex_lock (&mutex_compile);
-
-	/* Compile the filter, so we can capture only stuff we are interested in */
-	if (pcap_compile (handle, &fp, filter.c_str(), 0, maskp) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSendRecv()",
-	                 "Error compiling the filter -> " + string(pcap_geterr(handle) ));
-		cerr << "[!] Bad filter expression -> " << filter << endl;
-	  exit (1);
-	}
-
-	/* Set the filter for the device we have opened */
-	if (pcap_setfilter (handle, &fp) == -1)	{
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSendRecv()",
-		             "[!] Setting filter -> " + string(pcap_geterr (handle)));
-	  exit (1);
-	}
-
-    pthread_mutex_unlock (&mutex_compile);
-
-	/* ------------ End Critical area ----------------- */
-
-    int count = 0;
-    int success = 0;
-
-	Packet* match_packet = new Packet;
-
-    while (count < retry) {
-
-		if(sendto(sd, raw_data, bytes_size, 0, (struct sockaddr *)&din, sizeof(din)) < 0) {
-			PrintMessage(Crafter::PrintCodes::PrintPerror,
-					     "Packet::RawSocketSendRecv()",
-			             "Writing on raw socket -> ");
-			exit(1);
-		}
-
-		struct pcap_pkthdr *header;
-		const u_char *packet;
-		int r;
-
-		if ((r = pcap_next_ex (handle, &header, &packet)) <= 0) {
-			if (r == -1) {
-			  /* Pcap error */
-				PrintMessage(Crafter::PrintCodes::PrintError,
-						     "Packet::RawSocketSendRecv()",
-			                 "Error calling pcap_next_ex " + string(pcap_geterr(handle)));
-			  exit (1);
-			}
-			/* Otherwise return should be -2 */
-		}
-
-		if (r >= 1) {
-			match_packet->PacketFromEthernet(packet, header->len);
-			success = 1;
-			break;
-		}
-
-		count++;
-	}
-
-	pcap_close (handle);
-
-	if (success)
-		return match_packet;
-	else
-		return 0;
-
+	/* Write it on a packet socket */
+	return SendLinkSocket(sd, raw_data, bytes_size);
 }
+
 
 void Packet::InitMutex() {
     pthread_mutex_init(&Packet::mutex_compile, NULL);

@@ -748,8 +748,6 @@ LTLIBOBJS
 LIBOBJS
 CRAFTER_API_VERSION
 CRAFTER_SO_VERSION
-LNETLIB
-LNETINC
 PCAPLIB
 PCAPINC
 CXXCPP
@@ -875,7 +873,6 @@ enable_fast_install
 with_gnu_ld
 enable_libtool_lock
 with_libpcap
-with_libnet
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1525,7 +1522,6 @@ Optional Packages:
                           both]
   --with-gnu-ld           assume the C compiler uses GNU ld [default=no]
   --with-libpcap=DIR      use libpcap in DIR
-  --with-libnet=DIR       use libnet in DIR
 
 Some influential environment variables:
   CXX         C++ compiler command
@@ -4956,13 +4952,13 @@ if test "${lt_cv_nm_interface+set}" = set; then :
 else
   lt_cv_nm_interface="BSD nm"
   echo "int some_variable = 0;" > conftest.$ac_ext
-  (eval echo "\"\$as_me:4959: $ac_compile\"" >&5)
+  (eval echo "\"\$as_me:4955: $ac_compile\"" >&5)
   (eval "$ac_compile" 2>conftest.err)
   cat conftest.err >&5
-  (eval echo "\"\$as_me:4962: $NM \\\"conftest.$ac_objext\\\"\"" >&5)
+  (eval echo "\"\$as_me:4958: $NM \\\"conftest.$ac_objext\\\"\"" >&5)
   (eval "$NM \"conftest.$ac_objext\"" 2>conftest.err > conftest.out)
   cat conftest.err >&5
-  (eval echo "\"\$as_me:4965: output\"" >&5)
+  (eval echo "\"\$as_me:4961: output\"" >&5)
   cat conftest.out >&5
   if $GREP 'External.*some_variable' conftest.out > /dev/null; then
     lt_cv_nm_interface="MS dumpbin"
@@ -6168,7 +6164,7 @@ ia64-*-hpux*)
   ;;
 *-*-irix6*)
   # Find out which ABI we are using.
-  echo '#line 6171 "configure"' > conftest.$ac_ext
+  echo '#line 6167 "configure"' > conftest.$ac_ext
   if { { eval echo "\"\$as_me\":${as_lineno-$LINENO}: \"$ac_compile\""; } >&5
   (eval $ac_compile) 2>&5
   ac_status=$?
@@ -8219,11 +8215,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:8222: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:8218: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>conftest.err)
    ac_status=$?
    cat conftest.err >&5
-   echo "$as_me:8226: \$? = $ac_status" >&5
+   echo "$as_me:8222: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s "$ac_outfile"; then
      # The compiler can only warn and ignore the option if not recognized
      # So say no if there are warnings other than the usual output.
@@ -8558,11 +8554,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:8561: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:8557: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>conftest.err)
    ac_status=$?
    cat conftest.err >&5
-   echo "$as_me:8565: \$? = $ac_status" >&5
+   echo "$as_me:8561: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s "$ac_outfile"; then
      # The compiler can only warn and ignore the option if not recognized
      # So say no if there are warnings other than the usual output.
@@ -8663,11 +8659,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:8666: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:8662: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>out/conftest.err)
    ac_status=$?
    cat out/conftest.err >&5
-   echo "$as_me:8670: \$? = $ac_status" >&5
+   echo "$as_me:8666: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s out/conftest2.$ac_objext
    then
      # The compiler can only warn and ignore the option if not recognized
@@ -8718,11 +8714,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:8721: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:8717: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>out/conftest.err)
    ac_status=$?
    cat out/conftest.err >&5
-   echo "$as_me:8725: \$? = $ac_status" >&5
+   echo "$as_me:8721: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s out/conftest2.$ac_objext
    then
      # The compiler can only warn and ignore the option if not recognized
@@ -11102,7 +11098,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 11105 "configure"
+#line 11101 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -11198,7 +11194,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 11201 "configure"
+#line 11197 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -13154,11 +13150,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:13157: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:13153: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>conftest.err)
    ac_status=$?
    cat conftest.err >&5
-   echo "$as_me:13161: \$? = $ac_status" >&5
+   echo "$as_me:13157: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s "$ac_outfile"; then
      # The compiler can only warn and ignore the option if not recognized
      # So say no if there are warnings other than the usual output.
@@ -13253,11 +13249,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:13256: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:13252: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>out/conftest.err)
    ac_status=$?
    cat out/conftest.err >&5
-   echo "$as_me:13260: \$? = $ac_status" >&5
+   echo "$as_me:13256: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s out/conftest2.$ac_objext
    then
      # The compiler can only warn and ignore the option if not recognized
@@ -13305,11 +13301,11 @@ else
    -e 's:.*FLAGS}\{0,1\} :&$lt_compiler_flag :; t' \
    -e 's: [^ ]*conftest\.: $lt_compiler_flag&:; t' \
    -e 's:$: $lt_compiler_flag:'`
-   (eval echo "\"\$as_me:13308: $lt_compile\"" >&5)
+   (eval echo "\"\$as_me:13304: $lt_compile\"" >&5)
    (eval "$lt_compile" 2>out/conftest.err)
    ac_status=$?
    cat out/conftest.err >&5
-   echo "$as_me:13312: \$? = $ac_status" >&5
+   echo "$as_me:13308: \$? = $ac_status" >&5
    if (exit $ac_status) && test -s out/conftest2.$ac_objext
    then
      # The compiler can only warn and ignore the option if not recognized
@@ -14367,58 +14363,6 @@ else
      { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
 $as_echo "no" >&6; }
      as_fn_error $? "libpcap not found" "$LINENO" 5
-  fi
-  { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
-$as_echo "yes" >&6; }
-
-fi
-
-
-
-
-## Checks for libnet
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for libnet" >&5
-$as_echo_n "checking for libnet... " >&6; }
-
-# Check whether --with-libnet was given.
-if test "${with_libnet+set}" = set; then :
-  withval=$with_libnet;  case "$withval" in
-  yes|no)
-     { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
-$as_echo "no" >&6; }
-     ;;
-  *)
-     { $as_echo "$as_me:${as_lineno-$LINENO}: result: $withval" >&5
-$as_echo "$withval" >&6; }
-     if test -f $withval/include/libnet.h -a -f $withval/lib/libnet.a; then
-        owd=`pwd`
-        if cd $withval; then withval=`pwd`; cd $owd; fi
-	if test -f $withval/bin/libnet-config; then
-	   CFLAGS="$CFLAGS `$withval/bin/libnet-config --defines`"
-	elif test -f $withval/libnet-config; then
-	   CFLAGS="$CFLAGS `$withval/libnet-config --defines`"
-	else
-	   CFLAGS="$CFLAGS `libnet-config --defines`"
-	fi
-	LNETINC="-I$withval/include"
-	LNETLIB="-L$withval/lib -lnet"
-     else
-        as_fn_error $? "libnet.h or libnet.a not found in $withval" "$LINENO" 5
-     fi
-     ;;
-  esac
-else
-   if test -f ${prefix}/include/libnet.h; then
-     CFLAGS="$CFLAGS `${prefix}/bin/libnet-config --defines`"
-     LNETINC="-I${prefix}/include"
-     LNETLIB="-L${prefix}/lib -lnet"
-  elif test -f /usr/include/libnet.h; then
-     CFLAGS="$CFLAGS `libnet-config --defines`"
-     LNETLIB="-lnet"
-  else
-     { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
-$as_echo "no" >&6; }
-     as_fn_error $? "libnet not found" "$LINENO" 5
   fi
   { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }

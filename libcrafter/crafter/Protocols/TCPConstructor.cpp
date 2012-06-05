@@ -58,8 +58,8 @@ void TCP::DefineProtocol() {
     Fields.push_back(new WordField("SeqNumber",1,0));
     Fields.push_back(new WordField("AckNumber",2,0));
     Fields.push_back(new BitsField<4,0>("DataOffset",3));
-    Fields.push_back(new BitsField<3,4>("Reserved",3));
-    Fields.push_back(new TCPFlags<7>("Flags",3));
+    Fields.push_back(new BitsField<4,4>("Reserved",3));
+    Fields.push_back(new TCPFlags("Flags",3,1));
     Fields.push_back(new ShortField("WindowsSize",3,2));
     Fields.push_back(new XShortField("CheckSum",4,0));
     Fields.push_back(new ShortField("UrgPointer",4,2));

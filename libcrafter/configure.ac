@@ -62,49 +62,6 @@ AC_ARG_WITH(libpcap,
 AC_SUBST(PCAPINC)
 AC_SUBST(PCAPLIB)
 
-## Checks for libnet
-AC_MSG_CHECKING(for libnet)
-AC_ARG_WITH(libnet,
-[  --with-libnet=DIR       use libnet in DIR],
-[ case "$withval" in
-  yes|no)
-     AC_MSG_RESULT(no)
-     ;;
-  *)
-     AC_MSG_RESULT($withval)
-     if test -f $withval/include/libnet.h -a -f $withval/lib/libnet.a; then
-        owd=`pwd`
-        if cd $withval; then withval=`pwd`; cd $owd; fi
-	if test -f $withval/bin/libnet-config; then
-	   CFLAGS="$CFLAGS `$withval/bin/libnet-config --defines`"
-	elif test -f $withval/libnet-config; then
-	   CFLAGS="$CFLAGS `$withval/libnet-config --defines`"
-	else
-	   CFLAGS="$CFLAGS `libnet-config --defines`"
-	fi
-	LNETINC="-I$withval/include"
-	LNETLIB="-L$withval/lib -lnet"
-     else
-        AC_ERROR(libnet.h or libnet.a not found in $withval)
-     fi
-     ;;
-  esac ],
-[ if test -f ${prefix}/include/libnet.h; then
-     CFLAGS="$CFLAGS `${prefix}/bin/libnet-config --defines`"
-     LNETINC="-I${prefix}/include"
-     LNETLIB="-L${prefix}/lib -lnet"
-  elif test -f /usr/include/libnet.h; then
-     CFLAGS="$CFLAGS `libnet-config --defines`"
-     LNETLIB="-lnet"
-  else
-     AC_MSG_RESULT(no)
-     AC_ERROR(libnet not found)
-  fi
-  AC_MSG_RESULT(yes) ]
-)
-AC_SUBST(LNETINC)
-AC_SUBST(LNETLIB)
-
 AC_CHECK_LIB(pthread, pthread_create)
 AC_CHECK_LIB(rt,clock_gettime)
 

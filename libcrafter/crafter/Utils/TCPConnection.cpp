@@ -190,6 +190,9 @@ void Crafter::PckHand(Packet* sniff_packet, void* user) {
 				/* Change status of the connection */
 				conex->status = TCPConnection::SYN_RECEIVED;
 				conex->PrintStatus();
+				conex->tcp_packet.HexDump();
+				conex->tcp_packet.Print();
+
 				pthread_cond_signal(&conex->threshold_cv);
 			}
 

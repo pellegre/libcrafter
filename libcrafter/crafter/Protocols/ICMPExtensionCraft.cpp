@@ -59,21 +59,3 @@ void ICMPExtension::Craft() {
 
 	}
 }
-
-void ICMPExtension::LibnetBuild(libnet_t *l) {
-	/* Now write the data into de libnet context */
-	int pay = libnet_build_data	( raw_data,
-								  GetSize(),
-								  l,
-								  0
-							    );
-
-	/* In case of error */
-	if (pay == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "ICMPExtension::LibnetBuild()",
-		             "Unable to build ICMPExtension header: " + string(libnet_geterror (l)));
-		exit (1);
-	}
-}
-

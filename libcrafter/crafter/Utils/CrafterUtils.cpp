@@ -25,10 +25,20 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <pthread.h>
+#include <cstdio>
+
+#include <cstring> /* for strncpy */
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <netinet/in.h>
+#include <net/ethernet.h>
+#include <net/if.h>
+
 #include "../Crafter.h"
 #include "CrafterUtils.h"
-
-#include <pthread.h>
 
 #include "IPv4Parse.h"
 
@@ -36,120 +46,53 @@ using namespace Crafter;
 using namespace std;
 
 string Crafter::GetMyMAC(const string& iface) {
-	/* Name of the device */
-	char* device;
-	/* Buffer for error messages */
-	char errbuf[PCAP_ERRBUF_SIZE];
+	struct ifreq s;
+	int fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
+	strcpy(s.ifr_name, iface.c_str());
 
-	/* Find device for sniffing if needed */
-	if (iface == "") {
-	  /* If user hasn't specified a device */
-	  device = pcap_lookupdev (errbuf); /* let pcap find a compatible device */
-	  cout << "[@] MESSAGE: GetMyMAC() -> Using interface: " << device << endl;
-	  if (device == NULL) {
-		  /* there was an error */
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "GetMyMAC()",
-		                 "Opening device -> " + string(errbuf));
-		  exit (1);
-	  }
-	} else
-	  device = (char *)iface.c_str();
+	if (0 == ioctl(fd, SIOCGIFHWADDR, &s)) {
 
-	/* Libnet context */
-	libnet_t *l = libnet_init (LIBNET_LINK, device, errbuf);
+		const struct ether_addr *ptr = (const struct ether_addr *) (s.ifr_addr.sa_data);
+		char buf[19];
+		sprintf (buf, "%02x:%02x:%02x:%02x:%02x:%02x",
+			  ptr->ether_addr_octet[0], ptr->ether_addr_octet[1],
+			  ptr->ether_addr_octet[2], ptr->ether_addr_octet[3],
+			  ptr->ether_addr_octet[4], ptr->ether_addr_octet[5]);
+		buf[18] = 0;
+		close(fd);
+		return string(buf);
 
-	if (l == 0) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "GetMyMAC()",
-	                 "Opening libnet context: " + string(errbuf));
-	  exit (1);
+	} else {
+
+		close(fd);
+		return "";
+
 	}
-
-	/* Now, get the mac address */
-	u_int8_t* mac = (u_int8_t *) libnet_get_hwaddr(l);
-
-	/* In case of error */
-	if (!mac) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "GetMyMAC()",
-		             "Unable to find MAC address for device " + string(device) + ": " + string(libnet_geterror(l)));
-		exit (1);
-	}
-
-	/* Number of bytes on a MAC address */
-	size_t n_ether_bytes = 6;
-	/* Each MAC byte */
-	char str[3] = {0};
-	/* String to save the MAC address */
-	string ret;
-
-	/* Loop over the MAC's bytes */
-	for(size_t i = 0 ; i < n_ether_bytes ; i++) {
-		short_word dst = mac[i];
-		sprintf(str,"%.2x",dst);
-		if (i < n_ether_bytes - 1)
-			ret += string(str)+":";
-		else
-			ret += string(str);
-	}
-
-	/* Free everything */
-	libnet_destroy (l);
-
-    return ret;
 }
 
 string Crafter::GetMyIP(const string& iface) {
-	/* Name of the device */
-	char* device;
-	/* Buffer for error messages */
-	char errbuf[PCAP_ERRBUF_SIZE];
+	int fd;
+	struct ifreq ifr;
 
-	/* Find device for sniffing if needed */
-	if (iface == "") {
-	  /* If user hasn't specified a device */
-	  device = pcap_lookupdev (errbuf); /* let pcap find a compatible device */
-	  cout << "[@] MESSAGE: GetMyIP() -> Using interface: " << device << endl;
-	  if (device == NULL) {
-		  /* there was an error */
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "GetMyIP()",
-		                 "Opening device -> " + string(errbuf));
-		  exit (1);
-	  }
-	} else
-	  device = (char *)iface.c_str();
+	fd = socket(AF_INET, SOCK_DGRAM, 0);
 
-	/* Libnet context */
-	libnet_t *l = libnet_init (LIBNET_LINK, device, errbuf);
+	/* I want to get an IPv4 IP address */
+	ifr.ifr_addr.sa_family = AF_INET;
 
-	if (l == 0) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "GetMyIP()",
-	                 "Opening context: " + string(errbuf));
-	  exit (1);
+	/* I want IP address attached to "eth0" */
+	strncpy(ifr.ifr_name, iface.c_str(), IFNAMSIZ-1);
+
+	if((ioctl(fd, SIOCGIFADDR, &ifr)) == -1) {
+		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
+					 "BindLinkSocketToInterface()",
+					 "Getting Interface index");
+		close(fd);
+		return "";
 	}
 
-	/* Now, get the mac address */
-	u_int32_t ip = libnet_get_ipaddr4(l);
+	close(fd);
 
-	/* In case of error */
-	if (ip == (u_int32_t)-1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "GetMyIP()",
-		             "Unable to find IP address for device " + string(device) + ": " + string(libnet_geterror(l)));
-		exit (1);
-	}
-
-	struct in_addr local_address;
-	local_address.s_addr = ip;
-	std::string ret(inet_ntoa(local_address));
-
-	/* Free everything */
-	libnet_destroy (l);
-
-    return ret;
+	return inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);
 }
 
 /* Parse ports defined by an interval and push the values into the set */

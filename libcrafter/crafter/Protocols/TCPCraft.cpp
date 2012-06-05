@@ -31,15 +31,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace Crafter;
 using namespace std;
 
-const word TCP::FIN = 1 << 0;
-const word TCP::SYN = 1 << 1;
-const word TCP::RST = 1 << 2;
-const word TCP::PSH = 1 << 3;
-const word TCP::ACK = 1 << 4;
-const word TCP::URG = 1 << 5;
-const word TCP::ECE = 1 << 6;
-const word TCP::CWR = 1 << 7;
-const word TCP::NS  = 1 << 8;
+const byte TCP::FIN = 1 << 0;
+const byte TCP::SYN = 1 << 1;
+const byte TCP::RST = 1 << 2;
+const byte TCP::PSH = 1 << 3;
+const byte TCP::ACK = 1 << 4;
+const byte TCP::URG = 1 << 5;
+const byte TCP::ECE = 1 << 6;
+const byte TCP::CWR = 1 << 7;
 
 /* Pseudo header for TCP checksum */
 struct psd_tcp {
@@ -131,61 +130,3 @@ string TCP::MatchFilter() const {
 	std::string ret_str = "tcp and dst port " + std::string(src_port) + " and src port " + std::string(dst_port);
 	return ret_str;
 }
-
-void TCP::LibnetBuild(libnet_t *l) {
-	/* Get the payload */
-	size_t options_size = (GetDataOffset() - 5) * 4;
-	byte* options = 0;
-
-	if (options_size) {
-		options = new byte[options_size];
-		GetPayload(options);
-	}	/* In case the header has options */
-
-
-	if (options) {
-
-		int opt  = libnet_build_tcp_options ( (uint8_t *)options,
-											  GetPayloadSize(),
-											  l,
-											  0
-											 );
-
-		/* In case of error */
-		if (opt == -1) {
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "TCP::LibnetBuild()",
-			             "Unable to build TCP options: " + string(libnet_geterror (l)));
-			exit (1);
-		}
-
-	}
-
-	int tcp = libnet_build_tcp ( GetSrcPort(),
-			                     GetDstPort(),
-			                     GetSeqNumber(),
-			                     GetAckNumber(),
-			                     GetFlags(),
-			                     GetWindowsSize(),
-			                     GetCheckSum(),
-			                     GetUrgPointer(),
-			                     GetSize(),
-			                     NULL,
-			                     0,
-			                     l,
-			                     0
-			                   );
-
-	/* In case of error */
-	if (tcp == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "TCP::LibnetBuild()",
-		             "Unable to build TCP header: " + string(libnet_geterror (l)));
-		exit (1);
-	}
-
-	if(options)
-		delete [] options;
-
-}
-

@@ -45,8 +45,6 @@ namespace Crafter {
 
         void Craft();
 
-        void LibnetBuild(libnet_t* l);
-
         std::string MatchFilter() const;
 
         void ReDefineActiveFields();

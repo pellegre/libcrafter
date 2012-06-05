@@ -74,6 +74,36 @@ FieldInfo* XByteField::Clone() const {
 
 XByteField::~XByteField() { /* */ }
 
+/* Control flags names */
+const std::string TCPFlags::flags[] = {"FIN", "SYN", "RST", "PSH", "ACK", "URG", "ECE", "CWR"};
+
+TCPFlags::TCPFlags(const std::string& name, size_t nword, size_t nbyte) :
+		               ByteField(name,nword,nbyte)
+                       { /* */ }
+
+void TCPFlags::Print(std::ostream& str) const {
+	str << GetName() << " = ";
+
+	str << "( ";
+
+	for(int i = 0 ; i < 8 ; i++) {
+		int flag_shift = 1 << i;
+
+		if (flag_shift & human)
+			std::cout << flags[i] << " ";
+	}
+
+	str << ")";
+}
+
+FieldInfo* TCPFlags::Clone() const {
+	TCPFlags* new_ptr = new TCPFlags(GetName(),nword,nbyte);
+	new_ptr->human = human;
+	return new_ptr;
+}
+
+TCPFlags::~TCPFlags() { /* */ }
+
 ShortField::ShortField(const std::string& name, size_t nword, size_t nbyte) :
 		             Field<short_word> (name,nword,nbyte*8,16),
                      nword(nword), nbyte(nbyte) {

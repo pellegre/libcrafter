@@ -39,37 +39,6 @@ RawLayer::RawLayer() {
 	DefineProtocol();
 }
 
-
-void RawLayer::LibnetBuild(libnet_t *l) {
-
-	/* Get the payload */
-	size_t payload_size = GetPayloadSize();
-	byte* payload;
-	if (payload_size) {
-		payload = new byte[payload_size];
-		GetPayload(payload);
-	} else
-		payload = 0;
-
-	/* Now write the data into de libnet context */
-	int pay = libnet_build_data	( payload,
-								  payload_size,
-								  l,
-								  0
-							    );
-
-	/* In case of error */
-	if (pay == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "RawLayer::LibnetBuild()",
-		             "Unable to build RawData header: " + string(libnet_geterror (l)));
-		exit (1);
-	}
-
-	if(payload)
-		delete [] payload;
-}
-
 /* Constructor from raw data */
 RawLayer::RawLayer(const byte* data, size_t size) {
 	/* Name of the protocol */

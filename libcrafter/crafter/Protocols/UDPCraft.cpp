@@ -120,38 +120,3 @@ string UDP::MatchFilter() const {
 	std::string ret_str = "udp and dst port " + std::string(src_port) + " and src port " + std::string(dst_port);
 	return ret_str;
 }
-
-void UDP::LibnetBuild(libnet_t *l) {
-	/* Get the payload */
-	size_t payload_size = GetPayloadSize();
-	byte* payload;
-
-	if (payload_size) {
-		payload = new byte[payload_size];
-		GetPayload(payload);
-	} else
-		payload = 0;
-
-	/* Now write the data into de libnet context */
-	int udp = libnet_build_udp (  GetSrcPort(),
-								  GetDstPort(),
-								  GetLength(),
-								  GetCheckSum(),
-								  payload,
-								  payload_size,
-								  l,
-								  0
-							    );
-
-	/* In case of error */
-	if (udp == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "UDP::LibnetBuild()",
-		             "Unable to build UDP header: " + string(libnet_geterror (l)));
-		exit (1);
-	}
-
-	if(payload)
-		delete [] payload;
-}
-
