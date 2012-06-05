@@ -61,11 +61,13 @@ void Packet::PacketFromLinkLayer(const byte* data, size_t length, int link_proto
 	if(link_proto == DLT_EN10MB) {
 		/* First bytes are an Ethernet Layer */
 		link_layer = new Ethernet;
+		n_link = link_layer->PutData(data);
 		next_layer = dynamic_cast<Ethernet*>(link_layer)->GetType();
 
 	} else if (link_proto == DLT_LINUX_SLL) {
 		/* First bytes are an SLL Layer */
 		link_layer = new SLL;
+		n_link = link_layer->PutData(data);
 		next_layer = dynamic_cast<SLL*>(link_layer)->GetProtocol();
 	}
 	else {
@@ -85,14 +87,10 @@ void Packet::PacketFromLinkLayer(const byte* data, size_t length, int link_proto
 		return;
 	}
 
-	n_link = link_layer->PutData(data);
-
 	/* Get size of the remaining data */
 	length -= n_link;
-
 	/* Push this layer */
 	PushLayer(*link_layer);
-
 	/* Delete the link layer */
 	delete link_layer;
 

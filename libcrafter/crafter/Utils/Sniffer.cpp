@@ -286,7 +286,6 @@ void Crafter::Sniffer::Capture(uint32_t count, void *user) {
 void* SpawnThread(void* thread_arg) {
 	/* Cast back the argument */
 	SpawnData* spawn_data = static_cast<SpawnData*>(thread_arg);
-	delete spawn_data;
 	/* Just capture */
 	spawn_data->sniff_ptr->Capture(spawn_data->count,spawn_data->user);
 	/* Exit the function */
