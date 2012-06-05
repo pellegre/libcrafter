@@ -241,13 +241,13 @@ namespace Crafter {
 		/* -------------------- Print Data ------------------- */
 
 		/* Make an hexdump of the Layer */
-		void HexDump() const;
+		void HexDump(std::ostream& str = std::cout) const;
 
 		/* Print the header in human readable form */
 		void Print(std::ostream& str = std::cout) const;
 
 		/* Print Raw data in string format */
-		void RawString() const;
+		void RawString(std::ostream& str = std::cout) const;
 
 		/* ------------ Class specific functions ------------- */
 

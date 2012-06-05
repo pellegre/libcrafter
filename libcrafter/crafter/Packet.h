@@ -133,13 +133,13 @@ typedef std::vector<Layer*> LayerStack;
 		int PacketSocketSend(int sd);
 
 		/* Print each layer of the packet */
-		void Print() const;
+		void Print(std::ostream& str = std::cout) const;
 
 		/* Print Data as a raw string */
-		void RawString();
+		void RawString(std::ostream& str = std::cout);
 
 		/* Hexdump the data */
-		void HexDump();
+		void HexDump(std::ostream& str = std::cout);
 
 		/* -------------- Layer Manipulation functions ------------- */
 

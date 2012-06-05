@@ -35,7 +35,7 @@ using namespace Crafter;
 
 pthread_mutex_t Packet::mutex_compile;
 
-void Packet::HexDump() {
+void Packet::HexDump(ostream& str) {
 	Craft();
 	size_t lSize = bytes_size;
 
@@ -88,7 +88,7 @@ void Packet::HexDump() {
       szBuf[lIndex  ]   = ' ';
       szBuf[lIndex+1]   = ' ';
 
-      cout << szBuf << endl;
+      str << szBuf << endl;
 
       buf.pData   += lOutLen;
       buf.lSize   -= lOutLen;
@@ -98,22 +98,22 @@ void Packet::HexDump() {
 }
 
 /* Print Payload */
-void Packet::RawString() {
+void Packet::RawString(ostream& str) {
 	Craft();
 	/* Print raw data in hexadecimal format */
 	for(size_t i = 0 ; i < bytes_size ; i++) {
-		std::cout << "\\x";
-		std::cout << std::hex << (unsigned int)(raw_data)[i];
+		str << "\\x";
+		str << std::hex << (unsigned int)(raw_data)[i];
 	}
 
-	cout << endl;
+	str << endl;
 }
 
-void Packet::Print() const {
+void Packet::Print(ostream& str) const {
 	std::vector<Layer*>::const_iterator it_layer;
 
 	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; it_layer++)
-		(*it_layer)->Print();
+		(*it_layer)->Print(str);
 }
 
 void Packet::PushLayer(const Layer& user_layer) {

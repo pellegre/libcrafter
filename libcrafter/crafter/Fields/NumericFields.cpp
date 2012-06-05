@@ -90,7 +90,7 @@ void TCPFlags::Print(std::ostream& str) const {
 		int flag_shift = 1 << i;
 
 		if (flag_shift & human)
-			std::cout << flags[i] << " ";
+			str << flags[i] << " ";
 	}
 
 	str << ")";

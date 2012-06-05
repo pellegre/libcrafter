@@ -90,7 +90,7 @@ string Payload::GetString() const {
 }
 
 /* Print Payload */
-void Payload::Print() const{
+void Payload::Print(ostream& str) const{
 	size_t size = GetSize();
 
 	/* Print raw data in hexadecimal format */
@@ -98,43 +98,43 @@ void Payload::Print() const{
 
 		for(size_t i = 0 ; i < size ; i++) {
 			if ((unsigned int)storage[i] == 0x09)
-				std::cout << "\\t";
+				str << "\\t";
 			else if ((unsigned int)storage[i] == 0x0d)
-				std::cout << "\\r";
+				str  << "\\r";
 			else if ((unsigned int)storage[i] == 0x0a)
-				std::cout << "\\n";
+				str  << "\\n";
 			else if((unsigned int)storage[i] < 0x20) {
-				std::cout << "\\x";
-				std::cout << std::hex << (unsigned int)storage[i];
+				str  << "\\x";
+				str  << std::hex << (unsigned int)storage[i];
 			} else
-				std::cout << storage[i];
+				str  << storage[i];
 		}
 
 	} else {
 
 		for(size_t i = 0 ; i < size ; i++) {
-			std::cout << "\\x";
-			std::cout << std::hex << (unsigned int)storage[i];
+			str  << "\\x";
+			str  << std::hex << (unsigned int)storage[i];
 		}
 
 	}
 
 }
 
-void Payload::RawString() const {
+void Payload::RawString(ostream& str) const {
 	size_t size = GetSize();
 
 	/* Print raw data in hexadecimal format */
 	for(size_t i = 0 ; i < size ; i++) {
-		std::cout << "\\x";
-		std::cout << std::hex << (unsigned int)(storage)[i];
+		str  << "\\x";
+		str  << std::hex << (unsigned int)(storage)[i];
 	}
 }
 
-void Payload::PrintChars() const {
+void Payload::PrintChars(ostream& str) const {
 	size_t size = GetSize();
 
 	for(size_t i = 0 ; i < size ; i++)
-		std::cout << (char)storage[i];
+		str  << (char)storage[i];
 }
 

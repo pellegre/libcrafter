@@ -58,7 +58,7 @@ short_word Crafter::CheckSum(short_word *buf, int nwords) {
 	return (unsigned short)(~sum);
 }
 
-void Crafter::Layer::HexDump() const {
+void Crafter::Layer::HexDump(ostream& str) const {
 
 	size_t  lSize = bytes_size;
 
@@ -113,7 +113,7 @@ void Crafter::Layer::HexDump() const {
       szBuf[lIndex  ]   = ' ';
       szBuf[lIndex+1]   = ' ';
 
-      cout << szBuf << endl;
+      str << szBuf << endl;
 
       buf.pData   += lOutLen;
       buf.lSize   -= lOutLen;
@@ -123,31 +123,31 @@ void Crafter::Layer::HexDump() const {
 }
 
 /* Print Payload */
-void Crafter::Layer::RawString() const {
+void Crafter::Layer::RawString(ostream& str) const {
 	/* Print raw data in hexadecimal format */
 	for(size_t i = 0 ; i < size ; i++) {
-		std::cout << "\\x";
-		std::cout << std::hex << (unsigned int)((byte *)raw_data)[i];
+		str << "\\x";
+		str << std::hex << (unsigned int)((byte *)raw_data)[i];
 	}
 
-	LayerPayload.RawString();
+	LayerPayload.RawString(str);
 
-	cout << endl;
+	str << endl;
 }
 
 void Crafter::Layer::PrintFields(std::ostream& str) const {
 	/* Print the fields */
-	Fields.Print();
+	Fields.Print(str);
 }
 
 void Crafter::Layer::PrintPayload(std::ostream& str) const {
-	cout << "Payload = ";
-	LayerPayload.Print();
+	str << "Payload = ";
+	LayerPayload.Print(str);
 }
 
 void Crafter::Layer::Print(std::ostream& str) const {
-	cout << "< ";
-	cout << name << " (" << dec << GetSize() << " bytes) " << ":: ";
+	str << "< ";
+	str << name << " (" << dec << GetSize() << " bytes) " << ":: ";
 
 	/* Print each one of the fields */
 	PrintFields(str);
@@ -155,7 +155,7 @@ void Crafter::Layer::Print(std::ostream& str) const {
 	/* Also print the payload */
 	PrintPayload(str);
 
-	cout << ">" << endl;
+	str << ">" << endl;
 }
 
 /* Allocate a number of octets into the layer */

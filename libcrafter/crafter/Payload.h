@@ -103,13 +103,13 @@ namespace Crafter {
 		void Clear() { storage.clear(); };
 
 		/* Print characters one by one */
-		void PrintChars() const;
+		void PrintChars(std::ostream& str = std::cout) const;
 
 		/* Print a raw string of the payload */
-		void RawString() const;
+		void RawString(std::ostream& str = std::cout) const;
 
 		/* Print Payload */
-		virtual void Print() const;
+		virtual void Print(std::ostream& str = std::cout) const;
 
 		/* Return a constante reference to the container */
 		const std::vector<byte>& GetContainer() const { return storage; };
