@@ -41,7 +41,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <map>
 #include <set>
 #include <netinet/in.h>
-#include <libnet.h>
 
 #include "Fields/Field.h"
 #include "Payload.h"
@@ -197,9 +196,6 @@ namespace Crafter {
 
 		/* Add info to a filter for capture the matching packet */
 		virtual std::string MatchFilter() const { return " "; };
-
-		/* Put data into a libnet context calling the libnet_build* function */
-		virtual void LibnetBuild(libnet_t *l) { };
 
 		virtual void PrintFields(std::ostream& str) const;
 		virtual void PrintPayload(std::ostream& str) const;

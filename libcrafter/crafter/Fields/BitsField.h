@@ -83,18 +83,6 @@ namespace Crafter {
 	};
 
 	template <size_t nbit>
-	class TCPFlags : public BitsField<9,nbit> {
-		static const std::string flags[];
-		void Print(std::ostream& str) const;
-	public:
-		TCPFlags(const std::string& name, size_t nword);
-
-		FieldInfo* Clone() const;
-
-		virtual ~TCPFlags();
-	};
-
-	template <size_t nbit>
 	class BitFlag : public BitsField<1,nbit> {
 		std::string str_true;
 		std::string str_false;
@@ -246,43 +234,6 @@ Crafter::FieldInfo* Crafter::XBitsField<size,nbit>::Clone() const {
 	new_ptr->human = this->human;
 	return new_ptr;
 }
-
-/* ------- */
-
-/* Control flags names */
-template <size_t nbit>
-const std::string Crafter::TCPFlags<nbit>::flags[] = {"FIN", "SYN", "RST", "PSH", "ACK", "URG", "ECE", "CWR", "NS"};
-
-template <size_t nbit>
-Crafter::TCPFlags<nbit>::TCPFlags(const std::string& name, size_t nword) :
-					     BitsField<9,nbit>(name,nword)
-                         { /* */ }
-
-template <size_t nbit>
-void Crafter::TCPFlags<nbit>::Print(std::ostream& str) const {
-	str << this->GetName() << " = ";
-
-	str << "( ";
-
-	for(int i = 0 ; i < 9 ; i++) {
-		int flag_shift = 1 << i;
-
-		if (flag_shift & this->human)
-			str << flags[i] << " ";
-	}
-
-	str << ")";
-}
-
-template <size_t nbit>
-Crafter::FieldInfo* Crafter::TCPFlags<nbit>::Clone() const {
-	TCPFlags<nbit>* new_ptr = new TCPFlags<nbit>(this->GetName(),this->GetWord());
-	new_ptr->human = this->human;
-	return new_ptr;
-}
-
-template <size_t nbit>
-Crafter::TCPFlags<nbit>::~TCPFlags() { /* */ }
 
 /* ------- */
 

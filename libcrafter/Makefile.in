@@ -80,8 +80,7 @@ am__installdirs = "$(DESTDIR)$(libdir)" "$(DESTDIR)$(pkgconfigdir)" \
 	"$(DESTDIR)$(crafter_libincludedir)"
 LTLIBRARIES = $(lib_LTLIBRARIES)
 am__DEPENDENCIES_1 =
-libcrafter_la_DEPENDENCIES = $(am__DEPENDENCIES_1) \
-	$(am__DEPENDENCIES_1)
+libcrafter_la_DEPENDENCIES = $(am__DEPENDENCIES_1)
 am__dirstamp = $(am__leading_dot)dirstamp
 am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Packet.lo crafter/Utils/PrintMessage.lo \
@@ -195,8 +194,6 @@ LIBOBJS = @LIBOBJS@
 LIBS = @LIBS@
 LIBTOOL = @LIBTOOL@
 LIPO = @LIPO@
-LNETINC = @LNETINC@
-LNETLIB = @LNETLIB@
 LN_S = @LN_S@
 LTLIBOBJS = @LTLIBOBJS@
 MAKEINFO = @MAKEINFO@
@@ -371,7 +368,7 @@ crafter_libincludedir = $(libdir)/crafter-$(CRAFTER_API_VERSION)/include
 nodist_crafter_libinclude_HEADERS = crafterconfig.h
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = crafter.pc
-AM_CPPFLAGS = $(PCAPINC) $(LNETINC)
+AM_CPPFLAGS = $(PCAPINC) 
 AM_CXXFLAGS = -ansi -pedantic -Wall
 dist_noinst_SCRIPTS = autogen.sh
 all: config.h crafterconfig.h

@@ -53,8 +53,6 @@ namespace Crafter {
 				/* Nothing to craft */
 			};
 
-			void LibnetBuild(libnet_t *l);
-
 		public:
 
 			RawLayer();

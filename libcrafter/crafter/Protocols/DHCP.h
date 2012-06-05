@@ -47,8 +47,6 @@ namespace Crafter {
 
         void Craft();
 
-        void LibnetBuild(libnet_t* l);
-
         void ReDefineActiveFields();
 
         static const byte FieldOperationCode = 0;

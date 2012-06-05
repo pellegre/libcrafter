@@ -138,8 +138,8 @@ nodist_crafter_libinclude_HEADERS = crafterconfig.h
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = crafter.pc
 
-## Put additional flags, including libpcap and libnet linking information
-AM_CPPFLAGS = $(PCAPINC) $(LNETINC)
+## Put additional flags, including libpcap linking information
+AM_CPPFLAGS = $(PCAPINC) 
 AM_CXXFLAGS = -ansi -pedantic -Wall
 
 ## Define an independent executable script for inclusion in the distribution

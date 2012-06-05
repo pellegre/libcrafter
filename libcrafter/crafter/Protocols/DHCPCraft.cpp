@@ -53,68 +53,6 @@ void DHCP::Craft() {
 	AddPayload((const byte*)&padd,sizeof(byte));
 }
 
-void DHCP::LibnetBuild(libnet_t *l) {
-	/* Get the payload */
-	size_t payload_size = GetPayloadSize();
-	byte* payload;
-
-	if (payload_size) {
-		payload = new byte[payload_size];
-		GetPayload(payload);
-	} else
-		payload = 0;
-
-	/* IP addresses */
-	in_addr_t cip = inet_addr(GetClientIP().c_str());
-	in_addr_t yip = inet_addr(GetYourIP().c_str());
-	in_addr_t sip = inet_addr(GetServerIP().c_str());
-	in_addr_t gip = inet_addr(GetGatewayIP().c_str());
-	/* Client MAC address */
-	int r;
-	u_int8_t* macaddr = libnet_hex_aton(GetClientMAC().c_str(),&r);
-	u_int8_t* chaddr = new u_int8_t[16];
-	memset(chaddr,0,16);
-	memcpy(chaddr,macaddr,6);
-
-	/* Server host name and boot file */
-	/* 44 bytes to reach the server host name */
-	size_t servername_shift = 44;
-	/* 108 bytes to reach the file boot name*/
-	size_t filename_shift = 108;
-	/* Now write the data into de libnet context */
-	int dhcp = libnet_build_dhcpv4 (
-			  	                    GetOperationCode(),
-				                    GetHardwareType(),
-				                    GetHardwareLength(),
-				                    GetHopCount(),
-				                    GetTransactionID(),
-				                    GetNumberOfSeconds(),
-				                    GetFlags(),
-				                    htonl(cip),
-				                    htonl(yip),
-				                    htonl(sip),
-				                    htonl(gip),
-				                    chaddr,
-				                    raw_data + servername_shift,
-				                    raw_data + filename_shift,
-			                        payload,
-								    payload_size,
-								    l,
-								    0
-							      );
-
-	/* In case of error */
-	if (dhcp == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "DHCP::LibnetBuild()",
-		             "Unable to build DHCP header: " + string(libnet_geterror (l)));
-		exit (1);
-	}
-
-	if(payload)
-		delete [] payload;
-}
-
 /*
  * Adapted from dhcpdump code
  * http://dhcpdump.sourcearchive.com/documentation/1.8-2/dhcpdump_8c-source.html

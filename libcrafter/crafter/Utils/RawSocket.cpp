@@ -31,44 +31,75 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 using namespace std;
 
-int CreateRawSocket(int protocol_to_sniff)
+int Crafter::CreateLinkSocket(int protocol_to_sniff)
 {
 	int rawsock;
 
 	if((rawsock = socket(PF_PACKET, SOCK_RAW, htons(protocol_to_sniff)))== -1)
 	{
 		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
-				     "CreateRawSocket()",
-		             "Creating raw socket");
-		exit(-1);
+				     "CreateLinkSocket()",
+		             "Creating packet(PF_PACKET) socket");
+		exit(1);
 	}
 
 	return rawsock;
 }
 
-int BindRawSocketToInterface(const char *device, int rawsock, int protocol)
+int Crafter::CreateRawSocket(int protocol_to_sniff)
+{
+    /* Create a socket descriptor */
+    int s = socket(PF_INET, SOCK_RAW, protocol_to_sniff);
+
+    if(s < 0)
+    {
+		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
+				     "CreateRawSocket()",
+		             "Creating raw(PF_INET) socket");
+		exit(1);
+    }
+
+    /* Sock options */
+    int one = 1;
+    const int* val = &one;
+
+    if(setsockopt(s, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0) {
+		PrintMessage(Crafter::PrintCodes::PrintError,
+					"Packet::RawSocketSend()",
+					"Setting IP_HDRINCL option to raw socket");
+		exit(1);
+	}
+
+	if(setsockopt(s, SOL_SOCKET, SO_BROADCAST, val, sizeof(one)) < 0) {
+		PrintMessage(Crafter::PrintCodes::PrintError,
+					"Packet::RawSocketSend()",
+					"Setting SO_BROADCAST flag to raw socket");
+		exit(1);
+	}
+
+    return s;
+}
+
+int Crafter::BindLinkSocketToInterface(const char *device, int rawsock, int protocol)
 {
 
 	struct sockaddr_ll sll;
 	struct ifreq ifr;
 
-	bzero(&sll, sizeof(sll));
-	bzero(&ifr, sizeof(ifr));
+	memset(&sll,0,sizeof(sll));
+	memset(&ifr,0,sizeof(ifr));
 
 	/* First Get the Interface Index  */
-
-
 	strncpy((char *)ifr.ifr_name, device, IFNAMSIZ);
 	if((ioctl(rawsock, SIOCGIFINDEX, &ifr)) == -1)
 	{
-		Crafter::PrintMessage(Crafter::PrintCodes::PrintError,
-				     "BindRawSocketToInterface()",
+		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
+				     "BindLinkSocketToInterface()",
 		             "Getting Interface index");
-		exit(-1);
+		exit(1);
 	}
 
 	/* Bind our raw socket to this interface */
-
 	sll.sll_family = AF_PACKET;
 	sll.sll_ifindex = ifr.ifr_ifindex;
 	sll.sll_protocol = htons(protocol);
@@ -77,28 +108,37 @@ int BindRawSocketToInterface(const char *device, int rawsock, int protocol)
 	if((bind(rawsock, (struct sockaddr *)&sll, sizeof(sll)))== -1)
 	{
 		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
-				     "BindRawSocketToInterface()",
+				     "BindLinkSocketToInterface()",
 		             "Binding raw socket to interface");
-		exit(-1);
+		exit(1);
 	}
 
-	return 1;
-
+	return 0;
 }
 
-
-int SendRawPacket(int rawsock, unsigned char *pkt, int pkt_len)
+int Crafter::BindRawSocketToInterface(const char *device, int s)
 {
-	int sent= 0;
+	/* Bind to interface */
+    ifreq Interface;
+    memset(&Interface, 0, sizeof(Interface));
+    strncpy(Interface.ifr_ifrn.ifrn_name, device, IFNAMSIZ);
+    if (ioctl(s, SIOCGIFINDEX, &Interface) < 0)
+    {
+		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
+				     "BindRawSocketToInterface()",
+		             "Binding raw socket to interface");
+		exit(1);
+    }
 
-	/* A simple write on the socket ..thats all it takes ! */
+    return 0;
+}
 
-	if((sent = write(rawsock, pkt, pkt_len)) != pkt_len)
-	{
-		return 0;
-	}
+int Crafter::SendLinkSocket(int rawsock, unsigned char *pkt, int pkt_len)
+{
+	return write(rawsock, pkt, pkt_len);
+}
 
-	return 1;
-
-
+int Crafter::SendRawSocket(int rawsock, struct sockaddr* din, unsigned char *pkt, int pkt_len)
+{
+	return sendto(rawsock, pkt, pkt_len, 0, din, sizeof(struct sockaddr));
 }

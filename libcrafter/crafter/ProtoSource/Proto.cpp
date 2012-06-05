@@ -93,9 +93,6 @@ void Proto::PrintHdr() const {
 	Printline(out,"void Craft();",2);
 	Newline(out);
 
-	Printline(out,"void LibnetBuild(libnet_t* l);",2);
-	Newline(out);
-
 	Printline(out,"std::string MatchFilter() const ;",2);
 	Newline(out);
 
@@ -214,11 +211,6 @@ void Proto::PrintCrafterCpp(ostream& out) const {
 	Printline(out,"}",0);
 	Newline(out);
 
-	/* LibnetBuild function */
-	Printline(out,"void " + protoName + "::LibnetBuild(libnet_t *l) {",0);
-
-	Printline(out,"}",0);
-	Newline(out);
 }
 
 static inline bool fexists(const string& filename)

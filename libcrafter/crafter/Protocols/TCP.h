@@ -45,8 +45,6 @@ namespace Crafter {
 
         void Craft();
 
-        void LibnetBuild(libnet_t* l);
-
         std::string MatchFilter() const ;
 
         void ReDefineActiveFields();
@@ -65,15 +63,14 @@ namespace Crafter {
     public:
 
 		/* Flags */
-		static const word FIN;
-		static const word SYN;
-		static const word RST;
-		static const word PSH;
-		static const word ACK;
-		static const word URG;
-		static const word ECE;
-		static const word CWR;
-		static const word NS ;
+		static const byte FIN;
+		static const byte SYN;
+		static const byte RST;
+		static const byte PSH;
+		static const byte ACK;
+		static const byte URG;
+		static const byte ECE;
+		static const byte CWR;
 
 		/* Flag Checkers */
 		byte GetFIN() { return (GetFlags() & TCP::FIN); };
@@ -84,7 +81,6 @@ namespace Crafter {
 		byte GetURG() { return (GetFlags() & TCP::URG); };
 		byte GetECE() { return (GetFlags() & TCP::ECE); };
 		byte GetCWR() { return (GetFlags() & TCP::CWR); };
-		byte GetNS()  { return (GetFlags() & TCP::NS ); };
 
         TCP();
 
@@ -112,7 +108,7 @@ namespace Crafter {
             SetFieldValue(FieldReserved,value);
         };
 
-        void SetFlags(const word& value) {
+        void SetFlags(const byte& value) {
             SetFieldValue(FieldFlags,value);
         };
 
@@ -152,8 +148,8 @@ namespace Crafter {
             return GetFieldValue<word>(FieldReserved);
         };
 
-        word  GetFlags() const {
-            return GetFieldValue<word>(FieldFlags);
+        byte  GetFlags() const {
+            return GetFieldValue<byte>(FieldFlags);
         };
 
         short_word  GetWindowsSize() const {

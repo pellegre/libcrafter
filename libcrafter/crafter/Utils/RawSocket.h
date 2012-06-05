@@ -41,12 +41,21 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include<net/if.h>
 #include<arpa/inet.h>
 #include<cstring>
-#include <unistd.h>
+#include<unistd.h>
 
-int CreateRawSocket(int protocol_to_sniff);
+namespace Crafter {
 
-int BindRawSocketToInterface(const char *device, int rawsock, int protocol);
+	int CreateLinkSocket(int protocol_to_sniff);
 
-int SendRawPacket(int rawsock, unsigned char *pkt, int pkt_len);
+	int BindLinkSocketToInterface(const char *device, int rawsock, int protocol);
+
+	int SendLinkSocket(int rawsock, unsigned char *pkt, int pkt_len);
+
+	int CreateRawSocket(int protocol_to_sniff);
+
+	int BindRawSocketToInterface(const char *device, int rawsock);
+
+	int SendRawSocket(int rawsock, struct sockaddr *din, unsigned char *pkt, int pkt_len);
+}
 
 #endif /* RAWSOCKET_H_ */

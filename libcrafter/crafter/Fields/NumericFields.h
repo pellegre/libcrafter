@@ -63,6 +63,15 @@ namespace Crafter {
 		FieldInfo* Clone() const;
 		virtual ~XByteField();
 	};
+	
+	class TCPFlags : public ByteField {
+		static const std::string flags[];
+		void Print(std::ostream& str) const;
+	public:
+		TCPFlags(const std::string& name, size_t nword, size_t nbyte);
+		FieldInfo* Clone() const;
+		virtual ~TCPFlags();
+	};
 
 	class ShortField : public Field<short_word> {
 

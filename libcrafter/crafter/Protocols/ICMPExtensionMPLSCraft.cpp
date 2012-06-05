@@ -42,21 +42,3 @@ void ICMPExtensionMPLS::Craft() {
     else
         SetBottomOfStack(0);
 }
-
-void ICMPExtensionMPLS::LibnetBuild(libnet_t *l) {
-	/* Now write the data into the libnet context */
-	int pay = libnet_build_data	( raw_data,
-								  GetSize(),
-								  l,
-								  0
-							    );
-
-	/* In case of error */
-	if (pay == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "ICMPExtensionObject::LibnetBuild()",
-		             "Unable to build ICMPExtensionObject header: " + string(libnet_geterror (l)));
-		exit (1);
-	}
-}
-
