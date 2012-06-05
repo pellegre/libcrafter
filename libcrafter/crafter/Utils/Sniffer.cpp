@@ -337,6 +337,7 @@ void Crafter::Sniffer::Join() {
 void Crafter::Sniffer::Cancel() {
 
 	if(spawned) {
+		pcap_breakloop(handle);
 		/* If the thread was spawned, call pthread_cancel for terminating the sniffing */
 		int rc = pthread_cancel(thread_id);
 
