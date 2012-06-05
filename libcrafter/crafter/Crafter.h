@@ -34,6 +34,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /* Ethernet Protocol Implementation */
 #include "Protocols/Ethernet.h"
 
+/* SLL Protocol Implementation */
+#include "Protocols/SLL.h"
+
 /* Address Resolution Protocol Implementation */
 #include "Protocols/ARP.h"
 

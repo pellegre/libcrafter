@@ -23,6 +23,7 @@ lib_LTLIBRARIES = libcrafter.la
 libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Payload.cpp \
 						crafter/Packet.cpp \
+						crafter/PacketDecoder.cpp \
 						crafter/Utils/PrintMessage.cpp \
 						crafter/Utils/BitHandling.cpp \
 						crafter/Utils/IPResolver.cpp \
@@ -65,7 +66,9 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/DNSAnswer.cpp \
 						crafter/Protocols/DHCPConstructor.cpp \
 						crafter/Protocols/DHCPCraft.cpp \
-						crafter/Protocols/DHCPOptions.cpp
+						crafter/Protocols/DHCPOptions.cpp \
+						crafter/Protocols/SLLConstructor.cpp \
+						crafter/Protocols/SLLCraft.cpp
 
 ## Instruct libtool to include ABI version information in the generated shared
 ## library file (.so).  The library ABI version is defined in configure.ac, so
@@ -115,7 +118,8 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/ICMPExtensionObject.h \
 								crafter/Protocols/DNS.h \
 								crafter/Protocols/DHCP.h \
-								crafter/Protocols/DHCPOptions.h
+								crafter/Protocols/DHCPOptions.h \
+								crafter/Protocols/SLL.h
 
 ## The generated configuration header is installed in its own subdirectory of
 ## $(libdir).  The reason for this is that the configuration information put

@@ -83,11 +83,12 @@ am__DEPENDENCIES_1 =
 libcrafter_la_DEPENDENCIES = $(am__DEPENDENCIES_1)
 am__dirstamp = $(am__leading_dot)dirstamp
 am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
-	crafter/Packet.lo crafter/Utils/PrintMessage.lo \
-	crafter/Utils/BitHandling.lo crafter/Utils/IPResolver.lo \
-	crafter/Utils/IPv4Parse.lo crafter/Utils/RawSocket.lo \
-	crafter/Utils/CrafterUtils.lo crafter/Utils/ARPPing.lo \
-	crafter/Utils/ARPSpoofing.lo crafter/Utils/ARPSpoofingReply.lo \
+	crafter/Packet.lo crafter/PacketDecoder.lo \
+	crafter/Utils/PrintMessage.lo crafter/Utils/BitHandling.lo \
+	crafter/Utils/IPResolver.lo crafter/Utils/IPv4Parse.lo \
+	crafter/Utils/RawSocket.lo crafter/Utils/CrafterUtils.lo \
+	crafter/Utils/ARPPing.lo crafter/Utils/ARPSpoofing.lo \
+	crafter/Utils/ARPSpoofingReply.lo \
 	crafter/Utils/ARPSpoofingRequest.lo crafter/Utils/Sniffer.lo \
 	crafter/Utils/TCPConnection.lo \
 	crafter/Fields/FieldContainer.lo crafter/Fields/FieldInfo.lo \
@@ -116,7 +117,9 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Protocols/DNSAnswer.lo \
 	crafter/Protocols/DHCPConstructor.lo \
 	crafter/Protocols/DHCPCraft.lo \
-	crafter/Protocols/DHCPOptions.lo
+	crafter/Protocols/DHCPOptions.lo \
+	crafter/Protocols/SLLConstructor.lo \
+	crafter/Protocols/SLLCraft.lo
 libcrafter_la_OBJECTS = $(am_libcrafter_la_OBJECTS)
 libcrafter_la_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(AM_CXXFLAGS) \
@@ -279,6 +282,7 @@ lib_LTLIBRARIES = libcrafter.la
 libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Payload.cpp \
 						crafter/Packet.cpp \
+						crafter/PacketDecoder.cpp \
 						crafter/Utils/PrintMessage.cpp \
 						crafter/Utils/BitHandling.cpp \
 						crafter/Utils/IPResolver.cpp \
@@ -321,7 +325,9 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/DNSAnswer.cpp \
 						crafter/Protocols/DHCPConstructor.cpp \
 						crafter/Protocols/DHCPCraft.cpp \
-						crafter/Protocols/DHCPOptions.cpp
+						crafter/Protocols/DHCPOptions.cpp \
+						crafter/Protocols/SLLConstructor.cpp \
+						crafter/Protocols/SLLCraft.cpp
 
 libcrafter_la_LDFLAGS = -version-info $(CRAFTER_SO_VERSION)
 libcrafter_la_LIBADD = $(PCAPLIB) $(LNETLIB)
@@ -362,7 +368,8 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Protocols/ICMPExtensionObject.h \
 								crafter/Protocols/DNS.h \
 								crafter/Protocols/DHCP.h \
-								crafter/Protocols/DHCPOptions.h
+								crafter/Protocols/DHCPOptions.h \
+								crafter/Protocols/SLL.h
 
 crafter_libincludedir = $(libdir)/crafter-$(CRAFTER_API_VERSION)/include
 nodist_crafter_libinclude_HEADERS = crafterconfig.h
@@ -482,6 +489,8 @@ crafter/Payload.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/Packet.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
+crafter/PacketDecoder.lo: crafter/$(am__dirstamp) \
+	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/Utils/$(am__dirstamp):
 	@$(MKDIR_P) crafter/Utils
 	@: > crafter/Utils/$(am__dirstamp)
@@ -599,6 +608,11 @@ crafter/Protocols/DHCPCraft.lo: crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/DHCPOptions.lo: crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/SLLConstructor.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/SLLCraft.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 libcrafter.la: $(libcrafter_la_OBJECTS) $(libcrafter_la_DEPENDENCIES) 
 	$(libcrafter_la_LINK) -rpath $(libdir) $(libcrafter_la_OBJECTS) $(libcrafter_la_LIBADD) $(LIBS)
 
@@ -618,6 +632,8 @@ mostlyclean-compile:
 	-rm -f crafter/Layer.lo
 	-rm -f crafter/Packet.$(OBJEXT)
 	-rm -f crafter/Packet.lo
+	-rm -f crafter/PacketDecoder.$(OBJEXT)
+	-rm -f crafter/PacketDecoder.lo
 	-rm -f crafter/Payload.$(OBJEXT)
 	-rm -f crafter/Payload.lo
 	-rm -f crafter/Protocols/ARPConstructor.$(OBJEXT)
@@ -664,6 +680,10 @@ mostlyclean-compile:
 	-rm -f crafter/Protocols/IPCraft.lo
 	-rm -f crafter/Protocols/RawLayer.$(OBJEXT)
 	-rm -f crafter/Protocols/RawLayer.lo
+	-rm -f crafter/Protocols/SLLConstructor.$(OBJEXT)
+	-rm -f crafter/Protocols/SLLConstructor.lo
+	-rm -f crafter/Protocols/SLLCraft.$(OBJEXT)
+	-rm -f crafter/Protocols/SLLCraft.lo
 	-rm -f crafter/Protocols/TCPConstructor.$(OBJEXT)
 	-rm -f crafter/Protocols/TCPConstructor.lo
 	-rm -f crafter/Protocols/TCPCraft.$(OBJEXT)
@@ -702,6 +722,7 @@ distclean-compile:
 
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Layer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Packet.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/PacketDecoder.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Payload.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Fields/$(DEPDIR)/FieldContainer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Fields/$(DEPDIR)/FieldInfo.Plo@am__quote@
@@ -730,6 +751,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/RawLayer.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/SLLConstructor.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/SLLCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/UDPConstructor.Plo@am__quote@

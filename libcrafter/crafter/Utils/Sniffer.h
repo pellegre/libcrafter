@@ -48,6 +48,8 @@ namespace Crafter {
 		word ID;
 		/* Argument for the capture function */
 		void* sniffer_arg;
+		/* Type of the link layer */
+		int link_type;
 	};
 
 	class Sniffer {
@@ -74,6 +76,8 @@ namespace Crafter {
 
 		/* Handle for the opened pcap session */
 		pcap_t *handle;
+		/* Type of link layer of the interface */
+		int link_type;
 		/* Pcap error messages buffer */
 		char errbuf[PCAP_ERRBUF_SIZE];
 		/* IP address of interface */
