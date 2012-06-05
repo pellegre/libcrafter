@@ -25,30 +25,31 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "Ethernet.h"
+#include "SLL.h"
 
 using namespace Crafter;
 using namespace std;
 
-void Ethernet::ReDefineActiveFields() {
+void SLL::ReDefineActiveFields() {
 }
 
-void Ethernet::Craft() {
+void SLL::Craft() {
 	/* Get transport layer protocol */
 	if(TopLayer) {
-		if(!IsFieldSet(FieldType)) {
+		if(!IsFieldSet(FieldProtocol)) {
 			short_word network_layer = TopLayer->GetID();
 			/* Set Protocol */
 			if(network_layer != 0xfff1)
-				SetType(network_layer);
+				SetProtocol(network_layer);
 			else
-				SetType(0x0);
+				SetProtocol(0x0);
 
-			ResetField(FieldType);
+			ResetField(FieldProtocol);
 		}
 	}
 	else {
 		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "SSL::Craft()","No Network Layer Protocol associated with Ethernet Layer.");
+				     "SSL::Craft()","No Network Layer Protocol associated with SLL Layer.");
 	}
 }
+

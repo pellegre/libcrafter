@@ -1,0 +1,11 @@
+name SLL
+protoid 0xfff1
+ShortField PackeType      0 0   0
+ShortField AddressType    0 2   1
+ShortField AddressLength  1 0   6
+MACAddress SourceAddress  1 2   "00:00:00:00:00:00"
+BytesField  Pad           3 0 2 0
+ShortField Protocol       3 2   0x0800
+
+
+

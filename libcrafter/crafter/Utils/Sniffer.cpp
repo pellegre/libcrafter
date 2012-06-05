@@ -48,10 +48,12 @@ word Sniffer::counter = 0;
 static void process_packet (u_char *user, const struct pcap_pkthdr *header, const u_char *packet) {
 	Packet sniff_packet;
 
-	sniff_packet.PacketFromEthernet(packet, header->len);
-
 	/* Argument for packet handling */
 	SnifferData* total_arg = reinterpret_cast<SnifferData*>(user);
+
+	/* Construct the packet */
+	sniff_packet.PacketFromLinkLayer(packet, header->len,total_arg->link_type);
+
 	/* Grab the data */
 	word sniff_id = total_arg->ID;
 	void* arg = total_arg->sniffer_arg;
@@ -75,7 +77,7 @@ void Crafter::Sniffer::SetFilter(const std::string& filter) {
 }
 
 /* Set device interface */
-void Crafter::Sniffer::SetInterface(const std::string& iface ) {
+void Crafter::Sniffer::SetInterface(const std::string& iface) {
 	/* Close our devices */
 	pcap_close (handle);
 
@@ -114,12 +116,7 @@ void Crafter::Sniffer::SetInterface(const std::string& iface ) {
 	//cout << "[@] Using device: " << device << endl;
 
 	/* Find out the datalink type of the connection */
-	if (pcap_datalink (handle) != DLT_EN10MB) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::SetInterface()",
-	                 "This sniffer only supports Ethernet cards!");
-	  exit (1);
-	}
+	link_type = pcap_datalink(handle);
 
 	/* Get the IP subnet mask of the device, so we set a filter on it */
 	if (pcap_lookupnet (device, &netp, &maskp, errbuf) == -1) {
@@ -221,12 +218,7 @@ Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, P
 	//cout << "[@] Using device: " << device << endl;
 
 	/* Find out the datalink type of the connection */
-	if (pcap_datalink (handle) != DLT_EN10MB) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::Sniffer()",
-	                 "This sniffer only supports Ethernet cards!");
-		exit (1);
-	}
+	link_type = pcap_datalink(handle);
 
 	/* Get the IP subnet mask of the device, so we set a filter on it */
 	if (pcap_lookupnet (device, &netp, &maskp, errbuf) == -1) {
@@ -281,6 +273,7 @@ void Crafter::Sniffer::Capture(uint32_t count, void *user) {
 
 	sniffer_data->ID = ID;
 	sniffer_data->sniffer_arg = user;
+	sniffer_data->link_type = link_type;
 
 	u_char* sniffer_data_arg = reinterpret_cast<u_char*>(sniffer_data);
 

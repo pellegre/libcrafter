@@ -94,6 +94,9 @@ typedef std::vector<Layer*> LayerStack;
 		void PacketFromIP(const byte* data, size_t length);
 		void PacketFromEthernet(const byte* data, size_t length);
 
+		/* Packet from link layer (link_proto in the datalink type defined by libpcap) */
+		void PacketFromLinkLayer(const byte* data, size_t length, int link_proto);
+
 		/* Construct packet a raw layer */
 		void PacketFromIP(const RawLayer& data);
 		void PacketFromEthernet(const RawLayer& data);
