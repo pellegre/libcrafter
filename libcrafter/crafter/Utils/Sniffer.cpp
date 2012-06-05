@@ -112,9 +112,6 @@ void Crafter::Sniffer::SetInterface(const std::string& iface) {
 	  errbuf[0] = 0;    /* re-set error buffer */
 	}
 
-	/* Print device information */
-	//cout << "[@] Using device: " << device << endl;
-
 	/* Find out the datalink type of the connection */
 	link_type = pcap_datalink(handle);
 
@@ -214,9 +211,6 @@ Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, P
 	  errbuf[0] = 0;    /* re-set error buffer */
 	}
 
-	/* Print device information */
-	//cout << "[@] Using device: " << device << endl;
-
 	/* Find out the datalink type of the connection */
 	link_type = pcap_datalink(handle);
 
@@ -292,6 +286,7 @@ void Crafter::Sniffer::Capture(uint32_t count, void *user) {
 void* SpawnThread(void* thread_arg) {
 	/* Cast back the argument */
 	SpawnData* spawn_data = static_cast<SpawnData*>(thread_arg);
+	delete spawn_data;
 	/* Just capture */
 	spawn_data->sniff_ptr->Capture(spawn_data->count,spawn_data->user);
 	/* Exit the function */

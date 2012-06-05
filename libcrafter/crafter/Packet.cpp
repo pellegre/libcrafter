@@ -169,6 +169,10 @@ Packet::Packet(const Packet& copy_packet) {
 	/* Init the pointer */
 	raw_data = 0;
 
+	last_iface = "";
+	last_id = 0;
+	socket_open_once = 0;
+
 	/* Push layer one by one */
 	vector<Layer*>::const_iterator it_layer;
 	for (it_layer = copy_packet.Stack.begin() ; it_layer != copy_packet.Stack.end() ; ++it_layer)
@@ -191,6 +195,12 @@ Packet& Packet::operator=(const Packet& right) {
 
 	/* Init the size in bytes of the packet */
 	bytes_size = 0;
+
+	last_iface = "";
+	last_id = 0;
+	/* Check status of the socket */
+	if(socket_open_once) close(raw);
+	socket_open_once = 0;
 
 	vector<Layer*>::const_iterator it_const;
 
@@ -216,6 +226,12 @@ Packet& Packet::operator=(const Layer& right) {
 	/* Init the size in bytes of the packet */
 	bytes_size = 0;
 
+	last_iface = "";
+	last_id = 0;
+	/* Check status of the socket */
+	if(socket_open_once) close(raw);
+	socket_open_once = 0;
+
 	PushLayer(right);
 
 	return *this;
@@ -227,6 +243,10 @@ Packet::Packet(const Layer& copy_layer) {
 	bytes_size = 0;
 	/* Init the pointer */
 	raw_data = 0;
+
+	last_iface = "";
+	last_id = 0;
+	socket_open_once = 0;
 
 	/* Push layer one by one */
 	PushLayer(copy_layer);
@@ -329,20 +349,29 @@ int Packet::Send(const string& iface) {
 
 	 }
 
+	/* Check status of the socket */
+	if(socket_open_once) close(raw);
+	else socket_open_once = 1;
+
+	word current_id = Stack[0]->GetID();
 	/* Check for Internet Layer protocol */
-	if (Stack[0]->GetID() != 0x0800) {
+	if (current_id != 0x0800) {
 
-		/* Link layer object, or some unknown protocol */
-		int raw = CreateLinkSocket(ETH_P_ALL);
+		if(current_id != last_id || iface != last_iface) {
 
-		/* Bind raw socket to interface */
-		if(iface.size() > 0)
-			BindLinkSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
+			/* Link layer object, or some unknown protocol */
+			raw = CreateLinkSocket(ETH_P_ALL);
+			/* Bind raw socket to interface */
+			if(iface.size() > 0)
+				BindLinkSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
+
+			/* Update values */
+			last_id = current_id;
+			last_iface = iface;
+		}
 
 		/* Write the packet on the wire */
 		int ret = SendLinkSocket(raw, raw_data, bytes_size);
-
-		close(raw);
 
 		return ret;
 
@@ -350,12 +379,18 @@ int Packet::Send(const string& iface) {
 
 		IP* ip_layer = dynamic_cast<IP*>(Stack[0]);
 
-		/* Is IP, use a RAW socket */
-		int raw = CreateRawSocket(ip_layer->GetProtocol());
+		if(current_id != last_id || iface != last_iface) {
+			/* Is IP, use a RAW socket */
+			raw = CreateRawSocket(ip_layer->GetProtocol());
 
-		/* Bind raw socket to interface */
-		if(iface.size() > 0)
-			BindRawSocketToInterface(iface.c_str(), raw);
+			/* Bind raw socket to interface */
+			if(iface.size() > 0)
+				BindRawSocketToInterface(iface.c_str(), raw);
+
+			/* Update values */
+			last_id = current_id;
+			last_iface = iface;
+		}
 
 		/* Create structure for destination */
 		struct sockaddr_in din;
@@ -366,8 +401,6 @@ int Packet::Send(const string& iface) {
 	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
 
 		int ret = sendto(raw, raw_data, bytes_size, 0, (struct sockaddr *)&din, sizeof(din));
-
-		close(raw);
 
 		return ret;
 
@@ -394,8 +427,6 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 	/* Flag for link layer socket */
 	byte use_packet_socket = 0;
 
-	/* Socket descriptor */
-	int raw;
 	/* Create structure for destination */
 	struct sockaddr_in din;
 
@@ -411,30 +442,47 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 	/* Before doing anything weird, craft the packet */
 	Craft();
 
-	/* Check for Link Layer protocol */
-	if (Stack[0]->GetID() == 0xfff2) {
+	/* Check status of the socket */
+	if(socket_open_once) close(raw);
+	else socket_open_once = 1;
 
+	word current_id = Stack[0]->GetID();
+
+	/* Check for Link Layer protocol */
+	if (current_id == 0xfff2) {
 
 		use_packet_socket = 1;
 
-		/* Create the raw socket */
-		raw = CreateLinkSocket(ETH_P_ALL);
+		if(current_id != last_id || iface != last_iface) {
 
-		/* Bind raw socket to interface */
-		if(iface.size() > 0)
-			BindLinkSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
+			/* Link layer object, or some unknown protocol */
+			raw = CreateLinkSocket(ETH_P_ALL);
+			/* Bind raw socket to interface */
+			if(iface.size() > 0)
+				BindLinkSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
 
+			/* Update values */
+			last_id = current_id;
+			last_iface = iface;
+		}
 
 	/* Check for IP protocol */
-	} else if (Stack[0]->GetID() == 0x0800){
+	} else if (current_id == 0x0800){
 
 		IP* ip_layer = dynamic_cast<IP*>(Stack[0]);
 
-		raw = CreateRawSocket(ip_layer->GetProtocol());
+		if(current_id != last_id || iface != last_iface) {
+			/* Is IP, use a RAW socket */
+			raw = CreateRawSocket(ip_layer->GetProtocol());
 
-		/* Bind raw socket to interface */
-		if(iface.size() > 0)
-			BindRawSocketToInterface(iface.c_str(), raw);
+			/* Bind raw socket to interface */
+			if(iface.size() > 0)
+				BindRawSocketToInterface(iface.c_str(), raw);
+
+			/* Update values */
+			last_id = current_id;
+			last_iface = iface;
+		}
 
 		/* Set destinations structure */
 	    din.sin_family = AF_INET;
@@ -456,12 +504,18 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 
 		use_packet_socket = 1;
 
-		/* Create the raw socket */
-		raw = CreateLinkSocket(ETH_P_ALL);
+		if(current_id != last_id || iface != last_iface) {
 
-		/* Bind raw socket to interface */
-		if(iface.size() > 0)
-			BindLinkSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
+			/* Link layer object, or some unknown protocol */
+			raw = CreateLinkSocket(ETH_P_ALL);
+			/* Bind raw socket to interface */
+			if(iface.size() > 0)
+				BindLinkSocketToInterface(iface.c_str(), raw, ETH_P_ALL);
+
+			/* Update values */
+			last_id = current_id;
+			last_iface = iface;
+		}
 
 		if (user_filter == " ") {
 
@@ -471,8 +525,6 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 							 "Packet::SendRecv()",
 							 "Sending packet (PF_PACKET socket)");
 			}
-
-			close(raw);
 
 			return 0;
 
@@ -615,8 +667,6 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 				PrintMessage(Crafter::PrintCodes::PrintWarning,
 						     "Packet::SendRecv()",
 				             "Sending packet (PF_INET)");
-				/* Exit cleanly */
-				close(raw);
 				return 0;
 			}
 		} else {
@@ -626,8 +676,6 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 				PrintMessage(Crafter::PrintCodes::PrintWarning,
 						     "Packet::SendRecv()",
 				             "Sending packet (PF_PACKET)");
-				/* Exit cleanly */
-				close(raw);
 				return 0;
 			}
 
@@ -656,9 +704,6 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 		count++;
 
 	}
-
-	/* Exit cleanly */
-	close(raw);
 
 	pcap_close (handle);
 
@@ -733,6 +778,8 @@ Packet::~Packet() {
 		delete (*it_layer);
 
 	Stack.clear();
+
+	if(socket_open_once) close(raw);
 
 	if(raw_data) {
 		delete [] raw_data;
