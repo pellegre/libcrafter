@@ -103,7 +103,7 @@ typedef std::vector<Layer*> LayerStack;
 
 		/* Put raw data on array and returns the number of bytes copied */
 		size_t GetData(byte* raw_ptr);
-		/* Get a pointer to the raw buffer inside the packet (wich holds the crafted data) */
+		/* Get a pointer to the raw buffer inside the packet (which holds the crafted data) */
 		const byte* GetRawPtr();
 
 		/* Push a Layer into the stack */
@@ -120,11 +120,11 @@ typedef std::vector<Layer*> LayerStack;
 		/* Send a packet and try to match the answer */
 		Packet* SendRecv(const std::string& iface = "",int timeout = 1000, int retry = 3, const std::string& user_filter = " ");
 
-		/* Put a packet into the wire trough a raw socket */
-		int RawSocketSend(int sd);
-
-		/* Put a packet into the wire trough a raw socket */
-		int PacketSocketSend(int sd);
+		/*
+		 * Put a packet into the wire trough a raw socket
+		 * (should be a PF_INET or PF_PACKET accordingly to the type of packet crafted)
+		 */
+		int SocketSend(int sd);
 
 		/* Print each layer of the packet */
 		void Print(std::ostream& str = std::cout) const;
