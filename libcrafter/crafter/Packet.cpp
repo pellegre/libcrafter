@@ -719,7 +719,7 @@ int Packet::PacketSocketSend(int sd) {
 	Craft();
 
 	/* Write it on a packet socket */
-	return SocketSender::SendLinkSocket(sd, raw_data, bytes_size);
+	return write(sd, raw_data, bytes_size);
 }
 
 
