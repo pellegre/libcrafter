@@ -70,9 +70,15 @@ namespace Crafter {
 
 	typedef std::vector<Packet*> PacketContainer;
 
+	/* Dump packet container on a pcap file */
+	void DumpPcap(const std::string& filename, PacketContainer* pck_container);
+
+	/* Read a pcap file */
+	PacketContainer* ReadPcap(const std::string& filename, const std::string& filter = "");
+
 	/* Send and Receive a container of packet - Multithreading */
 	PacketContainer* SendRecv(PacketContainer* PacketContainer, const std::string& iface = "",
-			                        int num_threads = 16, int timeout = 5, int retry = 3);
+			                        int num_threads = 16, int timeout = 500, int retry = 3);
 
 	/* Send a container of packet - Multithreading */
 	void Send(PacketContainer* PacketContainer, const std::string& iface = "", int num_threads = 16);
