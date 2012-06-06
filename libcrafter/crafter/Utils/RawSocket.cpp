@@ -58,23 +58,23 @@ int SocketSender::RequestSocket(const std::string& iface, int proto_id) {
 	}
 
 	/* We should create a socket and bind it to the interface */
-	if(proto_id == Protocol::AccessFactory()->GetProtoID("Ethernet")) {
-
-		/* Create a link layer protocol */
-		raw = CreateLinkSocket(ETH_P_ALL);
-
-		/* If the user specify an interface, bind the socket to it */
-		if(iface.size() > 0)
-			BindLinkSocketToInterface(interface.c_str(),raw,ETH_P_ALL);
-
-	} else {
+	if(proto_id == Protocol::AccessFactory()->GetProtoID("IP")) {
 
 		/* Create a raw layer socket */
-		raw = CreateRawSocket(proto_id);
+		raw = CreateRawSocket();
 
 		/* If the user specify an interface, bind the socket to it */
 		if(iface.size() > 0)
 			BindRawSocketToInterface(interface.c_str(),raw);
+
+	} else {
+
+		/* Create a link layer protocol */
+		raw = CreateLinkSocket();
+
+		/* If the user specify an interface, bind the socket to it */
+		if(iface.size() > 0)
+			BindLinkSocketToInterface(interface.c_str(),raw);
 
 	}
 
@@ -198,6 +198,26 @@ int Crafter::SocketSender::SendLinkSocket(int rawsock, unsigned char *pkt, int p
 int Crafter::SocketSender::SendRawSocket(int rawsock, struct sockaddr* din, unsigned char *pkt, int pkt_len)
 {
 	return sendto(rawsock, pkt, pkt_len, 0, din, sizeof(struct sockaddr));
+}
+
+int Crafter::SocketSender::SendSocket(int rawsock, int proto_id, unsigned char *pkt, int pkt_len) {
+	if(proto_id == 0x0800) {
+		/* Raw socket, IPv4 */
+
+		/* Create structure for destination */
+		struct sockaddr_in din;
+		/* Set destinations structure */
+	    din.sin_family = AF_INET;
+	    din.sin_port = 0;
+	    memcpy(&din.sin_addr.s_addr,pkt + 16,sizeof(in_addr_t));
+	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
+
+	    return SendRawSocket(rawsock,(sockaddr *)&din,pkt,pkt_len);
+
+	}
+
+	return SendLinkSocket(rawsock,pkt,pkt_len);
+
 }
 
 Crafter::SocketSender::~SocketSender() {

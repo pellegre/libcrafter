@@ -50,6 +50,11 @@ void Crafter::PrintMessage(uint16_t code, const string& routine, const string& m
 			code_str = "[!] WARNING ";
 			break;
 
+		/* Print a warning */
+		case PrintCodes::PrintWarningPerror :
+			code_str = "[!] WARNING ";
+			break;
+
 		/* Print the error message */
 		case PrintCodes::PrintError :
 			code_str = "[!] ERROR ";
@@ -70,6 +75,10 @@ void Crafter::PrintMessage(uint16_t code, const string& routine, const string& m
 	/* Check if we should use the perror routine */
 	if (code == PrintCodes::PrintPerror) {
 		perror(ret_str.c_str());
+		return;
+	} else if (PrintCodes::PrintWarningPerror) {
+		if(ShowWarnings)
+			perror(ret_str.c_str());
 		return;
 	}
 

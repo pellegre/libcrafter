@@ -43,6 +43,7 @@ namespace Crafter {
 		const uint16_t PrintWarning = 1;
 		const uint16_t PrintError = 2;
 		const uint16_t PrintPerror = 3;
+		const uint16_t PrintWarningPerror = 4;
 	}
 
 	/* Return a string with a message from some routine o the library */

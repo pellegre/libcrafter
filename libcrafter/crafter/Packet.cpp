@@ -317,9 +317,7 @@ const byte* Packet::GetRawPtr() {
 
 /* Send a packet */
 int Packet::Send(const string& iface) {
-	/* Craft the packet, so we fill all the information needed */
-	Craft();
-
+	/* Check the size of the stack */
 	if(Stack.size() == 0) {
 
 		PrintMessage(Crafter::PrintCodes::PrintWarning,
@@ -329,55 +327,25 @@ int Packet::Send(const string& iface) {
 
 	 }
 
+	/* Craft the packet, so we fill all the information needed */
+	Craft();
+
+	/* Get the ID of the first layer */
 	word current_id = Stack[0]->GetID();
-	/* Check for Internet Layer protocol */
-	if (current_id != 0x0800) {
 
-		/* ----------- Begin Critical area ---------------- */
+	/* ----------- Begin Critical area ---------------- */
 
-	    pthread_mutex_lock (&mutex_compile);
+	pthread_mutex_lock (&mutex_compile);
 
-	    /* Link layer object, or some unknown protocol */
-		int raw = SocketSender::RequestSocket(iface,current_id);
+	/* Request a raw socket with this specific protocol */
+	int raw = SocketSender::RequestSocket(iface,current_id);
 
-		pthread_mutex_unlock (&mutex_compile);
+	pthread_mutex_unlock (&mutex_compile);
 
-		/* ------------ End Critical area ----------------- */
+	/* ------------ End Critical area ----------------- */
 
-		/* Write the packet on the wire */
-		int ret = SocketSender::SendLinkSocket(raw, raw_data, bytes_size);
-
-		return ret;
-
-	} else {
-
-		IP* ip_layer = dynamic_cast<IP*>(Stack[0]);
-
-		/* ----------- Begin Critical area ---------------- */
-
-	    pthread_mutex_lock (&mutex_compile);
-
-		/* Is IP, use a RAW socket */
-		int raw = SocketSender::RequestSocket(iface,ip_layer->GetProtocol());
-
-		pthread_mutex_unlock (&mutex_compile);
-
-		/* ------------ End Critical area ----------------- */
-
-		/* Create structure for destination */
-		struct sockaddr_in din;
-		/* Set destinations structure */
-	    din.sin_family = AF_INET;
-	    din.sin_port = 0;
-	    din.sin_addr.s_addr = inet_addr(ip_layer->GetDestinationIP().c_str());
-	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-
-		int ret = SocketSender::SendRawSocket(raw, (struct sockaddr *)&din, raw_data, bytes_size);
-
-		return ret;
-
-	}
-
+	/* Write the packet on the wire */
+	return SocketSender::SendSocket(raw, current_id, raw_data, bytes_size);
 }
 
 /* Send a packet */
@@ -396,12 +364,6 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 	/* Compiled BPF filter */
 	struct bpf_program fp;
 
-	/* Flag for link layer socket */
-	byte use_packet_socket = 0;
-
-	/* Create structure for destination */
-	struct sockaddr_in din;
-
 	if(Stack.size() == 0) {
 
 		PrintMessage(Crafter::PrintCodes::PrintWarning,
@@ -411,88 +373,39 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 
 	 }
 
-	/* Before doing anything weird, craft the packet */
+	/* Craft the packet */
 	Craft();
 
 	word current_id = Stack[0]->GetID();
-	int raw = 0;
 
-	/* Check for Link Layer protocol */
-	if (current_id == 0xfff2) {
+	/* ----------- Begin Critical area ---------------- */
 
-		use_packet_socket = 1;
+	pthread_mutex_lock (&mutex_compile);
 
-		/* ----------- Begin Critical area ---------------- */
+	/* Link layer object, or some unknown protocol */
+	int raw = SocketSender::RequestSocket(iface,current_id);
 
-	    pthread_mutex_lock (&mutex_compile);
+	pthread_mutex_unlock (&mutex_compile);
 
-		/* Link layer object, or some unknown protocol */
-		raw = SocketSender::RequestSocket(iface,current_id);
+	/* ------------ End Critical area ----------------- */
 
-		pthread_mutex_unlock (&mutex_compile);
+	if (current_id != 0xfff2 && current_id != 0x0800 && user_filter == " ") {
 
-		/* ------------ End Critical area ----------------- */
+		/* Print a warning message */
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+					 "Packet::SendRecv()",
+					 "The first layer in the stack (" + Stack[0]->GetName() + ") is not IP or Ethernet.");
 
-	/* Check for IP protocol */
-	} else if (current_id == 0x0800){
-
-		IP* ip_layer = dynamic_cast<IP*>(Stack[0]);
-
-		/* ----------- Begin Critical area ---------------- */
-
-	    pthread_mutex_lock (&mutex_compile);
-
-		/* Is IP, use a RAW socket */
-		raw = SocketSender::RequestSocket(iface,ip_layer->GetProtocol());
-
-		pthread_mutex_unlock (&mutex_compile);
-
-		/* ------------ End Critical area ----------------- */
-
-		/* Set destinations structure */
-	    din.sin_family = AF_INET;
-	    din.sin_port = 0;
-	    din.sin_addr.s_addr = inet_addr(ip_layer->GetDestinationIP().c_str());
-	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-
- 	} else {
-
-		if (user_filter == " ") {
-			PrintMessage(Crafter::PrintCodes::PrintWarning,
+		/* Write the packet on the wire */
+		if(SocketSender::SendSocket(raw, current_id, raw_data, bytes_size) < 0) {
+			PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
 						 "Packet::SendRecv()",
-						 "The first layer in the stack (" + Stack[0]->GetName() + ") is not IP or Ethernet and you didn't supply a filter expression. Don't expect any answer.");
-		}else {
-			PrintMessage(Crafter::PrintCodes::PrintWarning,
-						 "Packet::SendRecv()",
-						 "The first layer in the stack (" + Stack[0]->GetName() + ") is not IP or Ethernet.");
+						 "Sending packet (PF_PACKET socket)");
 		}
 
-		use_packet_socket = 1;
+		return 0;
 
-		/* ----------- Begin Critical area ---------------- */
-
-	    pthread_mutex_lock (&mutex_compile);
-
-		/* Link layer object, or some unknown protocol */
-		raw = SocketSender::RequestSocket(iface,0xfff2);
-
-		pthread_mutex_unlock (&mutex_compile);
-
-		/* ------------ End Critical area ----------------- */
-
-		if (user_filter == " ") {
-
-			/* Write the packet on the wire */
-			if(SocketSender::SendLinkSocket(raw, raw_data, bytes_size) < 0) {
-				PrintMessage(Crafter::PrintCodes::PrintWarning,
-							 "Packet::SendRecv()",
-							 "Sending packet (PF_PACKET socket)");
-			}
-
-			return 0;
-
-		}
- 	}
+	}
 
 	/* Set error buffer to 0 length string to check for warnings */
 	libcap_errbuf[0] = 0;
@@ -622,24 +535,12 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 
 	while (count < retry) {
 
-		if (!use_packet_socket) {
-			/* Write the packet on the wire */
-			if(SocketSender::SendRawSocket(raw,(sockaddr *)&din, raw_data, bytes_size) < 0) {
-				PrintMessage(Crafter::PrintCodes::PrintWarning,
-						     "Packet::SendRecv()",
-				             "Sending packet (PF_INET)");
-				return 0;
-			}
-		} else {
-
-			/* Write the packet on the wire */
-			if(SocketSender::SendLinkSocket(raw, raw_data, bytes_size) < 0) {
-				PrintMessage(Crafter::PrintCodes::PrintWarning,
-						     "Packet::SendRecv()",
-				             "Sending packet (PF_PACKET)");
-				return 0;
-			}
-
+		/* Write the packet on the wire */
+		if(SocketSender::SendSocket(raw, current_id, raw_data, bytes_size) < 0) {
+			PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
+						 "Packet::SendRecv()",
+						 "Sending packet ");
+			return 0;
 		}
 
 		struct pcap_pkthdr *header;
@@ -677,51 +578,23 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 
 }
 
-int Packet::RawSocketSend(int sd) {
-	/* Craft data before sending anything */
-	Craft();
+int Packet::SocketSend(int sd) {
+	if(Stack.size() == 0) {
 
-	/* Get IP Layer */
-	IP* ip_layer = 0;
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+					 "Packet::SendRecv()",
+					 "Not data in the packet. ");
+		return 0;
 
-	/* Check for Internet Layer protocol. Should be a IP Layer object */
-	if (Stack[0]->GetID() != 0x0800) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::RawSocketSend()",
-		             "No IP layer on packet. Cannot write on Raw Socket. ");
-		exit(1);
-	} else {
-		/* Is OK to cast it */
-		ip_layer = dynamic_cast<IP*>(Stack[0]);
-		int one = 1;
-		const int* val = &one;
-		if(setsockopt(sd, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0) {
-			PrintMessage(Crafter::PrintCodes::PrintError,
-						"Packet::RawSocketSend()",
-						"Setting IP_HDRINCL option to raw socket");
-			exit(1);
-		}
-	}
+	 }
 
-	/* Create structure for destination */
-	struct sockaddr_in din;
-	/* Set destinations structure */
-    din.sin_family = AF_INET;
-    din.sin_port = 0;
-    din.sin_addr.s_addr = inet_addr(ip_layer->GetDestinationIP().c_str());
-    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
-
-	return sendto(sd, raw_data, bytes_size, 0, (struct sockaddr *)&din, sizeof(din));
-}
-
-int Packet::PacketSocketSend(int sd) {
 	/* Craft the packet */
 	Craft();
 
-	/* Write it on a packet socket */
-	return write(sd, raw_data, bytes_size);
-}
+	word current_id = Stack[0]->GetID();
 
+	return SocketSender::SendSocket(sd,current_id,raw_data,bytes_size);
+}
 
 void Packet::InitMutex() {
     pthread_mutex_init(&Packet::mutex_compile, NULL);
