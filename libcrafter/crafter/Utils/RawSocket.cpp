@@ -28,10 +28,67 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "RawSocket.h"
 #include "PrintMessage.h"
+#include "../Layer.h"
 
 using namespace std;
+using namespace Crafter;
 
-int Crafter::CreateLinkSocket(int protocol_to_sniff)
+map<string,vector<SocketSender::SocketCouple> > SocketSender::socket_table;
+
+int SocketSender::RequestSocket(const std::string& iface, int proto_id) {
+	string interface;
+	/* First check if the string is not empty */
+	if (iface.size() == 0) interface = "default";
+	else interface = iface;
+
+	/* Now check if the interface is on the map */
+	map<string,vector<SocketCouple> >::iterator it = socket_table.find(interface);
+
+	/* Raw socket */
+	int raw;
+
+	if(it != socket_table.end()) {
+		/* A socket was binded to this interface, search for it */
+		 vector<SocketCouple>::iterator it_sc;
+
+		 for(it_sc = (*it).second.begin() ; it_sc != (*it).second.end() ; ++it_sc) {
+			 if(proto_id == (*it_sc).protocol)
+				 return (*it_sc).socket;
+		 }
+	}
+
+	/* We should create a socket and bind it to the interface */
+	if(proto_id == Protocol::AccessFactory()->GetProtoID("Ethernet")) {
+
+		/* Create a link layer protocol */
+		raw = CreateLinkSocket(ETH_P_ALL);
+
+		/* If the user specify an interface, bind the socket to it */
+		if(iface.size() > 0)
+			BindLinkSocketToInterface(interface.c_str(),raw,ETH_P_ALL);
+
+	} else {
+
+		/* Create a raw layer socket */
+		raw = CreateRawSocket(proto_id);
+
+		/* If the user specify an interface, bind the socket to it */
+		if(iface.size() > 0)
+			BindRawSocketToInterface(interface.c_str(),raw);
+
+	}
+
+	/* Create the socket couple */
+	SocketCouple sc;
+	sc.socket = raw;
+	sc.protocol = proto_id;
+
+	/* And push it into the global map */
+	socket_table[interface].push_back(sc);
+	return raw;
+}
+
+int Crafter::SocketSender::CreateLinkSocket(int protocol_to_sniff)
 {
 	int rawsock;
 
@@ -46,7 +103,7 @@ int Crafter::CreateLinkSocket(int protocol_to_sniff)
 	return rawsock;
 }
 
-int Crafter::CreateRawSocket(int protocol_to_sniff)
+int Crafter::SocketSender::CreateRawSocket(int protocol_to_sniff)
 {
     /* Create a socket descriptor */
     int s = socket(PF_INET, SOCK_RAW, protocol_to_sniff);
@@ -80,7 +137,7 @@ int Crafter::CreateRawSocket(int protocol_to_sniff)
     return s;
 }
 
-int Crafter::BindLinkSocketToInterface(const char *device, int rawsock, int protocol)
+int Crafter::SocketSender::BindLinkSocketToInterface(const char *device, int rawsock, int protocol)
 {
 
 	struct sockaddr_ll sll;
@@ -116,7 +173,7 @@ int Crafter::BindLinkSocketToInterface(const char *device, int rawsock, int prot
 	return 0;
 }
 
-int Crafter::BindRawSocketToInterface(const char *device, int s)
+int Crafter::SocketSender::BindRawSocketToInterface(const char *device, int s)
 {
 	/* Bind to interface */
     ifreq Interface;
@@ -133,12 +190,23 @@ int Crafter::BindRawSocketToInterface(const char *device, int s)
     return 0;
 }
 
-int Crafter::SendLinkSocket(int rawsock, unsigned char *pkt, int pkt_len)
+int Crafter::SocketSender::SendLinkSocket(int rawsock, unsigned char *pkt, int pkt_len)
 {
 	return write(rawsock, pkt, pkt_len);
 }
 
-int Crafter::SendRawSocket(int rawsock, struct sockaddr* din, unsigned char *pkt, int pkt_len)
+int Crafter::SocketSender::SendRawSocket(int rawsock, struct sockaddr* din, unsigned char *pkt, int pkt_len)
 {
 	return sendto(rawsock, pkt, pkt_len, 0, din, sizeof(struct sockaddr));
 }
+
+Crafter::SocketSender::~SocketSender() {
+	map<string,vector<SocketCouple> >::iterator it_iface;
+	vector<SocketCouple>::iterator it_sc;
+	/* Close all sockets */
+	for(it_iface = socket_table.begin() ; it_iface != socket_table.end() ; ++it_iface) {
+		for(it_sc = (*it_iface).second.begin() ; it_sc != (*it_iface).second.end() ; ++it_sc)
+			close((*it_sc).socket);
+	}
+}
+

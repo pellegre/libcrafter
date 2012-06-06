@@ -29,33 +29,58 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef RAWSOCKET_H_
 #define RAWSOCKET_H_
 
-#include<iostream>
-#include<cstdio>
-#include<cstdlib>
-#include<sys/socket.h>
-#include<features.h>
-#include<linux/if_packet.h>
-#include<linux/if_ether.h>
-#include<cerrno>
-#include<sys/ioctl.h>
-#include<net/if.h>
-#include<arpa/inet.h>
-#include<cstring>
-#include<unistd.h>
+#include <iostream>
+#include <map>
+#include <vector>
+#include <string>
+#include <cstdio>
+#include <cstdlib>
+#include <sys/socket.h>
+#include <features.h>
+#include <linux/if_packet.h>
+#include <linux/if_ether.h>
+#include <cerrno>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <arpa/inet.h>
+#include <cstring>
+#include <unistd.h>
 
 namespace Crafter {
 
-	int CreateLinkSocket(int protocol_to_sniff);
+	class SocketSender {
 
-	int BindLinkSocketToInterface(const char *device, int rawsock, int protocol);
+		struct SocketCouple {
+			int protocol;
+			int socket;
+		};
 
-	int SendLinkSocket(int rawsock, unsigned char *pkt, int pkt_len);
+		/* Map of socket to each interface requested by the user (by protocol ID) */
+		static std::map<std::string,std::vector<SocketCouple> > socket_table;
 
-	int CreateRawSocket(int protocol_to_sniff);
+		/* Prevent construction of this object */
+		SocketSender();
+		SocketSender(SocketSender& cpy);
 
-	int BindRawSocketToInterface(const char *device, int rawsock);
+		/* Sockets in link layer */
+		static int CreateLinkSocket(int protocol_to_sniff);
+		static int BindLinkSocketToInterface(const char *device, int rawsock, int protocol);
 
-	int SendRawSocket(int rawsock, struct sockaddr *din, unsigned char *pkt, int pkt_len);
+		/* Raw sockets */
+		static int CreateRawSocket(int protocol_to_sniff);
+		static int BindRawSocketToInterface(const char *device, int rawsock);
+
+	public:
+
+		/* Write data on the wire */
+		static int SendLinkSocket(int rawsock, unsigned char *pkt, int pkt_len);
+		static int SendRawSocket(int rawsock, struct sockaddr *din, unsigned char *pkt, int pkt_len);
+
+		/* Request a socket */
+		static int RequestSocket(const std::string& iface, int proto_id);
+
+		~SocketSender();
+	};
 }
 
 #endif /* RAWSOCKET_H_ */
