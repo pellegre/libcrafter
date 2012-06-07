@@ -27,6 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 #include "TCPConnection.h"
+#include "IPResolver.h"
 #include <ctime>
 
 using namespace std;
@@ -382,21 +383,29 @@ TCPConnection::TCPConnection(const string& src_ip, const string& dst_ip, short_w
     pthread_cond_init (&threshold_cv, NULL);
 
     /* Now init the headers */
-    IP ip_header;
-    ip_header.SetSourceIP(src_ip);
-    ip_header.SetDestinationIP(dst_ip);
+    IPLayer* ip_header;
+
+    if(validateIpv6Address(src_ip))
+    	ip_header = new IPv6;
+    else
+    	ip_header = new IP;
+
+    ip_header->SetSourceIP(src_ip);
+    ip_header->SetDestinationIP(dst_ip);
     TCP tcp_header;
     tcp_header.SetSrcPort(src_port);
     tcp_header.SetDstPort(dst_port);
     RawLayer raw_header;
     raw_header.SetPayload(" ");
     /* And push to the global instance of the buffer packet */
-    tcp_packet.PushLayer(ip_header);
+    tcp_packet.PushLayer(*ip_header);
     tcp_packet.PushLayer(tcp_header);
     /* Also push the data into the send buffer (this include a raw layer) */
-    tcp_send_packet.PushLayer(ip_header);
+    tcp_send_packet.PushLayer(*ip_header);
     tcp_send_packet.PushLayer(tcp_header);
     tcp_send_packet.PushLayer(raw_header);
+
+    delete ip_header;
 
     /* Set to zero the send flag */
     send_flag = 0;
