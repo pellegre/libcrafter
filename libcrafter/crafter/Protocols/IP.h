@@ -28,10 +28,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define IP_H_
 
 #include "../Layer.h"
+#include "IPLayer.h"
 
 namespace Crafter {
 
-    class IP: public Layer {
+    class IP: public IPLayer {
 
         void DefineProtocol();
 

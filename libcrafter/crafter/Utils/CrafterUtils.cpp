@@ -699,6 +699,17 @@ IPv6* Crafter::GetIPv6(const Packet& packet){
 	return 0;
 }
 
+IPLayer* Crafter::GetIPLayer(const Packet& packet) {
+	/* Search layer one by one */
+	LayerStack::const_iterator it_layer;
+	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
+		if ((*it_layer)->GetName() == "IP" || (*it_layer)->GetName() == "IPv6")
+			return dynamic_cast<IPLayer*>( (*it_layer) );
+
+	/* No requested layer, returns zero */
+	return 0;
+}
+
 TCP* Crafter::GetTCP(const Packet& packet){
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
