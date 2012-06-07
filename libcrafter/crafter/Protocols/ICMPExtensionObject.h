@@ -54,7 +54,7 @@ namespace Crafter {
 
     public:
 
-		static word PROTO = 0xfe;
+		static const word PROTO = 0xfe;
 
         /* Classes (ClassNum) */
         static const byte MPLS;

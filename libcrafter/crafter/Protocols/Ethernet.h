@@ -53,7 +53,7 @@ namespace Crafter {
 
     public:
 
-		static word PROTO = 0xfff2;
+		static const word PROTO = 0xfff2;
 
         Ethernet();
 

@@ -90,6 +90,7 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Layer.h \
 								crafter/Payload.h \
 								crafter/Packet.h \
+								crafter/Types.h \
 								crafter/Fields/BitsField.h \
 								crafter/Fields/BytesField.h \
 								crafter/Fields/FieldContainer.h \

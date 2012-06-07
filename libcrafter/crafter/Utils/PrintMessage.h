@@ -34,7 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstdio>
 #include <stdint.h>
 
-typedef uint8_t byte;
+#include "../Types.h"
 
 namespace Crafter {
 

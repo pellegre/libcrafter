@@ -37,9 +37,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Layer.h"
 #include "Protocols/RawLayer.h"
 
-typedef uint32_t word;
-typedef uint8_t byte;
-
 namespace Crafter {
 
 typedef std::vector<Layer*> LayerStack;

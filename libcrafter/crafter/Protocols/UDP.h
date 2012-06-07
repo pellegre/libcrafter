@@ -56,7 +56,7 @@ namespace Crafter {
 
     public:
 
-		static word PROTO = 0x11;
+		static const word PROTO = 0x11;
 
         UDP();
 

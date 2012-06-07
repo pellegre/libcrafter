@@ -46,12 +46,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstring>
 #include <unistd.h>
 
+#include "../Types.h"
+
 namespace Crafter {
 
 	class SocketSender {
 
 		struct SocketCouple {
-			int protocol;
+			word protocol;
 			int socket;
 		};
 
@@ -63,24 +65,24 @@ namespace Crafter {
 		SocketSender(SocketSender& cpy);
 
 		/* Sockets in link layer */
-		static int CreateLinkSocket(int protocol_to_sniff = ETH_P_ALL);
-		static int BindLinkSocketToInterface(const char *device, int rawsock, int protocol = ETH_P_ALL);
+		static int CreateLinkSocket(word protocol_to_sniff = ETH_P_ALL);
+		static int BindLinkSocketToInterface(const char *device, int rawsock, word protocol = ETH_P_ALL);
 
 		/* Raw sockets */
-		static int CreateRawSocket(int protocol_to_sniff = IPPROTO_RAW);
-		static int CreateRaw6Socket(int protocol_to_sniff = IPPROTO_RAW);
+		static int CreateRawSocket(word protocol_to_sniff = IPPROTO_RAW);
+		static int CreateRaw6Socket(word protocol_to_sniff = IPPROTO_RAW);
 		static int BindRawSocketToInterface(const char *device, int rawsock);
 
 		/* Write data on the wire */
-		static int SendLinkSocket(int rawsock, unsigned char *pkt, int pkt_len);
-		static int SendRawSocket(int rawsock, struct sockaddr *din, size_t size_dst, unsigned char *pkt, int pkt_len);
+		static int SendLinkSocket(int rawsock, byte *pkt, size_t pkt_len);
+		static int SendRawSocket(int rawsock, struct sockaddr *din, size_t size_dst, byte *pkt, size_t pkt_len);
 
 	public:
 
 		/* Request a socket */
-		static int RequestSocket(const std::string& iface, int proto_id);
+		static int RequestSocket(const std::string& iface, word proto_id);
 		/* Write into a socket */
-		static int SendSocket(int rawsock, int proto_id, unsigned char *pkt, int pkt_len);
+		static int SendSocket(int rawsock, word proto_id, byte *pkt, size_t pkt_len);
 
 		~SocketSender();
 	};

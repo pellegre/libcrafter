@@ -29,13 +29,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "RawSocket.h"
 #include "PrintMessage.h"
 #include "../Layer.h"
+#include "../Protocols/IP.h"
+#include "../Protocols/IPv6.h"
 
 using namespace std;
 using namespace Crafter;
 
 map<string,vector<SocketSender::SocketCouple> > SocketSender::socket_table;
 
-int SocketSender::RequestSocket(const std::string& iface, int proto_id) {
+int SocketSender::RequestSocket(const std::string& iface, word proto_id) {
 	string interface;
 	/* First check if the string is not empty */
 	if (iface.size() == 0) interface = "default";
@@ -100,7 +102,7 @@ int SocketSender::RequestSocket(const std::string& iface, int proto_id) {
 	return raw;
 }
 
-int Crafter::SocketSender::CreateLinkSocket(int protocol_to_sniff)
+int Crafter::SocketSender::CreateLinkSocket(word protocol_to_sniff)
 {
 	int rawsock;
 
@@ -115,7 +117,7 @@ int Crafter::SocketSender::CreateLinkSocket(int protocol_to_sniff)
 	return rawsock;
 }
 
-int Crafter::SocketSender::CreateRawSocket(int protocol_to_sniff)
+int Crafter::SocketSender::CreateRawSocket(word protocol_to_sniff)
 {
     /* Create a socket descriptor */
     int s = socket(PF_INET, SOCK_RAW, protocol_to_sniff);
@@ -149,7 +151,7 @@ int Crafter::SocketSender::CreateRawSocket(int protocol_to_sniff)
     return s;
 }
 
-int Crafter::SocketSender::CreateRaw6Socket(int protocol_to_sniff) {
+int Crafter::SocketSender::CreateRaw6Socket(word protocol_to_sniff) {
     /* Create a socket descriptor */
     int s = socket(PF_INET6, SOCK_RAW, protocol_to_sniff);
 
@@ -164,7 +166,7 @@ int Crafter::SocketSender::CreateRaw6Socket(int protocol_to_sniff) {
     return s;
 }
 
-int Crafter::SocketSender::BindLinkSocketToInterface(const char *device, int rawsock, int protocol)
+int Crafter::SocketSender::BindLinkSocketToInterface(const char *device, int rawsock, word protocol)
 {
 
 	struct sockaddr_ll sll;
@@ -217,17 +219,17 @@ int Crafter::SocketSender::BindRawSocketToInterface(const char *device, int s)
     return 0;
 }
 
-int Crafter::SocketSender::SendLinkSocket(int rawsock, unsigned char *pkt, int pkt_len)
+int Crafter::SocketSender::SendLinkSocket(int rawsock, byte *pkt, size_t pkt_len)
 {
 	return write(rawsock, pkt, pkt_len);
 }
 
-int Crafter::SocketSender::SendRawSocket(int rawsock, struct sockaddr* din, size_t size_dst, unsigned char *pkt, int pkt_len)
+int Crafter::SocketSender::SendRawSocket(int rawsock, struct sockaddr* din, size_t size_dst, byte *pkt, size_t pkt_len)
 {
 	return sendto(rawsock, pkt, pkt_len, 0, din, size_dst);
 }
 
-int Crafter::SocketSender::SendSocket(int rawsock, int proto_id, unsigned char *pkt, int pkt_len) {
+int Crafter::SocketSender::SendSocket(int rawsock, word proto_id, byte *pkt, size_t pkt_len) {
 	if(proto_id == IP::PROTO) {
 		/* Raw socket, IPv4 */
 		struct sockaddr_in din;

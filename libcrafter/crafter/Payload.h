@@ -34,7 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string>
 #include <cstring>
 
-typedef unsigned char byte;
+#include "Types.h"
 
 namespace Crafter {
 

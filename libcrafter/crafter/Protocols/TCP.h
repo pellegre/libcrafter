@@ -62,7 +62,7 @@ namespace Crafter {
 
     public:
 
-		static word PROTO = 0x06;
+		static const word PROTO = 0x06;
 
 		/* Flags */
 		static const byte FIN;

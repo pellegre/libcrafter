@@ -35,6 +35,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <set>
 
 #include "FieldInfo.h"
+#include "../Types.h"
 
 namespace Crafter {
 

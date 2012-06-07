@@ -46,10 +46,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Payload.h"
 #include "Utils/PrintMessage.h"
 
-typedef uint32_t word;
-typedef uint16_t short_word;
-typedef uint8_t byte;
-
 namespace Crafter {
 
 	short_word CheckSum(short_word *buf, int nwords);
