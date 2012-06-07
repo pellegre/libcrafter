@@ -103,9 +103,6 @@ namespace Crafter {
 	/* Shutdown cleany the ARPSpoofer */
 	void CleanARPContext(ARPContext* arp_context);
 
-	/* Get MAC using an ARP request */
-	const std::string GetMAC(const std::string& IPAddress, const std::string& iface = "");
-
 	/* Function for each thread */
 	void* ARPSpoofRequest(void* thread_arg);
 	void ARPNormalRequest(void* thread_arg);

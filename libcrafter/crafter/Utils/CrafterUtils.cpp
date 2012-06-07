@@ -35,12 +35,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/ioctl.h>
 #include <netinet/in.h>
 #include <net/ethernet.h>
+#include <ifaddrs.h>
 #include <net/if.h>
 
 #include "../Crafter.h"
 #include "CrafterUtils.h"
 
 #include "IPv4Parse.h"
+#include "IPResolver.h"
 
 using namespace Crafter;
 using namespace std;
@@ -71,28 +73,127 @@ string Crafter::GetMyMAC(const string& iface) {
 }
 
 string Crafter::GetMyIP(const string& iface) {
-	int fd;
-	struct ifreq ifr;
+    struct ifaddrs* ifAddrStruct = 0;
+    struct ifaddrs* ifa = 0;
+    void* tmpAddrPtr = 0;
+    /* Return value */
+    string ret = "";
 
-	fd = socket(AF_INET, SOCK_DGRAM, 0);
+    getifaddrs(&ifAddrStruct);
 
-	/* I want to get an IPv4 IP address */
-	ifr.ifr_addr.sa_family = AF_INET;
+    for (ifa = ifAddrStruct; ifa != 0; ifa = ifa->ifa_next) {
 
-	/* I want IP address attached to "eth0" */
-	strncpy(ifr.ifr_name, iface.c_str(), IFNAMSIZ-1);
+    	/* Check if is a IPv6 */
+        if (ifa->ifa_addr->sa_family==AF_INET) {
+        	/* Check the interface */
+        	if(string(ifa->ifa_name).find(iface) != string::npos) {
+            	/* Is a valid IP6 Address */
+                tmpAddrPtr=&((struct sockaddr_in *)ifa->ifa_addr)->sin_addr;
+                char addressBuffer[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, tmpAddrPtr, addressBuffer, INET_ADDRSTRLEN);
+                ret = string(addressBuffer);
+        	}
+        }
 
-	if((ioctl(fd, SIOCGIFADDR, &ifr)) == -1) {
-		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
-					 "BindLinkSocketToInterface()",
-					 "Getting Interface index");
-		close(fd);
-		return "";
+    }
+
+    if (ifAddrStruct!=0) freeifaddrs(ifAddrStruct);
+
+    return ret;
+}
+
+string Crafter::GetMyIPv6(const string& iface) {
+    struct ifaddrs* ifAddrStruct = 0;
+    struct ifaddrs* ifa = 0;
+    void* tmpAddrPtr = 0;
+    /* Return value */
+    string ret = "";
+
+    getifaddrs(&ifAddrStruct);
+
+    for (ifa = ifAddrStruct; ifa != 0; ifa = ifa->ifa_next) {
+
+    	/* Check if is a IPv6 */
+        if (ifa->ifa_addr->sa_family==AF_INET6) {
+        	/* Check the interface */
+        	if(string(ifa->ifa_name).find(iface) != string::npos) {
+            	/* Is a valid IP6 Address */
+                tmpAddrPtr=&((struct sockaddr_in6 *)ifa->ifa_addr)->sin6_addr;
+                char addressBuffer[INET6_ADDRSTRLEN];
+                inet_ntop(AF_INET6, tmpAddrPtr, addressBuffer, INET6_ADDRSTRLEN);
+                ret = string(addressBuffer);
+        	}
+        }
+
+    }
+
+    if (ifAddrStruct!=0) freeifaddrs(ifAddrStruct);
+
+    return ret;
+}
+
+static const std::string GetMACIPv4(const std::string& IPAddress, const string& iface) {
+	/* Get the IP address associated to the interface */
+	string MyIP = GetMyIP(iface);
+	/* Get the MAC Address associated to the interface */
+	string MyMAC = GetMyMAC(iface);
+	/* Create the Ethernet layer */
+	Ethernet ether_layer;
+
+	/* Set source MAC */
+	ether_layer.SetSourceMAC(MyMAC);
+	/* Set broadcast destination address */
+	ether_layer.SetDestinationMAC("ff:ff:ff:ff:ff:ff");
+
+	/* Create the ARP layer */
+	ARP arp_layer;
+
+	/* We want an ARP request */
+	arp_layer.SetOperation(ARP::Request);
+	arp_layer.SetSenderIP(MyIP);
+	arp_layer.SetSenderMAC(MyMAC);
+	/* Set the target IP address */
+	arp_layer.SetTargetIP(IPAddress);
+
+	/* Create the packet */
+	Packet arp_request;
+
+	/* Push layers */
+	arp_request.PushLayer(ether_layer);
+	arp_request.PushLayer(arp_layer);
+
+	/* Send the request and wait for an answer */
+	Packet* arp_reply = arp_request.SendRecv(iface,2,3);
+
+	/* Check if we receive an answer */
+	if (arp_reply) {
+		ARP* arp_reply_layer = GetARP(*arp_reply);
+		if (arp_reply_layer) {
+			string MAC = arp_reply_layer->GetSenderMAC();
+			delete arp_reply;
+			return MAC;
+		}
+		else {
+			return "";
+		}
 	}
 
-	close(fd);
+	return "";
+}
 
-	return inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);
+const std::string GetMACIPv6(const std::string& IPAddress, const string& iface) {
+	byte buf[sizeof(struct in6_addr)];
+	inet_pton(AF_INET6, IPAddress.c_str(), buf);
+	char mac[19];
+	sprintf(mac, "%02x:%02x:%02x:%02x:%02x:%02x", buf[8]^(1 << 1), buf[9], buf[10], buf[13], buf[14], buf[15]);
+	mac[18] = 0;
+	return string(mac);
+}
+
+const std::string Crafter::GetMAC(const std::string& IPAddress, const string& iface) {
+	if(validateIpv4Address(IPAddress)) return GetMACIPv4(IPAddress,iface);
+	if(validateIpv6Address(IPAddress)) return GetMACIPv6(IPAddress,iface);
+	return "";
 }
 
 /* Parse ports defined by an interval and push the values into the set */
@@ -224,7 +325,7 @@ struct PairMatch {
 	vector<Packet*>* Results;
 	/* Arguments for sending */
 	string iface;
-	int timeout;
+	double timeout;
 	int retry;
 };
 
@@ -251,7 +352,7 @@ static void* SendRecvThread(void* thread_arg) {
 	pthread_exit(NULL);
 }
 
-vector<Packet* >* Crafter::SendRecv(vector<Packet* >* PacketContainer, const string& iface, int num_threads, int timeout, int retry) {
+vector<Packet* >* Crafter::SendRecv(vector<Packet* >* PacketContainer, const string& iface, int num_threads, double timeout, int retry) {
 	/* Total number of packets */
 	int total = PacketContainer->size();
 
@@ -587,6 +688,17 @@ IP* Crafter::GetIP(const Packet& packet){
 	return 0;
 }
 
+IPv6* Crafter::GetIPv6(const Packet& packet){
+	/* Search layer one by one */
+	LayerStack::const_iterator it_layer;
+	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
+		if ((*it_layer)->GetName() == "IP")
+			return dynamic_cast<IPv6*>( (*it_layer) );
+
+	/* No requested layer, returns zero */
+	return 0;
+}
+
 TCP* Crafter::GetTCP(const Packet& packet){
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
@@ -639,6 +751,10 @@ void Crafter::InitCrafter() {
 	IP ip_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ip_dummy);
+
+	IPv6 ipv6_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ipv6_dummy);
 
 	UDP udp_dummy;
 	/* Register the protocol, this is executed only once */

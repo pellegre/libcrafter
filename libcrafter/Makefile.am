@@ -39,6 +39,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Fields/FieldContainer.cpp \
 						crafter/Fields/FieldInfo.cpp \
 						crafter/Fields/IPAddress.cpp \
+						crafter/Fields/IPv6Address.cpp \
 						crafter/Fields/MACAddress.cpp \
 						crafter/Fields/NumericFields.cpp \
 						crafter/Protocols/RawLayer.cpp \
@@ -68,7 +69,9 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/DHCPCraft.cpp \
 						crafter/Protocols/DHCPOptions.cpp \
 						crafter/Protocols/SLLConstructor.cpp \
-						crafter/Protocols/SLLCraft.cpp
+						crafter/Protocols/SLLCraft.cpp \
+						crafter/Protocols/IPv6Constructor.cpp \
+						crafter/Protocols/IPv6Craft.cpp
 
 ## Instruct libtool to include ABI version information in the generated shared
 ## library file (.so).  The library ABI version is defined in configure.ac, so
@@ -93,6 +96,7 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Fields/Field.h \
 								crafter/Fields/FieldInfo.h \
 								crafter/Fields/IPAddress.h \
+								crafter/Fields/IPv6Address.h \
 								crafter/Fields/MACAddress.h \
 								crafter/Fields/NumericFields.h \
 								crafter/Fields/StringField.h \
@@ -119,7 +123,8 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/DNS.h \
 								crafter/Protocols/DHCP.h \
 								crafter/Protocols/DHCPOptions.h \
-								crafter/Protocols/SLL.h
+								crafter/Protocols/SLL.h \
+								crafter/Protocols/IPv6.h
 
 ## The generated configuration header is installed in its own subdirectory of
 ## $(libdir).  The reason for this is that the configuration information put

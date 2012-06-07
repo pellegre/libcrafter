@@ -61,7 +61,7 @@ typedef std::vector<Layer*> LayerStack;
 		static void DestroyMutex();
 
 		/* Construct the packet from the IP layer to the top */
-		void GetFromIP(const byte* data, size_t length);
+		void GetFromIP(word ip_type, const byte* data, size_t length);
 
 		/* Craft data from the layer pushed into the stack */
 		void Craft();
@@ -92,6 +92,7 @@ typedef std::vector<Layer*> LayerStack;
 
 		/* Construct packet from data */
 		void PacketFromIP(const byte* data, size_t length);
+		void PacketFromIPv6(const byte* data, size_t length);
 		void PacketFromEthernet(const byte* data, size_t length);
 
 		/* Packet from link layer (link_proto in the datalink type defined by libpcap) */
@@ -118,7 +119,7 @@ typedef std::vector<Layer*> LayerStack;
 		int Send(const std::string& iface = "");
 
 		/* Send a packet and try to match the answer */
-		Packet* SendRecv(const std::string& iface = "",int timeout = 1000, int retry = 3, const std::string& user_filter = " ");
+		Packet* SendRecv(const std::string& iface = "",double timeout = 1, int retry = 3, const std::string& user_filter = " ");
 
 		/*
 		 * Put a packet into the wire trough a raw socket

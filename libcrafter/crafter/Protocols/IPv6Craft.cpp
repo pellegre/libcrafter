@@ -25,55 +25,44 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef CRAFTER_H_
-#define CRAFTER_H_
+#include "IPv6.h"
 
-/* Layer interface */
-#include "Layer.h"
+using namespace Crafter;
+using namespace std;
 
-/* Ethernet Protocol Implementation */
-#include "Protocols/Ethernet.h"
+void IPv6::ReDefineActiveFields() {
+}
 
-/* SLL Protocol Implementation */
-#include "Protocols/SLL.h"
+void IPv6::Craft() {
 
-/* Address Resolution Protocol Implementation */
-#include "Protocols/ARP.h"
+	/* Get transport layer protocol */
+	if(TopLayer) {
 
-/* UDP Protocol Implementation */
-#include "Protocols/UDP.h"
+		/* First, put the total length on the header */
+		if (!IsFieldSet(FieldPayloadLength)) {
+			SetPayloadLength(( (IPv6*)TopLayer)->GetRemainingSize());
+			ResetField(FieldPayloadLength);
+		}
 
-/* TCP Protocol Implementation */
-#include "Protocols/TCP.h"
+		if(!IsFieldSet(FieldNextHeader)) {
+			short_word transport_layer = TopLayer->GetID();
+			/* Set Protocol */
+			if(transport_layer != 0xfff1)
+				SetNextHeader(transport_layer);
+			else
+				SetNextHeader(0x0);
 
-/* IPv4 Protocol Implementation */
-#include "Protocols/IP.h"
+			ResetField(FieldNextHeader);
+		}
+	}
+	else {
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+				     "IPv6::Craft()","No Transport Layer Protocol associated with IPv6 Layer.");
+	}
 
-/* IPv6 Protocol Implementation */
-#include "Protocols/IPv6.h"
+}
 
-/* ICMP Protocol Implementation */
-#include "Protocols/ICMP.h"
+string IPv6::MatchFilter() const {
+	return "ip6 and dst host " + GetSourceIP() + " and src host " + GetDestinationIP();
+}
 
-/* ICMPExtension Protocol Implementation */
-#include "Protocols/ICMPExtension.h"
-
-/* ICMPExtensionMPLS Protocol Implementation */
-#include "Protocols/ICMPExtensionMPLS.h"
-
-/* ICMPExtensionObject Protocol Implementation */
-#include "Protocols/ICMPExtensionObject.h"
-
-/* DNS Protocol Implementation */
-#include "Protocols/DNS.h"
-
-/* DHCP Protocol Implementation */
-#include "Protocols/DHCP.h"
-
-/* Raw Layer, nothing specific */
-#include "Protocols/RawLayer.h"
-
-/* Packet Manipulation class */
-#include "Packet.h"
-
-#endif /* CRAFTER_H_ */

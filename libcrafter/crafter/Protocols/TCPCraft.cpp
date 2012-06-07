@@ -27,6 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "TCP.h"
 #include "IP.h"
+#include "IPv6.h"
 
 using namespace Crafter;
 using namespace std;
@@ -40,33 +41,11 @@ const byte TCP::URG = 1 << 5;
 const byte TCP::ECE = 1 << 6;
 const byte TCP::CWR = 1 << 7;
 
-/* Pseudo header for TCP checksum */
-struct psd_tcp {
-	struct in_addr src;
-	struct in_addr dst;
-	unsigned char pad;
-	unsigned char proto;
-	unsigned short tcp_len;
-};
-
-/* Setup pseudo header and return the number of bytes copied */
-static void setup_psd (word src, word dst, byte* buffer, size_t tcp_size) {
-	struct psd_tcp buf;
-	memset(&buf, 0, sizeof(buf));
-	buf.src.s_addr = src;
-	buf.dst.s_addr = dst;
-	buf.pad = 0;
-	buf.proto = IPPROTO_TCP;
-	buf.tcp_len = htons(tcp_size);
-	memcpy(buffer,(const byte *)&buf,sizeof(buf));
-}
-
 void TCP::ReDefineActiveFields() {
 }
 
 void TCP::Craft() {
-	/* Get the layer on the bottom of this one, and verify that is an IP layer */
-	IP* ip_layer = 0;
+
 	/* Bottom layer name */
 	Layer* bottom_ptr = GetBottomLayer();
 	short_word bottom_layer = 0;
@@ -90,26 +69,52 @@ void TCP::Craft() {
 		SetCheckSum(0x0);
 
 		if(bottom_layer == 0x0800) {
-			/* It's OK */
-			ip_layer = dynamic_cast<IP*>(bottom_ptr);
 
-			size_t data_length = sizeof(psd_tcp) + tot_length;
+			/* It's OK */
+			IP* ip_layer = dynamic_cast<IP*>(bottom_ptr);
+
+			size_t data_length = 12 + tot_length;
 
 			if(data_length%2 != 0) data_length++;
 
 			vector<byte> raw_buffer(data_length,0);
 
-			/* Setup the pseudo header */
-			setup_psd(inet_addr(ip_layer->GetSourceIP().c_str()),
-					  inet_addr(ip_layer->GetDestinationIP().c_str()),
-					  &raw_buffer[0],tot_length);
+			inet_pton(AF_INET, ip_layer->GetSourceIP().c_str(), &raw_buffer[0]);
+			inet_pton(AF_INET, ip_layer->GetDestinationIP().c_str(), &raw_buffer[4]);
+			raw_buffer[9] = IPPROTO_TCP;
+			short_word tcp_length = htons(tot_length);
+			memcpy(&raw_buffer[10],&tcp_length,sizeof(short_word));
 
 			/* Setup the rest of the UDP datagram */
-			GetData(&raw_buffer[sizeof(psd_tcp)]);
+			GetData(&raw_buffer[12]);
 
 			checksum = CheckSum((unsigned short *)&raw_buffer[0],raw_buffer.size()/2);
 
-		} else {
+		}
+
+		else if(bottom_layer == 0x86dd) {
+			/* It's OK */
+			IPv6* ip_layer = dynamic_cast<IPv6*>(bottom_ptr);
+
+			size_t data_length = 40 + tot_length;
+
+			if(data_length%2 != 0) data_length++;
+
+			vector<byte> raw_buffer(data_length,0);
+
+			inet_pton(AF_INET6, ip_layer->GetSourceIP().c_str(), &raw_buffer[0]);
+			inet_pton(AF_INET6, ip_layer->GetDestinationIP().c_str(), &raw_buffer[16]);
+			word tcp_length = htonl(tot_length);
+			memcpy(&raw_buffer[32],&tcp_length,sizeof(word));
+			raw_buffer[39] = IPPROTO_TCP;
+
+			/* Setup the rest of the UDP datagram */
+			GetData(&raw_buffer[40]);
+
+			checksum = CheckSum((unsigned short *)&raw_buffer[0],raw_buffer.size()/2);
+		}
+
+		else {
 			PrintMessage(Crafter::PrintCodes::PrintWarning,
 					     "TCP::Craft()",
 				         "Bottom Layer of TCP packet is not IP. Cannot calculate TCP checksum.");

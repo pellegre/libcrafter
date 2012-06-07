@@ -25,55 +25,39 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef CRAFTER_H_
-#define CRAFTER_H_
+#include "IPv6.h"
 
-/* Layer interface */
-#include "Layer.h"
+using namespace Crafter;
+using namespace std;
 
-/* Ethernet Protocol Implementation */
-#include "Protocols/Ethernet.h"
+IPv6::IPv6() {
 
-/* SLL Protocol Implementation */
-#include "Protocols/SLL.h"
+    allocate_bytes(40);
+    SetName("IPv6");
+    SetprotoID(0x86dd);
+    DefineProtocol();
 
-/* Address Resolution Protocol Implementation */
-#include "Protocols/ARP.h"
+    SetVersion(6);
+    SetTrafficClass(0);
+    SetFlowLabel(0);
+    SetPayloadLength(0);
+    SetNextHeader(0x06);
+    SetHopLimit(64);
+    SetSourceIP("0000::0000");
+    SetDestinationIP("0000::0000");
 
-/* UDP Protocol Implementation */
-#include "Protocols/UDP.h"
+    ResetFields();
 
-/* TCP Protocol Implementation */
-#include "Protocols/TCP.h"
+}
 
-/* IPv4 Protocol Implementation */
-#include "Protocols/IP.h"
+void IPv6::DefineProtocol() {
+    Fields.push_back(new BitsField<4,0>("Version",0));
+    Fields.push_back(new BitsField<8,4>("TrafficClass",0));
+    Fields.push_back(new BitsField<20,12>("FlowLabel",0));
+    Fields.push_back(new ShortField("PayloadLength",1,0));
+    Fields.push_back(new ByteField("NextHeader",1,2));
+    Fields.push_back(new ByteField("HopLimit",1,3));
+    Fields.push_back(new IPv6Address("SourceIP",2,0));
+    Fields.push_back(new IPv6Address("DestinationIP",6,0));
+}
 
-/* IPv6 Protocol Implementation */
-#include "Protocols/IPv6.h"
-
-/* ICMP Protocol Implementation */
-#include "Protocols/ICMP.h"
-
-/* ICMPExtension Protocol Implementation */
-#include "Protocols/ICMPExtension.h"
-
-/* ICMPExtensionMPLS Protocol Implementation */
-#include "Protocols/ICMPExtensionMPLS.h"
-
-/* ICMPExtensionObject Protocol Implementation */
-#include "Protocols/ICMPExtensionObject.h"
-
-/* DNS Protocol Implementation */
-#include "Protocols/DNS.h"
-
-/* DHCP Protocol Implementation */
-#include "Protocols/DHCP.h"
-
-/* Raw Layer, nothing specific */
-#include "Protocols/RawLayer.h"
-
-/* Packet Manipulation class */
-#include "Packet.h"
-
-#endif /* CRAFTER_H_ */

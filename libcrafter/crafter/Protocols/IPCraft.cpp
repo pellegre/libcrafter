@@ -56,8 +56,8 @@ void IP::Craft() {
 		}
 	}
 	else {
-		if (ShowWarnings)
-			std::cerr << "[!] WARNING: No Transport Layer Protocol associated with IP Layer. " << std::endl;
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+				     "IP::Craft()","No Transport Layer Protocol associated with IP Layer.");
 	}
 
 	/* Check the options and update header length */

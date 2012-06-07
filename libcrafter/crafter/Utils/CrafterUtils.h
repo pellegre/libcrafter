@@ -43,9 +43,12 @@ namespace Crafter {
 
 	/* Get interface hardware address */
 	std::string GetMyMAC(const std::string& iface = "");
+	/* Get MAC using an ARP request */
+	const std::string GetMAC(const std::string& IPAddress, const std::string& iface = "");
 
 	/* Get interface IP address */
 	std::string GetMyIP(const std::string& iface = "");
+	std::string GetMyIPv6(const std::string& iface = "");
 
 	/* Initialize and clean */
 	void InitCrafter();
@@ -78,7 +81,7 @@ namespace Crafter {
 
 	/* Send and Receive a container of packet - Multithreading */
 	PacketContainer* SendRecv(PacketContainer* PacketContainer, const std::string& iface = "",
-			                        int num_threads = 16, int timeout = 500, int retry = 3);
+			                        int num_threads = 16, double timeout = 1, int retry = 3);
 
 	/* Send a container of packet - Multithreading */
 	void Send(PacketContainer* PacketContainer, const std::string& iface = "", int num_threads = 16);
@@ -89,6 +92,7 @@ namespace Crafter {
 	Ethernet* GetEthernet(const Packet& packet);
 	ICMP* GetICMP(const Packet& packet);
 	IP* GetIP(const Packet& packet);
+	IPv6* GetIPv6(const Packet& packet);
 	TCP* GetTCP(const Packet& packet);
 	UDP* GetUDP(const Packet& packet);
 

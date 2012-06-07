@@ -32,57 +32,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace std;
 using namespace Crafter;
 
-const std::string Crafter::GetMAC(const std::string& IPAddress, const string& iface) {
-
-	/* Get the IP address associated to the interface */
-	string MyIP = GetMyIP(iface);
-	/* Get the MAC Address associated to the interface */
-	string MyMAC = GetMyMAC(iface);
-	/* Create the Ethernet layer */
-	Ethernet ether_layer;
-
-	/* Set source MAC */
-	ether_layer.SetSourceMAC(MyMAC);
-	/* Set broadcast destination address */
-	ether_layer.SetDestinationMAC("ff:ff:ff:ff:ff:ff");
-
-	/* Create the ARP layer */
-	ARP arp_layer;
-
-	/* We want an ARP request */
-	arp_layer.SetOperation(ARP::Request);
-	arp_layer.SetSenderIP(MyIP);
-	arp_layer.SetSenderMAC(MyMAC);
-	/* Set the target IP address */
-	arp_layer.SetTargetIP(IPAddress);
-
-	/* Create the packet */
-	Packet arp_request;
-
-	/* Push layers */
-	arp_request.PushLayer(ether_layer);
-	arp_request.PushLayer(arp_layer);
-
-	/* Send the request and wait for an answer */
-	Packet* arp_reply = arp_request.SendRecv(iface,2,3);
-
-	/* Check if we receive an answer */
-	if (arp_reply) {
-		ARP* arp_reply_layer = GetARP(*arp_reply);
-		if (arp_reply_layer) {
-			string MAC = arp_reply_layer->GetSenderMAC();
-			delete arp_reply;
-			return MAC;
-		}
-		else {
-			return "";
-		}
-	}
-
-	return "";
-
-}
-
 void Crafter::CleanARPContext(ARPContext* arp_context) {
 	/* Get the thread ID and cancel the spoofing */
 	pthread_t tid = arp_context->tid;

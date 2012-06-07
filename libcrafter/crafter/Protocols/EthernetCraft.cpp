@@ -49,6 +49,6 @@ void Ethernet::Craft() {
 	}
 	else {
 		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "SSL::Craft()","No Network Layer Protocol associated with Ethernet Layer.");
+				     "Ethernet::Craft()","No Network Layer Protocol associated with Ethernet Layer.");
 	}
 }

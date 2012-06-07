@@ -349,7 +349,7 @@ int Packet::Send(const string& iface) {
 }
 
 /* Send a packet */
-Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const string& user_filter) {
+Packet* Packet::SendRecv(const string& iface, double timeout, int retry, const string& user_filter) {
 
 	char libcap_errbuf[PCAP_ERRBUF_SIZE];      /* Error messages */
 
@@ -389,7 +389,7 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 
 	/* ------------ End Critical area ----------------- */
 
-	if (current_id != 0xfff2 && current_id != 0x0800 && user_filter == " ") {
+	if (current_id != 0xfff2 && current_id != 0x0800 && current_id != 0x86dd && user_filter == " ") {
 
 		/* Print a warning message */
 		PrintMessage(Crafter::PrintCodes::PrintWarning,
@@ -415,7 +415,7 @@ Packet* Packet::SendRecv(const string& iface, int timeout, int retry, const stri
 						     BUFSIZ,  /* maximum number of bytes to capture per packet */
 									  /* BUFSIZE is defined in pcap.h */
 				                  1,  /* promisc - 1 to set card in promiscuous mode, 0 to not */
-		                    timeout,  /* to_ms - amount of time to perform packet capture in milliseconds */
+		        (int)1000.0*timeout,  /* to_ms - amount of time to perform packet capture in milliseconds */
 									  /* 0 = sniff until error */
 				      libcap_errbuf); /* error message buffer if something goes wrong */
 
