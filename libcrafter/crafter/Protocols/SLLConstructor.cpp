@@ -34,7 +34,7 @@ SLL::SLL() {
 
     allocate_bytes(16);
     SetName("SLL");
-    SetprotoID(0xfff1);
+    SetprotoID(0xfff0);
     DefineProtocol();
 
     SetPackeType(0);

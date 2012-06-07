@@ -61,6 +61,8 @@ namespace Crafter {
 
     public:
 
+		static word PROTO = 0x06;
+
         IPv6();
 
         void SetVersion(const word& value) {

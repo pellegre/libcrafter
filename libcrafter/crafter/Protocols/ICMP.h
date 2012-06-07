@@ -61,6 +61,8 @@ namespace Crafter {
 
     public:
 
+		static word PROTO = 0x01;
+
 		/* ------- Messages types --------- */
 
 		/* +++ Other +++ */

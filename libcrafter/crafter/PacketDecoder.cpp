@@ -95,7 +95,7 @@ void Packet::PacketFromLinkLayer(const byte* data, size_t length, int link_proto
 	delete link_layer;
 
 	/* Construct a network layer */
-	if (next_layer == 0x0800 || next_layer == 0x86dd) {
+	if (next_layer == IP::PROTO || next_layer == IPv6::PROTO) {
 
 		/* Get data from IPv4 */
 		GetFromIP(next_layer,data + n_link,length);
@@ -191,7 +191,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 	/* IP layer */
 	Layer* net_layer;
 
-	if(ip_type == 0x0800) {
+	if(ip_type == IP::PROTO) {
 		/* The first bytes are an IPv4 layer */
 		IP* ip_layer = new IP;
 
@@ -394,7 +394,7 @@ void Packet::PacketFromIP(const byte* data, size_t length) {
 
 	Stack.clear();
 
-	GetFromIP(0x0800,data,length);
+	GetFromIP(IP::PROTO,data,length);
 }
 
 /* Constructor from raw data */
@@ -414,5 +414,5 @@ void Packet::PacketFromIPv6(const byte* data, size_t length) {
 
 	Stack.clear();
 
-	GetFromIP(0x86dd,data,length);
+	GetFromIP(IPv6::PROTO,data,length);
 }
