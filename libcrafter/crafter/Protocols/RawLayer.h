@@ -55,6 +55,8 @@ namespace Crafter {
 
 		public:
 
+			static word PROTO = 0xfff1;
+
 			RawLayer();
 
 			/* Constructor from raw data */

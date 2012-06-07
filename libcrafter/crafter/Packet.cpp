@@ -389,7 +389,9 @@ Packet* Packet::SendRecv(const string& iface, double timeout, int retry, const s
 
 	/* ------------ End Critical area ----------------- */
 
-	if (current_id != 0xfff2 && current_id != 0x0800 && current_id != 0x86dd && user_filter == " ") {
+	if (current_id != Ethernet::PROTO &&
+		current_id != IP::PROTO       &&
+		current_id != IPv6::PROTO     && user_filter == " ") {
 
 		/* Print a warning message */
 		PrintMessage(Crafter::PrintCodes::PrintWarning,

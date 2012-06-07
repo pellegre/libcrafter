@@ -64,6 +64,8 @@ namespace Crafter {
 		static const byte Request = 1;
 		static const byte Reply = 2;
 
+		static word PROTO = 0x0806;
+
         ARP();
 
         void SetHardwareType(const short_word& value) {

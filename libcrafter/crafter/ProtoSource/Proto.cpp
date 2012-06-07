@@ -114,6 +114,9 @@ void Proto::PrintHdr() const {
 	Printline(out,"public:",1);
 	Newline(out);
 
+	Printline(out,"static word PROTO = " + toString(protoID) + ";",2);
+	Newline(out);
+
 	Printline(out,"" + protoName +  "();",2);
 	Newline(out);
 

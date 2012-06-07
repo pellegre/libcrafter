@@ -55,6 +55,8 @@ namespace Crafter {
 
     public:
 
+		static word PROTO = 0xfd;
+
         ICMPExtensionMPLS();
 
         void SetLabel(const word& value) {

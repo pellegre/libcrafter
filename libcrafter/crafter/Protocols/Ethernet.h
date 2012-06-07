@@ -53,6 +53,8 @@ namespace Crafter {
 
     public:
 
+		static word PROTO = 0xfff2;
+
         Ethernet();
 
         void SetDestinationMAC(const std::string& value) {

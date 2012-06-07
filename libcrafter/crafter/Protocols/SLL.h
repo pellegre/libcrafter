@@ -56,6 +56,8 @@ namespace Crafter {
 
     public:
 
+		static word PROTO = 0xfff0;
+
         SLL();
 
         void SetPackeType(const short_word& value) {

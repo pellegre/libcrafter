@@ -68,7 +68,7 @@ void TCP::Craft() {
 		/* Set the checksum to zero */
 		SetCheckSum(0x0);
 
-		if(bottom_layer == 0x0800) {
+		if(bottom_layer == IP::PROTO) {
 
 			/* It's OK */
 			IP* ip_layer = dynamic_cast<IP*>(bottom_ptr);
@@ -92,7 +92,7 @@ void TCP::Craft() {
 
 		}
 
-		else if(bottom_layer == 0x86dd) {
+		else if(bottom_layer == IPv6::PROTO) {
 			/* It's OK */
 			IPv6* ip_layer = dynamic_cast<IPv6*>(bottom_ptr);
 

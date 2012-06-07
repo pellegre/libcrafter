@@ -56,6 +56,8 @@ namespace Crafter {
 
     public:
 
+		static word PROTO = 0x11;
+
         UDP();
 
         void SetSrcPort(const short_word& value) {

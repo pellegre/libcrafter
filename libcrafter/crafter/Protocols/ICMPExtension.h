@@ -54,6 +54,8 @@ namespace Crafter {
 
     public:
 
+		static word PROTO = 0xff;
+
         ICMPExtension();
 
         void SetVersion(const word& value) {

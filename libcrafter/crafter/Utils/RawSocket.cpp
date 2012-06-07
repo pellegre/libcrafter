@@ -58,7 +58,7 @@ int SocketSender::RequestSocket(const std::string& iface, int proto_id) {
 	}
 
 	/* We should create a socket and bind it to the interface */
-	if(proto_id == Protocol::AccessFactory()->GetProtoID("IP")) {
+	if(proto_id == IP::PROTO) {
 
 		/* Create a raw layer socket */
 		raw = CreateRawSocket();
@@ -69,7 +69,7 @@ int SocketSender::RequestSocket(const std::string& iface, int proto_id) {
 
 	}
 
-	else if(proto_id == Protocol::AccessFactory()->GetProtoID("IPv6")) {
+	else if(proto_id == IPv6::PROTO) {
 
 		/* Create a raw layer socket */
 		raw = CreateRaw6Socket();
@@ -228,7 +228,7 @@ int Crafter::SocketSender::SendRawSocket(int rawsock, struct sockaddr* din, size
 }
 
 int Crafter::SocketSender::SendSocket(int rawsock, int proto_id, unsigned char *pkt, int pkt_len) {
-	if(proto_id == 0x0800) {
+	if(proto_id == IP::PROTO) {
 		/* Raw socket, IPv4 */
 		struct sockaddr_in din;
 	    din.sin_family = AF_INET;
@@ -239,7 +239,7 @@ int Crafter::SocketSender::SendSocket(int rawsock, int proto_id, unsigned char *
 	    return SendRawSocket(rawsock,(sockaddr *)&din,sizeof(din),pkt,pkt_len);
 	}
 
-	else if(proto_id == 0x86dd) {
+	else if(proto_id == IPv6::PROTO) {
 		/* Raw socket, IPv6 */
 		struct sockaddr_in6 dest;
 		dest.sin6_family = AF_INET6;
