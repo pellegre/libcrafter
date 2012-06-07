@@ -28,10 +28,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define IPV6_H_
 
 #include "../Layer.h"
+#include "IPLayer.h"
 
 namespace Crafter {
 
-    class IPv6: public Layer {
+    class IPv6: public IPLayer {
 
         void DefineProtocol();
 

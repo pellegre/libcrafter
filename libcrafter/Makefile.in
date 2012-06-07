@@ -377,7 +377,8 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Protocols/DHCP.h \
 								crafter/Protocols/DHCPOptions.h \
 								crafter/Protocols/SLL.h \
-								crafter/Protocols/IPv6.h
+								crafter/Protocols/IPv6.h \
+								crafter/Protocols/IPLayer.h
 
 crafter_libincludedir = $(libdir)/crafter-$(CRAFTER_API_VERSION)/include
 nodist_crafter_libinclude_HEADERS = crafterconfig.h

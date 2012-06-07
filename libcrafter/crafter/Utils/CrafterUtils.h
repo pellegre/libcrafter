@@ -91,6 +91,7 @@ namespace Crafter {
 	ARP* GetARP(const Packet& packet);
 	Ethernet* GetEthernet(const Packet& packet);
 	ICMP* GetICMP(const Packet& packet);
+	IPLayer* GetIPLayer(const Packet& packet);
 	IP* GetIP(const Packet& packet);
 	IPv6* GetIPv6(const Packet& packet);
 	TCP* GetTCP(const Packet& packet);

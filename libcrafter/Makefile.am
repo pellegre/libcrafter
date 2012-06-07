@@ -124,7 +124,8 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/DHCP.h \
 								crafter/Protocols/DHCPOptions.h \
 								crafter/Protocols/SLL.h \
-								crafter/Protocols/IPv6.h
+								crafter/Protocols/IPv6.h \
+								crafter/Protocols/IPLayer.h
 
 ## The generated configuration header is installed in its own subdirectory of
 ## $(libdir).  The reason for this is that the configuration information put
