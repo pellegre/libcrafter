@@ -89,8 +89,9 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Utils/RawSocket.lo crafter/Utils/CrafterUtils.lo \
 	crafter/Utils/TCPConnection.lo \
 	crafter/Fields/FieldContainer.lo crafter/Fields/FieldInfo.lo \
-	crafter/Fields/IPAddress.lo crafter/Fields/MACAddress.lo \
-	crafter/Fields/NumericFields.lo crafter/Protocols/RawLayer.lo \
+	crafter/Fields/IPAddress.lo crafter/Fields/IPv6Address.lo \
+	crafter/Fields/MACAddress.lo crafter/Fields/NumericFields.lo \
+	crafter/Protocols/RawLayer.lo \
 	crafter/Protocols/EthernetConstructor.lo \
 	crafter/Protocols/EthernetCraft.lo \
 	crafter/Protocols/ARPConstructor.lo \
@@ -116,7 +117,9 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Protocols/DHCPCraft.lo \
 	crafter/Protocols/DHCPOptions.lo \
 	crafter/Protocols/SLLConstructor.lo \
-	crafter/Protocols/SLLCraft.lo
+	crafter/Protocols/SLLCraft.lo \
+	crafter/Protocols/IPv6Constructor.lo \
+	crafter/Protocols/IPv6Craft.lo
 libcrafter_la_OBJECTS = $(am_libcrafter_la_OBJECTS)
 libcrafter_la_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(AM_CXXFLAGS) \
@@ -292,6 +295,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Fields/FieldContainer.cpp \
 						crafter/Fields/FieldInfo.cpp \
 						crafter/Fields/IPAddress.cpp \
+						crafter/Fields/IPv6Address.cpp \
 						crafter/Fields/MACAddress.cpp \
 						crafter/Fields/NumericFields.cpp \
 						crafter/Protocols/RawLayer.cpp \
@@ -321,7 +325,9 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/DHCPCraft.cpp \
 						crafter/Protocols/DHCPOptions.cpp \
 						crafter/Protocols/SLLConstructor.cpp \
-						crafter/Protocols/SLLCraft.cpp
+						crafter/Protocols/SLLCraft.cpp \
+						crafter/Protocols/IPv6Constructor.cpp \
+						crafter/Protocols/IPv6Craft.cpp
 
 libcrafter_la_LDFLAGS = -version-info $(CRAFTER_SO_VERSION)
 libcrafter_la_LIBADD = $(PCAPLIB) $(LNETLIB)
@@ -337,6 +343,7 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Fields/Field.h \
 								crafter/Fields/FieldInfo.h \
 								crafter/Fields/IPAddress.h \
+								crafter/Fields/IPv6Address.h \
 								crafter/Fields/MACAddress.h \
 								crafter/Fields/NumericFields.h \
 								crafter/Fields/StringField.h \
@@ -362,7 +369,8 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Protocols/DNS.h \
 								crafter/Protocols/DHCP.h \
 								crafter/Protocols/DHCPOptions.h \
-								crafter/Protocols/SLL.h
+								crafter/Protocols/SLL.h \
+								crafter/Protocols/IPv6.h
 
 crafter_libincludedir = $(libdir)/crafter-$(CRAFTER_API_VERSION)/include
 nodist_crafter_libinclude_HEADERS = crafterconfig.h
@@ -523,6 +531,8 @@ crafter/Fields/FieldInfo.lo: crafter/Fields/$(am__dirstamp) \
 	crafter/Fields/$(DEPDIR)/$(am__dirstamp)
 crafter/Fields/IPAddress.lo: crafter/Fields/$(am__dirstamp) \
 	crafter/Fields/$(DEPDIR)/$(am__dirstamp)
+crafter/Fields/IPv6Address.lo: crafter/Fields/$(am__dirstamp) \
+	crafter/Fields/$(DEPDIR)/$(am__dirstamp)
 crafter/Fields/MACAddress.lo: crafter/Fields/$(am__dirstamp) \
 	crafter/Fields/$(DEPDIR)/$(am__dirstamp)
 crafter/Fields/NumericFields.lo: crafter/Fields/$(am__dirstamp) \
@@ -603,6 +613,11 @@ crafter/Protocols/SLLConstructor.lo:  \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/SLLCraft.lo: crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/IPv6Constructor.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/IPv6Craft.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 libcrafter.la: $(libcrafter_la_OBJECTS) $(libcrafter_la_DEPENDENCIES) 
 	$(libcrafter_la_LINK) -rpath $(libdir) $(libcrafter_la_OBJECTS) $(libcrafter_la_LIBADD) $(LIBS)
 
@@ -614,6 +629,8 @@ mostlyclean-compile:
 	-rm -f crafter/Fields/FieldInfo.lo
 	-rm -f crafter/Fields/IPAddress.$(OBJEXT)
 	-rm -f crafter/Fields/IPAddress.lo
+	-rm -f crafter/Fields/IPv6Address.$(OBJEXT)
+	-rm -f crafter/Fields/IPv6Address.lo
 	-rm -f crafter/Fields/MACAddress.$(OBJEXT)
 	-rm -f crafter/Fields/MACAddress.lo
 	-rm -f crafter/Fields/NumericFields.$(OBJEXT)
@@ -668,6 +685,10 @@ mostlyclean-compile:
 	-rm -f crafter/Protocols/IPConstructor.lo
 	-rm -f crafter/Protocols/IPCraft.$(OBJEXT)
 	-rm -f crafter/Protocols/IPCraft.lo
+	-rm -f crafter/Protocols/IPv6Constructor.$(OBJEXT)
+	-rm -f crafter/Protocols/IPv6Constructor.lo
+	-rm -f crafter/Protocols/IPv6Craft.$(OBJEXT)
+	-rm -f crafter/Protocols/IPv6Craft.lo
 	-rm -f crafter/Protocols/RawLayer.$(OBJEXT)
 	-rm -f crafter/Protocols/RawLayer.lo
 	-rm -f crafter/Protocols/SLLConstructor.$(OBJEXT)
@@ -711,6 +732,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Fields/$(DEPDIR)/FieldContainer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Fields/$(DEPDIR)/FieldInfo.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Fields/$(DEPDIR)/IPAddress.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Fields/$(DEPDIR)/IPv6Address.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Fields/$(DEPDIR)/MACAddress.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Fields/$(DEPDIR)/NumericFields.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ARPConstructor.Plo@am__quote@
@@ -734,6 +756,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPExtensionObjectCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPCraft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPv6Constructor.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPv6Craft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/RawLayer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/SLLConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/SLLCraft.Plo@am__quote@

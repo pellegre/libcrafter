@@ -68,11 +68,12 @@ namespace Crafter {
 
 		/* Raw sockets */
 		static int CreateRawSocket(int protocol_to_sniff = IPPROTO_RAW);
+		static int CreateRaw6Socket(int protocol_to_sniff = IPPROTO_RAW);
 		static int BindRawSocketToInterface(const char *device, int rawsock);
 
 		/* Write data on the wire */
 		static int SendLinkSocket(int rawsock, unsigned char *pkt, int pkt_len);
-		static int SendRawSocket(int rawsock, struct sockaddr *din, unsigned char *pkt, int pkt_len);
+		static int SendRawSocket(int rawsock, struct sockaddr *din, size_t size_dst, unsigned char *pkt, int pkt_len);
 
 	public:
 

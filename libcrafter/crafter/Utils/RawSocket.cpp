@@ -67,8 +67,20 @@ int SocketSender::RequestSocket(const std::string& iface, int proto_id) {
 		if(iface.size() > 0)
 			BindRawSocketToInterface(interface.c_str(),raw);
 
-	} else {
+	}
 
+	else if(proto_id == Protocol::AccessFactory()->GetProtoID("IPv6")) {
+
+		/* Create a raw layer socket */
+		raw = CreateRaw6Socket();
+
+		/* If the user specify an interface, bind the socket to it */
+		if(iface.size() > 0)
+			BindRawSocketToInterface(interface.c_str(),raw);
+
+	}
+
+	else {
 		/* Create a link layer protocol */
 		raw = CreateLinkSocket();
 
@@ -137,6 +149,21 @@ int Crafter::SocketSender::CreateRawSocket(int protocol_to_sniff)
     return s;
 }
 
+int Crafter::SocketSender::CreateRaw6Socket(int protocol_to_sniff) {
+    /* Create a socket descriptor */
+    int s = socket(PF_INET6, SOCK_RAW, protocol_to_sniff);
+
+    if(s < 0)
+    {
+		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
+				     "CreateRawSocket()",
+		             "Creating raw(PF_INET) socket");
+		exit(1);
+    }
+
+    return s;
+}
+
 int Crafter::SocketSender::BindLinkSocketToInterface(const char *device, int rawsock, int protocol)
 {
 
@@ -195,25 +222,34 @@ int Crafter::SocketSender::SendLinkSocket(int rawsock, unsigned char *pkt, int p
 	return write(rawsock, pkt, pkt_len);
 }
 
-int Crafter::SocketSender::SendRawSocket(int rawsock, struct sockaddr* din, unsigned char *pkt, int pkt_len)
+int Crafter::SocketSender::SendRawSocket(int rawsock, struct sockaddr* din, size_t size_dst, unsigned char *pkt, int pkt_len)
 {
-	return sendto(rawsock, pkt, pkt_len, 0, din, sizeof(struct sockaddr));
+	return sendto(rawsock, pkt, pkt_len, 0, din, size_dst);
 }
 
 int Crafter::SocketSender::SendSocket(int rawsock, int proto_id, unsigned char *pkt, int pkt_len) {
 	if(proto_id == 0x0800) {
 		/* Raw socket, IPv4 */
-
-		/* Create structure for destination */
 		struct sockaddr_in din;
-		/* Set destinations structure */
 	    din.sin_family = AF_INET;
 	    din.sin_port = 0;
 	    memcpy(&din.sin_addr.s_addr,pkt + 16,sizeof(in_addr_t));
 	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
 
-	    return SendRawSocket(rawsock,(sockaddr *)&din,pkt,pkt_len);
+	    return SendRawSocket(rawsock,(sockaddr *)&din,sizeof(din),pkt,pkt_len);
+	}
 
+	else if(proto_id == 0x86dd) {
+		/* Raw socket, IPv6 */
+		struct sockaddr_in6 dest;
+		dest.sin6_family = AF_INET6;
+		memcpy(&dest.sin6_addr,pkt+24,16);
+		dest.sin6_flowinfo = 0;
+		dest.sin6_scope_id = 0;
+		/* From kernel code, this should be zero for ipv6 raw sockets */
+		dest.sin6_port = 0;
+
+	    return SendRawSocket(rawsock,(struct sockaddr*)&dest,sizeof(dest),pkt,pkt_len);
 	}
 
 	return SendLinkSocket(rawsock,pkt,pkt_len);

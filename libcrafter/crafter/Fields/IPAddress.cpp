@@ -35,13 +35,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace std;
 using namespace Crafter;
 
-static bool validateIpAddress(const string& ipAddress)
-{
-    struct sockaddr_in sa;
-    int result = inet_pton(AF_INET, ipAddress.c_str(), &(sa.sin_addr));
-    return result != 0;
-}
-
 IPAddress::IPAddress(const std::string& name, size_t nword, size_t nbyte) :
 					 Field<std::string> (name,nword,nbyte*8,8*sizeof(word)),
 					 nword(nword), nbyte(nbyte) {
@@ -49,7 +42,7 @@ IPAddress::IPAddress(const std::string& name, size_t nword, size_t nbyte) :
 }
 
 void IPAddress::SetField(const string& ip_address) {
-	if(!validateIpAddress(ip_address))
+	if(!validateIpv4Address(ip_address))
 		human = GetIP(ip_address);
 	else
 		human = ip_address;

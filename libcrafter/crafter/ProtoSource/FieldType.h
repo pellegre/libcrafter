@@ -222,6 +222,26 @@ public:
 
 /* ------- */
 
+class IPv6AddressType : public FieldType {
+	std::string nword;
+	std::string nbyte;
+    void Read(std::ifstream& in) {
+		in >> nword;
+		in >> nbyte;
+    }
+public:
+
+    IPv6AddressType(const std::string& name) : FieldType(name,"IPv6Address","std::string") { /* */ };
+    std::string ReturnDefinition() const {
+		return "new " + type + "(\"" + name + "\"," + nword + "," + nbyte +")";
+    }
+    static FieldType* Constructor(const std::string& name) { return new IPv6AddressType(name); };
+    FieldType::Constructor GetConstructor() const { return IPv6AddressType::Constructor; };
+	size_t Size() const { return 128; };
+    ~IPv6AddressType() { /* */ };
+};
+/* ------- */
+
 class MACAddressType : public FieldType {
 	std::string nword;
 	std::string nbyte;
@@ -434,6 +454,7 @@ class FieldFactory {
 		XWordFieldType field11("TestWordField");
 		StringFieldType field12("TestStringField");
 		BitFlagType field13("TestBitFlagField");
+		IPv6AddressType field14("TestIPv6AddressField");
 
 		Factory.Register(&field0);
 		Factory.Register(&field1);
@@ -449,6 +470,7 @@ class FieldFactory {
 		Factory.Register(&field11);
 		Factory.Register(&field12);
 		Factory.Register(&field13);
+		Factory.Register(&field14);
 	};
 
 	FieldFactory (const FieldFactory&);

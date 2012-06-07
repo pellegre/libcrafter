@@ -95,10 +95,10 @@ void Packet::PacketFromLinkLayer(const byte* data, size_t length, int link_proto
 	delete link_layer;
 
 	/* Construct a network layer */
-	if (next_layer == 0x0800) {
+	if (next_layer == 0x0800 || next_layer == 0x86dd) {
 
 		/* Get data from IPv4 */
-		GetFromIP(data + n_link,length);
+		GetFromIP(next_layer,data + n_link,length);
 
 	} else {
 
@@ -180,46 +180,75 @@ void Packet::PacketFromIP(const RawLayer& data) {
 	delete [] buffer;
 }
 
-void Packet::GetFromIP(const byte* data, size_t length) {
-	/* The first bytes are an IP layer */
-	IP ip_layer;
+void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 
-	/* Check if the data don't fit into an ethernet header */
-	if(ip_layer.GetSize() > length) {
-		/* Create Raw layer */
-		RawLayer rawdata(data, length);
-		PushLayer(rawdata);
-		/* That's all */
-		return;
-	}
+	/* Next protocol */
+	word next_proto;
 
-	/* Put Data */
-	size_t n_ip = ip_layer.PutData(data);
+	/* Size of the IP layer */
+	size_t n_ip;
 
+	/* IP layer */
+	Layer* net_layer;
 
-	/* Get size of the remaining data */
-	length -= n_ip;
+	if(ip_type == 0x0800) {
+		/* The first bytes are an IPv4 layer */
+		IP* ip_layer = new IP;
 
-	/* Verify if the are options on the IP header */
-	size_t IP_word_size = ip_layer.GetHeaderLength();
-	size_t IP_opt_size = 0;
+		/* Check if the data don't fit into an ethernet header */
+		if(ip_layer->GetSize() > length) {
+			/* Create Raw layer */
+			RawLayer rawdata(data, length);
+			PushLayer(rawdata);
+			/* That's all */
+			return;
+		}
 
-	if(IP_word_size > 5) IP_opt_size = 4 * (IP_word_size - 5);
+		/* Put Data */
+		n_ip = ip_layer->PutData(data);
 
-	if (IP_opt_size < length && IP_opt_size > 0) {
-		/* The options are set as a payload */
-		ip_layer.SetPayload(data + n_ip, IP_opt_size);
-		length -= IP_opt_size;
-		n_ip += IP_opt_size;
-	} else if (IP_opt_size >= length && IP_opt_size > 0) {
-		ip_layer.SetPayload(data + n_ip, length);
-		PushLayer(ip_layer);
-		/* That's all */
-		return;
+		/* Get size of the remaining data */
+		length -= n_ip;
+
+		/* Verify if the are options on the IP header */
+		size_t IP_word_size = ip_layer->GetHeaderLength();
+		size_t IP_opt_size = 0;
+
+		if(IP_word_size > 5) IP_opt_size = 4 * (IP_word_size - 5);
+
+		if (IP_opt_size < length && IP_opt_size > 0) {
+			/* The options are set as a payload */
+			ip_layer->SetPayload(data + n_ip, IP_opt_size);
+			length -= IP_opt_size;
+			n_ip += IP_opt_size;
+		} else if (IP_opt_size >= length && IP_opt_size > 0) {
+			ip_layer->SetPayload(data + n_ip, length);
+			PushLayer(*ip_layer);
+			/* That's all */
+			return;
+		}
+
+		next_proto = ip_layer->GetProtocol();
+
+		net_layer = ip_layer;
+	} else {
+		/* The first bytes are an IPv6 layer */
+		IPv6* ip_layer = new IPv6;
+
+		n_ip = ip_layer->PutData(data);
+
+		/* Get size of the remaining data */
+		length -= n_ip;
+
+		/* Get next protocol */
+		next_proto = ip_layer->GetNextHeader();
+
+		/* TODO - Handle IPv6 extension */
+		net_layer = ip_layer;
 	}
 
 	/* Then, create the next protocol */
-	Layer* trp_layer = Protocol::AccessFactory()->GetLayerByID(ip_layer.GetProtocol());
+	Layer* trp_layer = Protocol::AccessFactory()->GetLayerByID(next_proto);
 
 	/* Construct transport layer */
 	size_t n_trp = 0;
@@ -229,8 +258,9 @@ void Packet::GetFromIP(const byte* data, size_t length) {
 		if(trp_layer->GetSize() > length) {
 			/* Create Raw layer */
 			RawLayer rawdata(data + n_ip, length);
-			PushLayer(ip_layer);
+			PushLayer(*net_layer);
 			PushLayer(rawdata);
+			delete net_layer;
 			delete trp_layer;
 			/* That's all */
 			return;
@@ -258,8 +288,9 @@ void Packet::GetFromIP(const byte* data, size_t length) {
 				n_trp += TCP_opt_size;
 			} else if (TCP_opt_size >= length && TCP_opt_size > 0) {
 				tcp_layer->SetPayload(data + n_ip + n_trp, length);
-				PushLayer(ip_layer);
+				PushLayer(*net_layer);
 				PushLayer(*trp_layer);
+				delete net_layer;
 				delete trp_layer;
 				/* That's all */
 				return;
@@ -279,7 +310,7 @@ void Packet::GetFromIP(const byte* data, size_t length) {
                          icmp_type == ICMP::TimeExceeded ||
                          icmp_type == ICMP::ParameterProblem) &&
                         icmp_length > 0) {
-                        PushLayer(ip_layer);
+                        PushLayer(*net_layer);
                         PushLayer(*trp_layer);
                         if (length >= icmp_length) {
                             RawLayer original_payload(data + n_ip + n_trp, icmp_length);
@@ -288,6 +319,7 @@ void Packet::GetFromIP(const byte* data, size_t length) {
                         } else {
                             RawLayer rawdata(data + n_ip + n_trp, length);
                             PushLayer(rawdata);
+                            delete net_layer;
                             delete trp_layer;
                             return;
                         }
@@ -336,12 +368,13 @@ void Packet::GetFromIP(const byte* data, size_t length) {
 	}
 
 	/* Push each layer into the stack */
-	PushLayer(ip_layer);
+	PushLayer(*net_layer);
 	if(trp_layer) PushLayer(*trp_layer);
 	if(data_length) PushLayer(raw_layer);
 
 	/* Delete the temporary layer created */
 	if(trp_layer) delete trp_layer;
+	delete net_layer;
 }
 
 /* Constructor from raw data */
@@ -361,5 +394,25 @@ void Packet::PacketFromIP(const byte* data, size_t length) {
 
 	Stack.clear();
 
-	GetFromIP(data,length);
+	GetFromIP(0x0800,data,length);
+}
+
+/* Constructor from raw data */
+void Packet::PacketFromIPv6(const byte* data, size_t length) {
+
+	/* First remove bytes for the raw data */
+	if (raw_data) {
+		bytes_size = 0;
+		delete [] raw_data;
+		raw_data = 0;
+	}
+
+	/* Delete layer one by one */
+	vector<Layer*>::iterator it_layer;
+	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; ++it_layer)
+		delete (*it_layer);
+
+	Stack.clear();
+
+	GetFromIP(0x86dd,data,length);
 }

@@ -39,6 +39,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "IPAddress.h"
 
+#include "IPv6Address.h"
+
 #include "MACAddress.h"
 
 #include "BitsField.h"

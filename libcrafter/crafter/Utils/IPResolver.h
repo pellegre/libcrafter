@@ -46,8 +46,16 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/poll.h>
 
 namespace Crafter {
+
+	/* Validate IPv4 address */
+	bool validateIpv4Address(const std::string& ipAddress);
+
+	/* Validate IPv6 address */
+	bool validateIpv6Address(const std::string& ipAddress);
+
 	/* Return IP from a host address */
 	std::string GetIP(const std::string& hostname);
+	std::string GetIPv6(const std::string& hostname);
 
 	/* Return the hostname of associated to the IP address */
 	std::string GetHostname(const std::string& ip_address);

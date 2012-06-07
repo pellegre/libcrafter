@@ -36,7 +36,8 @@ Crafter::FieldInfo::FieldInfo(const std::string& name, word nword, word bitpos, 
 	this->length = length;
 	this->field_set = 0;
 
-	assert(bitpos <= 31);
+	if(bitpos > 31)
+		cerr << "[@] ERROR on FieldInfo: bitpos = " << bitpos << " ; name = " << name << endl;
 }
 
 void Crafter::FieldInfo::PrintDebug() const {

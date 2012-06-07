@@ -1,0 +1,10 @@
+name IPv6
+protoid 0x86dd
+BitsField    Version          0  0  4  6
+BitsField    TrafficClass     0  4  8  0
+BitsField    FlowLabel        0 12 20  0
+ShortField   PayloadLength    1  0     0
+ByteField    NextHeader       1  2     0x06
+ByteField    HopLimit         1  3     64
+IPv6Address  SourceIP         2  0     "0000:0000:0000:0000:0000"
+IPv6Address  DestinationIP    6  0     "0000:0000:0000:0000:0000"
