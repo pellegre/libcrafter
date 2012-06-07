@@ -34,9 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <iostream>
 #include <cassert>
 
-typedef uint32_t word;
-typedef uint16_t short_word;
-typedef uint8_t byte;
+#include "../Types.h"
 
 namespace Crafter {
 

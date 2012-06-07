@@ -55,7 +55,7 @@ namespace Crafter {
 
 		public:
 
-			static word PROTO = 0xfff1;
+			static const word PROTO = 0xfff1;
 
 			RawLayer();
 

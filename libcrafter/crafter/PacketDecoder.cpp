@@ -272,7 +272,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 		length -= n_trp;
 
 		/* If we are dealing with a TCP layer, we should check for options */
-		if (trp_layer->GetName() == "TCP") {
+		if (next_proto == TCP::PROTO) {
 			/* Cast the layer */
 			TCP *tcp_layer = dynamic_cast<TCP *>(trp_layer);
 			size_t TCP_word_size = tcp_layer->GetDataOffset();
@@ -295,7 +295,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 				/* That's all */
 				return;
 			}
-		} else if (trp_layer->GetName() == "ICMP") {
+		} else if (next_proto == ICMP::PROTO) {
                     /* If we are dealing with an ICMP layer, we should check for extensions */
                     ICMP *icmp_layer = dynamic_cast<ICMP *>(trp_layer);
                     word icmp_type = icmp_layer->GetType();

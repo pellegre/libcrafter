@@ -40,10 +40,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 /* -------- DHCP Options */
 
-typedef uint32_t word;
-typedef uint16_t short_word;
-typedef uint8_t byte;
-
 namespace Crafter {
 
 	class DHCPOptions {

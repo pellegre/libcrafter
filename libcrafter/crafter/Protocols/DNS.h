@@ -74,7 +74,7 @@ namespace Crafter {
 
     public:
 
-		static word PROTO = 0xfff3;
+		static const word PROTO = 0xfff3;
 
 		/* Typical types */
 		static const short_word TypeA = 0x0001;
