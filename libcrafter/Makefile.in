@@ -87,8 +87,8 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Utils/PrintMessage.lo crafter/Utils/BitHandling.lo \
 	crafter/Utils/IPResolver.lo crafter/Utils/IPv4Parse.lo \
 	crafter/Utils/RawSocket.lo crafter/Utils/CrafterUtils.lo \
-	crafter/Utils/ARPPing.lo crafter/Utils/ARPSpoofing.lo \
-	crafter/Utils/ARPSpoofingReply.lo \
+	crafter/Utils/PacketContainer.lo crafter/Utils/ARPPing.lo \
+	crafter/Utils/ARPSpoofing.lo crafter/Utils/ARPSpoofingReply.lo \
 	crafter/Utils/ARPSpoofingRequest.lo crafter/Utils/Sniffer.lo \
 	crafter/Utils/TCPConnection.lo \
 	crafter/Fields/FieldContainer.lo crafter/Fields/FieldInfo.lo \
@@ -105,6 +105,12 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Protocols/UDPCraft.lo \
 	crafter/Protocols/TCPConstructor.lo \
 	crafter/Protocols/TCPCraft.lo \
+	crafter/Protocols/TCPOptionConstructor.lo \
+	crafter/Protocols/TCPOptionCraft.lo \
+	crafter/Protocols/TCPOptionMaxSegSizeConstructor.lo \
+	crafter/Protocols/TCPOptionMaxSegSizeCraft.lo \
+	crafter/Protocols/TCPOptionTimestampConstructor.lo \
+	crafter/Protocols/TCPOptionTimestampCraft.lo \
 	crafter/Protocols/ICMPConstructor.lo \
 	crafter/Protocols/ICMPCraft.lo \
 	crafter/Protocols/ICMPExtensionConstructor.lo \
@@ -292,6 +298,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Utils/IPv4Parse.cpp \
 						crafter/Utils/RawSocket.cpp \
 						crafter/Utils/CrafterUtils.cpp \
+						crafter/Utils/PacketContainer.cpp \
 						crafter/Utils/ARPPing.cpp \
 						crafter/Utils/ARPSpoofing.cpp \
 						crafter/Utils/ARPSpoofingReply.cpp \
@@ -315,6 +322,12 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/UDPCraft.cpp \
 						crafter/Protocols/TCPConstructor.cpp \
 						crafter/Protocols/TCPCraft.cpp \
+						crafter/Protocols/TCPOptionConstructor.cpp \
+						crafter/Protocols/TCPOptionCraft.cpp \
+						crafter/Protocols/TCPOptionMaxSegSizeConstructor.cpp \
+						crafter/Protocols/TCPOptionMaxSegSizeCraft.cpp \
+						crafter/Protocols/TCPOptionTimestampConstructor.cpp \
+						crafter/Protocols/TCPOptionTimestampCraft.cpp \
 						crafter/Protocols/ICMPConstructor.cpp \
 						crafter/Protocols/ICMPCraft.cpp \
 						crafter/Protocols/ICMPExtensionConstructor.cpp \
@@ -360,6 +373,7 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Utils/PrintMessage.h \
 								crafter/Utils/RawSocket.h \
 								crafter/Utils/CrafterUtils.h \
+								crafter/Utils/PacketContainer.h \
 								crafter/Utils/ARPPing.h \
 								crafter/Utils/ARPSpoofing.h \
 								crafter/Utils/Sniffer.h \
@@ -370,6 +384,10 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Protocols/IP.h \
 								crafter/Protocols/UDP.h \
 								crafter/Protocols/TCP.h \
+								crafter/Protocols/TCPOption.h \
+								crafter/Protocols/TCPOptionLayer.h \
+								crafter/Protocols/TCPOptionMaxSegSize.h \
+								crafter/Protocols/TCPOptionTimestamp.h \
 								crafter/Protocols/ICMP.h \
 								crafter/Protocols/ICMPExtension.h \
 								crafter/Protocols/ICMPExtensionMPLS.h \
@@ -519,6 +537,8 @@ crafter/Utils/RawSocket.lo: crafter/Utils/$(am__dirstamp) \
 	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
 crafter/Utils/CrafterUtils.lo: crafter/Utils/$(am__dirstamp) \
 	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
+crafter/Utils/PacketContainer.lo: crafter/Utils/$(am__dirstamp) \
+	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
 crafter/Utils/ARPPing.lo: crafter/Utils/$(am__dirstamp) \
 	crafter/Utils/$(DEPDIR)/$(am__dirstamp)
 crafter/Utils/ARPSpoofing.lo: crafter/Utils/$(am__dirstamp) \
@@ -580,6 +600,24 @@ crafter/Protocols/TCPConstructor.lo:  \
 	crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/TCPCraft.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/TCPOptionConstructor.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/TCPOptionCraft.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/TCPOptionMaxSegSizeConstructor.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/TCPOptionMaxSegSizeCraft.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/TCPOptionTimestampConstructor.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/TCPOptionTimestampCraft.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/ICMPConstructor.lo:  \
 	crafter/Protocols/$(am__dirstamp) \
@@ -711,6 +749,18 @@ mostlyclean-compile:
 	-rm -f crafter/Protocols/TCPConstructor.lo
 	-rm -f crafter/Protocols/TCPCraft.$(OBJEXT)
 	-rm -f crafter/Protocols/TCPCraft.lo
+	-rm -f crafter/Protocols/TCPOptionConstructor.$(OBJEXT)
+	-rm -f crafter/Protocols/TCPOptionConstructor.lo
+	-rm -f crafter/Protocols/TCPOptionCraft.$(OBJEXT)
+	-rm -f crafter/Protocols/TCPOptionCraft.lo
+	-rm -f crafter/Protocols/TCPOptionMaxSegSizeConstructor.$(OBJEXT)
+	-rm -f crafter/Protocols/TCPOptionMaxSegSizeConstructor.lo
+	-rm -f crafter/Protocols/TCPOptionMaxSegSizeCraft.$(OBJEXT)
+	-rm -f crafter/Protocols/TCPOptionMaxSegSizeCraft.lo
+	-rm -f crafter/Protocols/TCPOptionTimestampConstructor.$(OBJEXT)
+	-rm -f crafter/Protocols/TCPOptionTimestampConstructor.lo
+	-rm -f crafter/Protocols/TCPOptionTimestampCraft.$(OBJEXT)
+	-rm -f crafter/Protocols/TCPOptionTimestampCraft.lo
 	-rm -f crafter/Protocols/UDPConstructor.$(OBJEXT)
 	-rm -f crafter/Protocols/UDPConstructor.lo
 	-rm -f crafter/Protocols/UDPCraft.$(OBJEXT)
@@ -731,6 +781,8 @@ mostlyclean-compile:
 	-rm -f crafter/Utils/IPResolver.lo
 	-rm -f crafter/Utils/IPv4Parse.$(OBJEXT)
 	-rm -f crafter/Utils/IPv4Parse.lo
+	-rm -f crafter/Utils/PacketContainer.$(OBJEXT)
+	-rm -f crafter/Utils/PacketContainer.lo
 	-rm -f crafter/Utils/PrintMessage.$(OBJEXT)
 	-rm -f crafter/Utils/PrintMessage.lo
 	-rm -f crafter/Utils/RawSocket.$(OBJEXT)
@@ -781,6 +833,12 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/SLLCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPCraft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionConstructor.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionCraft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionMaxSegSizeConstructor.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionMaxSegSizeCraft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionTimestampConstructor.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionTimestampCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/UDPConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/UDPCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/ARPPing.Plo@am__quote@
@@ -791,6 +849,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/CrafterUtils.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/IPResolver.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/IPv4Parse.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/PacketContainer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/PrintMessage.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/RawSocket.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Utils/$(DEPDIR)/Sniffer.Plo@am__quote@

@@ -35,9 +35,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <unistd.h>
-#include <signal.h>
-#include <pcap.h>
+
+#include "PacketContainer.h"
 
 namespace Crafter {
 
@@ -69,9 +68,7 @@ namespace Crafter {
 		return dynamic_cast<T*>(layer);
 	}
 
-	/* ---------------- Send an Receive functions -------------- */
-
-	typedef std::vector<Packet*> PacketContainer;
+	/* ---------------- Send an Receive functions (wrappers for backward compatibility) -------------- */
 
 	/* Dump packet container on a pcap file */
 	void DumpPcap(const std::string& filename, PacketContainer* pck_container);
@@ -80,11 +77,11 @@ namespace Crafter {
 	PacketContainer* ReadPcap(const std::string& filename, const std::string& filter = "");
 
 	/* Send and Receive a container of packet - Multithreading */
-	PacketContainer* SendRecv(PacketContainer* PacketContainer, const std::string& iface = "",
-			                        int num_threads = 16, double timeout = 1, int retry = 3);
+	PacketContainer* SendRecv(PacketContainer* pck_container, const std::string& iface = "",
+			                  int num_threads = 16, double timeout = 1, int retry = 3);
 
 	/* Send a container of packet - Multithreading */
-	void Send(PacketContainer* PacketContainer, const std::string& iface = "", int num_threads = 16);
+	void Send(PacketContainer* pck_container, const std::string& iface = "", int num_threads = 16);
 
 	/* --------------- Search layers by protocols -------------- */
 

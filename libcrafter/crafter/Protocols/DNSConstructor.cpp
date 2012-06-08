@@ -37,8 +37,6 @@ DNS::DNS() {
     SetprotoID(0xfff3);
     DefineProtocol();
 
-    Fields.SetOverlap(1);
-
     SetIdentification(0);
     SetQRFlag(0);
     SetOpCode(0);

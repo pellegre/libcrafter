@@ -24,69 +24,58 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+#ifndef TCPOPTION_H_
+#define TCPOPTION_H_
 
-
-#ifndef RAWLAYER_H_
-#define RAWLAYER_H_
-
-#include "../Layer.h"
+#include "TCPOptionLayer.h"
 
 namespace Crafter {
 
-		class RawLayer : public Layer {
+    class TCPOption: public TCPOptionLayer {
 
-			/* Define the field of the IP layer */
-			void DefineProtocol() {
-				/* No fields */
-			};
+        void DefineProtocol();
 
-			Constructor GetConstructor() const {
-				return RawLayer::RawLayerConstFunc;
-			};
+        Constructor GetConstructor() const {
+            return TCPOption::TCPOptionConstFunc;
+        };
 
-			static Layer* RawLayerConstFunc() {
-				return new RawLayer;
-			};
+        static Layer* TCPOptionConstFunc() {
+            return new TCPOption;
+        };
 
-			/* Copy crafted packet to buffer_data */
-			void Craft () {
-				/* Nothing to craft */
-			};
+        void Craft();
 
-		public:
+        void ReDefineActiveFields();
 
-			static const word PROTO = 0xfff1;
+        static const byte FieldKind = 0;
+        static const byte FieldLength = 1;
 
-			RawLayer();
+    public:
 
-			/* Constructor from raw data */
-			RawLayer(const byte* data, size_t size);
+        static const word PROTO = 0xfff0;
 
-			/* Constructor from string */
-			RawLayer(const char* str);
+        TCPOption();
 
-			/* Constructor from a general Layer */
-			RawLayer(const Layer& layer);
+        void SetKind(const byte& value) {
+            SetFieldValue(FieldKind,value);
+        };
 
-			/* Equal from string */
-			RawLayer& operator=(const char* str);
+        void SetLength(const byte& value) {
+            SetFieldValue(FieldLength,value);
+        };
 
-			/* Equal from a general Layer */
-			RawLayer& operator=(const Layer& layer);
+        byte  GetKind() const {
+            return GetFieldValue<byte>(FieldKind);
+        };
 
-			/* Concatenate to raw layers */
-			const RawLayer operator+(const RawLayer& right) const;
+        byte  GetLength() const {
+            return GetFieldValue<byte>(FieldLength);
+        };
 
-			virtual ~RawLayer() { };
-		};
+        ~TCPOption() { /* Destructor */ };
 
-		class Pad : public RawLayer {
-
-		public:
-			Pad(byte value, size_t times);
-			~Pad() { /* */ };
-		};
+    };
 
 }
 
-#endif /* RAWLAYER_H_ */
+#endif /* TCPOPTION_H_ */

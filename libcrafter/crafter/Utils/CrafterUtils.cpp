@@ -25,11 +25,8 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <pthread.h>
 #include <cstdio>
-
-#include <cstring> /* for strncpy */
-
+#include <cstring>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -311,339 +308,6 @@ vector<string>* Crafter::ParseIP(const string& str_argv) {
 	return IPAddr;
 }
 
-
-
-/* ------------------------ SendRcv Function -------------------------- */
-
-struct PairMatch {
-	/* Information about the Packets corresponding to the thread */
-	int start;
-	int num_threads;
-	int total;
-	/* Container */
-	vector<Packet*>* PacketContainer;
-	vector<Packet*>* Results;
-	/* Arguments for sending */
-	string iface;
-	double timeout;
-	int retry;
-};
-
-static void* SendRecvThread(void* thread_arg) {
-
-	/* Cast the argument */
-	PairMatch* pair = static_cast<PairMatch *>(thread_arg);
-
-	/* Asign the values */
-	int start = pair->start;
-	int num_threads = pair->num_threads;
-	int total = pair->total;
-
-	vector<Packet*>* PacketContainer = pair->PacketContainer;
-	vector<Packet*>* Results = pair->Results;
-
-	for (int i = start ; i < total ; i += num_threads) {
-		(*Results)[i] = (*PacketContainer)[i]->SendRecv(pair->iface,pair->timeout,pair->retry);
-	}
-
-	delete pair;
-
-	/* Call pthread exit with a pointer to the new object */
-	pthread_exit(NULL);
-}
-
-vector<Packet* >* Crafter::SendRecv(vector<Packet* >* PacketContainer, const string& iface, int num_threads, double timeout, int retry) {
-	/* Total number of packets */
-	int total = PacketContainer->size();
-
-	/* Create the result container */
-	vector<Packet*>* Results = new vector<Packet*>(total);
-
-	if (total < num_threads) num_threads = total;
-
-	/* Thread array */
-	pthread_t* threads = new pthread_t[num_threads];
-
-	/* Do the work on each packet */
-	for(int i = 0 ; i < num_threads ; i++) {
-		/* Create a pair structure */
-		PairMatch* pair = new PairMatch;
-
-		/* Asign values */
-		pair->PacketContainer = PacketContainer;
-		pair->Results = Results;
-
-		/* Start value on the container */
-		pair->start = i;
-
-		/* Put the numbers of threads*/
-		pair->num_threads = num_threads;
-
-		/* Put the size of the container */
-		pair->total = total;
-
-		/* Set the arguments for the SendRecv function */
-		pair->iface = iface;
-		pair->timeout = timeout;
-		pair->retry = retry;
-
-		void* thread_arg = static_cast<void *>(pair);
-
-		int rc = pthread_create(&threads[i], NULL, SendRecvThread, thread_arg);
-
-		if (rc) {
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "BlockARP()",
-			             "Creating thread. Returning code = " + StrPort(rc));
-			exit(1);
-		}
-
-	}
-
-	/* Join thread */
-	for(int i = 0 ; i < num_threads ; i++) {
-		void* ret;
-
-		/* Join thread */
-		int rc = pthread_join(threads[i], &ret);
-
-		if (rc) {
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "BlockARP()",
-			             "Joining thread. Returning code = " + StrPort(rc));
-			exit(1);
-		}
-
-	}
-
-	delete [] threads;
-
-	return Results;
-}
-
-static void* SendThread(void* thread_arg) {
-
-	/* Cast the argument */
-	PairMatch* pair = static_cast<PairMatch *>(thread_arg);
-
-	/* Asign the values */
-	int start = pair->start;
-	int num_threads = pair->num_threads;
-	int total = pair->total;
-
-	vector<Packet*>* PacketContainer = pair->PacketContainer;
-
-	for (int i = start ; i < total ; i += num_threads)
-		(*PacketContainer)[i]->Send(pair->iface);
-
-	delete pair;
-
-	/* Call pthread exit with a pointer to the new object */
-	pthread_exit(NULL);
-}
-
-void Crafter::Send(vector<Packet* >* PacketContainer, const string& iface, int num_threads) {
-	/* Total number of packets */
-	int total = PacketContainer->size();
-
-	if (total < num_threads) num_threads = total;
-
-	/* Thread array */
-	pthread_t* threads = new pthread_t[num_threads];
-
-	/* Do the work on each packet */
-	for(int i = 0 ; i < num_threads ; i++) {
-		/* Create a pair structure */
-		PairMatch* pair = new PairMatch;
-
-		/* Asign values */
-		pair->PacketContainer = PacketContainer;
-
-		/* Start value on the container */
-		pair->start = i;
-
-		/* Put the numbers of threads*/
-		pair->num_threads = num_threads;
-
-		/* Put the size of the container */
-		pair->total = total;
-
-		/* Set the arguments for the SendRecv function */
-		pair->iface = iface;
-
-		void* thread_arg = static_cast<void *>(pair);
-
-		int rc = pthread_create(&threads[i], NULL, SendThread, thread_arg);
-
-		if (rc) {
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Crafter::Send()",
-			             "Creating thread. Returning code = " + StrPort(rc));
-			exit(1);
-		}
-
-	}
-
-	/* Join thread */
-	for(int i = 0 ; i < num_threads ; i++) {
-		void* ret;
-
-		/* Join thread */
-		int rc = pthread_join(threads[i], &ret);
-
-		if (rc) {
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "BlockARP()",
-			             "Joining thread. Returning code = " + StrPort(rc));
-			exit(1);
-		}
-
-	}
-
-	delete [] threads;
-
-}
-
-void Crafter::DumpPcap(const std::string& filename, PacketContainer* pck_container)  {
-	/* Check empty container, just in case */
-	if(pck_container->size() == 0) return;
-
-	/* Check the kind of packet that we are dealing with... We assume all the packets have the same format */
-	Packet* pck = (*pck_container)[0];
-	Layer* first = pck->GetLayer<Layer>(0);
-
-	/* Get the link type */
-	int link_type;
-	if(first->GetName() == "Ethernet")
-		link_type = DLT_EN10MB;           /* Packet begin with an Ethernet layer */
-	else if (first->GetName() == "SLL")
-		link_type = DLT_LINUX_SLL;        /* Linux cooked */
-	else
-		link_type = DLT_RAW;              /* Suppose all the packets begin with an IP layer */
-
-    pcap_t *pd;
-    pcap_dumper_t *pdumper;
-
-    pd = pcap_open_dead(link_type, 65535 /* snaplen */);
-
-    /* Create the output file. */
-    pdumper = pcap_dump_open(pd, filename.c_str());
-
-	/* Go through each packet */
-	PacketContainer::iterator it_pck;
-
-	for(it_pck = pck_container->begin() ; it_pck < pck_container->end() ; it_pck++) {
-		/* pcap header */
-		struct pcap_pkthdr header;
-		/* TODO - libcrafter don't know anything about timestamps */
-		header.ts.tv_sec = 0;
-		header.ts.tv_usec = 0;
-		header.len = (*it_pck)->GetSize();
-		header.caplen = (*it_pck)->GetSize();
-        pcap_dump(reinterpret_cast<u_char*>(pdumper), &header, (*it_pck)->GetRawPtr());
-	}
-    pcap_close(pd);
-    pcap_dump_close(pdumper);
-}
-
-struct ReadData {
-	int link_type;
-	PacketContainer* pck_container;
-};
-
-/* Callback function to process a packet when captured */
-static void process_packet (u_char *user, const struct pcap_pkthdr *header, const u_char *packet) {
-	/* New packet on the heap */
-	Packet* read_packet = new Packet;
-
-	/* Argument for packet handling */
-	ReadData* total_arg = reinterpret_cast<ReadData*>(user);
-
-	/* Construct the packet */
-	if(total_arg->link_type == DLT_RAW)
-		read_packet->PacketFromIP(packet,header->len);
-	else
-		read_packet->PacketFromLinkLayer(packet, header->len,total_arg->link_type);
-
-	/* Push this packet into the container */
-	total_arg->pck_container->push_back(read_packet);
-}
-
-PacketContainer* Crafter::ReadPcap(const std::string& filename, const std::string& filter) {
-	/* Handle for the opened pcap session */
-	pcap_t *handle;
-	/* Type of link layer of the interface */
-	int link_type;
-	/* Pcap error messages buffer */
-	char errbuf[PCAP_ERRBUF_SIZE];
-	errbuf[0] = 0;
-	/* Compiled BPF filter */
-	struct bpf_program fp;
-
-	handle = pcap_open_offline(filename.c_str(), errbuf);
-
-	if (handle == NULL) {
-	  /* There was an error */
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Crafter::ReadPcap()",
-	                 "opening the file: " + string(errbuf));
-	  exit (1);
-	}
-	if (strlen (errbuf) > 0) {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "Crafter::ReadPcap()",
-			         string(errbuf));
-	  errbuf[0] = 0;    /* re-set error buffer */
-	}
-
-	/* Find out the datalink type of the connection */
-	link_type = pcap_datalink(handle);
-
-	if(filter.size() > 0) {
-		/* Compile the filter, so we can capture only stuff we are interested in */
-		if (pcap_compile (handle, &fp, filter.c_str(), 0, 0) == -1) {
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Crafter::ReadPcap()",
-			             "Compiling filter: " + string(pcap_geterr (handle)));
-			cerr << "[!] Bad filter expression -> " << filter << endl;
-			exit (1);
-		}
-
-		/* Set the filter for the device we have opened */
-		if (pcap_setfilter (handle, &fp) == -1)	{
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Crafter::ReadPcap()",
-			             "Setting the filter: " + string(pcap_geterr (handle)) );
-			exit (1);
-		}
-	}
-
-	/* Create a new packet container */
-	PacketContainer* pck_container = new PacketContainer;
-
-	/* Prepare the data */
-	ReadData rd;
-	rd.link_type = link_type;
-	rd.pck_container = pck_container;
-
-	int r;
-	u_char* arg = reinterpret_cast<u_char*>(&rd);
-
-	if ((r = pcap_loop (handle, -1, process_packet, arg)) < 0) {
-	  if (r == -1) {
-		  /* Pcap error */
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Sniffer::Sniffer()",
-		                 "Error in pcap_loop " + string(pcap_geterr (handle)));
-		  exit (1);
-	  }
-	  /* Otherwise return should be -2, meaning pcap_breakloop has been called */
-	}
-
-	return pck_container;
-}
-
-
 ARP* Crafter::GetARP(const Packet& packet) {
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
@@ -757,6 +421,29 @@ void Crafter::CraftLayer(Layer* layer) {
 	layer->Craft();
 }
 
+/* Dump packet container on a pcap file */
+void Crafter::DumpPcap(const std::string& filename, PacketContainer* pck_container) {
+	pck_container->DumpPcap(filename);
+}
+
+/* Read a pcap file */
+PacketContainer* Crafter::ReadPcap(const std::string& filename, const std::string& filter) {
+	PacketContainer* pck_ptr = new PacketContainer;
+	pck_ptr->ReadPcap(filename,filter);
+	return pck_ptr;
+}
+
+/* Send and Receive a container of packet - Multithreading */
+PacketContainer* Crafter::SendRecv(PacketContainer* pck_container, const std::string& iface,
+		                  int num_threads, double timeout, int retry) {
+	return pck_container->SendRecv(iface,timeout,retry,num_threads);
+}
+
+/* Send a container of packet - Multithreading */
+void Crafter::Send(PacketContainer* pck_container, const std::string& iface, int num_threads) {
+	pck_container->Send(iface,num_threads);
+}
+
 void Crafter::InitCrafter() {
 
 	IP ip_dummy;
@@ -774,6 +461,18 @@ void Crafter::InitCrafter() {
 	TCP tcp_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&tcp_dummy);
+
+	TCPOption opt_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&opt_dummy);
+
+	TCPOptionMaxSegSize optmss_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optmss_dummy);
+
+	TCPOptionTimestamp optts_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optts_dummy);
 
 	ICMP icmp_dummy;
 	/* Register the protocol, this is executed only once */
@@ -815,7 +514,7 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&dhcp_dummy);
 
-	/* Init seed of RNG */
+	/* Initialize seed of RNG */
 	srand(time(NULL));
 
 	/* Put verbose mode as default */

@@ -30,6 +30,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Utils/IPv4Parse.cpp \
 						crafter/Utils/RawSocket.cpp \
 						crafter/Utils/CrafterUtils.cpp \
+						crafter/Utils/PacketContainer.cpp \
 						crafter/Utils/ARPPing.cpp \
 						crafter/Utils/ARPSpoofing.cpp \
 						crafter/Utils/ARPSpoofingReply.cpp \
@@ -53,6 +54,12 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/UDPCraft.cpp \
 						crafter/Protocols/TCPConstructor.cpp \
 						crafter/Protocols/TCPCraft.cpp \
+						crafter/Protocols/TCPOptionConstructor.cpp \
+						crafter/Protocols/TCPOptionCraft.cpp \
+						crafter/Protocols/TCPOptionMaxSegSizeConstructor.cpp \
+						crafter/Protocols/TCPOptionMaxSegSizeCraft.cpp \
+						crafter/Protocols/TCPOptionTimestampConstructor.cpp \
+						crafter/Protocols/TCPOptionTimestampCraft.cpp \
 						crafter/Protocols/ICMPConstructor.cpp \
 						crafter/Protocols/ICMPCraft.cpp \
 						crafter/Protocols/ICMPExtensionConstructor.cpp \
@@ -107,6 +114,7 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Utils/PrintMessage.h \
 								crafter/Utils/RawSocket.h \
 								crafter/Utils/CrafterUtils.h \
+								crafter/Utils/PacketContainer.h \
 								crafter/Utils/ARPPing.h \
 								crafter/Utils/ARPSpoofing.h \
 								crafter/Utils/Sniffer.h \
@@ -117,6 +125,10 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/IP.h \
 								crafter/Protocols/UDP.h \
 								crafter/Protocols/TCP.h \
+								crafter/Protocols/TCPOption.h \
+								crafter/Protocols/TCPOptionLayer.h \
+								crafter/Protocols/TCPOptionMaxSegSize.h \
+								crafter/Protocols/TCPOptionTimestamp.h \
 								crafter/Protocols/ICMP.h \
 								crafter/Protocols/ICMPExtension.h \
 								crafter/Protocols/ICMPExtensionMPLS.h \

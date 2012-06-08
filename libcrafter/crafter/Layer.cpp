@@ -152,8 +152,9 @@ void Crafter::Layer::Print(std::ostream& str) const {
 	/* Print each one of the fields */
 	PrintFields(str);
 
-	/* Also print the payload */
-	PrintPayload(str);
+	if(GetPayloadSize())
+		/* Also print the payload */
+		PrintPayload(str);
 
 	str << ">" << endl;
 }

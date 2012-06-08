@@ -1,0 +1,6 @@
+name TCPOptionTimestamp
+protoid 0xffee
+ByteField  Kind        0 0 0
+ByteField  Length      0 1 10
+WordField  Value       0 2 0
+WordField  EchoReply   1 2 0
