@@ -25,68 +25,31 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include "TCPOptionTimestamp.h"
 
-#ifndef RAWLAYER_H_
-#define RAWLAYER_H_
+using namespace Crafter;
+using namespace std;
 
-#include "../Layer.h"
+TCPOptionTimestamp::TCPOptionTimestamp() {
 
-namespace Crafter {
+    allocate_bytes(10);
+    SetName("TCPOptionTimestamp");
+    SetprotoID(0xffee);
+    DefineProtocol();
 
-		class RawLayer : public Layer {
+    SetKind(8);
+    SetLength(10);
+    SetValue(0);
+    SetEchoReply(0);
 
-			/* Define the field of the IP layer */
-			void DefineProtocol() {
-				/* No fields */
-			};
-
-			Constructor GetConstructor() const {
-				return RawLayer::RawLayerConstFunc;
-			};
-
-			static Layer* RawLayerConstFunc() {
-				return new RawLayer;
-			};
-
-			/* Copy crafted packet to buffer_data */
-			void Craft () {
-				/* Nothing to craft */
-			};
-
-		public:
-
-			static const word PROTO = 0xfff1;
-
-			RawLayer();
-
-			/* Constructor from raw data */
-			RawLayer(const byte* data, size_t size);
-
-			/* Constructor from string */
-			RawLayer(const char* str);
-
-			/* Constructor from a general Layer */
-			RawLayer(const Layer& layer);
-
-			/* Equal from string */
-			RawLayer& operator=(const char* str);
-
-			/* Equal from a general Layer */
-			RawLayer& operator=(const Layer& layer);
-
-			/* Concatenate to raw layers */
-			const RawLayer operator+(const RawLayer& right) const;
-
-			virtual ~RawLayer() { };
-		};
-
-		class Pad : public RawLayer {
-
-		public:
-			Pad(byte value, size_t times);
-			~Pad() { /* */ };
-		};
+    ResetFields();
 
 }
 
-#endif /* RAWLAYER_H_ */
+void TCPOptionTimestamp::DefineProtocol() {
+    Fields.push_back(new ByteField("Kind",0,0));
+    Fields.push_back(new ByteField("Length",0,1));
+    Fields.push_back(new WordField("Value",0,2));
+    Fields.push_back(new WordField("EchoReply",1,2));
+}
+

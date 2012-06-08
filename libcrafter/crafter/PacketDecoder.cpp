@@ -28,6 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "Packet.h"
 #include "Crafter.h"
+#include <netinet/tcp.h>
 #include <pcap.h>
 
 using namespace std;
@@ -192,6 +193,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 	Layer* net_layer;
 
 	if(ip_type == IP::PROTO) {
+
 		/* The first bytes are an IPv4 layer */
 		IP* ip_layer = new IP;
 
@@ -231,6 +233,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 		next_proto = ip_layer->GetProtocol();
 
 		net_layer = ip_layer;
+
 	} else {
 		/* The first bytes are an IPv6 layer */
 		IPv6* ip_layer = new IPv6;
@@ -247,6 +250,10 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 		net_layer = ip_layer;
 	}
 
+	/* Push network layer into the stack */
+	PushLayer(*net_layer);
+	delete net_layer;
+
 	/* Then, create the next protocol */
 	Layer* trp_layer = Protocol::AccessFactory()->GetLayerByID(next_proto);
 
@@ -258,9 +265,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 		if(trp_layer->GetSize() > length) {
 			/* Create Raw layer */
 			RawLayer rawdata(data + n_ip, length);
-			PushLayer(*net_layer);
 			PushLayer(rawdata);
-			delete net_layer;
 			delete trp_layer;
 			/* That's all */
 			return;
@@ -271,30 +276,90 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 		/* Get size of the remaining data */
 		length -= n_trp;
 
-		/* If we are dealing with a TCP layer, we should check for options */
+		/* --------------- BEGIN Checking TCP options -------------- */
+
 		if (next_proto == TCP::PROTO) {
+
 			/* Cast the layer */
-			TCP *tcp_layer = dynamic_cast<TCP *>(trp_layer);
-			size_t TCP_word_size = tcp_layer->GetDataOffset();
+			size_t TCP_word_size = dynamic_cast<TCP *>(trp_layer)->GetDataOffset();
 
+			/* Get options size */
 			size_t TCP_opt_size = 0;
-
 			if(TCP_word_size > 5) TCP_opt_size = 4 * (TCP_word_size - 5);
 
-			if (TCP_opt_size < length && TCP_opt_size > 0) {
-				/* The options are set as a payload */
-				tcp_layer->SetPayload(data + n_ip + n_trp, TCP_opt_size);
-				length -= TCP_opt_size;
-				n_trp += TCP_opt_size;
-			} else if (TCP_opt_size >= length && TCP_opt_size > 0) {
-				tcp_layer->SetPayload(data + n_ip + n_trp, length);
-				PushLayer(*net_layer);
+			/* We have a valid set of options */
+			if (TCP_opt_size <= length && TCP_opt_size > 0) {
+				/* Push the transport layer befor the options */
 				PushLayer(*trp_layer);
-				delete net_layer;
+
+				const byte* opt_data = data + n_ip + n_trp;
+                size_t optlen = 0, opt;
+
+                for(size_t cnt = TCP_opt_size ; cnt > 0 ; cnt -=optlen, opt_data += optlen) {
+                	/* Get the option type */
+                	opt = opt_data[0];
+
+					if (opt == TCPOPT_EOL)
+						break;
+
+					if (opt == TCPOPT_NOP) {
+						optlen = 1;
+						continue;
+					} else {
+						if (cnt < 2)
+							break;
+						optlen = opt_data[1];
+						if (optlen < 2 || optlen > cnt)
+							break;
+					}
+
+					TCPOptionLayer* opt_layer;
+
+					switch(opt) {
+
+						case TCP_MAXSEG:
+							opt_layer = new TCPOptionMaxSegSize;
+							opt_layer->PutData(opt_data);
+							break;
+						case TCPOPT_TIMESTAMP:
+							opt_layer = new TCPOptionTimestamp;
+							opt_layer->PutData(opt_data);
+							break;
+						default:
+							/* Generic Option Header */
+							opt_layer = new TCPOption;
+							opt_layer->PutData(opt_data);
+							optlen = opt_layer->GetLength();
+							opt_layer->SetPayload(opt_data + 2, optlen - 2);
+							break;
+					}
+
+					PushLayer(*opt_layer);
+                }
+
+				/* Just set the rest of the bytes as a TCP payload */
+				//tcp_layer->SetPayload(data + n_ip + n_trp, TCP_opt_size);
+                /* Update the length of the packet */
+                length -= TCP_opt_size;
+                n_trp += TCP_opt_size;
+
+			/* In case the packet is lying about the real size */
+			} else if (TCP_opt_size > length && TCP_opt_size > 0) {
+
+				/* Just set the rest of the bytes as a TCP payload */
+				trp_layer->SetPayload(data + n_ip + n_trp, length);
+
+				PushLayer(*trp_layer);
 				delete trp_layer;
-				/* That's all */
 				return;
+
 			}
+
+			/* Done with the TCP layer */
+			delete trp_layer;
+
+		/* --------------- END Checking TCP options -------------- */
+
 		} else if (next_proto == ICMP::PROTO) {
                     /* If we are dealing with an ICMP layer, we should check for extensions */
                     ICMP *icmp_layer = dynamic_cast<ICMP *>(trp_layer);
@@ -310,7 +375,6 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                          icmp_type == ICMP::TimeExceeded ||
                          icmp_type == ICMP::ParameterProblem) &&
                         icmp_length > 0) {
-                        PushLayer(*net_layer);
                         PushLayer(*trp_layer);
                         if (length >= icmp_length) {
                             RawLayer original_payload(data + n_ip + n_trp, icmp_length);
@@ -319,7 +383,6 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                         } else {
                             RawLayer rawdata(data + n_ip + n_trp, length);
                             PushLayer(rawdata);
-                            delete net_layer;
                             delete trp_layer;
                             return;
                         }
@@ -352,7 +415,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                             }
                         }
                         delete trp_layer;
-			return;
+                        return;
                     }
                 }
 
@@ -367,14 +430,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 		raw_layer.SetPayload(data + n_ip + n_trp, length);
 	}
 
-	/* Push each layer into the stack */
-	PushLayer(*net_layer);
-	if(trp_layer) PushLayer(*trp_layer);
 	if(data_length) PushLayer(raw_layer);
-
-	/* Delete the temporary layer created */
-	if(trp_layer) delete trp_layer;
-	delete net_layer;
 }
 
 /* Constructor from raw data */

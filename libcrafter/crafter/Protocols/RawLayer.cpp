@@ -128,3 +128,10 @@ const RawLayer RawLayer::operator+(const RawLayer& right) const{
 
 	return ret_layer;
 }
+
+Pad::Pad(byte value, size_t times) {
+    byte* pad_data = new byte[times];
+    memset(pad_data,value,times*sizeof(byte));
+    SetPayload(pad_data,times);
+    delete pad_data;
+}

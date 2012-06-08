@@ -45,6 +45,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 /* TCP Protocol Implementation */
 #include "Protocols/TCP.h"
+/* TCP Options Implementation */
+#include "Protocols/TCPOptionLayer.h"
+#include "Protocols/TCPOption.h"
+#include "Protocols/TCPOptionMaxSegSize.h"
+#include "Protocols/TCPOptionTimestamp.h"
 
 /* IPv4 Protocol Implementation */
 #include "Protocols/IP.h"

@@ -58,9 +58,8 @@ string Crafter::GetIP(const string& hostname) {
     hints.ai_family = AF_INET;
 
     if ((err = getaddrinfo(hostname.c_str(), NULL, &hints, &res)) != 0) {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "GetIPv6()","Error while resolving "+ hostname);
-		perror("GetIPv6");
+		PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
+				     "GetIPv4()","Error while resolving "+ hostname);
       return "";
     }
 
@@ -85,7 +84,7 @@ string Crafter::GetIPv6(const string& hostname) {
     hints.ai_family = AF_INET6;
 
     if ((err = getaddrinfo(hostname.c_str(), NULL, &hints, &res)) != 0) {
-		PrintMessage(Crafter::PrintCodes::PrintPerror,
+		PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
 				     "GetIPv6()","Error while resolving "+ hostname);
       return "";
     }

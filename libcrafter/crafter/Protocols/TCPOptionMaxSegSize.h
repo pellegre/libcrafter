@@ -24,69 +24,67 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+#ifndef TCPOPTIONMAXSEGSIZE_H_
+#define TCPOPTIONMAXSEGSIZE_H_
 
-
-#ifndef RAWLAYER_H_
-#define RAWLAYER_H_
-
-#include "../Layer.h"
+#include "TCPOptionLayer.h"
 
 namespace Crafter {
 
-		class RawLayer : public Layer {
+    class TCPOptionMaxSegSize: public TCPOptionLayer {
 
-			/* Define the field of the IP layer */
-			void DefineProtocol() {
-				/* No fields */
-			};
+        void DefineProtocol();
 
-			Constructor GetConstructor() const {
-				return RawLayer::RawLayerConstFunc;
-			};
+        Constructor GetConstructor() const {
+            return TCPOptionMaxSegSize::TCPOptionMaxSegSizeConstFunc;
+        };
 
-			static Layer* RawLayerConstFunc() {
-				return new RawLayer;
-			};
+        static Layer* TCPOptionMaxSegSizeConstFunc() {
+            return new TCPOptionMaxSegSize;
+        };
 
-			/* Copy crafted packet to buffer_data */
-			void Craft () {
-				/* Nothing to craft */
-			};
+        void Craft();
 
-		public:
+        void ReDefineActiveFields();
 
-			static const word PROTO = 0xfff1;
+        static const byte FieldKind = 0;
+        static const byte FieldLength = 1;
+        static const byte FieldMaxSegSize = 2;
 
-			RawLayer();
+    public:
 
-			/* Constructor from raw data */
-			RawLayer(const byte* data, size_t size);
+        static const word PROTO = 0xffef;
 
-			/* Constructor from string */
-			RawLayer(const char* str);
+        TCPOptionMaxSegSize();
 
-			/* Constructor from a general Layer */
-			RawLayer(const Layer& layer);
+        void SetKind(const byte& value) {
+            SetFieldValue(FieldKind,value);
+        };
 
-			/* Equal from string */
-			RawLayer& operator=(const char* str);
+        void SetLength(const byte& value) {
+            SetFieldValue(FieldLength,value);
+        };
 
-			/* Equal from a general Layer */
-			RawLayer& operator=(const Layer& layer);
+        void SetMaxSegSize(const short_word& value) {
+            SetFieldValue(FieldMaxSegSize,value);
+        };
 
-			/* Concatenate to raw layers */
-			const RawLayer operator+(const RawLayer& right) const;
+        byte  GetKind() const {
+            return GetFieldValue<byte>(FieldKind);
+        };
 
-			virtual ~RawLayer() { };
-		};
+        byte  GetLength() const {
+            return GetFieldValue<byte>(FieldLength);
+        };
 
-		class Pad : public RawLayer {
+        short_word  GetMaxSegSize() const {
+            return GetFieldValue<short_word>(FieldMaxSegSize);
+        };
 
-		public:
-			Pad(byte value, size_t times);
-			~Pad() { /* */ };
-		};
+        ~TCPOptionMaxSegSize() { /* Destructor */ };
+
+    };
 
 }
 
-#endif /* RAWLAYER_H_ */
+#endif /* TCPOPTIONMAXSEGSIZE_H_ */
