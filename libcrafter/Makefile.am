@@ -53,6 +53,8 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/TCPCraft.cpp \
 						crafter/Protocols/TCPOptionConstructor.cpp \
 						crafter/Protocols/TCPOptionCraft.cpp \
+						crafter/Protocols/TCPOptionPadConstructor.cpp \
+						crafter/Protocols/TCPOptionPadCraft.cpp \
 						crafter/Protocols/TCPOptionMaxSegSizeConstructor.cpp \
 						crafter/Protocols/TCPOptionMaxSegSizeCraft.cpp \
 						crafter/Protocols/TCPOptionTimestampConstructor.cpp \
@@ -123,6 +125,7 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/TCP.h \
 								crafter/Protocols/TCPOption.h \
 								crafter/Protocols/TCPOptionLayer.h \
+								crafter/Protocols/TCPOptionPad.h \
 								crafter/Protocols/TCPOptionMaxSegSize.h \
 								crafter/Protocols/TCPOptionTimestamp.h \
 								crafter/Protocols/ICMP.h \

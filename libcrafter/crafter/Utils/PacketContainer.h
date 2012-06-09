@@ -43,7 +43,7 @@ namespace Crafter {
 
 		/* Sender and matcher functions */
 		PacketContainer* SendRecvMultiThread(const std::string& iface, double timeout, int retry, int num_threads);
-		PacketContainer* SendRecvLoop(const std::string& iface, double timeout, int retry, int num_threads);
+		PacketContainer* SendRecvLoop(const std::string& iface, double timeout, int retry);
 
 	public:
 

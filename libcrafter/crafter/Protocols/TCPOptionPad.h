@@ -24,74 +24,55 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+#ifndef TCPOPTIONPAD_H_
+#define TCPOPTIONPAD_H_
 
-
-#include "PrintMessage.h"
-
-using namespace std;
-using namespace Crafter;
+#include "TCPOptionLayer.h"
 
 namespace Crafter {
-	extern /* Verbose mode flag */
-	byte ShowWarnings;
+
+    class TCPOptionPad: public TCPOptionLayer {
+
+        void DefineProtocol();
+
+        Constructor GetConstructor() const {
+            return TCPOptionPad::TCPOptionPadConstFunc;
+        };
+
+        static Layer* TCPOptionPadConstFunc() {
+            return new TCPOptionPad;
+        };
+
+        void Craft();
+
+        void ReDefineActiveFields();
+
+        static const byte FieldKind = 0;
+
+    public:
+
+        static const word PROTO = 0xffed;
+
+        TCPOptionPad();
+
+        void SetKind(const byte& value) {
+            SetFieldValue(FieldKind,value);
+        };
+
+        void SetLength(const byte& value) {  /*  */ };
+
+        byte  GetKind() const {
+            return GetFieldValue<byte>(FieldKind);
+        };
+
+        byte  GetLength() const {
+            return 1;
+        };
+
+        ~TCPOptionPad() { /* Destructor */ };
+
+    };
+
 }
 
-void Crafter::PrintMessage(uint16_t code, const string& routine, const string& message) {
-	string code_str;
-
-	switch(code) {
-		/* Just print some message */
-		case PrintCodes::PrintMessage :
-			code_str = "[@] MESSAGE ";
-			break;
-
-	    /* Print a warning */
-		case PrintCodes::PrintWarning :
-			code_str = "[!] WARNING ";
-			break;
-
-		/* Print a warning */
-		case PrintCodes::PrintWarningPerror :
-			code_str = "[!] WARNING ";
-			break;
-
-		/* Print the error message */
-		case PrintCodes::PrintError :
-			code_str = "[!] ERROR ";
-			break;
-		case PrintCodes::PrintPerror :
-			code_str = "[!] ERROR ";
-			break;
-
-		default:
-			code_str = "";
-			break;
-
-	}
-
-	/* Print String */
-	string ret_str = code_str + " : " + routine + " -> " + message;
-
-	/* Check if we should use the perror routine */
-	if (code == PrintCodes::PrintPerror) {
-		perror(ret_str.c_str());
-		return;
-	} else if (code == PrintCodes::PrintWarningPerror) {
-		if(ShowWarnings)
-			perror(ret_str.c_str());
-		return;
-	}
-
-	if(code == PrintCodes::PrintMessage) {
-		cout << ret_str << endl;
-		return;
-	} else if (code == PrintCodes::PrintWarning) {
-		if(ShowWarnings)
-			cerr << ret_str << endl;
-		return;
-	} else {
-		cerr << ret_str << endl;
-		return;
-	}
-}
-
+#endif /* TCPOPTIONPAD_H_ */

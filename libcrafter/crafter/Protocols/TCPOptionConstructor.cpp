@@ -33,7 +33,7 @@ using namespace std;
 TCPOption::TCPOption() {
 
     allocate_bytes(2);
-    SetName("TCPoption");
+    SetName("TCPOption");
     SetprotoID(0xfff0);
     DefineProtocol();
 

@@ -293,47 +293,45 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 				PushLayer(*trp_layer);
 
 				const byte* opt_data = data + n_ip + n_trp;
-                size_t optlen = 0, opt;
+                int optlen = 0, opt;
 
-                for(size_t cnt = TCP_opt_size ; cnt > 0 ; cnt -=optlen, opt_data += optlen) {
+                for(int cnt = TCP_opt_size ; cnt > 0 ; cnt -=optlen, opt_data += optlen) {
                 	/* Get the option type */
                 	opt = opt_data[0];
 
-					if (opt == TCPOPT_EOL)
-						break;
-
-					if (opt == TCPOPT_NOP) {
-						optlen = 1;
-						continue;
-					} else {
-						if (cnt < 2)
-							break;
-						optlen = opt_data[1];
-						if (optlen < 2 || optlen > cnt)
-							break;
-					}
-
 					TCPOptionLayer* opt_layer;
+
+					if (opt == TCPOPT_EOL) {
+						opt_layer = new TCPOptionPad;
+						opt_layer->PutData(opt_data);
+						break;
+					}
 
 					switch(opt) {
 
-						case TCP_MAXSEG:
-							opt_layer = new TCPOptionMaxSegSize;
-							opt_layer->PutData(opt_data);
-							break;
-						case TCPOPT_TIMESTAMP:
-							opt_layer = new TCPOptionTimestamp;
-							opt_layer->PutData(opt_data);
-							break;
-						default:
-							/* Generic Option Header */
-							opt_layer = new TCPOption;
-							opt_layer->PutData(opt_data);
-							optlen = opt_layer->GetLength();
-							opt_layer->SetPayload(opt_data + 2, optlen - 2);
-							break;
+					case TCPOPT_NOP:
+						opt_layer = new TCPOptionPad;
+						opt_layer->PutData(opt_data);
+						break;
+					case TCP_MAXSEG:
+						opt_layer = new TCPOptionMaxSegSize;
+						opt_layer->PutData(opt_data);
+						break;
+					case TCPOPT_TIMESTAMP:
+						opt_layer = new TCPOptionTimestamp;
+						opt_layer->PutData(opt_data);
+						break;
+					default:
+						/* Generic Option Header */
+						opt_layer = new TCPOption;
+						opt_layer->PutData(opt_data);
+						optlen = opt_layer->GetLength();
+						if(optlen > cnt) optlen = cnt;
+						opt_layer->SetPayload(opt_data + 2, optlen - 2);
+						break;
 					}
 
+					optlen = opt_layer->GetSize();
 					PushLayer(*opt_layer);
                 }
 
@@ -354,9 +352,6 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 				return;
 
 			}
-
-			/* Done with the TCP layer */
-			delete trp_layer;
 
 		/* --------------- END Checking TCP options -------------- */
 
@@ -411,6 +406,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                                     icmp_extension_object_length -= n_pay;
                                     length -= n_pay;
                                     extension_data += n_pay;
+                                    delete icmp_extension_layer;
                                 }
                             }
                         }
@@ -419,6 +415,13 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                     }
                 }
 
+	}
+
+	/* Done with transport layer */
+
+	if(trp_layer){
+		PushLayer(*trp_layer);
+		delete trp_layer;
 	}
 
 	size_t data_length = length;
