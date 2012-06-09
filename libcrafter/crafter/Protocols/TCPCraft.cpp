@@ -49,20 +49,32 @@ void TCP::Craft() {
 	/* Bottom layer name */
 	Layer* bottom_ptr = GetBottomLayer();
 	short_word bottom_layer = 0;
-	if(bottom_ptr)  bottom_layer = bottom_ptr->GetID();
 
 	/* Checksum of UDP packet */
 	short_word checksum;
 
 	/* Check the options and update header length */
-	size_t option_length = (GetSize() - GetHeaderSize())/4;
-	if (option_length)
-		if (!IsFieldSet(FieldDataOffset)) {
-			SetDataOffset(5 + option_length);
-			ResetField(FieldDataOffset);
+
+	if (!IsFieldSet(FieldDataOffset)) {
+		Layer* top_layer = GetTopLayer();
+		size_t option_length = 0;
+		if(top_layer) {
+			while(top_layer->GetName().find("TCPOpt") != string::npos) {
+				option_length += top_layer->GetSize();
+				top_layer = ((TCP *)top_layer)->GetTopLayer();
+			}
 		}
+		if(option_length%4 != 0)
+			PrintMessage(Crafter::PrintCodes::PrintWarning,
+					     "TCP::Craft()",
+				         "Option size is not padded to a multiple of 4 bytes.");
+		SetDataOffset(5 + option_length/4);
+		ResetField(FieldDataOffset);
+	}
 
 	size_t tot_length = GetRemainingSize();
+
+	if(bottom_ptr)  bottom_layer = bottom_ptr->GetID();
 
 	if (!IsFieldSet(FieldCheckSum)) {
 		/* Set the checksum to zero */

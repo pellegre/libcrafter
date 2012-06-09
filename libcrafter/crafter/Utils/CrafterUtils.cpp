@@ -76,12 +76,17 @@ string Crafter::GetMyIP(const string& iface) {
     /* Return value */
     string ret = "";
 
-    getifaddrs(&ifAddrStruct);
+    if (getifaddrs(&ifAddrStruct) == -1) {
+		PrintMessage(Crafter::PrintCodes::PrintPerror,
+				     "GetMyIP()",
+		             "Unable to get interface information.");
+		exit(1);
+    }
 
     for (ifa = ifAddrStruct; ifa != 0; ifa = ifa->ifa_next) {
 
-    	/* Check if is a IPv6 */
-        if (ifa->ifa_addr->sa_family==AF_INET) {
+    	/* Check if is a IPv4 */
+        if ( (ifa->ifa_addr) && ifa->ifa_addr->sa_family==AF_INET) {
         	/* Check the interface */
         	if(string(ifa->ifa_name).find(iface) != string::npos) {
             	/* Is a valid IP6 Address */
@@ -89,6 +94,7 @@ string Crafter::GetMyIP(const string& iface) {
                 char addressBuffer[INET_ADDRSTRLEN];
                 inet_ntop(AF_INET, tmpAddrPtr, addressBuffer, INET_ADDRSTRLEN);
                 ret = string(addressBuffer);
+                break;
         	}
         }
 
@@ -106,12 +112,17 @@ string Crafter::GetMyIPv6(const string& iface) {
     /* Return value */
     string ret = "";
 
-    getifaddrs(&ifAddrStruct);
+    if (getifaddrs(&ifAddrStruct) == -1) {
+		PrintMessage(Crafter::PrintCodes::PrintPerror,
+				     "GetMyIP()",
+		             "Unable to get interface information.");
+		exit(1);
+    }
 
     for (ifa = ifAddrStruct; ifa != 0; ifa = ifa->ifa_next) {
 
     	/* Check if is a IPv6 */
-        if (ifa->ifa_addr->sa_family==AF_INET6) {
+        if ( (ifa->ifa_addr) && ifa->ifa_addr->sa_family==AF_INET6) {
         	/* Check the interface */
         	if(string(ifa->ifa_name).find(iface) != string::npos) {
             	/* Is a valid IP6 Address */
@@ -119,6 +130,7 @@ string Crafter::GetMyIPv6(const string& iface) {
                 char addressBuffer[INET6_ADDRSTRLEN];
                 inet_ntop(AF_INET6, tmpAddrPtr, addressBuffer, INET6_ADDRSTRLEN);
                 ret = string(addressBuffer);
+                break;
         	}
         }
 
@@ -473,6 +485,10 @@ void Crafter::InitCrafter() {
 	TCPOptionTimestamp optts_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optts_dummy);
+
+	TCPOptionPad optpad_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optpad_dummy);
 
 	ICMP icmp_dummy;
 	/* Register the protocol, this is executed only once */

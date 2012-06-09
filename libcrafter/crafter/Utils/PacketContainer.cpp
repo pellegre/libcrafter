@@ -118,6 +118,15 @@ PacketContainer* Crafter::PacketContainer::SendRecvMultiThread(const string& ifa
 	return Results;
 }
 
+PacketContainer* Crafter::PacketContainer::SendRecvLoop(const std::string& iface, double timeout, int retry) {
+	/* Create the result container */
+	PacketContainer* Results = new PacketContainer;
+	iterator it = begin();
+	for(; it != end() ; it++)
+		Results->push_back((*it)->SendRecv(iface,timeout,retry));
+	return Results;
+}
+
 static void* SendThread(void* thread_arg) {
 
 	/* Cast the argument */
@@ -198,6 +207,14 @@ void Crafter::PacketContainer::SendMultiThread(const string& iface, int num_thre
 	}
 
 	delete [] threads;
+
+}
+
+void Crafter::PacketContainer::SendLoop(const std::string& iface) {
+	iterator it = begin();
+
+	for(;it != end() ; it++)
+		(*it)->Send(iface);
 
 }
 
@@ -339,10 +356,25 @@ void Crafter::PacketContainer::ReadPcap(const std::string& filename, const std::
 
 /* Send the packets */
 void Crafter::PacketContainer::Send(const std::string& iface, int num_threads) {
-	SendMultiThread(iface,num_threads);
+	if(num_threads)
+		SendMultiThread(iface,num_threads);
+	else
+		SendLoop(iface);
 }
 
 /* Send and Receive the container  */
 PacketContainer* Crafter::PacketContainer::SendRecv(const std::string& iface, double timeout, int retry, int num_threads) {
-	return SendRecvMultiThread(iface,timeout,retry,num_threads);
+	if(num_threads)
+		return SendRecvMultiThread(iface,timeout,retry,num_threads);
+	else
+		return SendRecvLoop(iface,timeout,retry);
+}
+
+void Crafter::PacketContainer::Clear() {
+	iterator it = begin();
+
+	for(; it != end() ; it++)
+		if((*it)) delete (*it);
+
+	clear();
 }

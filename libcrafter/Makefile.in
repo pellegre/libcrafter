@@ -107,6 +107,8 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Protocols/TCPCraft.lo \
 	crafter/Protocols/TCPOptionConstructor.lo \
 	crafter/Protocols/TCPOptionCraft.lo \
+	crafter/Protocols/TCPOptionPadConstructor.lo \
+	crafter/Protocols/TCPOptionPadCraft.lo \
 	crafter/Protocols/TCPOptionMaxSegSizeConstructor.lo \
 	crafter/Protocols/TCPOptionMaxSegSizeCraft.lo \
 	crafter/Protocols/TCPOptionTimestampConstructor.lo \
@@ -324,6 +326,8 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/TCPCraft.cpp \
 						crafter/Protocols/TCPOptionConstructor.cpp \
 						crafter/Protocols/TCPOptionCraft.cpp \
+						crafter/Protocols/TCPOptionPadConstructor.cpp \
+						crafter/Protocols/TCPOptionPadCraft.cpp \
 						crafter/Protocols/TCPOptionMaxSegSizeConstructor.cpp \
 						crafter/Protocols/TCPOptionMaxSegSizeCraft.cpp \
 						crafter/Protocols/TCPOptionTimestampConstructor.cpp \
@@ -386,6 +390,7 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Protocols/TCP.h \
 								crafter/Protocols/TCPOption.h \
 								crafter/Protocols/TCPOptionLayer.h \
+								crafter/Protocols/TCPOptionPad.h \
 								crafter/Protocols/TCPOptionMaxSegSize.h \
 								crafter/Protocols/TCPOptionTimestamp.h \
 								crafter/Protocols/ICMP.h \
@@ -607,6 +612,12 @@ crafter/Protocols/TCPOptionConstructor.lo:  \
 crafter/Protocols/TCPOptionCraft.lo:  \
 	crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/TCPOptionPadConstructor.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/TCPOptionPadCraft.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/TCPOptionMaxSegSizeConstructor.lo:  \
 	crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
@@ -757,6 +768,10 @@ mostlyclean-compile:
 	-rm -f crafter/Protocols/TCPOptionMaxSegSizeConstructor.lo
 	-rm -f crafter/Protocols/TCPOptionMaxSegSizeCraft.$(OBJEXT)
 	-rm -f crafter/Protocols/TCPOptionMaxSegSizeCraft.lo
+	-rm -f crafter/Protocols/TCPOptionPadConstructor.$(OBJEXT)
+	-rm -f crafter/Protocols/TCPOptionPadConstructor.lo
+	-rm -f crafter/Protocols/TCPOptionPadCraft.$(OBJEXT)
+	-rm -f crafter/Protocols/TCPOptionPadCraft.lo
 	-rm -f crafter/Protocols/TCPOptionTimestampConstructor.$(OBJEXT)
 	-rm -f crafter/Protocols/TCPOptionTimestampConstructor.lo
 	-rm -f crafter/Protocols/TCPOptionTimestampCraft.$(OBJEXT)
@@ -837,6 +852,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionMaxSegSizeConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionMaxSegSizeCraft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionPadConstructor.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionPadCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionTimestampConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionTimestampCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/UDPConstructor.Plo@am__quote@
