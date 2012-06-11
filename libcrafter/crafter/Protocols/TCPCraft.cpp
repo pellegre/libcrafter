@@ -28,6 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "TCP.h"
 #include "IP.h"
 #include "IPv6.h"
+#include "TCPOption.h"
 
 using namespace Crafter;
 using namespace std;
@@ -59,7 +60,7 @@ void TCP::Craft() {
 		Layer* top_layer = GetTopLayer();
 		size_t option_length = 0;
 		if(top_layer) {
-			while(top_layer->GetName().find("TCPOpt") != string::npos) {
+			while( top_layer && ((top_layer->GetID() >> 8) == (TCPOption::PROTO >> 8))) {
 				option_length += top_layer->GetSize();
 				top_layer = ((TCP *)top_layer)->GetTopLayer();
 			}

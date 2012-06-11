@@ -34,7 +34,7 @@ TCPOptionPad::TCPOptionPad() {
 
     allocate_bytes(1);
     SetName("TCPOptionPad");
-    SetprotoID(0xffed);
+    SetprotoID(0x9003);
     DefineProtocol();
 
     /* NOP padding */

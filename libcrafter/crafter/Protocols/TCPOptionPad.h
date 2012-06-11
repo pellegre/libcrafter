@@ -51,7 +51,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0xffed;
+        static const word PROTO = 0x9003;
 
         TCPOptionPad();
 
