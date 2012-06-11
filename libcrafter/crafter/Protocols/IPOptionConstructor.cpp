@@ -24,63 +24,32 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#ifndef TCPOPTION_H_
-#define TCPOPTION_H_
 
-#include "TCPOptionLayer.h"
-#include "TCPOptionPad.h"
+#include "IPOption.h"
 
-namespace Crafter {
+using namespace Crafter;
+using namespace std;
 
-    class TCPOption: public TCPOptionLayer {
+IPOption::IPOption() {
 
-        void DefineProtocol();
+    allocate_bytes(2);
+    SetName("IPOption");
+    SetprotoID(0x5000);
+    DefineProtocol();
 
-        Constructor GetConstructor() const {
-            return TCPOption::TCPOptionConstFunc;
-        };
+    SetCopyFlag(1);
+    SetClass(0);
+    SetOption(0);
+    SetLength(0);
 
-        static Layer* TCPOptionConstFunc() {
-            return new TCPOption;
-        };
-
-        void Craft();
-
-        void ReDefineActiveFields();
-
-        static const byte FieldKind = 0;
-        static const byte FieldLength = 1;
-
-    public:
-
-        static const word PROTO = 0x9000;
-
-        /* Padding layers */
-        static const TCPOptionPad NOP;
-        static const TCPOptionPad EOL;
-
-        TCPOption();
-
-        void SetKind(const byte& value) {
-            SetFieldValue(FieldKind,value);
-        };
-
-        void SetLength(const byte& value) {
-            SetFieldValue(FieldLength,value);
-        };
-
-        byte  GetKind() const {
-            return GetFieldValue<byte>(FieldKind);
-        };
-
-        byte  GetLength() const {
-            return GetFieldValue<byte>(FieldLength);
-        };
-
-        ~TCPOption() { /* Destructor */ };
-
-    };
+    ResetFields();
 
 }
 
-#endif /* TCPOPTION_H_ */
+void IPOption::DefineProtocol() {
+    Fields.push_back(new BitsField<1,0>("CopyFlag",0));
+    Fields.push_back(new BitsField<2,1>("Class",0));
+    Fields.push_back(new BitsField<5,3>("Option",0));
+    Fields.push_back(new ByteField("Length",0,1));
+}
+

@@ -34,7 +34,7 @@ TCPOptionMaxSegSize::TCPOptionMaxSegSize() {
 
     allocate_bytes(4);
     SetName("TCPOptionMaxSegSize");
-    SetprotoID(0xffef);
+    SetprotoID(0x9001);
     DefineProtocol();
 
     SetKind(2);

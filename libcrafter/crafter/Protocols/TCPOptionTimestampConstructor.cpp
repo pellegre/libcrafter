@@ -34,7 +34,7 @@ TCPOptionTimestamp::TCPOptionTimestamp() {
 
     allocate_bytes(10);
     SetName("TCPOptionTimestamp");
-    SetprotoID(0xffee);
+    SetprotoID(0x9002);
     DefineProtocol();
 
     SetKind(8);
