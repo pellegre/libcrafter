@@ -43,7 +43,7 @@ TCPOption::TCPOption() {
 
     allocate_bytes(2);
     SetName("TCPOption");
-    SetprotoID(0xfff0);
+    SetprotoID(0x9000);
     DefineProtocol();
 
     SetKind(0);

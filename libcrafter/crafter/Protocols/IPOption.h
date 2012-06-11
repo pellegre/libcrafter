@@ -24,63 +24,76 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#ifndef TCPOPTION_H_
-#define TCPOPTION_H_
+#ifndef IPOPTION_H_
+#define IPOPTION_H_
 
-#include "TCPOptionLayer.h"
-#include "TCPOptionPad.h"
+#include "IPOptionLayer.h"
 
 namespace Crafter {
 
-    class TCPOption: public TCPOptionLayer {
+    class IPOption: public IPOptionLayer {
 
         void DefineProtocol();
 
         Constructor GetConstructor() const {
-            return TCPOption::TCPOptionConstFunc;
+            return IPOption::IPOptionConstFunc;
         };
 
-        static Layer* TCPOptionConstFunc() {
-            return new TCPOption;
+        static Layer* IPOptionConstFunc() {
+            return new IPOption;
         };
 
         void Craft();
 
         void ReDefineActiveFields();
 
-        static const byte FieldKind = 0;
-        static const byte FieldLength = 1;
+        static const byte FieldCopyFlag = 0;
+        static const byte FieldClass = 1;
+        static const byte FieldOption = 2;
+        static const byte FieldLength = 3;
 
     public:
 
-        static const word PROTO = 0x9000;
+        static const word PROTO = 0x5000;
 
-        /* Padding layers */
-        static const TCPOptionPad NOP;
-        static const TCPOptionPad EOL;
+        IPOption();
 
-        TCPOption();
+        void SetCopyFlag(const word& value) {
+            SetFieldValue(FieldCopyFlag,value);
+        };
 
-        void SetKind(const byte& value) {
-            SetFieldValue(FieldKind,value);
+        void SetClass(const word& value) {
+            SetFieldValue(FieldClass,value);
+        };
+
+        void SetOption(const word& value) {
+            SetFieldValue(FieldOption,value);
         };
 
         void SetLength(const byte& value) {
             SetFieldValue(FieldLength,value);
         };
 
-        byte  GetKind() const {
-            return GetFieldValue<byte>(FieldKind);
+        word  GetCopyFlag() const {
+            return GetFieldValue<word>(FieldCopyFlag);
+        };
+
+        word  GetClass() const {
+            return GetFieldValue<word>(FieldClass);
+        };
+
+        word  GetOption() const {
+            return GetFieldValue<word>(FieldOption);
         };
 
         byte  GetLength() const {
             return GetFieldValue<byte>(FieldLength);
         };
 
-        ~TCPOption() { /* Destructor */ };
+        ~IPOption() { /* Destructor */ };
 
     };
 
 }
 
-#endif /* TCPOPTION_H_ */
+#endif /* IPOPTION_H_ */

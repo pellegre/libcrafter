@@ -54,6 +54,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 /* IPv4 Protocol Implementation */
 #include "Protocols/IP.h"
+/* IPv4 options Implementation */
+#include "Protocols/IPOptionLayer.h"
+#include "Protocols/IPOption.h"
 
 /* IPv6 Protocol Implementation */
 #include "Protocols/IPv6.h"

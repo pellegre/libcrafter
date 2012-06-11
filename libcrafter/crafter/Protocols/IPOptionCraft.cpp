@@ -24,63 +24,18 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#ifndef TCPOPTION_H_
-#define TCPOPTION_H_
 
-#include "TCPOptionLayer.h"
-#include "TCPOptionPad.h"
+#include "IPOption.h"
 
-namespace Crafter {
+using namespace Crafter;
+using namespace std;
 
-    class TCPOption: public TCPOptionLayer {
-
-        void DefineProtocol();
-
-        Constructor GetConstructor() const {
-            return TCPOption::TCPOptionConstFunc;
-        };
-
-        static Layer* TCPOptionConstFunc() {
-            return new TCPOption;
-        };
-
-        void Craft();
-
-        void ReDefineActiveFields();
-
-        static const byte FieldKind = 0;
-        static const byte FieldLength = 1;
-
-    public:
-
-        static const word PROTO = 0x9000;
-
-        /* Padding layers */
-        static const TCPOptionPad NOP;
-        static const TCPOptionPad EOL;
-
-        TCPOption();
-
-        void SetKind(const byte& value) {
-            SetFieldValue(FieldKind,value);
-        };
-
-        void SetLength(const byte& value) {
-            SetFieldValue(FieldLength,value);
-        };
-
-        byte  GetKind() const {
-            return GetFieldValue<byte>(FieldKind);
-        };
-
-        byte  GetLength() const {
-            return GetFieldValue<byte>(FieldLength);
-        };
-
-        ~TCPOption() { /* Destructor */ };
-
-    };
-
+void IPOption::ReDefineActiveFields() {
 }
 
-#endif /* TCPOPTION_H_ */
+void IPOption::Craft() {
+	if(!IsFieldSet(FieldLength)) {
+		SetLength(2 + GetPayloadSize());
+		ResetField(FieldLength);
+	}
+}
