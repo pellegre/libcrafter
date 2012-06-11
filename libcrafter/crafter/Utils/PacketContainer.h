@@ -70,7 +70,7 @@ namespace Crafter {
 		 * Delete all the pointer and clear the container
 		 * This function should be used only in case the packets were allocated on the heap
 		 */
-		void Clear();
+		void ClearPackets();
 
 		virtual ~PacketContainer() { /* */ };
 

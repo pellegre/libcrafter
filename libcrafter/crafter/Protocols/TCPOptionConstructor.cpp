@@ -30,6 +30,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace Crafter;
 using namespace std;
 
+static TCPOptionPad SetOptionKind(byte value) {
+	TCPOptionPad pad;
+	pad.SetKind(value);
+	return pad;
+}
+
+const TCPOptionPad TCPOption::NOP = SetOptionKind(0x01);
+const TCPOptionPad TCPOption::EOL = SetOptionKind(0x00);
+
 TCPOption::TCPOption() {
 
     allocate_bytes(2);
