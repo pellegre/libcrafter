@@ -28,6 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define TCPOPTION_H_
 
 #include "TCPOptionLayer.h"
+#include "TCPOptionPad.h"
 
 namespace Crafter {
 
@@ -53,6 +54,10 @@ namespace Crafter {
     public:
 
         static const word PROTO = 0xfff0;
+
+        /* Padding layers */
+        static const TCPOptionPad NOP;
+        static const TCPOptionPad EOL;
 
         TCPOption();
 

@@ -102,7 +102,7 @@ map<string,std::string> ARPPing(const string& ip_net, const string& iface, size_
 	 * request_packets container. Now we can Send 'Em All <send_count> times.
 	 */
 	for(size_t i = 0 ; i < send_count ; i++) {
-		Send(&request_packets,iface);
+		request_packets.Send(iface,16);
 		sleep(1);
 	}
 
@@ -110,9 +110,7 @@ map<string,std::string> ARPPing(const string& ip_net, const string& iface, size_
 	sniff.Cancel();
 
 	/* Delete the container with the ARP requests */
-	PacketContainer::iterator it_pck;
-	for(it_pck = request_packets.begin() ; it_pck < request_packets.end() ; it_pck++)
-		delete (*it_pck);
+	request_packets.ClearPackets();
 
 	/* Delete the IP address container */
 	delete net;

@@ -370,7 +370,7 @@ PacketContainer* Crafter::PacketContainer::SendRecv(const std::string& iface, do
 		return SendRecvLoop(iface,timeout,retry);
 }
 
-void Crafter::PacketContainer::Clear() {
+void Crafter::PacketContainer::ClearPackets() {
 	iterator it = begin();
 
 	for(; it != end() ; it++)
