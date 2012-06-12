@@ -55,14 +55,14 @@ void IP::Craft() {
 
 	/* Check the options and update header length */
 	if (!IsFieldSet(FieldHeaderLength)) {
-
 		Layer* top_layer = GetTopLayer();
 		if(top_layer) {
 			while( top_layer && ((top_layer->GetID() >> 8) == (IPOption::PROTO >> 8))) {
-				/* Get the option data */
-				if(option_length < MAXOPT) top_layer->GetRawData(ip_data + IPHDRSIZE + option_length);
+				size_t last_opt_length = option_length;
 				/* Update option length */
 				option_length += top_layer->GetSize();
+				/* Get the option data */
+				if(option_length < MAXOPT) top_layer->GetRawData(ip_data + IPHDRSIZE + last_opt_length);
 				/* Go to next layer */
 				top_layer = ((IP *)top_layer)->GetTopLayer();
 			}
@@ -96,6 +96,7 @@ void IP::Craft() {
 	}
 
 	size_t ip_length = option_length + 20;
+	if(ip_length > (MAXOPT + IPHDRSIZE) ) ip_length = MAXOPT + IPHDRSIZE;
 
 	if (!IsFieldSet(FieldCheckSum)) {
 		/* Compute the 16 bit checksum */

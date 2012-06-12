@@ -29,6 +29,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Packet.h"
 #include "Crafter.h"
 #include <netinet/tcp.h>
+#include <netinet/ip.h>
 #include <pcap.h>
 
 using namespace std;
@@ -217,27 +218,101 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 		/* Get size of the remaining data */
 		length -= n_ip;
 
-		/* Verify if the are options on the IP header */
+		/* Verify if there are options on the IP header */
 		size_t IP_word_size = ip_layer->GetHeaderLength();
 		size_t IP_opt_size = 0;
 
 		if(IP_word_size > 5) IP_opt_size = 4 * (IP_word_size - 5);
 
-		if (IP_opt_size < length && IP_opt_size > 0) {
-			/* The options are set as a payload */
-			ip_layer->SetPayload(data + n_ip, IP_opt_size);
-			length -= IP_opt_size;
-			n_ip += IP_opt_size;
-		} else if (IP_opt_size >= length && IP_opt_size > 0) {
-			ip_layer->SetPayload(data + n_ip, length);
-			PushLayer(*ip_layer);
-			/* That's all */
-			return;
-		}
-
 		next_proto = ip_layer->GetProtocol();
 
 		net_layer = ip_layer;
+
+		/* We have a valid set of options */
+		if (IP_opt_size <= length && IP_opt_size > 0) {
+			/* Push the net layer before the options */
+			PushLayer(*net_layer);
+
+			const byte* opt_data = data + n_ip;
+            int optlen = 0, opt;
+
+            for(int cnt = IP_opt_size ; cnt > 0 ; cnt -=optlen, opt_data += optlen) {
+            	/* Get the option type */
+            	opt = opt_data[0];
+
+				IPOptionLayer* opt_layer;
+
+				if (opt == IPOPT_EOL) {
+					opt_layer = new IPOptionPad;
+					opt_layer->PutData(opt_data);
+					break;
+				}
+
+				switch(opt) {
+
+				case IPOPT_NOP:
+					opt_layer = new IPOptionPad;
+					opt_layer->PutData(opt_data);
+					break;
+				case 0x52:
+					opt_layer = new IPOptionTraceroute;
+					opt_layer->PutData(opt_data);
+					break;
+				case IPOPT_LSRR:
+					opt_layer = new IPOptionLSRR;
+					opt_layer->PutData(opt_data);
+					optlen = opt_layer->GetLength();
+					if(optlen > cnt) optlen = cnt;
+					opt_layer->SetPayload(opt_data + 3, optlen - 3);
+					break;
+				case IPOPT_RR:
+					opt_layer = new IPOptionRR;
+					opt_layer->PutData(opt_data);
+					optlen = opt_layer->GetLength();
+					if(optlen > cnt) optlen = cnt;
+					opt_layer->SetPayload(opt_data + 3, optlen - 3);
+					break;
+				case IPOPT_SSRR:
+					opt_layer = new IPOptionSSRR;
+					opt_layer->PutData(opt_data);
+					optlen = opt_layer->GetLength();
+					if(optlen > cnt) optlen = cnt;
+					opt_layer->SetPayload(opt_data + 3, optlen - 3);
+					break;
+				default:
+					/* Generic Option Header */
+					opt_layer = new IPOption;
+					opt_layer->PutData(opt_data);
+					optlen = opt_layer->GetLength();
+					if(optlen > cnt) optlen = cnt;
+					opt_layer->SetPayload(opt_data + 2, optlen - 2);
+					break;
+				}
+
+				optlen = opt_layer->GetSize();
+				PushLayer(*opt_layer);
+            }
+
+            /* Update the length of the packet */
+            length -= IP_opt_size;
+            n_ip += IP_opt_size;
+
+		/* In case the packet is lying about the real size */
+		} else if (IP_opt_size > length && IP_opt_size > 0) {
+
+			/* Just set the rest of the bytes as a IP payload */
+			net_layer->SetPayload(data + n_ip, length);
+
+			PushLayer(*net_layer);
+			delete net_layer;
+			return;
+
+		} else {
+
+			/* Push network layer into the stack */
+			PushLayer(*net_layer);
+			delete net_layer;
+		}
 
 	} else {
 		/* The first bytes are an IPv6 layer */
@@ -253,11 +328,11 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 
 		/* TODO - Handle IPv6 extension */
 		net_layer = ip_layer;
-	}
 
-	/* Push network layer into the stack */
-	PushLayer(*net_layer);
-	delete net_layer;
+		/* Push network layer into the stack */
+		PushLayer(*net_layer);
+		delete net_layer;
+	}
 
 	/* Then, create the next protocol */
 	Layer* trp_layer = Protocol::AccessFactory()->GetLayerByID(next_proto);
@@ -294,7 +369,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 
 			/* We have a valid set of options */
 			if (TCP_opt_size <= length && TCP_opt_size > 0) {
-				/* Push the transport layer befor the options */
+				/* Push the transport layer before the options */
 				PushLayer(*trp_layer);
 
 				const byte* opt_data = data + n_ip + n_trp;
@@ -340,8 +415,6 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 					PushLayer(*opt_layer);
                 }
 
-				/* Just set the rest of the bytes as a TCP payload */
-				//tcp_layer->SetPayload(data + n_ip + n_trp, TCP_opt_size);
                 /* Update the length of the packet */
                 length -= TCP_opt_size;
                 n_trp += TCP_opt_size;
@@ -370,12 +443,13 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                      * is advised to consider a 128-octet original datagram to keep compatibility. */
                     if (icmp_length == 0 && length > 128)
                         icmp_length = 128;
+
                     /* According to RFC4884, specific types with a length field set have extensions */
-                    if ((icmp_type == ICMP::DestinationUnreachable ||
-                         icmp_type == ICMP::TimeExceeded ||
-                         icmp_type == ICMP::ParameterProblem) &&
-                        icmp_length > 0) {
+                    if (( icmp_type == ICMP::DestinationUnreachable || icmp_type == ICMP::TimeExceeded ||
+                    	  icmp_type == ICMP::ParameterProblem) && icmp_length > 0) {
+
                         PushLayer(*trp_layer);
+
                         if (length >= icmp_length) {
                             RawLayer original_payload(data + n_ip + n_trp, icmp_length);
                             length -= icmp_length;
@@ -386,6 +460,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                             delete trp_layer;
                             return;
                         }
+
                         if (length > 0) {
                             ICMPExtension icmp_extension;
                             size_t n_ext = icmp_extension.PutData(data + n_ip + n_trp + icmp_length);
@@ -398,14 +473,11 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                                 PushLayer(icmp_extension_object_header);
                                 length -= n_objhdr;
                                 extension_data += n_objhdr;
-                                word icmp_extension_object_length =
-                                    icmp_extension_object_header.GetLength() - n_objhdr;
-                                std::string icmp_extension_object_name =
-                                    icmp_extension_object_header.GetClassName();
+                                word icmp_extension_object_length = icmp_extension_object_header.GetLength() - n_objhdr;
+                                std::string icmp_extension_object_name = icmp_extension_object_header.GetClassName();
                                 /* Some ICMP extensions (such as MPLS) have more than one entry */
                                 while (length > 0 && icmp_extension_object_length > 0) {
-                                    Layer* icmp_extension_layer =
-                                        Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
+                                    Layer* icmp_extension_layer = Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
                                     size_t n_pay = icmp_extension_layer->PutData(extension_data);
                                     PushLayer(*icmp_extension_layer);
                                     icmp_extension_object_length -= n_pay;
@@ -415,6 +487,7 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                                 }
                             }
                         }
+
                         delete trp_layer;
                         return;
                     }

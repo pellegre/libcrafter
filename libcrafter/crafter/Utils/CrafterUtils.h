@@ -66,7 +66,7 @@ namespace Crafter {
 	std::vector<byte> IPtoRawData(const std::vector<std::string>& ips);
 
 	/* Convert raw data in network byte order into a container of ip address strings */
-	std::vector<std::string> IPtoRawData(const std::vector<byte>& raw_data);
+	std::vector<std::string> RawDatatoIP(const std::vector<byte>& raw_data);
 
 	/* Cast layers to protocols */
 	template<class T>

@@ -31,17 +31,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace Crafter {
 
-    class IPOptionLSRR: public IPOptionLayer {
+    class IPOptionPointer: public IPOptionLayer {
+
+    protected:
 
         void DefineProtocol();
-
-        Constructor GetConstructor() const {
-            return IPOptionLSRR::IPOptionLSRRConstFunc;
-        };
-
-        static Layer* IPOptionLSRRConstFunc() {
-            return new IPOptionLSRR;
-        };
 
         void Craft();
 
@@ -55,9 +49,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x5003;
-
-        IPOptionLSRR();
+        IPOptionPointer() { /* */ };
 
         void SetCopyFlag(const word& value) {
             SetFieldValue(FieldCopyFlag,value);
@@ -99,10 +91,68 @@ namespace Crafter {
             return GetFieldValue<byte>(FieldPointer);
         };
 
-        ~IPOptionLSRR() { /* Destructor */ };
+        virtual ~IPOptionPointer() { /* Destructor */ };
 
     };
 
+    class IPOptionLSRR : public IPOptionPointer {
+
+    	Constructor GetConstructor() const {
+            return IPOptionLSRR::IPOptionLSRRConstFunc;
+        };
+
+        static Layer* IPOptionLSRRConstFunc() {
+            return new IPOptionLSRR;
+        };
+
+    public:
+
+        IPOptionLSRR();
+
+        static const word PROTO = 0x5003;
+
+        ~IPOptionLSRR() { /* Destructor */ };
+    };
+
+    class IPOptionRR : public IPOptionPointer {
+
+    	Constructor GetConstructor() const {
+            return IPOptionRR::IPOptionRRConstFunc;
+        };
+
+        static Layer* IPOptionRRConstFunc() {
+            return new IPOptionRR;
+        };
+
+    public:
+
+        IPOptionRR();
+
+        static const word PROTO = 0x5004;
+
+        ~IPOptionRR() { /* Destructor */ };
+
+    };
+
+    class IPOptionSSRR : public IPOptionPointer {
+
+    	Constructor GetConstructor() const {
+            return IPOptionSSRR::IPOptionSSRRConstFunc;
+        };
+
+        static Layer* IPOptionSSRRConstFunc() {
+            return new IPOptionSSRR;
+        };
+
+    public:
+
+        IPOptionSSRR();
+
+        static const word PROTO = 0x5005;
+
+        ~IPOptionSSRR() { /* Destructor */ };
+
+    };
 }
 
 #endif /* IPOPTIONLSRR_H_ */

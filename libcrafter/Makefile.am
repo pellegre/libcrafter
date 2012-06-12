@@ -56,8 +56,8 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/IPOptionPadCraft.cpp \
 						crafter/Protocols/IPOptionTracerouteConstructor.cpp \
 						crafter/Protocols/IPOptionTracerouteCraft.cpp \
-						crafter/Protocols/IPOptionLSRRConstructor.cpp \
-						crafter/Protocols/IPOptionLSRRCraft.cpp \
+						crafter/Protocols/IPOptionPointerConstructor.cpp \
+						crafter/Protocols/IPOptionPointerCraft.cpp \
 						crafter/Protocols/UDPConstructor.cpp \
 						crafter/Protocols/UDPCraft.cpp \
 						crafter/Protocols/TCPConstructor.cpp \
@@ -137,7 +137,7 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/IPOptionLayer.h \
 								crafter/Protocols/IPOptionPad.h \
 								crafter/Protocols/IPOptionTraceroute.h \
-								crafter/Protocols/IPOptionLSRR.h \
+								crafter/Protocols/IPOptionPointer.h \
 								crafter/Protocols/UDP.h \
 								crafter/Protocols/TCP.h \
 								crafter/Protocols/TCPOption.h \

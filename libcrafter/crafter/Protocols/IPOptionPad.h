@@ -27,11 +27,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef IPOPTIONPAD_H_
 #define IPOPTIONPAD_H_
 
-#include "../Layer.h"
+#include "IPOptionLayer.h"
 
 namespace Crafter {
 
-    class IPOptionPad: public Layer {
+    class IPOptionPad: public IPOptionLayer {
 
         void DefineProtocol();
 

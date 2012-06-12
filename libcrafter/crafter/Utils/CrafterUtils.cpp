@@ -321,13 +321,47 @@ vector<string>* Crafter::ParseIP(const string& str_argv) {
 }
 
 /* Convert a container of ip address strings into raw data in network byte order */
-std::vector<byte> IPtoRawData(const std::vector<std::string>& ips) {
+vector<byte> Crafter::IPtoRawData(const vector<string>& ips) {
+	/* Get the size of the byte data */
+	size_t data_size = ips.size() * sizeof(word);
 
+	/* Create a container */
+	vector<byte> raw_data(data_size,0);
+
+	vector<string>::const_iterator it_str;
+
+	size_t raw_counter = 0;
+
+	for(it_str = ips.begin() ; it_str != ips.end() ; ++it_str) {
+		in_addr_t num_ip = inet_addr((*it_str).c_str());
+		for(size_t i = 0; i < sizeof(word) ; i++) {
+			raw_data[raw_counter] = ((byte*)&num_ip)[i];
+			raw_counter++;
+		}
+	}
+
+	return raw_data;
 }
 
 /* Convert raw data in network byte order into a container of ip address strings */
-std::vector<std::string> IPtoRawData(const std::vector<byte>& raw_data) {
+vector<string> Crafter::RawDatatoIP(const vector<byte>& raw_data) {
+	/* Container size */
+	size_t raw_size = raw_data.size();
+	size_t str_size = raw_size/4;
 
+	size_t raw_counter = 0;
+
+	vector<string> ips(str_size,"");
+
+	for(size_t j = 0 ; j < str_size ; j++) {
+	    struct in_addr ip_address;
+		memcpy(&ip_address.s_addr ,&raw_data[raw_counter], sizeof(in_addr_t));
+		raw_counter += sizeof(in_addr_t);
+		/* Push the IP address in string format */
+		ips[j] = string(inet_ntoa(ip_address));
+	}
+
+	return ips;
 }
 
 ARP* Crafter::GetARP(const Packet& packet) {
@@ -467,6 +501,14 @@ void Crafter::Send(PacketContainer* pck_container, const std::string& iface, int
 }
 
 void Crafter::InitCrafter() {
+
+	IPOptionSSRR ipssrr_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ipssrr_dummy);
+
+	IPOptionRR iprr_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&iprr_dummy);
 
 	IPOptionLSRR iplsrr_dummy;
 	/* Register the protocol, this is executed only once */
