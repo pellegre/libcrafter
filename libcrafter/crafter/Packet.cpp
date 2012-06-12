@@ -478,7 +478,8 @@ Packet* Packet::SendRecv(const string& iface, double timeout, int retry, const s
 		vector<Layer*>::iterator it_layer;
 
 		for (it_layer = Stack.begin() ; it_layer != Stack.end(); it_layer++) {
-			layer_filter.push_back((*it_layer)->MatchFilter());
+			string str_filter = (*it_layer)->MatchFilter();
+			if(str_filter != " ") layer_filter.push_back(str_filter);
 		}
 
 		filter = "(" + layer_filter[0];
@@ -499,6 +500,8 @@ Packet* Packet::SendRecv(const string& iface, double timeout, int retry, const s
 			filter += ")";
 	} else
 		filter = user_filter;
+
+	//cout << filter << endl;
 
 	/* ----------- Begin Critical area ---------------- */
 

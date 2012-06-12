@@ -30,6 +30,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace Crafter;
 using namespace std;
 
+static IPOptionPad SetOptionValue(byte value) {
+	IPOptionPad pad;
+	pad.SetOption(value);
+	return pad;
+}
+
+const IPOptionPad IPOption::NOP = SetOptionValue(0x01);
+const IPOptionPad IPOption::EOL = SetOptionValue(0x00);
+
 IPOption::IPOption() {
 
     allocate_bytes(2);

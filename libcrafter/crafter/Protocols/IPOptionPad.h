@@ -24,32 +24,71 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+#ifndef IPOPTIONPAD_H_
+#define IPOPTIONPAD_H_
 
-#include "Ethernet.h"
-#include "RawLayer.h"
+#include "../Layer.h"
 
-using namespace Crafter;
-using namespace std;
+namespace Crafter {
 
-void Ethernet::ReDefineActiveFields() {
+    class IPOptionPad: public Layer {
+
+        void DefineProtocol();
+
+        Constructor GetConstructor() const {
+            return IPOptionPad::IPOptionPadConstFunc;
+        };
+
+        static Layer* IPOptionPadConstFunc() {
+            return new IPOptionPad;
+        };
+
+        void Craft();
+
+        void ReDefineActiveFields();
+
+        static const byte FieldCopyFlag = 0;
+        static const byte FieldClass = 1;
+        static const byte FieldOption = 2;
+
+    public:
+
+        static const word PROTO = 0x5001;
+
+        IPOptionPad();
+
+        void SetCopyFlag(const word& value) {
+            SetFieldValue(FieldCopyFlag,value);
+        };
+
+        void SetClass(const word& value) {
+            SetFieldValue(FieldClass,value);
+        };
+
+        void SetOption(const word& value) {
+            SetFieldValue(FieldOption,value);
+        };
+
+        void SetLength(const byte& value) { /* NO length */ };
+
+        word  GetCopyFlag() const {
+            return GetFieldValue<word>(FieldCopyFlag);
+        };
+
+        word  GetClass() const {
+            return GetFieldValue<word>(FieldClass);
+        };
+
+        word  GetOption() const {
+            return GetFieldValue<word>(FieldOption);
+        };
+
+        byte  GetLength() const { return 1; }
+
+        ~IPOptionPad() { /* Destructor */ };
+
+    };
+
 }
 
-void Ethernet::Craft() {
-	/* Get transport layer protocol */
-	if(TopLayer) {
-		if(!IsFieldSet(FieldType)) {
-			short_word network_layer = TopLayer->GetID();
-			/* Set Protocol */
-			if(network_layer != RawLayer::PROTO)
-				SetType(network_layer);
-			else
-				SetType(0x0);
-
-			ResetField(FieldType);
-		}
-	}
-	else {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "Ethernet::Craft()","No Network Layer Protocol associated with Ethernet Layer.");
-	}
-}
+#endif /* IPOPTIONPAD_H_ */

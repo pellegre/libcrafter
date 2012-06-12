@@ -25,31 +25,14 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "Ethernet.h"
-#include "RawLayer.h"
+#include "IPOptionPad.h"
 
 using namespace Crafter;
 using namespace std;
 
-void Ethernet::ReDefineActiveFields() {
+void IPOptionPad::ReDefineActiveFields() {
 }
 
-void Ethernet::Craft() {
-	/* Get transport layer protocol */
-	if(TopLayer) {
-		if(!IsFieldSet(FieldType)) {
-			short_word network_layer = TopLayer->GetID();
-			/* Set Protocol */
-			if(network_layer != RawLayer::PROTO)
-				SetType(network_layer);
-			else
-				SetType(0x0);
-
-			ResetField(FieldType);
-		}
-	}
-	else {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "Ethernet::Craft()","No Network Layer Protocol associated with Ethernet Layer.");
-	}
+void IPOptionPad::Craft() {
 }
+
