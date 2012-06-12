@@ -111,8 +111,11 @@ namespace Crafter {
 		/* Print Payload */
 		virtual void Print(std::ostream& str = std::cout) const;
 
-		/* Return a constante reference to the container */
+		/* Return a constant reference to the container */
 		const std::vector<byte>& GetContainer() const { return storage; };
+
+		/* Get raw pointer */
+		const byte* GetRawPointer() const { return (const byte*)&storage[0]; };
 
 		virtual ~Payload() { /* */ };
 	};

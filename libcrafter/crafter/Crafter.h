@@ -58,6 +58,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Protocols/IPOptionLayer.h"
 #include "Protocols/IPOption.h"
 #include "Protocols/IPOptionPad.h"
+#include "Protocols/IPOptionTraceroute.h"
+#include "Protocols/IPOptionLSRR.h"
 
 /* IPv6 Protocol Implementation */
 #include "Protocols/IPv6.h"

@@ -198,7 +198,6 @@ void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_
 	}
 
 	delete [] buff;
-
 }
 
 void DNS::PrintPayload(ostream& str) const {
@@ -278,5 +277,8 @@ void DNS::FromRaw(const RawLayer& raw_layer) {
 	SetContainerSection(Additional,ns_s_ar,&handle);
 
 	delete [] data;
+
+	Craft();
+
 }
 

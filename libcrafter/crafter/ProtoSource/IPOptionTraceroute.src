@@ -1,0 +1,10 @@
+name IPOptionTraceroute
+protoid 0x5002
+BitsField     CopyFlag    0 0 1 0
+BitsField     Class       0 1 2 2
+BitsField     Option      0 3 5 18
+ByteField     Length      0 1   12
+XShortField   IDNumber    0 2   0
+ShortField    OutboundHC  1 0   0
+ShortField    ReturnHC    1 2   0xffff
+IPAddress     OrigIP      2 0   "0.0.0.0"

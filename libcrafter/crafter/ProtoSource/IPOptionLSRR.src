@@ -1,0 +1,7 @@
+name IPOptionLSRR
+protoid 0x5003
+BitsField CopyFlag    0 0 1 1
+BitsField Class       0 1 2 0
+BitsField Option      0 3 5 0
+ByteField Length      0 1   0
+ByteField Pointer     0 2   4
