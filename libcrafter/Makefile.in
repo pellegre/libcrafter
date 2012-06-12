@@ -103,6 +103,8 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Protocols/IPCraft.lo \
 	crafter/Protocols/IPOptionConstructor.lo \
 	crafter/Protocols/IPOptionCraft.lo \
+	crafter/Protocols/IPOptionPadConstructor.lo \
+	crafter/Protocols/IPOptionPadCraft.lo \
 	crafter/Protocols/UDPConstructor.lo \
 	crafter/Protocols/UDPCraft.lo \
 	crafter/Protocols/TCPConstructor.lo \
@@ -324,6 +326,8 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/IPCraft.cpp \
 						crafter/Protocols/IPOptionConstructor.cpp \
 						crafter/Protocols/IPOptionCraft.cpp \
+						crafter/Protocols/IPOptionPadConstructor.cpp \
+						crafter/Protocols/IPOptionPadCraft.cpp \
 						crafter/Protocols/UDPConstructor.cpp \
 						crafter/Protocols/UDPCraft.cpp \
 						crafter/Protocols/TCPConstructor.cpp \
@@ -392,6 +396,7 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Protocols/IP.h \
 								crafter/Protocols/IPOption.h \
 								crafter/Protocols/IPOptionLayer.h \
+								crafter/Protocols/IPOptionPad.h \
 								crafter/Protocols/UDP.h \
 								crafter/Protocols/TCP.h \
 								crafter/Protocols/TCPOption.h \
@@ -607,6 +612,12 @@ crafter/Protocols/IPOptionConstructor.lo:  \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/IPOptionCraft.lo: crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/IPOptionPadConstructor.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/IPOptionPadCraft.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/UDPConstructor.lo:  \
 	crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
@@ -761,6 +772,10 @@ mostlyclean-compile:
 	-rm -f crafter/Protocols/IPOptionConstructor.lo
 	-rm -f crafter/Protocols/IPOptionCraft.$(OBJEXT)
 	-rm -f crafter/Protocols/IPOptionCraft.lo
+	-rm -f crafter/Protocols/IPOptionPadConstructor.$(OBJEXT)
+	-rm -f crafter/Protocols/IPOptionPadConstructor.lo
+	-rm -f crafter/Protocols/IPOptionPadCraft.$(OBJEXT)
+	-rm -f crafter/Protocols/IPOptionPadCraft.lo
 	-rm -f crafter/Protocols/IPv6Constructor.$(OBJEXT)
 	-rm -f crafter/Protocols/IPv6Constructor.lo
 	-rm -f crafter/Protocols/IPv6Craft.$(OBJEXT)
@@ -858,6 +873,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPOptionConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPOptionCraft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPOptionPadConstructor.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPOptionPadCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPv6Constructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPv6Craft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/RawLayer.Plo@am__quote@

@@ -324,7 +324,7 @@ ARP* Crafter::GetARP(const Packet& packet) {
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
 	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "ARP")
+		if ((*it_layer)->GetID() == ARP::PROTO)
 			return dynamic_cast<ARP*>( (*it_layer) );
 
 	/* No requested layer, returns zero */
@@ -335,7 +335,7 @@ Ethernet* Crafter::GetEthernet(const Packet& packet) {
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
 	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "Ethernet")
+		if ((*it_layer)->GetID() == Ethernet::PROTO)
 			return dynamic_cast<Ethernet*>( (*it_layer) );
 
 	/* No requested layer, returns zero */
@@ -346,7 +346,7 @@ ICMP* Crafter::GetICMP(const Packet& packet){
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
 	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "ICMP")
+		if ((*it_layer)->GetID() == ICMP::PROTO)
 			return dynamic_cast<ICMP*>( (*it_layer) );
 
 	/* No requested layer, returns zero */
@@ -357,7 +357,7 @@ IP* Crafter::GetIP(const Packet& packet){
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
 	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "IP")
+		if ((*it_layer)->GetID() == IP::PROTO)
 			return dynamic_cast<IP*>( (*it_layer) );
 
 	/* No requested layer, returns zero */
@@ -368,7 +368,7 @@ IPv6* Crafter::GetIPv6(const Packet& packet){
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
 	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "IP")
+		if ((*it_layer)->GetID() == IPv6::PROTO)
 			return dynamic_cast<IPv6*>( (*it_layer) );
 
 	/* No requested layer, returns zero */
@@ -379,7 +379,7 @@ IPLayer* Crafter::GetIPLayer(const Packet& packet) {
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
 	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "IP" || (*it_layer)->GetName() == "IPv6")
+		if ((*it_layer)->GetID() == IP::PROTO || (*it_layer)->GetID() == IPv6::PROTO)
 			return dynamic_cast<IPLayer*>( (*it_layer) );
 
 	/* No requested layer, returns zero */
@@ -390,7 +390,7 @@ TCP* Crafter::GetTCP(const Packet& packet){
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
 	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "TCP")
+		if ((*it_layer)->GetID() == TCP::PROTO)
 			return dynamic_cast<TCP*>( (*it_layer) );
 
 	/* No requested layer, returns zero */
@@ -401,7 +401,7 @@ UDP* Crafter::GetUDP(const Packet& packet){
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
 	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "UDP")
+		if ((*it_layer)->GetID() == UDP::PROTO)
 			return dynamic_cast<UDP*>( (*it_layer) );
 
 	/* No requested layer, returns zero */
@@ -412,7 +412,7 @@ RawLayer* Crafter::GetRawLayer(const Packet& packet){
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
 	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "RawLayer")
+		if ((*it_layer)->GetID() == RawLayer::PROTO)
 			return dynamic_cast<RawLayer*>( (*it_layer) );
 
 	/* No requested layer, returns zero */
@@ -458,13 +458,17 @@ void Crafter::Send(PacketContainer* pck_container, const std::string& iface, int
 
 void Crafter::InitCrafter() {
 
-	IP ip_dummy;
+	IPOptionPad ippadopt_dummy;
 	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&ip_dummy);
+	Protocol::AccessFactory()->Register(&ippadopt_dummy);
 
 	IPOption ipopt_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ipopt_dummy);
+
+	IP ip_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ip_dummy);
 
 	IPv6 ipv6_dummy;
 	/* Register the protocol, this is executed only once */

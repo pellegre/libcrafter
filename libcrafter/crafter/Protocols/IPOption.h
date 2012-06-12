@@ -28,6 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define IPOPTION_H_
 
 #include "IPOptionLayer.h"
+#include "IPOptionPad.h"
 
 namespace Crafter {
 
@@ -55,6 +56,10 @@ namespace Crafter {
     public:
 
         static const word PROTO = 0x5000;
+
+        /* Padding layers */
+        static const IPOptionPad NOP;
+        static const IPOptionPad EOL;
 
         IPOption();
 

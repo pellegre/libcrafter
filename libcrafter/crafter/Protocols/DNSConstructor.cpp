@@ -73,5 +73,4 @@ void DNS::DefineProtocol() {
     Fields.push_back(new ShortField("TotalAnswer",1,2));
     Fields.push_back(new ShortField("TotalAuthority",2,0));
     Fields.push_back(new ShortField("TotalAdditional",2,2));
-    Fields.push_back(new ShortField("TotalQuestions",1,0));
 }

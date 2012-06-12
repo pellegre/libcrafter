@@ -47,8 +47,6 @@ void TCP::ReDefineActiveFields() {
 
 void TCP::Craft() {
 
-	/* Bottom layer name */
-	Layer* bottom_ptr = GetBottomLayer();
 	short_word bottom_layer = 0;
 
 	/* Checksum of UDP packet */
@@ -74,6 +72,12 @@ void TCP::Craft() {
 	}
 
 	size_t tot_length = GetRemainingSize();
+
+	/* Bottom layer name (look for IPs layers) */
+	Layer* bottom_ptr = GetBottomLayer();
+
+	while(bottom_ptr && (bottom_ptr->GetID() != IP::PROTO) && (bottom_ptr->GetID() != IPv6::PROTO))
+		bottom_ptr = ((TCP*) bottom_ptr)->GetBottomLayer();
 
 	if(bottom_ptr)  bottom_layer = bottom_ptr->GetID();
 

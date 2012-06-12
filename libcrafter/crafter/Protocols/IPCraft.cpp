@@ -26,14 +26,20 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "IP.h"
+#include "RawLayer.h"
+#include "IPOption.h"
 
 using namespace std;
 using namespace Crafter;
+
+const size_t MAXOPT = 40;
+const size_t IPHDRSIZE = 20;
 
 void IP::ReDefineActiveFields() {
 }
 
 void IP::Craft() {
+
 	size_t tot_length = GetRemainingSize();
 
 	/* First, put the total length on the header */
@@ -42,41 +48,62 @@ void IP::Craft() {
 		ResetField(FieldTotalLength);
 	}
 
-	/* Get transport layer protocol */
-	if(TopLayer) {
-		if(!IsFieldSet(FieldProtocol)) {
-			short_word transport_layer = TopLayer->GetID();
-			/* Set Protocol */
-			if(transport_layer != 0xfff1)
-				SetProtocol(transport_layer);
-			else
-				SetProtocol(0x0);
+	/* Array for the option data */
+	byte ip_data[IPHDRSIZE + MAXOPT];
 
-			ResetField(FieldProtocol);
-		}
-	}
-	else {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "IP::Craft()","No Transport Layer Protocol associated with IP Layer.");
-	}
+	size_t option_length = 0;
 
 	/* Check the options and update header length */
-	size_t option_length = (GetSize() - GetHeaderSize())/4;
-	if (option_length)
 	if (!IsFieldSet(FieldHeaderLength)) {
-		SetHeaderLength(5 + option_length);
+
+		Layer* top_layer = GetTopLayer();
+		if(top_layer) {
+			while( top_layer && ((top_layer->GetID() >> 8) == (IPOption::PROTO >> 8))) {
+				/* Get the option data */
+				if(option_length < MAXOPT) top_layer->GetRawData(ip_data + IPHDRSIZE + option_length);
+				/* Update option length */
+				option_length += top_layer->GetSize();
+				/* Go to next layer */
+				top_layer = ((IP *)top_layer)->GetTopLayer();
+			}
+		}
+
+		if(option_length%4 != 0)
+			PrintMessage(Crafter::PrintCodes::PrintWarning,
+					     "IP::Craft()",
+				         "Option size is not padded to a multiple of 4 bytes.");
+
+		SetHeaderLength(5 + option_length/4);
 		ResetField(FieldHeaderLength);
+
+		/* Get transport layer protocol */
+		if(top_layer) {
+			if(!IsFieldSet(FieldProtocol)) {
+				short_word transport_layer = top_layer->GetID();
+				/* Set Protocol */
+				if(transport_layer != RawLayer::PROTO)
+					SetProtocol(transport_layer);
+				else
+					SetProtocol(0x0);
+
+				ResetField(FieldProtocol);
+			}
+		}
+		else {
+			PrintMessage(Crafter::PrintCodes::PrintWarning,
+					     "IP::Craft()","No Transport Layer Protocol associated with IP Layer.");
+		}
 	}
+
+	size_t ip_length = option_length + 20;
 
 	if (!IsFieldSet(FieldCheckSum)) {
 		/* Compute the 16 bit checksum */
 		SetCheckSum(0);
-		byte* buffer = new byte[GetSize()];
-		GetRawData(buffer);
+		GetRawData(ip_data);
 		/* Calculate the checksum */
-		short_word checksum = CheckSum((unsigned short *)buffer,GetSize()/2);
+		short_word checksum = CheckSum((unsigned short *)ip_data,ip_length/2);
 		SetCheckSum(ntohs(checksum));
-		delete [] buffer;
 		ResetField(FieldCheckSum);
 	}
 }

@@ -39,9 +39,7 @@ void UDP::ReDefineActiveFields() {
 void UDP::Craft() {
 
 	/* Bottom layer name */
-	Layer* bottom_ptr = GetBottomLayer();
 	short_word bottom_layer = 0;
-	if(bottom_ptr)  bottom_layer = bottom_ptr->GetID();
 
 	/* Checksum of UDP packet */
 	short_word checksum;
@@ -53,6 +51,14 @@ void UDP::Craft() {
 		SetLength(tot_length);
 		ResetField(FieldLength);
 	}
+
+	/* Bottom layer name (look for IPs layers) */
+	Layer* bottom_ptr = GetBottomLayer();
+
+	while(bottom_ptr && (bottom_ptr->GetID() != IP::PROTO) && (bottom_ptr->GetID() != IPv6::PROTO))
+		bottom_ptr = ((UDP*) bottom_ptr)->GetBottomLayer();
+
+	if(bottom_ptr)  bottom_layer = bottom_ptr->GetID();
 
 	if (!IsFieldSet(FieldCheckSum)) {
 
