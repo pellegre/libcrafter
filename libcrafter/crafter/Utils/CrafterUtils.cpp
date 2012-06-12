@@ -320,6 +320,16 @@ vector<string>* Crafter::ParseIP(const string& str_argv) {
 	return IPAddr;
 }
 
+/* Convert a container of ip address strings into raw data in network byte order */
+std::vector<byte> IPtoRawData(const std::vector<std::string>& ips) {
+
+}
+
+/* Convert raw data in network byte order into a container of ip address strings */
+std::vector<std::string> IPtoRawData(const std::vector<byte>& raw_data) {
+
+}
+
 ARP* Crafter::GetARP(const Packet& packet) {
 	/* Search layer one by one */
 	LayerStack::const_iterator it_layer;
@@ -457,6 +467,14 @@ void Crafter::Send(PacketContainer* pck_container, const std::string& iface, int
 }
 
 void Crafter::InitCrafter() {
+
+	IPOptionLSRR iplsrr_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&iplsrr_dummy);
+
+	IPOptionTraceroute iptrace_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&iptrace_dummy);
 
 	IPOptionPad ippadopt_dummy;
 	/* Register the protocol, this is executed only once */

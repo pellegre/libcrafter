@@ -62,6 +62,12 @@ namespace Crafter {
 	/* Put port on a string */
 	std::string StrPort(short_word port_number);
 
+	/* Convert a container of ip address strings into raw data in network byte order */
+	std::vector<byte> IPtoRawData(const std::vector<std::string>& ips);
+
+	/* Convert raw data in network byte order into a container of ip address strings */
+	std::vector<std::string> IPtoRawData(const std::vector<byte>& raw_data);
+
 	/* Cast layers to protocols */
 	template<class T>
 	T* GetLayer(Layer* layer) {

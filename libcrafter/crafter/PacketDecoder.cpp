@@ -71,6 +71,11 @@ void Packet::PacketFromLinkLayer(const byte* data, size_t length, int link_proto
 		n_link = link_layer->PutData(data);
 		next_layer = dynamic_cast<SLL*>(link_layer)->GetProtocol();
 	}
+	else if (link_proto == DLT_RAW) {
+		/* No link layer, suppose we are dealing with IPv4. Hope to be a good guess :-p */
+		GetFromIP(IP::PROTO,data + n_link,length);
+		return;
+	}
 	else {
 		/* Create Raw layer */
 		RawLayer rawdata(data,length);

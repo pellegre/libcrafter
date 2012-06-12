@@ -204,6 +204,7 @@ void DHCP::FromRaw(const RawLayer& raw_layer) {
 			j+=data[j + 1] + 2;
     }
 
+    Craft();
 }
 
 void DHCP::PrintPayload(ostream& str) const {
