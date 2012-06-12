@@ -70,6 +70,13 @@ namespace Crafter {
 			IsReadable = payload.IsReadable;
 		};
 
+		Payload(const std::vector<byte>& raw_data) {
+			/* By default is readable */
+			IsReadable = 1;
+			storage.reserve(reserved);
+			SetPayload(&raw_data[0],raw_data.size());
+		};
+
 		/* Equal from a general Layer */
 		Payload& operator=(const Payload& payload) {
 			storage = payload.storage;

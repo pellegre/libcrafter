@@ -25,15 +25,15 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "IPOptionLSRR.h"
+#include "IPOptionPointer.h"
 
 using namespace Crafter;
 using namespace std;
 
-void IPOptionLSRR::ReDefineActiveFields() {
+void IPOptionPointer::ReDefineActiveFields() {
 }
 
-void IPOptionLSRR::Craft() {
+void IPOptionPointer::Craft() {
 	if(!IsFieldSet(FieldLength)) {
 		SetLength(3 + GetPayloadSize());
 		ResetField(FieldLength);
