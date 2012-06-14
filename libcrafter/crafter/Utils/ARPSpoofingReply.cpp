@@ -174,7 +174,7 @@ ARPContext* Crafter::ARPSpoofingReply(const std::string& net_target, const std::
 
 	/* ***************************** ARP ping -> Target net: */
 
-	map<string,string> TargetTable = ARPPing(net_target,iface,3);
+	map<string,string> TargetTable = ARPPingSendRcv(net_target,iface,3);
 
 	/* Create container for MAC an IP addresses */
 	vector<string>* TargetIPs = new vector<string>;
@@ -189,7 +189,7 @@ ARPContext* Crafter::ARPSpoofingReply(const std::string& net_target, const std::
 
 	/* ***************************** ARP ping -> Victim net: */
 
-	map<string,string> VictimTable = ARPPing(net_victim,iface,3);
+	map<string,string> VictimTable = ARPPingSendRcv(net_victim,iface,3);
 
 	/* Create container for MAC an IP addresses */
 	vector<string>* VictimIPs = new vector<string>;

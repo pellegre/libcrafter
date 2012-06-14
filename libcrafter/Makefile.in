@@ -430,7 +430,7 @@ nodist_crafter_libinclude_HEADERS = crafterconfig.h
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = crafter.pc
 AM_CPPFLAGS = $(PCAPINC) 
-AM_CXXFLAGS = -ansi -pedantic -Wall
+AM_CXXFLAGS = -ansi -pedantic -Wall -Werror 
 dist_noinst_SCRIPTS = autogen.sh
 all: config.h crafterconfig.h
 	$(MAKE) $(AM_MAKEFLAGS) all-am

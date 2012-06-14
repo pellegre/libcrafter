@@ -179,7 +179,7 @@ pkgconfig_DATA = crafter.pc
 
 ## Put additional flags, including libpcap linking information
 AM_CPPFLAGS = $(PCAPINC) 
-AM_CXXFLAGS = -ansi -pedantic -Wall
+AM_CXXFLAGS = -ansi -pedantic -Wall -Werror 
 
 ## Define an independent executable script for inclusion in the distribution
 ## archive.  However, it will not be installed on an end user's system due to
