@@ -65,6 +65,7 @@ void ICMP::ReDefineActiveFields() {
 
 	case DestinationUnreachable:
         RedefineField(FieldLength);
+        RedefineField(FieldMTUNextHop);
 		break;
 
 	case SourceQuench:
