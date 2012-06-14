@@ -76,6 +76,30 @@ namespace Crafter {
 
 	};
 
+	/* Generic function template to apply a function to packet pointers */
+
+	template<typename FowardIter, class T, class R, class A1>
+	void ApplyPacketFunction(FowardIter begin, FowardIter end, R(T::*f)(A1), A1 a1) {
+		while(begin != end) {
+			((*begin)->*f)(a1);
+			begin++;
+		}
+	}
+
+	template<typename FowardIter, class T, class R, class A1, class A2>
+	void ApplyPacketFunction(FowardIter begin, FowardIter end, R(T::*f)(A1, A2), A1 a1, A2 a2) {
+		while(begin != end) {
+			((*begin)->*f)(a1, a2);
+			begin++;
+		}
+	}
+
+	/* Send the packets */
+	template<typename FowardIter>
+	void Send(FowardIter begin, FowardIter end, const std::string& iface = "", int num_threads = 0) {
+		ApplyPacketFunction(begin,end,&Packet::Send,iface);
+	}
+
 }
 
 #endif /* PACKETCONTAINER_H_ */
