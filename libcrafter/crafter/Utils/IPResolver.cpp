@@ -41,9 +41,8 @@ bool Crafter::validateIpv4Address(const std::string& ipAddress) {
 
 /* Validate IPv6 address */
 bool Crafter::validateIpv6Address(const std::string& ipAddress) {
-	struct sockaddr_in sa;
-	sa.sin_family = AF_INET6;
-	int result = inet_pton(AF_INET6, ipAddress.c_str(), &(sa.sin_addr));
+	struct sockaddr_in6 addr;
+	int result = inet_pton(AF_INET6, ipAddress.c_str(), &addr.sin6_addr);
 	return result != 0;
 }
 
