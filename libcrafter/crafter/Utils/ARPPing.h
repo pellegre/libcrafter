@@ -33,6 +33,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../Crafter.h"
 #include "../Utils/CrafterUtils.h"
 
-std::map<std::string,std::string> ARPPing(const std::string& ip_net, const std::string& iface, size_t send_count);
+std::map<std::string,std::string> ARPPingSend(const std::string& ip_net, const std::string& iface, size_t send_count);
+
+std::map<std::string,std::string> ARPPingSendRcv(const std::string& ip_net, const std::string& iface, size_t send_count);
 
 #endif /* ARPPING_H_ */

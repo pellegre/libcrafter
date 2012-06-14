@@ -42,7 +42,7 @@ void ARPAlive(Packet* sniff_packet, void* user) {
 
 }
 
-map<string,std::string> ARPPing(const string& ip_net, const string& iface, size_t send_count) {
+map<string,std::string> ARPPingSend(const string& ip_net, const string& iface, size_t send_count) {
 	/* Get the IP address associated to the interface */
 	string MyIP = GetMyIP(iface);
 	/* Get the MAC Address associated to the interface */
@@ -116,6 +116,86 @@ map<string,std::string> ARPPing(const string& ip_net, const string& iface, size_
 	delete net;
 
 	/* Return the table */
+	return table;
+}
+
+map<string,std::string> ARPPingSendRcv(const string& ip_net, const string& iface, size_t send_count) {
+	/* Get the IP address associated to the interface */
+	string MyIP = GetMyIP(iface);
+	/* Get the MAC Address associated to the interface */
+	string MyMAC = GetMyMAC(iface);
+
+	/* --------- Common data to all headers --------- */
+
+	Ethernet ether_header;
+
+	ether_header.SetSourceMAC(MyMAC);
+	ether_header.SetDestinationMAC("ff:ff:ff:ff:ff:ff");   // <-- Set broadcast address
+
+	ARP arp_header;
+
+	arp_header.SetOperation(ARP::Request);                 // <-- Set Operation (ARP Request)
+    arp_header.SetSenderIP(MyIP);                          // <-- Set our network data
+    arp_header.SetSenderMAC(MyMAC);
+
+    /* ---------------------------------------------- */
+
+	/* Define the network to scan */
+	vector<string>* net = ParseIP(ip_net);                 // <-- Create a container of IP addresses from a "wildcard"
+	vector<string>::iterator it_IP;                        // <-- Iterator
+
+	/* Create a PacketContainer to hold all the ARP requests */
+	PacketContainer request_packets;
+
+	/* Iterate to access each string that defines an IP address */
+	for(it_IP = net->begin() ; it_IP != net->end() ; it_IP++) {
+
+		arp_header.SetTargetIP(*it_IP);                    // <-- Set a destination IP address on ARP header
+
+		/* Create a packet on the heap */
+		Packet* packet = new Packet;
+
+		/* Push the layers */
+		packet->PushLayer(ether_header);
+		packet->PushLayer(arp_header);
+
+		/* Finally, push the packet into the container */
+		request_packets.push_back(packet);
+	}
+
+	/* Create a table to hold IP and MAC addresses */
+	map<string,string> table;
+
+	/*
+	 * At this point, we have all the packets into the
+	 * request_packets container. Now we can Send 'Em All <send_count> times.
+	 */
+	PacketContainer* replies_packets = request_packets.SendRecv(iface,0.1,send_count,16);
+
+	PacketContainer::iterator it_pck;
+	for(it_pck = replies_packets->begin() ; it_pck < replies_packets->end() ; it_pck++) {
+		/* Check if the pointer is not NULL */
+		Packet* reply_packet = (*it_pck);
+		if(reply_packet) {
+			/* Get the ARP layer of the replied packet */
+			ARP* arp_layer = GetARP(*reply_packet);
+			/* Update the table */
+			(table)[arp_layer->GetSenderIP()] = arp_layer->GetSenderMAC();
+		}
+	}
+
+	/* Delete the container with the ARP requests */
+	request_packets.ClearPackets();
+
+	/* Delete the container with the responses, if there is one (check the NULL pointer) */
+	replies_packets->ClearPackets();
+
+	/* Delete the container itself */
+	delete replies_packets;
+
+	/* Delete the IP address container */
+	delete net;
+
 	return table;
 }
 
