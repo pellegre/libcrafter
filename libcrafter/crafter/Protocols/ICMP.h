@@ -58,6 +58,7 @@ namespace Crafter {
         static const byte FieldPointer = 6;
         static const byte FieldGateway = 7;
         static const byte FieldLength = 8;
+        static const byte FieldMTUNextHop = 9;
 
     public:
 
@@ -125,6 +126,10 @@ namespace Crafter {
             SetFieldValue(FieldLength,value);
         };
 
+        void SetMTUNextHop(const short_word& value) {
+            SetFieldValue(FieldMTUNextHop,value);
+        };
+
         byte  GetType() const {
             return GetFieldValue<byte>(FieldType);
         };
@@ -159,6 +164,10 @@ namespace Crafter {
 
         byte  GetLength() const {
             return GetFieldValue<byte>(FieldLength);
+        };
+
+        short_word SetMTUNextHop() {
+        	return GetFieldValue<short_word>(FieldMTUNextHop);
         };
 
         ~ICMP() { /* Destructor */ };

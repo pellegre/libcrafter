@@ -475,16 +475,30 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                                 extension_data += n_objhdr;
                                 word icmp_extension_object_length = icmp_extension_object_header.GetLength() - n_objhdr;
                                 std::string icmp_extension_object_name = icmp_extension_object_header.GetClassName();
-                                /* Some ICMP extensions (such as MPLS) have more than one entry */
-                                while (length > 0 && icmp_extension_object_length > 0) {
-                                    Layer* icmp_extension_layer = Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
-                                    size_t n_pay = icmp_extension_layer->PutData(extension_data);
-                                    PushLayer(*icmp_extension_layer);
-                                    icmp_extension_object_length -= n_pay;
-                                    length -= n_pay;
-                                    extension_data += n_pay;
+
+                                /* Get the extension layer */
+                                Layer* icmp_extension_layer = Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
+
+                                /* Check if the extension layer exist */
+                                if(icmp_extension_layer) {
+                                    /* Some ICMP extensions (such as MPLS) have more than one entry */
+                                    while (length > 0 && icmp_extension_object_length > 0) {
+                                        size_t n_pay = icmp_extension_layer->PutData(extension_data);
+                                        PushLayer(*icmp_extension_layer);
+                                        icmp_extension_object_length -= n_pay;
+                                        length -= n_pay;
+                                        extension_data += n_pay;
+                                        delete icmp_extension_layer;
+                                    }
+                                /* If not, just put a raw layer and exit, we don't have enough information to continue parsing */
+                                } else {
+                                    RawLayer rawdata(extension_data, length);
+                                    PushLayer(rawdata);
                                     delete icmp_extension_layer;
+                                    delete trp_layer;
+                                    return;
                                 }
+
                             }
                         }
 
