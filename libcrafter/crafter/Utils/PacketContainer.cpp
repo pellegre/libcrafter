@@ -127,7 +127,7 @@ PacketContainer* Crafter::PacketContainer::SendRecvLoop(const std::string& iface
 	return Results;
 }
 
-static void* SendThread(void* thread_arg) {
+void* SendThread(void* thread_arg) {
 
 	/* Cast the argument */
 	PairMatch* pair = static_cast<PairMatch *>(thread_arg);
