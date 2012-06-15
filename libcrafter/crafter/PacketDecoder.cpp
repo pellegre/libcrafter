@@ -263,21 +263,24 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 					opt_layer->PutData(opt_data);
 					optlen = opt_layer->GetLength();
 					if(optlen > cnt) optlen = cnt;
-					opt_layer->SetPayload(opt_data + 3, optlen - 3);
+					if(optlen > 2)
+						opt_layer->SetPayload(opt_data + 3, optlen - 3);
 					break;
 				case IPOPT_RR:
 					opt_layer = new IPOptionRR;
 					opt_layer->PutData(opt_data);
 					optlen = opt_layer->GetLength();
 					if(optlen > cnt) optlen = cnt;
-					opt_layer->SetPayload(opt_data + 3, optlen - 3);
+					if(optlen > 2)
+						opt_layer->SetPayload(opt_data + 3, optlen - 3);
 					break;
 				case IPOPT_SSRR:
 					opt_layer = new IPOptionSSRR;
 					opt_layer->PutData(opt_data);
 					optlen = opt_layer->GetLength();
 					if(optlen > cnt) optlen = cnt;
-					opt_layer->SetPayload(opt_data + 3, optlen - 3);
+					if(optlen > 2)
+						opt_layer->SetPayload(opt_data + 3, optlen - 3);
 					break;
 				default:
 					/* Generic Option Header */
@@ -285,7 +288,8 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 					opt_layer->PutData(opt_data);
 					optlen = opt_layer->GetLength();
 					if(optlen > cnt) optlen = cnt;
-					opt_layer->SetPayload(opt_data + 2, optlen - 2);
+					if(optlen > 2)
+						opt_layer->SetPayload(opt_data + 2, optlen - 2);
 					break;
 				}
 
@@ -407,7 +411,8 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 						opt_layer->PutData(opt_data);
 						optlen = opt_layer->GetLength();
 						if(optlen > cnt) optlen = cnt;
-						opt_layer->SetPayload(opt_data + 2, optlen - 2);
+						if(optlen > 2)
+							opt_layer->SetPayload(opt_data + 2, optlen - 2);
 						break;
 					}
 
@@ -428,6 +433,11 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 				PushLayer(*trp_layer);
 				delete trp_layer;
 				return;
+
+			} else {
+
+				PushLayer(*trp_layer);
+				delete trp_layer;
 
 			}
 
@@ -537,13 +547,6 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                     }
                 }
 
-	}
-
-	/* Done with transport layer */
-
-	if(trp_layer){
-		PushLayer(*trp_layer);
-		delete trp_layer;
 	}
 
 	size_t data_length = length;
