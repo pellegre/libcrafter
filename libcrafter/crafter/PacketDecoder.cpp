@@ -528,8 +528,8 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                                         icmp_extension_object_length -= n_pay;
                                         length -= n_pay;
                                         extension_data += n_pay;
-                                        delete icmp_extension_layer;
                                     }
+                                    delete icmp_extension_layer;
                                 /* If not, just put a raw layer and exit, we don't have enough information to continue parsing */
                                 } else {
                                     RawLayer rawdata(extension_data, length);
