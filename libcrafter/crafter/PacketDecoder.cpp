@@ -463,12 +463,32 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 
                         if (length > 0) {
                             ICMPExtension icmp_extension;
+
+                            /* Check if the data fit into the header */
+                    		if(icmp_extension.GetSize() > length) {
+                    			/* Create Raw layer */
+                    			RawLayer rawdata(data + n_ip + n_trp + icmp_length, length);
+                    			PushLayer(rawdata);
+                    			/* That's all */
+                    			return;
+                    		}
+
                             size_t n_ext = icmp_extension.PutData(data + n_ip + n_trp + icmp_length);
                             length -= n_ext;
                             PushLayer(icmp_extension);
                             const byte *extension_data = data + n_ip + n_trp + icmp_length + n_ext;
                             while (length > 0) {
                                 ICMPExtensionObject icmp_extension_object_header;
+
+                                /* Check if the data fit into the header */
+                        		if(icmp_extension_object_header.GetSize() > length) {
+                        			/* Create Raw layer */
+                        			RawLayer rawdata(extension_data, length);
+                        			PushLayer(rawdata);
+                        			/* That's all */
+                        			return;
+                        		}
+
                                 size_t n_objhdr = icmp_extension_object_header.PutData(extension_data);
                                 PushLayer(icmp_extension_object_header);
                                 length -= n_objhdr;
@@ -483,6 +503,16 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                                 if(icmp_extension_layer) {
                                     /* Some ICMP extensions (such as MPLS) have more than one entry */
                                     while (length > 0 && icmp_extension_object_length > 0) {
+
+                                    	/* Check if the data fit into the header */
+                                		if(icmp_extension_layer->GetSize() > length) {
+                                			/* Create Raw layer */
+                                			RawLayer rawdata(extension_data, length);
+                                			PushLayer(rawdata);
+                                			/* That's all */
+                                			return;
+                                		}
+
                                         size_t n_pay = icmp_extension_layer->PutData(extension_data);
                                         PushLayer(*icmp_extension_layer);
                                         icmp_extension_object_length -= n_pay;
