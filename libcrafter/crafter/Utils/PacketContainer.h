@@ -122,12 +122,14 @@ namespace Crafter {
 
 		/* Assign the values */
 		FowardIter begin = pair->beginIterator;
+		int num_threads = pair->num_threads;
 		FowardIter end = pair->endIterator;
-
-		ApplyPacketFunction(begin,end,&Packet::Send,pair->iface);
-
-		for (int i = start ; i < total ; i += num_threads)
-			(*PktContainer)[i]->Send(pair->iface);
+		/* Count packets */
+		size_t count = 0;
+		while(begin < end) {
+			(*begin)->Send(pair->iface);
+			advance(begin,num_threads);
+		}
 
 		delete pair;
 
