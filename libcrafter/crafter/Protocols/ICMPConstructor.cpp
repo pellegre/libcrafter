@@ -58,5 +58,6 @@ void ICMP::DefineProtocol() {
     Fields.push_back(new ByteField("Pointer",1,0));
     Fields.push_back(new IPAddress("Gateway",1,0));
     Fields.push_back(new ByteField("Length",1,1));
+    Fields.push_back(new ShortField("MTUNextHOP",1,2));
 }
 

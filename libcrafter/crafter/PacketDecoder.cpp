@@ -263,21 +263,24 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 					opt_layer->PutData(opt_data);
 					optlen = opt_layer->GetLength();
 					if(optlen > cnt) optlen = cnt;
-					opt_layer->SetPayload(opt_data + 3, optlen - 3);
+					if(optlen > 2)
+						opt_layer->SetPayload(opt_data + 3, optlen - 3);
 					break;
 				case IPOPT_RR:
 					opt_layer = new IPOptionRR;
 					opt_layer->PutData(opt_data);
 					optlen = opt_layer->GetLength();
 					if(optlen > cnt) optlen = cnt;
-					opt_layer->SetPayload(opt_data + 3, optlen - 3);
+					if(optlen > 2)
+						opt_layer->SetPayload(opt_data + 3, optlen - 3);
 					break;
 				case IPOPT_SSRR:
 					opt_layer = new IPOptionSSRR;
 					opt_layer->PutData(opt_data);
 					optlen = opt_layer->GetLength();
 					if(optlen > cnt) optlen = cnt;
-					opt_layer->SetPayload(opt_data + 3, optlen - 3);
+					if(optlen > 2)
+						opt_layer->SetPayload(opt_data + 3, optlen - 3);
 					break;
 				default:
 					/* Generic Option Header */
@@ -285,7 +288,8 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 					opt_layer->PutData(opt_data);
 					optlen = opt_layer->GetLength();
 					if(optlen > cnt) optlen = cnt;
-					opt_layer->SetPayload(opt_data + 2, optlen - 2);
+					if(optlen > 2)
+						opt_layer->SetPayload(opt_data + 2, optlen - 2);
 					break;
 				}
 
@@ -407,7 +411,8 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 						opt_layer->PutData(opt_data);
 						optlen = opt_layer->GetLength();
 						if(optlen > cnt) optlen = cnt;
-						opt_layer->SetPayload(opt_data + 2, optlen - 2);
+						if(optlen > 2)
+							opt_layer->SetPayload(opt_data + 2, optlen - 2);
 						break;
 					}
 
@@ -428,6 +433,11 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 				PushLayer(*trp_layer);
 				delete trp_layer;
 				return;
+
+			} else {
+
+				PushLayer(*trp_layer);
+				delete trp_layer;
 
 			}
 
@@ -463,28 +473,72 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 
                         if (length > 0) {
                             ICMPExtension icmp_extension;
+
+                            /* Check if the data fit into the header */
+                    		if(icmp_extension.GetSize() > length) {
+                    			/* Create Raw layer */
+                    			RawLayer rawdata(data + n_ip + n_trp + icmp_length, length);
+                    			PushLayer(rawdata);
+                    			/* That's all */
+                    			return;
+                    		}
+
                             size_t n_ext = icmp_extension.PutData(data + n_ip + n_trp + icmp_length);
                             length -= n_ext;
                             PushLayer(icmp_extension);
                             const byte *extension_data = data + n_ip + n_trp + icmp_length + n_ext;
                             while (length > 0) {
                                 ICMPExtensionObject icmp_extension_object_header;
+
+                                /* Check if the data fit into the header */
+                        		if(icmp_extension_object_header.GetSize() > length) {
+                        			/* Create Raw layer */
+                        			RawLayer rawdata(extension_data, length);
+                        			PushLayer(rawdata);
+                        			/* That's all */
+                        			return;
+                        		}
+
                                 size_t n_objhdr = icmp_extension_object_header.PutData(extension_data);
                                 PushLayer(icmp_extension_object_header);
                                 length -= n_objhdr;
                                 extension_data += n_objhdr;
                                 word icmp_extension_object_length = icmp_extension_object_header.GetLength() - n_objhdr;
                                 std::string icmp_extension_object_name = icmp_extension_object_header.GetClassName();
-                                /* Some ICMP extensions (such as MPLS) have more than one entry */
-                                while (length > 0 && icmp_extension_object_length > 0) {
-                                    Layer* icmp_extension_layer = Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
-                                    size_t n_pay = icmp_extension_layer->PutData(extension_data);
-                                    PushLayer(*icmp_extension_layer);
-                                    icmp_extension_object_length -= n_pay;
-                                    length -= n_pay;
-                                    extension_data += n_pay;
+
+                                /* Get the extension layer */
+                                Layer* icmp_extension_layer = Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
+
+                                /* Check if the extension layer exist */
+                                if(icmp_extension_layer) {
+                                    /* Some ICMP extensions (such as MPLS) have more than one entry */
+                                    while (length > 0 && icmp_extension_object_length > 0) {
+
+                                    	/* Check if the data fit into the header */
+                                		if(icmp_extension_layer->GetSize() > length) {
+                                			/* Create Raw layer */
+                                			RawLayer rawdata(extension_data, length);
+                                			PushLayer(rawdata);
+                                			/* That's all */
+                                			return;
+                                		}
+
+                                        size_t n_pay = icmp_extension_layer->PutData(extension_data);
+                                        PushLayer(*icmp_extension_layer);
+                                        icmp_extension_object_length -= n_pay;
+                                        length -= n_pay;
+                                        extension_data += n_pay;
+                                        delete icmp_extension_layer;
+                                    }
+                                /* If not, just put a raw layer and exit, we don't have enough information to continue parsing */
+                                } else {
+                                    RawLayer rawdata(extension_data, length);
+                                    PushLayer(rawdata);
                                     delete icmp_extension_layer;
+                                    delete trp_layer;
+                                    return;
                                 }
+
                             }
                         }
 
@@ -493,13 +547,6 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                     }
                 }
 
-	}
-
-	/* Done with transport layer */
-
-	if(trp_layer){
-		PushLayer(*trp_layer);
-		delete trp_layer;
 	}
 
 	size_t data_length = length;
