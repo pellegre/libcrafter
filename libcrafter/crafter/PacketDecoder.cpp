@@ -203,11 +203,12 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 		/* The first bytes are an IPv4 layer */
 		IP* ip_layer = new IP;
 
-		/* Check if the data don't fit into an ethernet header */
+		/* Check if the data don't fit into an ip header */
 		if(ip_layer->GetSize() > length) {
 			/* Create Raw layer */
 			RawLayer rawdata(data, length);
 			PushLayer(rawdata);
+			delete ip_layer;
 			/* That's all */
 			return;
 		}
@@ -245,6 +246,8 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 				if (opt == IPOPT_EOL) {
 					opt_layer = new IPOptionPad;
 					opt_layer->PutData(opt_data);
+					PushLayer(*opt_layer);
+					delete opt_layer;
 					break;
 				}
 
@@ -295,11 +298,15 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 
 				optlen = opt_layer->GetSize();
 				PushLayer(*opt_layer);
+
+				delete opt_layer;
             }
 
             /* Update the length of the packet */
             length -= IP_opt_size;
             n_ip += IP_opt_size;
+
+			delete net_layer;
 
 		/* In case the packet is lying about the real size */
 		} else if (IP_opt_size > length && IP_opt_size > 0) {
@@ -388,6 +395,8 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 					if (opt == TCPOPT_EOL) {
 						opt_layer = new TCPOptionPad;
 						opt_layer->PutData(opt_data);
+						PushLayer(*opt_layer);
+						delete opt_layer;
 						break;
 					}
 
@@ -418,11 +427,16 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
 
 					optlen = opt_layer->GetSize();
 					PushLayer(*opt_layer);
+
+					delete opt_layer;
+
                 }
 
                 /* Update the length of the packet */
                 length -= TCP_opt_size;
                 n_trp += TCP_opt_size;
+
+				delete trp_layer;
 
 			/* In case the packet is lying about the real size */
 			} else if (TCP_opt_size > length && TCP_opt_size > 0) {
@@ -545,7 +559,15 @@ void Packet::GetFromIP(word ip_type, const byte* data, size_t length) {
                         delete trp_layer;
                         return;
                     }
-                }
+
+                    PushLayer(*trp_layer);
+                    delete trp_layer;
+		} else {
+
+            PushLayer(*trp_layer);
+            delete trp_layer;
+
+		}
 
 	}
 
