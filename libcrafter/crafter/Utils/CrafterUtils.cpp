@@ -320,6 +320,49 @@ vector<string>* Crafter::ParseIP(const string& str_argv) {
 	return IPAddr;
 }
 
+vector<string> Crafter::GetIPs(const string& str_argv) {
+	/* Container of IP addresses */
+	vector<string> IPAddr;
+
+	/* context to hold state of ip range */
+	ipv4_parse_ctx ctx;
+	unsigned int addr = 0;
+	int ret = 0;
+
+	size_t argv_size = str_argv.size() + 1;
+	char* argv = new char[argv_size];
+	strncpy(argv,str_argv.c_str(),argv_size);
+	/* Perform initial parsing of ip range */
+
+	ret = ipv4_parse_ctx_init(&ctx, argv);
+	if(ret < 0) {
+		PrintMessage(Crafter::PrintCodes::PrintError,
+				     "ParseIP()",
+		             "IP address parsing failed. Check the IP address supplied");
+		exit(1);
+	}
+
+	/* Push out each ip in range */
+
+	while(1) {
+		/* get next ip in range */
+		ret = ipv4_parse_next (&ctx, &addr);
+		if(ret < 0)
+			break;
+
+		char ip_address[16];
+
+		/* Print this out on a char array */
+		sprintf(ip_address, "%d.%d.%d.%d", (addr >> 0) & 0xFF, (addr >> 8) & 0xFF, (addr >> 16) & 0xFF, (addr >> 24) & 0xFF);
+
+		/* Push in the container */
+		IPAddr.push_back(string(ip_address));
+	}
+
+	delete [] argv;
+	return IPAddr;
+}
+
 /* Convert a container of ip address strings into raw data in network byte order */
 vector<byte> Crafter::IPtoRawData(const vector<string>& ips) {
 	/* Get the size of the byte data */

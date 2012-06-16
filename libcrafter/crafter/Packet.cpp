@@ -557,7 +557,7 @@ Packet* Packet::SendRecv(const string& iface, double timeout, int retry, const s
 				PrintMessage(Crafter::PrintCodes::PrintError,
 						     "Packet::SendRecv()",
 			                 "Error calling pcap_next_ex() " + string(pcap_geterr (handle)));
-			  exit (1);
+			  return 0;
 			}
 			/* Otherwise return should be -2 */
 		}
