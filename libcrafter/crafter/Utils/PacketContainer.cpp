@@ -352,6 +352,8 @@ void Crafter::PacketContainer::ReadPcap(const std::string& filename, const std::
 	  /* Otherwise return should be -2, meaning pcap_breakloop has been called */
 	}
 
+	pcap_close(handle);
+
 }
 
 /* Send the packets */
