@@ -40,17 +40,15 @@ namespace Crafter {
 	struct ThreadData {
 		/* Container interators */
 		FowardIter beginIterator;
-		FowardIter endIterator;
 		FowardIter outputIterator;
 		/* Arguments for sending */
 		std::string iface;
 		int num_threads;
+		size_t start_count;
+		size_t total;
 		double timeout;
 		int retry;
 	};
-
-	/* Function called by a thread to send some packets */
-	void* SendThread(void* thread_arg);
 
 	class PacketContainer : public std::vector<Packet*> {
 
@@ -115,20 +113,21 @@ namespace Crafter {
 
 	/* This function is executed by a thread */
 	template<typename FowardIter>
-	void* SendThread(void* thread_arg) {
+	void* SendThreadIterator(void* thread_arg) {
 
 		/* Cast the argument */
 		ThreadData<FowardIter>* pair = static_cast<ThreadData<FowardIter> *>(thread_arg);
 
 		/* Assign the values */
-		FowardIter begin = pair->beginIterator;
 		int num_threads = pair->num_threads;
-		FowardIter end = pair->endIterator;
+		FowardIter begin = pair->beginIterator;
+		size_t total = pair->total;
 		/* Count packets */
-		size_t count = 0;
-		while(begin < end) {
+		size_t count = pair->start_count;
+		while(count < total) {
 			(*begin)->Send(pair->iface);
 			advance(begin,num_threads);
+			count += num_threads;
 		}
 
 		delete pair;
@@ -153,17 +152,18 @@ namespace Crafter {
 
 			/* Start value on the container */
 			pair->beginIterator = advance(begin,i);
+			/* Start value for the counter */
+			pair->start_count = i;
 			/* Put the number of threads */
 			pair->num_threads = num_threads;
 			/* Put the size of the container */
-			pair->endIterator = end;
-
+			pair->total = total;
 			/* Set the arguments for the SendRecv function */
 			pair->iface = iface;
 
 			void* thread_arg = static_cast<void *>(pair);
 
-			int rc = pthread_create(&threads[i], NULL, SendThread, thread_arg);
+			int rc = pthread_create(&threads[i], NULL, SendThreadIterator<FowardIter>, thread_arg);
 
 			if (rc) {
 				PrintMessage(Crafter::PrintCodes::PrintError,
@@ -196,7 +196,10 @@ namespace Crafter {
 
 	template<typename FowardIter>
 	void Send(FowardIter begin, FowardIter end, const std::string& iface = "", int num_threads = 0) {
-		ApplyPacketFunction(begin,end,&Packet::Send,iface);
+		if(num_threads == 0)
+			ApplyPacketFunction(begin,end,&Packet::Send,iface);
+		else
+			SendMultiThread(begin,end,iface,num_threads);
 	}
 
 }
