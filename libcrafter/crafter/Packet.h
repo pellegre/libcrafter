@@ -34,8 +34,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/socket.h>
 #include <pcap.h>
 
-#include "Layer.h"
-#include "Protocols/RawLayer.h"
+#include "Crafter.h"
+#include "Utils/RawSocket.h"
 
 namespace Crafter {
 
@@ -117,6 +117,8 @@ typedef std::vector<Layer*> LayerStack;
 
 		/* Send a packet and try to match the answer */
 		Packet* SendRecv(const std::string& iface = "",double timeout = 1, int retry = 3, const std::string& user_filter = " ");
+		template<class Pointer>
+		void SendRecvPtr(const std::string& iface, double timeout, int retry, const std::string& user_filter, Pointer& ptr);
 
 		/*
 		 * Put a packet into the wire trough a raw socket
@@ -165,6 +167,14 @@ T* Crafter::Packet::GetLayer(size_t n) const {
 		exit(1);
 		return 0;
 	}
+}
+
+/* Send a packet */
+template<class Pointer>
+void Crafter::Packet::SendRecvPtr(const std::string& iface, double timeout, int retry, const std::string& user_filter, Pointer& ptr) {
+	Packet* pck = SendRecv(iface,timeout,retry,user_filter);
+	if(pck) ptr = Pointer(pck);
+	else ptr = Pointer();
 }
 
 #endif /* PACKET_H_ */

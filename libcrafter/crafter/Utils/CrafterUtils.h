@@ -54,7 +54,8 @@ namespace Crafter {
 	void CleanCrafter();
 
 	/* Parse an IP in nmap style */
-	std::vector<std::string>* ParseIP(const std::string& argv);
+	std::vector<std::string>* ParseIP(const std::string& argv); /* DEPRECATED */
+	std::vector<std::string> GetIPs(const std::string& argv);
 
 	/* Parse an octect in nmap style */
 	std::vector<int>* ParseNumbers(const std::string& argv);
