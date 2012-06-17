@@ -90,7 +90,7 @@ void* Crafter::ARPSpoofReply(void* thread_arg) {
 
 
 	while(1) {
-		Send(context->arp_packets,context->iface,16);
+		Send(context->arp_packets->begin(),context->arp_packets->end(), context->iface,16);
 		sleep(5);
 	}
 
@@ -155,7 +155,7 @@ void Crafter::ARPNormalReply(void* thread_arg) {
 
 
 	for(int i = 0 ; i < 3 ; i++) {
-		Send(context->arp_packets,context->iface,16);
+		Send(context->arp_packets->begin(),context->arp_packets->end(),context->iface,16);
 		sleep(2);
 	}
 
