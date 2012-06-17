@@ -64,14 +64,14 @@ map<string,std::string> ARPPingSend(const string& ip_net, const string& iface, s
     /* ---------------------------------------------- */
 
 	/* Define the network to scan */
-	vector<string>* net = ParseIP(ip_net);                 // <-- Create a container of IP addresses from a "wildcard"
+	vector<string> net = GetIPs(ip_net);                 // <-- Create a container of IP addresses from a "wildcard"
 	vector<string>::iterator it_IP;                        // <-- Iterator
 
 	/* Create a PacketContainer to hold all the ARP requests */
 	PacketContainer request_packets;
 
 	/* Iterate to access each string that defines an IP address */
-	for(it_IP = net->begin() ; it_IP != net->end() ; it_IP++) {
+	for(it_IP = net.begin() ; it_IP != net.end() ; it_IP++) {
 
 		arp_header.SetTargetIP(*it_IP);                    // <-- Set a destination IP address on ARP header
 
@@ -102,7 +102,7 @@ map<string,std::string> ARPPingSend(const string& ip_net, const string& iface, s
 	 * request_packets container. Now we can Send 'Em All <send_count> times.
 	 */
 	for(size_t i = 0 ; i < send_count ; i++) {
-		request_packets.Send(iface,16);
+		Send(request_packets.begin(), request_packets.end(), iface,16);
 		sleep(1);
 	}
 
@@ -110,10 +110,7 @@ map<string,std::string> ARPPingSend(const string& ip_net, const string& iface, s
 	sniff.Cancel();
 
 	/* Delete the container with the ARP requests */
-	request_packets.ClearPackets();
-
-	/* Delete the IP address container */
-	delete net;
+	ClearContainer(request_packets);
 
 	/* Return the table */
 	return table;
@@ -141,14 +138,14 @@ map<string,std::string> ARPPingSendRcv(const string& ip_net, const string& iface
     /* ---------------------------------------------- */
 
 	/* Define the network to scan */
-	vector<string>* net = ParseIP(ip_net);                 // <-- Create a container of IP addresses from a "wildcard"
+	vector<string> net = GetIPs(ip_net);                 // <-- Create a container of IP addresses from a "wildcard"
 	vector<string>::iterator it_IP;                        // <-- Iterator
 
 	/* Create a PacketContainer to hold all the ARP requests */
 	PacketContainer request_packets;
 
 	/* Iterate to access each string that defines an IP address */
-	for(it_IP = net->begin() ; it_IP != net->end() ; it_IP++) {
+	for(it_IP = net.begin() ; it_IP != net.end() ; it_IP++) {
 
 		arp_header.SetTargetIP(*it_IP);                    // <-- Set a destination IP address on ARP header
 
@@ -170,10 +167,12 @@ map<string,std::string> ARPPingSendRcv(const string& ip_net, const string& iface
 	 * At this point, we have all the packets into the
 	 * request_packets container. Now we can Send 'Em All <send_count> times.
 	 */
-	PacketContainer* replies_packets = request_packets.SendRecv(iface,0.1,send_count,16);
+	PacketContainer replies_packets(request_packets.size());
+
+	SendRecv(request_packets.begin(), request_packets.end(), replies_packets.begin(), iface, 0.1, send_count, 16);
 
 	PacketContainer::iterator it_pck;
-	for(it_pck = replies_packets->begin() ; it_pck < replies_packets->end() ; it_pck++) {
+	for(it_pck = replies_packets.begin() ; it_pck < replies_packets.end() ; it_pck++) {
 		/* Check if the pointer is not NULL */
 		Packet* reply_packet = (*it_pck);
 		if(reply_packet) {
@@ -185,16 +184,10 @@ map<string,std::string> ARPPingSendRcv(const string& ip_net, const string& iface
 	}
 
 	/* Delete the container with the ARP requests */
-	request_packets.ClearPackets();
+	ClearContainer(request_packets);
 
 	/* Delete the container with the responses, if there is one (check the NULL pointer) */
-	replies_packets->ClearPackets();
-
-	/* Delete the container itself */
-	delete replies_packets;
-
-	/* Delete the IP address container */
-	delete net;
+	ClearContainer(replies_packets);
 
 	return table;
 }

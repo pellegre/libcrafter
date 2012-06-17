@@ -138,9 +138,6 @@ void Crafter::Sniffer::CompileFilter() {
 
     pthread_mutex_lock (&mutex_compile);
 
-	/* We'll be nice and free the memory used for the compiled filter */
-	pcap_freecode (&fp);
-
 	/* Compile the filter, so we can capture only stuff we are interested in */
 	if (pcap_compile (handle, &fp, filter.c_str(), 0, maskp) == -1) {
 		PrintMessage(Crafter::PrintCodes::PrintError,
@@ -156,6 +153,9 @@ void Crafter::Sniffer::CompileFilter() {
 		             "Setting filter: " + string(pcap_geterr (handle)));
 	  exit (1);
 	}
+
+	/* We'll be nice and free the memory used for the compiled filter */
+	pcap_freecode (&fp);
 
     pthread_mutex_unlock (&mutex_compile);
 
@@ -243,6 +243,9 @@ Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, P
 		exit (1);
 	}
 
+	/* We'll be nice and free the memory used for the compiled filter */
+	pcap_freecode (&fp);
+
 	/* Set ID of the sniffer */
 	ID = counter;
 
@@ -280,14 +283,26 @@ void Crafter::Sniffer::Capture(uint32_t count, void *user) {
 		  exit (1);
 	  }
 	  /* Otherwise return should be -2, meaning pcap_breakloop has been called */
+	  return;
 	}
 }
 
 void* SpawnThread(void* thread_arg) {
 	/* Cast back the argument */
 	SpawnData* spawn_data = static_cast<SpawnData*>(thread_arg);
+
+	/* User argument */
+	void* user = spawn_data->user;
+	/* Packet count, for Capture argument */
+	uint32_t count = spawn_data->count;
+	/* Pointer to the sniffer */
+	Sniffer* sniff_ptr = spawn_data->sniff_ptr;
+	/* Free the spawn data */
+	delete spawn_data;
+
 	/* Just capture */
-	spawn_data->sniff_ptr->Capture(spawn_data->count,spawn_data->user);
+	sniff_ptr->Capture(count,user);
+
 	/* Exit the function */
 	pthread_exit(NULL);
 }
@@ -364,8 +379,6 @@ void Sniffer::DestroyMutex() {
 Crafter::Sniffer::~Sniffer() {
 	delete sniffer_data;
 
-	/* We'll be nice and free the memory used for the compiled filter */
-	pcap_freecode (&fp);
 	/* Close our devices */
 	pcap_close (handle);
 }

@@ -50,48 +50,21 @@ namespace Crafter {
 		int retry;
 	};
 
-	class PacketContainer : public std::vector<Packet*> {
+	/* +++++++++++++++++++ Auxiliary Functions declaration  +++++++++++++++++++ */
 
-		/* Sender functions */
-		void SendMultiThread(const std::string& iface, int num_threads);
-		void SendLoop(const std::string& iface);
+	void OpenPcapDumper(int link_type, const std::string& filename, pcap_t*& pd, pcap_dumper_t*& pdumper);
 
-		/* Sender and matcher functions */
-		PacketContainer* SendRecvMultiThread(const std::string& iface, double timeout, int retry, int num_threads);
-		PacketContainer* SendRecvLoop(const std::string& iface, double timeout, int retry);
+	void ClosePcapDumper(pcap_t* pd, pcap_dumper_t* pdumper);
 
-	public:
+	void DumperPcap(pcap_dumper_t* pdumper, struct pcap_pkthdr* header, const byte* raw_data);
 
-		PacketContainer() { /* */ };
-		PacketContainer(size_t n) : std::vector<Packet*>(n) { /* */ };
+	void OpenOffPcap(int* link_type, pcap_t*& handle, const std::string& filename, const std::string& filter);
 
-		/* Copy constructor */
-		PacketContainer(const PacketContainer& cpy);
-		/* Assignment operator */
-		PacketContainer& operator=(const PacketContainer& right);
+	void LoopPcap(pcap_t *p, int cnt, pcap_handler callback, u_char *user);
 
-		/* Send the packets */
-		void Send(const std::string& iface = "", int num_threads = 0);
+	void ClosePcap(pcap_t *p);
 
-		/* Send and Receive the container  */
-		PacketContainer* SendRecv(const std::string& iface = "", double timeout = 1, int retry = 3, int num_threads = 0);
-
-		/* Dump packet container on a pcap file */
-		void DumpPcap(const std::string& filename);
-		/* Read a pcap file */
-		void ReadPcap(const std::string& filename, const std::string& filter = "");
-
-		/*
-		 * Delete all the pointer and clear the container
-		 * This function should be used only in case the packets were allocated on the heap
-		 */
-		void ClearPackets();
-
-		virtual ~PacketContainer() { /* */ };
-
-	};
-
-	/* +++++++++++++++++++ Clear Container +++++++++++++++++++++ */
+	/* +++++++++++++++++++ Apply Container +++++++++++++++++++++ */
 
 	template<class Seq>
 	void ClearContainer(Seq& seq) {
@@ -136,7 +109,7 @@ namespace Crafter {
 	template<typename FowardIter>
 	void SendMultiThread(FowardIter begin, FowardIter end, const std::string& iface, int num_threads, int ntries) {
 		/* Total number of packets */
-		size_t total = distance(begin,end);
+		int total = distance(begin,end);
 		if (total < num_threads) num_threads = total;
 
 		/* Thread array */
@@ -246,7 +219,7 @@ namespace Crafter {
 	void SendRecvMultiThread(FowardIter begin, FowardIter end, OutputIter out_begin,
 			                 const std::string& iface, double timeout, int retry, int num_threads) {
 		/* Total number of packets */
-		size_t total = distance(begin,end);
+		int total = distance(begin,end);
 		if (total < num_threads) num_threads = total;
 
 		/* Thread array */
@@ -326,6 +299,123 @@ namespace Crafter {
 	}
 
 	/* +++++++++++++++++++ Pcap dumpers and readers +++++++++++++++++++++ */
+
+	/* Pcap dumper */
+	template<typename FowardIter>
+	void DumpPcap(FowardIter begin, FowardIter end, const std::string& filename) {
+
+		/* We suppose that all the packets begin with the same layer */
+		Layer* first = *((*begin)->begin());
+
+		/* Get the link type */
+		int link_type;
+
+		if(first->GetName() == "Ethernet")
+			link_type = DLT_EN10MB;           /* Packet begin with an Ethernet layer */
+		else if (first->GetName() == "SLL")
+			link_type = DLT_LINUX_SLL;        /* Linux cooked */
+		else
+			link_type = DLT_RAW;              /* Suppose all the packets begin with an IP layer */
+
+	    pcap_t *pd;
+	    pcap_dumper_t *pdumper;
+
+	    OpenPcapDumper(link_type, filename, pd, pdumper);
+
+		while(begin != end) {
+			/* pcap header */
+			struct pcap_pkthdr header;
+			/* TODO - libcrafter don't know anything about timestamps */
+			header.ts.tv_sec = 0;
+			header.ts.tv_usec = 0;
+			size_t size = (*begin)->GetSize();
+			header.len = size;
+			header.caplen = size;
+			DumperPcap(pdumper,&header,(*begin)->GetRawPtr());
+	        begin++;
+		}
+
+		ClosePcapDumper(pd,pdumper);
+
+	}
+
+	/* Pcap reader */
+
+	template<class Seq>
+	struct ThreadReadData {
+		int link_type;
+		Seq* pck_container;
+	};
+
+	template<class Pointer>
+	inline void PutPacket(size_t len, int link_type, const u_char* packet, Pointer& pck_ptr) {
+		/* New packet on the heap */
+		pck_ptr = Pointer(new Packet);
+
+		/* Construct the packet */
+		if(link_type == DLT_RAW)
+			pck_ptr->PacketFromIP(packet,len);
+		else
+			pck_ptr->PacketFromLinkLayer(packet, len,link_type);
+	}
+
+	/* Callback function to process a packet when readed */
+	template<class Seq>
+	static void process_thread (u_char *user, const struct pcap_pkthdr *header, const u_char *packet) {
+
+		/* Argument for packet handling */
+		ThreadReadData<Seq>* total_arg = reinterpret_cast<ThreadReadData<Seq>*>(user);
+
+		/* Get the container */
+		Seq* cont = total_arg->pck_container;
+		/* Get size of the vector */
+		size_t current_size = cont->size();
+		cont->resize(current_size + 1);
+
+		/* Push this packet into the container */
+		PutPacket(header->len, total_arg->link_type, packet, cont->back());
+
+	}
+
+	template<class Seq>
+	void ReadPcap(Seq* pck_container, const std::string& filename, const std::string& filter = "") {
+		/* Handle for the opened pcap session */
+		pcap_t *handle;
+		/* Type of link layer of the interface */
+		int link_type;
+
+		OpenOffPcap(&link_type,handle,filename,filter);
+
+		/* Prepare the data */
+		ThreadReadData<Seq> rd;
+		rd.link_type = link_type;
+		rd.pck_container = pck_container;
+
+		u_char* arg = reinterpret_cast<u_char*>(&rd);
+
+		LoopPcap(handle,-1,process_thread<Seq>,arg);
+
+		ClosePcap(handle);
+	}
+
+	/* ---------------- Send an Receive functions (wrappers for backward compatibility) -------------- */
+
+	/* DEPRECATED functions */
+
+	typedef std::vector<Packet*> PacketContainer;
+
+	/* Dump packet container on a pcap file */
+	void DumpPcap(const std::string& filename, PacketContainer* pck_container);
+
+	/* Read a pcap file */
+	PacketContainer* ReadPcap(const std::string& filename, const std::string& filter = "");
+
+	/* Send and Receive a container of packet - Multithreading */
+	PacketContainer* SendRecv(PacketContainer* pck_container, const std::string& iface = "",
+			                  int num_threads = 16, double timeout = 1, int retry = 3);
+
+	/* Send a container of packet - Multithreading */
+	void Send(PacketContainer* pck_container, const std::string& iface = "", int num_threads = 16);
 }
 
 #endif /* PACKETCONTAINER_H_ */

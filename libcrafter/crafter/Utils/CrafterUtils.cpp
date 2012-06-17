@@ -520,29 +520,6 @@ void Crafter::CraftLayer(Layer* layer) {
 	layer->Craft();
 }
 
-/* Dump packet container on a pcap file */
-void Crafter::DumpPcap(const std::string& filename, PacketContainer* pck_container) {
-	pck_container->DumpPcap(filename);
-}
-
-/* Read a pcap file */
-PacketContainer* Crafter::ReadPcap(const std::string& filename, const std::string& filter) {
-	PacketContainer* pck_ptr = new PacketContainer;
-	pck_ptr->ReadPcap(filename,filter);
-	return pck_ptr;
-}
-
-/* Send and Receive a container of packet - Multithreading */
-PacketContainer* Crafter::SendRecv(PacketContainer* pck_container, const std::string& iface,
-		                  int num_threads, double timeout, int retry) {
-	return pck_container->SendRecv(iface,timeout,retry,num_threads);
-}
-
-/* Send a container of packet - Multithreading */
-void Crafter::Send(PacketContainer* pck_container, const std::string& iface, int num_threads) {
-	pck_container->Send(iface,num_threads);
-}
-
 void Crafter::InitCrafter() {
 
 	IPOptionSSRR ipssrr_dummy;

@@ -75,21 +75,6 @@ namespace Crafter {
 		return dynamic_cast<T*>(layer);
 	}
 
-	/* ---------------- Send an Receive functions (wrappers for backward compatibility) -------------- */
-
-	/* Dump packet container on a pcap file */
-	void DumpPcap(const std::string& filename, PacketContainer* pck_container);
-
-	/* Read a pcap file */
-	PacketContainer* ReadPcap(const std::string& filename, const std::string& filter = "");
-
-	/* Send and Receive a container of packet - Multithreading */
-	PacketContainer* SendRecv(PacketContainer* pck_container, const std::string& iface = "",
-			                  int num_threads = 16, double timeout = 1, int retry = 3);
-
-	/* Send a container of packet - Multithreading */
-	void Send(PacketContainer* pck_container, const std::string& iface = "", int num_threads = 16);
-
 	/* --------------- Search layers by protocols -------------- */
 
 	ARP* GetARP(const Packet& packet);
