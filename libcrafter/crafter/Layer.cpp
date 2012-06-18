@@ -296,14 +296,7 @@ size_t Crafter::Layer::GetPayload(byte* dst) const {
 	return LayerPayload.GetPayload(dst);
 }
 
-Crafter::Layer::Layer() {
-	/* Put size to zero */
-	size = 0;
-	raw_data = 0;
-	/* Init bottom and top layer pointer */
-	BottomLayer = 0;
-	TopLayer = 0;
-}
+Crafter::Layer::Layer() : size(0), bytes_size(0), raw_data(0), BottomLayer(0), TopLayer(0) { }
 
 Crafter::Layer::Layer(const Layer& layer) {
 	/* Put size to zero */

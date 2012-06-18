@@ -55,24 +55,15 @@ namespace Crafter {
 
 	public:
 
-		Payload() {
+		Payload() : IsReadable(1) {
 			/* Reserve */
 			storage.reserve(reserved);
-			/* By default is readable */
-			IsReadable = 1;
 		};
 
 		/* Copy constructor */
-		Payload(const Payload& payload) {
-			/* Reserve */
-			storage.reserve(reserved);
-			storage = payload.storage;
-			IsReadable = payload.IsReadable;
-		};
+		Payload(const Payload& payload) : IsReadable(payload.IsReadable), storage(payload.storage) { };
 
-		Payload(const std::vector<byte>& raw_data) {
-			/* By default is readable */
-			IsReadable = 1;
+		Payload(const std::vector<byte>& raw_data) : IsReadable(1) {
 			storage.reserve(reserved);
 			SetPayload(&raw_data[0],raw_data.size());
 		};
