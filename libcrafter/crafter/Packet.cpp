@@ -165,6 +165,27 @@ void Packet::PopLayer() {
 	}
 
 }
+Layer* Packet::operator[](size_t pos) {
+	if(pos < Stack.size())
+		return Stack[pos];
+	else {
+		Crafter::PrintMessage(Crafter::PrintCodes::PrintWarning,
+				     "Packet::operator[]",
+		             "Layer requested out of bounds.");
+		return 0;
+	}
+}
+
+const Layer* Packet::operator[](size_t pos) const {
+	if(pos < Stack.size())
+		return Stack[pos];
+	else {
+		Crafter::PrintMessage(Crafter::PrintCodes::PrintWarning,
+				     "Packet::operator[]",
+		             "Layer requested out of bounds.");
+		return 0;
+	}
+}
 
 /* Copy Constructor */
 Packet::Packet(const Packet& copy_packet) {
