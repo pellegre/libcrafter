@@ -39,7 +39,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace Crafter {
 
-typedef std::vector<Layer*> LayerStack;
+	typedef std::vector<Layer*> LayerStack;
 
 	class Packet {
 
@@ -127,7 +127,8 @@ typedef std::vector<Layer*> LayerStack;
 		int SocketSend(int sd);
 
 		/* Print each layer of the packet */
-		void Print(std::ostream& str = std::cout) const;
+		void Print(std::ostream& str) const;
+		void Print() const;
 
 		/* Print Data as a raw string */
 		void RawString(std::ostream& str = std::cout);
@@ -137,8 +138,13 @@ typedef std::vector<Layer*> LayerStack;
 
 		/* -------------- Layer Manipulation functions ------------- */
 
-		template<class T>
-		T* GetLayer(size_t n) const;
+		/* Get a layer from the position on the stack */
+		template<class Protocol>
+		Protocol* GetLayer(size_t n) const;
+
+		/* Get a layer of a specific type */
+		template<class Protocol>
+		Protocol* GetLayer() const;
 
 		/* Foward Iterators */
 		LayerStack::iterator begin() { return Stack.begin(); };
@@ -158,15 +164,27 @@ typedef std::vector<Layer*> LayerStack;
 
 }
 
-template<class T>
-T* Crafter::Packet::GetLayer(size_t n) const {
+template<class Protocol>
+Protocol* Crafter::Packet::GetLayer(size_t n) const {
 	if (n < Stack.size())
-		return dynamic_cast<T*>(Stack[n]);
+		return dynamic_cast<Protocol*>(Stack[n]);
 	else {
 		std::cerr << "[!] ERROR: Packet Stack out of bounds! Aborting... " << std::endl;
 		exit(1);
 		return 0;
 	}
+}
+
+template<class Protocol>
+Protocol* Crafter::Packet::GetLayer() const {
+	/* Search layer one by one */
+	LayerStack::const_iterator it_layer;
+	for (it_layer = begin() ; it_layer != end() ; ++it_layer)
+		if ((*it_layer)->GetID() == Protocol::PROTO)
+			return dynamic_cast<Protocol*>( (*it_layer) );
+
+	/* No requested layer, returns zero */
+	return 0;
 }
 
 /* Send a packet */
