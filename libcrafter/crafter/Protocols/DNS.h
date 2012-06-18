@@ -94,12 +94,8 @@ namespace Crafter {
 		/* Constructor, define number of words and registration */
 		DNS();
 
-		DNS(const DNS& dns) : Layer(dns) {
-			Queries = dns.Queries;
-			Answers = dns.Answers;
-			Authority = dns.Authority;
-			Additional = dns.Additional;
-		};
+		DNS(const DNS& dns) : Layer(dns), Queries(dns.Queries), Answers(dns.Answers),
+				              Authority(dns.Authority) , Additional(dns.Additional) { };
 
 		/* Assignment operator of this class */
 		DNS& operator=(const DNS& right) {

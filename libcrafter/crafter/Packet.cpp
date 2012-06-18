@@ -188,12 +188,7 @@ const Layer* Packet::operator[](size_t pos) const {
 }
 
 /* Copy Constructor */
-Packet::Packet(const Packet& copy_packet) {
-	/* Init the size in bytes of the packet */
-	bytes_size = 0;
-	/* Init the pointer */
-	raw_data = 0;
-
+Packet::Packet(const Packet& copy_packet) : raw_data(0), bytes_size(0) {
 	/* Push layer one by one */
 	vector<Layer*>::const_iterator it_layer;
 	for (it_layer = copy_packet.Stack.begin() ; it_layer != copy_packet.Stack.end() ; ++it_layer)
@@ -247,12 +242,7 @@ Packet& Packet::operator=(const Layer& right) {
 }
 
 /* Copy Constructor */
-Packet::Packet(const Layer& copy_layer) {
-	/* Init the size in bytes of the packet */
-	bytes_size = 0;
-	/* Init the pointer */
-	raw_data = 0;
-
+Packet::Packet(const Layer& copy_layer) : raw_data(0), bytes_size(0) {
 	/* Push layer one by one */
 	PushLayer(copy_layer);
 }

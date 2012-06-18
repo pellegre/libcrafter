@@ -29,12 +29,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 using namespace std;
 
-Crafter::FieldInfo::FieldInfo(const std::string& name, word nword, word bitpos, word length) {
-	this->name = name;
-	this->nword = nword;
-	this->bitpos = bitpos;
-	this->length = length;
-	this->field_set = 0;
+Crafter::FieldInfo::FieldInfo(const std::string& name, word nword, word bitpos, word length) :
+	name(name), nword(nword), bitpos(bitpos), length(length), field_set(0) {
 
 	if(bitpos > 31)
 		cerr << "[@] ERROR on FieldInfo: bitpos = " << bitpos << " ; name = " << name << endl;
