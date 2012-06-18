@@ -408,58 +408,23 @@ vector<string> Crafter::RawDatatoIP(const vector<byte>& raw_data) {
 }
 
 ARP* Crafter::GetARP(const Packet& packet) {
-	/* Search layer one by one */
-	LayerStack::const_iterator it_layer;
-	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetID() == ARP::PROTO)
-			return dynamic_cast<ARP*>( (*it_layer) );
-
-	/* No requested layer, returns zero */
-	return 0;
+	return packet.GetLayer<ARP>();
 }
 
 Ethernet* Crafter::GetEthernet(const Packet& packet) {
-	/* Search layer one by one */
-	LayerStack::const_iterator it_layer;
-	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetID() == Ethernet::PROTO)
-			return dynamic_cast<Ethernet*>( (*it_layer) );
-
-	/* No requested layer, returns zero */
-	return 0;
+	return packet.GetLayer<Ethernet>();
 }
 
 ICMP* Crafter::GetICMP(const Packet& packet){
-	/* Search layer one by one */
-	LayerStack::const_iterator it_layer;
-	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetID() == ICMP::PROTO)
-			return dynamic_cast<ICMP*>( (*it_layer) );
-
-	/* No requested layer, returns zero */
-	return 0;
+	return packet.GetLayer<ICMP>();
 }
 
 IP* Crafter::GetIP(const Packet& packet){
-	/* Search layer one by one */
-	LayerStack::const_iterator it_layer;
-	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetID() == IP::PROTO)
-			return dynamic_cast<IP*>( (*it_layer) );
-
-	/* No requested layer, returns zero */
-	return 0;
+	return packet.GetLayer<IP>();
 }
 
 IPv6* Crafter::GetIPv6(const Packet& packet){
-	/* Search layer one by one */
-	LayerStack::const_iterator it_layer;
-	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetID() == IPv6::PROTO)
-			return dynamic_cast<IPv6*>( (*it_layer) );
-
-	/* No requested layer, returns zero */
-	return 0;
+	return packet.GetLayer<IPv6>();
 }
 
 IPLayer* Crafter::GetIPLayer(const Packet& packet) {
@@ -474,36 +439,15 @@ IPLayer* Crafter::GetIPLayer(const Packet& packet) {
 }
 
 TCP* Crafter::GetTCP(const Packet& packet){
-	/* Search layer one by one */
-	LayerStack::const_iterator it_layer;
-	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetID() == TCP::PROTO)
-			return dynamic_cast<TCP*>( (*it_layer) );
-
-	/* No requested layer, returns zero */
-	return 0;
+	return packet.GetLayer<TCP>();
 }
 
 UDP* Crafter::GetUDP(const Packet& packet){
-	/* Search layer one by one */
-	LayerStack::const_iterator it_layer;
-	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetID() == UDP::PROTO)
-			return dynamic_cast<UDP*>( (*it_layer) );
-
-	/* No requested layer, returns zero */
-	return 0;
+	return packet.GetLayer<UDP>();
 }
 
 RawLayer* Crafter::GetRawLayer(const Packet& packet){
-	/* Search layer one by one */
-	LayerStack::const_iterator it_layer;
-	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetID() == RawLayer::PROTO)
-			return dynamic_cast<RawLayer*>( (*it_layer) );
-
-	/* No requested layer, returns zero */
-	return 0;
+	return packet.GetLayer<RawLayer>();
 }
 
 const Packet Crafter::operator/(const Layer& left, const Layer& right) {

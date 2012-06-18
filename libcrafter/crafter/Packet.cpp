@@ -116,6 +116,10 @@ void Packet::Print(ostream& str) const {
 		(*it_layer)->Print(str);
 }
 
+void Packet::Print() const {
+	Print(std::cout);
+}
+
 void Packet::PushLayer(const Layer& user_layer) {
 	/* Create a new layer from the one that was supplied by the user */
 	Layer* layer = Protocol::AccessFactory()->GetLayerByName(user_layer.GetName());
