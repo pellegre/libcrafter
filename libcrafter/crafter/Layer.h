@@ -145,7 +145,7 @@ namespace Crafter {
 			BottomLayer = bottom_layer;
 		};
 
-		/* Get pointer to the layer on top */
+		/* Get pointer to the layer on bottom */
 		Layer *GetBottomLayer() const {
 			return BottomLayer;
 		};
@@ -167,32 +167,31 @@ namespace Crafter {
 		 * This function re-set the Active Fields on the layer. For
 		 * default it does nothing. But, for example, the ICMP layer
 		 * have some fields that depends on the type of message, so
-		 * in function of that the active fields should be re-seted.
+		 * in function the active fields should be re-seted.
 		 * This function is called after the construction of the layer
 		 * from raw data.
 		 */
 		virtual void ReDefineActiveFields() {/* */};
 
 		/*
-		 * Function that defines the protocol of this layer. Name,
-		 * fields, ID, etc.
+		 * Function that defines the fields of this layer.
 		 */
 		virtual void DefineProtocol() = 0;
 
-		/* This function returns a contructor of this class */
+		/* This function returns a constructor of this class */
 		virtual Constructor GetConstructor() const = 0;
 
 		/*
 		 * This function is the most important. With the information of
 		 * the whole packet, it should complete some data in the layer.
-		 * For example, the checksum, next protocol, size, etc. Finally,
-		 * the final craft layer should be write out on <buffer>.
+		 * For example, the checksum, next protocol, size, etc.
 		 */
 		virtual void Craft() = 0;
 
 		/* Add info to a filter for capture the matching packet */
 		virtual std::string MatchFilter() const { return " "; };
 
+		/* Print tha layer content and payload */
 		virtual void PrintFields(std::ostream& str) const;
 		virtual void PrintPayload(std::ostream& str) const;
 
@@ -249,7 +248,7 @@ namespace Crafter {
 
 		/*
 		 * This function construct the layer from raw data and
-		 * returns the pointer at the end of the buffer
+		 * returns the number of bytes read
 		 */
 		size_t PutData(const byte* data);
 
@@ -287,6 +286,7 @@ namespace Crafter {
 
 		/* Returns the payload as a STL string */
 		std::string GetStringPayload() const { return LayerPayload.GetString(); };
+
 		/* --------------------------------------------------- */
 
 		virtual ~Layer();

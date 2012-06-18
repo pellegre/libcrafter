@@ -146,6 +146,10 @@ namespace Crafter {
 		template<class Protocol>
 		Protocol* GetLayer() const;
 
+		/* Get next layer of a specific type from a start point */
+		template<class Protocol>
+		Protocol* GetLayer(const Protocol* layer_ptr) const;
+
 		/* Foward Iterators */
 		LayerStack::iterator begin() { return Stack.begin(); };
 		LayerStack::iterator end() { return Stack.end(); };
@@ -158,6 +162,13 @@ namespace Crafter {
 		LayerStack::const_reverse_iterator rbegin() const { return Stack.rbegin(); };
 		LayerStack::const_reverse_iterator rend() const { return Stack.rend(); };
 
+		/* Get the numbers of layers on the stack */
+		size_t GetLayerCount() const { return Stack.size(); } ;
+
+		/* Get reference to a layer */
+		Layer* operator[](size_t pos);
+		const Layer* operator[](size_t pos) const;
+
 		/* Destructor */
 		virtual ~Packet();
 	};
@@ -169,8 +180,9 @@ Protocol* Crafter::Packet::GetLayer(size_t n) const {
 	if (n < Stack.size())
 		return dynamic_cast<Protocol*>(Stack[n]);
 	else {
-		std::cerr << "[!] ERROR: Packet Stack out of bounds! Aborting... " << std::endl;
-		exit(1);
+		Crafter::PrintMessage(Crafter::PrintCodes::PrintWarning,
+				     "Packet::GetLayer(size_t n)",
+		             "Layer requested out of bounds.");
 		return 0;
 	}
 }
@@ -185,6 +197,21 @@ Protocol* Crafter::Packet::GetLayer() const {
 
 	/* No requested layer, returns zero */
 	return 0;
+}
+
+template<class Protocol>
+Protocol* Crafter::Packet::GetLayer(const Protocol* layer_ptr) const {
+	/* Get next layer on the packet */
+	Crafter::Layer* next_layer = layer_ptr->GetTopLayer();
+
+	/* Go trough each layer */
+	while(next_layer) {
+		if(next_layer->GetID() == Protocol::PROTO)
+			break;
+	}
+
+	/* Return the layer with the searched ID or a null pointer */
+	return dynamic_cast<Protocol*>(next_layer);
 }
 
 /* Send a packet */
