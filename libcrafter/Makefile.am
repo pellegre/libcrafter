@@ -24,6 +24,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Payload.cpp \
 						crafter/Packet.cpp \
 						crafter/PacketDecoder.cpp \
+						crafter/InitCrafter.cpp \
 						crafter/Utils/PrintMessage.cpp \
 						crafter/Utils/BitHandling.cpp \
 						crafter/Utils/IPResolver.cpp \
@@ -108,6 +109,7 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Payload.h \
 								crafter/Packet.h \
 								crafter/Types.h \
+								crafter/InitCrafter.h \
 								crafter/Fields/BitsField.h \
 								crafter/Fields/BytesField.h \
 								crafter/Fields/FieldContainer.h \

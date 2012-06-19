@@ -84,11 +84,12 @@ libcrafter_la_DEPENDENCIES = $(am__DEPENDENCIES_1)
 am__dirstamp = $(am__leading_dot)dirstamp
 am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Packet.lo crafter/PacketDecoder.lo \
-	crafter/Utils/PrintMessage.lo crafter/Utils/BitHandling.lo \
-	crafter/Utils/IPResolver.lo crafter/Utils/IPv4Parse.lo \
-	crafter/Utils/RawSocket.lo crafter/Utils/CrafterUtils.lo \
-	crafter/Utils/PacketContainer.lo crafter/Utils/ARPPing.lo \
-	crafter/Utils/ARPSpoofing.lo crafter/Utils/ARPSpoofingReply.lo \
+	crafter/InitCrafter.lo crafter/Utils/PrintMessage.lo \
+	crafter/Utils/BitHandling.lo crafter/Utils/IPResolver.lo \
+	crafter/Utils/IPv4Parse.lo crafter/Utils/RawSocket.lo \
+	crafter/Utils/CrafterUtils.lo crafter/Utils/PacketContainer.lo \
+	crafter/Utils/ARPPing.lo crafter/Utils/ARPSpoofing.lo \
+	crafter/Utils/ARPSpoofingReply.lo \
 	crafter/Utils/ARPSpoofingRequest.lo crafter/Utils/Sniffer.lo \
 	crafter/Utils/TCPConnection.lo \
 	crafter/Fields/FieldContainer.lo crafter/Fields/FieldInfo.lo \
@@ -302,6 +303,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Payload.cpp \
 						crafter/Packet.cpp \
 						crafter/PacketDecoder.cpp \
+						crafter/InitCrafter.cpp \
 						crafter/Utils/PrintMessage.cpp \
 						crafter/Utils/BitHandling.cpp \
 						crafter/Utils/IPResolver.cpp \
@@ -377,6 +379,7 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Payload.h \
 								crafter/Packet.h \
 								crafter/Types.h \
+								crafter/InitCrafter.h \
 								crafter/Fields/BitsField.h \
 								crafter/Fields/BytesField.h \
 								crafter/Fields/FieldContainer.h \
@@ -544,6 +547,8 @@ crafter/Payload.lo: crafter/$(am__dirstamp) \
 crafter/Packet.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/PacketDecoder.lo: crafter/$(am__dirstamp) \
+	crafter/$(DEPDIR)/$(am__dirstamp)
+crafter/InitCrafter.lo: crafter/$(am__dirstamp) \
 	crafter/$(DEPDIR)/$(am__dirstamp)
 crafter/Utils/$(am__dirstamp):
 	@$(MKDIR_P) crafter/Utils
@@ -740,6 +745,8 @@ mostlyclean-compile:
 	-rm -f crafter/Fields/MACAddress.lo
 	-rm -f crafter/Fields/NumericFields.$(OBJEXT)
 	-rm -f crafter/Fields/NumericFields.lo
+	-rm -f crafter/InitCrafter.$(OBJEXT)
+	-rm -f crafter/InitCrafter.lo
 	-rm -f crafter/Layer.$(OBJEXT)
 	-rm -f crafter/Layer.lo
 	-rm -f crafter/Packet.$(OBJEXT)
@@ -870,6 +877,7 @@ mostlyclean-compile:
 distclean-compile:
 	-rm -f *.tab.c
 
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/InitCrafter.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Layer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/Packet.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/$(DEPDIR)/PacketDecoder.Plo@am__quote@

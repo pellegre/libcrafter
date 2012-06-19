@@ -48,8 +48,8 @@ IP::IP() {
     SetTTL(64);
     SetProtocol(0x06);
     SetCheckSum(0);
-    SetSourceIP("127.0.0.1");
-    SetDestinationIP("127.0.0.1");
+    SetSourceIP("0.0.0.0");
+    SetDestinationIP("0.0.0.0");
 
     ResetFields();
 
