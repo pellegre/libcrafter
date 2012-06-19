@@ -48,6 +48,7 @@ namespace Crafter {
 		size_t total;
 		double timeout;
 		int retry;
+		int sd;
 	};
 
 	/* +++++++++++++++++++ Auxiliary Functions declaration  +++++++++++++++++++ */
@@ -88,12 +89,10 @@ namespace Crafter {
 		int num_threads = pair->num_threads;
 		FowardIter begin = pair->beginIterator;
 		size_t total = pair->total;
-		int retry = pair->retry;
 		/* Count packets */
 		size_t count = pair->start_count;
 		while(count < total) {
-			for(int i = 0 ; i < retry ; i++)
-				(*begin)->Send(pair->iface);
+			(*begin)->Send(pair->iface);
 			count += num_threads;
 			if(count > total) break;
 			advance(begin,num_threads);
@@ -107,7 +106,7 @@ namespace Crafter {
 
 	/* A multithreaded Send function */
 	template<typename FowardIter>
-	void SendMultiThread(FowardIter begin, FowardIter end, const std::string& iface, int num_threads, int ntries) {
+	void SendMultiThread(FowardIter begin, FowardIter end, const std::string& iface, int num_threads) {
 		/* Total number of packets */
 		int total = distance(begin,end);
 		if (total < num_threads) num_threads = total;
@@ -131,8 +130,6 @@ namespace Crafter {
 			pair->total = total;
 			/* Set the arguments for the SendRecv function */
 			pair->iface = iface;
-			/* Number of times the packet is sent */
-			pair->retry = ntries;
 
 			void* thread_arg = static_cast<void *>(pair);
 
@@ -169,19 +166,115 @@ namespace Crafter {
 
 	/* Send a range of packets defined with forward iterators */
 	template<typename FowardIter>
-	void Send(FowardIter begin, FowardIter end, const std::string& iface = "", int num_threads = 0, int ntries = 1) {
+	void Send(FowardIter begin, FowardIter end, const std::string& iface = "", int num_threads = 0) {
 		if(num_threads == 0) {
-			for(int i = 0 ; i < ntries ; i++) {
-				while(begin != end) {
-					(*begin)->Send(iface);
-					begin++;
-				}
+			while(begin != end) {
+				(*begin)->Send(iface);
+				begin++;
 			}
 		}
 		else
-			SendMultiThread(begin,end,iface,num_threads,ntries);
+			SendMultiThread(begin,end,iface,num_threads);
 	}
 
+	/* This function is executed by a thread */
+	template<typename FowardIter>
+	void* SocketSendThreadIterator(void* thread_arg) {
+
+		/* Cast the argument */
+		ThreadData<FowardIter,FowardIter>* pair = static_cast<ThreadData<FowardIter,FowardIter> *>(thread_arg);
+
+		/* Assign the values */
+		int num_threads = pair->num_threads;
+		FowardIter begin = pair->beginIterator;
+		size_t total = pair->total;
+		/* Count packets */
+		size_t count = pair->start_count;
+		while(count < total) {
+			(*begin)->SocketSend(pair->sd);
+			count += num_threads;
+			if(count > total) break;
+			advance(begin,num_threads);
+		}
+
+		delete pair;
+
+		/* Call pthread exit */
+		pthread_exit(NULL);
+	}
+
+	/* A multithreaded Send function */
+	template<typename FowardIter>
+	void SocketSendMultiThread(int sd, FowardIter begin, FowardIter end, int num_threads) {
+		/* Total number of packets */
+		int total = distance(begin,end);
+		if (total < num_threads) num_threads = total;
+
+		/* Thread array */
+		pthread_t* threads = new pthread_t[num_threads];
+
+		/* Do the work on each packet */
+		for(int i = 0 ; i < num_threads ; i++) {
+			/* Create a pair structure */
+			ThreadData<FowardIter,FowardIter>* pair = new ThreadData<FowardIter,FowardIter>;
+
+			/* Start value on the container */
+			pair->beginIterator = begin;
+			advance(pair->beginIterator,i);
+			/* Start value for the counter */
+			pair->start_count = i;
+			/* Put the number of threads */
+			pair->num_threads = num_threads;
+			/* Put the size of the container */
+			pair->total = total;
+			/* Save the socket descriptor */
+			pair->sd = sd;
+
+			void* thread_arg = static_cast<void *>(pair);
+
+			int rc = pthread_create(&threads[i], NULL, SocketSendThreadIterator<FowardIter>, thread_arg);
+
+			if (rc) {
+				PrintMessage(Crafter::PrintCodes::PrintError,
+						     "Crafter::Send()",
+				             "Creating thread. Returning code = " + toString(rc));
+				exit(1);
+			}
+
+		}
+
+		/* Join thread */
+		for(int i = 0 ; i < num_threads ; i++) {
+			void* ret;
+
+			/* Join thread */
+			int rc = pthread_join(threads[i], &ret);
+
+			if (rc) {
+				PrintMessage(Crafter::PrintCodes::PrintError,
+						     "BlockARP()",
+				             "Joining thread. Returning code = " + toString(rc));
+				exit(1);
+			}
+
+		}
+
+		delete [] threads;
+
+	}
+
+	/* Send a range of packets defined with forward iterators */
+	template<typename FowardIter>
+	void SocketSend(int sd, FowardIter begin, FowardIter end, int num_threads = 0) {
+		if(num_threads == 0) {
+			while(begin != end) {
+				(*begin)->SocketSend(sd);
+				begin++;
+			}
+		}
+		else
+			SocketSendMultiThread(sd,begin,end,num_threads);
+	}
 	/* +++++++++++++++++++ Send and Receive the packets +++++++++++++++++++++ */
 
 	/* This function is executed by a thread */
@@ -295,6 +388,122 @@ namespace Crafter {
 				}
 		} else
 			SendRecvMultiThread(begin,end,out_begin,iface,timeout,retry,num_threads);
+
+	}
+
+	/* This function is executed by a thread */
+	template<typename FowardIter, typename OutputIter>
+	void* SocketSendRecvThreadIterator(void* thread_arg) {
+
+		/* Cast the argument */
+		ThreadData<FowardIter,OutputIter>* pair = static_cast<ThreadData<FowardIter,OutputIter> *>(thread_arg);
+
+		/* Assign the values */
+		int num_threads = pair->num_threads;
+		FowardIter begin = pair->beginIterator;
+		OutputIter out_begin = pair->beginOutput;
+		size_t total = pair->total;
+		int retry = pair->retry;
+		double timeout = pair->timeout;
+		/* Count packets */
+		size_t count = pair->start_count;
+		while(count < total) {
+			(*begin)->SocketSendRecvPtr(pair->sd,pair->iface,timeout,retry," ",(*out_begin));
+			count += num_threads;
+			if(count > total) break;
+			advance(begin,num_threads);
+			advance(out_begin,num_threads);
+		}
+
+		delete pair;
+
+		/* Call pthread exit */
+		pthread_exit(NULL);
+	}
+
+	/* A multithreaded Send function */
+	template<typename FowardIter, typename OutputIter>
+	void SocketSendRecvMultiThread(int sd,FowardIter begin, FowardIter end, OutputIter out_begin,
+			                 const std::string& iface, double timeout, int retry, int num_threads) {
+		/* Total number of packets */
+		int total = distance(begin,end);
+		if (total < num_threads) num_threads = total;
+
+		/* Thread array */
+		pthread_t* threads = new pthread_t[num_threads];
+
+		/* Do the work on each packet */
+		for(int i = 0 ; i < num_threads ; i++) {
+			/* Create a pair structure */
+			ThreadData<FowardIter,OutputIter>* pair = new ThreadData<FowardIter,OutputIter>;
+
+			/* Start value on the container */
+			pair->beginIterator = begin;
+			advance(pair->beginIterator,i);
+			/* Start value of output iterator */
+			pair->beginOutput = out_begin;
+			advance(pair->beginOutput,i);
+			/* Start value for the counter */
+			pair->start_count = i;
+			/* Put the number of threads */
+			pair->num_threads = num_threads;
+			/* Put the size of the container */
+			pair->total = total;
+			/* Set the arguments for the SendRecv function */
+			pair->iface = iface;
+			/* Number of times the packet is sent */
+			pair->retry = retry;
+			/* Timeout */
+			pair->timeout = timeout;
+			/* Save socket */
+			pair->sd = sd;
+
+			void* thread_arg = static_cast<void *>(pair);
+
+			int rc = pthread_create(&threads[i], NULL, SocketSendRecvThreadIterator<FowardIter,OutputIter>, thread_arg);
+
+			if (rc) {
+				PrintMessage(Crafter::PrintCodes::PrintError,
+						     "Crafter::Send()",
+				             "Creating thread. Returning code = " + toString(rc));
+				exit(1);
+			}
+
+		}
+
+		/* Join thread */
+		for(int i = 0 ; i < num_threads ; i++) {
+			void* ret;
+
+			/* Join thread */
+			int rc = pthread_join(threads[i], &ret);
+
+			if (rc) {
+				PrintMessage(Crafter::PrintCodes::PrintError,
+						     "BlockARP()",
+				             "Joining thread. Returning code = " + toString(rc));
+				exit(1);
+			}
+
+		}
+
+		delete [] threads;
+
+	}
+
+	/* Send a range of packets defined with forward iterators */
+	template<typename FowardIter, typename OutputIter>
+	void SocketSendRecv(int sd, FowardIter begin, FowardIter end, OutputIter out_begin,
+			      const std::string& iface = "", double timeout = 1, int retry = 3, int num_threads = 0) {
+
+		if(num_threads == 0) {
+				while(begin != end) {
+					(*begin)->SocketSendRecvPtr(sd,iface,timeout,retry," ",(*out_begin));
+					begin++;
+					out_begin++;
+				}
+		} else
+			SocketSendRecvMultiThread(sd,begin,end,out_begin,iface,timeout,retry,num_threads);
 
 	}
 

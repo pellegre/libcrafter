@@ -269,6 +269,41 @@ vector<int>* Crafter::ParseNumbers(const string& argv) {
 	return ports;
 }
 
+vector<int> Crafter::GetNumbers(const string& argv) {
+	/* Container of integer */
+	vector<int> ports;
+
+	/* Set of values */
+	set<int> port_values;
+
+	/* Position of comma separated values */
+	size_t ini = 0;
+	size_t end = argv.find_first_of(",",ini);
+
+	/* Value between commas */
+	string port_comma = argv.substr(ini,end-ini);
+
+	ParseNumbersInt(port_comma,&port_values);
+
+	while(end != string::npos) {
+		/* Update position */
+		ini = end + 1;
+		/* Update value between commas */
+		end = argv.find_first_of(",",ini);
+		port_comma = argv.substr(ini,end-ini);
+
+		ParseNumbersInt(port_comma,&port_values);
+	}
+
+	/* Put the values on the set into the vector */
+	set<int>::iterator it_values;
+
+	for(it_values = port_values.begin() ; it_values != port_values.end() ; it_values++)
+		ports.push_back((*it_values));
+
+	return ports;
+}
+
 string Crafter::StrPort(short_word port_number) {
 	char* str_port = new char[6];
 	sprintf(str_port,"%d", port_number);
@@ -428,14 +463,7 @@ IPv6* Crafter::GetIPv6(const Packet& packet){
 }
 
 IPLayer* Crafter::GetIPLayer(const Packet& packet) {
-	/* Search layer one by one */
-	LayerStack::const_iterator it_layer;
-	for (it_layer = packet.begin() ; it_layer != packet.end() ; ++it_layer)
-		if ((*it_layer)->GetID() == IP::PROTO || (*it_layer)->GetID() == IPv6::PROTO)
-			return dynamic_cast<IPLayer*>( (*it_layer) );
-
-	/* No requested layer, returns zero */
-	return 0;
+	return packet.GetLayer<IPLayer>();
 }
 
 TCP* Crafter::GetTCP(const Packet& packet){
@@ -462,120 +490,4 @@ const Packet Crafter::operator/(const Layer& left, const Layer& right) {
 
 void Crafter::CraftLayer(Layer* layer) {
 	layer->Craft();
-}
-
-void Crafter::InitCrafter() {
-
-	IPOptionSSRR ipssrr_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&ipssrr_dummy);
-
-	IPOptionRR iprr_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&iprr_dummy);
-
-	IPOptionLSRR iplsrr_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&iplsrr_dummy);
-
-	IPOptionTraceroute iptrace_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&iptrace_dummy);
-
-	IPOptionPad ippadopt_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&ippadopt_dummy);
-
-	IPOption ipopt_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&ipopt_dummy);
-
-	IP ip_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&ip_dummy);
-
-	IPv6 ipv6_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&ipv6_dummy);
-
-	UDP udp_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&udp_dummy);
-
-	TCP tcp_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&tcp_dummy);
-
-	TCPOption opt_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&opt_dummy);
-
-	TCPOptionMaxSegSize optmss_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&optmss_dummy);
-
-	TCPOptionTimestamp optts_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&optts_dummy);
-
-	TCPOptionPad optpad_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&optpad_dummy);
-
-	ICMP icmp_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&icmp_dummy);
-
-    ICMPExtension icmp_extension_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&icmp_extension_dummy);
-
-    ICMPExtensionMPLS icmp_extension_mpls_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&icmp_extension_mpls_dummy);
-
-    ICMPExtensionObject icmp_extension_object_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&icmp_extension_object_dummy);
-
-	Ethernet ether_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&ether_dummy);
-
-	SLL sll_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&sll_dummy);
-
-	ARP arp_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&arp_dummy);
-
-	RawLayer raw_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&raw_dummy);
-
-	DNS dns_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&dns_dummy);
-
-	DHCP dhcp_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&dhcp_dummy);
-
-	/* Initialize seed of RNG */
-	srand(time(NULL));
-
-	/* Put verbose mode as default */
-	ShowWarnings = 1;
-
-	/* Initialize Mutex variables */
-	Packet::InitMutex();
-	Sniffer::InitMutex();
-
-}
-
-void Crafter::CleanCrafter() {
-	/* Destroy Mutex Varibles */
-	Packet::DestroyMutex();
-	Sniffer::DestroyMutex();
 }

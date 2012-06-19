@@ -45,6 +45,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Fields/Field.h"
 #include "Payload.h"
 #include "Utils/PrintMessage.h"
+#include "InitCrafter.h"
 
 namespace Crafter {
 
@@ -300,7 +301,7 @@ namespace Crafter {
 		static Protocol ProtoFactory;
 
 		/* This prevent a creation of a Protocol class */
-		Protocol () {};
+		Protocol () {InitCrafter();};
 		Protocol (const Protocol&);
 
 		/* Map of Register Protocols */
@@ -368,7 +369,7 @@ namespace Crafter {
 		/* Access to the factory for registration or construction */
 		static Protocol* AccessFactory() {return &ProtoFactory;};
 
-		virtual ~Protocol() {};
+		virtual ~Protocol() {CleanCrafter();};
 	};
 
 	/* Verbose Mode */

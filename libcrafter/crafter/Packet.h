@@ -125,6 +125,10 @@ namespace Crafter {
 		 * (should be a PF_INET or PF_PACKET accordingly to the type of packet crafted)
 		 */
 		int SocketSend(int sd);
+		/* Send a packet and try to match the answer */
+		Packet* SocketSendRecv(int sd, const std::string& iface = "",double timeout = 1, int retry = 3, const std::string& user_filter = " ");
+		template<class Pointer>
+		void SocketSendRecvPtr(int sd, const std::string& iface, double timeout, int retry, const std::string& user_filter, Pointer& ptr);
 
 		/* Print each layer of the packet */
 		void Print(std::ostream& str) const;
@@ -173,6 +177,8 @@ namespace Crafter {
 		virtual ~Packet();
 	};
 
+	template<>
+	IPLayer* Packet::GetLayer<IPLayer>() const;
 }
 
 template<class Protocol>
@@ -207,17 +213,26 @@ Protocol* Crafter::Packet::GetLayer(const Protocol* layer_ptr) const {
 	/* Go trough each layer */
 	while(next_layer) {
 		if(next_layer->GetID() == Protocol::PROTO)
-			break;
+			return dynamic_cast<Protocol*>(next_layer);
+		next_layer = next_layer->GetTopLayer();
 	}
 
 	/* Return the layer with the searched ID or a null pointer */
-	return dynamic_cast<Protocol*>(next_layer);
+	return 0;
 }
 
 /* Send a packet */
 template<class Pointer>
 void Crafter::Packet::SendRecvPtr(const std::string& iface, double timeout, int retry, const std::string& user_filter, Pointer& ptr) {
 	Packet* pck = SendRecv(iface,timeout,retry,user_filter);
+	if(pck) ptr = Pointer(pck);
+	else ptr = Pointer();
+}
+
+/* Send a packet with socket */
+template<class Pointer>
+void Crafter::Packet::SocketSendRecvPtr(int sd,const std::string& iface, double timeout, int retry, const std::string& user_filter, Pointer& ptr) {
+	Packet* pck = SocketSendRecv(sd,iface,timeout,retry,user_filter);
 	if(pck) ptr = Pointer(pck);
 	else ptr = Pointer();
 }

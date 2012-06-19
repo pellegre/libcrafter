@@ -58,7 +58,8 @@ namespace Crafter {
 	std::vector<std::string> GetIPs(const std::string& argv);
 
 	/* Parse an octect in nmap style */
-	std::vector<int>* ParseNumbers(const std::string& argv);
+	std::vector<int>* ParseNumbers(const std::string& argv); /* DEPRECATED */
+	std::vector<int> GetNumbers(const std::string& argv);
 
 	/* Put port on a string */
 	std::string StrPort(short_word port_number);

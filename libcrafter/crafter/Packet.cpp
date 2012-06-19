@@ -616,6 +616,239 @@ int Packet::SocketSend(int sd) {
 	return SocketSender::SendSocket(sd,current_id,raw_data,bytes_size);
 }
 
+Packet* Packet::SocketSendRecv(int sd, const string& iface, double timeout, int retry, const string& user_filter) {
+	char libcap_errbuf[PCAP_ERRBUF_SIZE];      /* Error messages */
+
+	/* Name of the device */
+	const char* device = iface.c_str();
+	/* Handle for the opened pcap session */
+	pcap_t *handle;
+	/* IP address of interface */
+	bpf_u_int32 netp;
+	/* Subnet mask of interface */
+	bpf_u_int32 maskp;
+	/* Compiled BPF filter */
+	struct bpf_program fp;
+
+	if(Stack.size() == 0) {
+
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+					 "Packet::SendRecv()",
+					 "Not data in the packet. ");
+		return 0;
+
+	 }
+
+	/* Craft the packet */
+	Craft();
+
+	word current_id = Stack[0]->GetID();
+
+	if (current_id != Ethernet::PROTO &&
+		current_id != IP::PROTO       &&
+		current_id != IPv6::PROTO     && user_filter == " ") {
+
+		/* Print a warning message */
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+					 "Packet::SendRecv()",
+					 "The first layer in the stack (" + Stack[0]->GetName() + ") is not IP or Ethernet.");
+
+		/* Write the packet on the wire */
+		if(	SocketSender::SendSocket(sd,current_id,raw_data,bytes_size) < 0) {
+			PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
+						 "Packet::SendRecv()",
+						 "Sending packet (PF_PACKET socket)");
+		}
+
+		return 0;
+
+	}
+
+	/* Set error buffer to 0 length string to check for warnings */
+	libcap_errbuf[0] = 0;
+
+	/* Open device for sniffing */
+	handle = pcap_open_live (device,  /* device to sniff on */
+						     BUFSIZ,  /* maximum number of bytes to capture per packet */
+									  /* BUFSIZE is defined in pcap.h */
+				                  1,  /* promisc - 1 to set card in promiscuous mode, 0 to not */
+		        (int)1000.0*timeout,  /* to_ms - amount of time to perform packet capture in milliseconds */
+									  /* 0 = sniff until error */
+				      libcap_errbuf); /* error message buffer if something goes wrong */
+
+
+	if (handle == NULL) {
+	  /* There was an error */
+		PrintMessage(Crafter::PrintCodes::PrintError,
+				     "Packet::SendRecv()",
+	                 "Listening device -> " + string(libcap_errbuf));
+	  exit (1);
+	}
+	if (strlen (libcap_errbuf) > 0) {
+			PrintMessage(Crafter::PrintCodes::PrintWarning,
+					     "Packet::SendRecv()",
+			              string(libcap_errbuf));
+
+	  libcap_errbuf[0] = 0;    /* re-set error buffer */
+	}
+
+	int link_type = pcap_datalink(handle);
+
+	/* Get the IP subnet mask of the device, so we set a filter on it */
+	if (pcap_lookupnet (device, &netp, &maskp, libcap_errbuf) == -1) {
+		PrintMessage(Crafter::PrintCodes::PrintError,
+				     "Packet::SendRecv()",
+                     "Error getting device information " + string(libcap_errbuf));
+	  exit (1);
+	}
+
+	string filter = "";
+
+	/* Get the IP layer */
+	IP* ip_layer = 0;
+	LayerStack::iterator it_layer;
+	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; ++it_layer)
+		if ((*it_layer)->GetName() == "IP")
+			ip_layer = dynamic_cast<IP*>( (*it_layer) );
+
+	if (user_filter == " ") {
+		string check_icmp;
+
+		if (ip_layer) {
+			short_word ident = ip_layer->GetIdentification();
+			char* str_ident = new char[6];
+			sprintf(str_ident,"%d",ident);
+			str_ident[5] = 0;
+			check_icmp = "( ( (icmp[icmptype] == icmp-unreach) or (icmp[icmptype] == icmp-timxceed) or "
+						 "    (icmp[icmptype] == icmp-paramprob) or (icmp[icmptype] == icmp-sourcequench) or "
+						 "    (icmp[icmptype] == icmp-redirect) ) and (icmp[12:2] == " + string(str_ident)  + " ) ) ";
+			delete [] str_ident;
+
+		} else
+			check_icmp = " ";
+
+		vector<string> layer_filter;
+
+		/* Construct the filter for matching packets */
+		vector<Layer*>::iterator it_layer;
+
+		for (it_layer = Stack.begin() ; it_layer != Stack.end(); it_layer++) {
+			string str_filter = (*it_layer)->MatchFilter();
+			if(str_filter != " ") layer_filter.push_back(str_filter);
+		}
+
+		filter = "(" + layer_filter[0];
+
+		vector<string>::iterator it_f;
+
+		for(it_f = layer_filter.begin() + 1 ; it_f != layer_filter.end() ; it_f++) {
+			vector<string>::iterator last = it_f - 1;
+			if ( (*it_f) != " " && (*last) != " " )
+				filter += " and " + (*it_f);
+			else if ( (*it_f) != " " && (*last) == " ")
+				filter += (*it_f);
+		}
+
+		if (check_icmp != " ")
+			filter += ") or " + check_icmp;
+		else
+			filter += ")";
+	} else
+		filter = user_filter;
+
+	//cout << filter << endl;
+
+	/* ----------- Begin Critical area ---------------- */
+
+    pthread_mutex_lock (&mutex_compile);
+
+	/* Compile the filter, so we can capture only stuff we are interested in */
+	if (pcap_compile (handle, &fp, filter.c_str(), 0, maskp) == -1) {
+		PrintMessage(Crafter::PrintCodes::PrintError,
+				     "Packet::SendRecv()",
+	                 "Error compiling the filter -> " + string(pcap_geterr(handle)));
+		cerr << "[!] Bad filter expression -> " << filter << endl;
+	  exit (1);
+	}
+
+	/* Set the filter for the device we have opened */
+	if (pcap_setfilter (handle, &fp) == -1)	{
+		PrintMessage(Crafter::PrintCodes::PrintError,
+				     "Packet::SendRecv()",
+                     "Setting filter -> " + string(pcap_geterr (handle)));
+	  exit (1);
+	}
+
+	/* We'll be nice and free the memory used for the compiled filter */
+	pcap_freecode(&fp);
+
+    pthread_mutex_unlock (&mutex_compile);
+
+	/* ------------ End Critical area ----------------- */
+
+	int r = 0;
+
+	Packet* match_packet = new Packet;
+
+	int count = 0;
+	int success = 0;
+
+	while (count < retry) {
+
+		/* Write the packet on the wire */
+		if(SocketSender::SendSocket(sd,current_id,raw_data,bytes_size) < 0) {
+			PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
+						 "Packet::SendRecv()",
+						 "Sending packet ");
+			return 0;
+		}
+
+		struct pcap_pkthdr *header;
+		const u_char *packet;
+
+		if ((r = pcap_next_ex (handle, &header, &packet)) <= 0) {
+			if (r == -1) {
+			  /* Pcap error */
+				PrintMessage(Crafter::PrintCodes::PrintError,
+						     "Packet::SendRecv()",
+			                 "Error calling pcap_next_ex() " + string(pcap_geterr (handle)));
+			  return 0;
+			}
+			/* Otherwise return should be -2 */
+		}
+
+		if (r >= 1) {
+			match_packet->PacketFromLinkLayer(packet, header->len,link_type);
+			success = 1;
+			break;
+		}
+
+		count++;
+
+	}
+
+	pcap_close (handle);
+
+	if (success)
+		return match_packet;
+	else {
+		delete match_packet;
+		return 0;
+	}
+}
+
+template<>
+IPLayer* Packet::GetLayer<IPLayer>() const {
+	/* Search layer one by one */
+	LayerStack::const_iterator it_layer;
+	for (it_layer = begin() ; it_layer != end() ; ++it_layer)
+		if ((*it_layer)->GetID() == IP::PROTO || (*it_layer)->GetID() == IPv6::PROTO)
+			return dynamic_cast<IPLayer*>( (*it_layer) );
+
+	/* No requested layer, returns zero */
+	return 0;
+}
+
 void Packet::InitMutex() {
     pthread_mutex_init(&Packet::mutex_compile, NULL);
 }
