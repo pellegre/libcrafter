@@ -139,7 +139,7 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Protocols/SLLConstructor.lo \
 	crafter/Protocols/SLLCraft.lo \
 	crafter/Protocols/IPv6Constructor.lo \
-	crafter/Protocols/IPv6Craft.lo
+	crafter/Protocols/IPv6Craft.lo crafter/Protocols/IPLayer.lo
 libcrafter_la_OBJECTS = $(am_libcrafter_la_OBJECTS)
 libcrafter_la_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(AM_CXXFLAGS) \
@@ -368,7 +368,8 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/SLLConstructor.cpp \
 						crafter/Protocols/SLLCraft.cpp \
 						crafter/Protocols/IPv6Constructor.cpp \
-						crafter/Protocols/IPv6Craft.cpp
+						crafter/Protocols/IPv6Craft.cpp \
+						crafter/Protocols/IPLayer.cpp
 
 libcrafter_la_LDFLAGS = -version-info $(CRAFTER_SO_VERSION)
 libcrafter_la_LIBADD = $(PCAPLIB) $(LNETLIB)
@@ -728,6 +729,8 @@ crafter/Protocols/IPv6Constructor.lo:  \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/IPv6Craft.lo: crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/IPLayer.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 libcrafter.la: $(libcrafter_la_OBJECTS) $(libcrafter_la_DEPENDENCIES) 
 	$(libcrafter_la_LINK) -rpath $(libdir) $(libcrafter_la_OBJECTS) $(libcrafter_la_LIBADD) $(LIBS)
 
@@ -797,6 +800,8 @@ mostlyclean-compile:
 	-rm -f crafter/Protocols/IPConstructor.lo
 	-rm -f crafter/Protocols/IPCraft.$(OBJEXT)
 	-rm -f crafter/Protocols/IPCraft.lo
+	-rm -f crafter/Protocols/IPLayer.$(OBJEXT)
+	-rm -f crafter/Protocols/IPLayer.lo
 	-rm -f crafter/Protocols/IPOptionConstructor.$(OBJEXT)
 	-rm -f crafter/Protocols/IPOptionConstructor.lo
 	-rm -f crafter/Protocols/IPOptionCraft.$(OBJEXT)
@@ -909,6 +914,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPExtensionObjectCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPCraft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPLayer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPOptionConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPOptionCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPOptionPadConstructor.Plo@am__quote@

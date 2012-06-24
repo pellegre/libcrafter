@@ -89,7 +89,9 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/SLLConstructor.cpp \
 						crafter/Protocols/SLLCraft.cpp \
 						crafter/Protocols/IPv6Constructor.cpp \
-						crafter/Protocols/IPv6Craft.cpp
+						crafter/Protocols/IPv6Craft.cpp \
+						crafter/Protocols/IPLayer.cpp
+						
 
 ## Instruct libtool to include ABI version information in the generated shared
 ## library file (.so).  The library ABI version is defined in configure.ac, so
