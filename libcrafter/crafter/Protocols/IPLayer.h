@@ -26,6 +26,12 @@ namespace Crafter {
 
         virtual std::string  GetDestinationIP() const = 0;
 
+        /* Method to build IP layer from the source address */
+        static IPLayer* BuildSrc(const std::string& ip_src);
+
+        /* Method to build IP layer from the destination address */
+        static IPLayer* BuildDst(const std::string& ip_dst);
+
         virtual ~IPLayer() { /* Destructor */ };
 
     };
