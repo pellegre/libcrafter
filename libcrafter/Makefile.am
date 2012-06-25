@@ -48,6 +48,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/ARPCraft.cpp \
 						crafter/Protocols/IPConstructor.cpp \
 						crafter/Protocols/IPCraft.cpp \
+						crafter/Protocols/IPOptionLayer.cpp \
 						crafter/Protocols/IPOptionConstructor.cpp \
 						crafter/Protocols/IPOptionCraft.cpp \
 						crafter/Protocols/IPOptionPadConstructor.cpp \
@@ -60,6 +61,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/UDPCraft.cpp \
 						crafter/Protocols/TCPConstructor.cpp \
 						crafter/Protocols/TCPCraft.cpp \
+						crafter/Protocols/TCPOptionLayer.cpp \
 						crafter/Protocols/TCPOptionConstructor.cpp \
 						crafter/Protocols/TCPOptionCraft.cpp \
 						crafter/Protocols/TCPOptionPadConstructor.cpp \

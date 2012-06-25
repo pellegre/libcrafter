@@ -112,3 +112,28 @@ void IP::Craft() {
 string IP::MatchFilter() const {
 	return "ip and dst host " + GetSourceIP() + " and src host " + GetDestinationIP();
 }
+
+void IP::ParseLayerData(ParseInfo* info) {
+	/* Verify if there are options on the IP header */
+	size_t IP_word_size = GetHeaderLength();
+	size_t IP_opt_size = 0;
+
+	if(IP_word_size > 5) IP_opt_size = 4 * (IP_word_size - 5);
+
+	short_word network_layer = GetProtocol();
+
+	/* We have a valid set of options */
+	if (IP_opt_size > 0) {
+		/* Extra information for IP options */
+		IPOptionLayer::ExtraInfo* extra_info = new IPOptionLayer::ExtraInfo;
+		extra_info->optlen = IP_opt_size;
+		extra_info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
+
+		/* Information for the decoder */
+		int opt = (info->raw_data + info->offset)[0];
+		info->next_layer = IPOptionLayer::Build(opt);
+		info->extra_info = reinterpret_cast<void*>(extra_info);
+	} else
+		info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
+
+}

@@ -93,7 +93,6 @@ namespace Crafter {
 	void CraftLayer(Layer* layer);
 
 	/* ------------------- Some operators ---------------------- */
-
 	const Packet operator/(const Layer& left, const Layer& right);
 	const Packet operator/(const Layer& left, const Packet& right);
 }

@@ -24,65 +24,64 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#ifndef TCPOPTION_H_
-#define TCPOPTION_H_
 
-#include "TCPOptionLayer.h"
-#include "TCPOptionPad.h"
+#include "IPOptionLayer.h"
+#include "IPOption.h"
+#include "IPOptionPad.h"
+#include "IPOptionPointer.h"
+#include "IPOptionTraceroute.h"
+#include <netinet/ip.h>
 
-namespace Crafter {
+using namespace Crafter;
 
-    class TCPOption: public TCPOptionLayer {
+IPOptionLayer* IPOptionLayer::Build(int opt) {
 
-        void DefineProtocol();
+	switch(opt) {
 
-        Constructor GetConstructor() const {
-            return TCPOption::TCPOptionConstFunc;
-        };
+	case IPOPT_EOL :
+		return new IPOptionPad;
+		break;
+	case IPOPT_NOP:
+		return new IPOptionPad;
+		break;
+	case 0x52:
+		return new IPOptionTraceroute;
+		break;
+	case IPOPT_LSRR:
+		return new IPOptionLSRR;
+		break;
+	case IPOPT_RR:
+		return new IPOptionRR;
+		break;
+	case IPOPT_SSRR:
+		return new IPOptionSSRR;
+		break;
 
-        static Layer* TCPOptionConstFunc() {
-            return new TCPOption;
-        };
+	}
 
-        void Craft();
-
-        void ReDefineActiveFields();
-
-        void ParseLayerData(ParseInfo* info);
-
-        static const byte FieldKind = 0;
-        static const byte FieldLength = 1;
-
-    public:
-
-        static const word PROTO = 0x9000;
-
-        /* Padding layers */
-        static const TCPOptionPad NOP;
-        static const TCPOptionPad EOL;
-
-        TCPOption();
-
-        void SetKind(const byte& value) {
-            SetFieldValue(FieldKind,value);
-        };
-
-        void SetLength(const byte& value) {
-            SetFieldValue(FieldLength,value);
-        };
-
-        byte  GetKind() const {
-            return GetFieldValue<byte>(FieldKind);
-        };
-
-        byte  GetLength() const {
-            return GetFieldValue<byte>(FieldLength);
-        };
-
-        ~TCPOption() { /* Destructor */ };
-
-    };
+	/* Generic Option Header */
+	return new IPOption;
 
 }
 
-#endif /* TCPOPTION_H_ */
+void IPOptionLayer::ParseLayerData(ParseInfo* info) {
+	/* Update the information of the IP options */
+	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
+	if(!extra_info) {
+		info->top = 1;
+		return;
+	}
+	extra_info->optlen -= GetSize();
+	if(extra_info->optlen > 0) {
+		/* Get the option type */
+		int opt = (info->raw_data + info->offset)[0];
+		info->next_layer = Build(opt);
+	}  else {
+		info->next_layer = extra_info->next_layer;
+		delete extra_info;
+		extra_info = 0;
+	}
+}
+
+
+
