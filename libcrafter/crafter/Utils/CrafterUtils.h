@@ -95,7 +95,7 @@ namespace Crafter {
 	/* ------------------- Some operators ---------------------- */
 
 	const Packet operator/(const Layer& left, const Layer& right);
-
+	const Packet operator/(const Layer& left, const Packet& right);
 }
 
 /* ARP stuff */
