@@ -48,6 +48,8 @@ namespace Crafter {
 
         void ReDefineActiveFields();
 
+        void ParseLayerData(ParseInfo* info);
+
         static const byte FieldLength = 0;
         static const byte FieldClassNum = 1;
         static const byte FieldCType = 2;

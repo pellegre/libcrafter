@@ -51,6 +51,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/ARPCraft.cpp \
 						crafter/Protocols/IPConstructor.cpp \
 						crafter/Protocols/IPCraft.cpp \
+						crafter/Protocols/IPOptionLayer.cpp \
 						crafter/Protocols/IPOptionConstructor.cpp \
 						crafter/Protocols/IPOptionCraft.cpp \
 						crafter/Protocols/IPOptionPadConstructor.cpp \

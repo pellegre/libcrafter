@@ -10,6 +10,7 @@
 *.lo
 *.a
 *.sh
+*Old.cpp
 
 # Packages #
 ############

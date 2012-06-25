@@ -76,3 +76,9 @@ std::string ICMPExtensionObject::GetClassName() const {
     default: return "";
     }
 }
+
+void ICMPExtensionObject::ParseLayerData(ParseInfo* info) {
+    std::string icmp_extension_object_name = GetClassName();
+    /* Get the extension layer */
+    info->next_layer = Protocol::AccessFactory()->GetLayerByName(icmp_extension_object_name);
+}

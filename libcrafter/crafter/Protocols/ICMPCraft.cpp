@@ -1,5 +1,9 @@
 /*
 Copyright (c) 2012, Esteban Pellegrino
+
+ + ICMP Extensions
+Copyright (c) 2012, Bruno Nery
+
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -23,9 +27,13 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
 ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
 */
 
 #include "ICMP.h"
+#include "ICMPExtension.h"
+#include "RawLayer.h"
 
 using namespace Crafter;
 using namespace std;
@@ -173,4 +181,38 @@ string ICMP::MatchFilter() const {
 		return ret_string;
 	} else
 		return "";
+}
+
+void ICMP::ParseLayerData(ParseInfo* info) {
+    word icmp_type = GetType();
+    word icmp_length = 4 * GetLength();
+    word length = info->total_size - info->offset;
+    /* Non-Compliant applications don't set the Length field. According to RFC4884,
+     * Compliant applications should assume no extensions in this case. However, it
+     * is advised to consider a 128-octet original datagram to keep compatibility. */
+    if (icmp_length == 0 && length > 128)
+        icmp_length = 128;
+
+    /* According to RFC4884, specific types with a length field set have extensions */
+    if (( icmp_type == ICMP::DestinationUnreachable || icmp_type == ICMP::TimeExceeded ||
+    	  icmp_type == ICMP::ParameterProblem) && icmp_length > 0) {
+
+        if (length >= icmp_length) {
+        	/* Set the next layer as a RawLayer  (sandwich layer) */
+        	info->next_layer = Protocol::AccessFactory()->GetLayerByID(RawLayer::PROTO);
+
+        	/* Put extra information for the RawLayer */
+        	Layer* next_layer = Protocol::AccessFactory()->GetLayerByID(ICMPExtension::PROTO);
+        	info->extra_info = reinterpret_cast<void*>(new RawLayer::ExtraInfo(
+        			                                   info->raw_data + info->offset,
+        			        		                   icmp_length,
+        			        		                   next_layer));
+
+        	return;
+        }
+
+    }
+
+	/* No more layers */
+	info->top = 1;
 }

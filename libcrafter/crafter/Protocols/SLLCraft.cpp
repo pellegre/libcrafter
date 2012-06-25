@@ -53,3 +53,7 @@ void SLL::Craft() {
 	}
 }
 
+void SLL::ParseLayerData(ParseInfo* info) {
+	short_word network_layer = GetProtocol();
+	info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
+}

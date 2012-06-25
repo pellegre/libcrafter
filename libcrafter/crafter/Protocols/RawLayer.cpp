@@ -129,6 +129,20 @@ const RawLayer RawLayer::operator+(const RawLayer& right) const{
 	return ret_layer;
 }
 
+void RawLayer::ParseLayerData(ParseInfo* info) {
+	/* Get the extra information, this is s sandwich RawLayer */
+	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
+
+	/* Set payload */
+	SetPayload(extra_info->raw_data,extra_info->nbytes);
+	info->offset += extra_info->nbytes;
+	/* Set next layer */
+	info->next_layer = extra_info->next_layer;
+
+	/* Delete structure */
+	delete extra_info;
+}
+
 Pad::Pad(byte value, size_t times) {
     byte* pad_data = new byte[times];
     memset(pad_data,value,times*sizeof(byte));

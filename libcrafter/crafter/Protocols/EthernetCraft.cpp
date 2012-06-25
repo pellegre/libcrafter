@@ -53,3 +53,8 @@ void Ethernet::Craft() {
 				     "Ethernet::Craft()","No Network Layer Protocol associated with Ethernet Layer.");
 	}
 }
+
+void Ethernet::ParseLayerData(ParseInfo* info) {
+	short_word network_layer = GetType();
+	info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
+}
