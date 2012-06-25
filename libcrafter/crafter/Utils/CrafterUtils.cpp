@@ -488,6 +488,19 @@ const Packet Crafter::operator/(const Layer& left, const Layer& right) {
 	return ret_packet;
 }
 
+const Packet Crafter::operator/(const Layer& left, const Packet& right) {
+	/* Create the packet */
+	Packet ret_packet;
+
+	ret_packet.PushLayer(left);
+
+	LayerStack::const_iterator it = right.begin();
+	for(; it != right.end() ; it++)
+		ret_packet.PushLayer(*(*it));
+
+	return ret_packet;
+}
+
 void Crafter::CraftLayer(Layer* layer) {
 	layer->Craft();
 }
