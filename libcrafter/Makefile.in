@@ -115,6 +115,7 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Protocols/UDPCraft.lo \
 	crafter/Protocols/TCPConstructor.lo \
 	crafter/Protocols/TCPCraft.lo \
+	crafter/Protocols/TCPOptionLayer.lo \
 	crafter/Protocols/TCPOptionConstructor.lo \
 	crafter/Protocols/TCPOptionCraft.lo \
 	crafter/Protocols/TCPOptionPadConstructor.lo \
@@ -344,6 +345,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/UDPCraft.cpp \
 						crafter/Protocols/TCPConstructor.cpp \
 						crafter/Protocols/TCPCraft.cpp \
+						crafter/Protocols/TCPOptionLayer.cpp \
 						crafter/Protocols/TCPOptionConstructor.cpp \
 						crafter/Protocols/TCPOptionCraft.cpp \
 						crafter/Protocols/TCPOptionPadConstructor.cpp \
@@ -660,6 +662,9 @@ crafter/Protocols/TCPConstructor.lo:  \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/TCPCraft.lo: crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/TCPOptionLayer.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/TCPOptionConstructor.lo:  \
 	crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
@@ -842,6 +847,8 @@ mostlyclean-compile:
 	-rm -f crafter/Protocols/TCPOptionConstructor.lo
 	-rm -f crafter/Protocols/TCPOptionCraft.$(OBJEXT)
 	-rm -f crafter/Protocols/TCPOptionCraft.lo
+	-rm -f crafter/Protocols/TCPOptionLayer.$(OBJEXT)
+	-rm -f crafter/Protocols/TCPOptionLayer.lo
 	-rm -f crafter/Protocols/TCPOptionMaxSegSizeConstructor.$(OBJEXT)
 	-rm -f crafter/Protocols/TCPOptionMaxSegSizeConstructor.lo
 	-rm -f crafter/Protocols/TCPOptionMaxSegSizeCraft.$(OBJEXT)
@@ -939,6 +946,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionCraft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionLayer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionMaxSegSizeConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionMaxSegSizeCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/TCPOptionPadConstructor.Plo@am__quote@

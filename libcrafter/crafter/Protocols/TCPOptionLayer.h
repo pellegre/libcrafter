@@ -34,9 +34,18 @@ namespace Crafter {
 
     class TCPOptionLayer: public Layer {
 
+    	void ParseLayerData(ParseInfo* info);
+
     public:
 
         TCPOptionLayer() { /* */ };
+
+    	struct ExtraInfo {
+    		/* Next layer on the top of the options */
+    		Layer* next_layer;
+    		/* Remaining option length */
+    		int optlen;
+    	};
 
         virtual void SetKind(const byte& value) = 0;
 
@@ -45,6 +54,9 @@ namespace Crafter {
         virtual byte  GetKind() const = 0;
 
         virtual byte  GetLength() const = 0;
+
+        /* Build TCP options from first byte */
+        static TCPOptionLayer* Build(int opt);
 
         ~TCPOptionLayer() { /* Destructor */ };
 

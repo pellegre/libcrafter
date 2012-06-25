@@ -64,6 +64,7 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/UDPCraft.cpp \
 						crafter/Protocols/TCPConstructor.cpp \
 						crafter/Protocols/TCPCraft.cpp \
+						crafter/Protocols/TCPOptionLayer.cpp \
 						crafter/Protocols/TCPOptionConstructor.cpp \
 						crafter/Protocols/TCPOptionCraft.cpp \
 						crafter/Protocols/TCPOptionPadConstructor.cpp \
