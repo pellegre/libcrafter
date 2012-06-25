@@ -53,7 +53,21 @@ namespace Crafter {
 				/* Nothing to craft */
 			};
 
+			void ParseLayerData(ParseInfo* info);
+
 		public:
+
+			struct ExtraInfo {
+				/* Data */
+				const byte* raw_data;
+				/* Number of bytes to push on the RawLayer payload */
+				size_t nbytes;
+				/* Next layer */
+				Layer* next_layer;
+
+				ExtraInfo(const byte* raw_data, size_t nbytes, Layer* next_layer) :
+				          raw_data(raw_data), nbytes(nbytes), next_layer(next_layer) {};
+			};
 
 			static const word PROTO = 0xfff1;
 

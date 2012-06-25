@@ -27,6 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "ICMPExtension.h"
+#include "ICMPExtensionObject.h"
 
 using namespace Crafter;
 using namespace std;
@@ -58,4 +59,8 @@ void ICMPExtension::Craft() {
 		delete [] buff_data;
 
 	}
+}
+
+void ICMPExtension::ParseLayerData(ParseInfo* info) {
+	info->next_layer = Protocol::AccessFactory()->GetLayerByID(ICMPExtensionObject::PROTO);
 }

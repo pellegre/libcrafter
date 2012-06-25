@@ -241,6 +241,24 @@ size_t Crafter::Layer::PutData(const byte* data) {
 	return GetHeaderSize();
 }
 
+void Crafter::Layer::ParseData(ParseInfo* info) {
+	/* Construct this header from the data */
+	PutData(info->raw_data + info->offset);
+	info->offset += GetSize();
+
+	/* Once we have all the fields set, parse the information on this header */
+	ParseLayerData(info);
+	/*
+	 * After this, the info structure is updated with information on what the
+	 * decoder should do in the next step
+	 */
+}
+
+void Crafter::Layer::ParseLayerData(ParseInfo* info) {
+	/* No more layers, default */
+	info->top = 1;
+}
+
 void Crafter::Layer::RedefineField(size_t nfield) {
 	/* Set field as active */
 	Fields.SetActive(nfield);
