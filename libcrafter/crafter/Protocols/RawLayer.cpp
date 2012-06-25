@@ -132,7 +132,14 @@ const RawLayer RawLayer::operator+(const RawLayer& right) const{
 void RawLayer::ParseLayerData(ParseInfo* info) {
 	/* Get the extra information, this is s sandwich RawLayer */
 	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
-
+	if(!extra_info) {
+		/* Set payload */
+		SetPayload(info->raw_data,info->total_size - info->offset);
+		info->offset = info->total_size;
+		/* Set next layer */
+		info->top = 1;
+		return;
+	}
 	/* Set payload */
 	SetPayload(extra_info->raw_data,extra_info->nbytes);
 	info->offset += extra_info->nbytes;
@@ -141,6 +148,7 @@ void RawLayer::ParseLayerData(ParseInfo* info) {
 
 	/* Delete structure */
 	delete extra_info;
+	extra_info = 0;
 }
 
 Pad::Pad(byte value, size_t times) {

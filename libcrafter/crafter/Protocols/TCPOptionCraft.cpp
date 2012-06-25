@@ -43,6 +43,11 @@ void TCPOption::Craft() {
 void TCPOption::ParseLayerData(ParseInfo* info) {
 	/* Update the information of the IP options */
 	TCPOptionLayer::ExtraInfo* extra_info = reinterpret_cast<TCPOptionLayer::ExtraInfo*>(info->extra_info);
+	if(!extra_info) {
+		info->top = 1;
+		return;
+	}
+
 	int optlen = GetLength();
 	if(optlen > extra_info->optlen) optlen = extra_info->optlen;
 	if(optlen > 2) {
@@ -57,5 +62,6 @@ void TCPOption::ParseLayerData(ParseInfo* info) {
 	}  else {
 		info->next_layer = extra_info->next_layer;
 		delete extra_info;
+		extra_info = 0;
 	}
 }
