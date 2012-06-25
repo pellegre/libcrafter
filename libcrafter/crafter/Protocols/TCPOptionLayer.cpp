@@ -58,6 +58,11 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt) {
 void TCPOptionLayer::ParseLayerData(ParseInfo* info) {
 	/* Update the information of the IP options */
 	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
+	if(!extra_info) {
+		info->top = 1;
+		return;
+	}
+
 	extra_info->optlen -= GetSize();
 	if(extra_info->optlen > 0) {
 		/* Get the option type */
@@ -66,5 +71,6 @@ void TCPOptionLayer::ParseLayerData(ParseInfo* info) {
 	}  else {
 		info->next_layer = extra_info->next_layer;
 		delete extra_info;
+		extra_info = 0;
 	}
 }

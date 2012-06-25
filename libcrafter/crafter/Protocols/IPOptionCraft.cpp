@@ -43,6 +43,13 @@ void IPOption::Craft() {
 void IPOption::ParseLayerData(ParseInfo* info) {
 	/* Update the information of the IP options */
 	IPOptionLayer::ExtraInfo* extra_info = reinterpret_cast<IPOptionLayer::ExtraInfo*>(info->extra_info);
+
+	if(!extra_info) {
+		/* Is trying to parse from an IPOption layer? Get the hell out of here... */
+		info->top = 1;
+		return;
+	}
+
 	int optlen = GetLength();
 	if(optlen > extra_info->optlen) optlen = extra_info->optlen;
 	if(optlen > 2) {
@@ -57,5 +64,6 @@ void IPOption::ParseLayerData(ParseInfo* info) {
 	}  else {
 		info->next_layer = extra_info->next_layer;
 		delete extra_info;
+		extra_info = 0;
 	}
 }
