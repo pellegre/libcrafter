@@ -57,7 +57,7 @@ void IPOptionTraceroute::DefineProtocol() {
     Fields.push_back(new ByteField("Length",0,1));
     Fields.push_back(new XShortField("IDNumber",0,2));
     Fields.push_back(new ShortField("OutboundHC",1,0));
-    Fields.push_back(new ShortField("ReturnHC",1,2));
+    Fields.push_back(new XShortField("ReturnHC",1,2));
     Fields.push_back(new IPAddress("OrigIP",2,0));
 }
 

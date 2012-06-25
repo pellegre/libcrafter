@@ -27,6 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "ICMPExtensionMPLS.h"
+#include "ICMPExtensionObject.h"
 
 using namespace Crafter;
 using namespace std;
@@ -41,4 +42,12 @@ void ICMPExtensionMPLS::Craft() {
         SetBottomOfStack(1);
     else
         SetBottomOfStack(0);
+}
+
+void ICMPExtensionMPLS::ParseLayerData(ParseInfo* info) {
+	if(GetBottomOfStack())
+		info->next_layer = Protocol::AccessFactory()->GetLayerByID(ICMPExtensionObject::PROTO);
+	else
+		info->next_layer = Protocol::AccessFactory()->GetLayerByID(ICMPExtensionMPLS::PROTO);
+
 }

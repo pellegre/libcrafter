@@ -152,3 +152,27 @@ string TCP::MatchFilter() const {
 	std::string ret_str = "tcp and dst port " + std::string(src_port) + " and src port " + std::string(dst_port);
 	return ret_str;
 }
+
+void TCP::ParseLayerData(ParseInfo* info) {
+	/* Verify if there are options on the IP header */
+	size_t TCP_word_size = GetDataOffset();
+
+	/* Get options size */
+	size_t TCP_opt_size = 0;
+	if(TCP_word_size > 5) TCP_opt_size = 4 * (TCP_word_size - 5);
+
+	/* We have a valid set of options */
+	if (TCP_opt_size > 0) {
+		/* Extra information for IP options */
+		TCPOptionLayer::ExtraInfo* extra_info = new TCPOptionLayer::ExtraInfo;
+		extra_info->optlen = TCP_opt_size;
+		extra_info->next_layer = 0;
+
+		/* Information for the decoder */
+		int opt = (info->raw_data + info->offset)[0];
+		info->next_layer = TCPOptionLayer::Build(opt);
+		info->extra_info = reinterpret_cast<void*>(extra_info);
+	} else
+		info->next_layer = 0;
+
+}

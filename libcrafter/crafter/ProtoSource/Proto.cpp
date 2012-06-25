@@ -99,6 +99,9 @@ void Proto::PrintHdr() const {
 	Printline(out,"void ReDefineActiveFields();",2);
 	Newline(out);
 
+	Printline(out,"void ParseData(ParseInfo* info);",2);
+	Newline(out);
+
 	/* Iterator over each field */
 	const_iterator it_field;
 	/* Print the fields on the correct order and reference */
@@ -210,6 +213,11 @@ void Proto::PrintCrafterCpp(ostream& out) const {
 
 	/* ReDefineActiveFields function */
 	Printline(out,"string " + protoName + "::MatchFilter() const {",0);
+
+	Printline(out,"}",0);
+	Newline(out);
+
+	Printline(out,"void" + protoName + "::ParseData(ParseInfo* info) {",0);
 
 	Printline(out,"}",0);
 	Newline(out);

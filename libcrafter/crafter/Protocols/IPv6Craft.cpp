@@ -66,3 +66,7 @@ string IPv6::MatchFilter() const {
 	return "ip6 and dst host " + GetSourceIP() + " and src host " + GetDestinationIP();
 }
 
+void IPv6::ParseLayerData(ParseInfo* info) {
+	short_word network_layer = GetNextHeader();
+	info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
+}

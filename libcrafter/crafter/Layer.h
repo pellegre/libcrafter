@@ -64,6 +64,7 @@ namespace Crafter {
 		size_t size;
 		/* Size in bytes of the header including the payload */
 		size_t bytes_size;
+
 	protected:
 
 		friend void CraftLayer(Layer* layer);
@@ -202,6 +203,27 @@ namespace Crafter {
 		friend class Protocol;
 		friend class Packet;
 
+		/* Structure with information about the parsing of layers */
+		struct ParseInfo {
+			/* READ ONLY inside ParseData */
+			/* Pointer to the original data, this should be set only once at the begging*/
+			const byte* raw_data;
+			/* Total length of the data */
+			size_t total_size;
+
+			/* UPDATE DATA inside ParseData */
+			/* Current offset to read data on the raw pointer */
+			size_t offset;
+			/* Next layer to be pushed on the Packet stack */
+			Layer* next_layer;
+			/* Additional information that a layer may need to communicate to other layer */
+			void* extra_info;
+			/* Reach top of the packet */
+			byte top;
+			/* Constructor */
+			ParseInfo() : raw_data(0), total_size(0), offset(0), next_layer(0), extra_info(0), top(0) {};
+		};
+
 		/* Default constructor */
 		Layer();
 
@@ -291,6 +313,22 @@ namespace Crafter {
 		/* --------------------------------------------------- */
 
 		virtual ~Layer();
+
+	private:
+		/*
+		 * This function parse the data after the header is all set up.
+		 * Basically, this function should update the ParseInfo structure
+		 * to inform the decoder what should do on the next step.
+		 * Checkout PacketDecoder.cpp!
+		 *
+		 * If there isn't a "next layer" to be created, this function
+		 * should set the top flag to zero.
+		 */
+		virtual void ParseLayerData(ParseInfo* info);
+
+		/* Function to call PutData and the ParseLayerData */
+		void ParseData(ParseInfo* info);
+
 	};
 
 	class Protocol {
