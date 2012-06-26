@@ -70,6 +70,7 @@ namespace Crafter {
 
 		/* Constructor */
 		Packet() : raw_data(0), bytes_size(0) { /* */ };
+		Packet(const byte* data, size_t length, short_word proto_id);
 
 		/* Copy Constructor */
 		Packet(const Packet& copy_packet);
