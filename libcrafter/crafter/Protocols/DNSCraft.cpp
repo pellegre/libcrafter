@@ -235,6 +235,7 @@ void DNS::FromRaw(const RawLayer& raw_layer) {
 
 	/* Create the header */
 	PutData(data);
+	Print();
 
 	/* Initialize the response parser */
 	ns_msg handle;
@@ -282,3 +283,51 @@ void DNS::FromRaw(const RawLayer& raw_layer) {
 
 }
 
+void DNS::ParseLayerData(ParseInfo* info) {
+	/* Initialize the response parser */
+	ns_msg handle;
+	if (ns_initparse(info->raw_data + info->offset - GetHeaderSize(),
+			         info->total_size - info->offset + GetHeaderSize(),&handle) < 0) {
+		PrintMessage(Crafter::PrintCodes::PrintPerror,
+					 "DNS::FromRaw()",
+					 "Error initializing the parsing routines");
+		exit(1);
+	}
+
+	char* buff = new char[MAXDNAME];
+
+	/* First, parse the queries... Simple */
+	for(size_t i = 0 ; i < GetTotalQuestions() ; i++) {
+		/* RR data structure */
+		ns_rr rr;
+		/* Parse the data */
+		if (ns_parserr(&handle,ns_s_qd,i,&rr) < 0) {
+			PrintMessage(Crafter::PrintCodes::PrintPerror,
+						 "DNS::FromRaw()",
+						 "Error Parsing the Queries");
+			exit(1);
+		}
+		/* Set the Query name */
+        string qname = string(ns_rr_name(rr));
+        /* Create a DNS Query and push it into the container */
+        DNSQuery dns_query(qname);
+        /* Set the class */
+        dns_query.SetClass(ns_rr_class(rr));
+        /* Set the type */
+        dns_query.SetType(ns_rr_type(rr));
+
+        Queries.push_back(dns_query);
+	}
+
+	delete [] buff;
+
+	SetContainerSection(Answers,ns_s_an,&handle);
+	SetContainerSection(Authority,ns_s_ns,&handle);
+	SetContainerSection(Additional,ns_s_ar,&handle);
+
+	Craft();
+
+	info->offset = info->total_size;
+	/* No more layers, default */
+	info->top = 1;
+}
