@@ -71,6 +71,7 @@ namespace Crafter {
 		/* Constructor */
 		Packet() : raw_data(0), bytes_size(0) { /* */ };
 		Packet(const byte* data, size_t length, short_word proto_id);
+		Packet(const RawLayer& data, short_word proto_id);
 
 		/* Copy Constructor */
 		Packet(const Packet& copy_packet);
@@ -157,6 +158,12 @@ namespace Crafter {
 		template<class Protocol>
 		Protocol* GetLayer(const Protocol* layer_ptr) const;
 
+		/* Find a layer of a specific type and return a iterator to that layer */
+		template<class Protocol>
+		LayerStack::const_iterator Find() const;
+		template<class Protocol>
+		LayerStack::const_iterator Find(LayerStack::const_iterator begin) const;
+
 		/* Foward Iterators */
 		LayerStack::iterator begin() { return Stack.begin(); };
 		LayerStack::iterator end() { return Stack.end(); };
@@ -175,6 +182,10 @@ namespace Crafter {
 		/* Get reference to a layer */
 		Layer* operator[](size_t pos);
 		const Layer* operator[](size_t pos) const;
+
+		/* Get a packet from a subset of layer of the current packet */
+		Packet SubPacket(LayerStack::const_iterator begin, LayerStack::const_iterator end) const;
+		Packet SubPacket(size_t begin, size_t end) const;
 
 		/* Destructor */
 		virtual ~Packet();
@@ -222,6 +233,25 @@ Protocol* Crafter::Packet::GetLayer(const Protocol* layer_ptr) const {
 
 	/* Return the layer with the searched ID or a null pointer */
 	return 0;
+}
+
+/* Find a layer of a specific type and return a iterator to that layer */
+template<class Protocol>
+Crafter::LayerStack::const_iterator Crafter::Packet::Find() const {
+	LayerStack::const_iterator it_layer;
+	for (it_layer = begin() ; it_layer != end() ; ++it_layer)
+		if ((*it_layer)->GetID() == Protocol::PROTO) break;
+
+	return it_layer;
+}
+
+template<class Protocol>
+Crafter::LayerStack::const_iterator Crafter::Packet::Find(Crafter::LayerStack::const_iterator begin) const {
+	LayerStack::const_iterator it_layer;
+	for (it_layer = begin ; it_layer != end() ; ++it_layer)
+		if ((*it_layer)->GetID() == Protocol::PROTO) break;
+
+	return it_layer;
 }
 
 /* Send a packet */
