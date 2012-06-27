@@ -187,6 +187,21 @@ const Layer* Packet::operator[](size_t pos) const {
 	}
 }
 
+Packet Packet::SubPacket(LayerStack::const_iterator begin, LayerStack::const_iterator end) const {
+	Packet pck;
+	LayerStack::const_iterator it = begin;
+	for(; it != end ; it++)
+		pck.PushLayer(*(*it));
+	return pck;
+}
+
+Packet Packet::SubPacket(size_t begin, size_t end) const {
+	Packet pck;
+	for(size_t i = begin; i < end ; i++)
+		pck.PushLayer(*(Stack[i]));
+	return pck;
+}
+
 /* Copy Constructor */
 Packet::Packet(const Packet& copy_packet) : raw_data(0), bytes_size(0) {
 	/* Push layer one by one */
@@ -198,6 +213,10 @@ Packet::Packet(const Packet& copy_packet) : raw_data(0), bytes_size(0) {
 
 Packet::Packet(const byte* data, size_t length, short_word proto_id) : raw_data(0), bytes_size(0) {
 	GetFromLayer(data,length,proto_id);
+}
+
+Packet::Packet(const RawLayer& data, short_word proto_id) {
+	GetFromLayer(data.raw_data,data.GetSize(),proto_id);
 }
 
 Packet& Packet::operator=(const Packet& right) {
