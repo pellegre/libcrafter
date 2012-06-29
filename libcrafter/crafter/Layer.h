@@ -65,6 +65,27 @@ namespace Crafter {
 		/* Size in bytes of the header including the payload */
 		size_t bytes_size;
 
+		/* Pair of proto_id and top_layer (after binding) */
+		struct BindPair {
+			/* Proto ID of the next layer */
+			short_word proto_next;
+			/* Field container of the binded layer */
+			FieldContainer Fields;
+			BindPair() {/* */};
+			BindPair(short_word proto_next, const FieldContainer& fc, size_t layer_size) :
+				     proto_next(proto_next), Fields(fc) {/* */};
+			~BindPair() {/*  */};
+		};
+
+		/* Table of binded layers */
+		static std::map<short_word,std::vector<BindPair> > BindTable;
+
+		/*
+		 * Check if this layer is binded (if not returns zero,
+		 * else the proto id of the binded layer)
+		 */
+		short_word CheckBinding() const;
+
 	protected:
 
 		friend void CraftLayer(Layer* layer);
@@ -309,6 +330,13 @@ namespace Crafter {
 
 		/* Returns the payload as a STL string */
 		std::string GetStringPayload() const { return LayerPayload.GetString(); };
+
+		/*
+		 * Bind a layer to a protocol
+		 * This mean that after bottom_layer should be a top_layer
+		 * with protocol ID <proto_id>
+		 */
+		static void Bind(const Layer& bottom_layer, short_word proto_id);
 
 		/* --------------------------------------------------- */
 
