@@ -74,8 +74,17 @@ void Packet::GetFromLayer(const byte* data, size_t length, short_word proto_id) 
 		/* Push the new layer into the packet */
 		PushLayer(*next_layer);
 
+		/* Hijack the next layer pointer if this layer is binded to some other */
+		short_word next_proto = next_layer->CheckBinding();
 		/* Delete the layer created */
 		delete next_layer;
+
+		if(next_proto) {
+			/* It's binded */
+			info->top = 0; /* Reset the top flag, some layers set the flag to one when done */
+			info->next_layer = Protocol::AccessFactory()->GetLayerByID(next_proto);
+		}
+
 	}
 
 	/* Push the remaining (if any) bytes as a raw layer */

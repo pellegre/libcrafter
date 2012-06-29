@@ -31,6 +31,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace std;
 using namespace Crafter;
 
+/* Table of binded layers */
+map<short_word,vector<Layer::BindPair> > Layer::BindTable;
+
 namespace Crafter {
 
 	/* Create a global and unique instance of the Protocol Factory */
@@ -41,8 +44,66 @@ namespace Crafter {
 
 }
 
+
 void Crafter::Verbose(byte value) {
 	Crafter::ShowWarnings = value;
+}
+
+void Crafter::Layer::Bind(const Layer& bottom_layer, short_word proto_id) {
+	short_word bottom_proto = bottom_layer.GetID();
+	short_word top_proto = proto_id;
+
+	BindTable[bottom_proto].push_back(BindPair(top_proto,bottom_layer.Fields,bottom_layer.GetSize()));
+}
+
+short_word Crafter::Layer::CheckBinding() const {
+	map<short_word,vector<Layer::BindPair> >::const_iterator it = BindTable.find(GetID());
+	short_word next_proto = 0;
+
+	if(it != BindTable.end()) {
+
+		/* Allocate space for layers */
+		byte* this_layer = new byte[GetSize()];
+		byte* comp_layer = new byte[GetSize()];
+
+		/* Iterate through each BindPair */
+		vector<Layer::BindPair>::const_iterator it_bind;
+
+		for(it_bind = (*it).second.begin() ; it_bind != (*it).second.end() ; it_bind++) {
+			memset(this_layer,0,GetSize());
+			memset(comp_layer,0,GetSize());
+
+			/* Get the binded pair */
+			BindPair bp = (*it_bind);
+			/* Number of fields */
+			size_t field_count = Fields.size();
+
+			/* Sanity check */
+			if(field_count != bp.Fields.size())
+				return 0;
+
+			/* OK, lets compare both layers */
+			for(size_t field = 0 ; field < field_count ; field++) {
+				FieldInfo* field_ptr = bp.Fields[field];
+				/* Write fields */
+				if(field_ptr->IsFieldSet()) {
+					Fields[field]->Write(this_layer);
+					field_ptr->Write(comp_layer);
+				}
+			}
+
+			/* Compare both layers */
+			if(!memcmp(this_layer,comp_layer,GetSize())) {
+				next_proto = bp.proto_next;
+				break;
+			}
+		}
+
+		delete [] this_layer;
+		delete [] comp_layer;
+	}
+
+	return next_proto;
 }
 
 short_word Crafter::CheckSum(short_word *buf, int nwords) {
