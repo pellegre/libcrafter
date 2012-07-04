@@ -118,7 +118,7 @@ void Packet::Decode(const byte* data, size_t length, short_word proto_id) {
 
 void Packet::Decode(const RawLayer& data, short_word proto_id) {
 	/* Construct the packet from the buffer */
-	Decode(data.raw_data, data.GetSize(),proto_id);
+	Decode(data.GetPayload().GetRawPointer(), data.GetSize(),proto_id);
 }
 
 /* [+] ----------- From Link layer */
@@ -158,7 +158,7 @@ void Packet::PacketFromEthernet(const byte* data, size_t length) {
 
 void Packet::PacketFromEthernet(const RawLayer& data) {
 	/* Construct the packet from the buffer */
-	PacketFromEthernet(data.raw_data, data.GetSize());
+	PacketFromEthernet(data.GetPayload().GetRawPointer(), data.GetSize());
 }
 
 /* [+] ----------- From IP layer */
@@ -166,7 +166,7 @@ void Packet::PacketFromEthernet(const RawLayer& data) {
 /* Construct packet a raw layer */
 void Packet::PacketFromIP(const RawLayer& data) {
 	/* Construct the packet from the buffer */
-	PacketFromIP(data.raw_data, data.GetSize());
+	PacketFromIP(data.GetPayload().GetRawPointer(), data.GetSize());
 }
 
 /* Constructor from raw data */
