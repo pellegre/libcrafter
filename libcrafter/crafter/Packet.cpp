@@ -215,8 +215,8 @@ Packet::Packet(const byte* data, size_t length, short_word proto_id) : raw_data(
 	GetFromLayer(data,length,proto_id);
 }
 
-Packet::Packet(const RawLayer& data, short_word proto_id) {
-	GetFromLayer(data.raw_data,data.GetSize(),proto_id);
+Packet::Packet(const RawLayer& data, short_word proto_id) : raw_data(0), bytes_size(0) {
+	GetFromLayer(data.GetPayload().GetRawPointer(),data.GetSize(),proto_id);
 }
 
 Packet& Packet::operator=(const Packet& right) {
