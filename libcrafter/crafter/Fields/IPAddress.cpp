@@ -54,11 +54,11 @@ void IPAddress::Write(byte* raw_data) const {
 }
 
 void IPAddress::Read(const byte* raw_data) {
-	word* ptr = (word*) (raw_data + offset);
-    struct in_addr local_address;
-    local_address.s_addr = *ptr;
-    string ip(inet_ntoa(local_address));
-	human = ip;
+    struct sockaddr_in local_address;
+	memcpy(&local_address.sin_addr, raw_data + offset, sizeof(struct in_addr));
+    char str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &local_address.sin_addr, str, INET_ADDRSTRLEN);
+	human = string(str);
 }
 
 FieldInfo* IPAddress::Clone() const {
