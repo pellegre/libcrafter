@@ -32,11 +32,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace std;
 using namespace Crafter;
 
-/* Packet handler function */
-typedef void ((*PacketHandler)(Packet*, void*));
-
 /* Handle for packets sniffed in pcap session */
-static vector<PacketHandler> packet_handler;
+static vector<Packet::PacketHandler> packet_handler;
 
 /* Mutex variable for no-reentrant functions */
 pthread_mutex_t Sniffer::mutex_compile;
@@ -63,7 +60,7 @@ static void process_packet (u_char *user, const struct pcap_pkthdr *header, cons
 
 /* Default packet handling function */
 static void DefaultPckHand(Packet* sniff_packet, void* user) {
-	sniff_packet->Print();
+	sniff_packet->Print(cout);
 	cout << "[+] ******* [+]" << endl;
 }
 
@@ -128,7 +125,7 @@ void Crafter::Sniffer::SetInterface(const std::string& iface) {
 }
 
 /* Set Packet Handler function */
-void Crafter::Sniffer::SetPacketHandler(PacketHandler PacketHandlerFunction) {
+void Crafter::Sniffer::SetPacketHandler(Packet::PacketHandler PacketHandlerFunction) {
 	packet_handler[ID] = PacketHandlerFunction;
 }
 
@@ -162,7 +159,7 @@ void Crafter::Sniffer::CompileFilter() {
 	/* ------------ End Critical area ----------------- */
 }
 
-Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, PacketHandler PacketHandlerFunction) {
+Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, Packet::PacketHandler PacketHandlerFunction) {
 	/* Set the spawned flag to zero */
 	spawned = 0;
 

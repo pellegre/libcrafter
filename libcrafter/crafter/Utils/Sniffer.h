@@ -54,9 +54,6 @@ namespace Crafter {
 
 	class Sniffer {
 
-		/* Packet handler function */
-		typedef void ((*PacketHandler)(Packet*,void*));
-
 		/* String that defines the device we are listening */
 		char* device;
 
@@ -116,7 +113,7 @@ namespace Crafter {
 		friend void CleanCrafter();
 
 		/* Constructor */
-		Sniffer(const std::string& filter = "", const std::string& iface = "", PacketHandler PacketHandlerFunction = 0);
+		Sniffer(const std::string& filter = "", const std::string& iface = "", Packet::PacketHandler PacketHandlerFunction = 0);
 
 		/* Set filter */
 		void SetFilter(const std::string& filter);
@@ -125,7 +122,7 @@ namespace Crafter {
 		void SetInterface(const std::string& iface );
 
 		/* Set Packet Handler function */
-		void SetPacketHandler(PacketHandler PacketHandlerFunction);
+		void SetPacketHandler(Packet::PacketHandler PacketHandlerFunction);
 
 		/* Start capturing packets */
 		void Capture(uint32_t count = -1, void *user = 0);
