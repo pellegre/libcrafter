@@ -627,6 +627,8 @@ namespace Crafter {
 		ClosePcap(handle);
 	}
 
+	void ReadPcap(const std::string& filename, Packet::PacketHandler PacketHandlerFunction, void* user = 0, const std::string& filter = "");
+
 	/* ---------------- Send an Receive functions (wrappers for backward compatibility) -------------- */
 
 	/* DEPRECATED functions */

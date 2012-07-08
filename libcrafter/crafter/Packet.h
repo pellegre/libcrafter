@@ -68,6 +68,9 @@ namespace Crafter {
 		friend void InitCrafter();
 		friend void CleanCrafter();
 
+		/* Packet handler function */
+		typedef void ((*PacketHandler)(Packet*,void*));
+
 		/* Constructor */
 		Packet() : raw_data(0), bytes_size(0) { /* */ };
 		Packet(const byte* data, size_t length, short_word proto_id);
@@ -193,6 +196,7 @@ namespace Crafter {
 
 	template<>
 	IPLayer* Packet::GetLayer<IPLayer>() const;
+
 }
 
 template<class Protocol>

@@ -114,6 +114,51 @@ void Crafter::ClosePcap(pcap_t *handle) {
 	pcap_close(handle);
 }
 
+struct ReadData {
+	Packet::PacketHandler packet_handler;
+	void* user_arg;
+	int link_type;
+};
+
+/* Callback function to process a packet after read it */
+static void process_packet (u_char *user, const struct pcap_pkthdr *header, const u_char *packet) {
+	Packet sniff_packet;
+
+	/* Argument for packet handling */
+	ReadData* total_arg = reinterpret_cast<ReadData*>(user);
+
+	/* Construct the packet */
+	sniff_packet.PacketFromLinkLayer(packet,header->len,total_arg->link_type);
+
+	/* Grab the data */
+	Packet::PacketHandler PacketHandlerFunction = total_arg->packet_handler;
+	void* arg = total_arg->user_arg;
+
+	/* Execute function */
+	PacketHandlerFunction(&sniff_packet, arg);
+}
+
+void Crafter::ReadPcap(const std::string& filename, Packet::PacketHandler PacketHandlerFunction, void* user, const std::string& filter) {
+	/* Handle for the opened pcap session */
+	pcap_t *handle;
+	/* Type of link layer of the interface */
+	int link_type;
+
+	OpenOffPcap(&link_type,handle,filename,filter);
+
+	/* Prepare the data */
+	ReadData rd;
+	rd.link_type = link_type;
+	rd.packet_handler = PacketHandlerFunction;
+	rd.user_arg = user;
+
+	u_char* arg = reinterpret_cast<u_char*>(&rd);
+
+	LoopPcap(handle,-1,process_packet,arg);
+
+	ClosePcap(handle);
+}
+
 /* ---------------- Send an Receive functions (wrappers for backward compatibility) -------------- */
 
 /* DEPRECATED functions */
