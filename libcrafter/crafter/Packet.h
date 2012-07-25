@@ -50,6 +50,9 @@ namespace Crafter {
 		/* Size in bytes of the packet */
 		size_t bytes_size;
 
+		/* Pre-Crafted flag. This flag is set when an user wnats to handle the crafting by himself */
+		byte pre_crafted;
+
 		/* Mutex variable */
 		static pthread_mutex_t mutex_compile;
 
@@ -72,7 +75,7 @@ namespace Crafter {
 		typedef void ((*PacketHandler)(Packet*,void*));
 
 		/* Constructor */
-		Packet() : raw_data(0), bytes_size(0) { /* */ };
+		Packet() : raw_data(0), bytes_size(0), pre_crafted(0) { /* */ };
 		Packet(const byte* data, size_t length, short_word proto_id);
 		Packet(const RawLayer& data, short_word proto_id);
 
@@ -115,6 +118,12 @@ namespace Crafter {
 		void PushLayer(const Layer& layer);
 		/* Pop and destroy the layer on top */
 		void PopLayer();
+
+		/*
+		 * Craft a packet and set the pre_crafted flag to one.
+		 * When this function is called, the crafting is handled by the user.
+		 */
+		void PreCraft();
 
 		/* Get size of the packet in bytes */
 		size_t GetSize() const { return bytes_size; };

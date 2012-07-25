@@ -36,7 +36,8 @@ using namespace Crafter;
 pthread_mutex_t Packet::mutex_compile;
 
 void Packet::HexDump(ostream& str) {
-	Craft();
+	if(!pre_crafted)
+		Craft();
 	size_t lSize = bytes_size;
 
 	byte *pAddressIn = new byte[lSize];
@@ -99,7 +100,8 @@ void Packet::HexDump(ostream& str) {
 
 /* Print Payload */
 void Packet::RawString(ostream& str) {
-	Craft();
+	if(!pre_crafted)
+		Craft();
 	/* Print raw data in hexadecimal format */
 	for(size_t i = 0 ; i < bytes_size ; i++) {
 		str << "\\x";
@@ -203,7 +205,7 @@ Packet Packet::SubPacket(size_t begin, size_t end) const {
 }
 
 /* Copy Constructor */
-Packet::Packet(const Packet& copy_packet) : raw_data(0), bytes_size(0) {
+Packet::Packet(const Packet& copy_packet) : raw_data(0), bytes_size(0), pre_crafted(0) {
 	/* Push layer one by one */
 	vector<Layer*>::const_iterator it_layer;
 	for (it_layer = copy_packet.Stack.begin() ; it_layer != copy_packet.Stack.end() ; ++it_layer)
@@ -211,11 +213,11 @@ Packet::Packet(const Packet& copy_packet) : raw_data(0), bytes_size(0) {
 
 }
 
-Packet::Packet(const byte* data, size_t length, short_word proto_id) : raw_data(0), bytes_size(0) {
+Packet::Packet(const byte* data, size_t length, short_word proto_id) : raw_data(0), bytes_size(0), pre_crafted(0) {
 	GetFromLayer(data,length,proto_id);
 }
 
-Packet::Packet(const RawLayer& data, short_word proto_id) : raw_data(0), bytes_size(0) {
+Packet::Packet(const RawLayer& data, short_word proto_id) : raw_data(0), bytes_size(0), pre_crafted(0) {
 	GetFromLayer(data.GetPayload().GetRawPointer(),data.GetSize(),proto_id);
 }
 
@@ -236,6 +238,9 @@ Packet& Packet::operator=(const Packet& right) {
 	bytes_size = 0;
 
 	vector<Layer*>::const_iterator it_const;
+
+	/* Copy the Pre-Crafted flag */
+	pre_crafted = right.pre_crafted;
 
 	for (it_const = right.Stack.begin() ; it_const != right.Stack.end() ; ++it_const)
 		PushLayer(*(*it_const));
@@ -258,6 +263,8 @@ Packet& Packet::operator=(const Layer& right) {
 
 	/* Init the size in bytes of the packet */
 	bytes_size = 0;
+	/* Put the Pre-Crafted flag at zero */
+	pre_crafted = 0;
 
 	PushLayer(right);
 
@@ -265,7 +272,7 @@ Packet& Packet::operator=(const Layer& right) {
 }
 
 /* Copy Constructor */
-Packet::Packet(const Layer& copy_layer) : raw_data(0), bytes_size(0) {
+Packet::Packet(const Layer& copy_layer) : raw_data(0), bytes_size(0), pre_crafted(0) {
 	/* Push layer one by one */
 	PushLayer(copy_layer);
 }
@@ -311,6 +318,12 @@ Packet& Packet::operator/=(const Packet& right) {
 	return *this;
 }
 
+void Packet::PreCraft() {
+	/* Craft the packet */
+	Craft();
+	pre_crafted = 1;
+}
+
 void Packet::Craft() {
 	/* First remove bytes for the raw data */
 	if (raw_data) {
@@ -339,7 +352,8 @@ void Packet::Craft() {
 
 size_t Packet::GetData(byte* raw_ptr) {
 	/* Craft the data */
-	Craft();
+	if(!pre_crafted)
+		Craft();
  	if (Stack.size() > 0)
  		return Stack[0]->GetData(raw_ptr);
  	else
@@ -348,7 +362,8 @@ size_t Packet::GetData(byte* raw_ptr) {
 
 const byte* Packet::GetRawPtr() {
 	/* Craft the data */
-	Craft();
+	if(!pre_crafted)
+		Craft();
 	/* Return raw pointer */
 	return raw_data;
 }
@@ -366,7 +381,8 @@ int Packet::Send(const string& iface) {
 	 }
 
 	/* Craft the packet, so we fill all the information needed */
-	Craft();
+	if(!pre_crafted)
+		Craft();
 
 	/* Get the ID of the first layer */
 	word current_id = Stack[0]->GetID();
@@ -412,7 +428,8 @@ Packet* Packet::SendRecv(const string& iface, double timeout, int retry, const s
 	 }
 
 	/* Craft the packet */
-	Craft();
+	if(!pre_crafted)
+		Craft();
 
 	word current_id = Stack[0]->GetID();
 
@@ -632,7 +649,8 @@ int Packet::SocketSend(int sd) {
 	 }
 
 	/* Craft the packet */
-	Craft();
+	if(!pre_crafted)
+		Craft();
 
 	word current_id = Stack[0]->GetID();
 
@@ -663,7 +681,8 @@ Packet* Packet::SocketSendRecv(int sd, const string& iface, double timeout, int 
 	 }
 
 	/* Craft the packet */
-	Craft();
+	if(!pre_crafted)
+		Craft();
 
 	word current_id = Stack[0]->GetID();
 

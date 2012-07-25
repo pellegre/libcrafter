@@ -99,7 +99,7 @@ void Proto::PrintHdr() const {
 	Printline(out,"void ReDefineActiveFields();",2);
 	Newline(out);
 
-	Printline(out,"void ParseData(ParseInfo* info);",2);
+	Printline(out,"void ParseLayerData(ParseInfo* info);",2);
 	Newline(out);
 
 	/* Iterator over each field */
@@ -217,7 +217,7 @@ void Proto::PrintCrafterCpp(ostream& out) const {
 	Printline(out,"}",0);
 	Newline(out);
 
-	Printline(out,"void" + protoName + "::ParseData(ParseInfo* info) {",0);
+	Printline(out,"void" + protoName + "::ParseLayerData(ParseInfo* info) {",0);
 
 	Printline(out,"}",0);
 	Newline(out);
