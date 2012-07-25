@@ -96,6 +96,15 @@ namespace Crafter {
 		}
 	}
 
+	/* PreCraft a range of packets defined with forward iterators */
+	template<typename FowardIter>
+	void PreCraft(FowardIter begin, FowardIter end) {
+		while(begin != end) {
+			(*begin)->PreCraft();
+			begin++;
+		}
+	}
+
 	/* +++++++++++++++++++ Send the packets +++++++++++++++++++++ */
 
 	/* This function is executed by a thread */
