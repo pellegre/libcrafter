@@ -75,6 +75,14 @@ void Crafter::InitCrafter() {
         /* Register the protocol, this is executed only once */
         Protocol::AccessFactory()->Register(&opt_dummy);
 
+        TCPOptionSACKPermitted optsackp_dummy;
+        /* Register the protocol, this is executed only once */
+        Protocol::AccessFactory()->Register(&optsackp_dummy);
+
+        TCPOptionSACK optsack_dummy;
+        /* Register the protocol, this is executed only once */
+        Protocol::AccessFactory()->Register(&optsack_dummy);
+
         TCPOptionMaxSegSize optmss_dummy;
         /* Register the protocol, this is executed only once */
         Protocol::AccessFactory()->Register(&optmss_dummy);

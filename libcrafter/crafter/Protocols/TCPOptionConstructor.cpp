@@ -58,3 +58,26 @@ void TCPOption::DefineProtocol() {
     Fields.push_back(new ByteField("Length",0,1));
 }
 
+TCPOptionSACKPermitted::TCPOptionSACKPermitted() {
+
+    SetName("TCPOptionSACKPermitted");
+    SetprotoID(0x9004);
+
+    SetKind(0x04);
+    SetLength(2);
+
+    ResetFields();
+
+}
+
+TCPOptionSACK::TCPOptionSACK() {
+
+    SetName("TCPOptionSACK");
+    SetprotoID(0x9005);
+
+    SetKind(0x05);
+    SetLength(2);
+
+    ResetFields();
+
+}

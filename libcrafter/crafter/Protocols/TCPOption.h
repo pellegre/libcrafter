@@ -34,8 +34,6 @@ namespace Crafter {
 
     class TCPOption: public TCPOptionLayer {
 
-        void DefineProtocol();
-
         Constructor GetConstructor() const {
             return TCPOption::TCPOptionConstFunc;
         };
@@ -43,6 +41,10 @@ namespace Crafter {
         static Layer* TCPOptionConstFunc() {
             return new TCPOption;
         };
+
+    protected:
+
+        void DefineProtocol();
 
         void Craft();
 
@@ -83,6 +85,60 @@ namespace Crafter {
 
     };
 
+    class TCPOptionSACKPermitted : public TCPOption {
+
+    	Constructor GetConstructor() const {
+            return TCPOptionSACKPermitted::TCPOptionSACKPermittedConstFunc;
+        };
+
+        static Layer* TCPOptionSACKPermittedConstFunc() {
+            return new TCPOptionSACKPermitted;
+        };
+
+    public:
+
+        TCPOptionSACKPermitted();
+
+        static const word PROTO = 0x9004;
+
+        ~TCPOptionSACKPermitted() { /* Destructor */ };
+
+    };
+
+    class TCPOptionSACK : public TCPOption {
+
+    	Constructor GetConstructor() const {
+            return TCPOptionSACK::TCPOptionSACKConstFunc;
+        };
+
+        static Layer* TCPOptionSACKConstFunc() {
+            return new TCPOptionSACK;
+        };
+
+        void PrintPayload(std::ostream& str) const;
+
+    public:
+
+        /* Structure to define a pair of left-right edges */
+        struct Pair {
+        	word left;
+        	word right;
+        	void Print(std::ostream& str) const;
+        	Pair(word left, word right) : left(left), right(right) {/* */};
+        	~Pair() {/* */};
+        };
+
+        TCPOptionSACK();
+
+        static const word PROTO = 0x9005;
+
+        /* Methods to access the payload */
+        std::vector<Pair> GetBlocks() const;
+        void SetBlocks(const std::vector<Pair>& blocks);
+
+        ~TCPOptionSACK() { /* Destructor */ };
+
+    };
 }
 
 #endif /* TCPOPTION_H_ */
