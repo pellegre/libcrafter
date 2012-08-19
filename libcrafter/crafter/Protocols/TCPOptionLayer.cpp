@@ -49,6 +49,12 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt) {
 	case TCPOPT_TIMESTAMP:
 		return new TCPOptionTimestamp;
 		break;
+	case TCPOPT_SACK_PERMITTED:
+		return new TCPOptionSACKPermitted;
+		break;
+	case TCPOPT_SACK:
+		return new TCPOptionSACK;
+		break;
 	}
 
 	/* Generic Option Header */

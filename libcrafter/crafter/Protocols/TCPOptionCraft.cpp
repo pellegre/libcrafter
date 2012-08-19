@@ -65,3 +65,58 @@ void TCPOption::ParseLayerData(ParseInfo* info) {
 		extra_info = 0;
 	}
 }
+
+void TCPOptionSACK::PrintPayload(ostream& str) const {
+	cout << "Payload = ";
+
+	vector<Pair> blocks = GetBlocks();
+	vector<Pair>::iterator it_block = blocks.begin();
+
+	for( ; it_block != blocks.end() - 1; it_block++) {
+		(*it_block).Print(str);
+		str << " , ";
+	}
+	(*it_block).Print(str);
+	str << " ";
+}
+
+vector<TCPOptionSACK::Pair> TCPOptionSACK::GetBlocks() const {
+	/* Get payload */
+	size_t payload_size = GetPayloadSize();
+	if( payload_size > 0) {
+		const byte* raw_data = GetPayload().GetRawPointer();
+		/* Cast to 32 bit numbers */
+		const word* edges = (const word *)(raw_data);
+
+		/* Container of blocks */
+		vector<Pair> blocks;
+		for(size_t i = 0 ; i < (2 * (payload_size/2))/sizeof(word) ; i += 2)
+			blocks.push_back(Pair(ntohl(edges[i]),ntohl(edges[i+1])));
+
+		return blocks;
+	}
+
+	return vector<TCPOptionSACK::Pair>();
+}
+
+void TCPOptionSACK::SetBlocks(const std::vector<TCPOptionSACK::Pair>& blocks) {
+	/* First allocate space for the numbers */
+	word* blocks_data = new word[blocks.size() * 2];
+
+	vector<TCPOptionSACK::Pair>::const_iterator it_block = blocks.begin();
+
+	size_t index = 0;
+	for(; it_block != blocks.end() ; it_block++) {
+		blocks_data[index] = htonl((*it_block).left);
+		blocks_data[index + 1] = htonl((*it_block).right);
+		index += 2;
+	}
+
+	/* Finally, set the payload with the data */
+	SetPayload((const byte*)blocks_data,blocks.size()*2*sizeof(word));
+}
+
+void TCPOptionSACK::Pair::Print(ostream& str) const {
+	cout << left << "-" << right;
+}
+
