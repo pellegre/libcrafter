@@ -25,7 +25,6 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-
 #include "Layer.h"
 
 using namespace std;
@@ -413,10 +412,8 @@ Crafter::Layer::Layer(const Layer& layer) {
 Layer& Crafter::Layer::operator=(const Layer& right) {
 
 	/* Sanity check */
-	if (GetName() != right.GetName()) {
-		std::cout << "[!] ERROR: Cannot convert " << right.GetName()<< " to " << GetName() << std::endl;
-		exit(1);
-	}
+	if (GetName() != right.GetName())
+		throw runtime_error("Cannot convert " + right.GetName() + " to " + GetName());
 
 	Clone(right);
 	return *this;

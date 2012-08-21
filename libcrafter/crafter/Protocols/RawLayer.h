@@ -86,7 +86,7 @@ namespace Crafter {
 			RawLayer& operator=(const char* str);
 
 			/* Equal from a general Layer */
-			RawLayer& operator=(const Layer& layer);
+			RawLayer& operator=(const Layer& layer) throw ();
 
 			/* Concatenate to raw layers */
 			const RawLayer operator+(const RawLayer& right) const;

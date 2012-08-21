@@ -93,7 +93,7 @@ RawLayer& RawLayer::operator=(const char* str) {
 }
 
 /* Equal from a general Layer */
-RawLayer& RawLayer::operator=(const Layer& layer) {
+RawLayer& RawLayer::operator=(const Layer& layer) throw () {
 	/* Get the size of the layer */
 	size_t layer_size = layer.GetSize();
 	/* Allocate memory */

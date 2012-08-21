@@ -230,12 +230,8 @@ ARPContext* Crafter::ARPSpoofingReply(const std::string& net_target, const std::
 
 	int rc = pthread_create(&tid, NULL, ARPSpoofReply, thread_arg);
 
-	if (rc) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "ARPSpoofingReply()",
-		             "Creating thread. Returning code = " + StrPort(rc));
-		exit(1);
-	}
+	if (rc)
+		throw std::runtime_error("ARPSpoofingReply() : Creating thread. Returning code = " + StrPort(rc));
 
 	/* Put thread ID into the context */
 	context->tid = tid;

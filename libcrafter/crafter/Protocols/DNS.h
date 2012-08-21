@@ -27,6 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef DNS_H_
 #define DNS_H_
 
+#include <stdexcept>
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <netdb.h>
@@ -115,10 +116,8 @@ namespace Crafter {
 		Layer& operator=(const Layer& right) {
 
 			/* Sanity check */
-			if (GetName() != right.GetName()) {
-				std::cout << "[!] ERROR: Cannot convert " << right.GetName()<< " to " << GetName() << std::endl;
-				exit(1);
-			}
+			if (GetName() != right.GetName())
+				throw std::runtime_error("Cannot convert " + right.GetName() + " to " + GetName());
 
 			const DNS* right_ptr = dynamic_cast< const DNS* >(&right);
 			DNS::operator=(*right_ptr);

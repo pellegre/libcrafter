@@ -55,13 +55,10 @@ void Crafter::OpenOffPcap(int* link_type, pcap_t*& handle, const string& filenam
 
 	handle = pcap_open_offline(filename.c_str(), errbuf);
 
-	if (handle == NULL) {
+	if (handle == NULL)
 	  /* There was an error */
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Crafter::ReadPcap()",
-	                 "opening the file: " + string(errbuf));
-	  exit (1);
-	}
+		throw std::runtime_error("Crafter::ReadPcap() : opening the file: " + string(errbuf));
+
 	if (strlen (errbuf) > 0) {
 		PrintMessage(Crafter::PrintCodes::PrintWarning,
 				     "Crafter::ReadPcap()",
@@ -76,20 +73,13 @@ void Crafter::OpenOffPcap(int* link_type, pcap_t*& handle, const string& filenam
 
 		/* Compile the filter, so we can capture only stuff we are interested in */
 		if (pcap_compile (handle, &fp, filter.c_str(), 0, 0) == -1) {
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Crafter::ReadPcap()",
-			             "Compiling filter: " + string(pcap_geterr (handle)));
 			cerr << "[!] Bad filter expression -> " << filter << endl;
-			exit (1);
+			throw std::runtime_error("Crafter::ReadPcap() : Compiling filter : " + string(pcap_geterr (handle)));
 		}
 
 		/* Set the filter for the device we have opened */
-		if (pcap_setfilter (handle, &fp) == -1)	{
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Crafter::ReadPcap()",
-			             "Setting the filter: " + string(pcap_geterr (handle)) );
-			exit (1);
-		}
+		if (pcap_setfilter (handle, &fp) == -1)
+			throw std::runtime_error("Crafter::ReadPcap() : Setting the filter: " + string(pcap_geterr (handle)) );
 
 		pcap_freecode(&fp);
 	}
@@ -99,13 +89,9 @@ void Crafter::OpenOffPcap(int* link_type, pcap_t*& handle, const string& filenam
 void Crafter::LoopPcap(pcap_t *handle, int cnt, pcap_handler callback, u_char *user) {
 	int r;
 	if ((r = pcap_loop (handle, cnt, callback, user)) < 0) {
-	  if (r == -1) {
+	  if (r == -1)
 		  /* Pcap error */
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Crafter::ReadPcap()",
-		                 "Error in pcap_loop " + string(pcap_geterr (handle)));
-		  exit (1);
-	  }
+			throw std::runtime_error("Crafter::LoopPcap() : Error in pcap_loop " + string(pcap_geterr (handle)));
 	  /* Otherwise return should be -2, meaning pcap_breakloop has been called */
 	}
 }

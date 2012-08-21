@@ -76,12 +76,8 @@ string Crafter::GetMyIP(const string& iface) {
     /* Return value */
     string ret = "";
 
-    if (getifaddrs(&ifAddrStruct) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintPerror,
-				     "GetMyIP()",
-		             "Unable to get interface information.");
-		exit(1);
-    }
+    if (getifaddrs(&ifAddrStruct) == -1)
+		throw std::runtime_error("GetMyIP() : Unable to get interface information.");
 
     for (ifa = ifAddrStruct; ifa != 0; ifa = ifa->ifa_next) {
 
@@ -112,12 +108,8 @@ string Crafter::GetMyIPv6(const string& iface) {
     /* Return value */
     string ret = "";
 
-    if (getifaddrs(&ifAddrStruct) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintPerror,
-				     "GetMyIP()",
-		             "Unable to get interface information.");
-		exit(1);
-    }
+    if (getifaddrs(&ifAddrStruct) == -1)
+		throw std::runtime_error("GetMyIP() : Unable to get interface information.");
 
     for (ifa = ifAddrStruct; ifa != 0; ifa = ifa->ifa_next) {
 
@@ -327,12 +319,8 @@ vector<string>* Crafter::ParseIP(const string& str_argv) {
 	/* Perform initial parsing of ip range */
 
 	ret = ipv4_parse_ctx_init(&ctx, argv);
-	if(ret < 0) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "ParseIP()",
-		             "IP address parsing failed. Check the IP address supplied");
-		exit(1);
-	}
+	if(ret < 0)
+		throw std::runtime_error("ParseIP() : IP address parsing failed. Check the IP address supplied");
 
 	/* Push out each ip in range */
 
@@ -370,12 +358,8 @@ vector<string> Crafter::GetIPs(const string& str_argv) {
 	/* Perform initial parsing of ip range */
 
 	ret = ipv4_parse_ctx_init(&ctx, argv);
-	if(ret < 0) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "ParseIP()",
-		             "IP address parsing failed. Check the IP address supplied");
-		exit(1);
-	}
+	if(ret < 0)
+		throw std::runtime_error("ParseIP() : IP address parsing failed. Check the IP address supplied");
 
 	/* Push out each ip in range */
 

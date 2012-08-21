@@ -94,13 +94,10 @@ void Crafter::Sniffer::SetInterface(const std::string& iface) {
 						     0,       /* to_ms - amount of time to perform packet capture in milliseconds */
 									  /* 0 = sniff until error */
 						     errbuf); /* error message buffer if something goes wrong */
-	if (handle == NULL) {
+	if (handle == NULL)
 	  /* there was an error */
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::SetInterface()",
-	                 "Opening sniffer: " + string(errbuf));
-	  exit (1);
-	}
+		throw std::runtime_error("Sniffer::SetInterface() : Opening sniffer: " + string(errbuf));
+
 	if (strlen (errbuf) > 0) {
 		PrintMessage(Crafter::PrintCodes::PrintWarning,
 				     "Sniffer::SetInterface()",
@@ -113,12 +110,8 @@ void Crafter::Sniffer::SetInterface(const std::string& iface) {
 	link_type = pcap_datalink(handle);
 
 	/* Get the IP subnet mask of the device, so we set a filter on it */
-	if (pcap_lookupnet (device, &netp, &maskp, errbuf) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::SetInterface()",
-                     "Looking net parameters: " + string(errbuf));
-	  exit (1);
-	}
+	if (pcap_lookupnet (device, &netp, &maskp, errbuf) == -1)
+		throw std::runtime_error("Sniffer::SetInterface() : Looking net parameters: " + string(errbuf));
 
 	/* And compile the filter */
 	CompileFilter();
@@ -136,20 +129,14 @@ void Crafter::Sniffer::CompileFilter() {
     pthread_mutex_lock (&mutex_compile);
 
 	/* Compile the filter, so we can capture only stuff we are interested in */
-	if (pcap_compile (handle, &fp, filter.c_str(), 0, maskp) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::CompileFilter()",
-		             "Compiling filter: " + string(pcap_geterr (handle)));
-	  exit (1);
-	}
+	if (pcap_compile (handle, &fp, filter.c_str(), 0, maskp) == -1)
+		throw std::runtime_error("Sniffer::CompileFilter() : Compiling filter: " + string(pcap_geterr (handle)));
+
 
 	/* Set the filter for the device we have opened */
-	if (pcap_setfilter (handle, &fp) == -1)	{
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::CompileFilter()",
-		             "Setting filter: " + string(pcap_geterr (handle)));
-	  exit (1);
-	}
+	if (pcap_setfilter (handle, &fp) == -1)
+		throw std::runtime_error("Sniffer::CompileFilter() : Setting filter: " + string(pcap_geterr (handle)));
+
 
 	/* We'll be nice and free the memory used for the compiled filter */
 	pcap_freecode (&fp);
@@ -173,13 +160,10 @@ Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, P
 	if (iface == "") {
 	  /* If user hasn't specified a device */
 	  device = pcap_lookupdev (errbuf); /* let pcap find a compatible device */
-	  if (device == NULL) {
+	  if (device == NULL)
 		  /* there was an error */
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Sniffer::Sniffer()",
-     		             "Error looking device for sniffing " + string(errbuf));
-		  exit (1);
-	  }
+			throw std::runtime_error("Sniffer::Sniffer() : Error looking device for sniffing " + string(errbuf));
+
 	} else
 	  device = (char *)iface.c_str();
 
@@ -194,13 +178,10 @@ Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, P
 						     0,       /* to_ms - amount of time to perform packet capture in milliseconds */
 									  /* 0 = sniff until error */
 						     errbuf); /* error message buffer if something goes wrong */
-	if (handle == NULL) {
+	if (handle == NULL)
 	  /* There was an error */
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::Sniffer()",
-	                 "opening the sniffer: " + string(errbuf));
-	  exit (1);
-	}
+		throw std::runtime_error("Sniffer::Sniffer() : opening the sniffer: " + string(errbuf));
+
 	if (strlen (errbuf) > 0) {
 		PrintMessage(Crafter::PrintCodes::PrintWarning,
 				     "Sniffer::Sniffer()",
@@ -212,12 +193,8 @@ Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, P
 	link_type = pcap_datalink(handle);
 
 	/* Get the IP subnet mask of the device, so we set a filter on it */
-	if (pcap_lookupnet (device, &netp, &maskp, errbuf) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::Sniffer()",
-                     "Looking net parameters: " + string(errbuf));
-		exit (1);
-	}
+	if (pcap_lookupnet (device, &netp, &maskp, errbuf) == -1)
+		throw std::runtime_error("Sniffer::Sniffer() : Looking net parameters: " + string(errbuf));
 
 	/* ----------- Begin Critical area ---------------- */
 
@@ -225,20 +202,13 @@ Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, P
 
 	/* Compile the filter, so we can capture only stuff we are interested in */
 	if (pcap_compile (handle, &fp, filter.c_str(), 0, maskp) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::Sniffer()",
-		             "Compiling filter: " + string(pcap_geterr (handle)));
 		cerr << "[!] Bad filter expression -> " << filter << endl;
-		exit (1);
+		throw std::runtime_error("Sniffer::Sniffer() : Compiling filter: " + string(pcap_geterr (handle)));
 	}
 
 	/* Set the filter for the device we have opened */
-	if (pcap_setfilter (handle, &fp) == -1)	{
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::Sniffer()",
-		             "Setting the filter: " + string(pcap_geterr (handle)) );
-		exit (1);
-	}
+	if (pcap_setfilter (handle, &fp) == -1)
+		throw std::runtime_error("Sniffer::Sniffer() : Setting the filter: " + string(pcap_geterr (handle)) );
 
 	/* We'll be nice and free the memory used for the compiled filter */
 	pcap_freecode (&fp);
@@ -272,13 +242,10 @@ void Crafter::Sniffer::Capture(uint32_t count, void *user) {
 	u_char* sniffer_data_arg = reinterpret_cast<u_char*>(sniffer_data);
 
 	if ((r = pcap_loop (handle, count, process_packet, sniffer_data_arg)) < 0) {
-	  if (r == -1) {
+	  if (r == -1)
 		  /* Pcap error */
-			PrintMessage(Crafter::PrintCodes::PrintError,
-					     "Sniffer::Sniffer()",
-		                 "Error in pcap_loop " + string(pcap_geterr (handle)));
-		  exit (1);
-	  }
+			throw std::runtime_error("Sniffer::Sniffer() : Error in pcap_loop " + string(pcap_geterr (handle)));
+
 	  /* Otherwise return should be -2, meaning pcap_breakloop has been called */
 	  return;
 	}
@@ -324,12 +291,9 @@ void Crafter::Sniffer::Spawn(uint32_t count, void *user) {
 	/* Now, spawn a thread */
 	int rc = pthread_create(&thread_id, NULL, SpawnThread, thread_arg);
 
-	if (rc) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::Spawn()",
-		             "Creating thread. Returning code = " + StrPort(rc));
-		exit(1);
-	}
+	if (rc)
+		throw std::runtime_error("Sniffer::Spawn() : Creating thread. Returning code = " + StrPort(rc));
+
 }
 
 void Crafter::Sniffer::Join() {
@@ -338,12 +302,9 @@ void Crafter::Sniffer::Join() {
 	void* ret;
 	int rc = pthread_join(thread_id,&ret);
 
-	if (rc) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Sniffer::Join()",
-		             "Joining thread. Returning code = " + StrPort(rc));
-		exit(1);
-	}
+	if (rc)
+		throw std::runtime_error("Sniffer::Join() : Joining thread. Returning code = " + StrPort(rc));
+
 }
 
 void Crafter::Sniffer::Cancel() {
@@ -353,12 +314,9 @@ void Crafter::Sniffer::Cancel() {
 		/* If the thread was spawned, call pthread_cancel for terminating the sniffing */
 		int rc = pthread_cancel(thread_id);
 
-		if (rc) {
-			PrintMessage(Crafter::PrintCodes::PrintError,
-						 "Sniffer::Cancel()",
-						 "Cancelating thread. Returning code = " + StrPort(rc));
-			exit(1);
-		}
+		if (rc)
+			throw std::runtime_error("Sniffer::Cancel() : Cancelating thread. Returning code = " + StrPort(rc));
+
 	} else
 		/* Just call to pcap_breakloop */
 		pcap_breakloop(handle);

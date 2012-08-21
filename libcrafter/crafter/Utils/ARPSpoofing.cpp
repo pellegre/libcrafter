@@ -38,12 +38,8 @@ void Crafter::CleanARPContext(ARPContext* arp_context) {
 
 	int rc = pthread_cancel(tid);
 
-	if (rc) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "CleanARPContext()",
-		             "Cancelating thread. Returning code = " + StrPort(rc));
-		exit(1);
-	}
+	if (rc)
+		throw std::runtime_error("CleanARPContext() : Cancelating thread. Returning code = " + StrPort(rc));
 
 	/* Delete each packet on the container */
 	PacketContainer::iterator it_packet;
@@ -116,19 +112,11 @@ void ARPContext::SanityCheck() {
 		count_victim++;
 	}
 
-	if(TargetMACs->size() == 0) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "ARPContext::SanityCheck()",
-		             "No host on Target net respond to ARP request. I have to abort, sorry. ");
-		exit(1);
-	}
+	if(TargetMACs->size() == 0)
+		throw std::runtime_error("ARPContext::SanityCheck() : No host on Target net respond to ARP request. I have to abort, sorry. ");
 
-	if(VictimMACs->size() == 0) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "ARPContext::SanityCheck()",
-		             "No host on Victim net respond to ARP request. I have to abort, sorry. ");
-		exit(1);
-	}
+	if(VictimMACs->size() == 0)
+		throw std::runtime_error("ARPContext::SanityCheck() : No host on Victim net respond to ARP request. I have to abort, sorry. ");
 
 }
 
@@ -140,12 +128,9 @@ void Crafter::BlockARP(ARPContext* context) {
 	void* ret;
 	int rc = pthread_join(tid,&ret);
 
-	if (rc) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "BlockARP()",
-		             "Joining thread. Returning code = " + StrPort(rc));
-		exit(1);
-	}
+	if (rc)
+		throw std::runtime_error("BlockARP() : Joining thread. Returning code = " + StrPort(rc));
+
 }
 
 

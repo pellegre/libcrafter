@@ -93,15 +93,12 @@ size_t DNS::DNSQuery::GetSize() const {
 size_t DNS::DNSQuery::Compress() {
 	/* Put data into the buffer */
 	int nbytes = ns_name_compress(qname.c_str(),cqname,NS_MAXCDNAME,0,0);
-	if(nbytes == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "DNSQuery::Compress()",
-		             "Error compressing the domain name provided");
-		exit(1);
-		return -1;
-	} else
+	if(nbytes == -1)
+		throw std::runtime_error("DNS::DNSQuery::Compress() : Error compressing the domain name provided");
+	else
 		return nbytes;
 
+	return -1;
 }
 
 size_t DNS::DNSQuery::Write(byte* data_ptr) const {
