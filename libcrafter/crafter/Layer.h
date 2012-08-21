@@ -31,6 +31,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <iostream>
 #include <ostream>
+#include <stdexcept>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>

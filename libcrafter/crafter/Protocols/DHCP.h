@@ -110,10 +110,8 @@ namespace Crafter {
 		Layer& operator=(const Layer& right) {
 
 			/* Sanity check */
-			if (GetName() != right.GetName()) {
-				std::cout << "[!] ERROR: Cannot convert " << right.GetName()<< " to " << GetName() << std::endl;
-				exit(1);
-			}
+			if (GetName() != right.GetName())
+				throw std::runtime_error("Cannot convert " + right.GetName() + " to " + GetName());
 
 			const DHCP* right_ptr = dynamic_cast< const DHCP* >(&right);
 			DHCP::operator=(*right_ptr);

@@ -136,12 +136,8 @@ void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_
 		/* RR data structure */
 		ns_rr rr;
 		/* Parse the data */
-		if (ns_parserr(handle,section,i,&rr) < 0) {
-			PrintMessage(Crafter::PrintCodes::PrintPerror,
-						 "DNS::FromRaw()",
-						 "Error Parsing the Answers");
-			exit(1);
-		}
+		if (ns_parserr(handle,section,i,&rr) < 0)
+			throw std::runtime_error("DNS::SetContainerSection() : Error Parsing the Answers");
 
 		/* Put zeros on the buffer */
 		zero_buff(buff,MAXDNAME);
@@ -164,10 +160,7 @@ void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_
 						buff,                /* Result                  */
 						MAXDNAME)            /* Size of buffer   */
 								  < 0) {
-				PrintMessage(Crafter::PrintCodes::PrintPerror,
-							 "DNS::FromRaw()",
-							 "Error Uncompressing the RData");
-				exit(1);
+				throw std::runtime_error("DNS::SetContainerSection() : Error Uncompressing the RData");
 			}
 
 			/* Put the data into a string */
@@ -239,12 +232,8 @@ void DNS::FromRaw(const RawLayer& raw_layer) {
 
 	/* Initialize the response parser */
 	ns_msg handle;
-	if (ns_initparse(data,data_size,&handle) < 0) {
-		PrintMessage(Crafter::PrintCodes::PrintPerror,
-					 "DNS::FromRaw()",
-					 "Error initializing the parsing routines");
-		exit(1);
-	}
+	if (ns_initparse(data,data_size,&handle) < 0)
+		throw std::runtime_error("DNS::FromRaw() : Error initializing the parsing routines");
 
 	char* buff = new char[MAXDNAME];
 
@@ -253,12 +242,8 @@ void DNS::FromRaw(const RawLayer& raw_layer) {
 		/* RR data structure */
 		ns_rr rr;
 		/* Parse the data */
-		if (ns_parserr(&handle,ns_s_qd,i,&rr) < 0) {
-			PrintMessage(Crafter::PrintCodes::PrintPerror,
-						 "DNS::FromRaw()",
-						 "Error Parsing the Queries");
-			exit(1);
-		}
+		if (ns_parserr(&handle,ns_s_qd,i,&rr) < 0)
+			throw std::runtime_error("DNS::FromRaw() : Error Parsing the Queries");
 		/* Set the Query name */
         string qname = string(ns_rr_name(rr));
         /* Create a DNS Query and push it into the container */
@@ -287,12 +272,8 @@ void DNS::ParseLayerData(ParseInfo* info) {
 	/* Initialize the response parser */
 	ns_msg handle;
 	if (ns_initparse(info->raw_data + info->offset - GetHeaderSize(),
-			         info->total_size - info->offset + GetHeaderSize(),&handle) < 0) {
-		PrintMessage(Crafter::PrintCodes::PrintPerror,
-					 "DNS::FromRaw()",
-					 "Error initializing the parsing routines");
-		exit(1);
-	}
+			         info->total_size - info->offset + GetHeaderSize(),&handle) < 0)
+		throw std::runtime_error("DNS::ParseLayerData() : Error initializing the parsing routines");
 
 	char* buff = new char[MAXDNAME];
 
@@ -301,12 +282,8 @@ void DNS::ParseLayerData(ParseInfo* info) {
 		/* RR data structure */
 		ns_rr rr;
 		/* Parse the data */
-		if (ns_parserr(&handle,ns_s_qd,i,&rr) < 0) {
-			PrintMessage(Crafter::PrintCodes::PrintPerror,
-						 "DNS::FromRaw()",
-						 "Error Parsing the Queries");
-			exit(1);
-		}
+		if (ns_parserr(&handle,ns_s_qd,i,&rr) < 0)
+			throw std::runtime_error("DNS::ParseLayerData() : Error Parsing the Queries");
 		/* Set the Query name */
         string qname = string(ns_rr_name(rr));
         /* Create a DNS Query and push it into the container */

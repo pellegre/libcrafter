@@ -25,6 +25,7 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <stdexcept>
 
 #include "RawSocket.h"
 #include "PrintMessage.h"
@@ -106,12 +107,9 @@ int Crafter::SocketSender::CreateLinkSocket(word protocol_to_sniff)
 {
 	int rawsock;
 
-	if((rawsock = socket(PF_PACKET, SOCK_RAW, htons(protocol_to_sniff)))== -1)
-	{
-		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
-				     "CreateLinkSocket()",
-		             "Creating packet(PF_PACKET) socket");
-		exit(1);
+	if((rawsock = socket(PF_PACKET, SOCK_RAW, htons(protocol_to_sniff)))== -1) {
+		perror("CreateLinkSocket()");
+		throw std::runtime_error("Creating packet(PF_PACKET) socket");
 	}
 
 	return rawsock;
@@ -122,12 +120,9 @@ int Crafter::SocketSender::CreateRawSocket(word protocol_to_sniff)
     /* Create a socket descriptor */
     int s = socket(PF_INET, SOCK_RAW, protocol_to_sniff);
 
-    if(s < 0)
-    {
-		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
-				     "CreateRawSocket()",
-		             "Creating raw(PF_INET) socket");
-		exit(1);
+    if(s < 0) {
+    	perror("CreateRawSocket()");
+		throw std::runtime_error("Creating raw(PF_INET) socket");
     }
 
     /* Sock options */
@@ -135,17 +130,13 @@ int Crafter::SocketSender::CreateRawSocket(word protocol_to_sniff)
     const int* val = &one;
 
     if(setsockopt(s, IPPROTO_IP, IP_HDRINCL, val, sizeof(one)) < 0) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-					"Packet::RawSocketSend()",
-					"Setting IP_HDRINCL option to raw socket");
-		exit(1);
-	}
+    	perror("CreateRawSocket()");
+		throw std::runtime_error("Setting IP_HDRINCL option to raw socket");
+    }
 
 	if(setsockopt(s, SOL_SOCKET, SO_BROADCAST, val, sizeof(one)) < 0) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-					"Packet::RawSocketSend()",
-					"Setting SO_BROADCAST flag to raw socket");
-		exit(1);
+    	perror("CreateRawSocket()");
+		throw std::runtime_error("Setting SO_BROADCAST flag to raw socket");
 	}
 
     return s;
@@ -155,12 +146,9 @@ int Crafter::SocketSender::CreateRaw6Socket(word protocol_to_sniff) {
     /* Create a socket descriptor */
     int s = socket(PF_INET6, SOCK_RAW, protocol_to_sniff);
 
-    if(s < 0)
-    {
-		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
-				     "CreateRawSocket()",
-		             "Creating raw(PF_INET) socket");
-		exit(1);
+    if(s < 0) {
+    	perror("CreateRaw6Socket()");
+		throw std::runtime_error("Creating raw(PF_INET) socket");
     }
 
     return s;
@@ -177,12 +165,9 @@ int Crafter::SocketSender::BindLinkSocketToInterface(const char *device, int raw
 
 	/* First Get the Interface Index  */
 	strncpy((char *)ifr.ifr_name, device, IFNAMSIZ);
-	if((ioctl(rawsock, SIOCGIFINDEX, &ifr)) == -1)
-	{
-		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
-				     "BindLinkSocketToInterface()",
-		             "Getting Interface index");
-		exit(1);
+	if((ioctl(rawsock, SIOCGIFINDEX, &ifr)) == -1) {
+		perror("BindLinkSocketToInterface()");
+		throw std::runtime_error("Getting Interface index");
 	}
 
 	/* Bind our raw socket to this interface */
@@ -191,12 +176,9 @@ int Crafter::SocketSender::BindLinkSocketToInterface(const char *device, int raw
 	sll.sll_protocol = htons(protocol);
 
 
-	if((bind(rawsock, (struct sockaddr *)&sll, sizeof(sll)))== -1)
-	{
-		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
-				     "BindLinkSocketToInterface()",
-		             "Binding raw socket to interface");
-		exit(1);
+	if((bind(rawsock, (struct sockaddr *)&sll, sizeof(sll)))== -1) {
+		perror("BindLinkSocketToInterface()");
+		throw std::runtime_error("Binding raw socket to interface");
 	}
 
 	return 0;
@@ -208,12 +190,9 @@ int Crafter::SocketSender::BindRawSocketToInterface(const char *device, int s)
     ifreq Interface;
     memset(&Interface, 0, sizeof(Interface));
     strncpy(Interface.ifr_ifrn.ifrn_name, device, IFNAMSIZ);
-    if (ioctl(s, SIOCGIFINDEX, &Interface) < 0)
-    {
-		Crafter::PrintMessage(Crafter::PrintCodes::PrintPerror,
-				     "BindRawSocketToInterface()",
-		             "Binding raw socket to interface");
-		exit(1);
+    if (ioctl(s, SIOCGIFINDEX, &Interface) < 0) {
+    	perror("BindRawSocketToInterface()");
+		throw std::runtime_error("Binding raw socket to interface");
     }
 
     return 0;

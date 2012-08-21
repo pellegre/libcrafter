@@ -126,14 +126,13 @@ string DNS::DNSAnswer::GetRData() const {
 size_t DNS::DNSAnswer::CompressName() {
 	/* Put data into the buffer */
 	int nbytes = ns_name_compress(qname.c_str(),cqname,NS_MAXCDNAME,0,0);
-	if(nbytes == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "DNSAnswer::CompressName()",
-		             "Error compressing the domain name provided");
-		exit(1);
-		return -1;
-	} else
+	if(nbytes == -1)
+		throw std::runtime_error("DNSAnswer::CompressName() : Error compressing the domain name provided");
+	else
 		return nbytes;
+
+	return -1;
+
 
 }
 
@@ -141,14 +140,12 @@ size_t DNS::DNSAnswer::CompressRData() {
 	if (rdata.find_first_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIKKLMNOPQRSTUVWXYZ") != std::string::npos) {
 		/* Put data into the buffer */
 		int nbytes = ns_name_compress(rdata.c_str(),crdata,NS_MAXCDNAME,0,0);
-		if(nbytes == -1) {
-			PrintMessage(Crafter::PrintCodes::PrintError,
-						 "DNSAnswer::CompressRData()",
-						 "Error compressing the domain name provided");
-			exit(1);
-			return -1;
-		} else
+		if(nbytes == -1)
+			throw std::runtime_error("DNSAnswer::CompressRData() : Error compressing the domain name provided");
+		else
 			return nbytes;
+
+		return -1;
 
 	} else {
 		ns_put32(inet_network(rdata.c_str()),crdata);

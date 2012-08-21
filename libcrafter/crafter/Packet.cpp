@@ -477,13 +477,10 @@ Packet* Packet::SendRecv(const string& iface, double timeout, int retry, const s
 				      libcap_errbuf); /* error message buffer if something goes wrong */
 
 
-	if (handle == NULL) {
+	if (handle == NULL)
 	  /* There was an error */
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::SendRecv()",
-	                 "Listening device -> " + string(libcap_errbuf));
-	  exit (1);
-	}
+		throw std::runtime_error("Packet::SendRecv() : Listening device " + string(libcap_errbuf));
+
 	if (strlen (libcap_errbuf) > 0) {
 			PrintMessage(Crafter::PrintCodes::PrintWarning,
 					     "Packet::SendRecv()",
@@ -495,12 +492,8 @@ Packet* Packet::SendRecv(const string& iface, double timeout, int retry, const s
 	int link_type = pcap_datalink(handle);
 
 	/* Get the IP subnet mask of the device, so we set a filter on it */
-	if (pcap_lookupnet (device, &netp, &maskp, libcap_errbuf) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::SendRecv()",
-                     "Error getting device information " + string(libcap_errbuf));
-	  exit (1);
-	}
+	if (pcap_lookupnet (device, &netp, &maskp, libcap_errbuf) == -1)
+		throw std::runtime_error("Packet::SendRecv() : Error getting device information " + string(libcap_errbuf));
 
 	string filter = "";
 
@@ -564,20 +557,13 @@ Packet* Packet::SendRecv(const string& iface, double timeout, int retry, const s
 
 	/* Compile the filter, so we can capture only stuff we are interested in */
 	if (pcap_compile (handle, &fp, filter.c_str(), 0, maskp) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::SendRecv()",
-	                 "Error compiling the filter -> " + string(pcap_geterr(handle)));
 		cerr << "[!] Bad filter expression -> " << filter << endl;
-	  exit (1);
+		throw std::runtime_error("Packet::SendRecv() : Error compiling the filter : " + string(pcap_geterr(handle)));
 	}
 
 	/* Set the filter for the device we have opened */
-	if (pcap_setfilter (handle, &fp) == -1)	{
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::SendRecv()",
-                     "Setting filter -> " + string(pcap_geterr (handle)));
-	  exit (1);
-	}
+	if (pcap_setfilter (handle, &fp) == -1)
+		throw std::runtime_error("Packet::SendRecv() : Setting filter : " + string(pcap_geterr (handle)));
 
 	/* We'll be nice and free the memory used for the compiled filter */
 	pcap_freecode(&fp);
@@ -719,13 +705,10 @@ Packet* Packet::SocketSendRecv(int sd, const string& iface, double timeout, int 
 				      libcap_errbuf); /* error message buffer if something goes wrong */
 
 
-	if (handle == NULL) {
+	if (handle == NULL)
 	  /* There was an error */
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::SendRecv()",
-	                 "Listening device -> " + string(libcap_errbuf));
-	  exit (1);
-	}
+		throw std::runtime_error("Packet::SendRecv() : Listening device : " + string(libcap_errbuf));
+
 	if (strlen (libcap_errbuf) > 0) {
 			PrintMessage(Crafter::PrintCodes::PrintWarning,
 					     "Packet::SendRecv()",
@@ -737,12 +720,8 @@ Packet* Packet::SocketSendRecv(int sd, const string& iface, double timeout, int 
 	int link_type = pcap_datalink(handle);
 
 	/* Get the IP subnet mask of the device, so we set a filter on it */
-	if (pcap_lookupnet (device, &netp, &maskp, libcap_errbuf) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::SendRecv()",
-                     "Error getting device information " + string(libcap_errbuf));
-	  exit (1);
-	}
+	if (pcap_lookupnet (device, &netp, &maskp, libcap_errbuf) == -1)
+		throw std::runtime_error("Packet::SendRecv() : Error getting device information " + string(libcap_errbuf));
 
 	string filter = "";
 
@@ -806,20 +785,13 @@ Packet* Packet::SocketSendRecv(int sd, const string& iface, double timeout, int 
 
 	/* Compile the filter, so we can capture only stuff we are interested in */
 	if (pcap_compile (handle, &fp, filter.c_str(), 0, maskp) == -1) {
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::SendRecv()",
-	                 "Error compiling the filter -> " + string(pcap_geterr(handle)));
 		cerr << "[!] Bad filter expression -> " << filter << endl;
-	  exit (1);
+		throw std::runtime_error("Packet::SendRecv() : Error compiling the filter : " + string(pcap_geterr(handle)));
 	}
 
 	/* Set the filter for the device we have opened */
-	if (pcap_setfilter (handle, &fp) == -1)	{
-		PrintMessage(Crafter::PrintCodes::PrintError,
-				     "Packet::SendRecv()",
-                     "Setting filter -> " + string(pcap_geterr (handle)));
-	  exit (1);
-	}
+	if (pcap_setfilter (handle, &fp) == -1)
+		throw std::runtime_error("Packet::SendRecv() : Error compiling the filter : Setting filter : " + string(pcap_geterr (handle)));
 
 	/* We'll be nice and free the memory used for the compiled filter */
 	pcap_freecode(&fp);
