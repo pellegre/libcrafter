@@ -25,6 +25,7 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <sstream>
 
 #include "Packet.h"
 #include "Crafter.h"
@@ -34,6 +35,21 @@ using namespace std;
 using namespace Crafter;
 
 pthread_mutex_t Packet::mutex_compile;
+
+template<typename T>
+static T fromString(const std::string& str) {
+	std::istringstream s(str);
+	T t;
+	s >> t;
+	return t;
+}
+
+template<typename T>
+static std::string toString(const T& t) {
+	std::ostringstream s;
+	s << t;
+	return s.str();
+}
 
 void Packet::HexDump(ostream& str) {
 	if(!pre_crafted)
@@ -499,23 +515,49 @@ Packet* Packet::SendRecv(const string& iface, double timeout, int retry, const s
 
 	/* Get the IP layer */
 	IP* ip_layer = 0;
-	LayerStack::iterator it_layer;
-	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "IP")
+	LayerStack::iterator it_layer = Stack.begin() ;
+	for (; it_layer != Stack.end() ; ++it_layer) {
+		if ((*it_layer)->GetName() == "IP") {
 			ip_layer = dynamic_cast<IP*>( (*it_layer) );
+			break;
+		}
+	}
 
 	if (user_filter == " ") {
 		string check_icmp;
 
 		if (ip_layer) {
-			short_word ident = ip_layer->GetIdentification();
-			char* str_ident = new char[6];
-			sprintf(str_ident,"%d",ident);
-			str_ident[5] = 0;
+
+			/* Match first 8 bytes of next layer, if any */
+			Layer* next_layer;
+			string extra = "";
+			if(it_layer != Stack.end()) {
+				/* Next layer on top of IP */
+				next_layer = *it_layer;
+				while(next_layer && next_layer->GetName().find("IP") != string::npos) next_layer = next_layer->GetTopLayer();
+
+				/* Get offset to next layer (from the ICMP layer)*/
+				word offset_icmp = ip_layer->GetHeaderLength() * 4 + 8;
+				word rem_size = next_layer->GetRemainingSize();
+				/* Get offset to next layer (on the packet) */
+				word offset_packet = GetSize() - rem_size;
+
+				if(rem_size >= 8) {
+					word* raw_packet = reinterpret_cast<word*>(raw_data + offset_packet);
+					word first_word  = raw_packet[0];
+					word second_word = raw_packet[1];
+
+					extra =  " and (icmp[" + toString(offset_icmp) + ":4] == "+ toString(ntohl(first_word)) +")" +
+							 " and (icmp[" + toString(offset_icmp + 4) + ":4] == "+ toString(ntohl(second_word)) +")";
+				}
+
+			}
+
 			check_icmp = "( ( (icmp[icmptype] == icmp-unreach) or (icmp[icmptype] == icmp-timxceed) or "
 						 "    (icmp[icmptype] == icmp-paramprob) or (icmp[icmptype] == icmp-sourcequench) or "
-						 "    (icmp[icmptype] == icmp-redirect) ) and (icmp[12:2] == " + string(str_ident)  + " ) ) ";
-			delete [] str_ident;
+						 "    (icmp[icmptype] == icmp-redirect) ) and (icmp[12:2] == " + toString(ip_layer->GetIdentification()) + " )" +
+						 extra +
+						 " ) ";
 
 		} else
 			check_icmp = " ";
@@ -727,19 +769,24 @@ Packet* Packet::SocketSendRecv(int sd, const string& iface, double timeout, int 
 
 	/* Get the IP layer */
 	IP* ip_layer = 0;
-	LayerStack::iterator it_layer;
-	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; ++it_layer)
-		if ((*it_layer)->GetName() == "IP")
+	LayerStack::iterator it_layer = Stack.begin() ;
+	for (; it_layer != Stack.end() ; ++it_layer) {
+		if ((*it_layer)->GetName() == "IP") {
 			ip_layer = dynamic_cast<IP*>( (*it_layer) );
+			break;
+		}
+	}
 
 	if (user_filter == " ") {
 		string check_icmp;
 
 		if (ip_layer) {
+			/* Match IP identification number */
 			short_word ident = ip_layer->GetIdentification();
 			char* str_ident = new char[6];
 			sprintf(str_ident,"%d",ident);
 			str_ident[5] = 0;
+
 			check_icmp = "( ( (icmp[icmptype] == icmp-unreach) or (icmp[icmptype] == icmp-timxceed) or "
 						 "    (icmp[icmptype] == icmp-paramprob) or (icmp[icmptype] == icmp-sourcequench) or "
 						 "    (icmp[icmptype] == icmp-redirect) ) and (icmp[12:2] == " + string(str_ident)  + " ) ) ";
