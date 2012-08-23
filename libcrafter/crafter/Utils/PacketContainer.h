@@ -42,7 +42,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace Crafter {
 
 	template<typename T>
-	T fromString(const std::string& str) {
+	static T fromString(const std::string& str) {
 		std::istringstream s(str);
 		T t;
 		s >> t;
@@ -50,7 +50,7 @@ namespace Crafter {
 	}
 
 	template<typename T>
-	std::string toString(const T& t) {
+	static std::string toString(const T& t) {
 		std::ostringstream s;
 		s << t;
 		return s.str();
