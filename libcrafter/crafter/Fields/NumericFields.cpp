@@ -132,6 +132,34 @@ void ShortField::Read(const byte* raw_data){
 
 ShortField::~ShortField() { /* */ }
 
+ShortHostField::ShortHostField(const std::string& name, size_t nword, size_t nbyte) :
+		             Field<short_word> (name,nword,nbyte*8,16),
+                     nword(nword), nbyte(nbyte) {
+	offset = nword * 4 + nbyte;
+}
+
+void ShortHostField::Print(std::ostream& str) const {
+	str << GetName() << " = " << dec << (word)human;
+}
+
+FieldInfo* ShortHostField::Clone() const {
+	ShortHostField* new_ptr = new ShortHostField(GetName(),nword,nbyte);
+	new_ptr->human = human;
+	return new_ptr;
+}
+
+void ShortHostField::Write(byte* raw_data) const {
+	short_word* ptr = (short_word*)(raw_data + offset);
+	*ptr = human;
+}
+
+void ShortHostField::Read(const byte* raw_data){
+	short_word* ptr = (short_word*)(raw_data + offset);
+	human = *ptr;
+}
+
+ShortHostField::~ShortHostField() { /* */ }
+
 XShortField::XShortField(const std::string& name, size_t nword, size_t nbyte) :
 						 ShortField(name,nword,nbyte)
                          { /* */ }
@@ -175,6 +203,34 @@ void WordField::Read(const byte* raw_data){
 }
 
 WordField::~WordField() { /* */ }
+
+WordHostField::WordHostField(const std::string& name, size_t nword, size_t nbyte) :
+		             Field<word> (name,nword,nbyte*8,32),
+                     nword(nword), nbyte(nbyte) {
+	offset = nword * 4 + nbyte;
+}
+
+void WordHostField::Print(std::ostream& str) const {
+	str << GetName() << " = " << dec << (word)human;
+}
+
+FieldInfo* WordHostField::Clone() const {
+	WordHostField* new_ptr = new WordHostField(GetName(),nword,nbyte);
+	new_ptr->human = human;
+	return new_ptr;
+}
+
+void WordHostField::Write(byte* raw_data) const {
+	word* ptr = (word*)(raw_data + offset);
+	*ptr = human;
+}
+
+void WordHostField::Read(const byte* raw_data){
+	word* ptr = (word*)(raw_data + offset);
+	human = *ptr;
+}
+
+WordHostField::~WordHostField() { /* */ }
 
 XWordField::XWordField(const std::string& name, size_t nword, size_t nbyte) :
 						 WordField(name,nword,nbyte)

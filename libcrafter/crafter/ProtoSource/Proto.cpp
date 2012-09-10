@@ -217,7 +217,7 @@ void Proto::PrintCrafterCpp(ostream& out) const {
 	Printline(out,"}",0);
 	Newline(out);
 
-	Printline(out,"void" + protoName + "::ParseLayerData(ParseInfo* info) {",0);
+	Printline(out,"void " + protoName + "::ParseLayerData(ParseInfo* info) {",0);
 
 	Printline(out,"}",0);
 	Newline(out);

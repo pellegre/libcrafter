@@ -37,6 +37,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /* SLL Protocol Implementation */
 #include "Protocols/SLL.h"
 
+/* BSD loopback encapsulation Implementation */
+#include "Protocols/NullLoopback.h"
+
 /* Address Resolution Protocol Implementation */
 #include "Protocols/ARP.h"
 

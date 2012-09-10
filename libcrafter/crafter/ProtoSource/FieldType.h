@@ -347,6 +347,27 @@ public:
 
 /* ------- */
 
+class ShortHostFieldType : public FieldType {
+	std::string nword;
+	std::string nbyte;
+    void Read(std::ifstream& in) {
+		in >> nword;
+		in >> nbyte;
+    }
+public:
+
+    ShortHostFieldType(const std::string& name) : FieldType(name,"ShortHostField","short_word") { /* */ };
+    std::string ReturnDefinition() const {
+		return "new " + type + "(\"" + name + "\"," + nword + "," + nbyte +")";
+    }
+    static FieldType* Constructor(const std::string& name) { return new ShortHostFieldType(name); };
+	size_t Size() const { return 16; };
+    FieldType::Constructor GetConstructor() const { return ShortHostFieldType::Constructor; };
+    ~ShortHostFieldType() { /* */ };
+};
+
+/* ------- */
+
 class XShortFieldType : public FieldType {
 	std::string nword;
 	std::string nbyte;
@@ -385,6 +406,27 @@ public:
 	size_t Size() const { return 32; };
     FieldType::Constructor GetConstructor() const { return WordFieldType::Constructor; };
     ~WordFieldType() { /* */ };
+};
+
+/* ------- */
+
+class WordHostFieldType : public FieldType {
+	std::string nword;
+	std::string nbyte;
+    void Read(std::ifstream& in) {
+		in >> nword;
+		in >> nbyte;
+    }
+public:
+
+    WordHostFieldType(const std::string& name) : FieldType(name,"WordHostField","word") { /* */ };
+    std::string ReturnDefinition() const {
+		return "new " + type + "(\"" + name + "\"," + nword + "," + nbyte +")";
+    }
+    static FieldType* Constructor(const std::string& name) { return new WordHostFieldType(name); };
+	size_t Size() const { return 32; };
+    FieldType::Constructor GetConstructor() const { return WordHostFieldType::Constructor; };
+    ~WordHostFieldType() { /* */ };
 };
 
 /* ------- */
@@ -455,6 +497,8 @@ class FieldFactory {
 		StringFieldType field12("TestStringField");
 		BitFlagType field13("TestBitFlagField");
 		IPv6AddressType field14("TestIPv6AddressField");
+		WordHostFieldType field15("TestWordHostField");
+		ShortHostFieldType field16("TestShortHostField");
 
 		Factory.Register(&field0);
 		Factory.Register(&field1);
@@ -471,6 +515,8 @@ class FieldFactory {
 		Factory.Register(&field12);
 		Factory.Register(&field13);
 		Factory.Register(&field14);
+		Factory.Register(&field15);
+		Factory.Register(&field16);
 	};
 
 	FieldFactory (const FieldFactory&);

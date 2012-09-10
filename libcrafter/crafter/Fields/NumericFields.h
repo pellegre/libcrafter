@@ -63,7 +63,7 @@ namespace Crafter {
 		FieldInfo* Clone() const;
 		virtual ~XByteField();
 	};
-	
+
 	class TCPFlags : public ByteField {
 		static const std::string flags[];
 		void Print(std::ostream& str) const;
@@ -95,6 +95,28 @@ namespace Crafter {
 		virtual ~ShortField();
 	};
 
+	class ShortHostField : public Field<short_word> {
+
+		void Print(std::ostream& str) const;
+
+	protected:
+		size_t nword;
+		size_t nbyte;
+		size_t offset;
+
+	public:
+
+		ShortHostField(const std::string& name, size_t nword, size_t nbyte);
+
+		void Write(byte* raw_data) const;
+
+		void Read(const byte* raw_data);
+
+		FieldInfo* Clone() const;
+
+		virtual ~ShortHostField();
+	};
+
 	class XShortField : public ShortField {
 		void Print(std::ostream& str) const;
 	public:
@@ -123,6 +145,28 @@ namespace Crafter {
 		FieldInfo* Clone() const;
 
 		virtual ~WordField();
+	};
+
+	class WordHostField : public Field<word> {
+
+		void Print(std::ostream& str) const;
+
+	protected:
+		size_t nword;
+		size_t nbyte;
+		size_t offset;
+
+	public:
+
+		WordHostField(const std::string& name, size_t nword, size_t nbyte);
+
+		void Write(byte* raw_data) const;
+
+		void Read(const byte* raw_data);
+
+		FieldInfo* Clone() const;
+
+		virtual ~WordHostField();
 	};
 
 	class XWordField : public WordField {

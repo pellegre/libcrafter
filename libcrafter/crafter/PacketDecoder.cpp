@@ -132,9 +132,14 @@ void Packet::PacketFromLinkLayer(const byte* data, size_t length, int link_proto
 	if(link_proto == DLT_EN10MB) {
 		/* First bytes are an Ethernet Layer */
 		first_layer = Ethernet::PROTO;
-	} else if (link_proto == DLT_LINUX_SLL) {
+	}
+	else if (link_proto == DLT_LINUX_SLL) {
 		/* First bytes are an SLL Layer */
 		first_layer = SLL::PROTO;
+	}
+	else if (link_proto == DLT_NULL) {
+		/* BSD loopback encapsulation */
+		first_layer = NullLoopback::PROTO;
 	}
 	else if (link_proto == DLT_RAW) {
 		/* No link layer, suppose we are dealing with IPv4. Hope to be a good guess :-p */

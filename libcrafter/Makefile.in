@@ -141,7 +141,9 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Protocols/SLLConstructor.lo \
 	crafter/Protocols/SLLCraft.lo \
 	crafter/Protocols/IPv6Constructor.lo \
-	crafter/Protocols/IPv6Craft.lo crafter/Protocols/IPLayer.lo
+	crafter/Protocols/IPv6Craft.lo crafter/Protocols/IPLayer.lo \
+	crafter/Protocols/NullLoopbackConstructor.lo \
+	crafter/Protocols/NullLoopbackCraft.lo
 libcrafter_la_OBJECTS = $(am_libcrafter_la_OBJECTS)
 libcrafter_la_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(AM_CXXFLAGS) \
@@ -373,7 +375,9 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/SLLCraft.cpp \
 						crafter/Protocols/IPv6Constructor.cpp \
 						crafter/Protocols/IPv6Craft.cpp \
-						crafter/Protocols/IPLayer.cpp
+						crafter/Protocols/IPLayer.cpp \
+						crafter/Protocols/NullLoopbackConstructor.cpp \
+						crafter/Protocols/NullLoopbackCraft.cpp
 
 libcrafter_la_LDFLAGS = -version-info $(CRAFTER_SO_VERSION)
 libcrafter_la_LIBADD = $(PCAPLIB) $(LNETLIB)
@@ -431,7 +435,8 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Protocols/DHCPOptions.h \
 								crafter/Protocols/SLL.h \
 								crafter/Protocols/IPv6.h \
-								crafter/Protocols/IPLayer.h
+								crafter/Protocols/IPLayer.h \
+								crafter/Protocols/NullLoopback.h
 
 crafter_libincludedir = $(libdir)/crafter-$(CRAFTER_API_VERSION)/include
 nodist_crafter_libinclude_HEADERS = crafterconfig.h
@@ -740,6 +745,12 @@ crafter/Protocols/IPv6Craft.lo: crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 crafter/Protocols/IPLayer.lo: crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/NullLoopbackConstructor.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/NullLoopbackCraft.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 libcrafter.la: $(libcrafter_la_OBJECTS) $(libcrafter_la_DEPENDENCIES) 
 	$(libcrafter_la_LINK) -rpath $(libdir) $(libcrafter_la_OBJECTS) $(libcrafter_la_LIBADD) $(LIBS)
 
@@ -833,6 +844,10 @@ mostlyclean-compile:
 	-rm -f crafter/Protocols/IPv6Constructor.lo
 	-rm -f crafter/Protocols/IPv6Craft.$(OBJEXT)
 	-rm -f crafter/Protocols/IPv6Craft.lo
+	-rm -f crafter/Protocols/NullLoopbackConstructor.$(OBJEXT)
+	-rm -f crafter/Protocols/NullLoopbackConstructor.lo
+	-rm -f crafter/Protocols/NullLoopbackCraft.$(OBJEXT)
+	-rm -f crafter/Protocols/NullLoopbackCraft.lo
 	-rm -f crafter/Protocols/RawLayer.$(OBJEXT)
 	-rm -f crafter/Protocols/RawLayer.lo
 	-rm -f crafter/Protocols/SLLConstructor.$(OBJEXT)
@@ -939,6 +954,8 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPOptionTracerouteCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPv6Constructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPv6Craft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/NullLoopbackConstructor.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/NullLoopbackCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/RawLayer.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/SLLConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/SLLCraft.Plo@am__quote@
