@@ -31,119 +31,123 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 void Crafter::InitCrafter() {
 
-        IPOptionSSRR ipssrr_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&ipssrr_dummy);
+	NullLoopback nullloop_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&nullloop_dummy);
 
-        IPOptionRR iprr_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&iprr_dummy);
+	IPOptionSSRR ipssrr_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ipssrr_dummy);
 
-        IPOptionLSRR iplsrr_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&iplsrr_dummy);
+	IPOptionRR iprr_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&iprr_dummy);
 
-        IPOptionTraceroute iptrace_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&iptrace_dummy);
+	IPOptionLSRR iplsrr_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&iplsrr_dummy);
 
-        IPOptionPad ippadopt_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&ippadopt_dummy);
+	IPOptionTraceroute iptrace_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&iptrace_dummy);
 
-        IPOption ipopt_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&ipopt_dummy);
+	IPOptionPad ippadopt_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ippadopt_dummy);
 
-        IP ip_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&ip_dummy);
+	IPOption ipopt_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ipopt_dummy);
 
-        IPv6 ipv6_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&ipv6_dummy);
+	IP ip_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ip_dummy);
 
-        UDP udp_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&udp_dummy);
+	IPv6 ipv6_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ipv6_dummy);
 
-        TCP tcp_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&tcp_dummy);
+	UDP udp_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&udp_dummy);
 
-        TCPOption opt_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&opt_dummy);
+	TCP tcp_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&tcp_dummy);
 
-        TCPOptionSACKPermitted optsackp_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&optsackp_dummy);
+	TCPOption opt_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&opt_dummy);
 
-        TCPOptionSACK optsack_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&optsack_dummy);
+	TCPOptionSACKPermitted optsackp_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optsackp_dummy);
 
-        TCPOptionMaxSegSize optmss_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&optmss_dummy);
+	TCPOptionSACK optsack_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optsack_dummy);
 
-        TCPOptionTimestamp optts_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&optts_dummy);
+	TCPOptionMaxSegSize optmss_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optmss_dummy);
 
-        TCPOptionPad optpad_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&optpad_dummy);
+	TCPOptionTimestamp optts_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optts_dummy);
 
-        ICMP icmp_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&icmp_dummy);
+	TCPOptionPad optpad_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optpad_dummy);
 
-        ICMPExtension icmp_extension_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&icmp_extension_dummy);
+	ICMP icmp_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&icmp_dummy);
 
-        ICMPExtensionMPLS icmp_extension_mpls_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&icmp_extension_mpls_dummy);
+	ICMPExtension icmp_extension_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&icmp_extension_dummy);
 
-        ICMPExtensionObject icmp_extension_object_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&icmp_extension_object_dummy);
+	ICMPExtensionMPLS icmp_extension_mpls_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&icmp_extension_mpls_dummy);
 
-        Ethernet ether_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&ether_dummy);
+	ICMPExtensionObject icmp_extension_object_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&icmp_extension_object_dummy);
 
-        SLL sll_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&sll_dummy);
+	Ethernet ether_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ether_dummy);
 
-        ARP arp_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&arp_dummy);
+	SLL sll_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&sll_dummy);
 
-        RawLayer raw_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&raw_dummy);
+	ARP arp_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&arp_dummy);
 
-        DNS dns_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&dns_dummy);
+	RawLayer raw_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&raw_dummy);
 
-        DHCP dhcp_dummy;
-        /* Register the protocol, this is executed only once */
-        Protocol::AccessFactory()->Register(&dhcp_dummy);
+	DNS dns_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&dns_dummy);
 
-        /* Initialize seed of RNG */
-        srand(time(NULL));
+	DHCP dhcp_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&dhcp_dummy);
 
-        /* Put verbose mode as default */
-        ShowWarnings = 1;
+	/* Initialize seed of RNG */
+	srand(time(NULL));
 
-        /* Initialize Mutex variables */
-        Packet::InitMutex();
-        Sniffer::InitMutex();
+	/* Put verbose mode as default */
+	ShowWarnings = 1;
+
+	/* Initialize Mutex variables */
+	Packet::InitMutex();
+	Sniffer::InitMutex();
 
 }
 
