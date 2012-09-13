@@ -24,61 +24,62 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+#ifndef ICMPV6LAYER_H_
+#define ICMPV6LAYER_H_
 
-#include "IPv6.h"
-#include "ICMPv6Layer.h"
+#include "../Layer.h"
 
-using namespace Crafter;
-using namespace std;
+namespace Crafter {
 
-void IPv6::ReDefineActiveFields() {
+    class ICMPv6Layer: public Layer {
+
+    protected:
+
+        void DefineProtocol();
+
+        void Craft();
+
+        static const byte FieldType = 0;
+        static const byte FieldCode = 1;
+        static const byte FieldCheckSum = 2;
+
+    public:
+
+        static const word PROTO = 0x3A00;
+
+        ICMPv6Layer();
+
+        void SetType(const byte& value) {
+            SetFieldValue(FieldType,value);
+        };
+
+        void SetCode(const byte& value) {
+            SetFieldValue(FieldCode,value);
+        };
+
+        void SetCheckSum(const short_word& value) {
+            SetFieldValue(FieldCheckSum,value);
+        };
+
+        byte  GetType() const {
+            return GetFieldValue<byte>(FieldType);
+        };
+
+        byte  GetCode() const {
+            return GetFieldValue<byte>(FieldCode);
+        };
+
+        short_word  GetCheckSum() const {
+            return GetFieldValue<short_word>(FieldCheckSum);
+        };
+
+        /* Build ICMPv6 layer from type */
+        static ICMPv6Layer* Build(int type);
+
+        ~ICMPv6Layer() { /* Destructor */ };
+
+    };
+
 }
 
-void IPv6::Craft() {
-
-	/* Get transport layer protocol */
-	if(TopLayer) {
-
-		/* First, put the total length on the header */
-		if (!IsFieldSet(FieldPayloadLength)) {
-			SetPayloadLength(( (IPv6*)TopLayer)->GetRemainingSize());
-			ResetField(FieldPayloadLength);
-		}
-
-		if(!IsFieldSet(FieldNextHeader)) {
-			short_word transport_layer = TopLayer->GetID();
-			/* Set Protocol */
-			if(transport_layer != 0xfff1) {
-				if ((TopLayer->GetID() >> 8) == (ICMPv6Layer::PROTO >> 8))
-					SetNextHeader((ICMPv6Layer::PROTO >> 8));
-				else
-					SetNextHeader(transport_layer);
-			}
-			else
-				SetNextHeader(0x0);
-
-			ResetField(FieldNextHeader);
-		}
-	}
-	else {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "IPv6::Craft()","No Transport Layer Protocol associated with IPv6 Layer.");
-	}
-
-}
-
-string IPv6::MatchFilter() const {
-	return "ip6 and dst host " + GetSourceIP() + " and src host " + GetDestinationIP();
-}
-
-void IPv6::ParseLayerData(ParseInfo* info) {
-	short_word network_layer = GetNextHeader();
-	if(network_layer == (ICMPv6Layer::PROTO >> 8)) {
-		/* Get ICMPv6 type */
-		short_word icmpv6_layer = (info->raw_data + info->offset)[0];
-		/* Construct next layer */
-		info->next_layer = ICMPv6Layer::Build(icmpv6_layer);
-	} else {
-		info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
-	}
-}
+#endif /* ICMPV6LAYER_H_ */

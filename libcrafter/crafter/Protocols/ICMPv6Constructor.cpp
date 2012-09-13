@@ -25,60 +25,33 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "IPv6.h"
-#include "ICMPv6Layer.h"
+#include "ICMPv6.h"
 
 using namespace Crafter;
 using namespace std;
 
-void IPv6::ReDefineActiveFields() {
+ICMPv6::ICMPv6() {
+
+    allocate_bytes(8);
+    SetName("ICMPv6");
+    SetprotoID(0x3A01);
+    DefineProtocol();
+
+    Fields.SetOverlap(1);
+
+    SetType(8);
+    SetCode(0);
+    SetCheckSum(0);
+    SetRestOfHeader(0);
+
+    ResetFields();
 }
 
-void IPv6::Craft() {
-
-	/* Get transport layer protocol */
-	if(TopLayer) {
-
-		/* First, put the total length on the header */
-		if (!IsFieldSet(FieldPayloadLength)) {
-			SetPayloadLength(( (IPv6*)TopLayer)->GetRemainingSize());
-			ResetField(FieldPayloadLength);
-		}
-
-		if(!IsFieldSet(FieldNextHeader)) {
-			short_word transport_layer = TopLayer->GetID();
-			/* Set Protocol */
-			if(transport_layer != 0xfff1) {
-				if ((TopLayer->GetID() >> 8) == (ICMPv6Layer::PROTO >> 8))
-					SetNextHeader((ICMPv6Layer::PROTO >> 8));
-				else
-					SetNextHeader(transport_layer);
-			}
-			else
-				SetNextHeader(0x0);
-
-			ResetField(FieldNextHeader);
-		}
-	}
-	else {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "IPv6::Craft()","No Transport Layer Protocol associated with IPv6 Layer.");
-	}
-
+void ICMPv6::DefineProtocol() {
+    Fields.push_back(new WordField("RestOfHeader",1,0));
+    Fields.push_back(new WordField("MTU",1,0));
+    Fields.push_back(new WordField("Pointer",1,0));
+    Fields.push_back(new XShortField("Identifier",1,0));
+    Fields.push_back(new XShortField("SequenceNumber",1,2));
 }
 
-string IPv6::MatchFilter() const {
-	return "ip6 and dst host " + GetSourceIP() + " and src host " + GetDestinationIP();
-}
-
-void IPv6::ParseLayerData(ParseInfo* info) {
-	short_word network_layer = GetNextHeader();
-	if(network_layer == (ICMPv6Layer::PROTO >> 8)) {
-		/* Get ICMPv6 type */
-		short_word icmpv6_layer = (info->raw_data + info->offset)[0];
-		/* Construct next layer */
-		info->next_layer = ICMPv6Layer::Build(icmpv6_layer);
-	} else {
-		info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
-	}
-}

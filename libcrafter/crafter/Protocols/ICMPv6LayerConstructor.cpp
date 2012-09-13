@@ -25,60 +25,18 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "IPv6.h"
 #include "ICMPv6Layer.h"
 
 using namespace Crafter;
 using namespace std;
 
-void IPv6::ReDefineActiveFields() {
+ICMPv6Layer::ICMPv6Layer() {
+	DefineProtocol();
 }
 
-void IPv6::Craft() {
-
-	/* Get transport layer protocol */
-	if(TopLayer) {
-
-		/* First, put the total length on the header */
-		if (!IsFieldSet(FieldPayloadLength)) {
-			SetPayloadLength(( (IPv6*)TopLayer)->GetRemainingSize());
-			ResetField(FieldPayloadLength);
-		}
-
-		if(!IsFieldSet(FieldNextHeader)) {
-			short_word transport_layer = TopLayer->GetID();
-			/* Set Protocol */
-			if(transport_layer != 0xfff1) {
-				if ((TopLayer->GetID() >> 8) == (ICMPv6Layer::PROTO >> 8))
-					SetNextHeader((ICMPv6Layer::PROTO >> 8));
-				else
-					SetNextHeader(transport_layer);
-			}
-			else
-				SetNextHeader(0x0);
-
-			ResetField(FieldNextHeader);
-		}
-	}
-	else {
-		PrintMessage(Crafter::PrintCodes::PrintWarning,
-				     "IPv6::Craft()","No Transport Layer Protocol associated with IPv6 Layer.");
-	}
-
+void ICMPv6Layer::DefineProtocol() {
+    Fields.push_back(new ByteField("Type",0,0));
+    Fields.push_back(new ByteField("Code",0,1));
+    Fields.push_back(new XShortField("CheckSum",0,2));
 }
 
-string IPv6::MatchFilter() const {
-	return "ip6 and dst host " + GetSourceIP() + " and src host " + GetDestinationIP();
-}
-
-void IPv6::ParseLayerData(ParseInfo* info) {
-	short_word network_layer = GetNextHeader();
-	if(network_layer == (ICMPv6Layer::PROTO >> 8)) {
-		/* Get ICMPv6 type */
-		short_word icmpv6_layer = (info->raw_data + info->offset)[0];
-		/* Construct next layer */
-		info->next_layer = ICMPv6Layer::Build(icmpv6_layer);
-	} else {
-		info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
-	}
-}
