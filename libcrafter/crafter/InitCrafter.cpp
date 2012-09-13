@@ -30,6 +30,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Utils/CrafterUtils.h"
 
 void Crafter::InitCrafter() {
+	ICMPv6 icmpv6_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&icmpv6_dummy);
 
 	NullLoopback nullloop_dummy;
 	/* Register the protocol, this is executed only once */

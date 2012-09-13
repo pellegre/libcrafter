@@ -143,7 +143,11 @@ am_libcrafter_la_OBJECTS = crafter/Layer.lo crafter/Payload.lo \
 	crafter/Protocols/IPv6Constructor.lo \
 	crafter/Protocols/IPv6Craft.lo crafter/Protocols/IPLayer.lo \
 	crafter/Protocols/NullLoopbackConstructor.lo \
-	crafter/Protocols/NullLoopbackCraft.lo
+	crafter/Protocols/NullLoopbackCraft.lo \
+	crafter/Protocols/ICMPv6LayerConstructor.lo \
+	crafter/Protocols/ICMPv6LayerCraft.lo \
+	crafter/Protocols/ICMPv6Constructor.lo \
+	crafter/Protocols/ICMPv6Craft.lo
 libcrafter_la_OBJECTS = $(am_libcrafter_la_OBJECTS)
 libcrafter_la_LINK = $(LIBTOOL) --tag=CXX $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CXXLD) $(AM_CXXFLAGS) \
@@ -377,7 +381,11 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/IPv6Craft.cpp \
 						crafter/Protocols/IPLayer.cpp \
 						crafter/Protocols/NullLoopbackConstructor.cpp \
-						crafter/Protocols/NullLoopbackCraft.cpp
+						crafter/Protocols/NullLoopbackCraft.cpp \
+						crafter/Protocols/ICMPv6LayerConstructor.cpp \
+						crafter/Protocols/ICMPv6LayerCraft.cpp \
+						crafter/Protocols/ICMPv6Constructor.cpp \
+						crafter/Protocols/ICMPv6Craft.cpp 
 
 libcrafter_la_LDFLAGS = -version-info $(CRAFTER_SO_VERSION)
 libcrafter_la_LIBADD = $(PCAPLIB) $(LNETLIB)
@@ -436,7 +444,9 @@ nobase_crafter_include_HEADERS = crafter.h \
 								crafter/Protocols/SLL.h \
 								crafter/Protocols/IPv6.h \
 								crafter/Protocols/IPLayer.h \
-								crafter/Protocols/NullLoopback.h
+								crafter/Protocols/NullLoopback.h \
+						        crafter/Protocols/ICMPv6Layer.h \
+						        crafter/Protocols/ICMPv6.h
 
 crafter_libincludedir = $(libdir)/crafter-$(CRAFTER_API_VERSION)/include
 nodist_crafter_libinclude_HEADERS = crafterconfig.h
@@ -751,6 +761,17 @@ crafter/Protocols/NullLoopbackConstructor.lo:  \
 crafter/Protocols/NullLoopbackCraft.lo:  \
 	crafter/Protocols/$(am__dirstamp) \
 	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/ICMPv6LayerConstructor.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/ICMPv6LayerCraft.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/ICMPv6Constructor.lo:  \
+	crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
+crafter/Protocols/ICMPv6Craft.lo: crafter/Protocols/$(am__dirstamp) \
+	crafter/Protocols/$(DEPDIR)/$(am__dirstamp)
 libcrafter.la: $(libcrafter_la_OBJECTS) $(libcrafter_la_DEPENDENCIES) 
 	$(libcrafter_la_LINK) -rpath $(libdir) $(libcrafter_la_OBJECTS) $(libcrafter_la_LIBADD) $(LIBS)
 
@@ -816,6 +837,14 @@ mostlyclean-compile:
 	-rm -f crafter/Protocols/ICMPExtensionObjectConstructor.lo
 	-rm -f crafter/Protocols/ICMPExtensionObjectCraft.$(OBJEXT)
 	-rm -f crafter/Protocols/ICMPExtensionObjectCraft.lo
+	-rm -f crafter/Protocols/ICMPv6Constructor.$(OBJEXT)
+	-rm -f crafter/Protocols/ICMPv6Constructor.lo
+	-rm -f crafter/Protocols/ICMPv6Craft.$(OBJEXT)
+	-rm -f crafter/Protocols/ICMPv6Craft.lo
+	-rm -f crafter/Protocols/ICMPv6LayerConstructor.$(OBJEXT)
+	-rm -f crafter/Protocols/ICMPv6LayerConstructor.lo
+	-rm -f crafter/Protocols/ICMPv6LayerCraft.$(OBJEXT)
+	-rm -f crafter/Protocols/ICMPv6LayerCraft.lo
 	-rm -f crafter/Protocols/IPConstructor.$(OBJEXT)
 	-rm -f crafter/Protocols/IPConstructor.lo
 	-rm -f crafter/Protocols/IPCraft.$(OBJEXT)
@@ -940,6 +969,10 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPExtensionMPLSCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPExtensionObjectConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPExtensionObjectCraft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPv6Constructor.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPv6Craft.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPv6LayerConstructor.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/ICMPv6LayerCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPConstructor.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPCraft.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@crafter/Protocols/$(DEPDIR)/IPLayer.Plo@am__quote@

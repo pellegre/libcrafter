@@ -67,6 +67,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /* IPv6 Protocol Implementation */
 #include "Protocols/IPv6.h"
 
+/*ICMPv6 implementation */
+#include "Protocols/ICMPv6Layer.h"
+#include "Protocols/ICMPv6.h"
+
 /* ICMP Protocol Implementation */
 #include "Protocols/ICMP.h"
 
