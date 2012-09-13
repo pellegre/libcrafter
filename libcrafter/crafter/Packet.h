@@ -113,6 +113,8 @@ namespace Crafter {
 		size_t GetData(byte* raw_ptr);
 		/* Get a pointer to the raw buffer inside the packet (which holds the crafted data) */
 		const byte* GetRawPtr();
+		/* Get a pointer to the raw buffer inside the packet (this is a const method, without crafting the data) */
+		const byte* GetBuffer() const;
 
 		/* Push a Layer into the stack */
 		void PushLayer(const Layer& layer);

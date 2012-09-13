@@ -384,6 +384,10 @@ const byte* Packet::GetRawPtr() {
 	return raw_data;
 }
 
+const byte* Packet::GetBuffer() const {
+	return raw_data;
+}
+
 /* Send a packet */
 int Packet::Send(const string& iface) {
 	/* Check the size of the stack */
