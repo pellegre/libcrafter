@@ -28,10 +28,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define ICMP_H_
 
 #include "../Layer.h"
+#include "ICMPLayer.h"
 
 namespace Crafter {
 
-    class ICMP: public Layer {
+    class ICMP: public ICMPLayer {
 
         void DefineProtocol();
 
@@ -128,7 +129,7 @@ namespace Crafter {
             SetFieldValue(FieldLength,value);
         };
 
-        void SetMTUNextHop(const short_word& value) {
+        void SetMTU(const short_word& value) {
             SetFieldValue(FieldMTUNextHop,value);
         };
 
@@ -168,7 +169,7 @@ namespace Crafter {
             return GetFieldValue<byte>(FieldLength);
         };
 
-        short_word SetMTUNextHop() {
+        short_word GetMTU() {
         	return GetFieldValue<short_word>(FieldMTUNextHop);
         };
 
