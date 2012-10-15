@@ -30,6 +30,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "IPv6.h"
 #include "../Utils/IPResolver.h"
 
+using namespace std;
 using namespace Crafter;
 
 /* Method to build IP layer from the source address */
@@ -50,3 +51,20 @@ IPLayer* Crafter::IPLayer::BuildDst(const std::string& ip_dst) {
 	return ip_layer;
 }
 
+static IPLayer* Crafter::IPLayer::BuildDst(const std::string& ip_dst, const std::string& iface) {
+	IPLayer* ip_layer = 0;
+	string ip_src = "";
+	if(validateIpv4Address(ip_dst)) {
+		ip_layer = new IP();
+		ip_src = GetMyIP(iface);
+	}
+	if(validateIpv6Address(ip_dst)) {
+		ip_layer = new IPv6();
+		ip_src = GetMyIPv6(iface);
+	}
+	if(ip_layer) {
+		ip_layer->SetDestinationIP(ip_dst);
+		ip_layer->SetSourceIP(ip_src);
+	}
+	return ip_layer;
+}
