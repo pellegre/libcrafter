@@ -52,6 +52,12 @@ namespace Crafter {
         /* Method to build IP layer from the destination address */
         static IPLayer* BuildDst(const std::string& ip_dst);
 
+        /*
+         * Method to build IP layer from the destination address and set the correct IP
+         * on the source field (from the interface specified).
+         */
+        static IPLayer* BuildDst(const std::string& ip_dst, const std::string& iface);
+
         virtual ~IPLayer() { /* Destructor */ };
 
     };

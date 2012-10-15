@@ -28,10 +28,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define ICMPV6LAYER_H_
 
 #include "../Layer.h"
+#include "ICMPLayer.h"
 
 namespace Crafter {
 
-    class ICMPv6Layer: public Layer {
+    class ICMPv6Layer: public ICMPLayer {
 
     protected:
 
