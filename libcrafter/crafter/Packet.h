@@ -208,6 +208,8 @@ namespace Crafter {
 	template<>
 	IPLayer* Packet::GetLayer<IPLayer>() const;
 
+	template<>
+	ICMPLayer* Packet::GetLayer<ICMPLayer>() const;
 }
 
 template<class Protocol>

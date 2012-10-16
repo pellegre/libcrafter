@@ -26,6 +26,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "ICMPv6.h"
+#include "ICMPLayer.h"
 
 using namespace Crafter;
 using namespace std;
@@ -41,6 +42,21 @@ const byte ICMPv6::ParameterProblem = 4;
 /* +++ Request and replies +++ */
 const byte ICMPv6::EchoRequest = 128;
 const byte ICMPv6::EchoReply = 129;
+
+byte ICMPv6::MapTypeNumber(byte type) {
+	/* Get the type of message in function of the base type */
+	if(type == ICMPLayer::DestinationUnreachable)
+		return ICMPv6::DestinationUnreachable;
+	else if(type == ICMPLayer::TimeExceeded)
+		return ICMPv6::TimeExceeded;
+	else if(type == ICMPLayer::ParameterProblem)
+		return ICMPv6::ParameterProblem;
+	else if(type == ICMPLayer::EchoReply)
+		return ICMPv6::EchoReply;
+	else if(type == ICMPLayer::EchoRequest)
+		return ICMPv6::EchoRequest;
+	return type;
+}
 
 void ICMPv6::ReDefineActiveFields() {
 	/* Get the type of message and redefine fields */

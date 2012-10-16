@@ -36,6 +36,8 @@ namespace Crafter {
 
         void DefineProtocol();
 
+		byte MapTypeNumber(byte type);
+
         Constructor GetConstructor() const {
             return ICMP::ICMPConstFunc;
         };

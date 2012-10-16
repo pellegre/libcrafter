@@ -13,7 +13,25 @@
 namespace Crafter {
 
 	class ICMPLayer: public Layer {
+	protected:
+
+		/* Map common type numbers to the derived class */
+		virtual byte MapTypeNumber(byte type) = 0;
+
 	public:
+
+		/* ------- Messages types common to ICMPv4 and ICMPv6 --------- */
+
+		/* +++ Error messages +++ */
+		static byte DestinationUnreachable;
+		static byte TimeExceeded;
+		static byte ParameterProblem;
+
+		/* +++ Request and replies +++ */
+		static byte EchoRequest;
+		static byte EchoReply;
+
+
 		ICMPLayer() {/* */};
 
         virtual void SetType(const byte& value) = 0;
@@ -39,6 +57,9 @@ namespace Crafter {
         virtual byte  GetCode() const = 0;
 
         virtual short_word  GetCheckSum() const = 0;
+
+        /* Layer builder */
+        static ICMPLayer* Build(const std::string& ip_address, int icmp_type);
 
 		virtual ~ICMPLayer() {/* */};
 	};

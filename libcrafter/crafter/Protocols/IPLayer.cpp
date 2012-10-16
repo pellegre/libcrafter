@@ -29,6 +29,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "IP.h"
 #include "IPv6.h"
 #include "../Utils/IPResolver.h"
+#include "../Utils/CrafterUtils.h"
 
 using namespace std;
 using namespace Crafter;
@@ -51,7 +52,7 @@ IPLayer* Crafter::IPLayer::BuildDst(const std::string& ip_dst) {
 	return ip_layer;
 }
 
-static IPLayer* Crafter::IPLayer::BuildDst(const std::string& ip_dst, const std::string& iface) {
+IPLayer* Crafter::IPLayer::BuildDst(const std::string& ip_dst, const std::string& iface) {
 	IPLayer* ip_layer = 0;
 	string ip_src = "";
 	if(validateIpv4Address(ip_dst)) {
