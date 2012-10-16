@@ -36,6 +36,8 @@ namespace Crafter {
 
     public:
 
+    	enum { PROTO = 0xfff6 };
+
         IPLayer() { /* Constructor */ };
 
         virtual void SetSourceIP(const std::string& value) = 0;
