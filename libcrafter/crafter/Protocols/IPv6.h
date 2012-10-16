@@ -63,7 +63,7 @@ namespace Crafter {
 
     public:
 
-		static const word PROTO = 0x86dd;
+		enum { PROTO = 0x86dd };
 
         IPv6();
 

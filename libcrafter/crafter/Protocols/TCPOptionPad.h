@@ -51,7 +51,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x9003;
+        enum { PROTO = 0x9003 };
 
         TCPOptionPad();
 

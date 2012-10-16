@@ -67,7 +67,7 @@ namespace Crafter {
 
     public:
 
-		static const word PROTO = 0x01;
+		enum { PROTO = 0x01 };
 
 		/* ------- Messages types --------- */
 

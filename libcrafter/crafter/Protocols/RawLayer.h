@@ -69,7 +69,7 @@ namespace Crafter {
 				          raw_data(raw_data), nbytes(nbytes), next_layer(next_layer) {};
 			};
 
-			static const word PROTO = 0xfff1;
+			enum { PROTO = 0xfff1 };
 
 			RawLayer();
 

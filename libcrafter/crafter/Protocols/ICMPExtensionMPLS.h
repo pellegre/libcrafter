@@ -57,7 +57,7 @@ namespace Crafter {
 
     public:
 
-		static const word PROTO = 0xfd;
+		enum { PROTO = 0xfd };
 
         ICMPExtensionMPLS();
 

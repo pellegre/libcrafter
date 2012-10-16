@@ -53,7 +53,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x5001;
+        enum { PROTO = 0x5001 };
 
         IPOptionPad();
 

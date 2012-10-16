@@ -53,7 +53,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x9001;
+        enum { PROTO = 0x9001 };
 
         TCPOptionMaxSegSize();
 
