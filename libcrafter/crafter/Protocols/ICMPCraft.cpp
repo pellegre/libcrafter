@@ -32,6 +32,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "ICMP.h"
+#include "ICMPLayer.h"
 #include "ICMPExtension.h"
 #include "RawLayer.h"
 
@@ -61,6 +62,22 @@ const byte ICMP::InformationReply = 16;
 
 const byte ICMP::AddressMaskRequest = 17;
 const byte ICMP::AddressMaskReply = 18;
+
+byte ICMP::MapTypeNumber(byte type) {
+	/* Get the type of message in function of the base type */
+	if(type == ICMPLayer::DestinationUnreachable)
+		return ICMP::DestinationUnreachable;
+	else if(type == ICMPLayer::TimeExceeded)
+		return ICMP::TimeExceeded;
+	else if(type == ICMPLayer::ParameterProblem)
+		return ICMP::ParameterProblem;
+	else if(type == ICMPLayer::EchoReply)
+		return ICMP::EchoReply;
+	else if(type == ICMPLayer::EchoRequest)
+		return ICMP::EchoRequest;
+	return type;
+}
+
 
 void ICMP::ReDefineActiveFields() {
 	/* Get the type of message and redefine fields */
