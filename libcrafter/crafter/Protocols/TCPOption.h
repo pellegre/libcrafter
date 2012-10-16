@@ -57,7 +57,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x9000;
+        enum { PROTO = 0x9000 };
 
         /* Padding layers */
         static const TCPOptionPad NOP;
@@ -99,7 +99,7 @@ namespace Crafter {
 
         TCPOptionSACKPermitted();
 
-        static const word PROTO = 0x9004;
+        enum { PROTO = 0x9004 };
 
         ~TCPOptionSACKPermitted() { /* Destructor */ };
 
@@ -130,7 +130,7 @@ namespace Crafter {
 
         TCPOptionSACK();
 
-        static const word PROTO = 0x9005;
+        enum { PROTO = 0x9005 };
 
         /* Methods to access the payload */
         std::vector<Pair> GetBlocks() const;

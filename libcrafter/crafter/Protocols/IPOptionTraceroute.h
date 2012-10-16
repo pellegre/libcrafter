@@ -58,7 +58,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x5002;
+        enum { PROTO = 0x5002 };
 
         IPOptionTraceroute();
 

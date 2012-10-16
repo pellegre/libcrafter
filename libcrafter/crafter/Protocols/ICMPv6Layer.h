@@ -46,7 +46,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x3A00;
+        enum { PROTO = 0x3A00 };
 
         ICMPv6Layer();
 

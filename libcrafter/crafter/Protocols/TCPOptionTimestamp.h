@@ -54,7 +54,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x9002;
+        enum { PROTO = 0x9002 };
 
         TCPOptionTimestamp();
 

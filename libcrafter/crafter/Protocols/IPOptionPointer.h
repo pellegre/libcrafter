@@ -111,7 +111,7 @@ namespace Crafter {
 
         IPOptionLSRR();
 
-        static const word PROTO = 0x5003;
+        enum { PROTO = 0x5003 };
 
         ~IPOptionLSRR() { /* Destructor */ };
     };
@@ -130,7 +130,7 @@ namespace Crafter {
 
         IPOptionRR();
 
-        static const word PROTO = 0x5004;
+        enum { PROTO = 0x5004 };
 
         ~IPOptionRR() { /* Destructor */ };
 
@@ -150,7 +150,7 @@ namespace Crafter {
 
         IPOptionSSRR();
 
-        static const word PROTO = 0x5005;
+        enum { PROTO = 0x5005 };
 
         ~IPOptionSSRR() { /* Destructor */ };
 

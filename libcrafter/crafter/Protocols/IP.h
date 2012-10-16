@@ -68,7 +68,7 @@ namespace Crafter {
 
     public:
 
-		static const word PROTO = 0x0800;
+		enum { PROTO = 0x0800 };
 
         IP();
 

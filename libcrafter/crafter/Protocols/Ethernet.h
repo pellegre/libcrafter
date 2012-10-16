@@ -55,7 +55,7 @@ namespace Crafter {
 
     public:
 
-		static const word PROTO = 0xfff2;
+		enum { PROTO = 0xfff2 };
 
         Ethernet();
 

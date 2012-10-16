@@ -75,7 +75,7 @@ namespace Crafter {
 		static const byte Request;
 		static const byte Reply;
 
-		static const word PROTO = 0xfff4;
+		enum { PROTO = 0xfff4 };
 
         DHCP();
 

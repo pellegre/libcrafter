@@ -58,7 +58,7 @@ namespace Crafter {
 
     public:
 
-		static const word PROTO = 0xfff0;
+		enum { PROTO = 0xfff0 };
 
         SLL();
 

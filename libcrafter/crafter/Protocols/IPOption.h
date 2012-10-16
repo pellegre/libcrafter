@@ -57,7 +57,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x5000;
+        enum { PROTO = 0x5000 };
 
         /* Padding layers */
         static const IPOptionPad NOP;
