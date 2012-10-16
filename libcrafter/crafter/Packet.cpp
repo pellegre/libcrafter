@@ -965,7 +965,17 @@ IPLayer* Packet::GetLayer<IPLayer>() const {
 	for (it_layer = begin() ; it_layer != end() ; ++it_layer)
 		if ((*it_layer)->GetID() == IP::PROTO || (*it_layer)->GetID() == IPv6::PROTO)
 			return dynamic_cast<IPLayer*>( (*it_layer) );
+	/* No requested layer, returns zero */
+	return 0;
+}
 
+template<>
+ICMPLayer* Packet::GetLayer<ICMPLayer>() const {
+	/* Search layer one by one */
+	LayerStack::const_iterator it_layer;
+	for (it_layer = begin() ; it_layer != end() ; ++it_layer)
+		if ((*it_layer)->GetID() == ICMP::PROTO || (*it_layer)->GetID() == ICMPv6::PROTO)
+			return dynamic_cast<ICMPLayer*>( (*it_layer) );
 	/* No requested layer, returns zero */
 	return 0;
 }
