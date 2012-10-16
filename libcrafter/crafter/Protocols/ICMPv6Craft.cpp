@@ -43,7 +43,7 @@ const byte ICMPv6::ParameterProblem = 4;
 const byte ICMPv6::EchoRequest = 128;
 const byte ICMPv6::EchoReply = 129;
 
-byte ICMPv6::MapTypeNumber(byte type) {
+byte ICMPv6::MapTypeNumber(short_word type) {
 	/* Get the type of message in function of the base type */
 	if(type == ICMPLayer::DestinationUnreachable)
 		return ICMPv6::DestinationUnreachable;
@@ -102,5 +102,5 @@ string ICMPv6::MatchFilter() const {
 		string ret_string = "(icmp6 and ip6[40]=129 and ip6[44:2] == " + string(str_ident) + ") ";
 		return ret_string;
 	} else
-		return "";
+		return " icmp6 ";
 }

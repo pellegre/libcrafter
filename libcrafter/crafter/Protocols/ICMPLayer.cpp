@@ -15,15 +15,15 @@ using namespace Crafter;
 /* ------- Messages types --------- */
 
 /* +++ Error messages +++ */
-byte ICMPLayer::DestinationUnreachable = 1;
-byte ICMPLayer::TimeExceeded = 2;
-byte ICMPLayer::ParameterProblem = 3;
+short_word ICMPLayer::DestinationUnreachable = 1000;
+short_word ICMPLayer::TimeExceeded = 1001;
+short_word ICMPLayer::ParameterProblem = 1002;
 
 /* +++ Request and replies +++ */
-byte ICMPLayer::EchoRequest = 4;
-byte ICMPLayer::EchoReply = 5;
+short_word ICMPLayer::EchoRequest = 1003;
+short_word ICMPLayer::EchoReply = 1004;
 
-ICMPLayer* ICMPLayer::Build(const std::string& ip_address, int icmp_type) {
+ICMPLayer* ICMPLayer::Build(const std::string& ip_address, short_word icmp_type) {
 	ICMPLayer* icmp_layer = 0;
 	if(validateIpv4Address(ip_address)) icmp_layer = new ICMP();
 	if(validateIpv6Address(ip_address)) icmp_layer = new ICMPv6();

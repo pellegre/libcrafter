@@ -63,7 +63,7 @@ const byte ICMP::InformationReply = 16;
 const byte ICMP::AddressMaskRequest = 17;
 const byte ICMP::AddressMaskReply = 18;
 
-byte ICMP::MapTypeNumber(byte type) {
+byte ICMP::MapTypeNumber(short_word type) {
 	/* Get the type of message in function of the base type */
 	if(type == ICMPLayer::DestinationUnreachable)
 		return ICMP::DestinationUnreachable;
@@ -197,7 +197,7 @@ string ICMP::MatchFilter() const {
 		string ret_string = "( icmp and icmp[4:2] == " + string(str_ident) + ") ";
 		return ret_string;
 	} else
-		return "";
+		return " icmp ";
 }
 
 void ICMP::ParseLayerData(ParseInfo* info) {
