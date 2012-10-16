@@ -36,6 +36,15 @@ using namespace std;
 using namespace Crafter;
 
 void Packet::GetFromLayer(const byte* data, size_t length, short_word proto_id) {
+	/* Check for the special case of IPLayer::PROTO */
+	if(proto_id == IPLayer::PROTO && (length > 0)) {
+		/* Check version on the first bits of the data */
+		byte ip_data = data[0];
+		byte version = (ip_data & 0xf0) >> 4;
+		if(version == 4) proto_id = IP::PROTO;
+		else if(version == 6) proto_id = IPv6::PROTO;
+		else proto_id = 0;
+	}
 	/* Create an information structure */
 	Layer::ParseInfo* info = new Layer::ParseInfo;
 
