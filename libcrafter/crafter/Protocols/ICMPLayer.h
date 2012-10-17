@@ -34,6 +34,8 @@ namespace Crafter {
 
 		ICMPLayer() {/* */};
 
+                bool IsType(short_word type) { return MapTypeNumber(type) == GetType(); }
+
         virtual void SetType(const byte& value) = 0;
 
         virtual void SetCode(const byte& value) = 0;
