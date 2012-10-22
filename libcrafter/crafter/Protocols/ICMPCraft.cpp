@@ -162,6 +162,9 @@ void ICMP::Craft() {
 		}
 		SetLength(length / 4);
 	}
+        /* TODO: respect section 3. Summary of RFC4884: original datagram MUST
+           contain at least 128 octets, original datagram MUST be zero padded to
+           32-bit boundary */
 
 	if (!IsFieldSet(FieldCheckSum)) {
 
