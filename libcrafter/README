@@ -1,6 +1,6 @@
 LibCrafter
 ----------
 
-Before configuring and compiling libcrafter you need lipcap an libnet installed in your system. On debian based distros, you should execute:
+Before configuring and compiling libcrafter you need lipcap installed in your system. On debian based distros, you should execute:
 
-# apt-get install libnet1 libnet1-dev libpcap0.8 libpcap0.8-dev 
+# apt-get install libpcap0.8 libpcap0.8-dev 
