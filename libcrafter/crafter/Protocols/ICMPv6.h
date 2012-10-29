@@ -45,15 +45,20 @@ namespace Crafter {
             return new ICMPv6;
         };
 
+        void Craft();
+
         std::string MatchFilter() const ;
 
         void ReDefineActiveFields();
+
+        void ParseLayerData(ParseInfo* info);
 
         static const byte FieldRestOfHeader = 3;
         static const byte FieldMTU = 4;
         static const byte FieldPointer = 5;
         static const byte FieldIdentifier = 6;
         static const byte FieldSequenceNumber = 7;
+        static const byte FieldLength = 8;
 
     public:
 
@@ -93,6 +98,10 @@ namespace Crafter {
             SetFieldValue(FieldSequenceNumber,value);
         };
 
+        void SetLength(const byte& value) {
+            SetFieldValue(FieldLength,value);
+        };
+
         word  GetRestOfHeader() const {
             return GetFieldValue<word>(FieldRestOfHeader);
         };
@@ -111,6 +120,10 @@ namespace Crafter {
 
         short_word  GetSequenceNumber() const {
             return GetFieldValue<short_word>(FieldSequenceNumber);
+        };
+
+        byte  GetLength() const {
+            return GetFieldValue<byte>(FieldLength);
         };
 
         ~ICMPv6() { /* Destructor */ };
