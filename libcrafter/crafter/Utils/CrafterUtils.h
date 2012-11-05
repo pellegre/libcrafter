@@ -102,7 +102,4 @@ namespace Crafter {
 /* The sniffer */
 #include "Sniffer.h"
 
-/* Some TCP tools */
-#include "TCPConnection.h"
-
 #endif /* CRAFTERUTILS_H_ */

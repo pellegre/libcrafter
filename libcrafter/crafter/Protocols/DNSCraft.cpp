@@ -228,7 +228,6 @@ void DNS::FromRaw(const RawLayer& raw_layer) {
 
 	/* Create the header */
 	PutData(data);
-	Print();
 
 	/* Initialize the response parser */
 	ns_msg handle;
