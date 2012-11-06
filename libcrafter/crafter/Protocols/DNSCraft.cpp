@@ -151,7 +151,32 @@ void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_
         /* String for the RData */
         string rdata;
 
-        if(qtype != DNS::TypeA) {
+        if(qtype == DNS::TypeA) {
+        	/* Parse the IP address */
+        	const byte* rdata_ptr = ns_rr_rdata(rr);
+
+			struct sockaddr_in local_address;
+			memcpy(&local_address.sin_addr, rdata_ptr, sizeof(struct in_addr));
+			char str[INET_ADDRSTRLEN];
+			inet_ntop(AF_INET, &local_address.sin_addr, str, INET_ADDRSTRLEN);
+        	/* Convert it into a IP string */
+        	rdata = string(str);
+
+        } else if(qtype == DNS::TypeAAAA) {
+
+        	/* Parse the IP address */
+        	const byte* rdata_ptr = ns_rr_rdata(rr);
+
+			struct sockaddr_in6 addr;
+			memcpy(&addr.sin6_addr, rdata_ptr, sizeof(struct in6_addr));
+			char addressBuffer[INET6_ADDRSTRLEN];
+			inet_ntop(AF_INET6, &addr.sin6_addr, addressBuffer, INET6_ADDRSTRLEN);
+
+        	/* Convert it into a IP string */
+        	rdata = string(addressBuffer);
+
+		} else {
+
 			/* Expand the name domain name */
 			if (ns_name_uncompress(
 						ns_msg_base(*handle),/* Start of the message    */
@@ -165,16 +190,6 @@ void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_
 
 			/* Put the data into a string */
 			rdata = string(buff);
-
-        } else {
-        	/* Parse the IP address */
-        	const byte* rdata_ptr = ns_rr_rdata(rr);
-            struct in_addr addr;
-        	/* Get the 32 bit number */
-        	addr.s_addr = *((word*)(rdata_ptr));
-
-        	/* Convert it into a IP string */
-        	rdata = string(inet_ntoa(addr));
         }
 
 	    /* Create the answer and push it into the container */
