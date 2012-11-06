@@ -81,6 +81,7 @@ namespace Crafter {
 
 		/* Typical types */
 		static const short_word TypeA = 0x0001;
+		static const short_word TypeAAAA = 0x001c;
 		static const short_word TypeNS = 0x0002;
 		static const short_word TypeCNAME = 0x0005;
 		static const short_word TypeSOA = 0x0006;
