@@ -110,8 +110,11 @@ void Crafter::Sniffer::SetInterface(const std::string& iface) {
 	link_type = pcap_datalink(handle);
 
 	/* Get the IP subnet mask of the device, so we set a filter on it */
-	if (pcap_lookupnet (device, &netp, &maskp, errbuf) == -1)
-		throw std::runtime_error("Sniffer::SetInterface() : Looking net parameters: " + string(errbuf));
+	if (pcap_lookupnet (device, &netp, &maskp, errbuf) == -1) {
+		maskp = PCAP_NETMASK_UNKNOWN;
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+				"Sniffer::Sniffer() : Looking net parameters: " + string(errbuf));
+	}
 
 	/* And compile the filter */
 	CompileFilter();
@@ -193,8 +196,11 @@ Crafter::Sniffer::Sniffer(const std::string& filter, const std::string& iface, P
 	link_type = pcap_datalink(handle);
 
 	/* Get the IP subnet mask of the device, so we set a filter on it */
-	if (pcap_lookupnet (device, &netp, &maskp, errbuf) == -1)
-		throw std::runtime_error("Sniffer::Sniffer() : Looking net parameters: " + string(errbuf));
+	if (pcap_lookupnet (device, &netp, &maskp, errbuf) == -1) {
+		maskp = PCAP_NETMASK_UNKNOWN;
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+				"Sniffer::Sniffer() : Looking net parameters: " + string(errbuf));
+	}
 
 	/* ----------- Begin Critical area ---------------- */
 
