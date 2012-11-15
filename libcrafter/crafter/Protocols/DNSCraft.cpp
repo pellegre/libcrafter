@@ -175,6 +175,11 @@ void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_
         	/* Convert it into a IP string */
         	rdata = string(addressBuffer);
 
+		} else if(qtype == DNS::TypeOPT) {
+
+        	/* NO data */
+			rdata="";
+
 		} else {
 
 			/* Expand the name domain name */

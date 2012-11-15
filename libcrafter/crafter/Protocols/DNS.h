@@ -90,6 +90,7 @@ namespace Crafter {
 		static const short_word TypeMX = 0x000f;
 		static const short_word TypeSRV = 0x0021;
 		static const short_word TypeA6 = 0x0026;
+		static const short_word TypeOPT = 0x0029;
 		static const short_word TypeANY = 0x00ff;
 
 		/* Typical class */
