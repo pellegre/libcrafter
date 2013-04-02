@@ -97,9 +97,9 @@ void Packet::GetFromLayer(const byte* data, size_t length, short_word proto_id) 
 	}
 
 	/* Push the remaining (if any) bytes as a raw layer */
-	size_t data_length = info->total_size - info->offset;
+	int data_length = info->total_size - info->offset;
 
-	if(data_length) {
+	if(data_length > 0) {
 		/* Create a raw payload with the rest of the data */
 		RawLayer raw_layer(info->raw_data + info->offset, data_length);
 		PushLayer(raw_layer);
