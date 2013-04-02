@@ -38,6 +38,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <signal.h>
 #include <pcap.h>
 
+/* Define PCAP_NETMASK_UNKNOWN if not included on pcap.h */
+#ifndef PCAP_NETMASK_UNKNOWN
+        #define PCAP_NETMASK_UNKNOWN    0xffffffff
+#endif
+
 #include "../Crafter.h"
 
 namespace Crafter {
