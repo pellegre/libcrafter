@@ -54,7 +54,11 @@ void IPv6::DefineProtocol() {
     Fields.push_back(new BitsField<4,0>("Version",0));
     Fields.push_back(new BitsField<8,4>("TrafficClass",0));
     Fields.push_back(new BitsField<20,12>("FlowLabel",0));
+#ifdef __APPLE__
+    Fields.push_back(new ShortHostField("PayloadLength",1,0));
+#else
     Fields.push_back(new ShortField("PayloadLength",1,0));
+#endif
     Fields.push_back(new ByteField("NextHeader",1,2));
     Fields.push_back(new ByteField("HopLimit",1,3));
     Fields.push_back(new IPv6Address("SourceIP",2,0));

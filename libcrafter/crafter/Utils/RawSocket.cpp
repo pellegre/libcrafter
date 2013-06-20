@@ -27,6 +27,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <stdexcept>
 
+#if __APPLE__
+#include <fcntl.h>
+#include <net/bpf.h>
+#include <net/if_dl.h>
+#include <netinet/in.h>
+#endif
+
 #include "RawSocket.h"
 #include "PrintMessage.h"
 #include "../Layer.h"
@@ -106,11 +113,23 @@ int SocketSender::RequestSocket(const std::string& iface, word proto_id) {
 int Crafter::SocketSender::CreateLinkSocket(word protocol_to_sniff)
 {
 	int rawsock;
+#ifdef __APPLE__
+	int i;
 
+	for (i = 0; i < 128; i++) {
+		char file[32];
+
+		snprintf(file, sizeof(file), "/dev/bpf%d", i);
+		rawsock = open(file, O_WRONLY);
+		if (rawsock != -1 || errno != EBUSY)
+			break;
+	}
+#else
 	if((rawsock = socket(PF_PACKET, SOCK_RAW, htons(protocol_to_sniff)))== -1) {
 		perror("CreateLinkSocket()");
 		throw std::runtime_error("Creating packet(PF_PACKET) socket");
 	}
+#endif
 
 	return rawsock;
 }
@@ -144,21 +163,44 @@ int Crafter::SocketSender::CreateRawSocket(word protocol_to_sniff)
 
 int Crafter::SocketSender::CreateRaw6Socket(word protocol_to_sniff) {
     /* Create a socket descriptor */
+#if __APPLE__
+	/* FreeBSD/Mac OSX does not allow the IP_HDRINCL option */
+	int s = -1;
+#else
     int s = socket(PF_INET6, SOCK_RAW, protocol_to_sniff);
 
     if(s < 0) {
     	perror("CreateRaw6Socket()");
 		throw std::runtime_error("Creating raw(PF_INET) socket");
     }
+#endif
 
     return s;
 }
 
 int Crafter::SocketSender::BindLinkSocketToInterface(const char *device, int rawsock, word protocol)
 {
-
-	struct sockaddr_ll sll;
 	struct ifreq ifr;
+#ifdef __APPLE__
+	int i;
+
+	memset(&ifr, 0, sizeof(ifr));
+	strlcpy(ifr.ifr_name, device, sizeof(ifr.ifr_name));
+
+	if (ioctl(rawsock, BIOCSETIF, (char *)&ifr) < 0) {
+		perror("BindLinkSocketToInterface()");
+		throw std::runtime_error("Binding raw socket to interface");
+	}
+#ifdef BIOCSHDRCMPLT
+	i = 1;
+	if (ioctl(rawsock, BIOCSHDRCMPLT, &i) < 0) {
+		perror("BindLinkSocketToInterface()");
+		throw std::runtime_error("Binding raw socket to interface");
+	}
+#endif
+
+#else
+	struct sockaddr_ll sll;
 
 	memset(&sll,0,sizeof(sll));
 	memset(&ifr,0,sizeof(ifr));
@@ -180,13 +222,14 @@ int Crafter::SocketSender::BindLinkSocketToInterface(const char *device, int raw
 		perror("BindLinkSocketToInterface()");
 		throw std::runtime_error("Binding raw socket to interface");
 	}
-
+#endif
 	return 0;
 }
 
 int Crafter::SocketSender::BindRawSocketToInterface(const char *device, int s)
 {
 	/* Bind to interface */
+#ifndef __APPLE__
     ifreq Interface;
     memset(&Interface, 0, sizeof(Interface));
     strncpy(Interface.ifr_ifrn.ifrn_name, device, IFNAMSIZ);
@@ -194,7 +237,7 @@ int Crafter::SocketSender::BindRawSocketToInterface(const char *device, int s)
     	perror("BindRawSocketToInterface()");
 		throw std::runtime_error("Binding raw socket to interface");
     }
-
+#endif
     return 0;
 }
 
@@ -205,7 +248,12 @@ int Crafter::SocketSender::SendLinkSocket(int rawsock, byte *pkt, size_t pkt_len
 
 int Crafter::SocketSender::SendRawSocket(int rawsock, struct sockaddr* din, size_t size_dst, byte *pkt, size_t pkt_len)
 {
-	return sendto(rawsock, pkt, pkt_len, 0, din, size_dst);
+	int ret;
+
+	ret = sendto(rawsock, pkt, pkt_len, 0, din, size_dst);
+	if (ret < 0)
+		perror("sendto");
+	return ret;
 }
 
 int Crafter::SocketSender::SendSocket(int rawsock, word proto_id, byte *pkt, size_t pkt_len) {
@@ -231,6 +279,8 @@ int Crafter::SocketSender::SendSocket(int rawsock, word proto_id, byte *pkt, siz
 		dest.sin6_port = 0;
 
 	    return SendRawSocket(rawsock,(struct sockaddr*)&dest,sizeof(dest),pkt,pkt_len);
+
+
 	}
 
 	return SendLinkSocket(rawsock,pkt,pkt_len);

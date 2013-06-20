@@ -36,9 +36,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstdio>
 #include <cstdlib>
 #include <sys/socket.h>
+
+#ifndef __APPLE__
 #include <features.h>
 #include <linux/if_packet.h>
 #include <linux/if_ether.h>
+#else
+#define ETH_P_ALL 1
+#endif
+
 #include <cerrno>
 #include <sys/ioctl.h>
 #include <net/if.h>
