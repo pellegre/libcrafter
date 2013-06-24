@@ -130,7 +130,7 @@ string Crafter::GetMyIP(const string& iface) {
     return ret;
 }
 
-string Crafter::GetMyIPv6(const string& iface) {
+string Crafter::GetMyIPv6(const string& iface, bool ll) {
     struct ifaddrs* ifAddrStruct = 0;
     struct ifaddrs* ifa = 0;
     void* tmpAddrPtr = 0;
@@ -148,6 +148,8 @@ string Crafter::GetMyIPv6(const string& iface) {
         	if(string(ifa->ifa_name).find(iface) != string::npos) {
             	/* Is a valid IP6 Address */
                 tmpAddrPtr=&((struct sockaddr_in6 *)ifa->ifa_addr)->sin6_addr;
+                if (!ll && IN6_IS_ADDR_LINKLOCAL((struct in6_addr *)tmpAddrPtr))
+                        continue;
                 char addressBuffer[INET6_ADDRSTRLEN];
                 inet_ntop(AF_INET6, tmpAddrPtr, addressBuffer, INET6_ADDRSTRLEN);
                 ret = string(addressBuffer);

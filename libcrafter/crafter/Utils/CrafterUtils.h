@@ -47,7 +47,7 @@ namespace Crafter {
 
 	/* Get interface IP address */
 	std::string GetMyIP(const std::string& iface = "");
-	std::string GetMyIPv6(const std::string& iface = "");
+	std::string GetMyIPv6(const std::string& iface = "", bool ll = true);
 
 	/* Initialize and clean */
 	void InitCrafter();
