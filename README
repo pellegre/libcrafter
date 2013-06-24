@@ -31,6 +31,22 @@ frequently updated on:
 
 https://github.com/pellegre/libcrafter-examples
 
+= Installation
+
+To compile libcrafter from the git repository you should have autoconf and libtool 
+installed in your system : 
+
+$ sudo apt-get install autoconf libtool
+
+Clone the repository and compile the library :
+
+$ git clone https://github.com/pellegre/libcrafter
+$ cd libcrafter/libcrafter
+$ ./autogen.sh 
+$ make
+$ sudo make install
+$ sudo ldconfig
+
 = Information =
 
 Supported protocols are:
