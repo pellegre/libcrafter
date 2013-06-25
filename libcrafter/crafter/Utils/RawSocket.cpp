@@ -481,7 +481,7 @@ int Crafter::SocketSender::SendSocket(int rawsock, word proto_id, byte *pkt, siz
 		dest.sin6_port = 0;
 
 	    return SendRawSocket(rawsock,(struct sockaddr*)&dest,sizeof(dest),pkt,pkt_len);
-
+#endif
 
 	}
 
