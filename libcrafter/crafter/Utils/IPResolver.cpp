@@ -106,6 +106,8 @@ std::string Crafter::GetHostname(const std::string& ip_address) {
 	/* Host and service name */
 	char host[1024];
 	char service[20];
+	struct sockaddr *ptr;
+	size_t sa_len;
 
 	/* Fill the sa structure with IP information */
 	if (validateIpv4Address(ip_address)) {
@@ -114,18 +116,22 @@ std::string Crafter::GetHostname(const std::string& ip_address) {
 		sa.sin_port = htons(0);
 		sa.sin_addr.s_addr = inet_addr(ip_address.c_str());
 		memset(sa.sin_zero, '\0', sizeof(sa.sin_zero));
-		getnameinfo((struct sockaddr *)&sa, sizeof(sa), host, sizeof(host), service, sizeof(service), 0);
+		ptr = (struct sockaddr *)&sa;
+		sa_len = sizeof(sa);
 	} else if (validateIpv6Address(ip_address)) {
 		struct sockaddr_in6 sa;
 		memset(&sa, 0, sizeof(sa));
 		sa.sin6_family = AF_INET6;
 		sa.sin6_port = htons(0);
 		inet_pton(AF_INET6, ip_address.c_str(), &sa.sin6_addr);
-		getnameinfo((struct sockaddr *)&sa, sizeof(sa), host, sizeof(host), service, sizeof(service), 0);
+		ptr = (struct sockaddr *)&sa;
+		sa_len = sizeof(sa);
 	} else {
 		return ip_address;
 	}
 
+	if (getnameinfo(ptr, sa_len, host, sizeof(host), service, sizeof(service), 0) < 0)
+		return ip_address;
 	/* Make the inverse lookup */
 	return string(host);
 }
