@@ -54,6 +54,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Protocols/TCPOptionMaxSegSize.h"
 #include "Protocols/TCPOptionTimestamp.h"
 #include "Protocols/TCPOptionPad.h"
+#include "Protocols/TCPOptionMPTCP.h"
 
 /* IPv4 Protocol Implementation */
 #include "Protocols/IP.h"

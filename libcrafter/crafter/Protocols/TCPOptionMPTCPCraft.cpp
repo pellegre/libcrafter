@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2012, Esteban Pellegrino
+Copyright (c) 2013, Gregory Detal
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -25,51 +25,28 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include "TCPOptionMPTCP.h"
+#include "../Utils/BitHandling.h"
 
-#ifndef BITHANDLING_H_
-#define BITHANDLING_H_
+using namespace Crafter;
+using namespace std;
 
-#include <iostream>
-#include <string>
-#include <cstdio>
-#include <stdint.h>
-
-typedef uint32_t word;
-typedef uint16_t short_word;
-typedef uint8_t byte;
-
-/* Functions for manipulating bits on a word */
-
-namespace Crafter {
-
-	/* Print to STDOUT the bits on word */
-	void PrintBits (word value);
-
-	/* Set a bit */
-	word SetBit(word value, byte bit);
-
-	/* Reset a bit */
-	word ResetBit(word value, byte bit);
-
-	/* Test a bit */
-	word TestBit(word value, byte bit);
-
-	/* Shift bits to right ntimes */
-	word ShiftRight(word value, byte ntimes);
-
-	/* Shift bits to right ntimes */
-	word ShiftLeft(word value, byte ntimes);
-
-	/* Clear range of bits (including ebit) */
-	word ClearRange(word value, byte ibit, byte ebit);
-
-	/* Clear all bits except the range specified */
-	word ClearComplementRange(word value, byte ibit, byte ebit);
-
-	uint64_t htonll(uint64_t value);
-
-	uint64_t ntohll(uint64_t value);
-
+void TCPOptionMPTCP::Craft() {
+	SetLength(GetLength() + GetPayloadSize());
 }
 
-#endif /* BITHANDLING_H_ */
+void TCPOptionMPTCPCapable::SetReceiverKey(const uint64_t& value) {
+	word* data = new word[2];
+	*((uint64_t *)data) = htonll(value);
+
+	SetPayload((const byte*)data,sizeof(uint64_t)); 
+}
+
+uint64_t TCPOptionMPTCPCapable::GetReceiverKey() const {
+	size_t payload_size = GetPayloadSize();
+	if( payload_size > 0) {
+		const byte* raw_data = GetPayload().GetRawPointer();
+		return ntohll(*(const uint64_t *)(raw_data));
+	}
+	return 0;
+}

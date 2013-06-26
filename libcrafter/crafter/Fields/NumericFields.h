@@ -177,6 +177,28 @@ namespace Crafter {
 		virtual ~XWordField();
 	};
 
+	class Int64Field : public Field<uint64_t> {
+
+		void Print(std::ostream& str) const;
+
+	protected:
+		size_t nword;
+		size_t nbyte;
+		size_t offset;
+
+	public:
+
+		Int64Field(const std::string& name, size_t nword, size_t nbyte);
+
+		void Write(byte* raw_data) const;
+
+		void Read(const byte* raw_data);
+
+		FieldInfo* Clone() const;
+
+		virtual ~Int64Field();
+	};
+
 }
 
 #endif /* NUMERICFIELDS_H_ */
