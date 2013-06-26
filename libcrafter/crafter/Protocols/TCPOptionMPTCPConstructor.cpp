@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2012, Esteban Pellegrino
+Copyright (c) 2013, Gregory Detal
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -25,51 +25,44 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include "TCPOptionMPTCP.h"
 
-#ifndef BITHANDLING_H_
-#define BITHANDLING_H_
+using namespace Crafter;
+using namespace std;
 
-#include <iostream>
-#include <string>
-#include <cstdio>
-#include <stdint.h>
+TCPOptionMPTCP::TCPOptionMPTCP() {
 
-typedef uint32_t word;
-typedef uint16_t short_word;
-typedef uint8_t byte;
+    allocate_bytes(2);
+    SetName("TCPOptionMPTCP");
+    SetprotoID(0x9006);
+    DefineProtocol();
 
-/* Functions for manipulating bits on a word */
-
-namespace Crafter {
-
-	/* Print to STDOUT the bits on word */
-	void PrintBits (word value);
-
-	/* Set a bit */
-	word SetBit(word value, byte bit);
-
-	/* Reset a bit */
-	word ResetBit(word value, byte bit);
-
-	/* Test a bit */
-	word TestBit(word value, byte bit);
-
-	/* Shift bits to right ntimes */
-	word ShiftRight(word value, byte ntimes);
-
-	/* Shift bits to right ntimes */
-	word ShiftLeft(word value, byte ntimes);
-
-	/* Clear range of bits (including ebit) */
-	word ClearRange(word value, byte ibit, byte ebit);
-
-	/* Clear all bits except the range specified */
-	word ClearComplementRange(word value, byte ibit, byte ebit);
-
-	uint64_t htonll(uint64_t value);
-
-	uint64_t ntohll(uint64_t value);
-
+    SetKind(30);
+    SetLength(2);
 }
 
-#endif /* BITHANDLING_H_ */
+void TCPOptionMPTCP::DefineProtocol() {
+    Fields.push_back(new BitsField<4,16>("Subtype",0));
+}
+
+TCPOptionMPTCPCapable::TCPOptionMPTCPCapable() {
+    allocate_bytes(12);
+    SetName("TCPOptionMPTCPCapable");
+    SetprotoID(0x9007);
+    DefineProtocol();
+
+    SetKind(30);
+    SetLength(12);
+    SetVersion(0);
+    SetSubtype(0);
+    SetCrypto(1);
+}
+
+void TCPOptionMPTCPCapable::DefineProtocol() {
+    Fields.push_back(new BitsField<4,20>("Version",0));
+    Fields.push_back(new BitFlag<24>("Checksum",0,"Checksum Enabled","Checksum Disabled"));
+    Fields.push_back(new BitsField<6,25>("Flags",0));
+    Fields.push_back(new BitFlag<31>("Crypto",0,"HMAC-SHA1","NO HMAC-SHA1"));
+    Fields.push_back(new Int64Field("Sender's Key",1,0));
+}
+

@@ -26,6 +26,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include "NumericFields.h"
+#include "../Utils/BitHandling.h"
 
 #include <arpa/inet.h>
 
@@ -247,3 +248,31 @@ FieldInfo* XWordField::Clone() const {
 }
 
 XWordField::~XWordField() { /* */ }
+
+Int64Field::Int64Field(const std::string& name, size_t nword, size_t nbyte) :
+						Field<uint64_t> (name,nword,nbyte*8,64),
+						nword(nword), nbyte(nbyte) {
+	offset = nword * 4 + nbyte;
+}
+
+void Int64Field::Print(std::ostream& str) const {
+	str << GetName() << " = " << dec << (uint64_t)human;
+}
+
+FieldInfo* Int64Field::Clone() const {
+	Int64Field* new_ptr = new Int64Field(GetName(),nword,nbyte);
+	new_ptr->human = human;
+	return new_ptr;
+}
+
+void Int64Field::Write(byte* raw_data) const {
+	uint64_t* ptr = (uint64_t*)(raw_data + offset);
+	*ptr = htonll(human);
+}
+
+void Int64Field::Read(const byte* raw_data){
+	word* ptr = (word*)(raw_data + offset);
+	human = ntohll(*ptr);
+}
+
+Int64Field::~Int64Field() { /* */ }
