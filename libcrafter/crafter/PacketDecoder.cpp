@@ -188,6 +188,13 @@ void Packet::PacketFromIP(const byte* data, size_t length) {
 	Decode(data,length,IP::PROTO);
 }
 
+/* Construct packet a raw layer */
+void Packet::PacketFromIPv6(const RawLayer& data) {
+	/* Construct the packet from the buffer */
+	PacketFromIPv6(data.GetPayload().GetRawPointer(), data.GetSize());
+}
+
+
 /* Constructor from raw data */
 void Packet::PacketFromIPv6(const byte* data, size_t length) {
 	Decode(data,length,IPv6::PROTO);
