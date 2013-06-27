@@ -117,6 +117,14 @@ namespace Crafter {
 		virtual ~ShortHostField();
 	};
 
+	class ShortHostNetField : public ShortHostField {
+	public:
+		void Read(const byte* raw_data);
+		ShortHostNetField(const std::string& name, size_t nword, size_t nbyte);
+		FieldInfo* Clone() const;
+		virtual ~ShortHostNetField();
+	};
+
 	class XShortField : public ShortField {
 		void Print(std::ostream& str) const;
 	public:

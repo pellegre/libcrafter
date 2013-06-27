@@ -161,6 +161,23 @@ void ShortHostField::Read(const byte* raw_data){
 
 ShortHostField::~ShortHostField() { /* */ }
 
+ShortHostNetField::ShortHostNetField(const std::string& name, size_t nword, size_t nbyte) :
+									ShortHostField(name,nword,nbyte)
+                         { /* */ }
+
+void ShortHostNetField::Read(const byte* raw_data){
+	short_word* ptr = (short_word*)(raw_data + offset);
+	human = ntohs(*ptr);
+}
+
+FieldInfo* ShortHostNetField::Clone() const {
+	ShortHostNetField* new_ptr = new ShortHostNetField(GetName(),nword,nbyte);
+	new_ptr->human = human;
+	return new_ptr;
+}
+
+ShortHostNetField::~ShortHostNetField() { /* */ }
+
 XShortField::XShortField(const std::string& name, size_t nword, size_t nbyte) :
 						 ShortField(name,nword,nbyte)
                          { /* */ }

@@ -65,7 +65,7 @@ void IP::DefineProtocol() {
     Fields.push_back(new BitsField<6,8>("DiffServicesCP",0));
     Fields.push_back(new BitsField<2,14>("ExpCongestionNot",0));
 #ifdef __APPLE__
-    Fields.push_back(new ShortHostField("TotalLength",0,2));
+    Fields.push_back(new ShortHostNetField("TotalLength",0,2));
 #else
     Fields.push_back(new ShortField("TotalLength",0,2));
 #endif
