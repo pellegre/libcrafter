@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2012, Esteban Pellegrino
+Copyright (c) 2013, Gregory Detal
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -24,63 +24,67 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#include "TCPOption.h"
+
+#ifndef TCPOPTIONWSCALE_H_
+#define TCPOPTIONWSCALE_H_
+
 #include "TCPOptionLayer.h"
-#include "TCPOptionMaxSegSize.h"
-#include "TCPOptionPad.h"
-#include "TCPOptionTimestamp.h"
-#include "TCPOptionWindowScale.h"
-#include <netinet/tcp.h>
 
-using namespace Crafter;
+namespace Crafter {
 
-TCPOptionLayer* TCPOptionLayer::Build(int opt) {
+    class TCPOptionWindowScale: public TCPOptionLayer {
 
-	switch(opt) {
+        Constructor GetConstructor() const {
+            return TCPOptionWindowScale::TCPOptionWindowScaleConstFunc;
+        };
 
-	case TCPOPT_EOL:
-		return new TCPOptionPad;
-		break;
-	case TCPOPT_NOP:
-		return new TCPOptionPad;
-		break;
-	case TCP_MAXSEG:
-		return new TCPOptionMaxSegSize;
-		break;
-	case TCPOPT_TIMESTAMP:
-		return new TCPOptionTimestamp;
-		break;
-	case TCPOPT_SACK_PERMITTED:
-		return new TCPOptionSACKPermitted;
-		break;
-	case TCPOPT_SACK:
-		return new TCPOptionSACK;
-		break;
-	case TCPOPT_WINDOW:
-		return new TCPOptionWindowScale;
-		break;
-	}
+        static Layer* TCPOptionWindowScaleConstFunc() {
+            return new TCPOptionWindowScale;
+        };
 
-	/* Generic Option Header */
-	return new TCPOption;
+        void DefineProtocol();
+
+        void Craft();
+
+        void ReDefineActiveFields();
+
+        static const byte FieldKind = 0;
+        static const byte FieldLength = 1;
+        static const byte FieldShift = 2;
+
+    public:
+
+        TCPOptionWindowScale();
+
+        enum { PROTO = 0x9008 };
+
+        void SetKind(const byte& value) {
+            SetFieldValue(FieldKind,value);
+        };
+
+        void SetLength(const byte& value) {
+            SetFieldValue(FieldLength,value);
+        };
+
+        void SetShift(const byte& value) {
+            SetFieldValue(FieldShift,value);
+        };
+
+        byte  GetKind() const {
+            return GetFieldValue<byte>(FieldKind);
+        };
+
+        byte  GetLength() const {
+            return GetFieldValue<byte>(FieldLength);
+        };
+
+        byte  GetShift() const {
+            return GetFieldValue<byte>(FieldShift);
+        };
+
+        ~TCPOptionWindowScale() { /* Destructor */ };
+
+    };
 }
 
-void TCPOptionLayer::ParseLayerData(ParseInfo* info) {
-	/* Update the information of the IP options */
-	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
-	if(!extra_info) {
-		info->top = 1;
-		return;
-	}
-
-	extra_info->optlen -= GetSize();
-	if(extra_info->optlen > 0) {
-		/* Get the option type */
-		int opt = (info->raw_data + info->offset)[0];
-		info->next_layer = Build(opt);
-	}  else {
-		info->next_layer = extra_info->next_layer;
-		delete extra_info;
-		extra_info = 0;
-	}
-}
+#endif /* TCPOPTIONWSCALE */

@@ -90,6 +90,10 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optsack_dummy);
 
+	TCPOptionWindowScale optwscale_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optwscale_dummy);
+
 	TCPOptionMaxSegSize optmss_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optmss_dummy);

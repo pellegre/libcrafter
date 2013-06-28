@@ -24,63 +24,15 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#include "TCPOption.h"
-#include "TCPOptionLayer.h"
-#include "TCPOptionMaxSegSize.h"
-#include "TCPOptionPad.h"
-#include "TCPOptionTimestamp.h"
+
 #include "TCPOptionWindowScale.h"
-#include <netinet/tcp.h>
 
 using namespace Crafter;
+using namespace std;
 
-TCPOptionLayer* TCPOptionLayer::Build(int opt) {
-
-	switch(opt) {
-
-	case TCPOPT_EOL:
-		return new TCPOptionPad;
-		break;
-	case TCPOPT_NOP:
-		return new TCPOptionPad;
-		break;
-	case TCP_MAXSEG:
-		return new TCPOptionMaxSegSize;
-		break;
-	case TCPOPT_TIMESTAMP:
-		return new TCPOptionTimestamp;
-		break;
-	case TCPOPT_SACK_PERMITTED:
-		return new TCPOptionSACKPermitted;
-		break;
-	case TCPOPT_SACK:
-		return new TCPOptionSACK;
-		break;
-	case TCPOPT_WINDOW:
-		return new TCPOptionWindowScale;
-		break;
-	}
-
-	/* Generic Option Header */
-	return new TCPOption;
+void TCPOptionWindowScale::ReDefineActiveFields() {
 }
 
-void TCPOptionLayer::ParseLayerData(ParseInfo* info) {
-	/* Update the information of the IP options */
-	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
-	if(!extra_info) {
-		info->top = 1;
-		return;
-	}
-
-	extra_info->optlen -= GetSize();
-	if(extra_info->optlen > 0) {
-		/* Get the option type */
-		int opt = (info->raw_data + info->offset)[0];
-		info->next_layer = Build(opt);
-	}  else {
-		info->next_layer = extra_info->next_layer;
-		delete extra_info;
-		extra_info = 0;
-	}
+void TCPOptionWindowScale::Craft() {
 }
+

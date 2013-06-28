@@ -73,6 +73,8 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/TCPOptionMaxSegSizeCraft.cpp \
 						crafter/Protocols/TCPOptionTimestampConstructor.cpp \
 						crafter/Protocols/TCPOptionTimestampCraft.cpp \
+						crafter/Protocols/TCPOptionWindowScaleConstructor.cpp \
+						crafter/Protocols/TCPOptionWindowScaleCraft.cpp \
 						crafter/Protocols/TCPOptionMPTCPConstructor.cpp \
 						crafter/Protocols/TCPOptionMPTCPCraft.cpp \
 						crafter/Protocols/ICMPConstructor.cpp \

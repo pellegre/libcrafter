@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2012, Esteban Pellegrino
+Copyright (c) 2013, Gregory Detal
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -24,63 +24,26 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#include "TCPOption.h"
-#include "TCPOptionLayer.h"
-#include "TCPOptionMaxSegSize.h"
-#include "TCPOptionPad.h"
-#include "TCPOptionTimestamp.h"
+
 #include "TCPOptionWindowScale.h"
-#include <netinet/tcp.h>
 
 using namespace Crafter;
+using namespace std;
 
-TCPOptionLayer* TCPOptionLayer::Build(int opt) {
+TCPOptionWindowScale::TCPOptionWindowScale() {
 
-	switch(opt) {
+	allocate_bytes(3);
+    SetName("TCPOptionWindowScale");
+    SetprotoID(0x9008);
+	DefineProtocol();
 
-	case TCPOPT_EOL:
-		return new TCPOptionPad;
-		break;
-	case TCPOPT_NOP:
-		return new TCPOptionPad;
-		break;
-	case TCP_MAXSEG:
-		return new TCPOptionMaxSegSize;
-		break;
-	case TCPOPT_TIMESTAMP:
-		return new TCPOptionTimestamp;
-		break;
-	case TCPOPT_SACK_PERMITTED:
-		return new TCPOptionSACKPermitted;
-		break;
-	case TCPOPT_SACK:
-		return new TCPOptionSACK;
-		break;
-	case TCPOPT_WINDOW:
-		return new TCPOptionWindowScale;
-		break;
-	}
+    SetKind(0x03);
+    SetLength(3);
 
-	/* Generic Option Header */
-	return new TCPOption;
 }
 
-void TCPOptionLayer::ParseLayerData(ParseInfo* info) {
-	/* Update the information of the IP options */
-	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
-	if(!extra_info) {
-		info->top = 1;
-		return;
-	}
-
-	extra_info->optlen -= GetSize();
-	if(extra_info->optlen > 0) {
-		/* Get the option type */
-		int opt = (info->raw_data + info->offset)[0];
-		info->next_layer = Build(opt);
-	}  else {
-		info->next_layer = extra_info->next_layer;
-		delete extra_info;
-		extra_info = 0;
-	}
+void TCPOptionWindowScale::DefineProtocol() {
+    Fields.push_back(new ByteField("Kind",0,0));
+    Fields.push_back(new ByteField("Length",0,1));
+    Fields.push_back(new ByteField("Shift",0,2));
 }
