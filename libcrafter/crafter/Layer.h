@@ -339,6 +339,11 @@ namespace Crafter {
 		 */
 		static void Bind(const Layer& bottom_layer, short_word proto_id);
 
+		/* --------- Fields information functions ---------- */
+
+		size_t GetFieldsSize() const { return Fields.size(); };
+		FieldInfo* GetField(int i) const { return Fields[i]; };
+
 		/* --------------------------------------------------- */
 
 		virtual ~Layer();
