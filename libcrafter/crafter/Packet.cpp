@@ -138,13 +138,8 @@ void Packet::Print() const {
 	Print(std::cout);
 }
 
-void Packet::PushLayer(const Layer& user_layer) {
-	/* Create a new layer from the one that was supplied by the user */
-	Layer* layer = Protocol::AccessFactory()->GetLayerByName(user_layer.GetName());
-
-	/* Call = operator */
-	(*layer) = user_layer;
-
+void Packet::PushLayer(Layer* layer)
+{
 	Stack.push_back(layer);
 	/* Update size of the packet */
 	bytes_size += layer->GetSize();
@@ -158,6 +153,16 @@ void Packet::PushLayer(const Layer& user_layer) {
 		layer->PushBottomLayer(0);
 
 	layer->PushTopLayer(0);
+}
+
+void Packet::PushLayer(const Layer& user_layer) {
+	/* Create a new layer from the one that was supplied by the user */
+	Layer* layer = Protocol::AccessFactory()->GetLayerByName(user_layer.GetName());
+
+	/* Call = operator */
+	(*layer) = user_layer;
+
+	PushLayer(layer);
 }
 
 void Packet::PopLayer() {

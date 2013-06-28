@@ -119,6 +119,7 @@ namespace Crafter {
 
 		/* Push a Layer into the stack */
 		void PushLayer(const Layer& layer);
+		void PushLayer(Layer* layer);
 		/* Pop and destroy the layer on top */
 		void PopLayer();
 
