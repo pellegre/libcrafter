@@ -55,7 +55,6 @@ TCPOptionLayer* TCPOptionMPTCP::Build(int subopt) {
 
 	switch(subopt) {
 	case 0:
-		std::cout << "TCPOptionMPTCP::Build::TCPOptionMPTCPCapable" << std::endl;
 		return new TCPOptionMPTCPCapable;
 	}
 
