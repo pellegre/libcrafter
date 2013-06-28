@@ -29,9 +29,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "TCPOption.h"
 
+#ifndef TCPOPT_MPTCP
+#define TCPOPT_MPTCP 30
+#endif
+
 namespace Crafter {
 
-    class TCPOptionMPTCP: public TCPOption {
+    class TCPOptionMPTCP: public TCPOptionLayer {
 
         void DefineProtocol();
 
@@ -47,6 +51,8 @@ namespace Crafter {
 
         void Craft();
 
+        static const byte FieldKind = 0;
+        static const byte FieldLength = 1;
         static const byte FieldSubtype = 2;
 
     public:
@@ -55,8 +61,24 @@ namespace Crafter {
 
         TCPOptionMPTCP();
 
+        void SetKind(const byte& value) {
+            SetFieldValue(FieldKind,value);
+        };
+
+        void SetLength(const byte& value) {
+            SetFieldValue(FieldLength,value);
+        };
+
         void SetSubtype(const word& value) {
             SetFieldValue(FieldSubtype,value);
+        };
+
+        byte  GetKind() const {
+            return GetFieldValue<byte>(FieldKind);
+        };
+
+        byte  GetLength() const {
+            return GetFieldValue<byte>(FieldLength);
         };
 
         byte GetSubtype(const word& value) {
@@ -64,6 +86,9 @@ namespace Crafter {
         };
 
         ~TCPOptionMPTCP() { /* Destructor */ };
+
+        /* Build MPTCP options from subopt */
+        static TCPOptionLayer* Build(int subopt);
 
     };
     

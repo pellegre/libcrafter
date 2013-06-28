@@ -30,11 +30,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "TCPOptionPad.h"
 #include "TCPOptionTimestamp.h"
 #include "TCPOptionWindowScale.h"
+#include "TCPOptionMPTCP.h"
 #include <netinet/tcp.h>
 
 using namespace Crafter;
 
-TCPOptionLayer* TCPOptionLayer::Build(int opt) {
+TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
 
 	switch(opt) {
 
@@ -59,6 +60,10 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt) {
 	case TCPOPT_WINDOW:
 		return new TCPOptionWindowScale;
 		break;
+	case TCPOPT_MPTCP:
+		int subopt = (info->raw_data + info->offset)[2];
+		return TCPOptionMPTCP::Build(subopt);
+		break;
 	}
 
 	/* Generic Option Header */
@@ -77,7 +82,7 @@ void TCPOptionLayer::ParseLayerData(ParseInfo* info) {
 	if(extra_info->optlen > 0) {
 		/* Get the option type */
 		int opt = (info->raw_data + info->offset)[0];
-		info->next_layer = Build(opt);
+		info->next_layer = Build(opt, info);
 	}  else {
 		info->next_layer = extra_info->next_layer;
 		delete extra_info;
