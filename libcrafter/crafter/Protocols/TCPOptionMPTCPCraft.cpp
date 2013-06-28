@@ -50,3 +50,15 @@ uint64_t TCPOptionMPTCPCapable::GetReceiverKey() const {
 	}
 	return 0;
 }
+
+TCPOptionLayer* TCPOptionMPTCP::Build(int subopt) {
+
+	switch(subopt) {
+	case 0:
+		std::cout << "TCPOptionMPTCP::Build::TCPOptionMPTCPCapable" << std::endl;
+		return new TCPOptionMPTCPCapable;
+	}
+
+	/* Generic Option Header */
+	return new TCPOption;
+}

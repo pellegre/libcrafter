@@ -42,6 +42,8 @@ TCPOptionMPTCP::TCPOptionMPTCP() {
 }
 
 void TCPOptionMPTCP::DefineProtocol() {
+    Fields.push_back(new ByteField("Kind",0,0));
+    Fields.push_back(new ByteField("Length",0,1));
     Fields.push_back(new BitsField<4,16>("Subtype",0));
 }
 

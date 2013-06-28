@@ -56,7 +56,7 @@ namespace Crafter {
         virtual byte  GetLength() const = 0;
 
         /* Build TCP options from first byte */
-        static TCPOptionLayer* Build(int opt);
+        static TCPOptionLayer* Build(int opt, ParseInfo *info);
 
         ~TCPOptionLayer() { /* Destructor */ };
 
