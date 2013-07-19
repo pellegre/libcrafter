@@ -160,7 +160,9 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/TCPOptionLayer.h \
 								crafter/Protocols/TCPOptionPad.h \
 								crafter/Protocols/TCPOptionMaxSegSize.h \
+								crafter/Protocols/TCPOptionMPTCP.h \
 								crafter/Protocols/TCPOptionTimestamp.h \
+								crafter/Protocols/TCPOptionWindowScale.h \
 								crafter/Protocols/ICMP.h \
 								crafter/Protocols/ICMPExtension.h \
 								crafter/Protocols/ICMPExtensionMPLS.h \
