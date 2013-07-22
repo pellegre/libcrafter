@@ -39,8 +39,8 @@ ByteField::ByteField(const std::string& name, size_t nword, size_t nbyte) :
 	offset = nword * 4 + nbyte;
 }
 
-void ByteField::Print(std::ostream& str) const {
-	str << GetName() << " = " << dec << (word)human;
+void ByteField::PrintValue(std::ostream& str) const {
+	str << dec << (word)human;
 }
 
 FieldInfo* ByteField::Clone() const {
@@ -63,8 +63,8 @@ XByteField::XByteField(const std::string& name, size_t nword, size_t nbyte) :
 		               ByteField(name,nword,nbyte)
                        { /* */ }
 
-void XByteField::Print(std::ostream& str) const {
-	str << GetName() << " = 0x" << hex << (word)human;
+void XByteField::PrintValue(std::ostream& str) const {
+	str << "0x" << hex << (word)human;
 }
 
 FieldInfo* XByteField::Clone() const {
@@ -82,9 +82,7 @@ TCPFlags::TCPFlags(const std::string& name, size_t nword, size_t nbyte) :
 		               ByteField(name,nword,nbyte)
                        { /* */ }
 
-void TCPFlags::Print(std::ostream& str) const {
-	str << GetName() << " = ";
-
+void TCPFlags::PrintValue(std::ostream& str) const {
 	str << "( ";
 
 	for(int i = 0 ; i < 8 ; i++) {
@@ -111,8 +109,8 @@ ShortField::ShortField(const std::string& name, size_t nword, size_t nbyte) :
 	offset = nword * 4 + nbyte;
 }
 
-void ShortField::Print(std::ostream& str) const {
-	str << GetName() << " = " << dec << (word)human;
+void ShortField::PrintValue(std::ostream& str) const {
+	str << dec << (word)human;
 }
 
 FieldInfo* ShortField::Clone() const {
@@ -139,8 +137,8 @@ ShortHostField::ShortHostField(const std::string& name, size_t nword, size_t nby
 	offset = nword * 4 + nbyte;
 }
 
-void ShortHostField::Print(std::ostream& str) const {
-	str << GetName() << " = " << dec << (word)human;
+void ShortHostField::PrintValue(std::ostream& str) const {
+	str << dec << (word)human;
 }
 
 FieldInfo* ShortHostField::Clone() const {
@@ -182,8 +180,8 @@ XShortField::XShortField(const std::string& name, size_t nword, size_t nbyte) :
 						 ShortField(name,nword,nbyte)
                          { /* */ }
 
-void XShortField::Print(std::ostream& str) const {
-	str << GetName() << " = 0x" << hex << (word)human;
+void XShortField::PrintValue(std::ostream& str) const {
+	str << "0x" << hex << (word)human;
 }
 
 FieldInfo* XShortField::Clone() const {
@@ -200,8 +198,8 @@ WordField::WordField(const std::string& name, size_t nword, size_t nbyte) :
 	offset = nword * 4 + nbyte;
 }
 
-void WordField::Print(std::ostream& str) const {
-	str << GetName() << " = " << dec << (word)human;
+void WordField::PrintValue(std::ostream& str) const {
+	str << dec << (word)human;
 }
 
 FieldInfo* WordField::Clone() const {
@@ -228,8 +226,8 @@ WordHostField::WordHostField(const std::string& name, size_t nword, size_t nbyte
 	offset = nword * 4 + nbyte;
 }
 
-void WordHostField::Print(std::ostream& str) const {
-	str << GetName() << " = " << dec << (word)human;
+void WordHostField::PrintValue(std::ostream& str) const {
+	str << dec << (word)human;
 }
 
 FieldInfo* WordHostField::Clone() const {
@@ -254,8 +252,8 @@ XWordField::XWordField(const std::string& name, size_t nword, size_t nbyte) :
 						 WordField(name,nword,nbyte)
                          { /* */ }
 
-void XWordField::Print(std::ostream& str) const {
-	str << GetName() << " = 0x" << hex << (word)human;
+void XWordField::PrintValue(std::ostream& str) const {
+	str << "0x" << hex << (word)human;
 }
 
 FieldInfo* XWordField::Clone() const {
@@ -272,7 +270,7 @@ Int64Field::Int64Field(const std::string& name, size_t nword, size_t nbyte) :
 	offset = nword * 4 + nbyte;
 }
 
-void Int64Field::Print(std::ostream& str) const {
+void Int64Field::PrintValue(std::ostream& str) const {
 	str << GetName() << " = " << dec << (uint64_t)human;
 }
 

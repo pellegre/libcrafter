@@ -57,7 +57,7 @@ namespace Crafter {
 			word : (32 - psize);
 		};
 
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 
 	public:
 		BitsField(const std::string& name, size_t nword);
@@ -73,7 +73,7 @@ namespace Crafter {
 
 	template <size_t size, size_t nbit>
 	class XBitsField : public BitsField<size,nbit> {
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 	public:
 		XBitsField(const std::string& name, size_t nword);
 
@@ -86,7 +86,7 @@ namespace Crafter {
 	class BitFlag : public BitsField<1,nbit> {
 		std::string str_true;
 		std::string str_false;
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 	public:
 		BitFlag(const std::string& name, size_t nword, const std::string& str_true,const std::string& str_false);
 
@@ -212,8 +212,8 @@ Crafter::FieldInfo* Crafter::BitsField<size,nbit>::Clone() const {
 }
 
 template<size_t size, size_t nbit>
-void Crafter::BitsField<size,nbit>::Print(std::ostream& str) const {
-	str << GetName() << " = " << std::dec << human;
+void Crafter::BitsField<size,nbit>::PrintValue(std::ostream& str) const {
+	str << std::dec << human;
 }
 
 /* ------- */
@@ -224,8 +224,8 @@ Crafter::XBitsField<size,nbit>::XBitsField(const std::string& name, size_t nword
 								  { /* */ }
 
 template<size_t size, size_t nbit>
-void Crafter::XBitsField<size,nbit>::Print(std::ostream& str) const {
-	str << this->GetName() << " = 0x" << std::hex << this->human;
+void Crafter::XBitsField<size,nbit>::PrintValue(std::ostream& str) const {
+	str << "0x" << std::hex << this->human;
 }
 
 template<size_t size, size_t nbit>
@@ -245,8 +245,7 @@ Crafter::BitFlag<nbit>::BitFlag(const std::string& name, size_t nword,
 					            { /* */ }
 
 template <size_t nbit>
-void Crafter::BitFlag<nbit>::Print(std::ostream& str) const {
-	str << this->GetName() << " = ";
+void Crafter::BitFlag<nbit>::PrintValue(std::ostream& str) const {
 	if(this->human)
 		str << "1 (" << str_true << ")";
 	else
