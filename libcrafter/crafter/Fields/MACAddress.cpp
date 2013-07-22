@@ -123,8 +123,8 @@ FieldInfo* MACAddress::Clone() const {
 	return new_ptr;
 }
 
-void MACAddress::Print(std::ostream& str) const {
-	str << GetName() << " = " << human;
+void MACAddress::PrintValue(std::ostream& str) const {
+	str << human;
 }
 
 MACAddress::~MACAddress() { /* */ }

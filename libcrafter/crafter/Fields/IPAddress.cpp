@@ -67,8 +67,8 @@ FieldInfo* IPAddress::Clone() const {
 	return new_ptr;
 }
 
-void IPAddress::Print(std::ostream& str) const {
-	str << GetName() << " = " << human;
+void IPAddress::PrintValue(std::ostream& str) const {
+	str << human;
 }
 
 IPAddress::~IPAddress() { /* */ }

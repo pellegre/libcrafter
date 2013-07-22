@@ -36,7 +36,7 @@ namespace Crafter {
 
 	class ByteField : public Field<byte> {
 
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 
 	protected:
 		size_t nword;
@@ -57,7 +57,7 @@ namespace Crafter {
 	};
 
 	class XByteField : public ByteField {
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 	public:
 		XByteField(const std::string& name, size_t nword, size_t nbyte);
 		FieldInfo* Clone() const;
@@ -66,7 +66,7 @@ namespace Crafter {
 
 	class TCPFlags : public ByteField {
 		static const std::string flags[];
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 	public:
 		TCPFlags(const std::string& name, size_t nword, size_t nbyte);
 		FieldInfo* Clone() const;
@@ -75,7 +75,7 @@ namespace Crafter {
 
 	class ShortField : public Field<short_word> {
 
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 
 	protected:
 		size_t nword;
@@ -97,7 +97,7 @@ namespace Crafter {
 
 	class ShortHostField : public Field<short_word> {
 
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 
 	protected:
 		size_t nword;
@@ -126,7 +126,7 @@ namespace Crafter {
 	};
 
 	class XShortField : public ShortField {
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 	public:
 		XShortField(const std::string& name, size_t nword, size_t nbyte);
 		FieldInfo* Clone() const;
@@ -135,7 +135,7 @@ namespace Crafter {
 
 	class WordField : public Field<word> {
 
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 
 	protected:
 		size_t nword;
@@ -157,7 +157,7 @@ namespace Crafter {
 
 	class WordHostField : public Field<word> {
 
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 
 	protected:
 		size_t nword;
@@ -178,7 +178,7 @@ namespace Crafter {
 	};
 
 	class XWordField : public WordField {
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 	public:
 		XWordField(const std::string& name, size_t nword, size_t nbyte);
 		FieldInfo* Clone() const;
@@ -187,7 +187,7 @@ namespace Crafter {
 
 	class Int64Field : public Field<uint64_t> {
 
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 
 	protected:
 		size_t nword;
