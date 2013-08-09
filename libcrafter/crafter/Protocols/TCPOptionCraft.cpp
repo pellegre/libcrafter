@@ -114,6 +114,7 @@ void TCPOptionSACK::SetBlocks(const std::vector<TCPOptionSACK::Pair>& blocks) {
 
 	/* Finally, set the payload with the data */
 	SetPayload((const byte*)blocks_data,blocks.size()*2*sizeof(word));
+	delete[] blocks_data;
 }
 
 void TCPOptionSACK::Pair::Print(ostream& str) const {
