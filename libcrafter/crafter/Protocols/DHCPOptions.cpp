@@ -269,6 +269,7 @@ void DHCPOptions::SetIPAdresses(const vector<string>& ips) {
 			raw_data[i] = inet_addr(ips[i].c_str());
 
 		data.SetPayload((const byte*)raw_data, ips.size() * 4);
+		delete[] raw_data;
 	}
 
 	SetFields();
