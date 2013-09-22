@@ -283,3 +283,4 @@ namespace Crafter {
 }
 
 #endif /* TCPCONNECTION_H_ */
+
