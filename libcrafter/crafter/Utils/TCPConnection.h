@@ -33,6 +33,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "CrafterUtils.h"
 
 namespace Crafter {
+	void* ConnectHandler(void* thread_arg);
+	void PckHand(Crafter::Packet* sniff_packet, void* user);
 
 	class TCPBuffer {
 
@@ -283,3 +285,4 @@ namespace Crafter {
 }
 
 #endif /* TCPCONNECTION_H_ */
+

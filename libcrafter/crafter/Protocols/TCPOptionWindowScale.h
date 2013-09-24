@@ -88,3 +88,4 @@ namespace Crafter {
 }
 
 #endif /* TCPOPTIONWSCALE */
+
