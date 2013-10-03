@@ -68,3 +68,23 @@ void TCPOptionMPTCPCapable::DefineProtocol() {
     Fields.push_back(new Int64Field("Sender's Key",1,0));
 }
 
+TCPOptionMPTCPJoin::TCPOptionMPTCPJoin() {
+    allocate_bytes(12);
+    SetName("TCPOptionMPTCPJoin");
+    SetprotoID(0x9009);
+    DefineProtocol();
+
+    SetKind(30);
+    SetLength(12);
+    SetSubtype(1);
+    SetBackupPath(0);
+
+}
+
+void TCPOptionMPTCPJoin::DefineProtocol() {
+    Fields.push_back(new BitsField<3,20>("Blank",0));
+    Fields.push_back(new BitFlag<23>("BackupPath",0,"This is a Backup path","This is not a Backup Path"));
+    Fields.push_back(new ByteField("AddrID",0,3));
+    Fields.push_back(new WordField("Receiver's Token",1,0));
+    Fields.push_back(new WordField("Sender's Random Number",2,0));
+}

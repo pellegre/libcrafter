@@ -110,6 +110,10 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optmpcapable_dummy);
 
+	TCPOptionMPTCPJoin optmpjoin_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optmpjoin_dummy);
+
 	TCPOptionPad optpad_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optpad_dummy);
