@@ -56,6 +56,8 @@ TCPOptionLayer* TCPOptionMPTCP::Build(int subopt) {
 	switch(subopt) {
 	case 0:
 		return new TCPOptionMPTCPCapable;
+	case 1:
+		return new TCPOptionMPTCPJoin;
 	}
 
 	/* Generic Option Header */

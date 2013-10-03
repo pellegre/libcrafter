@@ -92,6 +92,76 @@ namespace Crafter {
 
     };
     
+    class TCPOptionMPTCPJoin : public TCPOptionMPTCP {
+
+        void DefineProtocol();
+
+        Constructor GetConstructor() const {
+            return TCPOptionMPTCPJoin::TCPOptionMPTCPJoinConstFunc;
+        };
+
+        static Layer* TCPOptionMPTCPJoinConstFunc() {
+            return new TCPOptionMPTCPJoin;
+        };
+
+        static const byte Blank = 3;
+        static const byte BackupPath = 4;
+        static const byte AddrID = 5;
+        static const byte ReceiverToken = 6;
+        static const byte SenderRandomNumber = 7;
+
+    public:
+
+        TCPOptionMPTCPJoin();
+
+        enum { PROTO = 0x9009 };
+
+        void SetBackupPath(const word& value) {
+            SetFieldValue(BackupPath,value);
+        };
+
+        void SetAddrID(const byte& value) {
+            SetFieldValue(AddrID,value);
+        };
+
+        void SetReceiverToken(const uint32_t& value) {
+            SetFieldValue(ReceiverToken,value);
+        };
+
+        void SetSenderRandomNumber(const uint32_t& value) {
+            SetFieldValue(SenderRandomNumber,value);
+        };
+
+        word GetBackupPath() const {
+            return GetFieldValue<word>(BackupPath);
+        };
+
+        byte GetAddrID() const {
+            return GetFieldValue<byte>(AddrID);
+        };
+
+        uint32_t GetReceiverToken() const {
+            return GetFieldValue<uint32_t>(ReceiverToken);
+        };
+
+        uint32_t GetSenderRandomNumber() const {
+            return GetFieldValue<uint32_t>(SenderRandomNumber);
+        };
+
+        void EnableBackupPath() {
+            SetBackupPath(1);
+        }
+
+        void DisableBackupPath() {
+            SetBackupPath(0);
+        }
+
+        ~TCPOptionMPTCPJoin() { /* Destructor */ };
+
+    };
+
+
+
     class TCPOptionMPTCPCapable : public TCPOptionMPTCP {
 
         void DefineProtocol();
