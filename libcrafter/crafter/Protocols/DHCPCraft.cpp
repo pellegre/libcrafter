@@ -44,7 +44,11 @@ void DHCP::Craft() {
 
 	std::vector<DHCPOptions*>::const_iterator it_opt;
 
-	for(it_opt = Options.begin() ; it_opt != Options.end() ; it_opt++) {
+	if(Options.size() > 0) {
+		SetPayload(Options[0]->GetData());
+	}
+
+	for(it_opt = Options.begin() + 1 ; it_opt != Options.end() ; it_opt++) {
 		AddPayload((*it_opt)->GetData());
 	}
 
