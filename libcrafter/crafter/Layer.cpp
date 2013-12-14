@@ -359,7 +359,7 @@ void Crafter::Layer::AddPayload (const char* data) {
 
 /* Set payload */
 void Crafter::Layer::SetPayload (const Payload& data)  {
-	LayerPayload.AddPayload(data);
+	LayerPayload.SetPayload(data);
 	bytes_size = size + LayerPayload.GetSize();
 }
 
