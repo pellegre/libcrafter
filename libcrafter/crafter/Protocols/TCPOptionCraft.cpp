@@ -118,6 +118,6 @@ void TCPOptionSACK::SetBlocks(const std::vector<TCPOptionSACK::Pair>& blocks) {
 }
 
 void TCPOptionSACK::Pair::Print(ostream& str) const {
-	cout << left << "-" << right;
+	str << left << "-" << right;
 }
 
