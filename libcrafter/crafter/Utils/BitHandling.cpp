@@ -27,6 +27,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "BitHandling.h"
 
+#include <arpa/inet.h>
+
 using namespace std;
 using namespace Crafter;
 
@@ -94,4 +96,19 @@ word Crafter::ClearComplementRange(word value, byte ibit, byte ebit) {
 		value = ResetBit(value,i);
 
 	return value;
+}
+
+uint64_t Crafter::htonll(uint64_t value) {
+	static const int num = 42;
+
+	if (*reinterpret_cast<const char*>(&num) == num) {
+		const uint32_t high_part = htonl(static_cast<uint32_t>(value >> 32));
+		const uint32_t low_part = htonl(static_cast<uint32_t>(value));
+		return (static_cast<uint64_t>(low_part) << 32) | high_part;
+	}
+	return value;
+}
+
+uint64_t Crafter::ntohll(uint64_t value) {
+	return htonll(value);
 }

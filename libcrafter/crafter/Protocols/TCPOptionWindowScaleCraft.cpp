@@ -25,51 +25,14 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include "../Utils/IPResolver.h"
+#include "TCPOptionWindowScale.h"
 
-#include "IPAddress.h"
-
-using namespace std;
 using namespace Crafter;
+using namespace std;
 
-IPAddress::IPAddress(const std::string& name, size_t nword, size_t nbyte) :
-					 Field<std::string> (name,nword,nbyte*8,8*sizeof(word)),
-					 nword(nword), nbyte(nbyte) {
-	offset = nword * 4 + nbyte;
+void TCPOptionWindowScale::ReDefineActiveFields() {
 }
 
-void IPAddress::SetField(const string& ip_address) {
-	if(!validateIpv4Address(ip_address))
-		human = GetIP(ip_address);
-	else
-		human = ip_address;
+void TCPOptionWindowScale::Craft() {
 }
-
-void IPAddress::Write(byte* raw_data) const {
-	word* ptr = (word*) (raw_data + offset);
-	*ptr = inet_addr(human.c_str());
-}
-
-void IPAddress::Read(const byte* raw_data) {
-    struct sockaddr_in local_address;
-	memcpy(&local_address.sin_addr, raw_data + offset, sizeof(struct in_addr));
-    char str[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &local_address.sin_addr, str, INET_ADDRSTRLEN);
-	human = string(str);
-}
-
-FieldInfo* IPAddress::Clone() const {
-	IPAddress* new_ptr = new IPAddress(GetName(),nword,nbyte);
-	new_ptr->human = human;
-	return new_ptr;
-}
-
-void IPAddress::PrintValue(std::ostream& str) const {
-	str << human;
-}
-
-IPAddress::~IPAddress() { /* */ }
 

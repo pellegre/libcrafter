@@ -52,9 +52,6 @@ namespace Crafter {
 
 		/* --- Virtual private functions */
 
-		/* Print this field */
-		virtual void Print(std::ostream& str) const = 0;
-
 		/* Clone the information of the field into a new pointer */
 		virtual FieldInfo* Clone() const = 0;
 	public:
@@ -90,6 +87,13 @@ namespace Crafter {
 		byte IsFieldSet() const {return this->field_set;};
 
 		void PrintDebug() const;
+
+		virtual void PrintValue(std::ostream& str) const = 0;
+
+		void Print(std::ostream& str) const {
+			str << GetName() << " = ";
+			PrintValue(str);
+		}
 
 		virtual ~FieldInfo() {};
 	};

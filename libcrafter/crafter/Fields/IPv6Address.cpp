@@ -64,8 +64,8 @@ FieldInfo* IPv6Address::Clone() const {
 	return new_ptr;
 }
 
-void IPv6Address::Print(std::ostream& str) const {
-	str << GetName() << " = " << human;
+void IPv6Address::PrintValue(std::ostream& str) const {
+	str << human;
 }
 
 IPv6Address::~IPv6Address() { /* */ }

@@ -73,6 +73,10 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/TCPOptionMaxSegSizeCraft.cpp \
 						crafter/Protocols/TCPOptionTimestampConstructor.cpp \
 						crafter/Protocols/TCPOptionTimestampCraft.cpp \
+						crafter/Protocols/TCPOptionWindowScaleConstructor.cpp \
+						crafter/Protocols/TCPOptionWindowScaleCraft.cpp \
+						crafter/Protocols/TCPOptionMPTCPConstructor.cpp \
+						crafter/Protocols/TCPOptionMPTCPCraft.cpp \
 						crafter/Protocols/ICMPConstructor.cpp \
 						crafter/Protocols/ICMPCraft.cpp \
 						crafter/Protocols/ICMPExtensionConstructor.cpp \
@@ -156,7 +160,9 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/TCPOptionLayer.h \
 								crafter/Protocols/TCPOptionPad.h \
 								crafter/Protocols/TCPOptionMaxSegSize.h \
+								crafter/Protocols/TCPOptionMPTCP.h \
 								crafter/Protocols/TCPOptionTimestamp.h \
+								crafter/Protocols/TCPOptionWindowScale.h \
 								crafter/Protocols/ICMP.h \
 								crafter/Protocols/ICMPExtension.h \
 								crafter/Protocols/ICMPExtensionMPLS.h \

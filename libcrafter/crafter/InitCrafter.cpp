@@ -90,6 +90,10 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optsack_dummy);
 
+	TCPOptionWindowScale optwscale_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optwscale_dummy);
+
 	TCPOptionMaxSegSize optmss_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optmss_dummy);
@@ -97,6 +101,18 @@ void Crafter::InitCrafter() {
 	TCPOptionTimestamp optts_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optts_dummy);
+
+	TCPOptionMPTCP optmptcp_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optmptcp_dummy);
+
+	TCPOptionMPTCPCapable optmpcapable_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optmpcapable_dummy);
+
+	TCPOptionMPTCPJoin optmpjoin_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optmpjoin_dummy);
 
 	TCPOptionPad optpad_dummy;
 	/* Register the protocol, this is executed only once */

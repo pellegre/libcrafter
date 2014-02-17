@@ -33,6 +33,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <netinet/in.h>
 #include <net/ethernet.h>
 #include <ifaddrs.h>
+#ifdef __APPLE__
+#include <net/if_dl.h>
+#include <net/if_types.h>
+#endif
 #include <net/if.h>
 
 #include "../Crafter.h"
@@ -45,6 +49,7 @@ using namespace Crafter;
 using namespace std;
 
 string Crafter::GetMyMAC(const string& iface) {
+#ifdef SIOCGIFHWADDR
 	struct ifreq s;
 	int fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
 	strcpy(s.ifr_name, iface.c_str());
@@ -67,6 +72,30 @@ string Crafter::GetMyMAC(const string& iface) {
 		return "";
 
 	}
+#else
+	struct ifaddrs *ifa = NULL;
+	getifaddrs(&ifa);
+
+	while (ifa != NULL) {
+		struct sockaddr_dl* dl = (struct sockaddr_dl*)ifa->ifa_addr;
+
+		if (ifa->ifa_addr->sa_family == AF_LINK &&
+		    dl->sdl_type == IFT_ETHER &&
+		    !strcmp(ifa->ifa_name, iface.c_str())) {
+			struct ether_addr ptr;
+			memcpy(&ptr, &dl->sdl_data[dl->sdl_nlen], sizeof(struct ether_addr));
+			char buf[19];
+			sprintf (buf, "%02x:%02x:%02x:%02x:%02x:%02x",
+				 ptr.ether_addr_octet[0], ptr.ether_addr_octet[1],
+				 ptr.ether_addr_octet[2], ptr.ether_addr_octet[3],
+				 ptr.ether_addr_octet[4], ptr.ether_addr_octet[5]);
+			buf[18] = 0;
+			return string(buf);
+		}
+		ifa = ifa->ifa_next;
+	}
+	return "";
+#endif
 }
 
 string Crafter::GetMyIP(const string& iface) {
@@ -101,7 +130,7 @@ string Crafter::GetMyIP(const string& iface) {
     return ret;
 }
 
-string Crafter::GetMyIPv6(const string& iface) {
+string Crafter::GetMyIPv6(const string& iface, bool ll) {
     struct ifaddrs* ifAddrStruct = 0;
     struct ifaddrs* ifa = 0;
     void* tmpAddrPtr = 0;
@@ -119,6 +148,8 @@ string Crafter::GetMyIPv6(const string& iface) {
         	if(string(ifa->ifa_name).find(iface) != string::npos) {
             	/* Is a valid IP6 Address */
                 tmpAddrPtr=&((struct sockaddr_in6 *)ifa->ifa_addr)->sin6_addr;
+                if (!ll && IN6_IS_ADDR_LINKLOCAL((struct in6_addr *)tmpAddrPtr))
+                        continue;
                 char addressBuffer[INET6_ADDRSTRLEN];
                 inet_ntop(AF_INET6, tmpAddrPtr, addressBuffer, INET6_ADDRSTRLEN);
                 ret = string(addressBuffer);
