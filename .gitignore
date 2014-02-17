@@ -59,3 +59,13 @@ Makefile
 autom4te.cache/
 m4/
 protogen
+INSTALL
+Makefile.in
+aclocal.m4
+config.guess
+config.sub
+configure
+depcomp
+install-sh
+missing
+config.h.in
