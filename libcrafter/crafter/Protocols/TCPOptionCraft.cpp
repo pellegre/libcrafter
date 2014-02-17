@@ -58,7 +58,7 @@ void TCPOption::ParseLayerData(ParseInfo* info) {
 	if(extra_info->optlen > 0) {
 		/* Get the option type */
 		int opt = (info->raw_data + info->offset)[0];
-		info->next_layer = Build(opt);
+		info->next_layer = Build(opt, info);
 	}  else {
 		info->next_layer = extra_info->next_layer;
 		delete extra_info;

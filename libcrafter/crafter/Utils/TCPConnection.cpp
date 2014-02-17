@@ -30,6 +30,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "IPResolver.h"
 #include <ctime>
 
+#ifdef __MACH__
+#include <mach/clock.h>
+#include <mach/mach.h>
+#endif
+
 using namespace std;
 using namespace Crafter;
 
@@ -50,6 +55,20 @@ std::string TCPConnection::TCPStatus[] = {
 namespace Crafter {
 	void* ConnectHandler(void* thread_arg);
 	void PckHand(Crafter::Packet* sniff_packet, void* user);
+}
+
+static void current_time(struct timespec *ts) {
+#if __MACH__
+	clock_serv_t cclock;
+	mach_timespec_t mts;
+	host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
+	clock_get_time(cclock, &mts);
+	mach_port_deallocate(mach_task_self(), cclock);
+	ts->tv_sec = mts.tv_sec;
+	ts->tv_nsec = mts.tv_nsec;
+#else
+	clock_gettime(CLOCK_REALTIME, ts);
+#endif
 }
 
 void TCPBuffer::ReassembleData(Payload& buffer) {
@@ -478,7 +497,7 @@ void TCPConnection::Sync(word _seq) {
 			tcp_packet.Send(iface);
 
 			/* Wait two seconds to send the data again */
-			clock_gettime(CLOCK_REALTIME, &tm);
+			current_time(&tm);
 			tm.tv_sec += 2;
 
 			pthread_cond_timedwait(&threshold_cv,&mutex,&tm);
@@ -526,7 +545,7 @@ void TCPConnection::Send(const byte* buffer, size_t size) {
 			tcp_send_packet.Send(iface);
 
 			/* Wait two seconds to send the data again */
-			clock_gettime(CLOCK_REALTIME, &tm);
+			current_time(&tm);
 			tm.tv_sec += 2;
 
 			pthread_cond_timedwait(&threshold_cv,&mutex,&tm);
@@ -565,7 +584,7 @@ void TCPConnection::Send(const char* buffer) {
 			tcp_send_packet.Send(iface);
 
 			/* Wait two seconds to send the data again */
-			clock_gettime(CLOCK_REALTIME, &tm);
+			current_time(&tm);
 			tm.tv_sec += 2;
 
 			pthread_cond_timedwait(&threshold_cv,&mutex,&tm);
@@ -585,7 +604,7 @@ byte TCPConnection::Read(Payload& payload) {
 	while (!read_flag && read_status) {
 
 		/* Wait two seconds to send the data again */
-		clock_gettime(CLOCK_REALTIME, &tm);
+		current_time(&tm);
 		tm.tv_sec += 2;
 
 		pthread_cond_timedwait(&threshold_cv,&mutex,&tm);

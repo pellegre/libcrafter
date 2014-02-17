@@ -46,7 +46,7 @@ namespace Crafter {
 
 	protected:
 
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 
 	public:
 		BytesField(const std::string& name, size_t nword, size_t nbyte);
@@ -95,8 +95,7 @@ Crafter::FieldInfo* Crafter::BytesField<size>::Clone() const {
 }
 
 template<size_t size>
-void Crafter::BytesField<size>::Print(std::ostream& str) const {
-	str << GetName() << " = ";
+void Crafter::BytesField<size>::PrintValue(std::ostream& str) const {
 	for(size_t i = 0 ; i < size && i < human.size() ; i++)
 		str << std::setw(2) << std::setfill('0') << std::hex << (unsigned int)human[i];
 }

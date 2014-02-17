@@ -32,6 +32,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/nameser.h>
+#include <arpa/nameser_compat.h>
 #include <resolv.h>
 
 #include "RawLayer.h"

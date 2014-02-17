@@ -17,6 +17,7 @@ AC_CHECK_TYPE(u_int64_t, uint64_t)
 AC_CHECK_TYPE(u_int16_t, uint16_t)
 AC_CHECK_TYPE(u_int8_t, uint8_t)
 AC_CHECK_TYPE(size_t)
+AC_CANONICAL_HOST
 
 ## Checks for libpcap
 AC_MSG_CHECKING(for libpcap)
@@ -65,8 +66,16 @@ AC_SUBST(PCAPLIB)
 AC_CHECK_LIB(pthread, pthread_create)
 AC_CHECK_LIB(rt,clock_gettime)
 
-AC_CHECK_LIB(resolv,ns_put16)
-AC_CHECK_LIB(resolv,ns_name_compress)
+case "${host_os}" in
+  darwin*)
+    AC_CHECK_LIB(resolv,res_9_ns_put16)
+    AC_CHECK_LIB(resolv,res_9_ns_name_compress)
+    ;;
+  *)
+    AC_CHECK_LIB(resolv,ns_put16)
+    AC_CHECK_LIB(resolv,ns_name_compress)
+    ;;
+esac
 
 ## Define these substitions here to keep all version information in one place.
 ## For information on how to properly maintain the library version information,

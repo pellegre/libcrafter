@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2012, Esteban Pellegrino
+Copyright (c) 2013, Gregory Detal
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -25,51 +25,41 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include "../Utils/IPResolver.h"
+#include "TCPOptionMPTCP.h"
+#include "../Utils/BitHandling.h"
 
-#include "IPAddress.h"
-
-using namespace std;
 using namespace Crafter;
+using namespace std;
 
-IPAddress::IPAddress(const std::string& name, size_t nword, size_t nbyte) :
-					 Field<std::string> (name,nword,nbyte*8,8*sizeof(word)),
-					 nword(nword), nbyte(nbyte) {
-	offset = nword * 4 + nbyte;
+void TCPOptionMPTCP::Craft() {
+	SetLength(GetLength() + GetPayloadSize());
 }
 
-void IPAddress::SetField(const string& ip_address) {
-	if(!validateIpv4Address(ip_address))
-		human = GetIP(ip_address);
-	else
-		human = ip_address;
+void TCPOptionMPTCPCapable::SetReceiverKey(const uint64_t& value) {
+	word* data = new word[2];
+	*((uint64_t *)data) = htonll(value);
+
+	SetPayload((const byte*)data,sizeof(uint64_t)); 
 }
 
-void IPAddress::Write(byte* raw_data) const {
-	word* ptr = (word*) (raw_data + offset);
-	*ptr = inet_addr(human.c_str());
+uint64_t TCPOptionMPTCPCapable::GetReceiverKey() const {
+	size_t payload_size = GetPayloadSize();
+	if( payload_size > 0) {
+		const byte* raw_data = GetPayload().GetRawPointer();
+		return ntohll(*(const uint64_t *)(raw_data));
+	}
+	return 0;
 }
 
-void IPAddress::Read(const byte* raw_data) {
-    struct sockaddr_in local_address;
-	memcpy(&local_address.sin_addr, raw_data + offset, sizeof(struct in_addr));
-    char str[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &local_address.sin_addr, str, INET_ADDRSTRLEN);
-	human = string(str);
+TCPOptionLayer* TCPOptionMPTCP::Build(int subopt) {
+
+	switch(subopt) {
+	case 0:
+		return new TCPOptionMPTCPCapable;
+	case 1:
+		return new TCPOptionMPTCPJoin;
+	}
+
+	/* Generic Option Header */
+	return new TCPOption;
 }
-
-FieldInfo* IPAddress::Clone() const {
-	IPAddress* new_ptr = new IPAddress(GetName(),nword,nbyte);
-	new_ptr->human = human;
-	return new_ptr;
-}
-
-void IPAddress::PrintValue(std::ostream& str) const {
-	str << human;
-}
-
-IPAddress::~IPAddress() { /* */ }
-

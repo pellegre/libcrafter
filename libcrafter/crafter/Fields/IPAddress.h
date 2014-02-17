@@ -42,7 +42,7 @@ namespace Crafter {
 		size_t nbyte;
 		size_t offset;
 
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 
 	public:
 

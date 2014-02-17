@@ -42,7 +42,7 @@ namespace Crafter {
 		size_t nbyte;
 		size_t offset;
 
-		void Print(std::ostream& str) const;
+		void PrintValue(std::ostream& str) const;
 
 	public:
 
@@ -86,8 +86,8 @@ Crafter::FieldInfo* Crafter::StringField<size>::Clone() const {
 }
 
 template<size_t size>
-void Crafter::StringField<size>::Print(std::ostream& str) const {
-	str << GetName() << " = " << human;
+void Crafter::StringField<size>::PrintValue(std::ostream& str) const {
+	str << human;
 }
 
 #endif /* STRINGFIELD_H_ */

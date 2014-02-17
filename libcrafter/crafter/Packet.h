@@ -107,6 +107,7 @@ namespace Crafter {
 		void PacketFromLinkLayer(const byte* data, size_t length, int link_proto);
 		/* Construct packet a raw layer */
 		void PacketFromIP(const RawLayer& data);
+		void PacketFromIPv6(const RawLayer& data);
 		void PacketFromEthernet(const RawLayer& data);
 
 		/* Put raw data on array and returns the number of bytes copied */
@@ -118,6 +119,7 @@ namespace Crafter {
 
 		/* Push a Layer into the stack */
 		void PushLayer(const Layer& layer);
+		void PushLayer(Layer* layer);
 		/* Pop and destroy the layer on top */
 		void PopLayer();
 

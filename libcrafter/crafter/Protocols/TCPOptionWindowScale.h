@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2012, Esteban Pellegrino
+Copyright (c) 2013, Gregory Detal
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -25,51 +25,67 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include "../Utils/IPResolver.h"
+#ifndef TCPOPTIONWSCALE_H_
+#define TCPOPTIONWSCALE_H_
 
-#include "IPAddress.h"
+#include "TCPOptionLayer.h"
 
-using namespace std;
-using namespace Crafter;
+namespace Crafter {
 
-IPAddress::IPAddress(const std::string& name, size_t nword, size_t nbyte) :
-					 Field<std::string> (name,nword,nbyte*8,8*sizeof(word)),
-					 nword(nword), nbyte(nbyte) {
-	offset = nword * 4 + nbyte;
+    class TCPOptionWindowScale: public TCPOptionLayer {
+
+        Constructor GetConstructor() const {
+            return TCPOptionWindowScale::TCPOptionWindowScaleConstFunc;
+        };
+
+        static Layer* TCPOptionWindowScaleConstFunc() {
+            return new TCPOptionWindowScale;
+        };
+
+        void DefineProtocol();
+
+        void Craft();
+
+        void ReDefineActiveFields();
+
+        static const byte FieldKind = 0;
+        static const byte FieldLength = 1;
+        static const byte FieldShift = 2;
+
+    public:
+
+        TCPOptionWindowScale();
+
+        enum { PROTO = 0x9008 };
+
+        void SetKind(const byte& value) {
+            SetFieldValue(FieldKind,value);
+        };
+
+        void SetLength(const byte& value) {
+            SetFieldValue(FieldLength,value);
+        };
+
+        void SetShift(const byte& value) {
+            SetFieldValue(FieldShift,value);
+        };
+
+        byte  GetKind() const {
+            return GetFieldValue<byte>(FieldKind);
+        };
+
+        byte  GetLength() const {
+            return GetFieldValue<byte>(FieldLength);
+        };
+
+        byte  GetShift() const {
+            return GetFieldValue<byte>(FieldShift);
+        };
+
+        ~TCPOptionWindowScale() { /* Destructor */ };
+
+    };
 }
 
-void IPAddress::SetField(const string& ip_address) {
-	if(!validateIpv4Address(ip_address))
-		human = GetIP(ip_address);
-	else
-		human = ip_address;
-}
-
-void IPAddress::Write(byte* raw_data) const {
-	word* ptr = (word*) (raw_data + offset);
-	*ptr = inet_addr(human.c_str());
-}
-
-void IPAddress::Read(const byte* raw_data) {
-    struct sockaddr_in local_address;
-	memcpy(&local_address.sin_addr, raw_data + offset, sizeof(struct in_addr));
-    char str[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &local_address.sin_addr, str, INET_ADDRSTRLEN);
-	human = string(str);
-}
-
-FieldInfo* IPAddress::Clone() const {
-	IPAddress* new_ptr = new IPAddress(GetName(),nword,nbyte);
-	new_ptr->human = human;
-	return new_ptr;
-}
-
-void IPAddress::PrintValue(std::ostream& str) const {
-	str << human;
-}
-
-IPAddress::~IPAddress() { /* */ }
+#endif /* TCPOPTIONWSCALE */
 
