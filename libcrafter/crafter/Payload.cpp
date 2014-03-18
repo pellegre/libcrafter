@@ -36,12 +36,8 @@ void Payload::SetPayload (const byte *data, size_t ndata) {
 }
 
 /* Add more stuff to the payload */
-void Payload::AddPayload (const byte* data, size_t ndata) {
-	/* Now, copy the data */
-	for (size_t i = 0 ; i < ndata ; i++) {
-		if ( (IsReadable) && (!isprint(data[i])) && (!iscntrl(data[i])) ) IsReadable = 0;
-			storage.push_back(data[i]);
-	}
+void Payload::AddPayload (const byte* data, size_t ndata) {	
+	storage.insert(storage.end(), data, data + ndata);
 }
 
 /* Set payload */
@@ -53,8 +49,7 @@ void Payload::SetPayload (const char *data) {
 /* Add more stuff to the payload */
 void Payload::AddPayload (const char* data) {
 	size_t ndata = strlen(data);
-	for (size_t i = 0 ; i < ndata ; i++)
-		storage.push_back(data[i]);
+	storage.insert(storage.end(), data, data + ndata);
 }
 
 void Payload::SetPayload (const Payload& payload) {
@@ -62,10 +57,8 @@ void Payload::SetPayload (const Payload& payload) {
 }
 
 void Payload::AddPayload (const Payload& payload) {
-	for (size_t i = 0 ; i < payload.storage.size() ; i++) {
-		if ( (IsReadable) && (!isprint(payload.storage[i])) && (!iscntrl(payload.storage[i])) ) IsReadable = 0;
-			storage.push_back(payload.storage[i]);
-	}}
+	storage.insert(storage.end(), payload.storage.begin(), payload.storage.end());
+}
 
 /* Copy the data into the pointer and returns the number of bytes copied */
 size_t Payload::GetPayload(byte* dst) const {
@@ -92,9 +85,17 @@ string Payload::GetString() const {
 /* Print Payload */
 void Payload::Print(ostream& str) const{
 	size_t size = GetSize();
+	bool readable = 1;
+
+	for (size_t i = 0 ; i < size ; i++) {
+		if ( (!isprint(storage[i])) && (!iscntrl(storage[i])) ) {
+			readable = 0;
+			break;
+		}
+	}
 
 	/* Print raw data in hexadecimal format */
-	if (IsReadable) {
+	if (readable) {
 
 		for(size_t i = 0 ; i < size ; i++) {
 			if ((unsigned int)storage[i] == 0x09)
