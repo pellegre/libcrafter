@@ -62,20 +62,15 @@ void Payload::AddPayload (const Payload& payload) {
 
 /* Copy the data into the pointer and returns the number of bytes copied */
 size_t Payload::GetPayload(byte* dst) const {
-	size_t size = GetSize();
-	for (size_t i = 0 ; i < size ; i++)
-		dst[i] = storage[i];
-
-	return size;
+	return std::copy(storage.begin(), storage.end(), dst) - dst;
 }
 
 size_t Payload::GetPayload(byte* dst, size_t ndata) const {
-	size_t i = 0;
 	size_t size = GetSize();
-	for (; i < size && i < ndata; i++)
-		dst[i] = storage[i];
-
-	return i;
+	if(size > ndata) {
+		size = ndata;
+	}
+	return std::copy(storage.begin(), storage.begin() + size, dst) - dst;
 }
 
 string Payload::GetString() const {
