@@ -60,6 +60,7 @@ IEEE802.11 coming soon!
 The primary developer of Libcrafter is Esteban Pellegrino. Contributions from 
 libcrafter's users:
 
-* Thanks to Bruno Nery contribution, libcrafter support ICMP
-extension (rfc4884) and MPLS extensions (rfc4950) for ICMPv6 and ICMPv4.
-
+* Bruno Nery : support ICMP extension (rfc4884) and MPLS extensions (rfc4950) 
+  for ICMPv6 and ICMPv4.
+* Joao Antunes : Several bug fixes
+* Lance Alt Performance enhancements for the GetPayload methods
