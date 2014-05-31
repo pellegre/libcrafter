@@ -138,6 +138,10 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ether_dummy);
 
+	Dot1Q dot1q_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&dot1q_dummy);
+
 	SLL sll_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&sll_dummy);
