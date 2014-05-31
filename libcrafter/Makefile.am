@@ -47,6 +47,8 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/RawLayer.cpp \
 						crafter/Protocols/EthernetConstructor.cpp \
 						crafter/Protocols/EthernetCraft.cpp \
+						crafter/Protocols/Dot1QConstructor.cpp \
+						crafter/Protocols/Dot1QCraft.cpp \
 						crafter/Protocols/ARPConstructor.cpp \
 						crafter/Protocols/ARPCraft.cpp \
 						crafter/Protocols/IPConstructor.cpp \
@@ -147,6 +149,7 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Utils/TCPConnection.h \
 								crafter/Protocols/RawLayer.h \
 								crafter/Protocols/Ethernet.h \
+								crafter/Protocols/Dot1Q.h \
 								crafter/Protocols/ARP.h \
 								crafter/Protocols/IP.h \
 								crafter/Protocols/IPOption.h \
