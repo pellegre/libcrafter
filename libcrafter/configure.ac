@@ -1,6 +1,6 @@
 ## LibCrafter (Adapted from http://www.openismus.com/documents/linux/building_libraries/building_libraries):
 
-AC_INIT([libcrafter], [0.2], [pellegre.esteban@gmail.com], [crafter],
+AC_INIT([libcrafter], [0.3], [pellegre.esteban@gmail.com], [crafter],
         [http://code.google.com/p/libcrafter/])
 AC_PREREQ([2.59])
 AM_INIT_AUTOMAKE([1.10 -Wall no-define])
