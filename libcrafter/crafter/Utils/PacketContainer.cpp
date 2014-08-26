@@ -116,6 +116,9 @@ static void process_packet (u_char *user, const struct pcap_pkthdr *header, cons
 	/* Construct the packet */
 	sniff_packet.PacketFromLinkLayer(packet,header->len,total_arg->link_type);
 
+	/* Set packet time stamp */
+	sniff_packet.SetTimestamp(header->ts);
+
 	/* Grab the data */
 	Packet::PacketHandler PacketHandlerFunction = total_arg->packet_handler;
 	void* arg = total_arg->user_arg;
