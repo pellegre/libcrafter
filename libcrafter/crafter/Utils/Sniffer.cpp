@@ -48,6 +48,9 @@ static void process_packet (u_char *user, const struct pcap_pkthdr *header, cons
 	/* Argument for packet handling */
 	SnifferData* total_arg = reinterpret_cast<SnifferData*>(user);
 
+	/* Set packet time stamp */
+	sniff_packet.SetTimestamp(header->ts);
+
 	/* Construct the packet */
 	sniff_packet.PacketFromLinkLayer(packet, header->len,total_arg->link_type);
 
