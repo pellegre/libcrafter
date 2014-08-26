@@ -610,7 +610,7 @@ namespace Crafter {
 
 		/* Push this packet into the container */
 		PutPacket(header->len, total_arg->link_type, packet, cont->back());
-
+		cont->back()->SetTimestamp(header->ts);
 	}
 
 	template<class Seq>
