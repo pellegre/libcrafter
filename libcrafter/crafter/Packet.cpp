@@ -186,8 +186,16 @@ void Packet::PopLayer() {
 		/* Pop back the pointer */
 		Stack.pop_back();
 	}
-
 }
+
+timeval Packet::GetTimestamp() const {
+	return ts;
+}
+
+void Packet::SetTimestamp(timeval timestamp) {
+	ts = timestamp;
+}
+
 Layer* Packet::operator[](size_t pos) {
 	if(pos < Stack.size())
 		return Stack[pos];
