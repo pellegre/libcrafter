@@ -69,3 +69,4 @@ depcomp
 install-sh
 missing
 config.h.in
+compile
