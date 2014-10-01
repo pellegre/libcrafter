@@ -1,0 +1,8 @@
+name IPv6FragmentationHeader
+protoid 0x2c
+ByteField    NextHeader       0  0     0x06
+ByteField    Reserved         0  1     0
+BitsField    FragmentOffset   0  16 13 0
+BitsField    Res              0  29 2  0
+BitsField    Mflag            0  31 1  0
+XWordField   Identification   1  0     0
