@@ -167,17 +167,25 @@ void Crafter::BitsField<size,nbit>::Read(const byte* raw_data) {
 
 	} else if (over_bytes == 1) {
 
-		WordBitPack<size> FieldValue;
-		memset((void*)&FieldValue,0,sizeof(WordBitPack<size>));
-		byte* field_data = reinterpret_cast<byte*>(&FieldValue);
-		byte mask = ( 1 << size%8 ) - 1 ;
-		field_data[1] &= ~mask;
-		field_data[1] |= data_ptr[0];
+		short_word value = 0;
+		byte* field_data = (byte*)(&value);
+		byte maskLow = ( 1 << size%8 ) - 1 ;
+		field_data[over_bytes] &= ~maskLow;
+		field_data[over_bytes] |= data_ptr[0];
+
 		size_t nbits = 8;
+		for(int i = 1 ; i < over_bytes ; i++) {
+			field_data[over_bytes - i] = data_ptr[i];
+			nbits += 8;
+		}
+
 		byte maskHigh = ( 1 << (size - (nbits - nbit%8)) ) - 1 ;
+
 		field_data[0] &= maskHigh;
-		field_data[0] |= data_ptr[1];
-		human = FieldValue.fieldm ;
+		field_data[0] |= data_ptr[over_bytes];
+
+		value = value >> ((over_bytes + 1)*8 - size);
+		human = value;
 
 	} else {
 
