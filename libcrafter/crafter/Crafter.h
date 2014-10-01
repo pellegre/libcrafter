@@ -34,6 +34,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 /* Ethernet Protocol Implementation */
 #include "Protocols/Ethernet.h"
 
+/* Dot1Q Protocol Implementation */
+#include "Protocols/Dot1Q.h"
+
 /* SLL Protocol Implementation */
 #include "Protocols/SLL.h"
 

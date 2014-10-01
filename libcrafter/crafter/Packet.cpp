@@ -186,8 +186,16 @@ void Packet::PopLayer() {
 		/* Pop back the pointer */
 		Stack.pop_back();
 	}
-
 }
+
+timeval Packet::GetTimestamp() const {
+	return ts;
+}
+
+void Packet::SetTimestamp(timeval timestamp) {
+	ts = timestamp;
+}
+
 Layer* Packet::operator[](size_t pos) {
 	if(pos < Stack.size())
 		return Stack[pos];
@@ -226,7 +234,7 @@ Packet Packet::SubPacket(size_t begin, size_t end) const {
 }
 
 /* Copy Constructor */
-Packet::Packet(const Packet& copy_packet) : raw_data(0), bytes_size(0), pre_crafted(0) {
+Packet::Packet(const Packet& copy_packet) : raw_data(0), bytes_size(0), pre_crafted(0), ts(copy_packet.ts) {
 	/* Push layer one by one */
 	vector<Layer*>::const_iterator it_layer;
 	for (it_layer = copy_packet.Stack.begin() ; it_layer != copy_packet.Stack.end() ; ++it_layer)
@@ -243,6 +251,9 @@ Packet::Packet(const RawLayer& data, short_word proto_id) : raw_data(0), bytes_s
 }
 
 Packet& Packet::operator=(const Packet& right) {
+	/* Copy time stamp */
+	ts = right.ts;
+
 	/* Delete layer one by one */
 	vector<Layer*>::iterator it_layer;
 	for (it_layer = Stack.begin() ; it_layer != Stack.end() ; ++it_layer)
