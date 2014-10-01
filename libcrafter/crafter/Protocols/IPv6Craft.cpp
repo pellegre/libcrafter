@@ -72,6 +72,14 @@ string IPv6::MatchFilter() const {
 }
 
 void IPv6::ParseLayerData(ParseInfo* info) {
+	size_t total_length = this->GetPayloadLength() * 8;
+	size_t total_data = info->total_size - info->offset;
+
+	/* Detect ethernet padding */
+	if(total_length && total_data > total_length) {
+		info->total_size -= (total_data - total_length);
+	}
+
 	short_word network_layer = GetNextHeader();
 	if(network_layer == (ICMPv6Layer::PROTO >> 8)) {
 		/* Get ICMPv6 type */
