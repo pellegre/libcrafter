@@ -37,6 +37,12 @@ void IPv6FragmentationHeader::Craft() {}
 
 void IPv6FragmentationHeader::ParseLayerData(ParseInfo* info) {
 	short_word network_layer = GetNextHeader();
+
+	if(this->GetFragmentOffset() > 0) {
+		info->next_layer = 0;
+		return;
+	}
+
 	if(network_layer == (ICMPv6Layer::PROTO >> 8)) {
 		/* Get ICMPv6 type */
 		short_word icmpv6_layer = (info->raw_data + info->offset)[0];
