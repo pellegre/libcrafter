@@ -114,6 +114,14 @@ string IP::MatchFilter() const {
 }
 
 void IP::ParseLayerData(ParseInfo* info) {
+	size_t total_length = this->GetTotalLength() - this->GetSize();
+	size_t total_data = info->total_size - info->offset;
+
+	/* Detect ethernet padding */
+	if(total_data > total_length) {
+		info->total_size -= (total_data - total_length);
+	}
+
 	/* Verify if there are options on the IP header */
 	size_t IP_word_size = GetHeaderLength();
 	size_t IP_opt_size = 0;
@@ -133,7 +141,7 @@ void IP::ParseLayerData(ParseInfo* info) {
 		int opt = (info->raw_data + info->offset)[0];
 		info->next_layer = IPOptionLayer::Build(opt);
 		info->extra_info = reinterpret_cast<void*>(extra_info);
-	} else
+	} else {
 		info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
-
+	}
 }
