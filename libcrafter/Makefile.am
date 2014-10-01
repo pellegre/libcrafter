@@ -95,6 +95,8 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/SLLCraft.cpp \
 						crafter/Protocols/IPv6Constructor.cpp \
 						crafter/Protocols/IPv6Craft.cpp \
+						crafter/Protocols/IPv6FragmentationHeaderCraft.cpp \
+						crafter/Protocols/IPv6FragmentationHeaderConstructor.cpp \
 						crafter/Protocols/IPLayer.cpp \
 						crafter/Protocols/NullLoopbackConstructor.cpp \
 						crafter/Protocols/NullLoopbackCraft.cpp \
@@ -171,6 +173,7 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/DHCPOptions.h \
 								crafter/Protocols/SLL.h \
 								crafter/Protocols/IPv6.h \
+								crafter/Protocols/IPv6FragmentationHeader.h \
 								crafter/Protocols/IPLayer.h \
 								crafter/Protocols/NullLoopback.h \
 						        crafter/Protocols/ICMPv6Layer.h \
