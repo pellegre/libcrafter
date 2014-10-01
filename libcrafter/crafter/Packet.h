@@ -53,6 +53,9 @@ namespace Crafter {
 		/* Pre-Crafted flag. This flag is set when an user wnats to handle the crafting by himself */
 		byte pre_crafted;
 
+		/* Packet time stamp */
+		timeval ts;
+
 		/* Mutex variable */
 		static pthread_mutex_t mutex_compile;
 
@@ -116,6 +119,11 @@ namespace Crafter {
 		const byte* GetRawPtr();
 		/* Get a pointer to the raw buffer inside the packet (this is a const method, without crafting the data) */
 		const byte* GetBuffer() const;
+
+		/* Get time stamp */
+		timeval GetTimestamp() const;
+		/* Set time stamp */
+		void SetTimestamp(timeval timestamp);
 
 		/* Push a Layer into the stack */
 		void PushLayer(const Layer& layer);

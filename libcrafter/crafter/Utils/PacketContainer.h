@@ -563,9 +563,7 @@ namespace Crafter {
 		while(begin != end) {
 			/* pcap header */
 			struct pcap_pkthdr header;
-			/* TODO - libcrafter don't know anything about timestamps */
-			header.ts.tv_sec = 0;
-			header.ts.tv_usec = 0;
+			header.ts = (*begin)->GetTimestamp();
 			size_t size = (*begin)->GetSize();
 			header.len = size;
 			header.caplen = size;
@@ -612,7 +610,7 @@ namespace Crafter {
 
 		/* Push this packet into the container */
 		PutPacket(header->len, total_arg->link_type, packet, cont->back());
-
+		cont->back()->SetTimestamp(header->ts);
 	}
 
 	template<class Seq>

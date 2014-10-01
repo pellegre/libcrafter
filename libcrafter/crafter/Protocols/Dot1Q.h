@@ -24,54 +24,78 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+#ifndef Dot1Q_H_
+#define Dot1Q_H_
 
-#include "IP.h"
+#include "../Layer.h"
 
-using namespace Crafter;
-using namespace std;
+namespace Crafter {
 
-IP::IP() {
+    class Dot1Q: public Layer {
 
-    allocate_bytes(20);
-    SetName("IP");
-    SetprotoID(0x0800);
-    DefineProtocol();
+        void DefineProtocol();
 
-    SetVersion(4);
-    SetHeaderLength(5);
-    SetDiffServicesCP(0);
-    SetExpCongestionNot(0);
-    SetTotalLength(0);
-    SetIdentification(0);
-#ifdef __APPLE__
-    SetFlags(0);
-#else
-    SetFlags(0x02);
-#endif
-    SetFragmentOffset(0);
-    SetTTL(64);
-    SetProtocol(0x06);
-    SetCheckSum(0);
-    SetSourceIP("0.0.0.0");
-    SetDestinationIP("0.0.0.0");
+        Constructor GetConstructor() const {
+            return Dot1Q::Dot1QConstFunc;
+        };
 
-    ResetFields();
+        static Layer* Dot1QConstFunc() {
+            return new Dot1Q;
+        };
+
+        void Craft();
+
+        void ReDefineActiveFields();
+
+        void ParseLayerData(ParseInfo* info);
+
+        static const byte FieldPCP = 0;
+        static const byte FieldDEI = 1;
+        static const byte FieldVID = 2;
+        static const byte FieldType = 3;
+
+    public:
+
+		enum { PROTO = 0x8100 };
+
+        Dot1Q();
+
+        void SetPCP(const word& value) {
+            SetFieldValue(FieldPCP,value);
+        };
+
+        void SetDEI(const word& value) {
+            SetFieldValue(FieldDEI,value);
+        };
+
+        void SetVID(const word& value) {
+            SetFieldValue(FieldVID,value);
+        };
+
+        void SetType(const short_word& value) {
+            SetFieldValue(FieldType,value);
+        };
+
+        word  GetPCP() const {
+            return GetFieldValue<word>(FieldPCP);
+        };
+
+        word  GetDEI() const {
+            return GetFieldValue<word>(FieldDEI);
+        };
+
+        word  GetVID() const {
+            return GetFieldValue<word>(FieldVID);
+        };
+
+        short_word  GetType() const {
+            return GetFieldValue<short_word>(FieldType);
+        };
+
+        ~Dot1Q() { /* Destructor */ };
+
+    };
 
 }
 
-void IP::DefineProtocol() {
-    Fields.push_back(new BitsField<4,0>("Version",0));
-    Fields.push_back(new BitsField<4,4>("HeaderLength",0));
-    Fields.push_back(new BitsField<6,8>("DiffServicesCP",0));
-    Fields.push_back(new BitsField<2,14>("ExpCongestionNot",0));
-    Fields.push_back(new ShortField("TotalLength",0,2));
-    Fields.push_back(new XShortField("Identification",1,0));
-    Fields.push_back(new BitsField<3,16>("Flags",1));
-    Fields.push_back(new BitsField<13,19>("FragmentOffset",1));
-    Fields.push_back(new ByteField("TTL",2,0));
-    Fields.push_back(new XByteField("Protocol",2,1));
-    Fields.push_back(new XShortField("CheckSum",2,2));
-    Fields.push_back(new IPAddress("SourceIP",3,0));
-    Fields.push_back(new IPAddress("DestinationIP",4,0));
-}
-
+#endif /* Dot1Q_H_ */
