@@ -50,6 +50,7 @@ void IP::Craft() {
 
 	/* Array for the option data */
 	byte ip_data[IPHDRSIZE + MAXOPT];
+	memset(ip_data, 0, IPHDRSIZE + MAXOPT);
 
 	size_t option_length = 0;
 
@@ -62,7 +63,7 @@ void IP::Craft() {
 				/* Update option length */
 				option_length += top_layer->GetSize();
 				/* Get the option data */
-				if(option_length < MAXOPT) top_layer->GetRawData(ip_data + IPHDRSIZE + last_opt_length);
+				if(option_length <= MAXOPT) top_layer->GetRawData(ip_data + IPHDRSIZE + last_opt_length);
 				/* Go to next layer */
 				top_layer = ((IP *)top_layer)->GetTopLayer();
 			}
