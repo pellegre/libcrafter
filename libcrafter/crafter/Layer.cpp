@@ -254,9 +254,7 @@ void Crafter::Layer::allocate_bytes(size_t nbytes) {
 	raw_data = new byte[nbytes];
 
 	/* And set the buffer to zero */
-	for (unsigned int i = 0 ; i < size ; i++)
-		raw_data[i] = 0x00;
-
+	memset(raw_data, 0, size);
 }
 
 size_t Crafter::Layer::GetData(byte* data) const {
