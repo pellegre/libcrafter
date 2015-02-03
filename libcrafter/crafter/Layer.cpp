@@ -221,22 +221,7 @@ void Crafter::Layer::Print(std::ostream& str) const {
 
 /* Allocate a number of octets into the layer */
 void Crafter::Layer::allocate_words(size_t nwords) {
-	/* Delete memory allocated */
-	if (size)
-		delete [] raw_data;
-
-	/* Set the size */
-	size = nwords * sizeof(word);
-	/* Size in bytes of the header */
-	bytes_size = nwords * sizeof(word);
-
-	/* Allocate the raw data buffer */
-	raw_data = new byte[size];
-
-	/* And set the buffer to zero */
-	for (unsigned int i = 0 ; i < size ; i++)
-		raw_data[i] = 0x00;
-
+	allocate_bytes(nwords * sizeof(word));
 }
 
 /* Allocate a number of bytes into the layer */
