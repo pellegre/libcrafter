@@ -34,6 +34,17 @@ using namespace std;
 void IPv6::ReDefineActiveFields() {
 }
 
+short_word IPv6::GetIPv6NextHeader(short_word transport_layer) {
+    if(transport_layer != 0xfff1) {
+        short_word top_id = transport_layer >> 8;
+        if (top_id == (ICMPv6Layer::PROTO >> 8))
+            return ICMPv6Layer::PROTO >> 8;
+        else
+            return transport_layer;
+    } else
+        return 0x0;
+}
+
 void IPv6::Craft() {
 
 	/* Get transport layer protocol */
@@ -46,17 +57,8 @@ void IPv6::Craft() {
 		}
 
 		if(!IsFieldSet(FieldNextHeader)) {
-			short_word transport_layer = TopLayer->GetID();
 			/* Set Protocol */
-			if(transport_layer != 0xfff1) {
-				if ((TopLayer->GetID() >> 8) == (ICMPv6Layer::PROTO >> 8))
-					SetNextHeader((ICMPv6Layer::PROTO >> 8));
-				else
-					SetNextHeader(transport_layer);
-			}
-			else
-				SetNextHeader(0x0);
-
+		    SetNextHeader(GetIPv6NextHeader(TopLayer->GetID()));	
 			ResetField(FieldNextHeader);
 		}
 	}
@@ -71,6 +73,15 @@ string IPv6::MatchFilter() const {
 	return "ip6 and dst host " + GetSourceIP() + " and src host " + GetDestinationIP();
 }
 
+Layer* IPv6::GetNextLayer(ParseInfo *info, short_word network_layer) {
+    if(network_layer == (ICMPv6Layer::PROTO >> 8)) {
+		/* Get ICMPv6 type */
+		short_word icmpv6_layer = (info->raw_data + info->offset)[0];
+		return ICMPv6Layer::Build(icmpv6_layer);
+    } else
+        return Protocol::AccessFactory()->GetLayerByID(network_layer);
+}
+
 void IPv6::ParseLayerData(ParseInfo* info) {
 	size_t total_length = this->GetPayloadLength() * 8;
 	size_t total_data = info->total_size - info->offset;
@@ -80,13 +91,5 @@ void IPv6::ParseLayerData(ParseInfo* info) {
 		info->total_size -= (total_data - total_length);
 	}
 
-	short_word network_layer = GetNextHeader();
-	if(network_layer == (ICMPv6Layer::PROTO >> 8)) {
-		/* Get ICMPv6 type */
-		short_word icmpv6_layer = (info->raw_data + info->offset)[0];
-		/* Construct next layer */
-		info->next_layer = ICMPv6Layer::Build(icmpv6_layer);
-	} else {
-		info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
-	}
+    info->next_layer = GetNextLayer(info, GetNextHeader());
 }

@@ -122,11 +122,6 @@ void DNS::Craft() {
 	delete [] raw_payload;
 }
 
-static void zero_buff(char* buff, size_t ndata) {
-	for(size_t i = 0 ; i < ndata ; i++)
-		buff[i] = 0x0;
-}
-
 void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_msg* handle) {
 	/* Allocate memory for buffer */
 	char* buff = new char[MAXDNAME];
@@ -140,7 +135,7 @@ void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_
 			throw std::runtime_error("DNS::SetContainerSection() : Error Parsing the Answers");
 
 		/* Put zeros on the buffer */
-		zero_buff(buff,MAXDNAME);
+		memset(buff, 0, MAXDNAME);
 
 		/* Get the name associated with the answer */
         string qname = string(ns_rr_name(rr));
@@ -214,26 +209,26 @@ void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_
 }
 
 void DNS::PrintPayload(ostream& str) const {
-	cout << "Payload = " << endl;
+	str << "Payload = " << endl;
 
 	vector<DNSQuery>::const_iterator it_query;
 	for(it_query  = Queries.begin() ; it_query != Queries.end() ; it_query++) {
-		(*it_query).Print();cout << endl;
+		(*it_query).Print();str << endl;
 	}
 
 	vector<DNSAnswer>::const_iterator it_ans;
 	for(it_ans  = Answers.begin() ; it_ans != Answers.end() ; it_ans++) {
-		(*it_ans).Print();cout << endl;
+		(*it_ans).Print();str << endl;
 	}
 
 	vector<DNSAnswer>::const_iterator it_auth;
 	for(it_auth  = Authority.begin() ; it_auth != Authority.end() ; it_auth++) {
-		(*it_auth).Print();cout << endl;
+		(*it_auth).Print();str << endl;
 	}
 
 	vector<DNSAnswer>::const_iterator it_add;
 	for(it_add  = Additional.begin() ; it_add != Additional.end() ; it_add++) {
-		(*it_add).Print();cout << endl;
+		(*it_add).Print();str << endl;
 	}
 
 }

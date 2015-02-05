@@ -131,6 +131,12 @@ namespace Crafter {
             return GetFieldValue<std::string>(FieldDestinatioIP);
         };
 
+        /* Return the corresponding next header value for the given protoid */
+        static short_word GetIPv6NextHeader(short_word transport_layer);
+
+        /* Return the corresponding layer for the given network layer value */
+        static Layer* GetNextLayer(ParseInfo *info, short_word network_layer);
+
         ~IPv6() { /* Destructor */ };
 
     };
