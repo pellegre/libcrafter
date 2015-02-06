@@ -73,6 +73,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Protocols/IPv6.h"
 #include "Protocols/IPv6FragmentationHeader.h"
 #include "Protocols/IPv6RoutingHeaderLayer.h"
+#include "Protocols/IPv6SegmentRoutingHeader.h"
 
 /* IMCP base class */
 #include "Protocols/ICMPLayer.h"
