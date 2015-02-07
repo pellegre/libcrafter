@@ -27,6 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "IPv6.h"
 #include "ICMPv6Layer.h"
+#include "IPv6RoutingHeaderLayer.h"
 
 using namespace Crafter;
 using namespace std;
@@ -39,6 +40,8 @@ short_word IPv6::GetIPv6NextHeader(short_word transport_layer) {
         short_word top_id = transport_layer >> 8;
         if (top_id == (ICMPv6Layer::PROTO >> 8))
             return ICMPv6Layer::PROTO >> 8;
+        else if (top_id == (IPv6RoutingHeaderLayer::PROTO >> 8))
+            return IPv6RoutingHeaderLayer::PROTO >> 8;
         else
             return transport_layer;
     } else
@@ -78,6 +81,10 @@ Layer* IPv6::GetNextLayer(ParseInfo *info, short_word network_layer) {
 		/* Get ICMPv6 type */
 		short_word icmpv6_layer = (info->raw_data + info->offset)[0];
 		return ICMPv6Layer::Build(icmpv6_layer);
+	} else if (network_layer == (IPv6RoutingHeaderLayer::PROTO >> 8)) {
+        /* Get Routing Header Type */
+        byte routing_type = (info->raw_data + info->offset)[2];
+        return IPv6RoutingHeaderLayer::Build(routing_type);
     } else
         return Protocol::AccessFactory()->GetLayerByID(network_layer);
 }

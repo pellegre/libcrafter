@@ -1,0 +1,59 @@
+/*
+Copyright (c) 2015, Olivier Tilmans
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the <organization> nor the
+      names of its contributors may be used to endorse or promote products
+      derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL OLIVIER TILMANS BE LIABLE FOR ANY
+DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+#include "IPv6RoutingHeaderLayer.h"
+
+using namespace Crafter;
+using namespace std;
+
+IPv6RoutingHeaderLayer::IPv6RoutingHeaderLayer(const size_t &hdr_size,
+        const char *layer_name, const word &proto_id, const bool &reset_fields) {
+
+    allocate_bytes(hdr_size);
+    SetName(layer_name);
+    SetprotoID(proto_id);
+    DefineProtocol();
+
+    SetDefaultValues();
+
+    if (reset_fields)
+        ResetFields();
+}
+
+void IPv6RoutingHeaderLayer::DefineProtocol() {
+    Fields.push_back(new ByteField("NextHeader",0,0));
+    Fields.push_back(new ByteField("HeaderExtLen",0,1));
+    Fields.push_back(new ByteField("RoutingType",0,2));
+    Fields.push_back(new ByteField("SegmentLeft",0,3));
+}
+
+void IPv6RoutingHeaderLayer::SetDefaultValues() {
+    SetNextHeader(0);
+    SetHeaderExtLen(0);
+    SetRoutingType(0);
+    SetSegmentLeft(0);
+}
