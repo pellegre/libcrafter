@@ -73,6 +73,14 @@ void Crafter::InitCrafter() {
 	IPv6FragmentationHeader ipv6_frag_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ipv6_frag_dummy);
+    
+    IPv6RoutingHeaderLayer ipv6_rtg_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ipv6_rtg_dummy);
+    
+    IPv6SegmentRoutingHeader ipv6_sr_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&ipv6_sr_dummy);
 
 	UDP udp_dummy;
 	/* Register the protocol, this is executed only once */
