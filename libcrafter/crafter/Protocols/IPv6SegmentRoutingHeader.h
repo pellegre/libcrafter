@@ -224,7 +224,7 @@ namespace Crafter {
             return GetFieldValue<byte>(FieldHMACKeyID);
         };
 
-        ~IPv6SegmentRoutingHeader();
+        ~IPv6SegmentRoutingHeader() { }
 
         void PushIPv6Segment(const std::string& ip);
 
