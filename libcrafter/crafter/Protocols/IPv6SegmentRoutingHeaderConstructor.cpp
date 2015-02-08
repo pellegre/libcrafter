@@ -64,8 +64,3 @@ void IPv6SegmentRoutingHeader::SetDefaultValues() {
     SetHMACKeyID(0);
 }
 
-IPv6SegmentRoutingHeader::~IPv6SegmentRoutingHeader() {
-    vector<segment_t>::const_iterator it;
-    //for (it = Segments.begin(); it != Segments.end(); ++it)
-    //    delete *it;
-}
