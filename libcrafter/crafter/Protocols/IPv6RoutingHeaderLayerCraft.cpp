@@ -27,6 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "IPv6RoutingHeaderLayer.h"
 #include "IPv6SegmentRoutingHeader.h"
+#include "IPv6MobileRoutingHeader.h"
 #include "IPv6.h"
 
 
@@ -38,9 +39,10 @@ IPv6RoutingHeaderLayer* IPv6RoutingHeaderLayer::Build(int type) {
     switch(type) {
         case 0: /* Routing Header Type 0 -- DEPRECATED */
         case 1: /* Nimrod -- DEPRECATED 2009-05-06 */
+            return new IPv6RoutingHeaderLayer;
         case 2: /* IPv6 mobility -- rfc6275 */
+            return new IPv6MobileRoutingHeader;
         case 3: /* RPL -- rfc6554 */
-            /* Not implemented :( */
             return new IPv6RoutingHeaderLayer;
         case 4: /* Segment Routing -- draft-previdi-6man-segment-routing-header */
             return new IPv6SegmentRoutingHeader;
@@ -76,7 +78,6 @@ void IPv6RoutingHeaderLayer::Craft() {
             PrintMessage(Crafter::PrintCodes::PrintWarning,
                 "IPv6RoutingHeader::Craft()", "No transport layer protocol.");
         }
-    }     
     }    
 
     size_t payload_size = GetRoutingPayloadSize();

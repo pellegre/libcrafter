@@ -82,6 +82,10 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ipv6_sr_dummy);
 
+    IPv6MobileRoutingHeader ipv6_mr_dummy;
+    /* Register the protocol, this is executed only once */
+    Protocol::AccessFactory()->Register(&ipv6_mr_dummy);
+
 	UDP udp_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&udp_dummy);
