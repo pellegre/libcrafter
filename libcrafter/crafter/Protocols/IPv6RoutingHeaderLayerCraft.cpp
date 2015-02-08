@@ -77,11 +77,15 @@ void IPv6RoutingHeaderLayer::Craft() {
                 "IPv6RoutingHeader::Craft()", "No transport layer protocol.");
         }
     }     
-    size_t payload_size = GetRoutingPayloadSize();
-    byte* raw_payload = new byte[payload_size];
-    FillRoutingPayload(raw_payload);
+    }    
 
-    SetPayload(raw_payload, payload_size); 
+    size_t payload_size = GetRoutingPayloadSize();
+    if (payload_size) {
+        byte* raw_payload = new byte[payload_size];
+        FillRoutingPayload(raw_payload);
+
+        SetPayload(raw_payload, payload_size);
+    }
 }
 
 void IPv6RoutingHeaderLayer::ParseLayerData(ParseInfo *info) {
