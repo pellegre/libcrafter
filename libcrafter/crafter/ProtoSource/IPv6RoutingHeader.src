@@ -1,4 +1,4 @@
-name IPv6RoutingHeaderLayer
+name IPv6RoutingHeader
 protoid 0x2b00
 ByteField NextHeader    0 0 0
 ByteField HeaderExtLen  0 1 0

@@ -28,11 +28,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define IPV6SEGMENTROUTINGHEADER_H_
 
 #include "../Layer.h"
-#include "IPv6RoutingHeaderLayer.h"
+#include "IPv6RoutingHeader.h"
 
 namespace Crafter {
 
-    class IPv6SegmentRoutingHeader: public IPv6RoutingHeaderLayer {
+    class IPv6SegmentRoutingHeader: public IPv6RoutingHeader {
  
         Constructor GetConstructor() const {
             return IPv6SegmentRoutingHeader::IPv6SegmentRoutingHeaderConstFunc;
@@ -81,7 +81,7 @@ namespace Crafter {
         IPv6SegmentRoutingHeader();
 
         IPv6SegmentRoutingHeader(const IPv6SegmentRoutingHeader& srh)
-            : IPv6RoutingHeaderLayer(srh),
+            : IPv6RoutingHeader(srh),
             Segments(srh.Segments) {
             memcpy(PolicyList, srh.PolicyList, sizeof(PolicyList));
             memcpy(HMAC, srh.HMAC, sizeof(HMAC));
@@ -94,7 +94,7 @@ namespace Crafter {
             memcpy(HMAC, right.HMAC, sizeof(HMAC));
             memcpy(PolicyList, right.PolicyList, sizeof(PolicyList));
             /* Call the assignment operator of the base class */
-			IPv6RoutingHeaderLayer::operator=(right);
+			IPv6RoutingHeader::operator=(right);
 			/* Return */
 			return *this;
 		}
@@ -224,7 +224,7 @@ namespace Crafter {
             return GetFieldValue<byte>(FieldHMACKeyID);
         };
 
-        ~IPv6SegmentRoutingHeader();
+        ~IPv6SegmentRoutingHeader() { }
 
         void PushIPv6Segment(const std::string& ip);
 

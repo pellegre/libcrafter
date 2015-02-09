@@ -24,21 +24,21 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#ifndef IPV6ROUTINGHEADERLAYER_H_
-#define IPV6ROUTINGHEADERLAYER_H_
+#ifndef IPv6RoutingHeader_H_
+#define IPv6RoutingHeader_H_
 
 #include "../Layer.h"
 
 namespace Crafter {
 
-    class IPv6RoutingHeaderLayer: public Layer {
+    class IPv6RoutingHeader: public Layer {
 
         Constructor GetConstructor() const {
-            return IPv6RoutingHeaderLayer::IPv6RoutingHeaderLayerConstFunc;
+            return IPv6RoutingHeader::IPv6RoutingHeaderConstFunc;
         };
 
-        static Layer* IPv6RoutingHeaderLayerConstFunc() {
-            return new IPv6RoutingHeaderLayer;
+        static Layer* IPv6RoutingHeaderConstFunc() {
+            return new IPv6RoutingHeader;
         };
 
         void DefineProtocol();
@@ -65,15 +65,15 @@ namespace Crafter {
 
         static const word PROTO = 0x2b00;
 
-        IPv6RoutingHeaderLayer(const size_t &hdr_size=4,
-                               const char *layer_name="IPv6RoutingHeaderLayer",
+        IPv6RoutingHeader(const size_t &hdr_size=4,
+                               const char *layer_name="IPv6RoutingHeader",
                                const word &proto_id=0x2b00,
                                const bool &reset_fields=true);
 
-        IPv6RoutingHeaderLayer(const IPv6RoutingHeaderLayer &other)
+        IPv6RoutingHeader(const IPv6RoutingHeader &other)
             : Layer(other) {}
 
-        IPv6RoutingHeaderLayer& operator=(const IPv6RoutingHeaderLayer &right) {
+        IPv6RoutingHeader& operator=(const IPv6RoutingHeader &right) {
             Layer::operator=(right);
             return *this;
         }
@@ -81,7 +81,7 @@ namespace Crafter {
         Layer& operator=(const Layer &right) {
             if (GetName() != right.GetName())
 				throw std::runtime_error("Cannot convert " + right.GetName() + " to " + GetName());
-			return IPv6RoutingHeaderLayer::operator=(dynamic_cast<const IPv6RoutingHeaderLayer&>(right));
+			return IPv6RoutingHeader::operator=(dynamic_cast<const IPv6RoutingHeader&>(right));
         }
 
         void SetNextHeader(const byte& value) {
@@ -117,12 +117,12 @@ namespace Crafter {
         };
 
         /* Build IPv6RoutingHeader layer from type */
-        static IPv6RoutingHeaderLayer* Build(int type);
+        static IPv6RoutingHeader* Build(int type);
 
-        ~IPv6RoutingHeaderLayer() { /* Destructor */ };
+        ~IPv6RoutingHeader() { /* Destructor */ };
 
     };
 
 }
 
-#endif /* IPV6ROUTINGHEADERLAYER_H_ */
+#endif /* IPv6RoutingHeader_H_ */

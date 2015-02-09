@@ -25,35 +25,24 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "IPv6RoutingHeaderLayer.h"
+#include "IPv6MobileRoutingHeader.h"
 
 using namespace Crafter;
 using namespace std;
 
-IPv6RoutingHeaderLayer::IPv6RoutingHeaderLayer(const size_t &hdr_size,
-        const char *layer_name, const word &proto_id, const bool &reset_fields) {
-
-    allocate_bytes(hdr_size);
-    SetName(layer_name);
-    SetprotoID(proto_id);
+IPv6MobileRoutingHeader::IPv6MobileRoutingHeader() 
+    : IPv6RoutingHeader(24, "IPv6MobileRoutingHeader", 0x2b02, false) {
     DefineProtocol();
-
     SetDefaultValues();
-
-    if (reset_fields)
-        ResetFields();
+    ResetFields();
 }
 
-void IPv6RoutingHeaderLayer::DefineProtocol() {
-    Fields.push_back(new ByteField("NextHeader",0,0));
-    Fields.push_back(new ByteField("HeaderExtLen",0,1));
-    Fields.push_back(new ByteField("RoutingType",0,2));
-    Fields.push_back(new ByteField("SegmentLeft",0,3));
+void IPv6MobileRoutingHeader::DefineProtocol() {
+    Fields.push_back(new WordField("Reserved",1,0));
+    Fields.push_back(new IPv6Address("HomeAddress",2,0));
 }
 
-void IPv6RoutingHeaderLayer::SetDefaultValues() {
-    SetNextHeader(0);
-    SetHeaderExtLen(0);
-    SetRoutingType(0);
-    SetSegmentLeft(0);
+void IPv6MobileRoutingHeader::SetDefaultValues() {
+    SetReserved(0);
+    SetHomeAddress("::1");
 }
