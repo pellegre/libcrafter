@@ -101,6 +101,14 @@ void IPv6SegmentRoutingHeader::Craft() {
         SetSegmentLeft(Segments.size() - 1);
         ResetField(FieldSegmentLeft);
     }
+
+    /* Users normally shouldn't need to set it manually as it is defined as the
+     * very first segment of the stack (thus the deepest one in the header) and
+     * is supposed to stay constant */
+    if (!IsFieldSet(FieldFirstSegment)) {
+        SetFirstSegment(Segments.size() - 1);
+        ResetField(FieldFirstSegment);
+    }
     
     /* Fill in policy flags if some have been set */
     byte policy_val = PolicyList[0].type;
@@ -134,7 +142,7 @@ void IPv6SegmentRoutingHeader::Craft() {
     }
 
     /* Super class will take care of registering the payload and next header */
-    IPv6RoutingHeaderLayer::Craft();
+    IPv6RoutingHeader::Craft();
 }
 
 void IPv6SegmentRoutingHeader::ParsePolicy(const byte &policy_val,
@@ -188,13 +196,23 @@ void IPv6SegmentRoutingHeader::ParseLayerData(ParseInfo* info) {
     ParsePolicy(GetPolicyFlag2(), 1, &segment_end);
     ParsePolicy(GetPolicyFlag1(), 0, &segment_end);
 
+    /* Check the consistency of the packet */
+    if (segment_start + SEGMENT_SIZE * (1 + GetFirstSegment()) != segment_end) {
+        /* Inconsistent packet, abort*/
+        PrintMessage(Crafter::PrintCodes::PrintError,
+                "IPv6SegmentRoutingHeader::ParseLayerData()",
+                "Inconsistency detected between FirstSegment and PolicyFlags/HMAC.");
+        info->top = 1;
+        return;
+    }
+
     /* Finally parse all segments that are left */
     for (; segment_start < segment_end; segment_start += SEGMENT_SIZE)
         CopySegment(segment_start);
 
     /* We've processed the SR part of the header,
      * delegate the generic handling to the super class */
-    IPv6RoutingHeaderLayer::ParseLayerData(info);
+    IPv6RoutingHeader::ParseLayerData(info);
 }
 
 void IPv6SegmentRoutingHeader::PrintPayload(ostream& str) const {

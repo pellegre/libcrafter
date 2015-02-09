@@ -1,0 +1,4 @@
+name IPv6MobileRoutingHeader
+protoid 0x2b02
+WordField Reserved       1 0 0
+IPv6Address HomeAddress  2 0 "::1"
