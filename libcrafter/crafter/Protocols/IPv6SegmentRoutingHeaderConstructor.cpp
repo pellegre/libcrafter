@@ -31,7 +31,7 @@ using namespace Crafter;
 using namespace std;
 
 IPv6SegmentRoutingHeader::IPv6SegmentRoutingHeader() 
-    : IPv6RoutingHeaderLayer(8, "IPv6SegmentRoutingHeader", 0x2b04, false) {
+    : IPv6RoutingHeader(8, "IPv6SegmentRoutingHeader", 0x2b04, false) {
     memset(HMAC, 0, HMAC_SIZE);
     memset(PolicyList, 0, sizeof(PolicyList));
     DefineProtocol();

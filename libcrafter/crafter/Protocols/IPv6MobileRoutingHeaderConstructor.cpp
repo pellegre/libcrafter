@@ -31,7 +31,7 @@ using namespace Crafter;
 using namespace std;
 
 IPv6MobileRoutingHeader::IPv6MobileRoutingHeader() 
-    : IPv6RoutingHeaderLayer(24, "IPv6MobileRoutingHeader", 0x2b02, false) {
+    : IPv6RoutingHeader(24, "IPv6MobileRoutingHeader", 0x2b02, false) {
     DefineProtocol();
     SetDefaultValues();
     ResetFields();

@@ -73,7 +73,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Protocols/IPv6.h"
 #include "Protocols/IPv6FragmentationHeader.h"
 /* Routing Extension Header */
-#include "Protocols/IPv6RoutingHeaderLayer.h"
+#include "Protocols/IPv6RoutingHeader.h"
 #include "Protocols/IPv6SegmentRoutingHeader.h"
 #include "Protocols/IPv6MobileRoutingHeader.h"
 

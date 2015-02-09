@@ -25,12 +25,12 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "IPv6RoutingHeaderLayer.h"
+#include "IPv6RoutingHeader.h"
 
 using namespace Crafter;
 using namespace std;
 
-IPv6RoutingHeaderLayer::IPv6RoutingHeaderLayer(const size_t &hdr_size,
+IPv6RoutingHeader::IPv6RoutingHeader(const size_t &hdr_size,
         const char *layer_name, const word &proto_id, const bool &reset_fields) {
 
     allocate_bytes(hdr_size);
@@ -44,14 +44,14 @@ IPv6RoutingHeaderLayer::IPv6RoutingHeaderLayer(const size_t &hdr_size,
         ResetFields();
 }
 
-void IPv6RoutingHeaderLayer::DefineProtocol() {
+void IPv6RoutingHeader::DefineProtocol() {
     Fields.push_back(new ByteField("NextHeader",0,0));
     Fields.push_back(new ByteField("HeaderExtLen",0,1));
     Fields.push_back(new ByteField("RoutingType",0,2));
     Fields.push_back(new ByteField("SegmentLeft",0,3));
 }
 
-void IPv6RoutingHeaderLayer::SetDefaultValues() {
+void IPv6RoutingHeader::SetDefaultValues() {
     SetNextHeader(0);
     SetHeaderExtLen(0);
     SetRoutingType(0);

@@ -28,11 +28,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define IPV6MOBILEROUTINGHEADER_H_
 
 #include "../Layer.h"
-#include "IPv6RoutingHeaderLayer.h"
+#include "IPv6RoutingHeader.h"
 
 namespace Crafter {
 
-    class IPv6MobileRoutingHeader: public IPv6RoutingHeaderLayer {
+    class IPv6MobileRoutingHeader: public IPv6RoutingHeader {
 
         void DefineProtocol();
 
@@ -66,11 +66,11 @@ namespace Crafter {
         IPv6MobileRoutingHeader();
         
         IPv6MobileRoutingHeader(const IPv6MobileRoutingHeader& mrh)
-            : IPv6RoutingHeaderLayer(mrh) { };
+            : IPv6RoutingHeader(mrh) { };
 
 		/* Assignment operator of this class */
 		IPv6MobileRoutingHeader& operator=(const IPv6MobileRoutingHeader& right) {
-			IPv6RoutingHeaderLayer::operator=(right);
+			IPv6RoutingHeader::operator=(right);
             return *this;
 		}
 
