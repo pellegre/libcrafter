@@ -142,7 +142,7 @@ void IPv6SegmentRoutingHeader::Craft() {
     }
 
     /* Super class will take care of registering the payload and next header */
-    IPv6RoutingHeaderLayer::Craft();
+    IPv6RoutingHeader::Craft();
 }
 
 void IPv6SegmentRoutingHeader::ParsePolicy(const byte &policy_val,
@@ -212,7 +212,7 @@ void IPv6SegmentRoutingHeader::ParseLayerData(ParseInfo* info) {
 
     /* We've processed the SR part of the header,
      * delegate the generic handling to the super class */
-    IPv6RoutingHeaderLayer::ParseLayerData(info);
+    IPv6RoutingHeader::ParseLayerData(info);
 }
 
 void IPv6SegmentRoutingHeader::PrintPayload(ostream& str) const {

@@ -51,6 +51,6 @@ void IPv6MobileRoutingHeader::Craft() {
         ResetField(FieldReserved);
     }
 
-    IPv6RoutingHeaderLayer::Craft();
+    IPv6RoutingHeader::Craft();
 }
 

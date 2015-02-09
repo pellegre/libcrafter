@@ -74,7 +74,7 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ipv6_frag_dummy);
     
-    IPv6RoutingHeaderLayer ipv6_rtg_dummy;
+    IPv6RoutingHeader ipv6_rtg_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ipv6_rtg_dummy);
     
