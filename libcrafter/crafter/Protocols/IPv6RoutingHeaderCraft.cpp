@@ -66,19 +66,24 @@ void IPv6RoutingHeader::FillRoutingPayload(byte *payload) const {
 }
 
 void IPv6RoutingHeader::Craft() {
-    /* Skipping HdrExtLen, SegmentsLeft and Type because these have sane default
-     * for an opaque header: 0, 0 and a deprecated value.
+    /* Skipping HdrExtLen and SegmentsLeft because these have sane default
+     * for an opaque header.
      */
+    if (!IsFieldSet(FieldRoutingType)) {
+        SetRoutingType(protoID & 0xFF);
+        ResetField(FieldRoutingType);
+    }
+
     if (TopLayer) {
         if (!IsFieldSet(FieldNextHeader)) {
-            SetNextHeader(IPv6::GetIPv6NextHeader(TopLayer->GetID()));	
+            SetNextHeader(IPv6::GetIPv6NextHeader(TopLayer->GetID()));
             ResetField(FieldNextHeader);
         }
-        else { 
+        else {
             PrintMessage(Crafter::PrintCodes::PrintWarning,
                 "IPv6RoutingHeader::Craft()", "No transport layer protocol.");
         }
-    }    
+    }
 
     size_t payload_size = GetRoutingPayloadSize();
     if (payload_size) {

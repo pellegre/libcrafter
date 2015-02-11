@@ -31,10 +31,6 @@ using namespace Crafter;
 using namespace std;
 
 void IPv6MobileRoutingHeader::Craft() {
-    if (!IsFieldSet(FieldRoutingType)) {
-        SetRoutingType(2);
-        ResetField(FieldRoutingType);
-    }
 
     if (!IsFieldSet(FieldSegmentLeft)) {
         SetSegmentLeft(1);
