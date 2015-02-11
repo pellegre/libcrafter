@@ -49,7 +49,7 @@ namespace Crafter {
         virtual void Craft();
 
         virtual void ParseLayerData(ParseInfo* info);
-        
+
         /* Return the size of the payload carried by this routing header */
         virtual size_t GetRoutingPayloadSize() const;
 
@@ -60,7 +60,7 @@ namespace Crafter {
         static const byte FieldHeaderExtLen = 1;
         static const byte FieldRoutingType = 2;
         static const byte FieldSegmentLeft = 3;
-    
+
     public:
 
         static const word PROTO = 0x2b00;
