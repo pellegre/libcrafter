@@ -94,12 +94,15 @@ void IPv6RoutingHeader::Craft() {
 }
 
 void IPv6RoutingHeader::ParseLayerData(ParseInfo *info) {
-    /* Mark all fields as as 'set' as we're about to craft the payload */
+    /* Save all fields */
     Fields.ApplyAll(&FieldInfo::FieldSet);
-    Craft();
-    /* We only need to worry about the payload, as ParseData will already have
-     * incremented the offset by the size of the fixed header. */
-    info->offset += GetRoutingPayloadSize();
+    const size_t payload_size = GetRoutingPayloadSize();
+    if (payload_size) {
+        /* Save _extra_ data of this header */
+        SetPayload(info->raw_data + info->offset, payload_size);
+        /* Increment offset accordingly */
+        info->offset += payload_size;
+    }
     info->next_layer = IPv6::GetNextLayer(info, GetNextHeader());
 }
 
