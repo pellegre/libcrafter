@@ -107,8 +107,7 @@ namespace Crafter {
         class IPv6ByteArray : public ByteArray<sizeof(in6_addr)> {
         public:
             IPv6ByteArray() : ByteArray() {}
-            IPv6ByteArray(const ByteArray &other) : ByteArray(other) {}
-            IPv6ByteArray(const byte *array) : ByteArray(array) {}
+            IPv6ByteArray(const IPv6ByteArray &other) : ByteArray(other) {}
             IPv6ByteArray(const std::string &ip) : ByteArray() { ReadIPv6(ip); }
             IPv6ByteArray(const char *ip) : ByteArray() { ReadIPv6(ip); }
 
