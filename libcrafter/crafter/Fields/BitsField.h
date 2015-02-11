@@ -165,46 +165,28 @@ void Crafter::BitsField<size,nbit>::Read(const byte* raw_data) {
 		const ByteBitPack<size,nbit%8>* ptr = reinterpret_cast<const ByteBitPack<size,nbit%8>*> (data_ptr);
 		human = ptr->fieldm;
 
-	} else if (over_bytes == 1) {
-
-		short_word value = 0;
-		byte* field_data = (byte*)(&value);
-		byte maskLow = ( 1 << size%8 ) - 1 ;
-		field_data[over_bytes] &= ~maskLow;
-		field_data[over_bytes] |= data_ptr[0];
-
-		size_t nbits = 8;
-		for(int i = 1 ; i < over_bytes ; i++) {
-			field_data[over_bytes - i] = data_ptr[i];
-			nbits += 8;
-		}
-
-		byte maskHigh = ( 1 << (size - (nbits - nbit%8)) ) - 1 ;
-
-		field_data[0] &= maskHigh;
-		field_data[0] |= data_ptr[over_bytes];
-
-		value = value >> ((over_bytes + 1)*8 - size);
-		human = value;
-
 	} else {
-
 		word value = 0;
 		byte* field_data = (byte*)(&value);
-		byte maskLow = ( 1 << size%8 ) - 1 ;
-		field_data[over_bytes] &= ~maskLow;
-		field_data[over_bytes] |= data_ptr[0];
+        /* Read values [x,y] in bit sequence B0..x.y..Bn,
+         * where x in B1 and y in Bn-1*/
 
+        /* Copy B1 as it is the starting byte */
+        field_data[over_bytes] |= data_ptr[0];
+	    /* But exclude the high order bits in [B0, x[ */
+		byte maskLow = ( 1 << size%8 ) - 1 ;
+        field_data[over_bytes] &= maskLow;
+        /* Then copy all intermediate bytes */
 		size_t nbits = 8;
 		for(int i = 1 ; i < over_bytes ; i++) {
 			field_data[over_bytes - i] = data_ptr[i];
 			nbits += 8;
 		}
-
-		byte maskHigh = ( 1 << (size - (nbits - nbit%8)) ) - 1 ;
-
-		field_data[0] &= maskHigh;
+        /* Copy Bn-1 as it contains y*/
 		field_data[0] |= data_ptr[over_bytes];
+		/* But exclude the low order bytes not part of y in ]y, Bn] */
+        byte maskHigh = ( 1 << (size - (nbits - nbit%8)) ) - 1 ;
+		field_data[0] &= ~maskHigh;
 
 		value = value >> ((over_bytes + 1)*8 - size);
 		human = value;
