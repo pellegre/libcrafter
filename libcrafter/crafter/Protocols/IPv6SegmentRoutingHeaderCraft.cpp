@@ -89,12 +89,6 @@ void IPv6SegmentRoutingHeader::FillRoutingPayload(byte *payload) const {
 }
 
 void IPv6SegmentRoutingHeader::Craft() {
-    /* Segment Routing has (will have) type 4 */
-    if (!IsFieldSet(FieldRoutingType)) {
-        SetRoutingType(4);
-        ResetField(FieldRoutingType);
-    }
-
     /* By default, segment left will point to the segment on top of the stack,
      * thus the first one in the segment routed path */
     if (!IsFieldSet(FieldSegmentLeft)) {
