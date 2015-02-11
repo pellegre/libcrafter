@@ -30,10 +30,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace Crafter;
 using namespace std;
 
-IPv6SegmentRoutingHeader::IPv6SegmentRoutingHeader() 
+IPv6SegmentRoutingHeader::IPv6SegmentRoutingHeader()
     : IPv6RoutingHeader(8, "IPv6SegmentRoutingHeader", 0x2b04, false) {
-    memset(HMAC, 0, HMAC_SIZE);
-    memset(PolicyList, 0, sizeof(PolicyList));
     DefineProtocol();
     SetDefaultValues();
     ResetFields();
@@ -57,10 +55,8 @@ void IPv6SegmentRoutingHeader::SetDefaultValues() {
     SetCFlag(0);
     SetPFlag(0);
     SetReserved(0);
-    SetPolicyFlag1(0);
-    SetPolicyFlag2(0);
-    SetPolicyFlag3(0);
-    SetPolicyFlag4(0);
+    for (size_t i = 0; i < policy_list_t::GetSize(); ++i)
+        SetPolicyFlag(i, 0);
     SetHMACKeyID(0);
 }
 

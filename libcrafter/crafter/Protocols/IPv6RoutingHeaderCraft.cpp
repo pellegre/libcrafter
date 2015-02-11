@@ -66,30 +66,36 @@ void IPv6RoutingHeader::FillRoutingPayload(byte *payload) const {
 }
 
 void IPv6RoutingHeader::Craft() {
-    /* Skipping HdrExtLen, SegmentsLeft and Type because these have sane default
-     * for an opaque header: 0, 0 and a deprecated value.
+    /* Skipping HdrExtLen and SegmentsLeft because these have sane default
+     * for an opaque header.
      */
-    if (TopLayer) {
-        if (!IsFieldSet(FieldNextHeader)) {
-            SetNextHeader(IPv6::GetIPv6NextHeader(TopLayer->GetID()));	
+    if (!IsFieldSet(FieldRoutingType)) {
+        SetRoutingType(protoID & 0xFF);
+        ResetField(FieldRoutingType);
+    }
+
+    if (!IsFieldSet(FieldNextHeader)) {
+        if (TopLayer) {
+            SetNextHeader(IPv6::GetIPv6NextHeader(TopLayer->GetID()));
             ResetField(FieldNextHeader);
-        }
-        else { 
+        } else {
             PrintMessage(Crafter::PrintCodes::PrintWarning,
                 "IPv6RoutingHeader::Craft()", "No transport layer protocol.");
         }
-    }    
+    }
 
     size_t payload_size = GetRoutingPayloadSize();
     if (payload_size) {
         byte* raw_payload = new byte[payload_size];
         FillRoutingPayload(raw_payload);
-
         SetPayload(raw_payload, payload_size);
+        delete[] raw_payload;
     }
 }
 
 void IPv6RoutingHeader::ParseLayerData(ParseInfo *info) {
+    /* Mark all fields as as 'set' as we're about to craft the payload */
+    Fields.ApplyAll(&FieldInfo::FieldSet);
     Craft();
     /* We only need to worry about the payload, as ParseData will already have
      * incremented the offset by the size of the fixed header. */

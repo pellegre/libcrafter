@@ -33,7 +33,125 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace Crafter {
 
     class IPv6SegmentRoutingHeader: public IPv6RoutingHeader {
- 
+
+    public:
+        template<class T, size_t n>
+        class FixedSizeArray {
+            /* This class assumes that both arrays are of equal length */
+            FixedSizeArray& Clone(const FixedSizeArray &other) {
+                for (size_t i = 0; i < n; ++i)
+                    items[i] = other[i];
+                return *this;
+            }
+
+            T items[n];
+
+            public:
+                FixedSizeArray() {}
+                ~FixedSizeArray() {}
+                /* copy */
+                FixedSizeArray(const FixedSizeArray &other) { Clone(other); }
+                FixedSizeArray& operator=(const FixedSizeArray other) { return Clone(other); }
+                /* get/set */
+                T operator[](int i) const { return items[i]; }
+                T& operator[](int i) { return items[i]; }
+
+                static size_t GetSize() { return n; }
+        };
+
+        template<size_t n>
+        class ByteArray {
+
+            ByteArray& Clone(const ByteArray &other) { Read(other.bytes); return *this; }
+
+            protected:
+                byte bytes[n];
+
+            public:
+                ByteArray() { memset(bytes, 0, n); }
+                ~ByteArray() {}
+                /* copy */
+                ByteArray(const ByteArray &other) { Clone(other); }
+                ByteArray(const byte *array) { Read(array); }
+                /* set */
+                ByteArray& operator=(const ByteArray &other) { return Clone(other); }
+                ByteArray& operator=(const byte *other) { return Read(other); }
+                byte operator[](int i) const { return bytes[i]; }
+                byte& operator[](int i) { return bytes[i]; }
+
+                void Write(byte *dst) const { memcpy(dst, bytes, n); }
+                void Read(const byte *src) { memcpy(bytes, src, n); }
+                byte* Raw() const { return bytes; }
+
+                virtual void Print(std::ostream &str) const {
+                    /* Each byte will be 0-padded, in hex */
+                    str << std::hex;
+                    for (size_t i = 0; i < n; ++i) {
+                        /* group by 4 bytes */
+                        if (!(i % 4)) str << " ";
+                        str << std::setfill('0') << std::setw(2) << (int)bytes[i];
+                    }
+                    /* Restore stream state */
+                    str << std::dec;
+                }
+
+                static size_t GetSize() { return n; }
+
+                friend std::ostream& operator<<(std::ostream &str,
+                        const ByteArray &array) {
+                    array.Print(str);
+                    return str;
+                }
+        };
+
+        class IPv6ByteArray : public ByteArray<sizeof(in6_addr)> {
+        public:
+            IPv6ByteArray() : ByteArray() {}
+            IPv6ByteArray(const ByteArray &other) : ByteArray(other) {}
+            IPv6ByteArray(const byte *array) : ByteArray(array) {}
+            IPv6ByteArray(const std::string &ip) : ByteArray() { ReadIPv6(ip); }
+            IPv6ByteArray(const char *ip) : ByteArray() { ReadIPv6(ip); }
+
+            IPv6ByteArray& operator=(const std::string &ip) { ReadIPv6(ip); return *this; }
+            IPv6ByteArray& operator=(const char *ip) { ReadIPv6(ip); return *this; }
+
+            int ReadIPv6(const std::string &ip) {
+                if (inet_pton(AF_INET6, ip.c_str(), bytes) <= 0) {
+                    PrintMessage(Crafter::PrintCodes::PrintError,
+                            "IPv6SegmentRoutingHeader::IPv6ByteArray::ReadIPv6()",
+                            "<" + ip + "> is not a valid IPv6 address");
+                    return -1;
+                }
+                return 0;
+            }
+            void Print(std::ostream &str) const {
+                char addr[INET6_ADDRSTRLEN];
+                inet_ntop(AF_INET6, bytes, addr, INET6_ADDRSTRLEN);
+                str << addr;
+            }
+        };
+
+        /* Segments are IPv6 addresses */
+        typedef IPv6ByteArray segment_t;
+
+        /* HMAC is 256b */
+        typedef ByteArray< 256 / 8 > hmac_t;
+
+        /* Policies are size of an IPv6, 128b opaque values */
+        typedef IPv6ByteArray policy_t;
+        /* Types of policies */
+        typedef enum {
+            POLICY_UNSET = 0x0,
+            POLICY_INGRESS = 0x1,
+            POLICY_EGRESS = 0x2,
+            POLICY_SOURCE_ADDRESS = 0x3
+        } policy_type_t;
+
+        /* At present we only have 4 policies in the header at max (see flags) */
+        typedef FixedSizeArray<policy_t, 4> policy_list_t;
+
+    private:
+
         Constructor GetConstructor() const {
             return IPv6SegmentRoutingHeader::IPv6SegmentRoutingHeaderConstFunc;
         };
@@ -50,12 +168,10 @@ namespace Crafter {
 
         void ParseLayerData(ParseInfo* info);
 
-        void ParsePolicy(const byte &policy_val, const byte &policy_index,
-                byte const **segment_end);
+        void ParsePolicy(const size_t &policy_index,
+                         byte const **segment_end);
 
-        void PrintPayload(std::ostream& str) const;
-
-        byte* AllocateSegment() const;
+        void PrintPolicy(std::ostream &str, const size_t &index) const;
 
         /* Generic routing header has fields 0-3  */
         static const byte FieldFirstSegment = 4;
@@ -67,7 +183,7 @@ namespace Crafter {
         static const byte FieldPolicyFlag3 = 10;
         static const byte FieldPolicyFlag4 = 11;
         static const byte FieldHMACKeyID = 12;
-   
+
     protected:
 
         size_t GetRoutingPayloadSize() const;
@@ -78,21 +194,26 @@ namespace Crafter {
 
         static const word PROTO = 0x2b04;
 
+        std::vector<segment_t> Segments;
+
+        policy_list_t PolicyList;
+
+        hmac_t HMAC;
+
         IPv6SegmentRoutingHeader();
 
         IPv6SegmentRoutingHeader(const IPv6SegmentRoutingHeader& srh)
             : IPv6RoutingHeader(srh),
-            Segments(srh.Segments) {
-            memcpy(PolicyList, srh.PolicyList, sizeof(PolicyList));
-            memcpy(HMAC, srh.HMAC, sizeof(HMAC));
-        };
+            Segments(srh.Segments),
+            PolicyList(srh.PolicyList),
+            HMAC(srh.HMAC) {};
 
 		/* Assignment operator of this class */
 		IPv6SegmentRoutingHeader& operator=(const IPv6SegmentRoutingHeader& right) {
 			/* Copy the particular data of this class */
             Segments = right.Segments;
-            memcpy(HMAC, right.HMAC, sizeof(HMAC));
-            memcpy(PolicyList, right.PolicyList, sizeof(PolicyList));
+            PolicyList = right.PolicyList;
+            HMAC = right.HMAC;
             /* Call the assignment operator of the base class */
 			IPv6RoutingHeader::operator=(right);
 			/* Return */
@@ -101,56 +222,11 @@ namespace Crafter {
 
 		Layer& operator=(const Layer& right) {
 			if (GetName() != right.GetName())
-				throw std::runtime_error("Cannot convert " 
+				throw std::runtime_error("Cannot convert "
                         + right.GetName() + " to " + GetName());
 			return IPv6SegmentRoutingHeader::operator=(
                     dynamic_cast<const IPv6SegmentRoutingHeader&>(right));
 		}
-
-
-        static const size_t SEGMENT_SIZE = sizeof(in6_addr);
-        struct SRPolicy {
-            static const byte SRPOLICY_UNSET = 0x0;
-            static const byte SRPOLICY_INGRESS = 0x1;
-            static const byte SRPOLICY_EGRESS = 0x2;
-            static const byte SRPOLICY_SOURCE_ADDRESS = 0x3;
-
-            /* Policies are 128bits long, opaque values, size of a segment */
-            static const size_t SRPOLICY_SIZE = IPv6SegmentRoutingHeader::SEGMENT_SIZE;
-            byte policy[SRPOLICY_SIZE];
-            byte type;
-
-            void SetIPv6(const IPv6Address &ip) { ip.Write(policy); }
-            size_t GetSize() const { return type == SRPOLICY_UNSET ? 0 : SRPOLICY_SIZE; }
-            void Write(byte *dst) const { memcpy(dst, policy, SRPOLICY_SIZE); }
-            void Read(const byte *src) { memcpy(policy, src, SRPOLICY_SIZE); }
-            void Print(const int& nr, std::ostream& str) const {
-                char addr[INET6_ADDRSTRLEN];
-                inet_ntop(AF_INET6, policy, addr, INET6_ADDRSTRLEN);
-                str << "Policy " << nr << " = " << addr
-                    << " (" << GetTypeDescr() << ") , ";
-            }
-            const char* GetTypeDescr() const {
-                switch(type) {
-                    case SRPOLICY_EGRESS: return "Egress router";
-                    case SRPOLICY_INGRESS: return "Ingress router";
-                    case SRPOLICY_SOURCE_ADDRESS: return "Original source address";
-                }
-                return "Unset";
-            }
-
-            SRPolicy() : type(SRPOLICY_UNSET) { memset(policy, 0, SRPOLICY_SIZE); }
-
-            static bool IsSet(byte policy_val) { return policy_val != SRPOLICY_UNSET; }
-        };
-
-        typedef struct { byte s[SEGMENT_SIZE]; } segment_t;
-
-        std::vector<segment_t> Segments;
-        SRPolicy PolicyList[4];
-        /* HMAC is 256b */
-        byte HMAC[32];
-        static const size_t HMAC_SIZE = sizeof(HMAC);
 
         void SetFirstSegment(const byte& value) {
             SetFieldValue(FieldFirstSegment,value);
@@ -186,6 +262,10 @@ namespace Crafter {
 
         void SetHMACKeyID(const byte& value) {
             SetFieldValue(FieldHMACKeyID,value);
+        };
+
+        void SetPolicyFlag(const size_t &policy_index, const word &value)  {
+            SetFieldValue(FieldPolicyFlag1 + policy_index, value);
         };
 
         byte  GetFirstSegment() const {
@@ -224,12 +304,36 @@ namespace Crafter {
             return GetFieldValue<byte>(FieldHMACKeyID);
         };
 
+        word GetPolicyFlag(const size_t &policy_index) const {
+            return GetFieldValue<word>(FieldPolicyFlag1 + policy_index);
+        };
+
         ~IPv6SegmentRoutingHeader() { }
 
-        void PushIPv6Segment(const std::string& ip);
+        int PushIPv6Segment(const std::string& ip);
+
+        int SetPolicy(const size_t &index, const policy_t &policy,
+                const policy_type_t &type);
+
+        int SetHMMAC(const byte &keyid, const hmac_t &hmac);
 
         void CopySegment(const byte *segment_start);
 
+        void PrintPayload(std::ostream& str) const;
+
+        static bool PolicyIsSet(const word &policy_type) {
+            return (policy_type != POLICY_UNSET);
+        }
+
+        const char* GetPolicyDescr(const size_t &index) const {
+            switch(GetPolicyFlag(index)) {
+                case POLICY_EGRESS: return "Egress router";
+                case POLICY_INGRESS: return "Ingress router";
+                case POLICY_SOURCE_ADDRESS: return "Original source address";
+                case POLICY_UNSET: return "Unset";
+            }
+            return "Invalid";
+        }
     };
 
 }
