@@ -118,39 +118,26 @@ void Crafter::BitsField<size,nbit>::Write(byte* raw_data) const {
 		ByteBitPack<size,nbit%8>* ptr = reinterpret_cast<ByteBitPack<size,nbit%8>*> (data_ptr);
 		ptr->fieldm = bytes_ptr[0];
 
-	} else if (over_bytes == 1) {
-
-		WordBitPack<size> FieldValue;
-		memset((void*)&FieldValue,0,sizeof(WordBitPack<size>));
-		FieldValue.fieldm = human;
-		const byte* field_data = reinterpret_cast<const byte*>(&FieldValue);
-		byte mask = ( 1 << size%8 ) - 1 ;
-		data_ptr[0] &= ~mask;
-		data_ptr[0] |= field_data[over_bytes];
-		size_t nbits = 8;
-		byte maskHigh = ( 1 << (size - (nbits - nbit%8)) ) - 1 ;
-		data_ptr[over_bytes] &= maskHigh;
-		data_ptr[over_bytes] |= field_data[0];
-
 	} else {
 
 		uint64_t value = human;
 		value = value << ((over_bytes + 1)*8 - size);
+        /* Write values [x,y] in bit sequence B0..x.y..Bn
+         * where x in B1 and y in Bn
+         * and x,y are in a word made of bytes By..Bx */
 		const byte* field_data = (const byte*)(&value);
-		byte maskLow = ( 1 << (8 - nbit%8) ) - 1 ;
-		data_ptr[0] &= ~maskLow;
-		data_ptr[0] |= field_data[over_bytes];
-
+		/* We want to store only the lower end of Bx (the rightmost part) */
+        byte maskLow = ( 1 << (8 - nbit%8) ) - 1 ;
+		data_ptr[0] |= (field_data[over_bytes] & maskLow);
+        /* Copy intermediate bytes*/
 		size_t nbits = 8;
 		for(int i = 1 ; i < over_bytes ; i++) {
 			data_ptr[i] = field_data[over_bytes - i];
 			nbits += 8;
 		}
-
+        /* We want to store only the higher end of By (the leftmost part) */
 		byte maskHigh = ( 1 << (size - (nbits - nbit%8)) ) - 1 ;
-
-		data_ptr[over_bytes] &= maskHigh;
-		data_ptr[over_bytes] |= field_data[0];
+		data_ptr[over_bytes] |= (field_data[0] & ~maskHigh);
 
 	}
 }
