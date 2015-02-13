@@ -109,76 +109,79 @@ Crafter::BitsField<size,nbit>::BitsField(const std::string& name, size_t nword) 
 
 template<size_t size, size_t nbit>
 void Crafter::BitsField<size,nbit>::Write(byte* raw_data) const {
-	const byte over_bytes = ((nbit%8 + size)-1)/8;
-	const byte* bytes_ptr = (const byte *)&human;
-	byte* data_ptr = raw_data + offset;
+    /* Number of bytes on which this field spans */
+	const byte over_bytes = (nbit % 8 + (size - 1)) / 8;
+    byte* data_ptr = raw_data + offset;
 
-	if (over_bytes == 0) {
-
-		ByteBitPack<size,nbit%8>* ptr = reinterpret_cast<ByteBitPack<size,nbit%8>*> (data_ptr);
-		ptr->fieldm = bytes_ptr[0];
-
-	} else {
-
-		uint64_t value = human;
-		value = value << ((over_bytes + 1)*8 - size);
-        /* Write values [x,y] in bit sequence B0..x.y..Bn
-         * where x in B1 and y in Bn
-         * and x,y are in a word made of bytes By..Bx */
-		const byte* field_data = (const byte*)(&value);
-		/* We want to store only the lower end of Bx (the rightmost part) */
-        byte maskLow = ( 1 << (8 - nbit%8) ) - 1 ;
-		data_ptr[0] |= (field_data[over_bytes] & maskLow);
-        /* Copy intermediate bytes*/
-		size_t nbits = 8;
-		for(int i = 1 ; i < over_bytes ; i++) {
-			data_ptr[i] = field_data[over_bytes - i];
-			nbits += 8;
-		}
-        /* We want to store only the higher end of By (the leftmost part) */
-		byte maskHigh = ( 1 << (size - (nbits - nbit%8)) ) - 1 ;
-		data_ptr[over_bytes] |= (field_data[0] & ~maskHigh);
-
+    /* Write values [x,y] in bit sequence B0..x.y..Bn
+     * where x in B1 and y in Bn
+     * and x,y are in a word made of bytes By..Bx */
+    /* Shift by the distance y..Bn to have ..By..Bx reflect the alignment */
+    const size_t y_bn_dist = 8 - (size + nbit) % 8;
+    uint64_t value = human << y_bn_dist;
+    const byte* field_data = (const byte*)(&value);
+    /* We want to store only the lower end of Bx
+     * thus the rightmost part of B1 */
+    byte maskLow = ( 1 << (8 - nbit%8) ) - 1 ;
+    if (over_bytes) {
+        /* Reset the previous bits of x (in case of multiple set) */
+        data_ptr[0] &= ~maskLow;
+        /* Apply x */
+        data_ptr[0] |= (field_data[over_bytes] & maskLow);
+    }
+    /* Copy intermediate bytes*/
+    size_t nbits = 8;
+    for(int i = 1 ; i < over_bytes ; i++) {
+        data_ptr[i] = field_data[over_bytes - i];
+        nbits += 8;
+    }
+    /* We want to store only the higher end of By
+     * thus the leftmost part of Bn-1 */
+    byte maskHigh = ( 1 << y_bn_dist ) - 1 ;
+    if (over_bytes) {
+        /* Reset the previous bits of y */
+        data_ptr[over_bytes] &= maskHigh;
+        /* Apply y if we spawn on multiple bytes, or both mask at once */
+        data_ptr[over_bytes] |= (field_data[0] & ~maskHigh);
+    } else { /* Only a single byte, apply both masks at once */
+        data_ptr[0] &= (~maskLow | maskHigh);
+        data_ptr[0] |= ((field_data[0] & maskLow) & ~maskHigh);
 	}
 }
 
 template<size_t size, size_t nbit>
 void Crafter::BitsField<size,nbit>::Read(const byte* raw_data) {
-	const byte over_bytes = ((nbit%8 + size)-1)/8;
+
+    const byte over_bytes = (nbit % 8 + (size - 1)) / 8;
 	const byte* data_ptr = raw_data + offset;
 
-	if (over_bytes == 0) {
+    word value = 0;
+    byte* field_data = (byte*)(&value);
+    /* Read values [x,y] in bit sequence B0..x.y..Bn,
+     * where x in B1 and y in Bn-1*/
 
-		const ByteBitPack<size,nbit%8>* ptr = reinterpret_cast<const ByteBitPack<size,nbit%8>*> (data_ptr);
-		human = ptr->fieldm;
-
-	} else {
-		word value = 0;
-		byte* field_data = (byte*)(&value);
-        /* Read values [x,y] in bit sequence B0..x.y..Bn,
-         * where x in B1 and y in Bn-1*/
-
-        /* Copy B1 as it is the starting byte */
-        field_data[over_bytes] |= data_ptr[0];
-	    /* But exclude the high order bits in [B0, x[ */
-		byte maskLow = ( 1 << size%8 ) - 1 ;
-        field_data[over_bytes] &= maskLow;
-        /* Then copy all intermediate bytes */
-		size_t nbits = 8;
-		for(int i = 1 ; i < over_bytes ; i++) {
-			field_data[over_bytes - i] = data_ptr[i];
-			nbits += 8;
-		}
-        /* Copy Bn-1 as it contains y*/
-		field_data[0] |= data_ptr[over_bytes];
-		/* But exclude the low order bytes not part of y in ]y, Bn] */
-        byte maskHigh = ( 1 << (size - (nbits - nbit%8)) ) - 1 ;
-		field_data[0] &= ~maskHigh;
-
-		value = value >> ((over_bytes + 1)*8 - size);
-		human = value;
-
-	}
+    /* Compute the distance between y and the start of Bn-1 */
+    const size_t y_bn_dist = 8 - (size + nbit) % 8;
+    /* Copy B1 as it is the starting byte */
+    field_data[over_bytes] |= data_ptr[0];
+    /* But exclude the high order bits in [B0, x[ */
+    byte maskLow = ( 1 << (8 - nbit%8) ) - 1 ;
+    field_data[over_bytes] &= maskLow;
+    /* Then copy all intermediate bytes */
+    size_t nbits = 8;
+    for(int i = 1 ; i < over_bytes ; i++) {
+        field_data[over_bytes - i] = data_ptr[i];
+        nbits += 8;
+    }
+    /* Copy Bn-1 as it contains y iff we span on more than one byte */
+    if (over_bytes)
+        field_data[0] |= data_ptr[over_bytes];
+    /* But exclude the low order bytes not part of y in ]y, Bn] */
+    byte maskHigh = ( 1 << y_bn_dist ) - 1 ;
+    field_data[0] &= ~maskHigh;
+    /* Shift back the value by the distance between y and the start of Bn-1 */
+    value = value >> y_bn_dist;
+    human = value;
 }
 
 template<size_t size, size_t nbit>
