@@ -41,7 +41,8 @@ namespace Crafter {
 		size_t nword;
 		size_t nbyte;
 		size_t offset;
-
+                struct sockaddr_in address;
+                
 		void PrintValue(std::ostream& str) const;
 
 	public:
@@ -55,8 +56,11 @@ namespace Crafter {
 		FieldInfo* Clone() const;
 
 		void SetField(const std::string& ip_address);
-
+                
+                operator byte*() { return (byte*)&address.sin_addr; }
+                
 		virtual ~IPAddress();
+                
 	};
 
 }

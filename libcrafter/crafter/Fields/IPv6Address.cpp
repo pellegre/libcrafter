@@ -27,7 +27,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "IPv6Address.h"
 #include "../Utils/IPResolver.h"
-#include <arpa/inet.h>
 
 using namespace std;
 using namespace Crafter;
@@ -51,7 +50,6 @@ void IPv6Address::Write(byte* raw_data) const {
 }
 
 void IPv6Address::Read(const byte* raw_data) {
-	struct sockaddr_in6 addr;
 	memcpy(&addr.sin6_addr, raw_data + offset, sizeof(struct in6_addr));
 	char addressBuffer[INET6_ADDRSTRLEN];
     inet_ntop(AF_INET6, &addr.sin6_addr, addressBuffer, INET6_ADDRSTRLEN);

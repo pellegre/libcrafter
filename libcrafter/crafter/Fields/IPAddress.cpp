@@ -54,10 +54,9 @@ void IPAddress::Write(byte* raw_data) const {
 }
 
 void IPAddress::Read(const byte* raw_data) {
-    struct sockaddr_in local_address;
-	memcpy(&local_address.sin_addr, raw_data + offset, sizeof(struct in_addr));
+	memcpy(&address.sin_addr, raw_data + offset, sizeof(struct in_addr));
     char str[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &local_address.sin_addr, str, INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &address.sin_addr, str, INET_ADDRSTRLEN);
 	human = string(str);
 }
 
