@@ -59,7 +59,7 @@ namespace Crafter {
         static const byte FieldNextHeader = 4;
         static const byte FieldHopLimit = 5;
         static const byte FieldSourceIP = 6;
-        static const byte FieldDestinatioIP = 7;
+        static const byte FieldDestinationIP = 7;
 
     public:
 
@@ -96,7 +96,7 @@ namespace Crafter {
         };
 
         void SetDestinationIP(const std::string& value) {
-            SetFieldValue(FieldDestinatioIP,value);
+            SetFieldValue(FieldDestinationIP,value);
         };
 
         word  GetVersion() const {
@@ -128,7 +128,19 @@ namespace Crafter {
         };
 
         std::string  GetDestinationIP() const {
-            return GetFieldValue<std::string>(FieldDestinatioIP);
+            return GetFieldValue<std::string>(FieldDestinationIP);
+        };
+
+	 byte* GetRawSourceIP() const {
+            FieldInfo* ptr = Fields[FieldSourceIP];
+            IPv6Address* ip =  dynamic_cast<IPv6Address*>(ptr);
+            return (byte*) *ip;
+        };
+        
+        byte* GetRawDestinationIP() const {
+            FieldInfo* ptr = Fields[FieldDestinationIP];
+            IPv6Address* ip =  dynamic_cast<IPv6Address*>(ptr);
+            return (byte*) *ip;
         };
 
         /* Return the corresponding next header value for the given protoid */
