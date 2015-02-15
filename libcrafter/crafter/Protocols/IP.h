@@ -171,11 +171,23 @@ namespace Crafter {
         std::string  GetSourceIP() const {
             return GetFieldValue<std::string>(FieldSourceIP);
         };
-
+        
         std::string  GetDestinationIP() const {
             return GetFieldValue<std::string>(FieldDestinationIP);
         };
 
+        byte* GetRawSourceIP() const {
+            FieldInfo* ptr = Fields[FieldSourceIP];
+            IPAddress* ip =  dynamic_cast<IPAddress*>(ptr);
+            return (byte*) *ip;
+        };
+        
+        byte* GetRawDestinationIP() const {
+            FieldInfo* ptr = Fields[FieldDestinationIP];
+            IPAddress* ip =  dynamic_cast<IPAddress*>(ptr);
+            return (byte*) *ip;
+        };
+        
         ~IP() { /* Destructor */ };
 
     };
