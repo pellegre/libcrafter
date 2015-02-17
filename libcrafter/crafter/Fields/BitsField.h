@@ -117,7 +117,7 @@ void Crafter::BitsField<size,nbit>::Write(byte* raw_data) const {
      * where x in B1 and y in Bn
      * and x,y are in a word made of bytes By..Bx */
     /* Shift by the distance y..Bn to have ..By..Bx reflect the alignment */
-    const size_t y_bn_dist = 8 - (size + nbit) % 8;
+    const size_t y_bn_dist = 7 - (size + nbit - 1) % 8;
     uint64_t value = human << y_bn_dist;
     const byte* field_data = (const byte*)(&value);
     /* We want to store only the lower end of Bx
@@ -161,7 +161,7 @@ void Crafter::BitsField<size,nbit>::Read(const byte* raw_data) {
      * where x in B1 and y in Bn-1*/
 
     /* Compute the distance between y and the start of Bn-1 */
-    const size_t y_bn_dist = 8 - (size + nbit) % 8;
+    const size_t y_bn_dist = 7 - (size + nbit - 1) % 8;
     /* Copy B1 as it is the starting byte */
     field_data[over_bytes] |= data_ptr[0];
     /* But exclude the high order bits in [B0, x[ */
