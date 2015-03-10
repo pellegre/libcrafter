@@ -34,6 +34,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <bitset>
 #include <cassert>
 
+#include <arpa/inet.h>
+
 #include "FieldInfo.h"
 
 namespace Crafter {
@@ -41,21 +43,12 @@ namespace Crafter {
 	template <size_t size, size_t nbit>
 	class BitsField : public Field<word> {
 
-		size_t nword;
-		size_t offset;
-		template<size_t psize, size_t bitp>
-		struct ByteBitPack {
-			static const int pad = (8>=(psize + bitp)) ? (8 - (psize + bitp)) : (8 - bitp);
-			word : pad ;
-			word fieldm:psize;
-			word : bitp;
-		};
-
-		template<size_t psize>
-		struct WordBitPack {
-			word fieldm:psize;
-			word : (32 - psize);
-		};
+		const size_t nword;
+		const size_t offset;
+		const byte over_bytes;
+		const byte rightMargin;
+		const byte maskLow;
+		const byte maskHigh;
 
 		void PrintValue(std::ostream& str) const;
 
@@ -102,86 +95,61 @@ namespace Crafter {
 template<size_t size, size_t nbit>
 Crafter::BitsField<size,nbit>::BitsField(const std::string& name, size_t nword) :
 								Field<word>(name,nword,nbit,size),
-								nword(nword) {
+								nword(nword), offset(nword * 4 + nbit/8),
+								over_bytes((nbit % 8 + (size - 1)) / 8),
+								rightMargin(7 - (size - 1 + nbit) % 8),
+								maskLow((1 << (8 - nbit%8)) - 1),
+								maskHigh(~((1 << rightMargin) - 1))
+{
 	assert(size<=32);
-	offset = nword * 4 + nbit/8;
+	assert(rightMargin<8);
 }
 
 template<size_t size, size_t nbit>
 void Crafter::BitsField<size,nbit>::Write(byte* raw_data) const {
-    /* Number of bytes on which this field spans */
-	const byte over_bytes = (nbit % 8 + (size - 1)) / 8;
-    byte* data_ptr = raw_data + offset;
-
+	byte* data_ptr = raw_data + offset;
     /* Write values [x,y] in bit sequence B0..x.y..Bn
-     * where x in B1 and y in Bn
-     * and x,y are in a word made of bytes By..Bx */
-    /* Shift by the distance y..Bn to have ..By..Bx reflect the alignment */
-    const size_t y_bn_dist = 7 - (size + nbit - 1) % 8;
-    uint64_t value = human << y_bn_dist;
-    const byte* field_data = (const byte*)(&value);
-    /* We want to store only the lower end of Bx
-     * thus the rightmost part of B1 */
-    byte maskLow = ( 1 << (8 - nbit%8) ) - 1 ;
-    if (over_bytes) {
+     * and x,y are in a word made of bytes Bx..By */
+    /* Shift by the right margin to have Bx..By.. aligned on y */
+    word value = htonl(human) << rightMargin;
+	const byte* field_data = (const byte*)(&value);
+	if (over_bytes) {
         /* Reset the previous bits of x (in case of multiple set) */
         data_ptr[0] &= ~maskLow;
         /* Apply x */
-        data_ptr[0] |= (field_data[over_bytes] & maskLow);
-    }
-    /* Copy intermediate bytes*/
-    size_t nbits = 8;
-    for(int i = 1 ; i < over_bytes ; i++) {
-        data_ptr[i] = field_data[over_bytes - i];
-        nbits += 8;
-    }
-    /* We want to store only the higher end of By
-     * thus the leftmost part of Bn-1 */
-    byte maskHigh = ( 1 << y_bn_dist ) - 1 ;
-    if (over_bytes) {
-        /* Reset the previous bits of y */
-        data_ptr[over_bytes] &= maskHigh;
-        /* Apply y if we spawn on multiple bytes, or both mask at once */
-        data_ptr[over_bytes] |= (field_data[0] & ~maskHigh);
-    } else { /* Only a single byte, apply both masks at once */
-        data_ptr[0] &= (~maskLow | maskHigh);
-        data_ptr[0] |= ((field_data[0] & maskLow) & ~maskHigh);
+        data_ptr[0] |= field_data[3 - over_bytes];
+		/* Copy intermediate bytes if any */
+		for(int i = 1; i < over_bytes ; i++)
+			data_ptr[i] = field_data[3 - over_bytes + i];
+		/* Reset the previous bits of y */
+        data_ptr[over_bytes] &= ~maskHigh;
+        /* Apply y */
+        data_ptr[over_bytes] |= field_data[3];
+    } else {
+		/* We span on a single byte, apply both masks at once */
+		/* Reset the bits of the bitfield */
+        data_ptr[0] &= (~maskLow | ~maskHigh);
+		/* Copy its content */
+        data_ptr[0] |= field_data[3];
 	}
 }
-
 template<size_t size, size_t nbit>
 void Crafter::BitsField<size,nbit>::Read(const byte* raw_data) {
-
-    const byte over_bytes = (nbit % 8 + (size - 1)) / 8;
 	const byte* data_ptr = raw_data + offset;
-
     word value = 0;
     byte* field_data = (byte*)(&value);
     /* Read values [x,y] in bit sequence B0..x.y..Bn,
-     * where x in B1 and y in Bn-1*/
-
-    /* Compute the distance between y and the start of Bn-1 */
-    const size_t y_bn_dist = 7 - (size + nbit - 1) % 8;
-    /* Copy B1 as it is the starting byte */
-    field_data[over_bytes] |= data_ptr[0];
-    /* But exclude the high order bits in [B0, x[ */
-    byte maskLow = ( 1 << (8 - nbit%8) ) - 1 ;
-    field_data[over_bytes] &= maskLow;
-    /* Then copy all intermediate bytes */
-    size_t nbits = 8;
-    for(int i = 1 ; i < over_bytes ; i++) {
-        field_data[over_bytes - i] = data_ptr[i];
-        nbits += 8;
-    }
-    /* Copy Bn-1 as it contains y iff we span on more than one byte */
-    if (over_bytes)
-        field_data[0] |= data_ptr[over_bytes];
-    /* But exclude the low order bytes not part of y in ]y, Bn] */
-    byte maskHigh = ( 1 << y_bn_dist ) - 1 ;
-    field_data[0] &= ~maskHigh;
-    /* Shift back the value by the distance between y and the start of Bn-1 */
-    value = value >> y_bn_dist;
-    human = value;
+	 * and x,y must be stored in a word made of bytes By..Bx */
+    field_data[3 - over_bytes] = data_ptr[0];
+    /* Keep only the low order bits of the first byte */
+    field_data[3 - over_bytes] &= maskLow;
+	/* Copy all remaining bytes */
+	for(int i = 1 ; i <= over_bytes ; i++)
+		field_data[3 - over_bytes + i] = data_ptr[i];
+	/* But exclude the low order bits of y */
+    field_data[3] &= maskHigh;
+    /* Shift back the value by the right margin */
+    human = ntohl(value >> rightMargin);
 }
 
 template<size_t size, size_t nbit>
