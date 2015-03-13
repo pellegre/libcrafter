@@ -66,9 +66,13 @@ namespace Crafter {
 	/* Clear all bits except the range specified */
 	word ClearComplementRange(word value, byte ibit, byte ebit);
 
+#ifndef htonll
 	uint64_t htonll(uint64_t value);
+#endif
 
+#ifndef nothll
 	uint64_t ntohll(uint64_t value);
+#endif
 
 }
 

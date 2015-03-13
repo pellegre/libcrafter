@@ -98,6 +98,7 @@ word Crafter::ClearComplementRange(word value, byte ibit, byte ebit) {
 	return value;
 }
 
+#ifndef htonll
 uint64_t Crafter::htonll(uint64_t value) {
 	static const int num = 42;
 
@@ -108,7 +109,10 @@ uint64_t Crafter::htonll(uint64_t value) {
 	}
 	return value;
 }
+#endif
 
+#ifndef ntohll
 uint64_t Crafter::ntohll(uint64_t value) {
 	return htonll(value);
 }
+#endif
