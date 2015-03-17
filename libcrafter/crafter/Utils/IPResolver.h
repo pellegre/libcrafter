@@ -29,21 +29,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef IPRESOLVER_H_
 #define IPRESOLVER_H_
 
-#include <iostream>
 #include <string>
-#include <map>
 #include <cstring>
-#include <cstdlib>
-#include <cerrno>
 
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <resolv.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
-#include <unistd.h>
 #include <netdb.h>
-#include <sys/poll.h>
 
 namespace Crafter {
 
@@ -54,6 +46,7 @@ namespace Crafter {
 	bool validateIpv6Address(const std::string& ipAddress);
 
 	/* Return IP from a host address */
+	int GetAddress(const std::string &hostname, std::string &result, int ai_family);
 	std::string GetIP(const std::string& hostname);
 	std::string GetIPv6(const std::string& hostname);
 

@@ -33,100 +33,63 @@ using namespace std;
 
 /* Validate IPv4 address */
 bool Crafter::validateIpv4Address(const std::string& ipAddress) {
-	struct sockaddr_in sa;
-	sa.sin_family = AF_INET;
-	int result = inet_pton(AF_INET, ipAddress.c_str(), &(sa.sin_addr));
-	return result != 0;
+	struct in_addr addr;
+	return inet_pton(AF_INET, ipAddress.c_str(), &addr);
 }
 
 /* Validate IPv6 address */
 bool Crafter::validateIpv6Address(const std::string& ipAddress) {
-	struct sockaddr_in6 addr;
-	int result = inet_pton(AF_INET6, ipAddress.c_str(), &addr.sin6_addr);
-	return result != 0;
+	struct in6_addr addr;
+	return inet_pton(AF_INET6, ipAddress.c_str(), &addr);
+}
+
+int Crafter::GetAddress(const string &hostname, string &result, int ai_family) {
+	struct addrinfo hints, *rp;
+	int err;
+	/* Attempt to resolve the hostname */
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = ai_family;
+	err = getaddrinfo(hostname.c_str(), NULL, &hints, &rp);
+	if (err)
+		return err;
+	/* Convert IP to textual, numeric form */
+	char addr[NI_MAXHOST];
+	getnameinfo(rp->ai_addr, rp->ai_addrlen, addr,
+			sizeof(addr), NULL, 0, NI_NUMERICHOST);
+	freeaddrinfo(rp);
+	result = addr;
+	return 0;
 }
 
 string Crafter::GetIP(const string& hostname) {
-    /* We shoukd make a DNS query */
-    struct addrinfo hints, *res;
-    struct in_addr addr;
-    int err;
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_family = AF_INET;
-
-    if ((err = getaddrinfo(hostname.c_str(), NULL, &hints, &res)) != 0) {
+    string r;
+	if (GetAddress(hostname, r, AF_INET))
 		PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
 				     "GetIPv4()","Error while resolving "+ hostname);
-      return "";
-    }
-
-    /* Set the IP */
-    addr.s_addr = ((struct sockaddr_in *)(res->ai_addr))->sin_addr.s_addr;
-
-    /* Get the IP address as a string */
-    string ip_address (inet_ntoa(addr));
-
-    freeaddrinfo(res);
-
-    /* Return the address */
-    return ip_address;
+	return r;
 }
 
 string Crafter::GetIPv6(const string& hostname) {
-    struct addrinfo hints, *res;
-    int err;
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_family = AF_INET6;
-
-    if ((err = getaddrinfo(hostname.c_str(), NULL, &hints, &res)) != 0) {
+    string r;
+	if (GetAddress(hostname, r, AF_INET6))
 		PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
 				     "GetIPv6()","Error while resolving "+ hostname);
-      return "";
-    }
-
-    void* tmpAddrPtr = 0;
-
-    /* Set the temp pointer */
-    tmpAddrPtr = &((struct sockaddr_in6 *)res->ai_addr)->sin6_addr;
-
-    char addressBuffer[INET6_ADDRSTRLEN];
-    inet_ntop(AF_INET6, tmpAddrPtr, addressBuffer, INET6_ADDRSTRLEN);
-
-    freeaddrinfo(res);
-
-    /* Return the address */
-    return string(addressBuffer);
+	return r;
 }
 
 std::string Crafter::GetHostname(const std::string& ip_address) {
-	/* Host and service name */
-	char host[1024];
-	char service[20];
-	struct sockaddr_storage sa;
-	size_t sa_len;
-
-	memset(&sa, 0, sizeof(sa));
-	/* Fill the sa structure with IP information */
-	if (validateIpv4Address(ip_address)) {
-		struct sockaddr_in *sin = (struct sockaddr_in *)&sa;
-		sin->sin_family = AF_INET;
-		sin->sin_addr.s_addr = inet_addr(ip_address.c_str());
-		sa_len = sizeof(*sin);
-	} else if (validateIpv6Address(ip_address)) {
-		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&sa;
-		sin6->sin6_family = AF_INET6;
-		inet_pton(AF_INET6, ip_address.c_str(), &sin6->sin6_addr);
-		sa_len = sizeof(*sin6);
-	} else {
-		return ip_address;
-	}
-
-	if (getnameinfo((struct sockaddr *)&sa, sa_len, host, sizeof(host), service, sizeof(service), 0) < 0)
+	struct addrinfo hints, *rp;
+	int err;
+	/* Get a sockaddr */
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	err = getaddrinfo(ip_address.c_str(), NULL, &hints, &rp);
+	if (err)
 		return ip_address;
 	/* Make the inverse lookup */
-	return string(host);
+	char addr[NI_MAXHOST];
+	if (getnameinfo(rp->ai_addr, rp->ai_addrlen, addr, sizeof(addr), NULL, 0, 0))
+		return ip_address;
+	freeaddrinfo(rp);
+	return string(addr);
 }
