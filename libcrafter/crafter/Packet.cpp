@@ -527,10 +527,10 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 						     BUFSIZ,  /* maximum number of bytes to capture per packet */
 									  /* BUFSIZE is defined in stdio.h (recommended buffer value for host) */
 				                  1,  /* promisc - 1 to set card in promiscuous mode, 0 to not */
-		        (int)1000.0*timeout,  /* to_ms - amount of time to perform packet capture in milliseconds */
+		        				  1,  /* to_ms - amount of time to delay a read */
 									  /* 0 = sniff until error */
 				      libcap_errbuf); /* error message buffer if something goes wrong */
-
+	pcap_set_immediate_mode(handle, 1); /* We want the response ASAP */
 
 	if (handle == NULL)
 	  /* There was an error */
@@ -561,7 +561,6 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 		if (pcap_lookupnet (device, &netp, &maskp, libcap_errbuf) == -1)
 			throw std::runtime_error("Packet::GetFilter() : Error getting device"
 					"information " + string(libcap_errbuf));
-		filter = user_filter;
 
 	/* ----------- Begin Critical area ---------------- */
 
@@ -572,7 +571,6 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 		cerr << "[!] Bad filter expression -> " << filter << endl;
 		throw std::runtime_error("Packet::SocketSendRecv() : Error compiling the filter : " + string(pcap_geterr(handle)));
 	}
-
 	/* Set the filter for the device we have opened */
 	if (pcap_setfilter (handle, &fp) == -1)
 		throw std::runtime_error("Packet::SocketSendRecv() : Setting filter : " + string(pcap_geterr (handle)));
@@ -589,6 +587,11 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 	int count = 0;
 	int success = 0;
 
+	fd_set read_handle;
+	FD_ZERO(&read_handle);
+	int fd = pcap_get_selectable_fd(handle);
+	struct timeval tv = { (int)timeout, ((int)(timeout*1000000)) % 1000000 };
+
 	while (count < retry) {
 		/* Write the packet on the wire */
 		if(SocketSender::SendSocket(raw, current_id, raw_data, bytes_size) < 0) {
@@ -600,6 +603,19 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 		struct pcap_pkthdr *header;
 		const u_char *packet;
 
+
+		FD_SET(fd, &read_handle);
+		int ret = select(fd + 1, &read_handle, NULL, NULL, &tv);
+		if (!ret || !FD_ISSET(fd, &read_handle)) /* timeout, try again */ {
+			++count;
+			continue;
+		}
+		if (ret < 0) {
+			PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
+						 "Packet::SocketSendRecv()",
+						 "select() failed ");
+			return 0;
+		}
 		if ((r = pcap_next_ex (handle, &header, &packet)) <= 0) {
 			if (r == -1) {
 			  /* Pcap error */
