@@ -44,13 +44,6 @@ static T fromString(const std::string& str) {
 	return t;
 }
 
-template<typename T>
-static std::string toString(const T& t) {
-	std::ostringstream s;
-	s << t;
-	return s.str();
-}
-
 void Packet::HexDump(ostream& str) {
 	if(!pre_crafted)
 		Craft();
@@ -553,103 +546,21 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 
 	int link_type = pcap_datalink(handle);
 
-	string filter = "";
+	string filter;
+	if (user_filter != " ")
+		filter = user_filter;
+	else {
+		stringstream s;
+		GetFilter(s);
+		filter = s.str();
+	}
 
 	IPLayer *ip_layer = GetLayer<IPLayer>();
-
-	if (user_filter == " ") {
-		string check_icmp;
-		if (!ip_layer) {
-			check_icmp = " ";
-		} else if (ip_layer->GetID() == IP::PROTO) {
-			IP *ipv4_layer = static_cast<IP*>(ip_layer);
-			/* Get the IP subnet mask of the device, so we set a filter on it */
-			if (pcap_lookupnet (device, &netp, &maskp, libcap_errbuf) == -1)
-				throw std::runtime_error("Packet::SocketSendRecv() : Error getting device information " + string(libcap_errbuf));
-
-			/* Match first 8 bytes of next layer, if any */
-			Layer* next_layer = ipv4_layer->GetTopLayer();
-			string extra = "";
-			if(next_layer) {
-				/* Get offset to next layer (from the ICMP layer)*/
-				word offset_icmp = ipv4_layer->GetHeaderLength() * 4 + 8;
-				word rem_size = next_layer->GetRemainingSize();
-				/* Get offset to next layer (on the packet) */
-				word offset_packet = GetSize() - rem_size;
-
-				if(rem_size >= 8) {
-					word* raw_packet = reinterpret_cast<word*>(raw_data + offset_packet);
-					word first_word  = raw_packet[0];
-					word second_word = raw_packet[1];
-
-					extra =  " and (icmp[" + toString(offset_icmp) + ":4] == "+ toString(ntohl(first_word)) +")" +
-							 " and (icmp[" + toString(offset_icmp + 4) + ":4] == "+ toString(ntohl(second_word)) +")";
-				}
-
-			}
-
-			check_icmp = "( ( (icmp[icmptype] == icmp-unreach) or (icmp[icmptype] == icmp-timxceed) or "
-						 "    (icmp[icmptype] == icmp-paramprob) or (icmp[icmptype] == icmp-sourcequench) or "
-						 "    (icmp[icmptype] == icmp-redirect) ) and (icmp[12:2] == " + toString(ipv4_layer->GetIdentification()) + " )" +
-						 extra +
-						 " ) ";
-
-		} else if(ip_layer->GetID() == IPv6::PROTO) {
-			IPv6 *ipv6_layer = static_cast<IPv6*>(ip_layer);
-			/* Match first 8 bytes of next layer, if any */
-			Layer* next_layer = ip_layer->GetTopLayer();
-			string extra = "";
-			if(next_layer) {
-
-				/* Get offset to next layer (from the ICMP layer)*/
-				word offset_icmp = ipv6_layer->GetSize() + 8;
-				word rem_size = next_layer->GetRemainingSize();
-				/* Get offset to next layer (on the packet) */
-				word offset_packet = GetSize() - rem_size;
-
-				if(rem_size >= 8) {
-					word* raw_packet = reinterpret_cast<word*>(raw_data + offset_packet);
-					word first_word  = raw_packet[0];
-					word second_word = raw_packet[1];
-
-					extra =  " and (ip6[" + toString(40 + offset_icmp) + ":4] == "+ toString(ntohl(first_word)) +")" +
-							 " and (ip6[" + toString(40 + offset_icmp + 4) + ":4] == "+ toString(ntohl(second_word)) +")";
-				}
-
-			}
-
-			check_icmp = "( ( (ip6[40] == 1) or (ip6[40] == 2) or "
-						 "    (ip6[40] == 3) or (ip6[40] == 4) )  "
-						 + extra +
-						 " ) ";
-		} else
-			check_icmp = " ";
-
-		vector<string> layer_filter;
-
-		/* Construct the filter for matching packets */
-		vector<Layer*>::iterator it_layer;
-		for (it_layer = Stack.begin() ; it_layer != Stack.end(); it_layer++) {
-			string str_filter = (*it_layer)->MatchFilter();
-			if(str_filter != " ") layer_filter.push_back(str_filter);
-		}
-
-		filter = "(" + layer_filter[0];
-
-		vector<string>::iterator it_f;
-		for(it_f = layer_filter.begin() + 1 ; it_f != layer_filter.end() ; it_f++) {
-			vector<string>::iterator last = it_f - 1;
-			if ( (*it_f) != " " && (*last) != " " )
-				filter += " and " + (*it_f);
-			else if ( (*it_f) != " " && (*last) == " ")
-				filter += (*it_f);
-		}
-
-		if (check_icmp != " ")
-			filter += ") or " + check_icmp;
-		else
-			filter += ")";
-	} else
+	if (ip_layer->GetID() == IP::PROTO)
+		/* Get the IP subnet mask of the device, so we set a filter on it */
+		if (pcap_lookupnet (device, &netp, &maskp, libcap_errbuf) == -1)
+			throw std::runtime_error("Packet::GetFilter() : Error getting device"
+					"information " + string(libcap_errbuf));
 		filter = user_filter;
 
 	/* ----------- Begin Critical area ---------------- */
@@ -714,6 +625,88 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 		delete match_packet;
 		return 0;
 	}
+}
+
+void Packet::GetFilter(stringstream& filter) const {
+	IPLayer *ip_layer = GetLayer<IPLayer>();
+
+	vector<string> layer_filter;
+
+	/* Construct the filter for matching packets */
+	vector<Layer*>::const_iterator it_layer;
+	for (it_layer = Stack.begin() ; it_layer != Stack.end(); it_layer++) {
+		string str_filter = (*it_layer)->MatchFilter();
+		if(str_filter != " ") layer_filter.push_back(str_filter);
+	}
+
+	filter << "(" << layer_filter[0];
+
+	vector<string>::iterator it_f;
+	for(it_f = layer_filter.begin() + 1 ; it_f != layer_filter.end() ; it_f++) {
+		vector<string>::iterator last = it_f - 1;
+		if ( (*it_f) != " " && (*last) != " " )
+			filter << " and " << (*it_f);
+		else if ( (*it_f) != " " && (*last) == " ")
+			filter << (*it_f);
+	}
+
+	/* Add ICMP payload match clause if applicable */
+	if (ip_layer->GetID() == IP::PROTO) {
+		IP *ipv4_layer = static_cast<IP*>(ip_layer);
+
+		filter << ") or ( ( (icmp[icmptype] == icmp-unreach) or (icmp[icmptype] == icmp-timxceed) or "
+			"    (icmp[icmptype] == icmp-paramprob) or (icmp[icmptype] == icmp-sourcequench) or "
+			"    (icmp[icmptype] == icmp-redirect) ) and (icmp[12:2] == "
+			<< ipv4_layer->GetIdentification() << " )";
+		/* Match first 8 bytes of next layer, if any */
+		Layer* next_layer = ipv4_layer->GetTopLayer();
+		if(next_layer) {
+			/* Get offset to next layer (from the ICMP layer)*/
+			word offset_icmp = ipv4_layer->GetHeaderLength() * 4 + 8;
+			word rem_size = next_layer->GetRemainingSize();
+			/* Get offset to next layer (on the packet) */
+			word offset_packet = GetSize() - rem_size;
+
+			if(rem_size >= 8) {
+				word* raw_packet = reinterpret_cast<word*>(raw_data + offset_packet);
+				word first_word  = raw_packet[0];
+				word second_word = raw_packet[1];
+
+				filter <<  " and (icmp[" << offset_icmp << ":4] == "
+					<< ntohl(first_word) << ") and (icmp[" << offset_icmp + 4
+					<< ":4] == " << ntohl(second_word) << ")";
+			}
+		}
+		filter << " ) ";
+
+	} else if(ip_layer->GetID() == IPv6::PROTO) {
+		IPv6 *ipv6_layer = static_cast<IPv6*>(ip_layer);
+		/* Match first 8 bytes of next layer, if any */
+		Layer* next_layer = ip_layer->GetTopLayer();
+		if(next_layer) {
+			/* Get offset to next layer (from the ICMP layer)*/
+			word offset_icmp = ipv6_layer->GetSize() + 8;
+			word rem_size = next_layer->GetRemainingSize();
+			/* Get offset to next layer (on the packet) */
+			word offset_packet = GetSize() - rem_size;
+			filter << ") or ( ( (ip6[40] == 1) or (ip6[40] == 2) or "
+				"    (ip6[40] == 3) or (ip6[40] == 4) )  ";
+
+			if(rem_size >= 8) {
+				word* raw_packet = reinterpret_cast<word*>(raw_data + offset_packet);
+				word first_word  = raw_packet[0];
+				word second_word = raw_packet[1];
+
+				filter <<  " and (ip6[" << 40 + offset_icmp << ":4] == "
+					<< ntohl(first_word) << ") and (ip6["
+					<< 40 + offset_icmp + 4 << ":4] == " << ntohl(second_word)
+					<< ")";
+			}
+
+		}
+		filter << " ) ";
+	} else
+		filter << ")";
 }
 
 template<>
