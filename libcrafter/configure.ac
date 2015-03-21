@@ -62,7 +62,9 @@ AC_ARG_WITH(libpcap,
 )
 AC_SUBST(PCAPINC)
 AC_SUBST(PCAPLIB)
-
+AC_CHECK_LIB([pcap], [pcap_set_immediate_mode],
+      [AC_DEFINE([HAVE_PCAP_SET_IMMEDIATE_MODE], [1],
+         [Define to 1 if pcap_set_immediate_mode is defined])])
 AC_CHECK_LIB(pthread, pthread_create)
 AC_CHECK_LIB(rt,clock_gettime)
 
