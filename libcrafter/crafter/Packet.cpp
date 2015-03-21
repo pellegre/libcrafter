@@ -27,6 +27,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <sstream>
 
+#include "config.h"
+
 #include "Packet.h"
 #include "Crafter.h"
 #include "Utils/RawSocket.h"
@@ -530,8 +532,9 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 		        				  1,  /* to_ms - amount of time to delay a read */
 									  /* 0 = sniff until error */
 				      libcap_errbuf); /* error message buffer if something goes wrong */
+#ifdef HAVE_PCAP_SET_IMMEDIATE_MODE
 	pcap_set_immediate_mode(handle, 1); /* We want the response ASAP */
-
+#endif
 	if (handle == NULL)
 	  /* There was an error */
 		throw std::runtime_error("Packet::SocketSendRecv() : Listening device " + string(libcap_errbuf));
