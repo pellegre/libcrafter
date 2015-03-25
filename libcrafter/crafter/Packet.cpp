@@ -535,6 +535,14 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 #ifdef HAVE_PCAP_SET_IMMEDIATE_MODE
 	pcap_set_immediate_mode(handle, 1); /* We want the response ASAP */
 #endif
+	if (pcap_setnonblock(handle, 1, libcap_errbuf)) {
+		PrintMessage(Crafter::PrintCodes::PrintWarning,
+					     "Packet::SocketSendRecv()",
+			              string(libcap_errbuf));
+
+	  libcap_errbuf[0] = 0;    /* re-set error buffer */
+	}
+
 	if (handle == NULL)
 	  /* There was an error */
 		throw std::runtime_error("Packet::SocketSendRecv() : Listening device " + string(libcap_errbuf));
@@ -585,7 +593,6 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 
 	/* ------------ End Critical area ----------------- */
 
-	int r = 0;
 	Packet* match_packet = new Packet;
 	int count = 0;
 	int success = 0;
@@ -593,7 +600,7 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 	fd_set read_handle;
 	FD_ZERO(&read_handle);
 	int fd = pcap_get_selectable_fd(handle);
-	struct timeval tv = { (int)timeout, ((int)(timeout*1000000)) % 1000000 };
+	struct timeval tv = { (int)timeout, (((int)(timeout*1000)) % 1000) * 1000 };
 
 	while (count < retry) {
 		/* Write the packet on the wire */
@@ -603,38 +610,33 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 						 "Sending packet ");
 			return 0;
 		}
-		struct pcap_pkthdr *header;
+		struct pcap_pkthdr header;
 		const u_char *packet;
 
 
 		FD_SET(fd, &read_handle);
+select:
 		int ret = select(fd + 1, &read_handle, NULL, NULL, &tv);
-		if (!ret || !FD_ISSET(fd, &read_handle)) /* timeout, try again */ {
+		if (!ret) /* timeout, try again */ {
 			++count;
 			continue;
 		}
 		if (ret < 0) {
+			if (errno == EINTR)
+				goto select;
 			PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
 						 "Packet::SocketSendRecv()",
 						 "select() failed ");
 			return 0;
 		}
-		if ((r = pcap_next_ex (handle, &header, &packet)) <= 0) {
-			if (r == -1) {
-			  /* Pcap error */
-				PrintMessage(Crafter::PrintCodes::PrintError,
-						     "Packet::SocketSendRecv()",
-			                 "Error calling pcap_next_ex() " + string(pcap_geterr (handle)));
-			  return 0;
-			}
-			/* Otherwise return should be -2 */
-		}
-		if (r >= 1) {
-			match_packet->PacketFromLinkLayer(packet, header->len,link_type);
+		if ((packet = pcap_next(handle, &header))) {
+			match_packet->PacketFromLinkLayer(packet, header.len, link_type);
 			success = 1;
 			break;
 		}
-		count++;
+		/* We arrived here because some packets were received on the interface
+		 * but were filtered out by the bpf filter. */
+		goto select;
 	}
 	pcap_close (handle);
 
