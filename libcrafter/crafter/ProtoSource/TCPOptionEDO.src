@@ -1,0 +1,5 @@
+name TCPOptionExtendedDataOffset
+protoid 0x0ED0
+ByteField Kind    0 0 0
+ByteField Length  0 1 6
+WordField Header_length 0 2 0

@@ -29,6 +29,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "IP.h"
 #include "IPv6.h"
 #include "TCPOption.h"
+#include "TCPOptionExtendedDataOffset.h"
 
 using namespace Crafter;
 using namespace std;
@@ -53,21 +54,34 @@ void TCP::Craft() {
 	short_word checksum;
 
 	/* Check the options and update header length */
-
 	if (!IsFieldSet(FieldDataOffset)) {
 		Layer* top_layer = GetTopLayer();
 		size_t option_length = 0;
+		TCPOptionExtendedDataOffset* option_edo = NULL;
+
 		if(top_layer) {
 			while( top_layer && ((top_layer->GetID() >> 8) == (TCPOption::PROTO >> 8))) {
 				option_length += top_layer->GetSize();
+				if(top_layer->GetName().compare("TCPOptionExtendedDataOffset")){
+					option_edo = (TCPOptionExtendedDataOffset*) top_layer;
+				}
 				top_layer = ((TCP *)top_layer)->GetTopLayer();
 			}
 		}
+
 		if(option_length%4 != 0)
 			PrintMessage(Crafter::PrintCodes::PrintWarning,
 					     "TCP::Craft()",
 				         "Option size is not padded to a multiple of 4 bytes.");
-		SetDataOffset(5 + option_length/4);
+		if(!option_edo){
+			SetDataOffset(5 + option_length/4); 	
+		}else{
+			/* Check if AO Option (not added yet) */ 
+			/* Is a padding needed since EDO should be last option related by DataOffset*/
+			SetDataOffset(5 + 1);
+			option_edo->SetHeader_length(5 + option_length/4);
+		}
+		
 		ResetField(FieldDataOffset);
 	}
 
