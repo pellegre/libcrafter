@@ -30,15 +30,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace Crafter;
 using namespace std;
 
-void TCPOptionExtendedDataOffsetRequest::ReDefineActiveFields() {
-}
-
 void TCPOptionExtendedDataOffsetRequest::Craft() {
+		SetLength(GetLength() + GetPayloadSize());
 }
-
-string TCPOptionExtendedDataOffsetRequest::MatchFilter() const {
-}
-
-void TCPOptionExtendedDataOffsetRequest::ParseLayerData(ParseInfo* info) {
-}
-
