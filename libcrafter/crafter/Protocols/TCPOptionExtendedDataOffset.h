@@ -50,10 +50,6 @@ namespace Crafter {
 
         void Craft();
 
-        std::string MatchFilter() const ;
-
-        void ReDefineActiveFields();
-
         void ParseLayerData(ParseInfo* info);
 
         static const byte FieldKind = 0;

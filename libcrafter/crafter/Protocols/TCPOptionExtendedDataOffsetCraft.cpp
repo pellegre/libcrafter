@@ -30,13 +30,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace Crafter;
 using namespace std;
 
-void TCPOptionExtendedDataOffset::ReDefineActiveFields() {
-}
-
 void TCPOptionExtendedDataOffset::Craft() {
-}
 
-string TCPOptionExtendedDataOffset::MatchFilter() const {
 }
 
 void TCPOptionExtendedDataOffset::ParseLayerData(ParseInfo* info) {
