@@ -29,9 +29,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "../Layer.h"
 
+
+#ifndef TCPOPT_EDOREQ
+#define TCPOPT_EDOREQ   32
+#endif
+
 namespace Crafter {
 
-    class TCPOptionExtendedDataOffsetRequest: public Layer {
+    class TCPOptionExtendedDataOffsetRequest: public TCPOptionLayer {
 
         void DefineProtocol();
 
