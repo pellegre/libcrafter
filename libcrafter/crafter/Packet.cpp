@@ -600,9 +600,10 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 	fd_set read_handle;
 	FD_ZERO(&read_handle);
 	int fd = pcap_get_selectable_fd(handle);
-	struct timeval tv = { (int)timeout, (((int)(timeout*1000)) % 1000) * 1000 };
 
 	while (count < retry) {
+		struct timeval tv = { (int)timeout, (((int)(timeout*1000)) % 1000) * 1000 };
+
 		/* Write the packet on the wire */
 		if(SocketSender::SendSocket(raw, current_id, raw_data, bytes_size) < 0) {
 			PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
