@@ -118,6 +118,14 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optts_dummy);
 
+	TCPOptionExtendedDataOffset optedo_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optedo_dummy);
+
+	TCPOptionExtendedDataOffsetRequest optedor_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&optedor_dummy);
+
 	TCPOptionMPTCP optmptcp_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optmptcp_dummy);

@@ -34,10 +34,10 @@ TCPOptionExtendedDataOffset::TCPOptionExtendedDataOffset() {
 
     allocate_bytes(6);
     SetName("TCPOptionExtendedDataOffset");
-    SetprotoID(0x0ED0);
+    SetprotoID(TCPOptionExtendedDataOffset::PROTO);
     DefineProtocol();
 
-    SetKind(0);
+    SetKind(TCPOPT_EDO);
     SetLength(6);
     SetHeader_length(0);
 
@@ -49,5 +49,24 @@ void TCPOptionExtendedDataOffset::DefineProtocol() {
     Fields.push_back(new ByteField("Kind",0,0));
     Fields.push_back(new ByteField("Length",0,1));
     Fields.push_back(new WordField("Header_length",0,2));
+}
+
+TCPOptionExtendedDataOffsetRequest::TCPOptionExtendedDataOffsetRequest() {
+
+    allocate_bytes(2);
+    SetName("TCPOptionExtendedDataOffsetRequest");
+    SetprotoID(TCPOptionExtendedDataOffset::PROTO);
+    DefineProtocol();
+
+    SetKind(TCPOPT_EDO);
+    SetLength(2);
+
+    ResetFields();
+
+}
+
+void TCPOptionExtendedDataOffsetRequest::DefineProtocol() {
+    Fields.push_back(new ByteField("Kind",0,0));
+    Fields.push_back(new ByteField("Length",0,1));
 }
 
