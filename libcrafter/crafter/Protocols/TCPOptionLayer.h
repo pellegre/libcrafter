@@ -45,6 +45,7 @@ namespace Crafter {
     		Layer* next_layer;
     		/* Remaining option length */
     		int optlen;
+            int optlen_origin;
     	};
 
         virtual void SetKind(const byte& value) = 0;

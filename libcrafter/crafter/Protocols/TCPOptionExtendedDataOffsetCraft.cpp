@@ -25,15 +25,42 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include "TCP.h"
+#include "TCPOption.h"
 #include "TCPOptionExtendedDataOffset.h"
 
 using namespace Crafter;
 using namespace std;
 
-void TCPOptionExtendedDataOffset::Craft() {
+void TCPOptionExtendedDataOffsetRequest::Craft() {
+}
 
+void TCPOptionExtendedDataOffset::Craft() {
 }
 
 void TCPOptionExtendedDataOffset::ParseLayerData(ParseInfo* info) {
+
+	/* Update the information of the TCP options */
+	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
+	if(!extra_info) {
+		info->top = 1;
+		return;
+	}
+	// Updating optlen value 
+	// 20 for std header without options
+	extra_info->optlen = 4*GetHeader_length() - 20 - (extra_info->optlen_origin - extra_info->optlen) - GetSize(); 
+	if(extra_info->optlen > 0) {
+
+		/* Get the option type */
+		int opt = (info->raw_data + info->offset)[0];
+		info->next_layer = TCPOption::Build(opt, info);
+	}  else {
+		info->next_layer = extra_info->next_layer;
+		delete extra_info;
+		extra_info = 0;
+	}
+
+	
 }
+
 

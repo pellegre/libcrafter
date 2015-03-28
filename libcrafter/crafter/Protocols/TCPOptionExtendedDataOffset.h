@@ -27,12 +27,21 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef TCPOPTIONEXTENDEDDATAOFFSET_H_
 #define TCPOPTIONEXTENDEDDATAOFFSET_H_
 
-#include "../Layer.h"
+#include "TCPOptionLayer.h"
 
 
 #ifndef TCPOPT_EDO
-#define TCPOPT_EDO  31
+#define TCPOPT_EDO  237 // 0x0EDO
 #endif
+
+#ifndef TCPOPT_EDO_DEFAULT_LENGTH
+#define TCPOPT_EDO_DEFAULT_LENGTH  6
+#endif
+
+#ifndef TCPOPT_EDOR_DEFAULT_LENGTH
+#define TCPOPT_EDOR_DEFAULT_LENGTH  2
+#endif
+
 
 namespace Crafter {
 
@@ -58,7 +67,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x0ED0;
+        static const word PROTO = 0x9006;
 
         TCPOptionExtendedDataOffset();
 
@@ -87,6 +96,54 @@ namespace Crafter {
         };
 
         ~TCPOptionExtendedDataOffset() { /* Destructor */ };
+
+        static TCPOptionLayer* Build(int subopt);
+
+    };
+
+     class TCPOptionExtendedDataOffsetRequest: public TCPOptionLayer {
+
+        void DefineProtocol();
+
+        Constructor GetConstructor() const {
+            return TCPOptionExtendedDataOffsetRequest::TCPOptionExtendedDataOffsetRequestConstFunc;
+        };
+
+        static Layer* TCPOptionExtendedDataOffsetRequestConstFunc() {
+            return new TCPOptionExtendedDataOffsetRequest;
+        };
+
+        void Craft();
+
+        //void ReDefineActiveFields();
+
+
+        static const byte FieldKind = 0;
+        static const byte FieldLength = 1;
+
+    public:
+
+        static const word PROTO = 0x9006;
+
+        TCPOptionExtendedDataOffsetRequest();
+
+        void SetKind(const byte& value) {
+            SetFieldValue(FieldKind,value);
+        };
+
+        void SetLength(const byte& value) {
+            SetFieldValue(FieldLength,value);
+        };
+
+        byte  GetKind() const {
+            return GetFieldValue<byte>(FieldKind);
+        };
+
+        byte  GetLength() const {
+            return GetFieldValue<byte>(FieldLength);
+        };
+
+        ~TCPOptionExtendedDataOffsetRequest() { /* Destructor */ };
 
     };
 
