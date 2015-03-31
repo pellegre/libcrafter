@@ -567,7 +567,7 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 	}
 
 	IPLayer *ip_layer = GetLayer<IPLayer>();
-	if (ip_layer->GetID() == IP::PROTO)
+	if (ip_layer && ip_layer->GetID() == IP::PROTO)
 		/* Get the IP subnet mask of the device, so we set a filter on it */
 		if (pcap_lookupnet (device, &netp, &maskp, libcap_errbuf) == -1)
 			throw std::runtime_error("Packet::GetFilter() : Error getting device"
@@ -651,6 +651,8 @@ select:
 
 void Packet::GetFilter(stringstream& filter) const {
 	IPLayer *ip_layer = GetLayer<IPLayer>();
+	if (!ip_layer)
+		return;
 
 	vector<string> layer_filter;
 
@@ -674,7 +676,7 @@ void Packet::GetFilter(stringstream& filter) const {
 
 	/* Add ICMP payload match clause if applicable */
 	if (ip_layer->GetID() == IP::PROTO) {
-		IP *ipv4_layer = static_cast<IP*>(ip_layer);
+		IP *ipv4_layer = dynamic_cast<IP*>(ip_layer);
 
 		filter << ") or ( ( (icmp[icmptype] == icmp-unreach) or (icmp[icmptype] == icmp-timxceed) or "
 			"    (icmp[icmptype] == icmp-paramprob) or (icmp[icmptype] == icmp-sourcequench) or "
@@ -699,10 +701,8 @@ void Packet::GetFilter(stringstream& filter) const {
 					<< ":4] == " << ntohl(second_word) << ")";
 			}
 		}
-		filter << " ) ";
-
 	} else if(ip_layer->GetID() == IPv6::PROTO) {
-		IPv6 *ipv6_layer = static_cast<IPv6*>(ip_layer);
+		IPv6 *ipv6_layer = dynamic_cast<IPv6*>(ip_layer);
 		/* Match first 8 bytes of next layer, if any */
 		Layer* next_layer = ip_layer->GetTopLayer();
 		if(next_layer) {
@@ -726,9 +726,8 @@ void Packet::GetFilter(stringstream& filter) const {
 			}
 
 		}
-		filter << " ) ";
-	} else
-		filter << ")";
+	}
+	filter << " )";
 }
 
 template<>
