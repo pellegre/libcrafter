@@ -24,85 +24,43 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
+
+#include "TCP.h"
 #include "TCPOption.h"
-#include "TCPOptionLayer.h"
-#include "TCPOptionMaxSegSize.h"
-#include "TCPOptionPad.h"
-#include "TCPOptionTimestamp.h"
-#include "TCPOptionWindowScale.h"
-#include "TCPOptionMPTCP.h"
 #include "TCPOptionExtendedDataOffset.h"
-#include <netinet/tcp.h>
 
 using namespace Crafter;
+using namespace std;
 
-TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
-
-	switch(opt) {
-
-	case TCPOPT_EOL:
-		return new TCPOptionPad;
-		break;
-	case TCPOPT_NOP:
-		return new TCPOptionPad;
-		break;
-	case TCP_MAXSEG:
-		return new TCPOptionMaxSegSize;
-		break;
-	case TCPOPT_TIMESTAMP:
-		return new TCPOptionTimestamp;
-		break;
-	case TCPOPT_SACK_PERMITTED:
-		return new TCPOptionSACKPermitted;
-		break;
-	case TCPOPT_SACK:
-		return new TCPOptionSACK;
-		break;
-	case TCPOPT_WINDOW:
-		return new TCPOptionWindowScale;
-		break;
-	case TCPOPT_MPTCP:
-		{	
-			int subopt = (info->raw_data + info->offset)[2];
-			return TCPOptionMPTCP::Build(subopt);
-			break;
-		}
-	case TCPOPT_EDO:
-		{
-			int subopt = (info->raw_data + info->offset)[1];
-
-			if(subopt==TCPOPT_EDO_DEFAULT_LENGTH){
-				return new TCPOptionExtendedDataOffset;
-			}else if(subopt==TCPOPT_EDOR_DEFAULT_LENGTH){
-				return new TCPOptionExtendedDataOffsetRequest;
-
-			}else{
-				return new TCPOption;
-			}
-			break;
-		}
-	}
-
-	/* Generic Option Header */
-	return new TCPOption;
+void TCPOptionExtendedDataOffsetRequest::Craft() {
 }
 
-void TCPOptionLayer::ParseLayerData(ParseInfo* info) {
-	/* Update the information of the IP options */
+void TCPOptionExtendedDataOffset::Craft() {
+}
+
+void TCPOptionExtendedDataOffset::ParseLayerData(ParseInfo* info) {
+
+	/* Update the information of the TCP options */
 	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
 	if(!extra_info) {
 		info->top = 1;
 		return;
 	}
-
-	extra_info->optlen -= GetSize();
+	// Updating optlen value 
+	// 20 for std header without options
+	extra_info->optlen = 4*GetHeader_length() - 20 - (extra_info->optlen_origin - extra_info->optlen) - GetSize(); 
 	if(extra_info->optlen > 0) {
+
 		/* Get the option type */
 		int opt = (info->raw_data + info->offset)[0];
-		info->next_layer = Build(opt, info);
+		info->next_layer = TCPOption::Build(opt, info);
 	}  else {
 		info->next_layer = extra_info->next_layer;
 		delete extra_info;
 		extra_info = 0;
 	}
+
+	
 }
+
+
