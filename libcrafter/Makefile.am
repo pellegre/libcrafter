@@ -77,6 +77,8 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/TCPOptionTimestampCraft.cpp \
 						crafter/Protocols/TCPOptionWindowScaleConstructor.cpp \
 						crafter/Protocols/TCPOptionWindowScaleCraft.cpp \
+						crafter/Protocols/TCPOptionExtendedDataOffsetConstructor.cpp \
+						crafter/Protocols/TCPOptionExtendedDataOffsetCraft.cpp \
 						crafter/Protocols/TCPOptionMPTCPConstructor.cpp \
 						crafter/Protocols/TCPOptionMPTCPCraft.cpp \
 						crafter/Protocols/ICMPConstructor.cpp \
@@ -174,6 +176,7 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/TCPOptionMPTCP.h \
 								crafter/Protocols/TCPOptionTimestamp.h \
 								crafter/Protocols/TCPOptionWindowScale.h \
+								crafter/Protocols/TCPOptionExtendedDataOffset.h \
 								crafter/Protocols/ICMP.h \
 								crafter/Protocols/ICMPExtension.h \
 								crafter/Protocols/ICMPExtensionMPLS.h \

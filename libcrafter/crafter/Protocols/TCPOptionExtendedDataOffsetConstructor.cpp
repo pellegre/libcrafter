@@ -25,45 +25,48 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef TCPOPTIONLAYER_H_
-#define TCPOPTIONLAYER_H_
+#include "TCPOptionExtendedDataOffset.h"
 
-#include "../Layer.h"
+using namespace Crafter;
+using namespace std;
 
-namespace Crafter {
+TCPOptionExtendedDataOffset::TCPOptionExtendedDataOffset() {
 
-    class TCPOptionLayer: public Layer {
+    allocate_bytes(6);
+    SetName("TCPOptionExtendedDataOffset");
+    SetprotoID(TCPOptionExtendedDataOffset::PROTO);
+    DefineProtocol();
 
-    	void ParseLayerData(ParseInfo* info);
+    SetKind(TCPOPT_EDO);
+    SetLength(6);
+    SetHeader_length(0);
 
-    public:
-
-        TCPOptionLayer() { /* */ };
-
-    	struct ExtraInfo {
-    		/* Next layer on the top of the options */
-    		Layer* next_layer;
-    		/* Remaining option length */
-    		int optlen;
-            int optlen_origin;
-    	};
-
-        virtual void SetKind(const byte& value) = 0;
-
-        virtual void SetLength(const byte& value) = 0;
-
-        virtual byte  GetKind() const = 0;
-
-        virtual byte  GetLength() const = 0;
-
-        /* Build TCP options from first byte */
-        static TCPOptionLayer* Build(int opt, ParseInfo *info);
-
-        ~TCPOptionLayer() { /* Destructor */ };
-
-    };
+    ResetFields();
 
 }
 
+void TCPOptionExtendedDataOffset::DefineProtocol() {
+    Fields.push_back(new ByteField("Kind",0,0));
+    Fields.push_back(new ByteField("Length",0,1));
+    Fields.push_back(new WordField("Header_length",0,2));
+}
 
-#endif /* TCPOPTIONLAYER_H_ */
+TCPOptionExtendedDataOffsetRequest::TCPOptionExtendedDataOffsetRequest() {
+
+    allocate_bytes(2);
+    SetName("TCPOptionExtendedDataOffsetRequest");
+    SetprotoID(TCPOptionExtendedDataOffset::PROTO);
+    DefineProtocol();
+
+    SetKind(TCPOPT_EDO);
+    SetLength(2);
+
+    ResetFields();
+
+}
+
+void TCPOptionExtendedDataOffsetRequest::DefineProtocol() {
+    Fields.push_back(new ByteField("Kind",0,0));
+    Fields.push_back(new ByteField("Length",0,1));
+}
+
