@@ -29,7 +29,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "IP.h"
 #include "IPv6.h"
 #include "TCPOption.h"
-#include "TCPOptionExtendedDataOffset.h"
+#include "TCPOptionEDO.h"
 
 using namespace Crafter;
 using namespace std;
