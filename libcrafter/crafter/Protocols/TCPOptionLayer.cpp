@@ -31,7 +31,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "TCPOptionTimestamp.h"
 #include "TCPOptionWindowScale.h"
 #include "TCPOptionMPTCP.h"
-#include "TCPOptionExtendedDataOffset.h"
+#include "TCPOptionEDO.h"
 #include <netinet/tcp.h>
 
 using namespace Crafter;

@@ -27,7 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "TCP.h"
 #include "TCPOption.h"
-#include "TCPOptionExtendedDataOffset.h"
+#include "TCPOptionEDO.h"
 
 using namespace Crafter;
 using namespace std;
