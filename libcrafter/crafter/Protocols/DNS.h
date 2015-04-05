@@ -179,7 +179,7 @@ namespace Crafter {
 			size_t Write(byte* data_ptr) const;
 
 			/* Print the DNS Query */
-			void Print() const;
+			void Print(std::ostream &out = std::cout) const;
 
 			~DNSQuery() { /*  */ };
 		};
@@ -255,7 +255,7 @@ namespace Crafter {
 			size_t Write(byte* data_ptr) const;
 
 			/* Print the DNS Query */
-			void Print() const;
+			void Print(std::ostream &out = std::cout) const;
 
 			~DNSAnswer() { /*  */ };
 		};
