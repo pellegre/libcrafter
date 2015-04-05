@@ -213,22 +213,22 @@ void DNS::PrintPayload(ostream& str) const {
 
 	vector<DNSQuery>::const_iterator it_query;
 	for(it_query  = Queries.begin() ; it_query != Queries.end() ; it_query++) {
-		(*it_query).Print();str << endl;
+		(*it_query).Print(str);str << endl;
 	}
 
 	vector<DNSAnswer>::const_iterator it_ans;
 	for(it_ans  = Answers.begin() ; it_ans != Answers.end() ; it_ans++) {
-		(*it_ans).Print();str << endl;
+		(*it_ans).Print(str);str << endl;
 	}
 
 	vector<DNSAnswer>::const_iterator it_auth;
 	for(it_auth  = Authority.begin() ; it_auth != Authority.end() ; it_auth++) {
-		(*it_auth).Print();str << endl;
+		(*it_auth).Print(str);str << endl;
 	}
 
 	vector<DNSAnswer>::const_iterator it_add;
 	for(it_add  = Additional.begin() ; it_add != Additional.end() ; it_add++) {
-		(*it_add).Print();str << endl;
+		(*it_add).Print(str);str << endl;
 	}
 
 }

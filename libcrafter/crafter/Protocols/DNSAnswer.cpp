@@ -52,10 +52,8 @@ DNS::DNSAnswer::DNSAnswer(const string& qname, const string& rdata) : qname(qnam
 }
 
 DNS::DNSAnswer::DNSAnswer(const DNSAnswer& ans) {
-	for(size_t i = 0 ; i < NS_MAXCDNAME ; i++) {
-		cqname[i] = ans.cqname[i];
-		crdata[i] = ans.crdata[i];
-	}
+	memcpy(cqname, ans.cqname, NS_MAXCDNAME);
+	memcpy(crdata, ans.crdata, NS_MAXCDNAME);
 	qname = ans.qname;
 	qtype = ans.qtype;
 	qclass = ans.qclass;
@@ -156,9 +154,7 @@ size_t DNS::DNSAnswer::CompressRData() {
 
 size_t DNS::DNSAnswer::Write(byte* data_ptr) const {
 	/* Write the query into the buffer, should be correctly allocated */
-	for(size_t i = 0 ; i < qnamelength ; i++) {
-		data_ptr[i] = cqname[i];
-	}
+	memcpy(data_ptr, cqname, qnamelength);
 
 	data_ptr += qnamelength;
 	/* Put type */
@@ -177,15 +173,15 @@ size_t DNS::DNSAnswer::Write(byte* data_ptr) const {
 	return size;
 }
 
-void DNS::DNSAnswer::Print() const {
-	cout << "  < Answer" << " (" << dec << GetSize() << " bytes) " << ":: ";
-	cout << "QName = " <<  GetName() << " ; " ;
-	cout << "Type = 0x" <<  hex << (unsigned int)(GetType()) << " ; " ;
-	cout << "Class = 0x" <<  hex << (unsigned int)(GetClass()) << " ; " ;
-	cout << "TTL = 0x" << hex << GetTTL() << " ; " ;
-	cout << "RDataLength = " << dec << GetRDataLength() << " ; " ;
-	cout << "RData = " <<  GetRData() << " " ;
-	cout << "> ";
+void DNS::DNSAnswer::Print(std::ostream &out) const {
+	out << "  < Answer" << " (" << dec << GetSize() << " bytes) " << ":: ";
+	out << "QName = " <<  GetName() << " ; " ;
+	out << "Type = 0x" <<  hex << (unsigned int)(GetType()) << " ; " ;
+	out << "Class = 0x" <<  hex << (unsigned int)(GetClass()) << " ; " ;
+	out << "TTL = 0x" << hex << GetTTL() << " ; " ;
+	out << "RDataLength = " << dec << GetRDataLength() << " ; " ;
+	out << "RData = " <<  GetRData() << " " ;
+	out << "> ";
 }
 
 
