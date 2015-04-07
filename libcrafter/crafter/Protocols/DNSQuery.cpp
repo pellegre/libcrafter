@@ -50,8 +50,7 @@ DNS::DNSQuery::DNSQuery(const string& qname) : qname(qname) {
 }
 
 DNS::DNSQuery::DNSQuery(const DNSQuery& query) {
-	for(size_t i = 0 ; i < NS_MAXCDNAME ; i++)
-		cqname[i] = query.cqname[i];
+	memcpy(cqname, query.cqname, NS_MAXCDNAME);
 	qtype = query.qtype;
 	qclass = query.qclass;
 	qname = query.qname;
@@ -116,12 +115,12 @@ size_t DNS::DNSQuery::Write(byte* data_ptr) const {
 	return size;
 }
 
-void DNS::DNSQuery::Print() const {
-	cout << "  < Query" << " (" << dec << GetSize() << " bytes) " << ":: ";
-	cout << "QName = " <<  GetName() << " ; " ;
-	cout << "Type = 0x" <<  hex << (unsigned int)(GetType()) << " ; " ;
-	cout << "Class = 0x" <<  hex << (unsigned int)(GetClass()) << " " ;
-	cout << "> ";
+void DNS::DNSQuery::Print(std::ostream &out) const {
+	out << "  < Query" << " (" << dec << GetSize() << " bytes) " << ":: ";
+	out << "QName = " <<  GetName() << " ; " ;
+	out << "Type = 0x" <<  hex << (unsigned int)(GetType()) << " ; " ;
+	out << "Class = 0x" <<  hex << (unsigned int)(GetClass()) << " " ;
+	out << "> ";
 }
 
 
