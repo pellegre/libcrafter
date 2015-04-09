@@ -93,6 +93,8 @@ namespace Crafter {
 
 		/* Copy the data into the pointer (no more than ndata) and returns the number of bytes copied */
 		size_t GetPayload(byte* dst, size_t ndata) const;
+		/* Return a read-only pointer towards the payload */
+		const byte * GetPayload() const;
 
 		/* Get payload as a STL string */
 		std::string GetString() const;
