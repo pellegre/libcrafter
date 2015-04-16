@@ -320,8 +320,7 @@ void Crafter::Sniffer::Cancel() {
 
 	if(spawned) {
 		pcap_breakloop(handle);
-		/* If the thread was spawned, call pthread_cancel for terminating the sniffing */
-		int rc = pthread_cancel(thread_id);
+		int rc = pthread_join(thread_id, NULL);
 
 		if (rc)
 			throw std::runtime_error("Sniffer::Cancel() : Cancelating thread. Returning code = " + StrPort(rc));
