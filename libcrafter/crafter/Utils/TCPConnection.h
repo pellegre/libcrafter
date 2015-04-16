@@ -108,6 +108,8 @@ namespace Crafter {
 		uint64_t ack;
 
 		/* ++++ Connection Data End : This data defines univocally a connection ++++ */
+		/* Sniffer used */
+		Sniffer *sniff;
 
 		/* Thread ID of the sniffer */
 		pthread_t thread_id;

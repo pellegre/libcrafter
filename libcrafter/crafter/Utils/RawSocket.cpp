@@ -31,7 +31,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <fcntl.h>
 #include <net/bpf.h>
 #include <net/if_dl.h>
-#include <netinet/in.h>
 #include <net/route.h>
 #endif
 
@@ -443,7 +442,7 @@ int Crafter::SocketSender::SendSocket(int rawsock, word proto_id, byte *pkt, siz
 		struct sockaddr_in din;
 	    din.sin_family = AF_INET;
 	    din.sin_port = 0;
-	    memcpy(&din.sin_addr.s_addr,pkt + 16,sizeof(in_addr_t));
+	    memcpy(&din.sin_addr.s_addr,pkt + 16,sizeof(din.sin_addr.s_addr));
 	    memset(din.sin_zero, '\0', sizeof (din.sin_zero));
 
 	    return SendRawSocket(rawsock,(sockaddr *)&din,sizeof(din),pkt,pkt_len);

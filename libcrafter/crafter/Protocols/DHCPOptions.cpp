@@ -396,9 +396,9 @@ void DHCPOptionsIP::SetPayload() {
 	vector<string>::const_iterator it_ip;
 	for(it_ip = ip_addresses.begin() ; it_ip != ip_addresses.end() ; it_ip++) {
 		/* Get the IP in network byte order */
-		in_addr_t bin_ip = inet_addr((*it_ip).c_str());
+		struct in_addr bin_ip = { inet_addr((*it_ip).c_str()) };
 		/* Set the payload from the string */
-		data.AddPayload((byte *)&bin_ip, sizeof(in_addr_t));
+		data.AddPayload((byte *)&bin_ip.s_addr, sizeof(bin_ip.s_addr));
 	}
 }
 
