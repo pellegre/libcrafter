@@ -34,9 +34,9 @@ using namespace Crafter;
 
 void Crafter::CleanARPContext(ARPContext* arp_context) {
 	/* Get the thread ID and cancel the spoofing */
-	pthread_t tid = arp_context->tid;
+	arp_context->keep_going = false;
 
-	int rc = pthread_cancel(tid);
+	int rc = pthread_join(arp_context->tid, NULL);
 
 	if (rc)
 		throw std::runtime_error("CleanARPContext() : Cancelating thread. Returning code = " + StrPort(rc));

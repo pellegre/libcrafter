@@ -29,6 +29,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../Utils/BitHandling.h"
 
 #include <arpa/inet.h>
+#include <netinet/in.h>
 
 using namespace std;
 using namespace Crafter;

@@ -426,9 +426,9 @@ vector<byte> Crafter::IPtoRawData(const vector<string>& ips) {
 	size_t raw_counter = 0;
 
 	for(it_str = ips.begin() ; it_str != ips.end() ; ++it_str) {
-		in_addr_t num_ip = inet_addr((*it_str).c_str());
+		struct in_addr num_ip = { inet_addr((*it_str).c_str()) };
 		for(size_t i = 0; i < sizeof(word) ; i++) {
-			raw_data[raw_counter] = ((byte*)&num_ip)[i];
+			raw_data[raw_counter] = ((byte*)&num_ip.s_addr)[i];
 			raw_counter++;
 		}
 	}
@@ -448,8 +448,8 @@ vector<string> Crafter::RawDatatoIP(const vector<byte>& raw_data) {
 
 	for(size_t j = 0 ; j < str_size ; j++) {
 	    struct in_addr ip_address;
-		memcpy(&ip_address.s_addr ,&raw_data[raw_counter], sizeof(in_addr_t));
-		raw_counter += sizeof(in_addr_t);
+		memcpy(&ip_address.s_addr ,&raw_data[raw_counter], sizeof(ip_address.s_addr));
+		raw_counter += sizeof(ip_address.s_addr);
 		/* Push the IP address in string format */
 		ips[j] = string(inet_ntoa(ip_address));
 	}

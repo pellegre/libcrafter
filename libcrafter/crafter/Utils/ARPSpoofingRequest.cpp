@@ -85,7 +85,7 @@ void* Crafter::ARPSpoofRequest(void* thread_arg) {
 	}
 
 
-	while(1) {
+	while(context->keep_going) {
 		Send(context->arp_packets,context->iface,16);
 		sleep(5);
 	}
@@ -223,6 +223,8 @@ ARPContext* Crafter::ARPSpoofingRequest(const std::string& net_target, const std
 	context->arp_packets = arp_request;
 
 	context->SanityCheck();
+
+	context->keep_going = true;
 
 	int rc = pthread_create(&tid, NULL, ARPSpoofRequest, thread_arg);
 

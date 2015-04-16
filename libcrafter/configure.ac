@@ -79,6 +79,8 @@ case "${host_os}" in
     ;;
 esac
 
+AC_CHECK_FUNCS(ether_aton_r)
+
 ## Define these substitions here to keep all version information in one place.
 ## For information on how to properly maintain the library version information,
 ## refer to the libtool manual, section "Updating library version information":
