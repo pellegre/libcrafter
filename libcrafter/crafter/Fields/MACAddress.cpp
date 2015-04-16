@@ -31,11 +31,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 #include <cstdio>
 #include "MACAddress.h"
+#include "config.h"
 
 using namespace std;
 using namespace Crafter;
 
-#if __APPLE__
+#ifndef HAVE_ETHER_ATON_R
 #ifndef isdigit
 #define isdigit(c)  (c >= '0' && c <= '9')
 #endif

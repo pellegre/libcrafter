@@ -36,6 +36,28 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 using namespace Crafter;
 
+#ifndef TCPOPT_EOL
+	#define TCPOPT_EOL		0
+#endif
+#ifndef TCPOPT_NOP
+	#define TCPOPT_NOP		1
+#endif
+#ifndef TCPOPT_MAXSEG
+	#define TCPOPT_MAXSEG		2
+#endif
+#ifndef TCPOPT_WINDOW
+	#define TCPOPT_WINDOW		3
+#endif
+#ifndef TCPOPT_SACK_PERMITTED
+	#define TCPOPT_SACK_PERMITTED	4		/* Experimental */
+#endif
+#ifndef TCPOPT_SACK
+	#define TCPOPT_SACK		5		/* Experimental */
+#endif
+#ifndef TCPOPT_TIMESTAMP
+	#define TCPOPT_TIMESTAMP	8
+#endif
+
 TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
 
 	switch(opt) {
@@ -62,7 +84,7 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
 		return new TCPOptionWindowScale;
 		break;
 	case TCPOPT_MPTCP:
-		{	
+		{
 			int subopt = (info->raw_data + info->offset)[2];
 			return TCPOptionMPTCP::Build(subopt);
 			break;

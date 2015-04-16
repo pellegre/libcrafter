@@ -65,6 +65,7 @@ namespace Crafter {
 
 		/* Thread ID of the thread that is doing the spoofing */
 		pthread_t tid;
+		bool keep_going;
 
 		/* Attacker's MAC Address */
 		std::string AttackerMAC;

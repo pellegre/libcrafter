@@ -27,6 +27,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "BitHandling.h"
 
+#include <netinet/in.h>
 #include <arpa/inet.h>
 
 using namespace std;

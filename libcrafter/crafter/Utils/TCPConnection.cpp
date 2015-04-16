@@ -373,7 +373,7 @@ void* Crafter::ConnectHandler(void* thread_arg) {
 	//cout << filter << endl;
 
 	/* Launch the snnifer */
-	Sniffer sniff(filter,iface,PckHand);
+	conex->sniff = new Sniffer(filter,iface,PckHand);
 
 	/* Signal the threshold... */
 	pthread_cond_signal(&conex->threshold_cv);
@@ -381,7 +381,7 @@ void* Crafter::ConnectHandler(void* thread_arg) {
 	pthread_mutex_unlock(&conex->mutex);
 
 	/* Start capturing */
-	sniff.Capture(-1,thread_arg);
+	conex->sniff->Capture(-1,thread_arg);
 
 	/* Get connection data */
 	return 0;
@@ -675,7 +675,7 @@ void TCPConnection::Close() {
 
 void TCPConnection::Reset() {
 	/* Kill the thread */
-	pthread_cancel(thread_id);
+	sniff->Cancel();
 
     pthread_mutex_lock (&mutex);
 
@@ -699,7 +699,7 @@ void TCPConnection::Reset() {
 TCPConnection::~TCPConnection() {
 	/* Close thread */
 	if(status != CLOSED) {
-		pthread_cancel(thread_id);
+		sniff->Cancel();
 	}
 
 	/* Destroy condition variable */

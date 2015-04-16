@@ -36,6 +36,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstdio>
 #include <cstdlib>
 #include <sys/socket.h>
+#include <netinet/in.h>
 
 #ifndef __APPLE__
 #include <features.h>

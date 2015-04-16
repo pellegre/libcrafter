@@ -32,7 +32,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/nameser.h>
+#ifdef __APPLE__
 #include <arpa/nameser_compat.h>
+#endif
 #include <resolv.h>
 
 #include "RawLayer.h"
