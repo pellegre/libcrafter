@@ -80,6 +80,7 @@ case "${host_os}" in
 esac
 
 AC_CHECK_FUNCS(ether_aton_r)
+AC_CHECK_FUNCS(inet_network)
 
 ## Define these substitions here to keep all version information in one place.
 ## For information on how to properly maintain the library version information,
