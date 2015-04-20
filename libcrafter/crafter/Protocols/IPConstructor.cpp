@@ -64,7 +64,12 @@ void IP::DefineProtocol() {
     Fields.push_back(new BitsField<4,4>("HeaderLength",0));
     Fields.push_back(new BitsField<6,8>("DiffServicesCP",0));
     Fields.push_back(new BitsField<2,14>("ExpCongestionNot",0));
+#ifdef __APPLE__
+	/* see http://cseweb.ucsd.edu/~braghava/notes/freebsd-sockets.txt */
+    Fields.push_back(new ShortHostNetField("TotalLength",0,2));
+#else
     Fields.push_back(new ShortField("TotalLength",0,2));
+#endif
     Fields.push_back(new XShortField("Identification",1,0));
     Fields.push_back(new BitsField<3,16>("Flags",1));
     Fields.push_back(new BitsField<13,19>("FragmentOffset",1));
