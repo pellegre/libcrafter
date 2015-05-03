@@ -103,6 +103,9 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
 			}
 			break;
 		}
+	case TCPOPT_TFO:
+		return new TCPOptionFastOpen;
+		break;
 	}
 
 	/* Generic Option Header */

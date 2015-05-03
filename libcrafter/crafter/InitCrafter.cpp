@@ -73,11 +73,11 @@ void Crafter::InitCrafter() {
 	IPv6FragmentationHeader ipv6_frag_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ipv6_frag_dummy);
-    
+
     IPv6RoutingHeader ipv6_rtg_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ipv6_rtg_dummy);
-    
+
     IPv6SegmentRoutingHeader ipv6_sr_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&ipv6_sr_dummy);
@@ -125,6 +125,10 @@ void Crafter::InitCrafter() {
 	TCPOptionExtendedDataOffsetRequest optedor_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optedor_dummy);
+
+	TCPOptionFastOpen tfo_dummy;
+	/* Register the protocol, this is executed only once */
+	Protocol::AccessFactory()->Register(&tfo_dummy);
 
 	TCPOptionMPTCP optmptcp_dummy;
 	/* Register the protocol, this is executed only once */
