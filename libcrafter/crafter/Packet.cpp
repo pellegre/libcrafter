@@ -654,80 +654,120 @@ void Packet::GetFilter(stringstream& filter) const {
 	if (!ip_layer)
 		return;
 
+	/*
+	 * Create a filter matching an expected answer
+	 */
 	vector<string> layer_filter;
-
-	/* Construct the filter for matching packets */
-	vector<Layer*>::const_iterator it_layer;
-	for (it_layer = Stack.begin() ; it_layer != Stack.end(); it_layer++) {
-		string str_filter = (*it_layer)->MatchFilter();
-		if(str_filter != " ") layer_filter.push_back(str_filter);
+	vector<Layer*>::const_iterator it_layer = Stack.begin(), it_end = Stack.end();
+	string str_filter;
+	/* Find first non empty filter */
+	do {
+		str_filter = (*it_layer)->MatchFilter();
+		++it_layer;
+	} while (str_filter == " " && it_layer != it_end);
+	/* We have at least one filter for an expected answer */
+	if (str_filter != " ") {
+		filter << "(" << str_filter;
+		for ( ; it_layer != it_end; ++it_layer) {
+			str_filter = (*it_layer)->MatchFilter();
+			/* Compose it with sublayers, if applicable */
+			if (str_filter != " ") filter << " and " << str_filter;
+		}
+		filter << ")";
 	}
 
-	filter << "(" << layer_filter[0];
-
-	vector<string>::iterator it_f;
-	for(it_f = layer_filter.begin() + 1 ; it_f != layer_filter.end() ; it_f++) {
-		vector<string>::iterator last = it_f - 1;
-		if ( (*it_f) != " " && (*last) != " " )
-			filter << " and " << (*it_f);
-		else if ( (*it_f) != " " && (*last) == " ")
-			filter << (*it_f);
-	}
-
-	/* Add ICMP payload match clause if applicable */
+	/*
+	 * Handle ICMP replies for that packet
+	 */
+	size_t transport_offset;
+	std::string transport_encapsulation;
+	filter << " or ( ";
 	if (ip_layer->GetID() == IP::PROTO) {
 		IP *ipv4_layer = dynamic_cast<IP*>(ip_layer);
 
-		filter << ") or ( ( (icmp[icmptype] == icmp-unreach) or (icmp[icmptype] == icmp-timxceed) or "
-			"    (icmp[icmptype] == icmp-paramprob) or (icmp[icmptype] == icmp-sourcequench) or "
-			"    (icmp[icmptype] == icmp-redirect) ) and (icmp[12:2] == "
-			<< ipv4_layer->GetIdentification() << " )";
-		/* Match first 8 bytes of next layer, if any */
-		Layer* next_layer = ipv4_layer->GetTopLayer();
-		if(next_layer) {
-			/* Get offset to next layer (from the ICMP layer)*/
-			word offset_icmp = ipv4_layer->GetHeaderLength() * 4 + 8;
-			word rem_size = next_layer->GetRemainingSize();
-			/* Get offset to next layer (on the packet) */
-			word offset_packet = GetSize() - rem_size;
+#define MATCH(offset, len, value) \
+		"( icmp[" << 8 + offset << ":" << len << "] == " << value << " )"
 
-			if(rem_size >= 8) {
-				word* raw_packet = reinterpret_cast<word*>(raw_data + offset_packet);
-				word first_word  = raw_packet[0];
-				word second_word = raw_packet[1];
-
-				filter <<  " and (icmp[" << offset_icmp << ":4] == "
-					<< ntohl(first_word) << ") and (icmp[" << offset_icmp + 4
-					<< ":4] == " << ntohl(second_word) << ")";
-			}
-		}
+		filter << "icmp and ( " /* IPv4 ICMP Transport protocol */
+						"(icmp[icmptype] == icmp-unreach) or " /* Is an ICMP */
+						"(icmp[icmptype] == icmp-timxceed) or " /* carrying */
+						"(icmp[icmptype] == icmp-paramprob) or " /* an useful */
+						"(icmp[icmptype] == icmp-sourcequench) or " /* payload */
+						"(icmp[icmptype] == icmp-redirect) "
+						") and ( " /* Match the uuid */
+							MATCH(4, 2, ipv4_layer->GetIdentification()) " or " /* Same IP ID */
+							" ( " /* Or same addresses */
+								MATCH(12, 4, ntohl(*(uint32_t*)ipv4_layer->GetRawSourceIP()))
+								" and "
+								MATCH(16,4, ntohl(*(uint32_t*)ipv4_layer->GetRawDestinationIP()))
+								; /* Payload match is common to v4-v6 */
+		transport_offset = ipv4_layer->GetHeaderLength() * 4 + 8;
+		transport_encapsulation = "icmp";
+#undef MATCH
 	} else if(ip_layer->GetID() == IPv6::PROTO) {
 		IPv6 *ipv6_layer = dynamic_cast<IPv6*>(ip_layer);
-		/* Match first 8 bytes of next layer, if any */
-		Layer* next_layer = ip_layer->GetTopLayer();
-		if(next_layer) {
-			/* Get offset to next layer (from the ICMP layer)*/
-			word offset_icmp = ipv6_layer->GetSize() + 8;
-			word rem_size = next_layer->GetRemainingSize();
-			/* Get offset to next layer (on the packet) */
-			word offset_packet = GetSize() - rem_size;
-			filter << ") or ( ( (ip6[40] == 1) or (ip6[40] == 2) or "
-				"    (ip6[40] == 3) or (ip6[40] == 4) )  ";
-
-			if(rem_size >= 8) {
-				word* raw_packet = reinterpret_cast<word*>(raw_data + offset_packet);
-				word first_word  = raw_packet[0];
-				word second_word = raw_packet[1];
-
-				filter <<  " and (ip6[" << 40 + offset_icmp << ":4] == "
-					<< ntohl(first_word) << ") and (ip6["
-					<< 40 + offset_icmp + 4 << ":4] == " << ntohl(second_word)
-					<< ")";
-			}
-
-		}
+#define MATCH(offset, len, value) \
+		"( ip6[" << 48 + offset << ":" << len << "] == " << value << " )"
+		uint32_t *sourceip = (uint32_t*)ipv6_layer->GetRawSourceIP();
+		uint32_t *destip = (uint32_t*)ipv6_layer->GetRawSourceIP();
+		filter << "icmp6 and ( " /* IPv6 ICMP6 TP */
+						"(ip6[40] == 1) or" /* With useful payload types */
+						"(ip6[40] == 2) or"
+						"(ip6[40] == 3) or"
+						"(ip6[40] == 4) "
+						") and ( " /* Match the uuid  - 20 bits */
+							" ip6[48:4] & 0x000fffff == " << ipv6_layer->GetFlowLabel()
+							<< " or ( " /* Same addresses */
+								MATCH(8, 4, ntohl(sourceip[0])) " and "
+								MATCH(12, 4, ntohl(sourceip[1])) " and "
+								MATCH(16, 4, ntohl(sourceip[2])) " and "
+								MATCH(20, 4, ntohl(sourceip[3])) " and "
+								MATCH(24, 4, ntohl(destip[0])) " and "
+								MATCH(28, 4, ntohl(destip[1])) " and "
+								MATCH(32, 4, ntohl(destip[2])) " and "
+								MATCH(36, 4, ntohl(destip[3]))
+								;
+		transport_offset = 88;
+		transport_encapsulation = "ip6";
+#undef MATCH
 	}
-	filter << " )";
+
+	Layer* next_layer = ip_layer->GetTopLayer();
+	if(next_layer && next_layer->GetSize() >= 8) {
+#define MATCH(offset, len, value) \
+		"( " << transport_encapsulation << "[" << transport_offset + offset \
+		<< ":" << len << "] == " << value << " )"
+		filter << " and ";
+		switch (next_layer->GetID()) {
+			case TCP::PROTO: { /* Match ports or seq numbers */
+				TCP *tcp = dynamic_cast<TCP*>(next_layer);
+				filter << "( "
+							"( "
+							MATCH(0, 2, tcp->GetSrcPort()) " and "
+							MATCH(2, 2, tcp->GetDstPort())
+							") or ("
+							MATCH(4, 4, tcp->GetSeqNumber()) " and "
+							MATCH(8, 4, tcp->GetAckNumber())
+							")"
+						")"
+					;
+				}
+				break;
+			case UDP::PROTO: { /* Match ports */
+				UDP *udp = dynamic_cast<UDP*>(next_layer);
+				filter << MATCH(0, 2, udp->GetSrcPort()) " and "
+					MATCH(2, 2, udp->GetDstPort());
+				}
+		   		break;
+			default: /* Match first byte of next header */
+				filter << MATCH(0, 1, *next_layer->raw_data);
+				break;
+		}
+#undef MATCH
+	}
+	filter <<		" ) " /* (same addresses and x) */
+				")" /* icmp and (sth) */
+			")"; /* or (icmp) */
 }
 
 template<>
