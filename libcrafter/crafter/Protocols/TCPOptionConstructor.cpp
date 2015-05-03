@@ -81,3 +81,15 @@ TCPOptionSACK::TCPOptionSACK() {
     ResetFields();
 
 }
+
+TCPOptionFastOpen::TCPOptionFastOpen() {
+
+    SetName("TCPOptionFastOpen");
+    SetprotoID(TCPOptionFastOpen::PROTO);
+
+    SetKind(TCPOPT_TFO);
+    SetLength(2);
+
+    ResetFields();
+
+}

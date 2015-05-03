@@ -139,6 +139,42 @@ namespace Crafter {
         ~TCPOptionSACK() { /* Destructor */ };
 
     };
+
+#ifndef TCPOPT_TFO_
+#define TCPOPT_TFO 34
+#endif
+
+    class TCPOptionFastOpen : public TCPOption {
+
+    	Constructor GetConstructor() const {
+            return TCPOptionFastOpen::TCPOptionFastOpenConstFunc;
+        };
+
+        static Layer* TCPOptionFastOpenConstFunc() {
+            return new TCPOptionFastOpen;
+        };
+
+    public:
+
+        TCPOptionFastOpen();
+
+        enum { PROTO = 0x9034 };
+
+		unsigned int CookieLen() const {
+			return GetPayloadSize();
+		}
+
+		void GetCookie(byte *dst) const {
+			GetPayload(dst);
+		}
+
+		void setCookie(const byte *data, unsigned int ndata) {
+			SetPayload(data, ndata);
+		}
+
+        ~TCPOptionFastOpen() { /* Destructor */ };
+
+    };
 }
 
 #endif /* TCPOPTION_H_ */
