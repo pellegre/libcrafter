@@ -31,6 +31,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <iostream>
 #include <ostream>
 #include <string>
+#include <arpa/inet.h>
 
 #include "FieldInfo.h"
 
@@ -41,8 +42,8 @@ namespace Crafter {
 		size_t nword;
 		size_t nbyte;
 		size_t offset;
-                struct sockaddr_in address;
-                
+    	struct in_addr address;
+
 		void PrintValue(std::ostream& str) const;
 
 	public:
@@ -56,11 +57,11 @@ namespace Crafter {
 		FieldInfo* Clone() const;
 
 		void SetField(const std::string& ip_address);
-                
-                operator byte*() { return (byte*)&address.sin_addr; }
-                
+
+        operator byte*() { return (byte*)&address.s_addr; }
+
 		virtual ~IPAddress();
-                
+
 	};
 
 }
