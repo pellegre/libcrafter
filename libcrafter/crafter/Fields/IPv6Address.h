@@ -42,7 +42,7 @@ namespace Crafter {
 		size_t nword;
 		size_t nbyte;
 		size_t offset;
-        struct sockaddr_in6 addr;
+        struct in6_addr addr;
 
 		void PrintValue(std::ostream& str) const;
 
@@ -58,7 +58,7 @@ namespace Crafter {
 
 		FieldInfo* Clone() const;
 
-                operator byte*() {return (byte*)&addr.sin6_addr;}
+        operator byte*() {return (byte*)&addr.s6_addr;}
 
 		virtual ~IPv6Address();
 	};

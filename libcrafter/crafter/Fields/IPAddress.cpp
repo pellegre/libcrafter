@@ -46,23 +46,23 @@ void IPAddress::SetField(const string& ip_address) {
 		human = GetIP(ip_address);
 	else
 		human = ip_address;
+    inet_pton(AF_INET, human.c_str(), &address.s_addr);
 }
 
 void IPAddress::Write(byte* raw_data) const {
-	word* ptr = (word*) (raw_data + offset);
-	*ptr = inet_addr(human.c_str());
+	memcpy(raw_data + offset, &address.s_addr, sizeof(address.s_addr));
 }
 
 void IPAddress::Read(const byte* raw_data) {
-	memcpy(&address.sin_addr, raw_data + offset, sizeof(struct in_addr));
+	memcpy(&address.s_addr, raw_data + offset, sizeof(address.s_addr));
     char str[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &address.sin_addr, str, INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &address.s_addr, str, INET_ADDRSTRLEN);
 	human = string(str);
 }
 
 FieldInfo* IPAddress::Clone() const {
 	IPAddress* new_ptr = new IPAddress(GetName(),nword,nbyte);
-	new_ptr->human = human;
+	new_ptr->SetField(human);
 	return new_ptr;
 }
 

@@ -42,17 +42,18 @@ void IPv6Address::SetField(const string& ip_address) {
 		human = GetIPv6(ip_address);
 	else
 		human = ip_address;
+	inet_pton(AF_INET6, human.c_str(), &addr.s6_addr);
 }
 
 
 void IPv6Address::Write(byte* raw_data) const {
-	inet_pton(AF_INET6, human.c_str(), raw_data + offset);
+	memcpy(raw_data + offset, &addr.s6_addr, sizeof(addr.s6_addr));
 }
 
 void IPv6Address::Read(const byte* raw_data) {
-	memcpy(&addr.sin6_addr, raw_data + offset, sizeof(struct in6_addr));
+	memcpy(&addr.s6_addr, raw_data + offset, sizeof(addr.s6_addr));
 	char addressBuffer[INET6_ADDRSTRLEN];
-    inet_ntop(AF_INET6, &addr.sin6_addr, addressBuffer, INET6_ADDRSTRLEN);
+    inet_ntop(AF_INET6, &addr.s6_addr, addressBuffer, INET6_ADDRSTRLEN);
     human = string(addressBuffer);
 }
 
