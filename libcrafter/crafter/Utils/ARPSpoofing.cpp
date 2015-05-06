@@ -83,6 +83,9 @@ void ARPContext::SanityCheck() {
 			it = TargetMACs->erase(it);
 			/* And erase it from IP list */
 			TargetIPs->erase(TargetIPs->begin() + count);
+			if (it == TargetMACs->end())
+				/* We deleted the last element, stop here. */
+				break;
 		}
 		count++;
 	}
@@ -93,6 +96,9 @@ void ARPContext::SanityCheck() {
 			it = VictimMACs->erase(it);
 			/* And erase it from IP list */
 			VictimIPs->erase(VictimIPs->begin() + count);
+			if (it == VictimMACs->end())
+				/* We deleted the last element, stop here. */
+				break;
 		}
 		count++;
 	}
@@ -107,6 +113,9 @@ void ARPContext::SanityCheck() {
 				it_victim = VictimMACs->erase(it_victim);
 				/* And erase it from IP list */
 				VictimIPs->erase(VictimIPs->begin() + count_victim);
+				if (it_victim == VictimIPs->end())
+					/* We deleted the last element, stop here. */
+					break;
 			}
 		}
 		count_victim++;
