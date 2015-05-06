@@ -113,7 +113,7 @@ void ARPContext::SanityCheck() {
 				it_victim = VictimMACs->erase(it_victim);
 				/* And erase it from IP list */
 				VictimIPs->erase(VictimIPs->begin() + count_victim);
-				if (it_victim == VictimIPs->end())
+				if (it_victim == VictimMACs->end())
 					/* We deleted the last element, stop here. */
 					break;
 			}
