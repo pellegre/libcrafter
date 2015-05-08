@@ -88,10 +88,10 @@ namespace Crafter {
         ~TCPOptionMPTCP() { /* Destructor */ };
 
         /* Build MPTCP options from subopt */
-        static TCPOptionLayer* Build(int subopt);
+        static TCPOptionLayer* Build(byte subopt);
 
     };
-    
+
     class TCPOptionMPTCPJoin : public TCPOptionMPTCP {
 
         void DefineProtocol();

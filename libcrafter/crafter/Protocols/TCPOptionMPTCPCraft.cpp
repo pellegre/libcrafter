@@ -39,7 +39,7 @@ void TCPOptionMPTCPCapable::SetReceiverKey(const uint64_t& value) {
 	word* data = new word[2];
 	*((uint64_t *)data) = htonll(value);
 
-	SetPayload((const byte*)data,sizeof(uint64_t)); 
+	SetPayload((const byte*)data,sizeof(uint64_t));
 }
 
 uint64_t TCPOptionMPTCPCapable::GetReceiverKey() const {
@@ -51,7 +51,7 @@ uint64_t TCPOptionMPTCPCapable::GetReceiverKey() const {
 	return 0;
 }
 
-TCPOptionLayer* TCPOptionMPTCP::Build(int subopt) {
+TCPOptionLayer* TCPOptionMPTCP::Build(byte subopt) {
 
 	switch(subopt) {
 	case 0:
