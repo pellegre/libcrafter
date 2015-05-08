@@ -62,50 +62,31 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
 
 	switch(opt) {
 
-	case TCPOPT_EOL:
-		return new TCPOptionPad;
-		break;
-	case TCPOPT_NOP:
-		return new TCPOptionPad;
-		break;
-	case TCP_MAXSEG:
-		return new TCPOptionMaxSegSize;
-		break;
-	case TCPOPT_TIMESTAMP:
-		return new TCPOptionTimestamp;
-		break;
-	case TCPOPT_SACK_PERMITTED:
-		return new TCPOptionSACKPermitted;
-		break;
-	case TCPOPT_SACK:
-		return new TCPOptionSACK;
-		break;
-	case TCPOPT_WINDOW:
-		return new TCPOptionWindowScale;
-		break;
+	case TCPOPT_EOL            : return new TCPOptionPad;
+	case TCPOPT_NOP            : return new TCPOptionPad;
+	case TCP_MAXSEG            : return new TCPOptionMaxSegSize;
+	case TCPOPT_TIMESTAMP      : return new TCPOptionTimestamp;
+	case TCPOPT_SACK_PERMITTED : return new TCPOptionSACKPermitted;
+	case TCPOPT_SACK           : return new TCPOptionSACK;
+	case TCPOPT_WINDOW         : return new TCPOptionWindowScale;
+	case TCPOPT_TFO            : return new TCPOptionFastOpen;
 	case TCPOPT_MPTCP:
 		{
-			int subopt = (info->raw_data + info->offset)[2];
+			byte subopt = (info->raw_data + info->offset)[2] >> 4;
 			return TCPOptionMPTCP::Build(subopt);
 			break;
 		}
 	case TCPOPT_EDO:
 		{
-			int subopt = (info->raw_data + info->offset)[1];
+			byte subopt = (info->raw_data + info->offset)[1];
 
-			if(subopt==TCPOPT_EDO_DEFAULT_LENGTH){
+			if(subopt == TCPOPT_EDO_DEFAULT_LENGTH)
 				return new TCPOptionExtendedDataOffset;
-			}else if(subopt==TCPOPT_EDOR_DEFAULT_LENGTH){
+			else if(subopt == TCPOPT_EDOR_DEFAULT_LENGTH)
 				return new TCPOptionExtendedDataOffsetRequest;
-
-			}else{
-				return new TCPOption;
-			}
-			break;
+			else
+				break;
 		}
-	case TCPOPT_TFO:
-		return new TCPOptionFastOpen;
-		break;
 	}
 
 	/* Generic Option Header */
