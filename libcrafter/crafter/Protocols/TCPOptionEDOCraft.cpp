@@ -32,13 +32,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace Crafter;
 using namespace std;
 
-void TCPOptionExtendedDataOffsetRequest::Craft() {
+void TCPEDORequest::Craft() {
 }
 
-void TCPOptionExtendedDataOffset::Craft() {
+void TCPEDO::Craft() {
 }
 
-void TCPOptionExtendedDataOffset::ParseLayerData(ParseInfo* info) {
+void TCPEDO::ParseLayerData(ParseInfo* info) {
 
 	/* Update the information of the TCP options */
 	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
