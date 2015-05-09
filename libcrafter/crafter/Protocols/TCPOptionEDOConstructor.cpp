@@ -30,11 +30,11 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace Crafter;
 using namespace std;
 
-TCPOptionExtendedDataOffset::TCPOptionExtendedDataOffset() {
+TCPEDO::TCPEDO() {
 
     allocate_bytes(6);
-    SetName("TCPOptionExtendedDataOffset");
-    SetprotoID(TCPOptionExtendedDataOffset::PROTO);
+    SetName("TCPEDO");
+    SetprotoID(TCPEDO::PROTO);
     DefineProtocol();
 
     SetKind(TCPOPT_EDO);
@@ -45,17 +45,17 @@ TCPOptionExtendedDataOffset::TCPOptionExtendedDataOffset() {
 
 }
 
-void TCPOptionExtendedDataOffset::DefineProtocol() {
+void TCPEDO::DefineProtocol() {
     Fields.push_back(new ByteField("Kind",0,0));
     Fields.push_back(new ByteField("Length",0,1));
     Fields.push_back(new WordField("Header_length",0,2));
 }
 
-TCPOptionExtendedDataOffsetRequest::TCPOptionExtendedDataOffsetRequest() {
+TCPEDORequest::TCPEDORequest() {
 
     allocate_bytes(2);
-    SetName("TCPOptionExtendedDataOffsetRequest");
-    SetprotoID(TCPOptionExtendedDataOffset::PROTO);
+    SetName("TCPEDORequest");
+    SetprotoID(TCPEDO::PROTO);
     DefineProtocol();
 
     SetKind(TCPOPT_EDO);
@@ -65,7 +65,7 @@ TCPOptionExtendedDataOffsetRequest::TCPOptionExtendedDataOffsetRequest() {
 
 }
 
-void TCPOptionExtendedDataOffsetRequest::DefineProtocol() {
+void TCPEDORequest::DefineProtocol() {
     Fields.push_back(new ByteField("Kind",0,0));
     Fields.push_back(new ByteField("Length",0,1));
 }

@@ -58,12 +58,12 @@ void TCP::Craft() {
 		Layer* top_layer = GetTopLayer();
 		size_t option_length = 0;
 		size_t option_edo_ref = 0;
-		TCPOptionExtendedDataOffset* option_edo = NULL;
+		TCPEDO* option_edo = NULL;
 
 		if(top_layer) {
 			while( top_layer && ((top_layer->GetID() >> 8) == (TCPOption::PROTO >> 8))) {
-				if(!top_layer->GetName().compare("TCPOptionExtendedDataOffset")){
-					option_edo = (TCPOptionExtendedDataOffset*) top_layer;
+				if(!top_layer->GetName().compare("TCPEDO")){
+					option_edo = (TCPEDO*) top_layer;
 					option_edo_ref = option_length;
 				}
 				option_length += top_layer->GetSize();
