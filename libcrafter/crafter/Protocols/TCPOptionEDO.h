@@ -38,23 +38,23 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define TCPOPT_EDO_DEFAULT_LENGTH  6
 #endif
 
-#ifndef TCPOPT_EDOR_DEFAULT_LENGTH
-#define TCPOPT_EDOR_DEFAULT_LENGTH  2
+#ifndef TCPOPT_EDOREQUEST_DEFAULT_LENGTH
+#define TCPOPT_EDOREQUEST_DEFAULT_LENGTH  2
 #endif
 
 
 namespace Crafter {
 
-    class TCPOptionExtendedDataOffset: public TCPOptionLayer {
+    class TCPEDO: public TCPOptionLayer {
 
         void DefineProtocol();
 
         Constructor GetConstructor() const {
-            return TCPOptionExtendedDataOffset::TCPOptionExtendedDataOffsetConstFunc;
+            return TCPEDO::TCPEDOConstFunc;
         };
 
-        static Layer* TCPOptionExtendedDataOffsetConstFunc() {
-            return new TCPOptionExtendedDataOffset;
+        static Layer* TCPEDOConstFunc() {
+            return new TCPEDO;
         };
 
         void Craft();
@@ -69,7 +69,7 @@ namespace Crafter {
 
         static const word PROTO = 0x9006;
 
-        TCPOptionExtendedDataOffset();
+        TCPEDO();
 
         void SetKind(const byte& value) {
             SetFieldValue(FieldKind,value);
@@ -95,22 +95,22 @@ namespace Crafter {
             return GetFieldValue<word>(FieldHeader_length);
         };
 
-        ~TCPOptionExtendedDataOffset() { /* Destructor */ };
+        ~TCPEDO() { /* Destructor */ };
 
         static TCPOptionLayer* Build(int subopt);
 
     };
 
-     class TCPOptionExtendedDataOffsetRequest: public TCPOptionLayer {
+     class TCPEDORequest: public TCPOptionLayer {
 
         void DefineProtocol();
 
         Constructor GetConstructor() const {
-            return TCPOptionExtendedDataOffsetRequest::TCPOptionExtendedDataOffsetRequestConstFunc;
+            return TCPEDORequest::TCPEDORequestConstFunc;
         };
 
-        static Layer* TCPOptionExtendedDataOffsetRequestConstFunc() {
-            return new TCPOptionExtendedDataOffsetRequest;
+        static Layer* TCPEDORequestConstFunc() {
+            return new TCPEDORequest;
         };
 
         void Craft();
@@ -125,7 +125,7 @@ namespace Crafter {
 
         static const word PROTO = 0x9006;
 
-        TCPOptionExtendedDataOffsetRequest();
+        TCPEDORequest();
 
         void SetKind(const byte& value) {
             SetFieldValue(FieldKind,value);
@@ -143,7 +143,7 @@ namespace Crafter {
             return GetFieldValue<byte>(FieldLength);
         };
 
-        ~TCPOptionExtendedDataOffsetRequest() { /* Destructor */ };
+        ~TCPEDORequest() { /* Destructor */ };
 
     };
 

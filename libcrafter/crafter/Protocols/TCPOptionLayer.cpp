@@ -79,11 +79,10 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
 	case TCPOPT_EDO:
 		{
 			byte subopt = (info->raw_data + info->offset)[1];
-
 			if(subopt == TCPOPT_EDO_DEFAULT_LENGTH)
-				return new TCPOptionExtendedDataOffset;
-			else if(subopt == TCPOPT_EDOR_DEFAULT_LENGTH)
-				return new TCPOptionExtendedDataOffsetRequest;
+				return new TCPEDO;
+			else if(subopt == TCPOPT_EDOREQUEST_DEFAULT_LENGTH)
+				return new TCPEDORequest;
 			else
 				break;
 		}
