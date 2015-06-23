@@ -650,10 +650,6 @@ select:
 }
 
 void Packet::GetFilter(stringstream& filter) const {
-	IPLayer *ip_layer = GetLayer<IPLayer>();
-	if (!ip_layer)
-		return;
-
 	/*
 	 * Create a filter matching an expected answer
 	 */
@@ -674,6 +670,11 @@ void Packet::GetFilter(stringstream& filter) const {
 			if (str_filter != " ") filter << " and " << str_filter;
 		}
 		filter << ")";
+	}
+
+	IPLayer *ip_layer = GetLayer<IPLayer>();
+	if (!ip_layer) {
+		return;
 	}
 
 	/*
