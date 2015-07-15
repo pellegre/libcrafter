@@ -65,7 +65,7 @@ void ICMPv6Layer::Craft() {
 	Layer* bottom_ptr = GetBottomLayer();
 
 	while(bottom_ptr && (bottom_ptr->GetID() != IPv6::PROTO))
-		bottom_ptr = ((ICMPv6Layer*) bottom_ptr)->GetBottomLayer();
+        bottom_ptr = bottom_ptr->GetBottomLayer();
 
 	if(bottom_ptr) bottom_layer = bottom_ptr->GetID();
 

@@ -64,7 +64,7 @@ void ICMPExtensionObject::Craft() {
     while (layer && layer->GetName() != "ICMPExtensionObject") {
         length += layer->GetSize();
         /* Trick to make every sibling class a friend :) */
-        layer = ((ICMPExtensionObject*) layer)->GetTopLayer();
+        layer = layer->GetTopLayer();
     }
     SetLength(GetSize() + length);
 }

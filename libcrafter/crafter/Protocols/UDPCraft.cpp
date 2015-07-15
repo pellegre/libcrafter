@@ -56,7 +56,7 @@ void UDP::Craft() {
 	Layer* bottom_ptr = GetBottomLayer();
 
 	while(bottom_ptr && (bottom_ptr->GetID() != IP::PROTO) && (bottom_ptr->GetID() != IPv6::PROTO))
-		bottom_ptr = ((UDP*) bottom_ptr)->GetBottomLayer();
+        bottom_ptr = bottom_ptr->GetBottomLayer();
 
 	if(bottom_ptr)  bottom_layer = bottom_ptr->GetID();
 
