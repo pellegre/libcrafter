@@ -108,7 +108,7 @@ void ICMPv6::Craft() {
         while (layer && layer->GetName() != "ICMPExtension") {
             length += layer->GetSize();
             /* Cheat: every sibling is a friend ;) */
-            layer = ((ICMPv6*) layer)->GetTopLayer();
+            layer = layer->GetTopLayer();
         }
         SetLength(length / 8);
     }

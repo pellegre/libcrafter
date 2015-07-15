@@ -65,7 +65,7 @@ void IP::Craft() {
 				/* Get the option data */
 				if(option_length <= MAXOPT) top_layer->GetRawData(ip_data + IPHDRSIZE + last_opt_length);
 				/* Go to next layer */
-				top_layer = ((IP *)top_layer)->GetTopLayer();
+                top_layer = top_layer->GetTopLayer();
 			}
 		}
 

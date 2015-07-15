@@ -158,7 +158,7 @@ void ICMP::Craft() {
 		while (layer && layer->GetName() != "ICMPExtension") {
 			length += layer->GetSize();
 			/* Trick to make every sibling class a friend :) */
-			layer = ((ICMP*) layer)->GetTopLayer();
+            layer = layer->GetTopLayer();
 		}
 		SetLength(length / 4);
 	}

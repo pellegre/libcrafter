@@ -87,7 +87,7 @@ namespace Crafter {
 		 */
 		short_word CheckBinding() const;
 
-	protected:
+    protected:
 
 		friend void CraftLayer(Layer* layer);
 
@@ -169,19 +169,9 @@ namespace Crafter {
 			BottomLayer = bottom_layer;
 		};
 
-		/* Get pointer to the layer on bottom */
-		Layer *GetBottomLayer() const {
-			return BottomLayer;
-		};
-
 		/* Put a Layer on the bottom of this one */
 		void PushTopLayer(Layer* top_layer) {
 			TopLayer = top_layer;
-		};
-
-		/* Get pointer to the layer on top */
-		Layer *GetTopLayer() const {
-			return TopLayer;
 		};
 
 		/* Get the remaining packet size in bytes */
@@ -343,6 +333,18 @@ namespace Crafter {
 
 		size_t GetFieldsSize() const { return Fields.size(); };
 		FieldInfo* GetField(int i) const { return Fields[i]; };
+
+        /* --------------- Move between layers ------------- */
+
+        /* Get pointer to the layer on bottom */
+        Layer *GetBottomLayer() const {
+            return BottomLayer;
+        };
+
+        /* Get pointer to the layer on top */
+        Layer *GetTopLayer() const {
+            return TopLayer;
+        };
 
 		/* --------------------------------------------------- */
 
