@@ -66,7 +66,8 @@ IPOptionLayer* IPOptionLayer::Build(int opt) {
 
 void IPOptionLayer::ParseLayerData(ParseInfo* info) {
 	/* Update the information of the IP options */
-	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
+	IPOptionLayer::ExtraInfo* extra_info =
+		static_cast<IPOptionLayer::ExtraInfo*>(info->extra_info);
 	if(!extra_info) {
 		info->top = 1;
 		return;

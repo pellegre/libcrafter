@@ -42,7 +42,7 @@ void IPOptionPointer::Craft() {
 
 void IPOptionPointer::ParseLayerData(ParseInfo* info) {
 	/* Update the information of the IP options */
-	IPOptionLayer::ExtraInfo* extra_info = reinterpret_cast<IPOptionLayer::ExtraInfo*>(info->extra_info);
+	IPOptionLayer::ExtraInfo* extra_info = static_cast<IPOptionLayer::ExtraInfo*>(info->extra_info);
 	if(!extra_info) {
 		info->top = 1;
 		return;

@@ -42,7 +42,8 @@ void IPOption::Craft() {
 
 void IPOption::ParseLayerData(ParseInfo* info) {
 	/* Update the information of the IP options */
-	IPOptionLayer::ExtraInfo* extra_info = reinterpret_cast<IPOptionLayer::ExtraInfo*>(info->extra_info);
+	IPOptionLayer::ExtraInfo* extra_info =
+		static_cast<IPOptionLayer::ExtraInfo*>(info->extra_info);
 
 	if(!extra_info) {
 		/* Is trying to parse from an IPOption layer? Get the hell out of here... */
