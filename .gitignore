@@ -37,6 +37,10 @@ make.errors
 .cproject
 *~
 
+# VIM swap file #
+#################
+*.swp
+
 # OS generated files #
 ######################
 .DS_Store*
