@@ -223,10 +223,9 @@ void ICMP::ParseLayerData(ParseInfo* info) {
 
         	/* Put extra information for the RawLayer */
         	Layer* next_layer = Protocol::AccessFactory()->GetLayerByID(ICMPExtension::PROTO);
-        	info->extra_info = reinterpret_cast<void*>(new RawLayer::ExtraInfo(
-        			                                   info->raw_data + info->offset,
-        			        		                   icmp_length,
-        			        		                   next_layer));
+        	info->extra_info =
+				new RawLayer::ExtraInfo(info->raw_data + info->offset,
+						icmp_length, next_layer);
 
         	return;
         }

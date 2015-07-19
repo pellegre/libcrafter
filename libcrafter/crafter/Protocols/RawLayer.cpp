@@ -131,7 +131,8 @@ const RawLayer RawLayer::operator+(const RawLayer& right) const{
 
 void RawLayer::ParseLayerData(ParseInfo* info) {
 	/* Get the extra information, this is s sandwich RawLayer */
-	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
+	RawLayer::ExtraInfo* extra_info =
+		static_cast<RawLayer::ExtraInfo*>(info->extra_info);
 	if(!extra_info) {
 		/* Set payload */
 		SetPayload(info->raw_data,info->total_size - info->offset);

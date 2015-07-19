@@ -188,7 +188,7 @@ void TCP::ParseLayerData(ParseInfo* info) {
 		/* Information for the decoder */
 		int opt = (info->raw_data + info->offset)[0];
 		info->next_layer = TCPOptionLayer::Build(opt, info);
-		info->extra_info = reinterpret_cast<void*>(extra_info);
+		info->extra_info = extra_info;
 	} else
 		info->next_layer = 0;
 

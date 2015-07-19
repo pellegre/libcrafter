@@ -141,7 +141,7 @@ void IP::ParseLayerData(ParseInfo* info) {
 		/* Information for the decoder */
 		int opt = (info->raw_data + info->offset)[0];
 		info->next_layer = IPOptionLayer::Build(opt);
-		info->extra_info = reinterpret_cast<void*>(extra_info);
+		info->extra_info = extra_info;
 	} else {
 		info->next_layer = Protocol::AccessFactory()->GetLayerByID(network_layer);
 	}

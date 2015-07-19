@@ -145,17 +145,18 @@ void ICMPv6::ParseLayerData(ParseInfo* info) {
         icmp_length = 128;
 
     /* According to RFC4884, specific types with a length field set have extensions */
-    if ((icmp_type == ICMPv6::DestinationUnreachable || icmp_type == ICMPv6::TimeExceeded) && icmp_length > 0) {
+    if ((icmp_type == ICMPv6::DestinationUnreachable
+				|| icmp_type == ICMPv6::TimeExceeded)
+			&& icmp_length > 0) {
         if (length >= icmp_length) {
             /* Set the next layer as a RawLayer  (sandwich layer) */
             info->next_layer = Protocol::AccessFactory()->GetLayerByID(RawLayer::PROTO);
 
             /* Put extra information for the RawLayer */
             Layer* next_layer = Protocol::AccessFactory()->GetLayerByID(ICMPExtension::PROTO);
-            info->extra_info = reinterpret_cast<void*>(new RawLayer::ExtraInfo(
-                                                           info->raw_data + info->offset,
-                                                           icmp_length,
-                                                           next_layer));
+            info->extra_info =
+				new RawLayer::ExtraInfo(info->raw_data + info->offset,
+                                       icmp_length, next_layer);
             return;
         }
     }

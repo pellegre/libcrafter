@@ -70,12 +70,6 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
 	case TCPOPT_SACK           : return new TCPOptionSACK;
 	case TCPOPT_WINDOW         : return new TCPOptionWindowScale;
 	case TCPOPT_TFO            : return new TCPOptionFastOpen;
-	case TCPOPT_MPTCP:
-		{
-			byte subopt = (info->raw_data + info->offset)[2] >> 4;
-			return TCPOptionMPTCP::Build(subopt);
-			break;
-		}
 	case TCPOPT_EDO:
 		{
 			byte subopt = (info->raw_data + info->offset)[1];
@@ -87,6 +81,8 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
 				break;
 		}
 	}
+    case TCPOPT_MPTCP          :
+		return TCPOptionMPTCP::Build((info->raw_data + info->offset)[2] >> 4);
 
 	/* Generic Option Header */
 	return new TCPOption;
@@ -94,7 +90,7 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
 
 void TCPOptionLayer::ParseLayerData(ParseInfo* info) {
 	/* Update the information of the IP options */
-	ExtraInfo* extra_info = reinterpret_cast<ExtraInfo*>(info->extra_info);
+	ExtraInfo* extra_info = static_cast<ExtraInfo*>(info->extra_info);
 	if(!extra_info) {
 		info->top = 1;
 		return;
