@@ -46,11 +46,11 @@ namespace Crafter {
 
         void DefineProtocol();
 
-        void Craft();
+        virtual void Craft();
 
         void ReDefineActiveFields();
 
-        void ParseLayerData(ParseInfo* info);
+        virtual void ParseLayerData(ParseInfo* info);
 
         static const byte FieldKind = 0;
         static const byte FieldLength = 1;
@@ -69,7 +69,7 @@ namespace Crafter {
             SetFieldValue(FieldKind,value);
         };
 
-        void SetLength(const byte& value) {
+        virtual void SetLength(const byte& value) {
             SetFieldValue(FieldLength,value);
         };
 
@@ -174,6 +174,83 @@ namespace Crafter {
 
         ~TCPOptionFastOpen() { /* Destructor */ };
 
+    };
+
+#ifndef TCPOPT_EDO
+#define TCPOPT_EDO  237 // 0x0EDO
+#endif
+
+	class TCPOptionEDO: public TCPOption {
+
+        Constructor GetConstructor() const {
+            return TCPOptionEDO::TCPEDOConstFunc;
+        };
+
+        static Layer* TCPEDOConstFunc() {
+            return new TCPOptionEDO;
+        };
+
+        void Craft() { UpdateLengths(); };
+
+        void ParseLayerData(ParseInfo* info);
+
+        static const byte FieldKind = 0;
+        static const byte FieldLength = 1;
+
+		short_word header_length;
+		short_word segment_length;
+
+        void UpdateLengths();
+
+		void PrintPayload(std::ostream& str) const;
+
+    public:
+
+        static const word PROTO = 0x900a;
+
+		/* The different size in bytes for the EDO variant */
+		static const byte EDOREQUEST;
+		static const byte EDO;
+		static const byte EDOEXT;
+
+        TCPOptionEDO(byte length = TCPOptionEDO::EDOREQUEST);
+
+		TCPOptionEDO(const TCPOptionEDO& edo) { SetLength(edo.GetLength()); }
+
+		TCPOptionEDO& operator=(const TCPOptionEDO& right) {
+			SetLength(right.GetLength());
+			return *this;
+		}
+
+		Layer& operator=(const Layer& right) {
+			if (GetName() != right.GetName())
+				throw std::runtime_error("Cannot convert "
+                        + right.GetName() + " to " + GetName());
+			return TCPOptionEDO::operator=(
+                    dynamic_cast<const TCPOptionEDO&>(right));
+		}
+
+        void SetLength(const byte& value) {
+			if (value == TCPOptionEDO::EDOREQUEST
+					|| value == TCPOptionEDO::EDO
+					|| value == TCPOptionEDO::EDOEXT) {
+				SetFieldValue(FieldLength,value);
+			} else {
+				PrintMessage(Crafter::PrintCodes::PrintWarning,
+							"TCPOptionEDO::SetLength",
+							"Requested Length is invalid, ignoring");
+			}
+        };
+
+        short_word  GetHeaderLength() const {
+            return header_length;
+        };
+
+		short_word  GetSegmentLength() const {
+            return segment_length;
+        };
+
+		~TCPOptionEDO() { /* Destructor */ };
     };
 }
 

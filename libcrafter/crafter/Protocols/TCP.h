@@ -47,8 +47,6 @@ namespace Crafter {
 
         std::string MatchFilter() const ;
 
-        void ReDefineActiveFields();
-
         void ParseLayerData(ParseInfo* info);
 
         static const byte FieldSrcPort = 0;
@@ -169,6 +167,9 @@ namespace Crafter {
         };
 
         ~TCP() { /* Destructor */ };
+
+        /* Return the size of the following TCPOptions */
+        size_t ComputeOptionSize() const;
 
     };
 

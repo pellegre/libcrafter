@@ -50,7 +50,6 @@ TCPOption::TCPOption() {
     SetLength(2);
 
     ResetFields();
-
 }
 
 void TCPOption::DefineProtocol() {
@@ -67,7 +66,6 @@ TCPOptionSACKPermitted::TCPOptionSACKPermitted() {
     SetLength(2);
 
     ResetFields();
-
 }
 
 TCPOptionSACK::TCPOptionSACK() {
@@ -79,7 +77,6 @@ TCPOptionSACK::TCPOptionSACK() {
     SetLength(2);
 
     ResetFields();
-
 }
 
 TCPOptionFastOpen::TCPOptionFastOpen() {
@@ -91,5 +88,14 @@ TCPOptionFastOpen::TCPOptionFastOpen() {
     SetLength(2);
 
     ResetFields();
+}
 
+TCPOptionEDO::TCPOptionEDO(byte length) : TCPOption() {
+	SetName("TCPOptionEDO");
+    SetprotoID(TCPOptionEDO::PROTO);
+
+    SetKind(TCPOPT_EDO);
+    SetLength(length);
+
+    ResetFields();
 }

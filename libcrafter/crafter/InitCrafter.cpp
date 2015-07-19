@@ -118,13 +118,9 @@ void Crafter::InitCrafter() {
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optts_dummy);
 
-	TCPEDO optedo_dummy;
+	TCPOptionEDO optedo_dummy;
 	/* Register the protocol, this is executed only once */
 	Protocol::AccessFactory()->Register(&optedo_dummy);
-
-	TCPEDORequest optedor_dummy;
-	/* Register the protocol, this is executed only once */
-	Protocol::AccessFactory()->Register(&optedor_dummy);
 
 	TCPOptionFastOpen tfo_dummy;
 	/* Register the protocol, this is executed only once */

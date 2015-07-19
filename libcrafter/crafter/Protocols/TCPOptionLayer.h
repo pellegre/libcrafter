@@ -29,11 +29,13 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define TCPOPTIONLAYER_H_
 
 #include "../Layer.h"
+#include "TCP.h"
 
 namespace Crafter {
 
     class TCPOptionLayer: public Layer {
 
+    protected:
     	void ParseLayerData(ParseInfo* info);
 
     public:
@@ -45,7 +47,8 @@ namespace Crafter {
     		Layer* next_layer;
     		/* Remaining option length */
     		int optlen;
-            int optlen_origin;
+			/* The Length of TCP header in internet words */
+			size_t header_len;
     	};
 
         virtual void SetKind(const byte& value) = 0;
