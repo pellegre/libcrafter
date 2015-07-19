@@ -31,7 +31,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "TCPOptionTimestamp.h"
 #include "TCPOptionWindowScale.h"
 #include "TCPOptionMPTCP.h"
-#include "TCPOptionEDO.h"
 #include <netinet/tcp.h>
 
 using namespace Crafter;
@@ -70,19 +69,13 @@ TCPOptionLayer* TCPOptionLayer::Build(int opt, ParseInfo *info) {
 	case TCPOPT_SACK           : return new TCPOptionSACK;
 	case TCPOPT_WINDOW         : return new TCPOptionWindowScale;
 	case TCPOPT_TFO            : return new TCPOptionFastOpen;
-	case TCPOPT_EDO:
-		{
-			byte subopt = (info->raw_data + info->offset)[1];
-			if(subopt == TCPOPT_EDO_DEFAULT_LENGTH)
-				return new TCPEDO;
-			else if(subopt == TCPOPT_EDOREQUEST_DEFAULT_LENGTH)
-				return new TCPEDORequest;
-			else
-				break;
-		}
-	}
     case TCPOPT_MPTCP          :
 		return TCPOptionMPTCP::Build((info->raw_data + info->offset)[2] >> 4);
+    case TCPOPT_EDO            :
+		/* We're not extracting the length to determine the subtype here,
+		 * as it messes with the perceived size in ParseLayerData */
+		return new TCPOptionEDO;
+    }
 
 	/* Generic Option Header */
 	return new TCPOption;

@@ -15,7 +15,7 @@ ACLOCAL_AMFLAGS = ${ACLOCAL_FLAGS}
 ## file (.so).
 lib_LTLIBRARIES = libcrafter.la
 
-## Define the source file list for the "libcrafter.la" target.  
+## Define the source file list for the "libcrafter.la" target.
 ## The file extension .cpp is recognized by Automake, and makes it produce
 ## rules which invoke the C++ compiler to produce a libtool object file (.lo)
 ## from each source file.  Note that it is not necessary to list header files
@@ -77,8 +77,6 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/TCPOptionTimestampCraft.cpp \
 						crafter/Protocols/TCPOptionWindowScaleConstructor.cpp \
 						crafter/Protocols/TCPOptionWindowScaleCraft.cpp \
-						crafter/Protocols/TCPOptionEDOConstructor.cpp \
-						crafter/Protocols/TCPOptionEDOCraft.cpp \
 						crafter/Protocols/TCPOptionMPTCPConstructor.cpp \
 						crafter/Protocols/TCPOptionMPTCPCraft.cpp \
 						crafter/Protocols/ICMPConstructor.cpp \
@@ -115,8 +113,8 @@ libcrafter_la_SOURCES = crafter/Layer.cpp \
 						crafter/Protocols/ICMPv6LayerCraft.cpp \
 						crafter/Protocols/ICMPv6Constructor.cpp \
 						crafter/Protocols/ICMPv6Craft.cpp \
-						crafter/Protocols/ICMPLayer.cpp 
-																		
+						crafter/Protocols/ICMPLayer.cpp
+
 ## Instruct libtool to include ABI version information in the generated shared
 ## library file (.so).  The library ABI version is defined in configure.ac, so
 ## that all version information is kept in one place.
@@ -176,7 +174,6 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/TCPOptionMPTCP.h \
 								crafter/Protocols/TCPOptionTimestamp.h \
 								crafter/Protocols/TCPOptionWindowScale.h \
-								crafter/Protocols/TCPOptionEDO.h \
 								crafter/Protocols/ICMP.h \
 								crafter/Protocols/ICMPExtension.h \
 								crafter/Protocols/ICMPExtensionMPLS.h \
@@ -194,8 +191,8 @@ nobase_crafter_include_HEADERS =crafter.h \
 								crafter/Protocols/NullLoopback.h \
 						        crafter/Protocols/ICMPv6Layer.h \
 						        crafter/Protocols/ICMPv6.h \
-						        crafter/Protocols/ICMPLayer.h						        
-								
+						        crafter/Protocols/ICMPLayer.h
+
 ## The generated configuration header is installed in its own subdirectory of
 ## $(libdir).  The reason for this is that the configuration information put
 ## into this header file describes the target platform the installed library
@@ -218,8 +215,8 @@ pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = crafter.pc
 
 ## Put additional flags, including libpcap linking information
-AM_CPPFLAGS = $(PCAPINC) 
-AM_CXXFLAGS = -ansi -pedantic -Wall 
+AM_CPPFLAGS = $(PCAPINC)
+AM_CXXFLAGS = -ansi -pedantic -Wall
 
 ## Define an independent executable script for inclusion in the distribution
 ## archive.  However, it will not be installed on an end user's system due to

@@ -29,7 +29,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "IP.h"
 #include "IPv6.h"
 #include "TCPOption.h"
-#include "TCPOptionEDO.h"
 
 using namespace Crafter;
 using namespace std;
@@ -43,7 +42,23 @@ const byte TCP::URG = 1 << 5;
 const byte TCP::ECE = 1 << 6;
 const byte TCP::CWR = 1 << 7;
 
-void TCP::ReDefineActiveFields() {
+size_t TCP::ComputeOptionSize() const {
+    Layer* top_layer = GetTopLayer();
+    size_t option_length = 0;
+
+    if(top_layer) {
+        while(top_layer
+              && ((top_layer->GetID() >> 8) == (TCPOption::PROTO >> 8))) {
+            option_length += top_layer->GetSize();
+            top_layer = top_layer->GetTopLayer();
+        }
+    }
+
+    if(option_length%4 != 0)
+        PrintMessage(Crafter::PrintCodes::PrintWarning,
+                     "TCP::Craft()",
+                     "Option size is not padded to a multiple of 4 bytes.");
+    return option_length;
 }
 
 void TCP::Craft() {
@@ -55,35 +70,7 @@ void TCP::Craft() {
 
 	/* Check the options and update header length */
 	if (!IsFieldSet(FieldDataOffset)) {
-		Layer* top_layer = GetTopLayer();
-		size_t option_length = 0;
-		size_t option_edo_ref = 0;
-		TCPEDO* option_edo = NULL;
-
-		if(top_layer) {
-			while( top_layer && ((top_layer->GetID() >> 8) == (TCPOption::PROTO >> 8))) {
-				if(!top_layer->GetName().compare("TCPEDO")){
-					option_edo = (TCPEDO*) top_layer;
-					option_edo_ref = option_length;
-				}
-				option_length += top_layer->GetSize();
-				top_layer = ((TCP *)top_layer)->GetTopLayer();
-			}
-		}
-
-		if(option_length%4 != 0)
-			PrintMessage(Crafter::PrintCodes::PrintWarning,
-					     "TCP::Craft()",
-				         "Option size is not padded to a multiple of 4 bytes.");
-		if(!option_edo){
-			SetDataOffset(5 + option_length/4);
-		}else{
-			/* Check if AO Option (not added yet) */
-			/* Is a padding needed since EDO should be last option related by DataOffset*/
-			SetDataOffset(5 + option_edo_ref/4 + 2);
-			option_edo->SetHeader_length(5 + option_length/4);
-		}
-
+        SetDataOffset(5 + ComputeOptionSize()/4);
 		ResetField(FieldDataOffset);
 	}
 
@@ -93,7 +80,7 @@ void TCP::Craft() {
 	Layer* bottom_ptr = GetBottomLayer();
 
 	while(bottom_ptr && (bottom_ptr->GetID() != IP::PROTO) && (bottom_ptr->GetID() != IPv6::PROTO))
-		bottom_ptr = ((TCP*) bottom_ptr)->GetBottomLayer();
+        bottom_ptr = bottom_ptr->GetBottomLayer();
 
 	if(bottom_ptr)  bottom_layer = bottom_ptr->GetID();
 
@@ -172,18 +159,17 @@ string TCP::MatchFilter() const {
 void TCP::ParseLayerData(ParseInfo* info) {
 	/* Verify if there are options on the IP header */
 	size_t TCP_word_size = GetDataOffset();
-
 	/* Get options size */
 	size_t TCP_opt_size = 0;
 	if(TCP_word_size > 5) TCP_opt_size = 4 * (TCP_word_size - 5);
 
 	/* We have a valid set of options */
 	if (TCP_opt_size > 0) {
-		/* Extra information for IP options */
+		/* Extra information for TCP options */
 		TCPOptionLayer::ExtraInfo* extra_info = new TCPOptionLayer::ExtraInfo;
 		extra_info->optlen = TCP_opt_size;
-		extra_info->optlen_origin = TCP_opt_size;
 		extra_info->next_layer = 0;
+        extra_info->header_len = TCP_word_size;
 
 		/* Information for the decoder */
 		int opt = (info->raw_data + info->offset)[0];

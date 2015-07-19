@@ -59,7 +59,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Protocols/TCPOptionWindowScale.h"
 #include "Protocols/TCPOptionPad.h"
 #include "Protocols/TCPOptionMPTCP.h"
-#include "Protocols/TCPOptionEDO.h"
 
 /* IPv4 Protocol Implementation */
 #include "Protocols/IP.h"
