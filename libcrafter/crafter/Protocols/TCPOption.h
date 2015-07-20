@@ -215,10 +215,15 @@ namespace Crafter {
 
         TCPOptionEDO(byte length = TCPOptionEDO::EDOREQUEST);
 
-		TCPOptionEDO(const TCPOptionEDO& edo) { SetLength(edo.GetLength()); }
+		TCPOptionEDO(const TCPOptionEDO& edo) :
+			header_length(edo.header_length),
+			segment_length(edo.segment_length)
+		{ SetLength(edo.GetLength()); }
 
 		TCPOptionEDO& operator=(const TCPOptionEDO& right) {
 			SetLength(right.GetLength());
+			header_length = right.header_length;
+			segment_length = right.segment_length;
 			return *this;
 		}
 
