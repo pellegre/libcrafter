@@ -58,7 +58,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x2c;
+        enum { PROTO = 0x2c };
 
         IPv6FragmentationHeader();
 

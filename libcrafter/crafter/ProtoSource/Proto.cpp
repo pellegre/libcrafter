@@ -117,7 +117,7 @@ void Proto::PrintHdr() const {
 	Printline(out,"public:",1);
 	Newline(out);
 
-	Printline(out,"static const word PROTO = " + toString(protoID) + ";",2);
+	Printline(out,"enum { PROTO = " + toString(protoID) + "; }",2);
 	Newline(out);
 
 	Printline(out,"" + protoName +  "();",2);
