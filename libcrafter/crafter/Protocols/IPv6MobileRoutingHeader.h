@@ -58,13 +58,13 @@ namespace Crafter {
         size_t GetRoutingPayloadSize() const { return 0; }
         /* Nothing to do here */
         void FillRoutingPayload(byte *payload) const { (void)payload; }
-    
+
     public:
 
-        static const word PROTO = 0x2b02;
+        enum { PROTO = 0x2b02 };
 
         IPv6MobileRoutingHeader();
-        
+
         IPv6MobileRoutingHeader(const IPv6MobileRoutingHeader& mrh)
             : IPv6RoutingHeader(mrh) { };
 
@@ -76,7 +76,7 @@ namespace Crafter {
 
 		Layer& operator=(const Layer& right) {
 			if (GetName() != right.GetName())
-				throw std::runtime_error("Cannot convert " 
+				throw std::runtime_error("Cannot convert "
                         + right.GetName() + " to " + GetName());
 			return IPv6MobileRoutingHeader::operator=(
                     dynamic_cast<const IPv6MobileRoutingHeader&>(right));

@@ -191,7 +191,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x2b04;
+        enum { PROTO = 0x2b04 };
 
         std::vector<segment_t> Segments;
 

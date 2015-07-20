@@ -63,7 +63,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x2b00;
+		enum { PROTO = 0x2b00 };
 
         IPv6RoutingHeader(const size_t &hdr_size=4,
                                const char *layer_name="IPv6RoutingHeader",

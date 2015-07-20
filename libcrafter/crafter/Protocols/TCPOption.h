@@ -206,7 +206,7 @@ namespace Crafter {
 
     public:
 
-        static const word PROTO = 0x900a;
+        enum { PROTO = 0x900a };
 
 		/* The different size in bytes for the EDO variant */
 		static const byte EDOREQUEST;
