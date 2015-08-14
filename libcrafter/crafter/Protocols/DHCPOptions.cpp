@@ -163,7 +163,7 @@ map<int,string> DHCPOptions::mess_table = create_mes_map(); /* Please compiler, 
 
 /* -------- DHCP Options */
 
-DHCPOptions::DHCPOptions(short_word code, string tag) : code(code), tag(tag) { }
+DHCPOptions::DHCPOptions(short_word code, string tag) : code(code), tag(tag), fake_size(0) { }
 
 Payload DHCPOptions::GetData() const {
 	/* Payload to return */
@@ -174,6 +174,9 @@ Payload DHCPOptions::GetData() const {
 
 	/* Get the length of the options */
 	byte net_length = data.GetSize();
+	if(fake_size) {
+		net_length = fake_size;
+	}
 	ret_payload.AddPayload((const byte*)&net_length,sizeof(byte));
 
 	/* Finally, concatenate the data */
@@ -192,7 +195,11 @@ void DHCPOptions::Print() const {
 	else
 		cout << "Code = " << code << " ; " ;
 
-	cout << "Length = " <<  data.GetSize() << " ; " ;
+	if(fake_size) {
+		cout << "Length = " <<  fake_size << " ; " ;
+	} else {
+		cout << "Length = " <<  data.GetSize() << " ; " ;
+	}
 	cout << "Data = ";
 	PrintData();
 	cout << " > " << endl;
@@ -300,6 +307,9 @@ void DHCPOptions::SetNumber(word value, byte type) {
 	SetFields();
 }
 
+void DHCPOptions::SetOptionSize(size_t sz) {
+	fake_size = sz;
+}
 
 DHCPOptions::~DHCPOptions() { }
 
