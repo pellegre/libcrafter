@@ -51,6 +51,8 @@ namespace Crafter {
 		short_word code;
 		/* A tag for know with what kind of option we are dealing */
 		std::string tag;
+		/* Fake size in case we want to create a malformed DHCP option */
+		byte fake_size;
 
 		/* Function that set the payload */
 		virtual void SetPayload() = 0;
@@ -194,8 +196,16 @@ namespace Crafter {
 		/* Print the options */
 		void Print() const;
 
-		/* Get the size of the options */
+		/* Get the size of the options (real size, should be used to parse) */
 		size_t GetSize() const { return data.GetSize() + 2; };
+
+		/* Get size on options (could be a bad one) */
+		size_t GetOptionSize() const {
+			if(fake_size) {
+				return fake_size + 2;
+			}
+			return data.GetSize() + 2;
+		}
 
 		/* Get the code associated to this option */
 		byte GetCode() const { return code; };
@@ -228,6 +238,9 @@ namespace Crafter {
 
 		/* Set a number as DHCP data */
 		void SetNumber(word value, byte type);
+
+		/* Set option size */
+		void SetOptionSize(size_t sz);
 
 		virtual ~DHCPOptions();
 	};
