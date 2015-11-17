@@ -371,7 +371,7 @@ Crafter::Layer::Layer(const Layer& layer) {
 	protoID = layer.protoID;
 
 	/* Equal size */
-	allocate_bytes(layer.size);
+	if(layer.size) allocate_bytes(layer.size);
 
 	/* Copy the fields from the other layer */
 	Fields = layer.Fields;
@@ -461,6 +461,5 @@ word Crafter::RNG32() {return 2 * rand(); }
 
 Crafter::Layer::~Layer() {
 	/* Delete memory allocated */
-	if (size)
-		delete [] raw_data;
+	delete [] raw_data;
 }
