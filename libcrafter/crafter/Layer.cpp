@@ -359,7 +359,7 @@ size_t Crafter::Layer::GetPayload(byte* dst) const {
 
 Crafter::Layer::Layer() : size(0), bytes_size(0), raw_data(0), BottomLayer(0), TopLayer(0) { }
 
-Crafter::Layer::Layer(const Layer& layer) {
+Crafter::Layer::Layer(const Layer& layer) : raw_data(0) {
 	/* Put size to zero */
 	size = 0;
 	/* Init bottom and top layer pointer */
@@ -371,7 +371,7 @@ Crafter::Layer::Layer(const Layer& layer) {
 	protoID = layer.protoID;
 
 	/* Equal size */
-	allocate_bytes(layer.size);
+	if(layer.size) allocate_bytes(layer.size);
 
 	/* Copy the fields from the other layer */
 	Fields = layer.Fields;
@@ -404,8 +404,8 @@ Layer& Crafter::Layer::operator=(const Layer& right) {
 
 void Crafter::Layer::Clone(const Layer& layer) {
 	/* Delete memory allocated */
-	if (size)
-		delete [] raw_data;
+	delete [] raw_data;
+	raw_data = 0;
 
 	/* Put size to zero */
 	size = 0;
@@ -461,6 +461,5 @@ word Crafter::RNG32() {return 2 * rand(); }
 
 Crafter::Layer::~Layer() {
 	/* Delete memory allocated */
-	if (size)
-		delete [] raw_data;
+	delete [] raw_data;
 }
