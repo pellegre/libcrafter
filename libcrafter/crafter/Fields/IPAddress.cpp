@@ -37,8 +37,8 @@ using namespace Crafter;
 
 IPAddress::IPAddress(const std::string& name, size_t nword, size_t nbyte) :
 					 Field<std::string> (name,nword,nbyte*8,8*sizeof(word)),
-					 nword(nword), nbyte(nbyte) {
-	offset = nword * 4 + nbyte;
+					 nword(nword), nbyte(nbyte), offset(nword * 4 +nbyte) {
+	human = "0.0.0.0";
 }
 
 void IPAddress::SetField(const string& ip_address) {
