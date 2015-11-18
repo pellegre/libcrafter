@@ -33,8 +33,8 @@ using namespace Crafter;
 
 IPv6Address::IPv6Address(const std::string& name, size_t nword, size_t nbyte) :
 					     Field<std::string> (name,nword,nbyte*8,48),
-					     nword(nword), nbyte(nbyte) {
-	offset = nword * 4 + nbyte;
+					     nword(nword), nbyte(nbyte), offset(nword * 4 + nbyte){
+	human = "::";
 }
 
 void IPv6Address::SetField(const string& ip_address) {
