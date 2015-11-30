@@ -1,9 +1,8 @@
 = Introduction =
 
-Libcrafter is a high level library for C++ designed to facilitate the creation 
-and decoding of network packets. It is able to craft or decode packets of most 
-common networks protocols, send them on the wire, capture them and match 
-requests and replies.
+Libcrafter is a high level library for C++ designed to create and decode network 
+packets. It is able to craft or decode packets of most common networks protocols, 
+send them on the wire, capture them and match requests and replies.
 It enables the creation of networking tools in a few lines with a interface 
 very similar to Scapy. 
 A packet is  described as layers that you stack one upon the other. Fields of 
@@ -57,10 +56,7 @@ TCP options, UDP and DNS
 
 IEEE802.11 coming soon!
 
-The primary developer of Libcrafter is Esteban Pellegrino. Contributions from 
-libcrafter's users:
+= License =
 
-* Bruno Nery : support ICMP extension (rfc4884) and MPLS extensions (rfc4950) 
-  for ICMPv6 and ICMPv4.
-* Joao Antunes : Several bug fixes
-* Lance Alt Performance enhancements for the GetPayload methods
+This project is licensed under the terms of the new BSD license (see LICENSE file 
+for more details)
