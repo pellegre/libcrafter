@@ -476,7 +476,8 @@ int Packet::SocketSend(int sd) {
 	return SocketSender::SendSocket(sd,current_id,raw_data,bytes_size);
 }
 
-Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int retry, const string& user_filter) {
+Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout,
+		int retry, const string& user_filter) {
 	char libcap_errbuf[PCAP_ERRBUF_SIZE];      /* Error messages */
 
 	/* Name of the device */
@@ -505,15 +506,18 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 
 	if (current_id != Ethernet::PROTO &&
 		current_id != IP::PROTO       &&
-		current_id != IPv6::PROTO     && user_filter == " ") {
+		current_id != IPv6::PROTO     &&
+		user_filter == " ") {
 
 		/* Print a warning message */
 		PrintMessage(Crafter::PrintCodes::PrintWarning,
 					 "Packet::SocketSendRecv()",
-					 "The first layer in the stack (" + Stack[0]->GetName() + ") is not IP or Ethernet.");
+					 "The first layer in the stack (" +
+					 Stack[0]->GetName() + ") is not IP or Ethernet.");
 
 		/* Write the packet on the wire */
-		if(SocketSender::SendSocket(raw, current_id, raw_data, bytes_size) < 0) {
+		if(SocketSender::SendSocket(raw, current_id,
+									raw_data, bytes_size) < 0) {
 			PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
 						 "Packet::SocketSendRecv()",
 						 "Sending packet (PF_PACKET socket)");
@@ -521,35 +525,20 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout, int
 		return 0;
 	}
 
-	/* Set error buffer to 0 length string to check for warnings */
-	libcap_errbuf[0] = 0;
+	/* Open device for sniffing, in promisc mode, no read delay */
+	handle = pcap_open_live (device, BUFSIZ, 1, -1, libcap_errbuf);
+	if (handle == NULL)
+	  /* There was an error */
+		throw std::runtime_error("Packet::SocketSendRecv() : Listening device "
+								 + string(libcap_errbuf));
 
-	/* Open device for sniffing */
-	handle = pcap_open_live (device,  /* device to sniff on */
-						     BUFSIZ,  /* maximum number of bytes to capture per packet */
-									  /* BUFSIZE is defined in stdio.h (recommended buffer value for host) */
-				                  1,  /* promisc - 1 to set card in promiscuous mode, 0 to not */
-		        				  1,  /* to_ms - amount of time to delay a read */
-									  /* 0 = sniff until error */
-				      libcap_errbuf); /* error message buffer if something goes wrong */
 #ifdef HAVE_PCAP_SET_IMMEDIATE_MODE
 	pcap_set_immediate_mode(handle, 1); /* We want the response ASAP */
 #endif
+
 	if (pcap_setnonblock(handle, 1, libcap_errbuf)) {
 		PrintMessage(Crafter::PrintCodes::PrintWarning,
-					     "Packet::SocketSendRecv()",
-			              string(libcap_errbuf));
-
-	  libcap_errbuf[0] = 0;    /* re-set error buffer */
-	}
-
-	if (handle == NULL)
-	  /* There was an error */
-		throw std::runtime_error("Packet::SocketSendRecv() : Listening device " + string(libcap_errbuf));
-
-	if (strlen (libcap_errbuf) > 0) {
-			PrintMessage(Crafter::PrintCodes::PrintWarning,
-					     "Packet::SocketSendRecv()",
+					     "Packet::SocketSendRecv() : Non blocking",
 			              string(libcap_errbuf));
 
 	  libcap_errbuf[0] = 0;    /* re-set error buffer */
