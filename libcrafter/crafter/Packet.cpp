@@ -632,6 +632,7 @@ select:
 		}
 		if ((packet = pcap_next(handle, &header))) {
 			match_packet->PacketFromLinkLayer(packet, header.len, link_type);
+			memcpy(&match_packet->ts, &header.ts, sizeof(header.ts));
 			success = 1;
 			break;
 		}
