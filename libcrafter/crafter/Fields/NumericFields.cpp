@@ -287,7 +287,7 @@ void Int64Field::Write(byte* raw_data) const {
 }
 
 void Int64Field::Read(const byte* raw_data){
-	word* ptr = (word*)(raw_data + offset);
+	uint64_t* ptr = (uint64_t*)(raw_data + offset);
 	human = ntohll(*ptr);
 }
 
