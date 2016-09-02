@@ -243,10 +243,12 @@ Packet::Packet(const Packet& copy_packet) : raw_data(0), bytes_size(0), pre_craf
 }
 
 Packet::Packet(const byte* data, size_t length, short_word proto_id) : raw_data(0), bytes_size(0), pre_crafted(0) {
+	ts.tv_sec = 0; ts.tv_usec = 0;
 	GetFromLayer(data,length,proto_id);
 }
 
 Packet::Packet(const RawLayer& data, short_word proto_id) : raw_data(0), bytes_size(0), pre_crafted(0) {
+	ts.tv_sec = 0; ts.tv_usec = 0;
 	GetFromLayer(data.GetPayload().GetRawPointer(),data.GetSize(),proto_id);
 }
 
@@ -305,6 +307,7 @@ Packet& Packet::operator=(const Layer& right) {
 
 /* Copy Constructor */
 Packet::Packet(const Layer& copy_layer) : raw_data(0), bytes_size(0), pre_crafted(0) {
+	ts.tv_sec = 0; ts.tv_usec = 0;
 	/* Push layer one by one */
 	PushLayer(copy_layer);
 }

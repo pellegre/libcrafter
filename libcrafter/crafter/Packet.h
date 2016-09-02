@@ -81,7 +81,7 @@ namespace Crafter {
 		typedef void ((*PacketHandler)(Packet*,void*));
 
 		/* Constructor */
-		Packet() : raw_data(0), bytes_size(0), pre_crafted(0) { /* */ };
+		Packet() : raw_data(0), bytes_size(0), pre_crafted(0) { ts.tv_sec = 0; ts.tv_usec = 0; };
 		Packet(timeval  ts) : raw_data(0), bytes_size(0), pre_crafted(0), ts(ts) { /* */ };
 		Packet(const byte* data, size_t length, short_word proto_id);
 		Packet(const RawLayer& data, short_word proto_id);
