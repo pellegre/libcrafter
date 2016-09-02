@@ -46,6 +46,11 @@ static T fromString(const std::string& str) {
 	return t;
 }
 
+int Packet::ToWire(int raw, word current_id, byte *raw_data, size_t bytes_size) {
+	gettimeofday(&this->ts, NULL);
+	return SocketSender::SendSocket(raw, current_id, raw_data, bytes_size);
+}
+
 void Packet::HexDump(ostream& str) {
 	if(!pre_crafted)
 		Craft();
@@ -214,7 +219,7 @@ const Layer* Packet::operator[](size_t pos) const {
 }
 
 Packet Packet::SubPacket(LayerStack::const_iterator begin, LayerStack::const_iterator end) const {
-	Packet pck;
+	Packet pck(ts);
 	LayerStack::const_iterator it = begin;
 	for(; it != end ; it++)
 		pck.PushLayer(*(*it));
@@ -222,7 +227,7 @@ Packet Packet::SubPacket(LayerStack::const_iterator begin, LayerStack::const_ite
 }
 
 Packet Packet::SubPacket(size_t begin, size_t end) const {
-	Packet pck;
+	Packet pck(ts);
 	for(size_t i = begin; i < end ; i++)
 		pck.PushLayer(*(Stack[i]));
 	return pck;
@@ -305,7 +310,7 @@ Packet::Packet(const Layer& copy_layer) : raw_data(0), bytes_size(0), pre_crafte
 }
 
 const Packet Packet::operator/(const Layer& right) const {
-	Packet ret_packet;
+	Packet ret_packet(ts);
 
 	vector<Layer*>::const_iterator it_const;
 
@@ -318,7 +323,7 @@ const Packet Packet::operator/(const Layer& right) const {
 }
 
 const Packet Packet::operator/(const Packet& right) const {
-	Packet ret_packet;
+	Packet ret_packet(ts);
 
 	vector<Layer*>::const_iterator it_const;
 
@@ -430,7 +435,7 @@ int Packet::Send(const string& iface) {
 	/* ------------ End Critical area ----------------- */
 
 	/* Write the packet on the wire */
-	return SocketSender::SendSocket(raw, current_id, raw_data, bytes_size);
+	return ToWire(raw, current_id, raw_data, bytes_size);
 }
 
 /* Send a packet */
@@ -473,7 +478,7 @@ int Packet::SocketSend(int sd) {
 
 	word current_id = Stack[0]->GetID();
 
-	return SocketSender::SendSocket(sd,current_id,raw_data,bytes_size);
+	return ToWire(sd,current_id,raw_data,bytes_size);
 }
 
 Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout,
@@ -516,7 +521,7 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout,
 					 Stack[0]->GetName() + ") is not IP or Ethernet.");
 
 		/* Write the packet on the wire */
-		if(SocketSender::SendSocket(raw, current_id,
+		if(ToWire(raw, current_id,
 									raw_data, bytes_size) < 0) {
 			PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
 						 "Packet::SocketSendRecv()",
@@ -594,7 +599,7 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout,
 		struct timeval tv = { (int)timeout, (((int)(timeout*1000)) % 1000) * 1000 };
 
 		/* Write the packet on the wire */
-		if(SocketSender::SendSocket(raw, current_id, raw_data, bytes_size) < 0) {
+		if(ToWire(raw, current_id, raw_data, bytes_size) < 0) {
 			PrintMessage(Crafter::PrintCodes::PrintWarningPerror,
 						 "Packet::SocketSendRecv()",
 						 "Sending packet ");
@@ -621,7 +626,7 @@ select:
 		}
 		if ((packet = pcap_next(handle, &header))) {
 			match_packet->PacketFromLinkLayer(packet, header.len, link_type);
-			memcpy(&match_packet->ts, &header.ts, sizeof(header.ts));
+			match_packet->SetTimestamp(header.ts);
 			success = 1;
 			break;
 		}
