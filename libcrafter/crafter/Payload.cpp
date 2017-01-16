@@ -36,7 +36,7 @@ void Payload::SetPayload (const byte *data, size_t ndata) {
 }
 
 /* Add more stuff to the payload */
-void Payload::AddPayload (const byte* data, size_t ndata) {	
+void Payload::AddPayload (const byte* data, size_t ndata) {
 	storage.insert(storage.end(), data, data + ndata);
 }
 
@@ -58,6 +58,10 @@ void Payload::SetPayload (const Payload& payload) {
 
 void Payload::AddPayload (const Payload& payload) {
 	storage.insert(storage.end(), payload.storage.begin(), payload.storage.end());
+}
+
+const byte* Payload::GetPayload() const {
+	return &storage[0];
 }
 
 /* Copy the data into the pointer and returns the number of bytes copied */
