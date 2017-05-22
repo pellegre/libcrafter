@@ -111,7 +111,7 @@ void Crafter::BitsField<size,nbit>::Write(byte* raw_data) const {
     /* Write values [x,y] in bit sequence B0..x.y..Bn
      * and x,y are in a word made of bytes Bx..By */
     /* Shift by the right margin to have Bx..By.. aligned on y */
-    word value = htonl(human) << rightMargin;
+    word value = htonl(human << rightMargin);
 	const byte* field_data = (const byte*)(&value);
 	if (over_bytes) {
         /* Reset the previous bits of x (in case of multiple set) */
@@ -149,7 +149,7 @@ void Crafter::BitsField<size,nbit>::Read(const byte* raw_data) {
 	/* But exclude the low order bits of y */
     field_data[3] &= maskHigh;
     /* Shift back the value by the right margin */
-    human = ntohl(value >> rightMargin);
+    human = ntohl(value) >> rightMargin;
 }
 
 template<size_t size, size_t nbit>
