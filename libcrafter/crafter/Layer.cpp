@@ -260,10 +260,8 @@ size_t Crafter::Layer::GetData(byte* data) const {
 
 size_t Crafter::Layer::GetRawData(byte* data) const {
 	/* Copy the data */
-	if (raw_data) {
-		for (size_t i = 0 ; i < GetHeaderSize() ; i++)
-			data[i] = ((byte *)raw_data)[i];
-	}
+	if (raw_data)
+		memcpy(data,raw_data,GetHeaderSize());
 
 	/* Put Payload, if any */
 	size_t npayload = LayerPayload.GetPayload(data + GetHeaderSize());
