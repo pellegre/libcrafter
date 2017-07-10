@@ -75,7 +75,7 @@ int SocketSender::RequestSocket(const std::string& iface, word proto_id) {
 
 		/* If the user specify an interface, bind the socket to it */
 		if(iface.size() > 0)
-			BindRawSocketToInterface(interface.c_str(),raw);
+			BindRawSocketToInterface(interface,raw);
 
 	}
 
@@ -97,7 +97,7 @@ int SocketSender::RequestSocket(const std::string& iface, word proto_id) {
 
 		/* If the user specify an interface, bind the socket to it */
 		if(iface.size() > 0)
-			BindRawSocketToInterface(interface.c_str(),raw);
+			BindRawSocketToInterface(interface,raw);
 #endif
 
 	}
@@ -233,17 +233,13 @@ int Crafter::SocketSender::BindLinkSocketToInterface(const char *device, int raw
 	return 0;
 }
 
-int Crafter::SocketSender::BindRawSocketToInterface(const char *device, int s)
+int Crafter::SocketSender::BindRawSocketToInterface(const std::string &device,
+		int s)
 {
 	/* Bind to interface */
 #ifndef __APPLE__
-    ifreq Interface;
-    memset(&Interface, 0, sizeof(Interface));
-    strncpy(Interface.ifr_ifrn.ifrn_name, device, IFNAMSIZ);
-    if (ioctl(s, SIOCGIFINDEX, &Interface) < 0) {
-    	perror("BindRawSocketToInterface()");
-		throw std::runtime_error("Binding raw socket to interface");
-    }
+	/* See man 7 raw */
+	setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, device.c_str(), device.size());
 #endif
     return 0;
 }

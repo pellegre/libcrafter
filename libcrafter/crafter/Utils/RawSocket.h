@@ -78,7 +78,7 @@ namespace Crafter {
 		/* Raw sockets */
 		static int CreateRawSocket(word protocol_to_sniff = IPPROTO_RAW);
 		static int CreateRaw6Socket(word protocol_to_sniff = IPPROTO_RAW);
-		static int BindRawSocketToInterface(const char *device, int rawsock);
+		static int BindRawSocketToInterface(const std::string &device, int rawsock);
 
 		/* Write data on the wire */
 		static int SendLinkSocket(int rawsock, byte *pkt, size_t pkt_len);
