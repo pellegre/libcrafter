@@ -105,11 +105,11 @@ short_word Crafter::Layer::CheckBinding() const {
 	return next_proto;
 }
 
-short_word Crafter::CheckSum(short_word *buf, int nwords) {
+short_word Crafter::CheckSum(const short_word *buf, int nwords) {
 	unsigned long sum;
 
 	for(sum=0; nwords>0; nwords--)
-			sum += *buf++;
+			sum += *(buf++);
 
 	sum = (sum >> 16) + (sum &0xffff);
 

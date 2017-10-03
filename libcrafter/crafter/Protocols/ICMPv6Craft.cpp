@@ -30,8 +30,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "ICMPv6.h"
 #include "ICMPLayer.h"
-#include "ICMPExtension.h"
-#include "RawLayer.h"
 
 using namespace Crafter;
 using namespace std;
@@ -136,30 +134,13 @@ string ICMPv6::MatchFilter() const {
 
 void ICMPv6::ParseLayerData(ParseInfo* info) {
     word icmp_type = GetType();
-    word icmp_length = 8 * GetLength();
-    word length = info->total_size - info->offset;
-    /* Non-Compliant applications don't set the Length field. According to RFC4884,
-     * Compliant applications should assume no extensions in this case. However, it
-     * is advised to consider a 128-octet original datagram to keep compatibility. */
-    if (icmp_length == 0 && length > 128)
-        icmp_length = 128;
 
-    /* According to RFC4884, specific types with a length field set have extensions */
-    if ((icmp_type == ICMPv6::DestinationUnreachable
+	/* Per RFC 4884, §5.5/5.4, specific ICMP types may have extensions,
+	 * beside their "original datagram" field */
+    if (icmp_type == ICMPv6::DestinationUnreachable
 				|| icmp_type == ICMPv6::TimeExceeded)
-			&& icmp_length > 0) {
-        if (length >= icmp_length) {
-            /* Set the next layer as a RawLayer  (sandwich layer) */
-            info->next_layer = Protocol::AccessFactory()->GetLayerByID(RawLayer::PROTO);
-
-            /* Put extra information for the RawLayer */
-            Layer* next_layer = Protocol::AccessFactory()->GetLayerByID(ICMPExtension::PROTO);
-            info->extra_info =
-				new RawLayer::ExtraInfo(info->raw_data + info->offset,
-                                       icmp_length, next_layer);
-            return;
-        }
-    }
-    /* No more layers */
-    info->top = 1;
+		ICMPLayer::parseExtensionHeader(info, 8 * GetLength());
+	else
+		/* No more layers */
+		info->top = 1;
 }
