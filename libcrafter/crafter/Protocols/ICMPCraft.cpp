@@ -33,8 +33,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "ICMP.h"
 #include "ICMPLayer.h"
-#include "ICMPExtension.h"
-#include "RawLayer.h"
 
 using namespace Crafter;
 using namespace std;
@@ -152,7 +150,8 @@ void ICMP::ReDefineActiveFields() {
 void ICMP::Craft() {
 	/* Calculates the ICMP original payload length (RFC4884) */
 	word type = GetType();
-	if ( (type == DestinationUnreachable || type == TimeExceeded || type == ParameterProblem) && !IsFieldSet(FieldLength)) {
+	if ( (type == DestinationUnreachable || type == TimeExceeded ||
+				type == ParameterProblem) && !IsFieldSet(FieldLength)) {
 		word length = 0;
 		Layer* layer = GetTopLayer();
 		while (layer && layer->GetName() != "ICMPExtension") {
@@ -192,7 +191,8 @@ void ICMP::Craft() {
 string ICMP::MatchFilter() const {
 	short_word type = GetType();
 
-	if ( type == EchoRequest || type == TimeStampRequest || type == InformationRequest || type == AddressMaskRequest) {
+	if ( type == EchoRequest || type == TimeStampRequest ||
+			type == InformationRequest || type == AddressMaskRequest) {
 		short_word ident = GetIdentifier();
 		char str_ident[6];
 		sprintf(str_ident,"%d",ident);
@@ -205,33 +205,14 @@ string ICMP::MatchFilter() const {
 
 void ICMP::ParseLayerData(ParseInfo* info) {
     word icmp_type = GetType();
-    word icmp_length = 4 * GetLength();
-    word length = info->total_size - info->offset;
-    /* Non-Compliant applications don't set the Length field. According to RFC4884,
-     * Compliant applications should assume no extensions in this case. However, it
-     * is advised to consider a 128-octet original datagram to keep compatibility. */
-    if (icmp_length == 0 && length > 128)
-        icmp_length = 128;
 
-    /* According to RFC4884, specific types with a length field set have extensions */
-    if (( icmp_type == ICMP::DestinationUnreachable || icmp_type == ICMP::TimeExceeded ||
-    	  icmp_type == ICMP::ParameterProblem) && icmp_length > 0) {
-
-        if (length >= icmp_length) {
-        	/* Set the next layer as a RawLayer  (sandwich layer) */
-        	info->next_layer = Protocol::AccessFactory()->GetLayerByID(RawLayer::PROTO);
-
-        	/* Put extra information for the RawLayer */
-        	Layer* next_layer = Protocol::AccessFactory()->GetLayerByID(ICMPExtension::PROTO);
-        	info->extra_info =
-				new RawLayer::ExtraInfo(info->raw_data + info->offset,
-						icmp_length, next_layer);
-
-        	return;
-        }
-
-    }
-
-	/* No more layers */
-	info->top = 1;
+	/* Per RFC 4884, §5.5/5.4, specific ICMP types may have extensions,
+	 * beside their "original datagram" field */
+    if (icmp_type == ICMP::DestinationUnreachable ||
+			icmp_type == ICMP::TimeExceeded ||
+			icmp_type == ICMP::ParameterProblem)
+		ICMPLayer::parseExtensionHeader(info, 4 * GetLength());
+    else
+		/* No more layers */
+		info->top = 1;
 }

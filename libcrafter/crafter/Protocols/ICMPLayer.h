@@ -18,6 +18,8 @@ namespace Crafter {
 		/* Map common type numbers to the derived class */
 		virtual byte MapTypeNumber(short_word type) = 0;
 
+		void parseExtensionHeader(ParseInfo *info, word payload_len);
+
 	public:
 
 		/* ------- Messages types common to ICMPv4 and ICMPv6 --------- */
