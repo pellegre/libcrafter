@@ -91,6 +91,9 @@ namespace Crafter {
 			/* Concatenate to raw layers */
 			const RawLayer operator+(const RawLayer& right) const;
 
+			/* The underlying data of the layer */
+			const byte * GetRawPointer() const;
+
 			virtual ~RawLayer() { };
 		};
 
