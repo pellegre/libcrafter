@@ -160,10 +160,11 @@ void ICMP::Craft() {
             layer = layer->GetTopLayer();
 		}
 		SetLength(length / 4);
+		if (layer->GetName() == "ICMPExtension" && (length < 128 || length % 4))
+			PrintMessage(PrintCodes::PrintWarning,
+					"Missing padding bytes between ICMP "
+					"payload and extensions! (see RFC4884)");
 	}
-        /* TODO: respect section 3. Summary of RFC4884: original datagram MUST
-           contain at least 128 octets, original datagram MUST be zero padded to
-           32-bit boundary */
 
 	if (!IsFieldSet(FieldCheckSum)) {
 
