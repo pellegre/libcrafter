@@ -152,9 +152,14 @@ void RawLayer::ParseLayerData(ParseInfo* info) {
 	extra_info = 0;
 }
 
+const byte* RawLayer::GetRawPointer() const
+{
+	return LayerPayload.GetRawPointer();
+}
+
 Pad::Pad(byte value, size_t times) {
     byte* pad_data = new byte[times];
     memset(pad_data,value,times*sizeof(byte));
     SetPayload(pad_data,times);
-    delete pad_data;
+    delete[] pad_data;
 }
