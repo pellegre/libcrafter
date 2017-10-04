@@ -47,13 +47,15 @@ void ICMPLayer::parseExtensionHeader(ParseInfo *info, word payload_len)
 		 * If the application detects a valid version and checksum, it
 		 * will treat the octets that follow as an extension structure.*/
 		payload_len = length;
-		if (payload_len >= 144) {
+		if (payload_len >= 144 - 8) {
 			/* The 144-octet sum is derived from 8 octets for the first two
 			 * words of the ICMPv4 Time Exceeded message, 128 octets for
 			 * the "original datagram" field, 4 octets for the ICMP
 			 * Extension Header, and 4 octets for a single ICMP Object
 			 * header.  All of these octets would be required if extensions
-			 * were present. */
+			 * were present.
+			 * BUT info->offset already accounts for the 8 octets for the
+			 * first two words of the ICMP message, hence the substraction. */
 			byte *ext_hdr = (byte *)(info->raw_data + info->offset + 128);
 			byte version = (*ext_hdr) >> 4;
 			/* Checksum: 16 bits. The one's complement of the one's
