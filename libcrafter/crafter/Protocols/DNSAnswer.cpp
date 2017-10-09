@@ -128,14 +128,10 @@ again:
 #endif
 
 DNS::DNSAnswer::DNSAnswer(const string& qname, const string& rdata) : qname(qname), rdata(rdata) {
-	/* Check the size */
-	if(qname.size() != 0) {
-		/* Compress the name */
-		qnamelength = CompressName();
-		rdatalength = CompressRData();
-		/* Update the size of the raw data */
-		size = 3 * sizeof(short_word) + sizeof(word) + qnamelength + rdatalength;
-	}
+
+	qnamelength = CompressName();
+	rdatalength = CompressRData();
+	size = 3 * sizeof(short_word) + sizeof(word) + qnamelength + rdatalength;
 	SetType(DNS::TypeA);
 	SetClass(DNS::ClassIN);
 	SetTTL(0x58);
@@ -213,7 +209,8 @@ string DNS::DNSAnswer::GetRData() const {
 
 size_t DNS::DNSAnswer::CompressName() {
 	/* Put data into the buffer */
-	int nbytes = ns_name_compress(qname.c_str(),cqname,NS_MAXCDNAME,0,0);
+	int nbytes = ns_name_compress(qname.c_str(), cqname, sizeof(cqname), NULL,
+			NULL);
 	if(nbytes == -1)
 		throw std::runtime_error("DNSAnswer::CompressName() : Error compressing the domain name provided");
 	else
@@ -227,7 +224,8 @@ size_t DNS::DNSAnswer::CompressName() {
 size_t DNS::DNSAnswer::CompressRData() {
 	if (rdata.find_first_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIKKLMNOPQRSTUVWXYZ") != std::string::npos) {
 		/* Put data into the buffer */
-		int nbytes = ns_name_compress(rdata.c_str(),crdata,NS_MAXCDNAME,0,0);
+		int nbytes = ns_name_compress(rdata.c_str(), crdata, sizeof(crdata),
+				NULL,  NULL);
 		if(nbytes == -1)
 			throw std::runtime_error("DNSAnswer::CompressRData() : Error compressing the domain name provided");
 		else

@@ -84,8 +84,8 @@ void DNS::Craft() {
 		payload_size += (*it_add).GetSize();
 
 	/* Create the raw data to add as a payload */
-	byte* raw_payload = new byte[payload_size];
-	byte* cpy_ptr = raw_payload;
+	byte *raw_payload = new byte[payload_size];
+	byte *cpy_ptr = raw_payload;
 
 	/* Iterate through each Query and write the raw data */
 	for(it_query  = Queries.begin() ; it_query != Queries.end() ; it_query++) {
@@ -119,12 +119,12 @@ void DNS::Craft() {
 	/* Set the payload of the layer */
 	SetPayload(raw_payload,payload_size);
 
-	delete [] raw_payload;
+	delete[] raw_payload;
 }
 
 void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_msg* handle) {
 	/* Allocate memory for buffer */
-	char* buff = new char[MAXDNAME];
+	char buff[MAXDNAME];
 
 	/* Parse the Answers */
 	for(size_t i = 0 ; i < ns_msg_count(*handle,section) ; i++) {
@@ -146,35 +146,17 @@ void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_
         /* String for the RData */
         string rdata;
 
-        if(qtype == DNS::TypeA) {
-        	/* Parse the IP address */
-        	const byte* rdata_ptr = ns_rr_rdata(rr);
+        if (qtype == DNS::TypeA || qtype == DNS::TypeAAAA) {
+			/* Parse the IP address */
+			const byte* rdata_ptr = ns_rr_rdata(rr);
 
-			struct sockaddr_in local_address;
-			memcpy(&local_address.sin_addr, rdata_ptr, sizeof(struct in_addr));
-			char str[INET_ADDRSTRLEN];
-			inet_ntop(AF_INET, &local_address.sin_addr, str, INET_ADDRSTRLEN);
-        	/* Convert it into a IP string */
-        	rdata = string(str);
-
-        } else if(qtype == DNS::TypeAAAA) {
-
-        	/* Parse the IP address */
-        	const byte* rdata_ptr = ns_rr_rdata(rr);
-
-			struct sockaddr_in6 addr;
-			memcpy(&addr.sin6_addr, rdata_ptr, sizeof(struct in6_addr));
-			char addressBuffer[INET6_ADDRSTRLEN];
-			inet_ntop(AF_INET6, &addr.sin6_addr, addressBuffer, INET6_ADDRSTRLEN);
-
-        	/* Convert it into a IP string */
-        	rdata = string(addressBuffer);
-
+			char str[INET6_ADDRSTRLEN];
+			inet_ntop(qtype == DNS::TypeA ? AF_INET : AF_INET6, rdata_ptr,
+					str, sizeof(str));
+			rdata = string(str);
 		} else if(qtype == DNS::TypeOPT) {
-
-        	/* NO data */
+			/* NO data */
 			rdata="";
-
 		} else {
 
 			/* Expand the name domain name */
@@ -204,8 +186,6 @@ void SetContainerSection(vector<DNS::DNSAnswer>& container, ns_sect section, ns_
 
         container.push_back(dns_answer);
 	}
-
-	delete [] buff;
 }
 
 void DNS::PrintPayload(ostream& str) const {
@@ -233,23 +213,12 @@ void DNS::PrintPayload(ostream& str) const {
 
 }
 
-void DNS::FromRaw(const RawLayer& raw_layer) {
-	/* Get size of the raw layer */
-	size_t data_size = raw_layer.GetSize();
-
-	/* Copy all the data */
-	byte* data = new byte[data_size];
-	raw_layer.GetData(data);
-
-	/* Create the header */
-	PutData(data);
-
+void DNS::ParseFromBuffer(const byte *buf, size_t len)
+{
 	/* Initialize the response parser */
 	ns_msg handle;
-	if (ns_initparse(data,data_size,&handle) < 0)
-		throw std::runtime_error("DNS::FromRaw() : Error initializing the parsing routines");
-
-	char* buff = new char[MAXDNAME];
+	if (ns_initparse(buf, len, &handle) < 0)
+		throw std::runtime_error("DNS::ParseFromBuffer() : Error initializing the parsing routines");
 
 	/* First, parse the queries... Simple */
 	for(size_t i = 0 ; i < GetTotalQuestions() ; i++) {
@@ -257,7 +226,7 @@ void DNS::FromRaw(const RawLayer& raw_layer) {
 		ns_rr rr;
 		/* Parse the data */
 		if (ns_parserr(&handle,ns_s_qd,i,&rr) < 0)
-			throw std::runtime_error("DNS::FromRaw() : Error Parsing the Queries");
+			throw std::runtime_error("DNS::ParseFromBuffer() : Error Parsing the Queries");
 		/* Set the Query name */
         string qname = string(ns_rr_name(rr));
         /* Create a DNS Query and push it into the container */
@@ -270,54 +239,27 @@ void DNS::FromRaw(const RawLayer& raw_layer) {
         Queries.push_back(dns_query);
 	}
 
-	delete [] buff;
-
 	SetContainerSection(Answers,ns_s_an,&handle);
 	SetContainerSection(Authority,ns_s_ns,&handle);
 	SetContainerSection(Additional,ns_s_ar,&handle);
 
-	delete [] data;
-
+	/* Kept from earlier ParseLayerInfo implementation, not sure why needed ? */
 	Craft();
+}
 
+void DNS::FromRaw(const RawLayer& raw_layer) {
+	if (raw_layer.GetSize() < GetHeaderSize())
+		throw std::runtime_error("Cannot construct a DNS header from a too "
+				"short RawLayer!");
+	/* Parse the header */
+	PutData(raw_layer.GetRawPointer());
+	/* Parse the rest of it */
+	ParseFromBuffer(raw_layer.GetRawPointer(), raw_layer.GetSize());
 }
 
 void DNS::ParseLayerData(ParseInfo* info) {
-	/* Initialize the response parser */
-	ns_msg handle;
-	if (ns_initparse(info->raw_data + info->offset - GetHeaderSize(),
-			         info->total_size - info->offset + GetHeaderSize(),&handle) < 0)
-		throw std::runtime_error("DNS::ParseLayerData() : Error initializing the parsing routines");
-
-	char* buff = new char[MAXDNAME];
-
-	/* First, parse the queries... Simple */
-	for(size_t i = 0 ; i < GetTotalQuestions() ; i++) {
-		/* RR data structure */
-		ns_rr rr;
-		/* Parse the data */
-		if (ns_parserr(&handle,ns_s_qd,i,&rr) < 0)
-			throw std::runtime_error("DNS::ParseLayerData() : Error Parsing the Queries");
-		/* Set the Query name */
-        string qname = string(ns_rr_name(rr));
-        /* Create a DNS Query and push it into the container */
-        DNSQuery dns_query(qname);
-        /* Set the class */
-        dns_query.SetClass(ns_rr_class(rr));
-        /* Set the type */
-        dns_query.SetType(ns_rr_type(rr));
-
-        Queries.push_back(dns_query);
-	}
-
-	delete [] buff;
-
-	SetContainerSection(Answers,ns_s_an,&handle);
-	SetContainerSection(Authority,ns_s_ns,&handle);
-	SetContainerSection(Additional,ns_s_ar,&handle);
-
-	Craft();
-
+	ParseFromBuffer(info->raw_data + info->offset - GetHeaderSize(),
+			info->total_size - info->offset + GetHeaderSize());
 	info->offset = info->total_size;
 	/* No more layers, default */
 	info->top = 1;
