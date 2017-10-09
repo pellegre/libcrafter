@@ -37,14 +37,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 using namespace std;
 using namespace Crafter;
 
-DNS::DNSQuery::DNSQuery(const string& qname) : qname(qname) {
-	/* Check the size */
-	if(qname.size() != 0) {
-		/* Compress the name */
-		size_t nbytes = Compress();
-		/* Update the size of the raw data */
-		size = 2 * sizeof(short_word) + nbytes;
-	}
+DNS::DNSQuery::DNSQuery(const string& qname) {
+	SetName(qname);
 	SetType(DNS::TypeA);
 	SetClass(DNS::ClassIN);
 }
@@ -91,7 +85,8 @@ size_t DNS::DNSQuery::GetSize() const {
 
 size_t DNS::DNSQuery::Compress() {
 	/* Put data into the buffer */
-	int nbytes = ns_name_compress(qname.c_str(),cqname,NS_MAXCDNAME,0,0);
+	int nbytes = ns_name_compress(qname.c_str(), cqname, sizeof(cqname) , NULL,
+			NULL);
 	if(nbytes == -1)
 		throw std::runtime_error("DNS::DNSQuery::Compress() : Error compressing the domain name provided");
 	else
@@ -102,9 +97,7 @@ size_t DNS::DNSQuery::Compress() {
 
 size_t DNS::DNSQuery::Write(byte* data_ptr) const {
 	/* Write the query into the buffer, should correctly allocated */
-	for(size_t i = 0 ; i < (size - 2 * sizeof(short_word)) ; i++) {
-		data_ptr[i] = cqname[i];
-	}
+	memcpy(data_ptr, cqname, size - 2 * sizeof(short_word));
 
 	data_ptr += (size - 2 * sizeof(short_word));
 	/* Put type */
