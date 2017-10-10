@@ -109,7 +109,8 @@ void ICMPv6::Craft() {
             layer = layer->GetTopLayer();
         }
         SetLength(length / 8);
-		if (layer->GetName() == "ICMPExtension" && (length < 128 || length % 8))
+		if (layer && layer->GetName() == "ICMPExtension"
+				&& (length < 128 || length % 8))
 			PrintMessage(PrintCodes::PrintWarning,
 					"Missing padding bytes between ICMP "
 					"payload and extensions! (see RFC 4884)");
