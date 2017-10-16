@@ -533,8 +533,8 @@ Packet* Packet::SocketSendRecv(int raw, const string& iface, double timeout,
 		return 0;
 	}
 
-	/* Open device for sniffing, in promisc mode, no read delay */
-	handle = pcap_open_live (device, BUFSIZ, 1, -1, libcap_errbuf);
+	/* Open device for sniffing, in promisc mode, packet buffer delay of 1ms */
+	handle = pcap_open_live (device, 65535, 1, 1, libcap_errbuf);
 	if (handle == NULL)
 	  /* There was an error */
 		throw std::runtime_error("Packet::SocketSendRecv() : Listening device "
