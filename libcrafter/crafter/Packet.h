@@ -119,7 +119,8 @@ namespace Crafter {
 
 		/* Put raw data on array and returns the number of bytes copied */
 		size_t GetData(byte* raw_ptr);
-		/* Get a pointer to the raw buffer inside the packet (which holds the crafted data) */
+		/* Get a pointer to the raw buffer inside the packet (which holds the crafted data)
+		 * This will cause Craft() to be called if the packet has not yet been crafted! */
 		const byte* GetRawPtr();
 		/* Get a pointer to the raw buffer inside the packet (this is a const method, without crafting the data) */
 		const byte* GetBuffer() const;
