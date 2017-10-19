@@ -162,7 +162,7 @@ namespace Crafter {
 		Packet* SocketSendRecv(int sd, const std::string& iface = "",double timeout = 1, int retry = 3, const std::string& user_filter = " ");
 		template<class Pointer>
 		void SocketSendRecvPtr(int sd, const std::string& iface, double timeout, int retry, const std::string& user_filter, Pointer& ptr);
-		void GetFilter(std::stringstream& out) const;
+		void GetFilter(std::ostream& out) const;
 
 		/* Print each layer of the packet */
 		void Print(std::ostream& str) const;
