@@ -647,7 +647,7 @@ select:
 	}
 }
 
-void Packet::GetFilter(stringstream& filter) const {
+void Packet::GetFilter(ostream& filter) const {
 	/*
 	 * Create a filter matching an expected answer
 	 */
