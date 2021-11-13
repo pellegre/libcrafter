@@ -42,6 +42,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <map>
 #include <set>
 #include <netinet/in.h>
+#include <sys/socket.h>
 
 #include "Fields/Field.h"
 #include "Payload.h"
