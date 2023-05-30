@@ -1,17 +1,26 @@
-= introduction =
+# Introduction
 
-libcrafter is a high level framework designed to perceive and materialize packets
-in networks of autonomous agents in space-time. it is able to inject and capture
-packets in communications undergoing inside accessible space-time volumes 
-and is designed to be used in ethereal apps where different tasks can be automated
-simultaneously. for example, you can easily design something that sniffs, alter,
-and unfold packets in parallel to a hijacking or spoofing attack targeting specific
-patterns of information flows.
+Libcrafter is a high level library for C++ designed to create and decode network 
+packets. It is able to craft or decode packets of most common networks protocols, 
+send them on the wire, capture them and match requests and replies.
 
-libcrafter is no longer maintained. we strongly suggest to go for an actively 
-developed and open alternative like [libtins](http://libtins.github.io/).
- 
-= license =
+It enables the creation of networking tools in a few lines with a interface 
+very similar to Scapy. 
+
+A packet is  described as layers that you stack one upon the other. Fields of 
+each layer have useful default values that you can overload.
+
+The library is designed to be used in multithreaded programs where you can 
+combine several tasks simultaneously. For example, you can easily design 
+something that sniffs, mangles, and sends at the same time you are doing 
+an ARP-Spoofing attack.
+
+It also contains a very naive implementation of the TCP/IP stack (fragmentation 
+is no handled yet) at user level that enables working with TCP streams. This 
+facilitates the creation of tools for data injection on arbitrary connections, 
+IP spoofing and TCP/IP session hijacking. 
+
+# License 
 
 libcrafter is licensed under the terms of the new BSD license (see LICENSE file 
 for more details)
