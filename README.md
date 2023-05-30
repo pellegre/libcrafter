@@ -15,11 +15,6 @@ combine several tasks simultaneously. For example, you can easily design
 something that sniffs, mangles, and sends at the same time you are doing 
 an ARP-Spoofing attack.
 
-It also contains a very naive implementation of the TCP/IP stack (fragmentation 
-is no handled yet) at user level that enables working with TCP streams. This 
-facilitates the creation of tools for data injection on arbitrary connections, 
-IP spoofing and TCP/IP session hijacking. 
-
 # License 
 
 libcrafter is licensed under the terms of the new BSD license (see LICENSE file 
