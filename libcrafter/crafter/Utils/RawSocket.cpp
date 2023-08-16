@@ -27,14 +27,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <stdexcept>
 
-#if __APPLE__
-#include <fcntl.h>
-#include <net/bpf.h>
-#include <net/if_dl.h>
-#include <net/route.h>
-#endif
-
 #include "RawSocket.h"
+
 #include "PrintMessage.h"
 #include "../Layer.h"
 #include "../Protocols/IP.h"
@@ -80,7 +74,7 @@ int SocketSender::RequestSocket(const std::string& iface, word proto_id) {
 	}
 
 	else if(proto_id == IPv6::PROTO) {
-#if __APPLE__
+#ifdef _UNIX_COMPAT_
 		/* FreeBSD/Mac OSX does not allow the IP_HDRINCL option
 		 * on RAW IPv6 sockets. We therefore create a LL socket
 		 * that will build the correct Ethernet header when sending
@@ -125,7 +119,8 @@ int SocketSender::RequestSocket(const std::string& iface, word proto_id) {
 int Crafter::SocketSender::CreateLinkSocket(word protocol_to_sniff)
 {
 	int rawsock;
-#ifdef __APPLE__
+
+#ifdef _UNIX_COMPAT_
 	int i;
 
 	for (i = 0; i < 128; i++) {
@@ -188,7 +183,9 @@ int Crafter::SocketSender::CreateRaw6Socket(word protocol_to_sniff) {
 int Crafter::SocketSender::BindLinkSocketToInterface(const char *device, int rawsock, word protocol)
 {
 	struct ifreq ifr;
-#ifdef __APPLE__
+
+
+#ifdef _UNIX_COMPAT_
 	int i;
 
 	memset(&ifr, 0, sizeof(ifr));
@@ -237,7 +234,7 @@ int Crafter::SocketSender::BindRawSocketToInterface(const std::string &device,
 		int s)
 {
 	/* Bind to interface */
-#ifndef __APPLE__
+#ifndef _UNIX_COMPAT_
 	/* See man 7 raw */
 	setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, device.c_str(), device.size());
 #endif
@@ -259,7 +256,7 @@ int Crafter::SocketSender::SendRawSocket(int rawsock, struct sockaddr* din, size
 	return ret;
 }
 
-#ifdef __APPLE__
+#ifdef _UNIX_COMPAT_
 /* Resolve IPv6 destination address -> MAC address of gateway */
 
 #define NEXTSA(s) \
@@ -445,7 +442,7 @@ int Crafter::SocketSender::SendSocket(int rawsock, word proto_id, byte *pkt, siz
 	}
 
 	else if(proto_id == IPv6::PROTO) {
-#ifdef __APPLE__
+#ifdef _UNIX_COMPAT_
 		/* We need to build a complete Ethernet header*/
 		struct llhdr {
 			u_char dst[6];

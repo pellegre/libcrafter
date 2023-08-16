@@ -29,7 +29,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define CRAFTERGLOBAL_H_
 
 /* This is a main header - it includes everything else. */
-
 #include "crafter/Crafter.h"
 
 #include "crafter/Utils/CrafterUtils.h"

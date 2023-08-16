@@ -38,12 +38,20 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-#ifndef __APPLE__
+#ifdef __APPLE__
+    #define _UNIX_COMPAT_
+#endif
+
+#ifdef __FreeBSD__
+    #define _UNIX_COMPAT_
+#endif
+
+#ifndef _UNIX_COMPAT_
 #include <features.h>
 #include <linux/if_packet.h>
 #include <linux/if_ether.h>
 #else
-#define ETH_P_ALL 1
+	#define ETH_P_ALL 1
 #endif
 
 #include <cerrno>
@@ -54,6 +62,14 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unistd.h>
 
 #include "../Types.h"
+
+#ifdef _UNIX_COMPAT_
+	#include <fcntl.h>
+	#include <net/bpf.h>
+	#include <net/if_dl.h>
+	#include <net/route.h>
+#endif
+
 
 namespace Crafter {
 

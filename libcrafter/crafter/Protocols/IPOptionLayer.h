@@ -28,6 +28,20 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef IPOPTIONLAYER_H_
 #define IPOPTIONLAYER_H_
 
+#ifdef __APPLE__
+    #define _UNIX_COMPAT_
+#endif
+
+#ifdef __FreeBSD__
+    #define _UNIX_COMPAT_
+
+	#include <sys/socket.h>
+	#include <sys/types.h>
+	#include <netinet/in.h>
+
+#endif
+
+
 #include "../Layer.h"
 
 namespace Crafter {

@@ -24,7 +24,22 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#ifndef __APPLE__
+
+#ifdef __APPLE__
+    #define _UNIX_COMPAT_
+#endif
+
+#ifdef __FreeBSD__
+    #define _UNIX_COMPAT_
+
+	#include <sys/socket.h>
+	#include <sys/types.h>
+	#include <netinet/in.h>
+
+#endif
+
+
+#ifndef _UNIX_COMPAT_
 #include <netinet/ether.h>
 #else
 #include <netinet/if_ether.h>
@@ -87,7 +102,11 @@ struct ether_addr *ether_aton_r(const char *asc, struct ether_addr *addr)
 		}
 
 		/* Store result.  */
+		#ifdef __FreeBSD__
+		addr->octet[cnt] = (unsigned char) number;
+		#else
 		addr->ether_addr_octet[cnt] = (unsigned char) number;
+		#endif
 
 		/* Skip ':'.  */
 		++asc;
@@ -110,10 +129,18 @@ void MACAddress::Write(byte* raw_data) const {
 void MACAddress::Read(const byte* raw_data) {
 	const struct ether_addr * ptr = (const struct ether_addr *) (raw_data + offset);
 	char buf[19];
+		#ifdef __FreeBSD__
+	  sprintf (buf, "%02x:%02x:%02x:%02x:%02x:%02x",
+			  ptr->octet[0], ptr->octet[1],
+			  ptr->octet[2], ptr->octet[3],
+			  ptr->octet[4], ptr->octet[5]);
+		#else
 	  sprintf (buf, "%02x:%02x:%02x:%02x:%02x:%02x",
 			  ptr->ether_addr_octet[0], ptr->ether_addr_octet[1],
 			  ptr->ether_addr_octet[2], ptr->ether_addr_octet[3],
 			  ptr->ether_addr_octet[4], ptr->ether_addr_octet[5]);
+		#endif
+
 	buf[18] = 0;
 	human = string(buf);
 }

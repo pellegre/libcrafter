@@ -33,10 +33,22 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <netinet/in.h>
 #include <net/ethernet.h>
 #include <ifaddrs.h>
+
+
 #ifdef __APPLE__
+    #define _UNIX_COMPAT_
+#endif
+
+#ifdef __FreeBSD__
+    #define _UNIX_COMPAT_
+#endif
+
+
+#ifdef _UNIX_COMPAT_
 #include <net/if_dl.h>
 #include <net/if_types.h>
 #endif
+
 #include <net/if.h>
 
 #include "../Crafter.h"
@@ -85,10 +97,17 @@ string Crafter::GetMyMAC(const string& iface) {
 			struct ether_addr ptr;
 			memcpy(&ptr, &dl->sdl_data[dl->sdl_nlen], sizeof(struct ether_addr));
 			char buf[19];
+			#ifdef __FreeBSD__
+			sprintf (buf, "%02x:%02x:%02x:%02x:%02x:%02x",
+				 ptr.octet[0], ptr.octet[1],
+				 ptr.octet[2], ptr.octet[3],
+				 ptr.octet[4], ptr.octet[5]);
+			#else
 			sprintf (buf, "%02x:%02x:%02x:%02x:%02x:%02x",
 				 ptr.ether_addr_octet[0], ptr.ether_addr_octet[1],
 				 ptr.ether_addr_octet[2], ptr.ether_addr_octet[3],
 				 ptr.ether_addr_octet[4], ptr.ether_addr_octet[5]);
+			#endif
 			buf[18] = 0;
 			return string(buf);
 		}
