@@ -12,21 +12,7 @@ The library is designed to be used in multithreaded programs where you can
 combine several tasks simultaneously. For example, you can easily design 
 something that sniffs, mangles, and sends at the same time you are doing 
 an ARP-Spoofing attack.
-It also contains a very naive implementation of the TCP/IP stack (fragmentation 
-is no handled yet) at user level that enables working with TCP streams. This 
-facilitates the creation of tools for data injection on arbitrary connections, 
-IP spoofing and TCP/IP session hijacking. 
-
-You can find information and news about the project at:
-
-http://code.google.com/p/libcrafter/
-
-or you can follow the development of Libcrafter at:
-
-https://github.com/pellegre/libcrafter
-
-Libcrafter is also distributed in latest Backtrack releases. Examples are 
-frequently updated on:
+Examples are frequently updated on:
 
 https://github.com/pellegre/libcrafter-examples
 
