@@ -1,0 +1,10 @@
+[package]
+name = "crafter-net"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+crafter-core = { path = "../crafter-core" }

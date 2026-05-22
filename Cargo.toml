@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "crates/crafter-core",
+    "crates/crafter-pcap",
+    "crates/crafter-net",
+    "crates/crafter-live",
+    "crates/crafter",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
