@@ -1492,8 +1492,11 @@ fn checksum_context(
     ctx: LayerContext<'_>,
     transport_protocol: u8,
 ) -> Option<TransportChecksumContext> {
-    ctx.previous()
-        .and_then(|layer| layer.transport_checksum_context(transport_protocol))
+    (0..ctx.index()).rev().find_map(|index| {
+        ctx.packet()
+            .get(index)
+            .and_then(|layer| layer.transport_checksum_context(transport_protocol))
+    })
 }
 
 fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
