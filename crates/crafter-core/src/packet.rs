@@ -8,6 +8,7 @@ use core::ops::Div;
 use crate::checksum::{ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum};
 use crate::error::Result;
 use crate::protocols::ip::decode_ipv4_packet;
+use crate::protocols::ipv6::decode_ipv6_packet;
 use crate::protocols::link::{decode_ethernet, decode_linux_sll, decode_null_loopback};
 
 /// Pseudo-header context used by transport layers when auto-filling checksums.
@@ -500,7 +501,7 @@ impl Packet {
         match network_layer {
             NetworkLayer::Raw => Self::decode_raw(bytes),
             NetworkLayer::Ipv4 => decode_ipv4_packet(bytes),
-            NetworkLayer::Ipv6 => Self::decode_raw(bytes),
+            NetworkLayer::Ipv6 => decode_ipv6_packet(bytes),
         }
     }
 

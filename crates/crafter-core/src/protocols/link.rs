@@ -11,6 +11,7 @@ use crate::field::Field;
 use crate::mac::MacAddr;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw};
 use crate::protocols::ip::{append_ipv4_packet, Ipv4};
+use crate::protocols::ipv6::{append_ipv6_packet, Ipv6};
 
 /// Ethernet type for IPv4 payloads.
 pub const ETHERTYPE_IPV4: u16 = 0x0800;
@@ -1097,6 +1098,9 @@ fn append_ethertype_payload(mut packet: Packet, ethertype: u16, payload: &[u8]) 
         ETHERTYPE_IPV4 => {
             packet = append_ipv4_packet(packet, payload)?;
         }
+        ETHERTYPE_IPV6 => {
+            packet = append_ipv6_packet(packet, payload)?;
+        }
         _ => {
             packet = packet.push(Raw::from_bytes(payload));
         }
@@ -1176,6 +1180,8 @@ fn layer_ethertype(layer: &dyn Layer) -> Option<u16> {
         Some(ETHERTYPE_VLAN)
     } else if layer.as_any().is::<Ipv4>() {
         Some(ETHERTYPE_IPV4)
+    } else if layer.as_any().is::<Ipv6>() {
+        Some(ETHERTYPE_IPV6)
     } else {
         None
     }
