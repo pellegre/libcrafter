@@ -4,7 +4,7 @@
 
 use std::fmt;
 use std::io;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use crafter_core::{
@@ -17,6 +17,10 @@ use crafter_pcap::{PcapError, Sniffer};
 use pnet_datalink::{self as datalink, Channel, ChannelType};
 use pnet_packet::ip::IpNextHeaderProtocol;
 use pnet_transport::{transport_channel, TransportChannelType};
+
+mod utils;
+
+pub use utils::*;
 
 /// Result type returned by network helpers.
 pub type Result<T> = std::result::Result<T, NetError>;
@@ -39,6 +43,34 @@ pub enum NetError {
     InterfaceNotFound {
         /// Interface name supplied by the caller.
         name: String,
+    },
+    /// No non-loopback, up interface with an address was available.
+    NoDefaultInterface,
+    /// The selected interface has no MAC address in the local interface table.
+    InterfaceMacNotFound {
+        /// Interface name supplied by the caller or selected by default.
+        name: String,
+    },
+    /// The selected interface has no address for the requested family.
+    InterfaceAddressNotFound {
+        /// Interface name supplied by the caller or selected by default.
+        name: String,
+        /// Requested address family.
+        family: &'static str,
+    },
+    /// A target address, wildcard, CIDR, or number range could not be parsed safely.
+    InvalidIpRange {
+        /// User supplied range expression.
+        input: String,
+        /// Stable diagnostic reason.
+        reason: &'static str,
+    },
+    /// ARP resolution completed without a matching reply.
+    ArpResolutionTimedOut {
+        /// IPv4 target address.
+        target: Ipv4Addr,
+        /// Interface used for the request.
+        interface: String,
     },
     /// The packet stack cannot be sent with the requested mode.
     UnsupportedPacketShape {
@@ -69,6 +101,13 @@ pub enum NetError {
         len: usize,
     },
     /// A platform or permission error occurred while opening or writing a raw socket.
+    PermissionDenied {
+        /// Stable operation name.
+        operation: &'static str,
+        /// Underlying operating-system error.
+        source: io::Error,
+    },
+    /// A platform error occurred while opening or writing a raw socket.
     Io {
         /// Stable operation name.
         operation: &'static str,
@@ -88,6 +127,23 @@ impl fmt::Display for NetError {
                 write!(f, "invalid interface name '{name}': {reason}")
             }
             Self::InterfaceNotFound { name } => write!(f, "interface '{name}' was not found"),
+            Self::NoDefaultInterface => write!(
+                f,
+                "no usable default interface was found in the local interface table"
+            ),
+            Self::InterfaceMacNotFound { name } => {
+                write!(f, "interface '{name}' does not have a MAC address")
+            }
+            Self::InterfaceAddressNotFound { name, family } => {
+                write!(f, "interface '{name}' does not have a {family} address")
+            }
+            Self::InvalidIpRange { input, reason } => {
+                write!(f, "invalid IP range '{input}': {reason}")
+            }
+            Self::ArpResolutionTimedOut { target, interface } => write!(
+                f,
+                "ARP resolution for {target} on interface '{interface}' timed out"
+            ),
             Self::UnsupportedPacketShape {
                 mode,
                 summary,
@@ -109,6 +165,12 @@ impl fmt::Display for NetError {
                 f,
                 "send buffer for interface '{interface}' could not accept {len} bytes"
             ),
+            Self::PermissionDenied { operation, source } => {
+                write!(
+                    f,
+                    "{operation} failed due to missing platform permission: {source}"
+                )
+            }
             Self::Io { operation, source } => write!(f, "{operation} failed: {source}"),
             Self::Capture(err) => write!(f, "{err}"),
         }
@@ -119,6 +181,7 @@ impl std::error::Error for NetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Packet(err) => Some(err),
+            Self::PermissionDenied { source, .. } => Some(source),
             Self::Io { source, .. } => Some(source),
             Self::Capture(err) => Some(err),
             _ => None,
@@ -1574,11 +1637,32 @@ pub fn send_recv_packets(
     options.into().send_recv_all(packets)
 }
 
-/// Interface helper namespace reserved for later address discovery APIs.
-pub mod interface {}
+/// Interface helper namespace.
+pub mod interface {
+    pub use crate::{
+        default_interface, default_interface_in, default_interface_name, find_interface,
+        find_interface_in, get_my_ip, get_my_ip_in, get_my_ipv6, get_my_ipv6_in, get_my_mac,
+        get_my_mac_in, interfaces, InterfaceAddress, InterfaceInfo,
+    };
+}
 
-/// Routing helper namespace reserved for later route lookup APIs.
-pub mod route {}
+/// Routing helper namespace.
+pub mod route {
+    pub use crate::{default_interface, default_interface_name, interface_for, interface_for_in};
+}
+
+/// ARP and neighbor-resolution helper namespace.
+pub mod arp {
+    pub use crate::{
+        arp_resolve, derive_mac_from_ipv6, get_mac, resolve_mac, ArpResolveOptions,
+        ArpResolveReport,
+    };
+}
+
+/// Address and number range helper namespace.
+pub mod range {
+    pub use crate::{get_ip_strings, get_ips, parse_ip_range, parse_numbers, Ipv4Range};
+}
 
 /// Socket helper namespace re-exporting the first stable sender types.
 pub mod socket {
@@ -1934,6 +2018,14 @@ fn validated_interface(options: &SendOptions) -> Result<String> {
     Ok(interface)
 }
 
+fn net_io_error(operation: &'static str, source: io::Error) -> NetError {
+    if source.kind() == io::ErrorKind::PermissionDenied {
+        NetError::PermissionDenied { operation, source }
+    } else {
+        NetError::Io { operation, source }
+    }
+}
+
 fn infer_send_target(packet: &Packet, bytes: &[u8], mode: SendMode) -> Result<SendTarget> {
     let Some(first) = packet.get(0) else {
         return Err(NetError::UnsupportedPacketShape {
@@ -2087,10 +2179,8 @@ fn transmit_link(plan: &SendPlan, options: &SendOptions, link_type: LinkType) ->
     config.write_timeout = options.write_timeout;
     config.write_buffer_size = options.write_buffer_size.max(plan.len());
 
-    let channel = datalink::channel(&interface, config).map_err(|source| NetError::Io {
-        operation: "open datalink channel",
-        source,
-    })?;
+    let channel = datalink::channel(&interface, config)
+        .map_err(|source| net_io_error("open datalink channel", source))?;
 
     match channel {
         Channel::Ethernet(mut tx, _) => {
@@ -2100,10 +2190,7 @@ fn transmit_link(plan: &SendPlan, options: &SendOptions, link_type: LinkType) ->
                         interface: plan.interface.clone(),
                         len: plan.len(),
                     })?;
-            result.map_err(|source| NetError::Io {
-                operation: "send datalink frame",
-                source,
-            })?;
+            result.map_err(|source| net_io_error("send datalink frame", source))?;
             Ok(plan.len())
         }
         _ => Err(NetError::UnsupportedDatalinkChannel {
@@ -2121,11 +2208,8 @@ fn transmit_network(
 ) -> Result<usize> {
     let channel_type = TransportChannelType::Layer3(IpNextHeaderProtocol::new(protocol));
     let buffer_size = options.write_buffer_size.max(plan.len());
-    let (mut tx, _) =
-        transport_channel(buffer_size, channel_type).map_err(|source| NetError::Io {
-            operation: "open raw network socket",
-            source,
-        })?;
+    let (mut tx, _) = transport_channel(buffer_size, channel_type)
+        .map_err(|source| net_io_error("open raw network socket", source))?;
 
     match network_layer {
         NetworkLayer::Ipv4 => {
@@ -2136,10 +2220,7 @@ fn transmit_network(
                 }
             })?;
             tx.send_to(packet, destination)
-                .map_err(|source| NetError::Io {
-                    operation: "send IPv4 packet",
-                    source,
-                })
+                .map_err(|source| net_io_error("send IPv4 packet", source))
         }
         NetworkLayer::Ipv6 => Err(NetError::UnsupportedSendTarget {
             target: plan.target,
