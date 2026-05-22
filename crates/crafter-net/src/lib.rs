@@ -473,6 +473,328 @@ pub fn send_plan(packet: &Packet, options: impl Into<SendOptions>) -> Result<Sen
     SendPlan::from_packet(packet, options.into().dry_run())
 }
 
+/// Configuration object for sending packet collections.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchSend {
+    send_options: SendOptions,
+    concurrency_limit: usize,
+    retries: usize,
+    retry_timeout: Duration,
+}
+
+impl BatchSend {
+    /// Create batch send options with libcrafter-like conservative defaults.
+    pub fn new() -> Self {
+        Self {
+            send_options: SendOptions::new(),
+            concurrency_limit: 64,
+            retries: 1,
+            retry_timeout: Duration::ZERO,
+        }
+    }
+
+    /// Select the interface used for sending.
+    pub fn interface(mut self, interface: impl Into<String>) -> Self {
+        self.send_options = self.send_options.interface(interface);
+        self
+    }
+
+    /// Scapy/libcrafter-style alias for [`Self::interface`].
+    pub fn iface(self, interface: impl Into<String>) -> Self {
+        self.interface(interface)
+    }
+
+    /// Set the send mode used for each packet.
+    pub fn mode(mut self, mode: SendMode) -> Self {
+        self.send_options = self.send_options.mode(mode);
+        self
+    }
+
+    /// Require link-layer send plans.
+    pub fn link_layer(self) -> Self {
+        self.mode(SendMode::LinkLayer)
+    }
+
+    /// Require network-layer send plans.
+    pub fn network_layer(self) -> Self {
+        self.mode(SendMode::NetworkLayer)
+    }
+
+    /// Compile and plan sends without transmitting bytes.
+    pub fn dry_run(mut self) -> Self {
+        self.send_options = self.send_options.dry_run();
+        self
+    }
+
+    /// Enable live transmission.
+    pub fn live(mut self) -> Self {
+        self.send_options = self.send_options.live();
+        self
+    }
+
+    /// Set the raw socket write timeout hint.
+    pub fn write_timeout(mut self, timeout: Duration) -> Self {
+        self.send_options = self.send_options.write_timeout(timeout);
+        self
+    }
+
+    /// Set the raw socket write buffer size hint.
+    pub fn write_buffer_size(mut self, size: usize) -> Self {
+        self.send_options = self.send_options.write_buffer_size(size);
+        self
+    }
+
+    /// Set the maximum number of requests processed in one batch window.
+    pub fn concurrency_limit(mut self, limit: usize) -> Self {
+        self.concurrency_limit = limit.max(1);
+        self
+    }
+
+    /// Set the number of send attempts per packet. A zero value is treated as one attempt.
+    pub fn retries(mut self, retries: usize) -> Self {
+        self.retries = retries.max(1);
+        self
+    }
+
+    /// libcrafter-style singular alias for [`Self::retries`].
+    pub fn retry(self, retries: usize) -> Self {
+        self.retries(retries)
+    }
+
+    /// Set the delay between live retry attempts. Dry-runs never sleep.
+    pub fn retry_timeout(mut self, timeout: Duration) -> Self {
+        self.retry_timeout = timeout;
+        self
+    }
+
+    /// Alias for [`Self::retry_timeout`].
+    pub fn timeout(self, timeout: Duration) -> Self {
+        self.retry_timeout(timeout)
+    }
+
+    /// Borrow the underlying send options.
+    pub const fn send_options(&self) -> &SendOptions {
+        &self.send_options
+    }
+
+    /// Configured concurrency limit.
+    pub const fn concurrency_limit_value(&self) -> usize {
+        self.concurrency_limit
+    }
+
+    /// Configured retry count.
+    pub const fn retries_value(&self) -> usize {
+        self.retries
+    }
+
+    /// Configured live retry delay.
+    pub const fn retry_timeout_value(&self) -> Duration {
+        self.retry_timeout
+    }
+
+    /// Send every packet and return reports aligned with the request order.
+    pub fn send_all(&self, packets: &[Packet]) -> Result<BatchSendReport> {
+        let mut entries = (0..packets.len())
+            .map(BatchSendEntry::new)
+            .collect::<Vec<_>>();
+        let sender = SocketSender::new(self.send_options.clone());
+
+        for chunk_start in (0..packets.len()).step_by(self.concurrency_limit) {
+            let chunk_end = (chunk_start + self.concurrency_limit).min(packets.len());
+            for attempt in 0..self.retries {
+                for request_index in chunk_start..chunk_end {
+                    entries[request_index]
+                        .send_reports
+                        .push(sender.send(&packets[request_index])?);
+                }
+                maybe_wait_between_live_retries(
+                    self.send_options.is_dry_run(),
+                    self.retry_timeout,
+                    attempt,
+                    self.retries,
+                );
+            }
+        }
+
+        Ok(BatchSendReport::new(
+            entries,
+            self.concurrency_limit,
+            self.retries,
+            self.retry_timeout,
+            self.send_options.is_dry_run(),
+        ))
+    }
+}
+
+impl Default for BatchSend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<SendOptions> for BatchSend {
+    fn from(send_options: SendOptions) -> Self {
+        Self::new().with_send_options(send_options)
+    }
+}
+
+impl From<SendRecv> for BatchSend {
+    fn from(send_recv: SendRecv) -> Self {
+        let SendRecv {
+            send_options,
+            timeout,
+            retries,
+            ..
+        } = send_recv;
+        Self::new()
+            .with_send_options(send_options)
+            .retries(retries)
+            .retry_timeout(timeout)
+    }
+}
+
+impl From<&str> for BatchSend {
+    fn from(interface: &str) -> Self {
+        Self::new().iface(interface)
+    }
+}
+
+impl From<String> for BatchSend {
+    fn from(interface: String) -> Self {
+        Self::new().iface(interface)
+    }
+}
+
+impl BatchSend {
+    fn with_send_options(mut self, send_options: SendOptions) -> Self {
+        self.send_options = send_options;
+        self
+    }
+}
+
+/// Per-request result in a batch send.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchSendEntry {
+    request_index: usize,
+    send_reports: Vec<SendReport>,
+}
+
+impl BatchSendEntry {
+    fn new(request_index: usize) -> Self {
+        Self {
+            request_index,
+            send_reports: Vec::new(),
+        }
+    }
+
+    /// Index of the request packet in the input collection.
+    pub const fn request_index(&self) -> usize {
+        self.request_index
+    }
+
+    /// Per-attempt send reports for this request.
+    pub fn send_reports(&self) -> &[SendReport] {
+        &self.send_reports
+    }
+
+    /// Number of send attempts made for this request.
+    pub fn attempts(&self) -> usize {
+        self.send_reports.len()
+    }
+}
+
+/// Detailed result returned by batch send operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchSendReport {
+    entries: Vec<BatchSendEntry>,
+    concurrency_limit: usize,
+    retries: usize,
+    retry_timeout: Duration,
+    dry_run: bool,
+}
+
+impl BatchSendReport {
+    fn new(
+        entries: Vec<BatchSendEntry>,
+        concurrency_limit: usize,
+        retries: usize,
+        retry_timeout: Duration,
+        dry_run: bool,
+    ) -> Self {
+        Self {
+            entries,
+            concurrency_limit,
+            retries,
+            retry_timeout,
+            dry_run,
+        }
+    }
+
+    /// Per-request reports in the same order as the input packets.
+    pub fn entries(&self) -> &[BatchSendEntry] {
+        &self.entries
+    }
+
+    /// Borrow one report by request index.
+    pub fn entry(&self, request_index: usize) -> Option<&BatchSendEntry> {
+        self.entries.get(request_index)
+    }
+
+    /// Number of request packets represented by this report.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return true when no request packets were supplied.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Concurrency limit used by the batch.
+    pub const fn concurrency_limit(&self) -> usize {
+        self.concurrency_limit
+    }
+
+    /// Retry count used by the batch.
+    pub const fn retries(&self) -> usize {
+        self.retries
+    }
+
+    /// Live retry delay used by the batch.
+    pub const fn retry_timeout(&self) -> Duration {
+        self.retry_timeout
+    }
+
+    /// Return true when the batch was compile-only.
+    pub const fn is_dry_run(&self) -> bool {
+        self.dry_run
+    }
+}
+
+/// Extension methods for sending packet collections.
+pub trait PacketBatchSendExt {
+    /// Send every packet and return reports aligned with the request order.
+    fn batch_send(&self, options: impl Into<BatchSend>) -> Result<BatchSendReport>;
+
+    /// Compile and plan every packet without transmitting bytes.
+    fn batch_send_dry_run(&self, options: impl Into<BatchSend>) -> Result<BatchSendReport>;
+}
+
+impl PacketBatchSendExt for [Packet] {
+    fn batch_send(&self, options: impl Into<BatchSend>) -> Result<BatchSendReport> {
+        options.into().send_all(self)
+    }
+
+    fn batch_send_dry_run(&self, options: impl Into<BatchSend>) -> Result<BatchSendReport> {
+        options.into().dry_run().send_all(self)
+    }
+}
+
+/// Send a packet collection in one call.
+pub fn send_packets(packets: &[Packet], options: impl Into<BatchSend>) -> Result<BatchSendReport> {
+    options.into().send_all(packets)
+}
+
 /// Configuration object for send-and-receive request/reply workflows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendRecv {
@@ -792,6 +1114,466 @@ pub fn send_recv_packet(packet: &Packet, options: impl Into<SendRecv>) -> Result
     options.into().send_recv(packet)
 }
 
+/// Configuration object for send-and-receive workflows over packet collections.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchSendRecv {
+    send_recv: SendRecv,
+    concurrency_limit: usize,
+}
+
+impl BatchSendRecv {
+    /// Create batch send/receive options with libcrafter-like defaults.
+    pub fn new() -> Self {
+        Self {
+            send_recv: SendRecv::new(),
+            concurrency_limit: 64,
+        }
+    }
+
+    /// Select the interface used for both sending and capture.
+    pub fn interface(mut self, interface: impl Into<String>) -> Self {
+        self.send_recv = self.send_recv.interface(interface);
+        self
+    }
+
+    /// Scapy/libcrafter-style alias for [`Self::interface`].
+    pub fn iface(self, interface: impl Into<String>) -> Self {
+        self.interface(interface)
+    }
+
+    /// Set the send mode.
+    pub fn mode(mut self, mode: SendMode) -> Self {
+        self.send_recv = self.send_recv.mode(mode);
+        self
+    }
+
+    /// Require link-layer send plans.
+    pub fn link_layer(self) -> Self {
+        self.mode(SendMode::LinkLayer)
+    }
+
+    /// Require network-layer send plans.
+    pub fn network_layer(self) -> Self {
+        self.mode(SendMode::NetworkLayer)
+    }
+
+    /// Compile and plan sends without transmitting or opening capture.
+    pub fn dry_run(mut self) -> Self {
+        self.send_recv = self.send_recv.dry_run();
+        self
+    }
+
+    /// Enable live send/receive behavior.
+    pub fn live(mut self) -> Self {
+        self.send_recv = self.send_recv.live();
+        self
+    }
+
+    /// Set the per-attempt capture timeout.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.send_recv = self.send_recv.timeout(timeout);
+        self
+    }
+
+    /// Set the number of send attempts per request. A zero value is treated as one attempt.
+    pub fn retries(mut self, retries: usize) -> Self {
+        self.send_recv = self.send_recv.retries(retries);
+        self
+    }
+
+    /// libcrafter-style singular alias for [`Self::retries`].
+    pub fn retry(self, retries: usize) -> Self {
+        self.retries(retries)
+    }
+
+    /// Add a caller-supplied BPF filter. It is combined with the derived batch reply filter.
+    pub fn filter(mut self, filter: impl Into<String>) -> Self {
+        self.send_recv = self.send_recv.filter(filter);
+        self
+    }
+
+    /// Remove any caller-supplied BPF filter.
+    pub fn clear_filter(mut self) -> Self {
+        self.send_recv = self.send_recv.clear_filter();
+        self
+    }
+
+    /// Set the maximum captured packets inspected per request in each batch window.
+    pub fn capture_limit(mut self, capture_limit: usize) -> Self {
+        self.send_recv = self.send_recv.capture_limit(capture_limit);
+        self
+    }
+
+    /// Set the maximum number of requests sent before collecting replies.
+    pub fn concurrency_limit(mut self, limit: usize) -> Self {
+        self.concurrency_limit = limit.max(1);
+        self
+    }
+
+    /// Borrow the underlying single-request send/receive options.
+    pub const fn send_recv_options(&self) -> &SendRecv {
+        &self.send_recv
+    }
+
+    /// Configured concurrency limit.
+    pub const fn concurrency_limit_value(&self) -> usize {
+        self.concurrency_limit
+    }
+
+    /// Effective BPF filter for the whole request collection.
+    pub fn effective_filter(&self, packets: &[Packet]) -> Option<String> {
+        combine_filters(batch_reply_filter(packets), self.send_recv.user_filter())
+    }
+
+    /// Send every request and collect matching replies in request order.
+    pub fn send_recv_all(&self, packets: &[Packet]) -> Result<BatchSendRecvReport> {
+        let mut entries = (0..packets.len())
+            .map(BatchSendRecvEntry::new)
+            .collect::<Vec<_>>();
+        let effective_filter = self.effective_filter(packets);
+
+        if packets.is_empty() {
+            return Ok(BatchSendRecvReport::new(
+                entries,
+                effective_filter,
+                self.concurrency_limit,
+                self.send_recv.retries_value().max(1),
+                self.send_recv.timeout_value(),
+            ));
+        }
+
+        let sender = SocketSender::new(self.send_recv.send_options().clone());
+
+        if self.send_recv.send_options().is_dry_run() {
+            for chunk_start in (0..packets.len()).step_by(self.concurrency_limit) {
+                let chunk_end = (chunk_start + self.concurrency_limit).min(packets.len());
+                for _ in 0..self.send_recv.retries_value().max(1) {
+                    for request_index in chunk_start..chunk_end {
+                        entries[request_index]
+                            .send_reports
+                            .push(sender.send(&packets[request_index])?);
+                    }
+                }
+            }
+            return Ok(BatchSendRecvReport::new(
+                entries,
+                effective_filter,
+                self.concurrency_limit,
+                self.send_recv.retries_value().max(1),
+                self.send_recv.timeout_value(),
+            ));
+        }
+
+        let interface = validated_interface(self.send_recv.send_options())?;
+        for chunk_start in (0..packets.len()).step_by(self.concurrency_limit) {
+            let chunk_end = (chunk_start + self.concurrency_limit).min(packets.len());
+            for _ in 0..self.send_recv.retries_value().max(1) {
+                let pending = (chunk_start..chunk_end)
+                    .filter(|request_index| entries[*request_index].reply.is_none())
+                    .collect::<Vec<_>>();
+                if pending.is_empty() {
+                    break;
+                }
+
+                let mut sniffer = Sniffer::interface(interface.clone())
+                    .timeout(self.send_recv.timeout_value())
+                    .count(
+                        self.send_recv
+                            .capture_limit
+                            .saturating_mul(pending.len().max(1))
+                            .max(1),
+                    );
+                if let Some(filter) = effective_filter.as_deref() {
+                    sniffer = sniffer.filter(filter);
+                }
+
+                let mut capture = sniffer.open()?;
+                for request_index in pending.iter().copied() {
+                    entries[request_index]
+                        .send_reports
+                        .push(sender.send(&packets[request_index])?);
+                }
+
+                while let Some(reply) = capture.next_packet()? {
+                    let packet = reply.into_packet();
+                    assign_reply_to_first_match(&mut entries, packets, packet);
+                    if pending
+                        .iter()
+                        .all(|request_index| entries[*request_index].reply.is_some())
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(BatchSendRecvReport::new(
+            entries,
+            effective_filter,
+            self.concurrency_limit,
+            self.send_recv.retries_value().max(1),
+            self.send_recv.timeout_value(),
+        ))
+    }
+
+    /// Match already-captured candidate replies to requests without sending packets.
+    pub fn collect_replies_from_candidates<I>(
+        &self,
+        requests: &[Packet],
+        candidates: I,
+    ) -> BatchSendRecvReport
+    where
+        I: IntoIterator<Item = Packet>,
+    {
+        let mut entries = (0..requests.len())
+            .map(BatchSendRecvEntry::new)
+            .collect::<Vec<_>>();
+
+        for candidate in candidates {
+            assign_reply_to_first_match(&mut entries, requests, candidate);
+        }
+
+        BatchSendRecvReport::new(
+            entries,
+            self.effective_filter(requests),
+            self.concurrency_limit,
+            self.send_recv.retries_value().max(1),
+            self.send_recv.timeout_value(),
+        )
+    }
+}
+
+impl Default for BatchSendRecv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<SendRecv> for BatchSendRecv {
+    fn from(send_recv: SendRecv) -> Self {
+        Self::new().with_send_recv(send_recv)
+    }
+}
+
+impl From<SendOptions> for BatchSendRecv {
+    fn from(send_options: SendOptions) -> Self {
+        Self::new().with_send_recv(SendRecv::new().with_send_options(send_options))
+    }
+}
+
+impl From<&str> for BatchSendRecv {
+    fn from(interface: &str) -> Self {
+        Self::new().iface(interface)
+    }
+}
+
+impl From<String> for BatchSendRecv {
+    fn from(interface: String) -> Self {
+        Self::new().iface(interface)
+    }
+}
+
+impl BatchSendRecv {
+    fn with_send_recv(mut self, send_recv: SendRecv) -> Self {
+        self.send_recv = send_recv;
+        self
+    }
+}
+
+impl SendRecv {
+    fn with_send_options(mut self, send_options: SendOptions) -> Self {
+        self.send_options = send_options;
+        self
+    }
+}
+
+/// Per-request result in a batch send/receive operation.
+#[derive(Debug, Clone)]
+pub struct BatchSendRecvEntry {
+    request_index: usize,
+    send_reports: Vec<SendReport>,
+    reply: Option<Packet>,
+}
+
+impl BatchSendRecvEntry {
+    fn new(request_index: usize) -> Self {
+        Self {
+            request_index,
+            send_reports: Vec::new(),
+            reply: None,
+        }
+    }
+
+    /// Index of the request packet in the input collection.
+    pub const fn request_index(&self) -> usize {
+        self.request_index
+    }
+
+    /// Per-attempt send reports for this request.
+    pub fn send_reports(&self) -> &[SendReport] {
+        &self.send_reports
+    }
+
+    /// Number of send attempts made for this request.
+    pub fn attempts(&self) -> usize {
+        self.send_reports.len()
+    }
+
+    /// Borrow the matching reply, if one was collected.
+    pub fn reply(&self) -> Option<&Packet> {
+        self.reply.as_ref()
+    }
+
+    /// Consume this entry and return the matching reply, if one was collected.
+    pub fn into_reply(self) -> Option<Packet> {
+        self.reply
+    }
+
+    /// Return true when no matching reply was collected.
+    pub fn timed_out(&self) -> bool {
+        self.reply.is_none()
+    }
+}
+
+/// Detailed result returned by batch send/receive operations.
+#[derive(Debug, Clone)]
+pub struct BatchSendRecvReport {
+    entries: Vec<BatchSendRecvEntry>,
+    effective_filter: Option<String>,
+    concurrency_limit: usize,
+    retries: usize,
+    timeout: Duration,
+}
+
+impl BatchSendRecvReport {
+    fn new(
+        entries: Vec<BatchSendRecvEntry>,
+        effective_filter: Option<String>,
+        concurrency_limit: usize,
+        retries: usize,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            entries,
+            effective_filter,
+            concurrency_limit,
+            retries,
+            timeout,
+        }
+    }
+
+    /// Per-request reports in the same order as the input packets.
+    pub fn entries(&self) -> &[BatchSendRecvEntry] {
+        &self.entries
+    }
+
+    /// Borrow one entry by request index.
+    pub fn entry(&self, request_index: usize) -> Option<&BatchSendRecvEntry> {
+        self.entries.get(request_index)
+    }
+
+    /// Number of request packets represented by this report.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return true when no request packets were supplied.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Borrow replies in request order.
+    pub fn replies(&self) -> Vec<Option<&Packet>> {
+        self.entries.iter().map(BatchSendRecvEntry::reply).collect()
+    }
+
+    /// Consume this report and return replies in request order.
+    pub fn into_replies(self) -> Vec<Option<Packet>> {
+        self.entries
+            .into_iter()
+            .map(BatchSendRecvEntry::into_reply)
+            .collect()
+    }
+
+    /// Number of requests with matching replies.
+    pub fn reply_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| entry.reply.is_some())
+            .count()
+    }
+
+    /// Number of requests without matching replies.
+    pub fn timed_out_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| entry.reply.is_none())
+            .count()
+    }
+
+    /// Request indexes that did not receive a matching reply.
+    pub fn timed_out_indices(&self) -> Vec<usize> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.reply.is_none())
+            .map(BatchSendRecvEntry::request_index)
+            .collect()
+    }
+
+    /// Effective capture filter used for the batch.
+    pub fn effective_filter(&self) -> Option<&str> {
+        self.effective_filter.as_deref()
+    }
+
+    /// Concurrency limit used by the batch.
+    pub const fn concurrency_limit(&self) -> usize {
+        self.concurrency_limit
+    }
+
+    /// Retry count used by the batch.
+    pub const fn retries(&self) -> usize {
+        self.retries
+    }
+
+    /// Per-attempt timeout used by the batch.
+    pub const fn timeout(&self) -> Duration {
+        self.timeout
+    }
+}
+
+/// Extension methods for send/receive packet collections.
+pub trait PacketBatchSendRecvExt {
+    /// Send every request and collect matching replies in request order.
+    fn batch_send_recv(&self, options: impl Into<BatchSendRecv>) -> Result<BatchSendRecvReport>;
+
+    /// Compile and plan every request without transmitting or opening capture.
+    fn batch_send_recv_dry_run(
+        &self,
+        options: impl Into<BatchSendRecv>,
+    ) -> Result<BatchSendRecvReport>;
+}
+
+impl PacketBatchSendRecvExt for [Packet] {
+    fn batch_send_recv(&self, options: impl Into<BatchSendRecv>) -> Result<BatchSendRecvReport> {
+        options.into().send_recv_all(self)
+    }
+
+    fn batch_send_recv_dry_run(
+        &self,
+        options: impl Into<BatchSendRecv>,
+    ) -> Result<BatchSendRecvReport> {
+        options.into().dry_run().send_recv_all(self)
+    }
+}
+
+/// Send a packet collection and collect replies in one call.
+pub fn send_recv_packets(
+    packets: &[Packet],
+    options: impl Into<BatchSendRecv>,
+) -> Result<BatchSendRecvReport> {
+    options.into().send_recv_all(packets)
+}
+
 /// Interface helper namespace reserved for later address discovery APIs.
 pub mod interface {}
 
@@ -801,7 +1583,9 @@ pub mod route {}
 /// Socket helper namespace re-exporting the first stable sender types.
 pub mod socket {
     pub use crate::{
-        reply_filter, reply_matches, send_packet, send_plan, send_recv_packet, NetError,
+        reply_filter, reply_matches, send_packet, send_packets, send_plan, send_recv_packet,
+        send_recv_packets, BatchSend, BatchSendEntry, BatchSendRecv, BatchSendRecvEntry,
+        BatchSendRecvReport, BatchSendReport, NetError, PacketBatchSendExt, PacketBatchSendRecvExt,
         PacketSendExt, PacketSendRecvExt, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan,
         SendRecv, SendRecvOptions, SendRecvReport, SendReport, SendTarget, SocketSend,
         SocketSender,
@@ -811,8 +1595,18 @@ pub mod socket {
 /// Send/receive-oriented re-exports.
 pub mod send_recv {
     pub use crate::{
-        reply_filter, reply_matches, send_recv_packet, PacketSendRecvExt, ReplyMatcher, SendRecv,
-        SendRecvOptions, SendRecvReport,
+        reply_filter, reply_matches, send_recv_packet, send_recv_packets, BatchSendRecv,
+        BatchSendRecvEntry, BatchSendRecvReport, PacketBatchSendRecvExt, PacketSendRecvExt,
+        ReplyMatcher, SendRecv, SendRecvOptions, SendRecvReport,
+    };
+}
+
+/// Batch-oriented re-exports for scan-style tools.
+pub mod batch {
+    pub use crate::{
+        send_packets, send_recv_packets, BatchSend, BatchSendEntry, BatchSendRecv,
+        BatchSendRecvEntry, BatchSendRecvReport, BatchSendReport, PacketBatchSendExt,
+        PacketBatchSendRecvExt,
     };
 }
 
@@ -859,6 +1653,56 @@ fn combine_filters(derived: Option<String>, user: Option<&str>) -> Option<String
         (Some(derived), None) => Some(derived),
         (None, Some(user)) => Some(user.to_string()),
         (None, None) => None,
+    }
+}
+
+fn batch_reply_filter(packets: &[Packet]) -> Option<String> {
+    let mut filters = Vec::new();
+    for packet in packets {
+        let Some(filter) = ReplyMatcher::from_packet(packet).reply_filter() else {
+            continue;
+        };
+        if !filters.iter().any(|existing| existing == &filter) {
+            filters.push(filter);
+        }
+    }
+
+    match filters.len() {
+        0 => None,
+        1 => filters.pop(),
+        _ => Some(
+            filters
+                .into_iter()
+                .map(|filter| format!("({filter})"))
+                .collect::<Vec<_>>()
+                .join(" or "),
+        ),
+    }
+}
+
+fn assign_reply_to_first_match(
+    entries: &mut [BatchSendRecvEntry],
+    requests: &[Packet],
+    candidate: Packet,
+) -> bool {
+    let Some(entry_index) = entries.iter().position(|entry| {
+        entry.reply.is_none() && reply_matches(&requests[entry.request_index], &candidate)
+    }) else {
+        return false;
+    };
+
+    entries[entry_index].reply = Some(candidate);
+    true
+}
+
+fn maybe_wait_between_live_retries(
+    dry_run: bool,
+    timeout: Duration,
+    attempt: usize,
+    attempts: usize,
+) {
+    if !dry_run && !timeout.is_zero() && attempt + 1 < attempts {
+        std::thread::sleep(timeout);
     }
 }
 
@@ -1773,6 +2617,182 @@ mod reply_matching {
 
         assert!(reply_matches(&request, &reply));
         assert!(!reply_matches(&request, &wrong_xid));
+    }
+}
+
+#[cfg(test)]
+mod batch_send {
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
+
+    use crafter_core::{Ipv4, Packet, Raw, Udp};
+
+    use super::{send_packets, BatchSend, PacketBatchSendExt, SendTarget};
+
+    fn udp_request(index: u8) -> Packet {
+        Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, index))
+            / Udp::new().sport(40_000 + u16::from(index)).dport(3_344)
+            / Raw::from_bytes([index, index + 1])
+    }
+
+    #[test]
+    fn batch_send_dry_run_preserves_order_and_attempts() {
+        let packets = vec![udp_request(1), udp_request(2), udp_request(3)];
+        let report = packets
+            .as_slice()
+            .batch_send(
+                BatchSend::new()
+                    .iface("eth0")
+                    .network_layer()
+                    .dry_run()
+                    .concurrency_limit(2)
+                    .retry(2),
+            )
+            .unwrap();
+
+        assert!(report.is_dry_run());
+        assert_eq!(report.len(), 3);
+        assert_eq!(report.concurrency_limit(), 2);
+        assert_eq!(report.retries(), 2);
+
+        for (index, entry) in report.entries().iter().enumerate() {
+            assert_eq!(entry.request_index(), index);
+            assert_eq!(entry.attempts(), 2);
+            for send_report in entry.send_reports() {
+                assert!(send_report.is_dry_run());
+                assert_eq!(send_report.bytes_sent(), send_report.plan().len());
+                assert!(matches!(
+                    send_report.plan().target(),
+                    SendTarget::NetworkLayer { .. }
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn batch_send_normalizes_zero_limits_and_exposes_timeout() {
+        let packets = vec![udp_request(7)];
+        let timeout = Duration::from_millis(25);
+        let report = send_packets(
+            &packets,
+            BatchSend::new()
+                .iface("eth0")
+                .network_layer()
+                .dry_run()
+                .concurrency_limit(0)
+                .retry(0)
+                .timeout(timeout),
+        )
+        .unwrap();
+
+        assert_eq!(report.concurrency_limit(), 1);
+        assert_eq!(report.retries(), 1);
+        assert_eq!(report.retry_timeout(), timeout);
+        assert_eq!(report.entry(0).unwrap().attempts(), 1);
+    }
+}
+
+#[cfg(test)]
+mod batch_send_recv {
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
+
+    use crafter_core::{Icmp, Ipv4, NetworkLayer, Packet, Raw};
+
+    use super::{BatchSendRecv, PacketBatchSendRecvExt};
+
+    fn echo_request(sequence: u16) -> Packet {
+        Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Icmp::echo_request().id(0x4242).seq(sequence)
+            / Raw::from_bytes(sequence.to_be_bytes())
+    }
+
+    fn echo_reply(sequence: u16) -> Packet {
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(198, 51, 100, 20))
+            .dst(Ipv4Addr::new(192, 0, 2, 10))
+            / Icmp::echo_reply().id(0x4242).seq(sequence)
+            / Raw::from_bytes(sequence.to_be_bytes());
+
+        Packet::decode_from_l3(NetworkLayer::Ipv4, packet.compile().unwrap().as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn batch_send_recv_dry_run_preserves_order_and_attempts() {
+        let requests = vec![echo_request(1), echo_request(2), echo_request(3)];
+        let report = requests
+            .as_slice()
+            .batch_send_recv_dry_run(
+                BatchSendRecv::new()
+                    .iface("eth0")
+                    .network_layer()
+                    .concurrency_limit(2)
+                    .retry(2)
+                    .timeout(Duration::from_millis(50)),
+            )
+            .unwrap();
+
+        assert_eq!(report.len(), 3);
+        assert_eq!(report.concurrency_limit(), 2);
+        assert_eq!(report.retries(), 2);
+        assert_eq!(report.timeout(), Duration::from_millis(50));
+        assert_eq!(report.reply_count(), 0);
+        assert_eq!(report.timed_out_indices(), vec![0, 1, 2]);
+        assert_eq!(
+            report.effective_filter(),
+            Some("icmp and src host 198.51.100.20 and dst host 192.0.2.10")
+        );
+
+        for (index, entry) in report.entries().iter().enumerate() {
+            assert_eq!(entry.request_index(), index);
+            assert_eq!(entry.attempts(), 2);
+            assert!(entry.timed_out());
+        }
+    }
+
+    #[test]
+    fn batch_send_recv_collects_partial_replies_in_request_order() {
+        let requests = vec![echo_request(1), echo_request(2), echo_request(3)];
+        let report = BatchSendRecv::new()
+            .iface("eth0")
+            .network_layer()
+            .concurrency_limit(2)
+            .collect_replies_from_candidates(
+                &requests,
+                vec![echo_reply(3), echo_reply(99), echo_reply(1)],
+            );
+
+        assert_eq!(report.reply_count(), 2);
+        assert_eq!(report.timed_out_count(), 1);
+        assert_eq!(report.timed_out_indices(), vec![1]);
+
+        assert_eq!(
+            report
+                .entry(0)
+                .unwrap()
+                .reply()
+                .unwrap()
+                .layer::<Icmp>()
+                .unwrap()
+                .sequence_number_value(),
+            Some(1)
+        );
+        assert!(report.entry(1).unwrap().reply().is_none());
+        assert_eq!(
+            report
+                .entry(2)
+                .unwrap()
+                .reply()
+                .unwrap()
+                .layer::<Icmp>()
+                .unwrap()
+                .sequence_number_value(),
+            Some(3)
+        );
     }
 }
 
