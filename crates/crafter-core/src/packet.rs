@@ -5,6 +5,7 @@ use core::fmt;
 use core::ops::Div;
 
 use crate::error::Result;
+use crate::protocols::ip::decode_ipv4_packet;
 use crate::protocols::link::{decode_ethernet, decode_linux_sll, decode_null_loopback};
 
 /// A protocol or payload layer that can live in a [`Packet`] stack.
@@ -443,11 +444,13 @@ impl Packet {
     }
 
     /// Decode bytes from a network-layer entrypoint.
-    ///
-    /// Until protocol-specific decoders are added, this preserves all bytes as
-    /// a single [`Raw`] layer for lossless roundtrips.
-    pub fn decode_from_l3(_network_layer: NetworkLayer, bytes: impl AsRef<[u8]>) -> Result<Self> {
-        Self::decode_raw(bytes)
+    pub fn decode_from_l3(network_layer: NetworkLayer, bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        match network_layer {
+            NetworkLayer::Raw => Self::decode_raw(bytes),
+            NetworkLayer::Ipv4 => decode_ipv4_packet(bytes),
+            NetworkLayer::Ipv6 => Self::decode_raw(bytes),
+        }
     }
 
     /// One-line packet summary.
@@ -750,7 +753,7 @@ mod packet_stack {
     #[test]
     fn raw_decode_entrypoints_are_lossless_raw_packets() {
         let link = Packet::decode_from_link(LinkType::Raw, b"frame").unwrap();
-        let l3 = Packet::decode_from_l3(NetworkLayer::Ipv4, b"packet").unwrap();
+        let l3 = Packet::decode_from_l3(NetworkLayer::Raw, b"packet").unwrap();
 
         assert_eq!(link.compile().unwrap().as_bytes(), b"frame");
         assert_eq!(l3.compile().unwrap().as_bytes(), b"packet");
