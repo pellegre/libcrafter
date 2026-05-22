@@ -10,6 +10,7 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::mac::MacAddr;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw};
+use crate::protocols::ip::{append_ipv4_packet, Ipv4};
 
 /// Ethernet type for IPv4 payloads.
 pub const ETHERTYPE_IPV4: u16 = 0x0800;
@@ -1093,6 +1094,9 @@ fn append_ethertype_payload(mut packet: Packet, ethertype: u16, payload: &[u8]) 
             packet = packet.push(vlan);
             packet = append_ethertype_payload(packet, inner, rest)?;
         }
+        ETHERTYPE_IPV4 => {
+            packet = append_ipv4_packet(packet, payload)?;
+        }
         _ => {
             packet = packet.push(Raw::from_bytes(payload));
         }
@@ -1170,6 +1174,8 @@ fn layer_ethertype(layer: &dyn Layer) -> Option<u16> {
         Some(ETHERTYPE_ARP)
     } else if layer.as_any().is::<Vlan>() {
         Some(ETHERTYPE_VLAN)
+    } else if layer.as_any().is::<Ipv4>() {
+        Some(ETHERTYPE_IPV4)
     } else {
         None
     }
@@ -1395,6 +1401,7 @@ mod arp {
 #[cfg(test)]
 mod link_layers {
     use super::{Arp, Ethernet, LinuxSll, NullByteOrder, NullLoopback, Vlan, ETHERTYPE_IPV4};
+    use crate::Ipv4;
     use crate::{LinkType, MacAddr, Packet, Raw};
     use core::net::Ipv4Addr;
 
@@ -1414,6 +1421,7 @@ mod link_layers {
         let decoded = Packet::decode_from_link(LinkType::Ethernet, VLAN_FIXTURE).unwrap();
         let ethernet = decoded.layer::<Ethernet>().unwrap();
         let vlan = decoded.layer::<Vlan>().unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
         let raw = decoded.layer::<Raw>().unwrap();
 
         assert_eq!(ethernet.source(), Some(src_mac()));
@@ -1422,7 +1430,9 @@ mod link_layers {
         assert!(!vlan.dei_value());
         assert_eq!(vlan.vlan_id_value(), 42);
         assert_eq!(vlan.ethertype_value(), ETHERTYPE_IPV4);
-        assert_eq!(raw.as_bytes(), &VLAN_FIXTURE[18..]);
+        assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+        assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 20));
+        assert_eq!(raw.as_bytes(), &VLAN_FIXTURE[38..]);
         assert_eq!(decoded.compile().unwrap().as_bytes(), VLAN_FIXTURE);
     }
 
