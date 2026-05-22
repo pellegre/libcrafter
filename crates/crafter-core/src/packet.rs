@@ -20,6 +20,11 @@ pub trait Layer: fmt::Debug + Send + Sync + 'static {
         self.name().to_string()
     }
 
+    /// Stable field/value pairs used by packet inspection output.
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        Vec::new()
+    }
+
     /// Encoded length for this layer before dependent auto-fill.
     fn encoded_len(&self) -> usize;
 
@@ -154,6 +159,16 @@ impl Raw {
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
+
+    /// Return a canonical hex dump of the raw bytes.
+    pub fn hexdump(&self) -> String {
+        hexdump(self.as_bytes())
+    }
+
+    /// Return raw bytes as a lossy UTF-8 string.
+    pub fn raw_string_lossy(&self) -> String {
+        String::from_utf8_lossy(self.as_bytes()).into_owned()
+    }
 }
 
 impl Layer for Raw {
@@ -163,6 +178,14 @@ impl Layer for Raw {
 
     fn summary(&self) -> String {
         format!("Raw(len={})", self.bytes.len())
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("len", self.bytes.len().to_string()),
+            ("bytes", hex_bytes(&self.bytes)),
+            ("text_lossy", quoted_lossy_text(self.as_bytes())),
+        ]
     }
 
     fn encoded_len(&self) -> usize {
@@ -440,9 +463,16 @@ impl Packet {
             return "Packet(empty)".to_string();
         }
 
-        let mut output = String::from("Packet\n");
+        let mut output = format!(
+            "Packet(len={}, layers={})",
+            self.encoded_len(),
+            self.layers.len()
+        );
         for (index, layer) in self.layers.iter().enumerate() {
-            output.push_str(&format!("  {index}: {}\n", layer.summary()));
+            output.push_str(&format!("\n  [{index}] {}", layer.name()));
+            for (name, value) in layer.inspection_fields() {
+                output.push_str(&format!("\n      {name}: {value}"));
+            }
         }
         output
     }
@@ -591,6 +621,41 @@ pub fn hexdump(bytes: &[u8]) -> String {
     output
 }
 
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut output = String::new();
+
+    for (index, byte) in bytes.iter().enumerate() {
+        if index > 0 {
+            output.push(' ');
+        }
+        output.push_str(&format!("{byte:02x}"));
+    }
+
+    output
+}
+
+fn quoted_lossy_text(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut output = String::from("\"");
+
+    for ch in text.chars() {
+        match ch {
+            '\0' => output.push_str("\\0"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            ch if ch.is_control() => output.extend(ch.escape_default()),
+            ch if ch.is_ascii() => output.push(ch),
+            ch => output.extend(ch.escape_default()),
+        }
+    }
+
+    output.push('"');
+    output
+}
+
 #[cfg(test)]
 mod raw_layer {
     use super::{Layer, Packet, Raw};
@@ -689,8 +754,77 @@ mod packet_stack {
     fn inspection_helpers_are_stable() {
         let packet = Packet::new().push(Raw::from([0x41, 0x42, 0x43].as_slice()));
 
-        assert_eq!(packet.show(), "Packet\n  0: Raw(len=3)\n");
+        assert_eq!(
+            packet.show(),
+            "Packet(len=3, layers=1)\n  [0] Raw\n      len: 3\n      bytes: 41 42 43\n      text_lossy: \"ABC\""
+        );
         assert_eq!(packet.hexdump().unwrap(), "0000: 41 42 43");
         assert_eq!(hexdump(&[]), "");
+    }
+}
+
+#[cfg(test)]
+mod formatting {
+    use super::{hexdump, Layer, Packet, Raw};
+
+    const RAW_ONLY_SUMMARY: &str =
+        include_str!("../../../tests/fixtures/summaries/raw--hello-agents.summary.txt");
+
+    fn raw_only_packet() -> Packet {
+        Packet::new().push(Raw::from("Hello, agents!"))
+    }
+
+    fn raw_only_snapshot() -> String {
+        let packet = raw_only_packet();
+
+        format!(
+            "summary:\n{}\n\nshow:\n{}\n\nhexdump:\n{}\n\nraw_string_lossy_debug:\n{:?}\n",
+            packet.summary(),
+            packet.show(),
+            packet.hexdump().unwrap(),
+            packet.raw_string_lossy().unwrap()
+        )
+    }
+
+    #[test]
+    fn formatting_raw_only_packet_matches_summary_fixture() {
+        assert_eq!(raw_only_snapshot(), RAW_ONLY_SUMMARY);
+    }
+
+    #[test]
+    fn formatting_empty_packet_is_stable() {
+        let packet = Packet::new();
+
+        assert_eq!(packet.summary(), "Packet(empty)");
+        assert_eq!(packet.show(), "Packet(empty)");
+        assert_eq!(packet.hexdump().unwrap(), "");
+        assert_eq!(packet.raw_string_lossy().unwrap(), "");
+    }
+
+    #[test]
+    fn formatting_raw_layer_helpers_are_stable() {
+        let raw = Raw::from([0x48, 0x69, 0xff, 0x00].as_slice());
+
+        assert_eq!(raw.summary(), "Raw(len=4)");
+        assert_eq!(raw.hexdump(), "0000: 48 69 ff 00");
+        assert_eq!(raw.raw_string_lossy(), "Hi\u{fffd}\0");
+        assert_eq!(
+            raw.inspection_fields(),
+            vec![
+                ("len", "4".to_string()),
+                ("bytes", "48 69 ff 00".to_string()),
+                ("text_lossy", "\"Hi\\u{fffd}\\0\"".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn formatting_hexdump_chunks_sixteen_bytes_per_line() {
+        let bytes: Vec<u8> = (0x00..=0x11).collect();
+
+        assert_eq!(
+            hexdump(&bytes),
+            "0000: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\n0010: 10 11"
+        );
     }
 }

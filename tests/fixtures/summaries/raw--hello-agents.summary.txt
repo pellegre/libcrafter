@@ -1,0 +1,15 @@
+summary:
+Raw(len=14)
+
+show:
+Packet(len=14, layers=1)
+  [0] Raw
+      len: 14
+      bytes: 48 65 6c 6c 6f 2c 20 61 67 65 6e 74 73 21
+      text_lossy: "Hello, agents!"
+
+hexdump:
+0000: 48 65 6c 6c 6f 2c 20 61 67 65 6e 74 73 21
+
+raw_string_lossy_debug:
+"Hello, agents!"
