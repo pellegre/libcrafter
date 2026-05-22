@@ -10,6 +10,7 @@ use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
+use crate::protocols::icmp::{append_icmp_packet, Icmp};
 use crate::protocols::transport::{append_tcp_packet, append_udp_packet, Tcp, Udp};
 
 /// IPv4 protocol number for ICMP.
@@ -673,6 +674,7 @@ fn append_ipv4_payload(mut packet: Packet, payload: &[u8], rest: &[u8]) -> Resul
         .unwrap_or_default();
 
     packet = match protocol {
+        IPPROTO_ICMP => append_icmp_packet(packet, payload)?,
         IPPROTO_TCP => append_tcp_packet(packet, payload)?,
         IPPROTO_UDP => append_udp_packet(packet, payload)?,
         _ => {
@@ -704,6 +706,8 @@ fn layer_ipv4_protocol(layer: &dyn Layer) -> Option<u8> {
         Some(IPPROTO_TCP)
     } else if layer.as_any().is::<Udp>() {
         Some(IPPROTO_UDP)
+    } else if layer.as_any().is::<Icmp>() {
+        Some(IPPROTO_ICMP)
     } else {
         None
     }
@@ -771,7 +775,7 @@ mod ipv4 {
     use super::{
         IpProtocol, Ipv4, IPPROTO_ICMP, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
     };
-    use crate::{LinkType, NetworkLayer, Packet, Raw};
+    use crate::{Icmp, LinkType, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     const IPV4_ICMP_FIXTURE: &[u8] =
@@ -802,6 +806,7 @@ mod ipv4 {
     fn ipv4_decode_exposes_header_fields_and_preserves_payload() {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, IPV4_ICMP_FIXTURE).unwrap();
         let ipv4 = decoded.layer::<Ipv4>().unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
         let raw = decoded.layer::<Raw>().unwrap();
 
         assert_eq!(ipv4.version_value(), 4);
@@ -815,7 +820,9 @@ mod ipv4 {
         assert_eq!(ipv4.checksum_value(), Some(0x3c4c));
         assert_eq!(ipv4.source(), src());
         assert_eq!(ipv4.destination(), dst());
-        assert_eq!(raw.as_bytes(), &IPV4_ICMP_FIXTURE[20..]);
+        assert_eq!(icmp.identifier_value(), Some(0x4242));
+        assert_eq!(icmp.sequence_number_value(), Some(1));
+        assert_eq!(raw.as_bytes(), b"libcrafter-icmp");
         assert_eq!(decoded.compile().unwrap().as_bytes(), IPV4_ICMP_FIXTURE);
     }
 

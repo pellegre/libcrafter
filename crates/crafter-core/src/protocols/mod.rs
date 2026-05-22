@@ -1,14 +1,24 @@
 //! Protocol layer implementations.
 
+pub mod icmp;
 pub mod ip;
+pub mod ipv6;
 pub mod link;
 pub mod transport;
 
 pub use crate::packet::Raw;
+pub use icmp::{
+    Icmp, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpKind, IcmpLayer, Icmpv6,
+    ICMPV6_DESTINATION_UNREACHABLE, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMPV6_PACKET_TOO_BIG,
+    ICMPV6_PARAMETER_PROBLEM, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REPLY,
+    ICMP_ECHO_REQUEST, ICMP_EXTENSION_CLASS_MPLS, ICMP_EXTENSION_CTYPE_MPLS_INCOMING,
+    ICMP_PARAMETER_PROBLEM, ICMP_REDIRECT, ICMP_SOURCE_QUENCH, ICMP_TIME_EXCEEDED,
+};
 pub use ip::{
     IpProtocol, Ipv4, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6, IPPROTO_TCP, IPPROTO_UDP,
     IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED,
 };
+pub use ipv6::Ipv6;
 pub use link::{
     Arp, ArpOperation, Dot1Q, Ethernet, LinuxSll, NullByteOrder, NullLoopback, Vlan, ETHERTYPE_ARP,
     ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
