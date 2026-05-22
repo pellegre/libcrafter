@@ -2,11 +2,54 @@
 
 use core::any::Any;
 use core::fmt;
+use core::net::{Ipv4Addr, Ipv6Addr};
 use core::ops::Div;
 
+use crate::checksum::{ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum};
 use crate::error::Result;
 use crate::protocols::ip::decode_ipv4_packet;
 use crate::protocols::link::{decode_ethernet, decode_linux_sll, decode_null_loopback};
+
+/// Pseudo-header context used by transport layers when auto-filling checksums.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransportChecksumContext {
+    /// IPv4 pseudo-header checksum inputs.
+    Ipv4 {
+        /// IPv4 source address.
+        source: Ipv4Addr,
+        /// IPv4 destination address.
+        destination: Ipv4Addr,
+        /// IPv4 protocol number encoded in the pseudo-header.
+        protocol: u8,
+    },
+    /// IPv6 pseudo-header checksum inputs.
+    Ipv6 {
+        /// IPv6 source address.
+        source: Ipv6Addr,
+        /// IPv6 destination address.
+        destination: Ipv6Addr,
+        /// IPv6 next-header value encoded in the pseudo-header.
+        next_header: u8,
+    },
+}
+
+impl TransportChecksumContext {
+    /// Compute the checksum for an encoded transport segment.
+    pub fn checksum(self, transport: &[u8]) -> u16 {
+        match self {
+            Self::Ipv4 {
+                source,
+                destination,
+                protocol,
+            } => ipv4_pseudo_header_checksum(source, destination, protocol, transport),
+            Self::Ipv6 {
+                source,
+                destination,
+                next_header,
+            } => ipv6_pseudo_header_checksum(source, destination, next_header, transport),
+        }
+    }
+}
 
 /// A protocol or payload layer that can live in a [`Packet`] stack.
 ///
@@ -32,6 +75,14 @@ pub trait Layer: fmt::Debug + Send + Sync + 'static {
 
     /// Encode this layer into `out`.
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()>;
+
+    /// Return pseudo-header data for a following transport layer, when present.
+    fn transport_checksum_context(
+        &self,
+        _transport_protocol: u8,
+    ) -> Option<TransportChecksumContext> {
+        None
+    }
 
     /// Clone this layer behind a trait object.
     fn clone_layer(&self) -> Box<dyn Layer>;
