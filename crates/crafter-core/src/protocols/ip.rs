@@ -10,8 +10,9 @@ use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
-use crate::protocols::icmp::{append_icmp_packet, Icmp};
-use crate::protocols::transport::{append_tcp_packet, append_udp_packet, Tcp, Udp};
+use crate::protocols::icmp::Icmp;
+use crate::protocols::transport::{Tcp, Udp};
+use crate::registry::ProtocolRegistry;
 
 /// IPv4 protocol number for ICMP.
 pub const IPPROTO_ICMP: u8 = 1;
@@ -888,16 +889,14 @@ impl Layer for Ipv4 {
 
 impl_layer_div!(Ipv4);
 
-/// Decode an IPv4 packet into a packet stack.
-pub(crate) fn decode_ipv4_packet(bytes: &[u8]) -> Result<Packet> {
+/// Append a decoded IPv4 packet using an explicit registry.
+pub(crate) fn append_ipv4_packet_with_registry(
+    registry: &ProtocolRegistry,
+    packet: Packet,
+    bytes: &[u8],
+) -> Result<Packet> {
     let (ipv4, payload, rest) = decode_ipv4_parts(bytes)?;
-    append_ipv4_payload(Packet::new().push(ipv4), payload, rest)
-}
-
-/// Append a decoded IPv4 packet to an existing outer stack.
-pub(crate) fn append_ipv4_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
-    let (ipv4, payload, rest) = decode_ipv4_parts(bytes)?;
-    append_ipv4_payload(packet.push(ipv4), payload, rest)
+    append_ipv4_payload_with_registry(registry, packet.push(ipv4), payload, rest)
 }
 
 fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
@@ -979,24 +978,18 @@ fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
     ))
 }
 
-fn append_ipv4_payload(mut packet: Packet, payload: &[u8], rest: &[u8]) -> Result<Packet> {
+fn append_ipv4_payload_with_registry(
+    registry: &ProtocolRegistry,
+    mut packet: Packet,
+    payload: &[u8],
+    rest: &[u8],
+) -> Result<Packet> {
     let protocol = packet
         .layer::<Ipv4>()
         .map(Ipv4::protocol_value)
         .unwrap_or_default();
 
-    packet = match protocol {
-        IPPROTO_ICMP => append_icmp_packet(packet, payload)?,
-        IPPROTO_TCP => append_tcp_packet(packet, payload)?,
-        IPPROTO_UDP => append_udp_packet(packet, payload)?,
-        _ => {
-            if payload.is_empty() {
-                packet
-            } else {
-                packet.push(Raw::from_bytes(payload))
-            }
-        }
-    };
+    packet = registry.decode_ipv4_protocol(packet, protocol, payload)?;
 
     if !rest.is_empty() {
         packet = packet.push(Raw::from_bytes(rest));

@@ -7,9 +7,7 @@ use core::ops::Div;
 
 use crate::checksum::{ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum};
 use crate::error::Result;
-use crate::protocols::ip::decode_ipv4_packet;
-use crate::protocols::ipv6::decode_ipv6_packet;
-use crate::protocols::link::{decode_ethernet, decode_linux_sll, decode_null_loopback};
+use crate::registry::ProtocolRegistry;
 
 /// Pseudo-header context used by transport layers when auto-filling checksums.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -486,23 +484,30 @@ impl Packet {
 
     /// Decode bytes from a link-layer entrypoint.
     pub fn decode_from_link(link_type: LinkType, bytes: impl AsRef<[u8]>) -> Result<Self> {
-        let bytes = bytes.as_ref();
-        match link_type {
-            LinkType::Raw => Self::decode_raw(bytes),
-            LinkType::Ethernet => decode_ethernet(bytes),
-            LinkType::LinuxCooked | LinkType::LinuxSll => decode_linux_sll(bytes),
-            LinkType::NullLoopback => decode_null_loopback(bytes),
-        }
+        ProtocolRegistry::new().decode_from_link(link_type, bytes)
+    }
+
+    /// Decode bytes from a link-layer entrypoint using an explicit registry.
+    pub fn decode_from_link_with_registry(
+        registry: &ProtocolRegistry,
+        link_type: LinkType,
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        registry.decode_from_link(link_type, bytes)
     }
 
     /// Decode bytes from a network-layer entrypoint.
     pub fn decode_from_l3(network_layer: NetworkLayer, bytes: impl AsRef<[u8]>) -> Result<Self> {
-        let bytes = bytes.as_ref();
-        match network_layer {
-            NetworkLayer::Raw => Self::decode_raw(bytes),
-            NetworkLayer::Ipv4 => decode_ipv4_packet(bytes),
-            NetworkLayer::Ipv6 => decode_ipv6_packet(bytes),
-        }
+        ProtocolRegistry::new().decode_from_l3(network_layer, bytes)
+    }
+
+    /// Decode bytes from a network-layer entrypoint using an explicit registry.
+    pub fn decode_from_l3_with_registry(
+        registry: &ProtocolRegistry,
+        network_layer: NetworkLayer,
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        registry.decode_from_l3(network_layer, bytes)
     }
 
     /// One-line packet summary.
