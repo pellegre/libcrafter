@@ -75,3 +75,22 @@ missing
 config.h.in
 compile
 tags
+
+# Rust workspace #
+##################
+/target/
+Cargo.lock
+
+# Local environment and live-lab state #
+#######################################
+.env
+.env.*
+!.env.example
+.libcrafter-live/
+tools/live-lab/.state/
+tools/live-lab/artifacts/
+
+# Generated artifacts #
+#######################
+artifacts/
+generated/
