@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+command="${1:-}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+provider_name="local-dry-run"
+state_root="${LIBCRAFTER_LIVE_LAB_STATE_DIR:?LIBCRAFTER_LIVE_LAB_STATE_DIR is required}"
+artifact_root="${LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR:?LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR is required}"
+project_root="${LIBCRAFTER_PROJECT_ROOT:?LIBCRAFTER_PROJECT_ROOT is required}"
+
+state_dir="$state_root/$provider_name"
+artifact_dir="$artifact_root/$provider_name"
+manifest="$state_dir/manifest.env"
+
+timestamp_utc() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+write_manifest() {
+  mkdir -p "$state_dir" "$artifact_dir"
+  cat >"$manifest" <<EOF
+provider=$provider_name
+created_at=$(timestamp_utc)
+project_root=$project_root
+artifact_dir=$artifact_dir
+kind=dry-run
+resource_count=0
+EOF
+}
+
+case "$command" in
+  doctor)
+    echo "provider=$provider_name"
+    echo "status=ok"
+    echo "creates_infrastructure=false"
+    echo "state_dir=$state_dir"
+    echo "artifact_dir=$artifact_dir"
+    ;;
+
+  create)
+    write_manifest
+    cat >"$artifact_dir/create.log" <<EOF
+$(timestamp_utc) local-dry-run create completed without infrastructure changes.
+EOF
+    echo "provider=$provider_name"
+    echo "created=true"
+    echo "creates_infrastructure=false"
+    echo "manifest=$manifest"
+    ;;
+
+  run)
+    if [[ ! -f "$manifest" ]]; then
+      write_manifest
+    fi
+    mkdir -p "$artifact_dir"
+    {
+      echo "$(timestamp_utc) local-dry-run run completed without executing live packet tests."
+      if [[ $# -gt 0 ]]; then
+        printf 'args='
+        printf '%q ' "$@"
+        printf '\n'
+      fi
+    } >"$artifact_dir/run.log"
+    echo "provider=$provider_name"
+    echo "ran=true"
+    echo "live_packet_tests=false"
+    echo "log=$artifact_dir/run.log"
+    ;;
+
+  artifact)
+    mkdir -p "$artifact_dir"
+    echo "provider=$provider_name"
+    echo "artifact_dir=$artifact_dir"
+    find "$artifact_dir" -maxdepth 1 -type f -print | sort
+    ;;
+
+  destroy)
+    rm -rf "$state_dir"
+    mkdir -p "$artifact_dir"
+    cat >"$artifact_dir/destroy.log" <<EOF
+$(timestamp_utc) local-dry-run destroy completed without infrastructure changes.
+EOF
+    echo "provider=$provider_name"
+    echo "destroyed=true"
+    echo "creates_infrastructure=false"
+    ;;
+
+  *)
+    echo "error: unknown local-dry-run command '$command'" >&2
+    exit 64
+    ;;
+esac
