@@ -7,8 +7,14 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::net::IpAddr;
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crafter_core::{
     Arp, CrafterError, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6, LinkType, LinuxSll, NetworkLayer,
@@ -20,6 +26,7 @@ const PCAP_RECORD_HEADER_LEN: usize = 16;
 const PCAP_VERSION_MAJOR: u16 = 2;
 const PCAP_VERSION_MINOR: u16 = 4;
 const DEFAULT_SNAPLEN: u32 = 65_535;
+const DEFAULT_CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// BSD null/loopback pcap data-link type.
 pub const DLT_NULL: u32 = 0;
@@ -62,6 +69,12 @@ pub enum PcapError {
         /// Stable reason for diagnostics.
         reason: &'static str,
     },
+    /// A sniffer was opened without selecting a pcap file or interface.
+    CaptureSourceMissing,
+    /// Live capture cannot be opened in the current environment.
+    LiveCaptureUnavailable(&'static str),
+    /// A spawned capture thread panicked.
+    CaptureThreadPanicked,
 }
 
 impl fmt::Display for PcapError {
@@ -77,6 +90,11 @@ impl fmt::Display for PcapError {
             Self::InvalidFilter { filter, reason } => {
                 write!(f, "invalid pcap filter '{filter}': {reason}")
             }
+            Self::CaptureSourceMissing => write!(f, "capture source is missing"),
+            Self::LiveCaptureUnavailable(reason) => {
+                write!(f, "live capture is unavailable: {reason}")
+            }
+            Self::CaptureThreadPanicked => write!(f, "capture thread panicked"),
         }
     }
 }
@@ -896,6 +914,434 @@ where
     writer.flush()
 }
 
+/// Builder for offline and live packet capture.
+///
+/// Offline capture reads a pcap file through [`PcapReader`]. Live capture is
+/// explicit and currently shells out to `tcpdump`, which keeps raw interface
+/// access out of local static tests while preserving libpcap BPF semantics in
+/// disposable live labs.
+#[derive(Debug, Clone)]
+pub struct Sniffer {
+    source: CaptureSource,
+    filter: Option<String>,
+    count_limit: Option<usize>,
+    timeout: Option<Duration>,
+    snaplen: u32,
+    promisc: bool,
+    immediate: bool,
+}
+
+impl Sniffer {
+    /// Create a sniffer builder with safe bounded live-capture defaults.
+    pub fn new() -> Self {
+        Self {
+            source: CaptureSource::Unset,
+            filter: None,
+            count_limit: None,
+            timeout: Some(DEFAULT_CAPTURE_TIMEOUT),
+            snaplen: DEFAULT_SNAPLEN,
+            promisc: true,
+            immediate: true,
+        }
+    }
+
+    /// Create a builder that captures from an offline pcap file.
+    pub fn offline(path: impl AsRef<Path>) -> Self {
+        Self::new().pcap(path)
+    }
+
+    /// Create a builder that captures from a network interface.
+    pub fn interface(name: impl Into<String>) -> Self {
+        Self::new().iface(name)
+    }
+
+    /// Select a network interface for live capture.
+    pub fn iface(mut self, name: impl Into<String>) -> Self {
+        self.source = CaptureSource::Interface(name.into());
+        self
+    }
+
+    /// Select an offline pcap file for capture.
+    pub fn pcap(mut self, path: impl AsRef<Path>) -> Self {
+        self.source = CaptureSource::Offline(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Attach a BPF-style filter expression.
+    ///
+    /// Offline capture accepts the deterministic subset parsed by
+    /// [`PcapFilter`]. Live capture passes the expression to `tcpdump`.
+    pub fn filter(mut self, filter: impl Into<String>) -> Self {
+        let filter = filter.into();
+        self.filter = (!filter.trim().is_empty()).then_some(filter);
+        self
+    }
+
+    /// Remove any configured filter.
+    pub fn clear_filter(mut self) -> Self {
+        self.filter = None;
+        self
+    }
+
+    /// Limit the number of packets yielded by this capture.
+    pub fn count(mut self, count: usize) -> Self {
+        self.count_limit = Some(count);
+        self
+    }
+
+    /// Remove the configured packet count limit.
+    pub fn unlimited_count(mut self) -> Self {
+        self.count_limit = None;
+        self
+    }
+
+    /// Set a wall-clock capture timeout.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Disable the capture timeout.
+    pub fn no_timeout(mut self) -> Self {
+        self.timeout = None;
+        self
+    }
+
+    /// Set the snapshot length for live capture.
+    pub fn snaplen(mut self, snaplen: u32) -> Self {
+        self.snaplen = snaplen;
+        self
+    }
+
+    /// Enable or disable promiscuous mode for live capture.
+    pub fn promisc(mut self, promisc: bool) -> Self {
+        self.promisc = promisc;
+        self
+    }
+
+    /// Enable or disable packet-buffer flushing for live capture.
+    pub fn immediate_mode(mut self, immediate: bool) -> Self {
+        self.immediate = immediate;
+        self
+    }
+
+    /// Open the capture and return an iterator over decoded packets.
+    pub fn open(self) -> Result<Capture> {
+        self.open_with_cancel(Arc::new(AtomicBool::new(false)))
+    }
+
+    /// Capture packets with a callback until count, timeout, EOF, cancellation,
+    /// or [`CaptureControl::Stop`] is reached.
+    pub fn capture<F>(self, count: usize, mut callback: F) -> Result<usize>
+    where
+        F: FnMut(PcapPacket) -> Result<CaptureControl>,
+    {
+        let mut capture = self.count(count).open()?;
+        let mut accepted = 0;
+        while let Some(packet) = capture.next_packet()? {
+            accepted += 1;
+            if callback(packet)? == CaptureControl::Stop {
+                break;
+            }
+        }
+        Ok(accepted)
+    }
+
+    /// Collect packets into memory using the configured limits.
+    pub fn collect(self) -> Result<Vec<PcapPacket>> {
+        self.open()?.collect_packets()
+    }
+
+    /// Start a background capture and return a handle that can be joined or
+    /// cancelled.
+    pub fn spawn(self, count: usize) -> Result<CaptureHandle> {
+        self.validate()?;
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let thread_cancel = Arc::clone(&cancel);
+        let sniffer = self.count(count);
+        let join = thread::Builder::new()
+            .name("crafter-sniffer".to_string())
+            .spawn(move || {
+                let capture = sniffer.open_with_cancel(thread_cancel)?;
+                capture.collect_packets()
+            })?;
+
+        Ok(CaptureHandle { cancel, join })
+    }
+
+    fn validate(&self) -> Result<()> {
+        match &self.source {
+            CaptureSource::Unset => Err(PcapError::CaptureSourceMissing),
+            CaptureSource::Offline(_) | CaptureSource::Interface(_) => Ok(()),
+        }
+    }
+
+    fn open_with_cancel(self, cancel: Arc<AtomicBool>) -> Result<Capture> {
+        let count_limit = self.count_limit;
+        let deadline = capture_deadline(self.timeout);
+        let inner = match self.source {
+            CaptureSource::Unset => return Err(PcapError::CaptureSourceMissing),
+            CaptureSource::Offline(path) => {
+                let mut reader = PcapReader::open(path)?;
+                if let Some(filter) = self.filter.as_deref() {
+                    reader = reader.filter(filter)?;
+                }
+                CaptureInner::Offline(reader)
+            }
+            CaptureSource::Interface(name) => CaptureInner::Live(TcpdumpCapture::open(
+                &name,
+                self.filter.as_deref(),
+                count_limit,
+                self.timeout,
+                self.snaplen,
+                self.promisc,
+                self.immediate,
+            )?),
+        };
+
+        Ok(Capture {
+            inner,
+            count_limit,
+            yielded: 0,
+            deadline,
+            cancel,
+        })
+    }
+}
+
+impl Default for Sniffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+enum CaptureSource {
+    Unset,
+    Offline(PathBuf),
+    Interface(String),
+}
+
+/// Callback decision returned from [`Sniffer::capture`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CaptureControl {
+    /// Continue capture.
+    Continue,
+    /// Stop capture after the current packet.
+    Stop,
+}
+
+/// Open packet capture iterator.
+#[derive(Debug)]
+pub struct Capture {
+    inner: CaptureInner,
+    count_limit: Option<usize>,
+    yielded: usize,
+    deadline: Option<Instant>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Capture {
+    /// Read the next decoded packet, returning `Ok(None)` on EOF, timeout,
+    /// cancellation, or count exhaustion.
+    pub fn next_packet(&mut self) -> Result<Option<PcapPacket>> {
+        if self.cancel.load(Ordering::Relaxed) || self.reached_limit() || self.timed_out() {
+            return Ok(None);
+        }
+
+        let Some(record) = self.inner.next_record()? else {
+            return Ok(None);
+        };
+        self.yielded += 1;
+        let packet = record.decode()?;
+        Ok(Some(PcapPacket::new(
+            record.timestamp,
+            record.original_len,
+            record.link_type,
+            packet,
+        )))
+    }
+
+    /// Collect remaining packets into memory.
+    pub fn collect_packets(mut self) -> Result<Vec<PcapPacket>> {
+        let mut packets = Vec::new();
+        while let Some(packet) = self.next_packet()? {
+            packets.push(packet);
+        }
+        Ok(packets)
+    }
+
+    /// Number of packets yielded by this capture so far.
+    pub const fn yielded(&self) -> usize {
+        self.yielded
+    }
+
+    fn reached_limit(&self) -> bool {
+        self.count_limit
+            .is_some_and(|count_limit| self.yielded >= count_limit)
+    }
+
+    fn timed_out(&self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+}
+
+impl Iterator for Capture {
+    type Item = Result<PcapPacket>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.next_packet() {
+            Ok(Some(packet)) => Some(Ok(packet)),
+            Ok(None) => None,
+            Err(err) => Some(Err(err)),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum CaptureInner {
+    Offline(PcapReader<BufReader<File>>),
+    Live(TcpdumpCapture),
+}
+
+impl CaptureInner {
+    fn next_record(&mut self) -> Result<Option<PcapRecord>> {
+        match self {
+            Self::Offline(reader) => reader.next_record(),
+            Self::Live(capture) => capture.next_record(),
+        }
+    }
+}
+
+/// Background capture handle returned by [`Sniffer::spawn`].
+#[derive(Debug)]
+pub struct CaptureHandle {
+    cancel: Arc<AtomicBool>,
+    join: JoinHandle<Result<Vec<PcapPacket>>>,
+}
+
+impl CaptureHandle {
+    /// Request cooperative cancellation.
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    /// Wait for the capture thread and return collected packets.
+    pub fn join(self) -> Result<Vec<PcapPacket>> {
+        self.join
+            .join()
+            .map_err(|_| PcapError::CaptureThreadPanicked)?
+    }
+}
+
+#[derive(Debug)]
+struct TcpdumpCapture {
+    child: Child,
+    reader: PcapReader<BufReader<ChildStdout>>,
+}
+
+impl TcpdumpCapture {
+    fn open(
+        iface: &str,
+        filter: Option<&str>,
+        count_limit: Option<usize>,
+        timeout: Option<Duration>,
+        snaplen: u32,
+        promisc: bool,
+        immediate: bool,
+    ) -> Result<Self> {
+        if iface.trim().is_empty() {
+            return Err(PcapError::LiveCaptureUnavailable(
+                "interface name must not be empty",
+            ));
+        }
+
+        let mut command = tcpdump_command(timeout);
+        command
+            .arg("-i")
+            .arg(iface)
+            .arg("-n")
+            .arg("-w")
+            .arg("-")
+            .arg("-s")
+            .arg(snaplen.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        if immediate {
+            command.arg("-U");
+        }
+        if !promisc {
+            command.arg("-p");
+        }
+        if let Some(count_limit) = count_limit {
+            command.arg("-c").arg(count_limit.to_string());
+        }
+        if let Some(filter) = filter {
+            command.args(split_filter_args(filter));
+        }
+
+        let mut child = command.spawn()?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or(PcapError::LiveCaptureUnavailable(
+                "tcpdump stdout unavailable",
+            ))?;
+        match PcapReader::from_reader(BufReader::new(stdout)) {
+            Ok(reader) => Ok(Self { child, reader }),
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                Err(err)
+            }
+        }
+    }
+
+    fn next_record(&mut self) -> Result<Option<PcapRecord>> {
+        match self.reader.next_record() {
+            Err(PcapError::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
+            result => result,
+        }
+    }
+}
+
+impl Drop for TcpdumpCapture {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn capture_deadline(timeout: Option<Duration>) -> Option<Instant> {
+    timeout.and_then(|duration| Instant::now().checked_add(duration))
+}
+
+fn tcpdump_command(timeout: Option<Duration>) -> Command {
+    if let Some(timeout) = timeout {
+        let mut command = Command::new("timeout");
+        command
+            .arg("--kill-after=1s")
+            .arg(format_timeout_arg(timeout))
+            .arg("tcpdump");
+        command
+    } else {
+        Command::new("tcpdump")
+    }
+}
+
+fn format_timeout_arg(timeout: Duration) -> String {
+    let seconds = timeout.as_secs() + u64::from(timeout.subsec_nanos() > 0);
+    format!("{seconds}s")
+}
+
+fn split_filter_args(filter: &str) -> Vec<&str> {
+    filter.split_whitespace().collect()
+}
+
 /// File-backed pcap reader alias used by generated examples.
 pub type FileSniffer = PcapReader<BufReader<File>>;
 
@@ -911,7 +1357,7 @@ pub mod writer {
 
 /// Capture-oriented placeholder module for live sniffing steps.
 pub mod capture {
-    pub use crate::{FileSniffer, PcapFilter};
+    pub use crate::{Capture, CaptureControl, CaptureHandle, FileSniffer, PcapFilter, Sniffer};
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1502,17 +1948,21 @@ where
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use crafter_core::{
         Arp, Ethernet, Ipv4, LinkType, MacAddr, Packet, Raw, Tcp, Udp, ETHERTYPE_ARP,
     };
 
     use super::{
-        dump_pcap, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
-        TimestampPrecision, DLT_EN10MB, PCAP_HEADER_LEN,
+        dump_pcap, CaptureControl, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter,
+        PcapWriterOptions, Sniffer, TimestampPrecision, DLT_EN10MB, PCAP_HEADER_LEN,
     };
 
     const ARP_REQUEST: &[u8] = include_bytes!("../../../tests/fixtures/scapy/arp-request.bin");
+    static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
 
     fn ethernet_arp_packet() -> Packet {
         Packet::decode_from_link(LinkType::Ethernet, ARP_REQUEST).unwrap()
@@ -1529,6 +1979,39 @@ mod tests {
                 .unwrap()
             / Tcp::new().sport(source_port).dport(destination_port)
             / Raw::from("payload")
+    }
+
+    fn udp_packet(source_port: u16, destination_port: u16) -> Packet {
+        Ethernet::new()
+            .src(MacAddr::new([0x02, 0, 0, 0, 0, 2]))
+            .dst(MacAddr::BROADCAST)
+            / Ipv4::new()
+                .src_str("203.0.113.30")
+                .unwrap()
+                .dst_str("198.51.100.20")
+                .unwrap()
+            / Udp::new().sport(source_port).dport(destination_port)
+            / Raw::from("payload")
+    }
+
+    fn temp_pcap_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "crafter-pcap-{name}-{}-{}.pcap",
+            std::process::id(),
+            NEXT_TEMP_PCAP.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn write_temp_pcap(name: &str, packets: &[Packet]) -> PathBuf {
+        let path = temp_pcap_path(name);
+        {
+            let mut writer = PcapWriter::create(&path, LinkType::Ethernet).unwrap();
+            for packet in packets {
+                writer.write_packet(packet).unwrap();
+            }
+            writer.flush().unwrap();
+        }
+        path
     }
 
     #[test]
@@ -1782,5 +2265,105 @@ mod tests {
             decoded.layer::<Ethernet>().unwrap().ethertype_value(),
             Some(ETHERTYPE_ARP)
         );
+    }
+
+    #[test]
+    fn sniffer_offline_supports_iterator_callback_and_spawn() {
+        let tcp = tcp_packet(10, 80);
+        let udp = udp_packet(53000, 53001);
+        let path = write_temp_pcap("sniffer-offline", &[tcp, udp]);
+
+        let mut capture = Sniffer::offline(&path)
+            .filter("tcp")
+            .count(1)
+            .open()
+            .unwrap();
+        let first = capture.next_packet().unwrap().unwrap();
+        assert!(first.packet().layer::<Tcp>().is_some());
+        assert!(capture.next_packet().unwrap().is_none());
+
+        let mut summaries = Vec::new();
+        let callback_count = Sniffer::offline(&path)
+            .filter("udp")
+            .capture(10, |packet| {
+                summaries.push(packet.packet().summary());
+                Ok(CaptureControl::Continue)
+            })
+            .unwrap();
+        assert_eq!(callback_count, 1);
+        assert!(summaries[0].contains("Udp"));
+
+        let spawned_packets = Sniffer::offline(&path)
+            .filter("tcp or udp")
+            .spawn(2)
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(spawned_packets.len(), 2);
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn bpf_filter_sniffer_offline_uses_deterministic_subset() {
+        let https = tcp_packet(12345, 443);
+        let http = tcp_packet(12345, 80);
+        let path = write_temp_pcap("bpf-filter", &[https, http]);
+
+        let packets = Sniffer::offline(&path)
+            .filter("tcp and dst port 443")
+            .collect()
+            .unwrap();
+        assert_eq!(packets.len(), 1);
+        assert_eq!(
+            packets[0]
+                .packet()
+                .layer::<Tcp>()
+                .unwrap()
+                .destination_port_value(),
+            443
+        );
+
+        let packets = Sniffer::offline(&path)
+            .filter("tcp and not dst port 443")
+            .collect()
+            .unwrap();
+        assert_eq!(packets.len(), 1);
+        assert_eq!(
+            packets[0]
+                .packet()
+                .layer::<Tcp>()
+                .unwrap()
+                .destination_port_value(),
+            80
+        );
+
+        let mut callback_count = 0;
+        let accepted = Sniffer::offline(&path)
+            .filter("tcp")
+            .capture(10, |_packet| {
+                callback_count += 1;
+                Ok(CaptureControl::Stop)
+            })
+            .unwrap();
+        assert_eq!(accepted, 1);
+        assert_eq!(callback_count, 1);
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[ignore = "live capture is reserved for disposable live-lab execution"]
+    fn sniffer_live_capture_live_lab_only() {
+        let Some(iface) = std::env::var_os("LIBCRAFTER_LIVE_CAPTURE_IFACE") else {
+            return;
+        };
+        let packets = Sniffer::interface(iface.to_string_lossy().into_owned())
+            .filter("icmp or arp")
+            .count(1)
+            .timeout(Duration::from_secs(2))
+            .collect()
+            .unwrap();
+        assert!(packets.len() <= 1);
     }
 }
