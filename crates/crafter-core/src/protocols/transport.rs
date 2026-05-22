@@ -28,6 +28,34 @@ pub const TCP_FLAG_CWR: u16 = 0x080;
 /// TCP NS flag.
 pub const TCP_FLAG_NS: u16 = 0x100;
 
+/// TCP end-of-option-list kind.
+pub const TCP_OPTION_EOL: u8 = 0;
+/// TCP no-operation option kind.
+pub const TCP_OPTION_NOP: u8 = 1;
+/// TCP maximum segment size option kind.
+pub const TCP_OPTION_MSS: u8 = 2;
+/// TCP window scale option kind.
+pub const TCP_OPTION_WINDOW_SCALE: u8 = 3;
+/// TCP SACK-permitted option kind.
+pub const TCP_OPTION_SACK_PERMITTED: u8 = 4;
+/// TCP SACK option kind.
+pub const TCP_OPTION_SACK: u8 = 5;
+/// TCP timestamp option kind.
+pub const TCP_OPTION_TIMESTAMP: u8 = 8;
+/// TCP MPTCP option kind.
+pub const TCP_OPTION_MPTCP: u8 = 30;
+/// TCP Fast Open option kind.
+pub const TCP_OPTION_FAST_OPEN: u8 = 34;
+/// TCP Extended Data Offset option kind.
+pub const TCP_OPTION_EDO: u8 = 237;
+
+/// EDO request length byte.
+pub const TCP_EDO_REQUEST_LEN: u8 = 2;
+/// EDO length byte carrying an extended TCP header length.
+pub const TCP_EDO_HEADER_LEN: u8 = 4;
+/// EDO length byte carrying an extended TCP header length and segment length.
+pub const TCP_EDO_HEADER_AND_SEGMENT_LEN: u8 = 6;
+
 const UDP_HEADER_LEN: usize = 8;
 const TCP_MIN_HEADER_LEN: usize = 20;
 const TCP_MAX_HEADER_LEN: usize = 60;
@@ -68,6 +96,376 @@ macro_rules! impl_layer_div {
             }
         }
     };
+}
+
+/// One SACK block carried by a TCP SACK option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TcpSackBlock {
+    /// Left edge sequence number.
+    pub left_edge: u32,
+    /// Right edge sequence number.
+    pub right_edge: u32,
+}
+
+impl TcpSackBlock {
+    /// Create a SACK block.
+    pub const fn new(left_edge: u32, right_edge: u32) -> Self {
+        Self {
+            left_edge,
+            right_edge,
+        }
+    }
+}
+
+/// Parsed or constructible TCP Extended Data Offset value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TcpExtendedDataOffset {
+    /// EDO request option with no payload.
+    Request,
+    /// EDO option carrying the extended TCP header length in 32-bit words.
+    HeaderLength {
+        /// Extended TCP header length in 32-bit words.
+        header_length: u16,
+    },
+    /// EDO option carrying the extended TCP header length and TCP segment length.
+    HeaderAndSegmentLength {
+        /// Extended TCP header length in 32-bit words.
+        header_length: u16,
+        /// TCP segment length in bytes.
+        segment_length: u16,
+    },
+}
+
+impl TcpExtendedDataOffset {
+    /// EDO option length byte.
+    pub const fn option_len(self) -> u8 {
+        match self {
+            Self::Request => TCP_EDO_REQUEST_LEN,
+            Self::HeaderLength { .. } => TCP_EDO_HEADER_LEN,
+            Self::HeaderAndSegmentLength { .. } => TCP_EDO_HEADER_AND_SEGMENT_LEN,
+        }
+    }
+}
+
+/// Parsed or constructible TCP option.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TcpOption {
+    /// End of option list.
+    EndOfList,
+    /// One-byte no-operation padding.
+    NoOperation,
+    /// Maximum segment size.
+    MaximumSegmentSize(u16),
+    /// Window scale shift count.
+    WindowScale(u8),
+    /// SACK permitted.
+    SackPermitted,
+    /// SACK blocks.
+    Sack(Vec<TcpSackBlock>),
+    /// TCP timestamp.
+    Timestamp {
+        /// Timestamp value.
+        value: u32,
+        /// Timestamp echo reply value.
+        echo_reply: u32,
+    },
+    /// MPTCP option preserving subtype-specific bytes.
+    MultipathTcp {
+        /// MPTCP subtype nibble.
+        subtype: u8,
+        /// Bytes after the kind/length header, including the subtype byte.
+        data: Vec<u8>,
+    },
+    /// Extended Data Offset.
+    ExtendedDataOffset(TcpExtendedDataOffset),
+    /// TCP Fast Open cookie bytes.
+    FastOpen(Vec<u8>),
+    /// Unknown or caller-defined option with a standard length byte.
+    Generic {
+        /// Raw option kind byte.
+        kind: u8,
+        /// Option payload bytes after kind and length.
+        data: Vec<u8>,
+    },
+}
+
+impl TcpOption {
+    /// Create an end-of-option-list marker.
+    pub const fn end_of_list() -> Self {
+        Self::EndOfList
+    }
+
+    /// Create a no-operation padding option.
+    pub const fn no_operation() -> Self {
+        Self::NoOperation
+    }
+
+    /// Create an MSS option.
+    pub const fn maximum_segment_size(mss: u16) -> Self {
+        Self::MaximumSegmentSize(mss)
+    }
+
+    /// Scapy/libcrafter-style alias for MSS.
+    pub const fn mss(mss: u16) -> Self {
+        Self::MaximumSegmentSize(mss)
+    }
+
+    /// Create a window-scale option.
+    pub const fn window_scale(shift: u8) -> Self {
+        Self::WindowScale(shift)
+    }
+
+    /// Create a SACK-permitted option.
+    pub const fn sack_permitted() -> Self {
+        Self::SackPermitted
+    }
+
+    /// Create a SACK option.
+    pub fn sack(blocks: impl Into<Vec<TcpSackBlock>>) -> Self {
+        Self::Sack(blocks.into())
+    }
+
+    /// Create a timestamp option.
+    pub const fn timestamp(value: u32, echo_reply: u32) -> Self {
+        Self::Timestamp { value, echo_reply }
+    }
+
+    /// Create a generic MPTCP option, preserving subtype-specific bytes.
+    pub fn multipath_tcp(subtype: u8, data: impl Into<Vec<u8>>) -> Self {
+        Self::MultipathTcp {
+            subtype,
+            data: data.into(),
+        }
+    }
+
+    /// Create an EDO request option.
+    pub const fn extended_data_offset_request() -> Self {
+        Self::ExtendedDataOffset(TcpExtendedDataOffset::Request)
+    }
+
+    /// Create an EDO option with an extended header length.
+    pub const fn extended_data_offset(header_length: u16) -> Self {
+        Self::ExtendedDataOffset(TcpExtendedDataOffset::HeaderLength { header_length })
+    }
+
+    /// Create an EDO option with an extended header length and segment length.
+    pub const fn extended_data_offset_ext(header_length: u16, segment_length: u16) -> Self {
+        Self::ExtendedDataOffset(TcpExtendedDataOffset::HeaderAndSegmentLength {
+            header_length,
+            segment_length,
+        })
+    }
+
+    /// Create a TCP Fast Open option.
+    pub fn fast_open(cookie: impl Into<Vec<u8>>) -> Self {
+        Self::FastOpen(cookie.into())
+    }
+
+    /// Create a caller-defined option.
+    pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
+        Self::Generic {
+            kind,
+            data: data.into(),
+        }
+    }
+
+    /// Raw option kind byte.
+    pub const fn kind(&self) -> u8 {
+        match self {
+            Self::EndOfList => TCP_OPTION_EOL,
+            Self::NoOperation => TCP_OPTION_NOP,
+            Self::MaximumSegmentSize(_) => TCP_OPTION_MSS,
+            Self::WindowScale(_) => TCP_OPTION_WINDOW_SCALE,
+            Self::SackPermitted => TCP_OPTION_SACK_PERMITTED,
+            Self::Sack(_) => TCP_OPTION_SACK,
+            Self::Timestamp { .. } => TCP_OPTION_TIMESTAMP,
+            Self::MultipathTcp { .. } => TCP_OPTION_MPTCP,
+            Self::ExtendedDataOffset(_) => TCP_OPTION_EDO,
+            Self::FastOpen(_) => TCP_OPTION_FAST_OPEN,
+            Self::Generic { kind, .. } => *kind,
+        }
+    }
+
+    /// Encoded option length in bytes.
+    pub fn encoded_len(&self) -> usize {
+        match self {
+            Self::EndOfList | Self::NoOperation => 1,
+            Self::MaximumSegmentSize(_) => 4,
+            Self::WindowScale(_) => 3,
+            Self::SackPermitted => 2,
+            Self::Sack(blocks) => 2 + blocks.len() * 8,
+            Self::Timestamp { .. } => 10,
+            Self::MultipathTcp { data, .. } => 2 + data.len().max(1),
+            Self::ExtendedDataOffset(edo) => edo.option_len() as usize,
+            Self::FastOpen(cookie) => 2 + cookie.len(),
+            Self::Generic { data, .. } => 2 + data.len(),
+        }
+    }
+
+    /// Encode this option to bytes.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let len = self.encoded_len();
+        if len > u8::MAX as usize {
+            return Err(CrafterError::invalid_field_value(
+                "tcp.option.length",
+                "TCP option length must fit in one byte",
+            ));
+        }
+
+        let mut bytes = Vec::with_capacity(len);
+        match self {
+            Self::EndOfList => bytes.push(TCP_OPTION_EOL),
+            Self::NoOperation => bytes.push(TCP_OPTION_NOP),
+            Self::MaximumSegmentSize(mss) => {
+                bytes.extend_from_slice(&[TCP_OPTION_MSS, 4]);
+                bytes.extend_from_slice(&mss.to_be_bytes());
+            }
+            Self::WindowScale(shift) => {
+                bytes.extend_from_slice(&[TCP_OPTION_WINDOW_SCALE, 3, *shift]);
+            }
+            Self::SackPermitted => {
+                bytes.extend_from_slice(&[TCP_OPTION_SACK_PERMITTED, 2]);
+            }
+            Self::Sack(blocks) => {
+                bytes.extend_from_slice(&[TCP_OPTION_SACK, len as u8]);
+                for block in blocks {
+                    bytes.extend_from_slice(&block.left_edge.to_be_bytes());
+                    bytes.extend_from_slice(&block.right_edge.to_be_bytes());
+                }
+            }
+            Self::Timestamp { value, echo_reply } => {
+                bytes.extend_from_slice(&[TCP_OPTION_TIMESTAMP, 10]);
+                bytes.extend_from_slice(&value.to_be_bytes());
+                bytes.extend_from_slice(&echo_reply.to_be_bytes());
+            }
+            Self::MultipathTcp { subtype, data } => {
+                if *subtype > 0x0f {
+                    return Err(CrafterError::invalid_field_value(
+                        "tcp.option.mptcp.subtype",
+                        "MPTCP subtype must fit in four bits",
+                    ));
+                }
+                bytes.extend_from_slice(&[TCP_OPTION_MPTCP, len as u8]);
+                if let Some((first, rest)) = data.split_first() {
+                    bytes.push((subtype << 4) | (first & 0x0f));
+                    bytes.extend_from_slice(rest);
+                } else {
+                    bytes.push(subtype << 4);
+                }
+            }
+            Self::ExtendedDataOffset(edo) => {
+                bytes.extend_from_slice(&[TCP_OPTION_EDO, edo.option_len()]);
+                match edo {
+                    TcpExtendedDataOffset::Request => {}
+                    TcpExtendedDataOffset::HeaderLength { header_length } => {
+                        bytes.extend_from_slice(&header_length.to_be_bytes());
+                    }
+                    TcpExtendedDataOffset::HeaderAndSegmentLength {
+                        header_length,
+                        segment_length,
+                    } => {
+                        bytes.extend_from_slice(&header_length.to_be_bytes());
+                        bytes.extend_from_slice(&segment_length.to_be_bytes());
+                    }
+                }
+            }
+            Self::FastOpen(cookie) => {
+                bytes.extend_from_slice(&[TCP_OPTION_FAST_OPEN, len as u8]);
+                bytes.extend_from_slice(cookie);
+            }
+            Self::Generic { kind, data } => {
+                if *kind == TCP_OPTION_EOL || *kind == TCP_OPTION_NOP {
+                    return Err(CrafterError::invalid_field_value(
+                        "tcp.option.kind",
+                        "EOL and NOP options do not carry a length byte",
+                    ));
+                }
+                bytes.extend_from_slice(&[*kind, len as u8]);
+                bytes.extend_from_slice(data);
+            }
+        }
+
+        Ok(bytes)
+    }
+
+    /// Decode all options from a raw TCP option byte slice.
+    pub fn decode_all(bytes: &[u8]) -> Result<Vec<Self>> {
+        TcpOptionIter::new(bytes).collect()
+    }
+}
+
+/// Iterator over encoded TCP options.
+#[derive(Debug, Clone)]
+pub struct TcpOptionIter<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+    done: bool,
+}
+
+impl<'a> TcpOptionIter<'a> {
+    /// Create an iterator over raw TCP option bytes.
+    pub const fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            offset: 0,
+            done: false,
+        }
+    }
+}
+
+impl Iterator for TcpOptionIter<'_> {
+    type Item = Result<TcpOption>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done || self.offset >= self.bytes.len() {
+            return None;
+        }
+
+        let start = self.offset;
+        let kind = self.bytes[start];
+        match kind {
+            TCP_OPTION_EOL => {
+                self.done = true;
+                self.offset = self.bytes.len();
+                Some(Ok(TcpOption::EndOfList))
+            }
+            TCP_OPTION_NOP => {
+                self.offset += 1;
+                Some(Ok(TcpOption::NoOperation))
+            }
+            _ => {
+                if start + 2 > self.bytes.len() {
+                    self.done = true;
+                    return Some(Err(CrafterError::buffer_too_short(
+                        "tcp option",
+                        start + 2,
+                        self.bytes.len(),
+                    )));
+                }
+
+                let len = self.bytes[start + 1] as usize;
+                if len < 2 {
+                    self.done = true;
+                    return Some(Err(CrafterError::invalid_field_value(
+                        "tcp.option.length",
+                        "option length must be at least 2 bytes",
+                    )));
+                }
+                if start + len > self.bytes.len() {
+                    self.done = true;
+                    return Some(Err(CrafterError::buffer_too_short(
+                        "tcp option",
+                        start + len,
+                        self.bytes.len(),
+                    )));
+                }
+
+                let option_bytes = &self.bytes[start..start + len];
+                self.offset += len;
+                Some(decode_tcp_option(option_bytes))
+            }
+        }
+    }
 }
 
 /// User Datagram Protocol header.
@@ -456,6 +854,12 @@ impl Tcp {
         self
     }
 
+    /// Append a typed TCP option.
+    pub fn tcp_option(mut self, option: TcpOption) -> Result<Self> {
+        self.options.extend_from_slice(&option.encode()?);
+        Ok(self)
+    }
+
     /// Replace all raw TCP option bytes.
     pub fn options(mut self, options: impl Into<Vec<u8>>) -> Self {
         self.options = options.into();
@@ -533,6 +937,16 @@ impl Tcp {
         &self.options
     }
 
+    /// Iterate over decoded TCP options.
+    pub fn option_iter(&self) -> TcpOptionIter<'_> {
+        TcpOptionIter::new(&self.options)
+    }
+
+    /// Decode TCP options into typed values.
+    pub fn parsed_options(&self) -> Result<Vec<TcpOption>> {
+        TcpOption::decode_all(&self.options)
+    }
+
     fn effective_data_offset(&self) -> u8 {
         self.data_offset
             .value()
@@ -593,6 +1007,7 @@ impl Tcp {
                 "TCP options must fit within the 60-byte maximum header",
             ));
         }
+        validate_tcp_options(&self.options)?;
         if self.effective_header_len() < TCP_MIN_HEADER_LEN + self.options.len() {
             return Err(CrafterError::invalid_field_value(
                 "tcp.data_offset",
@@ -782,6 +1197,7 @@ fn decode_tcp_parts(bytes: &[u8]) -> Result<(Tcp, &[u8])> {
             bytes.len(),
         ));
     }
+    validate_tcp_options(&bytes[TCP_MIN_HEADER_LEN..header_len])?;
 
     let flags = (((bytes[12] & 1) as u16) << 8) | bytes[13] as u16;
     let tcp = Tcp {
@@ -819,6 +1235,106 @@ fn transport_checksum_context(
             .get(index)
             .and_then(|layer| layer.transport_checksum_context(transport_protocol))
     })
+}
+
+fn validate_tcp_options(options: &[u8]) -> Result<()> {
+    for option in TcpOptionIter::new(options) {
+        option?;
+    }
+    Ok(())
+}
+
+fn decode_tcp_option(bytes: &[u8]) -> Result<TcpOption> {
+    let kind = bytes[0];
+    let data = &bytes[2..];
+    match kind {
+        TCP_OPTION_MSS => {
+            validate_tcp_option_len("tcp.option.mss", bytes.len(), 4)?;
+            Ok(TcpOption::MaximumSegmentSize(read_u16_be(data)?))
+        }
+        TCP_OPTION_WINDOW_SCALE => {
+            validate_tcp_option_len("tcp.option.window_scale", bytes.len(), 3)?;
+            Ok(TcpOption::WindowScale(data[0]))
+        }
+        TCP_OPTION_SACK_PERMITTED => {
+            validate_tcp_option_len("tcp.option.sack_permitted", bytes.len(), 2)?;
+            Ok(TcpOption::SackPermitted)
+        }
+        TCP_OPTION_SACK => decode_tcp_sack_option(data, bytes.len()),
+        TCP_OPTION_TIMESTAMP => {
+            validate_tcp_option_len("tcp.option.timestamp", bytes.len(), 10)?;
+            Ok(TcpOption::Timestamp {
+                value: read_u32_be(&data[0..4])?,
+                echo_reply: read_u32_be(&data[4..8])?,
+            })
+        }
+        TCP_OPTION_MPTCP => {
+            if data.is_empty() {
+                return Err(CrafterError::invalid_field_value(
+                    "tcp.option.mptcp",
+                    "MPTCP option must include a subtype byte",
+                ));
+            }
+            Ok(TcpOption::MultipathTcp {
+                subtype: data[0] >> 4,
+                data: data.to_vec(),
+            })
+        }
+        TCP_OPTION_EDO => decode_tcp_edo_option(data, bytes.len()),
+        TCP_OPTION_FAST_OPEN => Ok(TcpOption::FastOpen(data.to_vec())),
+        _ => Ok(TcpOption::Generic {
+            kind,
+            data: data.to_vec(),
+        }),
+    }
+}
+
+fn decode_tcp_sack_option(data: &[u8], len: usize) -> Result<TcpOption> {
+    if len < 10 || (len - 2) % 8 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "tcp.option.sack",
+            "SACK option payload must contain one or more 8-byte blocks",
+        ));
+    }
+
+    let mut blocks = Vec::with_capacity((len - 2) / 8);
+    for chunk in data.chunks_exact(8) {
+        blocks.push(TcpSackBlock {
+            left_edge: read_u32_be(&chunk[0..4])?,
+            right_edge: read_u32_be(&chunk[4..8])?,
+        });
+    }
+    Ok(TcpOption::Sack(blocks))
+}
+
+fn decode_tcp_edo_option(data: &[u8], len: usize) -> Result<TcpOption> {
+    let edo = match len as u8 {
+        TCP_EDO_REQUEST_LEN => TcpExtendedDataOffset::Request,
+        TCP_EDO_HEADER_LEN => TcpExtendedDataOffset::HeaderLength {
+            header_length: read_u16_be(&data[0..2])?,
+        },
+        TCP_EDO_HEADER_AND_SEGMENT_LEN => TcpExtendedDataOffset::HeaderAndSegmentLength {
+            header_length: read_u16_be(&data[0..2])?,
+            segment_length: read_u16_be(&data[2..4])?,
+        },
+        _ => {
+            return Err(CrafterError::invalid_field_value(
+                "tcp.option.edo.length",
+                "EDO length must be 2, 4, or 6 bytes",
+            ))
+        }
+    };
+    Ok(TcpOption::ExtendedDataOffset(edo))
+}
+
+fn validate_tcp_option_len(field: &'static str, actual: usize, expected: usize) -> Result<()> {
+    if actual != expected {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "TCP option has an invalid fixed length",
+        ));
+    }
+    Ok(())
 }
 
 fn padded_options_len(len: usize) -> usize {
@@ -1050,6 +1566,179 @@ mod tcp {
             .compile()
             .unwrap();
         assert!(Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod tcp_options {
+    use super::{Tcp, TcpExtendedDataOffset, TcpOption, TcpSackBlock, TCP_FLAG_ACK, TCP_FLAG_SYN};
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn tcp_options_encode_decode_common_typed_options() {
+        let mut tcp = Tcp::new()
+            .sport(44444)
+            .dport(443)
+            .seq(0x0102_0304)
+            .flags(TCP_FLAG_SYN | TCP_FLAG_ACK);
+        tcp = tcp.tcp_option(TcpOption::mss(1460)).unwrap();
+        tcp = tcp.tcp_option(TcpOption::window_scale(7)).unwrap();
+        tcp = tcp
+            .tcp_option(TcpOption::timestamp(398_303_815, 12_345))
+            .unwrap();
+        tcp = tcp.tcp_option(TcpOption::sack_permitted()).unwrap();
+        tcp = tcp
+            .tcp_option(TcpOption::sack(vec![TcpSackBlock::new(10, 20)]))
+            .unwrap();
+
+        let packet = Ipv4::new().src(src()).dst(dst()).id(0x2225) / tcp / Raw::from("payload");
+        let bytes = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let tcp = decoded.layer::<Tcp>().unwrap();
+        let options = tcp.parsed_options().unwrap();
+
+        assert_eq!(options[0], TcpOption::MaximumSegmentSize(1460));
+        assert_eq!(options[1], TcpOption::WindowScale(7));
+        assert_eq!(
+            options[2],
+            TcpOption::Timestamp {
+                value: 398_303_815,
+                echo_reply: 12_345
+            }
+        );
+        assert_eq!(options[3], TcpOption::SackPermitted);
+        assert_eq!(options[4], TcpOption::Sack(vec![TcpSackBlock::new(10, 20)]));
+        assert_eq!(options[5], TcpOption::EndOfList);
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn tcp_options_preserve_edo_mptcp_fast_open_and_generic_values() {
+        let mut tcp = Tcp::new().sport(12345).dport(80);
+        tcp = tcp.tcp_option(TcpOption::extended_data_offset(9)).unwrap();
+        tcp = tcp
+            .tcp_option(TcpOption::multipath_tcp(1, [0x03, 0xaa, 0xbb]))
+            .unwrap();
+        tcp = tcp.tcp_option(TcpOption::fast_open([0xca, 0xfe])).unwrap();
+        tcp = tcp.tcp_option(TcpOption::generic(76, [0x55])).unwrap();
+
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2226) / tcp)
+            .compile()
+            .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
+
+        assert_eq!(
+            options[0],
+            TcpOption::ExtendedDataOffset(TcpExtendedDataOffset::HeaderLength { header_length: 9 })
+        );
+        assert_eq!(
+            options[1],
+            TcpOption::MultipathTcp {
+                subtype: 1,
+                data: vec![0x13, 0xaa, 0xbb]
+            }
+        );
+        assert_eq!(options[2], TcpOption::FastOpen(vec![0xca, 0xfe]));
+        assert_eq!(
+            options[3],
+            TcpOption::Generic {
+                kind: 76,
+                data: vec![0x55]
+            }
+        );
+    }
+
+    #[test]
+    fn tcp_options_reject_malformed_option_lengths_on_decode() {
+        let mut tcp = [0u8; 24];
+        tcp[12] = 0x60;
+        tcp[13] = TCP_FLAG_SYN as u8;
+        tcp[20..24].copy_from_slice(&[2, 5, 0x05, 0xb4]);
+        let bytes = (Ipv4::new().proto(IpProtocol::Tcp) / Raw::from_bytes(tcp))
+            .compile()
+            .unwrap();
+
+        let error = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap_err();
+        assert!(error.to_string().contains("tcp option"));
+    }
+
+    #[test]
+    fn tcp_options_iterator_can_be_reused_without_consuming_raw_bytes() {
+        let tcp = Tcp::new().option([1, 1, 0]);
+
+        let first = tcp.parsed_options().unwrap();
+        let second = tcp.parsed_options().unwrap();
+
+        assert_eq!(
+            first,
+            vec![
+                TcpOption::NoOperation,
+                TcpOption::NoOperation,
+                TcpOption::EndOfList
+            ]
+        );
+        assert_eq!(second, first);
+        assert_eq!(tcp.option_bytes(), &[1, 1, 0]);
+    }
+}
+
+#[cfg(test)]
+mod option_padding {
+    use super::{Tcp, TcpOption};
+    use crate::{IpProtocol, Ipv4, Ipv4Option, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn option_padding_uses_eol_bytes_for_ipv4_and_tcp_alignment() {
+        let ip = Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .protocol(0)
+            .ip_option(Ipv4Option::generic(8, [1]))
+            .unwrap();
+        let ip_bytes = (ip / Raw::from("x")).compile().unwrap();
+        assert_eq!(ip_bytes.as_bytes()[0], 0x46);
+        assert_eq!(&ip_bytes.as_bytes()[20..24], &[8, 3, 1, 0]);
+
+        let decoded_ip = Packet::decode_from_l3(NetworkLayer::Ipv4, ip_bytes.as_bytes()).unwrap();
+        assert_eq!(
+            decoded_ip
+                .layer::<Ipv4>()
+                .unwrap()
+                .parsed_options()
+                .unwrap(),
+            vec![Ipv4Option::generic(8, [1]), Ipv4Option::EndOfList]
+        );
+
+        let mut tcp = Tcp::new();
+        tcp = tcp.tcp_option(TcpOption::mss(1460)).unwrap();
+        tcp = tcp.tcp_option(TcpOption::window_scale(7)).unwrap();
+        let tcp_bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp)
+            .compile()
+            .unwrap();
+        assert_eq!(tcp_bytes.as_bytes()[32] >> 4, 7);
+        assert_eq!(
+            &tcp_bytes.as_bytes()[40..48],
+            &[2, 4, 0x05, 0xb4, 3, 3, 7, 0]
+        );
     }
 }
 
