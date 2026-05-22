@@ -1,0 +1,520 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+command="${1:-}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+provider_name="hetzner"
+state_root="${LIBCRAFTER_LIVE_LAB_STATE_DIR:?LIBCRAFTER_LIVE_LAB_STATE_DIR is required}"
+artifact_root="${LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR:?LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR is required}"
+project_root="${LIBCRAFTER_PROJECT_ROOT:?LIBCRAFTER_PROJECT_ROOT is required}"
+
+state_dir="$state_root/$provider_name"
+artifact_dir="$artifact_root/$provider_name"
+manifest="$state_dir/manifest.env"
+api_base="${HETZNER_API_BASE:-https://api.hetzner.cloud/v1}"
+
+timestamp_utc() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+log() {
+  printf '%s %s\n' "$(timestamp_utc)" "$*" >&2
+}
+
+load_provider_env() {
+  local env_file="${LIBCRAFTER_LIVE_LAB_ENV:-$HOME/.config/libcrafter/live-test.env}"
+
+  if [[ -z "${HETZNER_API_TOKEN:-}" && -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$env_file"
+    set +a
+  fi
+}
+
+has_arg() {
+  local needle="$1"
+  shift
+
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "$needle" ]]; then
+      return 0
+    fi
+    shift
+  done
+
+  return 1
+}
+
+require_tool() {
+  local tool="$1"
+
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "error: required tool '$tool' is not installed" >&2
+    exit 69
+  fi
+}
+
+require_token() {
+  if [[ -z "${HETZNER_API_TOKEN:-}" ]]; then
+    echo "error: HETZNER_API_TOKEN is required for non-dry-run Hetzner operations" >&2
+    exit 78
+  fi
+}
+
+ensure_dirs() {
+  mkdir -p "$state_dir" "$artifact_dir"
+}
+
+write_manifest() {
+  local server_id="$1"
+  local server_name="$2"
+  local server_ipv4="$3"
+  local server_ipv6="$4"
+  local ssh_key="$5"
+
+  ensure_dirs
+  {
+    printf 'provider=%q\n' "$provider_name"
+    printf 'created_at=%q\n' "$(timestamp_utc)"
+    printf 'resource_type=%q\n' "hetzner-cloud-server"
+    printf 'server_id=%q\n' "$server_id"
+    printf 'server_name=%q\n' "$server_name"
+    printf 'server_ipv4=%q\n' "$server_ipv4"
+    printf 'server_ipv6=%q\n' "$server_ipv6"
+    printf 'ssh_user=%q\n' "${HETZNER_SSH_USER:-root}"
+    printf 'ssh_private_key=%q\n' "$ssh_key"
+    printf 'remote_dir=%q\n' "${LIBCRAFTER_LIVE_LAB_REMOTE_DIR:-/root/libcrafter}"
+    printf 'artifact_dir=%q\n' "$artifact_dir"
+    printf 'status=%q\n' "created"
+  } >"$manifest"
+  chmod 600 "$manifest"
+}
+
+load_manifest() {
+  if [[ ! -f "$manifest" ]]; then
+    echo "error: no Hetzner live-lab manifest found at $manifest" >&2
+    exit 66
+  fi
+
+  # shellcheck disable=SC1090
+  . "$manifest"
+}
+
+api() {
+  local method="$1"
+  local path="$2"
+  local body="${3:-}"
+
+  require_token
+
+  if [[ -n "$body" ]]; then
+    curl -fsS \
+      -X "$method" \
+      -H "Authorization: Bearer $HETZNER_API_TOKEN" \
+      -H "Content-Type: application/json" \
+      --data "$body" \
+      "$api_base$path"
+  else
+    curl -fsS \
+      -X "$method" \
+      -H "Authorization: Bearer $HETZNER_API_TOKEN" \
+      "$api_base$path"
+  fi
+}
+
+server_name() {
+  local prefix="${HETZNER_SERVER_NAME_PREFIX:-libcrafter-live-lab}"
+  printf '%s-%s' "$prefix" "$(date -u +%Y%m%d%H%M%S)"
+}
+
+ensure_ssh_key() {
+  local key_path="$state_dir/id_ed25519"
+
+  ensure_dirs
+  if [[ ! -f "$key_path" ]]; then
+    umask 077
+    ssh-keygen -q -t ed25519 -N "" -C "libcrafter-live-lab@$provider_name" -f "$key_path"
+  fi
+
+  printf '%s\n' "$key_path"
+}
+
+cloud_init_for_key() {
+  local public_key="$1"
+
+  cat <<EOF
+#cloud-config
+disable_root: false
+users:
+  - name: root
+    lock_passwd: true
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - $public_key
+ssh_pwauth: false
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - build-essential
+  - clang
+  - pkg-config
+  - libpcap-dev
+  - tcpdump
+  - python3
+  - python3-pip
+  - python3-venv
+runcmd:
+  - [ sh, -c, "python3 -m pip install --break-system-packages scapy || true" ]
+EOF
+}
+
+ssh_options() {
+  printf '%s\n' \
+    -i "${ssh_private_key:?ssh_private_key is missing}" \
+    -o StrictHostKeyChecking=accept-new \
+    -o UserKnownHostsFile="$state_dir/known_hosts" \
+    -o ConnectTimeout=10
+}
+
+ssh_remote() {
+  local remote="${ssh_user:?ssh_user is missing}@${server_ipv4:?server_ipv4 is missing}"
+  ssh $(ssh_options) "$remote" "$@"
+}
+
+scp_from_remote() {
+  local remote_path="$1"
+  local local_path="$2"
+  local remote="${ssh_user:?ssh_user is missing}@${server_ipv4:?server_ipv4 is missing}"
+  scp $(ssh_options) -r "$remote:$remote_path" "$local_path"
+}
+
+wait_for_server_running() {
+  local server_id="$1"
+  local attempt
+  local status
+
+  for attempt in $(seq 1 60); do
+    status="$(api GET "/servers/$server_id" | jq -r '.server.status')"
+    if [[ "$status" == "running" ]]; then
+      return 0
+    fi
+    sleep 3
+  done
+
+  echo "error: Hetzner server $server_id did not become running in time" >&2
+  exit 75
+}
+
+wait_for_ssh() {
+  local attempt
+
+  for attempt in $(seq 1 60); do
+    if ssh_remote "true" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 5
+  done
+
+  echo "error: SSH did not become ready for Hetzner server ${server_id:-unknown}" >&2
+  exit 75
+}
+
+default_remote_command() {
+  cat <<'EOF'
+set -euo pipefail
+cd "$HOME/libcrafter"
+if ! command -v cargo >/dev/null 2>&1; then
+  curl -fsS https://sh.rustup.rs | sh -s -- -y
+fi
+. "$HOME/.cargo/env"
+cargo test --workspace
+python3 - <<'PY'
+from scapy.all import IP, ICMP, raw
+packet = IP(dst="127.0.0.1") / ICMP()
+assert raw(packet)
+print("scapy=ok")
+PY
+EOF
+}
+
+create_payload() {
+  local name="$1"
+  local user_data="$2"
+  local server_type="${HETZNER_SERVER_TYPE:-cx22}"
+  local image="${HETZNER_IMAGE:-ubuntu-24.04}"
+  local location="${HETZNER_LOCATION:-fsn1}"
+
+  jq -n \
+    --arg name "$name" \
+    --arg server_type "$server_type" \
+    --arg image "$image" \
+    --arg location "$location" \
+    --arg user_data "$user_data" \
+    '{
+      name: $name,
+      server_type: $server_type,
+      image: $image,
+      location: $location,
+      public_net: { enable_ipv4: true, enable_ipv6: true },
+      user_data: $user_data,
+      labels: {
+        project: "libcrafter",
+        purpose: "live-lab",
+        provider: "hetzner"
+      }
+    }'
+}
+
+run_doctor() {
+  local dry_run=false
+
+  if has_arg "--dry-run" "$@"; then
+    dry_run=true
+  fi
+
+  echo "provider=$provider_name"
+  echo "status=ok"
+  echo "dry_run=$dry_run"
+  echo "token_configured=$([[ -n "${HETZNER_API_TOKEN:-}" ]] && echo true || echo false)"
+  echo "state_dir=$state_dir"
+  echo "artifact_dir=$artifact_dir"
+
+  if [[ "$dry_run" == true ]]; then
+    echo "creates_infrastructure=false"
+    return 0
+  fi
+
+  require_tool curl
+  require_tool jq
+  require_tool ssh
+  require_tool scp
+  require_tool ssh-keygen
+  require_tool tar
+  require_token
+  api GET "/locations" >/dev/null
+  echo "api=ok"
+}
+
+run_create() {
+  local dry_run=false
+  local name
+  local key_path
+  local public_key
+  local user_data
+  local payload
+  local response
+  local server_id
+  local server_ipv4
+  local server_ipv6
+
+  if has_arg "--dry-run" "$@"; then
+    dry_run=true
+  fi
+
+  name="$(server_name)"
+
+  if [[ "$dry_run" == true ]]; then
+    ensure_dirs
+    cat >"$artifact_dir/create.dry-run.log" <<EOF
+$(timestamp_utc) Hetzner create dry-run completed without infrastructure changes.
+server_type=${HETZNER_SERVER_TYPE:-cx22}
+image=${HETZNER_IMAGE:-ubuntu-24.04}
+location=${HETZNER_LOCATION:-fsn1}
+token_configured=$([[ -n "${HETZNER_API_TOKEN:-}" ]] && echo true || echo false)
+EOF
+    echo "provider=$provider_name"
+    echo "created=false"
+    echo "dry_run=true"
+    echo "creates_infrastructure=false"
+    echo "would_create_server=$name"
+    echo "log=$artifact_dir/create.dry-run.log"
+    return 0
+  fi
+
+  require_tool curl
+  require_tool jq
+  require_tool ssh-keygen
+  require_token
+  ensure_dirs
+
+  key_path="$(ensure_ssh_key)"
+  public_key="$(<"$key_path.pub")"
+  user_data="$(cloud_init_for_key "$public_key")"
+  payload="$(create_payload "$name" "$user_data")"
+
+  log "creating Hetzner server $name"
+  response="$(api POST "/servers" "$payload")"
+  server_id="$(jq -r '.server.id' <<<"$response")"
+  server_ipv4="$(jq -r '.server.public_net.ipv4.ip // empty' <<<"$response")"
+  server_ipv6="$(jq -r '.server.public_net.ipv6.ip // empty' <<<"$response")"
+
+  if [[ -z "$server_id" || "$server_id" == "null" ]]; then
+    echo "error: Hetzner create response did not include a server id" >&2
+    exit 70
+  fi
+
+  write_manifest "$server_id" "$name" "$server_ipv4" "$server_ipv6" "$key_path"
+  wait_for_server_running "$server_id"
+
+  cat >"$artifact_dir/create.log" <<EOF
+$(timestamp_utc) Hetzner server created.
+provider=$provider_name
+server_id=$server_id
+server_name=$name
+server_ipv4=$server_ipv4
+server_ipv6=$server_ipv6
+EOF
+
+  echo "provider=$provider_name"
+  echo "created=true"
+  echo "server_id=$server_id"
+  echo "server_name=$name"
+  echo "server_ipv4=$server_ipv4"
+  echo "manifest=$manifest"
+}
+
+run_remote_validation() {
+  local command_string
+  local quoted_command
+  local remote_dir_value
+  local tar_args
+
+  load_manifest
+  require_tool ssh
+  require_tool scp
+  require_tool tar
+
+  remote_dir_value="${remote_dir:-/root/libcrafter}"
+  case "$remote_dir_value" in
+    /*) ;;
+    *)
+      echo "error: remote_dir must be an absolute path" >&2
+      exit 64
+      ;;
+  esac
+  case "$remote_dir_value" in
+    *"'"*)
+      echo "error: remote_dir must not contain single quotes" >&2
+      exit 64
+      ;;
+  esac
+  mkdir -p "$artifact_dir"
+
+  wait_for_ssh
+  ssh_remote "rm -rf '$remote_dir_value' && mkdir -p '$remote_dir_value' '$remote_dir_value/live-artifacts'"
+
+  tar_args=(
+    --exclude=.git
+    --exclude=target
+    --exclude=tools/live-lab/.state
+    --exclude=tools/live-lab/artifacts
+    -czf -
+    .
+  )
+
+  tar -C "$project_root" "${tar_args[@]}" | ssh_remote "tar -xzf - -C '$remote_dir_value'"
+
+  if [[ $# -gt 0 ]]; then
+    printf -v command_string '%q ' "$@"
+    printf -v quoted_command '%q' "$command_string"
+    ssh_remote "cd '$remote_dir_value' && bash -lc $quoted_command" \
+      | tee "$artifact_dir/run.log"
+  else
+    default_remote_command \
+      | ssh_remote "cat > '$remote_dir_value/run-live-validation.sh' && chmod +x '$remote_dir_value/run-live-validation.sh'"
+    ssh_remote "cd '$remote_dir_value' && bash ./run-live-validation.sh" \
+      | tee "$artifact_dir/run.log"
+  fi
+
+  echo "provider=$provider_name"
+  echo "ran=true"
+  echo "server_id=$server_id"
+  echo "log=$artifact_dir/run.log"
+}
+
+run_artifact() {
+  load_manifest
+  mkdir -p "$artifact_dir"
+
+  if [[ -n "${server_ipv4:-}" && -n "${ssh_private_key:-}" ]]; then
+    if ssh_remote "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
+      rm -rf "$artifact_dir/remote"
+      mkdir -p "$artifact_dir/remote"
+      scp_from_remote "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/" || true
+    fi
+  fi
+
+  echo "provider=$provider_name"
+  echo "artifact_dir=$artifact_dir"
+  find "$artifact_dir" -type f -print | sort
+}
+
+run_destroy() {
+  if [[ ! -f "$manifest" ]]; then
+    mkdir -p "$artifact_dir"
+    cat >"$artifact_dir/destroy.log" <<EOF
+$(timestamp_utc) Hetzner destroy completed with no manifest present.
+EOF
+    echo "provider=$provider_name"
+    echo "destroyed=false"
+    echo "reason=no_manifest"
+    return 0
+  fi
+
+  load_manifest
+  require_tool curl
+  require_token
+
+  if [[ -n "${server_id:-}" ]]; then
+    log "destroying Hetzner server $server_id"
+    api DELETE "/servers/$server_id" >/dev/null || true
+  fi
+
+  mkdir -p "$artifact_dir"
+  cat >"$artifact_dir/destroy.log" <<EOF
+$(timestamp_utc) Hetzner destroy requested.
+provider=$provider_name
+server_id=${server_id:-}
+server_name=${server_name:-}
+EOF
+
+  rm -rf "$state_dir"
+
+  echo "provider=$provider_name"
+  echo "destroyed=true"
+}
+
+load_provider_env
+
+case "$command" in
+  doctor)
+    run_doctor "$@"
+    ;;
+
+  create)
+    run_create "$@"
+    ;;
+
+  run)
+    run_remote_validation "$@"
+    ;;
+
+  artifact)
+    run_artifact "$@"
+    ;;
+
+  destroy)
+    run_destroy "$@"
+    ;;
+
+  *)
+    echo "error: unknown Hetzner command '$command'" >&2
+    exit 64
+    ;;
+esac
