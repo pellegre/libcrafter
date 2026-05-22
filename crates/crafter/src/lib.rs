@@ -7,8 +7,9 @@ pub use crafter_core::*;
 pub use crafter_live as live;
 pub use crafter_net as net;
 pub use crafter_net::{
-    send_packet, send_plan, NetError, PacketSendExt, RawSender, SendMode, SendOptions, SendPlan,
-    SendReport, SendTarget, SocketSend, SocketSender,
+    reply_filter, reply_matches, send_packet, send_plan, send_recv_packet, NetError, PacketSendExt,
+    PacketSendRecvExt, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
+    SendRecvOptions, SendRecvReport, SendReport, SendTarget, SocketSend, SocketSender,
 };
 pub use crafter_pcap as pcap;
 pub use crafter_pcap::{
@@ -21,8 +22,10 @@ pub use crafter_pcap::{
 pub mod prelude {
     pub use crafter_core::*;
     pub use crafter_net::{
-        send_packet, send_plan, NetError, PacketSendExt, RawSender, SendMode, SendOptions,
-        SendPlan, SendReport, SendTarget, SocketSend, SocketSender,
+        reply_filter, reply_matches, send_packet, send_plan, send_recv_packet, NetError,
+        PacketSendExt, PacketSendRecvExt, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan,
+        SendRecv, SendRecvOptions, SendRecvReport, SendReport, SendTarget, SocketSend,
+        SocketSender,
     };
     pub use crafter_pcap::{
         dump_pcap, read_pcap, read_pcap_filtered, Capture, CaptureControl, CaptureHandle,
