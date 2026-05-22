@@ -1,5 +1,6 @@
 //! Protocol layer implementations.
 
+pub mod dns;
 pub mod icmp;
 pub mod ip;
 pub mod ipv6;
@@ -7,6 +8,13 @@ pub mod link;
 pub mod transport;
 
 pub use crate::packet::Raw;
+pub use dns::{
+    decode_dns_name, Dns, DnsQuestion, DnsRecord, DnsRecordData, DNS_CLASS_IN,
+    DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_CHECKING_DISABLED,
+    DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_AVAILABLE, DNS_FLAG_RECURSION_DESIRED,
+    DNS_FLAG_TRUNCATED, DNS_HEADER_LEN, DNS_PORT, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME,
+    DNS_TYPE_MX, DNS_TYPE_NS, DNS_TYPE_PTR, DNS_TYPE_TXT,
+};
 pub use icmp::{
     Icmp, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpKind, IcmpLayer, Icmpv6,
     ICMPV6_DESTINATION_UNREACHABLE, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMPV6_PACKET_TOO_BIG,

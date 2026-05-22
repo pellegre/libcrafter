@@ -7,6 +7,7 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw};
+use crate::protocols::dns::{append_dns_packet, DNS_PORT};
 use crate::protocols::ip::{IPPROTO_TCP, IPPROTO_UDP};
 
 /// TCP FIN flag.
@@ -1118,9 +1119,15 @@ impl_layer_div!(Tcp);
 /// Append a decoded UDP datagram to an existing packet stack.
 pub(crate) fn append_udp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (udp, payload, rest) = decode_udp_parts(bytes)?;
+    let decode_as_dns =
+        udp.source_port_value() == DNS_PORT || udp.destination_port_value() == DNS_PORT;
     packet = packet.push(udp);
     if !payload.is_empty() {
-        packet = packet.push(Raw::from_bytes(payload));
+        packet = if decode_as_dns {
+            append_dns_packet(packet, payload)?
+        } else {
+            packet.push(Raw::from_bytes(payload))
+        };
     }
     if !rest.is_empty() {
         packet = packet.push(Raw::from_bytes(rest));
