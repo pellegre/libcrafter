@@ -43,6 +43,79 @@ pub fn flag_present(name: &str) -> bool {
     env::args().skip(1).any(|arg| arg == name)
 }
 
+pub const ADVANCED_LIVE_ACK_FLAG: &str = "--i-understand-isolated-lab";
+pub const LIVE_LAB_ENV: &str = "LIBCRAFTER_LIVE_LAB";
+
+pub fn live_lab_marker_present() -> bool {
+    env::var(LIVE_LAB_ENV)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "isolated"
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub fn require_advanced_live_lab(example: &str) -> ExampleResult<()> {
+    if !flag_present("--live") {
+        return Ok(());
+    }
+
+    let mut missing = Vec::new();
+    if !flag_present(ADVANCED_LIVE_ACK_FLAG) {
+        missing.push(format!("CLI acknowledgement flag {ADVANCED_LIVE_ACK_FLAG}"));
+    }
+    if !live_lab_marker_present() {
+        missing.push(format!("environment marker {LIVE_LAB_ENV}=1"));
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{example} can change network traffic and is only enabled inside an isolated live lab; missing {}",
+            missing.join(" and ")
+        )
+        .into())
+    }
+}
+
+pub fn print_advanced_safety(example: &str, live: bool) {
+    println!("example: {example}");
+    println!("mode: {}", if live { "live-lab" } else { "dry-run" });
+    if live {
+        println!("safety: --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_LAB_ENV}=1 were required");
+    } else {
+        println!("safety: no packets are transmitted without --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_LAB_ENV}=1");
+    }
+}
+
+pub fn print_packet_plan(label: &str, packet: &Packet) -> ExampleResult<()> {
+    let compiled = packet.compile()?;
+    println!("{label}: {}", packet.summary());
+    println!("{label} bytes: {}", compiled.len());
+    println!("{label} hexdump:\n{}", compiled.hexdump());
+    Ok(())
+}
+
+pub fn print_batch_send_report(label: &str, report: &BatchSendReport) {
+    println!("batch: {label}");
+    println!("dry-run: {}", report.is_dry_run());
+    println!("requests: {}", report.len());
+    for entry in report.entries() {
+        for (attempt, send) in entry.send_reports().iter().enumerate() {
+            println!(
+                "request {} attempt {} bytes {} target {:?}",
+                entry.request_index(),
+                attempt + 1,
+                send.bytes_sent(),
+                send.plan().target()
+            );
+        }
+    }
+}
+
 pub fn parse_u16_arg(name: &str, default: u16) -> ExampleResult<u16> {
     Ok(match arg_value(name) {
         Some(value) => value.parse()?,
