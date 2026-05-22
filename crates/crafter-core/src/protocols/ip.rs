@@ -9,7 +9,8 @@ use crate::checksum::ipv4_header_checksum;
 use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
-use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw};
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
+use crate::protocols::transport::{append_tcp_packet, append_udp_packet, Tcp, Udp};
 
 /// IPv4 protocol number for ICMP.
 pub const IPPROTO_ICMP: u8 = 1;
@@ -556,6 +557,21 @@ impl Layer for Ipv4 {
         Ok(())
     }
 
+    fn transport_checksum_context(
+        &self,
+        transport_protocol: u8,
+    ) -> Option<TransportChecksumContext> {
+        Some(TransportChecksumContext::Ipv4 {
+            source: self.source(),
+            destination: self.destination(),
+            protocol: if self.protocol.is_user_set() {
+                self.protocol_value()
+            } else {
+                transport_protocol
+            },
+        })
+    }
+
     impl_layer_object!(Ipv4);
 }
 
@@ -651,12 +667,27 @@ fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
 }
 
 fn append_ipv4_payload(mut packet: Packet, payload: &[u8], rest: &[u8]) -> Result<Packet> {
-    if !payload.is_empty() {
-        packet = packet.push(Raw::from_bytes(payload));
-    }
+    let protocol = packet
+        .layer::<Ipv4>()
+        .map(Ipv4::protocol_value)
+        .unwrap_or_default();
+
+    packet = match protocol {
+        IPPROTO_TCP => append_tcp_packet(packet, payload)?,
+        IPPROTO_UDP => append_udp_packet(packet, payload)?,
+        _ => {
+            if payload.is_empty() {
+                packet
+            } else {
+                packet.push(Raw::from_bytes(payload))
+            }
+        }
+    };
+
     if !rest.is_empty() {
         packet = packet.push(Raw::from_bytes(rest));
     }
+
     Ok(packet)
 }
 
@@ -668,8 +699,14 @@ fn payload_len_after(ctx: LayerContext<'_>) -> usize {
         .sum()
 }
 
-fn layer_ipv4_protocol(_layer: &dyn Layer) -> Option<u8> {
-    None
+fn layer_ipv4_protocol(layer: &dyn Layer) -> Option<u8> {
+    if layer.as_any().is::<Tcp>() {
+        Some(IPPROTO_TCP)
+    } else if layer.as_any().is::<Udp>() {
+        Some(IPPROTO_UDP)
+    } else {
+        None
+    }
 }
 
 fn padded_options_len(len: usize) -> usize {

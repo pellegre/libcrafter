@@ -1401,7 +1401,7 @@ mod arp {
 #[cfg(test)]
 mod link_layers {
     use super::{Arp, Ethernet, LinuxSll, NullByteOrder, NullLoopback, Vlan, ETHERTYPE_IPV4};
-    use crate::Ipv4;
+    use crate::{Ipv4, Udp};
     use crate::{LinkType, MacAddr, Packet, Raw};
     use core::net::Ipv4Addr;
 
@@ -1422,6 +1422,7 @@ mod link_layers {
         let ethernet = decoded.layer::<Ethernet>().unwrap();
         let vlan = decoded.layer::<Vlan>().unwrap();
         let ipv4 = decoded.layer::<Ipv4>().unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
         let raw = decoded.layer::<Raw>().unwrap();
 
         assert_eq!(ethernet.source(), Some(src_mac()));
@@ -1432,7 +1433,9 @@ mod link_layers {
         assert_eq!(vlan.ethertype_value(), ETHERTYPE_IPV4);
         assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
         assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 20));
-        assert_eq!(raw.as_bytes(), &VLAN_FIXTURE[38..]);
+        assert_eq!(udp.source_port_value(), 53002);
+        assert_eq!(udp.destination_port_value(), 9999);
+        assert_eq!(raw.as_bytes(), &VLAN_FIXTURE[46..]);
         assert_eq!(decoded.compile().unwrap().as_bytes(), VLAN_FIXTURE);
     }
 
