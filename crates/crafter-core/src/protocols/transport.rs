@@ -7,12 +7,9 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw};
-use crate::protocols::dhcp::{
-    append_dhcp_packet, is_dhcp_port_pair, looks_like_dhcp_payload, DHCP_CLIENT_PORT,
-    DHCP_SERVER_PORT,
-};
-use crate::protocols::dns::{append_dns_packet, DNS_PORT};
+use crate::protocols::dhcp::{DHCP_CLIENT_PORT, DHCP_SERVER_PORT};
 use crate::protocols::ip::{IPPROTO_TCP, IPPROTO_UDP};
+use crate::registry::ProtocolRegistry;
 
 /// TCP FIN flag.
 pub const TCP_FLAG_FIN: u16 = 0x001;
@@ -1134,22 +1131,18 @@ impl Layer for Tcp {
 
 impl_layer_div!(Tcp);
 
-/// Append a decoded UDP datagram to an existing packet stack.
-pub(crate) fn append_udp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
+/// Append a decoded UDP datagram using an explicit registry.
+pub(crate) fn append_udp_packet_with_registry(
+    registry: &ProtocolRegistry,
+    mut packet: Packet,
+    bytes: &[u8],
+) -> Result<Packet> {
     let (udp, payload, rest) = decode_udp_parts(bytes)?;
-    let decode_as_dns =
-        udp.source_port_value() == DNS_PORT || udp.destination_port_value() == DNS_PORT;
-    let decode_as_dhcp = is_dhcp_port_pair(udp.source_port_value(), udp.destination_port_value())
-        && looks_like_dhcp_payload(payload);
+    let source_port = udp.source_port_value();
+    let destination_port = udp.destination_port_value();
     packet = packet.push(udp);
     if !payload.is_empty() {
-        packet = if decode_as_dhcp {
-            append_dhcp_packet(packet, payload)?
-        } else if decode_as_dns {
-            append_dns_packet(packet, payload)?
-        } else {
-            packet.push(Raw::from_bytes(payload))
-        };
+        packet = registry.decode_udp_application(packet, source_port, destination_port, payload)?;
     }
     if !rest.is_empty() {
         packet = packet.push(Raw::from_bytes(rest));
@@ -1157,12 +1150,18 @@ pub(crate) fn append_udp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pack
     Ok(packet)
 }
 
-/// Append a decoded TCP segment to an existing packet stack.
-pub(crate) fn append_tcp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
+/// Append a decoded TCP segment using an explicit registry.
+pub(crate) fn append_tcp_packet_with_registry(
+    registry: &ProtocolRegistry,
+    mut packet: Packet,
+    bytes: &[u8],
+) -> Result<Packet> {
     let (tcp, payload) = decode_tcp_parts(bytes)?;
+    let source_port = tcp.source_port_value();
+    let destination_port = tcp.destination_port_value();
     packet = packet.push(tcp);
     if !payload.is_empty() {
-        packet = packet.push(Raw::from_bytes(payload));
+        packet = registry.decode_tcp_application(packet, source_port, destination_port, payload)?;
     }
     Ok(packet)
 }

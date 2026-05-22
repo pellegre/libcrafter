@@ -9,6 +9,7 @@ pub mod field;
 pub mod mac;
 pub mod packet;
 pub mod protocols;
+pub mod registry;
 
 pub use error::{CrafterError, Result};
 pub use field::{Field, FieldState};
@@ -52,4 +53,8 @@ pub use protocols::{
     TCP_OPTION_EDO, TCP_OPTION_EOL, TCP_OPTION_FAST_OPEN, TCP_OPTION_MPTCP, TCP_OPTION_MSS,
     TCP_OPTION_NOP, TCP_OPTION_SACK, TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TIMESTAMP,
     TCP_OPTION_WINDOW_SCALE,
+};
+pub use registry::{
+    EthertypeBindingContext, Ipv4ProtocolBindingContext, Ipv6NextHeaderBindingContext,
+    ProtocolRegistry, TcpBindingContext, UdpBindingContext,
 };

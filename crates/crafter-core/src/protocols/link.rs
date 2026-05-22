@@ -10,8 +10,9 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::mac::MacAddr;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw};
-use crate::protocols::ip::{append_ipv4_packet, Ipv4};
-use crate::protocols::ipv6::{append_ipv6_packet, Ipv6};
+use crate::protocols::ip::Ipv4;
+use crate::protocols::ipv6::Ipv6;
+use crate::registry::ProtocolRegistry;
 
 /// Ethernet type for IPv4 payloads.
 pub const ETHERTYPE_IPV4: u16 = 0x0800;
@@ -1009,7 +1010,10 @@ impl Layer for NullLoopback {
 impl_layer_div!(NullLoopback);
 
 /// Decode an Ethernet frame.
-pub(crate) fn decode_ethernet(bytes: &[u8]) -> Result<Packet> {
+pub(crate) fn decode_ethernet_with_registry(
+    registry: &ProtocolRegistry,
+    bytes: &[u8],
+) -> Result<Packet> {
     if bytes.len() < ETHERNET_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "ethernet header",
@@ -1024,7 +1028,7 @@ pub(crate) fn decode_ethernet(bytes: &[u8]) -> Result<Packet> {
         ethertype: Field::user(read_u16_be(&bytes[12..14])?),
     };
 
-    append_ethertype_payload(
+    registry.decode_ethertype(
         Packet::new().push(ethernet),
         read_u16_be(&bytes[12..14])?,
         &bytes[ETHERNET_HEADER_LEN..],
@@ -1032,7 +1036,10 @@ pub(crate) fn decode_ethernet(bytes: &[u8]) -> Result<Packet> {
 }
 
 /// Decode a Linux cooked capture v1 frame.
-pub(crate) fn decode_linux_sll(bytes: &[u8]) -> Result<Packet> {
+pub(crate) fn decode_linux_sll_with_registry(
+    registry: &ProtocolRegistry,
+    bytes: &[u8],
+) -> Result<Packet> {
     if bytes.len() < LINUX_SLL_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "linux sll header",
@@ -1052,7 +1059,7 @@ pub(crate) fn decode_linux_sll(bytes: &[u8]) -> Result<Packet> {
         protocol: Field::user(protocol),
     };
 
-    append_ethertype_payload(
+    registry.decode_ethertype(
         Packet::new().push(linux_sll),
         protocol,
         &bytes[LINUX_SLL_HEADER_LEN..],
@@ -1080,33 +1087,25 @@ pub(crate) fn decode_null_loopback(bytes: &[u8]) -> Result<Packet> {
     Ok(packet)
 }
 
-fn append_ethertype_payload(mut packet: Packet, ethertype: u16, payload: &[u8]) -> Result<Packet> {
-    match ethertype {
-        ETHERTYPE_ARP => {
-            let (arp, rest) = decode_arp(payload)?;
-            packet = packet.push(arp);
-            if !rest.is_empty() {
-                packet = packet.push(Raw::from_bytes(rest));
-            }
-        }
-        ETHERTYPE_VLAN => {
-            let (vlan, rest) = decode_vlan(payload)?;
-            let inner = vlan.ethertype_value();
-            packet = packet.push(vlan);
-            packet = append_ethertype_payload(packet, inner, rest)?;
-        }
-        ETHERTYPE_IPV4 => {
-            packet = append_ipv4_packet(packet, payload)?;
-        }
-        ETHERTYPE_IPV6 => {
-            packet = append_ipv6_packet(packet, payload)?;
-        }
-        _ => {
-            packet = packet.push(Raw::from_bytes(payload));
-        }
+/// Append a decoded ARP packet to an existing packet stack.
+pub(crate) fn append_arp_packet(mut packet: Packet, payload: &[u8]) -> Result<Packet> {
+    let (arp, rest) = decode_arp(payload)?;
+    packet = packet.push(arp);
+    if !rest.is_empty() {
+        packet = packet.push(Raw::from_bytes(rest));
     }
-
     Ok(packet)
+}
+
+/// Append a decoded VLAN layer and dispatch its inner Ethernet type.
+pub(crate) fn append_vlan_packet_with_registry(
+    registry: &ProtocolRegistry,
+    packet: Packet,
+    payload: &[u8],
+) -> Result<Packet> {
+    let (vlan, rest) = decode_vlan(payload)?;
+    let inner = vlan.ethertype_value();
+    registry.decode_ethertype(packet.push(vlan), inner, rest)
 }
 
 fn decode_vlan(bytes: &[u8]) -> Result<(Vlan, &[u8])> {

@@ -9,9 +9,10 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
-use crate::protocols::icmp::{append_icmpv6_packet, Icmpv6};
+use crate::protocols::icmp::Icmpv6;
 use crate::protocols::ip::{IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
-use crate::protocols::transport::{append_tcp_packet, append_udp_packet, Tcp, Udp};
+use crate::protocols::transport::{Tcp, Udp};
+use crate::registry::ProtocolRegistry;
 
 /// IPv6 Hop-by-Hop Options next-header value.
 pub const IPPROTO_IPV6_HOPOPTS: u8 = 0;
@@ -1428,16 +1429,14 @@ impl Layer for Ipv6SegmentRoutingHeader {
 
 impl_layer_div!(Ipv6SegmentRoutingHeader);
 
-/// Decode an IPv6 packet into a packet stack.
-pub(crate) fn decode_ipv6_packet(bytes: &[u8]) -> Result<Packet> {
+/// Append a decoded IPv6 packet using an explicit registry.
+pub(crate) fn append_ipv6_packet_with_registry(
+    registry: &ProtocolRegistry,
+    packet: Packet,
+    bytes: &[u8],
+) -> Result<Packet> {
     let (ipv6, payload, rest) = decode_ipv6_parts(bytes)?;
-    append_ipv6_payload(Packet::new().push(ipv6), payload, rest)
-}
-
-/// Append a decoded IPv6 packet to an existing outer stack.
-pub(crate) fn append_ipv6_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
-    let (ipv6, payload, rest) = decode_ipv6_parts(bytes)?;
-    append_ipv6_payload(packet.push(ipv6), payload, rest)
+    append_ipv6_payload_with_registry(registry, packet.push(ipv6), payload, rest)
 }
 
 fn decode_ipv6_parts(bytes: &[u8]) -> Result<(Ipv6, &[u8], &[u8])> {
@@ -1486,13 +1485,18 @@ fn decode_ipv6_parts(bytes: &[u8]) -> Result<(Ipv6, &[u8], &[u8])> {
     ))
 }
 
-fn append_ipv6_payload(mut packet: Packet, payload: &[u8], rest: &[u8]) -> Result<Packet> {
+fn append_ipv6_payload_with_registry(
+    registry: &ProtocolRegistry,
+    mut packet: Packet,
+    payload: &[u8],
+    rest: &[u8],
+) -> Result<Packet> {
     let next_header = packet
         .layer::<Ipv6>()
         .map(Ipv6::next_header_value)
         .unwrap_or_default();
 
-    packet = append_ipv6_next(packet, next_header, payload)?;
+    packet = append_ipv6_next_with_registry(registry, packet, next_header, payload)?;
 
     if !rest.is_empty() {
         packet = packet.push(Raw::from_bytes(rest));
@@ -1501,7 +1505,12 @@ fn append_ipv6_payload(mut packet: Packet, payload: &[u8], rest: &[u8]) -> Resul
     Ok(packet)
 }
 
-fn append_ipv6_next(mut packet: Packet, mut next_header: u8, mut payload: &[u8]) -> Result<Packet> {
+fn append_ipv6_next_with_registry(
+    registry: &ProtocolRegistry,
+    mut packet: Packet,
+    mut next_header: u8,
+    mut payload: &[u8],
+) -> Result<Packet> {
     loop {
         match next_header {
             IPPROTO_IPV6_ROUTE => {
@@ -1527,15 +1536,7 @@ fn append_ipv6_next(mut packet: Packet, mut next_header: u8, mut payload: &[u8])
                 next_header = inner_next_header;
                 payload = remaining;
             }
-            IPPROTO_TCP => return append_tcp_packet(packet, payload),
-            IPPROTO_UDP => return append_udp_packet(packet, payload),
-            IPPROTO_ICMPV6 => return append_icmpv6_packet(packet, payload),
-            _ => {
-                if !payload.is_empty() {
-                    packet = packet.push(Raw::from_bytes(payload));
-                }
-                return Ok(packet);
-            }
+            _ => return registry.decode_ipv6_next_header(packet, next_header, payload),
         }
     }
 }
