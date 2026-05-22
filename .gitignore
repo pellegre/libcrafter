@@ -88,6 +88,7 @@ Cargo.lock
 !.env.example
 !tools/live-lab/run-in-image.sh
 !tools/live-lab/image/entrypoint.sh
+!tests/live/smoke.sh
 .libcrafter-live/
 tools/live-lab/.state/
 tools/live-lab/artifacts/
