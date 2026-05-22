@@ -3,8 +3,9 @@
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crafter::prelude::*;
 
@@ -38,6 +39,10 @@ pub fn arg_or(name: &str, default: &str) -> String {
     arg_value(name).unwrap_or_else(|| default.to_string())
 }
 
+pub fn flag_present(name: &str) -> bool {
+    env::args().skip(1).any(|arg| arg == name)
+}
+
 pub fn parse_u16_arg(name: &str, default: u16) -> ExampleResult<u16> {
     Ok(match arg_value(name) {
         Some(value) => value.parse()?,
@@ -57,6 +62,80 @@ pub fn parse_ipv4_arg(name: &str, default: Ipv4Addr) -> ExampleResult<Ipv4Addr> 
         Some(value) => value.parse()?,
         None => default,
     })
+}
+
+pub fn parse_ipv6_arg(name: &str, default: Ipv6Addr) -> ExampleResult<Ipv6Addr> {
+    Ok(match arg_value(name) {
+        Some(value) => value.parse()?,
+        None => default,
+    })
+}
+
+pub fn parse_mac_arg(name: &str, default: MacAddr) -> ExampleResult<MacAddr> {
+    Ok(match arg_value(name) {
+        Some(value) => value.parse()?,
+        None => default,
+    })
+}
+
+pub fn send_options(iface: &str, live: bool, link_layer: bool) -> SendOptions {
+    let options = if link_layer {
+        SendOptions::new().iface(iface).link_layer()
+    } else {
+        SendOptions::new().iface(iface).network_layer()
+    };
+
+    if live {
+        options.live()
+    } else {
+        options.dry_run()
+    }
+}
+
+pub fn send_recv_options(iface: &str, live: bool, link_layer: bool) -> SendRecv {
+    let options = if link_layer {
+        SendRecv::new().iface(iface).link_layer()
+    } else {
+        SendRecv::new().iface(iface).network_layer()
+    };
+
+    let options = options.timeout(Duration::from_secs(1)).retries(1);
+    if live {
+        options.live()
+    } else {
+        options.dry_run()
+    }
+}
+
+pub fn print_send_report(label: &str, packet: &Packet, report: &SendReport) {
+    println!("example: {label}");
+    println!(
+        "mode: {}",
+        if report.is_dry_run() {
+            "dry-run"
+        } else {
+            "live"
+        }
+    );
+    println!("interface: {}", report.plan().interface());
+    println!("target: {:?}", report.plan().target());
+    println!("bytes planned: {}", report.bytes_sent());
+    println!("summary: {}", packet.summary());
+    println!("hexdump:\n{}", report.plan().compiled_packet().hexdump());
+}
+
+pub fn print_send_recv_report(label: &str, packet: &Packet, report: &SendRecvReport) {
+    println!("example: {label}");
+    println!("attempts: {}", report.attempts());
+    println!("timed out: {}", report.timed_out());
+    println!(
+        "effective filter: {}",
+        report.effective_filter().unwrap_or("")
+    );
+    println!("summary: {}", packet.summary());
+    if let Some(reply) = report.reply() {
+        println!("reply: {}", reply.summary());
+    }
 }
 
 pub fn default_target_path(file_name: &str) -> PathBuf {
