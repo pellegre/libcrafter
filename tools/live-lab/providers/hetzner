@@ -15,6 +15,7 @@ state_dir="$state_root/$provider_name"
 artifact_dir="$artifact_root/$provider_name"
 manifest="$state_dir/manifest.env"
 api_base="${HETZNER_API_BASE:-https://api.hetzner.cloud/v1}"
+hetzner_smoke_cleanup_needed=false
 
 timestamp_utc() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -49,6 +50,26 @@ has_arg() {
   return 1
 }
 
+suite_arg() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --suite)
+        if [[ $# -lt 2 ]]; then
+          echo "error: --suite requires a value" >&2
+          exit 64
+        fi
+        printf '%s\n' "$2"
+        return 0
+        ;;
+      --suite=*)
+        printf '%s\n' "${1#--suite=}"
+        return 0
+        ;;
+    esac
+    shift
+  done
+}
+
 require_tool() {
   local tool="$1"
 
@@ -75,6 +96,7 @@ write_manifest() {
   local server_ipv4="$3"
   local server_ipv6="$4"
   local ssh_key="$5"
+  local hcloud_ssh_key_id="${6:-}"
 
   ensure_dirs
   {
@@ -87,6 +109,7 @@ write_manifest() {
     printf 'server_ipv6=%q\n' "$server_ipv6"
     printf 'ssh_user=%q\n' "${HETZNER_SSH_USER:-root}"
     printf 'ssh_private_key=%q\n' "$ssh_key"
+    printf 'hcloud_ssh_key_id=%q\n' "$hcloud_ssh_key_id"
     printf 'remote_dir=%q\n' "${LIBCRAFTER_LIVE_LAB_REMOTE_DIR:-/root/libcrafter}"
     printf 'artifact_dir=%q\n' "$artifact_dir"
     printf 'status=%q\n' "created"
@@ -174,6 +197,37 @@ runcmd:
 EOF
 }
 
+create_ssh_key() {
+  local key_name="$1"
+  local public_key="$2"
+  local payload
+  local response
+  local key_id
+
+  payload="$(jq -n \
+    --arg name "$key_name" \
+    --arg public_key "$public_key" \
+    '{
+      name: $name,
+      public_key: $public_key,
+      labels: {
+        project: "libcrafter",
+        purpose: "live-lab",
+        provider: "hetzner"
+      }
+    }')"
+
+  response="$(api POST "/ssh_keys" "$payload")"
+  key_id="$(jq -r '.ssh_key.id // empty' <<<"$response")"
+
+  if [[ -z "$key_id" || "$key_id" == "null" ]]; then
+    echo "error: Hetzner SSH key response did not include a key id" >&2
+    exit 70
+  fi
+
+  printf '%s\n' "$key_id"
+}
+
 ssh_options() {
   printf '%s\n' \
     -i "${ssh_private_key:?ssh_private_key is missing}" \
@@ -246,9 +300,10 @@ EOF
 create_payload() {
   local name="$1"
   local user_data="$2"
-  local server_type="${HETZNER_SERVER_TYPE:-cx22}"
+  local hcloud_ssh_key_id="$3"
+  local server_type="${HETZNER_SERVER_TYPE:-cpx11}"
   local image="${HETZNER_IMAGE:-ubuntu-24.04}"
-  local location="${HETZNER_LOCATION:-fsn1}"
+  local location="${HETZNER_LOCATION:-ash}"
 
   jq -n \
     --arg name "$name" \
@@ -256,12 +311,14 @@ create_payload() {
     --arg image "$image" \
     --arg location "$location" \
     --arg user_data "$user_data" \
+    --argjson hcloud_ssh_key_id "$hcloud_ssh_key_id" \
     '{
       name: $name,
       server_type: $server_type,
       image: $image,
       location: $location,
       public_net: { enable_ipv4: true, enable_ipv6: true },
+      ssh_keys: [$hcloud_ssh_key_id],
       user_data: $user_data,
       labels: {
         project: "libcrafter",
@@ -312,6 +369,7 @@ run_create() {
   local server_id
   local server_ipv4
   local server_ipv6
+  local hcloud_ssh_key_id
 
   if has_arg "--dry-run" "$@"; then
     dry_run=true
@@ -323,9 +381,9 @@ run_create() {
     ensure_dirs
     cat >"$artifact_dir/create.dry-run.log" <<EOF
 $(timestamp_utc) Hetzner create dry-run completed without infrastructure changes.
-server_type=${HETZNER_SERVER_TYPE:-cx22}
+server_type=${HETZNER_SERVER_TYPE:-cpx11}
 image=${HETZNER_IMAGE:-ubuntu-24.04}
-location=${HETZNER_LOCATION:-fsn1}
+location=${HETZNER_LOCATION:-ash}
 token_configured=$([[ -n "${HETZNER_API_TOKEN:-}" ]] && echo true || echo false)
 EOF
     echo "provider=$provider_name"
@@ -345,21 +403,26 @@ EOF
 
   key_path="$(ensure_ssh_key)"
   public_key="$(<"$key_path.pub")"
+  hcloud_ssh_key_id="$(create_ssh_key "$name" "$public_key")"
   user_data="$(cloud_init_for_key "$public_key")"
-  payload="$(create_payload "$name" "$user_data")"
+  payload="$(create_payload "$name" "$user_data" "$hcloud_ssh_key_id")"
 
   log "creating Hetzner server $name"
-  response="$(api POST "/servers" "$payload")"
+  if ! response="$(api POST "/servers" "$payload")"; then
+    api DELETE "/ssh_keys/$hcloud_ssh_key_id" >/dev/null || true
+    exit 70
+  fi
   server_id="$(jq -r '.server.id' <<<"$response")"
   server_ipv4="$(jq -r '.server.public_net.ipv4.ip // empty' <<<"$response")"
   server_ipv6="$(jq -r '.server.public_net.ipv6.ip // empty' <<<"$response")"
 
   if [[ -z "$server_id" || "$server_id" == "null" ]]; then
+    api DELETE "/ssh_keys/$hcloud_ssh_key_id" >/dev/null || true
     echo "error: Hetzner create response did not include a server id" >&2
     exit 70
   fi
 
-  write_manifest "$server_id" "$name" "$server_ipv4" "$server_ipv6" "$key_path"
+  write_manifest "$server_id" "$name" "$server_ipv4" "$server_ipv6" "$key_path" "$hcloud_ssh_key_id"
   wait_for_server_running "$server_id"
 
   cat >"$artifact_dir/create.log" <<EOF
@@ -438,6 +501,88 @@ run_remote_validation() {
   echo "log=$artifact_dir/run.log"
 }
 
+cleanup_hetzner_smoke_host() {
+  local exit_status=$?
+
+  if [[ "${hetzner_smoke_cleanup_needed:-false}" == true && -f "$manifest" ]]; then
+    run_destroy || true
+  fi
+
+  trap - EXIT
+  exit "$exit_status"
+}
+
+run_smoke_suite() {
+  local created_for_smoke=false
+  local suite_status=0
+  local remote_dir_value="${LIBCRAFTER_LIVE_LAB_REMOTE_DIR:-/root/libcrafter}"
+  local smoke_command
+
+  ensure_dirs
+
+  if [[ -z "${HETZNER_API_TOKEN:-}" ]]; then
+    mkdir -p "$artifact_dir/smoke"
+    cat >"$artifact_dir/smoke/skipped.env" <<EOF
+suite=smoke
+result=skipped
+reason=no_token
+finished_at=$(timestamp_utc)
+EOF
+    echo "provider=$provider_name"
+    echo "ran=false"
+    echo "suite=smoke"
+    echo "skipped=true"
+    echo "reason=no_token"
+    echo "creates_infrastructure=false"
+    echo "artifact_dir=$artifact_dir/smoke"
+    return 0
+  fi
+
+  if [[ ! -f "$manifest" ]]; then
+    created_for_smoke=true
+    hetzner_smoke_cleanup_needed=true
+    trap cleanup_hetzner_smoke_host EXIT
+    run_create
+  fi
+
+  smoke_command=$(cat <<EOF
+set -euo pipefail
+if command -v cloud-init >/dev/null 2>&1; then
+  cloud-init status --wait >/dev/null 2>&1 || true
+fi
+if ! command -v tcpdump >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y --no-install-recommends iproute2 tcpdump python3 python3-pip
+fi
+if ! python3 - <<'PY' >/dev/null 2>&1
+import scapy.all
+PY
+then
+  python3 -m pip install --break-system-packages scapy
+fi
+export LIBCRAFTER_PROJECT_ROOT='$remote_dir_value'
+export LIBCRAFTER_LIVE_ARTIFACT_DIR='$remote_dir_value/live-artifacts/smoke'
+tests/live/smoke.sh
+EOF
+)
+
+  if run_remote_validation bash -lc "$smoke_command"; then
+    suite_status=0
+  else
+    suite_status=$?
+  fi
+
+  run_artifact || true
+
+  if [[ "$created_for_smoke" == true ]]; then
+    run_destroy || true
+    hetzner_smoke_cleanup_needed=false
+    trap - EXIT
+  fi
+
+  return "$suite_status"
+}
+
 run_artifact() {
   load_manifest
   mkdir -p "$artifact_dir"
@@ -475,6 +620,9 @@ EOF
     log "destroying Hetzner server $server_id"
     api DELETE "/servers/$server_id" >/dev/null || true
   fi
+  if [[ -n "${hcloud_ssh_key_id:-}" ]]; then
+    api DELETE "/ssh_keys/$hcloud_ssh_key_id" >/dev/null || true
+  fi
 
   mkdir -p "$artifact_dir"
   cat >"$artifact_dir/destroy.log" <<EOF
@@ -502,7 +650,20 @@ case "$command" in
     ;;
 
   run)
-    run_remote_validation "$@"
+    suite="$(suite_arg "$@")"
+    if [[ -n "$suite" ]]; then
+      case "$suite" in
+        smoke)
+          run_smoke_suite
+          ;;
+        *)
+          echo "error: unknown Hetzner suite '$suite'" >&2
+          exit 64
+          ;;
+      esac
+    else
+      run_remote_validation "$@"
+    fi
     ;;
 
   artifact)

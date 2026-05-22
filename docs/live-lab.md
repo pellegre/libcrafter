@@ -38,9 +38,9 @@ tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 Real creation uses generic provider defaults that can be overridden:
 
 ```sh
-HETZNER_SERVER_TYPE=cx22 \
+HETZNER_SERVER_TYPE=cpx11 \
 HETZNER_IMAGE=ubuntu-24.04 \
-HETZNER_LOCATION=fsn1 \
+HETZNER_LOCATION=ash \
 tools/live-lab/libcrafter-live-lab create --provider hetzner
 ```
 
