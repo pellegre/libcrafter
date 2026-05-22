@@ -24,6 +24,13 @@ pub enum CrafterError {
         /// Short, stable reason for diagnostics.
         reason: &'static str,
     },
+    /// A protocol field value is internally inconsistent or out of range.
+    InvalidFieldValue {
+        /// Stable protocol field name.
+        field: &'static str,
+        /// Short, stable reason for diagnostics.
+        reason: &'static str,
+    },
 }
 
 impl CrafterError {
@@ -43,6 +50,11 @@ impl CrafterError {
             reason,
         }
     }
+
+    /// Build a protocol field validation error.
+    pub const fn invalid_field_value(field: &'static str, reason: &'static str) -> Self {
+        Self::InvalidFieldValue { field, reason }
+    }
 }
 
 impl fmt::Display for CrafterError {
@@ -58,6 +70,9 @@ impl fmt::Display for CrafterError {
             ),
             Self::InvalidMacAddress { input, reason } => {
                 write!(f, "invalid MAC address '{input}': {reason}")
+            }
+            Self::InvalidFieldValue { field, reason } => {
+                write!(f, "invalid value for {field}: {reason}")
             }
         }
     }

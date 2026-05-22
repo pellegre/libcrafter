@@ -5,6 +5,7 @@ use core::fmt;
 use core::ops::Div;
 
 use crate::error::Result;
+use crate::protocols::link::{decode_ethernet, decode_linux_sll, decode_null_loopback};
 
 /// A protocol or payload layer that can live in a [`Packet`] stack.
 ///
@@ -91,11 +92,13 @@ impl<'a> LayerContext<'a> {
 pub enum LinkType {
     /// Decode bytes as an unsupported or caller-defined raw link payload.
     Raw,
-    /// Ethernet frames. Protocol-specific decoding is added in later steps.
+    /// Ethernet frames.
     Ethernet,
-    /// Linux cooked capture frames. Protocol-specific decoding is added later.
+    /// Linux cooked capture frames.
     LinuxCooked,
-    /// BSD null/loopback frames. Protocol-specific decoding is added later.
+    /// Linux cooked capture frames.
+    LinuxSll,
+    /// BSD null/loopback frames.
     NullLoopback,
 }
 
@@ -429,11 +432,14 @@ impl Packet {
     }
 
     /// Decode bytes from a link-layer entrypoint.
-    ///
-    /// Until protocol-specific decoders are added, this preserves all bytes as
-    /// a single [`Raw`] layer for lossless roundtrips.
-    pub fn decode_from_link(_link_type: LinkType, bytes: impl AsRef<[u8]>) -> Result<Self> {
-        Self::decode_raw(bytes)
+    pub fn decode_from_link(link_type: LinkType, bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        match link_type {
+            LinkType::Raw => Self::decode_raw(bytes),
+            LinkType::Ethernet => decode_ethernet(bytes),
+            LinkType::LinuxCooked | LinkType::LinuxSll => decode_linux_sll(bytes),
+            LinkType::NullLoopback => decode_null_loopback(bytes),
+        }
     }
 
     /// Decode bytes from a network-layer entrypoint.
@@ -742,8 +748,8 @@ mod packet_stack {
     }
 
     #[test]
-    fn placeholder_decode_entrypoints_are_lossless_raw_packets() {
-        let link = Packet::decode_from_link(LinkType::Ethernet, b"frame").unwrap();
+    fn raw_decode_entrypoints_are_lossless_raw_packets() {
+        let link = Packet::decode_from_link(LinkType::Raw, b"frame").unwrap();
         let l3 = Packet::decode_from_l3(NetworkLayer::Ipv4, b"packet").unwrap();
 
         assert_eq!(link.compile().unwrap().as_bytes(), b"frame");

@@ -1,0 +1,32 @@
+{
+  "description": "Ethernet II frame with an experimental ethertype and raw payload.",
+  "expected_stack": [
+    "Ether",
+    "Raw"
+  ],
+  "hex": "02005e00530202005e00530190006c6962637261667465722d65746865726e6574",
+  "layers": [
+    {
+      "fields": {
+        "dst": "02:00:5e:00:53:02",
+        "src": "02:00:5e:00:53:01",
+        "type": 36864
+      },
+      "name": "Ether"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "libcrafter-ethernet",
+          "hex": "6c6962637261667465722d65746865726e6574"
+        }
+      },
+      "name": "Raw"
+    }
+  ],
+  "length": 33,
+  "name": "ethernet",
+  "root": "Ether",
+  "scapy_show": "###[ Ethernet ]###\n  dst       = 02:00:5e:00:53:02\n  src       = 02:00:5e:00:53:01\n  type      = 0x9000\n###[ Raw ]###\n     load      = b'libcrafter-ethernet'\n",
+  "summary": "02:00:5e:00:53:01 > 02:00:5e:00:53:02 (0x9000) / Raw"
+}
