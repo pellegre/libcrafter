@@ -5,7 +5,7 @@ use std::fs;
 use std::net::Ipv6Addr;
 use std::path::{Path, PathBuf};
 
-use crafter_core::{
+use crafter::core::{
     Arp, Dhcp, Dns, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
     Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LinkType,
     LinuxSll, NetworkLayer, NullLoopback, Packet, Raw, Tcp, Udp, Vlan, DNS_FLAG_AUTHENTIC_DATA,
