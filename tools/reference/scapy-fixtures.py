@@ -905,6 +905,29 @@ FIXTURES = [
         "Ether",
         ["Ether", "IP", "UDP", "BOOTP", "DHCP"],
         dhcp_discover_fixture,
+        field_subset(
+            ("Ether", ["dst", "src", "type"]),
+            ("IP", ["version", "ihl", "len", "proto", "src", "dst"]),
+            ("UDP", ["sport", "dport", "len", "chksum"]),
+            (
+                "BOOTP",
+                [
+                    "op",
+                    "htype",
+                    "hlen",
+                    "hops",
+                    "xid",
+                    "secs",
+                    "flags",
+                    "ciaddr",
+                    "yiaddr",
+                    "siaddr",
+                    "giaddr",
+                    "chaddr",
+                    "options",
+                ],
+            ),
+        ),
     ),
     Fixture(
         "ipv6-icmp",
@@ -1152,6 +1175,11 @@ def write_fixture(out_dir: Path, fixture: Fixture) -> None:
     decoded = decode_root(fixture.scapy_root, blob)
     layers = packet_layers(decoded)
     layer_names = [layer["name"] for layer in layers]
+    relevant_fields = (
+        fixture.field_factory(layers)
+        if fixture.field_factory is not None
+        else packet_fields(layers)
+    )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{fixture.name}.bin").write_bytes(blob)
@@ -1173,7 +1201,7 @@ def write_fixture(out_dir: Path, fixture: Fixture) -> None:
         "decoded_summary": decoded.summary(),
         "summary": decoded.summary(),
         "layer_names": layer_names,
-        "relevant_fields": packet_fields(layers),
+        "relevant_fields": relevant_fields,
         "layers": layers,
         "scapy_show": decoded.show(dump=True),
     }

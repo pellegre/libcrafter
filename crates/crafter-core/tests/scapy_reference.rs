@@ -6,14 +6,14 @@ use std::net::Ipv6Addr;
 use std::path::{Path, PathBuf};
 
 use crafter_core::{
-    Arp, Dns, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader, Ipv6MobileRoutingHeader,
-    Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, NetworkLayer,
-    NullLoopback, Packet, Raw, Tcp, Udp, Vlan, DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE,
-    DNS_FLAG_CHECKING_DISABLED, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_AVAILABLE,
-    DNS_FLAG_RECURSION_DESIRED, DNS_FLAG_TRUNCATED, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST,
-    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, TCP_FLAG_ACK,
-    TCP_FLAG_CWR, TCP_FLAG_ECE, TCP_FLAG_FIN, TCP_FLAG_NS, TCP_FLAG_PSH, TCP_FLAG_RST,
-    TCP_FLAG_SYN, TCP_FLAG_URG,
+    Arp, Dhcp, Dns, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
+    Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LinkType,
+    LinuxSll, NetworkLayer, NullLoopback, Packet, Raw, Tcp, Udp, Vlan, DNS_FLAG_AUTHENTIC_DATA,
+    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_CHECKING_DISABLED, DNS_FLAG_QR_RESPONSE,
+    DNS_FLAG_RECURSION_AVAILABLE, DNS_FLAG_RECURSION_DESIRED, DNS_FLAG_TRUNCATED,
+    ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
+    IPV4_FLAG_RESERVED, TCP_FLAG_ACK, TCP_FLAG_CWR, TCP_FLAG_ECE, TCP_FLAG_FIN, TCP_FLAG_NS,
+    TCP_FLAG_PSH, TCP_FLAG_RST, TCP_FLAG_SYN, TCP_FLAG_URG,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -270,17 +270,31 @@ fn assert_relevant_fields(packet: &Packet, metadata: &FixtureMetadata, ctx: &Cas
 
 fn decoded_layers(packet: &Packet) -> Vec<DecodedLayer<'_>> {
     let layers = packet.iter().collect::<Vec<_>>();
-    layers
-        .iter()
-        .enumerate()
-        .map(|(index, layer)| DecodedLayer {
-            scapy_name: scapy_layer_name(*layer),
-            layer: *layer,
-            raw_after: layers
-                .get(index + 1)
-                .and_then(|next| next.as_any().downcast_ref::<Raw>()),
-        })
-        .collect()
+    let mut decoded = Vec::new();
+    for (index, layer) in layers.iter().enumerate() {
+        let raw_after = layers
+            .get(index + 1)
+            .and_then(|next| next.as_any().downcast_ref::<Raw>());
+        if layer.as_any().is::<Dhcp>() {
+            decoded.push(DecodedLayer {
+                scapy_name: "BOOTP".to_string(),
+                layer: *layer,
+                raw_after,
+            });
+            decoded.push(DecodedLayer {
+                scapy_name: "DHCP".to_string(),
+                layer: *layer,
+                raw_after,
+            });
+        } else {
+            decoded.push(DecodedLayer {
+                scapy_name: scapy_layer_name(*layer),
+                layer: *layer,
+                raw_after,
+            });
+        }
+    }
+    decoded
 }
 
 fn scapy_layer_name(layer: &dyn Layer) -> String {
@@ -598,6 +612,54 @@ fn assert_layer_fields(
                 }
             }
         }
+        "BOOTP" => {
+            let layer = typed_layer::<Dhcp>(decoded, ctx);
+            for (name, value) in fields {
+                match name.as_str() {
+                    "op" => assert_u64(layer.op_value() as u64, value, name, ctx),
+                    "htype" => assert_u64(layer.hardware_type_value() as u64, value, name, ctx),
+                    "hlen" => assert_u64(layer.hardware_len_value() as u64, value, name, ctx),
+                    "hops" => assert_u64(layer.hops_value() as u64, value, name, ctx),
+                    "xid" => assert_u64(layer.transaction_id_value() as u64, value, name, ctx),
+                    "secs" => assert_u64(layer.seconds_value() as u64, value, name, ctx),
+                    "flags" => {
+                        assert_string(scapy_bootp_flags(layer.flags_value()), value, name, ctx)
+                    }
+                    "ciaddr" => assert_string(
+                        layer.client_ip_address_value().to_string(),
+                        value,
+                        name,
+                        ctx,
+                    ),
+                    "yiaddr" => {
+                        assert_string(layer.your_ip_address_value().to_string(), value, name, ctx)
+                    }
+                    "siaddr" => assert_string(
+                        layer.server_ip_address_value().to_string(),
+                        value,
+                        name,
+                        ctx,
+                    ),
+                    "giaddr" => assert_string(
+                        layer.gateway_ip_address_value().to_string(),
+                        value,
+                        name,
+                        ctx,
+                    ),
+                    "chaddr" => assert_dhcp_chaddr(layer.chaddr_bytes(), value, name, ctx),
+                    "options" => {
+                        assert_dhcp_magic_cookie(layer.magic_cookie_value(), value, name, ctx)
+                    }
+                    _ => unsupported_field(decoded, name, ctx),
+                }
+            }
+        }
+        "DHCP" => {
+            let _layer = typed_layer::<Dhcp>(decoded, ctx);
+            for name in fields.keys() {
+                unsupported_field(decoded, name, ctx);
+            }
+        }
         "DNS" => {
             let layer = typed_layer::<Dns>(decoded, ctx);
             for (name, value) in fields {
@@ -772,6 +834,32 @@ fn assert_hex_object_bytes(actual: &[u8], expected: &Value, field: &str, ctx: &C
     );
 }
 
+fn assert_dhcp_chaddr(actual: &[u8], expected: &Value, field: &str, ctx: &CaseContext<'_>) {
+    let expected_hex = expected
+        .get("hex")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("{ctx}: field {field} expected a {{hex, ascii}} object"));
+    let mut padded = actual.to_vec();
+    padded.resize(expected_hex.len() / 2, 0);
+    assert_eq!(
+        hex_bytes(&padded),
+        expected_hex,
+        "{ctx}: DHCP chaddr field {field} mismatch"
+    );
+}
+
+fn assert_dhcp_magic_cookie(actual: u32, expected: &Value, field: &str, ctx: &CaseContext<'_>) {
+    let expected_hex = expected
+        .get("hex")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("{ctx}: field {field} expected a {{hex, ascii}} object"));
+    assert_eq!(
+        hex_bytes(&actual.to_be_bytes()),
+        expected_hex,
+        "{ctx}: DHCP magic-cookie field {field} mismatch"
+    );
+}
+
 fn assert_option_array_and_bytes(
     actual_bytes: &[u8],
     expected: &Value,
@@ -862,6 +950,14 @@ fn scapy_ipv4_flags(flags: u8) -> String {
         names.push("evil");
     }
     names.join("+")
+}
+
+fn scapy_bootp_flags(flags: u16) -> String {
+    if flags & 0x8000 != 0 {
+        "B".to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn scapy_tcp_flags(flags: u16) -> String {

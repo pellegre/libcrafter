@@ -1,0 +1,183 @@
+{
+  "decoded_summary": "Ether / IP / UDP / BOOTP / DHCP Discover",
+  "description": "Ethernet IPv4 UDP BOOTP DHCP discover.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "Ether",
+    "IP",
+    "UDP",
+    "BOOTP",
+    "DHCP"
+  ],
+  "family": "dhcp",
+  "hex": "ffffffffffff02005e005301080045000127123800004011678f00000000ffffffff00440043011360f6010106003903f326000080000000000000000000000000000000000002005e00530100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000638253633501010c0f6c6962637261667465722d7465737437040103060fff",
+  "layer_names": [
+    "Ether",
+    "IP",
+    "UDP",
+    "BOOTP",
+    "DHCP"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "dst": "ff:ff:ff:ff:ff:ff",
+        "src": "02:00:5e:00:53:01",
+        "type": 2048
+      },
+      "name": "Ether"
+    },
+    {
+      "fields": {
+        "chksum": 26511,
+        "dst": "255.255.255.255",
+        "flags": "",
+        "frag": 0,
+        "id": 4664,
+        "ihl": 5,
+        "len": 295,
+        "options": [],
+        "proto": 17,
+        "src": "0.0.0.0",
+        "tos": 0,
+        "ttl": 64,
+        "version": 4
+      },
+      "name": "IP"
+    },
+    {
+      "fields": {
+        "chksum": 24822,
+        "dport": 67,
+        "len": 275,
+        "sport": 68
+      },
+      "name": "UDP"
+    },
+    {
+      "fields": {
+        "chaddr": {
+          "ascii": "\u0002\u0000^\u0000S\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+          "hex": "02005e00530100000000000000000000"
+        },
+        "ciaddr": "0.0.0.0",
+        "file": {
+          "ascii": "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+          "hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "flags": "B",
+        "giaddr": "0.0.0.0",
+        "hlen": 6,
+        "hops": 0,
+        "htype": 1,
+        "op": 1,
+        "options": {
+          "ascii": "c\ufffdSc",
+          "hex": "63825363"
+        },
+        "secs": 0,
+        "siaddr": "0.0.0.0",
+        "sname": {
+          "ascii": "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+          "hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "xid": 956560166,
+        "yiaddr": "0.0.0.0"
+      },
+      "name": "BOOTP"
+    },
+    {
+      "fields": {
+        "options": [
+          [
+            "message-type",
+            1
+          ],
+          [
+            "hostname",
+            {
+              "ascii": "libcrafter-test",
+              "hex": "6c6962637261667465722d74657374"
+            }
+          ],
+          [
+            "param_req_list",
+            [
+              1,
+              3,
+              6,
+              15
+            ]
+          ],
+          "end"
+        ]
+      },
+      "name": "DHCP"
+    }
+  ],
+  "length": 309,
+  "name": "dhcp-discover",
+  "notes": "Checked-in Scapy fixture. DHCP discover validates op, htype, hlen, xid, flags, chaddr, hostname, parameter request list, pad, and end.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "dst": "ff:ff:ff:ff:ff:ff",
+        "src": "02:00:5e:00:53:01",
+        "type": 2048
+      },
+      "layer": "Ether"
+    },
+    {
+      "fields": {
+        "dst": "255.255.255.255",
+        "ihl": 5,
+        "len": 295,
+        "proto": 17,
+        "src": "0.0.0.0",
+        "version": 4
+      },
+      "layer": "IP"
+    },
+    {
+      "fields": {
+        "chksum": 24822,
+        "dport": 67,
+        "len": 275,
+        "sport": 68
+      },
+      "layer": "UDP"
+    },
+    {
+      "fields": {
+        "chaddr": {
+          "ascii": "\u0002\u0000^\u0000S\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+          "hex": "02005e00530100000000000000000000"
+        },
+        "ciaddr": "0.0.0.0",
+        "flags": "B",
+        "giaddr": "0.0.0.0",
+        "hlen": 6,
+        "hops": 0,
+        "htype": 1,
+        "op": 1,
+        "options": {
+          "ascii": "c\ufffdSc",
+          "hex": "63825363"
+        },
+        "secs": 0,
+        "siaddr": "0.0.0.0",
+        "xid": 956560166,
+        "yiaddr": "0.0.0.0"
+      },
+      "layer": "BOOTP"
+    }
+  ],
+  "root": "link:ethernet",
+  "root_decoder": "link:ethernet",
+  "scapy_root": "Ether",
+  "scapy_show": "###[ Ethernet ]###\n  dst       = ff:ff:ff:ff:ff:ff\n  src       = 02:00:5e:00:53:01\n  type      = IPv4\n###[ IP ]###\n     version   = 4\n     ihl       = 5\n     tos       = 0x0\n     len       = 295\n     id        = 4664\n     flags     = \n     frag      = 0\n     ttl       = 64\n     proto     = udp\n     chksum    = 0x678f\n     src       = 0.0.0.0\n     dst       = 255.255.255.255\n     \\options   \\\n###[ UDP ]###\n        sport     = bootpc\n        dport     = bootps\n        len       = 275\n        chksum    = 0x60f6\n###[ BOOTP ]###\n           op        = BOOTREQUEST\n           htype     = Ethernet (10Mb)\n           hlen      = 6\n           hops      = 0\n           xid       = 0x3903f326\n           secs      = 0\n           flags     = B\n           ciaddr    = 0.0.0.0\n           yiaddr    = 0.0.0.0\n           siaddr    = 0.0.0.0\n           giaddr    = 0.0.0.0\n           chaddr    = 02:00:5e:00:53:01 (+ 10 nul pad)\n           sname     = b''\n           file      = b''\n           options   = b'c\\x82Sc' (DHCP magic)\n###[ DHCP options ]###\n              options   = [message-type=discover hostname=b'libcrafter-test' param_req_list=[1, 3, 6, 15] end]\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "Ether / IP / UDP / BOOTP / DHCP Discover"
+}

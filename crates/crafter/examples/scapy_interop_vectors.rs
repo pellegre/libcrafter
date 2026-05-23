@@ -86,6 +86,7 @@ fn build_manifest() -> ExampleResult<Manifest> {
             icmpv4_echo_reply()?,
             ipv6_icmp()?,
             dns_query()?,
+            dhcp_discover()?,
             vlan_ipv4_udp()?,
             crafter_raw_payload()?,
             crafter_ethernet_unknown_ethertype()?,
@@ -382,6 +383,35 @@ fn dns_query() -> ExampleResult<Vector> {
                 }),
             ),
         ],
+    )
+}
+
+fn dhcp_discover() -> ExampleResult<Vector> {
+    let src_mac = parse_mac(SRC_MAC)?;
+    let packet = Ethernet::new()
+        .src(src_mac)
+        .dst(MacAddr::BROADCAST)
+        .ethertype(ETHERTYPE_IPV4)
+        / Ipv4::new()
+            .src(Ipv4Addr::UNSPECIFIED)
+            .dst(Ipv4Addr::BROADCAST)
+            .id(0x1238)
+            .ttl(64)
+        / Udp::dhcp_client()
+        / Dhcp::discover(src_mac)
+            .xid(0x3903_f326)
+            .flags(0x8000)
+            .hostname("libcrafter-test")
+            .parameter_request_list(vec![1, 3, 6, 15]);
+
+    vector(
+        "dhcp-discover",
+        "dhcp",
+        "link:ethernet",
+        vec!["Ether", "IP", "UDP", "BOOTP", "DHCP"],
+        "Ether / IP / UDP / BOOTP / DHCP Discover",
+        packet,
+        vec![],
     )
 }
 

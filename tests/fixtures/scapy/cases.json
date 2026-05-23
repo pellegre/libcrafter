@@ -670,8 +670,8 @@
         "DHCP"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "Scapy generator recipe exists. DHCP discover validates op, htype, hlen, xid, flags, chaddr, hostname, parameter request list, pad, and end."
+      "status": "implemented",
+      "notes": "Checked-in Scapy fixture. DHCP discover validates op, htype, hlen, xid, flags, chaddr, hostname, parameter request list, pad, and end."
     },
     {
       "name": "dhcp-request-offer-ack",
