@@ -380,7 +380,7 @@ if (( run_scapy_to_libcrafter )); then
     scapy_to_libcrafter \
     "$case_label" \
     env LIBCRAFTER_SCAPY_FIXTURE_DIR="$scapy_dir" \
-      cargo test -p crafter-core --test scapy_reference -- \
+      cargo test -p crafter --test scapy_reference -- \
       scapy_generated_fixtures_decode_like_manifest --exact
 fi
 

@@ -80,7 +80,7 @@ def main() -> int:
         ),
         command_spec(
             "malformed-resilience",
-            ["cargo", "test", "-p", "crafter-core", "--test", "resilience"],
+            ["cargo", "test", "-p", "crafter", "--test", "resilience"],
         ),
         command_spec(
             "local-live-lab-dry-run",
