@@ -19,7 +19,7 @@ facade crate `crafter` and its supporting crates.
   raw payloads.
 - Protocol registry hooks for custom link, network, transport, and application
   decode bindings.
-- Classic pcap read/write helpers, deterministic offline filters, offline
+- Classic pcap read/write helpers, libpcap BPF filters, offline
   sniffer iteration, callbacks, and background capture handles.
 - Raw send planning, live send backends, send/receive matching, batch
   workflows, interface helpers, address range helpers, and ARP resolution.

@@ -30,13 +30,13 @@ PY
 fi
 
 pcap_file="$suite_dir/dns-loopback.pcap"
-tcpdump_log="$suite_dir/tcpdump.log"
+capture_log="$suite_dir/libpcap-capture.log"
 server_log="$suite_dir/dns-server.log"
-tcpdump_pid=""
+capture_pid=""
 server_pid=""
 
 cleanup() {
-  stop_background "$tcpdump_pid"
+  stop_background "$capture_pid"
   stop_background "$server_pid"
 }
 trap cleanup EXIT
@@ -73,7 +73,7 @@ PY
 server_pid="$!"
 sleep 1
 
-tcpdump_pid="$(start_tcpdump lo "udp port 53" "$pcap_file" "$tcpdump_log")"
+capture_pid="$(start_libpcap_capture lo "udp port 53" "$pcap_file" "$capture_log")"
 
 run_logged rust-dns-query-live \
   cargo run --quiet --example dns_query -- --live --iface lo --src 127.0.0.1 --server 127.0.0.1 --sport 53010 --name example.test
@@ -95,7 +95,7 @@ Path('$suite_dir/scapy-dns.json').write_text(
 print('scapy_dns=ok')
 PY
 
-stop_background "$tcpdump_pid"
-tcpdump_pid=""
+wait_for_capture "$capture_pid" "$capture_log"
+capture_pid=""
 pcap_has_packets "$pcap_file"
-write_suite_json ok "local DNS server validated with Rust, Scapy, and tcpdump"
+write_suite_json ok "local DNS server validated with Rust, Scapy, and libpcap"

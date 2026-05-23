@@ -189,17 +189,76 @@ PY
   echo "summary=$file"
 }
 
-start_tcpdump() {
+start_libpcap_capture() {
   local iface="$1"
   local filter="$2"
   local pcap_file="$3"
   local log_file="$4"
-  local timeout_seconds="${LIBCRAFTER_LIVE_TCPDUMP_TIMEOUT:-15}"
+  local count="${5:-1}"
+  local timeout_seconds="${LIBCRAFTER_LIVE_CAPTURE_TIMEOUT:-15}"
+  local target_dir="${CARGO_TARGET_DIR:-$project_root/target}"
+  local binary="$target_dir/debug/examples/capture_pcap"
 
-  require_tool tcpdump
-  timeout "$timeout_seconds" tcpdump -i "$iface" -n -U -w "$pcap_file" "$filter" >"$log_file" 2>&1 &
+  if [[ "$target_dir" != /* ]]; then
+    target_dir="$project_root/$target_dir"
+    binary="$target_dir/debug/examples/capture_pcap"
+  fi
+
+  require_tool cargo
+  {
+    echo "started_at=$(timestamp_utc)"
+    echo "interface=$iface"
+    echo "filter=$filter"
+    echo "pcap=$pcap_file"
+    echo "count=$count"
+    echo "timeout_seconds=$timeout_seconds"
+    cd "$project_root"
+    cargo build --quiet --example capture_pcap
+  } >"$log_file" 2>&1
+
+  "$binary" \
+    --iface "$iface" \
+    --filter "$filter" \
+    --out "$pcap_file" \
+    --count "$count" \
+    --timeout-seconds "$timeout_seconds" >>"$log_file" 2>&1 &
   echo "$!"
   sleep 1
+}
+
+wait_for_capture() {
+  local pid="${1:-}"
+  local log_file="${2:-}"
+  local wait_seconds="${LIBCRAFTER_LIVE_CAPTURE_WAIT:-20}"
+  local elapsed=0
+
+  if [[ -z "$pid" ]]; then
+    return 0
+  fi
+
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    if [[ "$elapsed" -ge "$wait_seconds" ]]; then
+      echo "error: libpcap capture did not finish within ${wait_seconds}s" >&2
+      if [[ -n "$log_file" ]]; then
+        tail -n 40 "$log_file" >&2 || true
+      fi
+      stop_background "$pid"
+      return 1
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  if wait "$pid"; then
+    return 0
+  fi
+
+  local status=$?
+  echo "error: libpcap capture failed (exit $status)" >&2
+  if [[ -n "$log_file" ]]; then
+    tail -n 40 "$log_file" >&2 || true
+  fi
+  return "$status"
 }
 
 stop_background() {
@@ -215,7 +274,8 @@ stop_background() {
 
 pcap_has_packets() {
   local pcap_file="$1"
+  local log_file="$suite_dir/pcap-read-check.log"
 
   [[ -s "$pcap_file" ]] || return 1
-  tcpdump -r "$pcap_file" -c 1 >/dev/null 2>&1
+  (cd "$project_root" && cargo run --quiet --example read_pcap -- --in "$pcap_file") >"$log_file" 2>&1
 }

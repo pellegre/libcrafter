@@ -76,19 +76,6 @@ PY
   exit 69
 }
 
-verify_tcpdump() {
-  local version
-
-  if require_tool tcpdump; then
-    if version="$(tcpdump --version 2>&1)"; then
-      first_line "$version"
-    else
-      echo "tcpdump_version=unavailable"
-    fi
-    echo "tcpdump=ok"
-  fi
-}
-
 verify_isolated_network() {
   local netns_error="$artifact_dir/netns.err"
   local unshare_error="$artifact_dir/unshare.err"
@@ -139,7 +126,11 @@ main() {
   print_optional_version rustc --version
   print_optional_version cargo --version
   verify_scapy
-  verify_tcpdump
+  if command -v pcap-config >/dev/null 2>&1; then
+    printf 'libpcap=%s\n' "$(pcap-config --version)"
+  else
+    echo "libpcap=pcap-config-missing"
+  fi
   require_tool ip >/dev/null || true
   if command -v ip >/dev/null 2>&1; then
     first_line "$(ip -Version 2>&1)"

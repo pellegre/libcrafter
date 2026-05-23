@@ -25,9 +25,9 @@ if is_dry_run; then
 fi
 
 pcap_file="$suite_dir/live-icmp.pcap"
-tcpdump_log="$suite_dir/tcpdump.log"
-tcpdump_pid="$(start_tcpdump lo "icmp" "$pcap_file" "$tcpdump_log")"
-trap 'stop_background "$tcpdump_pid"' EXIT
+capture_log="$suite_dir/libpcap-capture.log"
+capture_pid="$(start_libpcap_capture lo "icmp" "$pcap_file" "$capture_log")"
+trap 'stop_background "$capture_pid"' EXIT
 
 run_scapy_logged scapy-generate-live-pcap <<PY
 from scapy.all import ICMP, IP, Raw, conf, send
@@ -38,9 +38,10 @@ send(packet, verbose=False)
 print('sent=icmp-loopback')
 PY
 
-stop_background "$tcpdump_pid"
+wait_for_capture "$capture_pid" "$capture_log"
+capture_pid=""
 trap - EXIT
 pcap_has_packets "$pcap_file"
 run_logged rust-read-live-pcap \
   cargo run --quiet --example read_pcap -- --in "$pcap_file"
-write_suite_json ok "live tcpdump capture decoded by Rust pcap helpers"
+write_suite_json ok "live libpcap capture decoded by Rust pcap helpers"

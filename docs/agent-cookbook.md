@@ -76,8 +76,8 @@ match Packet::decode_from_l3(NetworkLayer::Ipv4, bytes) {
 
 ## Read A pcap
 
-Use `read_pcap` for full offline reads and `read_pcap_filtered` when a small
-tcpdump-style filter is enough.
+Use `read_pcap` for full offline reads and `read_pcap_filtered` when a libpcap
+BPF filter should be applied while reading.
 
 ```rust
 use crafter::prelude::*;

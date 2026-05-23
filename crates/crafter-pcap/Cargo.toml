@@ -17,3 +17,4 @@ path = "src/lib.rs"
 
 [dependencies]
 crafter-core = { path = "../crafter-core", version = "0.1.0-alpha.1" }
+pcap = "2.4.0"

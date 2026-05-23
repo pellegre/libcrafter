@@ -33,7 +33,11 @@ else:
     print(f"scapy={conf.version}")
 PY
     fi
-    tcpdump --version 2>&1 | head -n 1 || echo "tcpdump=missing"
+    if command -v pcap-config >/dev/null 2>&1; then
+      printf 'libpcap=%s\n' "$(pcap-config --version)"
+    else
+      echo "libpcap=pcap-config-missing"
+    fi
     ip -Version 2>&1 | head -n 1 || echo "ip=missing"
   } | tee "$versions_file"
 

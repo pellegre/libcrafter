@@ -15,7 +15,7 @@ The following workflows are intended to work on common Linux and macOS
 developer environments without live traffic:
 
 - Packet construction and decode tests in `crafter-core`.
-- Classic pcap read/write and deterministic offline filtering in
+- Classic pcap read/write and libpcap-backed filtering in
   `crafter-pcap`.
 - Example builds and dry-run example execution.
 - Malformed input resilience and encode/decode roundtrip tests.
@@ -28,7 +28,7 @@ but it is not yet part of the acceptance matrix.
 
 Live send, capture, ARP resolution, and send/receive workflows are developed for
 Linux disposable labs. They require suitable privileges inside the lab and may
-depend on `tcpdump`, Scapy, Docker, and basic networking tools installed by the
+depend on Scapy, Docker, and basic networking tools installed by the
 live-lab image.
 
 Live raw-packet tests must not run on a developer workstation by default. Use:
