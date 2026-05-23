@@ -6,6 +6,7 @@ repo_root="$(cd -- "$script_dir/../.." && pwd)"
 case_manifest="$repo_root/tests/fixtures/scapy/cases.json"
 generator="$script_dir/generate-scapy-fixtures"
 validator="$script_dir/scapy-validate-libcrafter.py"
+pcap_validator="$script_dir/scapy-pcap-interop.py"
 
 artifact_root="$repo_root/target/scapy-interop"
 keep_artifacts=0
@@ -163,7 +164,25 @@ filter_args=()
 for value in "${only_filters[@]}"; do
   filter_args+=(--only "$value")
 done
-for value in "${family_filters[@]}"; do
+
+pcap_family_requested=0
+non_pcap_family_filters=()
+for raw_family in "${family_filters[@]}"; do
+  IFS=',' read -r -a family_parts <<< "$raw_family"
+  for family in "${family_parts[@]}"; do
+    family="${family//[[:space:]]/}"
+    if [[ -z "$family" ]]; then
+      continue
+    fi
+    if [[ "$family" == "pcap" ]]; then
+      pcap_family_requested=1
+    else
+      non_pcap_family_filters+=("$family")
+    fi
+  done
+done
+
+for value in "${non_pcap_family_filters[@]}"; do
   filter_args+=(--family "$value")
 done
 
@@ -307,6 +326,27 @@ PY
 }
 
 case_label="selected"
+
+if (( pcap_family_requested )); then
+  pcap_args=(--out "$run_dir/pcap")
+  if (( run_scapy_to_libcrafter )); then
+    pcap_args+=(--direction scapy_to_libcrafter)
+  fi
+  if (( run_libcrafter_to_scapy )); then
+    pcap_args+=(--direction libcrafter_to_scapy)
+  fi
+
+  run_logged \
+    scapy-pcap-interop \
+    both \
+    pcap \
+    "$pcap_validator" "${pcap_args[@]}"
+
+  if ((${#non_pcap_family_filters[@]} == 0)); then
+    echo "scapy interop checks passed"
+    exit 0
+  fi
+fi
 
 if (( run_scapy_to_libcrafter )); then
   scapy_dir="$run_dir/scapy-fixtures"
