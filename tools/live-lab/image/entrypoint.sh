@@ -17,9 +17,6 @@ PY
   if command -v pcap-config >/dev/null 2>&1; then
     printf 'libpcap=%s\n' "$(pcap-config --version)"
   fi
-  autoconf --version | head -n 1
-  automake --version | head -n 1
-  libtoolize --version | head -n 1
 }
 
 run_check() {

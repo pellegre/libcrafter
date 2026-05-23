@@ -2,9 +2,8 @@
 
 ## 0.1.0-alpha.1 - Rust Packet Crafting Alpha
 
-This is the first public alpha of the Rust packet crafting workspace. The
-legacy C++ source remains in the repository; this release introduces the Rust
-facade crate `crafter` and its supporting crates.
+This is the first public alpha of the Rust packet crafting workspace, centered
+on the facade crate `crafter` and its supporting crates.
 
 ### Added
 
@@ -23,18 +22,18 @@ facade crate `crafter` and its supporting crates.
   sniffer iteration, callbacks, and background capture handles.
 - Raw send planning, live send backends, send/receive matching, batch
   workflows, interface helpers, address range helpers, and ARP resolution.
-- Safe-by-default Rust ports of the basic, intermediate, and gated advanced
-  libcrafter examples.
+- Safe-by-default Rust examples for basic, intermediate, and gated advanced
+  packet workflows.
 - Provider-agnostic disposable live-lab tooling with local dry-run and Hetzner
   providers.
-- Scapy and legacy libcrafter reference fixture harnesses, malformed decode
-  corpus, property tests, and GitHub Actions workflows.
+- Scapy reference fixture harnesses, malformed decode corpus, property tests,
+  and GitHub Actions workflows.
 
 ### Known Gaps
 
 - The Rust API is alpha and may change before a stable release.
 - The decoder is intentionally smaller than Wireshark or Scapy and focuses on
-  the libcrafter example surface.
+  the current example surface.
 - TCP stream reassembly, packet fragmentation/reassembly, full pcapng support,
   full BPF parsing, and full TCP/IP stack behavior are not included.
 - DNS encoding is deterministic and uncompressed; DNS decoding accepts

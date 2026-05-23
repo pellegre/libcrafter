@@ -1,6 +1,0 @@
-name IPv6RoutingHeader
-protoid 0x2b00
-ByteField NextHeader    0 0 0
-ByteField HeaderExtLen  0 1 0
-ByteField RoutingType   0 2 0
-ByteField SegmentLeft   0 3 0

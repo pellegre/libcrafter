@@ -9,8 +9,8 @@ tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 ```
 
 Local static tests should run before any live lab command. Live providers are
-for tests that need root privileges, raw sockets, packet capture, Scapy
-comparison, or legacy libcrafter validation on disposable infrastructure.
+for tests that need root privileges, raw sockets, packet capture, or Scapy
+comparison on disposable infrastructure.
 
 ## Hetzner Setup
 

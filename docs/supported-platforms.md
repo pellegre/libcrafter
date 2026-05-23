@@ -1,7 +1,6 @@
 # Supported Platforms And Known Gaps
 
-This page describes the first Rust alpha. The legacy C++ library remains in the
-repository and has its own build expectations.
+This page describes the first Rust alpha support matrix.
 
 ## Supported Rust Toolchain
 
@@ -41,18 +40,6 @@ tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite all
 For provider-backed runs, configure credentials outside the repository. The
 Hetzner provider reads only the `HETZNER_API_TOKEN` variable or the ignored
 local env file described in `docs/live-lab.md`.
-
-## Known Gaps Versus Legacy Libcrafter
-
-- The Rust API is not source-compatible with the C++ API.
-- Threading is expressed through Rust handles and bounded capture helpers rather
-  than the legacy callback classes.
-  disposable lab templates; they do not mutate host firewall or forwarding
-  state.
-- Route discovery uses interface hints and address tables rather than a full
-  platform route parser.
-- Live L2 sending focuses on Ethernet frames. Linux cooked and null/loopback
-  live sends are rejected explicitly.
 
 ## Known Gaps Versus Scapy
 

@@ -8,7 +8,6 @@ Most examples are packet builders or offline readers. They use
 dry-run send plans unless `--live` is explicitly supplied.
 
 
-demos:
 
 
 These examples are for isolated lab networks only. They must not be run on a
@@ -23,9 +22,8 @@ traffic-changing behavior requires all of the following:
 - `LIBCRAFTER_LIVE_LAB=1`
 
 The examples do not write firewall rules or change kernel forwarding settings.
-Where the legacy C++ examples used `iptables` or `/proc/sys/net/ipv4/ip_forward`,
-the Rust ports print the packet plan and leave host mutation to disposable
-live-lab orchestration.
+They print packet plans and leave host mutation to disposable live-lab
+orchestration.
 
 Run a dry-run locally:
 

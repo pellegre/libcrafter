@@ -1052,7 +1052,7 @@ mod ip_ranges {
     }
 
     #[test]
-    fn parses_number_ranges_like_legacy_utils() {
+    fn parses_number_ranges_compatibly() {
         assert_eq!(
             parse_numbers("80,443,1000-1002").unwrap(),
             vec![80, 443, 1000, 1001, 1002]

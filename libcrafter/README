@@ -1,6 +1,0 @@
-LibCrafter
-----------
-
-Before configuring and compiling libcrafter you need lipcap installed in your system. On debian based distros, you should execute:
-
-# apt-get install libpcap0.8 libpcap0.8-dev 
