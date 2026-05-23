@@ -517,10 +517,7 @@ impl PcapRecord {
     }
 
     /// Decode this record with an explicit protocol registry.
-    pub fn decode_with_registry(
-        &self,
-        registry: &ProtocolRegistry,
-    ) -> crate::Result<Packet> {
+    pub fn decode_with_registry(&self, registry: &ProtocolRegistry) -> crate::Result<Packet> {
         self.link_type.decode_with_registry(registry, &self.data)
     }
 }
@@ -1378,10 +1375,7 @@ enum Endian {
     Big,
 }
 
-fn decode_raw_ip_with_registry(
-    registry: &ProtocolRegistry,
-    bytes: &[u8],
-) -> crate::Result<Packet> {
+fn decode_raw_ip_with_registry(registry: &ProtocolRegistry, bytes: &[u8]) -> crate::Result<Packet> {
     match bytes.first().map(|byte| byte >> 4) {
         Some(4) => registry.decode_from_l3(NetworkLayer::Ipv4, bytes),
         Some(6) => registry.decode_from_l3(NetworkLayer::Ipv6, bytes),
@@ -1533,9 +1527,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
-    use crate::{
-        Arp, Ethernet, Ipv4, LinkType, MacAddr, Packet, Raw, Tcp, Udp, ETHERTYPE_ARP,
-    };
+    use crate::{Arp, Ethernet, Ipv4, LinkType, MacAddr, Packet, Raw, Tcp, Udp, ETHERTYPE_ARP};
 
     use super::{
         dump_pcap, CaptureControl, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter,

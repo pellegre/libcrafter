@@ -12,13 +12,13 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
+use crate::pcap_impl::{PcapError, Sniffer};
 use crate::{
     Arp, ArpOperation, CompiledPacket, CrafterError, Dhcp, Dns, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6,
     Layer, LinkType, NetworkLayer, Packet, Tcp, Udp, BOOTP_REPLY, DHCP_CLIENT_PORT,
     DHCP_SERVER_PORT, DNS_PORT, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY,
     ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
 };
-use crate::pcap_impl::{PcapError, Sniffer};
 use pnet_datalink::{self as datalink, Channel, ChannelType};
 use pnet_packet::ip::IpNextHeaderProtocol;
 use pnet_transport::{transport_channel, TransportChannelType};
@@ -2296,10 +2296,7 @@ mod send_plan {
                 link_type: crate::LinkType::Ethernet
             }
         );
-        assert_eq!(
-            plan.bytes()[12..14],
-            crate::ETHERTYPE_IPV4.to_be_bytes()
-        );
+        assert_eq!(plan.bytes()[12..14], crate::ETHERTYPE_IPV4.to_be_bytes());
     }
 
     #[test]

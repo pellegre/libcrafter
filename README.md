@@ -138,6 +138,17 @@ tracked files.
 - [docs/agent-cookbook.md](docs/agent-cookbook.md) gives copyable recipes for
   generated packet tools.
 
+Before publishing `crafter`, run the offline release gate from the repository
+root:
+
+```sh
+tools/check-crafter-release --static
+```
+
+For package-content checks only, run `tools/check-crafter-release
+--package-only`. Publishing to crates.io remains a separate manual step after
+review.
+
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE).
