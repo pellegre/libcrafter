@@ -6,6 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 
+from .model import dumps_json
 from .report import DEFAULT_OUTPUT_ROOT
 
 
@@ -22,6 +23,17 @@ def _not_implemented(args: argparse.Namespace) -> int:
         f"oracle {args.mode} mode is not implemented yet; parsed output root: {args.out}",
         file=sys.stderr,
     )
+    return 2
+
+
+def _backend_info(args: argparse.Namespace) -> int:
+    if args.backend == "scapy":
+        from .backends.scapy.bootstrap import backend_info
+
+        sys.stdout.write(dumps_json(backend_info()))
+        return 0
+
+    print(f"unsupported backend: {args.backend}", file=sys.stderr)
     return 2
 
 
@@ -44,6 +56,19 @@ def build_parser() -> argparse.ArgumentParser:
         )
         _add_common_options(mode_parser)
         mode_parser.set_defaults(func=_not_implemented)
+
+    backend_info_parser = subparsers.add_parser(
+        "backend-info",
+        help="print backend dependency and version metadata",
+        description="Print oracle backend dependency and version metadata.",
+    )
+    backend_info_parser.add_argument(
+        "--backend",
+        choices=("scapy",),
+        default="scapy",
+        help="backend to inspect (default: %(default)s)",
+    )
+    backend_info_parser.set_defaults(func=_backend_info)
 
     return parser
 
