@@ -12,13 +12,14 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
+import tempfile
 from typing import Any, Callable
 
 
 def import_scapy() -> dict[str, Any]:
     try:
+        import scapy  # type: ignore[import-untyped]
         from scapy.all import (  # type: ignore[import-untyped]
             ARP,
             BOOTP,
@@ -61,6 +62,7 @@ def import_scapy() -> dict[str, Any]:
         "Raw": Raw,
         "TCP": TCP,
         "UDP": UDP,
+        "version": getattr(scapy, "__version__", "unknown"),
         "raw": raw,
     }
 
@@ -122,6 +124,11 @@ Raw = SCAPY["Raw"]
 TCP = SCAPY["TCP"]
 UDP = SCAPY["UDP"]
 raw = SCAPY["raw"]
+SCAPY_VERSION = SCAPY["version"]
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCAPY_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "scapy"
+CASE_MANIFEST = SCAPY_FIXTURE_DIR / "cases.json"
 
 SRC_MAC = "02:00:5e:00:53:01"
 DST_MAC = "02:00:5e:00:53:02"
@@ -142,13 +149,13 @@ class Fixture:
         self,
         name: str,
         description: str,
-        root: str,
+        scapy_root: str,
         stack: list[str],
         factory: PacketFactory,
     ) -> None:
         self.name = name
         self.description = description
-        self.root = root
+        self.scapy_root = scapy_root
         self.stack = stack
         self.factory = factory
 
@@ -358,6 +365,64 @@ FIXTURES = [
 FIXTURE_MAP = {fixture.name: fixture for fixture in FIXTURES}
 
 
+def load_case_manifest(path: Path = CASE_MANIFEST) -> dict[str, Any]:
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise SystemExit(f"missing Scapy case manifest: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"invalid Scapy case manifest {path}: {exc}") from exc
+
+    cases = manifest.get("cases")
+    if not isinstance(cases, list):
+        raise SystemExit(f"Scapy case manifest {path} must contain a cases list")
+
+    by_name: dict[str, dict[str, Any]] = {}
+    for case in cases:
+        if not isinstance(case, dict):
+            raise SystemExit(f"Scapy case manifest {path} contains a non-object case")
+        name = case.get("name")
+        if not isinstance(name, str) or not name:
+            raise SystemExit(f"Scapy case manifest {path} contains an unnamed case")
+        if name in by_name:
+            raise SystemExit(f"duplicate Scapy case name in manifest: {name}")
+        by_name[name] = case
+
+    manifest["cases_by_name"] = by_name
+    return manifest
+
+
+CASE_DATA = load_case_manifest()
+CASE_MAP: dict[str, dict[str, Any]] = CASE_DATA["cases_by_name"]
+
+
+def fixture_case(fixture: Fixture) -> dict[str, Any]:
+    case = CASE_MAP.get(fixture.name)
+    if case is None:
+        raise SystemExit(
+            f"fixture {fixture.name!r} has no metadata in {CASE_MANIFEST}"
+        )
+    return case
+
+
+def validate_fixture_manifest() -> None:
+    for fixture in FIXTURES:
+        case = fixture_case(fixture)
+        stack = case.get("expected_stack")
+        if stack != fixture.stack:
+            raise SystemExit(
+                f"manifest expected_stack for {fixture.name!r} does not match "
+                "the Scapy factory"
+            )
+        if case.get("direction") != "scapy_to_libcrafter":
+            raise SystemExit(
+                f"fixture {fixture.name!r} must be a scapy_to_libcrafter case"
+            )
+
+
+validate_fixture_manifest()
+
+
 def decode_root(root: str, blob: bytes) -> Any:
     decoders = {
         "Ether": Ether,
@@ -398,22 +463,43 @@ def packet_layers(packet: Any) -> list[dict[str, Any]]:
     return layers
 
 
+def packet_fields(layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {"layer": layer["name"], "fields": layer["fields"]}
+        for layer in layers
+    ]
+
+
 def write_fixture(out_dir: Path, fixture: Fixture) -> None:
+    case = fixture_case(fixture)
     packet = fixture.factory()
     blob = bytes(raw(packet))
-    decoded = decode_root(fixture.root, blob)
+    decoded = decode_root(fixture.scapy_root, blob)
+    layers = packet_layers(decoded)
+    layer_names = [layer["name"] for layer in layers]
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{fixture.name}.bin").write_bytes(blob)
     metadata = {
         "name": fixture.name,
         "description": fixture.description,
-        "root": fixture.root,
-        "expected_stack": fixture.stack,
+        "family": case["family"],
+        "direction": case["direction"],
+        "root": case["root"],
+        "root_decoder": case["root"],
+        "scapy_root": fixture.scapy_root,
+        "scapy_version": SCAPY_VERSION,
+        "expected_stack": case["expected_stack"],
+        "strict_bytes": case["strict_bytes"],
+        "status": case.get("status"),
+        "notes": case.get("notes"),
         "length": len(blob),
         "hex": blob.hex(),
+        "decoded_summary": decoded.summary(),
         "summary": decoded.summary(),
-        "layers": packet_layers(decoded),
+        "layer_names": layer_names,
+        "relevant_fields": packet_fields(layers),
+        "layers": layers,
         "scapy_show": decoded.show(dump=True),
     }
     (out_dir / f"{fixture.name}.json").write_text(
@@ -422,32 +508,85 @@ def write_fixture(out_dir: Path, fixture: Fixture) -> None:
     )
 
 
-def selected_fixtures(names: list[str]) -> list[Fixture]:
-    if not names:
-        return FIXTURES
+def split_filters(values: list[str]) -> list[str]:
+    filters: list[str] = []
+    for raw_value in values:
+        for value in raw_value.split(","):
+            normalized = value.strip()
+            if normalized:
+                filters.append(normalized)
+    return filters
 
-    selected: list[Fixture] = []
-    unknown: list[str] = []
-    for raw_name in names:
-        for name in raw_name.split(","):
-            normalized = name.strip()
-            if not normalized:
-                continue
-            fixture = FIXTURE_MAP.get(normalized)
+
+def validate_filters(kind: str, requested: list[str], known: set[str]) -> None:
+    unknown = sorted(set(requested) - known)
+    if unknown:
+        raise SystemExit(
+            f"unknown {kind}(s): {', '.join(unknown)}. known: {', '.join(sorted(known))}"
+        )
+
+
+def selected_fixtures(
+    names: list[str],
+    families: list[str],
+    directions: list[str],
+    base_fixtures: list[Fixture] | None = None,
+) -> list[Fixture]:
+    requested_families = split_filters(families)
+    requested_directions = split_filters(directions)
+    validate_filters(
+        "family",
+        requested_families,
+        {str(case["family"]) for case in CASE_MAP.values()},
+    )
+    validate_filters(
+        "direction",
+        requested_directions,
+        {str(case["direction"]) for case in CASE_MAP.values()},
+    )
+
+    if not names:
+        selected = list(base_fixtures or FIXTURES)
+    else:
+        selected = []
+        unknown: list[str] = []
+        for name in split_filters(names):
+            fixture = FIXTURE_MAP.get(name)
             if fixture is None:
-                unknown.append(normalized)
+                unknown.append(name)
             else:
                 selected.append(fixture)
 
-    if unknown:
-        known = ", ".join(sorted(FIXTURE_MAP))
-        raise SystemExit(f"unknown fixture(s): {', '.join(unknown)}. known: {known}")
+        if unknown:
+            known = ", ".join(sorted(FIXTURE_MAP))
+            raise SystemExit(f"unknown fixture(s): {', '.join(unknown)}. known: {known}")
+
+    if requested_families:
+        selected = [
+            fixture
+            for fixture in selected
+            if fixture_case(fixture)["family"] in requested_families
+        ]
+    if requested_directions:
+        selected = [
+            fixture
+            for fixture in selected
+            if fixture_case(fixture)["direction"] in requested_directions
+        ]
 
     return selected
 
 
+def checked_in_fixtures() -> list[Fixture]:
+    return [
+        fixture
+        for fixture in FIXTURES
+        if fixture_case(fixture).get("status") == "implemented"
+    ]
+
+
 def default_output_dir() -> Path:
-    return Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "scapy"
+    return SCAPY_FIXTURE_DIR
 
 
 def parse_args() -> argparse.Namespace:
@@ -468,6 +607,28 @@ def parse_args() -> argparse.Namespace:
         help="fixture name to generate; can be passed multiple times or comma-separated",
     )
     parser.add_argument(
+        "--family",
+        action="append",
+        default=[],
+        metavar="FAMILY",
+        help="fixture family filter; can be passed multiple times or comma-separated",
+    )
+    parser.add_argument(
+        "--direction",
+        action="append",
+        default=[],
+        metavar="DIRECTION",
+        help="fixture direction filter; can be passed multiple times or comma-separated",
+    )
+    parser.add_argument(
+        "--check-drift",
+        action="store_true",
+        help=(
+            "generate fixtures in a temporary directory and compare them with "
+            "checked-in fixtures"
+        ),
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         help="list available fixtures and exit",
@@ -475,15 +636,59 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def compare_files(generated: Path, expected: Path) -> str | None:
+    if not expected.exists():
+        return f"missing checked-in fixture: {expected}"
+    generated_bytes = generated.read_bytes()
+    expected_bytes = expected.read_bytes()
+    if generated_bytes != expected_bytes:
+        return f"drift detected: {expected}"
+    return None
+
+
+def check_drift(fixtures: list[Fixture]) -> int:
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="libcrafter-scapy-fixtures-") as tmp:
+        out_dir = Path(tmp)
+        for fixture in fixtures:
+            write_fixture(out_dir, fixture)
+            for suffix in (".bin", ".json"):
+                generated = out_dir / f"{fixture.name}{suffix}"
+                expected = SCAPY_FIXTURE_DIR / f"{fixture.name}{suffix}"
+                failure = compare_files(generated, expected)
+                if failure is not None:
+                    failures.append(failure)
+
+    if failures:
+        for failure in failures:
+            print(failure, file=sys.stderr)
+        return 1
+
+    print(f"checked {len(fixtures)} Scapy fixture(s); no drift detected")
+    return 0
+
+
 def main() -> int:
     args = parse_args()
 
+    if args.check_drift and not args.only:
+        fixtures = selected_fixtures(
+            args.only,
+            args.family,
+            args.direction,
+            base_fixtures=checked_in_fixtures(),
+        )
+    else:
+        fixtures = selected_fixtures(args.only, args.family, args.direction)
+
     if args.list:
-        for fixture in FIXTURES:
+        for fixture in fixtures:
             print(f"{fixture.name}\t{fixture.description}")
         return 0
 
-    fixtures = selected_fixtures(args.only)
+    if args.check_drift:
+        return check_drift(fixtures)
+
     for fixture in fixtures:
         write_fixture(args.out, fixture)
         print(f"wrote {args.out / (fixture.name + '.bin')}")

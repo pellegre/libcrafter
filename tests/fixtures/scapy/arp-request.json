@@ -1,10 +1,17 @@
 {
+  "decoded_summary": "Ether / ARP who has 192.0.2.1 says 192.0.2.10",
   "description": "Ethernet ARP who-has request.",
+  "direction": "scapy_to_libcrafter",
   "expected_stack": [
     "Ether",
     "ARP"
   ],
+  "family": "link",
   "hex": "ffffffffffff02005e0053010806000108000604000102005e005301c000020a000000000000c0000201",
+  "layer_names": [
+    "Ether",
+    "ARP"
+  ],
   "layers": [
     {
       "fields": {
@@ -31,7 +38,37 @@
   ],
   "length": 42,
   "name": "arp-request",
-  "root": "Ether",
+  "notes": "Checked-in Scapy fixture. ARP who-has request with documentation IPv4 and deterministic local MAC values.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "dst": "ff:ff:ff:ff:ff:ff",
+        "src": "02:00:5e:00:53:01",
+        "type": 2054
+      },
+      "layer": "Ether"
+    },
+    {
+      "fields": {
+        "hwdst": "00:00:00:00:00:00",
+        "hwlen": 6,
+        "hwsrc": "02:00:5e:00:53:01",
+        "hwtype": 1,
+        "op": 1,
+        "pdst": "192.0.2.1",
+        "plen": 4,
+        "psrc": "192.0.2.10",
+        "ptype": 2048
+      },
+      "layer": "ARP"
+    }
+  ],
+  "root": "link:ethernet",
+  "root_decoder": "link:ethernet",
+  "scapy_root": "Ether",
   "scapy_show": "###[ Ethernet ]###\n  dst       = ff:ff:ff:ff:ff:ff\n  src       = 02:00:5e:00:53:01\n  type      = ARP\n###[ ARP ]###\n     hwtype    = Ethernet (10Mb)\n     ptype     = IPv4\n     hwlen     = 6\n     plen      = 4\n     op        = who-has\n     hwsrc     = 02:00:5e:00:53:01\n     psrc      = 192.0.2.10\n     hwdst     = 00:00:00:00:00:00\n     pdst      = 192.0.2.1\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
   "summary": "Ether / ARP who has 192.0.2.1 says 192.0.2.10"
 }

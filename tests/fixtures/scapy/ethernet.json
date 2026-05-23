@@ -1,10 +1,17 @@
 {
+  "decoded_summary": "02:00:5e:00:53:01 > 02:00:5e:00:53:02 (0x9000) / Raw",
   "description": "Ethernet II frame with an experimental ethertype and raw payload.",
+  "direction": "scapy_to_libcrafter",
   "expected_stack": [
     "Ether",
     "Raw"
   ],
+  "family": "link",
   "hex": "02005e00530202005e00530190006c6962637261667465722d65746865726e6574",
+  "layer_names": [
+    "Ether",
+    "Raw"
+  ],
   "layers": [
     {
       "fields": {
@@ -26,7 +33,32 @@
   ],
   "length": 33,
   "name": "ethernet",
-  "root": "Ether",
+  "notes": "Checked-in Scapy fixture. Ethernet II frame with an experimental ethertype and raw payload fallback.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "dst": "02:00:5e:00:53:02",
+        "src": "02:00:5e:00:53:01",
+        "type": 36864
+      },
+      "layer": "Ether"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "libcrafter-ethernet",
+          "hex": "6c6962637261667465722d65746865726e6574"
+        }
+      },
+      "layer": "Raw"
+    }
+  ],
+  "root": "link:ethernet",
+  "root_decoder": "link:ethernet",
+  "scapy_root": "Ether",
   "scapy_show": "###[ Ethernet ]###\n  dst       = 02:00:5e:00:53:02\n  src       = 02:00:5e:00:53:01\n  type      = 0x9000\n###[ Raw ]###\n     load      = b'libcrafter-ethernet'\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
   "summary": "02:00:5e:00:53:01 > 02:00:5e:00:53:02 (0x9000) / Raw"
 }
