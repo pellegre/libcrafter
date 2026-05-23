@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import tomllib
+import time
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -29,6 +32,104 @@ from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 
 
 PCAP_CONTRACT_SPEC = "features/pcap.yaml"
+FINAL_REPORT_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("formatting", ("cargo", "fmt", "--all", "--", "--check")),
+    ("clippy", ("cargo", "clippy", "--workspace", "--all-targets")),
+    ("workspace-tests", ("cargo", "test", "--workspace")),
+    ("example-builds", ("cargo", "build", "--examples")),
+    (
+        "oracle-offline-ci",
+        (
+            "tools/oracle/run",
+            "offline",
+            "--backend",
+            "scapy",
+            "--profile",
+            "ci",
+            "--seed",
+            "12345",
+            "--count",
+            "2000",
+        ),
+    ),
+    (
+        "oracle-offline-smoke",
+        (
+            "tools/oracle/run",
+            "offline",
+            "--backend",
+            "scapy",
+            "--profile",
+            "smoke",
+            "--seed",
+            "1",
+            "--count",
+            "50",
+        ),
+    ),
+    (
+        "oracle-pcap-smoke",
+        (
+            "tools/oracle/run",
+            "pcap",
+            "--backend",
+            "scapy",
+            "--profile",
+            "smoke",
+            "--seed",
+            "1",
+            "--count",
+            "50",
+        ),
+    ),
+    (
+        "oracle-live-local-dry-run",
+        (
+            "tools/oracle/run",
+            "live",
+            "--backend",
+            "scapy",
+            "--provider",
+            "local-dry-run",
+            "--profile",
+            "smoke",
+            "--seed",
+            "1",
+            "--count",
+            "10",
+        ),
+    ),
+    (
+        "legacy-reference-interop-smoke",
+        ("tools/reference/check-reference-interop", "--smoke"),
+    ),
+    (
+        "legacy-scapy-interop-smoke",
+        ("tools/reference/check-scapy-interop", "--smoke"),
+    ),
+)
+SCAPY_IMPORT_RE = re.compile(r"\b(?:from\s+scapy\b|import\s+scapy\b)")
+REPORT_SCAN_ROOTS = (
+    ".github",
+    ".agents",
+    "crates",
+    "docs",
+    "examples",
+    "tests",
+    "tools",
+    "Cargo.toml",
+    "README.md",
+)
+REPORT_SCAN_EXCLUDED_DIRS = {
+    ".git",
+    ".libcrafter-live",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "target",
+    "venv",
+}
 PCAP_DRY_PLAN_CASES: tuple[JSONObject, ...] = (
     {
         "name": "scapy-writes-pcap-libcrafter-reads",
@@ -2586,6 +2687,193 @@ def _fixtures(args: argparse.Namespace) -> int:
     )
 
 
+def _report(args: argparse.Namespace) -> int:
+    output_dir = Path(args.out)
+    if not output_dir.is_absolute():
+        output_dir = REPO_ROOT / output_dir
+    commands_dir = output_dir / "commands"
+    commands_dir.mkdir(parents=True, exist_ok=True)
+
+    command_results = [
+        _run_final_report_command(label, list(argv), commands_dir)
+        for label, argv in FINAL_REPORT_COMMANDS
+    ]
+    failed_commands = [
+        result
+        for result in command_results
+        if result.get("exit_code") != 0
+    ]
+    scapy_imports = _remaining_scapy_imports()
+    import_classifications = _classification_counts(scapy_imports)
+    status = "passed" if not failed_commands else "failed"
+
+    summary_path = output_dir / "summary.json"
+    summary: JSONObject = {
+        "mode": "report",
+        "status": status,
+        "generated_at": dt.datetime.now(dt.timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "summary_path": str(summary_path),
+        "backend": "scapy",
+        "backend_versions": _backend_versions("scapy"),
+        "libcrafter": _libcrafter_info(),
+        "commands": command_results,
+        "command_summary": {
+            "passed": len(command_results) - len(failed_commands),
+            "failed": len(failed_commands),
+            "total": len(command_results),
+        },
+        "remaining_scapy_imports": scapy_imports,
+        "remaining_scapy_import_summary": import_classifications,
+        "hetzner_provider_backed_live_validation": {
+            "status": "not_run",
+            "reason": (
+                "provider-backed Hetzner live validation requires explicit request "
+                "and credentials"
+            ),
+        },
+    }
+    write_json(summary_path, summary)
+
+    print(
+        f"final report: status={status} "
+        f"commands={len(command_results) - len(failed_commands)}/{len(command_results)} "
+        f"scapy_import_matches={len(scapy_imports)} summary={summary_path}"
+    )
+    if failed_commands:
+        labels = ", ".join(str(result.get("label")) for result in failed_commands)
+        print(f"failed_commands={labels}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _run_final_report_command(
+    label: str,
+    argv: list[str],
+    commands_dir: Path,
+) -> JSONObject:
+    stdout_path = commands_dir / f"{label}.stdout.log"
+    stderr_path = commands_dir / f"{label}.stderr.log"
+    started_at = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    started = time.monotonic()
+
+    try:
+        process = subprocess.run(
+            argv,
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        exit_code = process.returncode
+        stdout = process.stdout
+        stderr = process.stderr
+    except OSError as exc:
+        exit_code = 127
+        stdout = ""
+        stderr = str(exc)
+
+    duration_seconds = round(time.monotonic() - started, 3)
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
+
+    return {
+        "label": label,
+        "command": shlex.join(argv),
+        "exit_code": exit_code,
+        "duration_seconds": duration_seconds,
+        "started_at": started_at,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "stdout_tail": _tail_text(stdout),
+        "stderr_tail": _tail_text(stderr),
+    }
+
+
+def _tail_text(text: str, *, max_lines: int = 40, max_chars: int = 6000) -> str:
+    tail = "\n".join(text.splitlines()[-max_lines:])
+    if len(tail) > max_chars:
+        return tail[-max_chars:]
+    return tail
+
+
+def _remaining_scapy_imports() -> list[JSONObject]:
+    matches: list[JSONObject] = []
+    for root_name in REPORT_SCAN_ROOTS:
+        root = REPO_ROOT / root_name
+        if not root.exists():
+            continue
+        paths = [root] if root.is_file() else root.rglob("*")
+        for path in paths:
+            if not path.is_file() or _skip_report_scan_path(path):
+                continue
+            relative = path.relative_to(REPO_ROOT).as_posix()
+            if relative.startswith("tools/oracle/engine/backends/scapy/"):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            except OSError:
+                continue
+            if "\0" in text:
+                continue
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if not SCAPY_IMPORT_RE.search(line):
+                    continue
+                matches.append(
+                    {
+                        "path": relative,
+                        "line": line_number,
+                        "text": line.strip(),
+                        "classification": _classify_scapy_import_match(relative),
+                    }
+                )
+    return matches
+
+
+def _skip_report_scan_path(path: Path) -> bool:
+    try:
+        relative = path.relative_to(REPO_ROOT)
+    except ValueError:
+        return True
+    return any(part in REPORT_SCAN_EXCLUDED_DIRS for part in relative.parts)
+
+
+def _classify_scapy_import_match(relative_path: str) -> str:
+    if (
+        relative_path == "tools/reference/scapy-fixtures.py"
+        or relative_path.startswith("tests/fixtures/")
+        or "/fixtures/" in relative_path
+    ):
+        return "fixture data"
+    if (
+        relative_path.startswith("tools/reference/")
+        or relative_path.startswith("tests/live/")
+        or relative_path.startswith("tools/live-lab/")
+    ):
+        return "legacy wrapper"
+    if (
+        relative_path.startswith("docs/")
+        or relative_path.startswith(".agents/skills/")
+        or relative_path.endswith((".md", ".rst", ".txt"))
+    ):
+        return "allowed compatibility docs"
+    return "follow-up cleanup"
+
+
+def _classification_counts(matches: Sequence[JSONObject]) -> JSONObject:
+    counts: dict[str, int] = {}
+    for match in matches:
+        classification = match.get("classification")
+        if not isinstance(classification, str):
+            classification = "follow-up cleanup"
+        counts[classification] = counts.get(classification, 0) + 1
+    return counts
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tools/oracle/run",
@@ -2804,6 +3092,18 @@ def build_parser() -> argparse.ArgumentParser:
     legacy_live_example_parser.add_argument("--host-if")
     legacy_live_example_parser.add_argument("--host-mac")
     legacy_live_example_parser.set_defaults(func=_legacy_live_example)
+
+    report_parser = subparsers.add_parser(
+        "report",
+        help="run final oracle migration validation and write a summary",
+        description="Run final oracle migration validation and write a summary.",
+    )
+    report_parser.add_argument(
+        "--out",
+        default=str(DEFAULT_OUTPUT_ROOT / "final"),
+        help="final report output directory (default: %(default)s)",
+    )
+    report_parser.set_defaults(func=_report)
 
     self_check_parser = subparsers.add_parser(
         "self-check",
