@@ -4,15 +4,11 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        autoconf \
-        automake \
-        bison \
         build-essential \
         ca-certificates \
         clang \
         curl \
         file \
-        flex \
         g++ \
         gcc \
         git \
@@ -20,8 +16,6 @@ RUN apt-get update \
         iputils-ping \
         jq \
         libpcap-dev \
-        libtool \
-        m4 \
         make \
         net-tools \
         pkg-config \

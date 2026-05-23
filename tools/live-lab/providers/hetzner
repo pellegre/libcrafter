@@ -447,7 +447,6 @@ run_remote_validation() {
   local remote_dir_value
   local examples_source
   local remote_examples_dir
-  local remote_parent_dir
   local tar_args
 
   load_manifest
@@ -484,21 +483,6 @@ run_remote_validation() {
   )
 
   tar -C "$project_root" "${tar_args[@]}" | ssh_remote "tar -xzf - -C '$remote_dir_value'"
-
-  examples_source="${LIBCRAFTER_EXAMPLES_DIR:-$project_root/../libcrafter-examples}"
-  if [[ -d "$examples_source" ]]; then
-    remote_parent_dir="$(dirname "$remote_dir_value")"
-    remote_examples_dir="$remote_parent_dir/libcrafter-examples"
-    ssh_remote "rm -rf '$remote_examples_dir' && mkdir -p '$remote_examples_dir'"
-    tar -C "$examples_source" \
-      --exclude=.git \
-      --exclude=target \
-      --exclude='*.o' \
-      --exclude='*.a' \
-      --exclude='*.so' \
-      -czf - \
-      . | ssh_remote "tar -xzf - -C '$remote_examples_dir'"
-  fi
 
   if [[ $# -gt 0 ]]; then
     printf -v command_string '%q ' "$@"
@@ -604,7 +588,6 @@ run_all_suite() {
   local created_for_all=false
   local suite_status=0
   local remote_dir_value="${LIBCRAFTER_LIVE_LAB_REMOTE_DIR:-/root/libcrafter}"
-  local remote_examples_dir
   local all_command
 
   ensure_dirs
@@ -637,7 +620,6 @@ EOF
     run_create
   fi
 
-  remote_examples_dir="$(dirname "$remote_dir_value")/libcrafter-examples"
   all_command=$(cat <<EOF
 set -euo pipefail
 if command -v cloud-init >/dev/null 2>&1; then
@@ -645,14 +627,11 @@ if command -v cloud-init >/dev/null 2>&1; then
 fi
 apt-get update
 apt-get install -y --no-install-recommends \\
-  autoconf \\
-  automake \\
   build-essential \\
   ca-certificates \\
   curl \\
   iproute2 \\
   libpcap-dev \\
-  libtool \\
   pkg-config \\
   python3 \\
   python3-pip \\
@@ -671,9 +650,6 @@ export LIBCRAFTER_PROJECT_ROOT='$remote_dir_value'
 export LIBCRAFTER_LIVE_ARTIFACT_DIR='$remote_dir_value/live-artifacts/all'
 export LIBCRAFTER_LIVE_LAB=1
 export LIBCRAFTER_LIVE_SUITE_MODE=live
-if [[ -d '$remote_examples_dir' ]]; then
-  export LIBCRAFTER_EXAMPLES_DIR='$remote_examples_dir'
-fi
 tests/live/run-all.sh --live
 EOF
 )

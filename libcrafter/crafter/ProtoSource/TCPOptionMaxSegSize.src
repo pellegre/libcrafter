@@ -1,5 +1,0 @@
-name TCPOptionMaxSegSize
-protoid 0xffef
-ByteField   Kind       0 0 0
-ByteField   Length     0 1 4
-ShortField  MaxSegSize 0 2 0

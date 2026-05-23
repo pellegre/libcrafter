@@ -1,5 +1,0 @@
-name ICMPv6Layer
-protoid 0x3A
-ByteField   Type           0 0 8
-ByteField   Code           0 1 0
-XShortField CheckSum       0 2 0

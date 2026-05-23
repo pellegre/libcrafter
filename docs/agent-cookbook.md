@@ -291,23 +291,3 @@ A generated Rust tool can write its compiled bytes to a target file and compare
 against `target/scapy/ipv4-icmp.bin`. Prefer exact byte comparison for stable
 headers and structured field comparison when timestamps, random ids, route
 state, or OS-assigned values are expected to vary.
-
-## Legacy Comparison
-
-Use the legacy harness for examples that should stay close to the old C++
-project. Keep the work directory and outputs ignored.
-
-```sh
-tools/reference/legacy-libcrafter.sh --dry-run --examples IPv6RoutingHeader
-```
-
-Real legacy builds are live-lab material:
-
-```sh
-tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite all
-tools/live-lab/libcrafter-live-lab run --provider hetzner --suite all
-```
-
-When generating tools, point readers to Rust examples under
-`crates/crafter/examples/` first, then use legacy comparison only for behavior
-parity or migration checks.

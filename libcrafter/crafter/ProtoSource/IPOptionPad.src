@@ -1,6 +1,0 @@
-name IPOptionPad
-protoid 0x5001
-BitsField CopyFlag    0 0 1 0
-BitsField Class       0 1 2 0
-BitsField Option      0 3 5 1
-ByteField Length      0 1   0

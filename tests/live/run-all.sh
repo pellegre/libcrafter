@@ -109,7 +109,6 @@ main() {
     veth-arp.sh
     dns-local.sh
     pcap-capture.sh
-    legacy-compare.sh
   )
 
   capture_versions

@@ -1,8 +1,7 @@
 # libcrafter
 
-`libcrafter` now includes a Rust alpha workspace for building, decoding,
-capturing, and testing network packets. The original C++ library remains
-in `libcrafter/` while the Rust port is developed in `crates/`.
+`libcrafter` is a Rust alpha workspace for building, decoding, capturing, and
+testing network packets.
 
 The Rust API keeps the spirit of libcrafter and Scapy: packets are stacks of
 protocol layers, dependent fields are filled during compile, raw bytes can be
@@ -74,7 +73,7 @@ println!("{:?}", plan.target());
 
 ## Protocol Coverage
 
-The alpha covers the protocols needed by the current libcrafter example set:
+The alpha covers the protocols needed by the current Rust example set:
 
 | Link | Network | Transport | Application |
 | --- | --- | --- | --- |
@@ -130,20 +129,10 @@ tracked files.
 
 - [CHANGELOG.md](CHANGELOG.md) records the Rust alpha scope.
 - [docs/supported-platforms.md](docs/supported-platforms.md) lists supported
-  platforms, live-test requirements, and known gaps versus legacy libcrafter and
-  Scapy.
+  platforms, live-test requirements, and known gaps versus Scapy.
 - [docs/agent-cookbook.md](docs/agent-cookbook.md) gives copyable recipes for
   generated packet tools.
 
-## Legacy C++ Library
-
-The original C++ implementation is still available in `libcrafter/`. Its build
-system, headers, and license are preserved while the Rust port matures. Legacy
-examples remain available at:
-
-https://github.com/pellegre/libcrafter-examples
-
 ## License
 
-This project is licensed under the BSD 3-Clause License. See
-[libcrafter/LICENSE](libcrafter/LICENSE).
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
