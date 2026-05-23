@@ -166,6 +166,61 @@ def main() -> None:
 
     directions = split_directions(args.direction)
     args.out.mkdir(parents=True, exist_ok=True)
+    run_oracle_pcap(args.out, directions)
+    print("pcap interop checks passed")
+
+
+def run_oracle_pcap(out_dir: Path, directions: set[str]) -> None:
+    if directions == {"scapy_to_libcrafter"}:
+        direction = "reference_to_libcrafter"
+    elif directions == {"libcrafter_to_scapy"}:
+        direction = "libcrafter_to_reference"
+    else:
+        direction = "roundtrip"
+
+    oracle_out = out_dir / "oracle"
+    command = [
+        str(REPO_ROOT / "tools/oracle/run"),
+        "pcap",
+        "--backend",
+        "scapy",
+        "--direction",
+        direction,
+        "--profile",
+        "smoke",
+        "--seed",
+        "1",
+        "--count",
+        "10",
+        "--out",
+        str(oracle_out),
+        "--keep-artifacts",
+    ]
+    result = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    report_path = oracle_out / "pcap" / "report.json"
+    compatibility_report = {
+        "directions": sorted(directions),
+        "oracle_command": command,
+        "oracle_report": str(report_path),
+        "oracle_stdout": result.stdout.splitlines(),
+        "oracle_stderr": result.stderr.splitlines(),
+        "scapy_version": SCAPY_VERSION,
+    }
+    (out_dir / "pcap-interop-report.json").write_text(
+        json.dumps(compatibility_report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return
+
+    # Legacy implementation is intentionally retained below for reference until
+    # the wrapper cleanup step removes this Scapy-specific entrypoint.
 
     report: dict[str, Any] = {
         "scapy_version": SCAPY_VERSION,

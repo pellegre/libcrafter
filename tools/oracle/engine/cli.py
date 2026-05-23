@@ -176,22 +176,30 @@ def _not_implemented(args: argparse.Namespace) -> int:
 
 
 def _pcap(args: argparse.Namespace) -> int:
-    if not args.dry_plan:
-        print(
-            "oracle pcap execution is not implemented yet; pass --dry-plan to inspect "
-            "deterministic pcap contracts",
-            file=sys.stderr,
-        )
+    if args.backend != "scapy":
+        print(f"unsupported backend: {args.backend}", file=sys.stderr)
         return 2
 
+    if args.dry_plan:
+        return _pcap_dry_plan(args)
+
+    return _pcap_execute(args)
+
+
+def _pcap_dry_plan(args: argparse.Namespace) -> int:
     from .generator import generate_plans
 
+    directions = _pcap_execution_directions(args.direction)
+    pcap_cases: list[JSONObject] = []
     try:
-        pcap_cases = _select_pcap_cases(
-            direction=args.direction,
-            case_name=args.case_name,
-            feature=args.feature,
-        )
+        for direction in directions:
+            pcap_cases.extend(
+                _select_pcap_cases(
+                    direction=direction,
+                    case_name=args.case_name,
+                    feature=args.feature,
+                )
+            )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -222,6 +230,7 @@ def _pcap(args: argparse.Namespace) -> int:
             "dry_plan": True,
             "requested_count": args.count,
             "direction": args.direction,
+            "execution_directions": directions,
             "timestamp_policy": {
                 "deterministic": "exact",
                 "backend_precision_differs": "normalized",
@@ -233,6 +242,156 @@ def _pcap(args: argparse.Namespace) -> int:
     )
     sys.stdout.write(dumps_json(report))
     return 0
+
+
+def _pcap_execute(args: argparse.Namespace) -> int:
+    from .backends.scapy.packets import encode_packet_plans
+    from .backends.scapy.pcap import with_pcap_metadata
+    from .generator import generate_plans
+
+    directions = _pcap_execution_directions(args.direction)
+    output_dir = _pcap_output_dir(args.out)
+    artifacts_root = output_dir / "artifacts"
+    artifacts_root.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / "report.json"
+    run_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f"{args.direction}.",
+            dir=artifacts_root,
+        )
+    )
+
+    try:
+        plans = generate_plans(
+            seed=args.seed,
+            profile=args.profile,
+            count=args.count,
+            family=args.family,
+            case=args.case_name,
+            feature=args.feature,
+            index=args.index,
+        )
+        vectors = with_pcap_metadata(encode_packet_plans(plans), link_type="ethernet")
+        backend_versions = _backend_versions(args.backend)
+        libcrafter_info = _libcrafter_info()
+
+        vector_report = RunReport(
+            mode="pcap",
+            backend=args.backend,
+            profile=args.profile,
+            seed=args.seed,
+            count=len(vectors),
+            status="vectors",
+            selected_specs=[PCAP_CONTRACT_SPEC, "builtin-stack-grammar"],
+            backend_versions=backend_versions,
+            libcrafter=libcrafter_info,
+            metadata={
+                "direction": args.direction,
+                "execution_directions": directions,
+                "requested_count": args.count,
+                "vectors": [vector.to_dict() for vector in vectors],
+            },
+        )
+        vector_path = run_dir / "pcap-vectors.json"
+        write_json(vector_path, vector_report)
+
+        results: list[ComparisonResult] = []
+        direction_metadata: list[JSONObject] = []
+        direction_artifacts: list[str] = [str(vector_path)]
+        bridge_exit_codes: list[int] = []
+        for direction in directions:
+            if direction == "reference_to_libcrafter":
+                run = _pcap_reference_to_libcrafter(
+                    args=args,
+                    run_dir=run_dir,
+                    vector_path=vector_path,
+                    vectors=vectors,
+                    plans=plans,
+                )
+            elif direction == "libcrafter_to_reference":
+                run = _pcap_libcrafter_to_reference(
+                    args=args,
+                    run_dir=run_dir,
+                    vector_path=vector_path,
+                    vectors=vectors,
+                    plans=plans,
+                )
+            else:
+                raise RuntimeError(f"unsupported pcap execution direction: {direction}")
+
+            results.extend(run["results"])  # type: ignore[arg-type]
+            direction_metadata.append(_json_object(run["metadata"], "pcap direction metadata"))
+            direction_artifacts.extend(_string_values(run["artifacts"]))
+            exit_code = run.get("bridge_exit_code")
+            if isinstance(exit_code, int):
+                bridge_exit_codes.append(exit_code)
+
+        failures = [result for result in results if not result.passed]
+        status = "passed" if not failures and all(code == 0 for code in bridge_exit_codes) else "failed"
+        preserve_artifacts = args.keep_artifacts or status != "passed"
+
+        artifacts = [str(report_path)]
+        if preserve_artifacts:
+            artifacts.append(str(run_dir))
+            artifacts.extend(direction_artifacts)
+        artifacts.extend(_comparison_artifact_paths(failures))
+        artifacts = _dedupe_paths(artifacts)
+
+        report = RunReport(
+            mode="pcap",
+            backend=args.backend,
+            profile=args.profile,
+            seed=args.seed,
+            count=len(results),
+            status=status,
+            selected_specs=[PCAP_CONTRACT_SPEC, "builtin-stack-grammar"],
+            artifacts=artifacts,
+            artifact_paths=artifacts,
+            results=results,
+            failures=failures,
+            reproduction_commands=[
+                command
+                for command in (result.reproduction_command for result in failures)
+                if command is not None
+            ],
+            backend_versions=backend_versions,
+            libcrafter=libcrafter_info,
+            metadata={
+                "direction": args.direction,
+                "execution_directions": directions,
+                "requested_count": args.count,
+                "generated_count": len(plans),
+                "artifact_dir": str(run_dir) if preserve_artifacts else None,
+                "directions": direction_metadata,
+                "timestamp_policy": {
+                    "deterministic": "exact",
+                    "precision": "microseconds",
+                },
+            },
+        )
+        write_json(report_path, report)
+
+        if not preserve_artifacts:
+            shutil.rmtree(run_dir)
+
+        passed_count = len(results) - len(failures)
+        print(
+            f"pcap {args.direction}: status={status} "
+            f"passed={passed_count}/{len(results)} report={report_path}"
+        )
+        if failures:
+            indexes = ", ".join(str(index) for index in failure_indexes(failures))
+            print(f"failing_indexes={indexes}", file=sys.stderr)
+            if failures[0].reproduction_command:
+                print(f"reproduce: {failures[0].reproduction_command}", file=sys.stderr)
+
+        return 0 if status == "passed" else 1
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
 def _offline(args: argparse.Namespace) -> int:
@@ -669,6 +828,198 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
     return 0 if status == "passed" else 1
 
 
+def _pcap_reference_to_libcrafter(
+    *,
+    args: argparse.Namespace,
+    run_dir: Path,
+    vector_path: Path,
+    vectors: list[EncodedVector],
+    plans: list[PacketPlan],
+) -> JSONObject:
+    from .backends.scapy.pcap import read_pcap, write_pcap
+
+    pcap_path = run_dir / "scapy-reference.pcap"
+    write_pcap(pcap_path, vectors)
+    expected_records = read_pcap(pcap_path)
+    expected_path = run_dir / "scapy-reference-read.json"
+    write_json(expected_path, {"records": expected_records})
+
+    bridge = _run_libcrafter_pcap_reader(pcap_path, run_dir, "scapy-reference")
+    actual_records = _pcap_records(bridge["report"])
+    actual_path = run_dir / "libcrafter-read-scapy-reference.json"
+    write_json(actual_path, bridge["report"])
+
+    results = _compare_pcap_records(
+        args=args,
+        direction="reference_to_libcrafter",
+        expected=expected_records,
+        actual=actual_records,
+        plans=plans,
+    )
+
+    artifacts = _dedupe_paths(
+        [
+            str(vector_path),
+            str(pcap_path),
+            str(expected_path),
+            str(actual_path),
+            str(bridge["stdout_path"]),
+            str(bridge["stderr_path"]),
+        ]
+    )
+    return {
+        "results": results,
+        "artifacts": artifacts,
+        "bridge_exit_code": bridge["exit_code"],
+        "metadata": {
+            "direction": "reference_to_libcrafter",
+            "writer": "scapy",
+            "reader": "libcrafter",
+            "pcap": str(pcap_path),
+            "record_count": len(expected_records),
+            "libcrafter_bridge": {
+                "argv": bridge["argv"],
+                "exit_code": bridge["exit_code"],
+            },
+        },
+    }
+
+
+def _pcap_libcrafter_to_reference(
+    *,
+    args: argparse.Namespace,
+    run_dir: Path,
+    vector_path: Path,
+    vectors: list[EncodedVector],
+    plans: list[PacketPlan],
+) -> JSONObject:
+    from .backends.scapy.pcap import read_pcap
+
+    pcap_path = run_dir / "libcrafter-reference.pcap"
+    bridge = _run_libcrafter_pcap_writer(
+        vector_path=vector_path,
+        pcap_path=pcap_path,
+        run_dir=run_dir,
+        label="libcrafter-reference",
+        link_type="ethernet",
+    )
+    expected_records = _pcap_records(bridge["report"])
+    expected_path = run_dir / "libcrafter-reference-written.json"
+    write_json(expected_path, bridge["report"])
+
+    actual_records = read_pcap(pcap_path)
+    actual_path = run_dir / "scapy-read-libcrafter-reference.json"
+    write_json(actual_path, {"records": actual_records})
+
+    results = _compare_pcap_records(
+        args=args,
+        direction="libcrafter_to_reference",
+        expected=expected_records,
+        actual=actual_records,
+        plans=plans,
+    )
+
+    artifacts = _dedupe_paths(
+        [
+            str(vector_path),
+            str(pcap_path),
+            str(expected_path),
+            str(actual_path),
+            str(bridge["stdout_path"]),
+            str(bridge["stderr_path"]),
+        ]
+    )
+    return {
+        "results": results,
+        "artifacts": artifacts,
+        "bridge_exit_code": bridge["exit_code"],
+        "metadata": {
+            "direction": "libcrafter_to_reference",
+            "writer": "libcrafter",
+            "reader": "scapy",
+            "pcap": str(pcap_path),
+            "record_count": len(expected_records),
+            "libcrafter_bridge": {
+                "argv": bridge["argv"],
+                "exit_code": bridge["exit_code"],
+            },
+        },
+    }
+
+
+def _compare_pcap_records(
+    *,
+    args: argparse.Namespace,
+    direction: str,
+    expected: list[JSONObject],
+    actual: list[JSONObject],
+    plans: list[PacketPlan],
+) -> list[ComparisonResult]:
+    results: list[ComparisonResult] = []
+    shared_count = min(len(expected), len(actual), len(plans))
+    for position in range(shared_count):
+        plan = replace(plans[position], direction=direction)
+        differences: list[JSONObject] = []
+        _pcap_diff("raw_hex", expected[position], actual[position], differences)
+        _pcap_diff("link_type.name", expected[position], actual[position], differences)
+        _pcap_diff("link_type.datalink", expected[position], actual[position], differences)
+        _pcap_diff("timestamp", expected[position], actual[position], differences)
+        _pcap_diff("layers", expected[position], actual[position], differences)
+
+        passed = not differences
+        results.append(
+            ComparisonResult(
+                passed=passed,
+                direction=direction,
+                expected=expected[position],
+                actual=actual[position],
+                plan=plan,
+                strict_bytes=plan.strict_bytes,
+                byte_equal=_pcap_value(expected[position], "raw_hex")
+                == _pcap_value(actual[position], "raw_hex"),
+                differences=differences,
+                reproduction_command=None
+                if passed
+                else _pcap_reproduction_command(args, plan.index, direction),
+                metadata={
+                    "checks": [
+                        "packet_count",
+                        "link_type",
+                        "raw_packet_bytes",
+                        "normalized_layers",
+                        "timestamp_policy",
+                    ],
+                    "timestamp_policy": "exact",
+                },
+            )
+        )
+
+    if len(actual) == len(expected) == len(plans):
+        return results
+
+    count_difference: JSONObject = {
+        "path": "packet_count",
+        "expected": len(expected),
+        "actual": len(actual),
+    }
+    for position in range(shared_count, max(len(expected), len(actual), len(plans))):
+        plan = replace(plans[min(position, len(plans) - 1)], direction=direction)
+        results.append(
+            ComparisonResult(
+                passed=False,
+                direction=direction,
+                expected=expected[position] if position < len(expected) else {},
+                actual=actual[position] if position < len(actual) else {},
+                plan=plan,
+                strict_bytes=plan.strict_bytes,
+                byte_equal=False,
+                differences=[count_difference],
+                reproduction_command=_pcap_reproduction_command(args, plan.index, direction),
+            )
+        )
+    return results
+
+
 def _compare_offline_results(
     *,
     args: argparse.Namespace,
@@ -952,6 +1303,149 @@ def _run_libcrafter_vector_emitter(run_dir: Path) -> JSONObject:
     }
 
 
+def _run_libcrafter_pcap_reader(pcap_path: Path, run_dir: Path, label: str) -> JSONObject:
+    argv = [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "crafter",
+        "--example",
+        "oracle_pcap",
+        "--",
+        "--read-pcap",
+        str(pcap_path),
+    ]
+    return _run_libcrafter_json_command(argv, run_dir, f"{label}.libcrafter-read")
+
+
+def _run_libcrafter_pcap_writer(
+    *,
+    vector_path: Path,
+    pcap_path: Path,
+    run_dir: Path,
+    label: str,
+    link_type: str,
+) -> JSONObject:
+    argv = [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "crafter",
+        "--example",
+        "oracle_pcap",
+        "--",
+        "--write-pcap",
+        str(pcap_path),
+        "--input",
+        str(vector_path),
+        "--link-type",
+        link_type,
+    ]
+    return _run_libcrafter_json_command(argv, run_dir, f"{label}.libcrafter-write")
+
+
+def _run_libcrafter_json_command(argv: list[str], run_dir: Path, label: str) -> JSONObject:
+    process = subprocess.run(
+        argv,
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    stdout_path = run_dir / f"{label}.stdout.json"
+    stderr_path = run_dir / f"{label}.stderr.txt"
+    stdout_path.write_text(process.stdout, encoding="utf-8")
+    stderr_path.write_text(process.stderr, encoding="utf-8")
+
+    if process.returncode != 0:
+        report = RunReport(
+            mode="pcap",
+            backend="libcrafter",
+            profile="unknown",
+            seed=0,
+            count=0,
+            status="failed",
+            artifact_paths=[str(stdout_path), str(stderr_path)],
+            artifacts=[str(stdout_path), str(stderr_path)],
+            libcrafter=_libcrafter_info(),
+            metadata={
+                "records": [],
+                "error": "libcrafter pcap bridge failed",
+                "exit_code": process.returncode,
+            },
+        ).to_dict()
+        return {
+            "argv": argv,
+            "exit_code": process.returncode,
+            "report": report,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
+
+    try:
+        report = json.loads(process.stdout)
+    except json.JSONDecodeError as exc:
+        report = RunReport(
+            mode="pcap",
+            backend="libcrafter",
+            profile="unknown",
+            seed=0,
+            count=0,
+            status="failed",
+            artifact_paths=[str(stdout_path), str(stderr_path)],
+            artifacts=[str(stdout_path), str(stderr_path)],
+            libcrafter=_libcrafter_info(),
+            metadata={
+                "records": [],
+                "error": f"libcrafter pcap bridge emitted invalid JSON: {exc}",
+                "exit_code": process.returncode,
+            },
+        ).to_dict()
+        return {
+            "argv": argv,
+            "exit_code": 1,
+            "report": report,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
+
+    if not isinstance(report, dict):
+        report = RunReport(
+            mode="pcap",
+            backend="libcrafter",
+            profile="unknown",
+            seed=0,
+            count=0,
+            status="failed",
+            artifact_paths=[str(stdout_path), str(stderr_path)],
+            artifacts=[str(stdout_path), str(stderr_path)],
+            libcrafter=_libcrafter_info(),
+            metadata={
+                "records": [],
+                "error": "libcrafter pcap bridge report must be a JSON object",
+                "exit_code": process.returncode,
+            },
+        ).to_dict()
+        return {
+            "argv": argv,
+            "exit_code": 1,
+            "report": report,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
+
+    return {
+        "argv": argv,
+        "exit_code": process.returncode,
+        "report": report,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+    }
+
+
 def _decoded_models(report: object) -> list[JSONObject]:
     report_object = _json_object(report, "libcrafter report")
     metadata = _json_object(report_object.get("metadata", {}), "libcrafter report metadata")
@@ -962,6 +1456,19 @@ def _decoded_models(report: object) -> list[JSONObject]:
     output: list[JSONObject] = []
     for index, item in enumerate(decoded):
         output.append(_json_object(item, f"decoded[{index}]"))
+    return output
+
+
+def _pcap_records(report: object) -> list[JSONObject]:
+    report_object = _json_object(report, "pcap report")
+    metadata = _json_object(report_object.get("metadata", {}), "pcap report metadata")
+    records = metadata.get("records")
+    if not isinstance(records, list):
+        raise RuntimeError("pcap report metadata.records must be a list")
+
+    output: list[JSONObject] = []
+    for index, item in enumerate(records):
+        output.append(_json_object(item, f"records[{index}]"))
     return output
 
 
@@ -1187,6 +1694,13 @@ def _offline_output_dir(out: str) -> Path:
     return output_root / "offline"
 
 
+def _pcap_output_dir(out: str) -> Path:
+    output_root = Path(out)
+    if not output_root.is_absolute():
+        output_root = REPO_ROOT / output_root
+    return output_root / "pcap"
+
+
 def _reproduction_command(args: argparse.Namespace, index: int) -> str:
     argv = [
         "tools/oracle/run",
@@ -1213,6 +1727,59 @@ def _reproduction_command(args: argparse.Namespace, index: int) -> str:
     return shlex.join(argv)
 
 
+def _pcap_reproduction_command(args: argparse.Namespace, index: int, direction: str) -> str:
+    argv = [
+        "tools/oracle/run",
+        "pcap",
+        "--backend",
+        args.backend,
+        "--direction",
+        direction,
+        "--profile",
+        args.profile,
+        "--seed",
+        str(args.seed),
+        "--count",
+        "1",
+        "--index",
+        str(index),
+    ]
+    if args.case_name is not None:
+        argv.extend(["--case", args.case_name])
+    if args.feature is not None:
+        argv.extend(["--feature", args.feature])
+    if args.family is not None:
+        argv.extend(["--family", args.family])
+    return shlex.join(argv)
+
+
+def _pcap_diff(
+    path: str,
+    expected: JSONObject,
+    actual: JSONObject,
+    differences: list[JSONObject],
+) -> None:
+    expected_value = _pcap_value(expected, path)
+    actual_value = _pcap_value(actual, path)
+    if expected_value != actual_value:
+        differences.append(
+            {
+                "path": path,
+                "expected": expected_value,
+                "actual": actual_value,
+            }
+        )
+
+
+def _pcap_value(record: JSONObject, path: str) -> object:
+    value: object = record
+    for part in path.split("."):
+        if not isinstance(value, dict):
+            return "<missing>"
+        value = value.get(part, "<missing>")
+    return value
+
+
 def _json_object(value: object, name: str) -> JSONObject:
     if not isinstance(value, dict):
         raise RuntimeError(f"{name} must be a JSON object")
@@ -1236,6 +1803,14 @@ def _string_values(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
+
+
+def _pcap_execution_directions(direction: str) -> list[str]:
+    if direction == "roundtrip":
+        return ["reference_to_libcrafter", "libcrafter_to_reference"]
+    if direction in {"reference_to_libcrafter", "libcrafter_to_reference"}:
+        return [direction]
+    raise ValueError(f"unsupported pcap direction: {direction}")
 
 
 def _select_pcap_cases(
@@ -1388,8 +1963,13 @@ def build_parser() -> argparse.ArgumentParser:
     pcap_parser.add_argument(
         "--direction",
         choices=("reference_to_libcrafter", "libcrafter_to_reference", "roundtrip"),
-        default="reference_to_libcrafter",
+        default="roundtrip",
         help="pcap validation direction (default: %(default)s)",
+    )
+    pcap_parser.add_argument(
+        "--keep-artifacts",
+        action="store_true",
+        help="keep intermediate pcap and bridge artifacts for successful runs",
     )
     pcap_parser.add_argument(
         "--dry-plan",
