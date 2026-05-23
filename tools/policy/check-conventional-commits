@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+allowed_types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+subject_regex="^(${allowed_types})(\([a-z0-9][a-z0-9._/-]*\))?!?: .+$"
+
+usage() {
+  cat <<USAGE
+usage: tools/policy/check-conventional-commits --message-file FILE
+       tools/policy/check-conventional-commits --range RANGE
+       tools/policy/check-conventional-commits --subjects-file FILE
+
+Validate commit subjects with the Conventional Commits style used by this repo.
+
+Accepted examples:
+  fix(parser): reject truncated ipv4 headers
+  test(pcap): cover nanosecond timestamp roundtrips
+  ci: require reference interop checks
+
+Allowed types:
+  build chore ci docs feat fix perf refactor revert style test
+USAGE
+}
+
+trim_cr() {
+  printf '%s' "${1%$'\r'}"
+}
+
+check_subject() {
+  local label="$1"
+  local subject="$2"
+
+  subject="$(trim_cr "$subject")"
+  if [[ "$subject" =~ $subject_regex ]]; then
+    return 0
+  fi
+
+  {
+    echo "invalid commit subject: $label"
+    echo "  subject: $subject"
+    echo "  expected: type(scope): subject or type: subject"
+    echo "  types: $allowed_types"
+  } >&2
+  return 1
+}
+
+check_message_file() {
+  local message_file="$1"
+  local subject
+
+  if [[ ! -f "$message_file" ]]; then
+    echo "missing commit message file: $message_file" >&2
+    return 2
+  fi
+
+  IFS= read -r subject < "$message_file" || subject=""
+  check_subject "$message_file" "$subject"
+}
+
+check_range() {
+  local range="$1"
+  local status=0
+  local sha
+  local subject
+  local revs=()
+
+  if [[ "$range" != *..* && "$range" != *^* ]] && git rev-parse --verify -q "$range^{commit}" >/dev/null; then
+    revs+=("$(git rev-parse "$range^{commit}")")
+  else
+    while IFS= read -r sha; do
+      [[ -n "$sha" ]] || continue
+      revs+=("$sha")
+    done < <(git rev-list --reverse "$range")
+  fi
+
+  for sha in "${revs[@]}"; do
+    [[ -n "$sha" ]] || continue
+    subject="$(git log -1 --format=%s "$sha")"
+    if ! check_subject "$sha" "$subject"; then
+      status=1
+    fi
+  done
+
+  return "$status"
+}
+
+check_subjects_file() {
+  local subjects_file="$1"
+  local status=0
+  local line
+  local label
+  local subject
+
+  if [[ ! -f "$subjects_file" ]]; then
+    echo "missing subject file: $subjects_file" >&2
+    return 2
+  fi
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "$line" ]] || continue
+    if [[ "$line" == *$'\t'* ]]; then
+      label="${line%%$'\t'*}"
+      subject="${line#*$'\t'}"
+    else
+      label="$subjects_file"
+      subject="$line"
+    fi
+    if ! check_subject "$label" "$subject"; then
+      status=1
+    fi
+  done < "$subjects_file"
+
+  return "$status"
+}
+
+if [[ $# -ne 2 ]]; then
+  usage >&2
+  exit 2
+fi
+
+case "$1" in
+  --message-file)
+    check_message_file "$2"
+    ;;
+  --range)
+    check_range "$2"
+    ;;
+  --subjects-file)
+    check_subjects_file "$2"
+    ;;
+  -h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
