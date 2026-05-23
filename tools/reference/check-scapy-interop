@@ -1,0 +1,364 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/../.." && pwd)"
+case_manifest="$repo_root/tests/fixtures/scapy/cases.json"
+generator="$script_dir/generate-scapy-fixtures"
+validator="$script_dir/scapy-validate-libcrafter.py"
+
+artifact_root="$repo_root/target/scapy-interop"
+keep_artifacts=0
+smoke=0
+only_filters=()
+family_filters=()
+direction_filters=()
+
+usage() {
+  cat <<'USAGE'
+usage: tools/reference/check-scapy-interop [options]
+
+Run offline bidirectional Scapy/libcrafter interop checks.
+
+Options:
+  --only NAME             case name filter; repeat or comma-separate values
+  --family FAMILY         family filter; repeat or comma-separate values
+  --direction DIRECTION   scapy_to_libcrafter, libcrafter_to_scapy, or both
+  --smoke                 run the smallest default case unless filters are set
+  --out DIR               artifact root (default: target/scapy-interop)
+  --keep-artifacts        keep successful run artifacts
+  -h, --help              show this help
+USAGE
+}
+
+require_value() {
+  local option="$1"
+  local value="${2:-}"
+  if [[ -z "$value" ]]; then
+    echo "error: $option requires a value" >&2
+    exit 2
+  fi
+}
+
+while (($#)); do
+  case "$1" in
+    --only)
+      require_value "$1" "${2:-}"
+      only_filters+=("$2")
+      shift 2
+      ;;
+    --only=*)
+      only_filters+=("${1#*=}")
+      shift
+      ;;
+    --family)
+      require_value "$1" "${2:-}"
+      family_filters+=("$2")
+      shift 2
+      ;;
+    --family=*)
+      family_filters+=("${1#*=}")
+      shift
+      ;;
+    --direction)
+      require_value "$1" "${2:-}"
+      direction_filters+=("$2")
+      shift 2
+      ;;
+    --direction=*)
+      direction_filters+=("${1#*=}")
+      shift
+      ;;
+    --smoke)
+      smoke=1
+      shift
+      ;;
+    --out)
+      require_value "$1" "${2:-}"
+      artifact_root="$2"
+      shift 2
+      ;;
+    --out=*)
+      artifact_root="${1#*=}"
+      shift
+      ;;
+    --keep-artifacts)
+      keep_artifacts=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "$artifact_root" != /* ]]; then
+  artifact_root="$PWD/$artifact_root"
+fi
+
+if (( smoke )) && ((${#only_filters[@]} == 0)) && ((${#family_filters[@]} == 0)); then
+  only_filters=("ethernet")
+fi
+
+run_scapy_to_libcrafter=0
+run_libcrafter_to_scapy=0
+
+enable_direction() {
+  local direction="$1"
+  case "$direction" in
+    scapy_to_libcrafter)
+      run_scapy_to_libcrafter=1
+      ;;
+    libcrafter_to_scapy)
+      run_libcrafter_to_scapy=1
+      ;;
+    both)
+      run_scapy_to_libcrafter=1
+      run_libcrafter_to_scapy=1
+      ;;
+    "")
+      ;;
+    *)
+      echo "error: unknown direction: $direction" >&2
+      exit 2
+      ;;
+  esac
+}
+
+if ((${#direction_filters[@]} == 0)); then
+  enable_direction both
+else
+  for raw_direction in "${direction_filters[@]}"; do
+    IFS=',' read -r -a parts <<< "$raw_direction"
+    for direction in "${parts[@]}"; do
+      direction="${direction//[[:space:]]/}"
+      enable_direction "$direction"
+    done
+  done
+fi
+
+mkdir -p "$artifact_root"
+run_dir="$(mktemp -d "$artifact_root/run.XXXXXX")"
+logs_dir="$run_dir/logs"
+mkdir -p "$logs_dir"
+
+cleanup() {
+  local rc=$?
+  if (( rc == 0 && keep_artifacts == 0 )); then
+    rm -rf -- "$run_dir"
+  else
+    echo "artifacts: $run_dir" >&2
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+
+filter_args=()
+for value in "${only_filters[@]}"; do
+  filter_args+=(--only "$value")
+done
+for value in "${family_filters[@]}"; do
+  filter_args+=(--family "$value")
+done
+
+run_logged() {
+  local label="$1"
+  local direction="$2"
+  local case_label="$3"
+  shift 3
+  local log="$logs_dir/$label.log"
+
+  printf 'running direction=%s case=%s step=%s\n' "$direction" "$case_label" "$label"
+  printf 'command:' > "$log"
+  printf ' %q' "$@" >> "$log"
+  printf '\n\n' >> "$log"
+
+  if "$@" >> "$log" 2>&1; then
+    printf 'ok direction=%s case=%s step=%s\n' "$direction" "$case_label" "$label"
+    return 0
+  fi
+
+  local rc=$?
+  printf 'failed direction=%s case=%s step=%s exit=%s\n' \
+    "$direction" "$case_label" "$label" "$rc" >&2
+  tail -n 80 "$log" >&2 || true
+  return "$rc"
+}
+
+run_capture() {
+  local label="$1"
+  local direction="$2"
+  local case_label="$3"
+  local output="$4"
+  shift 4
+  local log="$logs_dir/$label.log"
+
+  printf 'running direction=%s case=%s step=%s\n' "$direction" "$case_label" "$label"
+  printf 'command:' > "$log"
+  printf ' %q' "$@" >> "$log"
+  printf ' > %q\n\n' "$output" >> "$log"
+
+  if "$@" > "$output" 2>> "$log"; then
+    printf 'ok direction=%s case=%s step=%s\n' "$direction" "$case_label" "$label"
+    return 0
+  fi
+
+  local rc=$?
+  printf 'failed direction=%s case=%s step=%s exit=%s\n' \
+    "$direction" "$case_label" "$label" "$rc" >&2
+  tail -n 80 "$log" >&2 || true
+  return "$rc"
+}
+
+select_scapy_cases() {
+  local manifest_out="$1"
+  local names_out="$2"
+  shift 2
+
+  python3 - "$case_manifest" "$manifest_out" "$names_out" "$@" <<'PY'
+import argparse
+import json
+from pathlib import Path
+import sys
+
+
+def split_filters(values):
+    out = []
+    for raw in values:
+        for value in raw.split(","):
+            value = value.strip()
+            if value:
+                out.append(value)
+    return out
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("source", type=Path)
+parser.add_argument("manifest_out", type=Path)
+parser.add_argument("names_out", type=Path)
+parser.add_argument("--only", action="append", default=[])
+parser.add_argument("--family", action="append", default=[])
+args = parser.parse_args()
+
+manifest = json.loads(args.source.read_text(encoding="utf-8"))
+cases = [
+    case
+    for case in manifest.get("cases", [])
+    if isinstance(case, dict) and case.get("direction") == "scapy_to_libcrafter"
+]
+names = split_filters(args.only)
+families = split_filters(args.family)
+
+known_names = {case.get("name") for case in cases}
+unknown_names = sorted(set(names) - known_names)
+if unknown_names:
+    print(
+        "unknown scapy_to_libcrafter case(s): "
+        + ", ".join(unknown_names)
+        + ". known: "
+        + ", ".join(sorted(str(name) for name in known_names if name)),
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+known_families = {case.get("family") for case in cases}
+unknown_families = sorted(set(families) - known_families)
+if unknown_families:
+    print(
+        "unknown scapy_to_libcrafter family/families: "
+        + ", ".join(unknown_families)
+        + ". known: "
+        + ", ".join(sorted(str(family) for family in known_families if family)),
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+if names:
+    selected = [case for case in cases if case.get("name") in set(names)]
+else:
+    selected = [case for case in cases if case.get("status") == "implemented"]
+
+if families:
+    selected = [case for case in selected if case.get("family") in set(families)]
+
+if not selected:
+    print("no scapy_to_libcrafter cases selected", file=sys.stderr)
+    sys.exit(2)
+
+filtered = dict(manifest)
+filtered["cases"] = selected
+args.manifest_out.write_text(
+    json.dumps(filtered, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+args.names_out.write_text(
+    "".join(f"{case['name']}\n" for case in selected),
+    encoding="utf-8",
+)
+PY
+}
+
+case_label="selected"
+
+if (( run_scapy_to_libcrafter )); then
+  scapy_dir="$run_dir/scapy-fixtures"
+  scapy_manifest="$scapy_dir/cases.json"
+  scapy_names_file="$run_dir/scapy-selected.txt"
+  mkdir -p "$scapy_dir"
+
+  if select_scapy_cases "$scapy_manifest" "$scapy_names_file" "${filter_args[@]}"; then
+    :
+  else
+    rc=$?
+    printf 'failed direction=%s case=%s step=%s exit=%s\n' \
+      scapy_to_libcrafter "$case_label" select-scapy-cases "$rc" >&2
+    exit "$rc"
+  fi
+  mapfile -t scapy_names < "$scapy_names_file"
+
+  generator_args=(--out "$scapy_dir" --direction scapy_to_libcrafter)
+  for name in "${scapy_names[@]}"; do
+    generator_args+=(--only "$name")
+  done
+
+  run_logged \
+    generate-scapy-fixtures \
+    scapy_to_libcrafter \
+    "$case_label" \
+    "$generator" "${generator_args[@]}"
+
+  run_logged \
+    rust-scapy-decode \
+    scapy_to_libcrafter \
+    "$case_label" \
+    env LIBCRAFTER_SCAPY_FIXTURE_DIR="$scapy_dir" \
+      cargo test -p crafter-core --test scapy_reference -- \
+      scapy_generated_fixtures_decode_like_manifest --exact
+fi
+
+if (( run_libcrafter_to_scapy )); then
+  vector_json="$run_dir/libcrafter-vectors.json"
+  decoded_dir="$run_dir/scapy-decoded-libcrafter"
+
+  run_capture \
+    emit-libcrafter-vectors \
+    libcrafter_to_scapy \
+    "$case_label" \
+    "$vector_json" \
+    cargo run -q -p crafter --example scapy_interop_vectors -- --json
+
+  run_logged \
+    scapy-validate-libcrafter \
+    libcrafter_to_scapy \
+    "$case_label" \
+    "$validator" --input "$vector_json" --out "$decoded_dir" \
+      --direction libcrafter_to_scapy "${filter_args[@]}"
+fi
+
+echo "scapy interop checks passed"
