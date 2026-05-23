@@ -14,7 +14,6 @@ packet = IP(dst="127.0.0.1") / ICMP()
 assert raw(packet)
 print("scapy=ok")
 PY
-  tcpdump --version | head -n 1
   if command -v pcap-config >/dev/null 2>&1; then
     printf 'libpcap=%s\n' "$(pcap-config --version)"
   fi

@@ -37,14 +37,14 @@ fi
 
 require_tool ip
 pcap_file="$suite_dir/veth-arp.pcap"
-tcpdump_log="$suite_dir/tcpdump.log"
+capture_log="$suite_dir/libpcap-capture.log"
 ns_name="lcrafter-arp-$$"
 host_if="lcarp$$h"
 peer_if="lcarp$$p"
-tcpdump_pid=""
+capture_pid=""
 
 cleanup() {
-  stop_background "$tcpdump_pid"
+  stop_background "$capture_pid"
   ip netns delete "$ns_name" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -59,7 +59,7 @@ ip netns exec "$ns_name" ip link set "$peer_if" up
 ip netns exec "$ns_name" ip link set lo up
 host_mac="$(cat "/sys/class/net/$host_if/address")"
 
-tcpdump_pid="$(start_tcpdump "$host_if" "arp" "$pcap_file" "$tcpdump_log")"
+capture_pid="$(start_libpcap_capture "$host_if" "arp" "$pcap_file" "$capture_log")"
 
 run_logged rust-arp-ping-live \
   cargo run --quiet --example arp_ping -- --live --iface "$host_if" --src 10.200.32.1 --target 10.200.32.2 --src-mac "$host_mac"
@@ -87,7 +87,7 @@ Path('$suite_dir/scapy-arp.json').write_text(
 print('scapy_arp=ok')
 PY
 
-stop_background "$tcpdump_pid"
-tcpdump_pid=""
+wait_for_capture "$capture_pid" "$capture_log"
+capture_pid=""
 pcap_has_packets "$pcap_file"
-write_suite_json ok "veth ARP validated with Rust, Scapy, and tcpdump"
+write_suite_json ok "veth ARP validated with Rust, Scapy, and libpcap"

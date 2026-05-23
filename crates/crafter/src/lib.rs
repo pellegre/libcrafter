@@ -109,8 +109,8 @@ pub use net_impl::{
 };
 pub use pcap_impl::{
     dump_pcap, read_pcap, read_pcap_filtered, Capture, CaptureControl, CaptureHandle, FileSniffer,
-    PcapError, PcapFilter, PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord,
-    PcapRecords, PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer, TimestampPrecision,
+    PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords,
+    PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer, TimestampPrecision,
 };
 
 /// Core packet and protocol APIs.
@@ -194,10 +194,10 @@ pub mod prelude {
         ArpResolveReport, BatchSend, BatchSendEntry, BatchSendRecv, BatchSendRecvEntry,
         BatchSendRecvReport, BatchSendReport, Capture, CaptureControl, CaptureHandle, FileSniffer,
         InterfaceAddress, InterfaceInfo, Ipv4Range, NetError, PacketBatchSendExt,
-        PacketBatchSendRecvExt, PacketSendExt, PacketSendRecvExt, PcapError, PcapFilter,
-        PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords, PcapTimestamp,
-        PcapWriter, PcapWriterOptions, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan,
-        SendRecv, SendRecvOptions, SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend,
-        SocketSender, TimestampPrecision,
+        PacketBatchSendRecvExt, PacketSendExt, PacketSendRecvExt, PcapError, PcapHeader,
+        PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords, PcapTimestamp, PcapWriter,
+        PcapWriterOptions, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
+        SendRecvOptions, SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend, SocketSender,
+        TimestampPrecision,
     };
 }

@@ -16,6 +16,7 @@ categories.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+pcap = "2.4.0"
 pnet_datalink = "0.35.0"
 pnet_packet = "0.35.0"
 pnet_transport = "0.35.0"

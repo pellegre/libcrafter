@@ -188,7 +188,6 @@ packages:
   - clang
   - pkg-config
   - libpcap-dev
-  - tcpdump
   - python3
   - python3-pip
   - python3-venv
@@ -568,9 +567,9 @@ set -euo pipefail
 if command -v cloud-init >/dev/null 2>&1; then
   cloud-init status --wait >/dev/null 2>&1 || true
 fi
-if ! command -v tcpdump >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1; then
+if ! command -v ip >/dev/null 2>&1; then
   apt-get update
-  apt-get install -y --no-install-recommends iproute2 tcpdump python3 python3-pip
+  apt-get install -y --no-install-recommends iproute2 python3 python3-pip
 fi
 if ! python3 - <<'PY' >/dev/null 2>&1
 import scapy.all
@@ -657,8 +656,7 @@ apt-get install -y --no-install-recommends \\
   pkg-config \\
   python3 \\
   python3-pip \\
-  python3-venv \\
-  tcpdump
+  python3-venv
 if ! python3 - <<'PY' >/dev/null 2>&1
 import scapy.all
 PY

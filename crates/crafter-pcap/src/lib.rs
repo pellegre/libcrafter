@@ -1,9 +1,9 @@
-//! Classic pcap read/write, deterministic offline filtering, and bounded
+//! Classic pcap read/write, libpcap BPF filtering, and bounded
 //! capture helpers.
 //!
-//! Offline pcap APIs are rootless and deterministic. Live capture is explicit,
-//! bounded by count and timeout controls, and currently shells out to `tcpdump`
-//! so raw interface work can stay isolated inside disposable live labs.
+//! Offline pcap APIs are rootless and deterministic. Live capture is explicit
+//! and bounded by count and timeout controls, using native libpcap for interface
+//! capture and BPF filtering.
 
 #![forbid(unsafe_code)]
 
@@ -11,9 +11,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
-use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -21,10 +19,7 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crafter_core::{
-    Arp, CrafterError, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6, LinkType, LinuxSll, NetworkLayer,
-    Packet, ProtocolRegistry, Tcp, Udp, Vlan,
-};
+use crafter_core::{CrafterError, LinkType, NetworkLayer, Packet, ProtocolRegistry};
 
 const PCAP_HEADER_LEN: usize = 24;
 const PCAP_RECORD_HEADER_LEN: usize = 16;
@@ -37,12 +32,15 @@ const DEFAULT_CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DLT_NULL: u32 = 0;
 /// Ethernet pcap data-link type.
 pub const DLT_EN10MB: u32 = 1;
-/// Raw IPv4/IPv6 pcap data-link type.
-pub const DLT_RAW: u32 = 12;
 /// BSD loopback pcap data-link type.
 pub const DLT_LOOP: u32 = 108;
+/// Raw IPv4/IPv6 pcap data-link type.
+pub const DLT_RAW: u32 = 101;
 /// Linux cooked capture v1 pcap data-link type.
 pub const DLT_LINUX_SLL: u32 = 113;
+const DLT_RAW_BSD: u32 = 12;
+const DLT_IPV4: u32 = 228;
+const DLT_IPV6: u32 = 229;
 
 /// Result type returned by pcap helpers.
 pub type Result<T> = std::result::Result<T, PcapError>;
@@ -54,6 +52,8 @@ pub enum PcapError {
     Io(io::Error),
     /// Packet compile or decode failed.
     Packet(CrafterError),
+    /// Native libpcap failed while opening, filtering, or reading capture.
+    Libpcap(pcap::Error),
     /// The pcap global header is malformed or unsupported.
     InvalidHeader(&'static str),
     /// A pcap record header or body is malformed.
@@ -66,13 +66,6 @@ pub enum PcapError {
         max: u64,
         /// Actual value.
         actual: u64,
-    },
-    /// The offline filter string is outside the supported deterministic subset.
-    InvalidFilter {
-        /// Original filter expression.
-        filter: String,
-        /// Stable reason for diagnostics.
-        reason: &'static str,
     },
     /// A sniffer was opened without selecting a pcap file or interface.
     CaptureSourceMissing,
@@ -87,13 +80,11 @@ impl fmt::Display for PcapError {
         match self {
             Self::Io(err) => write!(f, "{err}"),
             Self::Packet(err) => write!(f, "{err}"),
+            Self::Libpcap(err) => write!(f, "{err}"),
             Self::InvalidHeader(reason) => write!(f, "invalid pcap header: {reason}"),
             Self::InvalidRecord(reason) => write!(f, "invalid pcap record: {reason}"),
             Self::RecordTooLarge { field, max, actual } => {
                 write!(f, "pcap {field} value {actual} exceeds maximum {max}")
-            }
-            Self::InvalidFilter { filter, reason } => {
-                write!(f, "invalid pcap filter '{filter}': {reason}")
             }
             Self::CaptureSourceMissing => write!(f, "capture source is missing"),
             Self::LiveCaptureUnavailable(reason) => {
@@ -109,6 +100,7 @@ impl std::error::Error for PcapError {
         match self {
             Self::Io(err) => Some(err),
             Self::Packet(err) => Some(err),
+            Self::Libpcap(err) => Some(err),
             _ => None,
         }
     }
@@ -123,6 +115,12 @@ impl From<io::Error> for PcapError {
 impl From<CrafterError> for PcapError {
     fn from(value: CrafterError) -> Self {
         Self::Packet(value)
+    }
+}
+
+impl From<pcap::Error> for PcapError {
+    fn from(value: pcap::Error) -> Self {
+        Self::Libpcap(value)
     }
 }
 
@@ -275,7 +273,7 @@ impl PcapLinkType {
         match datalink {
             DLT_NULL | DLT_LOOP => Self::NullLoopback,
             DLT_EN10MB => Self::Ethernet,
-            DLT_RAW => Self::RawIp,
+            DLT_RAW | DLT_RAW_BSD | DLT_IPV4 | DLT_IPV6 => Self::RawIp,
             DLT_LINUX_SLL => Self::LinuxSll,
             value => Self::Unknown(value),
         }
@@ -589,7 +587,6 @@ pub struct PcapReader<R = BufReader<File>> {
     reader: R,
     header: PcapHeader,
     endian: Endian,
-    filter: PcapFilter,
 }
 
 impl PcapReader<BufReader<File>> {
@@ -613,19 +610,7 @@ where
             reader,
             header,
             endian,
-            filter: PcapFilter::all(),
         })
-    }
-
-    /// Attach an offline filter expression.
-    ///
-    /// Supported expressions intentionally cover a deterministic subset:
-    /// `tcp`, `udp`, `icmp`, `icmp6`, `ip`, `ip6`, `arp`, `port N`,
-    /// `src port N`, `dst port N`, `host ADDRESS`, `src host ADDRESS`,
-    /// `dst host ADDRESS`, `ether proto VALUE`, and `and`/`or`/`not`.
-    pub fn filter(mut self, filter: &str) -> Result<Self> {
-        self.filter = PcapFilter::parse(filter)?;
-        Ok(self)
     }
 
     /// Parsed pcap global header.
@@ -645,16 +630,7 @@ where
 
     /// Read the next accepted pcap record.
     pub fn next_record(&mut self) -> Result<Option<PcapRecord>> {
-        loop {
-            let record = match self.read_next_record()? {
-                Some(record) => record,
-                None => return Ok(None),
-            };
-
-            if self.filter.matches(&record)? {
-                return Ok(Some(record));
-            }
-        }
+        self.read_next_record()
     }
 
     /// Consume the reader and return an iterator over records.
@@ -901,7 +877,18 @@ pub fn read_pcap(path: impl AsRef<Path>) -> Result<Vec<PcapPacket>> {
 
 /// Read and decode all packets from a pcap file with an offline filter.
 pub fn read_pcap_filtered(path: impl AsRef<Path>, filter: &str) -> Result<Vec<PcapPacket>> {
-    PcapReader::open(path)?.filter(filter)?.collect_packets()
+    let mut capture = LibpcapOfflineCapture::open(path, Some(filter))?;
+    let mut packets = Vec::new();
+    while let Some(record) = capture.next_record()? {
+        let packet = record.decode()?;
+        packets.push(PcapPacket::new(
+            record.timestamp,
+            record.original_len,
+            record.link_type,
+            packet,
+        ));
+    }
+    Ok(packets)
 }
 
 /// Dump packets to a pcap file.
@@ -921,10 +908,9 @@ where
 
 /// Builder for offline and live packet capture.
 ///
-/// Offline capture reads a pcap file through [`PcapReader`]. Live capture is
-/// explicit and currently shells out to `tcpdump`, which keeps raw interface
-/// access out of local static tests while preserving libpcap BPF semantics in
-/// disposable live labs.
+/// Offline capture reads pcap files through [`PcapReader`] unless a filter is
+/// configured, in which case libpcap compiles and applies the BPF expression.
+/// Live capture opens interfaces directly through libpcap.
 #[derive(Debug, Clone)]
 pub struct Sniffer {
     source: CaptureSource,
@@ -974,8 +960,7 @@ impl Sniffer {
 
     /// Attach a BPF-style filter expression.
     ///
-    /// Offline capture accepts the deterministic subset parsed by
-    /// [`PcapFilter`]. Live capture passes the expression to `tcpdump`.
+    /// Filters are compiled by libpcap when the capture is opened.
     pub fn filter(mut self, filter: impl Into<String>) -> Self {
         let filter = filter.into();
         self.filter = (!filter.trim().is_empty()).then_some(filter);
@@ -1088,16 +1073,15 @@ impl Sniffer {
         let inner = match self.source {
             CaptureSource::Unset => return Err(PcapError::CaptureSourceMissing),
             CaptureSource::Offline(path) => {
-                let mut reader = PcapReader::open(path)?;
                 if let Some(filter) = self.filter.as_deref() {
-                    reader = reader.filter(filter)?;
+                    CaptureInner::OfflineFiltered(LibpcapOfflineCapture::open(path, Some(filter))?)
+                } else {
+                    CaptureInner::Offline(PcapReader::open(path)?)
                 }
-                CaptureInner::Offline(reader)
             }
-            CaptureSource::Interface(name) => CaptureInner::Live(TcpdumpCapture::open(
+            CaptureSource::Interface(name) => CaptureInner::Live(LibpcapCapture::open(
                 &name,
                 self.filter.as_deref(),
-                count_limit,
                 self.timeout,
                 self.snaplen,
                 self.promisc,
@@ -1208,13 +1192,15 @@ impl Iterator for Capture {
 #[derive(Debug)]
 enum CaptureInner {
     Offline(PcapReader<BufReader<File>>),
-    Live(TcpdumpCapture),
+    OfflineFiltered(LibpcapOfflineCapture),
+    Live(LibpcapCapture),
 }
 
 impl CaptureInner {
     fn next_record(&mut self) -> Result<Option<PcapRecord>> {
         match self {
             Self::Offline(reader) => reader.next_record(),
+            Self::OfflineFiltered(capture) => capture.next_record(),
             Self::Live(capture) => capture.next_record(),
         }
     }
@@ -1241,17 +1227,51 @@ impl CaptureHandle {
     }
 }
 
-#[derive(Debug)]
-struct TcpdumpCapture {
-    child: Child,
-    reader: PcapReader<BufReader<ChildStdout>>,
+struct LibpcapOfflineCapture {
+    capture: pcap::Capture<pcap::Offline>,
+    link_type: PcapLinkType,
 }
 
-impl TcpdumpCapture {
+impl fmt::Debug for LibpcapOfflineCapture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LibpcapOfflineCapture")
+            .field("link_type", &self.link_type)
+            .finish_non_exhaustive()
+    }
+}
+
+impl LibpcapOfflineCapture {
+    fn open(path: impl AsRef<Path>, filter: Option<&str>) -> Result<Self> {
+        let mut capture = pcap::Capture::from_file(path)?;
+        if let Some(filter) = filter.filter(|filter| !filter.trim().is_empty()) {
+            capture.filter(filter, true)?;
+        }
+        let link_type = pcap_link_type(capture.get_datalink());
+        Ok(Self { capture, link_type })
+    }
+
+    fn next_record(&mut self) -> Result<Option<PcapRecord>> {
+        next_libpcap_record(&mut self.capture, self.link_type)
+    }
+}
+
+struct LibpcapCapture {
+    capture: pcap::Capture<pcap::Active>,
+    link_type: PcapLinkType,
+}
+
+impl fmt::Debug for LibpcapCapture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LibpcapCapture")
+            .field("link_type", &self.link_type)
+            .finish_non_exhaustive()
+    }
+}
+
+impl LibpcapCapture {
     fn open(
         iface: &str,
         filter: Option<&str>,
-        count_limit: Option<usize>,
         timeout: Option<Duration>,
         snaplen: u32,
         promisc: bool,
@@ -1263,61 +1283,23 @@ impl TcpdumpCapture {
             ));
         }
 
-        let mut command = tcpdump_command(timeout);
-        command
-            .arg("-i")
-            .arg(iface)
-            .arg("-n")
-            .arg("-w")
-            .arg("-")
-            .arg("-s")
-            .arg(snaplen.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+        let mut capture = pcap::Capture::from_device(iface)?
+            .promisc(promisc)
+            .snaplen(snaplen_to_i32(snaplen))
+            .timeout(timeout_to_millis(timeout))
+            .immediate_mode(immediate)
+            .open()?;
 
-        if immediate {
-            command.arg("-U");
-        }
-        if !promisc {
-            command.arg("-p");
-        }
-        if let Some(count_limit) = count_limit {
-            command.arg("-c").arg(count_limit.to_string());
-        }
-        if let Some(filter) = filter {
-            command.args(split_filter_args(filter));
+        if let Some(filter) = filter.filter(|filter| !filter.trim().is_empty()) {
+            capture.filter(filter, true)?;
         }
 
-        let mut child = command.spawn()?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or(PcapError::LiveCaptureUnavailable(
-                "tcpdump stdout unavailable",
-            ))?;
-        match PcapReader::from_reader(BufReader::new(stdout)) {
-            Ok(reader) => Ok(Self { child, reader }),
-            Err(err) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                Err(err)
-            }
-        }
+        let link_type = pcap_link_type(capture.get_datalink());
+        Ok(Self { capture, link_type })
     }
 
     fn next_record(&mut self) -> Result<Option<PcapRecord>> {
-        match self.reader.next_record() {
-            Err(PcapError::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
-            result => result,
-        }
-    }
-}
-
-impl Drop for TcpdumpCapture {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        next_libpcap_record(&mut self.capture, self.link_type)
     }
 }
 
@@ -1325,26 +1307,51 @@ fn capture_deadline(timeout: Option<Duration>) -> Option<Instant> {
     timeout.and_then(|duration| Instant::now().checked_add(duration))
 }
 
-fn tcpdump_command(timeout: Option<Duration>) -> Command {
-    if let Some(timeout) = timeout {
-        let mut command = Command::new("timeout");
-        command
-            .arg("--kill-after=1s")
-            .arg(format_timeout_arg(timeout))
-            .arg("tcpdump");
-        command
-    } else {
-        Command::new("tcpdump")
+fn next_libpcap_record<T>(
+    capture: &mut pcap::Capture<T>,
+    link_type: PcapLinkType,
+) -> Result<Option<PcapRecord>>
+where
+    T: pcap::Activated,
+{
+    match capture.next_packet() {
+        Ok(packet) => {
+            let timestamp = libpcap_timestamp(packet.header)?;
+            PcapRecord::new(
+                timestamp,
+                packet.header.len,
+                packet.data.to_vec(),
+                link_type,
+            )
+            .map(Some)
+        }
+        Err(pcap::Error::TimeoutExpired | pcap::Error::NoMorePackets) => Ok(None),
+        Err(err) => Err(PcapError::Libpcap(err)),
     }
 }
 
-fn format_timeout_arg(timeout: Duration) -> String {
-    let seconds = timeout.as_secs() + u64::from(timeout.subsec_nanos() > 0);
-    format!("{seconds}s")
+fn libpcap_timestamp(header: &pcap::PacketHeader) -> Result<PcapTimestamp> {
+    let seconds = u64::try_from(header.ts.tv_sec)
+        .map_err(|_| PcapError::InvalidRecord("timestamp seconds must be non-negative"))?;
+    let micros = u32::try_from(header.ts.tv_usec)
+        .map_err(|_| PcapError::InvalidRecord("timestamp fractional field is out of range"))?;
+    PcapTimestamp::micros(seconds, micros)
 }
 
-fn split_filter_args(filter: &str) -> Vec<&str> {
-    filter.split_whitespace().collect()
+fn pcap_link_type(link_type: pcap::Linktype) -> PcapLinkType {
+    u32::try_from(link_type.0)
+        .map(PcapLinkType::from_datalink)
+        .unwrap_or(PcapLinkType::Unknown(link_type.0 as u32))
+}
+
+fn timeout_to_millis(timeout: Option<Duration>) -> i32 {
+    timeout
+        .map(|timeout| timeout.as_millis().clamp(1, i32::MAX as u128) as i32)
+        .unwrap_or(0)
+}
+
+fn snaplen_to_i32(snaplen: u32) -> i32 {
+    snaplen.min(i32::MAX as u32) as i32
 }
 
 /// File-backed pcap reader alias used by generated examples.
@@ -1362,444 +1369,13 @@ pub mod writer {
 
 /// Capture-oriented placeholder module for live sniffing steps.
 pub mod capture {
-    pub use crate::{Capture, CaptureControl, CaptureHandle, FileSniffer, PcapFilter, Sniffer};
+    pub use crate::{Capture, CaptureControl, CaptureHandle, FileSniffer, Sniffer};
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Endian {
     Little,
     Big,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PcapFilter {
-    original: String,
-    expression: Option<FilterExpression>,
-}
-
-impl PcapFilter {
-    /// Match every record.
-    pub fn all() -> Self {
-        Self {
-            original: String::new(),
-            expression: None,
-        }
-    }
-
-    /// Parse a deterministic offline filter subset.
-    pub fn parse(filter: &str) -> Result<Self> {
-        let original = filter.trim().to_string();
-        if original.is_empty() {
-            return Ok(Self::all());
-        }
-
-        let tokens = tokenize_filter(&original);
-        let mut parser = FilterParser::new(&original, tokens);
-        let expression = parser.parse_expression()?;
-        if parser.peek().is_some() {
-            return Err(invalid_filter(&original, "unexpected trailing token"));
-        }
-
-        Ok(Self {
-            original,
-            expression: Some(expression),
-        })
-    }
-
-    /// Original filter string.
-    pub fn original(&self) -> &str {
-        &self.original
-    }
-
-    /// Return true when the filter accepts the record.
-    pub fn matches(&self, record: &PcapRecord) -> Result<bool> {
-        match &self.expression {
-            Some(expression) => {
-                let packet = record.decode()?;
-                Ok(expression.matches(&packet))
-            }
-            None => Ok(true),
-        }
-    }
-}
-
-impl Default for PcapFilter {
-    fn default() -> Self {
-        Self::all()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum FilterExpression {
-    Protocol(FilterProtocol),
-    Port(FilterDirection, u16),
-    Host(FilterDirection, IpAddr),
-    EtherProto(u16),
-    And(Box<FilterExpression>, Box<FilterExpression>),
-    Or(Box<FilterExpression>, Box<FilterExpression>),
-    Not(Box<FilterExpression>),
-}
-
-impl FilterExpression {
-    fn matches(&self, packet: &Packet) -> bool {
-        match self {
-            Self::Protocol(protocol) => protocol.matches(packet),
-            Self::Port(direction, port) => port_matches(packet, *direction, *port),
-            Self::Host(direction, host) => host_matches(packet, *direction, *host),
-            Self::EtherProto(ethertype) => ethertype_matches(packet, *ethertype),
-            Self::And(left, right) => left.matches(packet) && right.matches(packet),
-            Self::Or(left, right) => left.matches(packet) || right.matches(packet),
-            Self::Not(inner) => !inner.matches(packet),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FilterProtocol {
-    Arp,
-    Icmp,
-    Icmpv6,
-    Ipv4,
-    Ipv6,
-    Tcp,
-    Udp,
-}
-
-impl FilterProtocol {
-    fn matches(self, packet: &Packet) -> bool {
-        match self {
-            Self::Arp => packet.layer::<Arp>().is_some(),
-            Self::Icmp => packet.layer::<Icmp>().is_some(),
-            Self::Icmpv6 => packet.layer::<Icmpv6>().is_some(),
-            Self::Ipv4 => packet.layer::<Ipv4>().is_some(),
-            Self::Ipv6 => packet.layer::<Ipv6>().is_some(),
-            Self::Tcp => packet.layer::<Tcp>().is_some(),
-            Self::Udp => packet.layer::<Udp>().is_some(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FilterDirection {
-    Any,
-    Source,
-    Destination,
-}
-
-#[derive(Debug)]
-struct FilterParser<'a> {
-    original: &'a str,
-    tokens: Vec<String>,
-    offset: usize,
-}
-
-impl<'a> FilterParser<'a> {
-    fn new(original: &'a str, tokens: Vec<String>) -> Self {
-        Self {
-            original,
-            tokens,
-            offset: 0,
-        }
-    }
-
-    fn parse_expression(&mut self) -> Result<FilterExpression> {
-        self.parse_or()
-    }
-
-    fn parse_or(&mut self) -> Result<FilterExpression> {
-        let mut expr = self.parse_and()?;
-        while self.consume("or") {
-            let right = self.parse_and()?;
-            expr = FilterExpression::Or(Box::new(expr), Box::new(right));
-        }
-        Ok(expr)
-    }
-
-    fn parse_and(&mut self) -> Result<FilterExpression> {
-        let mut expr = self.parse_not()?;
-        while self.consume("and") || self.starts_implicit_and() {
-            let right = self.parse_not()?;
-            expr = FilterExpression::And(Box::new(expr), Box::new(right));
-        }
-        Ok(expr)
-    }
-
-    fn parse_not(&mut self) -> Result<FilterExpression> {
-        if self.consume("not") {
-            Ok(FilterExpression::Not(Box::new(self.parse_not()?)))
-        } else {
-            self.parse_primary()
-        }
-    }
-
-    fn parse_primary(&mut self) -> Result<FilterExpression> {
-        if self.consume("(") {
-            let expr = self.parse_expression()?;
-            if !self.consume(")") {
-                return Err(invalid_filter(self.original, "missing closing parenthesis"));
-            }
-            return Ok(expr);
-        }
-
-        let token = self
-            .next()
-            .ok_or_else(|| invalid_filter(self.original, "expected filter term"))?;
-        match token.as_str() {
-            "arp" => Ok(FilterExpression::Protocol(FilterProtocol::Arp)),
-            "icmp" => Ok(FilterExpression::Protocol(FilterProtocol::Icmp)),
-            "icmp6" | "icmpv6" => Ok(FilterExpression::Protocol(FilterProtocol::Icmpv6)),
-            "ip" => Ok(FilterExpression::Protocol(FilterProtocol::Ipv4)),
-            "ip6" | "ipv6" => Ok(FilterExpression::Protocol(FilterProtocol::Ipv6)),
-            "tcp" => Ok(FilterExpression::Protocol(FilterProtocol::Tcp)),
-            "udp" => Ok(FilterExpression::Protocol(FilterProtocol::Udp)),
-            "port" => self.parse_port(FilterDirection::Any),
-            "host" => self.parse_host(FilterDirection::Any),
-            "src" => self.parse_directed(FilterDirection::Source),
-            "dst" => self.parse_directed(FilterDirection::Destination),
-            "ether" => self.parse_ether(),
-            _ => Err(invalid_filter(self.original, "unsupported filter term")),
-        }
-    }
-
-    fn parse_directed(&mut self, direction: FilterDirection) -> Result<FilterExpression> {
-        let token = self
-            .next()
-            .ok_or_else(|| invalid_filter(self.original, "expected directed filter term"))?;
-        match token.as_str() {
-            "port" => self.parse_port(direction),
-            "host" => self.parse_host(direction),
-            _ => Err(invalid_filter(
-                self.original,
-                "expected 'port' or 'host' after direction",
-            )),
-        }
-    }
-
-    fn parse_port(&mut self, direction: FilterDirection) -> Result<FilterExpression> {
-        let token = self
-            .next()
-            .ok_or_else(|| invalid_filter(self.original, "expected port number"))?;
-        Ok(FilterExpression::Port(
-            direction,
-            parse_u16(&token, self.original, "port")?,
-        ))
-    }
-
-    fn parse_host(&mut self, direction: FilterDirection) -> Result<FilterExpression> {
-        let token = self
-            .next()
-            .ok_or_else(|| invalid_filter(self.original, "expected host address"))?;
-        let host = token
-            .parse::<IpAddr>()
-            .map_err(|_| invalid_filter(self.original, "host must be an IP address"))?;
-        Ok(FilterExpression::Host(direction, host))
-    }
-
-    fn parse_ether(&mut self) -> Result<FilterExpression> {
-        if !self.consume("proto") {
-            return Err(invalid_filter(
-                self.original,
-                "expected 'proto' after ether",
-            ));
-        }
-        let token = self
-            .next()
-            .ok_or_else(|| invalid_filter(self.original, "expected ethertype"))?;
-        Ok(FilterExpression::EtherProto(parse_u16(
-            &token,
-            self.original,
-            "ethertype",
-        )?))
-    }
-
-    fn starts_implicit_and(&self) -> bool {
-        matches!(
-            self.peek(),
-            Some(
-                "arp"
-                    | "icmp"
-                    | "icmp6"
-                    | "icmpv6"
-                    | "ip"
-                    | "ip6"
-                    | "ipv6"
-                    | "tcp"
-                    | "udp"
-                    | "port"
-                    | "host"
-                    | "src"
-                    | "dst"
-                    | "ether"
-                    | "not"
-                    | "("
-            )
-        )
-    }
-
-    fn consume(&mut self, expected: &str) -> bool {
-        if self.peek() == Some(expected) {
-            self.offset += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn next(&mut self) -> Option<String> {
-        let token = self.tokens.get(self.offset)?.clone();
-        self.offset += 1;
-        Some(token)
-    }
-
-    fn peek(&self) -> Option<&str> {
-        self.tokens.get(self.offset).map(String::as_str)
-    }
-}
-
-fn invalid_filter(filter: &str, reason: &'static str) -> PcapError {
-    PcapError::InvalidFilter {
-        filter: filter.to_string(),
-        reason,
-    }
-}
-
-fn tokenize_filter(filter: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-
-    for ch in filter.chars() {
-        match ch {
-            '(' | ')' => {
-                if !current.is_empty() {
-                    tokens.push(current.to_ascii_lowercase());
-                    current.clear();
-                }
-                tokens.push(ch.to_string());
-            }
-            ch if ch.is_whitespace() => {
-                if !current.is_empty() {
-                    tokens.push(current.to_ascii_lowercase());
-                    current.clear();
-                }
-            }
-            ch => current.push(ch),
-        }
-    }
-
-    if !current.is_empty() {
-        tokens.push(current.to_ascii_lowercase());
-    }
-
-    tokens
-}
-
-fn parse_u16(token: &str, original: &str, field: &'static str) -> Result<u16> {
-    let parsed = if let Some(hex) = token.strip_prefix("0x") {
-        u16::from_str_radix(hex, 16)
-    } else {
-        token.parse()
-    };
-    parsed.map_err(|_| invalid_filter(original, field))
-}
-
-fn port_matches(packet: &Packet, direction: FilterDirection, port: u16) -> bool {
-    let udp = packet.layer::<Udp>().is_some_and(|udp| {
-        directed_port_matches(
-            udp.source_port_value(),
-            udp.destination_port_value(),
-            direction,
-            port,
-        )
-    });
-    let tcp = packet.layer::<Tcp>().is_some_and(|tcp| {
-        directed_port_matches(
-            tcp.source_port_value(),
-            tcp.destination_port_value(),
-            direction,
-            port,
-        )
-    });
-
-    udp || tcp
-}
-
-fn directed_port_matches(
-    source: u16,
-    destination: u16,
-    direction: FilterDirection,
-    port: u16,
-) -> bool {
-    match direction {
-        FilterDirection::Any => source == port || destination == port,
-        FilterDirection::Source => source == port,
-        FilterDirection::Destination => destination == port,
-    }
-}
-
-fn host_matches(packet: &Packet, direction: FilterDirection, host: IpAddr) -> bool {
-    match host {
-        IpAddr::V4(host) => {
-            packet.layer::<Ipv4>().is_some_and(|ip| {
-                directed_host_matches(
-                    ip.source().into(),
-                    ip.destination().into(),
-                    direction,
-                    host.into(),
-                )
-            }) || packet.layer::<Arp>().is_some_and(|arp| {
-                let source = arp.sender_ipv4().map(IpAddr::V4);
-                let destination = arp.target_ipv4().map(IpAddr::V4);
-                directed_optional_host_matches(source, destination, direction, IpAddr::V4(host))
-            })
-        }
-        IpAddr::V6(host) => packet.layer::<Ipv6>().is_some_and(|ip| {
-            directed_host_matches(
-                ip.source().into(),
-                ip.destination().into(),
-                direction,
-                host.into(),
-            )
-        }),
-    }
-}
-
-fn directed_host_matches(
-    source: IpAddr,
-    destination: IpAddr,
-    direction: FilterDirection,
-    host: IpAddr,
-) -> bool {
-    match direction {
-        FilterDirection::Any => source == host || destination == host,
-        FilterDirection::Source => source == host,
-        FilterDirection::Destination => destination == host,
-    }
-}
-
-fn directed_optional_host_matches(
-    source: Option<IpAddr>,
-    destination: Option<IpAddr>,
-    direction: FilterDirection,
-    host: IpAddr,
-) -> bool {
-    match direction {
-        FilterDirection::Any => source == Some(host) || destination == Some(host),
-        FilterDirection::Source => source == Some(host),
-        FilterDirection::Destination => destination == Some(host),
-    }
-}
-
-fn ethertype_matches(packet: &Packet, ethertype: u16) -> bool {
-    packet
-        .layer::<Ethernet>()
-        .and_then(Ethernet::ethertype_value)
-        .is_some_and(|value| value == ethertype)
-        || packet
-            .layer::<Vlan>()
-            .is_some_and(|vlan| vlan.ethertype_value() == ethertype)
-        || packet
-            .layer::<LinuxSll>()
-            .is_some_and(|sll| sll.protocol_value() == ethertype)
 }
 
 fn decode_raw_ip_with_registry(
@@ -2001,8 +1577,7 @@ mod tests {
 
     fn temp_pcap_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "crafter-pcap-{name}-{}-{}.pcap",
-            std::process::id(),
+            "crafter-pcap-{name}-{}.pcap",
             NEXT_TEMP_PCAP.fetch_add(1, Ordering::Relaxed)
         ))
     }
@@ -2111,22 +1686,12 @@ mod tests {
     }
 
     #[test]
-    fn pcap_read_filter_accepts_tcpdump_style_subset() {
+    fn pcap_read_filter_uses_libpcap_bpf() {
         let one = tcp_packet(10, 80);
         let two = tcp_packet(11, 443);
-        let mut output = Vec::new();
-        {
-            let mut writer = PcapWriter::from_writer(&mut output, LinkType::Ethernet).unwrap();
-            writer.write_packet(&one).unwrap();
-            writer.write_packet(&two).unwrap();
-        }
+        let path = write_temp_pcap("read-filter", &[one, two]);
 
-        let packets = PcapReader::from_reader(Cursor::new(output))
-            .unwrap()
-            .filter("tcp and port 10")
-            .unwrap()
-            .collect_packets()
-            .unwrap();
+        let packets = super::read_pcap_filtered(&path, "tcp and port 10").unwrap();
 
         assert_eq!(packets.len(), 1);
         assert_eq!(
@@ -2137,10 +1702,11 @@ mod tests {
                 .source_port_value(),
             10
         );
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
-    fn pcap_read_filter_supports_host_and_ether_proto() {
+    fn pcap_read_filter_supports_bpf_host_and_ether_proto() {
         let packet = Ethernet::new()
             .src(MacAddr::new([0x02, 0, 0, 0, 0, 1]))
             .dst(MacAddr::BROADCAST)
@@ -2150,20 +1716,14 @@ mod tests {
                 .dst_str("198.51.100.20")
                 .unwrap()
             / Udp::new().sport(53).dport(53000);
-        let mut output = Vec::new();
-        {
-            let mut writer = PcapWriter::from_writer(&mut output, LinkType::Ethernet).unwrap();
-            writer.write_packet(&packet).unwrap();
-        }
+        let path = write_temp_pcap("read-filter-host", &[packet]);
 
-        let packets = PcapReader::from_reader(Cursor::new(output))
-            .unwrap()
-            .filter("ip and src host 192.0.2.10 and ether proto 0x0800")
-            .unwrap()
-            .collect_packets()
-            .unwrap();
+        let packets =
+            super::read_pcap_filtered(&path, "ip and src host 192.0.2.10 and ether proto 0x0800")
+                .unwrap();
 
         assert_eq!(packets.len(), 1);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -2201,9 +1761,8 @@ mod tests {
     fn pcap_roundtrip_dump_and_read_helpers() {
         let dir = std::env::temp_dir();
         let path = dir.join(format!(
-            "crafter-pcap-roundtrip-{}-{}.pcap",
-            std::process::id(),
-            1
+            "crafter-pcap-roundtrip-{}.pcap",
+            NEXT_TEMP_PCAP.fetch_add(1, Ordering::Relaxed)
         ));
         let packet = ethernet_arp_packet();
 
@@ -2310,7 +1869,7 @@ mod tests {
     }
 
     #[test]
-    fn bpf_filter_sniffer_offline_uses_deterministic_subset() {
+    fn bpf_filter_sniffer_offline_uses_libpcap() {
         let https = tcp_packet(12345, 443);
         let http = tcp_packet(12345, 80);
         let path = write_temp_pcap("bpf-filter", &[https, http]);

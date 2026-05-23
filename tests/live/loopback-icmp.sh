@@ -27,9 +27,9 @@ PY
 fi
 
 pcap_file="$suite_dir/icmp-loopback.pcap"
-tcpdump_log="$suite_dir/tcpdump.log"
-tcpdump_pid="$(start_tcpdump lo "icmp" "$pcap_file" "$tcpdump_log")"
-trap 'stop_background "$tcpdump_pid"' EXIT
+capture_log="$suite_dir/libpcap-capture.log"
+capture_pid="$(start_libpcap_capture lo "icmp" "$pcap_file" "$capture_log")"
+trap 'stop_background "$capture_pid"' EXIT
 
 run_logged rust-network-ping-live \
   cargo run --quiet --example network_ping -- --live --iface lo --src 127.0.0.1 --dst 127.0.0.1
@@ -52,7 +52,8 @@ Path('$suite_dir/scapy-icmp.json').write_text(
 print('scapy_icmp=ok')
 PY
 
-stop_background "$tcpdump_pid"
+wait_for_capture "$capture_pid" "$capture_log"
+capture_pid=""
 trap - EXIT
 pcap_has_packets "$pcap_file"
-write_suite_json ok "loopback ICMP validated with Rust, Scapy, and tcpdump"
+write_suite_json ok "loopback ICMP validated with Rust, Scapy, and libpcap"

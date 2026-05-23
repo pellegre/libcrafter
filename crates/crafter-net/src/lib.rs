@@ -2892,7 +2892,7 @@ mod send_recv_live_lab {
     use super::{PacketSendRecvExt, SendRecv};
 
     #[test]
-    #[ignore = "requires root, tcpdump, and a disposable live packet lab"]
+    #[ignore = "requires root and a disposable live packet lab"]
     fn send_recv_icmp_loopback_smoke() {
         let request = Ipv4::new()
             .src(Ipv4Addr::LOCALHOST)

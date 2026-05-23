@@ -68,7 +68,7 @@ println!("{:?}", plan.target());
 | --- | --- |
 | `crafter` | Public facade and prelude for examples and generated tools. |
 | `crafter-core` | Packet model, layer composition, encode/decode, checksums, protocol registry, formatting. |
-| `crafter-pcap` | Classic pcap read/write, deterministic filters, offline sniffing, bounded live capture hooks. |
+| `crafter-pcap` | Classic pcap read/write, libpcap BPF filters, offline sniffing, bounded live capture hooks. |
 | `crafter-net` | Interface helpers, raw send planning, live send backends, send/receive matching, batch workflows. |
 | `crafter-live` | Disposable live-lab integration support. |
 
