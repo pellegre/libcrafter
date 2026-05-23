@@ -19,7 +19,7 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crafter_core::{CrafterError, LinkType, NetworkLayer, Packet, ProtocolRegistry};
+use crate::{CrafterError, LinkType, NetworkLayer, Packet, ProtocolRegistry};
 
 const PCAP_HEADER_LEN: usize = 24;
 const PCAP_RECORD_HEADER_LEN: usize = 16;
@@ -301,7 +301,7 @@ impl PcapLinkType {
     }
 
     /// Decode bytes according to this pcap data-link type.
-    pub fn decode(self, bytes: impl AsRef<[u8]>) -> crafter_core::Result<Packet> {
+    pub fn decode(self, bytes: impl AsRef<[u8]>) -> crate::Result<Packet> {
         self.decode_with_registry(&ProtocolRegistry::new(), bytes)
     }
 
@@ -310,7 +310,7 @@ impl PcapLinkType {
         self,
         registry: &ProtocolRegistry,
         bytes: impl AsRef<[u8]>,
-    ) -> crafter_core::Result<Packet> {
+    ) -> crate::Result<Packet> {
         let bytes = bytes.as_ref();
         match self {
             Self::NullLoopback | Self::Ethernet | Self::LinuxSll => {
@@ -512,7 +512,7 @@ impl PcapRecord {
     }
 
     /// Decode this record with the default protocol registry.
-    pub fn decode(&self) -> crafter_core::Result<Packet> {
+    pub fn decode(&self) -> crate::Result<Packet> {
         self.link_type.decode(&self.data)
     }
 
@@ -520,7 +520,7 @@ impl PcapRecord {
     pub fn decode_with_registry(
         &self,
         registry: &ProtocolRegistry,
-    ) -> crafter_core::Result<Packet> {
+    ) -> crate::Result<Packet> {
         self.link_type.decode_with_registry(registry, &self.data)
     }
 }
@@ -1381,7 +1381,7 @@ enum Endian {
 fn decode_raw_ip_with_registry(
     registry: &ProtocolRegistry,
     bytes: &[u8],
-) -> crafter_core::Result<Packet> {
+) -> crate::Result<Packet> {
     match bytes.first().map(|byte| byte >> 4) {
         Some(4) => registry.decode_from_l3(NetworkLayer::Ipv4, bytes),
         Some(6) => registry.decode_from_l3(NetworkLayer::Ipv6, bytes),
@@ -1533,7 +1533,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
-    use crafter_core::{
+    use crate::{
         Arp, Ethernet, Ipv4, LinkType, MacAddr, Packet, Raw, Tcp, Udp, ETHERTYPE_ARP,
     };
 
@@ -1791,7 +1791,7 @@ mod tests {
 
     #[test]
     fn pcap_read_null_loopback_link_type_is_preserved() {
-        let packet = crafter_core::NullLoopback::ipv4() / Raw::from("loopback");
+        let packet = crate::NullLoopback::ipv4() / Raw::from("loopback");
         let mut output = Vec::new();
         {
             let mut writer = PcapWriter::from_writer(&mut output, LinkType::NullLoopback).unwrap();

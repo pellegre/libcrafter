@@ -12,13 +12,13 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
-use crafter_core::{
+use crate::{
     Arp, ArpOperation, CompiledPacket, CrafterError, Dhcp, Dns, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6,
     Layer, LinkType, NetworkLayer, Packet, Tcp, Udp, BOOTP_REPLY, DHCP_CLIENT_PORT,
     DHCP_SERVER_PORT, DNS_PORT, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY,
     ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
 };
-use crafter_pcap::{PcapError, Sniffer};
+use crate::pcap_impl::{PcapError, Sniffer};
 use pnet_datalink::{self as datalink, Channel, ChannelType};
 use pnet_packet::ip::IpNextHeaderProtocol;
 use pnet_transport::{transport_channel, TransportChannelType};
@@ -2066,11 +2066,11 @@ fn infer_link_target(packet: &Packet, first: &dyn Layer) -> Result<SendTarget> {
         Ok(SendTarget::LinkLayer {
             link_type: LinkType::Ethernet,
         })
-    } else if first.as_any().is::<crafter_core::LinuxSll>() {
+    } else if first.as_any().is::<crate::LinuxSll>() {
         Ok(SendTarget::LinkLayer {
             link_type: LinkType::LinuxSll,
         })
-    } else if first.as_any().is::<crafter_core::NullLoopback>() {
+    } else if first.as_any().is::<crate::NullLoopback>() {
         Ok(SendTarget::LinkLayer {
             link_type: LinkType::NullLoopback,
         })
@@ -2115,8 +2115,8 @@ fn infer_network_target(packet: &Packet, first: &dyn Layer, bytes: &[u8]) -> Res
 
 fn is_link_layer(layer: &dyn Layer) -> bool {
     layer.as_any().is::<Ethernet>()
-        || layer.as_any().is::<crafter_core::LinuxSll>()
-        || layer.as_any().is::<crafter_core::NullLoopback>()
+        || layer.as_any().is::<crate::LinuxSll>()
+        || layer.as_any().is::<crate::NullLoopback>()
 }
 
 fn is_network_layer(layer: &dyn Layer) -> bool {
@@ -2147,7 +2147,7 @@ fn layer_protocol(layer: &dyn Layer) -> u8 {
     } else if layer.as_any().is::<Udp>() {
         IPPROTO_UDP
     } else if layer.as_any().is::<Ipv6>() {
-        crafter_core::IPPROTO_IPV6
+        crate::IPPROTO_IPV6
     } else {
         0
     }
@@ -2242,7 +2242,7 @@ fn transmit_network(
 mod send_plan {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    use crafter_core::{Ethernet, Icmp, Ipv4, Ipv6, NetworkLayer, Packet, Raw, Tcp, Udp};
+    use crate::{Ethernet, Icmp, Ipv4, Ipv6, NetworkLayer, Packet, Raw, Tcp, Udp};
 
     use super::{PacketSendExt, SendMode, SendOptions, SendTarget, SocketSender};
 
@@ -2275,7 +2275,7 @@ mod send_plan {
             } => {
                 assert_eq!(network_layer, NetworkLayer::Ipv4);
                 assert_eq!(destination, IpAddr::V4(Ipv4Addr::new(198, 51, 100, 20)));
-                assert_eq!(protocol, crafter_core::IPPROTO_UDP);
+                assert_eq!(protocol, crate::IPPROTO_UDP);
             }
             _ => panic!("expected network-layer send target"),
         }
@@ -2293,12 +2293,12 @@ mod send_plan {
         assert_eq!(
             plan.target(),
             SendTarget::LinkLayer {
-                link_type: crafter_core::LinkType::Ethernet
+                link_type: crate::LinkType::Ethernet
             }
         );
         assert_eq!(
             plan.bytes()[12..14],
-            crafter_core::ETHERTYPE_IPV4.to_be_bytes()
+            crate::ETHERTYPE_IPV4.to_be_bytes()
         );
     }
 
@@ -2342,7 +2342,7 @@ mod send_plan {
             } => {
                 assert_eq!(network_layer, NetworkLayer::Ipv6);
                 assert_eq!(destination, IpAddr::V6(Ipv6Addr::LOCALHOST));
-                assert_eq!(protocol, crafter_core::IPPROTO_TCP);
+                assert_eq!(protocol, crate::IPPROTO_TCP);
             }
             _ => panic!("expected IPv6 network-layer send target"),
         }
@@ -2351,7 +2351,7 @@ mod send_plan {
 
 #[cfg(test)]
 mod send_errors {
-    use crafter_core::{Ethernet, Ipv4, Packet, Raw};
+    use crate::{Ethernet, Ipv4, Packet, Raw};
 
     use super::{NetError, PacketSendExt, SendOptions, SocketSender};
 
@@ -2419,7 +2419,7 @@ mod send_recv_filters {
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::time::Duration;
 
-    use crafter_core::{Arp, Dns, Icmp, Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Tcp, Udp};
+    use crate::{Arp, Dns, Icmp, Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Tcp, Udp};
 
     use super::{PacketSendRecvExt, SendRecv};
 
@@ -2489,7 +2489,7 @@ mod send_recv_filters {
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcp_client()
-            / crafter_core::Dhcp::discover(mac).xid(0xfeed_beef);
+            / crate::Dhcp::discover(mac).xid(0xfeed_beef);
 
         assert_eq!(
             packet.reply_filter().unwrap(),
@@ -2517,7 +2517,7 @@ mod send_recv_filters {
 mod reply_matching {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
-    use crafter_core::{
+    use crate::{
         Arp, Dhcp, DhcpMessageType, Dns, DnsRecord, Icmp, Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr,
         Packet, Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK, TCP_FLAG_RST, TCP_FLAG_SYN,
     };
@@ -2558,7 +2558,7 @@ mod reply_matching {
             / Icmp::echo_reply().id(7).seq(9)
             / Raw::from("hello");
         let decoded_reply = Packet::decode_from_l3(
-            crafter_core::NetworkLayer::Ipv4,
+            crate::NetworkLayer::Ipv4,
             reply.compile().unwrap().as_bytes(),
         )
         .unwrap();
@@ -2696,7 +2696,7 @@ mod reply_matching {
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcp_server()
             / Dhcp::new()
-                .op(crafter_core::BOOTP_REPLY)
+                .op(crate::BOOTP_REPLY)
                 .client_mac(mac)
                 .message_type(DhcpMessageType::Offer)
                 .xid(0xfeed_beee);
@@ -2711,7 +2711,7 @@ mod batch_send {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use crafter_core::{Ipv4, Packet, Raw, Udp};
+    use crate::{Ipv4, Packet, Raw, Udp};
 
     use super::{send_packets, BatchSend, PacketBatchSendExt, SendTarget};
 
@@ -2785,7 +2785,7 @@ mod batch_send_recv {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use crafter_core::{Icmp, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Icmp, Ipv4, NetworkLayer, Packet, Raw};
 
     use super::{BatchSendRecv, PacketBatchSendRecvExt};
 
@@ -2887,7 +2887,7 @@ mod send_recv_live_lab {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use crafter_core::{Icmp, Ipv4};
+    use crate::{Icmp, Ipv4};
 
     use super::{PacketSendRecvExt, SendRecv};
 
