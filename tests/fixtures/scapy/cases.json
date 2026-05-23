@@ -1,12 +1,264 @@
 {
-  "schema_version": 1,
-  "schema_note": "Each case has name, family, direction, root, expected_stack, strict_bytes, and notes. Planned cases may not have fixture bytes yet.",
+  "cases": [
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "Ether",
+        "Raw"
+      ],
+      "family": "link",
+      "name": "ethernet",
+      "notes": "Checked-in Scapy fixture. Ethernet II frame with an experimental ethertype and raw payload fallback.",
+      "root": "link:ethernet",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "Raw"
+      ],
+      "family": "link",
+      "name": "raw-payload-link",
+      "notes": "Checked-in Scapy fixture. Raw link bytes decode as raw and roundtrip without interpretation.",
+      "root": "link:raw",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "family": "link",
+      "name": "arp-request",
+      "notes": "Checked-in Scapy fixture. ARP who-has request with documentation IPv4 and deterministic local MAC values.",
+      "root": "link:ethernet",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "family": "link",
+      "name": "arp-reply",
+      "notes": "Checked-in Scapy fixture. ARP is-at reply covers opcode, sender and target hardware/protocol addresses.",
+      "root": "link:ethernet",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "IP",
+        "ICMP",
+        "Raw"
+      ],
+      "family": "icmp",
+      "name": "ipv4-icmp",
+      "notes": "Checked-in Scapy fixture. IPv4 ICMP echo request with DF, checksum, length, and raw payload preservation.",
+      "root": "l3:ipv4",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6EchoRequest"
+      ],
+      "family": "icmp",
+      "name": "ipv6-icmp",
+      "notes": "Checked-in Scapy fixture. IPv6 ICMPv6 echo request with flow label, hop limit, checksum, and payload.",
+      "root": "l3:ipv6",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "family": "dns",
+      "name": "dns-query",
+      "notes": "Checked-in Scapy fixture. IPv4 UDP DNS A query for example.com.",
+      "root": "l3:ipv4",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "Ether",
+        "IP",
+        "UDP",
+        "BOOTP",
+        "DHCP"
+      ],
+      "family": "dhcp",
+      "name": "dhcp-discover",
+      "notes": "Checked-in Scapy fixture. DHCP discover validates op, htype, hlen, xid, flags, chaddr, hostname, parameter request list, pad, and end.",
+      "root": "link:ethernet",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "Ether",
+        "Dot1Q",
+        "IP",
+        "UDP",
+        "Raw"
+      ],
+      "family": "link",
+      "name": "vlan-ipv4-udp",
+      "notes": "Checked-in Scapy fixture. 802.1Q PCP and VLAN ID with IPv4 UDP payload.",
+      "root": "link:ethernet",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "Ether",
+        "Dot1Q",
+        "IP",
+        "UDP",
+        "Raw"
+      ],
+      "family": "link",
+      "name": "vlan-boundary-fields",
+      "notes": "Checked-in Scapy fixture. 802.1Q boundary case for PCP 7, DEI 1, VLAN ID 4094, and payload preservation.",
+      "root": "link:ethernet",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "CookedLinux",
+        "IP",
+        "UDP",
+        "Raw"
+      ],
+      "family": "link",
+      "name": "linux-cooked-ipv4-udp",
+      "notes": "Checked-in Scapy fixture. Linux cooked capture boundary with IPv4 UDP payload and deterministic address fields.",
+      "root": "link:linux-cooked",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "Loopback",
+        "IP",
+        "ICMP"
+      ],
+      "family": "link",
+      "name": "null-loopback-ipv4-little-endian",
+      "notes": "Checked-in Scapy fixture. BSD null loopback little-endian IPv4 family header followed by ICMP payload.",
+      "root": "link:null-loopback",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "IP",
+        "Raw"
+      ],
+      "family": "ipv4",
+      "name": "ipv4-boundary-fields",
+      "notes": "Checked-in Scapy fixture. IPv4 TOS, TTL 0, reserved/DF/MF flags, max fragment offset, unknown protocol raw fallback, and automatic total length/header checksum.",
+      "root": "l3:ipv4",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "IP",
+        "Raw"
+      ],
+      "family": "ipv4",
+      "name": "ipv4-options-source-route-traceroute",
+      "notes": "Checked-in Scapy fixture. Loose source route, strict source route, traceroute, and padding bytes must remain stable.",
+      "root": "l3:ipv4",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "IPv6",
+        "IPv6ExtHdrFragment",
+        "UDP",
+        "Raw"
+      ],
+      "family": "ipv6",
+      "name": "ipv6-fragment-udp",
+      "notes": "Checked-in Scapy fixture. IPv6 fragment extension header validates offset, M flag, ID, next-header chaining, and UDP payload.",
+      "root": "l3:ipv6",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "IPv6",
+        "IPv6ExtHdrSegmentRouting",
+        "UDP",
+        "Raw"
+      ],
+      "family": "ipv6",
+      "name": "ipv6-segment-routing-udp",
+      "notes": "Checked-in Scapy fixture. Segment routing header validates segment list, segments-left, next-header chaining, and UDP payload.",
+      "root": "l3:ipv6",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "IP",
+        "TCP",
+        "Raw"
+      ],
+      "family": "transport",
+      "name": "tcp-options-mptcp-fastopen-edo-generic",
+      "notes": "Checked-in Scapy fixture. MPTCP, Fast Open, EDO, and generic TCP option encodings must be preserved even if parsed generically.",
+      "root": "l3:ipv4",
+      "status": "implemented",
+      "strict_bytes": true
+    },
+    {
+      "direction": "scapy_to_libcrafter",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "Raw"
+      ],
+      "family": "transport",
+      "name": "udp-ipv4-zero-checksum",
+      "notes": "Checked-in Scapy fixture. UDP over IPv4 zero checksum is valid and must remain distinguishable from recomputed checksum cases.",
+      "root": "l3:ipv4",
+      "status": "implemented",
+      "strict_bytes": true
+    }
+  ],
   "documentation_values": {
-    "macs": [
-      "02:00:5e:00:53:01",
-      "02:00:5e:00:53:02",
-      "00:00:00:00:00:00",
-      "ff:ff:ff:ff:ff:ff"
+    "dns_names": [
+      "example.com.",
+      "example.net.",
+      "example.org."
     ],
     "ipv4": [
       "0.0.0.0",
@@ -17,1184 +269,20 @@
       "203.0.113.1",
       "255.255.255.255"
     ],
-      "ipv6": [
-        "2001:db8:1::10",
-        "2001:db8:2::20",
-        "2001:db8:ffff::1",
-        "2001:db8:ffff::2"
+    "ipv6": [
+      "2001:db8:1::10",
+      "2001:db8:2::20",
+      "2001:db8:ffff::1",
+      "2001:db8:ffff::2"
     ],
-    "dns_names": [
-      "example.com.",
-      "example.net.",
-      "example.org."
+    "macs": [
+      "02:00:5e:00:53:01",
+      "02:00:5e:00:53:02",
+      "00:00:00:00:00:00",
+      "ff:ff:ff:ff:ff:ff"
     ]
   },
-  "cases": [
-    {
-      "name": "ethernet",
-      "family": "link",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Ethernet II frame with an experimental ethertype and raw payload fallback."
-    },
-    {
-      "name": "arp-request",
-      "family": "link",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "ARP"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. ARP who-has request with documentation IPv4 and deterministic local MAC values."
-    },
-    {
-      "name": "ipv4-icmp",
-      "family": "icmp",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "ICMP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 ICMP echo request with DF, checksum, length, and raw payload preservation."
-    },
-    {
-      "name": "ipv6-icmp",
-      "family": "icmp",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "ICMPv6EchoRequest"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv6 ICMPv6 echo request with flow label, hop limit, checksum, and payload."
-    },
-    {
-      "name": "dns-query",
-      "family": "dns",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "UDP",
-        "DNS"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 UDP DNS A query for example.com."
-    },
-    {
-      "name": "vlan-ipv4-udp",
-      "family": "link",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "Dot1Q",
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. 802.1Q PCP and VLAN ID with IPv4 UDP payload."
-    },
-    {
-      "name": "raw-payload-link",
-      "family": "link",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:raw",
-      "expected_stack": [
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Raw link bytes decode as raw and roundtrip without interpretation."
-    },
-    {
-      "name": "arp-reply",
-      "family": "link",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "ARP"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. ARP is-at reply covers opcode, sender and target hardware/protocol addresses."
-    },
-    {
-      "name": "vlan-boundary-fields",
-      "family": "link",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "Dot1Q",
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. 802.1Q boundary case for PCP 7, DEI 1, VLAN ID 4094, and payload preservation."
-    },
-    {
-      "name": "linux-cooked-ipv4-udp",
-      "family": "link",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:linux-cooked",
-      "expected_stack": [
-        "CookedLinux",
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Linux cooked capture boundary with IPv4 UDP payload and deterministic address fields."
-    },
-    {
-      "name": "null-loopback-ipv4-little-endian",
-      "family": "link",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:null-loopback",
-      "expected_stack": [
-        "Loopback",
-        "IP",
-        "ICMP"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. BSD null loopback little-endian IPv4 family header followed by ICMP payload."
-    },
-    {
-      "name": "null-loopback-ipv6-big-endian",
-      "family": "link",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:null-loopback",
-      "expected_stack": [
-        "Loopback",
-        "IPv6",
-        "ICMPv6EchoRequest"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "BSD null loopback big-endian IPv6 family header followed by ICMPv6 payload."
-    },
-    {
-      "name": "ipv4-udp",
-      "family": "transport",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Covers IPv4 UDP length, checksum, ports, and raw payload."
-    },
-    {
-      "name": "ipv4-tcp-syn",
-      "family": "transport",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "TCP"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Covers TCP SYN fields, sequence, window, and IPv4 checksum."
-    },
-    {
-      "name": "ipv4-boundary-fields",
-      "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 TOS, TTL 0, reserved/DF/MF flags, max fragment offset, unknown protocol raw fallback, and automatic total length/header checksum."
-    },
-    {
-      "name": "ipv4-unknown-protocol-raw",
-      "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Unknown IPv4 protocol number must preserve the payload as raw bytes."
-    },
-    {
-      "name": "ipv4-fragment-mf-offset",
-      "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 nonzero fragment offset with MF set validates flags, offset units, and payload boundaries."
-    },
-    {
-      "name": "ipv4-ttl-255",
-      "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 TTL 255 with DF and raw fallback complements the TTL 0 boundary case."
-    },
-    {
-      "name": "ipv4-options",
-      "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Covers EOL, NOP, record-route, and generic IPv4 option encodings."
-    },
-    {
-      "name": "ipv4-options-source-route-traceroute",
-      "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Loose source route, strict source route, traceroute, and padding bytes must remain stable."
-    },
-    {
-      "name": "ipv6-boundary-fields",
-      "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv6 traffic class, max flow label, hop limit 0, payload length, and raw fallback."
-    },
-    {
-      "name": "ipv6-unknown-next-header-raw",
-      "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Unknown IPv6 next header must preserve the payload as raw bytes; this also covers flow label 0 and hop limit 255."
-    },
-    {
-      "name": "ipv6-fragment-udp",
-      "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrFragment",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv6 fragment extension header validates offset, M flag, ID, next-header chaining, and UDP payload."
-    },
-    {
-      "name": "ipv6-routing-generic",
-      "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrRouting",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Generic IPv6 routing extension validates header length, next-header chaining, and raw tail preservation."
-    },
-    {
-      "name": "ipv6-mobile-routing",
-      "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrRouting",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Mobile routing header variant uses 2001:db8 addresses and validates routing type preservation."
-    },
-    {
-      "name": "ipv6-segment-routing-udp",
-      "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrSegmentRouting",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Segment routing header validates segment list, segments-left, next-header chaining, and UDP payload."
-    },
-    {
-      "name": "ipv6-extension-chain-tcp-raw",
-      "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrRouting",
-        "TCP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv6 routing extension must decode before TCP and preserve TCP raw payload."
-    },
-    {
-      "name": "ipv6-routing-icmpv6",
-      "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrRouting",
-        "ICMPv6EchoRequest"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv6 routing extension chains into ICMPv6 echo while preserving checksum and payload."
-    },
-    {
-      "name": "udp-ipv6-checksum-length",
-      "family": "transport",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. UDP over IPv6 validates pseudo-header checksum, UDP length, and payload preservation."
-    },
-    {
-      "name": "udp-ipv4-zero-checksum",
-      "family": "transport",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. UDP over IPv4 zero checksum is valid and must remain distinguishable from recomputed checksum cases."
-    },
-    {
-      "name": "tcp-all-flags-reserved-offset",
-      "family": "transport",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "TCP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. TCP all flags, reserved bits, data offset, window, urgent pointer, and payload preservation."
-    },
-    {
-      "name": "tcp-options",
-      "family": "transport",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "TCP"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Covers MSS, SACK permitted, timestamp, window scale, and option padding."
-    },
-    {
-      "name": "tcp-options-sack-blocks",
-      "family": "transport",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "TCP"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. TCP SACK block option validates repeated block boundaries and stable option encoding."
-    },
-    {
-      "name": "tcp-options-mptcp-fastopen-edo-generic",
-      "family": "transport",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "TCP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. MPTCP, Fast Open, EDO, and generic TCP option encodings must be preserved even if parsed generically."
-    },
-    {
-      "name": "tcp-udp-unknown-ports-raw",
-      "family": "transport",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "Unknown UDP and TCP ports should avoid higher-level protocol decoding and preserve raw payload."
-    },
-    {
-      "name": "icmpv4-echo-reply",
-      "family": "icmp",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "ICMP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 ICMP echo reply complements the checked-in echo request case."
-    },
-    {
-      "name": "icmpv4-destination-unreachable",
-      "family": "icmp",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "ICMP",
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "IPv4 ICMP destination unreachable includes quoted packet fields and checksum."
-    },
-    {
-      "name": "icmpv4-time-exceeded",
-      "family": "icmp",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "ICMP",
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "IPv4 ICMP time exceeded validates type/code and quoted header preservation."
-    },
-    {
-      "name": "icmpv4-parameter-problem",
-      "family": "icmp",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "ICMP",
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "IPv4 ICMP parameter problem validates pointer field, type/code, and quoted payload."
-    },
-    {
-      "name": "icmpv4-redirect",
-      "family": "icmp",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "ICMP",
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "IPv4 ICMP redirect validates gateway field and quoted original packet."
-    },
-    {
-      "name": "icmpv4-extensions-mpls",
-      "family": "icmp",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "ICMP",
-        "ICMPExtensionHeader",
-        "ICMPExtensionMPLS"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "ICMP extension header and MPLS object validate class/type, length, label, traffic class, S bit, and TTL."
-    },
-    {
-      "name": "icmpv6-errors",
-      "family": "icmp",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "ICMPv6DestUnreach",
-        "IPv6",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "IPv6 destination unreachable, packet-too-big, time exceeded, and parameter problem variants with quoted packets."
-    },
-    {
-      "name": "dns-response-records",
-      "family": "dns",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "UDP",
-        "DNS"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "DNS response with A, AAAA, CNAME, PTR, MX, TXT, NS, TTLs, flags, counts, and compressed names."
-    },
-    {
-      "name": "dns-multiple-questions",
-      "family": "dns",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "UDP",
-        "DNS"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "DNS message with multiple questions where supported, using example.com and example.net names."
-    },
-    {
-      "name": "dns-generic-record-truncated-rcode",
-      "family": "dns",
-      "direction": "scapy_to_libcrafter",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "UDP",
-        "DNS"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "DNS generic record data, truncation flag, nonzero rcode, counts, TTLs, and raw RDATA preservation."
-    },
-    {
-      "name": "dhcp-discover",
-      "family": "dhcp",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "IP",
-        "UDP",
-        "BOOTP",
-        "DHCP"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "Checked-in Scapy fixture. DHCP discover validates op, htype, hlen, xid, flags, chaddr, hostname, parameter request list, pad, and end."
-    },
-    {
-      "name": "dhcp-request-offer-ack",
-      "family": "dhcp",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "IP",
-        "UDP",
-        "BOOTP",
-        "DHCP"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "DHCP request, offer, and ack variants cover ciaddr, yiaddr, siaddr, giaddr, sname/file, router/DNS lists, and lease timers."
-    },
-    {
-      "name": "dhcp-inform-release-generic-options",
-      "family": "dhcp",
-      "direction": "scapy_to_libcrafter",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "IP",
-        "UDP",
-        "BOOTP",
-        "DHCP"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "DHCP inform and release variants cover client identifiers, host/domain text, renew/rebind timers, pad/end, and generic options."
-    },
-    {
-      "name": "pcap-scapy-ethernet",
-      "family": "pcap",
-      "direction": "scapy_to_libcrafter",
-      "root": "pcap:ethernet",
-      "expected_stack": [
-        "Pcap",
-        "Ether",
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "Scapy-written pcap decoded by crafter-pcap with link type, packet count, and packet bytes compared."
-    },
-    {
-      "name": "pcap-scapy-null-loopback",
-      "family": "pcap",
-      "direction": "scapy_to_libcrafter",
-      "root": "pcap:null-loopback",
-      "expected_stack": [
-        "Pcap",
-        "Loopback",
-        "IP",
-        "ICMP"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "Scapy-written null loopback pcap validates datalink mapping and decoded packet bytes."
-    },
-    {
-      "name": "malformed-ethernet-short",
-      "family": "malformed",
-      "direction": "scapy_to_libcrafter",
-      "root": "malformed:link:ethernet",
-      "expected_stack": [
-        "DecodeError"
-      ],
-      "strict_bytes": false,
-      "status": "planned",
-      "notes": "Short Ethernet header must produce a structured error and must not panic."
-    },
-    {
-      "name": "malformed-ipv4-lengths-options",
-      "family": "malformed",
-      "direction": "scapy_to_libcrafter",
-      "root": "malformed:l3:ipv4",
-      "expected_stack": [
-        "DecodeError"
-      ],
-      "strict_bytes": false,
-      "status": "planned",
-      "notes": "Short IPv4 header, inconsistent total length, bad IHL, overlong header, and invalid option size cases."
-    },
-    {
-      "name": "malformed-ipv6-extensions",
-      "family": "malformed",
-      "direction": "scapy_to_libcrafter",
-      "root": "malformed:l3:ipv6",
-      "expected_stack": [
-        "DecodeError"
-      ],
-      "strict_bytes": false,
-      "status": "planned",
-      "notes": "Bad IPv6 payload length and truncated extension header cases."
-    },
-    {
-      "name": "malformed-tcp-options",
-      "family": "malformed",
-      "direction": "scapy_to_libcrafter",
-      "root": "malformed:l3:ipv4",
-      "expected_stack": [
-        "DecodeError"
-      ],
-      "strict_bytes": false,
-      "status": "planned",
-      "notes": "TCP data offset mismatch, invalid option length, and option overrun must return structured errors."
-    },
-    {
-      "name": "malformed-dns-compression",
-      "family": "malformed",
-      "direction": "scapy_to_libcrafter",
-      "root": "malformed:l3:ipv4",
-      "expected_stack": [
-        "DecodeError"
-      ],
-      "strict_bytes": false,
-      "status": "planned",
-      "notes": "DNS compression loop, impossible pointer offset, out-of-range pointer, and truncated question cases."
-    },
-    {
-      "name": "malformed-dhcp-options",
-      "family": "malformed",
-      "direction": "scapy_to_libcrafter",
-      "root": "malformed:link:ethernet",
-      "expected_stack": [
-        "DecodeError"
-      ],
-      "strict_bytes": false,
-      "status": "planned",
-      "notes": "DHCP missing magic cookie and truncated option must return structured errors or raw fallback without panic."
-    },
-    {
-      "name": "crafter-raw-payload",
-      "family": "link",
-      "direction": "libcrafter_to_scapy",
-      "root": "link:raw",
-      "expected_stack": [
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter raw bytes emitted as JSON decode in Scapy as raw payload and reserialize identically."
-    },
-    {
-      "name": "crafter-ethernet-unknown-ethertype",
-      "family": "link",
-      "direction": "libcrafter_to_scapy",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter Ethernet frame with unknown ethertype decodes in Scapy with raw payload preserved."
-    },
-    {
-      "name": "crafter-arp-reply",
-      "family": "link",
-      "direction": "libcrafter_to_scapy",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "ARP"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter ARP reply matches Scapy fields and bytes for documentation addresses and MAC values."
-    },
-    {
-      "name": "crafter-vlan-boundary-fields",
-      "family": "link",
-      "direction": "libcrafter_to_scapy",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "Dot1Q",
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter VLAN PCP, DEI, VLAN ID, EtherType, and UDP payload decode identically in Scapy."
-    },
-    {
-      "name": "crafter-linux-cooked-ipv4-udp",
-      "family": "link",
-      "direction": "libcrafter_to_scapy",
-      "root": "link:linux-cooked",
-      "expected_stack": [
-        "CookedLinux",
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter Linux cooked capture vector validates Scapy link-layer decoding and IPv4 UDP payload preservation."
-    },
-    {
-      "name": "crafter-null-loopback-ipv4-little-endian",
-      "family": "link",
-      "direction": "libcrafter_to_scapy",
-      "root": "link:null-loopback",
-      "expected_stack": [
-        "Loopback",
-        "IP",
-        "ICMP"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter little-endian null loopback vector validates Scapy IPv4 family decoding."
-    },
-    {
-      "name": "crafter-ipv4-boundary-fields",
-      "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv4 vector covers TOS, TTL 0, reserved/DF/MF flags, max fragment offset, automatic length, checksum, and raw fallback."
-    },
-    {
-      "name": "crafter-ipv4-unknown-protocol-raw",
-      "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv4 unknown protocol vector validates raw fallback."
-    },
-    {
-      "name": "crafter-ipv4-fragment-mf-offset",
-      "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv4 fragment vector validates MF and nonzero fragment offset preservation."
-    },
-    {
-      "name": "crafter-ipv4-ttl-255",
-      "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv4 vector covers TTL 255 with DF and raw fallback."
-    },
-    {
-      "name": "crafter-ipv4-options",
-      "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv4 options vector covers EOL, NOP, record-route, and generic option bytes."
-    },
-    {
-      "name": "crafter-ipv4-source-route-traceroute",
-      "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv4 options vector covers loose source route, strict source route, and traceroute option bytes."
-    },
-    {
-      "name": "crafter-ipv6-boundary-fields",
-      "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv6 vector covers traffic class, max flow label, hop limit 0, payload length, and raw fallback."
-    },
-    {
-      "name": "crafter-ipv6-unknown-next-header-raw",
-      "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv6 vector covers unknown next header raw fallback, flow label 0, and hop limit 255."
-    },
-    {
-      "name": "crafter-ipv6-fragment-udp",
-      "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrFragment",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv6 fragment vector validates next-header chaining into UDP."
-    },
-    {
-      "name": "crafter-ipv6-routing-generic",
-      "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrRouting",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv6 generic routing vector validates raw extension chaining."
-    },
-    {
-      "name": "crafter-ipv6-mobile-routing",
-      "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrRouting",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv6 mobile routing vector validates home address and raw extension chaining."
-    },
-    {
-      "name": "crafter-ipv6-segment-routing-udp",
-      "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrSegmentRouting",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv6 segment routing vector validates segment list and UDP chaining."
-    },
-    {
-      "name": "crafter-ipv6-routing-tcp-raw",
-      "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrRouting",
-        "TCP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv6 routing vector validates extension chaining into TCP and raw payload."
-    },
-    {
-      "name": "crafter-ipv6-routing-icmpv6",
-      "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "IPv6ExtHdrRouting",
-        "ICMPv6EchoRequest"
-      ],
-      "strict_bytes": true,
-      "status": "implemented",
-      "notes": "libcrafter IPv6 routing vector validates extension chaining into ICMPv6 echo."
-    },
-    {
-      "name": "crafter-udp-ipv4-ipv6-checksums",
-      "family": "transport",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "libcrafter UDP vectors cover IPv4 and IPv6 pseudo-header checksums, length fields, zero checksum where valid, and unknown port raw fallback."
-    },
-    {
-      "name": "crafter-tcp-options",
-      "family": "transport",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "TCP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "libcrafter TCP vectors cover all flags, reserved bits, data offset, MSS, window scale, SACK, timestamp, MPTCP, Fast Open, EDO, generic options, and payload preservation."
-    },
-    {
-      "name": "crafter-icmpv4-errors-extensions",
-      "family": "icmp",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "ICMP"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "libcrafter ICMPv4 vectors cover echo request/reply, destination unreachable, time exceeded, parameter problem, redirect, extension header, and MPLS object."
-    },
-    {
-      "name": "crafter-icmpv6-errors",
-      "family": "icmp",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv6",
-      "expected_stack": [
-        "IPv6",
-        "ICMPv6DestUnreach"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "libcrafter ICMPv6 vectors cover echo request/reply, destination unreachable, packet-too-big, time exceeded, and parameter problem."
-    },
-    {
-      "name": "crafter-dns-query-response-compression",
-      "family": "dns",
-      "direction": "libcrafter_to_scapy",
-      "root": "l3:ipv4",
-      "expected_stack": [
-        "IP",
-        "UDP",
-        "DNS"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "libcrafter DNS vectors cover query and response sections, compressed names, common record types, generic records, flags, counts, TTLs, and RDATA."
-    },
-    {
-      "name": "crafter-dhcp-message-matrix",
-      "family": "dhcp",
-      "direction": "libcrafter_to_scapy",
-      "root": "link:ethernet",
-      "expected_stack": [
-        "Ether",
-        "IP",
-        "UDP",
-        "BOOTP",
-        "DHCP"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "libcrafter DHCP vectors cover discover, request, offer, ack, inform, release, BOOTP fields, client identifier, router/DNS lists, text options, timers, generic options, pad, and end."
-    },
-    {
-      "name": "pcap-crafter-ethernet",
-      "family": "pcap",
-      "direction": "libcrafter_to_scapy",
-      "root": "pcap:ethernet",
-      "expected_stack": [
-        "Pcap",
-        "Ether",
-        "IP",
-        "UDP",
-        "Raw"
-      ],
-      "strict_bytes": true,
-      "status": "planned",
-      "notes": "libcrafter-written pcap decoded by Scapy with datalink, packet count, timestamps where compared, and packet bytes."
-    },
-    {
-      "name": "pcap-crafter-pcapng-mixed-links",
-      "family": "pcap",
-      "direction": "libcrafter_to_scapy",
-      "root": "pcapng:mixed-link-types",
-      "expected_stack": [
-        "PcapNg",
-        "Ether",
-        "Loopback"
-      ],
-      "strict_bytes": false,
-      "status": "planned",
-      "notes": "Mixed link types are checked only where current APIs and file format support them; compare link metadata and decoded packet bytes."
-    }
-  ]
+  "oracle_source_manifest": "tools/oracle/specs/fixtures/scapy-cases.json",
+  "schema_note": "Static byte-level golden fixture manifest. The full generated behavior matrix lives in tools/oracle/specs/fixtures/scapy-cases.json.",
+  "schema_version": 1
 }

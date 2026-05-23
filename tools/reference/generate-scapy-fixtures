@@ -5,7 +5,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/../.." && pwd)"
 
 # Legacy fixture entrypoint. Oracle owns fixture generation; this preserves the
-# old command name and default checked-in fixture output path.
+# old command name and writes generated output to oracle artifacts by default.
 
 has_out=0
 for arg in "$@"; do
@@ -17,7 +17,7 @@ for arg in "$@"; do
 done
 
 if [[ "$has_out" -eq 0 ]]; then
-  exec "$repo_root/tools/oracle/run" fixtures --backend scapy --out "$repo_root/tests/fixtures/scapy" "$@"
+  exec "$repo_root/tools/oracle/run" fixtures --backend scapy --out "$repo_root/target/oracle/fixtures" "$@"
 fi
 
 exec "$repo_root/tools/oracle/run" fixtures --backend scapy "$@"

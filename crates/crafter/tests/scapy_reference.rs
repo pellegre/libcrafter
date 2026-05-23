@@ -4,6 +4,8 @@ use std::fmt;
 use std::fs;
 use std::net::Ipv6Addr;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 mod support;
 
@@ -82,7 +84,16 @@ struct DecodedLayer<'a> {
 
 #[test]
 fn scapy_generated_fixtures_decode_like_manifest() {
-    let fixture_dir = fixture_dir();
+    exercise_fixture_dir(&fixture_dir());
+}
+
+#[test]
+fn oracle_generated_fixture_vectors_decode_like_manifest() {
+    let generated = GeneratedFixtureDir::create();
+    exercise_fixture_dir(generated.path());
+}
+
+fn exercise_fixture_dir(fixture_dir: &Path) {
     let manifest_path = fixture_dir.join("cases.json");
     let manifest: Manifest = read_json(&manifest_path, "Scapy manifest");
 
@@ -110,6 +121,56 @@ fn scapy_generated_fixtures_decode_like_manifest() {
         "Scapy reference tests found no implemented scapy_to_libcrafter fixtures in {}",
         fixture_dir.display()
     );
+}
+
+struct GeneratedFixtureDir {
+    path: PathBuf,
+}
+
+impl GeneratedFixtureDir {
+    fn create() -> Self {
+        let path = unique_temp_dir("libcrafter-oracle-fixtures");
+        let repo_root = repo_root();
+        let oracle = repo_root.join("tools/oracle/run");
+        let _ = fs::remove_dir_all(&path);
+
+        let output = Command::new(&oracle)
+            .current_dir(&repo_root)
+            .args([
+                "fixtures",
+                "--backend",
+                "scapy",
+                "--profile",
+                "smoke",
+                "--seed",
+                "1",
+                "--out",
+            ])
+            .arg(&path)
+            .output()
+            .unwrap_or_else(|err| panic!("failed to run {}: {err}", oracle.display()));
+
+        if !output.status.success() {
+            panic!(
+                "oracle fixture generation failed with status {}\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for GeneratedFixtureDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 
 fn exercise_case(case: &ManifestCase, bin_path: &Path, metadata_path: &Path) {
@@ -185,6 +246,18 @@ fn fixture_dir() -> PathBuf {
     }
 
     support::fixture_path("scapy")
+}
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn unique_temp_dir(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
 }
 
 fn read_json<T>(path: &Path, label: &str) -> T
