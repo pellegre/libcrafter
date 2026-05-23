@@ -14,6 +14,7 @@ BACKEND_NAME = "scapy"
 _LAYER_ALIASES: dict[str, str] = {
     "ARP": "arp",
     "BOOTP": "dhcp",
+    "CookedLinux": "linux_sll",
     "DHCP": "dhcp",
     "DNS": "dns",
     "Dot1Q": "vlan",
@@ -24,6 +25,7 @@ _LAYER_ALIASES: dict[str, str] = {
     "IPv6ExtHdrFragment": "ipv6_fragment",
     "IPv6ExtHdrRouting": "ipv6_routing",
     "IPv6ExtHdrSegmentRouting": "ipv6_routing",
+    "Loopback": "null_loopback",
     "Raw": "payload",
     "TCP": "tcp",
     "UDP": "udp",
@@ -88,6 +90,12 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "plen": "payload_length",
         "tc": "traffic_class",
         "version": "version",
+    },
+    "linux_sll": {
+        "lladdrlen": "address_length",
+        "lladdrtype": "address_type",
+        "pkttype": "packet_type",
+        "src": "source_address",
     },
     "payload": {
         "load": "hex",
@@ -193,18 +201,24 @@ def normalize_packet(
             _object(layer["fields"], f"{layer['name']}.fields"),
         )
 
+    metadata: JSONObject = {
+        "native": {
+            "summary": _text(packet.summary()),
+            "layers": layers,
+        },
+    }
+    try:
+        metadata["reencoded_hex"] = bytes(import_scapy()["all"].raw(packet)).hex()
+    except Exception as exc:  # pragma: no cover - Scapy exception types vary.
+        metadata["reencoded_error"] = _text(exc)
+
     return DecodedModel(
         backend=BACKEND_NAME,
         layers=normalized_layers,
         fields=normalized_fields,
         root=root,
         source_hex=source_hex,
-        metadata={
-            "native": {
-                "summary": _text(packet.summary()),
-                "layers": layers,
-            },
-        },
+        metadata=metadata,
     )
 
 
@@ -301,6 +315,8 @@ def _normalize_field_name(layer_name: str, native_name: str) -> str:
 def _normalize_field_value(layer_name: str, field_name: str, value: JSONValue) -> JSONValue:
     if layer_name == "icmpv6" and field_name == "type" and isinstance(value, str):
         return _normalize_icmpv6_type(value)
+    if layer_name == "linux_sll" and field_name == "source_address":
+        return _normalize_linux_sll_source_address(value)
     if field_name == "flags":
         return _normalize_flags(value)
     if field_name == "is_response" and isinstance(value, int):
@@ -327,6 +343,14 @@ def _normalize_icmpv6_type(value: str) -> str:
         "time_exceeded": "time_exceeded",
     }
     return aliases.get(lowered, lowered)
+
+
+def _normalize_linux_sll_source_address(value: JSONValue) -> JSONValue:
+    if isinstance(value, Mapping):
+        hex_value = value.get("hex")
+        if isinstance(hex_value, str):
+            return {"hex": hex_value}
+    return value
 
 
 def _field_key(existing: Mapping[str, JSONObject], layer_name: str) -> str:

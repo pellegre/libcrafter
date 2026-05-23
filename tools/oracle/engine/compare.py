@@ -17,23 +17,30 @@ def compare_decoded_models(
     plan: PacketPlan,
     direction: str,
     reproduction_command: str,
+    partial_expected: bool = False,
+    actual_strict_bytes_hex: str | None = None,
 ) -> ComparisonResult:
     """Compare two normalized decoded models and return a structured result."""
 
+    use_partial_fields = partial_expected or _assertions_are_partial(expected)
     expected_model = comparable_decoded_model(expected)
     actual_model = comparable_decoded_model(actual)
     differences: list[JSONObject] = []
 
     _diff("layers", expected_model["layers"], actual_model["layers"], differences)
-    _diff("fields", expected_model["fields"], actual_model["fields"], differences)
+    if use_partial_fields:
+        _diff_subset("fields", expected_model["fields"], actual_model["fields"], differences)
+    else:
+        _diff("fields", expected_model["fields"], actual_model["fields"], differences)
     _diff("root", expected_model["root"], actual_model["root"], differences)
 
-    byte_equal = expected_model.get("source_hex") == actual_model.get("source_hex")
+    actual_bytes_hex = actual_strict_bytes_hex or actual_model.get("source_hex")
+    byte_equal = expected_model.get("source_hex") == actual_bytes_hex
     if plan.strict_bytes:
         _diff(
             "source_hex",
             expected_model.get("source_hex"),
-            actual_model.get("source_hex"),
+            actual_bytes_hex,
             differences,
         )
 
@@ -48,7 +55,10 @@ def compare_decoded_models(
         byte_equal=byte_equal,
         differences=differences,
         reproduction_command=None if passed else reproduction_command,
-        metadata={"plan_id": _plan_id(plan)},
+        metadata={
+            "plan_id": _plan_id(plan),
+            "partial_expected": use_partial_fields,
+        },
     )
 
 
@@ -116,6 +126,31 @@ def _diff(path: str, expected: JSONValue, actual: JSONValue, differences: list[J
                 _append_difference(child_path, expected[key], "<missing>", differences)
             else:
                 _diff(child_path, expected[key], actual[key], differences)
+        return
+
+    if expected != actual:
+        _append_difference(path, expected, actual, differences)
+
+
+def _diff_subset(
+    path: str,
+    expected: JSONValue,
+    actual: JSONValue,
+    differences: list[JSONObject],
+) -> None:
+    if len(differences) >= MAX_DIFFERENCES:
+        return
+
+    if isinstance(expected, Mapping):
+        if not isinstance(actual, Mapping):
+            _append_difference(path, expected, actual, differences)
+            return
+        for key in sorted(expected):
+            child_path = f"{path}.{key}"
+            if key not in actual:
+                _append_difference(child_path, expected[key], "<missing>", differences)
+            else:
+                _diff_subset(child_path, expected[key], actual[key], differences)
         return
 
     if expected != actual:
@@ -198,6 +233,14 @@ def _plan_id(plan: PacketPlan) -> str | None:
     if isinstance(value, str):
         return value
     return None
+
+
+def _assertions_are_partial(model: DecodedModel | Mapping[str, object]) -> bool:
+    raw_model = _model_dict(model)
+    metadata = raw_model.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    return metadata.get("assertions_are_partial") is True
 
 
 class _Skip:
