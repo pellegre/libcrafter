@@ -172,7 +172,9 @@ SCAPY_VERSION = SCAPY["version"]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCAPY_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "scapy"
-CASE_MANIFEST = SCAPY_FIXTURE_DIR / "cases.json"
+ORACLE_FIXTURE_DIR = REPO_ROOT / "target" / "oracle" / "fixtures"
+CASE_MANIFEST = REPO_ROOT / "tools" / "oracle" / "specs" / "fixtures" / "scapy-cases.json"
+CHECKED_IN_CASE_MANIFEST = SCAPY_FIXTURE_DIR / "cases.json"
 
 SRC_MAC = "02:00:5e:00:53:01"
 DST_MAC = "02:00:5e:00:53:02"
@@ -1281,15 +1283,23 @@ def selected_fixtures(
 
 
 def checked_in_fixtures() -> list[Fixture]:
-    return [
-        fixture
-        for fixture in FIXTURES
-        if fixture_case(fixture).get("status") == "implemented"
+    checked_in = load_case_manifest(CHECKED_IN_CASE_MANIFEST)
+    checked_in_names = [
+        case["name"]
+        for case in checked_in["cases"]
+        if case.get("direction") == "scapy_to_libcrafter"
     ]
+    missing = [name for name in checked_in_names if name not in FIXTURE_MAP]
+    if missing:
+        raise SystemExit(
+            "checked-in fixture manifest references unknown fixture(s): "
+            + ", ".join(missing)
+        )
+    return [FIXTURE_MAP[name] for name in checked_in_names]
 
 
 def default_output_dir() -> Path:
-    return SCAPY_FIXTURE_DIR
+    return ORACLE_FIXTURE_DIR
 
 
 def parse_args() -> argparse.Namespace:

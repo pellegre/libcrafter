@@ -39,6 +39,14 @@ which layers can appear together and how parent/child relationships are sampled.
 If a sampled stack violates the grammar or a selected feature's constraints, the
 generator must reject it and resample instead of relying on backend exceptions.
 
+## Fixture Case Specs
+
+`tools/oracle/specs/fixtures/` contains backend-owned fixture case matrices used
+to generate temporary vectors and compatibility reports. The Scapy case matrix
+in `fixtures/scapy-cases.json` is the full generated behavior source; the
+checked-in `tests/fixtures/scapy/cases.json` file is only a manifest for the
+small static golden subset.
+
 ## Profiles
 
 `tools/oracle/specs/profiles.yaml` defines sampling profiles. Profiles change

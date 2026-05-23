@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/../.." && pwd)"
-case_manifest="$repo_root/tests/fixtures/scapy/cases.json"
+case_manifest="$repo_root/tools/oracle/specs/fixtures/scapy-cases.json"
 generator="$script_dir/generate-scapy-fixtures"
 validator="$script_dir/scapy-validate-libcrafter.py"
 pcap_validator="$script_dir/scapy-pcap-interop.py"

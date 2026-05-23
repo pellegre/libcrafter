@@ -57,13 +57,14 @@ CI evidence.
 
 | Path | Current Scapy surface | Migration target |
 | --- | --- | --- |
-| `tests/fixtures/scapy/cases.json` | Interop case matrix for both `scapy_to_libcrafter` and `libcrafter_to_scapy`, with implemented and planned cases across link, IPv4, IPv6, transport, ICMP, DNS, DHCP, pcap, and malformed families. | Convert implemented/planned cases into oracle layer and feature specs. |
-| `tests/fixtures/scapy/*.bin` | 35 checked-in raw packet fixtures generated from Scapy. | Keep as golden fixtures where review value remains; otherwise regenerate from oracle specs by seed/profile/count. |
-| `tests/fixtures/scapy/*.json` | 35 checked-in Scapy metadata files containing direction, root, Scapy show output, version, layer stack, and field expectations. | Replace with oracle reports and normalized models; preserve useful golden metadata during transition. |
+| `tools/oracle/specs/fixtures/scapy-cases.json` | Full Scapy-backed interop case matrix for generated behavior ownership. | Keep as oracle-owned case metadata until layer and feature specs fully drive generation. |
+| `tests/fixtures/scapy/cases.json` | Static golden subset manifest for reviewed checked-in packet bytes. | Keep only cases that need no-Python Rust unit coverage or byte-level review. |
+| `tests/fixtures/scapy/*.bin` | Reduced checked-in raw packet fixtures generated from Scapy. | Keep as golden fixtures where review value remains; otherwise regenerate temporary vectors from oracle specs. |
+| `tests/fixtures/scapy/*.json` | Reduced checked-in Scapy metadata files containing direction, root, Scapy show output, version, layer stack, and field expectations. | Replace generated behavior checks with oracle reports and normalized models; preserve golden metadata only for static fixtures. |
 | `tests/fixtures/scapy/.gitkeep` | Keeps the fixture directory present. | Keep or remove only after final fixture ownership is decided. |
 | `tests/fixtures/README.md` | Documents `scapy/` as the reference fixture directory and mentions `scapy/cases.json`. | Update terminology after oracle owns reference coverage. |
 
-Implemented fixture artifact names currently present:
+Static golden fixture artifact names currently present:
 
 ```text
 arp-reply
@@ -71,34 +72,17 @@ arp-request
 dhcp-discover
 dns-query
 ethernet
-icmpv4-echo-reply
 ipv4-boundary-fields
-ipv4-fragment-mf-offset
 ipv4-icmp
-ipv4-options
 ipv4-options-source-route-traceroute
-ipv4-tcp-syn
-ipv4-ttl-255
-ipv4-udp
-ipv4-unknown-protocol-raw
-ipv6-boundary-fields
-ipv6-extension-chain-tcp-raw
 ipv6-fragment-udp
 ipv6-icmp
-ipv6-mobile-routing
-ipv6-routing-generic
-ipv6-routing-icmpv6
 ipv6-segment-routing-udp
-ipv6-unknown-next-header-raw
 linux-cooked-ipv4-udp
 null-loopback-ipv4-little-endian
 raw-payload-link
-tcp-all-flags-reserved-offset
-tcp-options
 tcp-options-mptcp-fastopen-edo-generic
-tcp-options-sack-blocks
 udp-ipv4-zero-checksum
-udp-ipv6-checksum-length
 vlan-boundary-fields
 vlan-ipv4-udp
 ```
@@ -111,7 +95,7 @@ Scapy comparison model.
 
 | Path | Current Scapy surface | Migration target |
 | --- | --- | --- |
-| `crates/crafter/tests/scapy_reference.rs` | Rust test harness for Scapy-generated fixtures. Reads `LIBCRAFTER_SCAPY_FIXTURE_DIR` or `tests/fixtures/scapy`, decodes packets, maps Rust layers to Scapy names, and asserts Scapy metadata fields. | Keep during migration, then replace or adapt behind oracle's normalized model and Rust decode bridge. |
+| `crates/crafter/tests/scapy_reference.rs` | Rust test harness for Scapy-generated fixtures. Reads `LIBCRAFTER_SCAPY_FIXTURE_DIR` or `tests/fixtures/scapy` for static golden checks, and generates temporary oracle fixture vectors for broad behavior checks. | Keep until oracle normalized models replace Scapy-specific metadata assertions. |
 | `crates/crafter/examples/scapy_interop_vectors.rs` | Emits deterministic libcrafter packet vectors with `libcrafter_to_scapy` metadata for Scapy parser validation. | Rename or replace with a backend-neutral oracle vector emitter. |
 | `crates/crafter/src/pcap_impl.rs` | Unit tests reference `fixture_bytes!("scapy/arp-request.bin")`. | Keep as fixture-backed tests until oracle pcap coverage replaces or supplements them. |
 | `crates/crafter/src/protocols/link.rs` | Unit tests reference Scapy fixture bytes for Ethernet, ARP, and VLAN behavior. | Keep until oracle specs cover equivalent link behavior. |
@@ -171,7 +155,7 @@ mode. They should not retain packet generation logic after migration.
 | `tools/reference/check-reference-interop` | Backend-neutral alias that currently delegates to `check-scapy-interop`. | Wrapper to `tools/oracle/run`. |
 | `tools/reference/generate-scapy-fixtures` | Scapy-specific fixture generation bootstrap command. | Wrapper to oracle fixture generation or retained only for golden fixture maintenance. |
 | `tools/reference/generate-reference-fixtures` | Backend-neutral alias that currently delegates to `generate-scapy-fixtures`. | Wrapper to oracle fixture generation. |
-| `tools/reference/check-reference-fixtures` | Compares generated outputs against `tests/fixtures/scapy/*.bin`. | Wrapper around oracle fixture drift checks once oracle owns fixture generation. |
+| `tools/reference/check-reference-fixtures` | Compares generated outputs against the static golden `tests/fixtures/scapy/*.bin` subset. | Wrapper around oracle fixture drift checks for golden fixture maintenance. |
 | `tools/reference/run-scapy-interop-report` | Aggregates Scapy interop, pcap, local-dry-run, and Hetzner command results into a report. | Wrapper/report adapter over oracle reports. |
 | `tests/live/scapy-interop.sh` | Live-suite compatibility entrypoint. | Wrapper to oracle live/offline/pcap commands once oracle provides the same suite contract. |
 
