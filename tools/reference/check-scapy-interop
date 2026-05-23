@@ -19,7 +19,8 @@ usage() {
   cat <<'USAGE'
 usage: tools/reference/check-scapy-interop [options]
 
-Run offline bidirectional Scapy/libcrafter interop checks.
+Legacy wrapper for offline bidirectional Scapy/libcrafter interop checks.
+Common selections delegate to tools/oracle/run offline or pcap.
 
 Options:
   --only NAME             case name filter; repeat or comma-separate values
@@ -144,6 +145,142 @@ else
   done
 fi
 
+delegate_to_oracle() {
+  local oracle="$repo_root/tools/oracle/run"
+  local oracle_profile="smoke"
+  local oracle_count=10
+  local raw value
+  local -a selected_cases=()
+  local -a oracle_families=()
+  local -a unsupported_families=()
+  local run_pcap=0
+
+  if (( smoke )); then
+    oracle_count=1
+  fi
+
+  for raw in "${only_filters[@]}"; do
+    IFS=',' read -r -a parts <<< "$raw"
+    for value in "${parts[@]}"; do
+      value="${value//[[:space:]]/}"
+      if [[ -n "$value" ]]; then
+        selected_cases+=("$value")
+      fi
+    done
+  done
+  if ((${#selected_cases[@]} == 0)); then
+    selected_cases=("")
+  fi
+
+  for raw in "${family_filters[@]}"; do
+    IFS=',' read -r -a parts <<< "$raw"
+    for value in "${parts[@]}"; do
+      value="${value//[[:space:]]/}"
+      case "$value" in
+        "")
+          ;;
+        pcap)
+          run_pcap=1
+          ;;
+        ipv4|ipv6)
+          oracle_families+=("$value")
+          ;;
+        *)
+          unsupported_families+=("$value")
+          ;;
+      esac
+    done
+  done
+
+  if ((${#unsupported_families[@]} > 0)); then
+    {
+      printf 'warning: tools/reference/check-scapy-interop is legacy; '
+      printf 'tools/oracle/run cannot yet map legacy family filter(s):'
+      printf ' %s' "${unsupported_families[@]}"
+      printf '\n'
+      printf 'warning: falling back to legacy fixture orchestration. '
+      printf 'Follow-up: add equivalent oracle specs and use tools/oracle/run offline --backend scapy.\n'
+    } >&2
+    return 1
+  fi
+
+  if (( run_pcap == 0 )) && ((${#oracle_families[@]} == 0)); then
+    oracle_families=("")
+  fi
+
+  run_oracle() {
+    local mode="$1"
+    local direction="$2"
+    local family="$3"
+    local case_name="$4"
+    local -a cmd=(
+      "$oracle" "$mode"
+      --backend scapy
+      --profile "$oracle_profile"
+      --seed 1
+      --count "$oracle_count"
+      --out "$artifact_root"
+    )
+
+    if [[ -n "$direction" ]]; then
+      cmd+=(--direction "$direction")
+    fi
+    if [[ -n "$family" ]]; then
+      cmd+=(--family "$family")
+    fi
+    if [[ -n "$case_name" ]]; then
+      cmd+=(--case "$case_name")
+    fi
+    if (( keep_artifacts )); then
+      cmd+=(--keep-artifacts)
+    fi
+
+    printf 'legacy wrapper: delegating to' >&2
+    printf ' %q' "${cmd[@]}" >&2
+    printf '\n' >&2
+
+    if "${cmd[@]}"; then
+      return 0
+    else
+      return "$?"
+    fi
+  }
+
+  local -a offline_directions=()
+  if (( run_scapy_to_libcrafter )); then
+    offline_directions+=(reference_to_libcrafter)
+  fi
+  if (( run_libcrafter_to_scapy )); then
+    offline_directions+=(libcrafter_to_reference)
+  fi
+
+  local pcap_direction=""
+  if (( run_pcap )); then
+    if (( run_scapy_to_libcrafter && run_libcrafter_to_scapy )); then
+      pcap_direction="roundtrip"
+    elif (( run_scapy_to_libcrafter )); then
+      pcap_direction="reference_to_libcrafter"
+    elif (( run_libcrafter_to_scapy )); then
+      pcap_direction="libcrafter_to_reference"
+    fi
+
+    for case_name in "${selected_cases[@]}"; do
+      run_oracle pcap "$pcap_direction" "" "$case_name"
+    done
+  fi
+
+  local family case_name direction
+  for family in "${oracle_families[@]}"; do
+    for case_name in "${selected_cases[@]}"; do
+      for direction in "${offline_directions[@]}"; do
+        run_oracle offline "$direction" "$family" "$case_name"
+      done
+    done
+  done
+
+  echo "scapy interop checks passed"
+}
+
 mkdir -p "$artifact_root"
 run_dir="$(mktemp -d "$artifact_root/run.XXXXXX")"
 logs_dir="$run_dir/logs"
@@ -159,6 +296,10 @@ cleanup() {
   exit "$rc"
 }
 trap cleanup EXIT
+
+if delegate_to_oracle; then
+  exit 0
+fi
 
 filter_args=()
 for value in "${only_filters[@]}"; do
