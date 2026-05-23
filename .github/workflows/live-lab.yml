@@ -20,6 +20,22 @@ on:
         description: "Live-lab suite to run."
         required: true
         default: "all"
+      run_oracle_live_dry_run:
+        description: "Type run to execute the oracle Hetzner live dry run."
+        required: true
+        default: "no"
+      oracle_live_profile:
+        description: "Oracle live profile for the manual Hetzner dry run."
+        required: true
+        default: "smoke"
+      oracle_live_seed:
+        description: "Oracle live deterministic seed for the manual Hetzner dry run."
+        required: true
+        default: "12345"
+      oracle_live_count:
+        description: "Oracle live packet plan count for the manual Hetzner dry run."
+        required: true
+        default: "10"
 
 permissions:
   contents: read
@@ -48,6 +64,43 @@ jobs:
         run: |
           tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
           tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
+
+  oracle-live:
+    name: oracle hetzner live dry run
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_oracle_live_dry_run == 'run' }}
+    env:
+      ORACLE_LIVE_PROFILE: ${{ github.event.inputs.oracle_live_profile }}
+      ORACLE_LIVE_SEED: ${{ github.event.inputs.oracle_live_seed }}
+      ORACLE_LIVE_COUNT: ${{ github.event.inputs.oracle_live_count }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install oracle dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-pip python3-venv
+
+      - name: Run oracle Hetzner live dry run
+        run: |
+          tools/oracle/run live \
+            --backend scapy \
+            --provider hetzner \
+            --dry-run \
+            --profile "$ORACLE_LIVE_PROFILE" \
+            --seed "$ORACLE_LIVE_SEED" \
+            --count "$ORACLE_LIVE_COUNT"
+
+      - name: Upload oracle live artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcrafter-oracle-live-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: |
+            target/oracle/live
 
   live:
     name: disposable live lab
