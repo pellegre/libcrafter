@@ -23,7 +23,6 @@ env:
   CARGO_TERM_COLOR: always
   LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR: ${{ github.workspace }}/target/live-lab-artifacts
   LIBCRAFTER_LIVE_LAB_STATE_DIR: ${{ runner.temp }}/libcrafter-live-state
-  HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
 
 jobs:
   live:
@@ -31,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event.inputs.confirm_live_lab == 'run' }}
     timeout-minutes: 90
+    env:
+      HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
 
     steps:
       - name: Checkout
@@ -75,4 +76,3 @@ jobs:
           if-no-files-found: ignore
           path: |
             target/live-lab-artifacts
-
