@@ -12,6 +12,7 @@ const SRC_MAC: &str = "02:00:5e:00:53:01";
 const DST_MAC: &str = "02:00:5e:00:53:02";
 const SRC_IPV4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const DST_IPV4: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 20);
+const GW_IPV4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 const DNS_IPV4: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 53);
 
 #[derive(Serialize)]
@@ -85,6 +86,26 @@ fn build_manifest() -> ExampleResult<Manifest> {
             ipv6_icmp()?,
             dns_query()?,
             vlan_ipv4_udp()?,
+            crafter_raw_payload()?,
+            crafter_ethernet_unknown_ethertype()?,
+            crafter_arp_reply()?,
+            crafter_vlan_boundary_fields()?,
+            crafter_linux_cooked_ipv4_udp()?,
+            crafter_null_loopback_ipv4_little_endian()?,
+            crafter_ipv4_boundary_fields()?,
+            crafter_ipv4_unknown_protocol_raw()?,
+            crafter_ipv4_fragment_mf_offset()?,
+            crafter_ipv4_ttl_255()?,
+            crafter_ipv4_options()?,
+            crafter_ipv4_source_route_traceroute()?,
+            crafter_ipv6_boundary_fields()?,
+            crafter_ipv6_unknown_next_header_raw()?,
+            crafter_ipv6_fragment_udp()?,
+            crafter_ipv6_routing_generic()?,
+            crafter_ipv6_mobile_routing()?,
+            crafter_ipv6_segment_routing_udp()?,
+            crafter_ipv6_routing_tcp_raw()?,
+            crafter_ipv6_routing_icmpv6()?,
         ],
     })
 }
@@ -405,6 +426,738 @@ fn vlan_ipv4_udp() -> ExampleResult<Vector> {
     )
 }
 
+fn crafter_raw_payload() -> ExampleResult<Vector> {
+    let packet = Packet::new().push(Raw::from("raw-link-payload"));
+
+    vector(
+        "crafter-raw-payload",
+        "link",
+        "link:raw",
+        vec!["Raw"],
+        "Raw",
+        packet,
+        vec![fields(
+            "Raw",
+            json!({
+                "load": bytes_field(b"raw-link-payload")
+            }),
+        )],
+    )
+}
+
+fn crafter_ethernet_unknown_ethertype() -> ExampleResult<Vector> {
+    let packet = Ethernet::new()
+        .src(parse_mac(SRC_MAC)?)
+        .dst(parse_mac(DST_MAC)?)
+        .ethertype(0x88b5)
+        / Raw::from("unknown-ethertype");
+
+    vector(
+        "crafter-ethernet-unknown-ethertype",
+        "link",
+        "link:ethernet",
+        vec!["Ether", "Raw"],
+        "Ether / Raw",
+        packet,
+        vec![
+            fields(
+                "Ether",
+                json!({
+                    "dst": DST_MAC,
+                    "src": SRC_MAC,
+                    "type": 34997
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"unknown-ethertype")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_arp_reply() -> ExampleResult<Vector> {
+    let src_mac = parse_mac(SRC_MAC)?;
+    let dst_mac = parse_mac(DST_MAC)?;
+    let packet = Ethernet::new()
+        .src(src_mac)
+        .dst(dst_mac)
+        .ethertype(ETHERTYPE_ARP)
+        / Arp::is_at(SRC_IPV4, src_mac, GW_IPV4, dst_mac);
+
+    vector(
+        "crafter-arp-reply",
+        "link",
+        "link:ethernet",
+        vec!["Ether", "ARP"],
+        "Ether / ARP is at 192.0.2.10",
+        packet,
+        vec![
+            fields(
+                "Ether",
+                json!({
+                    "dst": DST_MAC,
+                    "src": SRC_MAC,
+                    "type": 2054
+                }),
+            ),
+            fields(
+                "ARP",
+                json!({
+                    "op": 2,
+                    "hwsrc": SRC_MAC,
+                    "psrc": "192.0.2.10",
+                    "hwdst": DST_MAC,
+                    "pdst": "192.0.2.1"
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_vlan_boundary_fields() -> ExampleResult<Vector> {
+    let packet = Ethernet::new()
+        .src(parse_mac(SRC_MAC)?)
+        .dst(parse_mac(DST_MAC)?)
+        .ethertype(ETHERTYPE_VLAN)
+        / Dot1Q::new()
+            .prio(7)
+            .dei(true)
+            .vlan(4094)
+            .ethertype(ETHERTYPE_IPV4)
+        / Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1248).ttl(57)
+        / Udp::new().sport(53003).dport(10000)
+        / Raw::from("vlan-boundary");
+
+    vector(
+        "crafter-vlan-boundary-fields",
+        "link",
+        "link:ethernet",
+        vec!["Ether", "Dot1Q", "IP", "UDP", "Raw"],
+        "Ether / Dot1Q / IP / UDP / Raw",
+        packet,
+        vec![
+            fields(
+                "Dot1Q",
+                json!({
+                    "prio": 7,
+                    "dei": 1,
+                    "vlan": 4094,
+                    "type": 2048
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"vlan-boundary")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_linux_cooked_ipv4_udp() -> ExampleResult<Vector> {
+    let packet = LinuxSll::new()
+        .packet_type(0)
+        .address_type(1)
+        .source_address(parse_mac(SRC_MAC)?)
+        .protocol(ETHERTYPE_IPV4)
+        / Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1249).ttl(56)
+        / Udp::new().sport(53004).dport(10001)
+        / Raw::from("sll-udp");
+
+    vector(
+        "crafter-linux-cooked-ipv4-udp",
+        "link",
+        "link:linux-cooked",
+        vec!["CookedLinux", "IP", "UDP", "Raw"],
+        "CookedLinux / IP / UDP / Raw",
+        packet,
+        vec![
+            fields(
+                "CookedLinux",
+                json!({
+                    "pkttype": 0,
+                    "lladdrtype": 1,
+                    "lladdrlen": 6,
+                    "src": bytes_field(&[0x02, 0x00, 0x5e, 0x00, 0x53, 0x01, 0x00, 0x00]),
+                    "proto": 2048
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"sll-udp")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_null_loopback_ipv4_little_endian() -> ExampleResult<Vector> {
+    let packet = NullLoopback::ipv4()
+        / Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x124a).ttl(55)
+        / Icmp::echo_request().id(0x4244).seq(4);
+
+    vector(
+        "crafter-null-loopback-ipv4-little-endian",
+        "link",
+        "link:null-loopback",
+        vec!["Loopback", "IP", "ICMP"],
+        "Loopback / IP / ICMP",
+        packet,
+        vec![
+            fields(
+                "Loopback",
+                json!({
+                    "type": 2
+                }),
+            ),
+            fields(
+                "ICMP",
+                json!({
+                    "type": 8,
+                    "code": 0,
+                    "id": 16964,
+                    "seq": 4
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv4_boundary_fields() -> ExampleResult<Vector> {
+    let packet = Ipv4::new()
+        .src(SRC_IPV4)
+        .dst(DST_IPV4)
+        .id(0x1243)
+        .tos(0xb8)
+        .ttl(0)
+        .flags(7)
+        .frag(0x1fff)
+        .protocol(253)
+        / Raw::from("v4-boundary");
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+
+    vector(
+        "crafter-ipv4-boundary-fields",
+        "ipv4",
+        "l3:ipv4",
+        vec!["IP", "Raw"],
+        "IP / Raw",
+        packet,
+        vec![
+            fields(
+                "IP",
+                json!({
+                    "version": 4,
+                    "ihl": 5,
+                    "tos": 184,
+                    "len": u16_at(bytes, 2),
+                    "id": 4675,
+                    "flags": "MF+DF+evil",
+                    "frag": 8191,
+                    "ttl": 0,
+                    "proto": 253,
+                    "chksum": u16_at(bytes, 10),
+                    "src": "192.0.2.10",
+                    "dst": "198.51.100.20"
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"v4-boundary")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv4_unknown_protocol_raw() -> ExampleResult<Vector> {
+    let packet = Ipv4::new()
+        .src(SRC_IPV4)
+        .dst(DST_IPV4)
+        .id(0x1244)
+        .ttl(64)
+        .protocol(253)
+        / Raw::from("unknown-ipv4");
+
+    vector(
+        "crafter-ipv4-unknown-protocol-raw",
+        "ipv4",
+        "l3:ipv4",
+        vec!["IP", "Raw"],
+        "IP / Raw",
+        packet,
+        vec![
+            fields(
+                "IP",
+                json!({
+                    "proto": 253,
+                    "ttl": 64
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"unknown-ipv4")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv4_fragment_mf_offset() -> ExampleResult<Vector> {
+    let packet = Ipv4::new()
+        .src(SRC_IPV4)
+        .dst(DST_IPV4)
+        .id(0x1245)
+        .more_fragments(true)
+        .frag(37)
+        .protocol(253)
+        / Raw::from("fragmented-tail");
+
+    vector(
+        "crafter-ipv4-fragment-mf-offset",
+        "ipv4",
+        "l3:ipv4",
+        vec!["IP", "Raw"],
+        "IP / Raw",
+        packet,
+        vec![
+            fields(
+                "IP",
+                json!({
+                    "flags": "MF",
+                    "frag": 37,
+                    "proto": 253
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"fragmented-tail")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv4_ttl_255() -> ExampleResult<Vector> {
+    let packet = Ipv4::new()
+        .src(SRC_IPV4)
+        .dst(DST_IPV4)
+        .id(0x1246)
+        .ttl(255)
+        .dont_fragment(true)
+        .protocol(253)
+        / Raw::from("ttl255");
+
+    vector(
+        "crafter-ipv4-ttl-255",
+        "ipv4",
+        "l3:ipv4",
+        vec!["IP", "Raw"],
+        "IP / Raw",
+        packet,
+        vec![
+            fields(
+                "IP",
+                json!({
+                    "ttl": 255,
+                    "flags": "DF",
+                    "proto": 253
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"ttl255")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv4_options() -> ExampleResult<Vector> {
+    let ip = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1247).ttl(60);
+    let ip = ip.ip_option(Ipv4Option::no_operation())?;
+    let ip = ip.ip_option(Ipv4Option::record_route(4, vec![GW_IPV4]))?;
+    let ip = ip.ip_option(Ipv4Option::generic(0x1e, [0xaa, 0xbb]))?;
+    let ip = ip.ip_option(Ipv4Option::end_of_list())?;
+    let packet = ip.protocol(253) / Raw::from("ip-options");
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+
+    vector(
+        "crafter-ipv4-options",
+        "ipv4",
+        "l3:ipv4",
+        vec!["IP", "Raw"],
+        "IP / Raw",
+        packet,
+        vec![
+            fields(
+                "IP",
+                json!({
+                    "ihl": bytes[0] & 0x0f,
+                    "len": u16_at(bytes, 2),
+                    "proto": 253,
+                    "chksum": u16_at(bytes, 10)
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"ip-options")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv4_source_route_traceroute() -> ExampleResult<Vector> {
+    let ip = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1248).ttl(62);
+    let ip = ip.ip_option(Ipv4Option::loose_source_route(4, vec![GW_IPV4]))?;
+    let ip = ip.ip_option(Ipv4Option::strict_source_route(4, vec![DST_IPV4]))?;
+    let ip = ip.ip_option(Ipv4Option::traceroute(0x1234, 1, 0xffff, SRC_IPV4))?;
+    let packet = ip.protocol(253) / Raw::from("srtrace");
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+
+    vector(
+        "crafter-ipv4-source-route-traceroute",
+        "ipv4",
+        "l3:ipv4",
+        vec!["IP", "Raw"],
+        "IP / Raw",
+        packet,
+        vec![
+            fields(
+                "IP",
+                json!({
+                    "ihl": bytes[0] & 0x0f,
+                    "len": u16_at(bytes, 2),
+                    "proto": 253,
+                    "chksum": u16_at(bytes, 10)
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"srtrace")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv6_boundary_fields() -> ExampleResult<Vector> {
+    let packet = Ipv6::new()
+        .src(src_ipv6()?)
+        .dst(dst_ipv6()?)
+        .tc(0xab)
+        .fl(0xfffff)
+        .hlim(0)
+        .nh(253)
+        / Raw::from("v6-boundary");
+
+    vector(
+        "crafter-ipv6-boundary-fields",
+        "ipv6",
+        "l3:ipv6",
+        vec!["IPv6", "Raw"],
+        "IPv6 / Raw",
+        packet,
+        vec![
+            fields(
+                "IPv6",
+                json!({
+                    "tc": 171,
+                    "fl": 1048575,
+                    "plen": 11,
+                    "nh": 253,
+                    "hlim": 0
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"v6-boundary")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv6_unknown_next_header_raw() -> ExampleResult<Vector> {
+    let packet = Ipv6::new()
+        .src(src_ipv6()?)
+        .dst(dst_ipv6()?)
+        .fl(0)
+        .hlim(255)
+        .nh(253)
+        / Raw::from("unknown-ipv6");
+
+    vector(
+        "crafter-ipv6-unknown-next-header-raw",
+        "ipv6",
+        "l3:ipv6",
+        vec!["IPv6", "Raw"],
+        "IPv6 / Raw",
+        packet,
+        vec![
+            fields(
+                "IPv6",
+                json!({
+                    "fl": 0,
+                    "nh": 253,
+                    "hlim": 255
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"unknown-ipv6")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv6_fragment_udp() -> ExampleResult<Vector> {
+    let packet = Ipv6::new().src(src_ipv6()?).dst(dst_ipv6()?)
+        / Ipv6FragmentHeader::new()
+            .nh(IPPROTO_UDP)
+            .identification(0x0102_0304)
+            .more_fragments(true)
+        / Udp::new().sport(53005).dport(10002)
+        / Raw::from("fragudp");
+
+    vector(
+        "crafter-ipv6-fragment-udp",
+        "ipv6",
+        "l3:ipv6",
+        vec!["IPv6", "IPv6ExtHdrFragment", "UDP", "Raw"],
+        "IPv6 / IPv6ExtHdrFragment / UDP / Raw",
+        packet,
+        vec![
+            fields(
+                "IPv6ExtHdrFragment",
+                json!({
+                    "nh": 17,
+                    "offset": 0,
+                    "m": 1,
+                    "id": 16909060
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"fragudp")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv6_routing_generic() -> ExampleResult<Vector> {
+    let packet = Ipv6::new().src(src_ipv6()?).dst(dst_ipv6()?)
+        / Ipv6RoutingHeader::new()
+            .nh(253)
+            .routing_type(253)
+            .segments_left(0)
+        / Raw::from("route-raw");
+
+    vector(
+        "crafter-ipv6-routing-generic",
+        "ipv6",
+        "l3:ipv6",
+        vec!["IPv6", "IPv6ExtHdrRouting", "Raw"],
+        "IPv6 / IPv6ExtHdrRouting / Raw",
+        packet,
+        vec![
+            fields(
+                "IPv6ExtHdrRouting",
+                json!({
+                    "nh": 253,
+                    "len": 0,
+                    "type": 253,
+                    "segleft": 0,
+                    "addresses": []
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"route-raw")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv6_mobile_routing() -> ExampleResult<Vector> {
+    let packet = Ipv6::new().src(src_ipv6()?).dst(dst_ipv6()?)
+        / Ipv6MobileRoutingHeader::new()
+            .nh(253)
+            .home_address_str("2001:db8:ffff::1")?
+        / Raw::from("mobile-raw");
+
+    vector(
+        "crafter-ipv6-mobile-routing",
+        "ipv6",
+        "l3:ipv6",
+        vec!["IPv6", "IPv6ExtHdrRouting", "Raw"],
+        "IPv6 / IPv6ExtHdrRouting / Raw",
+        packet,
+        vec![
+            fields(
+                "IPv6ExtHdrRouting",
+                json!({
+                    "nh": 253,
+                    "len": 2,
+                    "type": 2,
+                    "segleft": 1,
+                    "addresses": ["2001:db8:ffff::1"]
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"mobile-raw")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv6_segment_routing_udp() -> ExampleResult<Vector> {
+    let packet = Ipv6::new().src(src_ipv6()?).dst(dst_ipv6()?)
+        / Ipv6SegmentRoutingHeader::new()
+            .push_ipv6_segment("2001:db8:ffff::1")?
+            .push_ipv6_segment("2001:db8:ffff::2")?
+        / Udp::new().sport(53006).dport(10003)
+        / Raw::from("srhudp");
+
+    vector(
+        "crafter-ipv6-segment-routing-udp",
+        "ipv6",
+        "l3:ipv6",
+        vec!["IPv6", "IPv6ExtHdrSegmentRouting", "UDP", "Raw"],
+        "IPv6 / IPv6ExtHdrSegmentRouting / UDP / Raw",
+        packet,
+        vec![
+            fields(
+                "IPv6ExtHdrSegmentRouting",
+                json!({
+                    "nh": 17,
+                    "len": 4,
+                    "type": 4,
+                    "segleft": 1,
+                    "lastentry": 1,
+                    "addresses": ["2001:db8:ffff::1", "2001:db8:ffff::2"]
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"srhudp")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv6_routing_tcp_raw() -> ExampleResult<Vector> {
+    let packet = Ipv6::new().src(src_ipv6()?).dst(dst_ipv6()?)
+        / Ipv6RoutingHeader::new()
+            .nh(IPPROTO_TCP)
+            .routing_type(253)
+            .segments_left(0)
+        / Tcp::new()
+            .sport(53007)
+            .dport(443)
+            .flags(TCP_FLAG_PSH | TCP_FLAG_ACK)
+        / Raw::from("chain");
+
+    vector(
+        "crafter-ipv6-routing-tcp-raw",
+        "ipv6",
+        "l3:ipv6",
+        vec!["IPv6", "IPv6ExtHdrRouting", "TCP", "Raw"],
+        "IPv6 / IPv6ExtHdrRouting / TCP / Raw",
+        packet,
+        vec![
+            fields(
+                "IPv6ExtHdrRouting",
+                json!({
+                    "nh": 6,
+                    "type": 253,
+                    "segleft": 0
+                }),
+            ),
+            fields(
+                "TCP",
+                json!({
+                    "sport": 53007,
+                    "dport": 443,
+                    "flags": "PA"
+                }),
+            ),
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(b"chain")
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_ipv6_routing_icmpv6() -> ExampleResult<Vector> {
+    let packet = Ipv6::new().src(src_ipv6()?).dst(dst_ipv6()?)
+        / Ipv6RoutingHeader::new()
+            .nh(IPPROTO_ICMPV6)
+            .routing_type(253)
+            .segments_left(0)
+        / Icmpv6::echo_request().id(0x4246).seq(6)
+        / Raw::from("routeicmp");
+
+    vector(
+        "crafter-ipv6-routing-icmpv6",
+        "ipv6",
+        "l3:ipv6",
+        vec!["IPv6", "IPv6ExtHdrRouting", "ICMPv6EchoRequest"],
+        "IPv6 / IPv6ExtHdrRouting / ICMPv6 Echo Request",
+        packet,
+        vec![
+            fields(
+                "IPv6ExtHdrRouting",
+                json!({
+                    "nh": 58,
+                    "type": 253,
+                    "segleft": 0
+                }),
+            ),
+            fields(
+                "ICMPv6EchoRequest",
+                json!({
+                    "type": 128,
+                    "code": 0,
+                    "id": 16966,
+                    "seq": 6,
+                    "data": bytes_field(b"routeicmp")
+                }),
+            ),
+        ],
+    )
+}
+
 fn vector(
     name: &'static str,
     family: &'static str,
@@ -438,11 +1191,23 @@ fn parse_mac(value: &str) -> ExampleResult<MacAddr> {
     Ok(value.parse::<MacAddr>()?)
 }
 
+fn src_ipv6() -> ExampleResult<Ipv6Addr> {
+    Ok("2001:db8:1::10".parse::<Ipv6Addr>()?)
+}
+
+fn dst_ipv6() -> ExampleResult<Ipv6Addr> {
+    Ok("2001:db8:2::20".parse::<Ipv6Addr>()?)
+}
+
 fn bytes_field(bytes: &[u8]) -> Value {
     json!({
         "ascii": String::from_utf8_lossy(bytes).to_string(),
         "hex": hex_bytes(bytes)
     })
+}
+
+fn u16_at(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {

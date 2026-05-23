@@ -1,0 +1,108 @@
+{
+  "decoded_summary": "Loopback / IP / ICMP 192.0.2.10 > 198.51.100.20 echo-request 0",
+  "description": "BSD null loopback little-endian IPv4 ICMP packet.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "Loopback",
+    "IP",
+    "ICMP"
+  ],
+  "family": "link",
+  "hex": "020000004500001c124a000037018545c000020ac63364140800b5b742440004",
+  "layer_names": [
+    "Loopback",
+    "IP",
+    "ICMP"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "type": 2
+      },
+      "name": "Loopback"
+    },
+    {
+      "fields": {
+        "chksum": 34117,
+        "dst": "198.51.100.20",
+        "flags": "",
+        "frag": 0,
+        "id": 4682,
+        "ihl": 5,
+        "len": 28,
+        "options": [],
+        "proto": 1,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 55,
+        "version": 4
+      },
+      "name": "IP"
+    },
+    {
+      "fields": {
+        "chksum": 46519,
+        "code": 0,
+        "id": 16964,
+        "seq": 4,
+        "type": 8,
+        "unused": {
+          "ascii": "",
+          "hex": ""
+        }
+      },
+      "name": "ICMP"
+    }
+  ],
+  "length": 32,
+  "name": "null-loopback-ipv4-little-endian",
+  "notes": "Checked-in Scapy fixture. BSD null loopback little-endian IPv4 family header followed by ICMP payload.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "type": 2
+      },
+      "layer": "Loopback"
+    },
+    {
+      "fields": {
+        "chksum": 34117,
+        "dst": "198.51.100.20",
+        "flags": "",
+        "frag": 0,
+        "id": 4682,
+        "ihl": 5,
+        "len": 28,
+        "options": [],
+        "proto": 1,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 55,
+        "version": 4
+      },
+      "layer": "IP"
+    },
+    {
+      "fields": {
+        "chksum": 46519,
+        "code": 0,
+        "id": 16964,
+        "seq": 4,
+        "type": 8,
+        "unused": {
+          "ascii": "",
+          "hex": ""
+        }
+      },
+      "layer": "ICMP"
+    }
+  ],
+  "root": "link:null-loopback",
+  "root_decoder": "link:null-loopback",
+  "scapy_root": "Loopback",
+  "scapy_show": "###[ Loopback ]###\n  type      = IPv4\n###[ IP ]###\n     version   = 4\n     ihl       = 5\n     tos       = 0x0\n     len       = 28\n     id        = 4682\n     flags     = \n     frag      = 0\n     ttl       = 55\n     proto     = icmp\n     chksum    = 0x8545\n     src       = 192.0.2.10\n     dst       = 198.51.100.20\n     \\options   \\\n###[ ICMP ]###\n        type      = echo-request\n        code      = 0\n        chksum    = 0xb5b7\n        id        = 0x4244\n        seq       = 0x4\n        unused    = b''\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "Loopback / IP / ICMP 192.0.2.10 > 198.51.100.20 echo-request 0"
+}

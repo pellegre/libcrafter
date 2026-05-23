@@ -1,0 +1,96 @@
+{
+  "decoded_summary": "192.0.2.10 > 198.51.100.20 hopopt / Raw",
+  "description": "IPv4 loose/strict source route and traceroute options.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "IP",
+    "Raw"
+  ],
+  "family": "ipv4",
+  "hex": "4c000037124700003e009643c000020ac6336414830704c0000201890704c6336414520c12340001ffffc000020a000073727472616365",
+  "layer_names": [
+    "IP",
+    "Raw"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "chksum": 38467,
+        "dst": "198.51.100.20",
+        "flags": "",
+        "frag": 0,
+        "id": 4679,
+        "ihl": 12,
+        "len": 55,
+        "options": [
+          "IPOption_LSRR",
+          "IPOption_SSRR",
+          "IPOption_Traceroute",
+          "IPOption_EOL",
+          "IPOption_EOL"
+        ],
+        "proto": 0,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 62,
+        "version": 4
+      },
+      "name": "IP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "srtrace",
+          "hex": "73727472616365"
+        }
+      },
+      "name": "Raw"
+    }
+  ],
+  "length": 55,
+  "name": "ipv4-options-source-route-traceroute",
+  "notes": "Checked-in Scapy fixture. Loose source route, strict source route, traceroute, and padding bytes must remain stable.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "chksum": 38467,
+        "dst": "198.51.100.20",
+        "flags": "",
+        "frag": 0,
+        "id": 4679,
+        "ihl": 12,
+        "len": 55,
+        "options": [
+          "IPOption_LSRR",
+          "IPOption_SSRR",
+          "IPOption_Traceroute",
+          "IPOption_EOL",
+          "IPOption_EOL"
+        ],
+        "proto": 0,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 62,
+        "version": 4
+      },
+      "layer": "IP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "srtrace",
+          "hex": "73727472616365"
+        }
+      },
+      "layer": "Raw"
+    }
+  ],
+  "root": "l3:ipv4",
+  "root_decoder": "l3:ipv4",
+  "scapy_root": "IP",
+  "scapy_show": "###[ IP ]###\n  version   = 4\n  ihl       = 12\n  tos       = 0x0\n  len       = 55\n  id        = 4679\n  flags     = \n  frag      = 0\n  ttl       = 62\n  proto     = hopopt\n  chksum    = 0x9643\n  src       = 192.0.2.10\n  dst       = 198.51.100.20\n  \\options   \\\n   |###[ IP Option Loose Source and Record Route ]###\n   |  copy_flag = 1\n   |  optclass  = control\n   |  option    = loose_source_route\n   |  length    = 7\n   |  pointer   = 4\n   |  routers   = [192.0.2.1]\n   |###[ IP Option Strict Source and Record Route ]###\n   |  copy_flag = 1\n   |  optclass  = control\n   |  option    = strict_source_route\n   |  length    = 7\n   |  pointer   = 4\n   |  routers   = [198.51.100.20]\n   |###[ IP Option Traceroute ]###\n   |  copy_flag = 0\n   |  optclass  = debug\n   |  option    = traceroute\n   |  length    = 12\n   |  id        = 4660\n   |  outbound_hops= 1\n   |  return_hops= 65535\n   |  originator_ip= 192.0.2.10\n   |###[ IP Option End of Options List ]###\n   |  copy_flag = 0\n   |  optclass  = control\n   |  option    = end_of_list\n   |###[ IP Option End of Options List ]###\n   |  copy_flag = 0\n   |  optclass  = control\n   |  option    = end_of_list\n###[ Raw ]###\n     load      = b'srtrace'\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "192.0.2.10 > 198.51.100.20 hopopt / Raw"
+}
