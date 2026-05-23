@@ -1,4 +1,11 @@
-//! Core packet model, protocol encoding, protocol decoding, checksums, and formatting.
+//! Core packet model, protocol encoding, protocol decoding, checksums, and
+//! formatting.
+//!
+//! This crate contains no live socket or provider code. It is intended for
+//! deterministic packet construction, malformed-input-safe decoding, packet
+//! inspection, and reference fixture generation. Most applications should use
+//! the top-level `crafter` facade unless they intentionally need only the core
+//! encoder/decoder surface.
 
 #![forbid(unsafe_code)]
 

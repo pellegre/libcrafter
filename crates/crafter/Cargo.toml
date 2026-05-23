@@ -2,12 +2,20 @@
 name = "crafter"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
-crafter-core = { path = "../crafter-core" }
-crafter-live = { path = "../crafter-live" }
-crafter-net = { path = "../crafter-net" }
-crafter-pcap = { path = "../crafter-pcap" }
+pnet_datalink = "0.35.0"
+pnet_packet = "0.35.0"
+pnet_transport = "0.35.0"

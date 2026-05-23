@@ -1,0 +1,2113 @@
+//! IPv6 base header and IPv6 extension header implementations.
+
+use core::any::Any;
+use core::net::Ipv6Addr;
+use core::ops::Div;
+use core::str::FromStr;
+
+use crate::endian::{read_u16_be, read_u32_be};
+use crate::error::{CrafterError, Result};
+use crate::field::Field;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
+use crate::protocols::icmp::Icmpv6;
+use crate::protocols::ip::{IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
+use crate::protocols::transport::{Tcp, Udp};
+use crate::registry::ProtocolRegistry;
+
+/// IPv6 Hop-by-Hop Options next-header value.
+pub const IPPROTO_IPV6_HOPOPTS: u8 = 0;
+/// IPv6 Routing Header next-header value.
+pub const IPPROTO_IPV6_ROUTE: u8 = 43;
+/// IPv6 Fragment Header next-header value.
+pub const IPPROTO_IPV6_FRAGMENT: u8 = 44;
+/// IPv6 Destination Options next-header value.
+pub const IPPROTO_IPV6_DSTOPTS: u8 = 60;
+
+/// IPv6 Routing Header type for mobile IPv6 home-address routing.
+pub const IPV6_ROUTING_TYPE_MOBILE: u8 = 2;
+/// IPv6 Routing Header type for segment routing.
+pub const IPV6_ROUTING_TYPE_SEGMENT: u8 = 4;
+
+/// Segment-routing policy flag: unset.
+pub const IPV6_SEGMENT_POLICY_UNSET: u8 = 0;
+/// Segment-routing policy flag: ingress router.
+pub const IPV6_SEGMENT_POLICY_INGRESS: u8 = 1;
+/// Segment-routing policy flag: egress router.
+pub const IPV6_SEGMENT_POLICY_EGRESS: u8 = 2;
+/// Segment-routing policy flag: original source address.
+pub const IPV6_SEGMENT_POLICY_SOURCE_ADDRESS: u8 = 3;
+
+const IPV6_HEADER_LEN: usize = 40;
+const IPV6_EXTENSION_MIN_LEN: usize = 8;
+const IPV6_FRAGMENT_HEADER_LEN: usize = 8;
+const IPV6_MOBILE_ROUTING_LEN: usize = 24;
+const IPV6_SEGMENT_BASE_LEN: usize = 8;
+const IPV6_MAX_FLOW_LABEL: u32 = 0x000f_ffff;
+const IPV6_MAX_HEADER_EXT_LEN: usize = 8 + u8::MAX as usize * 8;
+const IPV6_MAX_FRAGMENT_OFFSET: u16 = 0x1fff;
+const IPV6_SEGMENT_HMAC_LEN: usize = 32;
+
+macro_rules! impl_layer_object {
+    ($type:ty) => {
+        fn clone_layer(&self) -> Box<dyn Layer> {
+            Box::new(self.clone())
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+
+        fn into_any(self: Box<Self>) -> Box<dyn Any> {
+            self
+        }
+    };
+}
+
+macro_rules! impl_layer_div {
+    ($type:ty) => {
+        impl<R> Div<R> for $type
+        where
+            R: IntoPacket,
+        {
+            type Output = Packet;
+
+            fn div(self, rhs: R) -> Self::Output {
+                Packet::from_layer(self).concat(rhs)
+            }
+        }
+    };
+}
+
+/// IPv6 base header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ipv6 {
+    version: Field<u8>,
+    traffic_class: Field<u8>,
+    flow_label: Field<u32>,
+    payload_length: Field<u16>,
+    next_header: Field<u8>,
+    hop_limit: Field<u8>,
+    source: Field<Ipv6Addr>,
+    destination: Field<Ipv6Addr>,
+}
+
+impl Ipv6 {
+    /// Create an IPv6 header with deterministic defaults.
+    pub fn new() -> Self {
+        Self {
+            version: Field::defaulted(6),
+            traffic_class: Field::defaulted(0),
+            flow_label: Field::defaulted(0),
+            payload_length: Field::unset(),
+            next_header: Field::defaulted(0),
+            hop_limit: Field::defaulted(64),
+            source: Field::defaulted(Ipv6Addr::LOCALHOST),
+            destination: Field::defaulted(Ipv6Addr::LOCALHOST),
+        }
+    }
+
+    /// Create an IPv6 header with explicit source and destination addresses.
+    pub fn with_addresses(source: Ipv6Addr, destination: Ipv6Addr) -> Self {
+        Self::new().src(source).dst(destination)
+    }
+
+    /// Set the IP version field.
+    pub fn version(mut self, version: u8) -> Self {
+        self.version.set_user(version);
+        self
+    }
+
+    /// Set the traffic class field.
+    pub fn traffic_class(mut self, traffic_class: u8) -> Self {
+        self.traffic_class.set_user(traffic_class);
+        self
+    }
+
+    /// Scapy-style alias for traffic class.
+    pub fn tc(self, traffic_class: u8) -> Self {
+        self.traffic_class(traffic_class)
+    }
+
+    /// Set the flow label.
+    pub fn flow_label(mut self, flow_label: u32) -> Self {
+        self.flow_label.set_user(flow_label);
+        self
+    }
+
+    /// Scapy-style alias for flow label.
+    pub fn fl(self, flow_label: u32) -> Self {
+        self.flow_label(flow_label)
+    }
+
+    /// Set the payload length field explicitly.
+    pub fn payload_length(mut self, payload_length: u16) -> Self {
+        self.payload_length.set_user(payload_length);
+        self
+    }
+
+    /// Scapy-style alias for payload length.
+    pub fn plen(self, payload_length: u16) -> Self {
+        self.payload_length(payload_length)
+    }
+
+    /// Set the next-header field.
+    pub fn next_header(mut self, next_header: u8) -> Self {
+        self.next_header.set_user(next_header);
+        self
+    }
+
+    /// Scapy/libcrafter-style alias for next header.
+    pub fn nh(self, next_header: u8) -> Self {
+        self.next_header(next_header)
+    }
+
+    /// Set the hop limit.
+    pub fn hop_limit(mut self, hop_limit: u8) -> Self {
+        self.hop_limit.set_user(hop_limit);
+        self
+    }
+
+    /// Scapy/libcrafter-style alias for hop limit.
+    pub fn hlim(self, hop_limit: u8) -> Self {
+        self.hop_limit(hop_limit)
+    }
+
+    /// Set the source IPv6 address.
+    pub fn src(mut self, source: Ipv6Addr) -> Self {
+        self.source.set_user(source);
+        self
+    }
+
+    /// Set the source IPv6 address from text.
+    pub fn src_str(self, source: &str) -> Result<Self> {
+        Ok(self.src(parse_ipv6(source)?))
+    }
+
+    /// Set the destination IPv6 address.
+    pub fn dst(mut self, destination: Ipv6Addr) -> Self {
+        self.destination.set_user(destination);
+        self
+    }
+
+    /// Set the destination IPv6 address from text.
+    pub fn dst_str(self, destination: &str) -> Result<Self> {
+        Ok(self.dst(parse_ipv6(destination)?))
+    }
+
+    /// IP version value.
+    pub fn version_value(&self) -> u8 {
+        value_or_copy(&self.version, 6)
+    }
+
+    /// Traffic class value.
+    pub fn traffic_class_value(&self) -> u8 {
+        value_or_copy(&self.traffic_class, 0)
+    }
+
+    /// Flow label value.
+    pub fn flow_label_value(&self) -> u32 {
+        value_or_copy(&self.flow_label, 0)
+    }
+
+    /// Payload length when explicitly stored or decoded.
+    pub fn payload_length_value(&self) -> Option<u16> {
+        self.payload_length.value().copied()
+    }
+
+    /// Next-header value.
+    pub fn next_header_value(&self) -> u8 {
+        value_or_copy(&self.next_header, 0)
+    }
+
+    /// Hop limit value.
+    pub fn hop_limit_value(&self) -> u8 {
+        value_or_copy(&self.hop_limit, 64)
+    }
+
+    /// Source address.
+    pub fn source(&self) -> Ipv6Addr {
+        value_or_copy(&self.source, Ipv6Addr::LOCALHOST)
+    }
+
+    /// Destination address.
+    pub fn destination(&self) -> Ipv6Addr {
+        value_or_copy(&self.destination, Ipv6Addr::LOCALHOST)
+    }
+
+    fn effective_payload_length(&self, payload_len: usize) -> Result<u16> {
+        if let Some(payload_length) = self.payload_length.value().copied() {
+            return Ok(payload_length);
+        }
+
+        u16::try_from(payload_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "ipv6.payload_length",
+                "IPv6 payload length exceeds 65535 bytes",
+            )
+        })
+    }
+
+    fn effective_next_header(&self, next: Option<&dyn Layer>) -> u8 {
+        if self.next_header.is_user_set() {
+            return self.next_header_value();
+        }
+
+        next.and_then(layer_ipv6_next_header)
+            .or_else(|| self.next_header.value().copied())
+            .unwrap_or(0)
+    }
+
+    fn validate(&self, payload_len: usize) -> Result<()> {
+        if self.version_value() != 6 {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.version",
+                "IPv6 layer version must be 6",
+            ));
+        }
+        if self.flow_label_value() > IPV6_MAX_FLOW_LABEL {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.flow_label",
+                "flow label must fit in 20 bits",
+            ));
+        }
+        self.effective_payload_length(payload_len)?;
+        Ok(())
+    }
+}
+
+impl Default for Ipv6 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for Ipv6 {
+    fn name(&self) -> &'static str {
+        "Ipv6"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "Ipv6(src={}, dst={}, next={})",
+            self.source(),
+            self.destination(),
+            next_header_summary(self.next_header_value())
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("version", self.version_value().to_string()),
+            (
+                "traffic_class",
+                format!("0x{:02x}", self.traffic_class_value()),
+            ),
+            ("flow_label", format!("0x{:05x}", self.flow_label_value())),
+            (
+                "payload_length",
+                self.payload_length_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            ("next_header", next_header_summary(self.next_header_value())),
+            ("hop_limit", self.hop_limit_value().to_string()),
+            ("src", self.source().to_string()),
+            ("dst", self.destination().to_string()),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        IPV6_HEADER_LEN
+    }
+
+    fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        let payload_len = payload_len_after(*ctx);
+        self.validate(payload_len)?;
+
+        let version_class_flow = ((self.version_value() as u32) << 28)
+            | ((self.traffic_class_value() as u32) << 20)
+            | self.flow_label_value();
+        out.extend_from_slice(&version_class_flow.to_be_bytes());
+        out.extend_from_slice(&self.effective_payload_length(payload_len)?.to_be_bytes());
+        out.push(self.effective_next_header(ctx.next()));
+        out.push(self.hop_limit_value());
+        out.extend_from_slice(&self.source().octets());
+        out.extend_from_slice(&self.destination().octets());
+        Ok(())
+    }
+
+    fn transport_checksum_context(
+        &self,
+        transport_protocol: u8,
+    ) -> Option<TransportChecksumContext> {
+        Some(TransportChecksumContext::Ipv6 {
+            source: self.source(),
+            destination: self.destination(),
+            next_header: transport_protocol,
+        })
+    }
+
+    impl_layer_object!(Ipv6);
+}
+
+impl_layer_div!(Ipv6);
+
+/// Generic IPv6 Routing Header for routing types not represented by a specialized layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ipv6RoutingHeader {
+    next_header: Field<u8>,
+    header_ext_len: Field<u8>,
+    routing_type: Field<u8>,
+    segments_left: Field<u8>,
+    type_data: Vec<u8>,
+}
+
+impl Ipv6RoutingHeader {
+    /// Create a generic routing header with type 0 and no type-specific data.
+    pub fn new() -> Self {
+        Self {
+            next_header: Field::defaulted(0),
+            header_ext_len: Field::unset(),
+            routing_type: Field::defaulted(0),
+            segments_left: Field::defaulted(0),
+            type_data: Vec::new(),
+        }
+    }
+
+    /// Set the next header after this routing header.
+    pub fn next_header(mut self, next_header: u8) -> Self {
+        self.next_header.set_user(next_header);
+        self
+    }
+
+    /// Scapy/libcrafter-style alias for next header.
+    pub fn nh(self, next_header: u8) -> Self {
+        self.next_header(next_header)
+    }
+
+    /// Set the encoded header extension length.
+    pub fn header_ext_len(mut self, header_ext_len: u8) -> Self {
+        self.header_ext_len.set_user(header_ext_len);
+        self
+    }
+
+    /// Set the routing type.
+    pub fn routing_type(mut self, routing_type: u8) -> Self {
+        self.routing_type.set_user(routing_type);
+        self
+    }
+
+    /// Alias for generated code that wants the protocol field name.
+    pub fn type_(self, routing_type: u8) -> Self {
+        self.routing_type(routing_type)
+    }
+
+    /// Set the segments-left field.
+    pub fn segments_left(mut self, segments_left: u8) -> Self {
+        self.segments_left.set_user(segments_left);
+        self
+    }
+
+    /// libcrafter-style alias for segments left.
+    pub fn segleft(self, segments_left: u8) -> Self {
+        self.segments_left(segments_left)
+    }
+
+    /// Replace the type-specific data bytes after the first four header bytes.
+    pub fn type_data(mut self, type_data: impl Into<Vec<u8>>) -> Self {
+        self.type_data = type_data.into();
+        self
+    }
+
+    /// Append type-specific data bytes.
+    pub fn append_type_data(mut self, type_data: impl AsRef<[u8]>) -> Self {
+        self.type_data.extend_from_slice(type_data.as_ref());
+        self
+    }
+
+    /// Next-header value.
+    pub fn next_header_value(&self) -> u8 {
+        value_or_copy(&self.next_header, 0)
+    }
+
+    /// Header extension length when explicit or decoded.
+    pub fn header_ext_len_value(&self) -> Option<u8> {
+        self.header_ext_len.value().copied()
+    }
+
+    /// Routing type.
+    pub fn routing_type_value(&self) -> u8 {
+        value_or_copy(&self.routing_type, 0)
+    }
+
+    /// Segments-left value.
+    pub fn segments_left_value(&self) -> u8 {
+        value_or_copy(&self.segments_left, 0)
+    }
+
+    /// Type-specific data bytes.
+    pub fn type_data_bytes(&self) -> &[u8] {
+        &self.type_data
+    }
+
+    fn effective_total_len(&self) -> usize {
+        self.header_ext_len
+            .value()
+            .map(|value| IPV6_EXTENSION_MIN_LEN + *value as usize * 8)
+            .unwrap_or_else(|| routing_total_len_for_type_data(self.type_data.len()))
+    }
+
+    fn effective_header_ext_len(&self) -> Result<u8> {
+        header_ext_len_from_total("ipv6.routing.header_ext_len", self.effective_total_len())
+    }
+
+    fn effective_next_header(&self, next: Option<&dyn Layer>) -> u8 {
+        if self.next_header.is_user_set() {
+            return self.next_header_value();
+        }
+
+        next.and_then(layer_ipv6_next_header)
+            .or_else(|| self.next_header.value().copied())
+            .unwrap_or(0)
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_extension_total_len("ipv6.routing.header_ext_len", self.effective_total_len())?;
+        if self.effective_total_len() < 4 + self.type_data.len() {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.routing.type_data",
+                "type-specific data does not fit in the routing header length",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for Ipv6RoutingHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for Ipv6RoutingHeader {
+    fn name(&self) -> &'static str {
+        "Ipv6RoutingHeader"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "Ipv6RoutingHeader(type={}, segleft={}, next={})",
+            self.routing_type_value(),
+            self.segments_left_value(),
+            next_header_summary(self.next_header_value())
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("next_header", next_header_summary(self.next_header_value())),
+            (
+                "header_ext_len",
+                self.header_ext_len_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            ("routing_type", self.routing_type_value().to_string()),
+            ("segments_left", self.segments_left_value().to_string()),
+            ("type_data", hex_bytes(&self.type_data)),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        self.effective_total_len()
+    }
+
+    fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.validate()?;
+        let start = out.len();
+        let total_len = self.effective_total_len();
+
+        out.push(self.effective_next_header(ctx.next()));
+        out.push(self.effective_header_ext_len()?);
+        out.push(self.routing_type_value());
+        out.push(self.segments_left_value());
+        out.extend_from_slice(&self.type_data);
+        out.resize(start + total_len, 0);
+        Ok(())
+    }
+
+    impl_layer_object!(Ipv6RoutingHeader);
+}
+
+impl_layer_div!(Ipv6RoutingHeader);
+
+/// IPv6 Fragment Header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ipv6FragmentHeader {
+    next_header: Field<u8>,
+    reserved: Field<u8>,
+    fragment_offset: Field<u16>,
+    res: Field<u8>,
+    more_fragments: Field<bool>,
+    identification: Field<u32>,
+}
+
+impl Ipv6FragmentHeader {
+    /// Create a fragment header with deterministic defaults.
+    pub fn new() -> Self {
+        Self {
+            next_header: Field::defaulted(IPPROTO_TCP),
+            reserved: Field::defaulted(0),
+            fragment_offset: Field::defaulted(0),
+            res: Field::defaulted(0),
+            more_fragments: Field::defaulted(false),
+            identification: Field::defaulted(0),
+        }
+    }
+
+    /// Set the next header after this fragment header.
+    pub fn next_header(mut self, next_header: u8) -> Self {
+        self.next_header.set_user(next_header);
+        self
+    }
+
+    /// Scapy/libcrafter-style alias for next header.
+    pub fn nh(self, next_header: u8) -> Self {
+        self.next_header(next_header)
+    }
+
+    /// Set the reserved byte.
+    pub fn reserved(mut self, reserved: u8) -> Self {
+        self.reserved.set_user(reserved);
+        self
+    }
+
+    /// Set the fragment offset in 8-byte units.
+    pub fn fragment_offset(mut self, fragment_offset: u16) -> Self {
+        self.fragment_offset.set_user(fragment_offset);
+        self
+    }
+
+    /// Scapy-style alias for fragment offset.
+    pub fn frag(self, fragment_offset: u16) -> Self {
+        self.fragment_offset(fragment_offset)
+    }
+
+    /// Set the two reserved flag bits in the fragment field.
+    pub fn res(mut self, res: u8) -> Self {
+        self.res.set_user(res);
+        self
+    }
+
+    /// Set or clear the more-fragments flag.
+    pub fn more_fragments(mut self, more_fragments: bool) -> Self {
+        self.more_fragments.set_user(more_fragments);
+        self
+    }
+
+    /// libcrafter-style alias for more-fragments flag.
+    pub fn mflag(self, more_fragments: bool) -> Self {
+        self.more_fragments(more_fragments)
+    }
+
+    /// Set the fragment identification.
+    pub fn identification(mut self, identification: u32) -> Self {
+        self.identification.set_user(identification);
+        self
+    }
+
+    /// Scapy/libcrafter-style alias for identification.
+    pub fn id(self, identification: u32) -> Self {
+        self.identification(identification)
+    }
+
+    /// Next-header value.
+    pub fn next_header_value(&self) -> u8 {
+        value_or_copy(&self.next_header, IPPROTO_TCP)
+    }
+
+    /// Reserved byte value.
+    pub fn reserved_value(&self) -> u8 {
+        value_or_copy(&self.reserved, 0)
+    }
+
+    /// Fragment offset in 8-byte units.
+    pub fn fragment_offset_value(&self) -> u16 {
+        value_or_copy(&self.fragment_offset, 0)
+    }
+
+    /// Two reserved bits in the fragment field.
+    pub fn res_value(&self) -> u8 {
+        value_or_copy(&self.res, 0)
+    }
+
+    /// Return true when the more-fragments flag is set.
+    pub fn has_more_fragments(&self) -> bool {
+        value_or_copy(&self.more_fragments, false)
+    }
+
+    /// Fragment identification value.
+    pub fn identification_value(&self) -> u32 {
+        value_or_copy(&self.identification, 0)
+    }
+
+    fn effective_next_header(&self, next: Option<&dyn Layer>) -> u8 {
+        if self.next_header.is_user_set() {
+            return self.next_header_value();
+        }
+
+        next.and_then(layer_ipv6_next_header)
+            .or_else(|| self.next_header.value().copied())
+            .unwrap_or(IPPROTO_TCP)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.fragment_offset_value() > IPV6_MAX_FRAGMENT_OFFSET {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.fragment.fragment_offset",
+                "fragment offset must fit in 13 bits",
+            ));
+        }
+        if self.res_value() > 0x03 {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.fragment.res",
+                "fragment reserved bits must fit in two bits",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for Ipv6FragmentHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for Ipv6FragmentHeader {
+    fn name(&self) -> &'static str {
+        "Ipv6FragmentHeader"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "Ipv6FragmentHeader(offset={}, m={}, next={})",
+            self.fragment_offset_value(),
+            self.has_more_fragments(),
+            next_header_summary(self.next_header_value())
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("next_header", next_header_summary(self.next_header_value())),
+            ("reserved", format!("0x{:02x}", self.reserved_value())),
+            ("fragment_offset", self.fragment_offset_value().to_string()),
+            ("res", self.res_value().to_string()),
+            ("more_fragments", self.has_more_fragments().to_string()),
+            (
+                "identification",
+                format!("0x{:08x}", self.identification_value()),
+            ),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        IPV6_FRAGMENT_HEADER_LEN
+    }
+
+    fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.validate()?;
+        let fragment_field = (self.fragment_offset_value() << 3)
+            | ((self.res_value() as u16) << 1)
+            | u16::from(self.has_more_fragments());
+
+        out.push(self.effective_next_header(ctx.next()));
+        out.push(self.reserved_value());
+        out.extend_from_slice(&fragment_field.to_be_bytes());
+        out.extend_from_slice(&self.identification_value().to_be_bytes());
+        Ok(())
+    }
+
+    impl_layer_object!(Ipv6FragmentHeader);
+}
+
+impl_layer_div!(Ipv6FragmentHeader);
+
+/// IPv6 Mobile Routing Header (Routing Header type 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ipv6MobileRoutingHeader {
+    next_header: Field<u8>,
+    header_ext_len: Field<u8>,
+    routing_type: Field<u8>,
+    segments_left: Field<u8>,
+    reserved: Field<u32>,
+    home_address: Field<Ipv6Addr>,
+}
+
+impl Ipv6MobileRoutingHeader {
+    /// Create a mobile routing header.
+    pub fn new() -> Self {
+        Self {
+            next_header: Field::defaulted(0),
+            header_ext_len: Field::unset(),
+            routing_type: Field::defaulted(IPV6_ROUTING_TYPE_MOBILE),
+            segments_left: Field::unset(),
+            reserved: Field::defaulted(0),
+            home_address: Field::defaulted(Ipv6Addr::LOCALHOST),
+        }
+    }
+
+    /// Set the next header after this routing header.
+    pub fn next_header(mut self, next_header: u8) -> Self {
+        self.next_header.set_user(next_header);
+        self
+    }
+
+    /// Scapy/libcrafter-style alias for next header.
+    pub fn nh(self, next_header: u8) -> Self {
+        self.next_header(next_header)
+    }
+
+    /// Set the encoded header extension length.
+    pub fn header_ext_len(mut self, header_ext_len: u8) -> Self {
+        self.header_ext_len.set_user(header_ext_len);
+        self
+    }
+
+    /// Set the routing type field.
+    pub fn routing_type(mut self, routing_type: u8) -> Self {
+        self.routing_type.set_user(routing_type);
+        self
+    }
+
+    /// Set the segments-left field.
+    pub fn segments_left(mut self, segments_left: u8) -> Self {
+        self.segments_left.set_user(segments_left);
+        self
+    }
+
+    /// libcrafter-style alias for segments left.
+    pub fn segleft(self, segments_left: u8) -> Self {
+        self.segments_left(segments_left)
+    }
+
+    /// Set the reserved field.
+    pub fn reserved(mut self, reserved: u32) -> Self {
+        self.reserved.set_user(reserved);
+        self
+    }
+
+    /// Set the home address.
+    pub fn home_address(mut self, home_address: Ipv6Addr) -> Self {
+        self.home_address.set_user(home_address);
+        self
+    }
+
+    /// libcrafter-style alias for home address.
+    pub fn home(self, home_address: Ipv6Addr) -> Self {
+        self.home_address(home_address)
+    }
+
+    /// Set the home address from text.
+    pub fn home_address_str(self, home_address: &str) -> Result<Self> {
+        Ok(self.home_address(parse_ipv6(home_address)?))
+    }
+
+    /// libcrafter-style alias for textual home address.
+    pub fn home_str(self, home_address: &str) -> Result<Self> {
+        self.home_address_str(home_address)
+    }
+
+    /// Next-header value.
+    pub fn next_header_value(&self) -> u8 {
+        value_or_copy(&self.next_header, 0)
+    }
+
+    /// Header extension length when explicit or decoded.
+    pub fn header_ext_len_value(&self) -> Option<u8> {
+        self.header_ext_len.value().copied()
+    }
+
+    /// Routing type.
+    pub fn routing_type_value(&self) -> u8 {
+        value_or_copy(&self.routing_type, IPV6_ROUTING_TYPE_MOBILE)
+    }
+
+    /// Segments-left value.
+    pub fn segments_left_value(&self) -> u8 {
+        self.segments_left.value().copied().unwrap_or(1)
+    }
+
+    /// Reserved field.
+    pub fn reserved_value(&self) -> u32 {
+        value_or_copy(&self.reserved, 0)
+    }
+
+    /// Home address value.
+    pub fn home_address_value(&self) -> Ipv6Addr {
+        value_or_copy(&self.home_address, Ipv6Addr::LOCALHOST)
+    }
+
+    fn effective_total_len(&self) -> usize {
+        self.header_ext_len
+            .value()
+            .map(|value| IPV6_EXTENSION_MIN_LEN + *value as usize * 8)
+            .unwrap_or(IPV6_MOBILE_ROUTING_LEN)
+    }
+
+    fn effective_header_ext_len(&self) -> Result<u8> {
+        header_ext_len_from_total("ipv6.mobile.header_ext_len", self.effective_total_len())
+    }
+
+    fn effective_next_header(&self, next: Option<&dyn Layer>) -> u8 {
+        if self.next_header.is_user_set() {
+            return self.next_header_value();
+        }
+
+        next.and_then(layer_ipv6_next_header)
+            .or_else(|| self.next_header.value().copied())
+            .unwrap_or(0)
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_extension_total_len("ipv6.mobile.header_ext_len", self.effective_total_len())?;
+        if self.effective_total_len() < IPV6_MOBILE_ROUTING_LEN {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.mobile.header_ext_len",
+                "mobile routing header must be at least 24 bytes",
+            ));
+        }
+        if self.routing_type_value() != IPV6_ROUTING_TYPE_MOBILE {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.mobile.routing_type",
+                "mobile routing header type must be 2",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for Ipv6MobileRoutingHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for Ipv6MobileRoutingHeader {
+    fn name(&self) -> &'static str {
+        "Ipv6MobileRoutingHeader"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "Ipv6MobileRoutingHeader(home={}, next={})",
+            self.home_address_value(),
+            next_header_summary(self.next_header_value())
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("next_header", next_header_summary(self.next_header_value())),
+            (
+                "header_ext_len",
+                self.header_ext_len_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            ("routing_type", self.routing_type_value().to_string()),
+            ("segments_left", self.segments_left_value().to_string()),
+            ("reserved", format!("0x{:08x}", self.reserved_value())),
+            ("home_address", self.home_address_value().to_string()),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        self.effective_total_len()
+    }
+
+    fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.validate()?;
+        let start = out.len();
+        let total_len = self.effective_total_len();
+
+        out.push(self.effective_next_header(ctx.next()));
+        out.push(self.effective_header_ext_len()?);
+        out.push(self.routing_type_value());
+        out.push(self.segments_left_value());
+        out.extend_from_slice(&self.reserved_value().to_be_bytes());
+        out.extend_from_slice(&self.home_address_value().octets());
+        out.resize(start + total_len, 0);
+        Ok(())
+    }
+
+    impl_layer_object!(Ipv6MobileRoutingHeader);
+}
+
+impl_layer_div!(Ipv6MobileRoutingHeader);
+
+/// IPv6 Segment Routing Header (Routing Header type 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ipv6SegmentRoutingHeader {
+    next_header: Field<u8>,
+    header_ext_len: Field<u8>,
+    routing_type: Field<u8>,
+    segments_left: Field<u8>,
+    first_segment: Field<u8>,
+    c_flag: Field<bool>,
+    p_flag: Field<bool>,
+    reserved: Field<u8>,
+    policy_flag1: Field<u8>,
+    policy_flag2: Field<u8>,
+    policy_flag3: Field<u8>,
+    policy_flag4: Field<u8>,
+    hmac_key_id: Field<u8>,
+    segments: Vec<Ipv6Addr>,
+    policies: [Ipv6Addr; 4],
+    hmac: [u8; IPV6_SEGMENT_HMAC_LEN],
+    extra_data: Vec<u8>,
+}
+
+impl Ipv6SegmentRoutingHeader {
+    /// Create an empty segment routing header.
+    pub fn new() -> Self {
+        Self {
+            next_header: Field::defaulted(0),
+            header_ext_len: Field::unset(),
+            routing_type: Field::defaulted(IPV6_ROUTING_TYPE_SEGMENT),
+            segments_left: Field::unset(),
+            first_segment: Field::unset(),
+            c_flag: Field::defaulted(false),
+            p_flag: Field::defaulted(false),
+            reserved: Field::defaulted(0),
+            policy_flag1: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
+            policy_flag2: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
+            policy_flag3: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
+            policy_flag4: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
+            hmac_key_id: Field::defaulted(0),
+            segments: Vec::new(),
+            policies: [Ipv6Addr::UNSPECIFIED; 4],
+            hmac: [0; IPV6_SEGMENT_HMAC_LEN],
+            extra_data: Vec::new(),
+        }
+    }
+
+    /// Set the next header after this segment routing header.
+    pub fn next_header(mut self, next_header: u8) -> Self {
+        self.next_header.set_user(next_header);
+        self
+    }
+
+    /// Scapy/libcrafter-style alias for next header.
+    pub fn nh(self, next_header: u8) -> Self {
+        self.next_header(next_header)
+    }
+
+    /// Set the encoded header extension length.
+    pub fn header_ext_len(mut self, header_ext_len: u8) -> Self {
+        self.header_ext_len.set_user(header_ext_len);
+        self
+    }
+
+    /// Set the routing type field.
+    pub fn routing_type(mut self, routing_type: u8) -> Self {
+        self.routing_type.set_user(routing_type);
+        self
+    }
+
+    /// Set the segments-left field.
+    pub fn segments_left(mut self, segments_left: u8) -> Self {
+        self.segments_left.set_user(segments_left);
+        self
+    }
+
+    /// libcrafter-style alias for segments left.
+    pub fn segleft(self, segments_left: u8) -> Self {
+        self.segments_left(segments_left)
+    }
+
+    /// Set the first-segment field.
+    pub fn first_segment(mut self, first_segment: u8) -> Self {
+        self.first_segment.set_user(first_segment);
+        self
+    }
+
+    /// Set or clear the cleanup flag.
+    pub fn c_flag(mut self, c_flag: bool) -> Self {
+        self.c_flag.set_user(c_flag);
+        self
+    }
+
+    /// Set or clear the protected flag.
+    pub fn p_flag(mut self, p_flag: bool) -> Self {
+        self.p_flag.set_user(p_flag);
+        self
+    }
+
+    /// libcrafter-style alias for protected flag.
+    pub fn pflag(self, p_flag: bool) -> Self {
+        self.p_flag(p_flag)
+    }
+
+    /// Set the two reserved bits.
+    pub fn reserved(mut self, reserved: u8) -> Self {
+        self.reserved.set_user(reserved);
+        self
+    }
+
+    /// Set policy flag 1.
+    pub fn policy_flag1(mut self, policy_flag: u8) -> Self {
+        self.policy_flag1.set_user(policy_flag);
+        self
+    }
+
+    /// Set policy flag 2.
+    pub fn policy_flag2(mut self, policy_flag: u8) -> Self {
+        self.policy_flag2.set_user(policy_flag);
+        self
+    }
+
+    /// Set policy flag 3.
+    pub fn policy_flag3(mut self, policy_flag: u8) -> Self {
+        self.policy_flag3.set_user(policy_flag);
+        self
+    }
+
+    /// Set policy flag 4.
+    pub fn policy_flag4(mut self, policy_flag: u8) -> Self {
+        self.policy_flag4.set_user(policy_flag);
+        self
+    }
+
+    /// Set one policy flag by zero-based policy index.
+    pub fn policy_flag(mut self, index: usize, policy_flag: u8) -> Result<Self> {
+        self.set_policy_flag(index, policy_flag)?;
+        Ok(self)
+    }
+
+    /// Set the HMAC key identifier.
+    pub fn hmac_key_id(mut self, hmac_key_id: u8) -> Self {
+        self.hmac_key_id.set_user(hmac_key_id);
+        self
+    }
+
+    /// Replace the HMAC bytes.
+    pub fn hmac(mut self, hmac: [u8; IPV6_SEGMENT_HMAC_LEN]) -> Self {
+        self.hmac = hmac;
+        self
+    }
+
+    /// Append a segment address.
+    pub fn segment(mut self, segment: Ipv6Addr) -> Self {
+        self.segments.push(segment);
+        self
+    }
+
+    /// libcrafter-style alias for appending a segment.
+    pub fn push_segment(self, segment: Ipv6Addr) -> Self {
+        self.segment(segment)
+    }
+
+    /// Append a textual segment address.
+    pub fn segment_str(self, segment: &str) -> Result<Self> {
+        Ok(self.segment(parse_ipv6(segment)?))
+    }
+
+    /// libcrafter-style alias for appending a textual segment.
+    pub fn push_ipv6_segment(self, segment: &str) -> Result<Self> {
+        self.segment_str(segment)
+    }
+
+    /// Set a policy address and flag by zero-based policy index.
+    pub fn policy(mut self, index: usize, policy: Ipv6Addr, policy_flag: u8) -> Result<Self> {
+        self.set_policy(index, policy, policy_flag)?;
+        Ok(self)
+    }
+
+    /// Set a textual policy address and flag by zero-based policy index.
+    pub fn policy_str(self, index: usize, policy: &str, policy_flag: u8) -> Result<Self> {
+        self.policy(index, parse_ipv6(policy)?, policy_flag)
+    }
+
+    /// Preserve or append extra bytes after known segment-routing fields.
+    pub fn extra_data(mut self, extra_data: impl Into<Vec<u8>>) -> Self {
+        self.extra_data = extra_data.into();
+        self
+    }
+
+    /// Next-header value.
+    pub fn next_header_value(&self) -> u8 {
+        value_or_copy(&self.next_header, 0)
+    }
+
+    /// Header extension length when explicit or decoded.
+    pub fn header_ext_len_value(&self) -> Option<u8> {
+        self.header_ext_len.value().copied()
+    }
+
+    /// Routing type.
+    pub fn routing_type_value(&self) -> u8 {
+        value_or_copy(&self.routing_type, IPV6_ROUTING_TYPE_SEGMENT)
+    }
+
+    /// Segments-left value.
+    pub fn segments_left_value(&self) -> u8 {
+        self.segments_left
+            .value()
+            .copied()
+            .unwrap_or_else(|| saturating_last_index(self.segments.len()))
+    }
+
+    /// First-segment value.
+    pub fn first_segment_value(&self) -> u8 {
+        self.first_segment
+            .value()
+            .copied()
+            .unwrap_or_else(|| saturating_last_index(self.segments.len()))
+    }
+
+    /// Return true when the cleanup flag is set.
+    pub fn c_flag_value(&self) -> bool {
+        value_or_copy(&self.c_flag, false)
+    }
+
+    /// Return true when the protected flag is set.
+    pub fn p_flag_value(&self) -> bool {
+        value_or_copy(&self.p_flag, false)
+    }
+
+    /// Reserved two-bit value.
+    pub fn reserved_value(&self) -> u8 {
+        value_or_copy(&self.reserved, 0)
+    }
+
+    /// Policy flags.
+    pub fn policy_flags(&self) -> [u8; 4] {
+        [
+            value_or_copy(&self.policy_flag1, IPV6_SEGMENT_POLICY_UNSET),
+            value_or_copy(&self.policy_flag2, IPV6_SEGMENT_POLICY_UNSET),
+            value_or_copy(&self.policy_flag3, IPV6_SEGMENT_POLICY_UNSET),
+            value_or_copy(&self.policy_flag4, IPV6_SEGMENT_POLICY_UNSET),
+        ]
+    }
+
+    /// HMAC key identifier.
+    pub fn hmac_key_id_value(&self) -> u8 {
+        value_or_copy(&self.hmac_key_id, 0)
+    }
+
+    /// Segment addresses.
+    pub fn segments(&self) -> &[Ipv6Addr] {
+        &self.segments
+    }
+
+    /// Policy addresses.
+    pub fn policies(&self) -> &[Ipv6Addr; 4] {
+        &self.policies
+    }
+
+    /// HMAC bytes.
+    pub fn hmac_bytes(&self) -> &[u8; IPV6_SEGMENT_HMAC_LEN] {
+        &self.hmac
+    }
+
+    /// Extra bytes preserved after known fields.
+    pub fn extra_data_bytes(&self) -> &[u8] {
+        &self.extra_data
+    }
+
+    fn set_policy(&mut self, index: usize, policy: Ipv6Addr, policy_flag: u8) -> Result<()> {
+        if index >= self.policies.len() {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.policy",
+                "policy index must be in the range 0..4",
+            ));
+        }
+        self.policies[index] = policy;
+        self.set_policy_flag(index, policy_flag)
+    }
+
+    fn set_policy_flag(&mut self, index: usize, policy_flag: u8) -> Result<()> {
+        if policy_flag > 0x07 {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.policy_flag",
+                "policy flag must fit in three bits",
+            ));
+        }
+        match index {
+            0 => self.policy_flag1.set_user(policy_flag),
+            1 => self.policy_flag2.set_user(policy_flag),
+            2 => self.policy_flag3.set_user(policy_flag),
+            3 => self.policy_flag4.set_user(policy_flag),
+            _ => {
+                return Err(CrafterError::invalid_field_value(
+                    "ipv6.segment.policy",
+                    "policy index must be in the range 0..4",
+                ))
+            }
+        }
+        Ok(())
+    }
+
+    fn known_variable_len(&self) -> usize {
+        self.segments.len() * 16
+            + self
+                .policy_flags()
+                .iter()
+                .filter(|flag| **flag != IPV6_SEGMENT_POLICY_UNSET)
+                .count()
+                * 16
+            + if self.hmac_key_id_value() == 0 {
+                0
+            } else {
+                IPV6_SEGMENT_HMAC_LEN
+            }
+            + self.extra_data.len()
+    }
+
+    fn effective_total_len(&self) -> usize {
+        self.header_ext_len
+            .value()
+            .map(|value| IPV6_EXTENSION_MIN_LEN + *value as usize * 8)
+            .unwrap_or_else(|| round_up_to_8(IPV6_SEGMENT_BASE_LEN + self.known_variable_len()))
+    }
+
+    fn effective_header_ext_len(&self) -> Result<u8> {
+        header_ext_len_from_total("ipv6.segment.header_ext_len", self.effective_total_len())
+    }
+
+    fn effective_next_header(&self, next: Option<&dyn Layer>) -> u8 {
+        if self.next_header.is_user_set() {
+            return self.next_header_value();
+        }
+
+        next.and_then(layer_ipv6_next_header)
+            .or_else(|| self.next_header.value().copied())
+            .unwrap_or(0)
+    }
+
+    fn flags_word(&self) -> u16 {
+        let policies = self.policy_flags();
+        (u16::from(self.c_flag_value()) << 15)
+            | (u16::from(self.p_flag_value()) << 14)
+            | ((self.reserved_value() as u16) << 12)
+            | ((policies[0] as u16) << 9)
+            | ((policies[1] as u16) << 6)
+            | ((policies[2] as u16) << 3)
+            | policies[3] as u16
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_extension_total_len("ipv6.segment.header_ext_len", self.effective_total_len())?;
+        if self.routing_type_value() != IPV6_ROUTING_TYPE_SEGMENT {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.routing_type",
+                "segment routing header type must be 4",
+            ));
+        }
+        if self.segments.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.segments",
+                "segment routing header requires at least one segment",
+            ));
+        }
+        if self.first_segment_value() as usize >= self.segments.len() {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.first_segment",
+                "first segment must refer to an existing segment",
+            ));
+        }
+        if self.segments_left_value() as usize >= self.segments.len() {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.segments_left",
+                "segments left must refer to an existing segment",
+            ));
+        }
+        if self.reserved_value() > 0x03 {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.reserved",
+                "reserved value must fit in two bits",
+            ));
+        }
+        if self.policy_flags().iter().any(|flag| *flag > 0x07) {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.policy_flag",
+                "policy flags must fit in three bits",
+            ));
+        }
+        if self.effective_total_len() < IPV6_SEGMENT_BASE_LEN + self.known_variable_len() {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.header_ext_len",
+                "header extension length is too small for segment data",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for Ipv6SegmentRoutingHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for Ipv6SegmentRoutingHeader {
+    fn name(&self) -> &'static str {
+        "Ipv6SegmentRoutingHeader"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "Ipv6SegmentRoutingHeader(segments={}, segleft={}, next={})",
+            self.segments.len(),
+            self.segments_left_value(),
+            next_header_summary(self.next_header_value())
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("next_header", next_header_summary(self.next_header_value())),
+            (
+                "header_ext_len",
+                self.header_ext_len_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            ("routing_type", self.routing_type_value().to_string()),
+            ("segments_left", self.segments_left_value().to_string()),
+            ("first_segment", self.first_segment_value().to_string()),
+            ("c_flag", self.c_flag_value().to_string()),
+            ("p_flag", self.p_flag_value().to_string()),
+            ("reserved", self.reserved_value().to_string()),
+            ("policy_flags", format!("{:?}", self.policy_flags())),
+            ("hmac_key_id", self.hmac_key_id_value().to_string()),
+            ("segments", ipv6_list_summary(&self.segments)),
+            ("extra_data", hex_bytes(&self.extra_data)),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        self.effective_total_len()
+    }
+
+    fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.validate()?;
+        let start = out.len();
+        let total_len = self.effective_total_len();
+
+        out.push(self.effective_next_header(ctx.next()));
+        out.push(self.effective_header_ext_len()?);
+        out.push(self.routing_type_value());
+        out.push(self.segments_left_value());
+        out.push(self.first_segment_value());
+        out.extend_from_slice(&self.flags_word().to_be_bytes());
+        out.push(self.hmac_key_id_value());
+        for segment in &self.segments {
+            out.extend_from_slice(&segment.octets());
+        }
+        for (index, flag) in self.policy_flags().iter().enumerate() {
+            if *flag != IPV6_SEGMENT_POLICY_UNSET {
+                out.extend_from_slice(&self.policies[index].octets());
+            }
+        }
+        if self.hmac_key_id_value() != 0 {
+            out.extend_from_slice(&self.hmac);
+        }
+        out.extend_from_slice(&self.extra_data);
+        out.resize(start + total_len, 0);
+        Ok(())
+    }
+
+    impl_layer_object!(Ipv6SegmentRoutingHeader);
+}
+
+impl_layer_div!(Ipv6SegmentRoutingHeader);
+
+/// Append a decoded IPv6 packet using an explicit registry.
+pub(crate) fn append_ipv6_packet_with_registry(
+    registry: &ProtocolRegistry,
+    packet: Packet,
+    bytes: &[u8],
+) -> Result<Packet> {
+    let (ipv6, payload, rest) = decode_ipv6_parts(bytes)?;
+    append_ipv6_payload_with_registry(registry, packet.push(ipv6), payload, rest)
+}
+
+fn decode_ipv6_parts(bytes: &[u8]) -> Result<(Ipv6, &[u8], &[u8])> {
+    if bytes.len() < IPV6_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ipv6 header",
+            IPV6_HEADER_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let version_class_flow = read_u32_be(&bytes[0..4])?;
+    let version = (version_class_flow >> 28) as u8;
+    if version != 6 {
+        return Err(CrafterError::invalid_field_value(
+            "ipv6.version",
+            "IPv6 packets must have version 6",
+        ));
+    }
+
+    let payload_length = read_u16_be(&bytes[4..6])? as usize;
+    let total_length = IPV6_HEADER_LEN + payload_length;
+    if bytes.len() < total_length {
+        return Err(CrafterError::buffer_too_short(
+            "ipv6 packet",
+            total_length,
+            bytes.len(),
+        ));
+    }
+
+    let ipv6 = Ipv6 {
+        version: Field::user(version),
+        traffic_class: Field::user(((version_class_flow >> 20) & 0xff) as u8),
+        flow_label: Field::user(version_class_flow & IPV6_MAX_FLOW_LABEL),
+        payload_length: Field::user(payload_length as u16),
+        next_header: Field::user(bytes[6]),
+        hop_limit: Field::user(bytes[7]),
+        source: Field::user(Ipv6Addr::from(copy_array_16(&bytes[8..24]))),
+        destination: Field::user(Ipv6Addr::from(copy_array_16(&bytes[24..40]))),
+    };
+
+    Ok((
+        ipv6,
+        &bytes[IPV6_HEADER_LEN..total_length],
+        &bytes[total_length..],
+    ))
+}
+
+fn append_ipv6_payload_with_registry(
+    registry: &ProtocolRegistry,
+    mut packet: Packet,
+    payload: &[u8],
+    rest: &[u8],
+) -> Result<Packet> {
+    let next_header = packet
+        .layer::<Ipv6>()
+        .map(Ipv6::next_header_value)
+        .unwrap_or_default();
+
+    packet = append_ipv6_next_with_registry(registry, packet, next_header, payload)?;
+
+    if !rest.is_empty() {
+        packet = packet.push(Raw::from_bytes(rest));
+    }
+
+    Ok(packet)
+}
+
+fn append_ipv6_next_with_registry(
+    registry: &ProtocolRegistry,
+    mut packet: Packet,
+    mut next_header: u8,
+    mut payload: &[u8],
+) -> Result<Packet> {
+    loop {
+        match next_header {
+            IPPROTO_IPV6_ROUTE => {
+                let (routing, inner_next_header, remaining) = decode_routing_header(payload)?;
+                packet = match routing {
+                    DecodedRoutingHeader::Generic(layer) => packet.push(layer),
+                    DecodedRoutingHeader::Mobile(layer) => packet.push(layer),
+                    DecodedRoutingHeader::Segment(layer) => packet.push(layer),
+                };
+                next_header = inner_next_header;
+                payload = remaining;
+            }
+            IPPROTO_IPV6_FRAGMENT => {
+                let (fragment, inner_next_header, remaining) = decode_fragment_header(payload)?;
+                let is_non_initial_fragment = fragment.fragment_offset_value() > 0;
+                packet = packet.push(fragment);
+                if is_non_initial_fragment {
+                    if !remaining.is_empty() {
+                        packet = packet.push(Raw::from_bytes(remaining));
+                    }
+                    return Ok(packet);
+                }
+                next_header = inner_next_header;
+                payload = remaining;
+            }
+            _ => return registry.decode_ipv6_next_header(packet, next_header, payload),
+        }
+    }
+}
+
+enum DecodedRoutingHeader {
+    Generic(Ipv6RoutingHeader),
+    Mobile(Ipv6MobileRoutingHeader),
+    Segment(Ipv6SegmentRoutingHeader),
+}
+
+fn decode_routing_header(bytes: &[u8]) -> Result<(DecodedRoutingHeader, u8, &[u8])> {
+    let total_len = decode_extension_total_len("ipv6 routing header", bytes)?;
+    let next_header = bytes[0];
+    let routing_type = bytes[2];
+
+    let header = match routing_type {
+        IPV6_ROUTING_TYPE_MOBILE => {
+            if total_len < IPV6_MOBILE_ROUTING_LEN {
+                return Err(CrafterError::invalid_field_value(
+                    "ipv6.mobile.header_ext_len",
+                    "mobile routing header must be at least 24 bytes",
+                ));
+            }
+            DecodedRoutingHeader::Mobile(Ipv6MobileRoutingHeader {
+                next_header: Field::user(next_header),
+                header_ext_len: Field::user(bytes[1]),
+                routing_type: Field::user(bytes[2]),
+                segments_left: Field::user(bytes[3]),
+                reserved: Field::user(read_u32_be(&bytes[4..8])?),
+                home_address: Field::user(Ipv6Addr::from(copy_array_16(&bytes[8..24]))),
+            })
+        }
+        IPV6_ROUTING_TYPE_SEGMENT => {
+            DecodedRoutingHeader::Segment(decode_segment_routing_header(bytes, total_len)?)
+        }
+        _ => DecodedRoutingHeader::Generic(Ipv6RoutingHeader {
+            next_header: Field::user(next_header),
+            header_ext_len: Field::user(bytes[1]),
+            routing_type: Field::user(bytes[2]),
+            segments_left: Field::user(bytes[3]),
+            type_data: bytes[4..total_len].to_vec(),
+        }),
+    };
+
+    Ok((header, next_header, &bytes[total_len..]))
+}
+
+fn decode_segment_routing_header(
+    bytes: &[u8],
+    total_len: usize,
+) -> Result<Ipv6SegmentRoutingHeader> {
+    if total_len < IPV6_SEGMENT_BASE_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "ipv6.segment.header_ext_len",
+            "segment routing header must be at least 8 bytes",
+        ));
+    }
+
+    let flags = read_u16_be(&bytes[5..7])?;
+    let policy_flags = [
+        ((flags >> 9) & 0x07) as u8,
+        ((flags >> 6) & 0x07) as u8,
+        ((flags >> 3) & 0x07) as u8,
+        (flags & 0x07) as u8,
+    ];
+    let first_segment = bytes[4] as usize;
+    let segment_count = first_segment + 1;
+    let policy_count = policy_flags
+        .iter()
+        .filter(|flag| **flag != IPV6_SEGMENT_POLICY_UNSET)
+        .count();
+    let hmac_len = if bytes[7] == 0 {
+        0
+    } else {
+        IPV6_SEGMENT_HMAC_LEN
+    };
+    let required_variable_len = segment_count * 16 + policy_count * 16 + hmac_len;
+    let variable = &bytes[IPV6_SEGMENT_BASE_LEN..total_len];
+    if variable.len() < required_variable_len {
+        return Err(CrafterError::invalid_field_value(
+            "ipv6.segment.header_ext_len",
+            "segment routing data is shorter than its fields require",
+        ));
+    }
+
+    let mut cursor = 0;
+    let mut segments = Vec::with_capacity(segment_count);
+    for _ in 0..segment_count {
+        segments.push(Ipv6Addr::from(copy_array_16(
+            &variable[cursor..cursor + 16],
+        )));
+        cursor += 16;
+    }
+
+    let mut policies = [Ipv6Addr::UNSPECIFIED; 4];
+    for (index, flag) in policy_flags.iter().enumerate() {
+        if *flag != IPV6_SEGMENT_POLICY_UNSET {
+            policies[index] = Ipv6Addr::from(copy_array_16(&variable[cursor..cursor + 16]));
+            cursor += 16;
+        }
+    }
+
+    let mut hmac = [0; IPV6_SEGMENT_HMAC_LEN];
+    if hmac_len != 0 {
+        hmac.copy_from_slice(&variable[cursor..cursor + IPV6_SEGMENT_HMAC_LEN]);
+        cursor += IPV6_SEGMENT_HMAC_LEN;
+    }
+
+    Ok(Ipv6SegmentRoutingHeader {
+        next_header: Field::user(bytes[0]),
+        header_ext_len: Field::user(bytes[1]),
+        routing_type: Field::user(bytes[2]),
+        segments_left: Field::user(bytes[3]),
+        first_segment: Field::user(bytes[4]),
+        c_flag: Field::user(flags & 0x8000 != 0),
+        p_flag: Field::user(flags & 0x4000 != 0),
+        reserved: Field::user(((flags >> 12) & 0x03) as u8),
+        policy_flag1: Field::user(policy_flags[0]),
+        policy_flag2: Field::user(policy_flags[1]),
+        policy_flag3: Field::user(policy_flags[2]),
+        policy_flag4: Field::user(policy_flags[3]),
+        hmac_key_id: Field::user(bytes[7]),
+        segments,
+        policies,
+        hmac,
+        extra_data: variable[cursor..].to_vec(),
+    })
+}
+
+fn decode_fragment_header(bytes: &[u8]) -> Result<(Ipv6FragmentHeader, u8, &[u8])> {
+    if bytes.len() < IPV6_FRAGMENT_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ipv6 fragment header",
+            IPV6_FRAGMENT_HEADER_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let fragment_field = read_u16_be(&bytes[2..4])?;
+    let fragment = Ipv6FragmentHeader {
+        next_header: Field::user(bytes[0]),
+        reserved: Field::user(bytes[1]),
+        fragment_offset: Field::user(fragment_field >> 3),
+        res: Field::user(((fragment_field >> 1) & 0x03) as u8),
+        more_fragments: Field::user(fragment_field & 1 != 0),
+        identification: Field::user(read_u32_be(&bytes[4..8])?),
+    };
+
+    Ok((fragment, bytes[0], &bytes[IPV6_FRAGMENT_HEADER_LEN..]))
+}
+
+fn payload_len_after(ctx: LayerContext<'_>) -> usize {
+    ctx.packet()
+        .iter()
+        .skip(ctx.index() + 1)
+        .map(Layer::encoded_len)
+        .sum()
+}
+
+fn layer_ipv6_next_header(layer: &dyn Layer) -> Option<u8> {
+    if layer.as_any().is::<Ipv6RoutingHeader>()
+        || layer.as_any().is::<Ipv6MobileRoutingHeader>()
+        || layer.as_any().is::<Ipv6SegmentRoutingHeader>()
+    {
+        Some(IPPROTO_IPV6_ROUTE)
+    } else if layer.as_any().is::<Ipv6FragmentHeader>() {
+        Some(IPPROTO_IPV6_FRAGMENT)
+    } else if layer.as_any().is::<Tcp>() {
+        Some(IPPROTO_TCP)
+    } else if layer.as_any().is::<Udp>() {
+        Some(IPPROTO_UDP)
+    } else if layer.as_any().is::<Icmpv6>() {
+        Some(IPPROTO_ICMPV6)
+    } else {
+        None
+    }
+}
+
+fn decode_extension_total_len(context: &'static str, bytes: &[u8]) -> Result<usize> {
+    if bytes.len() < IPV6_EXTENSION_MIN_LEN {
+        return Err(CrafterError::buffer_too_short(
+            context,
+            IPV6_EXTENSION_MIN_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let total_len = IPV6_EXTENSION_MIN_LEN + bytes[1] as usize * 8;
+    if bytes.len() < total_len {
+        return Err(CrafterError::buffer_too_short(
+            context,
+            total_len,
+            bytes.len(),
+        ));
+    }
+    Ok(total_len)
+}
+
+fn validate_extension_total_len(field: &'static str, total_len: usize) -> Result<()> {
+    if total_len < IPV6_EXTENSION_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "IPv6 extension header must be at least 8 bytes",
+        ));
+    }
+    if total_len > IPV6_MAX_HEADER_EXT_LEN {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "IPv6 extension header length exceeds the 8-bit header length field",
+        ));
+    }
+    if total_len % 8 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "IPv6 extension header length must be a multiple of 8 bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn header_ext_len_from_total(field: &'static str, total_len: usize) -> Result<u8> {
+    validate_extension_total_len(field, total_len)?;
+    u8::try_from((total_len - IPV6_EXTENSION_MIN_LEN) / 8)
+        .map_err(|_| CrafterError::invalid_field_value(field, "header extension length overflow"))
+}
+
+fn routing_total_len_for_type_data(type_data_len: usize) -> usize {
+    round_up_to_8(4 + type_data_len.max(4))
+}
+
+fn round_up_to_8(len: usize) -> usize {
+    (len + 7) & !7
+}
+
+fn saturating_last_index(len: usize) -> u8 {
+    len.saturating_sub(1).min(u8::MAX as usize) as u8
+}
+
+fn parse_ipv6(input: &str) -> Result<Ipv6Addr> {
+    Ipv6Addr::from_str(input).map_err(|_| {
+        CrafterError::invalid_field_value("ipv6_address", "expected textual IPv6 address")
+    })
+}
+
+fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
+    field.value().copied().unwrap_or(default)
+}
+
+fn next_header_summary(next_header: u8) -> String {
+    match next_header {
+        IPPROTO_IPV6_HOPOPTS => "hopopt(0)".to_string(),
+        IPPROTO_TCP => "tcp(6)".to_string(),
+        IPPROTO_UDP => "udp(17)".to_string(),
+        IPPROTO_IPV6_ROUTE => "ipv6-route(43)".to_string(),
+        IPPROTO_IPV6_FRAGMENT => "ipv6-fragment(44)".to_string(),
+        IPPROTO_ICMPV6 => "icmpv6(58)".to_string(),
+        IPPROTO_IPV6_DSTOPTS => "ipv6-dstopts(60)".to_string(),
+        value => value.to_string(),
+    }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut output = String::new();
+
+    for (index, byte) in bytes.iter().enumerate() {
+        if index > 0 {
+            output.push(' ');
+        }
+        output.push_str(&format!("{byte:02x}"));
+    }
+
+    output
+}
+
+fn ipv6_list_summary(addresses: &[Ipv6Addr]) -> String {
+    addresses
+        .iter()
+        .map(Ipv6Addr::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn copy_array_16(bytes: &[u8]) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&bytes[..16]);
+    out
+}
+
+#[cfg(test)]
+mod ipv6 {
+    use super::{Ipv6, IPPROTO_IPV6_ROUTE};
+    use crate::checksum::ipv6_pseudo_header_checksum;
+    use crate::{NetworkLayer, Packet, Raw, Tcp, TCP_FLAG_SYN};
+    use core::net::Ipv6Addr;
+
+    fn src() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1)
+    }
+
+    fn dst() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 2)
+    }
+
+    #[test]
+    fn ipv6_tcp_header_autofills_length_next_header_and_checksum() {
+        let packet = Ipv6::new()
+            .src(src())
+            .dst(dst())
+            .tc(0xab)
+            .fl(0x12345)
+            .hlim(32)
+            / Tcp::new().sport(1234).dport(80).seq(7).flags(TCP_FLAG_SYN)
+            / Raw::from("abc");
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes.as_bytes()[0], 0x6a);
+        assert_eq!(&bytes.as_bytes()[4..6], &(23u16).to_be_bytes());
+        assert_eq!(bytes.as_bytes()[6], crate::IPPROTO_TCP);
+        assert_eq!(bytes.as_bytes()[7], 32);
+
+        let mut tcp = bytes.as_bytes()[40..].to_vec();
+        tcp[16] = 0;
+        tcp[17] = 0;
+        assert_eq!(
+            u16::from_be_bytes([bytes.as_bytes()[56], bytes.as_bytes()[57]]),
+            ipv6_pseudo_header_checksum(src(), dst(), crate::IPPROTO_TCP, &tcp)
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let ipv6 = decoded.layer::<Ipv6>().unwrap();
+        assert_eq!(ipv6.source(), src());
+        assert_eq!(ipv6.destination(), dst());
+        assert_eq!(ipv6.traffic_class_value(), 0xab);
+        assert_eq!(ipv6.flow_label_value(), 0x12345);
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn ipv6_explicit_base_next_header_is_preserved() {
+        let bytes = (Ipv6::new().src(src()).dst(dst()).nh(IPPROTO_IPV6_ROUTE) / Raw::from("abc"))
+            .compile()
+            .unwrap();
+
+        assert_eq!(bytes.as_bytes()[6], IPPROTO_IPV6_ROUTE);
+    }
+
+    #[test]
+    fn ipv6_decode_rejects_short_and_malformed_headers() {
+        assert!(Packet::decode_from_l3(NetworkLayer::Ipv6, [0u8; 39]).is_err());
+
+        let mut bad_version = (Ipv6::new() / Raw::from("abc"))
+            .compile()
+            .unwrap()
+            .into_bytes();
+        bad_version[0] = 0x40;
+        assert!(Packet::decode_from_l3(NetworkLayer::Ipv6, bad_version).is_err());
+
+        let mut bad_length = (Ipv6::new() / Raw::from("abc"))
+            .compile()
+            .unwrap()
+            .into_bytes();
+        bad_length[4..6].copy_from_slice(&(10u16).to_be_bytes());
+        assert!(Packet::decode_from_l3(NetworkLayer::Ipv6, bad_length).is_err());
+    }
+}
+
+#[cfg(test)]
+mod ipv6_extensions {
+    use super::{Ipv6FragmentHeader, IPPROTO_IPV6_FRAGMENT};
+    use crate::checksum::ipv6_pseudo_header_checksum;
+    use crate::{Ipv6, NetworkLayer, Packet, Raw, Udp};
+    use core::net::Ipv6Addr;
+
+    fn src() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 10, 0, 0, 0, 0, 1)
+    }
+
+    fn dst() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 20, 0, 0, 0, 0, 2)
+    }
+
+    #[test]
+    fn ipv6_fragment_header_chains_to_udp_and_preserves_checksum_context() {
+        let packet = Ipv6::new().src(src()).dst(dst())
+            / Ipv6FragmentHeader::new()
+                .identification(0x0102_0304)
+                .more_fragments(true)
+            / Udp::new().sport(1234).dport(5678)
+            / Raw::from("payload");
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes.as_bytes()[6], IPPROTO_IPV6_FRAGMENT);
+        assert_eq!(bytes.as_bytes()[40], crate::IPPROTO_UDP);
+        assert_eq!(&bytes.as_bytes()[42..44], &1u16.to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[44..48], &0x0102_0304u32.to_be_bytes());
+
+        let mut udp = bytes.as_bytes()[48..].to_vec();
+        udp[6] = 0;
+        udp[7] = 0;
+        assert_eq!(
+            u16::from_be_bytes([bytes.as_bytes()[54], bytes.as_bytes()[55]]),
+            ipv6_pseudo_header_checksum(src(), dst(), crate::IPPROTO_UDP, &udp)
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let fragment = decoded.layer::<Ipv6FragmentHeader>().unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(fragment.identification_value(), 0x0102_0304);
+        assert!(fragment.has_more_fragments());
+        assert_eq!(udp.source_port_value(), 1234);
+        assert_eq!(raw.as_bytes(), b"payload");
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn ipv6_non_initial_fragments_preserve_remaining_bytes_as_raw() {
+        let bytes = (Ipv6::new().src(src()).dst(dst())
+            / Ipv6FragmentHeader::new()
+                .nh(crate::IPPROTO_UDP)
+                .fragment_offset(2)
+                .identification(9)
+            / Raw::from_bytes([1, 2, 3, 4]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        assert!(decoded.layer::<Udp>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn ipv6_unknown_next_header_preserves_payload_as_raw() {
+        let bytes = (Ipv6::new().src(src()).dst(dst()).nh(253) / Raw::from_bytes([9, 8, 7]))
+            .compile()
+            .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[9, 8, 7]);
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn ipv6_extension_decode_rejects_short_fragment_headers() {
+        let bytes = (Ipv6::new().src(src()).dst(dst()).nh(IPPROTO_IPV6_FRAGMENT)
+            / Raw::from_bytes([0u8; 7]))
+        .compile()
+        .unwrap();
+
+        assert!(Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod ipv6_routing_header {
+    use super::{
+        Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, IPPROTO_IPV6_ROUTE,
+        IPV6_ROUTING_TYPE_SEGMENT, IPV6_SEGMENT_POLICY_EGRESS, IPV6_SEGMENT_POLICY_SOURCE_ADDRESS,
+    };
+    use crate::{Ipv6, NetworkLayer, Packet, Raw, Tcp};
+    use core::net::Ipv6Addr;
+
+    fn src() -> Ipv6Addr {
+        "2001:db8:dead:beef:cafe::".parse().unwrap()
+    }
+
+    fn dst() -> Ipv6Addr {
+        "2001:db8:1234::1".parse().unwrap()
+    }
+
+    #[test]
+    fn ipv6_segment_routing_header_matches_libcrafter_example_shape() {
+        let mut hmac = [0u8; 32];
+        hmac[15] = 0xff;
+        let sr_header = Ipv6SegmentRoutingHeader::new()
+            .push_ipv6_segment("2001:db8:1234::2")
+            .unwrap()
+            .push_ipv6_segment("2001:db8:1234::3")
+            .unwrap()
+            .push_ipv6_segment("2001:db8:1234::4")
+            .unwrap()
+            .push_ipv6_segment("2001:db8:1234::5")
+            .unwrap()
+            .policy_str(3, "dead:beef::", IPV6_SEGMENT_POLICY_EGRESS)
+            .unwrap()
+            .policy_flag1(IPV6_SEGMENT_POLICY_SOURCE_ADDRESS)
+            .pflag(true)
+            .hmac_key_id(5)
+            .hmac(hmac);
+        let packet = Ipv6::new().src(src()).dst(dst())
+            / sr_header
+            / Tcp::new().sport(1234).dport(80)
+            / Raw::from("Hello World!");
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes.as_bytes()[6], IPPROTO_IPV6_ROUTE);
+        assert_eq!(bytes.as_bytes()[40], crate::IPPROTO_TCP);
+        assert_eq!(bytes.as_bytes()[41], 16);
+        assert_eq!(bytes.as_bytes()[42], IPV6_ROUTING_TYPE_SEGMENT);
+        assert_eq!(bytes.as_bytes()[43], 3);
+        assert_eq!(bytes.as_bytes()[44], 3);
+        assert_eq!(bytes.as_bytes()[45] & 0x40, 0x40);
+        assert_eq!(bytes.as_bytes()[47], 5);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let sr = decoded.layer::<Ipv6SegmentRoutingHeader>().unwrap();
+        assert_eq!(sr.segments().len(), 4);
+        assert_eq!(sr.segments_left_value(), 3);
+        assert_eq!(sr.first_segment_value(), 3);
+        assert_eq!(sr.policy_flags()[0], IPV6_SEGMENT_POLICY_SOURCE_ADDRESS);
+        assert_eq!(sr.policy_flags()[3], IPV6_SEGMENT_POLICY_EGRESS);
+        assert_eq!(sr.policies()[3], "dead:beef::".parse::<Ipv6Addr>().unwrap());
+        assert_eq!(sr.hmac_key_id_value(), 5);
+        assert_eq!(sr.hmac_bytes()[15], 0xff);
+        assert_eq!(decoded.layer::<Tcp>().unwrap().destination_port_value(), 80);
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"Hello World!");
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn ipv6_mobile_routing_header_encodes_home_address_and_decodes_tcp() {
+        let packet = Ipv6::new().src(src()).dst(dst())
+            / Ipv6MobileRoutingHeader::new()
+                .home_address_str("2001:db8::1")
+                .unwrap()
+            / Tcp::new().sport(1111).dport(2222)
+            / Raw::from("mobile");
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes.as_bytes()[6], IPPROTO_IPV6_ROUTE);
+        assert_eq!(bytes.as_bytes()[40], crate::IPPROTO_TCP);
+        assert_eq!(bytes.as_bytes()[41], 2);
+        assert_eq!(bytes.as_bytes()[42], 2);
+        assert_eq!(bytes.as_bytes()[43], 1);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let mobile = decoded.layer::<Ipv6MobileRoutingHeader>().unwrap();
+        assert_eq!(
+            mobile.home_address_value(),
+            "2001:db8::1".parse::<Ipv6Addr>().unwrap()
+        );
+        assert_eq!(decoded.layer::<Tcp>().unwrap().source_port_value(), 1111);
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn ipv6_generic_routing_header_preserves_unknown_type_data() {
+        let data = [0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4, 5];
+        let packet = Ipv6::new().src(src()).dst(dst())
+            / Ipv6RoutingHeader::new()
+                .routing_type(253)
+                .segments_left(0)
+                .append_type_data(data)
+            / Raw::from("tail");
+        let bytes = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let routing = decoded.layer::<Ipv6RoutingHeader>().unwrap();
+
+        assert_eq!(routing.routing_type_value(), 253);
+        assert_eq!(&routing.type_data_bytes()[..data.len()], &data);
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"tail");
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn ipv6_routing_header_builder_rejects_malformed_segment_fields() {
+        let bad_empty_segment_header = Packet::new().push(Ipv6SegmentRoutingHeader::new());
+        assert!(bad_empty_segment_header.compile().is_err());
+
+        let bad_policy_flag = Ipv6SegmentRoutingHeader::new().policy_flag(4, 1);
+        assert!(bad_policy_flag.is_err());
+    }
+}

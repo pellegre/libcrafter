@@ -35,12 +35,14 @@ tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```
 
-Real creation uses generic provider defaults that can be overridden:
+Real creation uses provider defaults that can be overridden. Choose values that
+belong to the disposable test environment and do not commit account-specific
+settings:
 
 ```sh
-HETZNER_SERVER_TYPE=cpx11 \
-HETZNER_IMAGE=ubuntu-24.04 \
-HETZNER_LOCATION=ash \
+HETZNER_SERVER_TYPE=replace-with-server-type \
+HETZNER_IMAGE=replace-with-image \
+HETZNER_LOCATION=replace-with-location \
 tools/live-lab/libcrafter-live-lab create --provider hetzner
 ```
 
@@ -64,6 +66,9 @@ tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 
 Real live runs should wrap `create`, `run`, `artifact`, and `destroy` in cleanup
 logic so `destroy` still executes after a failed validation step.
+
+See also `docs/supported-platforms.md` for the alpha support matrix and known
+release gaps.
 
 ## Cleanup
 

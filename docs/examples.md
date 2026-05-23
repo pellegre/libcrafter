@@ -35,5 +35,5 @@ Run a dry-run locally:
 Run live examples only from a disposable lab created by `tools/live-lab/`:
 
 ```sh
-  --live --i-understand-isolated-lab --iface eth0
+  --live --i-understand-isolated-lab --iface replace-with-lab-interface
 ```

@@ -17,7 +17,7 @@ fn main() -> ExampleResult<()> {
     let live = flag_present("--live");
     let iface = arg_or("--iface", "dry-run0");
     let src = parse_ipv4_arg("--src", Ipv4Addr::new(192, 0, 2, 10))?;
-    let server = parse_ipv4_arg("--server", Ipv4Addr::new(8, 8, 8, 8))?;
+    let server = parse_ipv4_arg("--server", Ipv4Addr::new(198, 51, 100, 53))?;
     let sport = parse_u16_arg("--sport", 53000)?;
     let name = arg_or("--name", "example.com");
     let question_type = if flag_present("--aaaa") {

@@ -1,206 +1,149 @@
 # libcrafter
 
-A high-level C++ library for crafting, decoding, and manipulating network packets.
+`libcrafter` now includes a Rust alpha workspace for building, decoding,
+capturing, and testing network packets. The original C++ library remains
+in `libcrafter/` while the Rust port is developed in `crates/`.
 
-## Overview
+The Rust API keeps the spirit of libcrafter and Scapy: packets are stacks of
+protocol layers, dependent fields are filled during compile, raw bytes can be
+decoded back into typed layers, and live traffic is opt-in rather than a default
+side effect.
 
-**libcrafter** is a network packet manipulation library for C++ that provides an intuitive, Scapy-like interface for creating and analyzing network traffic. It enables developers to build powerful networking tools with minimal code by representing packets as stackable protocol layers with sensible defaults.
+## Rust Alpha
 
-The library is designed with multithreading in mind, allowing you to simultaneously sniff, modify, and transmit packets, ideal for network security tools, traffic analysis, and protocol testing.
+The facade crate is `crafter`. Most generated tools and examples should import:
 
-## Features
+```rust
+use crafter::prelude::*;
+```
 
-- **Packet Crafting**: Build custom network packets by stacking protocol layers
-- **Packet Decoding**: Parse raw network data into structured protocol objects
-- **Send & Receive**: Transmit packets and capture responses with automatic request/reply matching
-- **Sniffing**: Capture live traffic with BPF filter support
-- **Concurrent**: Designed for concurrent operations in multithreaded applications
+Build a packet with explicit builders:
 
-## Supported Protocols
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
 
-| Layer 2 | Layer 3 | Layer 4 | Application |
-|---------|---------|---------|-------------|
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Icmp::echo_request().id(0x4242).seq(1)
+        / Raw::from("hello");
+
+    let bytes = packet.compile()?;
+    println!("{}", packet.summary());
+    println!("{}", bytes.hexdump());
+    Ok(())
+}
+```
+
+Read and write pcaps without root:
+
+```rust
+use crafter::prelude::*;
+
+fn inspect(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    for captured in read_pcap_filtered(path, "icmp")? {
+        println!("{}", captured.packet().summary());
+    }
+    Ok(())
+}
+```
+
+Examples use dry-run send paths by default. Use dry-run plans for local tools
+and reserve live sends for disposable labs:
+
+```rust
+let plan = packet.send_dry_run(
+    SendOptions::new()
+        .iface("dry-run0")
+        .network_layer(),
+)?;
+println!("{:?}", plan.target());
+```
+
+## Crates
+
+| Crate | Purpose |
+| --- | --- |
+| `crafter` | Public facade and prelude for examples and generated tools. |
+| `crafter-core` | Packet model, layer composition, encode/decode, checksums, protocol registry, formatting. |
+| `crafter-pcap` | Classic pcap read/write, deterministic filters, offline sniffing, bounded live capture hooks. |
+| `crafter-net` | Interface helpers, raw send planning, live send backends, send/receive matching, batch workflows. |
+| `crafter-live` | Disposable live-lab integration support. |
+
+## Protocol Coverage
+
+The alpha covers the protocols needed by the current libcrafter example set:
+
+| Link | Network | Transport | Application |
+| --- | --- | --- | --- |
 | Ethernet | IPv4 | TCP | DNS |
-| 802.1Q (VLAN) | IPv6 | UDP | DHCP |
-| SLL (Linux cooked) | ICMP | TCP Options | |
-| Null/Loopback | ICMPv6 | | |
-| | IP Options | | |
-| | IPv6 Extensions | | |
-| | ICMP Extensions | | |
+| 802.1Q VLAN | IPv6 | UDP | DHCP |
+| Linux cooked capture | ARP | TCP options | Raw payloads |
+| Null/loopback | ICMP | UDP checksums | |
+| | ICMPv6 | | |
+| | IPv4 options | | |
+| | IPv6 fragment, routing, mobile routing, and segment routing headers | | |
+| | ICMP extensions | | |
 
-### IPv6 Extension Headers
-- Fragmentation Header
-- Routing Header
-- Segment Routing Header
-- Mobile Routing Header
-
-### TCP Options
-- Maximum Segment Size
-- Timestamps
-- Window Scale
-- MPTCP
-- Padding (NOP, EOL)
-
-### IP Options
-- Traceroute
-- Loose/Strict Source Routing (Pointer-based)
-- Padding
-
-## Project Structure
-
-```
-libcrafter/
-├── crafter/
-│   ├── Crafter.h          # Main header including all protocols
-│   ├── Layer.h/cpp        # Base class for all protocol layers
-│   ├── Packet.h/cpp       # Packet container and manipulation
-│   ├── Payload.h/cpp      # Raw payload handling
-│   ├── Fields/            # Field types (IP addresses, MAC, numerics, etc.)
-│   ├── Protocols/         # Protocol implementations (Ethernet, IP, TCP, etc.)
-│   ├── Utils/             # Utilities (Sniffer, ARP tools, helpers)
-│   └── ProtoSource/       # Protocol definition source files
-├── crafter.h              # Public include header
-├── configure.ac           # Autoconf configuration
-├── Makefile.am            # Automake build rules
-└── autogen.sh             # Bootstrap script
-```
-
-## Dependencies
-
-- **libpcap** - Packet capture library
-- **pthread** - POSIX threads
-- **libresolv** - DNS resolver (for DNS protocol support)
-- **autoconf** & **libtool** - Build system (for compilation from source)
-
-### Installing Dependencies
-
-**Debian/Ubuntu:**
-```bash
-sudo apt-get install libpcap libpcap-dev autoconf libtool
-```
-
-**Fedora/RHEL:**
-```bash
-sudo dnf install libpcap libpcap-devel autoconf libtool
-```
-
-**macOS (Homebrew):**
-```bash
-brew install libpcap autoconf libtool
-```
-
-## Building from Source
-
-```bash
-# Clone the repository
-git clone https://github.com/pellegre/libcrafter
-cd libcrafter/libcrafter
-
-# Generate build system and compile
-./autogen.sh
-make
-
-# Install system-wide (requires root)
-sudo make install
-sudo ldconfig
-```
-
-### Build Options
-
-You can specify a custom libpcap location:
-```bash
-./configure --with-libpcap=/path/to/libpcap
-```
-
-## Quick Start
-
-### Include the Library
-
-```cpp
-#include <crafter.h>
-using namespace Crafter;
-```
-
-### Initialize/Cleanup
-
-```cpp
-int main() {
-    InitCrafter();
-    
-    // Your code here
-    
-    CleanCrafter();
-    return 0;
-}
-```
-
-### Craft a TCP SYN Packet
-
-```cpp
-// Create layers
-Ethernet ether;
-ether.SetSourceMAC("aa:bb:cc:dd:ee:ff");
-ether.SetDestinationMAC("11:22:33:44:55:66");
-
-IP ip;
-ip.SetSourceIP("192.168.1.100");
-ip.SetDestinationIP("192.168.1.1");
-
-TCP tcp;
-tcp.SetSrcPort(12345);
-tcp.SetDstPort(80);
-tcp.SetFlags(TCP::SYN);
-
-// Stack layers into a packet
-Packet packet = ether / ip / tcp;
-
-// Send the packet
-packet.Send("eth0");
-```
-
-### Sniff Packets
-
-```cpp
-void PacketHandler(Packet* packet, void* user) {
-    packet->Print();
-}
-
-Sniffer sniff("tcp port 80", "eth0", PacketHandler);
-sniff.Capture(10);  // Capture 10 packets
-```
-
-### Decode Raw Data
-
-```cpp
-byte raw_data[] = { /* raw packet bytes */ };
-Packet packet;
-packet.PacketFromEthernet(raw_data, sizeof(raw_data));
-packet.Print();
-```
-
-## Compilation
-
-Link against libcrafter when compiling your programs:
-
-```bash
-g++ -o prog prog.cpp -lcrafter -lpcap -lpthread
-```
-
-Or use pkg-config:
-```bash
-g++ -o prog prog.cpp $(pkg-config --cflags --libs crafter)
-```
+Unknown or unsupported next protocols are preserved as `Raw` payloads where the
+enclosing header is valid.
 
 ## Examples
 
-More examples are available at:
+Rust examples live under `crates/crafter/examples/` and build against the
+public `crafter` facade:
+
+```sh
+cargo build --examples
+cargo run --example hello_world -- --dry-run
+cargo run --example ping -- --iface dry-run0
+cargo run --example dns_query -- --dry-run --name example.com
+```
+
+workflows are dry-run by default and require explicit live-lab acknowledgement.
+See [docs/examples.md](docs/examples.md).
+
+## Live Testing
+
+Local tests do not require root or provider credentials:
+
+```sh
+cargo test --workspace
+cargo doc --workspace --no-deps
+```
+
+Live raw-packet validation must run in a disposable provider lab:
+
+```sh
+tools/live-lab/libcrafter-live-lab doctor --provider local-dry-run
+tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite all
+```
+
+The Hetzner provider reads `HETZNER_API_TOKEN` from the environment or from the
+ignored local file documented in [docs/live-lab.md](docs/live-lab.md). Do not
+store real credentials, provider account data, public IPs, or live host IDs in
+tracked files.
+
+## Release Notes And Platform Support
+
+- [CHANGELOG.md](CHANGELOG.md) records the Rust alpha scope.
+- [docs/supported-platforms.md](docs/supported-platforms.md) lists supported
+  platforms, live-test requirements, and known gaps versus legacy libcrafter and
+  Scapy.
+- [docs/agent-cookbook.md](docs/agent-cookbook.md) gives copyable recipes for
+  generated packet tools.
+
+## Legacy C++ Library
+
+The original C++ implementation is still available in `libcrafter/`. Its build
+system, headers, and license are preserved while the Rust port matures. Legacy
+examples remain available at:
+
 https://github.com/pellegre/libcrafter-examples
 
 ## License
 
-This project is licensed under the **BSD 3-Clause License**. See the [LICENSE](libcrafter/LICENSE) file for details.
-
-## Author
-
-**Esteban Pellegrino**
-
+This project is licensed under the BSD 3-Clause License. See
+[libcrafter/LICENSE](libcrafter/LICENSE).
