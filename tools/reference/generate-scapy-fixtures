@@ -4,6 +4,9 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/../.." && pwd)"
 
+# Legacy fixture entrypoint. Oracle owns fixture generation; this preserves the
+# old command name and default checked-in fixture output path.
+
 has_out=0
 for arg in "$@"; do
   case "$arg" in

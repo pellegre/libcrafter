@@ -2,4 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# Legacy backend-neutral entrypoint. The Scapy-specific wrapper delegates common
+# paths to tools/oracle/run and falls back only for unmapped legacy selectors.
 exec "$script_dir/check-scapy-interop" "$@"

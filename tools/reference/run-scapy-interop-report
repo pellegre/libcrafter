@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the full Scapy/libcrafter validation surface and write a report."""
+"""Run the full oracle Scapy-backend validation surface and write a report."""
 
 from __future__ import annotations
 
@@ -57,26 +57,42 @@ def main() -> int:
             ["cargo", "build", "--examples"],
         ),
         command_spec(
-            "scapy-interop",
+            "oracle-offline",
             [
-                "tools/reference/check-scapy-interop",
+                "tools/oracle/run",
+                "offline",
+                "--backend",
+                "scapy",
+                "--profile",
+                "ci",
+                "--seed",
+                "12345",
+                "--count",
+                "200",
                 "--out",
-                str(artifacts_dir / "scapy-interop"),
+                str(artifacts_dir / "oracle"),
                 "--keep-artifacts",
             ],
-            artifact_paths=[artifacts_dir / "scapy-interop"],
+            artifact_paths=[artifacts_dir / "oracle" / "offline"],
         ),
         command_spec(
-            "pcap-interop",
+            "oracle-pcap",
             [
-                "tools/reference/check-scapy-interop",
-                "--family",
+                "tools/oracle/run",
                 "pcap",
+                "--backend",
+                "scapy",
+                "--profile",
+                "smoke",
+                "--seed",
+                "12345",
+                "--count",
+                "100",
                 "--out",
-                str(artifacts_dir / "pcap-interop"),
+                str(artifacts_dir / "oracle"),
                 "--keep-artifacts",
             ],
-            artifact_paths=[artifacts_dir / "pcap-interop"],
+            artifact_paths=[artifacts_dir / "oracle" / "pcap"],
         ),
         command_spec(
             "malformed-resilience",
@@ -115,8 +131,8 @@ def main() -> int:
         ],
         "commands": results,
         "local_commands": [
-            "tools/reference/check-scapy-interop",
-            "tools/reference/check-scapy-interop --family pcap",
+            "tools/oracle/run offline --backend scapy --profile ci --seed 12345 --count 200",
+            "tools/oracle/run pcap --backend scapy --profile smoke --seed 12345 --count 100",
             "tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite scapy-interop",
         ],
         "hetzner_commands": [
@@ -221,7 +237,7 @@ def extract_failures(log_text: str) -> list[str]:
 
 def write_readme(out_dir: Path, summary: dict[str, Any]) -> None:
     lines = [
-        "# Scapy Interop Report",
+        "# Oracle Scapy-Backend Interop Report",
         "",
         f"Generated: {summary['generated_at']}",
         f"Status: {summary['status']}",
