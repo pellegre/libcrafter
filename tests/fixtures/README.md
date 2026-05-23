@@ -23,17 +23,17 @@ run without root, live network access, cloud credentials, or packet injection.
 Use lowercase, dash-separated names that describe the protocol stack and case:
 
 ```text
-<stack>--<case>.<kind>
+<stack>-<case>.<kind>
 ```
 
 Examples:
 
 ```text
-ipv4-icmp-raw--echo-request.bin
-ethernet-ipv4-tcp--syn-options.bin
-dns-udp-ipv4--query-example-com.summary.txt
-ipv6-routing--type0-reference.json
-ipv4--truncated-header.malformed.bin
+ipv4-icmp-raw-echo-request.bin
+ethernet-ipv4-tcp-syn-options.bin
+dns-udp-ipv4-query-example-com.summary.txt
+ipv6-routing-type0-reference.json
+ipv4-truncated-header.malformed.bin
 ```
 
 Prefer stable, deterministic packets. Do not include wall-clock timestamps,
@@ -49,9 +49,9 @@ bytes in `bytes/` and keep the recipe or structured output in `scapy/`.
 Recommended pairs:
 
 ```text
-bytes/ipv4-icmp-raw--echo-request.bin
-scapy/ipv4-icmp-raw--echo-request.py.txt
-scapy/ipv4-icmp-raw--echo-request.json
+bytes/ipv4-icmp-raw-echo-request.bin
+scapy/ipv4-icmp-raw-echo-request.py.txt
+scapy/ipv4-icmp-raw-echo-request.json
 ```
 
 Reference output must be generated in a deterministic mode. Any fields that the
@@ -80,9 +80,9 @@ should never require panic catching to pass. Name malformed fixtures after the
 error being exercised when possible:
 
 ```text
-malformed/ipv4--ihl-too-small.bin
-malformed/tcp--options-overrun.bin
-malformed/dns--truncated-question.bin
+malformed/ipv4-ihl-too-small.bin
+malformed/tcp-options-overrun.bin
+malformed/dns-truncated-question.bin
 ```
 
 Tests should assert the error category and useful context rather than depending
