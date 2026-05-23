@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Run the full Scapy/libcrafter validation surface and write a report."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=REPO_ROOT / "target" / "scapy-interop-report",
+        help="report output directory",
+    )
+    args = parser.parse_args()
+
+    out_dir = args.out
+    if not out_dir.is_absolute():
+        out_dir = (Path.cwd() / out_dir).resolve()
+    logs_dir = out_dir / "logs"
+    artifacts_dir = out_dir / "artifacts"
+    state_dir = out_dir / "state"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    commands = [
+        command_spec(
+            "format",
+            ["cargo", "fmt", "--all", "--", "--check"],
+        ),
+        command_spec(
+            "clippy",
+            ["cargo", "clippy", "--workspace", "--all-targets"],
+        ),
+        command_spec(
+            "workspace-tests",
+            ["cargo", "test", "--workspace"],
+        ),
+        command_spec(
+            "examples-build",
+            ["cargo", "build", "--examples"],
+        ),
+        command_spec(
+            "scapy-interop",
+            [
+                "tools/reference/check-scapy-interop",
+                "--out",
+                str(artifacts_dir / "scapy-interop"),
+                "--keep-artifacts",
+            ],
+            artifact_paths=[artifacts_dir / "scapy-interop"],
+        ),
+        command_spec(
+            "pcap-interop",
+            [
+                "tools/reference/check-scapy-interop",
+                "--family",
+                "pcap",
+                "--out",
+                str(artifacts_dir / "pcap-interop"),
+                "--keep-artifacts",
+            ],
+            artifact_paths=[artifacts_dir / "pcap-interop"],
+        ),
+        command_spec(
+            "malformed-resilience",
+            ["cargo", "test", "-p", "crafter-core", "--test", "resilience"],
+        ),
+        command_spec(
+            "local-live-lab-dry-run",
+            [
+                "tools/live-lab/libcrafter-live-lab",
+                "run",
+                "--provider",
+                "local-dry-run",
+                "--suite",
+                "scapy-interop",
+            ],
+            env={
+                "LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR": str(artifacts_dir / "live-lab"),
+                "LIBCRAFTER_LIVE_LAB_STATE_DIR": str(state_dir / "live-lab"),
+            },
+            artifact_paths=[artifacts_dir / "live-lab"],
+        ),
+    ]
+
+    results = []
+    for spec in commands:
+        results.append(run_command(spec, logs_dir))
+
+    summary = {
+        "schema_version": 1,
+        "generated_at": utc_now(),
+        "repo_root": str(REPO_ROOT),
+        "out_dir": str(out_dir),
+        "status": "ok" if all(result["exit_code"] == 0 for result in results) else "failed",
+        "failing_commands": [
+            result["name"] for result in results if result["exit_code"] != 0
+        ],
+        "commands": results,
+        "local_commands": [
+            "tools/reference/check-scapy-interop",
+            "tools/reference/check-scapy-interop --family pcap",
+            "tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite scapy-interop",
+        ],
+        "hetzner_commands": [
+            "tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run",
+            "tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run",
+            "tools/live-lab/libcrafter-live-lab run --provider hetzner --suite scapy-interop",
+        ],
+    }
+
+    summary_path = out_dir / "summary.json"
+    summary_path.write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    write_readme(out_dir, summary)
+
+    print(f"summary={summary_path}")
+    print(f"status={summary['status']}")
+    if summary["failing_commands"]:
+        print("failing_commands=" + " ".join(summary["failing_commands"]))
+
+    return 0
+
+
+def command_spec(
+    name: str,
+    argv: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    artifact_paths: list[Path] | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "argv": argv,
+        "env": env or {},
+        "artifact_paths": artifact_paths or [],
+    }
+
+
+def run_command(spec: dict[str, Any], logs_dir: Path) -> dict[str, Any]:
+    name = spec["name"]
+    argv = spec["argv"]
+    log_path = logs_dir / f"{name}.log"
+    env = os.environ.copy()
+    env.update(spec["env"])
+
+    print(f"running {name}: {shlex.join(argv)}")
+    started = time.monotonic()
+    started_at = utc_now()
+    with log_path.open("w", encoding="utf-8") as log:
+        log.write(f"started_at={started_at}\n")
+        log.write(f"command={shlex.join(argv)}\n\n")
+        log.flush()
+        process = subprocess.run(
+            argv,
+            cwd=REPO_ROOT,
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+        finished_at = utc_now()
+        duration = time.monotonic() - started
+        log.write(f"\nfinished_at={finished_at}\n")
+        log.write(f"exit_code={process.returncode}\n")
+        log.write(f"duration_seconds={duration:.3f}\n")
+
+    failures = extract_failures(log_path.read_text(encoding="utf-8", errors="replace"))
+    result = {
+        "name": name,
+        "command": shlex.join(argv),
+        "exit_code": process.returncode,
+        "duration_seconds": round(duration, 3),
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "log": str(log_path),
+        "artifact_paths": [
+            str(path) for path in spec["artifact_paths"] if path.exists()
+        ],
+        "failures": failures,
+    }
+    print(f"finished {name}: exit={process.returncode} duration={duration:.1f}s")
+    return result
+
+
+def extract_failures(log_text: str) -> list[str]:
+    failures: list[str] = []
+    for match in re.finditer(
+        r"failed direction=(?P<direction>\S+) case=(?P<case>\S+) step=(?P<step>\S+)",
+        log_text,
+    ):
+        failures.append(
+            f"{match.group('direction')}:{match.group('case')}:{match.group('step')}"
+        )
+    for match in re.finditer(r"^test (?P<name>\S+) \.\.\. FAILED$", log_text, re.MULTILINE):
+        failures.append(match.group("name"))
+    for match in re.finditer(r"^failed_suites=(?P<suites>.*)$", log_text, re.MULTILINE):
+        failures.extend(suite for suite in match.group("suites").split() if suite)
+    return sorted(set(failures))
+
+
+def write_readme(out_dir: Path, summary: dict[str, Any]) -> None:
+    lines = [
+        "# Scapy Interop Report",
+        "",
+        f"Generated: {summary['generated_at']}",
+        f"Status: {summary['status']}",
+        "",
+        "## Local Commands",
+        "",
+    ]
+    lines.extend(f"- `{command}`" for command in summary["local_commands"])
+    lines.extend(
+        [
+            "",
+            "## Hetzner Commands",
+            "",
+        ]
+    )
+    lines.extend(f"- `{command}`" for command in summary["hetzner_commands"])
+    lines.extend(
+        [
+            "",
+            "## Command Logs",
+            "",
+        ]
+    )
+    lines.extend(
+        f"- `{result['name']}` exit={result['exit_code']} log=`{result['log']}`"
+        for result in summary["commands"]
+    )
+    (out_dir / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
