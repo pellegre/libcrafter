@@ -13,7 +13,16 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .compare import compare_decoded_models, failure_indexes
-from .model import ComparisonResult, JSONObject, RunReport, dumps_json, write_json
+from .model import (
+    ComparisonResult,
+    DecodedModel,
+    EncodedVector,
+    JSONObject,
+    PacketPlan,
+    RunReport,
+    dumps_json,
+    write_json,
+)
 from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 
 
@@ -95,7 +104,12 @@ def _not_implemented(args: argparse.Namespace) -> int:
 
 def _offline(args: argparse.Namespace) -> int:
     if not args.dry_plan and not args.emit_vectors and not args.emit_decoded:
-        return _offline_reference_to_libcrafter(args)
+        if args.direction == "reference_to_libcrafter":
+            return _offline_reference_to_libcrafter(args)
+        if args.direction == "libcrafter_to_reference":
+            return _offline_libcrafter_to_reference(args)
+        print(f"unsupported offline direction: {args.direction}", file=sys.stderr)
+        return 2
 
     from .generator import generate_plans
 
@@ -325,12 +339,170 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
     return 0 if status == "passed" else 1
 
 
+def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
+    if args.backend != "scapy":
+        print(f"unsupported backend: {args.backend}", file=sys.stderr)
+        return 2
+
+    from .backends.scapy.normalize import decode_vectors
+
+    output_dir = _offline_output_dir(args.out)
+    artifacts_root = output_dir / "artifacts"
+    artifacts_root.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / "report.json"
+    scapy_decoded_path = output_dir / "scapy-decoded.json"
+    run_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f"{args.direction}.",
+            dir=artifacts_root,
+        )
+    )
+
+    emitter = _run_libcrafter_vector_emitter(run_dir)
+    entries = _select_libcrafter_cases(emitter["manifest"], args)
+    plans: list[PacketPlan] = []
+    vectors: list[EncodedVector] = []
+    expected_decoded: list[JSONObject] = []
+    for index, case in entries:
+        plan = _libcrafter_case_plan(case, args, index)
+        plans.append(plan)
+        vectors.append(_libcrafter_case_vector(case, plan))
+        expected_decoded.append(
+            _json_object(case.get("expected_decoded", {}), f"case[{index}].expected_decoded")
+        )
+
+    vector_report = RunReport(
+        mode="offline",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=len(vectors),
+        status="vectors",
+        selected_specs=["libcrafter-oracle-vectors"],
+        metadata={
+            "direction": args.direction,
+            "requested_count": args.count,
+            "generated_count": len(entries),
+            "vector_backend": "libcrafter",
+            "vectors": [vector.to_dict() for vector in vectors],
+        },
+    )
+    vector_path = run_dir / "libcrafter-vectors.json"
+    write_json(vector_path, vector_report)
+
+    expected_path = run_dir / "libcrafter-expected-decoded.json"
+    write_json(
+        expected_path,
+        RunReport(
+            mode="offline",
+            backend="libcrafter",
+            profile=args.profile,
+            seed=args.seed,
+            count=len(expected_decoded),
+            status="decoded",
+            selected_specs=["libcrafter-oracle-vectors"],
+            metadata={
+                "direction": args.direction,
+                "decoded": expected_decoded,
+            },
+        ),
+    )
+
+    actual_decoded = decode_vectors(vectors)
+    scapy_report = RunReport(
+        mode="offline",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=len(actual_decoded),
+        status="decoded",
+        selected_specs=["libcrafter-oracle-vectors"],
+        metadata={
+            "direction": args.direction,
+            "decoded": [model.to_dict() for model in actual_decoded],
+        },
+    )
+    actual_path = run_dir / "scapy-decoded.json"
+    write_json(actual_path, scapy_report)
+    write_json(scapy_decoded_path, scapy_report)
+
+    results = _compare_offline_results(
+        args=args,
+        expected=expected_decoded,
+        actual=actual_decoded,
+        plans=plans,
+        partial_expected=True,
+    )
+    failures = [result for result in results if not result.passed]
+    status = "passed" if not failures and emitter["exit_code"] == 0 else "failed"
+    preserve_artifacts = args.keep_artifacts or status != "passed"
+
+    artifacts = [str(report_path), str(scapy_decoded_path)]
+    if preserve_artifacts:
+        artifacts.extend(
+            [
+                str(run_dir),
+                str(vector_path),
+                str(expected_path),
+                str(actual_path),
+                str(emitter["stdout_path"]),
+                str(emitter["stderr_path"]),
+            ]
+        )
+
+    report = RunReport(
+        mode="offline",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=len(results),
+        status=status,
+        selected_specs=["libcrafter-oracle-vectors"],
+        artifacts=artifacts,
+        results=results,
+        failures=failures,
+        reproduction_commands=[
+            command
+            for command in (result.reproduction_command for result in failures)
+            if command is not None
+        ],
+        metadata={
+            "direction": args.direction,
+            "requested_count": args.count,
+            "generated_count": len(entries),
+            "artifact_dir": str(run_dir) if preserve_artifacts else None,
+            "libcrafter_emitter": {
+                "argv": emitter["argv"],
+                "exit_code": emitter["exit_code"],
+            },
+        },
+    )
+    write_json(report_path, report)
+
+    if not preserve_artifacts:
+        shutil.rmtree(run_dir)
+
+    passed_count = len(results) - len(failures)
+    print(
+        f"offline {args.direction}: status={status} "
+        f"passed={passed_count}/{len(results)} report={report_path}"
+    )
+    if failures:
+        indexes = ", ".join(str(index) for index in failure_indexes(failures))
+        print(f"failing_indexes={indexes}", file=sys.stderr)
+        if failures[0].reproduction_command:
+            print(f"reproduce: {failures[0].reproduction_command}", file=sys.stderr)
+
+    return 0 if status == "passed" else 1
+
+
 def _compare_offline_results(
     *,
     args: argparse.Namespace,
     expected: list[object],
-    actual: list[JSONObject],
-    plans: list[object],
+    actual: list[object],
+    plans: list[PacketPlan],
+    partial_expected: bool = False,
 ) -> list[ComparisonResult]:
     results: list[ComparisonResult] = []
     shared_count = min(len(expected), len(actual), len(plans))
@@ -343,6 +515,8 @@ def _compare_offline_results(
                 plan=plan,
                 direction=args.direction,
                 reproduction_command=_reproduction_command(args, plan.index),
+                partial_expected=partial_expected,
+                actual_strict_bytes_hex=_strict_bytes_hex(actual[item]),
             )
         )
 
@@ -355,8 +529,8 @@ def _compare_offline_results(
             ComparisonResult(
                 passed=False,
                 direction=args.direction,
-                expected=expected[item].to_dict() if item < len(expected) else {},
-                actual=actual[item] if item < len(actual) else {},
+                expected=_model_to_object(expected[item]) if item < len(expected) else {},
+                actual=_model_to_object(actual[item]) if item < len(actual) else {},
                 plan=plan,
                 strict_bytes=plan.strict_bytes,
                 byte_equal=False,
@@ -421,6 +595,53 @@ def _run_libcrafter_decode_bridge(vector_path: Path, run_dir: Path) -> JSONObjec
     }
 
 
+def _run_libcrafter_vector_emitter(run_dir: Path) -> JSONObject:
+    argv = [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "crafter",
+        "--example",
+        "oracle_vectors",
+        "--",
+        "--json",
+    ]
+    process = subprocess.run(
+        argv,
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    stdout_path = run_dir / "libcrafter-vectors.stdout.json"
+    stderr_path = run_dir / "libcrafter-vectors.stderr.txt"
+    stdout_path.write_text(process.stdout, encoding="utf-8")
+    stderr_path.write_text(process.stderr, encoding="utf-8")
+
+    if process.returncode != 0:
+        raise RuntimeError(
+            "libcrafter vector emitter failed with exit "
+            f"{process.returncode}; stderr={stderr_path}"
+        )
+
+    try:
+        manifest = json.loads(process.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"libcrafter vector emitter emitted invalid JSON: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError("libcrafter vector emitter manifest must be a JSON object")
+
+    return {
+        "argv": argv,
+        "exit_code": process.returncode,
+        "manifest": manifest,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+    }
+
+
 def _decoded_models(report: object) -> list[JSONObject]:
     report_object = _json_object(report, "libcrafter report")
     metadata = _json_object(report_object.get("metadata", {}), "libcrafter report metadata")
@@ -432,6 +653,136 @@ def _decoded_models(report: object) -> list[JSONObject]:
     for index, item in enumerate(decoded):
         output.append(_json_object(item, f"decoded[{index}]"))
     return output
+
+
+def _select_libcrafter_cases(
+    manifest: object,
+    args: argparse.Namespace,
+) -> list[tuple[int, JSONObject]]:
+    manifest_object = _json_object(manifest, "libcrafter vector manifest")
+    cases = manifest_object.get("cases")
+    if not isinstance(cases, list):
+        raise RuntimeError("libcrafter vector manifest cases must be a list")
+
+    entries: list[tuple[int, JSONObject]] = []
+    for index, case in enumerate(cases):
+        case_object = _json_object(case, f"cases[{index}]")
+        if not _case_supports_direction(case_object, args.direction):
+            continue
+        entries.append((index, case_object))
+
+    if args.case_name is not None:
+        entries = [
+            (index, case)
+            for index, case in entries
+            if case.get("name") == args.case_name
+        ]
+    if args.family is not None:
+        entries = [
+            (index, case)
+            for index, case in entries
+            if case.get("family") == args.family
+        ]
+    if args.feature is not None:
+        entries = [
+            (index, case)
+            for index, case in entries
+            if args.feature in _string_values(case.get("features", []))
+            or args.feature in _string_values(case.get("feature_tags", []))
+        ]
+    if args.index is not None:
+        entries = [
+            (index, case)
+            for index, case in entries
+            if index == args.index
+        ]
+    else:
+        entries = entries[: args.count]
+
+    if not entries:
+        raise RuntimeError("no libcrafter oracle vector cases selected")
+    return entries
+
+
+def _case_supports_direction(case: JSONObject, direction: str) -> bool:
+    directions = case.get("directions")
+    if isinstance(directions, list) and direction in directions:
+        return True
+    return case.get("direction") == direction
+
+
+def _libcrafter_case_plan(
+    case: JSONObject,
+    args: argparse.Namespace,
+    index: int,
+) -> PacketPlan:
+    expected = _json_object(case.get("expected_decoded", {}), f"case[{index}].expected_decoded")
+    stack = _string_values(expected.get("layers", []))
+    fields = _json_object(expected.get("fields", {}), f"case[{index}].expected_decoded.fields")
+    name = _optional_string(case.get("name"))
+    family = _optional_string(case.get("family"))
+    strict_bytes = case.get("strict_bytes")
+    return PacketPlan(
+        stack=stack,
+        fields=fields,
+        profile=args.profile,
+        seed=args.seed,
+        index=index,
+        direction=args.direction,
+        family=family,
+        feature_tags=_string_values(case.get("feature_tags", [])),
+        case=name,
+        strict_bytes=strict_bytes is not False,
+        metadata={
+            "plan_id": f"libcrafter:{index}",
+            "case": name,
+            "generator": "cargo run -q -p crafter --example oracle_vectors -- --json",
+            "source": "libcrafter oracle vector emitter",
+        },
+    )
+
+
+def _libcrafter_case_vector(case: JSONObject, plan: PacketPlan) -> EncodedVector:
+    raw_hex = _optional_string(case.get("raw_hex")) or _optional_string(case.get("hex"))
+    if raw_hex is None:
+        raise RuntimeError(f"libcrafter case {plan.index} is missing raw_hex")
+    root = _optional_string(case.get("root_decoder")) or _optional_string(case.get("root"))
+    if root is None:
+        raise RuntimeError(f"libcrafter case {plan.index} is missing root/root_decoder")
+    return EncodedVector(
+        plan=plan,
+        backend="libcrafter",
+        raw_hex=raw_hex,
+        root=root,
+        decoder=root,
+        metadata={
+            "case": plan.case,
+            "length": len(bytes.fromhex(raw_hex)),
+            "strict_bytes": plan.strict_bytes,
+            "summary": case.get("summary"),
+        },
+    )
+
+
+def _strict_bytes_hex(model: object) -> str | None:
+    model_object = model.to_dict() if isinstance(model, DecodedModel) else model
+    if not isinstance(model_object, dict):
+        return None
+    metadata = model_object.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get("reencoded_hex")
+    if isinstance(value, str):
+        return value
+    error = metadata.get("reencoded_error")
+    if isinstance(error, str):
+        return f"<scapy re-encode failed: {error}>"
+    return None
+
+
+def _model_to_object(model: object) -> JSONObject:
+    value = model.to_dict() if hasattr(model, "to_dict") else model
+    return _json_object(value, "oracle model")
 
 
 def _offline_output_dir(out: str) -> Path:
@@ -477,6 +828,21 @@ def _json_object(value: object, name: str) -> JSONObject:
         output[key] = item  # type: ignore[assignment]
     return output
 
+
+def _optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _string_values(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
 def _backend_info(args: argparse.Namespace) -> int:
     if args.backend == "scapy":
         from .backends.scapy.bootstrap import backend_info
@@ -516,7 +882,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_generation_options(offline_parser)
     offline_parser.add_argument(
         "--direction",
-        choices=("reference_to_libcrafter",),
+        choices=("reference_to_libcrafter", "libcrafter_to_reference"),
         default="reference_to_libcrafter",
         help="offline validation direction (default: %(default)s)",
     )
