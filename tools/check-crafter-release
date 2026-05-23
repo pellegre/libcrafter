@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: tools/check-crafter-release [--static|--package-only]
+
+Runs the local crafter release gate without publishing.
+
+  --static        run fmt, clippy, tests, example builds, docs, and package inspection
+  --package-only run package creation and package content inspection only
+USAGE
+}
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+run() {
+  printf '\n==> %s\n' "$*"
+  "$@"
+}
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+mode="${1:---static}"
+if [[ $# -gt 1 ]]; then
+  usage >&2
+  exit 2
+fi
+
+case "$mode" in
+  --static | --package-only)
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+
+crate_name="crafter"
+cargo_offline_flags=(--locked --offline)
+
+inspect_package_contents() {
+  local crate_file="$1"
+  local package_members
+  local forbidden_members
+
+  [[ -f "$crate_file" ]] || die "package archive not found: $crate_file"
+
+  package_members="$(mktemp)"
+  forbidden_members="$(mktemp)"
+
+  run tar -tf "$crate_file"
+  tar -tf "$crate_file" >"$package_members"
+
+  awk '
+    {
+      path = $0
+      sub(/^[^/]+\//, "", path)
+
+      if (path ~ /(^|\/)(\.agents|\.clew|\.github|\.githooks|\.libcrafter-live|target)(\/|$)/ ||
+          path ~ /(^|\/)(\.codex|\.cursor|\.idea|\.vscode)(\/|$)/ ||
+          path ~ /^tools\/(git-hooks|live-lab|policy|reference)(\/|$)/ ||
+          path ~ /^tests\/live(\/|$)/ ||
+          path ~ /^crates\/(crafter-core|crafter-live|crafter-net|crafter-pcap|core|live|net|pcap)(\/|$)/) {
+        print path
+      }
+    }
+  ' "$package_members" >"$forbidden_members"
+
+  if [[ -s "$forbidden_members" ]]; then
+    printf '\nforbidden package members:\n' >&2
+    sed 's/^/  - /' "$forbidden_members" >&2
+    die "package contains repo-local execution substrate"
+  fi
+
+  if ! awk '{ sub(/^[^/]+\//, "", $0); print }' "$package_members" | grep -Fxq 'Cargo.toml'; then
+    die "package archive is missing Cargo.toml"
+  fi
+
+  if ! awk '{ sub(/^[^/]+\//, "", $0); print }' "$package_members" | grep -Fxq 'src/lib.rs'; then
+    die "package archive is missing src/lib.rs"
+  fi
+
+  rm -f "$package_members" "$forbidden_members"
+}
+
+create_and_inspect_package() {
+  local crate_file
+
+  rm -f "target/package/${crate_name}-"*.crate
+  run cargo package -p "$crate_name" --allow-dirty --no-verify "${cargo_offline_flags[@]}"
+
+  crate_file="$(find target/package -maxdepth 1 -type f -name "${crate_name}-*.crate" -printf '%T@ %p\n' | sort -nr | awk 'NR == 1 { print $2 }')"
+  [[ -n "$crate_file" ]] || die "cargo package did not create a ${crate_name} archive"
+
+  inspect_package_contents "$crate_file"
+}
+
+if [[ "$mode" == "--static" ]]; then
+  run cargo fmt --all -- --check
+  run cargo clippy -p "$crate_name" --all-targets --all-features "${cargo_offline_flags[@]}"
+  run cargo test -p "$crate_name" --all-targets "${cargo_offline_flags[@]}"
+  run cargo build -p "$crate_name" --examples "${cargo_offline_flags[@]}"
+  run env RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings" cargo doc -p "$crate_name" --no-deps "${cargo_offline_flags[@]}"
+fi
+
+create_and_inspect_package
