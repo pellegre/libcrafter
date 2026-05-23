@@ -1430,8 +1430,7 @@ mod udp {
     use crate::{IpProtocol, Ipv4, LinkType, Packet, Raw, IPPROTO_UDP};
     use core::net::Ipv4Addr;
 
-    const VLAN_FIXTURE: &[u8] =
-        include_bytes!("../../../../tests/fixtures/scapy/vlan-ipv4-udp.bin");
+    const VLAN_FIXTURE: &[u8] = fixture_bytes!("scapy/vlan-ipv4-udp.bin");
 
     fn src() -> Ipv4Addr {
         Ipv4Addr::new(192, 0, 2, 1)

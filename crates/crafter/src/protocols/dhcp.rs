@@ -1393,8 +1393,7 @@ mod dhcp_options {
     use super::{Dhcp, DhcpMessageType, DhcpOption};
     use core::net::Ipv4Addr;
 
-    const OFFER_OPTIONS: &str =
-        include_str!("../../../../tests/fixtures/bytes/dhcp-offer-options.hex");
+    const OFFER_OPTIONS: &str = fixture_str!("bytes/dhcp-offer-options.hex");
 
     #[test]
     fn option_fixture_decodes_common_offer_values() {

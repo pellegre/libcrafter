@@ -1,3 +1,6 @@
+#[macro_use]
+mod support;
+
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crafter::core::{
@@ -87,7 +90,7 @@ fn decode_malformed_case(case: &MalformedCase) {
 }
 
 fn malformed_cases() -> Vec<MalformedCase> {
-    include_str!("../../../tests/fixtures/malformed/core-decode-corpus.hex")
+    fixture_str!("malformed/core-decode-corpus.hex")
         .lines()
         .filter_map(|line| {
             let line = line.trim();

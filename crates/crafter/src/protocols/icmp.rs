@@ -1604,8 +1604,7 @@ mod icmp_tests {
     use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
     use core::net::Ipv4Addr;
 
-    const IPV4_ICMP_FIXTURE: &[u8] =
-        include_bytes!("../../../../tests/fixtures/scapy/ipv4-icmp.bin");
+    const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("scapy/ipv4-icmp.bin");
 
     fn src() -> Ipv4Addr {
         Ipv4Addr::new(192, 0, 2, 10)
@@ -1699,8 +1698,7 @@ mod icmpv6 {
     use crate::{Ipv6, NetworkLayer, Packet, Raw};
     use core::net::Ipv6Addr;
 
-    const IPV6_ICMP_FIXTURE: &[u8] =
-        include_bytes!("../../../../tests/fixtures/scapy/ipv6-icmp.bin");
+    const IPV6_ICMP_FIXTURE: &[u8] = fixture_bytes!("scapy/ipv6-icmp.bin");
 
     fn src() -> Ipv6Addr {
         Ipv6Addr::new(0x2001, 0x0db8, 1, 0, 0, 0, 0, 0x0010)

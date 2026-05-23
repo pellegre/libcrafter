@@ -1292,9 +1292,8 @@ mod ethernet {
     use crate::{LinkType, MacAddr, Packet, Raw};
     use core::net::Ipv4Addr;
 
-    const ETHERNET_FIXTURE: &[u8] = include_bytes!("../../../../tests/fixtures/scapy/ethernet.bin");
-    const ARP_REQUEST_FIXTURE: &[u8] =
-        include_bytes!("../../../../tests/fixtures/scapy/arp-request.bin");
+    const ETHERNET_FIXTURE: &[u8] = fixture_bytes!("scapy/ethernet.bin");
+    const ARP_REQUEST_FIXTURE: &[u8] = fixture_bytes!("scapy/arp-request.bin");
 
     fn src_mac() -> MacAddr {
         "02:00:5e:00:53:01".parse().unwrap()
@@ -1358,8 +1357,7 @@ mod arp {
     use crate::{LinkType, MacAddr, Packet};
     use core::net::Ipv4Addr;
 
-    const ARP_REQUEST_FIXTURE: &[u8] =
-        include_bytes!("../../../../tests/fixtures/scapy/arp-request.bin");
+    const ARP_REQUEST_FIXTURE: &[u8] = fixture_bytes!("scapy/arp-request.bin");
 
     fn src_mac() -> MacAddr {
         "02:00:5e:00:53:01".parse().unwrap()
@@ -1426,8 +1424,7 @@ mod link_layers {
     use crate::{LinkType, MacAddr, Packet, Raw};
     use core::net::Ipv4Addr;
 
-    const VLAN_FIXTURE: &[u8] =
-        include_bytes!("../../../../tests/fixtures/scapy/vlan-ipv4-udp.bin");
+    const VLAN_FIXTURE: &[u8] = fixture_bytes!("scapy/vlan-ipv4-udp.bin");
 
     fn src_mac() -> MacAddr {
         "02:00:5e:00:53:01".parse().unwrap()
