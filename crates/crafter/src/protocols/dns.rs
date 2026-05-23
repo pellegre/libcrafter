@@ -1011,7 +1011,7 @@ fn record_type_summary(record_type: u16) -> String {
 }
 
 #[cfg(test)]
-mod dns {
+mod dns_tests {
     use super::{
         decode_dns_name, Dns, DnsQuestion, DnsRecord, DnsRecordData, DNS_CLASS_IN,
         DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_TYPE_A,

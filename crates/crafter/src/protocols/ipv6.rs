@@ -1826,7 +1826,7 @@ fn copy_array_16(bytes: &[u8]) -> [u8; 16] {
 }
 
 #[cfg(test)]
-mod ipv6 {
+mod ipv6_tests {
     use super::{Ipv6, IPPROTO_IPV6_ROUTE};
     use crate::checksum::ipv6_pseudo_header_checksum;
     use crate::{NetworkLayer, Packet, Raw, Tcp, TCP_FLAG_SYN};

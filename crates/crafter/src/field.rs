@@ -4,9 +4,10 @@
 ///
 /// Protocol builders use this to distinguish fields that may be auto-filled
 /// from fields the caller set explicitly.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Field<T> {
     /// No value has been assigned.
+    #[default]
     Unset,
     /// The library assigned a default value.
     Defaulted(T),
@@ -23,12 +24,6 @@ pub enum FieldState {
     Defaulted,
     /// The caller explicitly supplied a value.
     User,
-}
-
-impl<T> Default for Field<T> {
-    fn default() -> Self {
-        Self::Unset
-    }
 }
 
 impl<T> Field<T> {
