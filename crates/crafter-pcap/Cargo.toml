@@ -2,9 +2,18 @@
 name = "crafter-pcap"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
-crafter-core = { path = "../crafter-core" }
+crafter-core = { path = "../crafter-core", version = "0.1.0-alpha.1" }

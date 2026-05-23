@@ -32,12 +32,14 @@ arguments after provider selection unchanged.
 
 ## Providers
 
-`local-dry-run` is the first provider. It creates no infrastructure, sends no
-packets, and writes only local state and artifact files. Use it to validate the
-contract before adding or invoking a real provider.
+`local-dry-run` creates no infrastructure, sends no packets, and writes only
+local state and artifact files. Use it to validate the contract before invoking
+a real provider.
 
-Future providers, including Hetzner, should implement the same executable
-interface without changing the Rust packet library.
+`hetzner` is the first real provider. It provisions a disposable Linux host,
+runs the selected validation suite there, collects artifacts, and tears the host
+down through the same command contract. Additional providers should implement
+the same executable interface without changing the Rust packet library.
 
 ## Configuration
 
@@ -54,7 +56,7 @@ from a local env file when it exists:
   `tools/live-lab/artifacts`.
 - `LIBCRAFTER_PROJECT_ROOT`: optional project root override. Defaults to the
   repository root inferred from this tool.
-- `HETZNER_API_TOKEN`: required only by a future Hetzner provider.
+- `HETZNER_API_TOKEN`: required only by non-dry-run Hetzner commands.
 
 Do not store provider token values, account identifiers, host IDs, public IPs,
 or personal defaults in tracked files. Local env files and generated live-lab

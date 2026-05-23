@@ -1,13 +1,15 @@
 # Rust API Map
 
-This document maps the legacy libcrafter API and Scapy-inspired packet workflows
-to the planned Rust public surface. It is a design target for the port, not a
-claim that every symbol already exists.
+This document maps the legacy libcrafter API and Scapy-inspired packet
+workflows to the Rust public surface. It began as a design target for the port;
+the first alpha implements the core workflow while a few entries remain
+forward-looking notes.
 
 The first milestone is a packet crafting library that agents can use by copying
 small, explicit examples. The generated-code style is therefore primary:
 predictable constructors, builder methods, typed errors, and named helpers. A
-concise `/` composition style is still planned for interactive and example code.
+concise `/` composition style is also available for interactive and example
+code.
 
 Example parity should be checked against `LIBCRAFTER_EXAMPLES_DIR` when set, or
 the conventional sibling checkout at `../libcrafter-examples`.
@@ -403,4 +405,3 @@ Agent-generated tools should prefer:
 
 Concise human examples may use `/`, but generated examples should always have a
 builder equivalent nearby in documentation.
-
