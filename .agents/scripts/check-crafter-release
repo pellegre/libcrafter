@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-usage: tools/check-crafter-release [--static|--package-only]
+usage: .agents/scripts/check-crafter-release [--static|--package-only]
 
 Runs the local crafter release gate without publishing.
 
@@ -22,7 +22,7 @@ run() {
   "$@"
 }
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 mode="${1:---static}"
