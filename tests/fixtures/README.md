@@ -58,6 +58,11 @@ Scapy output must be generated in a deterministic mode. Any fields that Scapy
 fills implicitly, such as checksums and lengths, should be called out in the
 metadata so Rust tests can assert the same behavior.
 
+The Scapy interop case matrix lives in `scapy/cases.json`. Each case records
+`name`, `family`, `direction`, `root`, `expected_stack`, `strict_bytes`, and
+`notes`; planned cases may be listed before their packet factories or checked-in
+bytes exist.
+
 ## Pcap Fixtures
 
 Pcap fixtures should be small and focused. A pcap should normally contain one
