@@ -1,0 +1,90 @@
+version: 1
+kind: layer
+name: dhcp
+summary: BOOTP plus DHCP message and option lists over Ethernet IPv4 UDP.
+
+roots: []
+parents:
+  - udp
+children: []
+
+fields:
+  - name: op
+    type: uint8
+    required: true
+    domains:
+      - bootrequest
+      - bootreply
+  - name: hardware_type
+    type: uint8
+    required: true
+    domains:
+      - ethernet
+  - name: hardware_length
+    type: uint8
+    required: true
+    domains:
+      - 6
+  - name: transaction_id
+    type: uint32
+    required: true
+    domains:
+      - deterministic
+  - name: flags
+    type: flags
+    required: true
+    domains:
+      - none
+      - broadcast
+  - name: client_ip
+    type: ipv4
+    required: true
+    domains:
+      - zero
+      - documentation_ipv4
+  - name: your_ip
+    type: ipv4
+    required: true
+    domains:
+      - zero
+      - documentation_ipv4
+  - name: client_hardware_address
+    type: bytes
+    required: true
+    domains:
+      - documentation_mac_padded
+  - name: options
+    type: dhcp_option_list
+    required: true
+    domains:
+      - message_type
+      - hostname
+      - requested_ip
+      - server_id
+      - parameter_request_list
+      - lease_time
+      - router
+      - dns_server
+      - generic
+      - end
+
+coverage_cases:
+  - dhcp-discover
+  - dhcp-request-offer-ack
+  - dhcp-inform-release-generic-options
+  - crafter-dhcp-message-matrix
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - BOOTP
+      - DHCP
+    encode: true
+    decode: true
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - Full message matrix and generic options are planned coverage.

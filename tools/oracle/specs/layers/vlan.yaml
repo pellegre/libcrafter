@@ -1,0 +1,59 @@
+version: 1
+kind: layer
+name: vlan
+summary: IEEE 802.1Q VLAN tag with PCP, DEI, VLAN ID, and nested ethertype.
+
+roots: []
+parents:
+  - ethernet
+children:
+  - ipv4
+  - ipv6
+  - payload
+
+fields:
+  - name: priority
+    type: uint3
+    required: true
+    domains:
+      - 0
+      - 1
+      - 7
+  - name: drop_eligible
+    type: uint1
+    required: true
+    domains:
+      - 0
+      - 1
+  - name: vlan_id
+    type: uint12
+    required: true
+    domains:
+      - 0
+      - 1
+      - 100
+      - 4094
+  - name: ethertype
+    type: uint16
+    required: true
+    domains:
+      - ipv4
+      - ipv6
+      - experimental
+
+coverage_cases:
+  - vlan-ipv4-udp
+  - vlan-boundary-fields
+  - crafter-vlan-boundary-fields
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - Dot1Q
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true

@@ -1,0 +1,75 @@
+version: 1
+kind: layer
+name: icmpv6
+summary: ICMPv6 echo and error messages embedded in IPv6.
+
+roots: []
+parents:
+  - ipv6
+  - ipv6_routing
+children:
+  - ipv6
+  - payload
+
+fields:
+  - name: type
+    type: uint8
+    required: true
+    domains:
+      - echo_request
+      - echo_reply
+      - destination_unreachable
+      - packet_too_big
+      - time_exceeded
+      - parameter_problem
+  - name: code
+    type: uint8
+    required: true
+    domains:
+      - 0
+      - protocol_specific
+  - name: checksum
+    type: uint16
+    required: true
+    domains:
+      - derived
+  - name: identifier
+    type: uint16
+    required: false
+    domains:
+      - deterministic
+  - name: sequence
+    type: uint16
+    required: false
+    domains:
+      - deterministic
+  - name: embedded_header
+    type: packet_prefix
+    required: false
+    domains:
+      - ipv6
+
+coverage_cases:
+  - ipv6-icmp
+  - ipv6-routing-icmpv6
+  - icmpv6-errors
+  - crafter-icmpv6-errors
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ICMPv6EchoRequest
+      - ICMPv6EchoReply
+      - ICMPv6DestUnreach
+      - ICMPv6PacketTooBig
+      - ICMPv6TimeExceeded
+      - ICMPv6ParamProblem
+    encode: true
+    decode: true
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - ICMPv6 error matrix is planned coverage.

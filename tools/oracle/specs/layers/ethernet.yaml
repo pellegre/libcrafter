@@ -1,0 +1,55 @@
+version: 1
+kind: layer
+name: ethernet
+summary: Ethernet II frame header and raw ethertype fallback.
+
+roots:
+  - "link:ethernet"
+parents:
+  - root
+children:
+  - vlan
+  - arp
+  - ipv4
+  - ipv6
+  - payload
+
+fields:
+  - name: dst
+    type: mac
+    required: true
+    domains:
+      - documentation_mac
+      - broadcast
+      - zero
+  - name: src
+    type: mac
+    required: true
+    domains:
+      - documentation_mac
+      - zero
+  - name: ethertype
+    type: uint16
+    required: true
+    domains:
+      - ipv4
+      - ipv6
+      - arp
+      - vlan
+      - experimental
+
+coverage_cases:
+  - ethernet
+  - crafter-ethernet-unknown-ethertype
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - Ether
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true

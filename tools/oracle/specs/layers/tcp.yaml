@@ -1,0 +1,121 @@
+version: 1
+kind: layer
+name: tcp
+summary: TCP ports, sequence fields, flags, data offset, reserved bits, and options.
+
+roots: []
+parents:
+  - ipv4
+  - ipv6
+  - ipv6_routing
+children:
+  - payload
+
+fields:
+  - name: src_port
+    type: uint16
+    required: true
+    domains:
+      - dynamic
+      - boundary
+  - name: dst_port
+    type: uint16
+    required: true
+    domains:
+      - http
+      - https
+      - dynamic
+      - boundary
+  - name: sequence
+    type: uint32
+    required: true
+    domains:
+      - deterministic
+      - boundary
+  - name: acknowledgement
+    type: uint32
+    required: true
+    domains:
+      - 0
+      - deterministic
+      - boundary
+  - name: data_offset
+    type: uint4
+    required: true
+    domains:
+      - derived
+      - boundary
+  - name: reserved
+    type: uint3
+    required: true
+    domains:
+      - 0
+      - 7
+  - name: flags
+    type: flags
+    required: true
+    domains:
+      - syn
+      - ack
+      - fin
+      - rst
+      - psh
+      - urg
+      - ece
+      - cwr
+      - all
+  - name: window
+    type: uint16
+    required: true
+    domains:
+      - 0
+      - 8192
+      - 65535
+  - name: checksum
+    type: uint16
+    required: true
+    domains:
+      - derived
+  - name: urgent_pointer
+    type: uint16
+    required: true
+    domains:
+      - 0
+      - boundary
+  - name: options
+    type: option_list
+    required: false
+    domains:
+      - eol
+      - nop
+      - mss
+      - window_scale
+      - sack_permitted
+      - sack_blocks
+      - timestamp
+      - mptcp
+      - fast_open
+      - edo
+      - generic
+
+coverage_cases:
+  - ipv4-tcp-syn
+  - tcp-all-flags-reserved-offset
+  - tcp-options
+  - tcp-options-sack-blocks
+  - tcp-options-mptcp-fastopen-edo-generic
+  - crafter-tcp-options
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - TCP
+    encode: true
+    decode: true
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - Advanced option kinds may normalize as generic option bytes.

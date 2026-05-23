@@ -1,0 +1,59 @@
+version: 1
+kind: feature
+name: dhcp_behavior
+summary: DHCP message matrix and option list behavior over BOOTP.
+
+layers:
+  - ethernet
+  - ipv4
+  - udp
+  - dhcp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: discover
+    message_types:
+      - discover
+  - name: request_offer_ack
+    message_types:
+      - request
+      - offer
+      - ack
+  - name: inform_release
+    message_types:
+      - inform
+      - release
+  - name: option_matrix
+    option_kinds:
+      - message_type
+      - hostname
+      - requested_ip
+      - server_id
+      - parameter_request_list
+      - lease_time
+      - router
+      - dns_server
+      - generic
+      - end
+
+coverage_cases:
+  - dhcp-discover
+  - dhcp-request-offer-ack
+  - dhcp-inform-release-generic-options
+  - malformed-dhcp-options
+  - crafter-dhcp-message-matrix
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - BOOTP
+      - DHCP
+  libcrafter:
+    status: partial
+    notes:
+      - Full message matrix and generic options are planned coverage.

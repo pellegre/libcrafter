@@ -1,0 +1,101 @@
+version: 1
+kind: profiles
+name: oracle_initial_profiles
+description: Seeded sampling profiles for offline, pcap, and live oracle runs.
+
+profiles:
+  - name: smoke
+    purpose: tiny stable local and PR sanity coverage
+    default_count: 10
+    family_weights:
+      - name: ipv4
+        weight: 4
+      - name: ipv6
+        weight: 1
+    payload_length:
+      min: 0
+      max: 32
+    feature_weights:
+      baseline: 10
+      boundary: 1
+      malformed: 0
+      pcap: 0
+      live: 0
+  - name: ci
+    purpose: deterministic pull request coverage
+    default_count: 2000
+    family_weights:
+      - name: ipv4
+        weight: 3
+      - name: ipv6
+        weight: 2
+    payload_length:
+      min: 0
+      max: 256
+    feature_weights:
+      baseline: 10
+      boundary: 3
+      malformed: 1
+      pcap: 1
+      live: 0
+  - name: wild
+    purpose: common packet shapes and field values
+    default_count: 5000
+    family_weights:
+      - name: ipv4
+        weight: 3
+      - name: ipv6
+        weight: 2
+    payload_length:
+      min: 0
+      max: 512
+    feature_weights:
+      baseline: 10
+      boundary: 2
+      malformed: 1
+      pcap: 1
+      live: 1
+  - name: boundary
+    purpose: edge values, options, checksums, lengths, and header limits
+    default_count: 1000
+    family_weights:
+      - name: ipv4
+        weight: 1
+      - name: ipv6
+        weight: 1
+    payload_length:
+      min: 0
+      max: 1500
+    feature_weights:
+      baseline: 3
+      boundary: 10
+      malformed: 2
+      pcap: 1
+      live: 0
+  - name: fuzz
+    purpose: valid-weird and explicitly malformed behavior
+    default_count: 1000
+    family_weights:
+      - name: ipv4
+        weight: 1
+      - name: ipv6
+        weight: 1
+    payload_length:
+      min: 0
+      max: 128
+    feature_weights:
+      baseline: 2
+      boundary: 4
+      malformed: 8
+      pcap: 1
+      live: 0
+
+backend_support:
+  scapy:
+    status: supported
+    notes:
+      - Profiles affect generator sampling only.
+  libcrafter:
+    status: supported
+    notes:
+      - Profiles affect generator sampling only.

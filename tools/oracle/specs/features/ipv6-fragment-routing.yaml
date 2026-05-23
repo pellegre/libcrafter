@@ -1,0 +1,76 @@
+version: 1
+kind: feature
+name: ipv6_fragment_routing
+summary: IPv6 fragment, generic routing, mobile routing, and segment routing headers.
+
+layers:
+  - ipv6
+  - ipv6_fragment
+  - ipv6_routing
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: fragment_udp
+    extension_headers:
+      - fragment
+    terminal_layers:
+      - udp
+      - payload
+  - name: generic_routing_payload
+    extension_headers:
+      - routing
+    terminal_layers:
+      - payload
+  - name: mobile_routing_payload
+    extension_headers:
+      - mobile_routing
+    terminal_layers:
+      - payload
+  - name: segment_routing_udp
+    extension_headers:
+      - segment_routing
+    terminal_layers:
+      - udp
+      - payload
+  - name: routing_tcp_raw
+    extension_headers:
+      - routing
+    terminal_layers:
+      - tcp
+      - payload
+  - name: routing_icmpv6
+    extension_headers:
+      - routing
+    terminal_layers:
+      - icmpv6
+
+coverage_cases:
+  - ipv6-fragment-udp
+  - ipv6-routing-generic
+  - ipv6-mobile-routing
+  - ipv6-segment-routing-udp
+  - ipv6-extension-chain-tcp-raw
+  - ipv6-routing-icmpv6
+  - malformed-ipv6-extensions
+  - crafter-ipv6-fragment-udp
+  - crafter-ipv6-routing-generic
+  - crafter-ipv6-mobile-routing
+  - crafter-ipv6-segment-routing-udp
+  - crafter-ipv6-routing-tcp-raw
+  - crafter-ipv6-routing-icmpv6
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - IPv6ExtHdrFragment
+      - IPv6ExtHdrRouting
+      - IPv6ExtHdrSegmentRouting
+  libcrafter:
+    status: supported
+    notes:
+      - Unsupported malformed chains must produce structured decode failures.

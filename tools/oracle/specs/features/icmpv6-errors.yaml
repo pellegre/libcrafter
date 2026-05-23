@@ -1,0 +1,52 @@
+version: 1
+kind: feature
+name: icmpv6_errors
+summary: ICMPv6 error variants with embedded IPv6 header prefixes.
+
+layers:
+  - ipv6
+  - icmpv6
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: destination_unreachable
+    icmp_type: destination_unreachable
+    embeds:
+      - ipv6
+      - payload_prefix
+  - name: packet_too_big
+    icmp_type: packet_too_big
+    embeds:
+      - ipv6
+      - payload_prefix
+  - name: time_exceeded
+    icmp_type: time_exceeded
+    embeds:
+      - ipv6
+      - payload_prefix
+  - name: parameter_problem
+    icmp_type: parameter_problem
+    embeds:
+      - ipv6
+      - payload_prefix
+
+coverage_cases:
+  - icmpv6-errors
+  - crafter-icmpv6-errors
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ICMPv6DestUnreach
+      - ICMPv6PacketTooBig
+      - ICMPv6TimeExceeded
+      - ICMPv6ParamProblem
+  libcrafter:
+    status: planned
+    notes:
+      - Error matrix is tracked as planned coverage in current fixture metadata.

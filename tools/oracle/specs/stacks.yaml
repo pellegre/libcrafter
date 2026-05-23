@@ -1,0 +1,255 @@
+version: 1
+kind: stack_grammar
+name: oracle_initial_stacks
+description: Initial backend-neutral stacks translated from checked-in Scapy fixtures.
+
+roots:
+  - name: "link:raw"
+    layers:
+      - payload
+    families:
+      - link
+  - name: "link:ethernet"
+    layers:
+      - ethernet
+    families:
+      - link
+      - arp
+      - ipv4
+      - ipv6
+      - dns
+      - dhcp
+  - name: "link:linux-cooked"
+    layers:
+      - linux_cooked
+    families:
+      - link
+      - ipv4
+  - name: "link:null-loopback"
+    layers:
+      - null_loopback
+    families:
+      - link
+      - ipv4
+      - ipv6
+  - name: "l3:ipv4"
+    layers:
+      - ipv4
+    families:
+      - ipv4
+      - transport
+      - icmp
+      - dns
+  - name: "l3:ipv6"
+    layers:
+      - ipv6
+    families:
+      - ipv6
+      - transport
+      - icmp
+
+families:
+  - name: ipv4
+    default_stack:
+      - ethernet
+      - ipv4
+      - udp
+      - payload
+    feature_tags:
+      - ethernet
+      - ipv4
+      - udp
+      - payload
+  - name: ipv6
+    default_stack:
+      - ethernet
+      - ipv6
+      - udp
+      - payload
+    feature_tags:
+      - ethernet
+      - ipv6
+      - udp
+      - payload
+
+stacks:
+  - name: ethernet_payload
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - payload
+    coverage_cases:
+      - ethernet
+      - crafter-ethernet-unknown-ethertype
+  - name: raw_payload
+    root: "link:raw"
+    layers:
+      - payload
+    coverage_cases:
+      - raw-payload-link
+      - crafter-raw-payload
+  - name: ethernet_arp
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - arp
+    coverage_cases:
+      - arp-request
+      - arp-reply
+      - crafter-arp-reply
+  - name: vlan_ipv4_udp
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - vlan
+      - ipv4
+      - udp
+      - payload
+    coverage_cases:
+      - vlan-ipv4-udp
+      - vlan-boundary-fields
+      - crafter-vlan-boundary-fields
+  - name: ipv4_udp_payload
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - payload
+    coverage_cases:
+      - ipv4-udp
+      - udp-ipv4-zero-checksum
+  - name: ipv4_tcp_payload
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - tcp
+      - payload
+    coverage_cases:
+      - ipv4-tcp-syn
+      - tcp-all-flags-reserved-offset
+      - tcp-options
+      - tcp-options-sack-blocks
+      - tcp-options-mptcp-fastopen-edo-generic
+  - name: ipv4_icmp_payload
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - icmp
+      - payload
+    coverage_cases:
+      - ipv4-icmp
+      - icmpv4-echo-reply
+  - name: ipv4_dns
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - dns
+    coverage_cases:
+      - dns-query
+  - name: ethernet_dhcp
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - ipv4
+      - udp
+      - dhcp
+    coverage_cases:
+      - dhcp-discover
+  - name: ipv6_udp_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - udp
+      - payload
+    coverage_cases:
+      - udp-ipv6-checksum-length
+  - name: ipv6_icmpv6
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - icmpv6
+    coverage_cases:
+      - ipv6-icmp
+  - name: ipv6_fragment_udp
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - ipv6_fragment
+      - udp
+      - payload
+    coverage_cases:
+      - ipv6-fragment-udp
+  - name: ipv6_routing_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - ipv6_routing
+      - payload
+    coverage_cases:
+      - ipv6-routing-generic
+      - ipv6-mobile-routing
+  - name: ipv6_routing_tcp_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - ipv6_routing
+      - tcp
+      - payload
+    coverage_cases:
+      - ipv6-extension-chain-tcp-raw
+      - crafter-ipv6-routing-tcp-raw
+  - name: ipv6_routing_icmpv6
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - ipv6_routing
+      - icmpv6
+    coverage_cases:
+      - ipv6-routing-icmpv6
+      - crafter-ipv6-routing-icmpv6
+
+constraints:
+  - name: ethernet_children
+    parent: ethernet
+    children:
+      - vlan
+      - arp
+      - ipv4
+      - ipv6
+      - payload
+  - name: vlan_children
+    parent: vlan
+    children:
+      - ipv4
+      - ipv6
+      - payload
+  - name: ipv4_children
+    parent: ipv4
+    children:
+      - udp
+      - tcp
+      - icmp
+      - dns
+      - payload
+  - name: ipv6_children
+    parent: ipv6
+    children:
+      - udp
+      - tcp
+      - icmpv6
+      - ipv6_fragment
+      - ipv6_routing
+      - payload
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - Planned and malformed cases remain explicit feature-level support entries.

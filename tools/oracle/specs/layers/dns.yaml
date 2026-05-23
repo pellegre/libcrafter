@@ -1,0 +1,79 @@
+version: 1
+kind: layer
+name: dns
+summary: DNS over UDP query and response records with compression-aware normalization.
+
+roots: []
+parents:
+  - udp
+children: []
+
+fields:
+  - name: transaction_id
+    type: uint16
+    required: true
+    domains:
+      - deterministic
+      - boundary
+  - name: is_response
+    type: bool
+    required: true
+    domains:
+      - false
+      - true
+  - name: opcode
+    type: uint4
+    required: true
+    domains:
+      - query
+  - name: flags
+    type: flags
+    required: true
+    domains:
+      - recursion_desired
+      - truncated
+      - authoritative
+  - name: response_code
+    type: uint4
+    required: true
+    domains:
+      - no_error
+      - name_error
+      - server_failure
+  - name: questions
+    type: dns_question_list
+    required: true
+    domains:
+      - a_in
+      - multiple_questions
+  - name: answers
+    type: dns_record_list
+    required: false
+    domains:
+      - a
+      - aaaa
+      - cname
+      - generic
+
+coverage_cases:
+  - dns-query
+  - dns-response-records
+  - dns-multiple-questions
+  - dns-generic-record-truncated-rcode
+  - crafter-dns-query-response-compression
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - DNS
+      - DNSQR
+      - DNSRR
+    encode: true
+    decode: true
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - Compression and generic records are planned feature coverage.
