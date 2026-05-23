@@ -190,6 +190,37 @@ fn malformed_corpus_decoder_paths_do_not_panic() {
         );
     }
 
+    for expected_name in [
+        "short-ethernet",
+        "short-arp",
+        "invalid-vlan-length",
+        "bad-linux-sll-length",
+        "bad-null-loopback-family-bytes",
+        "bad-ipv4-ihl",
+        "ipv4-total-length-shorter-than-header",
+        "ipv4-option-overrun",
+        "truncated-ipv6-base",
+        "ipv6-payload-length-mismatch",
+        "truncated-ipv6-routing-header",
+        "truncated-ipv6-fragment-header",
+        "truncated-ipv6-mobile-routing-header",
+        "truncated-ipv6-segment-routing-header",
+        "udp-length-underflow",
+        "tcp-data-offset-underflow",
+        "tcp-data-offset-overrun",
+        "tcp-option-length-overrun",
+        "icmp-short-headers",
+        "dns-compression-loop",
+        "dns-pointer-out-of-range",
+        "dhcp-missing-magic-cookie",
+        "dhcp-truncated-option",
+    ] {
+        assert!(
+            cases.iter().any(|case| case.name == expected_name),
+            "malformed corpus missing named coverage for {expected_name}"
+        );
+    }
+
     for case in &cases {
         assert!(
             !case.name.is_empty(),
