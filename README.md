@@ -3,10 +3,9 @@
 `libcrafter` is a Rust alpha workspace for building, decoding, capturing, and
 testing network packets.
 
-The Rust API keeps the spirit of libcrafter and Scapy: packets are stacks of
-protocol layers, dependent fields are filled during compile, raw bytes can be
-decoded back into typed layers, and live traffic is opt-in rather than a default
-side effect.
+The Rust API keeps a packet-stacking style: protocol layers compose directly,
+dependent fields are filled during compile, raw bytes can be decoded back into
+typed layers, and compiled packets can be sent on live interfaces.
 
 ## Rust Alpha
 
@@ -130,7 +129,7 @@ tracked files.
 
 - [CHANGELOG.md](CHANGELOG.md) records the Rust alpha scope.
 - [docs/supported-platforms.md](docs/supported-platforms.md) lists supported
-  platforms, live-test requirements, and known gaps versus Scapy.
+  platforms, live-test requirements, and protocol coverage gaps.
 - [docs/agent-cookbook.md](docs/agent-cookbook.md) gives copyable recipes for
   generated packet tools.
 

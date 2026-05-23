@@ -152,7 +152,7 @@ PY
   fi
 
   echo "exit=$status" >>"$log_file"
-  echo "error: Scapy command failed: $name (exit $status)" >&2
+  echo "error: reference packet command failed: $name (exit $status)" >&2
   tail -n 40 "$log_file" >&2 || true
   return "$status"
 }

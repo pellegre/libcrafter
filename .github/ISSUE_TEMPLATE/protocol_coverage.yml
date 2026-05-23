@@ -16,8 +16,8 @@ body:
     attributes:
       label: Interop Direction
       options:
-        - Scapy to libcrafter
-        - libcrafter to Scapy
+        - Reference packet to libcrafter
+        - libcrafter packet to reference decoder
         - Both directions
         - Not applicable
     validations:
@@ -33,4 +33,4 @@ body:
     id: references
     attributes:
       label: References
-      description: RFC sections, Scapy examples, packet hex, or pcaps that define expected behavior.
+      description: RFC sections, reference examples, packet hex, or pcaps that define expected behavior.

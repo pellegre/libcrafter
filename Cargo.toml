@@ -18,5 +18,5 @@ repository = "https://github.com/pellegre/libcrafter"
 homepage = "https://github.com/pellegre/libcrafter"
 documentation = "https://docs.rs/crafter"
 readme = "README.md"
-keywords = ["packets", "pcap", "networking", "scapy", "testing"]
+keywords = ["packets", "pcap", "networking", "packet-crafting", "testing"]
 categories = ["network-programming", "development-tools"]
