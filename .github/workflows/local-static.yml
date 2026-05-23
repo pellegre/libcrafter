@@ -58,3 +58,9 @@ jobs:
         run: |
           tools/reference/check-reference-interop
           tools/reference/check-reference-interop --family pcap
+
+      - name: Run oracle offline validation
+        run: tools/oracle/run offline --backend scapy --profile ci --seed 12345 --count 2000
+
+      - name: Run oracle pcap smoke validation
+        run: tools/oracle/run pcap --backend scapy --profile smoke --seed 12345 --count 250
