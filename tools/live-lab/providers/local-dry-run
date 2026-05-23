@@ -88,6 +88,28 @@ run_smoke_suite() {
   echo "log=$artifact_dir/run.log"
 }
 
+run_all_suite() {
+  local all_artifact_dir="$artifact_dir/all"
+
+  if [[ ! -f "$manifest" ]]; then
+    write_manifest
+  fi
+
+  mkdir -p "$all_artifact_dir"
+  LIBCRAFTER_LIVE_SUITE_MODE=dry-run \
+    LIBCRAFTER_LIVE_ARTIFACT_DIR="$all_artifact_dir" \
+    LIBCRAFTER_PROJECT_ROOT="$project_root" \
+    "$project_root/tests/live/run-all.sh" --dry-run \
+    | tee "$artifact_dir/run-all.log"
+
+  echo "provider=$provider_name"
+  echo "ran=true"
+  echo "suite=all"
+  echo "live_packet_tests=false"
+  echo "artifact_dir=$all_artifact_dir"
+  echo "log=$artifact_dir/run-all.log"
+}
+
 write_manifest() {
   mkdir -p "$state_dir" "$artifact_dir"
   cat >"$manifest" <<EOF
@@ -126,6 +148,9 @@ EOF
       case "$suite" in
         smoke)
           run_smoke_suite
+          ;;
+        all)
+          run_all_suite
           ;;
         *)
           echo "error: unknown local-dry-run suite '$suite'" >&2

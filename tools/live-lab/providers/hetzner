@@ -446,6 +446,9 @@ run_remote_validation() {
   local command_string
   local quoted_command
   local remote_dir_value
+  local examples_source
+  local remote_examples_dir
+  local remote_parent_dir
   local tar_args
 
   load_manifest
@@ -482,6 +485,21 @@ run_remote_validation() {
   )
 
   tar -C "$project_root" "${tar_args[@]}" | ssh_remote "tar -xzf - -C '$remote_dir_value'"
+
+  examples_source="${LIBCRAFTER_EXAMPLES_DIR:-$project_root/../libcrafter-examples}"
+  if [[ -d "$examples_source" ]]; then
+    remote_parent_dir="$(dirname "$remote_dir_value")"
+    remote_examples_dir="$remote_parent_dir/libcrafter-examples"
+    ssh_remote "rm -rf '$remote_examples_dir' && mkdir -p '$remote_examples_dir'"
+    tar -C "$examples_source" \
+      --exclude=.git \
+      --exclude=target \
+      --exclude='*.o' \
+      --exclude='*.a' \
+      --exclude='*.so' \
+      -czf - \
+      . | ssh_remote "tar -xzf - -C '$remote_examples_dir'"
+  fi
 
   if [[ $# -gt 0 ]]; then
     printf -v command_string '%q ' "$@"
@@ -583,6 +601,102 @@ EOF
   return "$suite_status"
 }
 
+run_all_suite() {
+  local created_for_all=false
+  local suite_status=0
+  local remote_dir_value="${LIBCRAFTER_LIVE_LAB_REMOTE_DIR:-/root/libcrafter}"
+  local remote_examples_dir
+  local all_command
+
+  ensure_dirs
+  mkdir -p "$artifact_dir/all"
+  run_doctor --dry-run | tee "$artifact_dir/all/doctor.dry-run.log"
+  run_create --dry-run | tee "$artifact_dir/all/create.dry-run.log"
+
+  if [[ -z "${HETZNER_API_TOKEN:-}" ]]; then
+    mkdir -p "$artifact_dir/all"
+    cat >"$artifact_dir/all/skipped.env" <<EOF
+suite=all
+result=skipped
+reason=no_token
+finished_at=$(timestamp_utc)
+EOF
+    echo "provider=$provider_name"
+    echo "ran=false"
+    echo "suite=all"
+    echo "skipped=true"
+    echo "reason=no_token"
+    echo "creates_infrastructure=false"
+    echo "artifact_dir=$artifact_dir/all"
+    return 0
+  fi
+
+  if [[ ! -f "$manifest" ]]; then
+    created_for_all=true
+    hetzner_smoke_cleanup_needed=true
+    trap cleanup_hetzner_smoke_host EXIT
+    run_create
+  fi
+
+  remote_examples_dir="$(dirname "$remote_dir_value")/libcrafter-examples"
+  all_command=$(cat <<EOF
+set -euo pipefail
+if command -v cloud-init >/dev/null 2>&1; then
+  cloud-init status --wait >/dev/null 2>&1 || true
+fi
+apt-get update
+apt-get install -y --no-install-recommends \\
+  autoconf \\
+  automake \\
+  build-essential \\
+  ca-certificates \\
+  curl \\
+  iproute2 \\
+  libpcap-dev \\
+  libtool \\
+  pkg-config \\
+  python3 \\
+  python3-pip \\
+  python3-venv \\
+  tcpdump
+if ! python3 - <<'PY' >/dev/null 2>&1
+import scapy.all
+PY
+then
+  python3 -m pip install --break-system-packages 'scapy>=2.5,<3'
+fi
+if ! command -v cargo >/dev/null 2>&1; then
+  curl -fsS https://sh.rustup.rs | sh -s -- -y
+fi
+. "\$HOME/.cargo/env"
+export LIBCRAFTER_PROJECT_ROOT='$remote_dir_value'
+export LIBCRAFTER_LIVE_ARTIFACT_DIR='$remote_dir_value/live-artifacts/all'
+export LIBCRAFTER_LIVE_LAB=1
+export LIBCRAFTER_LIVE_SUITE_MODE=live
+if [[ -d '$remote_examples_dir' ]]; then
+  export LIBCRAFTER_EXAMPLES_DIR='$remote_examples_dir'
+fi
+tests/live/run-all.sh --live
+EOF
+)
+
+  if run_remote_validation bash -lc "$all_command"; then
+    suite_status=0
+  else
+    suite_status=$?
+  fi
+
+  run_artifact || true
+
+  if [[ "$created_for_all" == true ]]; then
+    run_destroy || true
+    hetzner_smoke_cleanup_needed=false
+    trap - EXIT
+  fi
+
+  return "$suite_status"
+}
+
 run_artifact() {
   load_manifest
   mkdir -p "$artifact_dir"
@@ -655,6 +769,9 @@ case "$command" in
       case "$suite" in
         smoke)
           run_smoke_suite
+          ;;
+        all)
+          run_all_suite
           ;;
         *)
           echo "error: unknown Hetzner suite '$suite'" >&2
