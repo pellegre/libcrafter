@@ -9,7 +9,8 @@ typed layers, and compiled packets can be sent on live interfaces.
 
 ## Rust Alpha
 
-The facade crate is `crafter`. Most generated tools and examples should import:
+The only public crate is `crafter`. The API is alpha and may change before a
+stable release. Most generated tools and examples should import:
 
 ```rust
 use crafter::prelude::*;
@@ -60,15 +61,19 @@ let plan = packet.send_dry_run(
 println!("{:?}", plan.target());
 ```
 
-## Crates
+## Crate And Modules
 
-| Crate | Purpose |
+Install and depend on `crafter` only. The repository is still named
+`libcrafter`, but the public Rust surface is organized as modules inside the
+one crate:
+
+| Module | Purpose |
 | --- | --- |
-| `crafter` | Public facade and prelude for examples and generated tools. |
-| `crafter-core` | Packet model, layer composition, encode/decode, checksums, protocol registry, formatting. |
-| `crafter-pcap` | Classic pcap read/write, libpcap BPF filters, offline sniffing, bounded live capture hooks. |
-| `crafter-net` | Interface helpers, raw send planning, live send backends, send/receive matching, batch workflows. |
-| `crafter-live` | Disposable live-lab integration support. |
+| `crafter::prelude` | Common imports for examples and generated tools. |
+| `crafter::core` | Packet model, layer composition, encode/decode, checksums, protocol registry, formatting. |
+| `crafter::pcap` | Classic pcap read/write, libpcap BPF filters, offline sniffing, bounded live capture hooks. |
+| `crafter::net` | Interface helpers, raw send planning, live send backends, send/receive matching, batch workflows. |
+| `crafter::live` | Disposable live-lab integration support. |
 
 ## Protocol Coverage
 
@@ -91,7 +96,7 @@ enclosing header is valid.
 ## Examples
 
 Rust examples live under `crates/crafter/examples/` and build against the
-public `crafter` facade:
+public `crafter` crate:
 
 ```sh
 cargo build --examples

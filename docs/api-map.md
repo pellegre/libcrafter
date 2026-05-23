@@ -3,6 +3,8 @@
 This document summarizes the public Rust surface for generated packet tools.
 The first alpha focuses on explicit builders, deterministic compile/decode
 behavior, bounded pcap workflows, and lab-only live traffic.
+The only public crate is `crafter`, and its API may change before a stable
+release.
 
 Most examples should start with:
 
@@ -10,15 +12,19 @@ Most examples should start with:
 use crafter::prelude::*;
 ```
 
-## Public Crates
+## One Public Crate
 
-| Crate | Responsibility |
+Install and depend on `crafter` only. The repository is still named
+`libcrafter`, but the public Rust surface is organized as modules inside the
+one crate:
+
+| Module | Responsibility |
 | --- | --- |
-| `crafter` | Facade crate re-exporting the public API for examples and agent-written tools. |
-| `crafter-core` | Packet model, layer model, encode/decode, checksums, formatting, and protocol registry. |
-| `crafter-pcap` | Pcap reader/writer helpers and libpcap-backed capture adapters. |
-| `crafter-net` | Interfaces, raw sockets, send, send-receive, routing helpers, and address helpers. |
-| `crafter-live` | Disposable live-lab helpers and integration-test support only. |
+| `crafter::prelude` | Common imports for examples and agent-written tools. |
+| `crafter::core` | Packet model, layer model, encode/decode, checksums, formatting, and protocol registry. |
+| `crafter::pcap` | Pcap reader/writer helpers and libpcap-backed capture adapters. |
+| `crafter::net` | Interfaces, raw sockets, send, send-receive, routing helpers, and address helpers. |
+| `crafter::live` | Disposable live-lab helpers and integration-test support only. |
 
 ## Packet Composition
 
@@ -129,7 +135,8 @@ while let Some(record) = reader.next_record()? {
 }
 ```
 
-Pcap helpers belong in `crafter-pcap`, re-exported by `crafter`.
+Pcap helpers are exposed under `crafter::pcap` and through the prelude where
+appropriate.
 
 ## Sniff Helpers
 
