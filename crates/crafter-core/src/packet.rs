@@ -834,7 +834,7 @@ mod formatting {
     use super::{hexdump, Layer, Packet, Raw};
 
     const RAW_ONLY_SUMMARY: &str =
-        include_str!("../../../tests/fixtures/summaries/raw--hello-agents.summary.txt");
+        include_str!("../../../tests/fixtures/summaries/raw-hello-agents.summary.txt");
 
     fn raw_only_packet() -> Packet {
         Packet::new().push(Raw::from("Hello, agents!"))
