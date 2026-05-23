@@ -33,7 +33,6 @@ jobs:
   dry-run:
     name: provider dry run
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.confirm_live_lab != 'run' }}
 
     steps:
       - name: Checkout
@@ -52,23 +51,38 @@ jobs:
   live:
     name: disposable live lab
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_live_lab == 'run' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     timeout-minutes: 90
     env:
+      CONFIRM_LIVE_LAB: ${{ github.event.inputs.confirm_live_lab }}
+      LIVE_LAB_PROVIDER: ${{ github.event.inputs.provider }}
+      LIVE_LAB_SUITE: ${{ github.event.inputs.suite }}
       HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
 
     steps:
       - name: Checkout
+        if: ${{ env.CONFIRM_LIVE_LAB == 'run' }}
         uses: actions/checkout@v4
 
+      - name: Check confirmation
+        run: |
+          if [ "${CONFIRM_LIVE_LAB}" = "run" ]; then
+            echo "confirmed=true"
+          else
+            echo "confirmed=false"
+            echo "Set confirm_live_lab=run to create disposable infrastructure."
+          fi
+
       - name: Install provider tools
+        if: ${{ env.CONFIRM_LIVE_LAB == 'run' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends curl jq openssh-client tar
 
       - name: Require provider secret
+        if: ${{ env.CONFIRM_LIVE_LAB == 'run' }}
         run: |
-          case "${{ github.event.inputs.provider }}" in
+          case "$LIVE_LAB_PROVIDER" in
             hetzner)
               if [ -z "${HETZNER_API_TOKEN:-}" ]; then
                 echo "::error::HETZNER_API_TOKEN secret is required for the Hetzner live lab."
@@ -76,24 +90,25 @@ jobs:
               fi
               ;;
             *)
-              echo "provider=${{ github.event.inputs.provider }}"
+              echo "provider=$LIVE_LAB_PROVIDER"
               ;;
           esac
 
       - name: Run live-lab suite
+        if: ${{ env.CONFIRM_LIVE_LAB == 'run' }}
         run: |
           tools/live-lab/libcrafter-live-lab run \
-            --provider "${{ github.event.inputs.provider }}" \
-            --suite "${{ github.event.inputs.suite }}"
+            --provider "$LIVE_LAB_PROVIDER" \
+            --suite "$LIVE_LAB_SUITE"
 
       - name: Destroy live-lab resources
-        if: always()
+        if: ${{ always() && env.CONFIRM_LIVE_LAB == 'run' }}
         run: |
           tools/live-lab/libcrafter-live-lab destroy \
-            --provider "${{ github.event.inputs.provider }}" || true
+            --provider "$LIVE_LAB_PROVIDER" || true
 
       - name: Upload live-lab artifacts
-        if: always()
+        if: ${{ always() && env.CONFIRM_LIVE_LAB == 'run' }}
         uses: actions/upload-artifact@v4
         with:
           name: libcrafter-live-lab-${{ github.run_id }}
