@@ -32,6 +32,7 @@ def import_scapy() -> dict[str, Any]:
             IP,
             IPOption,
             IPv6,
+            load_contrib,
             Raw,
             TCP,
             UDP,
@@ -39,12 +40,23 @@ def import_scapy() -> dict[str, Any]:
             raw,
         )
         from scapy.layers.inet6 import (  # type: ignore[import-untyped]
+            ICMPv6DestUnreach,
+            ICMPv6EchoReply,
             ICMPv6EchoRequest,
+            ICMPv6PacketTooBig,
+            ICMPv6ParamProblem,
+            ICMPv6TimeExceeded,
             IPv6ExtHdrFragment,
             IPv6ExtHdrRouting,
             IPv6ExtHdrSegmentRouting,
         )
         from scapy.layers.l2 import CookedLinux, Loopback  # type: ignore[import-untyped]
+        load_contrib("mpls")
+        from scapy.contrib.mpls import (  # type: ignore[import-untyped]
+            ICMPExtension_MPLS,
+            MPLS,
+        )
+        from scapy.layers.inet import ICMPExtension_Header  # type: ignore[import-untyped]
     except ModuleNotFoundError as exc:
         if exc.name != "scapy":
             raise
@@ -62,7 +74,14 @@ def import_scapy() -> dict[str, Any]:
         "Dot1Q": Dot1Q,
         "Ether": Ether,
         "ICMP": ICMP,
+        "ICMPExtension_Header": ICMPExtension_Header,
+        "ICMPExtension_MPLS": ICMPExtension_MPLS,
+        "ICMPv6DestUnreach": ICMPv6DestUnreach,
+        "ICMPv6EchoReply": ICMPv6EchoReply,
         "ICMPv6EchoRequest": ICMPv6EchoRequest,
+        "ICMPv6PacketTooBig": ICMPv6PacketTooBig,
+        "ICMPv6ParamProblem": ICMPv6ParamProblem,
+        "ICMPv6TimeExceeded": ICMPv6TimeExceeded,
         "IP": IP,
         "IPOption": IPOption,
         "IPv6": IPv6,
@@ -70,6 +89,7 @@ def import_scapy() -> dict[str, Any]:
         "IPv6ExtHdrRouting": IPv6ExtHdrRouting,
         "IPv6ExtHdrSegmentRouting": IPv6ExtHdrSegmentRouting,
         "Loopback": Loopback,
+        "MPLS": MPLS,
         "Raw": Raw,
         "TCP": TCP,
         "UDP": UDP,
@@ -128,7 +148,14 @@ DNSQR = SCAPY["DNSQR"]
 Dot1Q = SCAPY["Dot1Q"]
 Ether = SCAPY["Ether"]
 ICMP = SCAPY["ICMP"]
+ICMPExtension_Header = SCAPY["ICMPExtension_Header"]
+ICMPExtension_MPLS = SCAPY["ICMPExtension_MPLS"]
+ICMPv6DestUnreach = SCAPY["ICMPv6DestUnreach"]
+ICMPv6EchoReply = SCAPY["ICMPv6EchoReply"]
 ICMPv6EchoRequest = SCAPY["ICMPv6EchoRequest"]
+ICMPv6PacketTooBig = SCAPY["ICMPv6PacketTooBig"]
+ICMPv6ParamProblem = SCAPY["ICMPv6ParamProblem"]
+ICMPv6TimeExceeded = SCAPY["ICMPv6TimeExceeded"]
 IP = SCAPY["IP"]
 IPOption = SCAPY["IPOption"]
 IPv6 = SCAPY["IPv6"]
@@ -136,6 +163,7 @@ IPv6ExtHdrFragment = SCAPY["IPv6ExtHdrFragment"]
 IPv6ExtHdrRouting = SCAPY["IPv6ExtHdrRouting"]
 IPv6ExtHdrSegmentRouting = SCAPY["IPv6ExtHdrSegmentRouting"]
 Loopback = SCAPY["Loopback"]
+MPLS = SCAPY["MPLS"]
 Raw = SCAPY["Raw"]
 TCP = SCAPY["TCP"]
 UDP = SCAPY["UDP"]
@@ -158,6 +186,7 @@ DST_IPV6 = "2001:db8:2::20"
 
 
 PacketFactory = Callable[[], Any]
+FieldFactory = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
 
 
 class Fixture:
@@ -168,16 +197,79 @@ class Fixture:
         scapy_root: str,
         stack: list[str],
         factory: PacketFactory,
+        field_factory: FieldFactory | None = None,
     ) -> None:
         self.name = name
         self.description = description
         self.scapy_root = scapy_root
         self.stack = stack
         self.factory = factory
+        self.field_factory = field_factory
 
 
 def mac_bytes(mac: str) -> bytes:
     return bytes(int(part, 16) for part in mac.split(":"))
+
+
+def pattern_payload(length: int, seed: int = 0) -> bytes:
+    return bytes((seed + index) % 251 for index in range(length))
+
+
+def quoted_ipv4_udp(payload: bytes = b"quoted") -> bytes:
+    return bytes(
+        raw(
+            IP(src="5.6.7.8", dst="10.11.12.13", id=0x5151, ttl=32)
+            / UDP(sport=5300, dport=1111)
+            / Raw(payload)
+        )
+    )
+
+
+def quoted_ipv6_udp(payload: bytes = b"quoted-v6") -> bytes:
+    return bytes(
+        raw(
+            IPv6(src="2001:db8:feed::1", dst="2001:db8:feed::2", hlim=31)
+            / UDP(sport=5301, dport=1112)
+            / Raw(payload)
+        )
+    )
+
+
+def field_subset(*specs: tuple[str, list[str]]) -> FieldFactory:
+    def build(layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        occurrences: dict[str, int] = {}
+        selected: list[dict[str, Any]] = []
+        for layer_name, field_names in specs:
+            occurrence = occurrences.get(layer_name, 0)
+            matching = [layer for layer in layers if layer["name"] == layer_name]
+            if occurrence >= len(matching):
+                raise SystemExit(f"missing generated Scapy layer {layer_name}")
+            occurrences[layer_name] = occurrence + 1
+            fields = matching[occurrence]["fields"]
+            selected.append(
+                {
+                    "layer": layer_name,
+                    "fields": {
+                        name: fields[name]
+                        for name in field_names
+                        if name in fields
+                    },
+                }
+            )
+        return selected
+
+    return build
+
+
+def outer_ipv4_icmp_fields() -> FieldFactory:
+    return field_subset(("IP", ["version", "ihl", "len", "proto", "src", "dst"]), ("ICMP", ["type", "code", "chksum"]))
+
+
+def outer_ipv6_icmp_fields(layer_name: str) -> FieldFactory:
+    return field_subset(
+        ("IPv6", ["version", "plen", "nh", "hlim", "src", "dst"]),
+        (layer_name, ["type", "code", "cksum"]),
+    )
 
 
 def ethernet_fixture() -> Any:
@@ -222,6 +314,14 @@ def ipv4_icmp_fixture() -> Any:
     )
 
 
+def icmpv4_echo_reply_fixture() -> Any:
+    return (
+        IP(src=DST_IPV4, dst=SRC_IPV4, id=0x1260, ttl=64, flags="DF")
+        / ICMP(type="echo-reply", id=0x4243, seq=3)
+        / Raw(b"libcrafter-icmp-reply")
+    )
+
+
 def ipv4_udp_fixture() -> Any:
     return (
         IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1235, ttl=63)
@@ -230,10 +330,141 @@ def ipv4_udp_fixture() -> Any:
     )
 
 
+def ipv4_udp_empty_payload_fixture() -> Any:
+    return IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1250, ttl=63) / UDP(
+        sport=53010,
+        dport=33440,
+    )
+
+
+def ipv4_udp_odd_payload_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1251, ttl=63)
+        / UDP(sport=53011, dport=33441)
+        / Raw(b"odd")
+    )
+
+
+def ipv4_udp_max_payload_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1252, ttl=63)
+        / UDP(sport=53012, dport=33442)
+        / Raw(pattern_payload(1472, 7))
+    )
+
+
+def ipv4_udp_zero_checksum_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1253, ttl=63)
+        / UDP(sport=53013, dport=33443, chksum=0)
+        / Raw(b"zero-v4-udp")
+    )
+
+
+def ipv6_udp_empty_payload_fixture() -> Any:
+    return IPv6(src=SRC_IPV6, dst=DST_IPV6, hlim=63) / UDP(
+        sport=53014,
+        dport=33444,
+    )
+
+
+def ipv6_udp_odd_payload_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6, hlim=63)
+        / UDP(sport=53015, dport=33445)
+        / Raw(b"odd")
+    )
+
+
+def ipv6_udp_max_payload_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6, hlim=63)
+        / UDP(sport=53016, dport=33446)
+        / Raw(pattern_payload(1452, 11))
+    )
+
+
+def ipv6_udp_computed_checksum_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6, hlim=62)
+        / UDP(sport=53017, dport=33447)
+        / Raw(b"libcrafter-udp6")
+    )
+
+
 def ipv4_tcp_syn_fixture() -> Any:
     return (
         IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1236, ttl=62, flags="DF")
         / TCP(sport=40000, dport=80, flags="S", seq=0x01020304, window=64240)
+    )
+
+
+def tcp_syn_ack_fixture() -> Any:
+    return (
+        IP(src=DST_IPV4, dst=SRC_IPV4, id=0x1254, ttl=61, flags="DF")
+        / TCP(
+            sport=443,
+            dport=40000,
+            flags="SA",
+            seq=0x01010101,
+            ack=0x01020305,
+            window=60000,
+        )
+    )
+
+
+def tcp_fin_psh_ack_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1255, ttl=60, flags="DF")
+        / TCP(
+            sport=40001,
+            dport=443,
+            flags="FPA",
+            seq=0x02030405,
+            ack=0x11121314,
+            window=32768,
+        )
+        / Raw(b"fin-psh-ack")
+    )
+
+
+def tcp_rst_empty_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1256, ttl=59, flags="DF")
+        / TCP(sport=40002, dport=443, flags="R", seq=0x03040506, window=0)
+    )
+
+
+def tcp_all_flags_reserved_urgent_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1257, ttl=58, flags="DF")
+        / TCP(
+            sport=40003,
+            dport=443,
+            reserved=7,
+            flags=0x1FF,
+            seq=0x04050607,
+            ack=0x21222324,
+            window=4096,
+            urgptr=0xBEEF,
+            options=[("EOL", None)],
+        )
+        / Raw(b"all-flags")
+    )
+
+
+def tcp_raw_payload_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1258, ttl=57, flags="DF")
+        / TCP(
+            sport=40004,
+            dport=8443,
+            flags="PA",
+            seq=0x05060708,
+            ack=0x31323334,
+            window=16384,
+        )
+        / Raw(b"tcp-raw-payload")
     )
 
 
@@ -364,6 +595,77 @@ def tcp_options_fixture() -> Any:
                 ("WScale", 7),
             ],
         )
+    )
+
+
+def tcp_options_eol_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1259, ttl=56, flags="DF")
+        / TCP(
+            sport=40005,
+            dport=443,
+            flags="S",
+            seq=0x06070809,
+            options=[("EOL", None)],
+        )
+    )
+
+
+def tcp_options_nop_padding_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x125A, ttl=55, flags="DF")
+        / TCP(
+            sport=40006,
+            dport=443,
+            flags="S",
+            seq=0x0708090A,
+            options=[("NOP", None), ("NOP", None), ("MSS", 1460)],
+        )
+    )
+
+
+def tcp_options_sack_blocks_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x125B, ttl=54, flags="DF")
+        / TCP(
+            sport=40007,
+            dport=443,
+            flags="A",
+            seq=0x08090A0B,
+            ack=0x41424344,
+            options=[
+                (
+                    "SAck",
+                    (
+                        0x11111111,
+                        0x22222222,
+                        0x33333333,
+                        0x44444444,
+                    ),
+                )
+            ],
+        )
+    )
+
+
+def tcp_options_mptcp_fastopen_edo_generic_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x125C, ttl=53, flags="DF")
+        / TCP(
+            sport=40008,
+            dport=443,
+            flags="S",
+            seq=0x090A0B0C,
+            options=[
+                (30, b"\x10\x01\x02"),
+                ("TFO", b"\xde\xad"),
+                (237, b""),
+                (237, b"\x00\x10"),
+                (237, b"\x00\x10\x00\x60"),
+                (254, b"\xaa\xbb"),
+            ],
+        )
+        / Raw(b"tcp-option-tail")
     )
 
 
@@ -521,6 +823,13 @@ FIXTURES = [
         ipv4_icmp_fixture,
     ),
     Fixture(
+        "icmpv4-echo-reply",
+        "IPv4 ICMP echo reply with raw payload.",
+        "IP",
+        ["IP", "ICMP", "Raw"],
+        icmpv4_echo_reply_fixture,
+    ),
+    Fixture(
         "ipv4-udp",
         "IPv4 UDP datagram with raw payload.",
         "IP",
@@ -528,11 +837,32 @@ FIXTURES = [
         ipv4_udp_fixture,
     ),
     Fixture(
+        "udp-ipv6-checksum-length",
+        "IPv6 UDP datagram with computed length and checksum.",
+        "IPv6",
+        ["IPv6", "UDP", "Raw"],
+        ipv6_udp_computed_checksum_fixture,
+    ),
+    Fixture(
+        "udp-ipv4-zero-checksum",
+        "IPv4 UDP datagram with explicit zero checksum.",
+        "IP",
+        ["IP", "UDP", "Raw"],
+        ipv4_udp_zero_checksum_fixture,
+    ),
+    Fixture(
         "ipv4-tcp-syn",
         "IPv4 TCP SYN packet.",
         "IP",
         ["IP", "TCP"],
         ipv4_tcp_syn_fixture,
+    ),
+    Fixture(
+        "tcp-all-flags-reserved-offset",
+        "IPv4 TCP packet with all flags, reserved bits, urgent pointer, and raw payload.",
+        "IP",
+        ["IP", "TCP", "Raw"],
+        tcp_all_flags_reserved_urgent_fixture,
     ),
     Fixture(
         "ipv4-boundary-fields",
@@ -603,6 +933,20 @@ FIXTURES = [
         "IP",
         ["IP", "TCP"],
         tcp_options_fixture,
+    ),
+    Fixture(
+        "tcp-options-sack-blocks",
+        "IPv4 TCP packet with SACK block option.",
+        "IP",
+        ["IP", "TCP"],
+        tcp_options_sack_blocks_fixture,
+    ),
+    Fixture(
+        "tcp-options-mptcp-fastopen-edo-generic",
+        "IPv4 TCP packet with MPTCP, Fast Open, EDO, generic options, and raw payload.",
+        "IP",
+        ["IP", "TCP", "Raw"],
+        tcp_options_mptcp_fastopen_edo_generic_fixture,
     ),
     Fixture(
         "vlan-ipv4-udp",

@@ -578,7 +578,7 @@ fn assert_layer_fields(
                     }
                     "urgptr" => assert_u64(layer.urgent_pointer_value() as u64, value, name, ctx),
                     "options" => {
-                        assert_empty_array_and_bytes(layer.option_bytes(), value, name, ctx)
+                        assert_option_array_and_bytes(layer.option_bytes(), value, name, ctx)
                     }
                     _ => unsupported_field(decoded, name, ctx),
                 }
@@ -769,20 +769,6 @@ fn assert_hex_object_bytes(actual: &[u8], expected: &Value, field: &str, ctx: &C
         hex_bytes(actual),
         expected_hex,
         "{ctx}: raw payload field {field} mismatch"
-    );
-}
-
-fn assert_empty_array_and_bytes(
-    actual_bytes: &[u8],
-    expected: &Value,
-    field: &str,
-    ctx: &CaseContext<'_>,
-) {
-    assert_empty_array_len(0, expected, field, ctx);
-    assert!(
-        actual_bytes.is_empty(),
-        "{ctx}: field {field} expected empty option bytes but decoded {}",
-        hex_bytes(actual_bytes)
     );
 }
 

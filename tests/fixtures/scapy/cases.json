@@ -208,8 +208,8 @@
         "Raw"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "Scapy generator recipe exists. Covers IPv4 UDP length, checksum, ports, and raw payload."
+      "status": "implemented",
+      "notes": "Checked-in Scapy fixture. Covers IPv4 UDP length, checksum, ports, and raw payload."
     },
     {
       "name": "ipv4-tcp-syn",
@@ -221,8 +221,8 @@
         "TCP"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "Scapy generator recipe exists. Covers TCP SYN fields, sequence, window, and IPv4 checksum."
+      "status": "implemented",
+      "notes": "Checked-in Scapy fixture. Covers TCP SYN fields, sequence, window, and IPv4 checksum."
     },
     {
       "name": "ipv4-boundary-fields",
@@ -426,8 +426,8 @@
         "Raw"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "UDP over IPv6 validates pseudo-header checksum, UDP length, and payload preservation."
+      "status": "implemented",
+      "notes": "Checked-in Scapy fixture. UDP over IPv6 validates pseudo-header checksum, UDP length, and payload preservation."
     },
     {
       "name": "udp-ipv4-zero-checksum",
@@ -440,8 +440,8 @@
         "Raw"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "UDP over IPv4 zero checksum is valid and must remain distinguishable from recomputed checksum cases."
+      "status": "implemented",
+      "notes": "Checked-in Scapy fixture. UDP over IPv4 zero checksum is valid and must remain distinguishable from recomputed checksum cases."
     },
     {
       "name": "tcp-all-flags-reserved-offset",
@@ -454,8 +454,8 @@
         "Raw"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "TCP all flags, reserved bits, data offset, window, urgent pointer, and payload preservation."
+      "status": "implemented",
+      "notes": "Checked-in Scapy fixture. TCP all flags, reserved bits, data offset, window, urgent pointer, and payload preservation."
     },
     {
       "name": "tcp-options",
@@ -467,8 +467,8 @@
         "TCP"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "Scapy generator recipe exists. Covers MSS, SACK permitted, timestamp, window scale, and option padding."
+      "status": "implemented",
+      "notes": "Checked-in Scapy fixture. Covers MSS, SACK permitted, timestamp, window scale, and option padding."
     },
     {
       "name": "tcp-options-sack-blocks",
@@ -480,8 +480,8 @@
         "TCP"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "TCP SACK block option validates repeated block boundaries and stable option encoding."
+      "status": "implemented",
+      "notes": "Checked-in Scapy fixture. TCP SACK block option validates repeated block boundaries and stable option encoding."
     },
     {
       "name": "tcp-options-mptcp-fastopen-edo-generic",
@@ -494,8 +494,8 @@
         "Raw"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "MPTCP, Fast Open, EDO, and generic TCP option encodings must be preserved even if parsed generically."
+      "status": "implemented",
+      "notes": "Checked-in Scapy fixture. MPTCP, Fast Open, EDO, and generic TCP option encodings must be preserved even if parsed generically."
     },
     {
       "name": "tcp-udp-unknown-ports-raw",
@@ -522,8 +522,8 @@
         "Raw"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "IPv4 ICMP echo reply complements the checked-in echo request case."
+      "status": "implemented",
+      "notes": "Checked-in Scapy fixture. IPv4 ICMP echo reply complements the checked-in echo request case."
     },
     {
       "name": "icmpv4-destination-unreachable",

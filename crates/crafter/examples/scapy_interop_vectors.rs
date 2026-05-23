@@ -83,6 +83,7 @@ fn build_manifest() -> ExampleResult<Manifest> {
             ethernet_raw()?,
             arp_request()?,
             ipv4_icmp()?,
+            icmpv4_echo_reply()?,
             ipv6_icmp()?,
             dns_query()?,
             vlan_ipv4_udp()?,
@@ -106,6 +107,11 @@ fn build_manifest() -> ExampleResult<Manifest> {
             crafter_ipv6_segment_routing_udp()?,
             crafter_ipv6_routing_tcp_raw()?,
             crafter_ipv6_routing_icmpv6()?,
+            crafter_udp_ipv4_checksum_payload()?,
+            crafter_udp_ipv6_checksum_payload()?,
+            crafter_tcp_all_flags_payload()?,
+            crafter_tcp_common_options()?,
+            crafter_tcp_advanced_options()?,
         ],
     })
 }
@@ -238,6 +244,31 @@ fn ipv4_icmp() -> ExampleResult<Vector> {
                 }),
             ),
         ],
+    )
+}
+
+fn icmpv4_echo_reply() -> ExampleResult<Vector> {
+    let packet = Ipv4::new()
+        .src(DST_IPV4)
+        .dst(SRC_IPV4)
+        .id(0x1260)
+        .dont_fragment(true)
+        / Icmp::echo_reply().id(0x4243).seq(3)
+        / Raw::from("libcrafter-icmp-reply");
+
+    vector(
+        "icmpv4-echo-reply",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP", "Raw"],
+        "IP / ICMP echo-reply / Raw",
+        packet,
+        vec![fields(
+            "Raw",
+            json!({
+                "load": bytes_field(b"libcrafter-icmp-reply")
+            }),
+        )],
     )
 }
 
@@ -1155,6 +1186,145 @@ fn crafter_ipv6_routing_icmpv6() -> ExampleResult<Vector> {
                 }),
             ),
         ],
+    )
+}
+
+fn crafter_udp_ipv4_checksum_payload() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1251).ttl(63)
+        / Udp::new().sport(53011).dport(33441)
+        / Raw::from("odd");
+
+    vector(
+        "crafter-udp-ipv4-checksum-payload",
+        "transport",
+        "l3:ipv4",
+        vec!["IP", "UDP", "Raw"],
+        "IP / UDP / Raw",
+        packet,
+        vec![fields(
+            "Raw",
+            json!({
+                "load": bytes_field(b"odd")
+            }),
+        )],
+    )
+}
+
+fn crafter_udp_ipv6_checksum_payload() -> ExampleResult<Vector> {
+    let packet = Ipv6::new().src(src_ipv6()?).dst(dst_ipv6()?).hlim(62)
+        / Udp::new().sport(53017).dport(33447)
+        / Raw::from("libcrafter-udp6");
+
+    vector(
+        "crafter-udp-ipv6-checksum-payload",
+        "transport",
+        "l3:ipv6",
+        vec!["IPv6", "UDP", "Raw"],
+        "IPv6 / UDP / Raw",
+        packet,
+        vec![fields(
+            "Raw",
+            json!({
+                "load": bytes_field(b"libcrafter-udp6")
+            }),
+        )],
+    )
+}
+
+fn crafter_tcp_all_flags_payload() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1257).ttl(58)
+        / Tcp::new()
+            .sport(40003)
+            .dport(443)
+            .reserved(7)
+            .flags(
+                TCP_FLAG_NS
+                    | TCP_FLAG_CWR
+                    | TCP_FLAG_ECE
+                    | TCP_FLAG_URG
+                    | TCP_FLAG_ACK
+                    | TCP_FLAG_PSH
+                    | TCP_FLAG_RST
+                    | TCP_FLAG_SYN
+                    | TCP_FLAG_FIN,
+            )
+            .seq(0x0405_0607)
+            .ack(0x2122_2324)
+            .window(4096)
+            .urgptr(0xbeef)
+        / Raw::from("all-flags");
+
+    vector(
+        "crafter-tcp-all-flags-payload",
+        "transport",
+        "l3:ipv4",
+        vec!["IP", "TCP", "Raw"],
+        "IP / TCP / Raw",
+        packet,
+        vec![fields(
+            "Raw",
+            json!({
+                "load": bytes_field(b"all-flags")
+            }),
+        )],
+    )
+}
+
+fn crafter_tcp_common_options() -> ExampleResult<Vector> {
+    let mut tcp = Tcp::new()
+        .sport(40009)
+        .dport(443)
+        .seq(0x1122_3344)
+        .flags(TCP_FLAG_SYN)
+        .window(65535);
+    tcp = tcp.tcp_option(TcpOption::mss(1460))?;
+    tcp = tcp.tcp_option(TcpOption::sack_permitted())?;
+    tcp = tcp.tcp_option(TcpOption::timestamp(0x0102_0304, 0x0506_0708))?;
+    tcp = tcp.tcp_option(TcpOption::window_scale(7))?;
+
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1259).ttl(59) / tcp;
+
+    vector(
+        "crafter-tcp-common-options",
+        "transport",
+        "l3:ipv4",
+        vec!["IP", "TCP"],
+        "IP / TCP",
+        packet,
+        vec![],
+    )
+}
+
+fn crafter_tcp_advanced_options() -> ExampleResult<Vector> {
+    let mut tcp = Tcp::new()
+        .sport(40010)
+        .dport(443)
+        .seq(0x090a_0b0c)
+        .flags(TCP_FLAG_SYN);
+    tcp = tcp.tcp_option(TcpOption::extended_data_offset_request())?;
+    tcp = tcp.tcp_option(TcpOption::extended_data_offset(16))?;
+    tcp = tcp.tcp_option(TcpOption::extended_data_offset_ext(16, 96))?;
+    tcp = tcp.tcp_option(TcpOption::multipath_tcp(1, [0x03, 0xaa, 0xbb]))?;
+    tcp = tcp.tcp_option(TcpOption::fast_open([0xde, 0xad]))?;
+    tcp = tcp.tcp_option(TcpOption::generic(254, [0xaa, 0xbb]))?;
+
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x125a).ttl(53)
+        / tcp
+        / Raw::from("tcp-option-tail");
+
+    vector(
+        "crafter-tcp-advanced-options",
+        "transport",
+        "l3:ipv4",
+        vec!["IP", "TCP", "Raw"],
+        "IP / TCP / Raw",
+        packet,
+        vec![fields(
+            "Raw",
+            json!({
+                "load": bytes_field(b"tcp-option-tail")
+            }),
+        )],
     )
 }
 
