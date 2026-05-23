@@ -7,12 +7,16 @@ show_tool_versions() {
   rustc --version
   cargo --version
   python3 --version
-  python3 - <<'PY'
-from scapy.all import IP, ICMP, raw
+  "$project_root/tools/oracle/run" backend-info --backend scapy >/tmp/libcrafter-scapy-backend.json
+  python3 - /tmp/libcrafter-scapy-backend.json <<'PY'
+from __future__ import annotations
 
-packet = IP(dst="127.0.0.1") / ICMP()
-assert raw(packet)
-print("scapy=ok")
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    metadata = json.load(handle)
+print(f"scapy={metadata.get('scapy_version', 'unknown')}")
 PY
   if command -v pcap-config >/dev/null 2>&1; then
     printf 'libpcap=%s\n' "$(pcap-config --version)"

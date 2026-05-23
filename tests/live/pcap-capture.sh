@@ -29,14 +29,7 @@ capture_log="$suite_dir/libpcap-capture.log"
 capture_pid="$(start_libpcap_capture lo "icmp" "$pcap_file" "$capture_log")"
 trap 'stop_background "$capture_pid"' EXIT
 
-run_scapy_logged scapy-generate-live-pcap <<PY
-from scapy.all import ICMP, IP, Raw, conf, send
-
-conf.verb = 0
-packet = IP(dst='127.0.0.1') / ICMP(id=0x5151, seq=9) / Raw(b'libcrafter-live-pcap')
-send(packet, verbose=False)
-print('sent=icmp-loopback')
-PY
+run_oracle_legacy_scapy_logged scapy-generate-live-pcap --case pcap-generate-live-pcap
 
 wait_for_capture "$capture_pid" "$capture_log"
 capture_pid=""

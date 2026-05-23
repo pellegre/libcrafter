@@ -105,56 +105,41 @@ run_shell_logged() {
   run_logged "$name" bash -lc "$script"
 }
 
-run_scapy_logged() {
-  local name="$1"
-  local script_file="$suite_dir/$name.py"
-  local log_file="$suite_dir/$name.log"
-  local venv_dir="${LIBCRAFTER_SCAPY_VENV:-$project_root/.libcrafter-live/live-scapy-venv}"
+write_reference_backend_version() {
+  local output_json="$1"
+  local output_log="${2:-$output_json.log}"
 
-  cat >"$script_file"
-  {
-    echo "started_at=$(timestamp_utc)"
-    echo "script=$script_file"
-  } >"$log_file"
+  if "$project_root/tools/oracle/run" backend-info --backend scapy >"$output_json" 2>"$output_log"; then
+    python3 - "$output_json" <<'PY'
+from __future__ import annotations
 
-  local status=0
+import json
+import sys
 
-  set +e
-  if python3 - <<'PY' >/dev/null 2>&1
-import scapy.all
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    metadata = json.load(handle)
+print(f"reference_tool={metadata.get('scapy_version', 'unknown')}")
 PY
-  then
-    python3 "$script_file" >>"$log_file" 2>&1
-    status=$?
-  elif command -v uv >/dev/null 2>&1; then
-    UV_NO_PROGRESS=1 uv run --quiet --no-project --with 'scapy>=2.5,<3' -- python3 "$script_file" >>"$log_file" 2>&1
-    status=$?
-  else
-    python3 -m venv "$venv_dir" >>"$log_file" 2>&1
-    status=$?
-    if [[ "$status" -eq 0 ]]; then
-      "$venv_dir/bin/python" -m pip install --upgrade pip >>"$log_file" 2>&1
-      status=$?
-    fi
-    if [[ "$status" -eq 0 ]]; then
-      "$venv_dir/bin/python" -m pip install 'scapy>=2.5,<3' >>"$log_file" 2>&1
-      status=$?
-    fi
-    if [[ "$status" -eq 0 ]]; then
-      "$venv_dir/bin/python" "$script_file" >>"$log_file" 2>&1
-      status=$?
-    fi
-  fi
-  set -e
-  if [[ "$status" -eq 0 ]]; then
-    echo "log=$log_file"
     return 0
   fi
 
-  echo "exit=$status" >>"$log_file"
-  echo "error: reference packet command failed: $name (exit $status)" >&2
-  tail -n 40 "$log_file" >&2 || true
+  local status=$?
+  echo "reference_tool=unavailable:oracle-backend"
+  if [[ -s "$output_log" ]]; then
+    sed 's/^/reference_tool_error: /' "$output_log" >&2
+  fi
   return "$status"
+}
+
+run_oracle_legacy_scapy_logged() {
+  local name="$1"
+  shift
+
+  run_logged "$name" \
+    "$project_root/tools/oracle/run" legacy-live-example \
+      --backend scapy \
+      --suite-dir "$suite_dir" \
+      "$@"
 }
 
 write_suite_json() {

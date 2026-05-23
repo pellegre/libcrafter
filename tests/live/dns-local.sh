@@ -14,17 +14,7 @@ require_live_lab
 if is_dry_run; then
   run_logged rust-dns-query-dry-run \
     cargo run --quiet --example dns_query -- --iface dry-run0 --src 127.0.0.1 --server 127.0.0.1 --sport 53010 --name example.test
-  run_scapy_logged scapy-dns-bytes <<PY
-import json
-from pathlib import Path
-from scapy.all import DNS, DNSQR, IP, UDP, raw
-packet = IP(src='127.0.0.1', dst='127.0.0.1') / UDP(sport=53010, dport=53) / DNS(id=0x1234, rd=1, qd=DNSQR(qname='example.test.', qtype='A'))
-Path('$suite_dir/scapy-dns.json').write_text(
-    json.dumps({'summary': packet.summary(), 'hex': raw(packet).hex()}, indent=2, sort_keys=True) + '\\n',
-    encoding='utf-8',
-)
-print('scapy_dns_bytes=ok')
-PY
+  run_oracle_legacy_scapy_logged scapy-dns-bytes --case dns-local-bytes
   write_suite_json ok "dry-run generated Rust and Scapy DNS artifacts"
   exit 0
 fi
@@ -78,22 +68,7 @@ capture_pid="$(start_libpcap_capture lo "udp port 53" "$pcap_file" "$capture_log
 run_logged rust-dns-query-live \
   cargo run --quiet --example dns_query -- --live --iface lo --src 127.0.0.1 --server 127.0.0.1 --sport 53010 --name example.test
 
-run_scapy_logged scapy-dns-live <<PY
-import json
-from pathlib import Path
-from scapy.all import DNS, DNSQR, IP, UDP, conf, sr1
-
-conf.verb = 0
-query = IP(dst='127.0.0.1') / UDP(sport=53011, dport=53) / DNS(id=0x5150, rd=1, qd=DNSQR(qname='example.test.', qtype='A'))
-reply = sr1(query, timeout=2)
-if reply is None:
-    raise SystemExit('no DNS reply captured by Scapy')
-Path('$suite_dir/scapy-dns.json').write_text(
-    json.dumps({'query': query.summary(), 'reply': reply.summary()}, indent=2, sort_keys=True) + '\\n',
-    encoding='utf-8',
-)
-print('scapy_dns=ok')
-PY
+run_oracle_legacy_scapy_logged scapy-dns-live --case dns-local-live
 
 wait_for_capture "$capture_pid" "$capture_log"
 capture_pid=""

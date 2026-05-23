@@ -24,14 +24,9 @@ capture_versions() {
     cargo --version || echo "cargo=missing"
     python3 --version || echo "python3=missing"
     if command -v python3 >/dev/null 2>&1; then
-      python3 - <<'PY' || true
-try:
-    from scapy.all import conf
-except Exception as exc:
-    print(f"reference_tool=unavailable:{exc.__class__.__name__}")
-else:
-    print(f"reference_tool={conf.version}")
-PY
+      write_reference_backend_version \
+        "$artifact_root/reference-backend.json" \
+        "$artifact_root/reference-backend.log" || true
     fi
     if command -v pcap-config >/dev/null 2>&1; then
       printf 'libpcap=%s\n' "$(pcap-config --version)"

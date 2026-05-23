@@ -287,12 +287,8 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 . "$HOME/.cargo/env"
 cargo test --workspace
-python3 - <<'PY'
-from scapy.all import IP, ICMP, raw
-packet = IP(dst="127.0.0.1") / ICMP()
-assert raw(packet)
-print("scapy=ok")
-PY
+tools/oracle/run backend-info --backend scapy >/dev/null
+echo "reference_backend=ok"
 EOF
 }
 
@@ -551,16 +547,9 @@ set -euo pipefail
 if command -v cloud-init >/dev/null 2>&1; then
   cloud-init status --wait >/dev/null 2>&1 || true
 fi
-if ! command -v ip >/dev/null 2>&1; then
-  apt-get update
-  apt-get install -y --no-install-recommends iproute2 python3 python3-pip
-fi
-if ! python3 - <<'PY' >/dev/null 2>&1
-import scapy.all
-PY
-then
-  python3 -m pip install --break-system-packages scapy
-fi
+apt-get update
+apt-get install -y --no-install-recommends iproute2 python3 python3-pip python3-venv
+'$remote_dir_value/tools/oracle/run' backend-info --backend scapy >/dev/null
 export LIBCRAFTER_PROJECT_ROOT='$remote_dir_value'
 export LIBCRAFTER_LIVE_ARTIFACT_DIR='$remote_dir_value/live-artifacts/smoke'
 tests/live/smoke.sh
@@ -584,32 +573,34 @@ EOF
   return "$suite_status"
 }
 
-run_all_suite() {
+run_example_smoke_suite() {
+  local requested_suite="${1:-example-smoke}"
   local created_for_all=false
   local suite_status=0
   local remote_dir_value="${LIBCRAFTER_LIVE_LAB_REMOTE_DIR:-/root/libcrafter}"
   local all_command
 
   ensure_dirs
-  mkdir -p "$artifact_dir/all"
-  run_doctor --dry-run | tee "$artifact_dir/all/doctor.dry-run.log"
-  run_create --dry-run | tee "$artifact_dir/all/create.dry-run.log"
+  mkdir -p "$artifact_dir/$requested_suite"
+  run_doctor --dry-run | tee "$artifact_dir/$requested_suite/doctor.dry-run.log"
+  run_create --dry-run | tee "$artifact_dir/$requested_suite/create.dry-run.log"
 
   if [[ -z "${HETZNER_API_TOKEN:-}" ]]; then
-    mkdir -p "$artifact_dir/all"
-    cat >"$artifact_dir/all/skipped.env" <<EOF
-suite=all
+    mkdir -p "$artifact_dir/$requested_suite"
+    cat >"$artifact_dir/$requested_suite/skipped.env" <<EOF
+suite=$requested_suite
 result=skipped
 reason=no_token
 finished_at=$(timestamp_utc)
 EOF
     echo "provider=$provider_name"
     echo "ran=false"
-    echo "suite=all"
+    echo "suite=$requested_suite"
+    echo "suite_kind=legacy-example-smoke"
     echo "skipped=true"
     echo "reason=no_token"
     echo "creates_infrastructure=false"
-    echo "artifact_dir=$artifact_dir/all"
+    echo "artifact_dir=$artifact_dir/$requested_suite"
     return 0
   fi
 
@@ -636,18 +627,13 @@ apt-get install -y --no-install-recommends \\
   python3 \\
   python3-pip \\
   python3-venv
-if ! python3 - <<'PY' >/dev/null 2>&1
-import scapy.all
-PY
-then
-  python3 -m pip install --break-system-packages 'scapy>=2.5,<3'
-fi
+'$remote_dir_value/tools/oracle/run' backend-info --backend scapy >/dev/null
 if ! command -v cargo >/dev/null 2>&1; then
   curl -fsS https://sh.rustup.rs | sh -s -- -y
 fi
 . "\$HOME/.cargo/env"
 export LIBCRAFTER_PROJECT_ROOT='$remote_dir_value'
-export LIBCRAFTER_LIVE_ARTIFACT_DIR='$remote_dir_value/live-artifacts/all'
+export LIBCRAFTER_LIVE_ARTIFACT_DIR='$remote_dir_value/live-artifacts/$requested_suite'
 export LIBCRAFTER_LIVE_LAB=1
 export LIBCRAFTER_LIVE_SUITE_MODE=live
 tests/live/run-all.sh --live
@@ -671,8 +657,8 @@ EOF
   return "$suite_status"
 }
 
-run_scapy_interop_suite() {
-  local requested_suite="${1:-scapy-interop}"
+run_reference_interop_suite() {
+  local requested_suite="${1:-reference-interop}"
   local created_for_scapy=false
   local suite_status=0
   local remote_dir_value="${LIBCRAFTER_LIVE_LAB_REMOTE_DIR:-/root/libcrafter}"
@@ -693,6 +679,7 @@ EOF
     echo "provider=$provider_name"
     echo "ran=false"
     echo "suite=$requested_suite"
+    echo "suite_kind=reference-offline-interop"
     echo "skipped=true"
     echo "reason=no_token"
     echo "creates_infrastructure=false"
@@ -723,12 +710,7 @@ apt-get install -y --no-install-recommends \\
   python3 \\
   python3-pip \\
   python3-venv
-if ! python3 - <<'PY' >/dev/null 2>&1
-import scapy.all
-PY
-then
-  python3 -m pip install --break-system-packages 'scapy>=2.5,<3'
-fi
+'$remote_dir_value/tools/oracle/run' backend-info --backend scapy >/dev/null
 if ! command -v cargo >/dev/null 2>&1; then
   curl -fsS https://sh.rustup.rs | sh -s -- -y
 fi
@@ -757,6 +739,34 @@ EOF
   fi
 
   return "$suite_status"
+}
+
+run_oracle_live_suite() {
+  local requested_suite="${1:-oracle-live}"
+  local oracle_artifact_dir="$artifact_dir/$requested_suite"
+
+  ensure_dirs
+  mkdir -p "$oracle_artifact_dir"
+  run_doctor --dry-run | tee "$oracle_artifact_dir/doctor.dry-run.log"
+  run_create --dry-run | tee "$oracle_artifact_dir/create.dry-run.log"
+  "$project_root/tools/oracle/run" live \
+    --backend scapy \
+    --provider hetzner \
+    --profile smoke \
+    --seed 1 \
+    --count 10 \
+    --dry-run \
+    --out "$oracle_artifact_dir" \
+    | tee "$artifact_dir/$requested_suite.log"
+
+  echo "provider=$provider_name"
+  echo "ran=true"
+  echo "suite=$requested_suite"
+  echo "suite_kind=oracle-live-validation"
+  echo "live_packet_tests=false"
+  echo "creates_infrastructure=false"
+  echo "artifact_dir=$oracle_artifact_dir"
+  echo "log=$artifact_dir/$requested_suite.log"
 }
 
 run_artifact() {
@@ -833,10 +843,16 @@ case "$command" in
           run_smoke_suite
           ;;
         all)
-          run_all_suite
+          run_example_smoke_suite all
+          ;;
+        example-smoke)
+          run_example_smoke_suite "$suite"
+          ;;
+        oracle-live)
+          run_oracle_live_suite "$suite"
           ;;
         reference-interop | scapy-interop)
-          run_scapy_interop_suite "$suite"
+          run_reference_interop_suite "$suite"
           ;;
         *)
           echo "error: unknown Hetzner suite '$suite'" >&2
