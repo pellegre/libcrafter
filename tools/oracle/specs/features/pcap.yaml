@@ -1,0 +1,221 @@
+version: 1
+kind: feature
+name: pcap_contracts
+summary: Backend-neutral pcap and pcapng read/write validation contracts.
+
+layers:
+  - ethernet
+  - ipv4
+  - ipv6
+  - udp
+  - icmp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+file_formats:
+  - name: pcap
+    link_type_scope: file
+    packet_count_policy: exact
+    supported: true
+  - name: pcapng
+    link_type_scope: interface
+    packet_count_policy: exact
+    supported: conditional
+    notes:
+      - Mixed link types are valid only when both backends expose per-interface link metadata.
+
+supported_cases:
+  - name: scapy-writes-pcap-libcrafter-reads
+    direction: reference_to_libcrafter
+    writer: scapy
+    reader: libcrafter
+    file_format: pcap
+    link_types:
+      - ethernet
+      - linux_cooked
+      - null_loopback
+      - raw
+    required_checks:
+      - file_format
+      - packet_count
+      - link_type
+      - packet_bytes
+      - decoded_model
+      - timestamp_policy
+  - name: libcrafter-writes-pcap-scapy-reads
+    direction: libcrafter_to_reference
+    writer: libcrafter
+    reader: scapy
+    file_format: pcap
+    link_types:
+      - ethernet
+      - linux_cooked
+      - null_loopback
+      - raw
+    required_checks:
+      - file_format
+      - packet_count
+      - link_type
+      - packet_bytes
+      - decoded_model
+      - timestamp_policy
+  - name: ethernet-link-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    file_formats:
+      - pcap
+      - pcapng
+    link_type: ethernet
+    roots:
+      - link:ethernet
+    datalink_values:
+      pcap: DLT_EN10MB
+      scapy: Ether
+      libcrafter: Ethernet
+    strict_bytes: true
+  - name: linux-cooked-link-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    file_formats:
+      - pcap
+      - pcapng
+    link_type: linux_cooked
+    roots:
+      - link:linux-cooked
+      - link:linux-sll
+    datalink_values:
+      pcap: DLT_LINUX_SLL
+      scapy: CookedLinux
+      libcrafter: LinuxSll
+    strict_bytes: true
+  - name: null-loopback-link-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    file_formats:
+      - pcap
+      - pcapng
+    link_type: null_loopback
+    roots:
+      - link:null-loopback
+    datalink_values:
+      pcap:
+        - DLT_NULL
+        - DLT_LOOP
+      scapy: Loopback
+      libcrafter: NullLoopback
+    strict_bytes: true
+  - name: raw-link-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    file_formats:
+      - pcap
+      - pcapng
+    link_type: raw
+    roots:
+      - link:raw
+      - l3:ipv4
+      - l3:ipv6
+    datalink_values:
+      pcap: DLT_RAW
+      scapy: Raw
+      libcrafter: Raw
+    support: where_supported
+    strict_bytes: true
+    notes:
+      - Raw link type cases must declare whether bytes are IPv4, IPv6, or opaque raw before decoding.
+  - name: pcapng-mixed-link-types
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    file_format: pcapng
+    link_types:
+      - ethernet
+      - linux_cooked
+      - null_loopback
+      - raw
+    support: where_supported
+    strict_bytes: false
+    required_checks:
+      - interface_link_types
+      - packet_count
+      - packet_bytes
+      - decoded_model
+      - timestamp_policy
+    notes:
+      - Compare each packet using its interface link type; do not assume one file-global datalink value.
+
+timestamp_comparison:
+  default_policy: normalized
+  deterministic:
+    policy: exact
+    applies_when:
+      - The writer receives seeded timestamp seconds and fractional precision from the pcap plan.
+      - Both reader backends expose timestamp seconds, fractional value, and precision.
+    compare_fields:
+      - seconds
+      - fractional
+      - precision
+  normalized:
+    policy: normalized
+    applies_when:
+      - Backends expose equivalent timestamps with different precision units.
+    normalization:
+      - Convert microsecond and nanosecond precision to integer nanoseconds before comparison.
+      - Preserve packet order before comparing normalized timestamps.
+  ignored:
+    policy: ignored
+    applies_when:
+      - A backend assigns wall-clock timestamps during write.
+      - A reader does not expose timestamp precision needed for deterministic comparison.
+    required_checks:
+      - packet_count
+      - link_type
+      - packet_bytes
+      - decoded_model
+
+coverage_cases:
+  - pcap-scapy-ethernet
+  - pcap-scapy-linux-cooked
+  - pcap-scapy-null-loopback
+  - pcap-scapy-raw
+  - pcap-crafter-ethernet
+  - pcap-crafter-linux-cooked
+  - pcap-crafter-null-loopback
+  - pcap-crafter-raw
+  - pcap-crafter-pcapng-mixed-links
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - Ether
+      - CookedLinux
+      - Loopback
+      - Raw
+      - PcapReader
+      - PcapWriter
+      - RawPcapNgReader
+      - RawPcapNgWriter
+    notes:
+      - Pcapng mixed-link cases are conditional on Scapy exposing enough interface metadata for comparison.
+  libcrafter:
+    status: partial
+    native_layers:
+      - Ethernet
+      - LinuxSll
+      - NullLoopback
+      - Raw
+      - PcapReader
+      - PcapWriter
+    notes:
+      - Classic pcap read/write is supported for declared link types.
+      - Pcapng mixed-link execution remains planned until pcap mode is implemented.
