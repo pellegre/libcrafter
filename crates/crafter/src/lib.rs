@@ -31,9 +31,6 @@
 
 #![forbid(unsafe_code)]
 
-extern crate self as crafter_core;
-extern crate self as crafter_pcap;
-
 pub mod checksum;
 pub mod endian;
 pub mod error;

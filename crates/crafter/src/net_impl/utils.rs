@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
-use crafter_core::{Arp, Ethernet, MacAddr, Packet};
+use crate::{Arp, Ethernet, MacAddr, Packet};
 use pnet_datalink as datalink;
 
 use super::{NetError, Result, SendRecv};
@@ -1072,7 +1072,7 @@ mod ip_ranges {
 mod interface_helpers {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    use crafter_core::MacAddr;
+    use crate::MacAddr;
 
     use super::{
         default_interface_in, find_interface_in, get_my_ip_in, get_my_ipv6_in, get_my_mac_in,
