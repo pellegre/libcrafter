@@ -2,7 +2,7 @@
 set -euo pipefail
 
 allowed_types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
-subject_regex="^(${allowed_types})(\([a-z0-9][a-z0-9._/-]*\))?!?: .+$"
+subject_regex="^(${allowed_types})\([a-z0-9][a-z0-9._/-]*\)!?: .+$"
 
 usage() {
   cat <<USAGE
@@ -15,7 +15,7 @@ Validate commit subjects with the Conventional Commits style used by this repo.
 Accepted examples:
   fix(parser): reject truncated ipv4 headers
   test(pcap): cover nanosecond timestamp roundtrips
-  ci: require reference interop checks
+  ci(static): require reference interop checks
 
 Allowed types:
   build chore ci docs feat fix perf refactor revert style test
@@ -38,7 +38,7 @@ check_subject() {
   {
     echo "invalid commit subject: $label"
     echo "  subject: $subject"
-    echo "  expected: type(scope): subject or type: subject"
+    echo "  expected: type(scope): subject"
     echo "  types: $allowed_types"
   } >&2
   return 1
