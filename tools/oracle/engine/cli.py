@@ -9,7 +9,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from .compare import compare_decoded_models, failure_indexes
@@ -154,6 +156,8 @@ def _offline(args: argparse.Namespace) -> int:
                 count=len(decoded),
                 status="decoded",
                 selected_specs=["builtin-stack-grammar"],
+                backend_versions=_backend_versions(args.backend),
+                libcrafter=_libcrafter_info(),
                 metadata=metadata,
             )
             sys.stdout.write(dumps_json(report))
@@ -167,6 +171,8 @@ def _offline(args: argparse.Namespace) -> int:
             count=len(vectors),
             status="vectors",
             selected_specs=["builtin-stack-grammar"],
+            backend_versions=_backend_versions(args.backend),
+            libcrafter=_libcrafter_info(),
             metadata={
                 "emit_vectors": True,
                 "requested_count": args.count,
@@ -229,6 +235,8 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
     )
     vectors = encode_packet_plans(plans)
     expected_decoded = decode_vectors(vectors)
+    backend_versions = _backend_versions(args.backend)
+    libcrafter_info = _libcrafter_info()
 
     vector_report = RunReport(
         mode="offline",
@@ -238,6 +246,8 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         count=len(vectors),
         status="vectors",
         selected_specs=["builtin-stack-grammar"],
+        backend_versions=backend_versions,
+        libcrafter=libcrafter_info,
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
@@ -258,6 +268,8 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
             count=len(expected_decoded),
             status="decoded",
             selected_specs=["builtin-stack-grammar"],
+            backend_versions=backend_versions,
+            libcrafter=libcrafter_info,
             metadata={
                 "direction": args.direction,
                 "decoded": [model.to_dict() for model in expected_decoded],
@@ -266,7 +278,7 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
     )
 
     bridge = _run_libcrafter_decode_bridge(vector_path, run_dir)
-    actual_decoded = _decoded_models(bridge["report"])
+    actual_decoded = _decoded_models(bridge["report"]) if bridge["exit_code"] == 0 else []
     actual_path = run_dir / "libcrafter-decoded.json"
     write_json(actual_path, bridge["report"])
 
@@ -275,6 +287,13 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         expected=expected_decoded,
         actual=actual_decoded,
         plans=plans,
+    )
+    results = _with_failure_artifacts(
+        run_dir=run_dir,
+        results=results,
+        vectors=vectors,
+        backend_decoded=expected_decoded,
+        libcrafter_decoded=actual_decoded,
     )
     failures = [result for result in results if not result.passed]
     status = "passed" if not failures and bridge["exit_code"] == 0 else "failed"
@@ -292,6 +311,8 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
                 str(bridge["stderr_path"]),
             ]
         )
+    artifacts.extend(_comparison_artifact_paths(failures))
+    artifacts = _dedupe_paths(artifacts)
 
     report = RunReport(
         mode="offline",
@@ -302,6 +323,7 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         status=status,
         selected_specs=["builtin-stack-grammar"],
         artifacts=artifacts,
+        artifact_paths=artifacts,
         results=results,
         failures=failures,
         reproduction_commands=[
@@ -309,6 +331,8 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
             for command in (result.reproduction_command for result in failures)
             if command is not None
         ],
+        backend_versions=backend_versions,
+        libcrafter=libcrafter_info,
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
@@ -370,6 +394,8 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         expected_decoded.append(
             _json_object(case.get("expected_decoded", {}), f"case[{index}].expected_decoded")
         )
+    backend_versions = _backend_versions(args.backend)
+    libcrafter_info = _libcrafter_info()
 
     vector_report = RunReport(
         mode="offline",
@@ -379,6 +405,8 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         count=len(vectors),
         status="vectors",
         selected_specs=["libcrafter-oracle-vectors"],
+        backend_versions=backend_versions,
+        libcrafter=libcrafter_info,
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
@@ -401,6 +429,8 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
             count=len(expected_decoded),
             status="decoded",
             selected_specs=["libcrafter-oracle-vectors"],
+            backend_versions=backend_versions,
+            libcrafter=libcrafter_info,
             metadata={
                 "direction": args.direction,
                 "decoded": expected_decoded,
@@ -433,6 +463,13 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         plans=plans,
         partial_expected=True,
     )
+    results = _with_failure_artifacts(
+        run_dir=run_dir,
+        results=results,
+        vectors=vectors,
+        backend_decoded=actual_decoded,
+        libcrafter_decoded=expected_decoded,
+    )
     failures = [result for result in results if not result.passed]
     status = "passed" if not failures and emitter["exit_code"] == 0 else "failed"
     preserve_artifacts = args.keep_artifacts or status != "passed"
@@ -449,6 +486,8 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
                 str(emitter["stderr_path"]),
             ]
         )
+    artifacts.extend(_comparison_artifact_paths(failures))
+    artifacts = _dedupe_paths(artifacts)
 
     report = RunReport(
         mode="offline",
@@ -459,6 +498,7 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         status=status,
         selected_specs=["libcrafter-oracle-vectors"],
         artifacts=artifacts,
+        artifact_paths=artifacts,
         results=results,
         failures=failures,
         reproduction_commands=[
@@ -466,6 +506,8 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
             for command in (result.reproduction_command for result in failures)
             if command is not None
         ],
+        backend_versions=backend_versions,
+        libcrafter=libcrafter_info,
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
@@ -547,6 +589,80 @@ def _compare_offline_results(
     return results
 
 
+def _with_failure_artifacts(
+    *,
+    run_dir: Path,
+    results: list[ComparisonResult],
+    vectors: list[EncodedVector],
+    backend_decoded: list[object],
+    libcrafter_decoded: list[object],
+) -> list[ComparisonResult]:
+    """Write exact per-packet reproduction artifacts for failed comparisons."""
+
+    updated: list[ComparisonResult] = []
+    for position, result in enumerate(results):
+        if result.passed:
+            updated.append(result)
+            continue
+
+        index = result.plan.index if result.plan is not None else position
+        failure_dir = run_dir / "failures" / f"index-{index:06d}"
+        failure_dir.mkdir(parents=True, exist_ok=True)
+
+        plan_path = failure_dir / "packet-plan.json"
+        raw_path = failure_dir / "raw.hex"
+        backend_path = failure_dir / "backend-decoded.json"
+        libcrafter_path = failure_dir / "libcrafter-decoded.json"
+        diff_path = failure_dir / "comparison-diff.json"
+
+        write_json(plan_path, result.plan if result.plan is not None else {})
+        raw_hex = vectors[position].raw_hex if position < len(vectors) else ""
+        raw_path.write_text(f"{raw_hex}\n", encoding="utf-8")
+        write_json(
+            backend_path,
+            _model_to_object(backend_decoded[position]) if position < len(backend_decoded) else {},
+        )
+        write_json(
+            libcrafter_path,
+            (
+                _model_to_object(libcrafter_decoded[position])
+                if position < len(libcrafter_decoded)
+                else {}
+            ),
+        )
+
+        artifact_paths = [
+            str(plan_path),
+            str(raw_path),
+            str(backend_path),
+            str(libcrafter_path),
+            str(diff_path),
+        ]
+        result_with_artifacts = replace(result, artifacts=artifact_paths)
+        write_json(diff_path, result_with_artifacts)
+        updated.append(result_with_artifacts)
+
+    return updated
+
+
+def _comparison_artifact_paths(results: Sequence[ComparisonResult]) -> list[str]:
+    paths: list[str] = []
+    for result in results:
+        paths.extend(result.artifacts)
+    return paths
+
+
+def _dedupe_paths(paths: Sequence[str]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        output.append(path)
+    return output
+
+
 def _run_libcrafter_decode_bridge(vector_path: Path, run_dir: Path) -> JSONObject:
     argv = [
         "cargo",
@@ -574,17 +690,80 @@ def _run_libcrafter_decode_bridge(vector_path: Path, run_dir: Path) -> JSONObjec
     stderr_path.write_text(process.stderr, encoding="utf-8")
 
     if process.returncode != 0:
-        raise RuntimeError(
-            "libcrafter decode bridge failed with exit "
-            f"{process.returncode}; stderr={stderr_path}"
+        report = RunReport(
+            mode="offline",
+            backend="libcrafter",
+            profile="unknown",
+            seed=0,
+            count=0,
+            status="failed",
+            artifact_paths=[str(stdout_path), str(stderr_path)],
+            artifacts=[str(stdout_path), str(stderr_path)],
+            libcrafter=_libcrafter_info(),
+            metadata={
+                "decoded": [],
+                "error": "libcrafter decode bridge failed",
+                "exit_code": process.returncode,
+            },
         )
+        return {
+            "argv": argv,
+            "exit_code": process.returncode,
+            "report": report.to_dict(),
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
 
     try:
         report = json.loads(process.stdout)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"libcrafter decode bridge emitted invalid JSON: {exc}") from exc
+        report = RunReport(
+            mode="offline",
+            backend="libcrafter",
+            profile="unknown",
+            seed=0,
+            count=0,
+            status="failed",
+            artifact_paths=[str(stdout_path), str(stderr_path)],
+            artifacts=[str(stdout_path), str(stderr_path)],
+            libcrafter=_libcrafter_info(),
+            metadata={
+                "decoded": [],
+                "error": f"libcrafter decode bridge emitted invalid JSON: {exc}",
+                "exit_code": process.returncode,
+            },
+        )
+        return {
+            "argv": argv,
+            "exit_code": 1,
+            "report": report.to_dict(),
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
     if not isinstance(report, dict):
-        raise RuntimeError("libcrafter decode bridge report must be a JSON object")
+        report = RunReport(
+            mode="offline",
+            backend="libcrafter",
+            profile="unknown",
+            seed=0,
+            count=0,
+            status="failed",
+            artifact_paths=[str(stdout_path), str(stderr_path)],
+            artifacts=[str(stdout_path), str(stderr_path)],
+            libcrafter=_libcrafter_info(),
+            metadata={
+                "decoded": [],
+                "error": "libcrafter decode bridge report must be a JSON object",
+                "exit_code": process.returncode,
+            },
+        ).to_dict()
+        return {
+            "argv": argv,
+            "exit_code": 1,
+            "report": report,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
 
     return {
         "argv": argv,
@@ -783,6 +962,91 @@ def _strict_bytes_hex(model: object) -> str | None:
 def _model_to_object(model: object) -> JSONObject:
     value = model.to_dict() if hasattr(model, "to_dict") else model
     return _json_object(value, "oracle model")
+
+
+def _backend_versions(backend: str) -> JSONObject:
+    if backend == "scapy":
+        from .backends.scapy.bootstrap import backend_info
+
+        return {"scapy": backend_info()}
+    return {}
+
+
+def _libcrafter_info() -> JSONObject:
+    info: JSONObject = {}
+    version = _workspace_package_version()
+    if version is not None:
+        info["version"] = version
+    commit = _git_head_commit()
+    if commit is not None:
+        info["commit"] = commit
+    return info
+
+
+def _workspace_package_version() -> str | None:
+    try:
+        document = tomllib.loads((REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+
+    workspace = document.get("workspace")
+    if not isinstance(workspace, dict):
+        return None
+    package = workspace.get("package")
+    if not isinstance(package, dict):
+        return None
+    version = package.get("version")
+    return version if isinstance(version, str) else None
+
+
+def _git_head_commit() -> str | None:
+    git_dir = REPO_ROOT / ".git"
+    try:
+        if git_dir.is_file():
+            content = git_dir.read_text(encoding="utf-8").strip()
+            if not content.startswith("gitdir:"):
+                return None
+            raw_path = Path(content.split(":", 1)[1].strip())
+            git_dir = raw_path if raw_path.is_absolute() else (REPO_ROOT / raw_path).resolve()
+
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        if not head:
+            return None
+        if not head.startswith("ref:"):
+            return head
+
+        ref_name = head.removeprefix("ref:").strip()
+        common_dir = _git_common_dir(git_dir)
+        ref_path = git_dir / ref_name
+        if ref_path.exists():
+            return ref_path.read_text(encoding="utf-8").strip() or None
+        ref_path = common_dir / ref_name
+        if ref_path.exists():
+            return ref_path.read_text(encoding="utf-8").strip() or None
+
+        for packed_refs in (git_dir / "packed-refs", common_dir / "packed-refs"):
+            if not packed_refs.exists():
+                continue
+            for line in packed_refs.read_text(encoding="utf-8").splitlines():
+                if not line or line.startswith(("#", "^")):
+                    continue
+                commit, _, packed_ref = line.partition(" ")
+                if packed_ref == ref_name:
+                    return commit
+    except OSError:
+        return None
+    return None
+
+
+def _git_common_dir(git_dir: Path) -> Path:
+    common_dir_file = git_dir / "commondir"
+    if not common_dir_file.exists():
+        return git_dir
+    try:
+        raw_path = Path(common_dir_file.read_text(encoding="utf-8").strip())
+    except OSError:
+        return git_dir
+    return raw_path if raw_path.is_absolute() else (git_dir / raw_path).resolve()
 
 
 def _offline_output_dir(out: str) -> Path:

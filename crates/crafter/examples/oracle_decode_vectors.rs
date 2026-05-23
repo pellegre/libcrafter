@@ -53,9 +53,14 @@ fn main() -> ExampleResult<()> {
 
     let report = json!({
         "artifacts": [],
+        "artifact_paths": [],
         "backend": BACKEND_NAME,
+        "backend_versions": {},
         "count": decoded.len(),
         "failures": [],
+        "libcrafter": {
+            "version": env!("CARGO_PKG_VERSION")
+        },
         "metadata": {
             "decoded": decoded,
             "input_backend": document.get("backend").cloned().unwrap_or(Value::Null),
