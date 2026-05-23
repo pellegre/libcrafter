@@ -656,7 +656,7 @@ fn assert_layer_fields(
         }
         "DHCP" => {
             let _layer = typed_layer::<Dhcp>(decoded, ctx);
-            for name in fields.keys() {
+            if let Some(name) = fields.keys().next() {
                 unsupported_field(decoded, name, ctx);
             }
         }

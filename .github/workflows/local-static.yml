@@ -71,3 +71,8 @@ jobs:
             cmp "tests/fixtures/scapy/$fixture.bin" "$out_dir/$fixture.bin"
             python3 -m json.tool "$out_dir/$fixture.json" >/dev/null
           done
+
+      - name: Run Scapy interop checks
+        run: |
+          tools/reference/check-scapy-interop
+          tools/reference/check-scapy-interop --family pcap
