@@ -55,14 +55,18 @@ verify_scapy() {
     python3 --version
   fi
 
-  if python3 - <<'PY'
-from scapy.all import IP, ICMP, raw, conf
-
-packet = IP(dst="127.0.0.1") / ICMP()
-assert raw(packet)
-print(f"scapy={conf.version}")
-PY
+  if "$project_root/tools/oracle/run" backend-info --backend scapy >"$artifact_dir/reference-backend.json" 2>"$artifact_dir/reference-backend.log"
   then
+    python3 - "$artifact_dir/reference-backend.json" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    metadata = json.load(handle)
+print(f"scapy={metadata.get('scapy_version', 'unknown')}")
+PY
     echo "scapy_import=ok"
     return 0
   fi

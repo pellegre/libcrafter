@@ -6,7 +6,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/common.sh"
 
 parse_live_args "$@"
-suite_label="${LIBCRAFTER_REFERENCE_INTEROP_SUITE_NAME:-scapy-interop}"
+suite_label="${LIBCRAFTER_REFERENCE_INTEROP_SUITE_NAME:-reference-interop}"
 init_suite "$suite_label"
 require_tool cargo
 require_tool python3
@@ -25,14 +25,9 @@ cd "$project_root"
   rustc --version || echo "rustc=missing"
   cargo --version || echo "cargo=missing"
   python3 --version || echo "python3=missing"
-  python3 - <<'PY' || true
-try:
-    from scapy.all import conf
-except Exception as exc:
-    print(f"reference_tool=unavailable:{exc.__class__.__name__}")
-else:
-    print(f"reference_tool={conf.version}")
-PY
+  write_reference_backend_version \
+    "$suite_dir/reference-backend.json" \
+    "$suite_dir/reference-backend.log" || true
   if command -v pcap-config >/dev/null 2>&1; then
     printf 'libpcap=%s\n' "$(pcap-config --version)"
   else

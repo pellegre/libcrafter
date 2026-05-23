@@ -14,14 +14,7 @@ require_live_lab
 if is_dry_run; then
   run_logged rust-network-ping-dry-run \
     cargo run --quiet --example network_ping -- --iface dry-run0 --src 127.0.0.1 --dst 127.0.0.1
-  run_scapy_logged scapy-icmp-bytes <<PY
-from pathlib import Path
-from scapy.all import ICMP, IP, Raw, raw
-out = Path('$suite_dir/scapy-icmp.hex')
-packet = IP(src='127.0.0.1', dst='127.0.0.1') / ICMP(id=0x4321, seq=7) / Raw(b'libcrafter-live-icmp')
-out.write_text(raw(packet).hex() + '\\n', encoding='utf-8')
-print(f'wrote={out}')
-PY
+  run_oracle_legacy_scapy_logged scapy-icmp-bytes --case loopback-icmp-bytes
   write_suite_json ok "dry-run generated Rust and Scapy ICMP artifacts"
   exit 0
 fi
@@ -34,23 +27,7 @@ trap 'stop_background "$capture_pid"' EXIT
 run_logged rust-network-ping-live \
   cargo run --quiet --example network_ping -- --live --iface lo --src 127.0.0.1 --dst 127.0.0.1
 
-run_scapy_logged scapy-icmp-live <<PY
-import json
-from pathlib import Path
-from scapy.all import ICMP, IP, Raw, conf, sr1, wrpcap
-
-conf.verb = 0
-packet = IP(src='127.0.0.1', dst='127.0.0.1') / ICMP(id=0x4321, seq=7) / Raw(b'libcrafter-live-icmp')
-reply = sr1(packet, timeout=2)
-if reply is None:
-    raise SystemExit('no ICMP reply captured by Scapy')
-wrpcap('$suite_dir/scapy-icmp.pcap', [packet, reply])
-Path('$suite_dir/scapy-icmp.json').write_text(
-    json.dumps({'sent': packet.summary(), 'reply': reply.summary()}, indent=2, sort_keys=True) + '\\n',
-    encoding='utf-8',
-)
-print('scapy_icmp=ok')
-PY
+run_oracle_legacy_scapy_logged scapy-icmp-live --case loopback-icmp-live
 
 wait_for_capture "$capture_pid" "$capture_log"
 capture_pid=""

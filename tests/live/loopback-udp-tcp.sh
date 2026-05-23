@@ -16,20 +16,7 @@ if is_dry_run; then
     cargo run --quiet --example udp_traceroute -- --iface dry-run0 --src 127.0.0.1 --host 127.0.0.1 --max-hops 1
   run_logged rust-tcp-traceroute-dry-run \
     cargo run --quiet --example tcp_traceroute -- --iface dry-run0 --src 127.0.0.1 --host 127.0.0.1 --port 18080 --max-hops 1
-  run_scapy_logged scapy-udp-tcp-bytes <<PY
-import json
-from pathlib import Path
-from scapy.all import IP, Raw, TCP, UDP, raw
-packets = {
-    'udp': IP(src='127.0.0.1', dst='127.0.0.1') / UDP(sport=40100, dport=18181) / Raw(b'libcrafter-live-udp'),
-    'tcp': IP(src='127.0.0.1', dst='127.0.0.1') / TCP(sport=40101, dport=18080, flags='S', seq=0x10203040),
-}
-Path('$suite_dir/scapy-udp-tcp.json').write_text(
-    json.dumps({name: {'summary': packet.summary(), 'hex': raw(packet).hex()} for name, packet in packets.items()}, indent=2, sort_keys=True) + '\\n',
-    encoding='utf-8',
-)
-print('scapy_udp_tcp_bytes=ok')
-PY
+  run_oracle_legacy_scapy_logged scapy-udp-tcp-bytes --case loopback-udp-tcp-bytes
   write_suite_json ok "dry-run generated Rust and Scapy UDP/TCP artifacts"
   exit 0
 fi
@@ -99,32 +86,7 @@ run_logged rust-tcp-traceroute-live \
 run_logged rust-udp-traceroute-live \
   cargo run --quiet --example udp_traceroute -- --live --iface lo --src 127.0.0.1 --host 127.0.0.1 --base-port 18181 --max-hops 1
 
-run_scapy_logged scapy-udp-tcp-live <<PY
-import json
-from pathlib import Path
-from scapy.all import IP, Raw, TCP, UDP, conf, send, sr1
-
-conf.verb = 0
-tcp_probe = IP(dst='127.0.0.1') / TCP(sport=40101, dport=18080, flags='S', seq=0x10203040)
-tcp_reply = sr1(tcp_probe, timeout=2)
-udp_probe = IP(dst='127.0.0.1') / UDP(sport=40102, dport=18182) / Raw(b'libcrafter-live-udp')
-send(udp_probe, verbose=False)
-Path('$suite_dir/scapy-udp-tcp.json').write_text(
-    json.dumps(
-        {
-            'tcp_probe': tcp_probe.summary(),
-            'tcp_reply': tcp_reply.summary() if tcp_reply is not None else None,
-            'udp_probe': udp_probe.summary(),
-        },
-        indent=2,
-        sort_keys=True,
-    ) + '\\n',
-    encoding='utf-8',
-)
-if tcp_reply is None:
-    raise SystemExit('no TCP loopback response captured by Scapy')
-print('scapy_udp_tcp=ok')
-PY
+run_oracle_legacy_scapy_logged scapy-udp-tcp-live --case loopback-udp-tcp-live
 
 wait_for_capture "$capture_pid" "$capture_log"
 capture_pid=""
