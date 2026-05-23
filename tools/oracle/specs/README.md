@@ -4,6 +4,19 @@ The oracle runner uses specs as the source of truth for packet behavior. Backend
 code, including Scapy support, should materialize and normalize packets from
 these specs instead of carrying its own sampling rules.
 
+## Runner Modes
+
+`tools/oracle/run offline` validates raw vectors and normalized decode behavior.
+`tools/oracle/run pcap` validates pcap writer, reader, and roundtrip behavior.
+`tools/oracle/run live` validates provider-backed live exchange plans and
+reports. All three modes accept `--backend scapy`, `--profile`, `--seed`,
+`--count`, and targeted reproduction coordinates such as `--case`, `--feature`,
+`--family`, and `--index`.
+
+Artifacts default below `target/oracle/`. A failing case should be reproducible
+with the same mode, backend, profile, seed, and packet index reported by the
+oracle runner.
+
 ## Layer Specs
 
 Layer specs live under `tools/oracle/specs/layers/`. A layer spec defines the

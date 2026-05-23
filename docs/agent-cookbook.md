@@ -209,6 +209,43 @@ println!("bytes_sent={}", report.bytes_sent());
 
 Always destroy provider resources after the run.
 
+## Oracle Validation
+
+Use the oracle runner when generated tools change packet behavior. The oracle is
+the validation system; Scapy is one backend selected with `--backend scapy`.
+Agents should not add ad hoc Scapy imports to tests or scripts when an oracle
+mode covers the same behavior.
+
+Offline validation compares generated raw packet vectors and normalized decode
+models without root privileges:
+
+```sh
+tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
+```
+
+Pcap validation exercises pcap writer, reader, and roundtrip behavior:
+
+```sh
+tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
+```
+
+Live validation routes through a provider. Use `local-dry-run` for agent and CI
+planning, and reserve real providers for explicit live-lab workflows:
+
+```sh
+tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 1 --count 10
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+```
+
+Artifacts default below `target/oracle/`, with mode-specific reports under
+`target/oracle/offline`, `target/oracle/pcap`, and `target/oracle/live`. Every
+failing oracle command should be rerunnable with the same `--profile`, `--seed`,
+`--count`, and, when the report identifies one packet, `--index`.
+
+Pull request CI runs deterministic oracle offline coverage and pcap smoke
+coverage with the Scapy backend. Provider-backed live traffic must stay behind
+explicit live-lab confirmation or dry-run workflows.
+
 ## send_recv Matching
 
 Use `send_recv_report` when the tool needs the derived reply filter and timeout
@@ -277,17 +314,17 @@ for entry in report.entries() {
 }
 ```
 
-## Reference Fixture Comparison
+## Fixture Comparison
 
-Use reference fixtures to validate byte-level behavior for deterministic packets.
+Use oracle fixtures to validate byte-level behavior for deterministic packets.
 Fixture generation is offline and does not require root.
 
 ```sh
-tools/reference/generate-reference-fixtures --list
-tools/reference/generate-reference-fixtures --only ipv4-icmp --out target/reference-fixtures
+tools/oracle/run fixtures --backend scapy --list
+tools/oracle/run fixtures --backend scapy --only ipv4-icmp --seed 1 --out target/oracle/fixtures
 ```
 
 A generated Rust tool can write its compiled bytes to a target file and compare
-against `target/reference-fixtures/ipv4-icmp.bin`. Prefer exact byte comparison
+against `target/oracle/fixtures/ipv4-icmp.bin`. Prefer exact byte comparison
 for stable headers and structured field comparison when timestamps, random ids,
 route state, or OS-assigned values are expected to vary.
