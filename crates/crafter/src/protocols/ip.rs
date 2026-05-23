@@ -1173,8 +1173,7 @@ mod ipv4 {
     use crate::{Icmp, LinkType, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
-    const IPV4_ICMP_FIXTURE: &[u8] =
-        include_bytes!("../../../../tests/fixtures/scapy/ipv4-icmp.bin");
+    const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("scapy/ipv4-icmp.bin");
 
     fn src() -> Ipv4Addr {
         Ipv4Addr::new(192, 0, 2, 10)
@@ -1387,8 +1386,7 @@ mod ipv4_checksum {
     use crate::{checksum::verify_internet_checksum, Raw};
     use core::net::Ipv4Addr;
 
-    const IPV4_ICMP_FIXTURE: &[u8] =
-        include_bytes!("../../../../tests/fixtures/scapy/ipv4-icmp.bin");
+    const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("scapy/ipv4-icmp.bin");
 
     #[test]
     fn ipv4_header_checksum_matches_scapy_fixture() {

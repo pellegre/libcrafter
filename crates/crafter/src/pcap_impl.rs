@@ -1534,7 +1534,7 @@ mod tests {
         PcapWriterOptions, Sniffer, TimestampPrecision, DLT_EN10MB, PCAP_HEADER_LEN,
     };
 
-    const ARP_REQUEST: &[u8] = include_bytes!("../../../tests/fixtures/scapy/arp-request.bin");
+    const ARP_REQUEST: &[u8] = fixture_bytes!("scapy/arp-request.bin");
     static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
 
     fn ethernet_arp_packet() -> Packet {

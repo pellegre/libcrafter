@@ -37,6 +37,11 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+#[macro_use]
+#[path = "../tests/support/mod.rs"]
+mod test_support;
+
 pub mod checksum;
 pub mod endian;
 pub mod error;

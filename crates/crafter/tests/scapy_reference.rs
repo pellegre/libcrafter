@@ -5,6 +5,8 @@ use std::fs;
 use std::net::Ipv6Addr;
 use std::path::{Path, PathBuf};
 
+mod support;
+
 use crafter::core::{
     Arp, Dhcp, Dns, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
     Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LinkType,
@@ -182,9 +184,7 @@ fn fixture_dir() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("tests/fixtures/scapy")
+    support::fixture_path("scapy")
 }
 
 fn read_json<T>(path: &Path, label: &str) -> T
