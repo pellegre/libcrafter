@@ -1,0 +1,114 @@
+{
+  "decoded_summary": "IP / ICMP 198.51.100.20 > 192.0.2.10 echo-reply 0 / Raw",
+  "description": "IPv4 ICMP echo reply with raw payload.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "IP",
+    "ICMP",
+    "Raw"
+  ],
+  "family": "icmp",
+  "hex": "450000311260400040013c1ac6336414c000020a000053ce424300036c6962637261667465722d69636d702d7265706c79",
+  "layer_names": [
+    "IP",
+    "ICMP",
+    "Raw"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "chksum": 15386,
+        "dst": "192.0.2.10",
+        "flags": "DF",
+        "frag": 0,
+        "id": 4704,
+        "ihl": 5,
+        "len": 49,
+        "options": [],
+        "proto": 1,
+        "src": "198.51.100.20",
+        "tos": 0,
+        "ttl": 64,
+        "version": 4
+      },
+      "name": "IP"
+    },
+    {
+      "fields": {
+        "chksum": 21454,
+        "code": 0,
+        "id": 16963,
+        "seq": 3,
+        "type": 0,
+        "unused": {
+          "ascii": "",
+          "hex": ""
+        }
+      },
+      "name": "ICMP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "libcrafter-icmp-reply",
+          "hex": "6c6962637261667465722d69636d702d7265706c79"
+        }
+      },
+      "name": "Raw"
+    }
+  ],
+  "length": 49,
+  "name": "icmpv4-echo-reply",
+  "notes": "Checked-in Scapy fixture. IPv4 ICMP echo reply complements the checked-in echo request case.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "chksum": 15386,
+        "dst": "192.0.2.10",
+        "flags": "DF",
+        "frag": 0,
+        "id": 4704,
+        "ihl": 5,
+        "len": 49,
+        "options": [],
+        "proto": 1,
+        "src": "198.51.100.20",
+        "tos": 0,
+        "ttl": 64,
+        "version": 4
+      },
+      "layer": "IP"
+    },
+    {
+      "fields": {
+        "chksum": 21454,
+        "code": 0,
+        "id": 16963,
+        "seq": 3,
+        "type": 0,
+        "unused": {
+          "ascii": "",
+          "hex": ""
+        }
+      },
+      "layer": "ICMP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "libcrafter-icmp-reply",
+          "hex": "6c6962637261667465722d69636d702d7265706c79"
+        }
+      },
+      "layer": "Raw"
+    }
+  ],
+  "root": "l3:ipv4",
+  "root_decoder": "l3:ipv4",
+  "scapy_root": "IP",
+  "scapy_show": "###[ IP ]###\n  version   = 4\n  ihl       = 5\n  tos       = 0x0\n  len       = 49\n  id        = 4704\n  flags     = DF\n  frag      = 0\n  ttl       = 64\n  proto     = icmp\n  chksum    = 0x3c1a\n  src       = 198.51.100.20\n  dst       = 192.0.2.10\n  \\options   \\\n###[ ICMP ]###\n     type      = echo-reply\n     code      = 0\n     chksum    = 0x53ce\n     id        = 0x4243\n     seq       = 0x3\n     unused    = b''\n###[ Raw ]###\n        load      = b'libcrafter-icmp-reply'\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "IP / ICMP 198.51.100.20 > 192.0.2.10 echo-reply 0 / Raw"
+}

@@ -1,0 +1,104 @@
+{
+  "decoded_summary": "IP / UDP 192.0.2.10:53000 > 198.51.100.20:33434 / Raw",
+  "description": "IPv4 UDP datagram with raw payload.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "IP",
+    "UDP",
+    "Raw"
+  ],
+  "family": "transport",
+  "hex": "4500002a123500003f117d3cc000020ac6336414cf08829a001622d26c6962637261667465722d756470",
+  "layer_names": [
+    "IP",
+    "UDP",
+    "Raw"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "chksum": 32060,
+        "dst": "198.51.100.20",
+        "flags": "",
+        "frag": 0,
+        "id": 4661,
+        "ihl": 5,
+        "len": 42,
+        "options": [],
+        "proto": 17,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 63,
+        "version": 4
+      },
+      "name": "IP"
+    },
+    {
+      "fields": {
+        "chksum": 8914,
+        "dport": 33434,
+        "len": 22,
+        "sport": 53000
+      },
+      "name": "UDP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "libcrafter-udp",
+          "hex": "6c6962637261667465722d756470"
+        }
+      },
+      "name": "Raw"
+    }
+  ],
+  "length": 42,
+  "name": "ipv4-udp",
+  "notes": "Checked-in Scapy fixture. Covers IPv4 UDP length, checksum, ports, and raw payload.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "chksum": 32060,
+        "dst": "198.51.100.20",
+        "flags": "",
+        "frag": 0,
+        "id": 4661,
+        "ihl": 5,
+        "len": 42,
+        "options": [],
+        "proto": 17,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 63,
+        "version": 4
+      },
+      "layer": "IP"
+    },
+    {
+      "fields": {
+        "chksum": 8914,
+        "dport": 33434,
+        "len": 22,
+        "sport": 53000
+      },
+      "layer": "UDP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "libcrafter-udp",
+          "hex": "6c6962637261667465722d756470"
+        }
+      },
+      "layer": "Raw"
+    }
+  ],
+  "root": "l3:ipv4",
+  "root_decoder": "l3:ipv4",
+  "scapy_root": "IP",
+  "scapy_show": "###[ IP ]###\n  version   = 4\n  ihl       = 5\n  tos       = 0x0\n  len       = 42\n  id        = 4661\n  flags     = \n  frag      = 0\n  ttl       = 63\n  proto     = udp\n  chksum    = 0x7d3c\n  src       = 192.0.2.10\n  dst       = 198.51.100.20\n  \\options   \\\n###[ UDP ]###\n     sport     = 53000\n     dport     = 33434\n     len       = 22\n     chksum    = 0x22d2\n###[ Raw ]###\n        load      = b'libcrafter-udp'\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "IP / UDP 192.0.2.10:53000 > 198.51.100.20:33434 / Raw"
+}

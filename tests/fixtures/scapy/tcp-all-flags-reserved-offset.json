@@ -1,0 +1,128 @@
+{
+  "decoded_summary": "IP / TCP 192.0.2.10:40003 > 198.51.100.20:https FSRPAUECN / Raw",
+  "description": "IPv4 TCP packet with all flags, reserved bits, urgent pointer, and raw payload.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "IP",
+    "TCP",
+    "Raw"
+  ],
+  "family": "transport",
+  "hex": "45000035125740003a06421ac000020ac63364149c4301bb04050607212223246fff1000dfd7beef00000000616c6c2d666c616773",
+  "layer_names": [
+    "IP",
+    "TCP",
+    "Raw"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "chksum": 16922,
+        "dst": "198.51.100.20",
+        "flags": "DF",
+        "frag": 0,
+        "id": 4695,
+        "ihl": 5,
+        "len": 53,
+        "options": [],
+        "proto": 6,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 58,
+        "version": 4
+      },
+      "name": "IP"
+    },
+    {
+      "fields": {
+        "ack": 555885348,
+        "chksum": 57303,
+        "dataofs": 6,
+        "dport": 443,
+        "flags": "FSRPAUECN",
+        "options": [
+          [
+            "EOL",
+            null
+          ]
+        ],
+        "reserved": 7,
+        "seq": 67438087,
+        "sport": 40003,
+        "urgptr": 48879,
+        "window": 4096
+      },
+      "name": "TCP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "all-flags",
+          "hex": "616c6c2d666c616773"
+        }
+      },
+      "name": "Raw"
+    }
+  ],
+  "length": 53,
+  "name": "tcp-all-flags-reserved-offset",
+  "notes": "Checked-in Scapy fixture. TCP all flags, reserved bits, data offset, window, urgent pointer, and payload preservation.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "chksum": 16922,
+        "dst": "198.51.100.20",
+        "flags": "DF",
+        "frag": 0,
+        "id": 4695,
+        "ihl": 5,
+        "len": 53,
+        "options": [],
+        "proto": 6,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 58,
+        "version": 4
+      },
+      "layer": "IP"
+    },
+    {
+      "fields": {
+        "ack": 555885348,
+        "chksum": 57303,
+        "dataofs": 6,
+        "dport": 443,
+        "flags": "FSRPAUECN",
+        "options": [
+          [
+            "EOL",
+            null
+          ]
+        ],
+        "reserved": 7,
+        "seq": 67438087,
+        "sport": 40003,
+        "urgptr": 48879,
+        "window": 4096
+      },
+      "layer": "TCP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "all-flags",
+          "hex": "616c6c2d666c616773"
+        }
+      },
+      "layer": "Raw"
+    }
+  ],
+  "root": "l3:ipv4",
+  "root_decoder": "l3:ipv4",
+  "scapy_root": "IP",
+  "scapy_show": "###[ IP ]###\n  version   = 4\n  ihl       = 5\n  tos       = 0x0\n  len       = 53\n  id        = 4695\n  flags     = DF\n  frag      = 0\n  ttl       = 58\n  proto     = tcp\n  chksum    = 0x421a\n  src       = 192.0.2.10\n  dst       = 198.51.100.20\n  \\options   \\\n###[ TCP ]###\n     sport     = 40003\n     dport     = https\n     seq       = 67438087\n     ack       = 555885348\n     dataofs   = 6\n     reserved  = 7\n     flags     = FSRPAUECN\n     window    = 4096\n     chksum    = 0xdfd7\n     urgptr    = 48879\n     options   = [('EOL', None)]\n###[ Raw ]###\n        load      = b'all-flags'\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "IP / TCP 192.0.2.10:40003 > 198.51.100.20:https FSRPAUECN / Raw"
+}

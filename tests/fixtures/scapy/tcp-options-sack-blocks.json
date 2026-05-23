@@ -1,0 +1,126 @@
+{
+  "decoded_summary": "IP / TCP 192.0.2.10:40007 > 198.51.100.20:https A",
+  "description": "IPv4 TCP packet with SACK block option.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "IP",
+    "TCP"
+  ],
+  "family": "transport",
+  "hex": "4500003c125b40003606460fc000020ac63364149c4701bb08090a0b41424344a0102000c46900000512111111112222222233333333444444440000",
+  "layer_names": [
+    "IP",
+    "TCP"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "chksum": 17935,
+        "dst": "198.51.100.20",
+        "flags": "DF",
+        "frag": 0,
+        "id": 4699,
+        "ihl": 5,
+        "len": 60,
+        "options": [],
+        "proto": 6,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 54,
+        "version": 4
+      },
+      "name": "IP"
+    },
+    {
+      "fields": {
+        "ack": 1094861636,
+        "chksum": 50281,
+        "dataofs": 10,
+        "dport": 443,
+        "flags": "A",
+        "options": [
+          [
+            "SAck",
+            [
+              286331153,
+              572662306,
+              858993459,
+              1145324612
+            ]
+          ],
+          [
+            "EOL",
+            null
+          ]
+        ],
+        "reserved": 0,
+        "seq": 134810123,
+        "sport": 40007,
+        "urgptr": 0,
+        "window": 8192
+      },
+      "name": "TCP"
+    }
+  ],
+  "length": 60,
+  "name": "tcp-options-sack-blocks",
+  "notes": "Checked-in Scapy fixture. TCP SACK block option validates repeated block boundaries and stable option encoding.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "chksum": 17935,
+        "dst": "198.51.100.20",
+        "flags": "DF",
+        "frag": 0,
+        "id": 4699,
+        "ihl": 5,
+        "len": 60,
+        "options": [],
+        "proto": 6,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 54,
+        "version": 4
+      },
+      "layer": "IP"
+    },
+    {
+      "fields": {
+        "ack": 1094861636,
+        "chksum": 50281,
+        "dataofs": 10,
+        "dport": 443,
+        "flags": "A",
+        "options": [
+          [
+            "SAck",
+            [
+              286331153,
+              572662306,
+              858993459,
+              1145324612
+            ]
+          ],
+          [
+            "EOL",
+            null
+          ]
+        ],
+        "reserved": 0,
+        "seq": 134810123,
+        "sport": 40007,
+        "urgptr": 0,
+        "window": 8192
+      },
+      "layer": "TCP"
+    }
+  ],
+  "root": "l3:ipv4",
+  "root_decoder": "l3:ipv4",
+  "scapy_root": "IP",
+  "scapy_show": "###[ IP ]###\n  version   = 4\n  ihl       = 5\n  tos       = 0x0\n  len       = 60\n  id        = 4699\n  flags     = DF\n  frag      = 0\n  ttl       = 54\n  proto     = tcp\n  chksum    = 0x460f\n  src       = 192.0.2.10\n  dst       = 198.51.100.20\n  \\options   \\\n###[ TCP ]###\n     sport     = 40007\n     dport     = https\n     seq       = 134810123\n     ack       = 1094861636\n     dataofs   = 10\n     reserved  = 0\n     flags     = A\n     window    = 8192\n     chksum    = 0xc469\n     urgptr    = 0\n     options   = [('SAck', (286331153, 572662306, 858993459, 1145324612)), ('EOL', None)]\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "IP / TCP 192.0.2.10:40007 > 198.51.100.20:https A"
+}

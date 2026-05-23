@@ -149,7 +149,7 @@ logs_dir="$run_dir/logs"
 mkdir -p "$logs_dir"
 
 cleanup() {
-  local rc=$?
+  rc=$?
   if (( rc == 0 && keep_artifacts == 0 )); then
     rm -rf -- "$run_dir"
   else
@@ -182,9 +182,10 @@ run_logged() {
   if "$@" >> "$log" 2>&1; then
     printf 'ok direction=%s case=%s step=%s\n' "$direction" "$case_label" "$label"
     return 0
+  else
+    rc=$?
   fi
 
-  local rc=$?
   printf 'failed direction=%s case=%s step=%s exit=%s\n' \
     "$direction" "$case_label" "$label" "$rc" >&2
   tail -n 80 "$log" >&2 || true
@@ -207,9 +208,10 @@ run_capture() {
   if "$@" > "$output" 2>> "$log"; then
     printf 'ok direction=%s case=%s step=%s\n' "$direction" "$case_label" "$label"
     return 0
+  else
+    rc=$?
   fi
 
-  local rc=$?
   printf 'failed direction=%s case=%s step=%s exit=%s\n' \
     "$direction" "$case_label" "$label" "$rc" >&2
   tail -n 80 "$log" >&2 || true
