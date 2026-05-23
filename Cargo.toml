@@ -1,9 +1,5 @@
 [workspace]
 members = [
-    "crates/crafter-core",
-    "crates/crafter-pcap",
-    "crates/crafter-net",
-    "crates/crafter-live",
     "crates/crafter",
 ]
 resolver = "2"
