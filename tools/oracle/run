@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "${script_dir}/../.." && pwd)"
+
+export ORACLE_REPO_ROOT="${repo_root}"
+export PYTHONPATH="${script_dir}${PYTHONPATH:+:${PYTHONPATH}}"
+
+cd "${repo_root}"
+exec python3 -m engine.cli "$@"
