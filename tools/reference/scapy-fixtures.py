@@ -38,7 +38,13 @@ def import_scapy() -> dict[str, Any]:
             conf,
             raw,
         )
-        from scapy.layers.inet6 import ICMPv6EchoRequest  # type: ignore[import-untyped]
+        from scapy.layers.inet6 import (  # type: ignore[import-untyped]
+            ICMPv6EchoRequest,
+            IPv6ExtHdrFragment,
+            IPv6ExtHdrRouting,
+            IPv6ExtHdrSegmentRouting,
+        )
+        from scapy.layers.l2 import CookedLinux, Loopback  # type: ignore[import-untyped]
     except ModuleNotFoundError as exc:
         if exc.name != "scapy":
             raise
@@ -49,6 +55,7 @@ def import_scapy() -> dict[str, Any]:
     return {
         "ARP": ARP,
         "BOOTP": BOOTP,
+        "CookedLinux": CookedLinux,
         "DHCP": DHCP,
         "DNS": DNS,
         "DNSQR": DNSQR,
@@ -59,6 +66,10 @@ def import_scapy() -> dict[str, Any]:
         "IP": IP,
         "IPOption": IPOption,
         "IPv6": IPv6,
+        "IPv6ExtHdrFragment": IPv6ExtHdrFragment,
+        "IPv6ExtHdrRouting": IPv6ExtHdrRouting,
+        "IPv6ExtHdrSegmentRouting": IPv6ExtHdrSegmentRouting,
+        "Loopback": Loopback,
         "Raw": Raw,
         "TCP": TCP,
         "UDP": UDP,
@@ -110,6 +121,7 @@ SCAPY = import_scapy()
 
 ARP = SCAPY["ARP"]
 BOOTP = SCAPY["BOOTP"]
+CookedLinux = SCAPY["CookedLinux"]
 DHCP = SCAPY["DHCP"]
 DNS = SCAPY["DNS"]
 DNSQR = SCAPY["DNSQR"]
@@ -120,6 +132,10 @@ ICMPv6EchoRequest = SCAPY["ICMPv6EchoRequest"]
 IP = SCAPY["IP"]
 IPOption = SCAPY["IPOption"]
 IPv6 = SCAPY["IPv6"]
+IPv6ExtHdrFragment = SCAPY["IPv6ExtHdrFragment"]
+IPv6ExtHdrRouting = SCAPY["IPv6ExtHdrRouting"]
+IPv6ExtHdrSegmentRouting = SCAPY["IPv6ExtHdrSegmentRouting"]
+Loopback = SCAPY["Loopback"]
 Raw = SCAPY["Raw"]
 TCP = SCAPY["TCP"]
 UDP = SCAPY["UDP"]
@@ -181,6 +197,23 @@ def arp_request_fixture() -> Any:
     )
 
 
+def raw_payload_link_fixture() -> Any:
+    return Raw(b"raw-link-payload")
+
+
+def arp_reply_fixture() -> Any:
+    return (
+        Ether(src=SRC_MAC, dst=DST_MAC)
+        / ARP(
+            op=2,
+            hwsrc=SRC_MAC,
+            psrc=SRC_IPV4,
+            hwdst=DST_MAC,
+            pdst=GW_IPV4,
+        )
+    )
+
+
 def ipv4_icmp_fixture() -> Any:
     return (
         IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1234, ttl=64, flags="DF")
@@ -201,6 +234,50 @@ def ipv4_tcp_syn_fixture() -> Any:
     return (
         IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1236, ttl=62, flags="DF")
         / TCP(sport=40000, dport=80, flags="S", seq=0x01020304, window=64240)
+    )
+
+
+def ipv4_boundary_fields_fixture() -> Any:
+    return (
+        IP(
+            src=SRC_IPV4,
+            dst=DST_IPV4,
+            id=0x1243,
+            tos=0xB8,
+            ttl=0,
+            flags=7,
+            frag=0x1FFF,
+            proto=253,
+        )
+        / Raw(b"v4-boundary")
+    )
+
+
+def ipv4_unknown_protocol_raw_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1244, ttl=64, proto=253)
+        / Raw(b"unknown-ipv4")
+    )
+
+
+def ipv4_fragment_mf_offset_fixture() -> Any:
+    return (
+        IP(
+            src=SRC_IPV4,
+            dst=DST_IPV4,
+            id=0x1245,
+            flags="MF",
+            frag=37,
+            proto=253,
+        )
+        / Raw(b"fragmented-tail")
+    )
+
+
+def ipv4_ttl_255_fixture() -> Any:
+    return (
+        IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1246, ttl=255, flags="DF", proto=253)
+        / Raw(b"ttl255")
     )
 
 
@@ -246,10 +323,28 @@ def ipv4_options_fixture() -> Any:
             options=[
                 IPOption(b"\x01"),
                 IPOption(b"\x07\x07\x04\xc0\x00\x02\x01"),
+                IPOption(b"\x1e\x04\xaa\xbb"),
+                IPOption(b"\x00"),
             ],
         )
-        / ICMP(type="echo-request", id=0x4243, seq=3)
         / Raw(b"ip-options")
+    )
+
+
+def ipv4_options_source_route_traceroute_fixture() -> Any:
+    return (
+        IP(
+            src=SRC_IPV4,
+            dst=DST_IPV4,
+            id=0x1247,
+            ttl=62,
+            options=[
+                IPOption(b"\x83\x07\x04\xc0\x00\x02\x01"),
+                IPOption(b"\x89\x07\x04\xc6\x33\x64\x14"),
+                IPOption(b"\x52\x0c\x12\x34\x00\x01\xff\xff\xc0\x00\x02\x0a"),
+            ],
+        )
+        / Raw(b"srtrace")
     )
 
 
@@ -282,6 +377,113 @@ def vlan_udp_fixture() -> Any:
     )
 
 
+def vlan_boundary_fields_fixture() -> Any:
+    return (
+        Ether(src=SRC_MAC, dst=DST_MAC)
+        / Dot1Q(vlan=4094, prio=7, dei=1)
+        / IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1248, ttl=57)
+        / UDP(sport=53003, dport=10000)
+        / Raw(b"vlan-boundary")
+    )
+
+
+def linux_cooked_ipv4_udp_fixture() -> Any:
+    return (
+        CookedLinux(
+            pkttype=0,
+            lladdrtype=1,
+            lladdrlen=6,
+            src=mac_bytes(SRC_MAC) + b"\x00\x00",
+            proto=0x0800,
+        )
+        / IP(src=SRC_IPV4, dst=DST_IPV4, id=0x1249, ttl=56)
+        / UDP(sport=53004, dport=10001)
+        / Raw(b"sll-udp")
+    )
+
+
+def null_loopback_ipv4_little_endian_fixture() -> Any:
+    return (
+        Loopback(type=2)
+        / IP(src=SRC_IPV4, dst=DST_IPV4, id=0x124A, ttl=55)
+        / ICMP(type="echo-request", id=0x4244, seq=4)
+    )
+
+
+def ipv6_boundary_fields_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6, tc=0xAB, fl=0xFFFFF, hlim=0, nh=253)
+        / Raw(b"v6-boundary")
+    )
+
+
+def ipv6_unknown_next_header_raw_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6, fl=0, hlim=255, nh=253)
+        / Raw(b"unknown-ipv6")
+    )
+
+
+def ipv6_fragment_udp_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6)
+        / IPv6ExtHdrFragment(nh=17, offset=0, m=1, id=0x01020304)
+        / UDP(sport=53005, dport=10002)
+        / Raw(b"fragudp")
+    )
+
+
+def ipv6_routing_generic_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6)
+        / IPv6ExtHdrRouting(nh=253, type=253, segleft=0, addresses=[])
+        / Raw(b"route-raw")
+    )
+
+
+def ipv6_mobile_routing_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6)
+        / IPv6ExtHdrRouting(
+            nh=253,
+            type=2,
+            segleft=1,
+            addresses=["2001:db8:ffff::1"],
+        )
+        / Raw(b"mobile-raw")
+    )
+
+
+def ipv6_segment_routing_udp_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6)
+        / IPv6ExtHdrSegmentRouting(
+            nh=17,
+            segleft=1,
+            addresses=["2001:db8:ffff::1", "2001:db8:ffff::2"],
+        )
+        / UDP(sport=53006, dport=10003)
+        / Raw(b"srhudp")
+    )
+
+
+def ipv6_extension_chain_tcp_raw_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6)
+        / IPv6ExtHdrRouting(nh=6, type=253, segleft=0, addresses=[])
+        / TCP(sport=53007, dport=443, flags="PA")
+        / Raw(b"chain")
+    )
+
+
+def ipv6_routing_icmpv6_fixture() -> Any:
+    return (
+        IPv6(src=SRC_IPV6, dst=DST_IPV6)
+        / IPv6ExtHdrRouting(nh=58, type=253, segleft=0, addresses=[])
+        / ICMPv6EchoRequest(id=0x4246, seq=6, data=b"routeicmp")
+    )
+
+
 FIXTURES = [
     Fixture(
         "ethernet",
@@ -296,6 +498,20 @@ FIXTURES = [
         "Ether",
         ["Ether", "ARP"],
         arp_request_fixture,
+    ),
+    Fixture(
+        "raw-payload-link",
+        "Raw link-layer payload.",
+        "Raw",
+        ["Raw"],
+        raw_payload_link_fixture,
+    ),
+    Fixture(
+        "arp-reply",
+        "Ethernet ARP is-at reply.",
+        "Ether",
+        ["Ether", "ARP"],
+        arp_reply_fixture,
     ),
     Fixture(
         "ipv4-icmp",
@@ -317,6 +533,34 @@ FIXTURES = [
         "IP",
         ["IP", "TCP"],
         ipv4_tcp_syn_fixture,
+    ),
+    Fixture(
+        "ipv4-boundary-fields",
+        "IPv4 boundary fields with raw fallback.",
+        "IP",
+        ["IP", "Raw"],
+        ipv4_boundary_fields_fixture,
+    ),
+    Fixture(
+        "ipv4-unknown-protocol-raw",
+        "IPv4 unknown protocol with raw payload.",
+        "IP",
+        ["IP", "Raw"],
+        ipv4_unknown_protocol_raw_fixture,
+    ),
+    Fixture(
+        "ipv4-fragment-mf-offset",
+        "IPv4 nonzero fragment offset with raw payload.",
+        "IP",
+        ["IP", "Raw"],
+        ipv4_fragment_mf_offset_fixture,
+    ),
+    Fixture(
+        "ipv4-ttl-255",
+        "IPv4 TTL 255 with raw payload.",
+        "IP",
+        ["IP", "Raw"],
+        ipv4_ttl_255_fixture,
     ),
     Fixture(
         "dns-query",
@@ -341,10 +585,17 @@ FIXTURES = [
     ),
     Fixture(
         "ipv4-options",
-        "IPv4 ICMP echo request with NOP and record-route options.",
+        "IPv4 packet with NOP, record-route, generic, and EOL options.",
         "IP",
-        ["IP", "IPOption_NOP", "IPOption_RR", "ICMP", "Raw"],
+        ["IP", "Raw"],
         ipv4_options_fixture,
+    ),
+    Fixture(
+        "ipv4-options-source-route-traceroute",
+        "IPv4 loose/strict source route and traceroute options.",
+        "IP",
+        ["IP", "Raw"],
+        ipv4_options_source_route_traceroute_fixture,
     ),
     Fixture(
         "tcp-options",
@@ -359,6 +610,83 @@ FIXTURES = [
         "Ether",
         ["Ether", "Dot1Q", "IP", "UDP", "Raw"],
         vlan_udp_fixture,
+    ),
+    Fixture(
+        "vlan-boundary-fields",
+        "802.1Q Ethernet boundary PCP, DEI, and VLAN ID.",
+        "Ether",
+        ["Ether", "Dot1Q", "IP", "UDP", "Raw"],
+        vlan_boundary_fields_fixture,
+    ),
+    Fixture(
+        "linux-cooked-ipv4-udp",
+        "Linux cooked capture IPv4 UDP datagram.",
+        "CookedLinux",
+        ["CookedLinux", "IP", "UDP", "Raw"],
+        linux_cooked_ipv4_udp_fixture,
+    ),
+    Fixture(
+        "null-loopback-ipv4-little-endian",
+        "BSD null loopback little-endian IPv4 ICMP packet.",
+        "Loopback",
+        ["Loopback", "IP", "ICMP"],
+        null_loopback_ipv4_little_endian_fixture,
+    ),
+    Fixture(
+        "ipv6-boundary-fields",
+        "IPv6 traffic class, max flow label, hop limit 0, and raw fallback.",
+        "IPv6",
+        ["IPv6", "Raw"],
+        ipv6_boundary_fields_fixture,
+    ),
+    Fixture(
+        "ipv6-unknown-next-header-raw",
+        "IPv6 unknown next header with flow label 0 and hop limit 255.",
+        "IPv6",
+        ["IPv6", "Raw"],
+        ipv6_unknown_next_header_raw_fixture,
+    ),
+    Fixture(
+        "ipv6-fragment-udp",
+        "IPv6 fragment extension header chained to UDP.",
+        "IPv6",
+        ["IPv6", "IPv6ExtHdrFragment", "UDP", "Raw"],
+        ipv6_fragment_udp_fixture,
+    ),
+    Fixture(
+        "ipv6-routing-generic",
+        "IPv6 generic routing header chained to raw payload.",
+        "IPv6",
+        ["IPv6", "IPv6ExtHdrRouting", "Raw"],
+        ipv6_routing_generic_fixture,
+    ),
+    Fixture(
+        "ipv6-mobile-routing",
+        "IPv6 mobile routing header chained to raw payload.",
+        "IPv6",
+        ["IPv6", "IPv6ExtHdrRouting", "Raw"],
+        ipv6_mobile_routing_fixture,
+    ),
+    Fixture(
+        "ipv6-segment-routing-udp",
+        "IPv6 segment routing header chained to UDP.",
+        "IPv6",
+        ["IPv6", "IPv6ExtHdrSegmentRouting", "UDP", "Raw"],
+        ipv6_segment_routing_udp_fixture,
+    ),
+    Fixture(
+        "ipv6-extension-chain-tcp-raw",
+        "IPv6 routing extension chained to TCP and raw payload.",
+        "IPv6",
+        ["IPv6", "IPv6ExtHdrRouting", "TCP", "Raw"],
+        ipv6_extension_chain_tcp_raw_fixture,
+    ),
+    Fixture(
+        "ipv6-routing-icmpv6",
+        "IPv6 routing extension chained to ICMPv6 echo.",
+        "IPv6",
+        ["IPv6", "IPv6ExtHdrRouting", "ICMPv6EchoRequest"],
+        ipv6_routing_icmpv6_fixture,
     ),
 ]
 
@@ -425,9 +753,12 @@ validate_fixture_manifest()
 
 def decode_root(root: str, blob: bytes) -> Any:
     decoders = {
+        "CookedLinux": CookedLinux,
         "Ether": Ether,
         "IP": IP,
         "IPv6": IPv6,
+        "Loopback": Loopback,
+        "Raw": Raw,
     }
     return decoders[root](blob)
 

@@ -1,0 +1,84 @@
+{
+  "decoded_summary": "192.0.2.10 > 198.51.100.20 253 / Raw",
+  "description": "IPv4 TTL 255 with raw payload.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "IP",
+    "Raw"
+  ],
+  "family": "ipv4",
+  "hex": "4500001a12464000fffd7c4ec000020ac633641474746c323535",
+  "layer_names": [
+    "IP",
+    "Raw"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "chksum": 31822,
+        "dst": "198.51.100.20",
+        "flags": "DF",
+        "frag": 0,
+        "id": 4678,
+        "ihl": 5,
+        "len": 26,
+        "options": [],
+        "proto": 253,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 255,
+        "version": 4
+      },
+      "name": "IP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "ttl255",
+          "hex": "74746c323535"
+        }
+      },
+      "name": "Raw"
+    }
+  ],
+  "length": 26,
+  "name": "ipv4-ttl-255",
+  "notes": "Checked-in Scapy fixture. IPv4 TTL 255 with DF and raw fallback complements the TTL 0 boundary case.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "chksum": 31822,
+        "dst": "198.51.100.20",
+        "flags": "DF",
+        "frag": 0,
+        "id": 4678,
+        "ihl": 5,
+        "len": 26,
+        "options": [],
+        "proto": 253,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 255,
+        "version": 4
+      },
+      "layer": "IP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "ttl255",
+          "hex": "74746c323535"
+        }
+      },
+      "layer": "Raw"
+    }
+  ],
+  "root": "l3:ipv4",
+  "root_decoder": "l3:ipv4",
+  "scapy_root": "IP",
+  "scapy_show": "###[ IP ]###\n  version   = 4\n  ihl       = 5\n  tos       = 0x0\n  len       = 26\n  id        = 4678\n  flags     = DF\n  frag      = 0\n  ttl       = 255\n  proto     = 253\n  chksum    = 0x7c4e\n  src       = 192.0.2.10\n  dst       = 198.51.100.20\n  \\options   \\\n###[ Raw ]###\n     load      = b'ttl255'\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "192.0.2.10 > 198.51.100.20 253 / Raw"
+}

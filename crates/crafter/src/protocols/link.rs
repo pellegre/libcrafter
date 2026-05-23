@@ -9,7 +9,7 @@ use crate::endian::{read_u16_be, read_u32_le};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::mac::MacAddr;
-use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw};
+use crate::packet::{IntoPacket, Layer, LayerContext, NetworkLayer, Packet, Raw};
 use crate::protocols::ip::Ipv4;
 use crate::protocols::ipv6::Ipv6;
 use crate::registry::ProtocolRegistry;
@@ -1067,7 +1067,10 @@ pub(crate) fn decode_linux_sll_with_registry(
 }
 
 /// Decode a little-endian BSD null/loopback frame.
-pub(crate) fn decode_null_loopback(bytes: &[u8]) -> Result<Packet> {
+pub(crate) fn decode_null_loopback_with_registry(
+    registry: &ProtocolRegistry,
+    bytes: &[u8],
+) -> Result<Packet> {
     if bytes.len() < NULL_LOOPBACK_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "null loopback header",
@@ -1081,9 +1084,22 @@ pub(crate) fn decode_null_loopback(bytes: &[u8]) -> Result<Packet> {
         byte_order: NullByteOrder::LittleEndian,
     };
     let mut packet = Packet::new().push(null);
-    if bytes.len() > NULL_LOOPBACK_HEADER_LEN {
-        packet = packet.push(Raw::from_bytes(&bytes[NULL_LOOPBACK_HEADER_LEN..]));
+    let payload = &bytes[NULL_LOOPBACK_HEADER_LEN..];
+    if payload.is_empty() {
+        return Ok(packet);
     }
+
+    let family = packet
+        .layer::<NullLoopback>()
+        .map(NullLoopback::family_value)
+        .unwrap_or_default();
+    if family == 2 && payload.first().is_some_and(|first| first >> 4 == 4) {
+        if let Ok(decoded) = registry.decode_from_l3(NetworkLayer::Ipv4, payload) {
+            return Ok(packet.concat(decoded));
+        }
+    }
+
+    packet = packet.push(Raw::from_bytes(payload));
     Ok(packet)
 }
 

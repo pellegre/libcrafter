@@ -1,0 +1,74 @@
+{
+  "decoded_summary": "2001:db8:1::10 > 2001:db8:2::20 (253) / Raw",
+  "description": "IPv6 unknown next header with flow label 0 and hop limit 255.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "IPv6",
+    "Raw"
+  ],
+  "family": "ipv6",
+  "hex": "60000000000cfdff20010db800010000000000000000001020010db8000200000000000000000020756e6b6e6f776e2d69707636",
+  "layer_names": [
+    "IPv6",
+    "Raw"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "dst": "2001:db8:2::20",
+        "fl": 0,
+        "hlim": 255,
+        "nh": 253,
+        "plen": 12,
+        "src": "2001:db8:1::10",
+        "tc": 0,
+        "version": 6
+      },
+      "name": "IPv6"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "unknown-ipv6",
+          "hex": "756e6b6e6f776e2d69707636"
+        }
+      },
+      "name": "Raw"
+    }
+  ],
+  "length": 52,
+  "name": "ipv6-unknown-next-header-raw",
+  "notes": "Checked-in Scapy fixture. Unknown IPv6 next header must preserve the payload as raw bytes; this also covers flow label 0 and hop limit 255.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "dst": "2001:db8:2::20",
+        "fl": 0,
+        "hlim": 255,
+        "nh": 253,
+        "plen": 12,
+        "src": "2001:db8:1::10",
+        "tc": 0,
+        "version": 6
+      },
+      "layer": "IPv6"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "unknown-ipv6",
+          "hex": "756e6b6e6f776e2d69707636"
+        }
+      },
+      "layer": "Raw"
+    }
+  ],
+  "root": "l3:ipv6",
+  "root_decoder": "l3:ipv6",
+  "scapy_root": "IPv6",
+  "scapy_show": "###[ IPv6 ]###\n  version   = 6\n  tc        = 0\n  fl        = 0\n  plen      = 12\n  nh        = 253\n  hlim      = 255\n  src       = 2001:db8:1::10\n  dst       = 2001:db8:2::20\n###[ Raw ]###\n     load      = b'unknown-ipv6'\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "2001:db8:1::10 > 2001:db8:2::20 (253) / Raw"
+}

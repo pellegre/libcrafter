@@ -1,0 +1,132 @@
+{
+  "decoded_summary": "IPv6 / IPv6ExtHdrRouting / TCP 53007 > https PA / Raw",
+  "description": "IPv6 routing extension chained to TCP and raw payload.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "IPv6",
+    "IPv6ExtHdrRouting",
+    "TCP",
+    "Raw"
+  ],
+  "family": "ipv6",
+  "hex": "6000000000212b4020010db800010000000000000000001020010db80002000000000000000000200600fd0000000000cf0f01bb00000000000000005018200030860000636861696e",
+  "layer_names": [
+    "IPv6",
+    "IPv6ExtHdrRouting",
+    "TCP",
+    "Raw"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "dst": "2001:db8:2::20",
+        "fl": 0,
+        "hlim": 64,
+        "nh": 43,
+        "plen": 33,
+        "src": "2001:db8:1::10",
+        "tc": 0,
+        "version": 6
+      },
+      "name": "IPv6"
+    },
+    {
+      "fields": {
+        "addresses": [],
+        "len": 0,
+        "nh": 6,
+        "reserved": 0,
+        "segleft": 0,
+        "type": 253
+      },
+      "name": "IPv6ExtHdrRouting"
+    },
+    {
+      "fields": {
+        "ack": 0,
+        "chksum": 12422,
+        "dataofs": 5,
+        "dport": 443,
+        "flags": "PA",
+        "options": [],
+        "reserved": 0,
+        "seq": 0,
+        "sport": 53007,
+        "urgptr": 0,
+        "window": 8192
+      },
+      "name": "TCP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "chain",
+          "hex": "636861696e"
+        }
+      },
+      "name": "Raw"
+    }
+  ],
+  "length": 73,
+  "name": "ipv6-extension-chain-tcp-raw",
+  "notes": "Checked-in Scapy fixture. IPv6 routing extension must decode before TCP and preserve TCP raw payload.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "dst": "2001:db8:2::20",
+        "fl": 0,
+        "hlim": 64,
+        "nh": 43,
+        "plen": 33,
+        "src": "2001:db8:1::10",
+        "tc": 0,
+        "version": 6
+      },
+      "layer": "IPv6"
+    },
+    {
+      "fields": {
+        "addresses": [],
+        "len": 0,
+        "nh": 6,
+        "reserved": 0,
+        "segleft": 0,
+        "type": 253
+      },
+      "layer": "IPv6ExtHdrRouting"
+    },
+    {
+      "fields": {
+        "ack": 0,
+        "chksum": 12422,
+        "dataofs": 5,
+        "dport": 443,
+        "flags": "PA",
+        "options": [],
+        "reserved": 0,
+        "seq": 0,
+        "sport": 53007,
+        "urgptr": 0,
+        "window": 8192
+      },
+      "layer": "TCP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "chain",
+          "hex": "636861696e"
+        }
+      },
+      "layer": "Raw"
+    }
+  ],
+  "root": "l3:ipv6",
+  "root_decoder": "l3:ipv6",
+  "scapy_root": "IPv6",
+  "scapy_show": "###[ IPv6 ]###\n  version   = 6\n  tc        = 0\n  fl        = 0\n  plen      = 33\n  nh        = Routing Header\n  hlim      = 64\n  src       = 2001:db8:1::10\n  dst       = 2001:db8:2::20\n###[ IPv6 Option Header Routing ]###\n     nh        = TCP\n     len       = 0\n     type      = 253\n     segleft   = 0\n     reserved  = 0\n     addresses = [  ]\n###[ TCP ]###\n        sport     = 53007\n        dport     = https\n        seq       = 0\n        ack       = 0\n        dataofs   = 5\n        reserved  = 0\n        flags     = PA\n        window    = 8192\n        chksum    = 0x3086\n        urgptr    = 0\n        options   = []\n###[ Raw ]###\n           load      = b'chain'\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "IPv6 / IPv6ExtHdrRouting / TCP 53007 > https PA / Raw"
+}

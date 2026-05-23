@@ -1,0 +1,84 @@
+{
+  "decoded_summary": "192.0.2.10 > 198.51.100.20 253 frag:8191 / Raw",
+  "description": "IPv4 boundary fields with raw fallback.",
+  "direction": "scapy_to_libcrafter",
+  "expected_stack": [
+    "IP",
+    "Raw"
+  ],
+  "family": "ipv4",
+  "hex": "45b8001f1243ffff00fdba95c000020ac633641476342d626f756e64617279",
+  "layer_names": [
+    "IP",
+    "Raw"
+  ],
+  "layers": [
+    {
+      "fields": {
+        "chksum": 47765,
+        "dst": "198.51.100.20",
+        "flags": "MF+DF+evil",
+        "frag": 8191,
+        "id": 4675,
+        "ihl": 5,
+        "len": 31,
+        "options": [],
+        "proto": 253,
+        "src": "192.0.2.10",
+        "tos": 184,
+        "ttl": 0,
+        "version": 4
+      },
+      "name": "IP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "v4-boundary",
+          "hex": "76342d626f756e64617279"
+        }
+      },
+      "name": "Raw"
+    }
+  ],
+  "length": 31,
+  "name": "ipv4-boundary-fields",
+  "notes": "Checked-in Scapy fixture. IPv4 TOS, TTL 0, reserved/DF/MF flags, max fragment offset, unknown protocol raw fallback, and automatic total length/header checksum.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "chksum": 47765,
+        "dst": "198.51.100.20",
+        "flags": "MF+DF+evil",
+        "frag": 8191,
+        "id": 4675,
+        "ihl": 5,
+        "len": 31,
+        "options": [],
+        "proto": 253,
+        "src": "192.0.2.10",
+        "tos": 184,
+        "ttl": 0,
+        "version": 4
+      },
+      "layer": "IP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "v4-boundary",
+          "hex": "76342d626f756e64617279"
+        }
+      },
+      "layer": "Raw"
+    }
+  ],
+  "root": "l3:ipv4",
+  "root_decoder": "l3:ipv4",
+  "scapy_root": "IP",
+  "scapy_show": "###[ IP ]###\n  version   = 4\n  ihl       = 5\n  tos       = 0xb8\n  len       = 31\n  id        = 4675\n  flags     = MF+DF+evil\n  frag      = 8191\n  ttl       = 0\n  proto     = 253\n  chksum    = 0xba95\n  src       = 192.0.2.10\n  dst       = 198.51.100.20\n  \\options   \\\n###[ Raw ]###\n     load      = b'v4-boundary'\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
+  "summary": "192.0.2.10 > 198.51.100.20 253 frag:8191 / Raw"
+}
