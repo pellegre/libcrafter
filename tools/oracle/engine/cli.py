@@ -87,7 +87,7 @@ def _not_implemented(args: argparse.Namespace) -> int:
 
 
 def _offline(args: argparse.Namespace) -> int:
-    if not args.dry_plan and not args.emit_vectors:
+    if not args.dry_plan and not args.emit_vectors and not args.emit_decoded:
         return _not_implemented(args)
 
     from .generator import generate_plans
@@ -101,7 +101,7 @@ def _offline(args: argparse.Namespace) -> int:
         feature=args.feature,
         index=args.index,
     )
-    if args.emit_vectors:
+    if args.emit_vectors or args.emit_decoded:
         if args.backend == "scapy":
             from .backends.scapy.packets import encode_packet_plans
 
@@ -109,6 +109,34 @@ def _offline(args: argparse.Namespace) -> int:
         else:
             print(f"unsupported backend: {args.backend}", file=sys.stderr)
             return 2
+
+        if args.emit_decoded:
+            from .backends.scapy.normalize import decode_vectors, validate_smoke_decodes
+
+            decoded = decode_vectors(vectors)
+            if args.profile == "smoke":
+                validate_smoke_decodes(vectors, decoded)
+
+            metadata = {
+                "emit_decoded": True,
+                "requested_count": args.count,
+                "decoded": [model.to_dict() for model in decoded],
+            }
+            if args.emit_vectors:
+                metadata["vectors"] = [vector.to_dict() for vector in vectors]
+
+            report = RunReport(
+                mode="offline",
+                backend=args.backend,
+                profile=args.profile,
+                seed=args.seed,
+                count=len(decoded),
+                status="decoded",
+                selected_specs=["builtin-stack-grammar"],
+                metadata=metadata,
+            )
+            sys.stdout.write(dumps_json(report))
+            return 0
 
         report = RunReport(
             mode="offline",
@@ -191,6 +219,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--emit-vectors",
         action="store_true",
         help="print Scapy-materialized packet vectors without invoking libcrafter",
+    )
+    offline_parser.add_argument(
+        "--emit-decoded",
+        action="store_true",
+        help="print normalized Scapy-decoded packet models without invoking libcrafter",
     )
     offline_parser.set_defaults(func=_offline)
 
