@@ -1,0 +1,41 @@
+name: Bug Report
+description: Report a reproducible libcrafter bug.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal commands, code, packet bytes, or pcap details needed to reproduce.
+      placeholder: |
+        cargo test ...
+        tools/reference/check-scapy-interop ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Rust version, libpcap version, Scapy version, and whether this was offline or in a disposable live lab.
+      placeholder: |
+        rustc --version
+        cargo --version
+        pcap-config --version
+        python3 -c 'from scapy.all import conf; print(conf.version)'
+    validations:
+      required: true

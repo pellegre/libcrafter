@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security Reports
+    url: https://github.com/pellegre/libcrafter/security/policy
+    about: Report security-sensitive issues privately when available.
