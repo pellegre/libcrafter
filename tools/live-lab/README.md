@@ -33,14 +33,29 @@ Provider names may contain only letters, numbers, dots, underscores, and
 hyphens. Providers receive the command as their first argument and any remaining
 arguments after provider selection unchanged.
 
+Oracle validation itself is driven by `tools/oracle/run`. Use the live-lab
+entrypoint for provider lifecycle and provider suites; use the oracle runner for
+deterministic offline, pcap, and live reports:
+
+```sh
+tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
+tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 1 --count 10
+```
+
+Scapy is a backend selected by the oracle runner, not a general live-lab coding
+pattern. Provider scripts may install or bootstrap Scapy only as backend
+infrastructure.
+
 ## Providers
 
 `local-dry-run` creates no infrastructure, sends no packets, and writes only
 local state and artifact files. Use it to validate the contract before invoking
 a real provider. The `oracle-live` suite runs oracle live orchestration in
 dry-run mode. The `example-smoke` suite preserves the older example smoke
-checks. The `reference-interop` suite runs the offline reference agreement
-checks and keeps their artifacts under the provider artifact tree.
+checks. The `reference-interop` and `scapy-interop` suite names are
+compatibility aliases; new documentation and CI should prefer `oracle-live` or
+direct `tools/oracle/run` commands.
 
 `hetzner` is the first real provider. It provisions a disposable Linux host,
 runs the selected validation suite there, collects artifacts, and tears the host
@@ -86,6 +101,15 @@ By default, providers write artifacts below:
 tools/live-lab/artifacts/<provider>/
 ```
 
+Oracle commands write reports and generated packet artifacts below:
+
+```text
+target/oracle/
+target/oracle/offline/
+target/oracle/pcap/
+target/oracle/live/
+```
+
 Expected artifact types include:
 
 - command logs such as `create.log`, `run.log`, and `destroy.log`
@@ -97,6 +121,10 @@ Expected artifact types include:
 
 Artifacts should be sufficient to debug a failed live run offline. Secrets must
 not be printed or written to artifact files.
+
+Oracle reports include the profile, seed, count, direction, and packet index.
+Use those coordinates with the same backend, for example `--backend scapy
+--seed 1 --index 3`, to reproduce one packet plan.
 
 ## Cleanup
 
