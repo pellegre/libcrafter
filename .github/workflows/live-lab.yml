@@ -1,0 +1,78 @@
+name: live-lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_live_lab:
+        description: "Type run to create disposable live-lab infrastructure."
+        required: true
+        default: "no"
+      provider:
+        description: "Live-lab provider executable under tools/live-lab/providers."
+        required: true
+        default: "hetzner"
+      suite:
+        description: "Live-lab suite to run."
+        required: true
+        default: "all"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR: ${{ github.workspace }}/target/live-lab-artifacts
+  LIBCRAFTER_LIVE_LAB_STATE_DIR: ${{ runner.temp }}/libcrafter-live-state
+  HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+
+jobs:
+  live:
+    name: disposable live lab
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm_live_lab == 'run' }}
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install provider tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl jq openssh-client tar
+
+      - name: Require provider secret
+        run: |
+          case "${{ github.event.inputs.provider }}" in
+            hetzner)
+              if [ -z "${HETZNER_API_TOKEN:-}" ]; then
+                echo "::error::HETZNER_API_TOKEN secret is required for the Hetzner live lab."
+                exit 78
+              fi
+              ;;
+            *)
+              echo "provider=${{ github.event.inputs.provider }}"
+              ;;
+          esac
+
+      - name: Run live-lab suite
+        run: |
+          tools/live-lab/libcrafter-live-lab run \
+            --provider "${{ github.event.inputs.provider }}" \
+            --suite "${{ github.event.inputs.suite }}"
+
+      - name: Destroy live-lab resources
+        if: always()
+        run: |
+          tools/live-lab/libcrafter-live-lab destroy \
+            --provider "${{ github.event.inputs.provider }}" || true
+
+      - name: Upload live-lab artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcrafter-live-lab-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: |
+            target/live-lab-artifacts
+
