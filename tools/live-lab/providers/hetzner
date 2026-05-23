@@ -671,6 +671,92 @@ EOF
   return "$suite_status"
 }
 
+run_scapy_interop_suite() {
+  local created_for_scapy=false
+  local suite_status=0
+  local remote_dir_value="${LIBCRAFTER_LIVE_LAB_REMOTE_DIR:-/root/libcrafter}"
+  local scapy_command
+
+  ensure_dirs
+  mkdir -p "$artifact_dir/scapy-interop"
+  run_doctor --dry-run | tee "$artifact_dir/scapy-interop/doctor.dry-run.log"
+  run_create --dry-run | tee "$artifact_dir/scapy-interop/create.dry-run.log"
+
+  if [[ -z "${HETZNER_API_TOKEN:-}" ]]; then
+    cat >"$artifact_dir/scapy-interop/skipped.env" <<EOF
+suite=scapy-interop
+result=skipped
+reason=no_token
+finished_at=$(timestamp_utc)
+EOF
+    echo "provider=$provider_name"
+    echo "ran=false"
+    echo "suite=scapy-interop"
+    echo "skipped=true"
+    echo "reason=no_token"
+    echo "creates_infrastructure=false"
+    echo "artifact_dir=$artifact_dir/scapy-interop"
+    return 0
+  fi
+
+  if [[ ! -f "$manifest" ]]; then
+    created_for_scapy=true
+    hetzner_smoke_cleanup_needed=true
+    trap cleanup_hetzner_smoke_host EXIT
+    run_create
+  fi
+
+  scapy_command=$(cat <<EOF
+set -euo pipefail
+if command -v cloud-init >/dev/null 2>&1; then
+  cloud-init status --wait >/dev/null 2>&1 || true
+fi
+apt-get update
+apt-get install -y --no-install-recommends \\
+  build-essential \\
+  ca-certificates \\
+  curl \\
+  iproute2 \\
+  libpcap-dev \\
+  pkg-config \\
+  python3 \\
+  python3-pip \\
+  python3-venv
+if ! python3 - <<'PY' >/dev/null 2>&1
+import scapy.all
+PY
+then
+  python3 -m pip install --break-system-packages 'scapy>=2.5,<3'
+fi
+if ! command -v cargo >/dev/null 2>&1; then
+  curl -fsS https://sh.rustup.rs | sh -s -- -y
+fi
+. "\$HOME/.cargo/env"
+export LIBCRAFTER_PROJECT_ROOT='$remote_dir_value'
+export LIBCRAFTER_LIVE_ARTIFACT_DIR='$remote_dir_value/live-artifacts'
+export LIBCRAFTER_LIVE_LAB=1
+export LIBCRAFTER_LIVE_SUITE_MODE=live
+tests/live/scapy-interop.sh --live
+EOF
+)
+
+  if run_remote_validation bash -lc "$scapy_command"; then
+    suite_status=0
+  else
+    suite_status=$?
+  fi
+
+  run_artifact || true
+
+  if [[ "$created_for_scapy" == true ]]; then
+    run_destroy || true
+    hetzner_smoke_cleanup_needed=false
+    trap - EXIT
+  fi
+
+  return "$suite_status"
+}
+
 run_artifact() {
   load_manifest
   mkdir -p "$artifact_dir"
@@ -746,6 +832,9 @@ case "$command" in
           ;;
         all)
           run_all_suite
+          ;;
+        scapy-interop)
+          run_scapy_interop_suite
           ;;
         *)
           echo "error: unknown Hetzner suite '$suite'" >&2

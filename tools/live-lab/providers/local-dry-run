@@ -110,6 +110,28 @@ run_all_suite() {
   echo "log=$artifact_dir/run-all.log"
 }
 
+run_scapy_interop_suite() {
+  local scapy_artifact_dir="$artifact_dir/scapy-interop"
+
+  if [[ ! -f "$manifest" ]]; then
+    write_manifest
+  fi
+
+  mkdir -p "$scapy_artifact_dir"
+  LIBCRAFTER_LIVE_SUITE_MODE=dry-run \
+    LIBCRAFTER_LIVE_ARTIFACT_DIR="$artifact_dir" \
+    LIBCRAFTER_PROJECT_ROOT="$project_root" \
+    "$project_root/tests/live/scapy-interop.sh" --dry-run \
+    | tee "$artifact_dir/scapy-interop.log"
+
+  echo "provider=$provider_name"
+  echo "ran=true"
+  echo "suite=scapy-interop"
+  echo "live_packet_tests=false"
+  echo "artifact_dir=$scapy_artifact_dir"
+  echo "log=$artifact_dir/scapy-interop.log"
+}
+
 write_manifest() {
   mkdir -p "$state_dir" "$artifact_dir"
   cat >"$manifest" <<EOF
@@ -151,6 +173,9 @@ EOF
           ;;
         all)
           run_all_suite
+          ;;
+        scapy-interop)
+          run_scapy_interop_suite
           ;;
         *)
           echo "error: unknown local-dry-run suite '$suite'" >&2

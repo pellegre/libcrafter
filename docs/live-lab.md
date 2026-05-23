@@ -35,6 +35,13 @@ tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```
 
+The Scapy interop suite is offline and can be exercised through the local
+provider before creating infrastructure:
+
+```sh
+tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite scapy-interop
+```
+
 Real creation uses provider defaults that can be overridden. Choose values that
 belong to the disposable test environment and do not commit account-specific
 settings:
@@ -44,6 +51,12 @@ HETZNER_SERVER_TYPE=replace-with-server-type \
 HETZNER_IMAGE=replace-with-image \
 HETZNER_LOCATION=replace-with-location \
 tools/live-lab/libcrafter-live-lab create --provider hetzner
+```
+
+Run the same Scapy interop suite on a disposable Hetzner host with:
+
+```sh
+tools/live-lab/libcrafter-live-lab run --provider hetzner --suite scapy-interop
 ```
 
 Generated provider state is written below `tools/live-lab/.state/hetzner/`.
@@ -60,6 +73,8 @@ Recommended CI flow:
 
 ```sh
 cargo test --workspace
+tools/reference/check-scapy-interop --smoke
+tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite scapy-interop
 tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```

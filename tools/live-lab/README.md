@@ -22,6 +22,7 @@ The entrypoint dispatches to `tools/live-lab/providers/<provider>`:
 tools/live-lab/libcrafter-live-lab doctor --provider local-dry-run
 tools/live-lab/libcrafter-live-lab create --provider local-dry-run
 tools/live-lab/libcrafter-live-lab run --provider local-dry-run
+tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite scapy-interop
 tools/live-lab/libcrafter-live-lab artifact --provider local-dry-run
 tools/live-lab/libcrafter-live-lab destroy --provider local-dry-run
 ```
@@ -34,12 +35,22 @@ arguments after provider selection unchanged.
 
 `local-dry-run` creates no infrastructure, sends no packets, and writes only
 local state and artifact files. Use it to validate the contract before invoking
-a real provider.
+a real provider. The `scapy-interop` suite runs the offline Scapy/libcrafter
+agreement checks and keeps their artifacts under the provider artifact tree.
 
 `hetzner` is the first real provider. It provisions a disposable Linux host,
 runs the selected validation suite there, collects artifacts, and tears the host
 down through the same command contract. Additional providers should implement
 the same executable interface without changing the Rust packet library.
+
+Use dry-run checks before invoking Hetzner, then run the Scapy interop suite on
+the disposable host:
+
+```sh
+tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
+tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
+tools/live-lab/libcrafter-live-lab run --provider hetzner --suite scapy-interop
+```
 
 ## Configuration
 

@@ -104,6 +104,7 @@ main() {
   local suite
   local status
   local suites=(
+    scapy-interop.sh
     loopback-icmp.sh
     loopback-udp-tcp.sh
     veth-arp.sh
