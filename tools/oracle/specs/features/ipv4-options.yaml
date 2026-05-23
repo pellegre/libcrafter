@@ -1,0 +1,56 @@
+version: 1
+kind: feature
+name: ipv4_options
+summary: IPv4 option encodings and header-length normalization.
+
+layers:
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: eol_padding
+    option_kinds:
+      - eol
+  - name: nop_alignment
+    option_kinds:
+      - nop
+  - name: record_route
+    option_kinds:
+      - record_route
+  - name: source_route
+    option_kinds:
+      - loose_source_route
+      - strict_source_route
+  - name: timestamp_traceroute_generic
+    option_kinds:
+      - timestamp
+      - traceroute
+      - generic
+
+coverage_cases:
+  - ipv4-options
+  - ipv4-options-source-route-traceroute
+  - malformed-ipv4-lengths-options
+  - crafter-ipv4-options
+  - crafter-ipv4-source-route-traceroute
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - IPOption
+      - IPOption_EOL
+      - IPOption_NOP
+      - IPOption_RR
+      - IPOption_LSRR
+      - IPOption_SSRR
+      - IPOption_Timestamp
+      - IPOption_Traceroute
+  libcrafter:
+    status: supported
+    notes:
+      - Malformed option lengths remain explicit malformed cases.

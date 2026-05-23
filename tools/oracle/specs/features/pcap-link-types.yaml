@@ -1,0 +1,63 @@
+version: 1
+kind: feature
+name: pcap_link_types
+summary: Pcap and pcapng link-type coverage for reference/libcrafter read-write checks.
+
+layers:
+  - ethernet
+  - ipv4
+  - ipv6
+  - icmp
+  - udp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: ethernet_pcap
+    link_types:
+      - ethernet
+    file_formats:
+      - pcap
+  - name: null_loopback_pcap
+    link_types:
+      - null_loopback
+    file_formats:
+      - pcap
+  - name: linux_cooked_pcap
+    link_types:
+      - linux_cooked
+    file_formats:
+      - pcap
+  - name: pcapng_mixed_links
+    link_types:
+      - ethernet
+      - null_loopback
+    file_formats:
+      - pcapng
+
+coverage_cases:
+  - linux-cooked-ipv4-udp
+  - null-loopback-ipv4-little-endian
+  - null-loopback-ipv6-big-endian
+  - pcap-scapy-ethernet
+  - pcap-scapy-null-loopback
+  - pcap-crafter-ethernet
+  - pcap-crafter-pcapng-mixed-links
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - Ether
+      - CookedLinux
+      - Loopback
+      - PcapReader
+      - PcapWriter
+  libcrafter:
+    status: partial
+    notes:
+      - Pcapng mixed-link support remains planned until the pcap mode is implemented.

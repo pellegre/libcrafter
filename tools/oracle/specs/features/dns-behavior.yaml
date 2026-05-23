@@ -1,0 +1,59 @@
+version: 1
+kind: feature
+name: dns_behavior
+summary: DNS query, response, record, truncation, rcode, and compression behavior.
+
+layers:
+  - udp
+  - dns
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: query_a_in
+    record_kinds:
+      - question_a
+  - name: response_records
+    record_kinds:
+      - a
+      - aaaa
+      - cname
+      - generic
+  - name: multiple_questions
+    record_kinds:
+      - question_a
+      - question_aaaa
+  - name: truncated_rcode
+    flags:
+      - truncated
+    response_codes:
+      - no_error
+      - server_failure
+      - name_error
+  - name: compression
+    comparison:
+      - strict_bytes
+      - normalized_names
+
+coverage_cases:
+  - dns-query
+  - dns-response-records
+  - dns-multiple-questions
+  - dns-generic-record-truncated-rcode
+  - malformed-dns-compression
+  - crafter-dns-query-response-compression
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - DNS
+      - DNSQR
+      - DNSRR
+  libcrafter:
+    status: partial
+    notes:
+      - Compression and generic records are planned coverage.

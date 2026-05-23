@@ -1,0 +1,105 @@
+version: 1
+kind: layer
+name: ipv4
+summary: IPv4 header, fragmentation fields, options, and raw protocol fallback.
+
+roots:
+  - "l3:ipv4"
+parents:
+  - ethernet
+  - vlan
+  - linux_cooked
+  - null_loopback
+children:
+  - udp
+  - tcp
+  - icmp
+  - dns
+  - payload
+
+fields:
+  - name: src
+    type: ipv4
+    required: true
+    domains:
+      - documentation_ipv4
+      - zero
+  - name: dst
+    type: ipv4
+    required: true
+    domains:
+      - documentation_ipv4
+      - broadcast
+  - name: ttl
+    type: uint8
+    required: true
+    domains:
+      - 1
+      - 60
+      - 64
+      - 255
+  - name: protocol
+    type: uint8
+    required: true
+    domains:
+      - icmp
+      - tcp
+      - udp
+      - unknown
+  - name: identification
+    type: uint16
+    required: true
+    domains:
+      - deterministic
+      - boundary
+  - name: flags
+    type: flags
+    required: true
+    domains:
+      - none
+      - df
+      - mf
+  - name: fragment_offset
+    type: uint13
+    required: true
+    domains:
+      - 0
+      - 1
+      - boundary
+  - name: options
+    type: option_list
+    required: false
+    domains:
+      - eol
+      - nop
+      - record_route
+      - loose_source_route
+      - timestamp
+      - traceroute
+      - generic
+
+coverage_cases:
+  - ipv4-boundary-fields
+  - ipv4-unknown-protocol-raw
+  - ipv4-fragment-mf-offset
+  - ipv4-ttl-255
+  - ipv4-options
+  - ipv4-options-source-route-traceroute
+  - crafter-ipv4-boundary-fields
+  - crafter-ipv4-unknown-protocol-raw
+  - crafter-ipv4-fragment-mf-offset
+  - crafter-ipv4-ttl-255
+  - crafter-ipv4-options
+  - crafter-ipv4-source-route-traceroute
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - IP
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true

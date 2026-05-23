@@ -1,0 +1,75 @@
+version: 1
+kind: layer
+name: icmp
+summary: ICMPv4 echo and error messages embedded in IPv4.
+
+roots: []
+parents:
+  - ipv4
+children:
+  - ipv4
+  - payload
+
+fields:
+  - name: type
+    type: uint8
+    required: true
+    domains:
+      - echo_reply
+      - echo_request
+      - destination_unreachable
+      - redirect
+      - time_exceeded
+      - parameter_problem
+  - name: code
+    type: uint8
+    required: true
+    domains:
+      - 0
+      - protocol_specific
+  - name: checksum
+    type: uint16
+    required: true
+    domains:
+      - derived
+  - name: identifier
+    type: uint16
+    required: false
+    domains:
+      - deterministic
+  - name: sequence
+    type: uint16
+    required: false
+    domains:
+      - deterministic
+  - name: embedded_header
+    type: packet_prefix
+    required: false
+    domains:
+      - ipv4
+
+coverage_cases:
+  - ipv4-icmp
+  - icmpv4-echo-reply
+  - icmpv4-destination-unreachable
+  - icmpv4-time-exceeded
+  - icmpv4-parameter-problem
+  - icmpv4-redirect
+  - icmpv4-extensions-mpls
+  - crafter-icmpv4-errors-extensions
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ICMP
+      - ICMPExtensionHeader
+      - ICMPExtensionMPLS
+    encode: true
+    decode: true
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - ICMP extension support is feature-gated as planned coverage.

@@ -1,0 +1,54 @@
+version: 1
+kind: feature
+name: tcp_options
+summary: TCP option lists, data offset, reserved bits, and raw option preservation.
+
+layers:
+  - tcp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: common_options
+    option_kinds:
+      - eol
+      - nop
+      - mss
+      - window_scale
+      - sack_permitted
+      - timestamp
+  - name: sack_blocks
+    option_kinds:
+      - sack
+  - name: advanced_generic_options
+    option_kinds:
+      - mptcp
+      - fast_open
+      - edo
+      - generic
+  - name: header_boundary
+    fields:
+      - data_offset
+      - reserved
+      - flags
+
+coverage_cases:
+  - tcp-all-flags-reserved-offset
+  - tcp-options
+  - tcp-options-sack-blocks
+  - tcp-options-mptcp-fastopen-edo-generic
+  - malformed-tcp-options
+  - crafter-tcp-options
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - TCP
+  libcrafter:
+    status: partial
+    notes:
+      - Generic and advanced options may compare as opaque option bytes.

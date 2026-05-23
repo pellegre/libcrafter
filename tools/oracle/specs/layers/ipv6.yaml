@@ -1,0 +1,102 @@
+version: 1
+kind: layer
+name: ipv6
+summary: IPv6 base header, next-header fallback, and extension-header chaining.
+
+roots:
+  - "l3:ipv6"
+parents:
+  - ethernet
+  - vlan
+  - null_loopback
+children:
+  - udp
+  - tcp
+  - icmpv6
+  - ipv6_fragment
+  - ipv6_routing
+  - payload
+
+fields:
+  - name: src
+    type: ipv6
+    required: true
+    domains:
+      - documentation_ipv6
+  - name: dst
+    type: ipv6
+    required: true
+    domains:
+      - documentation_ipv6
+  - name: traffic_class
+    type: uint8
+    required: true
+    domains:
+      - 0
+      - boundary
+  - name: flow_label
+    type: uint20
+    required: true
+    domains:
+      - 0
+      - boundary
+  - name: next_header
+    type: uint8
+    required: true
+    domains:
+      - hop_by_hop
+      - tcp
+      - udp
+      - routing
+      - fragment
+      - icmpv6
+      - unknown
+  - name: hop_limit
+    type: uint8
+    required: true
+    domains:
+      - 1
+      - 64
+      - 255
+
+extension_layers:
+  - name: ipv6_fragment
+    native_names:
+      - IPv6ExtHdrFragment
+  - name: ipv6_routing
+    native_names:
+      - IPv6ExtHdrRouting
+      - IPv6ExtHdrSegmentRouting
+
+coverage_cases:
+  - ipv6-boundary-fields
+  - ipv6-unknown-next-header-raw
+  - ipv6-fragment-udp
+  - ipv6-routing-generic
+  - ipv6-mobile-routing
+  - ipv6-segment-routing-udp
+  - ipv6-extension-chain-tcp-raw
+  - ipv6-routing-icmpv6
+  - crafter-ipv6-boundary-fields
+  - crafter-ipv6-unknown-next-header-raw
+  - crafter-ipv6-fragment-udp
+  - crafter-ipv6-routing-generic
+  - crafter-ipv6-mobile-routing
+  - crafter-ipv6-segment-routing-udp
+  - crafter-ipv6-routing-tcp-raw
+  - crafter-ipv6-routing-icmpv6
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - IPv6
+      - IPv6ExtHdrFragment
+      - IPv6ExtHdrRouting
+      - IPv6ExtHdrSegmentRouting
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true

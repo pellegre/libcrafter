@@ -1,0 +1,60 @@
+version: 1
+kind: layer
+name: udp
+summary: UDP header over IPv4 and IPv6, including checksum edge behavior.
+
+roots: []
+parents:
+  - ipv4
+  - ipv6
+children:
+  - dns
+  - dhcp
+  - payload
+
+fields:
+  - name: src_port
+    type: uint16
+    required: true
+    domains:
+      - dynamic
+      - bootpc
+      - dns_client
+  - name: dst_port
+    type: uint16
+    required: true
+    domains:
+      - dynamic
+      - bootps
+      - dns_server
+  - name: length
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - boundary
+  - name: checksum
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - zero_ipv4
+      - boundary
+
+coverage_cases:
+  - ipv4-udp
+  - udp-ipv4-zero-checksum
+  - udp-ipv6-checksum-length
+  - crafter-udp-ipv4-ipv6-checksums
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - UDP
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true

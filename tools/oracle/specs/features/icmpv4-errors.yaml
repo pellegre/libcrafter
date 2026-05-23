@@ -1,0 +1,60 @@
+version: 1
+kind: feature
+name: icmpv4_errors
+summary: ICMPv4 error variants with embedded IPv4 header prefixes and extensions.
+
+layers:
+  - ipv4
+  - icmp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: destination_unreachable
+    icmp_type: destination_unreachable
+    embeds:
+      - ipv4
+      - payload_prefix
+  - name: time_exceeded
+    icmp_type: time_exceeded
+    embeds:
+      - ipv4
+      - payload_prefix
+  - name: parameter_problem
+    icmp_type: parameter_problem
+    embeds:
+      - ipv4
+      - payload_prefix
+  - name: redirect
+    icmp_type: redirect
+    embeds:
+      - ipv4
+      - payload_prefix
+  - name: mpls_extension
+    icmp_type: destination_unreachable
+    embeds:
+      - icmp_extension_header
+      - icmp_extension_mpls
+
+coverage_cases:
+  - icmpv4-destination-unreachable
+  - icmpv4-time-exceeded
+  - icmpv4-parameter-problem
+  - icmpv4-redirect
+  - icmpv4-extensions-mpls
+  - crafter-icmpv4-errors-extensions
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ICMP
+      - ICMPExtensionHeader
+      - ICMPExtensionMPLS
+  libcrafter:
+    status: partial
+    notes:
+      - ICMP extension objects are planned and may normalize as opaque extension bytes first.

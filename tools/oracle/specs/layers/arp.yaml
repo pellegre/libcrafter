@@ -1,0 +1,65 @@
+version: 1
+kind: layer
+name: arp
+summary: Ethernet and IPv4 ARP requests and replies.
+
+roots: []
+parents:
+  - ethernet
+children: []
+
+fields:
+  - name: hardware_type
+    type: uint16
+    required: true
+    domains:
+      - ethernet
+  - name: protocol_type
+    type: uint16
+    required: true
+    domains:
+      - ipv4
+  - name: opcode
+    type: uint16
+    required: true
+    domains:
+      - request
+      - reply
+  - name: sender_hardware_address
+    type: mac
+    required: true
+    domains:
+      - documentation_mac
+  - name: sender_protocol_address
+    type: ipv4
+    required: true
+    domains:
+      - documentation_ipv4
+  - name: target_hardware_address
+    type: mac
+    required: true
+    domains:
+      - documentation_mac
+      - zero
+  - name: target_protocol_address
+    type: ipv4
+    required: true
+    domains:
+      - documentation_ipv4
+
+coverage_cases:
+  - arp-request
+  - arp-reply
+  - crafter-arp-reply
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ARP
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
