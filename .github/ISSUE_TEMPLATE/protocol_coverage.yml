@@ -1,0 +1,36 @@
+name: Protocol Coverage
+description: Request or track packet/protocol coverage.
+title: "coverage: "
+labels:
+  - enhancement
+body:
+  - type: input
+    id: protocol
+    attributes:
+      label: Protocol Or Feature
+      placeholder: "IPv6 routing header, DHCP option, TCP option, pcap link type"
+    validations:
+      required: true
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Interop Direction
+      options:
+        - Scapy to libcrafter
+        - libcrafter to Scapy
+        - Both directions
+        - Not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: cases
+    attributes:
+      label: Edge Cases
+      description: Specific packet shapes, fields, malformed inputs, or pcap behavior to cover.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: RFC sections, Scapy examples, packet hex, or pcaps that define expected behavior.
