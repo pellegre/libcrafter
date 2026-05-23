@@ -1126,6 +1126,35 @@ def _self_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fixtures(args: argparse.Namespace) -> int:
+    if args.backend != "scapy":
+        print(f"unsupported backend: {args.backend}", file=sys.stderr)
+        return 2
+
+    from .backends.scapy.fixtures import FixtureGenerationOptions, generate_fixtures
+
+    output_dir = Path(args.out)
+    if not output_dir.is_absolute():
+        output_dir = REPO_ROOT / output_dir
+
+    names = list(args.only)
+    if args.case_name is not None:
+        names.append(args.case_name)
+
+    return generate_fixtures(
+        FixtureGenerationOptions(
+            out_dir=output_dir,
+            profile=args.profile,
+            seed=args.seed,
+            names=names,
+            families=list(args.fixture_family),
+            directions=list(args.fixture_direction),
+            check_drift=args.check_drift,
+            list_only=args.list_cases,
+        )
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tools/oracle/run",
@@ -1180,6 +1209,75 @@ def build_parser() -> argparse.ArgumentParser:
         )
         _add_common_options(mode_parser)
         mode_parser.set_defaults(func=_not_implemented)
+
+    fixtures_parser = subparsers.add_parser(
+        "fixtures",
+        help="generate deterministic oracle fixture artifacts",
+        description="Generate deterministic oracle fixture artifacts.",
+    )
+    fixtures_parser.add_argument(
+        "--backend",
+        choices=("scapy",),
+        default="scapy",
+        help="reference backend to target (default: %(default)s)",
+    )
+    fixtures_parser.add_argument(
+        "--profile",
+        choices=("smoke", "ci", "wild", "boundary", "fuzz"),
+        default="smoke",
+        help="fixture generation profile metadata (default: %(default)s)",
+    )
+    fixtures_parser.add_argument(
+        "--seed",
+        type=int,
+        default=1,
+        help="fixture generation seed metadata (default: %(default)s)",
+    )
+    fixtures_parser.add_argument(
+        "--out",
+        default=str(DEFAULT_OUTPUT_ROOT / "fixtures"),
+        help="fixture output directory (default: %(default)s)",
+    )
+    fixtures_parser.add_argument(
+        "--case",
+        dest="case_name",
+        help="fixture case name to generate",
+    )
+    fixtures_parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="legacy fixture name filter; can be passed multiple times or comma-separated",
+    )
+    fixtures_parser.add_argument(
+        "--family",
+        dest="fixture_family",
+        action="append",
+        default=[],
+        metavar="FAMILY",
+        help="legacy fixture family filter; can be passed multiple times or comma-separated",
+    )
+    fixtures_parser.add_argument(
+        "--direction",
+        dest="fixture_direction",
+        action="append",
+        default=[],
+        metavar="DIRECTION",
+        help="legacy fixture direction filter; can be passed multiple times or comma-separated",
+    )
+    fixtures_parser.add_argument(
+        "--check-drift",
+        action="store_true",
+        help="compare generated fixture bytes and legacy metadata with checked-in fixtures",
+    )
+    fixtures_parser.add_argument(
+        "--list",
+        dest="list_cases",
+        action="store_true",
+        help="list available fixture cases and exit",
+    )
+    fixtures_parser.set_defaults(func=_fixtures)
 
     backend_info_parser = subparsers.add_parser(
         "backend-info",

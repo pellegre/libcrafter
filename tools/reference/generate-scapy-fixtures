@@ -3,21 +3,18 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/../.." && pwd)"
-generator="$script_dir/scapy-fixtures.py"
-venv_dir="${LIBCRAFTER_SCAPY_VENV:-$repo_root/.libcrafter-live/scapy-fixtures-venv}"
 
-if python3 - <<'PY' >/dev/null 2>&1
-import scapy.all
-PY
-then
-  exec "$generator" "$@"
+has_out=0
+for arg in "$@"; do
+  case "$arg" in
+    --out|--out=*)
+      has_out=1
+      ;;
+  esac
+done
+
+if [[ "$has_out" -eq 0 ]]; then
+  exec "$repo_root/tools/oracle/run" fixtures --backend scapy --out "$repo_root/tests/fixtures/scapy" "$@"
 fi
 
-if command -v uv >/dev/null 2>&1; then
-  exec uv run --quiet --no-project --with 'scapy>=2.5,<3' -- python3 "$generator" "$@"
-fi
-
-python3 -m venv "$venv_dir"
-"$venv_dir/bin/python" -m pip install --upgrade pip >/dev/null
-"$venv_dir/bin/python" -m pip install 'scapy>=2.5,<3' >/dev/null
-exec "$venv_dir/bin/python" "$generator" "$@"
+exec "$repo_root/tools/oracle/run" fixtures --backend scapy "$@"

@@ -16,12 +16,14 @@ fixtures=(
 out_dir="$(mktemp -d)"
 trap 'rm -rf "$out_dir"' EXIT
 
-args=(--out "$out_dir")
+args=(fixtures --backend scapy --profile smoke --seed 1 --out "$out_dir")
 for fixture in "${fixtures[@]}"; do
   args+=(--only "$fixture")
 done
 
-"$script_dir/generate-reference-fixtures" "${args[@]}"
+"$repo_root/tools/oracle/run" "${args[@]}"
+
+python3 -m json.tool "$out_dir/cases.json" >/dev/null
 
 for fixture in "${fixtures[@]}"; do
   cmp "$repo_root/tests/fixtures/scapy/$fixture.bin" "$out_dir/$fixture.bin"
