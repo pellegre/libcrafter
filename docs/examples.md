@@ -7,31 +7,21 @@ can copy when generating packet tools.
 Most examples are packet builders or offline readers. They use
 dry-run send plans unless `--live` is explicitly supplied.
 
+## Local Runs
 
-
-
-These examples are for isolated lab networks only. They must not be run on a
-developer workstation, a shared LAN, or any network where the traffic does not
-belong to the test operator.
-
-By default these examples only compile packets and print dry-run plans. Any
-traffic-changing behavior requires all of the following:
-
-- `--live`
-- `--i-understand-isolated-lab`
-- `LIBCRAFTER_LIVE_LAB=1`
-
-The examples do not write firewall rules or change kernel forwarding settings.
-They print packet plans and leave host mutation to disposable live-lab
-orchestration.
-
-Run a dry-run locally:
+Build every example:
 
 ```sh
+cargo build --examples
 ```
 
-Run live examples only from a disposable lab created by `tools/live-lab/`:
+Run representative examples locally:
 
 ```sh
-  --live --i-understand-isolated-lab --iface replace-with-lab-interface
+cargo run --example hello_world -- --dry-run
+cargo run --example ping -- --iface dry-run0
+cargo run --example dns_query -- --dry-run --name example.com
 ```
+
+Examples that accept `--live` still default to dry-run mode and should be used
+only for bounded validation in controlled environments.

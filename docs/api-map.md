@@ -261,7 +261,8 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | `extended_data_offset.rs` | TCP data-offset edge cases. |
 | `user_sockets.rs` | Explicit socket wrappers and send helpers. |
 
-lab-only and must not run by default.
+The example set is limited to construction, decoding, pcap, and bounded
+validation flows.
 
 ## Agent-Oriented Style
 

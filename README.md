@@ -101,7 +101,8 @@ cargo run --example ping -- --iface dry-run0
 cargo run --example dns_query -- --dry-run --name example.com
 ```
 
-workflows are dry-run by default and require explicit live-lab acknowledgement.
+The example set focuses on packet construction, offline pcap workflows, and
+bounded validation flows that are dry-run by default.
 See [docs/examples.md](docs/examples.md).
 
 ## Live Testing
