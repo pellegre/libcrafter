@@ -190,14 +190,439 @@ def _live(args: argparse.Namespace) -> int:
     if args.backend != "scapy":
         print(f"unsupported backend: {args.backend}", file=sys.stderr)
         return 2
-    if args.provider != "local-dry-run":
-        print(
-            f"provider-backed live mode is not implemented yet: {args.provider}",
-            file=sys.stderr,
+    if args.provider == "local-dry-run":
+        return _live_local_dry_run(args)
+    if args.provider == "hetzner":
+        return _live_hetzner(args)
+
+    print(f"unsupported live provider: {args.provider}", file=sys.stderr)
+    return 2
+
+
+def _live_hetzner(args: argparse.Namespace) -> int:
+    from .backends.scapy.live import (
+        backend_bootstrap_command_plan,
+        dry_run_command_plan as scapy_dry_run_command_plan,
+        validate_backend_bootstrap_command,
+        validate_dry_run_command_plan as validate_scapy_dry_run_command_plan,
+    )
+    from .generator import generate_plans
+    from .live import (
+        LIVE_SELECTED_SPECS,
+        LiveExchangePlan,
+        libcrafter_dry_run_command_plan,
+        live_execution_directions,
+        validate_libcrafter_command_plan,
+    )
+    from .providers.hetzner import (
+        hetzner_endpoints,
+        hetzner_private_network_plan,
+        hetzner_provider_workflow,
+        hetzner_token_configured,
+        validate_hetzner_dry_run_exchange,
+        validate_hetzner_provider_workflow,
+    )
+
+    try:
+        directions = live_execution_directions(args.direction)
+        plans = generate_plans(
+            seed=args.seed,
+            profile=args.profile,
+            count=args.count,
+            family=args.family,
+            case=args.case_name,
+            feature=args.feature,
+            index=args.index,
         )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
         return 2
 
-    return _live_local_dry_run(args)
+    output_dir = _live_output_dir(args.out)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / "report.json"
+
+    token_configured = hetzner_token_configured()
+    dry_run = bool(args.dry_run)
+    if not dry_run and not token_configured:
+        return _live_hetzner_skip_no_token(
+            args=args,
+            report_path=report_path,
+            directions=directions,
+            generated_count=len(plans),
+        )
+    if not dry_run:
+        return _live_hetzner_requires_dry_run_report(
+            args=args,
+            report_path=report_path,
+            directions=directions,
+            generated_count=len(plans),
+        )
+
+    endpoints = hetzner_endpoints(dry_run=True)
+    provider_workflow = hetzner_provider_workflow(dry_run=True)
+    bootstrap_command = backend_bootstrap_command_plan()
+    validations = [
+        validate_backend_bootstrap_command(bootstrap_command),
+        validate_hetzner_provider_workflow(provider_workflow, dry_run=True),
+    ]
+    exchanges: list[LiveExchangePlan] = []
+
+    for plan in plans:
+        for direction in directions:
+            if direction == "reference_to_libcrafter":
+                sender = endpoints["reference_backend"]
+                receiver = endpoints["libcrafter"]
+                sender_command = scapy_dry_run_command_plan(
+                    plan=plan,
+                    direction=direction,
+                    role="sender",
+                )
+                receiver_command = libcrafter_dry_run_command_plan(
+                    plan=plan,
+                    direction=direction,
+                    role="receiver",
+                )
+                validations.append(validate_scapy_dry_run_command_plan(sender_command))
+                validations.append(validate_libcrafter_command_plan(receiver_command))
+            elif direction == "libcrafter_to_reference":
+                sender = endpoints["libcrafter"]
+                receiver = endpoints["reference_backend"]
+                sender_command = libcrafter_dry_run_command_plan(
+                    plan=plan,
+                    direction=direction,
+                    role="sender",
+                )
+                receiver_command = scapy_dry_run_command_plan(
+                    plan=plan,
+                    direction=direction,
+                    role="receiver",
+                )
+                validations.append(validate_libcrafter_command_plan(sender_command))
+                validations.append(validate_scapy_dry_run_command_plan(receiver_command))
+            else:
+                print(f"unsupported live direction: {direction}", file=sys.stderr)
+                return 2
+
+            exchange = LiveExchangePlan(
+                provider=args.provider,
+                backend=args.backend,
+                direction=direction,
+                index=plan.index,
+                packet_plan=replace(plan, direction=direction),
+                sender=sender,
+                receiver=receiver,
+                sender_command=sender_command,
+                receiver_command=receiver_command,
+                live_packet_exchange=False,
+                metadata={
+                    "dry_run": True,
+                    "creates_infrastructure": False,
+                    "planned_live_packet_exchange": True,
+                    "live_packet_exchange": False,
+                    "no_live_packets_sent": True,
+                    "private_network": True,
+                },
+            )
+            exchanges.append(exchange)
+            validations.append(validate_hetzner_dry_run_exchange(exchange))
+
+    failed_validations = [validation for validation in validations if not validation.passed]
+    status = "dry-run" if not failed_validations else "failed"
+    result = ComparisonResult(
+        passed=not failed_validations,
+        direction=args.direction,
+        expected={
+            "provider": args.provider,
+            "dry_run": True,
+            "creates_infrastructure": False,
+            "private_network": True,
+            "endpoint_count": 2,
+            "validations_pass": True,
+        },
+        actual={
+            "provider": args.provider,
+            "dry_run": True,
+            "creates_infrastructure": False,
+            "private_network": True,
+            "endpoint_count": len(endpoints),
+            "validations_pass": not failed_validations,
+            "failed_validations": [validation.to_dict() for validation in failed_validations],
+        },
+        strict_bytes=False,
+        byte_equal=None,
+        differences=[
+            {
+                "path": validation.name,
+                "expected": "passed",
+                "actual": validation.errors,
+                "subject": validation.subject,
+            }
+            for validation in failed_validations
+        ],
+        reproduction_command=None
+        if not failed_validations
+        else _live_reproduction_command(args),
+        metadata={
+            "provider": args.provider,
+            "dry_run": True,
+            "creates_infrastructure": False,
+            "planned_live_packet_exchange": True,
+            "live_packet_exchange": False,
+            "validation_count": len(validations),
+        },
+    )
+
+    report = RunReport(
+        mode="live",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=len(exchanges),
+        status=status,
+        selected_specs=LIVE_SELECTED_SPECS,
+        artifacts=[str(report_path)],
+        artifact_paths=[str(report_path)],
+        results=[result],
+        failures=[] if result.passed else [result],
+        reproduction_commands=(
+            [] if result.reproduction_command is None else [result.reproduction_command]
+        ),
+        backend_versions=_backend_versions(args.backend),
+        libcrafter=_libcrafter_info(),
+        metadata={
+            "provider": args.provider,
+            "dry_run": True,
+            "creates_infrastructure": False,
+            "would_create_infrastructure": True,
+            "planned_live_packet_exchange": True,
+            "live_packet_exchange": False,
+            "no_live_packets_sent": True,
+            "token_configured": token_configured,
+            "requested_count": args.count,
+            "generated_count": len(plans),
+            "execution_directions": directions,
+            "planned_infrastructure": hetzner_private_network_plan(dry_run=True),
+            "provider_workflow": [command.to_dict() for command in provider_workflow],
+            "artifact_collection": {
+                "always_attempt": True,
+                "command": provider_workflow[3].to_dict(),
+            },
+            "teardown": {
+                "always_attempt": True,
+                "command": provider_workflow[4].to_dict(),
+            },
+            "backend_bootstrap": {
+                "command": bootstrap_command.to_dict(),
+                "validation": validations[0].to_dict(),
+            },
+            "endpoints": {
+                name: endpoint.to_dict() for name, endpoint in endpoints.items()
+            },
+            "exchanges": [exchange.to_dict() for exchange in exchanges],
+            "validations": [validation.to_dict() for validation in validations],
+        },
+    )
+    write_json(report_path, report)
+
+    print(
+        f"live {args.provider}: status={status} exchanges={len(exchanges)} "
+        f"creates_infrastructure=false report={report_path}"
+    )
+    if failed_validations:
+        print(f"failed_validations={len(failed_validations)}", file=sys.stderr)
+        print(f"reproduce: {_live_reproduction_command(args)}", file=sys.stderr)
+
+    return 0 if status == "dry-run" else 1
+
+
+def _live_hetzner_skip_no_token(
+    *,
+    args: argparse.Namespace,
+    report_path: Path,
+    directions: list[str],
+    generated_count: int,
+) -> int:
+    from .live import LIVE_SELECTED_SPECS
+    from .providers.hetzner import (
+        hetzner_endpoints,
+        hetzner_private_network_plan,
+        hetzner_provider_workflow,
+    )
+
+    endpoints = hetzner_endpoints(dry_run=False)
+    provider_workflow = hetzner_provider_workflow(dry_run=False)
+    result = ComparisonResult(
+        passed=True,
+        direction=args.direction,
+        expected={
+            "provider": args.provider,
+            "credential": "HETZNER_API_TOKEN",
+            "token_configured": True,
+        },
+        actual={
+            "provider": args.provider,
+            "skipped": True,
+            "reason": "missing HETZNER_API_TOKEN",
+            "token_configured": False,
+            "creates_infrastructure": False,
+        },
+        strict_bytes=False,
+        byte_equal=None,
+        metadata={
+            "provider": args.provider,
+            "skipped": True,
+            "skip_reason": "missing HETZNER_API_TOKEN",
+            "creates_infrastructure": False,
+            "live_packet_exchange": False,
+        },
+    )
+    report = RunReport(
+        mode="live",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=0,
+        status="skipped",
+        selected_specs=LIVE_SELECTED_SPECS,
+        artifacts=[str(report_path)],
+        artifact_paths=[str(report_path)],
+        results=[result],
+        failures=[],
+        backend_versions=_backend_versions(args.backend),
+        libcrafter=_libcrafter_info(),
+        metadata={
+            "provider": args.provider,
+            "dry_run": False,
+            "skipped": True,
+            "skip_reason": "missing HETZNER_API_TOKEN",
+            "creates_infrastructure": False,
+            "would_create_infrastructure_with_credentials": True,
+            "live_packet_exchange": False,
+            "no_live_packets_sent": True,
+            "token_configured": False,
+            "requested_count": args.count,
+            "generated_count": generated_count,
+            "execution_directions": directions,
+            "planned_infrastructure_if_credentials_available": hetzner_private_network_plan(
+                dry_run=False
+            ),
+            "provider_workflow_if_credentials_available": [
+                command.to_dict() for command in provider_workflow
+            ],
+            "artifact_collection": {
+                "always_attempt": True,
+                "command": provider_workflow[3].to_dict(),
+            },
+            "teardown": {
+                "always_attempt": True,
+                "command": provider_workflow[4].to_dict(),
+            },
+            "endpoints": {
+                name: endpoint.to_dict() for name, endpoint in endpoints.items()
+            },
+        },
+    )
+    write_json(report_path, report)
+    print(
+        f"live {args.provider}: status=skipped reason=missing_HETZNER_API_TOKEN "
+        f"creates_infrastructure=false report={report_path}"
+    )
+    return 0
+
+
+def _live_hetzner_requires_dry_run_report(
+    *,
+    args: argparse.Namespace,
+    report_path: Path,
+    directions: list[str],
+    generated_count: int,
+) -> int:
+    from .live import LIVE_SELECTED_SPECS
+    from .providers.hetzner import (
+        hetzner_endpoints,
+        hetzner_private_network_plan,
+        hetzner_provider_workflow,
+    )
+
+    endpoints = hetzner_endpoints(dry_run=False)
+    provider_workflow = hetzner_provider_workflow(dry_run=False)
+    result = ComparisonResult(
+        passed=False,
+        direction=args.direction,
+        expected={
+            "provider": args.provider,
+            "dry_run": False,
+            "live_packet_exchange": True,
+        },
+        actual={
+            "provider": args.provider,
+            "dry_run": False,
+            "live_packet_exchange": False,
+            "reason": "provider execution requires the live-lab operator path",
+        },
+        strict_bytes=False,
+        byte_equal=None,
+        differences=[
+            {
+                "path": "provider_execution",
+                "expected": "two-endpoint live exchange",
+                "actual": "not executed by oracle dry-run adapter",
+            }
+        ],
+        reproduction_command=_live_reproduction_command(args),
+        metadata={
+            "provider": args.provider,
+            "creates_infrastructure": False,
+            "live_packet_exchange": False,
+            "planned_infrastructure": True,
+        },
+    )
+    report = RunReport(
+        mode="live",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=0,
+        status="failed",
+        selected_specs=LIVE_SELECTED_SPECS,
+        artifacts=[str(report_path)],
+        artifact_paths=[str(report_path)],
+        results=[result],
+        failures=[result],
+        reproduction_commands=[result.reproduction_command]
+        if result.reproduction_command is not None
+        else [],
+        backend_versions=_backend_versions(args.backend),
+        libcrafter=_libcrafter_info(),
+        metadata={
+            "provider": args.provider,
+            "dry_run": False,
+            "creates_infrastructure": False,
+            "planned_infrastructure": hetzner_private_network_plan(dry_run=False),
+            "provider_workflow": [command.to_dict() for command in provider_workflow],
+            "artifact_collection": {
+                "always_attempt": True,
+                "command": provider_workflow[3].to_dict(),
+            },
+            "teardown": {
+                "always_attempt": True,
+                "command": provider_workflow[4].to_dict(),
+            },
+            "endpoints": {
+                name: endpoint.to_dict() for name, endpoint in endpoints.items()
+            },
+            "execution_directions": directions,
+            "generated_count": generated_count,
+        },
+    )
+    write_json(report_path, report)
+    print(
+        f"live {args.provider}: status=failed reason=requires_live_lab_operator_path "
+        f"creates_infrastructure=false report={report_path}",
+        file=sys.stderr,
+    )
+    return 2
 
 
 def _live_local_dry_run(args: argparse.Namespace) -> int:
@@ -1961,6 +2386,8 @@ def _live_reproduction_command(args: argparse.Namespace) -> str:
         argv.extend(["--feature", args.feature])
     if args.family is not None:
         argv.extend(["--family", args.family])
+    if getattr(args, "dry_run", False):
+        argv.append("--dry-run")
     return shlex.join(argv)
 
 
@@ -2233,6 +2660,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("libcrafter_to_reference", "reference_to_libcrafter", "live_exchange"),
         default="live_exchange",
         help="live validation direction (default: %(default)s)",
+    )
+    live_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="plan provider-backed live validation without creating infrastructure",
     )
     live_parser.set_defaults(func=_live)
 
