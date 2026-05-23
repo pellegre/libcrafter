@@ -1,0 +1,88 @@
+name: commit-policy
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - edited
+      - synchronize
+      - ready_for_review
+  push:
+    branches:
+      - master
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-title:
+    name: conventional PR title
+    if: ${{ github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate PR title
+        uses: amannn/action-semantic-pull-request@v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            build
+            chore
+            ci
+            docs
+            feat
+            fix
+            perf
+            refactor
+            revert
+            style
+            test
+
+  pr-commits:
+    name: conventional PR commits
+    if: ${{ github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout policy scripts
+        uses: actions/checkout@v4
+
+      - name: Collect PR commit subjects
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPOSITORY/pulls/$PR_NUMBER/commits" --paginate \
+            --jq '.[] | .sha + "\t" + (.commit.message | split("\n")[0])' \
+            > "$RUNNER_TEMP/pr-commit-subjects.txt"
+
+      - name: Validate PR commit subjects
+        run: tools/policy/check-conventional-commits --subjects-file "$RUNNER_TEMP/pr-commit-subjects.txt"
+
+  push-commits:
+    name: conventional pushed commits
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate pushed commit subjects
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          if [[ "$BEFORE" =~ ^0+$ ]] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            range="$AFTER"
+          else
+            range="$BEFORE..$AFTER"
+          fi
+          tools/policy/check-conventional-commits --range "$range"
