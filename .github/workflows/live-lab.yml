@@ -1,6 +1,11 @@
 name: live-lab
 
 on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
   workflow_dispatch:
     inputs:
       confirm_live_lab:
@@ -25,10 +30,29 @@ env:
   LIBCRAFTER_LIVE_LAB_STATE_DIR: ${{ runner.temp }}/libcrafter-live-state
 
 jobs:
+  dry-run:
+    name: provider dry run
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.confirm_live_lab != 'run' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install provider tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl jq openssh-client tar
+
+      - name: Run provider dry runs
+        run: |
+          tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
+          tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
+
   live:
     name: disposable live lab
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.confirm_live_lab == 'run' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_live_lab == 'run' }}
     timeout-minutes: 90
     env:
       HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}

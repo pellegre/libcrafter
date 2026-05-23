@@ -36,7 +36,7 @@ def import_scapy() -> dict[str, Any]:
     except ModuleNotFoundError as exc:
         if exc.name != "scapy":
             raise
-        maybe_reexec_with_uv()
+        maybe_reexec_with_scapy()
         raise
 
     conf.verb = 0
@@ -59,19 +59,10 @@ def import_scapy() -> dict[str, Any]:
     }
 
 
-def maybe_reexec_with_uv() -> None:
+def maybe_reexec_with_scapy() -> None:
     if os.environ.get("LIBCRAFTER_SCAPY_BOOTSTRAPPED") == "1":
         print(
             "error: scapy is not importable after dependency bootstrap",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    uv = shutil.which("uv")
-    if uv is None:
-        print(
-            "error: scapy is not installed. Install scapy or install uv so this "
-            "pcap validator can bootstrap scapy without root.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -80,20 +71,48 @@ def maybe_reexec_with_uv() -> None:
     env["LIBCRAFTER_SCAPY_BOOTSTRAPPED"] = "1"
     env.setdefault("UV_NO_PROGRESS", "1")
     script = str(Path(__file__).resolve())
-    os.execvpe(
-        uv,
-        [
+
+    uv = shutil.which("uv")
+    if uv is not None:
+        os.execvpe(
             uv,
-            "run",
-            "--quiet",
-            "--no-project",
-            "--with",
-            "scapy>=2.5,<3",
-            "--",
-            "python3",
-            script,
-            *sys.argv[1:],
-        ],
+            [
+                uv,
+                "run",
+                "--quiet",
+                "--no-project",
+                "--with",
+                "scapy>=2.5,<3",
+                "--",
+                "python3",
+                script,
+                *sys.argv[1:],
+            ],
+            env,
+        )
+
+    repo_root = Path(__file__).resolve().parents[2]
+    venv_dir = Path(
+        os.environ.get(
+            "LIBCRAFTER_SCAPY_VENV",
+            str(repo_root / ".libcrafter-live" / "scapy-pcap-venv"),
+        )
+    )
+    subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+    python = venv_dir / "bin" / "python"
+    subprocess.run(
+        [str(python), "-m", "pip", "install", "--upgrade", "pip"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        [str(python), "-m", "pip", "install", "scapy>=2.5,<3"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    os.execvpe(
+        str(python),
+        [str(python), script, *sys.argv[1:]],
         env,
     )
 
