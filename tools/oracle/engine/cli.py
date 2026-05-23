@@ -28,6 +28,77 @@ from .model import (
 from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 
 
+PCAP_CONTRACT_SPEC = "features/pcap.yaml"
+PCAP_DRY_PLAN_CASES: tuple[JSONObject, ...] = (
+    {
+        "name": "scapy-writes-pcap-libcrafter-reads",
+        "directions": ["reference_to_libcrafter"],
+        "writer": "scapy",
+        "reader": "libcrafter",
+        "file_format": "pcap",
+        "link_type": "ethernet",
+        "strict_bytes": True,
+        "timestamp_policy": "exact_when_deterministic_else_normalized",
+    },
+    {
+        "name": "libcrafter-writes-pcap-scapy-reads",
+        "directions": ["libcrafter_to_reference"],
+        "writer": "libcrafter",
+        "reader": "scapy",
+        "file_format": "pcap",
+        "link_type": "ethernet",
+        "strict_bytes": True,
+        "timestamp_policy": "exact_when_deterministic_else_normalized",
+    },
+    {
+        "name": "ethernet-link-type",
+        "directions": ["reference_to_libcrafter", "libcrafter_to_reference"],
+        "file_format": "pcap",
+        "link_type": "ethernet",
+        "roots": ["link:ethernet"],
+        "strict_bytes": True,
+        "timestamp_policy": "exact_when_deterministic_else_normalized",
+    },
+    {
+        "name": "linux-cooked-link-type",
+        "directions": ["reference_to_libcrafter", "libcrafter_to_reference"],
+        "file_format": "pcap",
+        "link_type": "linux_cooked",
+        "roots": ["link:linux-cooked", "link:linux-sll"],
+        "strict_bytes": True,
+        "timestamp_policy": "exact_when_deterministic_else_normalized",
+    },
+    {
+        "name": "null-loopback-link-type",
+        "directions": ["reference_to_libcrafter", "libcrafter_to_reference"],
+        "file_format": "pcap",
+        "link_type": "null_loopback",
+        "roots": ["link:null-loopback"],
+        "strict_bytes": True,
+        "timestamp_policy": "exact_when_deterministic_else_normalized",
+    },
+    {
+        "name": "raw-link-type",
+        "directions": ["reference_to_libcrafter", "libcrafter_to_reference"],
+        "file_format": "pcap",
+        "link_type": "raw",
+        "roots": ["link:raw", "l3:ipv4", "l3:ipv6"],
+        "strict_bytes": True,
+        "support": "where_supported",
+        "timestamp_policy": "exact_when_deterministic_else_normalized",
+    },
+    {
+        "name": "pcapng-mixed-link-types",
+        "directions": ["reference_to_libcrafter", "libcrafter_to_reference", "roundtrip"],
+        "file_format": "pcapng",
+        "link_types": ["ethernet", "linux_cooked", "null_loopback", "raw"],
+        "strict_bytes": False,
+        "support": "where_supported",
+        "timestamp_policy": "exact_when_deterministic_else_normalized_or_ignored",
+    },
+)
+
+
 def _add_common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--out",
@@ -102,6 +173,66 @@ def _not_implemented(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     return 2
+
+
+def _pcap(args: argparse.Namespace) -> int:
+    if not args.dry_plan:
+        print(
+            "oracle pcap execution is not implemented yet; pass --dry-plan to inspect "
+            "deterministic pcap contracts",
+            file=sys.stderr,
+        )
+        return 2
+
+    from .generator import generate_plans
+
+    try:
+        pcap_cases = _select_pcap_cases(
+            direction=args.direction,
+            case_name=args.case_name,
+            feature=args.feature,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    base_plans = generate_plans(
+        seed=args.seed,
+        profile=args.profile,
+        count=args.count,
+        family=args.family,
+        case=args.case_name,
+        feature=args.feature,
+        index=args.index,
+    )
+    plans = [
+        _pcap_plan(plan, pcap_cases[offset % len(pcap_cases)], args.direction)
+        for offset, plan in enumerate(base_plans)
+    ]
+
+    report = RunReport(
+        mode="pcap",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=len(plans),
+        status="dry-plan",
+        selected_specs=[PCAP_CONTRACT_SPEC, "builtin-stack-grammar"],
+        metadata={
+            "dry_plan": True,
+            "requested_count": args.count,
+            "direction": args.direction,
+            "timestamp_policy": {
+                "deterministic": "exact",
+                "backend_precision_differs": "normalized",
+                "backend_generated_or_unavailable": "ignored",
+            },
+            "pcap_cases": pcap_cases,
+            "plans": [plan.to_dict() for plan in plans],
+        },
+    )
+    sys.stdout.write(dumps_json(report))
+    return 0
 
 
 def _offline(args: argparse.Namespace) -> int:
@@ -1107,6 +1238,52 @@ def _string_values(value: object) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
+def _select_pcap_cases(
+    *,
+    direction: str,
+    case_name: str | None,
+    feature: str | None,
+) -> list[JSONObject]:
+    selected: list[JSONObject] = []
+    for pcap_case in PCAP_DRY_PLAN_CASES:
+        directions = _string_values(pcap_case.get("directions"))
+        if direction not in directions:
+            continue
+        if case_name is not None and pcap_case.get("name") != case_name:
+            continue
+        if feature is not None and feature not in {"pcap", "pcap_contracts"}:
+            continue
+        selected.append(dict(pcap_case))
+
+    if selected:
+        return selected
+
+    detail = f" direction={direction!r}"
+    if case_name is not None:
+        detail += f" case={case_name!r}"
+    if feature is not None:
+        detail += f" feature={feature!r}"
+    raise ValueError(f"no pcap dry-plan contracts match{detail}")
+
+
+def _pcap_plan(plan: PacketPlan, pcap_case: JSONObject, direction: str) -> PacketPlan:
+    strict_bytes = pcap_case.get("strict_bytes")
+    metadata = dict(plan.metadata)
+    metadata["pcap"] = pcap_case
+    metadata["selected_spec"] = PCAP_CONTRACT_SPEC
+    metadata["timestamp_policy"] = pcap_case.get("timestamp_policy")
+    feature_tags = list(dict.fromkeys([*plan.feature_tags, "pcap"]))
+    case_name = pcap_case.get("name")
+    return replace(
+        plan,
+        direction=direction,
+        case=case_name if isinstance(case_name, str) else plan.case,
+        strict_bytes=strict_bytes if isinstance(strict_bytes, bool) else plan.strict_bytes,
+        feature_tags=feature_tags,
+        metadata=metadata,
+    )
+
+
 def _backend_info(args: argparse.Namespace) -> int:
     if args.backend == "scapy":
         from .backends.scapy.bootstrap import backend_info
@@ -1201,14 +1378,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     offline_parser.set_defaults(func=_offline)
 
-    for mode in ("pcap", "live"):
-        mode_parser = subparsers.add_parser(
-            mode,
-            help=f"run {mode} validation",
-            description=f"Run {mode} oracle validation.",
-        )
-        _add_common_options(mode_parser)
-        mode_parser.set_defaults(func=_not_implemented)
+    pcap_parser = subparsers.add_parser(
+        "pcap",
+        help="run pcap validation",
+        description="Run pcap oracle validation.",
+    )
+    _add_common_options(pcap_parser)
+    _add_generation_options(pcap_parser)
+    pcap_parser.add_argument(
+        "--direction",
+        choices=("reference_to_libcrafter", "libcrafter_to_reference", "roundtrip"),
+        default="reference_to_libcrafter",
+        help="pcap validation direction (default: %(default)s)",
+    )
+    pcap_parser.add_argument(
+        "--dry-plan",
+        action="store_true",
+        help="print deterministic pcap plans without invoking a backend",
+    )
+    pcap_parser.set_defaults(func=_pcap)
+
+    live_parser = subparsers.add_parser(
+        "live",
+        help="run live validation",
+        description="Run live oracle validation.",
+    )
+    _add_common_options(live_parser)
+    live_parser.set_defaults(func=_not_implemented)
 
     fixtures_parser = subparsers.add_parser(
         "fixtures",
