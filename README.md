@@ -144,24 +144,31 @@ From a clean reviewed checkout, an authenticated maintainer should run the
 offline release gate from the repository root:
 
 ```sh
-tools/check-crafter-release --static
+.agents/scripts/check-crafter-release --static
 ```
 
 For package-content checks only, run:
 
 ```sh
-tools/check-crafter-release --package-only
+.agents/scripts/check-crafter-release --package-only
 ```
 
-Then make the explicit crates.io publishing decision with:
+For agent-assisted publishing, use `$agent-cargo-publish`. The skill runs the
+same local release gate, performs a `cargo publish` dry run, summarizes the
+crate/version/commit and package contents, and requires explicit ask-tool
+approval before the real upload.
+
+For a fully manual publish, make the explicit crates.io publishing decision
+with:
 
 ```sh
 cargo publish -p crafter --dry-run
 cargo publish -p crafter
 ```
 
-Do not run the real publish command from automation; it is a final manual
-maintainer action.
+Do not run the real publish command from unattended automation. It is a final
+maintainer action, either manual or explicitly ask-confirmed through the
+repo-local publish skill.
 
 ## License
 
