@@ -87,7 +87,7 @@ def _not_implemented(args: argparse.Namespace) -> int:
 
 
 def _offline(args: argparse.Namespace) -> int:
-    if not args.dry_plan:
+    if not args.dry_plan and not args.emit_vectors:
         return _not_implemented(args)
 
     from .generator import generate_plans
@@ -101,6 +101,32 @@ def _offline(args: argparse.Namespace) -> int:
         feature=args.feature,
         index=args.index,
     )
+    if args.emit_vectors:
+        if args.backend == "scapy":
+            from .backends.scapy.packets import encode_packet_plans
+
+            vectors = encode_packet_plans(plans)
+        else:
+            print(f"unsupported backend: {args.backend}", file=sys.stderr)
+            return 2
+
+        report = RunReport(
+            mode="offline",
+            backend=args.backend,
+            profile=args.profile,
+            seed=args.seed,
+            count=len(vectors),
+            status="vectors",
+            selected_specs=["builtin-stack-grammar"],
+            metadata={
+                "emit_vectors": True,
+                "requested_count": args.count,
+                "vectors": [vector.to_dict() for vector in vectors],
+            },
+        )
+        sys.stdout.write(dumps_json(report))
+        return 0
+
     report = RunReport(
         mode="offline",
         backend=args.backend,
@@ -160,6 +186,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-plan",
         action="store_true",
         help="print generated packet plans without invoking a backend",
+    )
+    offline_parser.add_argument(
+        "--emit-vectors",
+        action="store_true",
+        help="print Scapy-materialized packet vectors without invoking libcrafter",
     )
     offline_parser.set_defaults(func=_offline)
 
