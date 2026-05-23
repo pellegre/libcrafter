@@ -1,5 +1,7 @@
 {
+  "decoded_summary": "Ether / Dot1Q / IP / UDP 192.0.2.10:53002 > 198.51.100.20:9999 / Raw",
   "description": "802.1Q Ethernet IPv4 UDP datagram.",
+  "direction": "scapy_to_libcrafter",
   "expected_stack": [
     "Ether",
     "Dot1Q",
@@ -7,7 +9,15 @@
     "UDP",
     "Raw"
   ],
+  "family": "link",
   "hex": "02005e00530202005e0053018100602a080045000024123b00003a11823cc000020ac6336414cf0a270f0010b3a1766c616e2d756470",
+  "layer_names": [
+    "Ether",
+    "Dot1Q",
+    "IP",
+    "UDP",
+    "Raw"
+  ],
   "layers": [
     {
       "fields": {
@@ -65,7 +75,68 @@
   ],
   "length": 54,
   "name": "vlan-ipv4-udp",
-  "root": "Ether",
+  "notes": "Checked-in Scapy fixture. 802.1Q PCP and VLAN ID with IPv4 UDP payload.",
+  "relevant_fields": [
+    {
+      "fields": {
+        "dst": "02:00:5e:00:53:02",
+        "src": "02:00:5e:00:53:01",
+        "type": 33024
+      },
+      "layer": "Ether"
+    },
+    {
+      "fields": {
+        "dei": 0,
+        "prio": 3,
+        "type": 2048,
+        "vlan": 42
+      },
+      "layer": "Dot1Q"
+    },
+    {
+      "fields": {
+        "chksum": 33340,
+        "dst": "198.51.100.20",
+        "flags": "",
+        "frag": 0,
+        "id": 4667,
+        "ihl": 5,
+        "len": 36,
+        "options": [],
+        "proto": 17,
+        "src": "192.0.2.10",
+        "tos": 0,
+        "ttl": 58,
+        "version": 4
+      },
+      "layer": "IP"
+    },
+    {
+      "fields": {
+        "chksum": 45985,
+        "dport": 9999,
+        "len": 16,
+        "sport": 53002
+      },
+      "layer": "UDP"
+    },
+    {
+      "fields": {
+        "load": {
+          "ascii": "vlan-udp",
+          "hex": "766c616e2d756470"
+        }
+      },
+      "layer": "Raw"
+    }
+  ],
+  "root": "link:ethernet",
+  "root_decoder": "link:ethernet",
+  "scapy_root": "Ether",
   "scapy_show": "###[ Ethernet ]###\n  dst       = 02:00:5e:00:53:02\n  src       = 02:00:5e:00:53:01\n  type      = n_802_1Q\n###[ 802.1Q ]###\n     prio      = 3\n     dei       = 0\n     vlan      = 42\n     type      = IPv4\n###[ IP ]###\n        version   = 4\n        ihl       = 5\n        tos       = 0x0\n        len       = 36\n        id        = 4667\n        flags     = \n        frag      = 0\n        ttl       = 58\n        proto     = udp\n        chksum    = 0x823c\n        src       = 192.0.2.10\n        dst       = 198.51.100.20\n        \\options   \\\n###[ UDP ]###\n           sport     = 53002\n           dport     = 9999\n           len       = 16\n           chksum    = 0xb3a1\n###[ Raw ]###\n              load      = b'vlan-udp'\n",
+  "scapy_version": "2.7.0",
+  "status": "implemented",
+  "strict_bytes": true,
   "summary": "Ether / Dot1Q / IP / UDP 192.0.2.10:53002 > 198.51.100.20:9999 / Raw"
 }
