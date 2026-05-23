@@ -2179,10 +2179,12 @@ fn transmit_link(plan: &SendPlan, options: &SendOptions, link_type: LinkType) ->
             name: plan.interface.clone(),
         })?;
 
-    let mut config = datalink::Config::default();
-    config.channel_type = ChannelType::Layer2;
-    config.write_timeout = options.write_timeout;
-    config.write_buffer_size = options.write_buffer_size.max(plan.len());
+    let config = datalink::Config {
+        channel_type: ChannelType::Layer2,
+        write_timeout: options.write_timeout,
+        write_buffer_size: options.write_buffer_size.max(plan.len()),
+        ..Default::default()
+    };
 
     let channel = datalink::channel(&interface, config)
         .map_err(|source| net_io_error("open datalink channel", source))?;
@@ -2218,7 +2220,7 @@ fn transmit_network(
 
     match network_layer {
         NetworkLayer::Ipv4 => {
-            let packet = pnet_packet::ipv4::Ipv4Packet::new(plan.bytes()).ok_or_else(|| {
+            let packet = pnet_packet::ipv4::Ipv4Packet::new(plan.bytes()).ok_or({
                 NetError::UnsupportedSendTarget {
                     target: plan.target,
                     reason: "compiled bytes are not a complete IPv4 packet",

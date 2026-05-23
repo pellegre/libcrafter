@@ -1299,7 +1299,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod dhcp {
+mod dhcp_tests {
     use super::{
         Dhcp, DhcpMessageType, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_MAGIC_COOKIE, DHCP_SERVER_PORT,
     };

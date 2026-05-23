@@ -1596,7 +1596,7 @@ fn copy_array_4(bytes: &[u8]) -> [u8; 4] {
 }
 
 #[cfg(test)]
-mod icmp {
+mod icmp_tests {
     use super::{
         Icmp, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpKind, ICMP_ECHO_REQUEST,
         ICMP_TIME_EXCEEDED,
