@@ -1,6 +1,7 @@
 # Supported Platforms And Known Gaps
 
-This page describes the first Rust alpha support matrix.
+This page describes the first Rust alpha support matrix. The only public crate
+is `crafter`; APIs may change before a stable release.
 
 ## Supported Rust Toolchain
 
@@ -13,9 +14,9 @@ This page describes the first Rust alpha support matrix.
 The following workflows are intended to work on common Linux and macOS
 developer environments without live traffic:
 
-- Packet construction and decode tests in `crafter-core`.
-- Classic pcap read/write and libpcap-backed filtering in
-  `crafter-pcap`.
+- Packet construction and decode tests through `crafter::core`.
+- Classic pcap read/write and libpcap-backed filtering through
+  `crafter::pcap`.
 - Example builds and dry-run example execution.
 - Malformed input resilience and encode/decode roundtrip tests.
 

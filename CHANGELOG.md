@@ -2,8 +2,8 @@
 
 ## 0.1.0-alpha.1 - Rust Packet Crafting Alpha
 
-This is the first public alpha of the Rust packet crafting workspace, centered
-on the facade crate `crafter` and its supporting crates.
+This is the first public alpha of the Rust packet crafting workspace, released
+as one public crate: `crafter`.
 
 ### Added
 
