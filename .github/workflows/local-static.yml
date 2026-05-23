@@ -51,28 +51,10 @@ jobs:
       - name: Build examples
         run: cargo build --examples
 
-      - name: Check Scapy fixture generation
-        run: |
-          fixtures=(
-            arp-request
-            dns-query
-            ethernet
-            ipv4-icmp
-            ipv6-icmp
-            vlan-ipv4-udp
-          )
-          out_dir="$(mktemp -d)"
-          args=(--out "$out_dir")
-          for fixture in "${fixtures[@]}"; do
-            args+=(--only "$fixture")
-          done
-          tools/reference/generate-scapy-fixtures "${args[@]}"
-          for fixture in "${fixtures[@]}"; do
-            cmp "tests/fixtures/scapy/$fixture.bin" "$out_dir/$fixture.bin"
-            python3 -m json.tool "$out_dir/$fixture.json" >/dev/null
-          done
+      - name: Check reference fixture generation
+        run: tools/reference/check-reference-fixtures
 
-      - name: Run Scapy interop checks
+      - name: Run reference interop checks
         run: |
-          tools/reference/check-scapy-interop
-          tools/reference/check-scapy-interop --family pcap
+          tools/reference/check-reference-interop
+          tools/reference/check-reference-interop --family pcap

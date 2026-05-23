@@ -27,8 +27,8 @@ but it is not yet part of the acceptance matrix.
 
 Live send, capture, ARP resolution, and send/receive workflows are developed for
 Linux disposable labs. They require suitable privileges inside the lab and may
-depend on Scapy, Docker, and basic networking tools installed by the
-live-lab image.
+depend on reference packet tooling, Docker, and basic networking tools installed
+by the live-lab image.
 
 Live raw-packet tests must not run on a developer workstation by default. Use:
 
@@ -41,7 +41,7 @@ For provider-backed runs, configure credentials outside the repository. The
 Hetzner provider reads only the `HETZNER_API_TOKEN` variable or the ignored
 local env file described in `docs/live-lab.md`.
 
-## Known Gaps Versus Scapy
+## Known Protocol Coverage Gaps
 
 - The crate is not a general-purpose dissector catalogue.
 - No interactive REPL, packet expression language, or dynamic Python-style field

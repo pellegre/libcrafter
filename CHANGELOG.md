@@ -26,14 +26,14 @@ on the facade crate `crafter` and its supporting crates.
   packet workflows.
 - Provider-agnostic disposable live-lab tooling with local dry-run and Hetzner
   providers.
-- Scapy reference fixture harnesses, malformed decode corpus, property tests,
+- Reference fixture harnesses, malformed decode corpus, property tests,
   and GitHub Actions workflows.
 
 ### Known Gaps
 
 - The Rust API is alpha and may change before a stable release.
-- The decoder is intentionally smaller than Wireshark or Scapy and focuses on
-  the current example surface.
+- The decoder is intentionally smaller than a full packet analyzer and focuses
+  on the current example surface.
 - TCP stream reassembly, packet fragmentation/reassembly, full pcapng support,
   full BPF parsing, and full TCP/IP stack behavior are not included.
 - DNS encoding is deterministic and uncompressed; DNS decoding accepts

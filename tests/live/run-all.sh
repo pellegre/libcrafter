@@ -28,9 +28,9 @@ capture_versions() {
 try:
     from scapy.all import conf
 except Exception as exc:
-    print(f"scapy=unavailable:{exc.__class__.__name__}")
+    print(f"reference_tool=unavailable:{exc.__class__.__name__}")
 else:
-    print(f"scapy={conf.version}")
+    print(f"reference_tool={conf.version}")
 PY
     fi
     if command -v pcap-config >/dev/null 2>&1; then

@@ -672,30 +672,31 @@ EOF
 }
 
 run_scapy_interop_suite() {
+  local requested_suite="${1:-scapy-interop}"
   local created_for_scapy=false
   local suite_status=0
   local remote_dir_value="${LIBCRAFTER_LIVE_LAB_REMOTE_DIR:-/root/libcrafter}"
   local scapy_command
 
   ensure_dirs
-  mkdir -p "$artifact_dir/scapy-interop"
-  run_doctor --dry-run | tee "$artifact_dir/scapy-interop/doctor.dry-run.log"
-  run_create --dry-run | tee "$artifact_dir/scapy-interop/create.dry-run.log"
+  mkdir -p "$artifact_dir/$requested_suite"
+  run_doctor --dry-run | tee "$artifact_dir/$requested_suite/doctor.dry-run.log"
+  run_create --dry-run | tee "$artifact_dir/$requested_suite/create.dry-run.log"
 
   if [[ -z "${HETZNER_API_TOKEN:-}" ]]; then
-    cat >"$artifact_dir/scapy-interop/skipped.env" <<EOF
-suite=scapy-interop
+    cat >"$artifact_dir/$requested_suite/skipped.env" <<EOF
+suite=$requested_suite
 result=skipped
 reason=no_token
 finished_at=$(timestamp_utc)
 EOF
     echo "provider=$provider_name"
     echo "ran=false"
-    echo "suite=scapy-interop"
+    echo "suite=$requested_suite"
     echo "skipped=true"
     echo "reason=no_token"
     echo "creates_infrastructure=false"
-    echo "artifact_dir=$artifact_dir/scapy-interop"
+    echo "artifact_dir=$artifact_dir/$requested_suite"
     return 0
   fi
 
@@ -736,6 +737,7 @@ export LIBCRAFTER_PROJECT_ROOT='$remote_dir_value'
 export LIBCRAFTER_LIVE_ARTIFACT_DIR='$remote_dir_value/live-artifacts'
 export LIBCRAFTER_LIVE_LAB=1
 export LIBCRAFTER_LIVE_SUITE_MODE=live
+export LIBCRAFTER_REFERENCE_INTEROP_SUITE_NAME='$requested_suite'
 tests/live/scapy-interop.sh --live
 EOF
 )
@@ -833,8 +835,8 @@ case "$command" in
         all)
           run_all_suite
           ;;
-        scapy-interop)
-          run_scapy_interop_suite
+        reference-interop | scapy-interop)
+          run_scapy_interop_suite "$suite"
           ;;
         *)
           echo "error: unknown Hetzner suite '$suite'" >&2

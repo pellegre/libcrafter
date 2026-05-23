@@ -277,17 +277,17 @@ for entry in report.entries() {
 }
 ```
 
-## Scapy Comparison
+## Reference Fixture Comparison
 
-Use Scapy fixtures to validate byte-level behavior for deterministic packets.
+Use reference fixtures to validate byte-level behavior for deterministic packets.
 Fixture generation is offline and does not require root.
 
 ```sh
-tools/reference/generate-scapy-fixtures --list
-tools/reference/generate-scapy-fixtures --only ipv4-icmp --out target/scapy
+tools/reference/generate-reference-fixtures --list
+tools/reference/generate-reference-fixtures --only ipv4-icmp --out target/reference-fixtures
 ```
 
 A generated Rust tool can write its compiled bytes to a target file and compare
-against `target/scapy/ipv4-icmp.bin`. Prefer exact byte comparison for stable
-headers and structured field comparison when timestamps, random ids, route
-state, or OS-assigned values are expected to vary.
+against `target/reference-fixtures/ipv4-icmp.bin`. Prefer exact byte comparison
+for stable headers and structured field comparison when timestamps, random ids,
+route state, or OS-assigned values are expected to vary.

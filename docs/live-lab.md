@@ -9,7 +9,7 @@ tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 ```
 
 Local static tests should run before any live lab command. Live providers are
-for tests that need root privileges, raw sockets, packet capture, or Scapy
+for tests that need root privileges, raw sockets, packet capture, or reference
 comparison on disposable infrastructure.
 
 ## Hetzner Setup
@@ -35,11 +35,11 @@ tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```
 
-The Scapy interop suite is offline and can be exercised through the local
+The reference interop suite is offline and can be exercised through the local
 provider before creating infrastructure:
 
 ```sh
-tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite scapy-interop
+tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite reference-interop
 ```
 
 Real creation uses provider defaults that can be overridden. Choose values that
@@ -53,10 +53,10 @@ HETZNER_LOCATION=replace-with-location \
 tools/live-lab/libcrafter-live-lab create --provider hetzner
 ```
 
-Run the same Scapy interop suite on a disposable Hetzner host with:
+Run the same reference interop suite on a disposable Hetzner host with:
 
 ```sh
-tools/live-lab/libcrafter-live-lab run --provider hetzner --suite scapy-interop
+tools/live-lab/libcrafter-live-lab run --provider hetzner --suite reference-interop
 ```
 
 Generated provider state is written below `tools/live-lab/.state/hetzner/`.
@@ -73,8 +73,8 @@ Recommended CI flow:
 
 ```sh
 cargo test --workspace
-tools/reference/check-scapy-interop --smoke
-tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite scapy-interop
+tools/reference/check-reference-interop --smoke
+tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite reference-interop
 tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```

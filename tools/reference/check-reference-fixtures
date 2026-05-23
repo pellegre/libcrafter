@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/../.." && pwd)"
+
+fixtures=(
+  arp-request
+  dns-query
+  ethernet
+  ipv4-icmp
+  ipv6-icmp
+  vlan-ipv4-udp
+)
+
+out_dir="$(mktemp -d)"
+trap 'rm -rf "$out_dir"' EXIT
+
+args=(--out "$out_dir")
+for fixture in "${fixtures[@]}"; do
+  args+=(--only "$fixture")
+done
+
+"$script_dir/generate-reference-fixtures" "${args[@]}"
+
+for fixture in "${fixtures[@]}"; do
+  cmp "$repo_root/tests/fixtures/scapy/$fixture.bin" "$out_dir/$fixture.bin"
+  python3 -m json.tool "$out_dir/$fixture.json" >/dev/null
+done
