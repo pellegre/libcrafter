@@ -122,9 +122,12 @@ class RunReport(JsonModel):
     status: str
     selected_specs: list[str] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)
+    artifact_paths: list[str] = field(default_factory=list)
     results: list[ComparisonResult] = field(default_factory=list)
     failures: list[ComparisonResult] = field(default_factory=list)
     reproduction_commands: list[str] = field(default_factory=list)
+    backend_versions: JSONObject = field(default_factory=dict)
+    libcrafter: JSONObject = field(default_factory=dict)
     metadata: JSONObject = field(default_factory=dict)
 
 
