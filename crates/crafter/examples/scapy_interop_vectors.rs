@@ -117,6 +117,11 @@ fn build_manifest() -> ExampleResult<Manifest> {
     })
 }
 
+#[allow(dead_code)]
+pub(crate) fn manifest_json() -> std::result::Result<Value, Box<dyn Error>> {
+    Ok(serde_json::to_value(build_manifest()?)?)
+}
+
 fn ethernet_raw() -> ExampleResult<Vector> {
     let packet = Ethernet::new()
         .src(parse_mac(SRC_MAC)?)
