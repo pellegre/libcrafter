@@ -186,6 +186,208 @@ def _pcap(args: argparse.Namespace) -> int:
     return _pcap_execute(args)
 
 
+def _live(args: argparse.Namespace) -> int:
+    if args.backend != "scapy":
+        print(f"unsupported backend: {args.backend}", file=sys.stderr)
+        return 2
+    if args.provider != "local-dry-run":
+        print(
+            f"provider-backed live mode is not implemented yet: {args.provider}",
+            file=sys.stderr,
+        )
+        return 2
+
+    return _live_local_dry_run(args)
+
+
+def _live_local_dry_run(args: argparse.Namespace) -> int:
+    from .backends.scapy.live import (
+        backend_bootstrap_command_plan,
+        dry_run_command_plan as scapy_dry_run_command_plan,
+        validate_backend_bootstrap_command,
+        validate_dry_run_command_plan as validate_scapy_dry_run_command_plan,
+    )
+    from .generator import generate_plans
+    from .live import (
+        LIVE_SELECTED_SPECS,
+        LiveExchangePlan,
+        libcrafter_dry_run_command_plan,
+        live_execution_directions,
+        local_dry_run_endpoints,
+        validate_libcrafter_command_plan,
+        validate_local_dry_run_exchange,
+    )
+
+    try:
+        directions = live_execution_directions(args.direction)
+        plans = generate_plans(
+            seed=args.seed,
+            profile=args.profile,
+            count=args.count,
+            family=args.family,
+            case=args.case_name,
+            feature=args.feature,
+            index=args.index,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    output_dir = _live_output_dir(args.out)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / "report.json"
+
+    endpoints = local_dry_run_endpoints()
+    bootstrap_command = backend_bootstrap_command_plan()
+    validations = [validate_backend_bootstrap_command(bootstrap_command)]
+    exchanges: list[LiveExchangePlan] = []
+
+    for plan in plans:
+        for direction in directions:
+            if direction == "reference_to_libcrafter":
+                sender = endpoints["reference_backend"]
+                receiver = endpoints["libcrafter"]
+                sender_command = scapy_dry_run_command_plan(
+                    plan=plan,
+                    direction=direction,
+                    role="sender",
+                )
+                receiver_command = libcrafter_dry_run_command_plan(
+                    plan=plan,
+                    direction=direction,
+                    role="receiver",
+                )
+                validations.append(validate_scapy_dry_run_command_plan(sender_command))
+                validations.append(validate_libcrafter_command_plan(receiver_command))
+            elif direction == "libcrafter_to_reference":
+                sender = endpoints["libcrafter"]
+                receiver = endpoints["reference_backend"]
+                sender_command = libcrafter_dry_run_command_plan(
+                    plan=plan,
+                    direction=direction,
+                    role="sender",
+                )
+                receiver_command = scapy_dry_run_command_plan(
+                    plan=plan,
+                    direction=direction,
+                    role="receiver",
+                )
+                validations.append(validate_libcrafter_command_plan(sender_command))
+                validations.append(validate_scapy_dry_run_command_plan(receiver_command))
+            else:
+                print(f"unsupported live direction: {direction}", file=sys.stderr)
+                return 2
+
+            exchange = LiveExchangePlan(
+                provider=args.provider,
+                backend=args.backend,
+                direction=direction,
+                index=plan.index,
+                packet_plan=replace(plan, direction=direction),
+                sender=sender,
+                receiver=receiver,
+                sender_command=sender_command,
+                receiver_command=receiver_command,
+                live_packet_exchange=False,
+                metadata={
+                    "dry_run": True,
+                    "live_packet_exchange": False,
+                    "no_live_packets_sent": True,
+                },
+            )
+            exchanges.append(exchange)
+            validations.append(validate_local_dry_run_exchange(exchange))
+
+    failed_validations = [validation for validation in validations if not validation.passed]
+    status = "passed" if not failed_validations else "failed"
+    result = ComparisonResult(
+        passed=not failed_validations,
+        direction=args.direction,
+        expected={
+            "provider": args.provider,
+            "dry_run": True,
+            "live_packet_exchange": False,
+            "validations_pass": True,
+        },
+        actual={
+            "provider": args.provider,
+            "dry_run": True,
+            "live_packet_exchange": False,
+            "validations_pass": not failed_validations,
+            "failed_validations": [validation.to_dict() for validation in failed_validations],
+        },
+        strict_bytes=False,
+        byte_equal=None,
+        differences=[
+            {
+                "path": validation.name,
+                "expected": "passed",
+                "actual": validation.errors,
+                "subject": validation.subject,
+            }
+            for validation in failed_validations
+        ],
+        reproduction_command=None
+        if not failed_validations
+        else _live_reproduction_command(args),
+        metadata={
+            "provider": args.provider,
+            "dry_run": True,
+            "live_packet_exchange": False,
+            "validation_count": len(validations),
+        },
+    )
+
+    report = RunReport(
+        mode="live",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=len(exchanges),
+        status=status,
+        selected_specs=LIVE_SELECTED_SPECS,
+        artifacts=[str(report_path)],
+        artifact_paths=[str(report_path)],
+        results=[result],
+        failures=[] if result.passed else [result],
+        reproduction_commands=(
+            [] if result.reproduction_command is None else [result.reproduction_command]
+        ),
+        backend_versions=_backend_versions(args.backend),
+        libcrafter=_libcrafter_info(),
+        metadata={
+            "provider": args.provider,
+            "dry_run": True,
+            "live_packet_exchange": False,
+            "no_live_packets_sent": True,
+            "real_provider_backed_live_mode": "not executed by local-dry-run",
+            "requested_count": args.count,
+            "generated_count": len(plans),
+            "execution_directions": directions,
+            "backend_bootstrap": {
+                "command": bootstrap_command.to_dict(),
+                "validation": validations[0].to_dict(),
+            },
+            "endpoints": {
+                name: endpoint.to_dict() for name, endpoint in endpoints.items()
+            },
+            "exchanges": [exchange.to_dict() for exchange in exchanges],
+            "validations": [validation.to_dict() for validation in validations],
+        },
+    )
+    write_json(report_path, report)
+
+    print(
+        f"live {args.provider}: status={status} exchanges={len(exchanges)} "
+        f"live_packet_exchange=false report={report_path}"
+    )
+    if failed_validations:
+        print(f"failed_validations={len(failed_validations)}", file=sys.stderr)
+        print(f"reproduce: {_live_reproduction_command(args)}", file=sys.stderr)
+
+    return 0 if status == "passed" else 1
+
+
 def _pcap_dry_plan(args: argparse.Namespace) -> int:
     from .generator import generate_plans
 
@@ -1701,6 +1903,13 @@ def _pcap_output_dir(out: str) -> Path:
     return output_root / "pcap"
 
 
+def _live_output_dir(out: str) -> Path:
+    output_root = Path(out)
+    if not output_root.is_absolute():
+        output_root = REPO_ROOT / output_root
+    return output_root / "live"
+
+
 def _reproduction_command(args: argparse.Namespace, index: int) -> str:
     argv = [
         "tools/oracle/run",
@@ -1718,6 +1927,34 @@ def _reproduction_command(args: argparse.Namespace, index: int) -> str:
         "--index",
         str(index),
     ]
+    if args.case_name is not None:
+        argv.extend(["--case", args.case_name])
+    if args.feature is not None:
+        argv.extend(["--feature", args.feature])
+    if args.family is not None:
+        argv.extend(["--family", args.family])
+    return shlex.join(argv)
+
+
+def _live_reproduction_command(args: argparse.Namespace) -> str:
+    argv = [
+        "tools/oracle/run",
+        "live",
+        "--backend",
+        args.backend,
+        "--provider",
+        args.provider,
+        "--direction",
+        args.direction,
+        "--profile",
+        args.profile,
+        "--seed",
+        str(args.seed),
+        "--count",
+        str(args.count),
+    ]
+    if args.index is not None:
+        argv.extend(["--index", str(args.index)])
     if args.case_name is not None:
         argv.extend(["--case", args.case_name])
     if args.feature is not None:
@@ -1984,7 +2221,20 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run live oracle validation.",
     )
     _add_common_options(live_parser)
-    live_parser.set_defaults(func=_not_implemented)
+    _add_generation_options(live_parser)
+    live_parser.add_argument(
+        "--provider",
+        choices=("local-dry-run", "hetzner"),
+        required=True,
+        help="live provider to use",
+    )
+    live_parser.add_argument(
+        "--direction",
+        choices=("libcrafter_to_reference", "reference_to_libcrafter", "live_exchange"),
+        default="live_exchange",
+        help="live validation direction (default: %(default)s)",
+    )
+    live_parser.set_defaults(func=_live)
 
     fixtures_parser = subparsers.add_parser(
         "fixtures",
