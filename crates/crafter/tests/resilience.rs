@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crafter_core::{
+use crafter::core::{
     decode_dns_name, Arp, Dhcp, DhcpOption, Dns, Ethernet, Icmp, Icmpv6, IpProtocol, Ipv4,
     Ipv4Option, Ipv6, LinkType, LinuxSll, MacAddr, NetworkLayer, NullLoopback, Packet, Raw, Tcp,
     TcpOption, Udp, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH,
@@ -35,7 +35,7 @@ enum PacketDecodeTarget {
     L3(NetworkLayer),
 }
 
-fn decode_packet(target: PacketDecodeTarget, bytes: &[u8]) -> crafter_core::Result<Packet> {
+fn decode_packet(target: PacketDecodeTarget, bytes: &[u8]) -> crafter::core::Result<Packet> {
     match target {
         PacketDecodeTarget::Link(link_type) => Packet::decode_from_link(link_type, bytes),
         PacketDecodeTarget::L3(network_layer) => Packet::decode_from_l3(network_layer, bytes),
