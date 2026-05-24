@@ -1,7 +1,7 @@
 version: 1
 kind: stack_grammar
 name: oracle_initial_stacks
-description: Initial backend-neutral stacks translated from checked-in Scapy fixtures.
+description: Initial backend-neutral stacks translated from oracle case specs.
 
 roots:
   - name: "link:raw"

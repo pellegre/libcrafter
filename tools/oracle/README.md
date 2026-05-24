@@ -42,7 +42,6 @@ Oracle artifacts default below `target/oracle/`:
 target/oracle/offline/
 target/oracle/pcap/
 target/oracle/live/
-target/oracle/fixtures/
 ```
 
 Reports include the mode, backend, profile, seed, count, direction, and packet

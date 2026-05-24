@@ -1292,8 +1292,8 @@ mod ethernet {
     use crate::{LinkType, MacAddr, Packet, Raw};
     use core::net::Ipv4Addr;
 
-    const ETHERNET_FIXTURE: &[u8] = fixture_bytes!("scapy/ethernet.bin");
-    const ARP_REQUEST_FIXTURE: &[u8] = fixture_bytes!("scapy/arp-request.bin");
+    const ETHERNET_FIXTURE: &[u8] = fixture_bytes!("bytes/ethernet-experimental-raw.bin");
+    const ARP_REQUEST_FIXTURE: &[u8] = fixture_bytes!("bytes/arp-who-has.bin");
 
     fn src_mac() -> MacAddr {
         "02:00:5e:00:53:01".parse().unwrap()
@@ -1304,7 +1304,7 @@ mod ethernet {
     }
 
     #[test]
-    fn ethernet_frame_matches_scapy_fixture() {
+    fn ethernet_frame_matches_golden_bytes() {
         let packet = Ethernet::new()
             .src(src_mac())
             .dst(dst_mac())
@@ -1357,14 +1357,14 @@ mod arp {
     use crate::{LinkType, MacAddr, Packet};
     use core::net::Ipv4Addr;
 
-    const ARP_REQUEST_FIXTURE: &[u8] = fixture_bytes!("scapy/arp-request.bin");
+    const ARP_REQUEST_FIXTURE: &[u8] = fixture_bytes!("bytes/arp-who-has.bin");
 
     fn src_mac() -> MacAddr {
         "02:00:5e:00:53:01".parse().unwrap()
     }
 
     #[test]
-    fn arp_request_matches_scapy_fixture() {
+    fn arp_request_matches_golden_bytes() {
         let packet = Ethernet::new().src(src_mac())
             / Arp::who_has(
                 Ipv4Addr::new(192, 0, 2, 10),
@@ -1424,7 +1424,7 @@ mod link_layers {
     use crate::{LinkType, MacAddr, Packet, Raw};
     use core::net::Ipv4Addr;
 
-    const VLAN_FIXTURE: &[u8] = fixture_bytes!("scapy/vlan-ipv4-udp.bin");
+    const VLAN_FIXTURE: &[u8] = fixture_bytes!("bytes/ethernet-vlan-ipv4-udp-raw.bin");
 
     fn src_mac() -> MacAddr {
         "02:00:5e:00:53:01".parse().unwrap()
@@ -1458,7 +1458,7 @@ mod link_layers {
     }
 
     #[test]
-    fn vlan_builder_matches_scapy_fixture_when_payload_is_known_bytes() {
+    fn vlan_builder_matches_golden_bytes_when_payload_is_known_bytes() {
         let packet = Ethernet::new().src(src_mac()).dst(dst_mac())
             / Vlan::new().prio(3).vlan(42).ethertype(ETHERTYPE_IPV4)
             / Raw::from_bytes(&VLAN_FIXTURE[18..]);

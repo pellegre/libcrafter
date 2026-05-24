@@ -1604,7 +1604,7 @@ mod icmp_tests {
     use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
     use core::net::Ipv4Addr;
 
-    const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("scapy/ipv4-icmp.bin");
+    const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("bytes/ipv4-icmp-echo-request.bin");
 
     fn src() -> Ipv4Addr {
         Ipv4Addr::new(192, 0, 2, 10)
@@ -1615,7 +1615,7 @@ mod icmp_tests {
     }
 
     #[test]
-    fn icmp_echo_request_matches_scapy_fixture() {
+    fn icmp_echo_request_matches_golden_bytes() {
         let packet = Ipv4::new()
             .src(src())
             .dst(dst())
@@ -1698,7 +1698,7 @@ mod icmpv6 {
     use crate::{Ipv6, NetworkLayer, Packet, Raw};
     use core::net::Ipv6Addr;
 
-    const IPV6_ICMP_FIXTURE: &[u8] = fixture_bytes!("scapy/ipv6-icmp.bin");
+    const IPV6_ICMP_FIXTURE: &[u8] = fixture_bytes!("bytes/ipv6-icmp-echo-request.bin");
 
     fn src() -> Ipv6Addr {
         Ipv6Addr::new(0x2001, 0x0db8, 1, 0, 0, 0, 0, 0x0010)
@@ -1709,7 +1709,7 @@ mod icmpv6 {
     }
 
     #[test]
-    fn icmpv6_echo_request_matches_scapy_fixture() {
+    fn icmpv6_echo_request_matches_golden_bytes() {
         let packet = Ipv6::new().src(src()).dst(dst()).fl(0x12345).hlim(64)
             / Icmpv6::echo_request().id(0x4242).seq(2)
             / Raw::from("libcrafter-ipv6");
