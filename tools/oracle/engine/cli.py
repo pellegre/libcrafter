@@ -1556,6 +1556,9 @@ def _hetzner_live_generation_constraints() -> JSONObject:
         "root": "l3:ipv4",
         "family": "ipv4",
         "case": "ipv4-udp",
+        "transit_safe_fields": {
+            "ipv4.ttl": "generated TTL values below 2 are rewritten for provider live transit",
+        },
         "unsupported_in_live": [
             "ipv6",
             "tcp",
@@ -1703,11 +1706,30 @@ def _live_plan_with_endpoint_addresses(
 
 
 def _hetzner_live_transit_plan(plan: PacketPlan) -> PacketPlan:
+    fields = {
+        layer: dict(layer_fields)
+        for layer, layer_fields in plan.fields.items()
+    }
+    rewrites: list[JSONObject] = []
+    ipv4 = fields.get("ipv4")
+    if isinstance(ipv4, dict) and int(ipv4.get("ttl", 64)) < 2:
+        rewrites.append(
+            {
+                "field": "ipv4.ttl",
+                "from": ipv4.get("ttl"),
+                "to": 64,
+                "reason": "provider live transit decrements TTL before capture",
+            }
+        )
+        ipv4["ttl"] = 64
+
     return replace(
         plan,
+        fields=fields,
         strict_bytes=False,
         metadata={
             **plan.metadata,
+            "live_transit_rewrites": rewrites,
             "live_mutable_fields": [
                 "ipv4.ttl",
                 "ipv4.checksum",

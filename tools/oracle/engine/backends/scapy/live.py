@@ -27,7 +27,7 @@ from .packets import encode_packet_plans
 
 
 BACKEND_NAME = "scapy"
-LIVE_SEND_INTERVAL_SECONDS = 0.002
+LIVE_SEND_INTERVAL_SECONDS = 0.01
 
 
 def backend_bootstrap_command_plan() -> LiveCommandPlan:

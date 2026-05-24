@@ -1,7 +1,7 @@
 # libcrafter
 
 `libcrafter` is a Rust alpha workspace for building, decoding, capturing, and
-testing network packets.
+sending network packets.
 
 The Rust API keeps a packet-stacking style: protocol layers compose directly,
 dependent fields are filled during compile, raw bytes can be decoded back into
@@ -49,7 +49,7 @@ fn inspect(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Examples use dry-run send paths by default. Use dry-run plans for local tools
+Send paths are safe by default in examples. Use dry-run plans for local tools
 and reserve live sends for disposable labs:
 
 ```rust

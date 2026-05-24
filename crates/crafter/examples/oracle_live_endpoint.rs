@@ -13,7 +13,7 @@ use std::time::Duration;
 type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
 const BACKEND_NAME: &str = "libcrafter";
-const LIVE_SEND_INTERVAL: Duration = Duration::from_millis(2);
+const LIVE_SEND_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug)]
 struct Args {
