@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
+import posixpath
 import re
 import shlex
 import shutil
@@ -615,11 +617,11 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             generated_count=len(plans),
         )
     if not dry_run:
-        return _live_hetzner_requires_dry_run_report(
+        return _live_hetzner_execute(
             args=args,
             report_path=report_path,
             directions=directions,
-            generated_count=len(plans),
+            plans=plans,
         )
 
     endpoints = hetzner_endpoints(dry_run=True)
@@ -1003,6 +1005,989 @@ def _live_hetzner_requires_dry_run_report(
         file=sys.stderr,
     )
     return 2
+
+
+def _live_hetzner_execute(
+    *,
+    args: argparse.Namespace,
+    report_path: Path,
+    directions: list[str],
+    plans: list[PacketPlan],
+) -> int:
+    from .backends.scapy.normalize import decode_vectors
+    from .backends.scapy.packets import encode_packet_plans
+    from .live import (
+        LIVE_SELECTED_SPECS,
+        LiveCommandPlan,
+        LiveExchangePlan,
+        build_live_endpoint_batch_request,
+        live_endpoint_artifact_paths,
+        validate_live_endpoint_batch_contract,
+    )
+    from .providers.hetzner import (
+        hetzner_endpoint_bootstrap_plan,
+        hetzner_endpoints,
+        hetzner_private_network_plan,
+        hetzner_provider_workflow,
+    )
+
+    output_dir = report_path.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    endpoints = hetzner_endpoints(dry_run=False)
+    provider_workflow = hetzner_provider_workflow(dry_run=False)
+    endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
+    provider_commands: list[JSONObject] = []
+    endpoint_protocol_batches: list[JSONObject] = []
+    exchanges: list[LiveExchangePlan] = []
+    results: list[ComparisonResult] = []
+    execution_errors: list[str] = []
+    manifest_path = _hetzner_manifest_path()
+    manifest: dict[str, str] = {}
+    keep_live_lab = bool(getattr(args, "keep_live_lab", False))
+    live_packet_exchange = False
+
+    try:
+        doctor = _run_live_lab_provider_command(
+            "doctor",
+            output_dir=output_dir,
+            label="01-doctor",
+        )
+        provider_commands.append(doctor)
+        if doctor["exit_code"] != 0:
+            execution_errors.append("Hetzner provider doctor failed")
+            raise RuntimeError("Hetzner provider doctor failed")
+
+        if manifest_path.exists():
+            provider_commands.append(
+                {
+                    "argv": [],
+                    "exit_code": 0,
+                    "label": "02-reuse-existing-lab",
+                    "manifest": str(manifest_path),
+                    "reused_existing_lab": True,
+                }
+            )
+        else:
+            create = _run_live_lab_provider_command(
+                "create",
+                output_dir=output_dir,
+                label="02-create",
+            )
+            provider_commands.append(create)
+            if create["exit_code"] != 0:
+                execution_errors.append("Hetzner provider create failed")
+                raise RuntimeError("Hetzner provider create failed")
+
+        bootstrap = _run_live_lab_provider_command(
+            "run",
+            output_dir=output_dir,
+            label="03-bootstrap",
+            extra_args=["--suite", "oracle-live"],
+        )
+        provider_commands.append(bootstrap)
+        if bootstrap["exit_code"] != 0:
+            execution_errors.append("Hetzner endpoint bootstrap failed")
+            raise RuntimeError("Hetzner endpoint bootstrap failed")
+
+        manifest = _read_hetzner_manifest(manifest_path)
+        remote_dir = manifest.get("remote_dir", "/root/libcrafter")
+        remote_artifact_root = posixpath.join(
+            remote_dir,
+            "live-artifacts",
+            "oracle-live",
+            "exchange",
+        )
+
+        for direction in directions:
+            if direction == "reference_to_libcrafter":
+                sender = endpoints["reference_backend"]
+                receiver = endpoints["libcrafter"]
+            elif direction == "libcrafter_to_reference":
+                sender = endpoints["libcrafter"]
+                receiver = endpoints["reference_backend"]
+            else:
+                print(f"unsupported live direction: {direction}", file=sys.stderr)
+                return 2
+
+            direction_plans = [
+                _live_plan_with_endpoint_addresses(
+                    replace(plan, direction=direction),
+                    sender=sender,
+                    receiver=receiver,
+                )
+                for plan in plans
+            ]
+            expected_models = [
+                decoded.to_dict()
+                for decoded in decode_vectors(encode_packet_plans(direction_plans))
+            ]
+
+            sender_artifacts = live_endpoint_artifact_paths(
+                output_dir=remote_artifact_root,
+                direction=direction,
+                endpoint_role=sender.role,
+            )
+            receiver_artifacts = live_endpoint_artifact_paths(
+                output_dir=remote_artifact_root,
+                direction=direction,
+                endpoint_role=receiver.role,
+            )
+            sender_request = build_live_endpoint_batch_request(
+                provider=args.provider,
+                backend=args.backend,
+                seed=args.seed,
+                profile=args.profile,
+                packet_plans=direction_plans,
+                direction=direction,
+                endpoint=sender,
+                peer=receiver,
+                artifact_paths=sender_artifacts,
+                metadata={
+                    "phase_role": "sender",
+                    "dry_run": False,
+                    "planned_live_packet_exchange": True,
+                    "live_packet_exchange": False,
+                    "batch_size": len(direction_plans),
+                },
+            )
+            receiver_request = build_live_endpoint_batch_request(
+                provider=args.provider,
+                backend=args.backend,
+                seed=args.seed,
+                profile=args.profile,
+                packet_plans=direction_plans,
+                direction=direction,
+                endpoint=receiver,
+                peer=sender,
+                artifact_paths=receiver_artifacts,
+                metadata={
+                    "phase_role": "receiver",
+                    "dry_run": False,
+                    "planned_live_packet_exchange": True,
+                    "live_packet_exchange": False,
+                    "batch_size": len(direction_plans),
+                },
+            )
+
+            sender_request_path = posixpath.join(
+                remote_artifact_root,
+                "inputs",
+                direction,
+                f"{sender.role}.request.json",
+            )
+            receiver_request_path = posixpath.join(
+                remote_artifact_root,
+                "inputs",
+                direction,
+                f"{receiver.role}.request.json",
+            )
+            local_direction_dir = output_dir / "artifacts" / "hetzner-exchange" / direction
+            local_direction_dir.mkdir(parents=True, exist_ok=True)
+            write_json(local_direction_dir / f"{sender.role}.request.json", sender_request)
+            write_json(local_direction_dir / f"{receiver.role}.request.json", receiver_request)
+
+            upload_receiver = _upload_hetzner_endpoint_request(
+                manifest=manifest,
+                endpoint_role=receiver.role,
+                remote_request_path=receiver_request_path,
+                request_json=receiver_request.to_json(),
+                output_dir=local_direction_dir,
+                label=f"upload-{receiver.role}",
+            )
+            upload_sender = _upload_hetzner_endpoint_request(
+                manifest=manifest,
+                endpoint_role=sender.role,
+                remote_request_path=sender_request_path,
+                request_json=sender_request.to_json(),
+                output_dir=local_direction_dir,
+                label=f"upload-{sender.role}",
+            )
+            endpoint_protocol_batches.extend([upload_receiver, upload_sender])
+            if upload_receiver["exit_code"] != 0 or upload_sender["exit_code"] != 0:
+                execution_errors.append(f"{direction}: failed to upload endpoint requests")
+                continue
+
+            receiver_command = LiveCommandPlan(
+                role=receiver.role,
+                purpose="receive-live-packet-batch",
+                argv=_hetzner_endpoint_ssh_argv(
+                    manifest,
+                    receiver.role,
+                    _hetzner_endpoint_remote_command(
+                        endpoint_role=receiver.role,
+                        remote_dir=remote_dir,
+                        request_path=receiver_request_path,
+                        out_dir=remote_artifact_root,
+                    ),
+                ),
+                sends_live_packets=False,
+                expects_live_packets=True,
+                metadata={
+                    "provider": args.provider,
+                    "direction": direction,
+                    "phase_role": "receiver",
+                    "batch_size": len(direction_plans),
+                    "planned_live_packet_exchange": True,
+                    "live_packet_exchange": False,
+                },
+            )
+            sender_command = LiveCommandPlan(
+                role=sender.role,
+                purpose="send-live-packet-batch",
+                argv=_hetzner_endpoint_ssh_argv(
+                    manifest,
+                    sender.role,
+                    _hetzner_endpoint_remote_command(
+                        endpoint_role=sender.role,
+                        remote_dir=remote_dir,
+                        request_path=sender_request_path,
+                        out_dir=remote_artifact_root,
+                    ),
+                ),
+                sends_live_packets=True,
+                expects_live_packets=False,
+                metadata={
+                    "provider": args.provider,
+                    "direction": direction,
+                    "phase_role": "sender",
+                    "batch_size": len(direction_plans),
+                    "planned_live_packet_exchange": True,
+                    "live_packet_exchange": False,
+                },
+            )
+
+            exchanges.append(
+                LiveExchangePlan(
+                    provider=args.provider,
+                    backend=args.backend,
+                    direction=direction,
+                    index=direction_plans[0].index if direction_plans else 0,
+                    packet_plan=direction_plans[0] if direction_plans else plans[0],
+                    sender=sender,
+                    receiver=receiver,
+                    sender_command=sender_command,
+                    receiver_command=receiver_command,
+                    live_packet_exchange=False,
+                    metadata={
+                        "dry_run": False,
+                        "private_network": True,
+                        "batch_size": len(direction_plans),
+                    },
+                )
+            )
+
+            receiver_process = _start_hetzner_endpoint_batch(
+                argv=receiver_command.argv,
+                output_dir=local_direction_dir,
+                label=f"receiver-{receiver.role}",
+            )
+            time.sleep(2)
+            sender_execution = _run_hetzner_endpoint_batch(
+                argv=sender_command.argv,
+                output_dir=local_direction_dir,
+                label=f"sender-{sender.role}",
+                timeout_seconds=_live_endpoint_process_timeout(sender_request.timeout_seconds),
+            )
+            receiver_execution = _wait_hetzner_endpoint_batch(
+                receiver_process,
+                timeout_seconds=_live_endpoint_process_timeout(
+                    receiver_request.timeout_seconds
+                ),
+            )
+            endpoint_protocol_batches.extend([receiver_execution, sender_execution])
+
+            sender_response = _endpoint_response_from_execution(sender_execution)
+            receiver_response = _endpoint_response_from_execution(receiver_execution)
+            if sender_response is None or receiver_response is None:
+                execution_errors.append(f"{direction}: endpoint execution did not return JSON")
+                continue
+
+            sender_validation = validate_live_endpoint_batch_contract(
+                sender_request,
+                sender_response,
+                dry_run=False,
+            )
+            receiver_validation = validate_live_endpoint_batch_contract(
+                receiver_request,
+                receiver_response,
+                dry_run=False,
+            )
+            endpoint_protocol_batches.extend(
+                [
+                    {
+                        "phase_role": "receiver",
+                        "request": receiver_request.to_dict(),
+                        "response": receiver_response.to_dict(),
+                        "validation": receiver_validation.to_dict(),
+                    },
+                    {
+                        "phase_role": "sender",
+                        "request": sender_request.to_dict(),
+                        "response": sender_response.to_dict(),
+                        "validation": sender_validation.to_dict(),
+                    },
+                ]
+            )
+            if not sender_validation.passed or not receiver_validation.passed:
+                execution_errors.append(f"{direction}: endpoint protocol validation failed")
+
+            direction_live_exchange = (
+                sender_response.sent_count > 0
+                and receiver_response.received_count > 0
+                and sender_response.sent_count >= len(direction_plans)
+                and receiver_response.received_count >= len(direction_plans)
+            )
+            live_packet_exchange = live_packet_exchange or direction_live_exchange
+            exchanges[-1] = replace(
+                exchanges[-1],
+                live_packet_exchange=direction_live_exchange,
+                metadata={
+                    **exchanges[-1].metadata,
+                    "live_packet_exchange": direction_live_exchange,
+                    "sent_count": sender_response.sent_count,
+                    "received_count": receiver_response.received_count,
+                    "sender_errors": sender_response.errors,
+                    "receiver_errors": receiver_response.errors,
+                },
+            )
+
+            results.extend(
+                _compare_live_decoded_results(
+                    args=args,
+                    direction=direction,
+                    expected=expected_models,
+                    actual=[model.to_dict() for model in receiver_response.decoded_models],
+                    plans=direction_plans,
+                )
+            )
+    except Exception as exc:  # pragma: no cover - exercised only by live providers.
+        if not execution_errors:
+            execution_errors.append(str(exc))
+    finally:
+        artifact = _run_live_lab_provider_command(
+            "artifact",
+            output_dir=output_dir,
+            label="98-artifact",
+        )
+        provider_commands.append(artifact)
+        if not keep_live_lab:
+            destroy = _run_live_lab_provider_command(
+                "destroy",
+                output_dir=output_dir,
+                label="99-destroy",
+            )
+            provider_commands.append(destroy)
+        else:
+            provider_commands.append(
+                {
+                    "argv": [],
+                    "exit_code": 0,
+                    "label": "99-destroy-skipped",
+                    "keep_live_lab": True,
+                }
+            )
+
+    failures = [result for result in results if not result.passed]
+    provider_failures = [
+        command
+        for command in provider_commands
+        if isinstance(command.get("exit_code"), int) and command["exit_code"] != 0
+    ]
+    status = (
+        "passed"
+        if results and not failures and not execution_errors and not provider_failures
+        else "failed"
+    )
+    artifact_paths = _dedupe_paths(
+        [str(report_path)]
+        + [
+            path
+            for command in provider_commands + endpoint_protocol_batches
+            for path in _command_artifact_paths(command)
+        ]
+        + _comparison_artifact_paths(failures)
+    )
+    report = RunReport(
+        mode="live",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=len(results),
+        status=status,
+        selected_specs=LIVE_SELECTED_SPECS,
+        artifacts=artifact_paths,
+        artifact_paths=artifact_paths,
+        results=results,
+        failures=failures,
+        reproduction_commands=_dedupe_paths(
+            [
+                command
+                for result in failures
+                if result.reproduction_command is not None
+                for command in [result.reproduction_command]
+            ]
+        ),
+        backend_versions=_backend_versions(args.backend),
+        libcrafter=_libcrafter_info(),
+        metadata={
+            "provider": args.provider,
+            "dry_run": False,
+            "creates_infrastructure": any(
+                command.get("label") == "02-create" and command.get("exit_code") == 0
+                for command in provider_commands
+            ),
+            "reused_existing_lab": any(
+                bool(command.get("reused_existing_lab")) for command in provider_commands
+            ),
+            "planned_live_packet_exchange": True,
+            "live_packet_exchange": bool(live_packet_exchange and status == "passed"),
+            "token_configured": True,
+            "requested_count": args.count,
+            "generated_count": len(plans),
+            "execution_directions": directions,
+            "planned_infrastructure": hetzner_private_network_plan(dry_run=False),
+            "provider_workflow": [command.to_dict() for command in provider_workflow],
+            "provider_commands": provider_commands,
+            "endpoint_bootstrap": [command.to_dict() for command in endpoint_bootstrap],
+            "artifact_collection": {
+                "always_attempt": True,
+                "command": provider_workflow[3].to_dict(),
+            },
+            "teardown": {
+                "always_attempt": not keep_live_lab,
+                "keep_live_lab": keep_live_lab,
+                "command": provider_workflow[4].to_dict(),
+            },
+            "manifest": {"path": str(manifest_path), "values": manifest},
+            "endpoints": {
+                name: endpoint.to_dict() for name, endpoint in endpoints.items()
+            },
+            "endpoint_protocol": {
+                "version": 1,
+                "batches": endpoint_protocol_batches,
+            },
+            "exchanges": [exchange.to_dict() for exchange in exchanges],
+            "execution_errors": execution_errors,
+        },
+    )
+    write_json(report_path, report)
+
+    print(
+        f"live {args.provider}: status={status} exchanges={len(exchanges)} "
+        f"live_packet_exchange={str(report.metadata['live_packet_exchange']).lower()} "
+        f"report={report_path}"
+    )
+    if status != "passed":
+        for error in execution_errors:
+            print(f"error: {error}", file=sys.stderr)
+        print(f"reproduce: {_live_reproduction_command(args)}", file=sys.stderr)
+    return 0 if status == "passed" else 1
+
+
+def _hetzner_manifest_path() -> Path:
+    state_root = Path(
+        os.environ.get(
+            "LIBCRAFTER_LIVE_LAB_STATE_DIR",
+            str(REPO_ROOT / "tools" / "live-lab" / ".state"),
+        )
+    )
+    if not state_root.is_absolute():
+        state_root = REPO_ROOT / state_root
+    return state_root / "hetzner" / "manifest.env"
+
+
+def _read_hetzner_manifest(path: Path) -> dict[str, str]:
+    if not path.exists():
+        raise FileNotFoundError(f"Hetzner manifest not found: {path}")
+
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = shlex.split(stripped, posix=True)
+        if len(parts) != 1 or "=" not in parts[0]:
+            continue
+        key, value = parts[0].split("=", 1)
+        values[key] = value
+    return values
+
+
+def _run_live_lab_provider_command(
+    command: str,
+    *,
+    output_dir: Path,
+    label: str,
+    extra_args: Sequence[str] = (),
+) -> JSONObject:
+    provider_dir = output_dir / "provider"
+    provider_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = provider_dir / f"{label}.stdout.txt"
+    stderr_path = provider_dir / f"{label}.stderr.txt"
+    argv = [
+        "tools/live-lab/libcrafter-live-lab",
+        command,
+        "--provider",
+        "hetzner",
+        *extra_args,
+    ]
+    process = subprocess.run(
+        argv,
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    stdout_path.write_text(process.stdout, encoding="utf-8")
+    stderr_path.write_text(process.stderr, encoding="utf-8")
+    return {
+        "argv": argv,
+        "exit_code": process.returncode,
+        "label": label,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+    }
+
+
+def _live_plan_with_endpoint_addresses(
+    plan: PacketPlan,
+    *,
+    sender,
+    receiver,
+) -> PacketPlan:
+    fields = {
+        layer: dict(layer_fields)
+        for layer, layer_fields in plan.fields.items()
+    }
+    if "ipv4" in fields:
+        fields["ipv4"]["src"] = sender.address
+        fields["ipv4"]["dst"] = receiver.address
+    if "ip" in fields:
+        fields["ip"]["src"] = sender.address
+        fields["ip"]["dst"] = receiver.address
+    if (
+        "ipv6" in fields
+        and sender.ipv6_address is not None
+        and receiver.ipv6_address is not None
+    ):
+        fields["ipv6"]["src"] = sender.ipv6_address
+        fields["ipv6"]["dst"] = receiver.ipv6_address
+    metadata = {
+        **plan.metadata,
+        "live_address_rewrite": {
+            "sender_role": sender.role,
+            "receiver_role": receiver.role,
+            "sender_ipv4": sender.address,
+            "receiver_ipv4": receiver.address,
+            "sender_ipv6": sender.ipv6_address,
+            "receiver_ipv6": receiver.ipv6_address,
+        },
+    }
+    return replace(plan, fields=fields, metadata=metadata)
+
+
+def _upload_hetzner_endpoint_request(
+    *,
+    manifest: dict[str, str],
+    endpoint_role: str,
+    remote_request_path: str,
+    request_json: str,
+    output_dir: Path,
+    label: str,
+) -> JSONObject:
+    stdout_path = output_dir / f"{label}.stdout.txt"
+    stderr_path = output_dir / f"{label}.stderr.txt"
+    remote_parent = posixpath.dirname(remote_request_path)
+    remote_command = (
+        f"mkdir -p {shlex.quote(remote_parent)} && "
+        f"cat > {shlex.quote(remote_request_path)}"
+    )
+    argv = _hetzner_endpoint_ssh_argv(manifest, endpoint_role, remote_command)
+    process = subprocess.run(
+        argv,
+        cwd=REPO_ROOT,
+        input=request_json,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    stdout_path.write_text(process.stdout, encoding="utf-8")
+    stderr_path.write_text(process.stderr, encoding="utf-8")
+    return {
+        "argv": argv,
+        "exit_code": process.returncode,
+        "label": label,
+        "remote_request_path": remote_request_path,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+    }
+
+
+def _hetzner_endpoint_ssh_argv(
+    manifest: dict[str, str],
+    endpoint_role: str,
+    remote_command: str,
+) -> list[str]:
+    prefix = "libcrafter" if endpoint_role == "libcrafter" else "reference"
+    host = manifest.get(f"{prefix}_ssh_host") or manifest.get(f"{prefix}_public_ipv4")
+    user = manifest.get("ssh_user", "root")
+    key = manifest.get("ssh_private_key")
+    if not host:
+        raise RuntimeError(f"Hetzner manifest is missing {prefix} SSH host")
+    if not key:
+        raise RuntimeError("Hetzner manifest is missing ssh_private_key")
+
+    known_hosts = _hetzner_manifest_path().parent / "known_hosts"
+    return [
+        "ssh",
+        "-i",
+        key,
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        f"UserKnownHostsFile={known_hosts}",
+        "-o",
+        "ConnectTimeout=10",
+        f"{user}@{host}",
+        remote_command,
+    ]
+
+
+def _hetzner_endpoint_remote_command(
+    *,
+    endpoint_role: str,
+    remote_dir: str,
+    request_path: str,
+    out_dir: str,
+) -> str:
+    quoted_remote_dir = shlex.quote(remote_dir)
+    quoted_request = shlex.quote(request_path)
+    quoted_out = shlex.quote(out_dir)
+    if endpoint_role == "libcrafter":
+        script = "\n".join(
+            [
+                "set -euo pipefail",
+                f"cd {quoted_remote_dir}",
+                'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
+                (
+                    "cargo run -q -p crafter --example oracle_live_endpoint -- "
+                    f"--live --input {quoted_request} --out {quoted_out}"
+                ),
+            ]
+        )
+    else:
+        script = "\n".join(
+            [
+                "set -euo pipefail",
+                f"cd {quoted_remote_dir}",
+                'export PYTHONPATH="tools/oracle${PYTHONPATH:+:$PYTHONPATH}"',
+                (
+                    "python3 -m engine.backends.scapy.live "
+                    f"--live --input {quoted_request} --out {quoted_out}"
+                ),
+            ]
+        )
+    return f"bash -lc {shlex.quote(script)}"
+
+
+def _start_hetzner_endpoint_batch(
+    *,
+    argv: list[str],
+    output_dir: Path,
+    label: str,
+) -> JSONObject:
+    stdout_path = output_dir / f"{label}.stdout.json"
+    stderr_path = output_dir / f"{label}.stderr.txt"
+    process = subprocess.Popen(
+        argv,
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return {
+        "argv": argv,
+        "label": label,
+        "process": process,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+    }
+
+
+def _run_hetzner_endpoint_batch(
+    *,
+    argv: list[str],
+    output_dir: Path,
+    label: str,
+    timeout_seconds: int,
+) -> JSONObject:
+    stdout_path = output_dir / f"{label}.stdout.json"
+    stderr_path = output_dir / f"{label}.stderr.txt"
+    try:
+        process = subprocess.run(
+            argv,
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        stdout = process.stdout
+        stderr = process.stderr
+        exit_code = process.returncode
+        errors: list[str] = []
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        exit_code = 124
+        errors = [f"endpoint command timed out after {timeout_seconds}s"]
+
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
+    response, parse_errors = _parse_endpoint_stdout(stdout, label)
+    return {
+        "argv": argv,
+        "exit_code": exit_code,
+        "label": label,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "response": response,
+        "errors": errors + parse_errors,
+    }
+
+
+def _wait_hetzner_endpoint_batch(
+    execution: JSONObject,
+    *,
+    timeout_seconds: int,
+) -> JSONObject:
+    process = execution.get("process")
+    if not isinstance(process, subprocess.Popen):
+        return {
+            **{key: value for key, value in execution.items() if key != "process"},
+            "exit_code": 1,
+            "response": None,
+            "errors": ["receiver process handle is invalid"],
+        }
+
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        exit_code = process.returncode
+        errors: list[str] = []
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout, stderr = process.communicate()
+        exit_code = 124
+        errors = [f"endpoint command timed out after {timeout_seconds}s"]
+
+    stdout_path = Path(str(execution["stdout_path"]))
+    stderr_path = Path(str(execution["stderr_path"]))
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
+    response, parse_errors = _parse_endpoint_stdout(stdout, str(execution["label"]))
+    return {
+        **{key: value for key, value in execution.items() if key != "process"},
+        "exit_code": exit_code,
+        "response": response,
+        "errors": errors + parse_errors,
+    }
+
+
+def _parse_endpoint_stdout(stdout: str, label: str) -> tuple[JSONObject | None, list[str]]:
+    if not stdout.strip():
+        return None, [f"{label}: endpoint produced no JSON response"]
+    try:
+        value = json.loads(stdout)
+    except json.JSONDecodeError:
+        start = stdout.find("{")
+        end = stdout.rfind("}")
+        if start < 0 or end <= start:
+            return None, [f"{label}: endpoint stdout was not JSON"]
+        try:
+            value = json.loads(stdout[start : end + 1])
+        except json.JSONDecodeError as exc:
+            return None, [f"{label}: endpoint stdout JSON parse failed: {exc}"]
+    if not isinstance(value, dict):
+        return None, [f"{label}: endpoint response must be a JSON object"]
+    return _json_object(value, f"{label}.response"), []
+
+
+def _endpoint_response_from_execution(execution: JSONObject):
+    from .live import (
+        LiveCaptureArtifact,
+        LiveEndpointBatchResponse,
+        LiveEndpointIndexStatus,
+    )
+
+    response = execution.get("response")
+    if not isinstance(response, dict):
+        return None
+    response_object = _json_object(response, "endpoint response")
+    decoded_values = response_object.get("decoded_models")
+    capture_values = response_object.get("captures")
+    status_values = response_object.get("per_index_status")
+    if not isinstance(decoded_values, list):
+        return None
+    if not isinstance(capture_values, list):
+        return None
+    if not isinstance(status_values, list):
+        return None
+
+    decoded_models = [
+        _decoded_model_from_object(model, f"decoded_models[{index}]")
+        for index, model in enumerate(decoded_values)
+    ]
+    captures = [
+        _live_capture_from_object(capture, f"captures[{index}]")
+        for index, capture in enumerate(capture_values)
+    ]
+    statuses = [
+        _live_status_from_object(status, f"per_index_status[{index}]")
+        for index, status in enumerate(status_values)
+    ]
+    return LiveEndpointBatchResponse(
+        provider=_required_response_string(response_object, "provider"),
+        backend=_required_response_string(response_object, "backend"),
+        direction=_required_response_string(response_object, "direction"),
+        endpoint_id=_required_response_string(response_object, "endpoint_id"),
+        endpoint_role=_required_response_string(response_object, "endpoint_role"),
+        sent_count=_object_int(response_object.get("sent_count"), 0),
+        received_count=_object_int(response_object.get("received_count"), 0),
+        decoded_models=decoded_models,
+        captures=captures,
+        per_index_status=statuses,
+        errors=_string_values(response_object.get("errors", [])),
+        artifact_paths=_json_object(
+            response_object.get("artifact_paths", {}),
+            "endpoint response artifact_paths",
+        ),
+        metadata=_json_object(response_object.get("metadata", {}), "endpoint metadata"),
+    )
+
+
+def _decoded_model_from_object(value: object, name: str) -> DecodedModel:
+    model = _json_object(value, name)
+    fields = _json_object(model.get("fields", {}), f"{name}.fields")
+    return DecodedModel(
+        backend=_optional_string(model.get("backend")) or "unknown",
+        layers=_string_values(model.get("layers", [])),
+        fields={
+            layer: _json_object(layer_fields, f"{name}.fields.{layer}")
+            for layer, layer_fields in fields.items()
+        },
+        root=_optional_string(model.get("root")),
+        source_hex=_optional_string(model.get("source_hex")),
+        feature_tags=_string_values(model.get("feature_tags", [])),
+        metadata=_json_object(model.get("metadata", {}), f"{name}.metadata"),
+    )
+
+
+def _live_capture_from_object(value: object, name: str):
+    from .live import LiveCaptureArtifact
+
+    capture = _json_object(value, name)
+    return LiveCaptureArtifact(
+        endpoint_role=_required_response_string(capture, "endpoint_role"),
+        path=_required_response_string(capture, "path"),
+        link_type=_optional_string(capture.get("link_type")),
+        packet_count=_object_int(capture.get("packet_count"), 0),
+        metadata=_json_object(capture.get("metadata", {}), f"{name}.metadata"),
+    )
+
+
+def _live_status_from_object(value: object, name: str):
+    from .live import LiveEndpointIndexStatus
+
+    status = _json_object(value, name)
+    return LiveEndpointIndexStatus(
+        index=_object_int(status.get("index"), 0),
+        direction=_required_response_string(status, "direction"),
+        status=_required_response_string(status, "status"),
+        sent=bool(status.get("sent")),
+        received=bool(status.get("received")),
+        decoded_count=_object_int(status.get("decoded_count"), 0),
+        capture_paths=_string_values(status.get("capture_paths", [])),
+        errors=_string_values(status.get("errors", [])),
+        metadata=_json_object(status.get("metadata", {}), f"{name}.metadata"),
+    )
+
+
+def _required_response_string(value: JSONObject, key: str) -> str:
+    item = value.get(key)
+    if not isinstance(item, str) or not item:
+        raise RuntimeError(f"endpoint response requires string field {key}")
+    return item
+
+
+def _live_endpoint_process_timeout(endpoint_timeout: int) -> int:
+    return max(120, int(endpoint_timeout) + 90)
+
+
+def _compare_live_decoded_results(
+    *,
+    args: argparse.Namespace,
+    direction: str,
+    expected: list[JSONObject],
+    actual: list[JSONObject],
+    plans: list[PacketPlan],
+) -> list[ComparisonResult]:
+    results: list[ComparisonResult] = []
+    shared_count = min(len(expected), len(actual), len(plans))
+    for index in range(shared_count):
+        plan = plans[index]
+        results.append(
+            compare_decoded_models(
+                expected=expected[index],
+                actual=actual[index],
+                plan=plan,
+                direction=direction,
+                reproduction_command=_live_reproduction_command(args),
+                actual_strict_bytes_hex=_strict_bytes_hex(actual[index]),
+            )
+        )
+
+    if len(actual) == len(expected) == len(plans):
+        return results
+
+    for index in range(shared_count, len(plans)):
+        plan = plans[index]
+        results.append(
+            ComparisonResult(
+                passed=False,
+                direction=direction,
+                expected=expected[index] if index < len(expected) else {},
+                actual=actual[index] if index < len(actual) else {},
+                plan=plan,
+                strict_bytes=plan.strict_bytes,
+                byte_equal=False,
+                differences=[
+                    {
+                        "path": "decoded_count",
+                        "expected": len(expected),
+                        "actual": len(actual),
+                    }
+                ],
+                reproduction_command=_live_reproduction_command(args),
+                metadata={
+                    "live_packet_exchange": False,
+                    "reason": "receiver decoded packet count mismatch",
+                },
+            )
+        )
+    return results
+
+
+def _command_artifact_paths(command: JSONObject) -> list[str]:
+    paths: list[str] = []
+    for key in ("stdout_path", "stderr_path"):
+        value = command.get(key)
+        if isinstance(value, str):
+            paths.append(value)
+    return paths
 
 
 def _live_local_dry_run(args: argparse.Namespace) -> int:
@@ -3190,6 +4175,8 @@ def _live_reproduction_command(args: argparse.Namespace) -> str:
         argv.extend(["--root", args.root])
     if getattr(args, "dry_run", False):
         argv.append("--dry-run")
+    if getattr(args, "keep_live_lab", False):
+        argv.append("--keep-live-lab")
     return shlex.join(argv)
 
 
@@ -4050,6 +5037,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="plan provider-backed live validation without creating infrastructure",
+    )
+    live_parser.add_argument(
+        "--keep-live-lab",
+        action="store_true",
+        help="keep Hetzner live-lab resources after a non-dry-run for debugging",
     )
     live_parser.set_defaults(func=_live)
 
