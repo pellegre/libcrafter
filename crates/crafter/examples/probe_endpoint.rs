@@ -107,6 +107,16 @@ struct ProbePlan {
     expected_response_code: Option<u8>,
     #[serde(default)]
     answer_ttl: Option<u32>,
+    #[serde(default)]
+    ttl: Option<u8>,
+    #[serde(default)]
+    expected_icmp_type: Option<u8>,
+    #[serde(default)]
+    expected_icmp_code: Option<u8>,
+    #[serde(default)]
+    expected_embedded_prefix_hex: Option<String>,
+    #[serde(default)]
+    expected_embedded_prefix_length: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -251,6 +261,8 @@ fn run_endpoint(
             (RunMode::Live, "tcp-syn-open" | "tcp-syn-closed") => run_tcp_live(request, plan)?,
             (RunMode::DryRun, "dns-query") => run_dns_dry_run(request, plan)?,
             (RunMode::Live, "dns-query") => run_dns_live(request, plan)?,
+            (RunMode::DryRun, "ttl-expired") => run_ttl_expired_dry_run(request, plan)?,
+            (RunMode::Live, "ttl-expired") => run_ttl_expired_live(request, plan)?,
             _ => {
                 let message = format!("unsupported probe case: {}", plan.case);
                 errors.push(message.clone());
@@ -895,6 +907,219 @@ fn run_dns_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResu
     ))
 }
 
+fn run_ttl_expired_dry_run(
+    request: &ProbeEndpointRequest,
+    plan: &ProbePlan,
+) -> ExampleResult<ProbeOutcome> {
+    let packet = ttl_expired_packet(plan)?;
+    let report = SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .dry_run(),
+    )
+    .send(&packet)?;
+    let sent_raw = report.plan().bytes();
+    let sent_raw_hex = hex_bytes(sent_raw);
+    let embedded_prefix = expected_embedded_prefix(plan, sent_raw)?;
+    let observed = observed_response(
+        plan,
+        false,
+        None,
+        json!({}),
+        json!({
+            "planned_only": true,
+            "send_report": send_report_json(&report),
+            "sent_raw_hex": sent_raw_hex,
+            "capture_filter": capture_filter(plan),
+            "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
+        }),
+    );
+    let result = json!({
+        "case": plan.case,
+        "sequence": plan.sequence,
+        "status": "planned",
+        "endpoint_role": "stimulus",
+        "passed": null,
+        "observed_response": observed,
+        "metadata": {
+            "dry_run": true,
+            "probe_plan": plan_json(plan),
+            "planned_only": true,
+            "sent_raw_hex": sent_raw_hex,
+            "capture_filter": capture_filter(plan),
+            "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
+        }
+    });
+    Ok(ProbeOutcome {
+        result,
+        observed_response: observed,
+        sent: false,
+        received: false,
+    })
+}
+
+fn run_ttl_expired_live(
+    request: &ProbeEndpointRequest,
+    plan: &ProbePlan,
+) -> ExampleResult<ProbeOutcome> {
+    let packet = ttl_expired_packet(plan)?;
+    let timeout = Duration::from_secs(request.timeout_seconds.max(1));
+    let mut sniffer = match Sniffer::interface(request.interface.clone())
+        .timeout(timeout)
+        .count(64)
+        .filter(&capture_filter(plan))
+        .open()
+    {
+        Ok(sniffer) => sniffer,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("capture open failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
+    let send_report = match SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .live(),
+    )
+    .send(&packet)
+    {
+        Ok(report) => report,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("send failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
+
+    let sent = send_report.bytes_sent() > 0;
+    let embedded_prefix = expected_embedded_prefix(plan, send_report.plan().bytes())?;
+    let mut wrong_peer = None;
+    let mut wrong_payload = None;
+    while let Some(captured) = match sniffer.next_packet() {
+        Ok(packet) => packet,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("capture decode failed: {err}")],
+                Some(send_report_json(&send_report)),
+                sent,
+                false,
+            ));
+        }
+    } {
+        match validate_ttl_expired_candidate(
+            plan,
+            captured.packet(),
+            captured.data(),
+            &embedded_prefix,
+        )? {
+            CandidateValidation::Ignore => {}
+            CandidateValidation::Passed(decoded) => {
+                let raw_hex = hex_bytes(captured.data());
+                let observed = observed_response(
+                    plan,
+                    true,
+                    Some(raw_hex.clone()),
+                    decoded.clone(),
+                    json!({
+                        "send_report": send_report_json(&send_report),
+                        "capture_filter": capture_filter(plan),
+                        "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
+                    }),
+                );
+                let result = json!({
+                    "case": plan.case,
+                    "sequence": plan.sequence,
+                    "status": "passed",
+                    "endpoint_role": "stimulus",
+                    "passed": true,
+                    "observed_response": observed,
+                    "metadata": {
+                        "dry_run": false,
+                        "probe_plan": plan_json(plan),
+                        "raw_hex": raw_hex,
+                        "decoded": decoded,
+                    }
+                });
+                return Ok(ProbeOutcome {
+                    result,
+                    observed_response: observed,
+                    sent,
+                    received: true,
+                });
+            }
+            CandidateValidation::WrongPeer(decoded) => {
+                wrong_peer = Some(decoded);
+            }
+            CandidateValidation::WrongPayload(decoded) => {
+                wrong_payload = Some(decoded);
+            }
+        }
+    }
+
+    if let Some(decoded) = wrong_payload {
+        return Ok(failed_outcome(
+            plan,
+            FAILURE_WRONG_PAYLOAD,
+            vec![
+                "captured ICMP time exceeded did not include the expected embedded packet prefix"
+                    .to_string(),
+            ],
+            Some(json!({
+                "send_report": send_report_json(&send_report),
+                "decoded": decoded,
+                "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
+            })),
+            sent,
+            true,
+        ));
+    }
+
+    if let Some(decoded) = wrong_peer {
+        return Ok(failed_outcome(
+            plan,
+            FAILURE_WRONG_PEER,
+            vec![
+                "captured ICMP time exceeded did not match expected router or destination"
+                    .to_string(),
+            ],
+            Some(json!({
+                "send_report": send_report_json(&send_report),
+                "decoded": decoded,
+            })),
+            sent,
+            true,
+        ));
+    }
+
+    Ok(failed_outcome(
+        plan,
+        FAILURE_TIMEOUT,
+        vec!["timed out waiting for ICMP time exceeded".to_string()],
+        Some(json!({
+            "send_report": send_report_json(&send_report),
+            "capture_filter": capture_filter(plan),
+            "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
+        })),
+        sent,
+        false,
+    ))
+}
+
 fn failed_outcome(
     plan: &ProbePlan,
     reason: &str,
@@ -1329,6 +1554,93 @@ fn validate_dns_candidate(
     Ok(CandidateValidation::Passed(decoded))
 }
 
+fn validate_ttl_expired_candidate(
+    plan: &ProbePlan,
+    packet: &Packet,
+    raw: &[u8],
+    expected_embedded_prefix: &[u8],
+) -> ExampleResult<CandidateValidation> {
+    let Some(icmp) = packet.layer::<Icmp>() else {
+        return Ok(CandidateValidation::Ignore);
+    };
+    let expected_type = plan.expected_icmp_type.unwrap_or(ICMP_TIME_EXCEEDED);
+    if icmp.icmp_type_value() != expected_type {
+        return Ok(CandidateValidation::Ignore);
+    }
+
+    let expected_source: Ipv4Addr = required_str(
+        plan.expected_reply_source_ipv4.as_deref(),
+        "expected_reply_source_ipv4",
+    )?
+    .parse()?;
+    let expected_destination: Ipv4Addr = required_str(
+        plan.expected_reply_destination_ipv4.as_deref(),
+        "expected_reply_destination_ipv4",
+    )?
+    .parse()?;
+    let expected_code = plan.expected_icmp_code.unwrap_or(0);
+    let mut peer_mismatches = Vec::new();
+
+    match packet.layer::<Ipv4>() {
+        Some(ipv4) => {
+            if ipv4.source() != expected_source {
+                peer_mismatches.push(json!({
+                    "field": "ipv4.src",
+                    "expected": expected_source.to_string(),
+                    "actual": ipv4.source().to_string(),
+                }));
+            }
+            if ipv4.destination() != expected_destination {
+                peer_mismatches.push(json!({
+                    "field": "ipv4.dst",
+                    "expected": expected_destination.to_string(),
+                    "actual": ipv4.destination().to_string(),
+                }));
+            }
+        }
+        None => peer_mismatches.push(json!({
+            "field": "ipv4",
+            "expected": "present",
+            "actual": "missing",
+        })),
+    }
+
+    let decoded = decoded_packet_json(packet, raw);
+    if !peer_mismatches.is_empty() {
+        return Ok(CandidateValidation::WrongPeer(json!({
+            "packet": decoded,
+            "mismatches": peer_mismatches,
+        })));
+    }
+
+    let mut payload_mismatches = Vec::new();
+    if icmp.code_value() != expected_code {
+        payload_mismatches.push(json!({
+            "field": "icmp.code",
+            "expected": expected_code,
+            "actual": icmp.code_value(),
+        }));
+    }
+
+    let embedded = raw_payload(packet);
+    if !embedded.starts_with(expected_embedded_prefix) {
+        payload_mismatches.push(json!({
+            "field": "icmp.embedded_prefix",
+            "expected": hex_bytes(expected_embedded_prefix),
+            "actual": hex_bytes(&embedded[..embedded.len().min(expected_embedded_prefix.len())]),
+        }));
+    }
+
+    if !payload_mismatches.is_empty() {
+        return Ok(CandidateValidation::WrongPayload(json!({
+            "packet": decoded,
+            "mismatches": payload_mismatches,
+        })));
+    }
+
+    Ok(CandidateValidation::Passed(decoded))
+}
+
 fn icmp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let source: Ipv4Addr = required_str(plan.source_ipv4.as_deref(), "source_ipv4")?.parse()?;
     let destination: Ipv4Addr =
@@ -1370,6 +1682,21 @@ fn dns_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     Ok(Ipv4::new().src(source).dst(destination)
         / Udp::new().sport(source_port).dport(destination_port)
         / Dns::query(query_name, query_type).id(query_id))
+}
+
+fn ttl_expired_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
+    let source: Ipv4Addr = required_str(plan.source_ipv4.as_deref(), "source_ipv4")?.parse()?;
+    let destination: Ipv4Addr =
+        required_str(plan.destination_ipv4.as_deref(), "destination_ipv4")?.parse()?;
+    let payload = decode_hex(required_str(plan.payload_hex.as_deref(), "payload_hex")?)?;
+    let identifier = required_u16(plan.identifier, "identifier")?;
+    let sequence_number = required_u16(plan.sequence_number, "sequence_number")?;
+    Ok(Ipv4::new()
+        .src(source)
+        .dst(destination)
+        .ttl(plan.ttl.unwrap_or(1))
+        / Icmp::echo_request().id(identifier).seq(sequence_number)
+        / Raw::from_bytes(payload))
 }
 
 fn observed_response(
@@ -1419,6 +1746,11 @@ fn plan_json(plan: &ProbePlan) -> Value {
         "expected_answer_data": plan.expected_answer_data,
         "expected_response_code": plan.expected_response_code,
         "answer_ttl": plan.answer_ttl,
+        "ttl": plan.ttl,
+        "expected_icmp_type": plan.expected_icmp_type,
+        "expected_icmp_code": plan.expected_icmp_code,
+        "expected_embedded_prefix_hex": plan.expected_embedded_prefix_hex,
+        "expected_embedded_prefix_length": plan.expected_embedded_prefix_length,
         "target_service": target_service_json(plan),
         "capture_filter": capture_filter(plan),
     })
@@ -1497,6 +1829,13 @@ fn capture_filter(plan: &ProbePlan) -> String {
             plan.destination_port.unwrap_or(0),
             plan.source_port.unwrap_or(0),
         ),
+        "ttl-expired" => format!(
+            "icmp and src host {} and dst host {}",
+            plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+            plan.expected_reply_destination_ipv4
+                .as_deref()
+                .unwrap_or("")
+        ),
         _ => String::new(),
     }
 }
@@ -1509,6 +1848,7 @@ fn expected_response(plan: &ProbePlan) -> &str {
             "tcp-syn-open" => "tcp_syn_ack",
             "tcp-syn-closed" => "tcp_rst",
             "dns-query" => "dns_response",
+            "ttl-expired" => "icmp_ttl_expired",
             _ => "unknown",
         })
 }
@@ -1535,6 +1875,21 @@ fn target_service_json(plan: &ProbePlan) -> Value {
         }),
         _ => json!({}),
     }
+}
+
+fn expected_embedded_prefix(plan: &ProbePlan, sent_raw: &[u8]) -> ExampleResult<Vec<u8>> {
+    if let Some(expected_hex) = plan
+        .expected_embedded_prefix_hex
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        return decode_hex(expected_hex);
+    }
+    let prefix_len = plan
+        .expected_embedded_prefix_length
+        .unwrap_or(28)
+        .min(sent_raw.len());
+    Ok(sent_raw[..prefix_len].to_vec())
 }
 
 fn dns_type_value(plan: &ProbePlan) -> ExampleResult<u16> {

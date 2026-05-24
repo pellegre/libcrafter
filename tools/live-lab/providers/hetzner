@@ -1048,7 +1048,7 @@ tcp_closed_port_state=reserved_unbound
 dns_service=planned
 dns_service_port=53
 controlled_router=false
-ttl_expired_probe=skip_provider_capability_unavailable
+ttl_expired_probe=skip_requires_controlled_router
 EOF
   write_provider_capability_artifacts "$probe_artifact_dir" true
 }
@@ -1148,7 +1148,7 @@ tcp_closed_port_state=reserved_unbound
 dns_service=planned
 dns_service_port=53
 controlled_router=false
-ttl_expired_probe=skip_provider_capability_unavailable
+ttl_expired_probe=skip_requires_controlled_router
 finished_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF2
 {

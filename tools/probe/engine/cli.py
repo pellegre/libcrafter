@@ -32,6 +32,7 @@ from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 PROBE_SELECTED_SPECS = ("probe-contracts",)
 SKIP_CAPABILITY_UNAVAILABLE = "provider_capability_unavailable"
 SKIP_CONFIRMATION_REQUIRED = "confirm_live_run_required"
+SKIP_REQUIRES_CONTROLLED_ROUTER = "requires_controlled_router"
 STATUS_DRY_RUN = "dry-run"
 STATUS_FAILED = "failed"
 STATUS_PASSED = "passed"
@@ -86,7 +87,7 @@ _PROBE_CASES: tuple[ProbeCase, ...] = (
         description="Send low-TTL packet and validate ICMP TTL-expired from controlled hop.",
         stimulus="low_ttl_probe",
         expected_response="icmp_ttl_expired",
-        required_capabilities=["controlled_routed_hop"],
+        required_capabilities=["controlled_router"],
         endpoint_roles=["stimulus", "router"],
         metadata={"protocol": "icmp", "service": "controlled_router"},
     ),
@@ -106,7 +107,7 @@ _ENDPOINT_ROLES: tuple[EndpointRole, ...] = (
     EndpointRole(
         role="router",
         responsibilities=["emit_ttl_expired"],
-        capabilities=["controlled_routed_hop"],
+        capabilities=["controlled_router"],
     ),
 )
 _PROVIDER_CAPABILITIES: dict[str, JSONObject] = {
@@ -117,7 +118,7 @@ _PROVIDER_CAPABILITIES: dict[str, JSONObject] = {
         "tcp_open_port": True,
         "tcp_closed_port": True,
         "dns_service": True,
-        "controlled_routed_hop": False,
+        "controlled_router": False,
     },
     "hetzner": {
         "provider": "hetzner",
@@ -126,7 +127,7 @@ _PROVIDER_CAPABILITIES: dict[str, JSONObject] = {
         "tcp_open_port": True,
         "tcp_closed_port": True,
         "dns_service": True,
-        "controlled_routed_hop": False,
+        "controlled_router": False,
     },
 }
 
@@ -326,6 +327,12 @@ def _probe_plan_for_case(
         )
     if case.name == "dns-query":
         return _dns_query_probe_plan(
+            profile=request.profile,
+            seed=request.seed,
+            sequence=sequence,
+        )
+    if case.name == "ttl-expired":
+        return _ttl_expired_probe_plan(
             profile=request.profile,
             seed=request.seed,
             sequence=sequence,
@@ -543,6 +550,65 @@ def _dns_query_name(*, profile: str, seed: int, sequence: int, digest: bytes) ->
     return f"probe-{seed}-{sequence}-{suffix}.{label}.libcrafter.test."
 
 
+def _ttl_expired_probe_plan(
+    *,
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    digest = _deterministic_bytes("ttl-expired", profile, seed, sequence)
+    stimulus_ipv4, destination_ipv4 = _deterministic_ipv4_pair(
+        profile,
+        seed,
+        sequence,
+    )
+    router_ipv4 = _deterministic_router_ipv4(profile, seed, sequence)
+    identifier = int.from_bytes(digest[0:2], "big") or 1
+    sequence_number = int.from_bytes(digest[2:4], "big")
+    payload = (
+        f"libcrafter-probe:ttl-expired:{profile}:{seed}:{sequence}:"
+        f"{digest.hex()[:16]}"
+    ).encode("ascii")
+    embedded_prefix_length = 28
+    return {
+        "schema_version": 1,
+        "case": "ttl-expired",
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "low_ttl_probe",
+        "expected_response": "icmp_ttl_expired",
+        "ttl": 1,
+        "identifier": identifier,
+        "sequence_number": sequence_number,
+        "payload_hex": payload.hex(),
+        "payload_length": len(payload),
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": destination_ipv4,
+        "controlled_router_ipv4": router_ipv4,
+        "expected_reply_source_ipv4": router_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "expected_icmp_type": 11,
+        "expected_icmp_code": 0,
+        "expected_embedded_prefix_length": embedded_prefix_length,
+        "capture_filter": (
+            f"icmp and src host {router_ipv4} and dst host {stimulus_ipv4}"
+        ),
+        "validation": {
+            "source_ipv4": router_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "icmp_type": 11,
+            "icmp_code": 0,
+            "embedded_prefix": {
+                "source": "stimulus_sent_bytes",
+                "length": embedded_prefix_length,
+                "meaning": "original IPv4 header plus first eight bytes of payload",
+            },
+        },
+    }
+
+
 def _dns_label(value: str) -> str:
     label = "".join(char.lower() if char.isalnum() else "-" for char in value)
     label = "-".join(part for part in label.split("-") if part)
@@ -559,6 +625,13 @@ def _deterministic_ipv4_pair(profile: str, seed: int, sequence: int) -> tuple[st
     second = 64 + digest[0] % 64
     third = digest[1]
     return f"10.{second}.{third}.10", f"10.{second}.{third}.20"
+
+
+def _deterministic_router_ipv4(profile: str, seed: int, sequence: int) -> str:
+    digest = _deterministic_bytes("endpoint-addresses", profile, seed, sequence)
+    second = 64 + digest[0] % 64
+    third = digest[1]
+    return f"10.{second}.{third}.1"
 
 
 def _dry_run_report(
@@ -590,11 +663,23 @@ def _guarded_live_report(
     status: str,
 ) -> ProbeReport:
     if request.provider == "hetzner" and request.confirm_live_run:
-        executable_plans = _probe_endpoint_plans(probe_plans)
-        unsupported = [
-            case.name for case in planned_cases if case.name not in _PROBE_ENDPOINT_CASES
+        provider_capabilities = _PROVIDER_CAPABILITIES[request.provider]
+        skipped_sequences = {
+            sequence
+            for sequence, case in enumerate(planned_cases)
+            if _missing_capabilities(case, provider_capabilities)
+        }
+        executable_plans = [
+            plan
+            for plan in _probe_endpoint_plans(probe_plans)
+            if int(plan.get("sequence", -1)) not in skipped_sequences
         ]
-        if executable_plans and not unsupported:
+        unsupported = [
+            case.name
+            for sequence, case in enumerate(planned_cases)
+            if sequence not in skipped_sequences and case.name not in _PROBE_ENDPOINT_CASES
+        ]
+        if (executable_plans or skipped_sequences) and not unsupported:
             return _hetzner_endpoint_live_report(
                 request=request,
                 selected_cases=selected_cases,
@@ -643,33 +728,19 @@ def _build_report(
 
     for sequence, case in enumerate(planned_cases):
         probe_plan = probe_plans_by_sequence.get(sequence, {})
-        missing = _missing_capabilities(case, provider_capabilities)
-        if missing:
-            skip = ProbeSkip(
-                case=case.name,
-                sequence=sequence,
-                reason=SKIP_CAPABILITY_UNAVAILABLE,
-                capability=missing[0],
-                metadata={
-                    "missing_capabilities": list(missing),
-                    "provider": request.provider,
-                    "dry_run": dry_run,
-                    "probe_plan": probe_plan,
-                },
-            )
+        capability_skip = _capability_skip_result(
+            request=request,
+            case=case,
+            sequence=sequence,
+            probe_plan=probe_plan,
+            dry_run=dry_run,
+            provider_capabilities=provider_capabilities,
+        )
+        if capability_skip is not None:
+            skip, result = capability_skip
             skips.append(skip)
             skip_counts[skip.reason] = skip_counts.get(skip.reason, 0) + 1
-            results.append(
-                ProbeResult(
-                    case=case.name,
-                    sequence=sequence,
-                    status="skipped",
-                    endpoint_role=_primary_endpoint_role(case),
-                    passed=None,
-                    skip=skip,
-                    metadata={"dry_run": dry_run, "probe_plan": probe_plan},
-                )
-            )
+            results.append(result)
             continue
 
         if not dry_run and not request.confirm_live_run:
@@ -750,6 +821,7 @@ def _build_report(
         "skipped_count": len(skips),
         "observed_count": sum(1 for response in observed_responses if response.observed),
         "provider_capabilities": dict(provider_capabilities),
+        "skip_reasons": list(skip_counts),
         "skip_counts_by_reason": skip_counts,
         "selected_case_names": [case.name for case in selected_cases],
         "planned_case_names": [case.name for case in planned_cases],
@@ -830,7 +902,7 @@ def _write_probe_endpoint_request_artifact(
 
 
 _PROBE_ENDPOINT_CASES = frozenset(
-    {"icmp-echo", "tcp-syn-open", "tcp-syn-closed", "dns-query"}
+    {"icmp-echo", "tcp-syn-open", "tcp-syn-closed", "dns-query", "ttl-expired"}
 )
 
 
@@ -852,156 +924,189 @@ def _hetzner_endpoint_live_report(
     provider_commands: list[JSONObject] = []
     execution_errors: list[str] = []
     endpoint_response: JSONObject | None = None
-    live_plans = list(probe_plans)
+    provider_capabilities = _PROVIDER_CAPABILITIES[request.provider]
+    skipped_results, skips, skip_counts, skipped_sequences = _capability_skip_state(
+        request=request,
+        planned_cases=planned_cases,
+        probe_plans=probe_plans,
+        dry_run=False,
+        provider_capabilities=provider_capabilities,
+    )
+    all_live_plans = list(probe_plans)
+    live_plans = [
+        plan
+        for plan in probe_plans
+        if int(plan.get("sequence", -1)) not in skipped_sequences
+    ]
+    executable_planned_cases = [
+        case
+        for sequence, case in enumerate(planned_cases)
+        if sequence not in skipped_sequences
+    ]
     local_request_path = endpoint_dir / "stimulus.request.json"
     manifest_path = _hetzner_manifest_path()
     manifest: dict[str, str] = {}
     target_setup_attempted = False
     rst_guard_attempted = False
 
-    try:
-        manifest = _read_hetzner_manifest(manifest_path)
-        source_ipv4 = manifest.get("libcrafter_private_ipv4", "")
-        target_ipv4 = manifest.get("reference_private_ipv4", "")
-        interface = (
-            manifest.get("libcrafter_interface")
-            or manifest.get("private_interface")
-            or _probe_interface("hetzner", dry_run=False)
-        )
-        live_plans = [
-            _probe_plan_with_endpoint_addresses(
-                plan,
-                source_ipv4=source_ipv4,
-                target_ipv4=target_ipv4,
+    if live_plans:
+        try:
+            manifest = _read_hetzner_manifest(manifest_path)
+            source_ipv4 = manifest.get("libcrafter_private_ipv4", "")
+            target_ipv4 = manifest.get("reference_private_ipv4", "")
+            interface = (
+                manifest.get("libcrafter_interface")
+                or manifest.get("private_interface")
+                or _probe_interface("hetzner", dry_run=False)
             )
-            for plan in probe_plans
-        ]
-        remote_dir = manifest.get("remote_dir", "/root/libcrafter")
-        remote_artifact_root = posixpath.join(
-            remote_dir,
-            "live-artifacts",
-            "probe",
-            "endpoint",
-        )
-        remote_request_path = posixpath.join(
-            remote_artifact_root,
-            "inputs",
-            "stimulus.request.json",
-        )
-        endpoint_request = _probe_endpoint_request_object(
-            request=request,
-            probe_plans=live_plans,
-            dry_run=False,
-            interface=interface,
-            artifact_root=remote_artifact_root,
-            request_path=remote_request_path,
-        )
-        write_json(local_request_path, endpoint_request)
-
-        target_setup = _prepare_hetzner_probe_target(
-            manifest=manifest,
-            remote_dir=remote_dir,
-            probe_plans=live_plans,
-            output_dir=endpoint_dir,
-        )
-        if target_setup is not None:
-            target_setup_attempted = True
-            provider_commands.append(target_setup)
-            execution_errors.extend(_string_list(target_setup.get("errors", [])))
-            if target_setup["exit_code"] != 0:
-                execution_errors.append("target endpoint setup failed")
-
-        rst_setup = _install_hetzner_stimulus_rst_guards(
-            manifest=manifest,
-            probe_plans=live_plans,
-            output_dir=endpoint_dir,
-        )
-        if rst_setup is not None:
-            rst_guard_attempted = True
-            provider_commands.append(rst_setup)
-            execution_errors.extend(_string_list(rst_setup.get("errors", [])))
-            if rst_setup["exit_code"] != 0:
-                execution_errors.append("stimulus RST guard setup failed")
-
-        if not execution_errors:
-            upload = _upload_hetzner_probe_request(
-                manifest=manifest,
-                local_request_path=local_request_path,
-                remote_request_path=remote_request_path,
-                output_dir=endpoint_dir,
+            all_live_plans = [
+                _probe_plan_with_endpoint_addresses(
+                    plan,
+                    source_ipv4=source_ipv4,
+                    target_ipv4=target_ipv4,
+                )
+                for plan in probe_plans
+            ]
+            live_plans = [
+                plan
+                for plan in all_live_plans
+                if int(plan.get("sequence", -1)) not in skipped_sequences
+            ]
+            remote_dir = manifest.get("remote_dir", "/root/libcrafter")
+            remote_artifact_root = posixpath.join(
+                remote_dir,
+                "live-artifacts",
+                "probe",
+                "endpoint",
             )
-            provider_commands.append(upload)
-            if upload["exit_code"] != 0:
-                execution_errors.append("failed to upload probe endpoint request")
-        else:
-            upload = None
+            remote_request_path = posixpath.join(
+                remote_artifact_root,
+                "inputs",
+                "stimulus.request.json",
+            )
+            endpoint_request = _probe_endpoint_request_object(
+                request=request,
+                probe_plans=live_plans,
+                dry_run=False,
+                interface=interface,
+                artifact_root=remote_artifact_root,
+                request_path=remote_request_path,
+            )
+            write_json(local_request_path, endpoint_request)
 
-        if not execution_errors and upload is not None:
-            execution = _run_hetzner_probe_endpoint(
+            target_setup = _prepare_hetzner_probe_target(
                 manifest=manifest,
                 remote_dir=remote_dir,
-                remote_request_path=remote_request_path,
-                remote_artifact_root=remote_artifact_root,
+                probe_plans=live_plans,
                 output_dir=endpoint_dir,
-                timeout_seconds=_probe_process_timeout_seconds(len(live_plans)),
             )
-            provider_commands.append(execution)
-            endpoint_response = execution.get("response") if isinstance(
-                execution.get("response"), dict
-            ) else None
-            execution_errors.extend(_string_list(execution.get("errors", [])))
-            if execution["exit_code"] != 0:
-                execution_errors.append("probe endpoint command failed")
-            if endpoint_response is None:
-                execution_errors.append("probe endpoint did not return JSON")
-    except Exception as exc:  # pragma: no cover - live-provider only.
-        execution_errors.append(str(exc))
-    finally:
-        if manifest and rst_guard_attempted:
-            rst_cleanup = _cleanup_hetzner_stimulus_rst_guards(
+            if target_setup is not None:
+                target_setup_attempted = True
+                provider_commands.append(target_setup)
+                execution_errors.extend(_string_list(target_setup.get("errors", [])))
+                if target_setup["exit_code"] != 0:
+                    execution_errors.append("target endpoint setup failed")
+
+            rst_setup = _install_hetzner_stimulus_rst_guards(
                 manifest=manifest,
                 probe_plans=live_plans,
                 output_dir=endpoint_dir,
             )
-            provider_commands.append(rst_cleanup)
-            execution_errors.extend(_string_list(rst_cleanup.get("errors", [])))
-            if rst_cleanup["exit_code"] != 0:
-                execution_errors.append("stimulus RST guard cleanup failed")
-        if manifest and target_setup_attempted:
-            target_cleanup = _cleanup_hetzner_probe_target(
-                manifest=manifest,
-                remote_dir=manifest.get("remote_dir", "/root/libcrafter"),
-                output_dir=endpoint_dir,
-            )
-            provider_commands.append(target_cleanup)
-            execution_errors.extend(_string_list(target_cleanup.get("errors", [])))
-            if target_cleanup["exit_code"] != 0:
-                execution_errors.append("target endpoint cleanup failed")
+            if rst_setup is not None:
+                rst_guard_attempted = True
+                provider_commands.append(rst_setup)
+                execution_errors.extend(_string_list(rst_setup.get("errors", [])))
+                if rst_setup["exit_code"] != 0:
+                    execution_errors.append("stimulus RST guard setup failed")
 
-    if endpoint_response is None:
-        results, observed_responses = _failed_live_probe_results(
-            planned_cases=planned_cases,
+            if not execution_errors:
+                upload = _upload_hetzner_probe_request(
+                    manifest=manifest,
+                    local_request_path=local_request_path,
+                    remote_request_path=remote_request_path,
+                    output_dir=endpoint_dir,
+                )
+                provider_commands.append(upload)
+                if upload["exit_code"] != 0:
+                    execution_errors.append("failed to upload probe endpoint request")
+            else:
+                upload = None
+
+            if not execution_errors and upload is not None:
+                execution = _run_hetzner_probe_endpoint(
+                    manifest=manifest,
+                    remote_dir=remote_dir,
+                    remote_request_path=remote_request_path,
+                    remote_artifact_root=remote_artifact_root,
+                    output_dir=endpoint_dir,
+                    timeout_seconds=_probe_process_timeout_seconds(len(live_plans)),
+                )
+                provider_commands.append(execution)
+                endpoint_response = execution.get("response") if isinstance(
+                    execution.get("response"), dict
+                ) else None
+                execution_errors.extend(_string_list(execution.get("errors", [])))
+                if execution["exit_code"] != 0:
+                    execution_errors.append("probe endpoint command failed")
+                if endpoint_response is None:
+                    execution_errors.append("probe endpoint did not return JSON")
+        except Exception as exc:  # pragma: no cover - live-provider only.
+            execution_errors.append(str(exc))
+        finally:
+            if manifest and rst_guard_attempted:
+                rst_cleanup = _cleanup_hetzner_stimulus_rst_guards(
+                    manifest=manifest,
+                    probe_plans=live_plans,
+                    output_dir=endpoint_dir,
+                )
+                provider_commands.append(rst_cleanup)
+                execution_errors.extend(_string_list(rst_cleanup.get("errors", [])))
+                if rst_cleanup["exit_code"] != 0:
+                    execution_errors.append("stimulus RST guard cleanup failed")
+            if manifest and target_setup_attempted:
+                target_cleanup = _cleanup_hetzner_probe_target(
+                    manifest=manifest,
+                    remote_dir=manifest.get("remote_dir", "/root/libcrafter"),
+                    output_dir=endpoint_dir,
+                )
+                provider_commands.append(target_cleanup)
+                execution_errors.extend(_string_list(target_cleanup.get("errors", [])))
+                if target_cleanup["exit_code"] != 0:
+                    execution_errors.append("target endpoint cleanup failed")
+
+    if not live_plans:
+        endpoint_results: list[ProbeResult] = []
+        observed_responses = []
+    elif endpoint_response is None:
+        endpoint_results, observed_responses = _failed_live_probe_results(
+            planned_cases=executable_planned_cases,
             probe_plans=live_plans,
             reason=FAILURE_DECODE_FAILED,
             errors=execution_errors,
         )
     else:
-        results, observed_responses = _probe_results_from_endpoint_response(
+        endpoint_results, observed_responses = _probe_results_from_endpoint_response(
             endpoint_response
         )
 
+    results = sorted(
+        [*skipped_results, *endpoint_results],
+        key=lambda result: result.sequence,
+    )
     failures = [result for result in results if result.passed is False]
     status = STATUS_PASSED if results and not failures and not execution_errors else STATUS_FAILED
     failed_counts = _failed_counts_by_reason(results)
-    artifact_paths = [
-        str(report_path),
-        str(local_request_path),
-        *[
+    executed_count = sum(1 for result in results if result.status != "skipped")
+    artifact_paths = [str(report_path)]
+    if local_request_path.exists():
+        artifact_paths.append(str(local_request_path))
+    artifact_paths.extend(
+        [
             path
             for command in provider_commands
             for path in _command_artifact_paths(command)
-        ],
-    ]
+        ]
+    )
     if endpoint_response is not None:
         artifact_paths.extend(_string_list(endpoint_response.get("artifacts", [])))
         artifact_paths.extend(_string_list(endpoint_response.get("artifact_paths", [])))
@@ -1018,7 +1123,7 @@ def _hetzner_endpoint_live_report(
         cases=list(selected_cases),
         endpoint_roles=list(_ENDPOINT_ROLES),
         results=results,
-        skips=[],
+        skips=skips,
         observed_responses=observed_responses,
         artifacts=artifact_paths,
         artifact_paths=artifact_paths,
@@ -1035,21 +1140,22 @@ def _hetzner_endpoint_live_report(
                 [result.case for result in results if result.status != "skipped"]
             ),
             "failed_counts_by_reason": failed_counts,
-            "skipped_count": 0,
+            "skipped_count": len(skips),
             "observed_count": sum(
                 1 for response in observed_responses if response.observed
             ),
-            "provider_capabilities": dict(_PROVIDER_CAPABILITIES[request.provider]),
-            "skip_counts_by_reason": {},
+            "provider_capabilities": dict(provider_capabilities),
+            "skip_reasons": list(skip_counts),
+            "skip_counts_by_reason": skip_counts,
             "selected_case_names": [case.name for case in selected_cases],
             "planned_case_names": [case.name for case in planned_cases],
-            "probe_plans": live_plans,
+            "probe_plans": all_live_plans,
             "selected_specs": list(PROBE_SELECTED_SPECS),
             "dry_run": False,
             "creates_infrastructure": False,
             "requires_provider_lifecycle": True,
             "mutates_lab": True,
-            "live_packet_exchange": status == STATUS_PASSED,
+            "live_packet_exchange": status == STATUS_PASSED and executed_count > 0,
             "manifest": {"path": str(manifest_path), "loaded": bool(manifest)},
             "provider_commands": provider_commands,
             "execution_errors": execution_errors,
@@ -1119,6 +1225,18 @@ def _probe_plan_with_endpoint_addresses(
         updated["capture_filter"] = (
             f"icmp and src host {target_ipv4} and dst host {source_ipv4}"
         )
+    elif case_name == "ttl-expired":
+        router_ipv4 = str(
+            updated.get("controlled_router_ipv4") or target_ipv4
+        )
+        updated["source_ipv4"] = source_ipv4
+        updated["destination_ipv4"] = target_ipv4
+        updated["controlled_router_ipv4"] = router_ipv4
+        updated["expected_reply_source_ipv4"] = router_ipv4
+        updated["expected_reply_destination_ipv4"] = source_ipv4
+        updated["capture_filter"] = (
+            f"icmp and src host {router_ipv4} and dst host {source_ipv4}"
+        )
     elif case_name.startswith("tcp-syn-"):
         source_port = int(updated.get("source_port", 0))
         destination_port = int(updated.get("destination_port", 0))
@@ -1157,7 +1275,11 @@ def _probe_plan_with_endpoint_addresses(
         )
         updated["target_service"] = target_service
     validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
-    validation["source_ipv4"] = target_ipv4
+    validation["source_ipv4"] = (
+        str(updated.get("controlled_router_ipv4"))
+        if case_name == "ttl-expired" and updated.get("controlled_router_ipv4")
+        else target_ipv4
+    )
     validation["destination_ipv4"] = source_ipv4
     updated["validation"] = validation
     updated["live_address_rewrite"] = {
@@ -1890,26 +2012,28 @@ def _failed_live_probe_results(
     reason: str,
     errors: Sequence[str],
 ) -> tuple[list[ProbeResult], list[ObservedResponse]]:
-    plans_by_sequence = {
-        int(plan["sequence"]): plan
-        for plan in probe_plans
-        if isinstance(plan.get("sequence"), int)
-    }
-    results = [
-        ProbeResult(
-            case=case.name,
-            sequence=sequence,
-            status=STATUS_FAILED,
-            endpoint_role=_primary_endpoint_role(case),
-            passed=False,
-            metadata={
-                "failure_reason": reason,
-                "errors": list(errors),
-                "probe_plan": plans_by_sequence.get(sequence, {}),
-            },
+    results: list[ProbeResult] = []
+    for index, case in enumerate(planned_cases):
+        plan = probe_plans[index] if index < len(probe_plans) else {}
+        sequence = (
+            int(plan["sequence"])
+            if isinstance(plan.get("sequence"), int)
+            else index
         )
-        for sequence, case in enumerate(planned_cases)
-    ]
+        results.append(
+            ProbeResult(
+                case=case.name,
+                sequence=sequence,
+                status=STATUS_FAILED,
+                endpoint_role=_primary_endpoint_role(case),
+                passed=False,
+                metadata={
+                    "failure_reason": reason,
+                    "errors": list(errors),
+                    "probe_plan": plan,
+                },
+            )
+        )
     return results, []
 
 
@@ -1992,7 +2116,87 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_DECODE_FAILED,
             FAILURE_TARGET_SETUP_FAILED,
         ]
+    if case_name == "ttl-expired":
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_DECODE_FAILED,
+        ]
     return []
+
+
+def _capability_skip_result(
+    *,
+    request: ProbeRunRequest,
+    case: ProbeCase,
+    sequence: int,
+    probe_plan: JSONObject,
+    dry_run: bool,
+    provider_capabilities: Mapping[str, JSONValue],
+) -> tuple[ProbeSkip, ProbeResult] | None:
+    missing = _missing_capabilities(case, provider_capabilities)
+    if not missing:
+        return None
+
+    skip = ProbeSkip(
+        case=case.name,
+        sequence=sequence,
+        reason=_skip_reason_for_missing_capability(case, missing[0]),
+        capability=missing[0],
+        metadata={
+            "missing_capabilities": list(missing),
+            "provider": request.provider,
+            "dry_run": dry_run,
+            "probe_plan": probe_plan,
+        },
+    )
+    result = ProbeResult(
+        case=case.name,
+        sequence=sequence,
+        status="skipped",
+        endpoint_role=_primary_endpoint_role(case),
+        passed=None,
+        skip=skip,
+        metadata={"dry_run": dry_run, "probe_plan": probe_plan},
+    )
+    return skip, result
+
+
+def _capability_skip_state(
+    *,
+    request: ProbeRunRequest,
+    planned_cases: Sequence[ProbeCase],
+    probe_plans: Sequence[JSONObject],
+    dry_run: bool,
+    provider_capabilities: Mapping[str, JSONValue],
+) -> tuple[list[ProbeResult], list[ProbeSkip], dict[str, int], set[int]]:
+    probe_plans_by_sequence = {
+        int(plan["sequence"]): plan
+        for plan in probe_plans
+        if isinstance(plan.get("sequence"), int)
+    }
+    results: list[ProbeResult] = []
+    skips: list[ProbeSkip] = []
+    skip_counts: dict[str, int] = {}
+    skipped_sequences: set[int] = set()
+    for sequence, case in enumerate(planned_cases):
+        capability_skip = _capability_skip_result(
+            request=request,
+            case=case,
+            sequence=sequence,
+            probe_plan=probe_plans_by_sequence.get(sequence, {}),
+            dry_run=dry_run,
+            provider_capabilities=provider_capabilities,
+        )
+        if capability_skip is None:
+            continue
+        skip, result = capability_skip
+        skips.append(skip)
+        results.append(result)
+        skipped_sequences.add(sequence)
+        skip_counts[skip.reason] = skip_counts.get(skip.reason, 0) + 1
+    return results, skips, skip_counts, skipped_sequences
 
 
 def _missing_capabilities(
@@ -2004,6 +2208,12 @@ def _missing_capabilities(
         if provider_capabilities.get(capability) is not True:
             missing.append(capability)
     return missing
+
+
+def _skip_reason_for_missing_capability(case: ProbeCase, capability: str) -> str:
+    if case.name == "ttl-expired" and capability == "controlled_router":
+        return SKIP_REQUIRES_CONTROLLED_ROUTER
+    return SKIP_CAPABILITY_UNAVAILABLE
 
 
 def _primary_endpoint_role(case: ProbeCase) -> str:
@@ -2084,7 +2294,7 @@ def _target_service_setup_plan(
         ],
         "controlled_router": {
             "available": False,
-            "skip_reason": "provider_capability_unavailable",
+            "skip_reason": SKIP_REQUIRES_CONTROLLED_ROUTER,
         },
     }
 
