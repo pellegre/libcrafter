@@ -46,7 +46,7 @@ coverage_cases:
   - pcap-scapy-ethernet
   - pcap-scapy-null-loopback
   - pcap-crafter-ethernet
-  - pcap-crafter-pcapng-mixed-links
+  - pcapng-libcrafter-mixed-links
 
 backend_support:
   scapy:

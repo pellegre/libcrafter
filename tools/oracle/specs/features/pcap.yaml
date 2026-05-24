@@ -190,7 +190,7 @@ coverage_cases:
   - pcap-crafter-linux-cooked
   - pcap-crafter-null-loopback
   - pcap-crafter-raw
-  - pcap-crafter-pcapng-mixed-links
+  - pcapng-libcrafter-mixed-links
 
 backend_support:
   scapy:
