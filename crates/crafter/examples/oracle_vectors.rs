@@ -1,6 +1,5 @@
-#[path = "scapy_interop_vectors.rs"]
-#[allow(dead_code)]
-mod scapy_interop_vectors;
+#[path = "oracle_vectors/cases.rs"]
+mod cases;
 
 use serde_json::{json, Map, Value};
 use std::env;
@@ -54,67 +53,59 @@ fn print_usage() {
 }
 
 fn build_manifest() -> ExampleResult<Value> {
-    let legacy = scapy_interop_vectors::manifest_json()?;
-    let legacy_object = json_object(&legacy, "legacy manifest")?;
-    let legacy_cases = legacy_object
-        .get("cases")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_data("legacy manifest cases must be an array"))?;
-
-    let mut cases = Vec::with_capacity(legacy_cases.len());
-    for case in legacy_cases {
+    let case_inputs = cases::build_cases()?;
+    let mut cases = Vec::with_capacity(case_inputs.len());
+    for case in &case_inputs {
         cases.push(oracle_case(case)?);
     }
 
     Ok(json!({
-        "schema_version": legacy_object.get("schema_version").cloned().unwrap_or_else(|| json!(1)),
+        "schema_version": 1,
         "direction": DIRECTION,
         "directions": [DIRECTION, ROUNDTRIP_DIRECTION],
         "generator": GENERATOR,
         "cases": cases,
         "metadata": {
-            "source_generator": legacy_object.get("generator").cloned().unwrap_or(Value::Null),
-            "source_direction": legacy_object.get("direction").cloned().unwrap_or(Value::Null)
+            "case_source": "crates/crafter/examples/oracle_vectors/cases.rs"
         }
     }))
 }
 
-fn oracle_case(case: &Value) -> ExampleResult<Value> {
-    let object = json_object(case, "legacy case")?;
-    let raw_hex = string_field(object, "hex")?;
-    let expected_stack = normalize_stack(array_field(object, "expected_stack")?)?;
-    let field_assertions = normalize_field_assertions(array_field(object, "field_assertions")?)?;
+fn oracle_case(case: &cases::Vector) -> ExampleResult<Value> {
+    let raw_hex = case.raw_hex.as_str();
+    let expected_stack = normalize_stack(&case.expected_stack);
+    let field_assertions = normalize_field_assertions(&case.field_assertions)?;
     let assertion_fields = assertion_fields(&field_assertions)?;
-    let feature_tags = case_feature_tags(object, &expected_stack);
+    let feature_tags = case_feature_tags(case, &expected_stack);
 
     let mut output = Map::new();
-    copy_field(object, &mut output, "name")?;
-    copy_field(object, &mut output, "family")?;
+    output.insert("name".to_string(), json!(case.name));
+    output.insert("family".to_string(), json!(case.family));
     output.insert("feature_tags".to_string(), json!(feature_tags.clone()));
     output.insert("direction".to_string(), json!(DIRECTION));
     output.insert(
         "directions".to_string(),
         json!([DIRECTION, ROUNDTRIP_DIRECTION]),
     );
-    copy_field(object, &mut output, "root")?;
-    copy_field(object, &mut output, "root_decoder")?;
+    output.insert("root".to_string(), json!(case.root));
+    output.insert("root_decoder".to_string(), json!(case.root_decoder));
     output.insert(
         "expected_stack".to_string(),
         Value::Array(expected_stack.clone()),
     );
     output.insert("field_assertions".to_string(), field_assertions.clone());
-    copy_field(object, &mut output, "strict_bytes")?;
-    copy_field(object, &mut output, "length")?;
+    output.insert("strict_bytes".to_string(), json!(case.strict_bytes));
+    output.insert("length".to_string(), json!(case.length));
     output.insert("raw_hex".to_string(), json!(raw_hex));
     output.insert("hex".to_string(), json!(raw_hex));
-    copy_optional_field(object, &mut output, "summary");
+    output.insert("summary".to_string(), json!(case.summary));
     output.insert(
         "expected_decoded".to_string(),
         json!({
             "backend": "libcrafter",
             "layers": expected_stack,
             "fields": assertion_fields,
-            "root": object.get("root_decoder").or_else(|| object.get("root")).cloned().unwrap_or(Value::Null),
+            "root": case.root_decoder,
             "source_hex": raw_hex,
             "feature_tags": feature_tags,
             "metadata": {
@@ -125,60 +116,39 @@ fn oracle_case(case: &Value) -> ExampleResult<Value> {
     output.insert(
         "metadata".to_string(),
         json!({
-            "legacy_direction": object.get("direction").cloned().unwrap_or(Value::Null),
-            "legacy_expected_stack": object.get("expected_stack").cloned().unwrap_or(Value::Null),
-            "legacy_field_assertions": object.get("field_assertions").cloned().unwrap_or(Value::Null)
+            "case_source": "oracle_vectors",
+            "assertions_are_partial": true
         }),
     );
 
     Ok(Value::Object(output))
 }
 
-fn case_feature_tags(object: &Map<String, Value>, expected_stack: &[Value]) -> Vec<String> {
-    let mut tags = Vec::new();
-    if let Some(values) = object.get("feature_tags").and_then(Value::as_array) {
-        for value in values {
-            if let Some(tag) = value.as_str() {
-                tags.push(tag.to_string());
-            }
-        }
-    }
-    if tags.is_empty() {
-        if let Some(family) = object.get("family").and_then(Value::as_str) {
-            tags.push(family.to_string());
-        }
-        for layer in expected_stack {
-            if let Some(layer) = layer.as_str() {
-                tags.push(layer.to_string());
-            }
+fn case_feature_tags(case: &cases::Vector, expected_stack: &[Value]) -> Vec<String> {
+    let mut tags = vec![case.family.to_string()];
+    for layer in expected_stack {
+        if let Some(layer) = layer.as_str() {
+            tags.push(layer.to_string());
         }
     }
     dedupe(tags)
 }
 
-fn normalize_stack(stack: &[Value]) -> ExampleResult<Vec<Value>> {
+fn normalize_stack(stack: &[&str]) -> Vec<Value> {
     stack
         .iter()
-        .map(|layer| {
-            Ok(Value::String(normalize_layer_name(
-                layer
-                    .as_str()
-                    .ok_or_else(|| invalid_data("expected_stack entries must be strings"))?,
-            )))
-        })
+        .map(|layer| Value::String(normalize_layer_name(layer)))
         .collect()
 }
 
-fn normalize_field_assertions(assertions: &[Value]) -> ExampleResult<Value> {
+fn normalize_field_assertions(assertions: &[cases::FieldAssertion]) -> ExampleResult<Value> {
     let mut output = Vec::with_capacity(assertions.len());
     for assertion in assertions {
-        let object = json_object(assertion, "field assertion")?;
-        let layer = string_field(object, "layer")?;
-        let fields = object
-            .get("fields")
-            .and_then(Value::as_object)
+        let fields = assertion
+            .fields
+            .as_object()
             .ok_or_else(|| invalid_data("field assertion fields must be an object"))?;
-        let normalized_layer = normalize_layer_name(layer);
+        let normalized_layer = normalize_layer_name(assertion.layer);
         output.push(json!({
             "layer": normalized_layer,
             "fields": normalize_fields(&normalized_layer, fields)?
@@ -387,39 +357,10 @@ fn dedupe(values: Vec<String>) -> Vec<String> {
     output
 }
 
-fn copy_field(
-    source: &Map<String, Value>,
-    target: &mut Map<String, Value>,
-    key: &str,
-) -> ExampleResult<()> {
-    target.insert(
-        key.to_string(),
-        source
-            .get(key)
-            .cloned()
-            .ok_or_else(|| invalid_data(format!("legacy case is missing {key}")))?,
-    );
-    Ok(())
-}
-
-fn copy_optional_field(source: &Map<String, Value>, target: &mut Map<String, Value>, key: &str) {
-    if let Some(value) = source.get(key) {
-        target.insert(key.to_string(), value.clone());
-    }
-}
-
 fn json_object<'a>(value: &'a Value, label: &str) -> ExampleResult<&'a Map<String, Value>> {
     value
         .as_object()
         .ok_or_else(|| invalid_data(format!("{label} must be an object")).into())
-}
-
-fn array_field<'a>(object: &'a Map<String, Value>, key: &str) -> ExampleResult<&'a [Value]> {
-    object
-        .get(key)
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .ok_or_else(|| invalid_data(format!("{key} must be an array")).into())
 }
 
 fn string_field<'a>(object: &'a Map<String, Value>, key: &str) -> ExampleResult<&'a str> {

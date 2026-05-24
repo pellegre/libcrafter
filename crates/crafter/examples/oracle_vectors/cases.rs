@@ -1,12 +1,9 @@
 use crafter::prelude::*;
-use serde::Serialize;
 use serde_json::{json, Value};
-use std::env;
 use std::error::Error;
-use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
+pub(crate) type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
 const SRC_MAC: &str = "02:00:5e:00:53:01";
 const DST_MAC: &str = "02:00:5e:00:53:02";
@@ -15,111 +12,60 @@ const DST_IPV4: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 20);
 const GW_IPV4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 const DNS_IPV4: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 53);
 
-#[derive(Serialize)]
-struct Manifest {
-    schema_version: u8,
-    direction: &'static str,
-    generator: &'static str,
-    cases: Vec<Vector>,
+pub(crate) struct Vector {
+    pub(crate) name: &'static str,
+    pub(crate) family: &'static str,
+    pub(crate) root: &'static str,
+    pub(crate) root_decoder: &'static str,
+    pub(crate) expected_stack: Vec<&'static str>,
+    pub(crate) strict_bytes: bool,
+    pub(crate) length: usize,
+    pub(crate) raw_hex: String,
+    pub(crate) summary: &'static str,
+    pub(crate) field_assertions: Vec<FieldAssertion>,
 }
 
-#[derive(Serialize)]
-struct Vector {
-    name: &'static str,
-    family: &'static str,
-    direction: &'static str,
-    root: &'static str,
-    root_decoder: &'static str,
-    expected_stack: Vec<&'static str>,
-    strict_bytes: bool,
-    length: usize,
-    hex: String,
-    summary: &'static str,
-    field_assertions: Vec<FieldAssertion>,
+pub(crate) struct FieldAssertion {
+    pub(crate) layer: &'static str,
+    pub(crate) fields: Value,
 }
 
-#[derive(Serialize)]
-struct FieldAssertion {
-    layer: &'static str,
-    fields: Value,
-}
-
-fn main() -> ExampleResult<()> {
-    let args = env::args().skip(1).collect::<Vec<_>>();
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_usage();
-        return Ok(());
-    }
-
-    let manifest = build_manifest()?;
-    if args.iter().any(|arg| arg == "--list") {
-        for case in &manifest.cases {
-            println!("{}\t{}\t{}", case.name, case.root, case.summary);
-        }
-        return Ok(());
-    }
-
-    if args.is_empty() || args.iter().any(|arg| arg == "--json") {
-        serde_json::to_writer_pretty(io::stdout(), &manifest)?;
-        println!();
-        return Ok(());
-    }
-
-    Err(format!("unknown arguments: {}", args.join(" ")).into())
-}
-
-fn print_usage() {
-    println!(
-        "usage: cargo run -p crafter --example scapy_interop_vectors -- [--list|--json]\n\nEmit deterministic libcrafter packet vectors for Scapy parser validation."
-    );
-}
-
-fn build_manifest() -> ExampleResult<Manifest> {
-    Ok(Manifest {
-        schema_version: 1,
-        direction: "libcrafter_to_scapy",
-        generator: "crafter example scapy_interop_vectors",
-        cases: vec![
-            ethernet_raw()?,
-            arp_request()?,
-            ipv4_icmp()?,
-            icmpv4_echo_reply()?,
-            ipv6_icmp()?,
-            dns_query()?,
-            dhcp_discover()?,
-            vlan_ipv4_udp()?,
-            crafter_raw_payload()?,
-            crafter_ethernet_unknown_ethertype()?,
-            crafter_arp_reply()?,
-            crafter_vlan_boundary_fields()?,
-            crafter_linux_cooked_ipv4_udp()?,
-            crafter_null_loopback_ipv4_little_endian()?,
-            crafter_ipv4_boundary_fields()?,
-            crafter_ipv4_unknown_protocol_raw()?,
-            crafter_ipv4_fragment_mf_offset()?,
-            crafter_ipv4_ttl_255()?,
-            crafter_ipv4_options()?,
-            crafter_ipv4_source_route_traceroute()?,
-            crafter_ipv6_boundary_fields()?,
-            crafter_ipv6_unknown_next_header_raw()?,
-            crafter_ipv6_fragment_udp()?,
-            crafter_ipv6_routing_generic()?,
-            crafter_ipv6_mobile_routing()?,
-            crafter_ipv6_segment_routing_udp()?,
-            crafter_ipv6_routing_tcp_raw()?,
-            crafter_ipv6_routing_icmpv6()?,
-            crafter_udp_ipv4_checksum_payload()?,
-            crafter_udp_ipv6_checksum_payload()?,
-            crafter_tcp_all_flags_payload()?,
-            crafter_tcp_common_options()?,
-            crafter_tcp_advanced_options()?,
-        ],
-    })
-}
-
-#[allow(dead_code)]
-pub(crate) fn manifest_json() -> std::result::Result<Value, Box<dyn Error>> {
-    Ok(serde_json::to_value(build_manifest()?)?)
+pub(crate) fn build_cases() -> ExampleResult<Vec<Vector>> {
+    Ok(vec![
+        ethernet_raw()?,
+        arp_request()?,
+        ipv4_icmp()?,
+        icmpv4_echo_reply()?,
+        ipv6_icmp()?,
+        dns_query()?,
+        dhcp_discover()?,
+        vlan_ipv4_udp()?,
+        crafter_raw_payload()?,
+        crafter_ethernet_unknown_ethertype()?,
+        crafter_arp_reply()?,
+        crafter_vlan_boundary_fields()?,
+        crafter_linux_cooked_ipv4_udp()?,
+        crafter_null_loopback_ipv4_little_endian()?,
+        crafter_ipv4_boundary_fields()?,
+        crafter_ipv4_unknown_protocol_raw()?,
+        crafter_ipv4_fragment_mf_offset()?,
+        crafter_ipv4_ttl_255()?,
+        crafter_ipv4_options()?,
+        crafter_ipv4_source_route_traceroute()?,
+        crafter_ipv6_boundary_fields()?,
+        crafter_ipv6_unknown_next_header_raw()?,
+        crafter_ipv6_fragment_udp()?,
+        crafter_ipv6_routing_generic()?,
+        crafter_ipv6_mobile_routing()?,
+        crafter_ipv6_segment_routing_udp()?,
+        crafter_ipv6_routing_tcp_raw()?,
+        crafter_ipv6_routing_icmpv6()?,
+        crafter_udp_ipv4_checksum_payload()?,
+        crafter_udp_ipv6_checksum_payload()?,
+        crafter_tcp_all_flags_payload()?,
+        crafter_tcp_common_options()?,
+        crafter_tcp_advanced_options()?,
+    ])
 }
 
 fn ethernet_raw() -> ExampleResult<Vector> {
@@ -1376,13 +1322,12 @@ fn vector(
     Ok(Vector {
         name,
         family,
-        direction: "libcrafter_to_scapy",
         root,
         root_decoder: root,
         expected_stack,
         strict_bytes: true,
         length: compiled.len(),
-        hex: hex_bytes(compiled.as_bytes()),
+        raw_hex: hex_bytes(compiled.as_bytes()),
         summary,
         field_assertions,
     })
