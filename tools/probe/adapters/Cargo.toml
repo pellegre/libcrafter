@@ -7,8 +7,8 @@ license.workspace = true
 publish = false
 
 [[bin]]
-name = "probe_endpoint"
-path = "src/bin/probe_endpoint.rs"
+name = "stimulus_endpoint"
+path = "src/bin/stimulus_endpoint.rs"
 
 [dependencies]
 crafter = { path = "../../../crates/crafter" }

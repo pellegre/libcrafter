@@ -17,5 +17,5 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 Build the Rust adapter directly:
 
 ```sh
-cargo build -p probe-adapters --bin probe_endpoint
+cargo build -p probe-adapters --bin stimulus_endpoint
 ```

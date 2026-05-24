@@ -243,7 +243,7 @@ def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
                 "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
                 "uv": "install_if_missing",
                 "rust": "install_if_missing",
-                "validation": "cargo build -p oracle-adapters --bin oracle_live_endpoint",
+                "validation": "cargo build -p oracle-adapters --bin live_endpoint",
                 "artifact": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
                 "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
             },
@@ -360,7 +360,7 @@ def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
                 (
                     "sync-repository && apt-get install libcrafter packages && "
                     "rustup install-if-missing && "
-                    "cargo build -p oracle-adapters --bin oracle_live_endpoint"
+                    "cargo build -p oracle-adapters --bin live_endpoint"
                 ),
             ],
             sends_live_packets=False,
@@ -374,7 +374,7 @@ def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
                 "uv": "install_if_missing",
                 "rust": "install_if_missing",
-                "validation": "cargo build -p oracle-adapters --bin oracle_live_endpoint",
+                "validation": "cargo build -p oracle-adapters --bin live_endpoint",
                 "artifact_path": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
                 "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
                 "provider_capabilities": provider_capabilities,
@@ -460,9 +460,9 @@ def validate_hetzner_endpoint_bootstrap(
             errors.append("libcrafter bootstrap must install Rust when missing")
         if (
             libcrafter.metadata.get("validation")
-            != "cargo build -p oracle-adapters --bin oracle_live_endpoint"
+            != "cargo build -p oracle-adapters --bin live_endpoint"
         ):
-            errors.append("libcrafter bootstrap must validate oracle_live_endpoint build")
+            errors.append("libcrafter bootstrap must validate live_endpoint build")
 
     reference = commands_by_role.get("reference_backend")
     if reference is not None:

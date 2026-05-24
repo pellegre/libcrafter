@@ -1,4 +1,4 @@
-#[path = "oracle_vectors/cases.rs"]
+#[path = "vectors/cases.rs"]
 mod cases;
 
 use serde_json::{json, Map, Value};
@@ -48,7 +48,7 @@ fn main() -> ExampleResult<()> {
 
 fn print_usage() {
     println!(
-        "usage: cargo run -p oracle-adapters --bin oracle_vectors -- [--list|--json]\n\nEmit deterministic libcrafter packet vectors for oracle reference validation."
+        "usage: cargo run -p oracle-adapters --bin vectors -- [--list|--json]\n\nEmit deterministic libcrafter packet vectors for oracle reference validation."
     );
 }
 
@@ -66,7 +66,7 @@ fn build_manifest() -> ExampleResult<Value> {
         "generator": GENERATOR,
         "cases": cases,
         "metadata": {
-            "case_source": "tools/oracle/adapters/src/bin/oracle_vectors/cases.rs"
+            "case_source": "tools/oracle/adapters/src/bin/vectors/cases.rs"
         }
     }))
 }
@@ -116,7 +116,7 @@ fn oracle_case(case: &cases::Vector) -> ExampleResult<Value> {
     output.insert(
         "metadata".to_string(),
         json!({
-            "case_source": "oracle_vectors",
+            "case_source": "vectors",
             "assertions_are_partial": true
         }),
     );

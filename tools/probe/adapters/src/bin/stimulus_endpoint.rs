@@ -39,7 +39,7 @@ impl RunMode {
 }
 
 #[derive(Debug, Deserialize)]
-struct ProbeEndpointRequest {
+struct StimulusEndpointRequest {
     provider: String,
     profile: String,
     seed: u64,
@@ -138,7 +138,7 @@ enum CandidateValidation {
 fn main() -> ExampleResult<()> {
     let args = parse_args()?;
     let input = read_input(args.input.clone())?;
-    let request: ProbeEndpointRequest = serde_json::from_str(&input)?;
+    let request: StimulusEndpointRequest = serde_json::from_str(&input)?;
     let request_json: Value = serde_json::from_str(&input)?;
     let response = run_endpoint(&request, request_json, &args)?;
 
@@ -149,7 +149,7 @@ fn main() -> ExampleResult<()> {
 
 fn parse_args() -> ExampleResult<Args> {
     let mut input = None;
-    let mut out = PathBuf::from("target/probe/libcrafter-probe-endpoint");
+    let mut out = PathBuf::from("target/probe/libcrafter-stimulus-endpoint");
     let mut explicit_mode = None;
     let mut args = env::args().skip(1);
 
@@ -208,7 +208,7 @@ fn input_path(value: String) -> Option<PathBuf> {
 
 fn print_usage() {
     println!(
-        "usage: cargo run -p probe-adapters --bin probe_endpoint -- [--dry-run|--live] --input PATH|- [--out DIR]\n\nRun the libcrafter stimulus endpoint for probe cases. Dry-run is the default and compiles probe packets without sending traffic."
+        "usage: cargo run -p probe-adapters --bin stimulus_endpoint -- [--dry-run|--live] --input PATH|- [--out DIR]\n\nRun the libcrafter stimulus endpoint for probe cases. Dry-run is the default and compiles probe packets without sending traffic."
     );
 }
 
@@ -224,13 +224,13 @@ fn read_input(input: Option<PathBuf>) -> ExampleResult<String> {
 }
 
 fn run_endpoint(
-    request: &ProbeEndpointRequest,
+    request: &StimulusEndpointRequest,
     request_json: Value,
     args: &Args,
 ) -> ExampleResult<Value> {
     if request.endpoint_role != "stimulus" {
         return Err(format!(
-            "probe_endpoint only supports endpoint_role=stimulus, got {}",
+            "stimulus_endpoint only supports endpoint_role=stimulus, got {}",
             request.endpoint_role
         )
         .into());
@@ -336,7 +336,7 @@ fn run_endpoint(
 }
 
 fn run_icmp_dry_run(
-    request: &ProbeEndpointRequest,
+    request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
     let packet = icmp_packet(plan)?;
@@ -383,7 +383,10 @@ fn run_icmp_dry_run(
     })
 }
 
-fn run_icmp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResult<ProbeOutcome> {
+fn run_icmp_live(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+) -> ExampleResult<ProbeOutcome> {
     let packet = icmp_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer = match Sniffer::interface(request.interface.clone())
@@ -523,7 +526,7 @@ fn run_icmp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleRes
 }
 
 fn run_tcp_dry_run(
-    request: &ProbeEndpointRequest,
+    request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
     let packet = tcp_packet(plan)?;
@@ -572,7 +575,10 @@ fn run_tcp_dry_run(
     })
 }
 
-fn run_tcp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResult<ProbeOutcome> {
+fn run_tcp_live(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+) -> ExampleResult<ProbeOutcome> {
     let packet = tcp_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer = match Sniffer::interface(request.interface.clone())
@@ -717,7 +723,7 @@ fn run_tcp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResu
 }
 
 fn run_dns_dry_run(
-    request: &ProbeEndpointRequest,
+    request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
     let packet = dns_packet(plan)?;
@@ -766,7 +772,10 @@ fn run_dns_dry_run(
     })
 }
 
-fn run_dns_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResult<ProbeOutcome> {
+fn run_dns_live(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+) -> ExampleResult<ProbeOutcome> {
     let packet = dns_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer = match Sniffer::interface(request.interface.clone())
@@ -911,7 +920,7 @@ fn run_dns_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResu
 }
 
 fn run_ttl_expired_dry_run(
-    request: &ProbeEndpointRequest,
+    request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
     let packet = ttl_expired_packet(plan)?;
@@ -963,7 +972,7 @@ fn run_ttl_expired_dry_run(
 }
 
 fn run_ttl_expired_live(
-    request: &ProbeEndpointRequest,
+    request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
     let packet = ttl_expired_packet(plan)?;
