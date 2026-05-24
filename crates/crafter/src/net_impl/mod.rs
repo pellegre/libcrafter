@@ -9,7 +9,7 @@
 
 use std::fmt;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::time::Duration;
 
 use crate::pcap::{PcapError, Sniffer};
@@ -69,13 +69,6 @@ pub enum NetError {
         input: String,
         /// Stable diagnostic reason.
         reason: &'static str,
-    },
-    /// ARP resolution completed without a matching reply.
-    ArpResolutionTimedOut {
-        /// IPv4 target address.
-        target: Ipv4Addr,
-        /// Interface used for the request.
-        interface: String,
     },
     /// The packet stack cannot be sent with the requested mode.
     UnsupportedPacketShape {
@@ -145,10 +138,6 @@ impl fmt::Display for NetError {
             Self::InvalidIpRange { input, reason } => {
                 write!(f, "invalid IP range '{input}': {reason}")
             }
-            Self::ArpResolutionTimedOut { target, interface } => write!(
-                f,
-                "ARP resolution for {target} on interface '{interface}' timed out"
-            ),
             Self::UnsupportedPacketShape {
                 mode,
                 summary,
@@ -1654,14 +1643,6 @@ pub mod interface {
 /// Routing helper namespace.
 pub mod route {
     pub use crate::{default_interface, default_interface_name, interface_for, interface_for_in};
-}
-
-/// ARP and neighbor-resolution helper namespace.
-pub mod arp {
-    pub use crate::{
-        arp_resolve, derive_mac_from_ipv6, get_mac, resolve_mac, ArpResolveOptions,
-        ArpResolveReport,
-    };
 }
 
 /// Address and number range helper namespace.

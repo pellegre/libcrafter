@@ -26,7 +26,7 @@ but it is not yet part of the acceptance matrix.
 
 ## Live Packet Support
 
-Live send, capture, ARP resolution, and send/receive workflows are developed for
+Live send, capture, and send/receive workflows are developed for
 Linux disposable labs. They require suitable privileges inside the lab and may
 depend on reference packet tooling, Docker, and basic networking tools installed
 by the live-lab image.

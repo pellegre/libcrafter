@@ -216,7 +216,6 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | --- | --- |
 | `find_interface(name)` | Load interface metadata. |
 | `get_ip_strings(iface)` | Return local addresses as strings for generated CLIs. |
-| `resolve_mac(ip, iface)` | Resolve MAC addresses through ARP in live-lab contexts. |
 | `Ipv4Range::parse(...)` | Parse IPv4 CIDR/range/list expressions. |
 
 ## Protocol Names
