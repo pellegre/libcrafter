@@ -273,6 +273,60 @@ def _generate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _corpus(args: argparse.Namespace) -> int:
+    from .corpus import build_corpus_report, write_corpus_report
+    from .generator import generate_plans
+
+    try:
+        plans = generate_plans(
+            seed=args.seed,
+            profile=args.profile,
+            backend=args.backend,
+            count=args.count,
+            root=args.root,
+            family=args.family,
+            case=args.case_name,
+            feature=args.feature,
+            index=args.index,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    output_dir = Path(args.out)
+    if not output_dir.is_absolute():
+        output_dir = REPO_ROOT / output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plans_path = output_dir / "plans.json"
+    backend_versions = _backend_versions(args.backend)
+    libcrafter_info = _libcrafter_info()
+    report = build_corpus_report(
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=args.count,
+        plans=plans,
+        selected_specs=GENERATOR_SELECTED_SPECS,
+        metadata={
+            "requested_count": args.count,
+            "generated_count": len(plans),
+            "filters": {
+                "root": args.root,
+                "family": args.family,
+                "case": args.case_name,
+                "feature": args.feature,
+                "index": args.index,
+            },
+            "backend_metadata": backend_versions.get(args.backend, {}),
+            "backend_versions": backend_versions,
+            "libcrafter": libcrafter_info,
+        },
+    )
+    write_corpus_report(plans_path, report)
+    print(f"corpus: status=generated count={len(plans)} plans={plans_path}")
+    return 0
+
+
 def _offline_required_capabilities(
     args: argparse.Namespace,
 ) -> tuple[BackendCapabilityName, ...]:
@@ -5144,6 +5198,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="plan direction metadata (default: %(default)s)",
     )
     generate_parser.set_defaults(func=_generate)
+
+    corpus_parser = subparsers.add_parser(
+        "corpus",
+        help="generate a reusable packet corpus",
+        description="Generate a reusable oracle packet corpus artifact.",
+    )
+    corpus_parser.add_argument(
+        "--out",
+        default=str(DEFAULT_OUTPUT_ROOT / "corpus"),
+        help="corpus output root (default: %(default)s)",
+    )
+    _add_generation_options(corpus_parser)
+    corpus_parser.set_defaults(func=_corpus)
 
     offline_parser = subparsers.add_parser(
         "offline",

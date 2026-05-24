@@ -5,6 +5,18 @@ The oracle validates packet behavior against reference backends owned by
 tree; crate tests, public docs, and fixture docs should describe only the
 oracle boundary.
 
+## Corpus Generation
+
+Corpus generation writes the ordered packet plans shared by validation modes:
+
+```sh
+tools/oracle/run corpus --profile smoke --seed 1 --count 10
+```
+
+The artifact is written to `target/oracle/corpus/plans.json` by default and
+records the corpus id, selected specs, requested filters, backend metadata, and
+libcrafter metadata.
+
 ## Offline Validation
 
 Offline validation compares generated raw packet vectors and normalized decode
@@ -71,12 +83,14 @@ Recommended local preflight:
 
 ```sh
 cargo test --workspace
+tools/oracle/run corpus --profile ci --seed 12345 --count 2000
 tools/oracle/run offline --profile ci --seed 12345 --count 2000
 tools/oracle/run pcap --profile smoke --seed 12345 --count 250
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 ```
 
 Oracle artifacts default below `target/oracle/`, with mode-specific reports
-under `target/oracle/offline`, `target/oracle/pcap`, and `target/oracle/live`.
+under `target/oracle/corpus`, `target/oracle/offline`, `target/oracle/pcap`,
+and `target/oracle/live`.
 Keep promoted fixture bytes under `tests/fixtures/` and reference backend
 ownership under `tools/oracle/`.

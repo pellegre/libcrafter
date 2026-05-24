@@ -664,8 +664,8 @@ install_uv() {
 }
 install_uv
 mkdir -p "live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE"
-tools/oracle/run backend-info --backend scapy \
-  > "live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/scapy-backend.json"
+tools/oracle/run backend-info \
+  > "live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/reference-backend.json"
 if command -v tshark >/dev/null 2>&1; then
   tshark_available=true
   tools/oracle/run backend-info --backend wireshark \
@@ -680,7 +680,7 @@ fi
   echo "system_packages=ca-certificates curl git iproute2 python3"
   echo "python_dependency_runner=uv"
   echo "uv=$(command -v uv)"
-  echo "scapy_backend=ok"
+  echo "reference_backend_info=ok"
   echo "tshark_available=$tshark_available"
   echo "tshark_required=false"
   echo "finished_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -713,7 +713,7 @@ private_ipv4=$reference_private_ipv4
 system_packages=ca-certificates curl git iproute2 python3
 python_dependency_runner=uv
 uv_install=if-missing
-scapy_validation=tools/oracle/run backend-info --backend scapy
+reference_backend_validation=tools/oracle/run backend-info
 tshark_availability=reported_optional_not_required
 artifact=live-artifacts/bootstrap/reference_backend/bootstrap.env
 EOF
@@ -772,7 +772,7 @@ fi
 export PATH="$HOME/.local/bin:$PATH"
 . "$HOME/.cargo/env"
 cargo test --workspace
-tools/oracle/run backend-info --backend scapy >/dev/null
+tools/oracle/run backend-info >/dev/null
 echo "reference_backend=ok"
 EOF
 }
@@ -1196,7 +1196,6 @@ EOF
   fi
 
   "$project_root/tools/oracle/run" live \
-    --backend scapy \
     --provider hetzner \
     --profile smoke \
     --seed 1 \
