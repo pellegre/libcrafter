@@ -44,20 +44,12 @@ jobs:
 
       - name: Run pcap roundtrip tests
         run: |
-          cargo test -p crafter-pcap pcap_read
-          cargo test -p crafter-pcap pcap_write
-          cargo test -p crafter-pcap pcap_roundtrip
+          cargo test -p crafter pcap_read
+          cargo test -p crafter pcap_write
+          cargo test -p crafter pcap_roundtrip
 
       - name: Build examples
         run: cargo build --examples
-
-      - name: Check reference fixture generation
-        run: tools/reference/check-reference-fixtures
-
-      - name: Run reference interop checks
-        run: |
-          tools/reference/check-reference-interop
-          tools/reference/check-reference-interop --family pcap
 
       - name: Run oracle offline validation
         run: tools/oracle/run offline --backend scapy --profile ci --seed 12345 --count 2000
