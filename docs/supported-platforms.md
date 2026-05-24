@@ -48,7 +48,7 @@ local env file described in `docs/live-lab.md`.
 - No interactive REPL, packet expression language, or dynamic Python-style field
   mutation model is included.
 - DNS encoding does not emit compression, although decoding handles compressed
-  names correctly.
+  names safely.
 - pcapng, full libpcap BPF grammar support, TCP stream reassembly, IP
   fragmentation reassembly, and broad application protocol coverage are future
   work.

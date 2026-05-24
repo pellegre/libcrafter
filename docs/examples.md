@@ -4,7 +4,7 @@ The Rust examples live under `crates/crafter/examples/` and build against the
 public `crafter` facade API. They are intended to be small templates that agents
 can copy when generating packet tools.
 
-Most examples are packet builders or offline readers. They use
+Most examples are safe-by-default packet builders or offline readers. They use
 dry-run send plans unless `--live` is explicitly supplied.
 
 ## Local Runs
