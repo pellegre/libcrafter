@@ -6,11 +6,11 @@
 </h1>
 
 `libcrafter` is a Rust alpha workspace for building, decoding, capturing, and
-sending network packets.
+safely testing network packets.
 
 The Rust API keeps a packet-stacking style: protocol layers compose directly,
 dependent fields are filled during compile, raw bytes can be decoded back into
-typed layers, and compiled packets can be sent on live interfaces.
+typed layers, and live traffic is opt-in rather than a default side effect.
 
 ## Rust Alpha
 
@@ -138,7 +138,8 @@ store real credentials, provider account data, public IPs, or live host IDs in
 tracked files.
 
 Oracle validation modes are documented in
-[docs/validation.md](docs/validation.md).
+[docs/validation.md](docs/validation.md). Kernel and service behavior probes
+are documented in [docs/probe.md](docs/probe.md).
 
 ## Documentation And Release Notes
 
@@ -146,6 +147,8 @@ Oracle validation modes are documented in
 - [docs/api.md](docs/api.md) describes the public Rust API shape.
 - [docs/validation.md](docs/validation.md) describes oracle validation modes
   and CI expectations.
+- [docs/probe.md](docs/probe.md) describes live kernel and service behavior
+  probes.
 - [CHANGELOG.md](CHANGELOG.md) records the Rust alpha scope.
 - [docs/supported-platforms.md](docs/supported-platforms.md) lists supported
   platforms, live-test requirements, and protocol coverage gaps.

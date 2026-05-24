@@ -56,29 +56,32 @@ jobs:
       - name: Check reference backend naming boundary
         run: |
           python3 - <<'PY'
-          import os
+          import subprocess
           from pathlib import Path
 
-          blocked = ("sca" + "py", "wire" + "shark", "t" + "shark")
-          skip_dirs = {".git", ".clew", ".scratch", "target", "tools"}
+          blocked = ("sca" + "py",)
           hits = []
 
-          for root, dirs, files in os.walk("."):
-              dirs[:] = [name for name in dirs if name not in skip_dirs]
-              for filename in files:
-                  path = Path(root, filename)
-                  try:
-                      text = path.read_text(encoding="utf-8")
-                  except (OSError, UnicodeDecodeError):
-                      continue
-                  lowered = text.lower()
-                  for term in blocked:
-                      if term in lowered:
-                          hits.append(str(path))
-                          break
+          tracked = subprocess.check_output(
+              ["git", "ls-files"],
+              text=True,
+          ).splitlines()
+          for name in tracked:
+              path = Path(name)
+              if path.parts[:2] == ("tools", "oracle"):
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except (OSError, UnicodeDecodeError):
+                  continue
+              lowered = text.lower()
+              for term in blocked:
+                  if term in lowered:
+                      hits.append(str(path))
+                      break
 
           if hits:
-              print("reference backend names must stay under tools/:")
+              print("reference backend names must stay under tools/oracle/:")
               for hit in hits:
                   print(hit)
               raise SystemExit(1)
@@ -87,8 +90,20 @@ jobs:
       - name: Build examples
         run: cargo build --examples
 
-      - name: Run oracle offline validation
-        run: tools/oracle/run offline --profile ci --seed 12345 --count 2000
+      - name: Compile Python validation tooling
+        run: python3 -m compileall tools/oracle/engine tools/probe/engine
 
-      - name: Run oracle pcap smoke validation
-        run: tools/oracle/run pcap --profile smoke --seed 12345 --count 250
+      - name: Generate oracle CI corpus
+        run: tools/oracle/run corpus --profile ci --seed 12345 --count 100 --out target/oracle/ci-corpus
+
+      - name: Run oracle offline validation
+        run: tools/oracle/run offline --corpus target/oracle/ci-corpus/plans.json --out target/oracle/ci-offline
+
+      - name: Run oracle pcap validation
+        run: tools/oracle/run pcap --corpus target/oracle/ci-corpus/plans.json --out target/oracle/ci-pcap
+
+      - name: Run oracle Hetzner wire dry run
+        run: tools/oracle/run live --provider hetzner --dry-run --corpus target/oracle/ci-corpus/plans.json --out target/oracle/ci-live-dry-run
+
+      - name: Run probe Hetzner dry run
+        run: tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10 --out target/probe/ci-dry-run

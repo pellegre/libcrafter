@@ -9,9 +9,10 @@ tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 ```
 
 Local static tests should run before any live lab command. Live providers are
-for tests that need root privileges, raw sockets, packet capture, or reference
-comparison on disposable infrastructure. See [validation.md](validation.md) for
-oracle modes and CI expectations.
+for tests that need root privileges, raw sockets, packet capture, reference
+comparison, or kernel/service replies on disposable infrastructure. See
+[validation.md](validation.md) for oracle modes and CI expectations, and
+[probe.md](probe.md) for behavioral probe cases.
 
 ## Hetzner Setup
 
@@ -36,8 +37,9 @@ tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```
 
-Oracle offline and pcap validation should pass before creating infrastructure.
-The validation commands are documented in [validation.md](validation.md).
+Oracle offline and pcap validation plus probe dry-runs should pass before
+creating infrastructure. The validation commands are documented in
+[validation.md](validation.md) and [probe.md](probe.md).
 
 Real creation uses provider defaults that can be overridden. Choose values that
 belong to the disposable test environment and do not commit account-specific
@@ -50,26 +52,30 @@ HETZNER_LOCATION=replace-with-location \
 tools/live-lab/libcrafter-live-lab create --provider hetzner
 ```
 
-Plan provider-backed oracle live validation without creating infrastructure:
+Plan provider-backed oracle and probe live validation without creating
+infrastructure:
 
 ```sh
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
-Run oracle live validation through the provider suite when disposable resources
-are intentionally available:
+Run oracle or probe live validation through the provider suite when disposable
+resources are intentionally available:
 
 ```sh
 tools/live-lab/libcrafter-live-lab run --provider hetzner --suite oracle-live
+LIBCRAFTER_LIVE_LAB_CONFIRM=run tools/live-lab/libcrafter-live-lab run --provider hetzner --suite probe --confirm-live-run
 ```
 
 Generated provider state is written below `tools/live-lab/.state/hetzner/`.
 Artifacts are written below `tools/live-lab/artifacts/hetzner/`. Both locations
 are ignored by git. Oracle reports and packet artifacts are written below
-`target/oracle/`.
+`target/oracle/`; probe reports are written below `target/probe/`.
 
 Use the same `--profile`, `--seed`, `--count`, and reported `--index` to
-reproduce a single failed oracle packet plan.
+reproduce a single failed oracle packet plan. For probe, preserve the reported
+sequence number, case name, seed, and profile.
 
 ## Artifacts
 
@@ -87,20 +93,22 @@ or credentials.
 
 Use `HETZNER_API_TOKEN` as the CI secret name. CI jobs should run dry-run
 commands for pull requests and reserve real host creation for explicit,
-protected workflows.
+protected workflows with environment approval.
 
 Recommended provider dry-run flow:
 
 ```sh
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```
 
-Pull request CI should run offline and pcap oracle validation through
-[validation.md](validation.md). Real live runs should be manual, protected, and
-wrap `create`, `run`, `artifact`, and `destroy` in cleanup logic so `destroy`
-still executes after a failed validation step.
+Pull request CI should run corpus, offline, pcap, Hetzner wire dry-run, and
+probe dry-run validation through [validation.md](validation.md). Real live runs
+should be manual, protected, and wrap `create`, `run`, `artifact`, and
+`destroy` in cleanup logic so `destroy` still executes after a failed
+validation step.
 
 See also [supported-platforms.md](supported-platforms.md) for the alpha support
 matrix and known release gaps.

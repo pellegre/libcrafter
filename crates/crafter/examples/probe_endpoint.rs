@@ -578,7 +578,7 @@ fn run_tcp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResu
     let mut sniffer = match Sniffer::interface(request.interface.clone())
         .timeout(timeout)
         .count(64)
-        .filter(&capture_filter(plan))
+        .filter(capture_filter(plan))
         .nonblock()
         .open()
     {
@@ -772,7 +772,7 @@ fn run_dns_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResu
     let mut sniffer = match Sniffer::interface(request.interface.clone())
         .timeout(timeout)
         .count(64)
-        .filter(&capture_filter(plan))
+        .filter(capture_filter(plan))
         .nonblock()
         .open()
     {
@@ -971,7 +971,7 @@ fn run_ttl_expired_live(
     let mut sniffer = match Sniffer::interface(request.interface.clone())
         .timeout(timeout)
         .count(64)
-        .filter(&capture_filter(plan))
+        .filter(capture_filter(plan))
         .nonblock()
         .open()
     {
