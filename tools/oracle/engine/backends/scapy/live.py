@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ from .packets import encode_packet_plans
 
 
 BACKEND_NAME = "scapy"
+LIVE_SEND_INTERVAL_SECONDS = 0.002
 
 
 def backend_bootstrap_command_plan() -> LiveCommandPlan:
@@ -299,6 +301,7 @@ def _run_sender(
         if not dry_run:
             try:
                 _send_packet(scapy_all, packet, request, vector.root)
+                time.sleep(LIVE_SEND_INTERVAL_SECONDS)
                 sent = True
                 sent_count += 1
             except Exception as exc:  # pragma: no cover - Scapy errors vary by host.

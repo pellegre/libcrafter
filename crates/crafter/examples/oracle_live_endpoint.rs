@@ -13,6 +13,7 @@ use std::time::Duration;
 type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
 const BACKEND_NAME: &str = "libcrafter";
+const LIVE_SEND_INTERVAL: Duration = Duration::from_millis(2);
 
 #[derive(Debug)]
 struct Args {
@@ -252,37 +253,36 @@ fn run_sender(
     } else {
         common_send_mode(prepared)?
     };
-    let mut batch = BatchSend::new()
-        .iface(request.interface.clone())
-        .concurrency_limit(64)
-        .retries(1);
-    batch = match send_mode {
-        SendMode::Auto | SendMode::NetworkLayer => batch.network_layer(),
-        SendMode::LinkLayer => batch.link_layer(),
+    let mut send_options = SendOptions::new().iface(request.interface.clone());
+    send_options = match send_mode {
+        SendMode::Auto => send_options,
+        SendMode::NetworkLayer => send_options.network_layer(),
+        SendMode::LinkLayer => send_options.link_layer(),
     };
-    batch = if mode.is_dry_run() {
-        batch.dry_run()
+    send_options = if mode.is_dry_run() {
+        send_options.dry_run()
     } else {
-        batch.live()
+        send_options.live()
     };
+    let sender = SocketSender::new(send_options);
 
-    let report = batch.send_all(&packets)?;
     let mut statuses = Vec::with_capacity(prepared.len());
     let mut send_reports = Vec::with_capacity(prepared.len());
     let mut live_sent_count = 0usize;
 
     for (offset, prepared_packet) in prepared.iter().enumerate() {
-        let Some(entry) = report.entry(offset) else {
-            return Err(format!("missing send report for packet offset {offset}").into());
-        };
-        let attempts = entry.send_reports();
+        let report = sender.send(&packets[offset])?;
+        if !mode.is_dry_run() {
+            std::thread::sleep(LIVE_SEND_INTERVAL);
+        }
+        let attempts = [report];
         let sent = !mode.is_dry_run() && attempts.iter().any(|attempt| attempt.bytes_sent() > 0);
         if sent {
             live_sent_count += 1;
         }
         send_reports.push(json!({
             "index": prepared_packet.index,
-            "attempts": entry.attempts(),
+            "attempts": attempts.len(),
             "reports": attempts.iter().map(send_report_json).collect::<Vec<_>>(),
         }));
         statuses.push(index_status(
