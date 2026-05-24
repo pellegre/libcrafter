@@ -23,6 +23,7 @@ from .backends import (
     UnknownBackendError,
     backend_report_metadata,
     get_backend,
+    get_backend_capability_registration,
     registered_backend_names,
 )
 from .compare import compare_decoded_models, failure_indexes
@@ -1606,6 +1607,8 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         direction=args.direction,
         index=args.index,
     )
+    selected_specs = _selected_specs_for_plans(plans)
+    backend_capabilities = _offline_backend_capabilities(args)
     vectors = encode_packet_plans(plans)
     expected_decoded = decode_vectors(vectors)
     backend_versions = _backend_versions(args.backend)
@@ -1618,12 +1621,13 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(vectors),
         status="vectors",
-        selected_specs=list(GENERATOR_SELECTED_SPECS),
+        selected_specs=selected_specs,
         backend_versions=backend_versions,
         libcrafter=libcrafter_info,
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
+            "backend_capabilities": backend_capabilities,
             "vectors": [vector.to_dict() for vector in vectors],
         },
     )
@@ -1640,11 +1644,12 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
             seed=args.seed,
             count=len(expected_decoded),
             status="decoded",
-            selected_specs=list(GENERATOR_SELECTED_SPECS),
+            selected_specs=selected_specs,
             backend_versions=backend_versions,
             libcrafter=libcrafter_info,
             metadata={
                 "direction": args.direction,
+                "backend_capabilities": backend_capabilities,
                 "decoded": [model.to_dict() for model in expected_decoded],
             },
         ),
@@ -1694,7 +1699,7 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(results),
         status=status,
-        selected_specs=list(GENERATOR_SELECTED_SPECS),
+        selected_specs=selected_specs,
         artifacts=artifacts,
         artifact_paths=artifacts,
         results=results,
@@ -1711,10 +1716,12 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
             "requested_count": args.count,
             "generated_count": len(plans),
             "artifact_dir": str(run_dir) if preserve_artifacts else None,
+            "backend_capabilities": backend_capabilities,
             "libcrafter_bridge": {
                 "argv": bridge["argv"],
                 "exit_code": bridge["exit_code"],
             },
+            "vectors": _vector_summaries(vectors),
         },
     )
     write_json(report_path, report)
@@ -1737,11 +1744,15 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
 
 
 def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
+    if args.direction != "libcrafter_to_reference":
+        print(f"unsupported offline direction: {args.direction}", file=sys.stderr)
+        return 2
     if args.backend != "scapy":
         print(f"unsupported backend: {args.backend}", file=sys.stderr)
         return 2
 
     from .backends.scapy.normalize import decode_vectors
+    from .generator import generate_plans
 
     output_dir = _offline_output_dir(args.out)
     artifacts_root = output_dir / "artifacts"
@@ -1755,63 +1766,80 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         )
     )
 
-    emitter = _run_libcrafter_vector_emitter(run_dir)
-    entries = _select_libcrafter_cases(emitter["manifest"], args)
-    plans: list[PacketPlan] = []
-    vectors: list[EncodedVector] = []
-    expected_decoded: list[JSONObject] = []
-    for index, case in entries:
-        plan = _libcrafter_case_plan(case, args, index)
-        plans.append(plan)
-        vectors.append(_libcrafter_case_vector(case, plan))
-        expected_decoded.append(
-            _json_object(case.get("expected_decoded", {}), f"case[{index}].expected_decoded")
-        )
     backend_versions = _backend_versions(args.backend)
     libcrafter_info = _libcrafter_info()
+    plans = generate_plans(
+        seed=args.seed,
+        profile=args.profile,
+        backend=args.backend,
+        count=args.count,
+        root=args.root,
+        family=args.family,
+        case=args.case_name,
+        feature=args.feature,
+        direction=args.direction,
+        index=args.index,
+    )
+    selected_specs = _selected_specs_for_plans(plans)
+    backend_capabilities = _offline_backend_capabilities(args)
 
-    vector_report = RunReport(
+    plan_report = RunReport(
         mode="offline",
         backend=args.backend,
         profile=args.profile,
         seed=args.seed,
-        count=len(vectors),
-        status="vectors",
-        selected_specs=["libcrafter-oracle-vectors"],
+        count=len(plans),
+        status="generated",
+        selected_specs=selected_specs,
         backend_versions=backend_versions,
         libcrafter=libcrafter_info,
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
-            "generated_count": len(entries),
-            "vector_backend": "libcrafter",
-            "vectors": [vector.to_dict() for vector in vectors],
+            "generated_count": len(plans),
+            "backend_capabilities": backend_capabilities,
+            "plans": [plan.to_dict() for plan in plans],
         },
     )
+    plan_path = run_dir / "libcrafter-plans.json"
+    write_json(plan_path, plan_report)
+
+    materializer = _run_libcrafter_plan_materializer(plan_path, run_dir)
+    vector_report = materializer["report"]
+    vectors = _encoded_vectors(vector_report) if materializer["exit_code"] == 0 else []
     vector_path = run_dir / "libcrafter-vectors.json"
     write_json(vector_path, vector_report)
 
-    expected_path = run_dir / "libcrafter-expected-decoded.json"
-    write_json(
-        expected_path,
-        RunReport(
+    bridge = _run_libcrafter_decode_bridge(vector_path, run_dir) if vectors else {
+        "argv": [],
+        "exit_code": 1,
+        "report": RunReport(
             mode="offline",
             backend="libcrafter",
             profile=args.profile,
             seed=args.seed,
-            count=len(expected_decoded),
-            status="decoded",
-            selected_specs=["libcrafter-oracle-vectors"],
+            count=0,
+            status="failed",
+            selected_specs=selected_specs,
             backend_versions=backend_versions,
             libcrafter=libcrafter_info,
             metadata={
-                "direction": args.direction,
-                "decoded": expected_decoded,
+                "decoded": [],
+                "error": "libcrafter plan materializer did not emit vectors",
+                "materializer_exit_code": materializer["exit_code"],
             },
-        ),
+        ).to_dict(),
+        "stdout_path": materializer["stdout_path"],
+        "stderr_path": materializer["stderr_path"],
+    }
+    expected_decoded = _decoded_models(bridge["report"]) if bridge["exit_code"] == 0 else []
+    expected_path = run_dir / "libcrafter-expected-decoded.json"
+    write_json(
+        expected_path,
+        bridge["report"],
     )
 
-    actual_decoded = decode_vectors(vectors)
+    actual_decoded = decode_vectors(vectors) if vectors else []
     scapy_report = RunReport(
         mode="offline",
         backend=args.backend,
@@ -1819,9 +1847,12 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(actual_decoded),
         status="decoded",
-        selected_specs=["libcrafter-oracle-vectors"],
+        selected_specs=selected_specs,
+        backend_versions=backend_versions,
+        libcrafter=libcrafter_info,
         metadata={
             "direction": args.direction,
+            "backend_capabilities": backend_capabilities,
             "decoded": [model.to_dict() for model in actual_decoded],
         },
     )
@@ -1834,7 +1865,6 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         expected=expected_decoded,
         actual=actual_decoded,
         plans=plans,
-        partial_expected=True,
     )
     results = _with_failure_artifacts(
         run_dir=run_dir,
@@ -1844,7 +1874,11 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         libcrafter_decoded=expected_decoded,
     )
     failures = [result for result in results if not result.passed]
-    status = "passed" if not failures and emitter["exit_code"] == 0 else "failed"
+    status = (
+        "passed"
+        if not failures and materializer["exit_code"] == 0 and bridge["exit_code"] == 0
+        else "failed"
+    )
     preserve_artifacts = args.keep_artifacts or status != "passed"
 
     artifacts = [str(report_path), str(scapy_decoded_path)]
@@ -1852,11 +1886,14 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         artifacts.extend(
             [
                 str(run_dir),
+                str(plan_path),
                 str(vector_path),
                 str(expected_path),
                 str(actual_path),
-                str(emitter["stdout_path"]),
-                str(emitter["stderr_path"]),
+                str(materializer["stdout_path"]),
+                str(materializer["stderr_path"]),
+                str(bridge["stdout_path"]),
+                str(bridge["stderr_path"]),
             ]
         )
     artifacts.extend(_comparison_artifact_paths(failures))
@@ -1869,7 +1906,7 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(results),
         status=status,
-        selected_specs=["libcrafter-oracle-vectors"],
+        selected_specs=selected_specs,
         artifacts=artifacts,
         artifact_paths=artifacts,
         results=results,
@@ -1884,12 +1921,18 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
-            "generated_count": len(entries),
+            "generated_count": len(plans),
             "artifact_dir": str(run_dir) if preserve_artifacts else None,
-            "libcrafter_emitter": {
-                "argv": emitter["argv"],
-                "exit_code": emitter["exit_code"],
+            "backend_capabilities": backend_capabilities,
+            "libcrafter_materializer": {
+                "argv": materializer["argv"],
+                "exit_code": materializer["exit_code"],
             },
+            "libcrafter_bridge": {
+                "argv": bridge["argv"],
+                "exit_code": bridge["exit_code"],
+            },
+            "vectors": _vector_summaries(vectors),
         },
     )
     write_json(report_path, report)
@@ -2217,6 +2260,54 @@ def _comparison_artifact_paths(results: Sequence[ComparisonResult]) -> list[str]
     return paths
 
 
+def _selected_specs_for_plans(plans: Sequence[PacketPlan]) -> list[str]:
+    selected: list[str] = []
+    seen: set[str] = set()
+    for spec in GENERATOR_SELECTED_SPECS:
+        if spec not in seen:
+            selected.append(spec)
+            seen.add(spec)
+
+    for plan in plans:
+        for spec in _string_values(plan.metadata.get("selected_specs", [])):
+            if spec in seen:
+                continue
+            selected.append(spec)
+            seen.add(spec)
+    return selected
+
+
+def _offline_backend_capabilities(args: argparse.Namespace) -> JSONObject:
+    capabilities: JSONObject = {}
+    try:
+        capabilities["reference_backend"] = get_backend(args.backend).to_dict()
+    except UnknownBackendError as exc:
+        capabilities["reference_backend"] = {"name": args.backend, "error": str(exc)}
+    try:
+        capabilities["libcrafter"] = get_backend_capability_registration("libcrafter").to_dict()
+    except UnknownBackendError as exc:
+        capabilities["libcrafter"] = {"name": "libcrafter", "error": str(exc)}
+    return capabilities
+
+
+def _vector_summaries(vectors: Sequence[EncodedVector]) -> list[JSONObject]:
+    summaries: list[JSONObject] = []
+    for vector in vectors:
+        summaries.append(
+            {
+                "index": vector.plan.index,
+                "backend": vector.backend,
+                "root": vector.root,
+                "decoder": vector.decoder,
+                "raw_hex": vector.raw_hex,
+                "selected_specs": _string_values(
+                    vector.plan.metadata.get("selected_specs", [])
+                ),
+            }
+        )
+    return summaries
+
+
 def _dedupe_paths(paths: Sequence[str]) -> list[str]:
     output: list[str] = []
     seen: set[str] = set()
@@ -2319,6 +2410,118 @@ def _run_libcrafter_decode_bridge(vector_path: Path, run_dir: Path) -> JSONObjec
             metadata={
                 "decoded": [],
                 "error": "libcrafter decode bridge report must be a JSON object",
+                "exit_code": process.returncode,
+            },
+        ).to_dict()
+        return {
+            "argv": argv,
+            "exit_code": 1,
+            "report": report,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
+
+    return {
+        "argv": argv,
+        "exit_code": process.returncode,
+        "report": report,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+    }
+
+
+def _run_libcrafter_plan_materializer(plan_path: Path, run_dir: Path) -> JSONObject:
+    argv = [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "crafter",
+        "--example",
+        "oracle_materialize_plans",
+        "--",
+        "--input",
+        str(plan_path),
+    ]
+    process = subprocess.run(
+        argv,
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    stdout_path = run_dir / "libcrafter-materialize.stdout.json"
+    stderr_path = run_dir / "libcrafter-materialize.stderr.txt"
+    stdout_path.write_text(process.stdout, encoding="utf-8")
+    stderr_path.write_text(process.stderr, encoding="utf-8")
+
+    if process.returncode != 0:
+        report = RunReport(
+            mode="offline",
+            backend="libcrafter",
+            profile="unknown",
+            seed=0,
+            count=0,
+            status="failed",
+            artifact_paths=[str(stdout_path), str(stderr_path)],
+            artifacts=[str(stdout_path), str(stderr_path)],
+            libcrafter=_libcrafter_info(),
+            metadata={
+                "vectors": [],
+                "error": "libcrafter plan materializer failed",
+                "exit_code": process.returncode,
+            },
+        ).to_dict()
+        return {
+            "argv": argv,
+            "exit_code": process.returncode,
+            "report": report,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
+
+    try:
+        report = json.loads(process.stdout)
+    except json.JSONDecodeError as exc:
+        report = RunReport(
+            mode="offline",
+            backend="libcrafter",
+            profile="unknown",
+            seed=0,
+            count=0,
+            status="failed",
+            artifact_paths=[str(stdout_path), str(stderr_path)],
+            artifacts=[str(stdout_path), str(stderr_path)],
+            libcrafter=_libcrafter_info(),
+            metadata={
+                "vectors": [],
+                "error": f"libcrafter plan materializer emitted invalid JSON: {exc}",
+                "exit_code": process.returncode,
+            },
+        ).to_dict()
+        return {
+            "argv": argv,
+            "exit_code": 1,
+            "report": report,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
+
+    if not isinstance(report, dict):
+        report = RunReport(
+            mode="offline",
+            backend="libcrafter",
+            profile="unknown",
+            seed=0,
+            count=0,
+            status="failed",
+            artifact_paths=[str(stdout_path), str(stderr_path)],
+            artifacts=[str(stdout_path), str(stderr_path)],
+            libcrafter=_libcrafter_info(),
+            metadata={
+                "vectors": [],
+                "error": "libcrafter plan materializer report must be a JSON object",
                 "exit_code": process.returncode,
             },
         ).to_dict()
@@ -2540,6 +2743,71 @@ def _decoded_models(report: object) -> list[JSONObject]:
     for index, item in enumerate(decoded):
         output.append(_json_object(item, f"decoded[{index}]"))
     return output
+
+
+def _encoded_vectors(report: object) -> list[EncodedVector]:
+    report_object = _json_object(report, "libcrafter materializer report")
+    metadata = _json_object(
+        report_object.get("metadata", {}),
+        "libcrafter materializer report metadata",
+    )
+    vectors = metadata.get("vectors")
+    if not isinstance(vectors, list):
+        raise RuntimeError("libcrafter materializer report metadata.vectors must be a list")
+
+    output: list[EncodedVector] = []
+    for index, item in enumerate(vectors):
+        vector = _json_object(item, f"vectors[{index}]")
+        raw_hex = _optional_string(vector.get("raw_hex")) or _optional_string(vector.get("hex"))
+        if raw_hex is None:
+            raise RuntimeError(f"libcrafter materialized vector {index} is missing raw_hex")
+        plan = _packet_plan_from_object(vector.get("plan"), f"vectors[{index}].plan")
+        root = _optional_string(vector.get("root")) or _optional_string(vector.get("decoder"))
+        if root is None:
+            raise RuntimeError(f"libcrafter materialized vector {index} is missing root")
+        output.append(
+            EncodedVector(
+                plan=plan,
+                backend=_optional_string(vector.get("backend")) or "libcrafter",
+                raw_hex=raw_hex,
+                root=root,
+                decoder=_optional_string(vector.get("decoder")) or root,
+                metadata=_json_object(vector.get("metadata", {}), f"vectors[{index}].metadata"),
+            )
+        )
+    return output
+
+
+def _packet_plan_from_object(value: object, name: str) -> PacketPlan:
+    plan = _json_object(value, name)
+    fields_object = _json_object(plan.get("fields", {}), f"{name}.fields")
+    fields = {
+        layer: _json_object(layer_fields, f"{name}.fields.{layer}")
+        for layer, layer_fields in fields_object.items()
+    }
+    return PacketPlan(
+        stack=_string_values(plan.get("stack", [])),
+        fields=fields,
+        profile=_optional_string(plan.get("profile")) or "unknown",
+        seed=_object_int(plan.get("seed"), 0),
+        index=_object_int(plan.get("index"), 0),
+        direction=_optional_string(plan.get("direction")) or "libcrafter_to_reference",
+        family=_optional_string(plan.get("family")),
+        feature_tags=_string_values(plan.get("feature_tags", [])),
+        case=_optional_string(plan.get("case")),
+        strict_bytes=plan.get("strict_bytes") is not False,
+        metadata=_json_object(plan.get("metadata", {}), f"{name}.metadata"),
+    )
+
+
+def _object_int(value: object, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value, 0)
+    return default
 
 
 def _pcap_records(report: object) -> list[JSONObject]:
