@@ -379,21 +379,24 @@ impl PcapRecord {
 pub struct PcapPacket {
     timestamp: PcapTimestamp,
     original_len: u32,
+    data: Vec<u8>,
     pub(super) link_type: PcapLinkType,
     packet: Packet,
 }
 
 impl PcapPacket {
     /// Create a decoded pcap packet wrapper.
-    pub const fn new(
+    pub fn new(
         timestamp: PcapTimestamp,
         original_len: u32,
+        data: impl Into<Vec<u8>>,
         link_type: PcapLinkType,
         packet: Packet,
     ) -> Self {
         Self {
             timestamp,
             original_len,
+            data: data.into(),
             link_type,
             packet,
         }
@@ -407,6 +410,11 @@ impl PcapPacket {
     /// Original on-wire length.
     pub const fn original_len(&self) -> u32 {
         self.original_len
+    }
+
+    /// Captured bytes exactly as read from the pcap record.
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 
     /// Best-effort core link-layer type.

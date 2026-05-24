@@ -7,6 +7,7 @@ import json
 import sys
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,25 @@ from .packets import encode_packet_plans
 
 BACKEND_NAME = "scapy"
 LIVE_SEND_INTERVAL_SECONDS = 0.01
+CAPTURE_COMPARE_ROOTS = {
+    "Ether": "link:ethernet",
+    "IP": "l3:ipv4",
+    "IPv4": "l3:ipv4",
+    "IPv6": "l3:ipv6",
+    "link:ethernet": "link:ethernet",
+    "l3:ipv4": "l3:ipv4",
+    "l3:ipv6": "l3:ipv6",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureSlice:
+    """Capture bytes split into full-frame and compare-root views."""
+
+    compare_root: str
+    full_raw: bytes
+    comparable_raw: bytes
+    packet: Any
 
 
 def backend_bootstrap_command_plan() -> LiveCommandPlan:
@@ -387,7 +407,7 @@ def _run_receiver(
                 metadata={
                     "root": vector.root,
                     "expected_raw_hex": vector.raw_hex,
-                    "capture_root": vector.root,
+                    "capture_root": _compare_root_for_vector(request, vector),
                     "feature_tags": list(vector.plan.feature_tags),
                 },
             )
@@ -443,8 +463,13 @@ def _run_receiver(
             continue
 
         try:
-            observed_raw = _observed_packet_bytes(scapy_all, captured[offset], vector)
-            decoded = _decode_observed_packet(scapy_all, captured[offset], vector)
+            capture_slice = _capture_slice_for_root(
+                scapy_all,
+                captured[offset],
+                _compare_root_for_vector(request, vector),
+            )
+            observed_raw = capture_slice.comparable_raw
+            decoded = _decode_observed_capture_slice(capture_slice, vector)
             decoded_models.append(decoded.to_dict())
             capture_path = str(capture_summary_path)
             capture_link_type = _packet_link_type(captured[offset])
@@ -462,10 +487,14 @@ def _run_receiver(
                         "root": vector.root,
                         "expected_raw_hex": vector.raw_hex,
                         "observed_raw_hex": observed_raw.hex(),
-                        "capture_root": vector.root,
+                        "comparable_raw_hex": observed_raw.hex(),
+                        "full_capture_raw_hex": capture_slice.full_raw.hex(),
+                        "capture_root": capture_slice.compare_root,
                         "capture_link_type": capture_link_type,
                         "capture_path": capture_path,
                         "byte_length": len(observed_raw),
+                        "comparable_byte_length": len(observed_raw),
+                        "full_capture_byte_length": len(capture_slice.full_raw),
                     },
                 )
             )
@@ -501,9 +530,21 @@ def _run_receiver(
                 {
                     "index": status["index"],
                     "observed_raw_hex": status.get("observed_raw_hex"),
+                    "comparable_raw_hex": _status_metadata(status).get(
+                        "comparable_raw_hex"
+                    ),
+                    "full_capture_raw_hex": _status_metadata(status).get(
+                        "full_capture_raw_hex"
+                    ),
                     "capture_root": status.get("capture_root"),
                     "capture_link_type": status.get("capture_link_type"),
                     "byte_length": status.get("byte_length"),
+                    "comparable_byte_length": _status_metadata(status).get(
+                        "comparable_byte_length"
+                    ),
+                    "full_capture_byte_length": _status_metadata(status).get(
+                        "full_capture_byte_length"
+                    ),
                     "capture_path": status.get("capture_path"),
                 }
                 for status in statuses
@@ -600,40 +641,83 @@ def _address_value(request: JSONObject, group: str, family: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _decode_observed_packet(
-    scapy_all: Any,
-    packet: Any,
+def _decode_observed_capture_slice(
+    capture_slice: CaptureSlice,
     vector: EncodedVector,
 ) -> DecodedModel:
-    root = vector.root or vector.decoder
-    observed = _packet_for_root(scapy_all, packet, root)
-    raw_bytes = _observed_packet_bytes(scapy_all, packet, vector)
     return normalize_packet(
-        observed,
-        root=root,
-        source_hex=raw_bytes.hex(),
+        capture_slice.packet,
+        root=capture_slice.compare_root,
+        source_hex=capture_slice.comparable_raw.hex(),
         feature_tags=vector.plan.feature_tags,
     )
 
 
-def _observed_packet_bytes(
+def _capture_slice_for_root(
     scapy_all: Any,
     packet: Any,
-    vector: EncodedVector,
-) -> bytes:
-    root = vector.root or vector.decoder
-    observed = _packet_for_root(scapy_all, packet, root)
-    return bytes(scapy_all.raw(observed))
+    compare_root: str | None,
+) -> CaptureSlice:
+    root = _canonical_compare_root(compare_root)
+    full_raw = bytes(scapy_all.raw(packet))
+    if root == "l3:ipv4":
+        if not packet.haslayer(scapy_all.IP):
+            raise ValueError("captured packet has no IPv4 header for l3:ipv4 compare root")
+        comparable_packet = packet[scapy_all.IP]
+    elif root == "l3:ipv6":
+        if not packet.haslayer(scapy_all.IPv6):
+            raise ValueError("captured packet has no IPv6 header for l3:ipv6 compare root")
+        comparable_packet = packet[scapy_all.IPv6]
+    elif root == "link:ethernet":
+        if not packet.haslayer(scapy_all.Ether):
+            raise ValueError("captured packet has no Ethernet frame for link:ethernet compare root")
+        comparable_packet = packet
+    else:  # pragma: no cover - _canonical_compare_root raises first.
+        raise ValueError(f"unsupported capture compare root: {compare_root}")
+    comparable_raw = bytes(scapy_all.raw(comparable_packet))
+    return CaptureSlice(
+        compare_root=root,
+        full_raw=full_raw,
+        comparable_raw=comparable_raw,
+        packet=comparable_packet,
+    )
 
 
-def _packet_for_root(scapy_all: Any, packet: Any, root: str | None) -> Any:
-    if root in {"IP", "l3:ipv4"} and packet.haslayer(scapy_all.IP):
-        return packet[scapy_all.IP]
-    if root in {"IPv6", "l3:ipv6"} and packet.haslayer(scapy_all.IPv6):
-        return packet[scapy_all.IPv6]
-    if root in {"Raw", "l3:raw", "link:raw"} and packet.haslayer(scapy_all.Raw):
-        return packet[scapy_all.Raw]
-    return packet
+def _compare_root_for_vector(request: JSONObject, vector: EncodedVector) -> str:
+    packet_metadata = _request_packet_metadata(request, vector.plan.index)
+    compare_root = _optional_string(packet_metadata.get("compare_root"))
+    if compare_root is None:
+        compare_root = vector.root or vector.decoder
+    return _canonical_compare_root(compare_root)
+
+
+def _request_packet_metadata(request: JSONObject, index: int) -> JSONObject:
+    metadata = json_object(request.get("metadata", {}), "metadata")
+    packets = metadata.get("packets")
+    if not isinstance(packets, list):
+        return {}
+    for value in packets:
+        if not isinstance(value, dict):
+            continue
+        packet = {
+            key: item
+            for key, item in value.items()
+            if isinstance(key, str)
+        }
+        if packet.get("index") == index:
+            return json_object(packet, "metadata.packets[]")
+    return {}
+
+
+def _canonical_compare_root(root: str | None) -> str:
+    if root in CAPTURE_COMPARE_ROOTS:
+        return CAPTURE_COMPARE_ROOTS[root]
+    raise ValueError(f"wire compare root unavailable for live capture: {root!r}")
+
+
+def _status_metadata(status: JSONObject) -> JSONObject:
+    metadata = status.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
 
 
 def _send_mode_for_root(root: str | None) -> str:

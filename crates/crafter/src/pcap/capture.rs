@@ -256,6 +256,7 @@ impl Capture {
         Ok(Some(PcapPacket::new(
             record.timestamp(),
             record.original_len(),
+            record.data(),
             record.pcap_link_type(),
             packet,
         )))

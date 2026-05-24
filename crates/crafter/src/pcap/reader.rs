@@ -87,6 +87,7 @@ where
             packets.push(PcapPacket::new(
                 record.timestamp(),
                 record.original_len(),
+                record.data(),
                 record.pcap_link_type(),
                 packet,
             ));
@@ -189,6 +190,7 @@ pub fn read_pcap_filtered(path: impl AsRef<Path>, filter: &str) -> Result<Vec<Pc
         packets.push(PcapPacket::new(
             record.timestamp(),
             record.original_len(),
+            record.data(),
             record.pcap_link_type(),
             packet,
         ));
