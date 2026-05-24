@@ -117,7 +117,7 @@ more verbose and field-oriented.
 ## Pcap Helpers
 
 ```rust
-let packets = read_pcap_filtered("input.pcap", "icmp")?;
+let packets = PcapReader::open("input.pcap")?.collect_packets()?;
 
 PcapWriter::create("out.pcap", LinkType::Ethernet)?
     .write_packet(&packet)?
@@ -241,30 +241,33 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 
 | Example | API surface exercised |
 | --- | --- |
-| `hello_world.rs` | Layer construction, `show`, `summary`. |
-| `payload_hello_world.rs` | `Raw`, `/` composition, `compile`. |
-| `basic_send.rs` | `Packet::new`, Ethernet/IPv4/TCP, send planning. |
-| `ping.rs` | `Icmp::echo_request`, compile-only send plans. |
-| `basic_ping_pong.rs` | Request/reply matching and `reply_filter`. |
-| `network_ping.rs` | ICMP send/receive workflow. |
-| `arp_ping.rs` | `Arp::who_has`, L2 send-receive, MAC resolution. |
-| `dns_query.rs` | `Udp`, `Dns::query`, response decoding. |
-| `tcp_traceroute.rs` | TTL loops, TCP SYN, ICMP time-exceeded handling. |
-| `simple_sniffer.rs` | `Sniffer`, BPF filters, packet iteration. |
-| `read_pcap.rs` | `PcapReader`, decode from link type. |
-| `dump_pcap.rs` | `PcapWriter`. |
-| `capture_pcap.rs` | Bounded libpcap capture into pcap files. |
-| `tcp_options.rs` | TCP option builders and header-length auto-fill. |
-| `ip_options.rs` | IPv4 option builders and checksum/length auto-fill. |
-| `dhcp_request.rs` | DHCP over Ethernet/IPv4/UDP. |
-| `ping6.rs` | IPv6 and ICMPv6 checksum pseudo-header. |
-| `ping_ipv4_ipv6.rs` | Dual-stack example organization. |
-| `combine_ipv4_ipv6.rs` | Mixed packet collections and pcap output. |
-| `ipv6_routing_header.rs` | IPv6 extension header composition. |
-| `null_header.rs` | Loopback/null link-layer decode. |
-| `sack_option.rs` | TCP SACK option encoding/decoding. |
-| `extended_data_offset.rs` | TCP data-offset edge cases. |
-| `user_sockets.rs` | Explicit socket wrappers and send helpers. |
+| `hello_world` | IPv4, ICMP, Raw construction, compile, summary, and hexdump output. |
+| `packet_building` | Builder-style packet composition, typed field setting, and deterministic compile output. |
+| `packet_inspection` | Typed layer access, mutation before compile, packet summaries, and detailed inspection output. |
+| `decode_bytes` | Decode from link, network, and IPv4 entry points while preserving raw payloads. |
+| `custom_registry` | Protocol registry customization and default decode comparison. |
+| `send_plan` | Network-layer send planning, compiled bytes, targets, and derived reply filters. |
+| `send_packet` | Network-layer and link-layer send reports using dry-run options by default. |
+| `send_recv_icmp` | ICMP send/receive configuration, retry timing, filters, and dry-run reports. |
+| `reply_matching` | Synthetic request/reply matching and generated reply filters. |
+| `batch_send` | Positional batch send reports for multiple TCP packets. |
+| `batch_send_recv` | Batch send/receive reports across IPv4 and IPv6 requests. |
+| `interface_helpers` | Documentation-safe interface metadata and address helper output. |
+| `ip_ranges` | IPv4 CIDR, range, and list parsing. |
+| `pcap_write` | Generated Ethernet/IPv4/TCP packets written to a pcap file. |
+| `pcap_read` | Pcap metadata inspection, packet collection, and streaming `PcapReader` workflows. |
+| `sniffer_offline` | Offline `Sniffer` filtering and bounded packet iteration. |
+| `capture_pcap` | Bounded libpcap capture configuration and pcap writing after live-lab opt-in. |
+| `arp_who_has` | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. |
+| `dns_query` | DNS query construction, dry-run send/receive reporting, and synthetic response decoding. |
+| `dhcp_discover` | DHCP discover construction with an explicit client MAC and link-layer send options. |
+| `icmpv6_echo` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. |
+| `vlan` | 802.1Q VLAN frame construction, compile, and decode. |
+| `linux_sll` | Linux cooked capture packet construction, compile, and decode. |
+| `null_loopback` | BSD null/loopback link-layer packet construction, compile, and decode. |
+| `ipv4_options` | IPv4 option builders with checksum and length auto-fill. |
+| `tcp_options` | TCP option builders, option ordering, and header-length auto-fill. |
+| `ipv6_extensions` | IPv6 routing, segment-routing, and fragment extension header decoding. |
 
 The example set is limited to construction, decoding, pcap, and bounded
 validation flows.

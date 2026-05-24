@@ -1,8 +1,7 @@
 mod common;
 
 use common::{
-    arg_or, arg_value, default_target_path, print_help_if_requested, write_example_pcap,
-    ExampleResult,
+    arg_value, default_target_path, print_help_if_requested, write_example_pcap, ExampleResult,
 };
 use crafter::prelude::*;
 
@@ -19,7 +18,7 @@ fn print_packet(label: &str, index: usize, packet: &PcapPacket) {
 
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example pcap_read -- [--in FILE] [--filter EXPR]\n\nRead an offline pcap through read_pcap, read_pcap_filtered, and PcapReader.",
+        "usage: cargo run --example pcap_read -- [--in FILE]\n\nRead an offline pcap through PcapReader collection and streaming APIs.",
     ) {
         return Ok(());
     }
@@ -27,29 +26,15 @@ fn main() -> ExampleResult<()> {
     let path = arg_value("--in")
         .map(Into::into)
         .unwrap_or_else(|| default_target_path("examples/pcap-read.pcap"));
-    let filter = arg_or("--filter", "tcp");
 
     if !path.exists() {
         let generated = write_example_pcap(&path, 3)?;
         println!("created: {} packets at {}", generated.len(), path.display());
     }
 
-    let all_packets = read_pcap(&path)?;
-    let filtered_packets = read_pcap_filtered(&path, &filter)?;
-
     println!("example: pcap_read");
     println!("mode: offline");
     println!("pcap: {}", path.display());
-    println!("read_pcap packets: {}", all_packets.len());
-    for (index, packet) in all_packets.iter().enumerate() {
-        print_packet("read_pcap", index, packet);
-    }
-
-    println!("read_pcap_filtered filter: {filter}");
-    println!("read_pcap_filtered packets: {}", filtered_packets.len());
-    for (index, packet) in filtered_packets.iter().enumerate() {
-        print_packet("filtered", index, packet);
-    }
 
     let reader = PcapReader::open(&path)?;
     let header = reader.header();
@@ -59,6 +44,13 @@ fn main() -> ExampleResult<()> {
         header.snaplen(),
         header.precision()
     );
+
+    let packets = PcapReader::open(&path)?.collect_packets()?;
+    println!("collected packets: {}", packets.len());
+    for (index, packet) in packets.iter().enumerate() {
+        print_packet("collected", index, packet);
+    }
+
     for (index, record) in reader.records().enumerate() {
         let record = record?;
         let timestamp = record.timestamp();

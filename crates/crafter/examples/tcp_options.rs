@@ -5,7 +5,7 @@ use crafter::prelude::*;
 
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example tcp_options -- [--src IP] [--dst IP]\n\nBuild labeled TCP packets covering common options, SACK blocks, and Extended Data Offset.",
+        "usage: cargo run --example tcp_options -- [--src IP] [--dst IP]\n\nBuild labeled TCP packets covering common options, SACK blocks, Fast Open, and generic options.",
     ) {
         return Ok(());
     }
@@ -20,7 +20,7 @@ fn main() -> ExampleResult<()> {
         &syn_options(src, dst)?,
     )?;
     inspect_tcp_packet("sack blocks", &sack_blocks(src, dst)?)?;
-    inspect_tcp_packet("extended data offset", &extended_data_offset(src, dst)?)?;
+    inspect_tcp_packet("fast-open generic padding", &misc_options(src, dst)?)?;
 
     Ok(())
 }
@@ -54,17 +54,18 @@ fn sack_blocks(src: std::net::Ipv4Addr, dst: std::net::Ipv4Addr) -> ExampleResul
     Ok(Ipv4::new().src(dst).dst(src).id(0x5402) / tcp)
 }
 
-fn extended_data_offset(src: std::net::Ipv4Addr, dst: std::net::Ipv4Addr) -> ExampleResult<Packet> {
+fn misc_options(src: std::net::Ipv4Addr, dst: std::net::Ipv4Addr) -> ExampleResult<Packet> {
     let tcp = Tcp::new()
         .sport(41000)
         .dport(80)
         .seq(1)
         .flags(TCP_FLAG_SYN)
-        .tcp_option(TcpOption::extended_data_offset_request())?
-        .tcp_option(TcpOption::extended_data_offset_ext(16, 96))?
+        .tcp_option(TcpOption::no_operation())?
+        .tcp_option(TcpOption::fast_open([0xaa_u8, 0xbb, 0xcc, 0xdd]))?
+        .tcp_option(TcpOption::generic(254, [0x01_u8, 0x02]))?
         .tcp_option(TcpOption::mss(1460))?;
 
-    Ok(Ipv4::new().src(src).dst(dst).id(0x5403) / tcp / Raw::from("edo"))
+    Ok(Ipv4::new().src(src).dst(dst).id(0x5403) / tcp / Raw::from("misc"))
 }
 
 fn inspect_tcp_packet(label: &str, packet: &Packet) -> ExampleResult<()> {
