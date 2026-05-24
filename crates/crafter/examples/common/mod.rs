@@ -11,6 +11,57 @@ use crafter::prelude::*;
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
+/// Documentation-safe example interface: dry-run0.
+pub const EXAMPLE_IFACE: &str = "dry-run0";
+/// Documentation-safe local IPv4 address: 192.0.2.10.
+pub const LOCAL_IPV4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
+/// Documentation-safe remote IPv4 address: 198.51.100.20.
+pub const REMOTE_IPV4: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 20);
+/// Documentation-safe gateway IPv4 address: 192.0.2.1.
+pub const GATEWAY_IPV4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+/// Documentation-safe intermediary IPv4 address: 203.0.113.1.
+pub const INTERMEDIARY_IPV4: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 1);
+/// Documentation-safe local IPv6 address: 2001:db8::10.
+pub const LOCAL_IPV6: Ipv6Addr = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010);
+/// Documentation-safe remote IPv6 address: 2001:db8::20.
+pub const REMOTE_IPV6: Ipv6Addr = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0020);
+/// Documentation-safe local MAC address: 02:00:5e:00:53:01.
+pub const LOCAL_MAC: MacAddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+/// Documentation-safe remote MAC address: 02:00:5e:00:53:02.
+pub const REMOTE_MAC: MacAddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]);
+
+pub const fn local_ipv4() -> Ipv4Addr {
+    LOCAL_IPV4
+}
+
+pub const fn remote_ipv4() -> Ipv4Addr {
+    REMOTE_IPV4
+}
+
+pub const fn gateway_ipv4() -> Ipv4Addr {
+    GATEWAY_IPV4
+}
+
+pub const fn intermediary_ipv4() -> Ipv4Addr {
+    INTERMEDIARY_IPV4
+}
+
+pub const fn local_ipv6() -> Ipv6Addr {
+    LOCAL_IPV6
+}
+
+pub const fn remote_ipv6() -> Ipv6Addr {
+    REMOTE_IPV6
+}
+
+pub const fn local_mac() -> MacAddr {
+    LOCAL_MAC
+}
+
+pub const fn remote_mac() -> MacAddr {
+    REMOTE_MAC
+}
+
 pub fn print_help_if_requested(usage: &str) -> bool {
     if env::args().any(|arg| arg == "--help" || arg == "-h") {
         println!("{usage}");
@@ -79,6 +130,14 @@ pub fn require_advanced_live_lab(example: &str) -> ExampleResult<()> {
         )
         .into())
     }
+}
+
+pub fn live_mode(example: &str) -> ExampleResult<bool> {
+    let live = flag_present("--live");
+    if live {
+        require_advanced_live_lab(example)?;
+    }
+    Ok(live)
 }
 
 pub fn print_advanced_safety(example: &str, live: bool) {
@@ -252,17 +311,17 @@ pub fn example_ethernet_tcp_packet(
 pub fn write_example_pcap(path: &Path, count: usize) -> ExampleResult<Vec<Packet>> {
     ensure_parent(path)?;
 
-    let src_ip = Ipv4Addr::new(192, 0, 2, 10);
-    let dst_ip = Ipv4Addr::new(198, 51, 100, 20);
-    let src_mac = "02:00:5e:00:53:01";
-    let dst_mac = "02:00:5e:00:53:ff";
+    let src_ip = LOCAL_IPV4;
+    let dst_ip = REMOTE_IPV4;
+    let src_mac = LOCAL_MAC.to_string();
+    let dst_mac = REMOTE_MAC.to_string();
 
     let mut packets = Vec::new();
     packets.push(example_ethernet_tcp_packet(
         src_ip,
         dst_ip,
-        src_mac,
-        dst_mac,
+        &src_mac,
+        &dst_mac,
         62345,
         80,
         "SomeTCPPayload\n",
@@ -272,8 +331,8 @@ pub fn write_example_pcap(path: &Path, count: usize) -> ExampleResult<Vec<Packet
         packets.push(example_ethernet_tcp_packet(
             src_ip,
             dst_ip,
-            src_mac,
-            dst_mac,
+            &src_mac,
+            &dst_mac,
             62345 + offset as u16,
             80,
             "SomeTCPPayload\n",
