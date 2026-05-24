@@ -20,7 +20,6 @@ private_network_cidr="${HETZNER_PRIVATE_NETWORK_CIDR:-10.42.19.0/24}"
 private_network_zone="${HETZNER_NETWORK_ZONE:-us-east}"
 private_interface_override="${HETZNER_PRIVATE_INTERFACE:-}"
 private_interface="${private_interface_override:-auto}"
-private_prefix_len="${HETZNER_PRIVATE_PREFIX_LEN:-24}"
 libcrafter_private_ipv4="${HETZNER_LIBCRAFTER_PRIVATE_IPV4:-10.42.19.10}"
 reference_private_ipv4="${HETZNER_REFERENCE_PRIVATE_IPV4:-10.42.19.20}"
 
@@ -547,16 +546,46 @@ read_interface_mac() {
   ssh_remote_host "$host" "cat '/sys/class/net/$interface/address'"
 }
 
+network_gateway_ipv4() {
+  local cidr="$1"
+  local network="${cidr%/*}"
+  local prefix="${cidr#*/}"
+  local o1 o2 o3 o4 ip_int mask network_int gateway
+
+  IFS=. read -r o1 o2 o3 o4 <<<"$network"
+  if [[ -z "$o1" || -z "$o2" || -z "$o3" || -z "$o4" || "$prefix" == "$cidr" ]]; then
+    echo "error: invalid private network CIDR: $cidr" >&2
+    return 64
+  fi
+
+  ip_int=$(( (o1 << 24) | (o2 << 16) | (o3 << 8) | o4 ))
+  if (( prefix == 0 )); then
+    mask=0
+  else
+    mask=$(( (0xffffffff << (32 - prefix)) & 0xffffffff ))
+  fi
+  network_int=$(( ip_int & mask ))
+  gateway=$(( network_int + 1 ))
+  printf '%d.%d.%d.%d\n' \
+    $(( (gateway >> 24) & 255 )) \
+    $(( (gateway >> 16) & 255 )) \
+    $(( (gateway >> 8) & 255 )) \
+    $(( gateway & 255 ))
+}
+
 configure_private_interface() {
   local host="$1"
   local private_ip="$2"
   local attempt
   local detected_interface
+  local gateway
+
+  gateway="$(network_gateway_ipv4 "$private_network_cidr")"
 
   for attempt in $(seq 1 40); do
     if detected_interface="$(detect_private_interface "$host" 2>/dev/null)"; then
       private_interface="$detected_interface"
-      ssh_remote_host "$host" "ip link set '$detected_interface' up && ip address replace '$private_ip/$private_prefix_len' dev '$detected_interface' && { ip route replace '$private_network_cidr' dev '$detected_interface' src '$private_ip' || true; }"
+      ssh_remote_host "$host" "ip link set '$detected_interface' up && ip link set '$detected_interface' mtu 1450 || true && ip address flush dev '$detected_interface' scope global || true && ip address replace '$private_ip/32' dev '$detected_interface' && ip route replace '$private_network_cidr' via '$gateway' dev '$detected_interface' src '$private_ip' onlink"
       return 0
     fi
     sleep 3
