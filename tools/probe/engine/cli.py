@@ -39,7 +39,9 @@ STATUS_UNSUPPORTED = "unsupported"
 FAILURE_TIMEOUT = "timeout"
 FAILURE_WRONG_PEER = "wrong_peer"
 FAILURE_WRONG_PAYLOAD = "wrong_payload"
+FAILURE_WRONG_FLAGS = "wrong_flags"
 FAILURE_DECODE_FAILED = "decode_failed"
+FAILURE_TARGET_SETUP_FAILED = "target_setup_failed"
 
 
 _PROBE_CASES: tuple[ProbeCase, ...] = (
@@ -315,6 +317,13 @@ def _probe_plan_for_case(
             seed=request.seed,
             sequence=sequence,
         )
+    if case.name in {"tcp-syn-open", "tcp-syn-closed"}:
+        return _tcp_syn_probe_plan(
+            case_name=case.name,
+            profile=request.profile,
+            seed=request.seed,
+            sequence=sequence,
+        )
     return {
         "schema_version": 1,
         "case": case.name,
@@ -374,6 +383,68 @@ def _icmp_echo_probe_plan(
     }
 
 
+def _tcp_syn_probe_plan(
+    *,
+    case_name: str,
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    digest = _deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = _deterministic_ipv4_pair(profile, seed, sequence)
+    source_port = 61000 + int.from_bytes(digest[0:2], "big") % 4000
+    destination_base = 18000 if case_name == "tcp-syn-open" else 22000
+    destination_port = destination_base + int.from_bytes(digest[2:4], "big") % 3000
+    sequence_number = int.from_bytes(digest[4:8], "big")
+    expected_ack = (sequence_number + 1) & 0xFFFF_FFFF
+    expected_response = "tcp_syn_ack" if case_name == "tcp-syn-open" else "tcp_rst"
+    expected_flags = ["syn", "ack"] if case_name == "tcp-syn-open" else ["rst"]
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "tcp_syn",
+        "expected_response": expected_response,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "tcp_sequence_number": sequence_number,
+        "expected_acknowledgment_number": expected_ack,
+        "window": 64240,
+        "target_service": {
+            "required": case_name == "tcp-syn-open",
+            "kind": "tcp-listener" if case_name == "tcp-syn-open" else "closed-port",
+            "port": destination_port,
+        },
+        "stimulus_rst_guard": {
+            "required": True,
+            "source_ipv4": stimulus_ipv4,
+            "destination_ipv4": target_ipv4,
+            "source_port": source_port,
+            "destination_port": destination_port,
+        },
+        "capture_filter": (
+            f"tcp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "flags": expected_flags,
+            "acknowledgment_number": expected_ack,
+            "allow_rst_ack": case_name == "tcp-syn-closed",
+        },
+    }
+
+
 def _deterministic_bytes(case: str, profile: str, seed: int, sequence: int) -> bytes:
     material = f"{case}\0{profile}\0{seed}\0{sequence}".encode("utf-8")
     return hashlib.sha256(material).digest()
@@ -415,12 +486,12 @@ def _guarded_live_report(
     status: str,
 ) -> ProbeReport:
     if request.provider == "hetzner" and request.confirm_live_run:
-        icmp_plans = [plan for plan in probe_plans if plan.get("case") == "icmp-echo"]
+        executable_plans = _probe_endpoint_plans(probe_plans)
         unsupported = [
-            case.name for case in planned_cases if case.name != "icmp-echo"
+            case.name for case in planned_cases if case.name not in _PROBE_ENDPOINT_CASES
         ]
-        if icmp_plans and not unsupported:
-            return _hetzner_icmp_live_report(
+        if executable_plans and not unsupported:
+            return _hetzner_endpoint_live_report(
                 request=request,
                 selected_cases=selected_cases,
                 planned_cases=planned_cases,
@@ -584,7 +655,10 @@ def _build_report(
         "creates_infrastructure": False,
         "requires_provider_lifecycle": request.provider == "hetzner",
         "mutates_lab": False if dry_run else None,
-        "target_service_setup": _target_service_setup_plan(dry_run=dry_run),
+        "target_service_setup": _target_service_setup_plan(
+            probe_plans=probe_plans,
+            dry_run=dry_run,
+        ),
     }
     return ProbeReport(
         mode="probe",
@@ -612,7 +686,7 @@ def _write_probe_endpoint_request_artifact(
     probe_plans: Sequence[JSONObject],
     dry_run: bool,
 ) -> Path | None:
-    endpoint_plans = [plan for plan in probe_plans if plan.get("case") == "icmp-echo"]
+    endpoint_plans = _probe_endpoint_plans(probe_plans)
     if not endpoint_plans:
         return None
 
@@ -639,14 +713,26 @@ def _write_probe_endpoint_request_artifact(
         "metadata": {
             "planned_only": dry_run,
             "case_count": len(endpoint_plans),
-            "failure_reasons": _failure_reasons_for_case("icmp-echo"),
+            "failure_reasons_by_case": {
+                str(plan.get("case", "")): _failure_reasons_for_case(
+                    str(plan.get("case", ""))
+                )
+                for plan in endpoint_plans
+            },
         },
     }
     write_json(request_path, endpoint_request)
     return request_path
 
 
-def _hetzner_icmp_live_report(
+_PROBE_ENDPOINT_CASES = frozenset({"icmp-echo", "tcp-syn-open", "tcp-syn-closed"})
+
+
+def _probe_endpoint_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    return [plan for plan in probe_plans if plan.get("case") in _PROBE_ENDPOINT_CASES]
+
+
+def _hetzner_endpoint_live_report(
     *,
     request: ProbeRunRequest,
     selected_cases: Sequence[ProbeCase],
@@ -655,7 +741,7 @@ def _hetzner_icmp_live_report(
     report_path: Path,
 ) -> ProbeReport:
     output_dir = report_path.parent
-    endpoint_dir = output_dir / "artifacts" / "hetzner-icmp-echo"
+    endpoint_dir = output_dir / "artifacts" / "hetzner-probe-endpoint"
     endpoint_dir.mkdir(parents=True, exist_ok=True)
     provider_commands: list[JSONObject] = []
     execution_errors: list[str] = []
@@ -664,6 +750,8 @@ def _hetzner_icmp_live_report(
     local_request_path = endpoint_dir / "stimulus.request.json"
     manifest_path = _hetzner_manifest_path()
     manifest: dict[str, str] = {}
+    target_setup_attempted = False
+    rst_guard_attempted = False
 
     try:
         manifest = _read_hetzner_manifest(manifest_path)
@@ -687,7 +775,7 @@ def _hetzner_icmp_live_report(
             remote_dir,
             "live-artifacts",
             "probe",
-            "icmp-echo",
+            "endpoint",
         )
         remote_request_path = posixpath.join(
             remote_artifact_root,
@@ -704,16 +792,45 @@ def _hetzner_icmp_live_report(
         )
         write_json(local_request_path, endpoint_request)
 
-        upload = _upload_hetzner_probe_request(
+        target_setup = _prepare_hetzner_probe_target(
             manifest=manifest,
-            local_request_path=local_request_path,
-            remote_request_path=remote_request_path,
+            remote_dir=remote_dir,
+            probe_plans=live_plans,
             output_dir=endpoint_dir,
         )
-        provider_commands.append(upload)
-        if upload["exit_code"] != 0:
-            execution_errors.append("failed to upload probe endpoint request")
+        if target_setup is not None:
+            target_setup_attempted = True
+            provider_commands.append(target_setup)
+            execution_errors.extend(_string_list(target_setup.get("errors", [])))
+            if target_setup["exit_code"] != 0:
+                execution_errors.append("target endpoint setup failed")
+
+        rst_setup = _install_hetzner_stimulus_rst_guards(
+            manifest=manifest,
+            probe_plans=live_plans,
+            output_dir=endpoint_dir,
+        )
+        if rst_setup is not None:
+            rst_guard_attempted = True
+            provider_commands.append(rst_setup)
+            execution_errors.extend(_string_list(rst_setup.get("errors", [])))
+            if rst_setup["exit_code"] != 0:
+                execution_errors.append("stimulus RST guard setup failed")
+
+        if not execution_errors:
+            upload = _upload_hetzner_probe_request(
+                manifest=manifest,
+                local_request_path=local_request_path,
+                remote_request_path=remote_request_path,
+                output_dir=endpoint_dir,
+            )
+            provider_commands.append(upload)
+            if upload["exit_code"] != 0:
+                execution_errors.append("failed to upload probe endpoint request")
         else:
+            upload = None
+
+        if not execution_errors and upload is not None:
             execution = _run_hetzner_probe_endpoint(
                 manifest=manifest,
                 remote_dir=remote_dir,
@@ -733,6 +850,27 @@ def _hetzner_icmp_live_report(
                 execution_errors.append("probe endpoint did not return JSON")
     except Exception as exc:  # pragma: no cover - live-provider only.
         execution_errors.append(str(exc))
+    finally:
+        if manifest and rst_guard_attempted:
+            rst_cleanup = _cleanup_hetzner_stimulus_rst_guards(
+                manifest=manifest,
+                probe_plans=live_plans,
+                output_dir=endpoint_dir,
+            )
+            provider_commands.append(rst_cleanup)
+            execution_errors.extend(_string_list(rst_cleanup.get("errors", [])))
+            if rst_cleanup["exit_code"] != 0:
+                execution_errors.append("stimulus RST guard cleanup failed")
+        if manifest and target_setup_attempted:
+            target_cleanup = _cleanup_hetzner_probe_target(
+                manifest=manifest,
+                remote_dir=manifest.get("remote_dir", "/root/libcrafter"),
+                output_dir=endpoint_dir,
+            )
+            provider_commands.append(target_cleanup)
+            execution_errors.extend(_string_list(target_cleanup.get("errors", [])))
+            if target_cleanup["exit_code"] != 0:
+                execution_errors.append("target endpoint cleanup failed")
 
     if endpoint_response is None:
         results, observed_responses = _failed_live_probe_results(
@@ -809,7 +947,10 @@ def _hetzner_icmp_live_report(
             "manifest": {"path": str(manifest_path), "loaded": bool(manifest)},
             "provider_commands": provider_commands,
             "execution_errors": execution_errors,
-            "target_service_setup": _target_service_setup_plan(dry_run=False),
+            "target_service_setup": _target_service_setup_plan(
+                probe_plans=live_plans,
+                dry_run=False,
+            ),
         },
     )
 
@@ -844,7 +985,12 @@ def _probe_endpoint_request_object(
         "metadata": {
             "planned_only": dry_run,
             "case_count": len(probe_plans),
-            "failure_reasons": _failure_reasons_for_case("icmp-echo"),
+            "failure_reasons_by_case": {
+                str(plan.get("case", "")): _failure_reasons_for_case(
+                    str(plan.get("case", ""))
+                )
+                for plan in probe_plans
+            },
         },
     }
 
@@ -855,14 +1001,37 @@ def _probe_plan_with_endpoint_addresses(
     source_ipv4: str,
     target_ipv4: str,
 ) -> JSONObject:
-    if plan.get("case") != "icmp-echo":
+    if plan.get("case") not in _PROBE_ENDPOINT_CASES:
         return dict(plan)
     updated = dict(plan)
     updated["source_ipv4"] = source_ipv4
     updated["destination_ipv4"] = target_ipv4
     updated["expected_reply_source_ipv4"] = target_ipv4
     updated["expected_reply_destination_ipv4"] = source_ipv4
-    updated["capture_filter"] = f"icmp and src host {target_ipv4} and dst host {source_ipv4}"
+    case_name = str(updated.get("case", ""))
+    if case_name == "icmp-echo":
+        updated["capture_filter"] = (
+            f"icmp and src host {target_ipv4} and dst host {source_ipv4}"
+        )
+    elif case_name.startswith("tcp-syn-"):
+        source_port = int(updated.get("source_port", 0))
+        destination_port = int(updated.get("destination_port", 0))
+        updated["capture_filter"] = (
+            f"tcp and src host {target_ipv4} and dst host {source_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        )
+        rst_guard = dict(
+            json_object(updated.get("stimulus_rst_guard", {}), "probe_plan.rst_guard")
+        )
+        rst_guard.update(
+            {
+                "source_ipv4": source_ipv4,
+                "destination_ipv4": target_ipv4,
+                "source_port": source_port,
+                "destination_port": destination_port,
+            }
+        )
+        updated["stimulus_rst_guard"] = rst_guard
     validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
     validation["source_ipv4"] = target_ipv4
     validation["destination_ipv4"] = source_ipv4
@@ -954,6 +1123,282 @@ def _run_hetzner_probe_endpoint(
         timeout_seconds=timeout_seconds,
         parse_json=True,
     )
+
+
+def _prepare_hetzner_probe_target(
+    *,
+    manifest: Mapping[str, str],
+    remote_dir: str,
+    probe_plans: Sequence[JSONObject],
+    output_dir: Path,
+) -> JSONObject | None:
+    tcp_plans = _tcp_probe_plans(probe_plans)
+    if not tcp_plans:
+        return None
+    remote_artifact_root = posixpath.join(
+        remote_dir,
+        "live-artifacts",
+        "probe",
+        "target-services",
+    )
+    open_ports = _dedupe_ints(
+        int(plan["destination_port"])
+        for plan in tcp_plans
+        if plan.get("case") == "tcp-syn-open"
+    )
+    closed_ports = _dedupe_ints(
+        int(plan["destination_port"])
+        for plan in tcp_plans
+        if plan.get("case") == "tcp-syn-closed"
+    )
+    script = _target_service_setup_script(
+        artifact_root=remote_artifact_root,
+        open_ports=open_ports,
+        closed_ports=closed_ports,
+    )
+    return _run_command(
+        _hetzner_endpoint_ssh_argv(
+            manifest,
+            "target",
+            f"bash -lc {shlex.quote(script)}",
+        ),
+        output_dir=output_dir,
+        label="probe-target-setup",
+        timeout_seconds=60,
+    )
+
+
+def _cleanup_hetzner_probe_target(
+    *,
+    manifest: Mapping[str, str],
+    remote_dir: str,
+    output_dir: Path,
+) -> JSONObject:
+    remote_artifact_root = posixpath.join(
+        remote_dir,
+        "live-artifacts",
+        "probe",
+        "target-services",
+    )
+    cleanup_script = posixpath.join(remote_artifact_root, "cleanup.sh")
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            f"if [ -x {shlex.quote(cleanup_script)} ]; then {shlex.quote(cleanup_script)}; fi",
+        ]
+    )
+    return _run_command(
+        _hetzner_endpoint_ssh_argv(
+            manifest,
+            "target",
+            f"bash -lc {shlex.quote(script)}",
+        ),
+        output_dir=output_dir,
+        label="probe-target-cleanup",
+        timeout_seconds=60,
+    )
+
+
+def _install_hetzner_stimulus_rst_guards(
+    *,
+    manifest: Mapping[str, str],
+    probe_plans: Sequence[JSONObject],
+    output_dir: Path,
+) -> JSONObject | None:
+    tcp_plans = _tcp_probe_plans(probe_plans)
+    if not tcp_plans:
+        return None
+    return _run_command(
+        _hetzner_endpoint_ssh_argv(
+            manifest,
+            "stimulus",
+            f"bash -lc {shlex.quote(_rst_guard_script(tcp_plans, install=True))}",
+        ),
+        output_dir=output_dir,
+        label="probe-stimulus-rst-guard-setup",
+        timeout_seconds=60,
+    )
+
+
+def _cleanup_hetzner_stimulus_rst_guards(
+    *,
+    manifest: Mapping[str, str],
+    probe_plans: Sequence[JSONObject],
+    output_dir: Path,
+) -> JSONObject:
+    return _run_command(
+        _hetzner_endpoint_ssh_argv(
+            manifest,
+            "stimulus",
+            f"bash -lc {shlex.quote(_rst_guard_script(_tcp_probe_plans(probe_plans), install=False))}",
+        ),
+        output_dir=output_dir,
+        label="probe-stimulus-rst-guard-cleanup",
+        timeout_seconds=60,
+    )
+
+
+def _target_service_setup_script(
+    *,
+    artifact_root: str,
+    open_ports: Sequence[int],
+    closed_ports: Sequence[int],
+) -> str:
+    lines = [
+        "set -euo pipefail",
+        f"artifact_root={shlex.quote(artifact_root)}",
+        'mkdir -p "$artifact_root"',
+        'cleanup="$artifact_root/cleanup.sh"',
+        ': > "$cleanup"',
+        'chmod 700 "$cleanup"',
+        "check_port_free() {",
+        "  python3 - \"$1\" <<'PY'",
+        "import socket",
+        "import sys",
+        "port = int(sys.argv[1])",
+        "sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)",
+        "try:",
+        "    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+        "    sock.bind(('0.0.0.0', port))",
+        "except OSError as exc:",
+        "    print(f'port {port} is not free: {exc}', file=sys.stderr)",
+        "    sys.exit(1)",
+        "finally:",
+        "    sock.close()",
+        "PY",
+        "}",
+    ]
+    for port in closed_ports:
+        lines.append(f"check_port_free {port}")
+        lines.append(f"echo closed_port_{port}=free")
+    for port in open_ports:
+        listener_path = posixpath.join(artifact_root, f"tcp-listener-{port}.py")
+        stdout_path = posixpath.join(artifact_root, f"tcp-listener-{port}.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, f"tcp-listener-{port}.stderr.txt")
+        pid_path = posixpath.join(artifact_root, f"tcp-listener-{port}.pid")
+        lines.extend(
+            [
+                f"check_port_free {port}",
+                f"cat > {shlex.quote(listener_path)} <<'PY'",
+                "import signal",
+                "import socket",
+                "import sys",
+                "",
+                "stop = False",
+                "",
+                "def handle_stop(_signum, _frame):",
+                "    global stop",
+                "    stop = True",
+                "",
+                "signal.signal(signal.SIGTERM, handle_stop)",
+                "signal.signal(signal.SIGINT, handle_stop)",
+                "port = int(sys.argv[1])",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)",
+                "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+                "sock.bind(('0.0.0.0', port))",
+                "sock.listen(128)",
+                "sock.settimeout(1.0)",
+                "print(f'listening on {port}', flush=True)",
+                "while not stop:",
+                "    try:",
+                "        conn, _addr = sock.accept()",
+                "    except socket.timeout:",
+                "        continue",
+                "    conn.close()",
+                "sock.close()",
+                "PY",
+                (
+                    f"python3 {shlex.quote(listener_path)} {port} "
+                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.5",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                f"  echo listener_{port}=failed >&2",
+                "  exit 73",
+                "fi",
+                f"echo listener_{port}=running",
+            ]
+        )
+    lines.append("echo target_service_setup=ok")
+    return "\n".join(lines)
+
+
+def _rst_guard_script(probe_plans: Sequence[JSONObject], *, install: bool) -> str:
+    lines = [
+        "set -euo pipefail",
+        "if ! command -v iptables >/dev/null 2>&1; then",
+        "  echo 'iptables is required for TCP raw SYN probes' >&2",
+        "  exit 69",
+        "fi",
+    ]
+    for argv in _rst_guard_iptables_args(probe_plans):
+        quoted_args = " ".join(shlex.quote(arg) for arg in argv)
+        check = f"iptables -C OUTPUT {quoted_args}"
+        if install:
+            lines.extend(
+                [
+                    f"if ! {check} >/dev/null 2>&1; then",
+                    f"  iptables -I OUTPUT 1 {quoted_args}",
+                    "fi",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"while {check} >/dev/null 2>&1; do",
+                    f"  iptables -D OUTPUT {quoted_args}",
+                    "done",
+                ]
+            )
+    lines.append(
+        "echo stimulus_rst_guard={}".format("installed" if install else "removed")
+    )
+    return "\n".join(lines)
+
+
+def _rst_guard_iptables_args(probe_plans: Sequence[JSONObject]) -> list[list[str]]:
+    rules: list[list[str]] = []
+    for plan in probe_plans:
+        guard = json_object(plan.get("stimulus_rst_guard", {}), "stimulus_rst_guard")
+        if guard.get("required") is not True:
+            continue
+        rules.append(
+            [
+                "-p",
+                "tcp",
+                "-s",
+                str(guard.get("source_ipv4", plan.get("source_ipv4", ""))),
+                "-d",
+                str(guard.get("destination_ipv4", plan.get("destination_ipv4", ""))),
+                "--sport",
+                str(guard.get("source_port", plan.get("source_port", ""))),
+                "--dport",
+                str(guard.get("destination_port", plan.get("destination_port", ""))),
+                "--tcp-flags",
+                "RST",
+                "RST",
+                "-j",
+                "DROP",
+            ]
+        )
+    return rules
+
+
+def _tcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    return [
+        plan
+        for plan in probe_plans
+        if str(plan.get("case", "")).startswith("tcp-syn-")
+    ]
+
+
+def _dedupe_ints(values: Sequence[int]) -> list[int]:
+    return list(dict.fromkeys(values))
 
 
 def _hetzner_endpoint_ssh_argv(
@@ -1215,6 +1660,14 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
         ]
+    if case_name in {"tcp-syn-open", "tcp-syn-closed"}:
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_FLAGS,
+            FAILURE_DECODE_FAILED,
+            FAILURE_TARGET_SETUP_FAILED,
+        ]
     return []
 
 
@@ -1239,19 +1692,37 @@ def _live_status(request: ProbeRunRequest) -> str:
     return STATUS_UNSUPPORTED
 
 
-def _target_service_setup_plan(*, dry_run: bool) -> JSONObject:
+def _target_service_setup_plan(
+    *,
+    probe_plans: Sequence[JSONObject],
+    dry_run: bool,
+) -> JSONObject:
+    tcp_open_ports = _dedupe_ints(
+        int(plan["destination_port"])
+        for plan in probe_plans
+        if plan.get("case") == "tcp-syn-open"
+    )
+    tcp_closed_ports = _dedupe_ints(
+        int(plan["destination_port"])
+        for plan in probe_plans
+        if plan.get("case") == "tcp-syn-closed"
+    )
     return {
         "role": "target",
         "planned": True,
         "starts_services": not dry_run,
         "dry_run_starts_services": False,
         "services": [
-            {
-                "name": "tcp-open-listener",
-                "protocol": "tcp",
-                "port": 18080,
-                "purpose": "tcp-syn-open",
-            },
+            *[
+                {
+                    "name": "tcp-open-listener",
+                    "protocol": "tcp",
+                    "port": port,
+                    "purpose": "tcp-syn-open",
+                    "deterministic": True,
+                }
+                for port in tcp_open_ports
+            ],
             {
                 "name": "dns-responder",
                 "protocol": "udp",
@@ -1259,11 +1730,15 @@ def _target_service_setup_plan(*, dry_run: bool) -> JSONObject:
                 "purpose": "dns-query",
             },
         ],
-        "closed_tcp_port": {
-            "port": 18081,
-            "state": "reserved-unbound",
-            "purpose": "tcp-syn-closed",
-        },
+        "closed_tcp_ports": [
+            {
+                "port": port,
+                "state": "verified-unbound" if not dry_run else "planned-unbound",
+                "purpose": "tcp-syn-closed",
+                "deterministic": True,
+            }
+            for port in tcp_closed_ports
+        ],
         "controlled_router": {
             "available": False,
             "skip_reason": "provider_capability_unavailable",
