@@ -53,7 +53,7 @@ PRs should be squash-merged. The squash title must be the PR title. Intermediate
 commits should also pass:
 
 ```sh
-tools/policy/check-conventional-commits --range origin/master..HEAD
+.agents/scripts/check-conventional-commits --range origin/master..HEAD
 ```
 
 If a PR accumulates noisy work-in-progress commits, squash or reword them before
