@@ -208,7 +208,7 @@ fn input_path(value: String) -> Option<PathBuf> {
 
 fn print_usage() {
     println!(
-        "usage: cargo run -p crafter --example probe_endpoint -- [--dry-run|--live] --input PATH|- [--out DIR]\n\nRun the libcrafter stimulus endpoint for probe cases. Dry-run is the default and compiles probe packets without sending traffic."
+        "usage: cargo run -p probe-adapters --bin probe_endpoint -- [--dry-run|--live] --input PATH|- [--out DIR]\n\nRun the libcrafter stimulus endpoint for probe cases. Dry-run is the default and compiles probe packets without sending traffic."
     );
 }
 

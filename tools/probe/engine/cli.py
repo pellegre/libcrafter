@@ -1353,7 +1353,7 @@ def _run_hetzner_probe_endpoint(
             f"cd {quoted_remote_dir}",
             'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
             (
-                "cargo run -q -p crafter --example probe_endpoint -- "
+                "cargo run -q -p probe-adapters --bin probe_endpoint -- "
                 f"--live --input {quoted_request} --out {quoted_out}"
             ),
         ]

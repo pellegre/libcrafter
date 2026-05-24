@@ -2,6 +2,7 @@
 members = [
     "crates/crafter",
     "tools/oracle/adapters",
+    "tools/probe/adapters",
 ]
 resolver = "2"
 
