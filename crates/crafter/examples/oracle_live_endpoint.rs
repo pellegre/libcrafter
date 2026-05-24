@@ -366,10 +366,13 @@ fn run_receiver(
     }
 
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
-    let captured = Sniffer::interface(request.interface.clone())
+    let mut sniffer = Sniffer::interface(request.interface.clone())
         .timeout(timeout)
-        .count(prepared.len().max(1))
-        .collect()?;
+        .count(prepared.len().max(1));
+    if let Some(filter) = live_capture_filter(request) {
+        sniffer = sniffer.filter(filter);
+    }
+    let captured = sniffer.collect()?;
 
     let mut decoded_models = Vec::with_capacity(captured.len());
     for (offset, captured_packet) in captured.iter().enumerate() {
@@ -519,6 +522,14 @@ fn endpoint_response(
             "detail": metadata,
         },
     })
+}
+
+fn live_capture_filter(request: &EndpointRequest) -> Option<String> {
+    let local = request.local_addresses.get("ipv4")?.as_str()?;
+    let peer = request.peer_addresses.get("ipv4")?.as_str()?;
+    Some(format!(
+        "ip and udp and src host {peer} and dst host {local}"
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
