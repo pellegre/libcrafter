@@ -144,7 +144,7 @@ fn input_path(value: String) -> Option<PathBuf> {
 
 fn print_usage() {
     println!(
-        "usage: cargo run -p oracle-adapters --bin oracle_live_endpoint -- [--dry-run|--live] --input PATH|- [--out DIR]\n\nRun the libcrafter side of an oracle live endpoint batch. Dry-run is the default and compiles packet plans without sending or capturing traffic."
+        "usage: cargo run -p oracle-adapters --bin live_endpoint -- [--dry-run|--live] --input PATH|- [--out DIR]\n\nRun the libcrafter side of an oracle live endpoint batch. Dry-run is the default and compiles packet plans without sending or capturing traffic."
     );
 }
 
@@ -166,7 +166,7 @@ fn run_endpoint(
 ) -> ExampleResult<Value> {
     if request.endpoint_role != "libcrafter" {
         return Err(format!(
-            "oracle_live_endpoint only supports endpoint_role=libcrafter, got {}",
+            "live_endpoint only supports endpoint_role=libcrafter, got {}",
             request.endpoint_role
         )
         .into());

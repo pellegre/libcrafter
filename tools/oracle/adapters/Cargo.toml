@@ -7,24 +7,24 @@ license.workspace = true
 publish = false
 
 [[bin]]
-name = "oracle_decode_vectors"
-path = "src/bin/oracle_decode_vectors.rs"
+name = "decode_vectors"
+path = "src/bin/decode_vectors.rs"
 
 [[bin]]
-name = "oracle_live_endpoint"
-path = "src/bin/oracle_live_endpoint.rs"
+name = "live_endpoint"
+path = "src/bin/live_endpoint.rs"
 
 [[bin]]
-name = "oracle_materialize_plans"
-path = "src/bin/oracle_materialize_plans.rs"
+name = "materialize_plans"
+path = "src/bin/materialize_plans.rs"
 
 [[bin]]
-name = "oracle_pcap"
-path = "src/bin/oracle_pcap.rs"
+name = "pcap"
+path = "src/bin/pcap.rs"
 
 [[bin]]
-name = "oracle_vectors"
-path = "src/bin/oracle_vectors.rs"
+name = "vectors"
+path = "src/bin/vectors.rs"
 
 [dependencies]
 crafter = { path = "../../../crates/crafter" }

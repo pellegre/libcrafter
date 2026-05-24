@@ -124,7 +124,7 @@ fn input_path(value: String) -> Option<PathBuf> {
 
 fn print_usage() {
     println!(
-        "usage: cargo run -p oracle-adapters --bin oracle_decode_vectors -- [--input PATH|-]\n\nDecode oracle raw vectors with libcrafter and emit normalized JSON. Reads stdin when --input is omitted or set to -."
+        "usage: cargo run -p oracle-adapters --bin decode_vectors -- [--input PATH|-]\n\nDecode oracle raw vectors with libcrafter and emit normalized JSON. Reads stdin when --input is omitted or set to -."
     );
 }
 

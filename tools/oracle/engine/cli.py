@@ -2831,7 +2831,7 @@ def _hetzner_endpoint_remote_command(
                 f"cd {quoted_remote_dir}",
                 'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
                 (
-                    "cargo run -q -p oracle-adapters --bin oracle_live_endpoint -- "
+                    "cargo run -q -p oracle-adapters --bin live_endpoint -- "
                     f"--live --input {quoted_request} --out {quoted_out}"
                 ),
             ]
@@ -5161,7 +5161,7 @@ def _run_libcrafter_decode_bridge(vector_path: Path, run_dir: Path) -> JSONObjec
         "-p",
         "oracle-adapters",
         "--bin",
-        "oracle_decode_vectors",
+        "decode_vectors",
         "--",
         "--input",
         str(vector_path),
@@ -5272,7 +5272,7 @@ def _run_libcrafter_plan_materializer(plan_path: Path, run_dir: Path) -> JSONObj
         "-p",
         "oracle-adapters",
         "--bin",
-        "oracle_materialize_plans",
+        "materialize_plans",
         "--",
         "--input",
         str(plan_path),
@@ -5384,7 +5384,7 @@ def _run_libcrafter_vector_emitter(run_dir: Path) -> JSONObject:
         "-p",
         "oracle-adapters",
         "--bin",
-        "oracle_vectors",
+        "vectors",
         "--",
         "--json",
     ]
@@ -5431,7 +5431,7 @@ def _run_libcrafter_pcap_reader(pcap_path: Path, run_dir: Path, label: str) -> J
         "-p",
         "oracle-adapters",
         "--bin",
-        "oracle_pcap",
+        "pcap",
         "--",
         "--read-pcap",
         str(pcap_path),
@@ -5454,7 +5454,7 @@ def _run_libcrafter_pcap_writer(
         "-p",
         "oracle-adapters",
         "--bin",
-        "oracle_pcap",
+        "pcap",
         "--",
         "--write-pcap",
         str(pcap_path),
@@ -5738,7 +5738,7 @@ def _libcrafter_case_plan(
         metadata={
             "plan_id": f"libcrafter:{index}",
             "case": name,
-            "generator": "cargo run -q -p oracle-adapters --bin oracle_vectors -- --json",
+            "generator": "cargo run -q -p oracle-adapters --bin vectors -- --json",
             "source": "libcrafter oracle vector emitter",
         },
     )

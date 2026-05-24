@@ -671,13 +671,13 @@ def _guarded_live_report(
         }
         executable_plans = [
             plan
-            for plan in _probe_endpoint_plans(probe_plans)
+            for plan in _stimulus_endpoint_plans(probe_plans)
             if int(plan.get("sequence", -1)) not in skipped_sequences
         ]
         unsupported = [
             case.name
             for sequence, case in enumerate(planned_cases)
-            if sequence not in skipped_sequences and case.name not in _PROBE_ENDPOINT_CASES
+            if sequence not in skipped_sequences and case.name not in _STIMULUS_ENDPOINT_CASES
         ]
         if (executable_plans or skipped_sequences) and not unsupported:
             return _hetzner_endpoint_live_report(
@@ -715,7 +715,7 @@ def _build_report(
         for plan in probe_plans
         if isinstance(plan.get("sequence"), int)
     }
-    endpoint_request_path = _write_probe_endpoint_request_artifact(
+    endpoint_request_path = _write_stimulus_endpoint_request_artifact(
         report_path=report_path,
         request=request,
         probe_plans=probe_plans,
@@ -855,18 +855,18 @@ def _build_report(
     )
 
 
-def _write_probe_endpoint_request_artifact(
+def _write_stimulus_endpoint_request_artifact(
     *,
     report_path: Path,
     request: ProbeRunRequest,
     probe_plans: Sequence[JSONObject],
     dry_run: bool,
 ) -> Path | None:
-    endpoint_plans = _probe_endpoint_plans(probe_plans)
+    endpoint_plans = _stimulus_endpoint_plans(probe_plans)
     if not endpoint_plans:
         return None
 
-    artifact_dir = report_path.parent / "artifacts" / "probe-endpoint"
+    artifact_dir = report_path.parent / "artifacts" / "stimulus-endpoint"
     request_path = artifact_dir / "stimulus.request.json"
     first_plan = endpoint_plans[0]
     endpoint_request: JSONObject = {
@@ -901,13 +901,13 @@ def _write_probe_endpoint_request_artifact(
     return request_path
 
 
-_PROBE_ENDPOINT_CASES = frozenset(
+_STIMULUS_ENDPOINT_CASES = frozenset(
     {"icmp-echo", "tcp-syn-open", "tcp-syn-closed", "dns-query", "ttl-expired"}
 )
 
 
-def _probe_endpoint_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    return [plan for plan in probe_plans if plan.get("case") in _PROBE_ENDPOINT_CASES]
+def _stimulus_endpoint_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    return [plan for plan in probe_plans if plan.get("case") in _STIMULUS_ENDPOINT_CASES]
 
 
 def _hetzner_endpoint_live_report(
@@ -919,7 +919,7 @@ def _hetzner_endpoint_live_report(
     report_path: Path,
 ) -> ProbeReport:
     output_dir = report_path.parent
-    endpoint_dir = output_dir / "artifacts" / "hetzner-probe-endpoint"
+    endpoint_dir = output_dir / "artifacts" / "hetzner-stimulus-endpoint"
     endpoint_dir.mkdir(parents=True, exist_ok=True)
     provider_commands: list[JSONObject] = []
     execution_errors: list[str] = []
@@ -984,7 +984,7 @@ def _hetzner_endpoint_live_report(
                 "inputs",
                 "stimulus.request.json",
             )
-            endpoint_request = _probe_endpoint_request_object(
+            endpoint_request = _stimulus_endpoint_request_object(
                 request=request,
                 probe_plans=live_plans,
                 dry_run=False,
@@ -1028,12 +1028,12 @@ def _hetzner_endpoint_live_report(
                 )
                 provider_commands.append(upload)
                 if upload["exit_code"] != 0:
-                    execution_errors.append("failed to upload probe endpoint request")
+                    execution_errors.append("failed to upload stimulus endpoint request")
             else:
                 upload = None
 
             if not execution_errors and upload is not None:
-                execution = _run_hetzner_probe_endpoint(
+                execution = _run_hetzner_stimulus_endpoint(
                     manifest=manifest,
                     remote_dir=remote_dir,
                     remote_request_path=remote_request_path,
@@ -1047,9 +1047,9 @@ def _hetzner_endpoint_live_report(
                 ) else None
                 execution_errors.extend(_string_list(execution.get("errors", [])))
                 if execution["exit_code"] != 0:
-                    execution_errors.append("probe endpoint command failed")
+                    execution_errors.append("stimulus endpoint command failed")
                 if endpoint_response is None:
-                    execution_errors.append("probe endpoint did not return JSON")
+                    execution_errors.append("stimulus endpoint did not return JSON")
         except Exception as exc:  # pragma: no cover - live-provider only.
             execution_errors.append(str(exc))
         finally:
@@ -1167,7 +1167,7 @@ def _hetzner_endpoint_live_report(
     )
 
 
-def _probe_endpoint_request_object(
+def _stimulus_endpoint_request_object(
     *,
     request: ProbeRunRequest,
     probe_plans: Sequence[JSONObject],
@@ -1213,7 +1213,7 @@ def _probe_plan_with_endpoint_addresses(
     source_ipv4: str,
     target_ipv4: str,
 ) -> JSONObject:
-    if plan.get("case") not in _PROBE_ENDPOINT_CASES:
+    if plan.get("case") not in _STIMULUS_ENDPOINT_CASES:
         return dict(plan)
     updated = dict(plan)
     updated["source_ipv4"] = source_ipv4
@@ -1335,7 +1335,7 @@ def _upload_hetzner_probe_request(
     )
 
 
-def _run_hetzner_probe_endpoint(
+def _run_hetzner_stimulus_endpoint(
     *,
     manifest: Mapping[str, str],
     remote_dir: str,
@@ -1353,7 +1353,7 @@ def _run_hetzner_probe_endpoint(
             f"cd {quoted_remote_dir}",
             'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
             (
-                "cargo run -q -p probe-adapters --bin probe_endpoint -- "
+                "cargo run -q -p probe-adapters --bin stimulus_endpoint -- "
                 f"--live --input {quoted_request} --out {quoted_out}"
             ),
         ]
@@ -1365,7 +1365,7 @@ def _run_hetzner_probe_endpoint(
             f"bash -lc {shlex.quote(script)}",
         ),
         output_dir=output_dir,
-        label="probe-endpoint-stimulus",
+        label="stimulus-endpoint",
         timeout_seconds=timeout_seconds,
         parse_json=True,
     )

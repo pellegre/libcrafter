@@ -345,7 +345,7 @@ def libcrafter_dry_run_command_plan(
             "-p",
             "oracle-adapters",
             "--bin",
-            "oracle_vectors",
+            "vectors",
             "--",
             "--json",
         ]
@@ -358,7 +358,7 @@ def libcrafter_dry_run_command_plan(
             "-p",
             "oracle-adapters",
             "--bin",
-            "oracle_decode_vectors",
+            "decode_vectors",
             "--",
             "--input",
             f"artifacts/live/index-{plan.index:06d}.reference-vectors.json",
@@ -393,7 +393,7 @@ def validate_libcrafter_command_plan(command: LiveCommandPlan) -> LiveValidation
         errors.append(
             "libcrafter command must use `cargo run -q -p oracle-adapters --bin`"
         )
-    elif argv[6] not in {"oracle_vectors", "oracle_decode_vectors"}:
+    elif argv[6] not in {"vectors", "decode_vectors"}:
         errors.append(f"unsupported libcrafter dry-run binary: {argv[6]}")
     if "--live" in argv:
         errors.append("local dry-run libcrafter command must not include --live")

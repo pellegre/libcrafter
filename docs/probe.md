@@ -56,7 +56,7 @@ tools/live-lab/libcrafter-live-lab run --provider hetzner --suite probe \
 
 The provider wrapper bootstraps both endpoints, configures the private network,
 starts target services, installs temporary TCP RST guards on the stimulus
-endpoint, runs the `probe_endpoint` binary from `tools/probe/adapters`, collects
+endpoint, runs the `stimulus_endpoint` binary from `tools/probe/adapters`, collects
 artifacts, and cleans up probe services. Destroy the lab when the run is
 complete:
 
