@@ -6,7 +6,7 @@ import argparse
 import json
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -408,6 +408,8 @@ def _run_receiver(
                     "root": vector.root,
                     "expected_raw_hex": vector.raw_hex,
                     "capture_root": _compare_root_for_vector(request, vector),
+                    "capture_filter": _capture_filter_for_vector(request, vector),
+                    "capture_match": _capture_match_for_vector(request, vector),
                     "feature_tags": list(vector.plan.feature_tags),
                 },
             )
@@ -427,12 +429,15 @@ def _run_receiver(
 
     scapy_all = import_scapy()["all"]
     scapy_all.conf.verb = 0
-    captured = scapy_all.sniff(
-        iface=_required_string(request, "interface"),
-        count=max(1, len(vectors)),
-        timeout=max(1, _int_value(request.get("timeout_seconds"), 30)),
-        lfilter=lambda packet: _matches_live_capture(scapy_all, packet, request),
-    )
+    sniff_kwargs: dict[str, Any] = {
+        "iface": _required_string(request, "interface"),
+        "count": max(1, len(vectors)),
+        "timeout": max(1, _int_value(request.get("timeout_seconds"), 30)),
+        "lfilter": lambda packet: _matches_live_capture(scapy_all, packet, request),
+    }
+    if capture_filter := _request_capture_filter(request):
+        sniff_kwargs["filter"] = capture_filter
+    captured = scapy_all.sniff(**sniff_kwargs)
 
     decoded_models: list[JSONObject] = []
     statuses: list[JSONObject] = []
@@ -490,6 +495,8 @@ def _run_receiver(
                         "comparable_raw_hex": observed_raw.hex(),
                         "full_capture_raw_hex": capture_slice.full_raw.hex(),
                         "capture_root": capture_slice.compare_root,
+                        "capture_filter": _capture_filter_for_vector(request, vector),
+                        "capture_match": _capture_match_for_vector(request, vector),
                         "capture_link_type": capture_link_type,
                         "capture_path": capture_path,
                         "byte_length": len(observed_raw),
@@ -513,6 +520,8 @@ def _run_receiver(
                         "root": vector.root,
                         "expected_raw_hex": vector.raw_hex,
                         "capture_root": vector.root,
+                        "capture_filter": _capture_filter_for_vector(request, vector),
+                        "capture_match": _capture_match_for_vector(request, vector),
                         "capture_link_type": _packet_link_type(captured[offset]),
                         "capture_path": str(capture_summary_path),
                     },
@@ -526,6 +535,7 @@ def _run_receiver(
             "packet_count": len(captured),
             "decoded_count": len(decoded_models),
             "packets": decoded_models,
+            "capture_filter": _request_capture_filter(request),
             "observed_packets": [
                 {
                     "index": status["index"],
@@ -621,16 +631,116 @@ def _can_send_as_ethernet(request: JSONObject) -> bool:
 
 
 def _matches_live_capture(scapy_all: Any, packet: Any, request: JSONObject) -> bool:
-    local_ipv4 = _address_value(request, "local_addresses", "ipv4")
-    peer_ipv4 = _address_value(request, "peer_addresses", "ipv4")
-    if local_ipv4 is not None and peer_ipv4 is not None:
+    matches = _request_capture_matches(request)
+    if not matches:
+        return True
+    return any(
+        _packet_matches_capture_match(scapy_all, packet, match)
+        for match in matches
+    )
+
+
+def _request_capture_filter(request: JSONObject) -> str | None:
+    metadata = json_object(request.get("metadata", {}), "metadata")
+    value = metadata.get("capture_filter")
+    if isinstance(value, str) and value:
+        return value
+    filters = [
+        packet.get("capture_filter")
+        for packet in _request_packet_metadata_values(request)
+        if isinstance(packet.get("capture_filter"), str) and packet.get("capture_filter")
+    ]
+    if not filters:
+        return None
+    unique = list(dict.fromkeys(str(item) for item in filters))
+    if len(unique) == 1:
+        return unique[0]
+    return " or ".join(f"({item})" for item in unique)
+
+
+def _request_capture_matches(request: JSONObject) -> list[JSONObject]:
+    matches: list[JSONObject] = []
+    for packet in _request_packet_metadata_values(request):
+        raw_match = packet.get("capture_match")
+        if not isinstance(raw_match, Mapping):
+            continue
+        matches.append(json_object(raw_match, "metadata.packets[].capture_match"))
+    return matches
+
+
+def _capture_filter_for_vector(request: JSONObject, vector: EncodedVector) -> str | None:
+    metadata = _request_packet_metadata(request, vector.plan.index)
+    value = metadata.get("capture_filter")
+    return value if isinstance(value, str) and value else None
+
+
+def _capture_match_for_vector(request: JSONObject, vector: EncodedVector) -> JSONObject | None:
+    metadata = _request_packet_metadata(request, vector.plan.index)
+    value = metadata.get("capture_match")
+    if not isinstance(value, Mapping):
+        return None
+    return json_object(value, "metadata.packets[].capture_match")
+
+
+def _packet_matches_capture_match(
+    scapy_all: Any,
+    packet: Any,
+    match: Mapping[str, object],
+) -> bool:
+    family = match.get("family")
+    protocol = match.get("protocol")
+    source = match.get("src")
+    destination = match.get("dst")
+    if family == "ipv4":
         if not packet.haslayer(scapy_all.IP):
             return False
         ip = packet[scapy_all.IP]
-        if ip.src != peer_ipv4 or ip.dst != local_ipv4:
+    elif family == "ipv6":
+        if not packet.haslayer(scapy_all.IPv6):
             return False
+        ip = packet[scapy_all.IPv6]
+    else:
+        ip = None
+
+    if ip is not None:
+        if isinstance(source, str) and source and ip.src != source:
+            return False
+        if isinstance(destination, str) and destination and ip.dst != destination:
+            return False
+
+    return _packet_matches_protocol(scapy_all, packet, protocol)
+
+
+def _packet_matches_protocol(scapy_all: Any, packet: Any, protocol: object) -> bool:
+    if protocol == "dns":
+        if hasattr(scapy_all, "DNS") and packet.haslayer(scapy_all.DNS):
+            return True
+        if not packet.haslayer(scapy_all.UDP):
+            return False
+        udp = packet[scapy_all.UDP]
+        return udp.sport == 53 or udp.dport == 53
+    if protocol == "udp":
         return packet.haslayer(scapy_all.UDP)
+    if protocol == "tcp":
+        return packet.haslayer(scapy_all.TCP)
+    if protocol == "icmp":
+        return packet.haslayer(scapy_all.ICMP)
+    if protocol == "icmpv6":
+        return _has_layer_name_prefix(packet, "ICMPv6")
+    if protocol == "arp":
+        return hasattr(scapy_all, "ARP") and packet.haslayer(scapy_all.ARP)
     return True
+
+
+def _has_layer_name_prefix(packet: Any, prefix: str) -> bool:
+    try:
+        layers = packet.layers()
+    except Exception:
+        return False
+    return any(
+        getattr(layer, "__name__", "").startswith(prefix)
+        for layer in layers
+    )
 
 
 def _address_value(request: JSONObject, group: str, family: str) -> str | None:
@@ -692,10 +802,18 @@ def _compare_root_for_vector(request: JSONObject, vector: EncodedVector) -> str:
 
 
 def _request_packet_metadata(request: JSONObject, index: int) -> JSONObject:
+    for packet in _request_packet_metadata_values(request):
+        if packet.get("index") == index:
+            return packet
+    return {}
+
+
+def _request_packet_metadata_values(request: JSONObject) -> list[JSONObject]:
     metadata = json_object(request.get("metadata", {}), "metadata")
     packets = metadata.get("packets")
     if not isinstance(packets, list):
-        return {}
+        return []
+    output: list[JSONObject] = []
     for value in packets:
         if not isinstance(value, dict):
             continue
@@ -704,9 +822,8 @@ def _request_packet_metadata(request: JSONObject, index: int) -> JSONObject:
             for key, item in value.items()
             if isinstance(key, str)
         }
-        if packet.get("index") == index:
-            return json_object(packet, "metadata.packets[]")
-    return {}
+        output.append(json_object(packet, "metadata.packets[]"))
+    return output
 
 
 def _canonical_compare_root(root: str | None) -> str:

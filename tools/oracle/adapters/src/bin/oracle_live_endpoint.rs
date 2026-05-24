@@ -382,6 +382,8 @@ fn run_receiver(
                         "root": prepared_packet.root,
                         "expected_raw_hex": prepared_packet.raw_hex,
                         "capture_root": compare_root,
+                        "capture_filter": capture_filter_for_index(request, prepared_packet.index),
+                        "capture_match": capture_match_for_index(request, prepared_packet.index),
                     }),
                 ))
             })
@@ -400,10 +402,11 @@ fn run_receiver(
     }
 
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
+    let capture_filter = live_capture_filter(request);
     let mut sniffer = Sniffer::interface(request.interface.clone())
         .timeout(timeout)
         .count(prepared.len().max(1));
-    if let Some(filter) = live_capture_filter(request) {
+    if let Some(filter) = capture_filter.clone() {
         sniffer = sniffer.filter(filter);
     }
     let captured = sniffer.collect()?;
@@ -452,6 +455,7 @@ fn run_receiver(
         &capture_summary_path,
         &json!({
             "packet_count": captured.len(),
+            "capture_filter": capture_filter,
             "packets": decoded_models,
             "observed_packets": observed_packets,
         }),
@@ -483,6 +487,8 @@ fn run_receiver(
                 json!({
                     "root": prepared_packet.root,
                     "expected_raw_hex": prepared_packet.raw_hex,
+                    "capture_filter": capture_filter_for_index(request, prepared_packet.index),
+                    "capture_match": capture_match_for_index(request, prepared_packet.index),
                     "observed_raw_hex": observed_packet
                         .get("observed_raw_hex")
                         .cloned()
@@ -536,7 +542,8 @@ fn run_receiver(
             "link_type": captured.first().map(|packet| format!("{:?}", packet.link_type())),
             "packet_count": captured.len(),
             "metadata": {
-                "artifact_kind": "decoded-live-capture-summary"
+                "artifact_kind": "decoded-live-capture-summary",
+                "capture_filter": live_capture_filter(request)
             }
         })],
         statuses,
@@ -633,11 +640,79 @@ fn endpoint_response(
 }
 
 fn live_capture_filter(request: &EndpointRequest) -> Option<String> {
-    let local = request.local_addresses.get("ipv4")?.as_str()?;
-    let peer = request.peer_addresses.get("ipv4")?.as_str()?;
-    Some(format!(
-        "ip and udp and src host {peer} and dst host {local}"
-    ))
+    if let Some(filter) = request
+        .metadata
+        .get("capture_filter")
+        .and_then(Value::as_str)
+    {
+        if !filter.is_empty() {
+            return Some(filter.to_string());
+        }
+    }
+    let filters = request
+        .metadata
+        .get("packets")
+        .and_then(Value::as_array)
+        .map(|packets| {
+            packets
+                .iter()
+                .filter_map(|packet| packet.get("capture_filter")?.as_str())
+                .filter(|filter| !filter.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    combine_capture_filters(filters)
+}
+
+fn combine_capture_filters(filters: Vec<String>) -> Option<String> {
+    let mut unique = Vec::new();
+    for filter in filters {
+        if !unique.contains(&filter) {
+            unique.push(filter);
+        }
+    }
+    match unique.len() {
+        0 => None,
+        1 => unique.into_iter().next(),
+        _ => Some(
+            unique
+                .into_iter()
+                .map(|filter| format!("({filter})"))
+                .collect::<Vec<_>>()
+                .join(" or "),
+        ),
+    }
+}
+
+fn capture_filter_for_index(request: &EndpointRequest, index: usize) -> Value {
+    packet_metadata_for_index(request, index)
+        .and_then(|packet| packet.get("capture_filter"))
+        .and_then(Value::as_str)
+        .map(|value| json!(value))
+        .unwrap_or(Value::Null)
+}
+
+fn capture_match_for_index(request: &EndpointRequest, index: usize) -> Value {
+    packet_metadata_for_index(request, index)
+        .and_then(|packet| packet.get("capture_match"))
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+fn packet_metadata_for_index(request: &EndpointRequest, index: usize) -> Option<&Value> {
+    request
+        .metadata
+        .get("packets")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|packet| {
+            packet
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                == Some(index)
+        })
 }
 
 fn live_ethernet_addresses(request: &EndpointRequest) -> ExampleResult<Option<(MacAddr, MacAddr)>> {
@@ -761,12 +836,17 @@ fn decoded_model(
         let name = normalize_layer_name(layer.name());
         layers.push(Value::String(name.to_string()));
         summaries.push(Value::String(layer.summary()));
-        let mut layer_fields = Map::new();
-        for (field, value) in layer.inspection_fields() {
-            if let Some((field_name, field_value)) = normalize_field(name, field, &value)? {
-                layer_fields.insert(field_name, field_value);
+        let layer_fields = if let Some(fields) = typed_layer_fields(layer, name) {
+            fields
+        } else {
+            let mut fields = Map::new();
+            for (field, value) in layer.inspection_fields() {
+                if let Some((field_name, field_value)) = normalize_field(name, field, &value)? {
+                    fields.insert(field_name, field_value);
+                }
             }
-        }
+            fields
+        };
         fields.insert(name.to_string(), Value::Object(layer_fields));
     }
 
@@ -887,15 +967,212 @@ fn canonical_compare_root(root: &str) -> ExampleResult<&'static str> {
 
 fn normalize_layer_name(name: &str) -> &str {
     match name {
+        "Dns" => "dns",
         "Ethernet" => "ethernet",
+        "ICMP" => "icmp",
+        "Icmp" => "icmp",
+        "ICMPv6" => "icmpv6",
+        "ICMPv6EchoRequest" => "icmpv6",
+        "Icmpv6" => "icmpv6",
         "IPv4" => "ipv4",
         "Ipv4" => "ipv4",
         "IPv6" => "ipv6",
         "Ipv6" => "ipv6",
+        "TCP" => "tcp",
+        "Tcp" => "tcp",
         "UDP" => "udp",
         "Udp" => "udp",
         "Raw" => "payload",
         value => value,
+    }
+}
+
+fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value>> {
+    match name {
+        "ipv6" => layer.as_any().downcast_ref::<Ipv6>().map(ipv6_fields),
+        "tcp" => layer.as_any().downcast_ref::<Tcp>().map(tcp_fields),
+        "icmp" => layer.as_any().downcast_ref::<Icmp>().map(icmp_fields),
+        "icmpv6" => layer.as_any().downcast_ref::<Icmpv6>().map(icmpv6_fields),
+        "dns" => layer.as_any().downcast_ref::<Dns>().map(dns_fields),
+        _ => None,
+    }
+}
+
+fn ipv6_fields(layer: &Ipv6) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("version".to_string(), json!(layer.version_value()));
+    fields.insert(
+        "traffic_class".to_string(),
+        json!(layer.traffic_class_value()),
+    );
+    fields.insert("flow_label".to_string(), json!(layer.flow_label_value()));
+    if let Some(value) = layer.payload_length_value() {
+        fields.insert("payload_length".to_string(), json!(value));
+    }
+    fields.insert("next_header".to_string(), json!(layer.next_header_value()));
+    fields.insert("hop_limit".to_string(), json!(layer.hop_limit_value()));
+    fields.insert("src".to_string(), json!(layer.source().to_string()));
+    fields.insert("dst".to_string(), json!(layer.destination().to_string()));
+    fields
+}
+
+fn tcp_fields(layer: &Tcp) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("src_port".to_string(), json!(layer.source_port_value()));
+    fields.insert(
+        "dst_port".to_string(),
+        json!(layer.destination_port_value()),
+    );
+    fields.insert("sequence".to_string(), json!(layer.sequence_number_value()));
+    fields.insert(
+        "acknowledgement".to_string(),
+        json!(layer.acknowledgment_number_value()),
+    );
+    fields.insert("data_offset".to_string(), json!(layer.data_offset_value()));
+    fields.insert("reserved".to_string(), json!(layer.reserved_value()));
+    fields.insert(
+        "flags".to_string(),
+        json!(tcp_flag_names(layer.flags_value())),
+    );
+    fields.insert("window".to_string(), json!(layer.window_value()));
+    fields.insert(
+        "urgent_pointer".to_string(),
+        json!(layer.urgent_pointer_value()),
+    );
+    fields.insert(
+        "options".to_string(),
+        json!(hex_bytes(layer.option_bytes())),
+    );
+    if let Some(value) = layer.checksum_value() {
+        fields.insert("checksum".to_string(), json!(value));
+    }
+    fields
+}
+
+fn icmp_fields(layer: &Icmp) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("type".to_string(), json!(layer.icmp_type_value()));
+    fields.insert("code".to_string(), json!(layer.code_value()));
+    fields.insert(
+        "rest_of_header".to_string(),
+        json!(hex_bytes(&layer.rest_of_header_value())),
+    );
+    if let Some(value) = layer.checksum_value() {
+        fields.insert("checksum".to_string(), json!(value));
+    }
+    if let Some(value) = layer.identifier_value() {
+        fields.insert("identifier".to_string(), json!(value));
+    }
+    if let Some(value) = layer.sequence_number_value() {
+        fields.insert("sequence".to_string(), json!(value));
+    }
+    if let Some(value) = layer.length_value() {
+        fields.insert("length".to_string(), json!(value));
+    }
+    fields
+}
+
+fn icmpv6_fields(layer: &Icmpv6) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("type".to_string(), json!(layer.icmp_type_value()));
+    fields.insert("code".to_string(), json!(layer.code_value()));
+    fields.insert(
+        "rest_of_header".to_string(),
+        json!(hex_bytes(&layer.rest_of_header_value())),
+    );
+    if let Some(value) = layer.checksum_value() {
+        fields.insert("checksum".to_string(), json!(value));
+    }
+    if let Some(value) = layer.identifier_value() {
+        fields.insert("identifier".to_string(), json!(value));
+    }
+    if let Some(value) = layer.sequence_number_value() {
+        fields.insert("sequence".to_string(), json!(value));
+    }
+    if let Some(value) = layer.length_value() {
+        fields.insert("length".to_string(), json!(value));
+    }
+    fields
+}
+
+fn dns_fields(layer: &Dns) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("transaction_id".to_string(), json!(layer.id_value()));
+    fields.insert(
+        "is_response".to_string(),
+        json!(dns_flag_enabled(layer, DNS_FLAG_QR_RESPONSE)),
+    );
+    fields.insert(
+        "opcode".to_string(),
+        json!((layer.flags_value() >> 11) & 0x0f),
+    );
+    fields.insert(
+        "authoritative".to_string(),
+        json!(dns_flag_enabled(layer, DNS_FLAG_AUTHORITATIVE)),
+    );
+    fields.insert(
+        "truncated".to_string(),
+        json!(dns_flag_enabled(layer, DNS_FLAG_TRUNCATED)),
+    );
+    fields.insert(
+        "recursion_desired".to_string(),
+        json!(dns_flag_enabled(layer, DNS_FLAG_RECURSION_DESIRED)),
+    );
+    fields.insert(
+        "recursion_available".to_string(),
+        json!(dns_flag_enabled(layer, DNS_FLAG_RECURSION_AVAILABLE)),
+    );
+    fields.insert("z".to_string(), json!((layer.flags_value() >> 6) & 0x01));
+    fields.insert(
+        "authenticated_data".to_string(),
+        json!(dns_flag_enabled(layer, DNS_FLAG_AUTHENTIC_DATA)),
+    );
+    fields.insert(
+        "checking_disabled".to_string(),
+        json!(dns_flag_enabled(layer, DNS_FLAG_CHECKING_DISABLED)),
+    );
+    fields.insert(
+        "response_code".to_string(),
+        json!(layer.flags_value() & 0x0f),
+    );
+    fields.insert("question_count".to_string(), json!(layer.questions().len()));
+    fields.insert("answer_count".to_string(), json!(layer.answers().len()));
+    fields.insert(
+        "authority_count".to_string(),
+        json!(layer.authorities().len()),
+    );
+    fields.insert(
+        "additional_count".to_string(),
+        json!(layer.additionals().len()),
+    );
+    fields
+}
+
+fn dns_flag_enabled(dns: &Dns, flag: u16) -> bool {
+    dns.flags_value() & flag != 0
+}
+
+fn tcp_flag_names(flags: u16) -> String {
+    let mut names = Vec::new();
+    for (bit, name) in [
+        (TCP_FLAG_FIN, "fin"),
+        (TCP_FLAG_SYN, "syn"),
+        (TCP_FLAG_RST, "rst"),
+        (TCP_FLAG_PSH, "psh"),
+        (TCP_FLAG_ACK, "ack"),
+        (TCP_FLAG_URG, "urg"),
+        (TCP_FLAG_ECE, "ece"),
+        (TCP_FLAG_CWR, "cwr"),
+        (TCP_FLAG_NS, "ns"),
+    ] {
+        if flags & bit != 0 {
+            names.push(name);
+        }
+    }
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join("|")
     }
 }
 
@@ -923,6 +1200,14 @@ fn normalize_field(
         ("ipv4", "src") | ("ipv4", "dst") | ("ipv4", "flags") => {
             Ok(Some((field.to_string(), json!(value))))
         }
+        ("ipv6", "traffic_class") => Ok(Some((field.to_string(), json!(u64_text(value)?)))),
+        ("ipv6", "flow_label") => Ok(Some((field.to_string(), json!(u64_text(value)?)))),
+        ("ipv6", "payload_length") if value == "auto" => Ok(None),
+        ("ipv6", "payload_length") | ("ipv6", "hop_limit") | ("ipv6", "version") => {
+            Ok(Some((field.to_string(), json!(u64_text(value)?))))
+        }
+        ("ipv6", "next_header") => Ok(Some((field.to_string(), json!(protocol_number(value)?)))),
+        ("ipv6", "src") | ("ipv6", "dst") => Ok(Some((field.to_string(), json!(value)))),
         ("udp", "sport") => Ok(Some(("src_port".to_string(), json!(u64_text(value)?)))),
         ("udp", "dport") => Ok(Some(("dst_port".to_string(), json!(u64_text(value)?)))),
         ("udp", "checksum") | ("udp", "length") => {
@@ -969,6 +1254,10 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "ipv4" => Ok(Box::new(ipv4_layer(plan)?)),
         "ipv6" => Ok(Box::new(ipv6_layer(plan)?)),
         "udp" => Ok(Box::new(udp_layer(plan)?)),
+        "tcp" => Ok(Box::new(tcp_layer(plan)?)),
+        "icmp" => Ok(Box::new(icmp_layer(plan)?)),
+        "icmpv6" => Ok(Box::new(icmpv6_layer(plan)?)),
+        "dns" => Ok(Box::new(dns_layer(plan)?)),
         _ => Err(format!("unsupported libcrafter live materialization layer: {layer}").into()),
     }
 }
@@ -1019,6 +1308,142 @@ fn udp_layer(plan: &Value) -> ExampleResult<Udp> {
         layer = layer.len(u16_value(value)?);
     }
     Ok(layer)
+}
+
+fn tcp_layer(plan: &Value) -> ExampleResult<Tcp> {
+    let fields = layer_fields(plan, "tcp")?;
+    let mut layer = Tcp::new()
+        .sport(u16_value(required(fields, &["src_port", "sport"])?)?)
+        .dport(u16_value(required(fields, &["dst_port", "dport"])?)?)
+        .seq(u32_value(required(fields, &["sequence", "seq"])?)?)
+        .ack(u32_value(required(fields, &["acknowledgement", "ack"])?)?)
+        .reserved(u8_value(required(fields, &["reserved"])?)?)
+        .flags(tcp_flags(required(fields, &["flags"])?)?)
+        .window(u16_value(required(fields, &["window"])?)?)
+        .urgptr(
+            optional(fields, &["urgent_pointer", "urgptr"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(0),
+        );
+    if let Some(value) = optional(fields, &["checksum", "chksum"]) {
+        layer = layer.chksum(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["data_offset", "dataofs"]) {
+        layer = layer.dataofs(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["options"]) {
+        layer = layer.options(option_bytes(value)?);
+    }
+    Ok(layer)
+}
+
+fn icmp_layer(plan: &Value) -> ExampleResult<Icmp> {
+    let fields = layer_fields(plan, "icmp")?;
+    let mut layer = Icmp::new()
+        .type_(icmp_type(required(fields, &["type"])?, false)?)
+        .code(u8_value(required(fields, &["code"])?)?);
+    if let Some(value) = optional(fields, &["id", "identifier"]) {
+        layer = layer.id(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["seq", "sequence"]) {
+        layer = layer.seq(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["checksum", "chksum"]) {
+        layer = layer.chksum(u16_value(value)?);
+    }
+    Ok(layer)
+}
+
+fn icmpv6_layer(plan: &Value) -> ExampleResult<Icmpv6> {
+    let fields = layer_fields(plan, "icmpv6")?;
+    let mut layer = Icmpv6::new()
+        .type_(icmp_type(required(fields, &["type"])?, true)?)
+        .code(u8_value(required(fields, &["code"])?)?);
+    if let Some(value) = optional(fields, &["id", "identifier"]) {
+        layer = layer.id(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["seq", "sequence"]) {
+        layer = layer.seq(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["checksum", "cksum"]) {
+        layer = layer.chksum(u16_value(value)?);
+    }
+    Ok(layer)
+}
+
+fn dns_layer(plan: &Value) -> ExampleResult<Dns> {
+    let fields = layer_fields(plan, "dns")?;
+    let mut layer = Dns::new()
+        .id(optional(fields, &["transaction_id", "id"])
+            .map(u16_value)
+            .transpose()?
+            .unwrap_or(0))
+        .flags(dns_flags(fields)?)
+        .response(
+            optional(fields, &["is_response"])
+                .map(bool_value)
+                .transpose()?
+                .unwrap_or(false),
+        )
+        .rcode(
+            optional(fields, &["response_code"])
+                .map(dns_response_code)
+                .transpose()?
+                .unwrap_or(0),
+        );
+
+    for question in array_values(required(fields, &["questions"])?)? {
+        let qname = if let Some(object) = question.as_object() {
+            text_optional(object, &["qname", "name"]).unwrap_or("example.com.")
+        } else {
+            question.as_str().unwrap_or("example.com.")
+        };
+        let qtype = if let Some(object) = question.as_object() {
+            object
+                .get("qtype")
+                .or_else(|| object.get("type"))
+                .map(dns_record_type)
+                .transpose()?
+                .unwrap_or(DNS_TYPE_A)
+        } else {
+            DNS_TYPE_A
+        };
+        layer = layer.question(DnsQuestion::new(qname, qtype));
+    }
+
+    if let Some(answers) = optional(fields, &["answers"]) {
+        for answer in array_values(answers)? {
+            if let Some(object) = answer.as_object() {
+                layer = layer.answer(dns_answer(object)?);
+            }
+        }
+    }
+
+    Ok(layer)
+}
+
+fn dns_answer(object: &Map<String, Value>) -> ExampleResult<DnsRecord> {
+    let rr_type = object
+        .get("type")
+        .map(dns_record_type)
+        .transpose()?
+        .unwrap_or(DNS_TYPE_A);
+    let name = text_optional(object, &["name", "rrname"]).unwrap_or("example.com.");
+    let ttl = object.get("ttl").map(u32_value).transpose()?.unwrap_or(60);
+    if rr_type == DNS_TYPE_CNAME {
+        return Ok(DnsRecord::cname(
+            name,
+            text_optional(object, &["target", "rdata"]).unwrap_or("alias.example.com."),
+            ttl,
+        ));
+    }
+    if rr_type == DNS_TYPE_AAAA {
+        let address = text_optional(object, &["address", "rdata"]).unwrap_or("2001:db8::53");
+        return Ok(DnsRecord::aaaa(name, Ipv6Addr::from_str(address)?, ttl));
+    }
+    let address = text_optional(object, &["address", "rdata"]).unwrap_or("192.0.2.53");
+    Ok(DnsRecord::a(name, Ipv4Addr::from_str(address)?, ttl))
 }
 
 fn payload_bytes(plan: &Value) -> ExampleResult<Vec<u8>> {
@@ -1077,6 +1502,10 @@ fn text_required<'a>(fields: &'a Map<String, Value>, names: &[&str]) -> ExampleR
     text_value(required(fields, names)?)
 }
 
+fn text_optional<'a>(fields: &'a Map<String, Value>, names: &[&str]) -> Option<&'a str> {
+    optional(fields, names).and_then(Value::as_str)
+}
+
 fn text_value(value: &Value) -> ExampleResult<&str> {
     value
         .as_str()
@@ -1122,6 +1551,8 @@ fn packet_index(plan: &Value) -> ExampleResult<usize> {
 fn ip_protocol(value: &Value) -> ExampleResult<u8> {
     if let Some(text) = value.as_str() {
         return match text.to_ascii_lowercase().as_str() {
+            "icmp" => Ok(IPPROTO_ICMP),
+            "tcp" => Ok(IPPROTO_TCP),
             "udp" => Ok(IPPROTO_UDP),
             _ => u8_text(text),
         };
@@ -1132,7 +1563,9 @@ fn ip_protocol(value: &Value) -> ExampleResult<u8> {
 fn ipv6_next_header(value: &Value) -> ExampleResult<u8> {
     if let Some(text) = value.as_str() {
         return match text.to_ascii_lowercase().as_str() {
+            "icmpv6" => Ok(IPPROTO_ICMPV6),
             "payload" | "raw" | "unknown" => Ok(253),
+            "tcp" => Ok(IPPROTO_TCP),
             "udp" => Ok(IPPROTO_UDP),
             _ => u8_text(text),
         };
@@ -1152,8 +1585,200 @@ fn ipv4_flags(value: &Value) -> ExampleResult<u8> {
     u8_value(value)
 }
 
+fn tcp_flags(value: &Value) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        if text == "all" {
+            return Ok(0x01ff);
+        }
+        return Ok(tcp_flag_text_value(text));
+    }
+    if let Some(items) = value.as_array() {
+        let mut flags = 0;
+        for item in items {
+            if let Some(text) = item.as_str() {
+                if text == "all" {
+                    flags |= 0x01ff;
+                } else {
+                    flags |= tcp_flag_text_value(text);
+                }
+            }
+        }
+        return Ok(flags);
+    }
+    u16_value(value)
+}
+
+fn tcp_flag_text_value(text: &str) -> u16 {
+    match text.to_ascii_lowercase().as_str() {
+        "fin" => TCP_FLAG_FIN,
+        "syn" => TCP_FLAG_SYN,
+        "rst" => TCP_FLAG_RST,
+        "psh" => TCP_FLAG_PSH,
+        "ack" => TCP_FLAG_ACK,
+        "urg" => TCP_FLAG_URG,
+        "ece" => TCP_FLAG_ECE,
+        "cwr" => TCP_FLAG_CWR,
+        "ns" => TCP_FLAG_NS,
+        other => other
+            .chars()
+            .fold(0, |flags, item| flags | tcp_flag_char(item)),
+    }
+}
+
+fn tcp_flag_char(value: char) -> u16 {
+    match value {
+        'F' | 'f' => TCP_FLAG_FIN,
+        'S' | 's' => TCP_FLAG_SYN,
+        'R' | 'r' => TCP_FLAG_RST,
+        'P' | 'p' => TCP_FLAG_PSH,
+        'A' | 'a' => TCP_FLAG_ACK,
+        'U' | 'u' => TCP_FLAG_URG,
+        'E' | 'e' => TCP_FLAG_ECE,
+        'C' | 'c' => TCP_FLAG_CWR,
+        'N' | 'n' => TCP_FLAG_NS,
+        _ => 0,
+    }
+}
+
+fn icmp_type(value: &Value, ipv6: bool) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "echo-reply" => Ok(if ipv6 {
+                ICMPV6_ECHO_REPLY
+            } else {
+                ICMP_ECHO_REPLY
+            }),
+            "echo-request" => Ok(if ipv6 {
+                ICMPV6_ECHO_REQUEST
+            } else {
+                ICMP_ECHO_REQUEST
+            }),
+            "destination-unreachable" | "dest-unreach" => Ok(if ipv6 {
+                ICMPV6_DESTINATION_UNREACHABLE
+            } else {
+                ICMP_DESTINATION_UNREACHABLE
+            }),
+            "packet-too-big" if ipv6 => Ok(ICMPV6_PACKET_TOO_BIG),
+            "parameter-problem" => Ok(if ipv6 {
+                ICMPV6_PARAMETER_PROBLEM
+            } else {
+                ICMP_PARAMETER_PROBLEM
+            }),
+            "time-exceeded" => Ok(if ipv6 {
+                ICMPV6_TIME_EXCEEDED
+            } else {
+                ICMP_TIME_EXCEEDED
+            }),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn dns_flags(fields: &Map<String, Value>) -> ExampleResult<u16> {
+    let mut flags = 0u16;
+    if let Some(value) = optional(fields, &["flags"]) {
+        for item in value.as_array().into_iter().flatten() {
+            if let Some(text) = item.as_str() {
+                match text.to_ascii_lowercase().replace('-', "_").as_str() {
+                    "authoritative" => flags |= DNS_FLAG_AUTHORITATIVE,
+                    "truncated" => flags |= DNS_FLAG_TRUNCATED,
+                    "recursion_desired" => flags |= DNS_FLAG_RECURSION_DESIRED,
+                    "recursion_available" => flags |= DNS_FLAG_RECURSION_AVAILABLE,
+                    "authenticated_data" => flags |= DNS_FLAG_AUTHENTIC_DATA,
+                    "checking_disabled" => flags |= DNS_FLAG_CHECKING_DISABLED,
+                    _ => {}
+                }
+            }
+        }
+    } else {
+        flags |= DNS_FLAG_RECURSION_DESIRED;
+    }
+    if optional(fields, &["is_response"])
+        .map(bool_value)
+        .transpose()?
+        .unwrap_or(false)
+    {
+        flags |= DNS_FLAG_QR_RESPONSE;
+    }
+    if let Some(value) = optional(fields, &["response_code"]) {
+        flags |= dns_response_code(value)? as u16;
+    }
+    Ok(flags)
+}
+
+fn dns_record_type(value: &Value) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_uppercase().as_str() {
+            "A" => Ok(DNS_TYPE_A),
+            "AAAA" => Ok(DNS_TYPE_AAAA),
+            "CNAME" => Ok(DNS_TYPE_CNAME),
+            "MX" => Ok(DNS_TYPE_MX),
+            "NS" => Ok(DNS_TYPE_NS),
+            "PTR" => Ok(DNS_TYPE_PTR),
+            "TXT" => Ok(DNS_TYPE_TXT),
+            _ => u16_text(text),
+        };
+    }
+    u16_value(value)
+}
+
+fn dns_response_code(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "no_error" => Ok(0),
+            "server_failure" => Ok(2),
+            "name_error" => Ok(3),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn option_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
+    if let Some(text) = value.as_str() {
+        return decode_hex(text);
+    }
+    if let Some(object) = value.as_object() {
+        if let Some(hex) = object.get("hex").and_then(Value::as_str) {
+            return decode_hex(hex);
+        }
+    }
+    Err(format!("unsupported option bytes value: {value:?}").into())
+}
+
+fn bool_value(value: &Value) -> ExampleResult<bool> {
+    if let Some(value) = value.as_bool() {
+        return Ok(value);
+    }
+    if let Some(value) = value.as_i64() {
+        return Ok(value != 0);
+    }
+    if let Some(value) = value.as_u64() {
+        return Ok(value != 0);
+    }
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "true" | "yes" | "broadcast" | "b" => Ok(true),
+            "false" | "no" | "none" | "0" => Ok(false),
+            _ => Err(format!("expected bool-compatible value, got {text:?}").into()),
+        };
+    }
+    Err(format!("expected bool-compatible value, got {value:?}").into())
+}
+
+fn array_values(value: &Value) -> ExampleResult<&Vec<Value>> {
+    value
+        .as_array()
+        .ok_or_else(|| format!("expected array value, got {value:?}").into())
+}
+
 fn u8_value(value: &Value) -> ExampleResult<u8> {
     Ok(u8::try_from(u64_value(value)?)?)
+}
+
+fn u16_text(text: &str) -> ExampleResult<u16> {
+    Ok(u16::try_from(u64_text(text)?)?)
 }
 
 fn u16_value(value: &Value) -> ExampleResult<u16> {

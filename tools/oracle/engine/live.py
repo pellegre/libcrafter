@@ -242,9 +242,16 @@ def build_live_endpoint_batch_request(
 ) -> LiveEndpointBatchRequest:
     """Build the endpoint protocol request for provider execution."""
 
+    local_addresses = live_endpoint_addresses(endpoint)
+    peer_addresses = live_endpoint_addresses(peer)
     request_metadata = dict(metadata or {})
     request_metadata.update(
-        _live_endpoint_request_wire_metadata(packet_plans, direction=direction)
+        _live_endpoint_request_wire_metadata(
+            packet_plans,
+            direction=direction,
+            local_addresses=local_addresses,
+            peer_addresses=peer_addresses,
+        )
     )
     return LiveEndpointBatchRequest(
         provider=provider,
@@ -256,8 +263,8 @@ def build_live_endpoint_batch_request(
         endpoint_id=endpoint.endpoint_id,
         endpoint_role=endpoint.role,
         peer_role=peer.role,
-        local_addresses=live_endpoint_addresses(endpoint),
-        peer_addresses=live_endpoint_addresses(peer),
+        local_addresses=local_addresses,
+        peer_addresses=peer_addresses,
         interface=endpoint.interface,
         timeout_seconds=timeout_seconds,
         artifact_paths=artifact_paths,
@@ -492,9 +499,16 @@ def _live_endpoint_request_wire_metadata(
     packet_plans: Sequence[PacketPlan],
     *,
     direction: str,
+    local_addresses: Mapping[str, object],
+    peer_addresses: Mapping[str, object],
 ) -> JSONObject:
     packet_metadata = [
-        _live_endpoint_packet_wire_metadata(plan, direction=direction)
+        _live_endpoint_packet_wire_metadata(
+            plan,
+            direction=direction,
+            local_addresses=local_addresses,
+            peer_addresses=peer_addresses,
+        )
         for plan in packet_plans
     ]
     corpus_ids = [
@@ -503,6 +517,13 @@ def _live_endpoint_request_wire_metadata(
         if isinstance(packet.get("corpus_id"), str) and packet["corpus_id"]
     ]
     metadata: JSONObject = {
+        "capture_filter": _combine_capture_filters(
+            [
+                packet.get("capture_filter")
+                for packet in packet_metadata
+                if isinstance(packet.get("capture_filter"), str)
+            ]
+        ),
         "packet_ids": [
             packet.get("packet_id")
             for packet in packet_metadata
@@ -519,16 +540,124 @@ def _live_endpoint_packet_wire_metadata(
     plan: PacketPlan,
     *,
     direction: str,
+    local_addresses: Mapping[str, object],
+    peer_addresses: Mapping[str, object],
 ) -> JSONObject:
+    capture = _live_endpoint_capture_match(
+        plan,
+        local_addresses=local_addresses,
+        peer_addresses=peer_addresses,
+    )
     return {
         "index": plan.index,
         "corpus_id": _plan_corpus_id(plan),
         "packet_id": _plan_packet_id(plan),
         "compare_root": _plan_compare_root(plan),
+        "capture_filter": capture.get("filter"),
+        "capture_match": capture,
         "strict_bytes": plan.strict_bytes,
         "mutable_fields": _plan_mutable_fields(plan),
         "expected_sender_role": _expected_sender_role(direction),
     }
+
+
+def _live_endpoint_capture_match(
+    plan: PacketPlan,
+    *,
+    local_addresses: Mapping[str, object],
+    peer_addresses: Mapping[str, object],
+) -> JSONObject:
+    family = _live_endpoint_capture_family(plan)
+    protocol = _live_endpoint_capture_protocol(plan)
+    source = _address_for_family(peer_addresses, family)
+    destination = _address_for_family(local_addresses, family)
+
+    terms: list[str] = []
+    if family == "ipv4":
+        terms.append("ip")
+    elif family == "ipv6":
+        terms.append("ip6")
+
+    bpf_protocol = _capture_bpf_protocol(protocol, plan.stack)
+    if bpf_protocol is not None:
+        terms.append(bpf_protocol)
+    if source is not None:
+        terms.append(f"src host {source}")
+    if destination is not None:
+        terms.append(f"dst host {destination}")
+
+    return {
+        "family": family,
+        "protocol": protocol,
+        "layers": list(plan.stack),
+        "src": source,
+        "dst": destination,
+        "filter": " and ".join(terms) if terms else None,
+    }
+
+
+def _live_endpoint_capture_family(plan: PacketPlan) -> str | None:
+    compare_root = _plan_compare_root(plan)
+    if compare_root in {"IP", "IPv4", "l3:ipv4"} or "ipv4" in plan.stack or "ip" in plan.stack:
+        return "ipv4"
+    if (
+        compare_root in {"IPv6", "l3:ipv6"}
+        or "ipv6" in plan.stack
+        or "icmpv6" in plan.stack
+    ):
+        return "ipv6"
+    return None
+
+
+def _live_endpoint_capture_protocol(plan: PacketPlan) -> str | None:
+    layers = set(plan.stack)
+    if "dns" in layers:
+        return "dns"
+    if "tcp" in layers:
+        return "tcp"
+    if "icmpv6" in layers:
+        return "icmpv6"
+    if "icmp" in layers:
+        return "icmp"
+    if "udp" in layers:
+        return "udp"
+    if "arp" in layers:
+        return "arp"
+    return None
+
+
+def _capture_bpf_protocol(protocol: str | None, stack: Sequence[str]) -> str | None:
+    if "ipv6_fragment" in stack or "ipv6_routing" in stack:
+        return None
+    if protocol == "dns":
+        return "udp"
+    if protocol == "icmpv6":
+        return "icmp6"
+    return protocol
+
+
+def _address_for_family(addresses: Mapping[str, object], family: str | None) -> str | None:
+    if family == "ipv4":
+        value = addresses.get("ipv4")
+    elif family == "ipv6":
+        value = addresses.get("ipv6")
+    else:
+        value = None
+    return value if isinstance(value, str) and value else None
+
+
+def _combine_capture_filters(filters: Sequence[object]) -> str | None:
+    unique = [
+        value
+        for value in dict.fromkeys(
+            item for item in filters if isinstance(item, str) and item
+        )
+    ]
+    if not unique:
+        return None
+    if len(unique) == 1:
+        return unique[0]
+    return " or ".join(f"({value})" for value in unique)
 
 
 def _validate_endpoint_request_wire_metadata(
