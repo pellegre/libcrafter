@@ -34,6 +34,7 @@ from .model import (
     DecodedModel,
     EncodedVector,
     JSONObject,
+    JSONValue,
     PacketPlan,
     RunReport,
     dumps_json,
@@ -53,6 +54,26 @@ PCAP_SELECTED_SPECS = (
     PCAP_LINK_TYPES_SPEC,
     *GENERATOR_SELECTED_SPECS,
 )
+LIVE_COUNT_FIELDS = (
+    "generated_count",
+    "eligible_count",
+    "skipped_count",
+    "sent_count",
+    "captured_count",
+    "parsed_count",
+    "byte_passed_count",
+    "decode_passed_count",
+    "failed_count",
+)
+LIVE_ROOT_ALIASES = {
+    "Ether": "link:ethernet",
+    "IP": "l3:ipv4",
+    "IPv4": "l3:ipv4",
+    "IPv6": "l3:ipv6",
+    "link:ethernet": "link:ethernet",
+    "l3:ipv4": "l3:ipv4",
+    "l3:ipv6": "l3:ipv6",
+}
 FINAL_REPORT_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("formatting", ("cargo", "fmt", "--all", "--", "--check")),
     ("clippy", ("cargo", "clippy", "--workspace", "--all-targets")),
@@ -677,6 +698,69 @@ def _live_corpus_accounting_validation(
     )
 
 
+def _live_empty_direction_counts(
+    corpus_metadata: Mapping[str, object],
+    directions: Sequence[str],
+) -> dict[str, JSONObject]:
+    generated_count = _count_value(corpus_metadata.get("generated_count"))
+    eligible_count = _count_value(corpus_metadata.get("wire_eligible_count"))
+    skipped_count = _count_value(corpus_metadata.get("wire_skipped_count"))
+    return {
+        direction: {
+            "generated_count": generated_count,
+            "eligible_count": eligible_count,
+            "skipped_count": skipped_count,
+            "sent_count": 0,
+            "captured_count": 0,
+            "parsed_count": 0,
+            "byte_passed_count": 0,
+            "decode_passed_count": 0,
+            "failed_count": 0,
+        }
+        for direction in directions
+    }
+
+
+def _live_count_metadata(direction_counts: Mapping[str, Mapping[str, object]]) -> JSONObject:
+    directions: JSONObject = {}
+    overall = {field: 0 for field in LIVE_COUNT_FIELDS}
+    for direction, raw_counts in direction_counts.items():
+        counts = {
+            field: _count_value(raw_counts.get(field))
+            for field in LIVE_COUNT_FIELDS
+        }
+        directions[direction] = counts
+        for field, count in counts.items():
+            overall[field] += count
+    return {
+        "eligible_count": overall["eligible_count"],
+        "skipped_count": overall["skipped_count"],
+        "sent_count": overall["sent_count"],
+        "captured_count": overall["captured_count"],
+        "parsed_count": overall["parsed_count"],
+        "byte_passed_count": overall["byte_passed_count"],
+        "decode_passed_count": overall["decode_passed_count"],
+        "failed_count": overall["failed_count"],
+        "live_counts": {
+            "overall": overall,
+            "directions": directions,
+        },
+    }
+
+
+def _count_value(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value, 0)
+        except ValueError:
+            return 0
+    return 0
+
+
 def _pcap_required_capabilities(
     args: argparse.Namespace,
 ) -> tuple[BackendCapabilityName, ...]:
@@ -1099,6 +1183,9 @@ def _live_hetzner(args: argparse.Namespace) -> int:
 
     failed_validations = [validation for validation in validations if not validation.passed]
     status = "dry-run" if not failed_validations else "failed"
+    live_count_metadata = _live_count_metadata(
+        _live_empty_direction_counts(corpus_metadata, directions)
+    )
     result = ComparisonResult(
         passed=not failed_validations,
         direction=args.direction,
@@ -1176,6 +1263,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             "no_live_packets_sent": True,
             "token_configured": token_configured,
             **corpus_metadata,
+            **live_count_metadata,
             "execution_directions": directions,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=True),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
@@ -1238,6 +1326,9 @@ def _live_hetzner_skip_no_token(
     endpoints = hetzner_endpoints(dry_run=False)
     provider_workflow = hetzner_provider_workflow(dry_run=False)
     endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
+    live_count_metadata = _live_count_metadata(
+        _live_empty_direction_counts(corpus_metadata, directions)
+    )
     result = ComparisonResult(
         passed=True,
         direction=args.direction,
@@ -1288,6 +1379,7 @@ def _live_hetzner_skip_no_token(
             "no_live_packets_sent": True,
             "token_configured": False,
             **corpus_metadata,
+            **live_count_metadata,
             "execution_directions": directions,
             "planned_infrastructure_if_credentials_available": hetzner_private_network_plan(
                 dry_run=False
@@ -1337,6 +1429,9 @@ def _live_hetzner_requires_dry_run_report(
     endpoints = hetzner_endpoints(dry_run=False)
     provider_workflow = hetzner_provider_workflow(dry_run=False)
     endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
+    live_count_metadata = _live_count_metadata(
+        _live_empty_direction_counts(corpus_metadata, directions)
+    )
     result = ComparisonResult(
         passed=False,
         direction=args.direction,
@@ -1406,6 +1501,7 @@ def _live_hetzner_requires_dry_run_report(
             },
             "execution_directions": directions,
             **corpus_metadata,
+            **live_count_metadata,
         },
     )
     write_json(report_path, report)
@@ -1435,6 +1531,9 @@ def _live_hetzner_skip_no_wire_eligible(
     endpoints = hetzner_endpoints(dry_run=False)
     provider_workflow = hetzner_provider_workflow(dry_run=False)
     endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
+    live_count_metadata = _live_count_metadata(
+        _live_empty_direction_counts(corpus_metadata, directions)
+    )
     result = ComparisonResult(
         passed=True,
         direction=args.direction,
@@ -1486,6 +1585,7 @@ def _live_hetzner_skip_no_wire_eligible(
             "no_live_packets_sent": True,
             "token_configured": True,
             **corpus_metadata,
+            **live_count_metadata,
             "execution_directions": directions,
             "planned_infrastructure_if_packets_eligible": hetzner_private_network_plan(
                 dry_run=False
@@ -1549,6 +1649,7 @@ def _live_hetzner_execute(
     manifest: dict[str, str] = {}
     keep_live_lab = bool(getattr(args, "keep_live_lab", False))
     live_packet_exchange = False
+    live_direction_counts = _live_empty_direction_counts(corpus_metadata, directions)
 
     try:
         doctor = _run_live_lab_provider_command(
@@ -1860,15 +1961,19 @@ def _live_hetzner_execute(
                 },
             )
 
-            results.extend(
-                _compare_live_decoded_results(
-                    args=args,
-                    direction=direction,
-                    expected=expected_models,
-                    actual=[model.to_dict() for model in receiver_response.decoded_models],
-                    plans=direction_plans,
-                )
+            direction_results, direction_counts = _compare_live_direction_results(
+                args=args,
+                direction=direction,
+                expected=expected_models,
+                plans=direction_plans,
+                corpus_metadata=corpus_metadata,
+                sender_response=sender_response,
+                receiver_response=receiver_response,
+                sender_execution=sender_execution,
+                receiver_execution=receiver_execution,
             )
+            results.extend(direction_results)
+            live_direction_counts[direction] = direction_counts
     except Exception as exc:  # pragma: no cover - exercised only by live providers.
         if not execution_errors:
             execution_errors.append(str(exc))
@@ -1952,6 +2057,7 @@ def _live_hetzner_execute(
             "live_packet_exchange": bool(live_packet_exchange and status == "passed"),
             "token_configured": True,
             **corpus_metadata,
+            **_live_count_metadata(live_direction_counts),
             "execution_directions": directions,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=False),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
@@ -2590,123 +2696,562 @@ def _live_endpoint_timeout_for_count(packet_count: int) -> int:
     return max(30, min(300, 30 + int(packet_count)))
 
 
-def _compare_live_decoded_results(
+def _compare_live_direction_results(
     *,
     args: argparse.Namespace,
     direction: str,
     expected: list[JSONObject],
-    actual: list[JSONObject],
     plans: list[PacketPlan],
-) -> list[ComparisonResult]:
-    results: list[ComparisonResult] = []
-    remaining_actual = list(actual)
-    for index in range(min(len(expected), len(plans))):
-        if not remaining_actual:
-            break
-        plan = plans[index]
-        expected_model = _live_comparison_model(expected[index], plan=plan)
-        expected_fingerprint = _live_model_fingerprint(expected_model)
-        exact_index = next(
-            (
-                candidate_index
-                for candidate_index, candidate in enumerate(remaining_actual)
-                if _live_model_fingerprint(
-                    _live_comparison_model(candidate, plan=plan)
-                )
-                == expected_fingerprint
-            ),
-            None,
-        )
-        if exact_index is not None:
-            candidate = remaining_actual.pop(exact_index)
-            candidate_model = _live_comparison_model(candidate, plan=plan)
-            result = compare_decoded_models(
-                expected=expected_model,
-                actual=candidate_model,
-                plan=plan,
-                direction=direction,
-                reproduction_command=_live_reproduction_command(args),
-                actual_strict_bytes_hex=_strict_bytes_hex(candidate),
-            )
-        else:
-            candidates = []
-            for candidate_index, candidate in enumerate(remaining_actual):
-                candidate_model = _live_comparison_model(candidate, plan=plan)
-                candidates.append(
-                    (
-                        candidate_index,
-                        candidate,
-                        candidate_model,
-                        compare_decoded_models(
-                            expected=expected_model,
-                            actual=candidate_model,
-                            plan=plan,
-                            direction=direction,
-                            reproduction_command=_live_reproduction_command(args),
-                            actual_strict_bytes_hex=_strict_bytes_hex(candidate),
-                        ),
-                    )
-                )
-            candidate_index, _, _, result = min(
-                candidates,
-                key=lambda candidate: _live_comparison_score(candidate[3]),
-            )
-            remaining_actual.pop(candidate_index)
-        result = _annotate_live_comparison_result(result, plan)
-        results.append(result)
-
-    shared_count = len(results)
-    if len(actual) == len(expected) == len(plans):
-        return results
-
-    for index in range(shared_count, len(plans)):
-        plan = plans[index]
-        results.append(
-            ComparisonResult(
-                passed=False,
-                direction=direction,
-                expected=expected[index] if index < len(expected) else {},
-                actual=actual[index] if index < len(actual) else {},
-                plan=plan,
-                strict_bytes=plan.strict_bytes,
-                byte_equal=False,
-                differences=[
-                    {
-                        "path": "decoded_count",
-                        "expected": len(expected),
-                        "actual": len(actual),
-                    }
-                ],
-                reproduction_command=_live_reproduction_command(args),
-                metadata={
-                    "live_packet_exchange": False,
-                    "reason": "receiver decoded packet count mismatch",
-                    "wire_policy": _live_wire_policy(plan, provider="hetzner"),
-                    "live_address_rewrite": plan.metadata.get("live_address_rewrite"),
-                    "live_transit_rewrites": plan.metadata.get(
-                        "live_transit_rewrites",
-                        [],
-                    ),
-                },
-            )
-        )
-    return results
-
-
-def _live_comparison_score(result: ComparisonResult) -> tuple[int, int]:
-    return (0 if result.passed else 1, len(result.differences))
-
-
-def _live_model_fingerprint(model: JSONObject) -> str:
-    return json.dumps(
-        {
-            "layers": model.get("layers"),
-            "fields": model.get("fields"),
-            "root": model.get("root"),
-            "feature_tags": model.get("feature_tags"),
-        },
-        sort_keys=True,
+    corpus_metadata: Mapping[str, object],
+    sender_response,
+    receiver_response,
+    sender_execution: JSONObject,
+    receiver_execution: JSONObject,
+) -> tuple[list[ComparisonResult], JSONObject]:
+    sender_statuses = {
+        status.index: status for status in sender_response.per_index_status
+    }
+    receiver_statuses = {
+        status.index: status for status in receiver_response.per_index_status
+    }
+    actual_by_index = _live_decoded_models_by_index(receiver_response)
+    failure_artifacts = _live_endpoint_failure_artifacts(
+        sender_response,
+        receiver_response,
+        sender_execution,
+        receiver_execution,
     )
+
+    results: list[ComparisonResult] = []
+    for position, plan in enumerate(plans):
+        expected_model = expected[position] if position < len(expected) else {}
+        results.append(
+            _compare_live_packet_result(
+                args=args,
+                direction=direction,
+                plan=plan,
+                expected_model=expected_model,
+                actual_model=actual_by_index.get(plan.index),
+                sender_status=sender_statuses.get(plan.index),
+                receiver_status=receiver_statuses.get(plan.index),
+                failure_artifacts=failure_artifacts,
+            )
+        )
+
+    count_mismatch = _live_count_mismatch_result(
+        args=args,
+        direction=direction,
+        expected_count=len(plans),
+        sender_response=sender_response,
+        receiver_response=receiver_response,
+        failure_artifacts=failure_artifacts,
+    )
+    if count_mismatch is not None:
+        results.append(count_mismatch)
+
+    packet_results = [
+        result for result in results if result.metadata.get("aggregate") is not True
+    ]
+    direction_counts: JSONObject = {
+        "generated_count": _count_value(corpus_metadata.get("generated_count")),
+        "eligible_count": len(plans),
+        "skipped_count": _count_value(corpus_metadata.get("wire_skipped_count")),
+        "sent_count": sender_response.sent_count,
+        "captured_count": receiver_response.received_count,
+        "parsed_count": len(receiver_response.decoded_models),
+        "byte_passed_count": sum(
+            1 for result in packet_results if result.metadata.get("byte_passed") is True
+        ),
+        "decode_passed_count": sum(
+            1 for result in packet_results if result.metadata.get("decode_passed") is True
+        ),
+        "failed_count": sum(1 for result in results if not result.passed),
+    }
+    return results, direction_counts
+
+
+def _compare_live_packet_result(
+    *,
+    args: argparse.Namespace,
+    direction: str,
+    plan: PacketPlan,
+    expected_model: JSONObject,
+    actual_model: JSONObject | None,
+    sender_status,
+    receiver_status,
+    failure_artifacts: list[str],
+) -> ComparisonResult:
+    wire_policy = _live_wire_policy(plan, provider="hetzner")
+    byte_differences, byte_metadata = _live_wire_byte_differences(
+        plan=plan,
+        sender_status=sender_status,
+        receiver_status=receiver_status,
+        wire_policy=wire_policy,
+    )
+
+    decode_differences: list[JSONObject] = []
+    decode_passed = False
+    comparable_expected = _live_comparison_model(expected_model, plan=plan)
+    comparable_actual: JSONObject | None = None
+    if actual_model is None:
+        decode_differences.append(
+            {
+                "path": "decoded_model",
+                "expected": "present",
+                "actual": "missing",
+            }
+        )
+    else:
+        comparable_actual = _live_comparison_model(actual_model, plan=plan)
+        decode_result = compare_decoded_models(
+            expected=comparable_expected,
+            actual=comparable_actual,
+            plan=replace(plan, strict_bytes=False),
+            direction=direction,
+            reproduction_command=_live_reproduction_command(args),
+        )
+        decode_passed = decode_result.passed
+        decode_differences.extend(
+            _live_prefixed_differences("decoded", decode_result.differences)
+        )
+
+    differences = byte_differences + decode_differences
+    byte_passed = not byte_differences
+    passed = byte_passed and decode_passed
+    sender_status_object = sender_status.to_dict() if sender_status is not None else None
+    receiver_status_object = (
+        receiver_status.to_dict() if receiver_status is not None else None
+    )
+    return _annotate_live_comparison_result(
+        ComparisonResult(
+            passed=passed,
+            direction=direction,
+            expected={
+                "sent_raw_hex": None if sender_status is None else sender_status.sent_raw_hex,
+                "decoded_model": expected_model,
+                "comparable_decoded_model": comparable_expected,
+                "sender_status": sender_status_object,
+            },
+            actual={
+                "observed_raw_hex": (
+                    None if receiver_status is None else receiver_status.observed_raw_hex
+                ),
+                "decoded_model": actual_model or {},
+                "comparable_decoded_model": comparable_actual or {},
+                "receiver_status": receiver_status_object,
+            },
+            plan=plan,
+            strict_bytes=bool(wire_policy.get("strict_bytes", plan.strict_bytes)),
+            byte_equal=byte_passed,
+            differences=differences,
+            reproduction_command=None if passed else _live_reproduction_command(args),
+            artifacts=[] if passed else failure_artifacts,
+            metadata={
+                "plan_id": _plan_id(plan),
+                "sent": bool(sender_status.sent) if sender_status is not None else False,
+                "captured": (
+                    bool(receiver_status.received) if receiver_status is not None else False
+                ),
+                "parsed": actual_model is not None,
+                "byte_passed": byte_passed,
+                "decode_passed": decode_passed,
+                "byte_comparison": byte_metadata,
+            },
+        ),
+        plan,
+    )
+
+
+def _live_count_mismatch_result(
+    *,
+    args: argparse.Namespace,
+    direction: str,
+    expected_count: int,
+    sender_response,
+    receiver_response,
+    failure_artifacts: list[str],
+) -> ComparisonResult | None:
+    parsed_count = len(receiver_response.decoded_models)
+    differences: list[JSONObject] = []
+    if (
+        sender_response.sent_count != receiver_response.received_count
+        or sender_response.sent_count != expected_count
+        or receiver_response.received_count != expected_count
+    ):
+        differences.append(
+            {
+                "path": "sent_captured_count_mismatch",
+                "expected": {
+                    "eligible_count": expected_count,
+                    "sent_count": expected_count,
+                    "captured_count": expected_count,
+                },
+                "actual": {
+                    "sent_count": sender_response.sent_count,
+                    "captured_count": receiver_response.received_count,
+                },
+            }
+        )
+    if parsed_count != receiver_response.received_count:
+        differences.append(
+            {
+                "path": "parsed_count",
+                "expected": receiver_response.received_count,
+                "actual": parsed_count,
+            }
+        )
+    if not differences:
+        return None
+    return ComparisonResult(
+        passed=False,
+        direction=direction,
+        expected={
+            "eligible_count": expected_count,
+            "sent_count": expected_count,
+            "captured_count": expected_count,
+            "parsed_count": receiver_response.received_count,
+        },
+        actual={
+            "sent_count": sender_response.sent_count,
+            "captured_count": receiver_response.received_count,
+            "parsed_count": parsed_count,
+            "sender_errors": list(sender_response.errors),
+            "receiver_errors": list(receiver_response.errors),
+        },
+        strict_bytes=False,
+        byte_equal=None,
+        differences=differences,
+        reproduction_command=_live_reproduction_command(args),
+        artifacts=failure_artifacts,
+        metadata={
+            "aggregate": True,
+            "reason": "live endpoint sent/captured/parsed count mismatch",
+        },
+    )
+
+
+def _live_decoded_models_by_index(response) -> dict[int, JSONObject]:
+    output: dict[int, JSONObject] = {}
+    decoded_index = 0
+    decoded_models = list(response.decoded_models)
+    for status in response.per_index_status:
+        for _ in range(max(0, status.decoded_count)):
+            if decoded_index >= len(decoded_models):
+                return output
+            output.setdefault(status.index, decoded_models[decoded_index].to_dict())
+            decoded_index += 1
+    return output
+
+
+def _live_endpoint_failure_artifacts(
+    sender_response,
+    receiver_response,
+    sender_execution: JSONObject,
+    receiver_execution: JSONObject,
+) -> list[str]:
+    paths: list[str] = []
+    for response in (sender_response, receiver_response):
+        paths.extend(
+            value for value in response.artifact_paths.values() if isinstance(value, str)
+        )
+        paths.extend(capture.path for capture in response.captures)
+    paths.extend(_command_artifact_paths(sender_execution))
+    paths.extend(_command_artifact_paths(receiver_execution))
+    return _dedupe_paths(paths)
+
+
+def _live_wire_byte_differences(
+    *,
+    plan: PacketPlan,
+    sender_status,
+    receiver_status,
+    wire_policy: Mapping[str, object],
+) -> tuple[list[JSONObject], JSONObject]:
+    differences: list[JSONObject] = []
+    compare_root = _optional_string(wire_policy.get("compare_root"))
+    mutable_fields = _live_byte_mutable_fields(wire_policy)
+    metadata: JSONObject = {
+        "compare_root": compare_root,
+        "strict_bytes": bool(wire_policy.get("strict_bytes", plan.strict_bytes)),
+        "mutable_fields": _string_values(wire_policy.get("mutable_fields", [])),
+        "byte_mutable_fields": mutable_fields,
+        "policy_source": "wire_policy",
+    }
+
+    if sender_status is None:
+        differences.append(
+            {"path": "sender_status", "expected": "present", "actual": "missing"}
+        )
+        return differences, metadata
+    if receiver_status is None:
+        differences.append(
+            {"path": "receiver_status", "expected": "present", "actual": "missing"}
+        )
+        return differences, metadata
+
+    metadata["sender_status"] = sender_status.status
+    metadata["receiver_status"] = receiver_status.status
+    metadata["sender_root"] = sender_status.send_root
+    metadata["receiver_root"] = receiver_status.capture_root
+
+    if not sender_status.sent:
+        differences.append({"path": "sent", "expected": True, "actual": False})
+    if not receiver_status.received:
+        differences.append({"path": "captured", "expected": True, "actual": False})
+    if sender_status.sent_raw_hex is None:
+        differences.append(
+            {"path": "sent_raw_hex", "expected": "hex bytes", "actual": None}
+        )
+    if receiver_status.observed_raw_hex is None:
+        differences.append(
+            {"path": "observed_raw_hex", "expected": "hex bytes", "actual": None}
+        )
+    if sender_status.sent_raw_hex is None or receiver_status.observed_raw_hex is None:
+        return differences, metadata
+
+    sender_hex, sender_extract = _live_extract_comparable_hex(
+        sender_status.sent_raw_hex,
+        raw_root=sender_status.send_root,
+        compare_root=compare_root,
+    )
+    receiver_hex, receiver_extract = _live_extract_comparable_hex(
+        receiver_status.observed_raw_hex,
+        raw_root=receiver_status.capture_root,
+        compare_root=compare_root,
+    )
+    metadata["sender_extract"] = sender_extract
+    metadata["receiver_extract"] = receiver_extract
+    sender_error = _optional_string(sender_extract.get("error"))
+    receiver_error = _optional_string(receiver_extract.get("error"))
+    if sender_error is not None:
+        differences.append(
+            {
+                "path": "sent_raw_hex.compare_root",
+                "expected": compare_root,
+                "actual": sender_error,
+            }
+        )
+    if receiver_error is not None:
+        differences.append(
+            {
+                "path": "observed_raw_hex.compare_root",
+                "expected": compare_root,
+                "actual": receiver_error,
+            }
+        )
+    if sender_hex is None or receiver_hex is None:
+        return differences, metadata
+
+    masked_sender, sender_mask = _live_mask_wire_hex(
+        sender_hex,
+        compare_root=compare_root,
+        mutable_fields=mutable_fields,
+    )
+    masked_receiver, receiver_mask = _live_mask_wire_hex(
+        receiver_hex,
+        compare_root=compare_root,
+        mutable_fields=mutable_fields,
+    )
+    metadata["comparable_sent_raw_hex"] = sender_hex
+    metadata["comparable_observed_raw_hex"] = receiver_hex
+    metadata["masked_sent_raw_hex"] = masked_sender
+    metadata["masked_observed_raw_hex"] = masked_receiver
+    metadata["sender_mask"] = sender_mask
+    metadata["receiver_mask"] = receiver_mask
+    if masked_sender != masked_receiver:
+        differences.append(
+            {
+                "path": "raw_hex",
+                "expected": sender_hex,
+                "actual": receiver_hex,
+                "masked_expected": masked_sender,
+                "masked_actual": masked_receiver,
+                "mutable_fields": mutable_fields,
+            }
+        )
+    return differences, metadata
+
+
+def _live_byte_mutable_fields(wire_policy: Mapping[str, object]) -> list[str]:
+    if "byte_mutable_fields" in wire_policy:
+        return _string_values(wire_policy.get("byte_mutable_fields", []))
+    return _string_values(wire_policy.get("mutable_fields", []))
+
+
+def _live_extract_comparable_hex(
+    raw_hex: str,
+    *,
+    raw_root: str | None,
+    compare_root: str | None,
+) -> tuple[str | None, JSONObject]:
+    metadata: JSONObject = {
+        "raw_root": raw_root,
+        "compare_root": compare_root,
+    }
+    try:
+        raw = bytes.fromhex(raw_hex)
+    except ValueError as exc:
+        metadata["error"] = f"invalid hex: {exc}"
+        return None, metadata
+
+    canonical_raw_root = _live_canonical_root(raw_root) or compare_root
+    canonical_compare_root = _live_canonical_root(compare_root)
+    metadata["canonical_raw_root"] = canonical_raw_root
+    metadata["canonical_compare_root"] = canonical_compare_root
+    if canonical_compare_root is None:
+        metadata["error"] = "missing compare root"
+        return None, metadata
+    if canonical_raw_root == canonical_compare_root:
+        metadata["offset"] = 0
+        metadata["length"] = len(raw)
+        return raw.hex(), metadata
+    if canonical_raw_root == "link:ethernet" and canonical_compare_root in {
+        "l3:ipv4",
+        "l3:ipv6",
+    }:
+        payload = _live_ethernet_payload(raw)
+        if payload is None:
+            metadata["error"] = "ethernet frame too short"
+            return None, metadata
+        offset, ethertype = payload
+        expected_ethertype = 0x0800 if canonical_compare_root == "l3:ipv4" else 0x86DD
+        metadata["offset"] = offset
+        metadata["ethertype"] = ethertype
+        if ethertype != expected_ethertype:
+            metadata["error"] = (
+                f"ethernet ethertype 0x{ethertype:04x} does not match "
+                f"{canonical_compare_root}"
+            )
+            return None, metadata
+        comparable = raw[offset:]
+        metadata["length"] = len(comparable)
+        return comparable.hex(), metadata
+
+    metadata["error"] = (
+        f"cannot compare {canonical_raw_root!r} bytes as {canonical_compare_root!r}"
+    )
+    return None, metadata
+
+
+def _live_mask_wire_hex(
+    raw_hex: str,
+    *,
+    compare_root: str | None,
+    mutable_fields: Sequence[str],
+) -> tuple[str, list[JSONObject]]:
+    raw = bytearray(bytes.fromhex(raw_hex))
+    root = _live_canonical_root(compare_root)
+    masked: list[JSONObject] = []
+    for mutable_field in mutable_fields:
+        for offset, length in _live_mutable_field_spans(raw, root, mutable_field):
+            if offset < 0 or length <= 0 or offset + length > len(raw):
+                continue
+            raw[offset : offset + length] = b"\x00" * length
+            masked.append(
+                {
+                    "field": mutable_field,
+                    "offset": offset,
+                    "length": length,
+                }
+            )
+    return raw.hex(), masked
+
+
+def _live_mutable_field_spans(
+    raw: bytearray,
+    compare_root: str | None,
+    mutable_field: str,
+) -> list[tuple[int, int]]:
+    field = _live_normalized_mutable_field(mutable_field)
+    spans: list[tuple[int, int]] = []
+    if compare_root == "link:ethernet":
+        if field == "ethernet.dst":
+            spans.append((0, 6))
+        elif field == "ethernet.src":
+            spans.append((6, 6))
+        elif field == "ethernet.ethertype":
+            spans.append((12, 2))
+    ipv4_offset = _live_ipv4_header_offset(raw, compare_root)
+    if ipv4_offset is not None:
+        if field in {"ipv4.ttl", "ip.ttl"}:
+            spans.append((ipv4_offset + 8, 1))
+        elif field in {"ipv4.checksum", "ipv4.chksum", "ip.checksum", "ip.chksum"}:
+            spans.append((ipv4_offset + 10, 2))
+    return spans
+
+
+def _live_ipv4_header_offset(raw: bytearray, compare_root: str | None) -> int | None:
+    if compare_root == "l3:ipv4":
+        return 0 if len(raw) >= 20 and raw[0] >> 4 == 4 else None
+    if compare_root == "link:ethernet":
+        payload = _live_ethernet_payload(bytes(raw))
+        if payload is None:
+            return None
+        offset, ethertype = payload
+        if ethertype == 0x0800 and len(raw) >= offset + 20 and raw[offset] >> 4 == 4:
+            return offset
+    return None
+
+
+def _live_ethernet_payload(raw: bytes) -> tuple[int, int] | None:
+    if len(raw) < 14:
+        return None
+    ethertype = int.from_bytes(raw[12:14], "big")
+    offset = 14
+    while ethertype in {0x8100, 0x88A8, 0x9100}:
+        if len(raw) < offset + 4:
+            return None
+        ethertype = int.from_bytes(raw[offset + 2 : offset + 4], "big")
+        offset += 4
+    return offset, ethertype
+
+
+def _live_canonical_root(root: str | None) -> str | None:
+    if root is None:
+        return None
+    return LIVE_ROOT_ALIASES.get(root, root)
+
+
+def _live_normalized_mutable_field(field: str) -> str:
+    normalized = field.removeprefix("fields.")
+    return normalized.lower()
+
+
+def _live_prefixed_differences(
+    prefix: str,
+    differences: Sequence[Mapping[str, object]],
+) -> list[JSONObject]:
+    output: list[JSONObject] = []
+    for difference in differences:
+        path = difference.get("path")
+        copied: JSONObject = {
+            key: _json_difference_value(value)
+            for key, value in difference.items()
+            if isinstance(key, str)
+        }
+        copied["path"] = f"{prefix}.{path}" if isinstance(path, str) else prefix
+        output.append(copied)
+    return output
+
+
+def _json_difference_value(value: object) -> JSONValue:
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, Mapping):
+        return {
+            str(key): _json_difference_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_json_difference_value(item) for item in value]
+    if isinstance(value, bytes):
+        return {"hex": value.hex()}
+    return str(value)
+
+
+def _plan_id(plan: PacketPlan) -> str | None:
+    value = plan.metadata.get("plan_id")
+    return value if isinstance(value, str) else None
 
 
 def _live_comparison_model(model: JSONObject, *, plan: PacketPlan) -> JSONObject:
@@ -2934,6 +3479,9 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
 
     failed_validations = [validation for validation in validations if not validation.passed]
     status = "passed" if not failed_validations else "failed"
+    live_count_metadata = _live_count_metadata(
+        _live_empty_direction_counts(corpus_metadata, directions)
+    )
     result = ComparisonResult(
         passed=not failed_validations,
         direction=args.direction,
@@ -3004,6 +3552,7 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
             "no_live_packets_sent": True,
             "real_provider_backed_live_mode": "not executed by local-dry-run",
             **corpus_metadata,
+            **live_count_metadata,
             "execution_directions": directions,
             "backend_bootstrap": {
                 "command": bootstrap_command.to_dict(),
