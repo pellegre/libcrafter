@@ -62,14 +62,17 @@ output path without capturing traffic.
 | `arp_who_has` | Dry-run | `cargo run -p crafter --example arp_who_has` |
 | `dns_query` | Dry-run send/receive plus offline decode | `cargo run -p crafter --example dns_query -- --name example.com` |
 | `dhcp_discover` | Dry-run by default, live-gated with `--live` | `cargo run -p crafter --example dhcp_discover` |
+| `icmpv6_echo` | Offline by default, dry-run send/receive with `--send-recv` | `cargo run -p crafter --example icmpv6_echo` |
 | `vlan` | Offline | `cargo run -p crafter --example vlan` |
 | `linux_sll` | Offline | `cargo run -p crafter --example linux_sll` |
 | `null_loopback` | Offline | `cargo run -p crafter --example null_loopback` |
+| `ipv4_options` | Offline | `cargo run -p crafter --example ipv4_options` |
 | `tcp_options` | Offline | `cargo run -p crafter --example tcp_options` |
+| `ipv6_extensions` | Offline | `cargo run -p crafter --example ipv6_extensions` |
 
 `dhcp_discover --live` is available only after
 `--i-understand-isolated-lab` and `LIBCRAFTER_LIVE_LAB=1` are supplied. The
 documented command never transmits traffic. `arp_who_has` always shows a
 link-layer dry-run plan and never attempts MAC discovery.
-
-Planned: `icmpv6_echo.rs`, `ipv4_options.rs`, and `ipv6_extensions.rs`.
+`icmpv6_echo --send-recv` uses a dry-run `SendRecv` report only; it does not
+offer live mode.
