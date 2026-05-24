@@ -16,14 +16,13 @@ documented as commands yet.
 
 ## Core Packet Model
 
-Runnable now:
-
 | Example | Safety mode | Command |
 | --- | --- | --- |
 | `hello_world` | Offline | `cargo run -p crafter --example hello_world` |
-
-Planned: `packet_building.rs`, `packet_inspection.rs`, `decode_bytes.rs`, and
-`custom_registry.rs`.
+| `packet_building` | Offline | `cargo run -p crafter --example packet_building` |
+| `packet_inspection` | Offline | `cargo run -p crafter --example packet_inspection` |
+| `decode_bytes` | Offline | `cargo run -p crafter --example decode_bytes` |
+| `custom_registry` | Offline | `cargo run -p crafter --example custom_registry` |
 
 ## Net Workflows
 
@@ -56,4 +55,3 @@ Runnable now:
 Planned: `arp_who_has.rs`, `dhcp_discover.rs`, `icmpv6_echo.rs`, `vlan.rs`,
 `linux_sll.rs`, `null_loopback.rs`, `ipv4_options.rs`, and
 `ipv6_extensions.rs`.
-
