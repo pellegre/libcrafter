@@ -1569,7 +1569,7 @@ mod tests {
 
     fn temp_pcap_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "crafter-pcap-{name}-{}.pcap",
+            "pcap-crafter-{name}-{}.pcap",
             NEXT_TEMP_PCAP.fetch_add(1, Ordering::Relaxed)
         ))
     }
@@ -1753,7 +1753,7 @@ mod tests {
     fn pcap_roundtrip_dump_and_read_helpers() {
         let dir = std::env::temp_dir();
         let path = dir.join(format!(
-            "crafter-pcap-roundtrip-{}.pcap",
+            "pcap-crafter-roundtrip-{}.pcap",
             NEXT_TEMP_PCAP.fetch_add(1, Ordering::Relaxed)
         ));
         let packet = ethernet_arp_packet();

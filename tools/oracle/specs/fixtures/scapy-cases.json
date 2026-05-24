@@ -719,7 +719,7 @@
       ],
       "strict_bytes": true,
       "status": "planned",
-      "notes": "Scapy-written pcap decoded by crafter-pcap with link type, packet count, and packet bytes compared."
+      "notes": "Scapy-written pcap decoded by libcrafter with link type, packet count, and packet bytes compared."
     },
     {
       "name": "pcap-scapy-null-loopback",
@@ -1183,7 +1183,7 @@
       "notes": "libcrafter-written pcap decoded by Scapy with datalink, packet count, timestamps where compared, and packet bytes."
     },
     {
-      "name": "pcap-crafter-pcapng-mixed-links",
+      "name": "pcapng-libcrafter-mixed-links",
       "family": "pcap",
       "direction": "libcrafter_to_scapy",
       "root": "pcapng:mixed-link-types",
