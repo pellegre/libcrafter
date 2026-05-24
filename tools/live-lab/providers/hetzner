@@ -18,7 +18,8 @@ api_base="${HETZNER_API_BASE:-https://api.hetzner.cloud/v1}"
 hetzner_smoke_cleanup_needed=false
 private_network_cidr="${HETZNER_PRIVATE_NETWORK_CIDR:-10.42.19.0/24}"
 private_network_zone="${HETZNER_NETWORK_ZONE:-us-east}"
-private_interface="${HETZNER_PRIVATE_INTERFACE:-ens10}"
+private_interface_override="${HETZNER_PRIVATE_INTERFACE:-}"
+private_interface="${private_interface_override:-auto}"
 private_prefix_len="${HETZNER_PRIVATE_PREFIX_LEN:-24}"
 libcrafter_private_ipv4="${HETZNER_LIBCRAFTER_PRIVATE_IPV4:-10.42.19.10}"
 reference_private_ipv4="${HETZNER_REFERENCE_PRIVATE_IPV4:-10.42.19.20}"
@@ -426,6 +427,16 @@ ssh_remote() {
   ssh_remote_host "$host" "$@"
 }
 
+forget_known_host() {
+  local host="$1"
+  local known_hosts="$state_dir/known_hosts"
+
+  if [[ -f "$known_hosts" ]]; then
+    ssh-keygen -f "$known_hosts" -R "$host" >/dev/null 2>&1 || true
+    rm -f "$known_hosts.old"
+  fi
+}
+
 scp_from_remote_host() {
   local host="$1"
   local remote_path="$2"
@@ -484,20 +495,33 @@ wait_for_ssh() {
   return 75
 }
 
+detect_private_interface() {
+  local host="$1"
+  local override="$private_interface_override"
+
+  ssh_remote_host "$host" "override='$override'; if [ -n \"\$override\" ]; then ip link show \"\$override\" >/dev/null 2>&1 && printf '%s\n' \"\$override\"; exit; fi; default_if=\$(ip route show default 0.0.0.0/0 | awk '{print \$5; exit}'); for dev in \$(ls /sys/class/net); do case \"\$dev\" in lo|\"\$default_if\") continue ;; esac; [ -e \"/sys/class/net/\$dev\" ] && printf '%s\n' \"\$dev\" && exit 0; done; exit 1"
+}
+
 configure_private_interface() {
   local host="$1"
   local private_ip="$2"
   local attempt
+  local detected_interface
 
   for attempt in $(seq 1 40); do
-    if ssh_remote_host "$host" "ip link show '$private_interface' >/dev/null 2>&1"; then
-      ssh_remote_host "$host" "ip link set '$private_interface' up && ip address replace '$private_ip/$private_prefix_len' dev '$private_interface'"
+    if detected_interface="$(detect_private_interface "$host" 2>/dev/null)"; then
+      private_interface="$detected_interface"
+      ssh_remote_host "$host" "ip link set '$detected_interface' up && ip address replace '$private_ip/$private_prefix_len' dev '$detected_interface'"
       return 0
     fi
     sleep 3
   done
 
-  echo "error: private interface $private_interface did not appear on Hetzner host $host" >&2
+  if [[ -n "$private_interface_override" ]]; then
+    echo "error: private interface $private_interface_override did not appear on Hetzner host $host" >&2
+  else
+    echo "error: no private interface appeared on Hetzner host $host" >&2
+  fi
   return 75
 }
 
@@ -927,6 +951,9 @@ EOF
     cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
     exit 70
   fi
+
+  forget_known_host "$libcrafter_public_ipv4"
+  forget_known_host "$reference_public_ipv4"
 
   if ! wait_for_ssh "$libcrafter_public_ipv4"; then
     cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"

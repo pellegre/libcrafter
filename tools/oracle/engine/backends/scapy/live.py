@@ -393,6 +393,7 @@ def _run_receiver(
         iface=_required_string(request, "interface"),
         count=max(1, len(vectors)),
         timeout=max(1, _int_value(request.get("timeout_seconds"), 30)),
+        lfilter=lambda packet: _matches_live_capture(scapy_all, packet, request),
     )
 
     decoded_models: list[JSONObject] = []
@@ -505,6 +506,27 @@ def _send_packet(
         scapy_all.sendp(packet, **kwargs)
     else:
         scapy_all.send(packet, **kwargs)
+
+
+def _matches_live_capture(scapy_all: Any, packet: Any, request: JSONObject) -> bool:
+    local_ipv4 = _address_value(request, "local_addresses", "ipv4")
+    peer_ipv4 = _address_value(request, "peer_addresses", "ipv4")
+    if local_ipv4 is not None and peer_ipv4 is not None:
+        if not packet.haslayer(scapy_all.IP):
+            return False
+        ip = packet[scapy_all.IP]
+        if ip.src != peer_ipv4 or ip.dst != local_ipv4:
+            return False
+        return packet.haslayer(scapy_all.UDP)
+    return True
+
+
+def _address_value(request: JSONObject, group: str, family: str) -> str | None:
+    addresses = request.get(group)
+    if not isinstance(addresses, dict):
+        return None
+    value = addresses.get(family)
+    return value if isinstance(value, str) and value else None
 
 
 def _decode_observed_packet(

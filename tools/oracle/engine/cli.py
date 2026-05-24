@@ -580,15 +580,16 @@ def _live_hetzner(args: argparse.Namespace) -> int:
 
     try:
         directions = live_execution_directions(args.direction)
+        root, family, case_name, feature = _hetzner_live_generation_selection(args)
         plans = generate_plans(
             seed=args.seed,
             profile=args.profile,
             backend=args.backend,
             count=args.count,
-            root=args.root,
-            family=args.family,
-            case=args.case_name,
-            feature=args.feature,
+            root=root,
+            family=family,
+            case=case_name,
+            feature=feature,
             index=args.index,
         )
     except ValueError as exc:
@@ -603,6 +604,13 @@ def _live_hetzner(args: argparse.Namespace) -> int:
     dry_run = bool(args.dry_run)
     if not dry_run and not token_configured:
         return _live_hetzner_skip_no_token(
+            args=args,
+            report_path=report_path,
+            directions=directions,
+            generated_count=len(plans),
+        )
+    if not dry_run and not bool(getattr(args, "confirm_live_run", False)):
+        return _live_hetzner_requires_dry_run_report(
             args=args,
             report_path=report_path,
             directions=directions,
@@ -760,6 +768,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             "token_configured": token_configured,
             "requested_count": args.count,
             "generated_count": len(plans),
+            "live_generation_constraints": _hetzner_live_generation_constraints(),
             "execution_directions": directions,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=True),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
@@ -932,15 +941,15 @@ def _live_hetzner_requires_dry_run_report(
             "provider": args.provider,
             "dry_run": False,
             "live_packet_exchange": False,
-            "reason": "provider execution requires the live-lab operator path",
+            "reason": "provider execution requires --confirm-live-run and live confirmation",
         },
         strict_bytes=False,
         byte_equal=None,
         differences=[
             {
                 "path": "provider_execution",
-                "expected": "two-endpoint live exchange",
-                "actual": "not executed by oracle dry-run adapter",
+                "expected": "protected confirmed two-endpoint live exchange",
+                "actual": "missing --confirm-live-run",
             }
         ],
         reproduction_command=_live_reproduction_command(args),
@@ -949,6 +958,7 @@ def _live_hetzner_requires_dry_run_report(
             "creates_infrastructure": False,
             "live_packet_exchange": False,
             "planned_infrastructure": True,
+            "requires_confirmation": True,
         },
     )
     report = RunReport(
@@ -993,7 +1003,7 @@ def _live_hetzner_requires_dry_run_report(
     write_json(report_path, report)
     print(
         f"live {args.provider}: status=failed reason=requires_live_lab_operator_path "
-        f"creates_infrastructure=false report={report_path}",
+        f"confirm=missing creates_infrastructure=false report={report_path}",
         file=sys.stderr,
     )
     return 2
@@ -1083,6 +1093,7 @@ def _live_hetzner_execute(
             raise RuntimeError("Hetzner endpoint bootstrap failed")
 
         manifest = _read_hetzner_manifest(manifest_path)
+        endpoints = _hetzner_endpoints_from_manifest(endpoints, manifest)
         remote_dir = manifest.get("remote_dir", "/root/libcrafter")
         remote_artifact_root = posixpath.join(
             remote_dir,
@@ -1135,6 +1146,7 @@ def _live_hetzner_execute(
                 endpoint=sender,
                 peer=receiver,
                 artifact_paths=sender_artifacts,
+                timeout_seconds=_live_endpoint_timeout_for_count(len(direction_plans)),
                 metadata={
                     "phase_role": "sender",
                     "dry_run": False,
@@ -1153,6 +1165,7 @@ def _live_hetzner_execute(
                 endpoint=receiver,
                 peer=sender,
                 artifact_paths=receiver_artifacts,
+                timeout_seconds=_live_endpoint_timeout_for_count(len(direction_plans)),
                 metadata={
                     "phase_role": "receiver",
                     "dry_run": False,
@@ -1437,6 +1450,7 @@ def _live_hetzner_execute(
             "token_configured": True,
             "requested_count": args.count,
             "generated_count": len(plans),
+            "live_generation_constraints": _hetzner_live_generation_constraints(),
             "execution_directions": directions,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=False),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
@@ -1504,6 +1518,111 @@ def _read_hetzner_manifest(path: Path) -> dict[str, str]:
         key, value = parts[0].split("=", 1)
         values[key] = value
     return values
+
+
+def _hetzner_live_generation_selection(
+    args: argparse.Namespace,
+) -> tuple[str, str, str, None]:
+    """Return the currently materialized live stack for Hetzner exchanges."""
+
+    if args.root not in (None, "l3:ipv4"):
+        raise ValueError(
+            "Hetzner live exchange currently supports --root l3:ipv4 only; "
+            f"got {args.root}"
+        )
+    if args.family not in (None, "ipv4"):
+        raise ValueError(
+            "Hetzner live exchange currently supports --family ipv4 only; "
+            f"got {args.family}"
+        )
+    if args.case_name not in (None, "ipv4-udp"):
+        raise ValueError(
+            "Hetzner live exchange currently supports --case ipv4-udp only; "
+            f"got {args.case_name}"
+        )
+    if args.feature is not None:
+        raise ValueError(
+            "Hetzner live exchange currently supports baseline ipv4-udp only; "
+            f"got --feature {args.feature}"
+        )
+    return "l3:ipv4", "ipv4", "ipv4-udp", None
+
+
+def _hetzner_live_generation_constraints() -> JSONObject:
+    return {
+        "reason": "current libcrafter live endpoint materializes and safely sends l3 ipv4 udp payload batches",
+        "root": "l3:ipv4",
+        "family": "ipv4",
+        "case": "ipv4-udp",
+        "unsupported_in_live": [
+            "ipv6",
+            "tcp",
+            "icmp",
+            "dns",
+            "link-layer roots",
+        ],
+    }
+
+
+def _hetzner_endpoints_from_manifest(endpoints, manifest: dict[str, str]):
+    libcrafter = _hetzner_endpoint_from_manifest(
+        endpoints["libcrafter"],
+        manifest=manifest,
+        prefix="libcrafter",
+    )
+    reference = _hetzner_endpoint_from_manifest(
+        endpoints["reference_backend"],
+        manifest=manifest,
+        prefix="reference",
+    )
+    libcrafter = replace(
+        libcrafter,
+        metadata={
+            **libcrafter.metadata,
+            "peer_role": reference.role,
+            "peer_address": reference.address,
+            "peer_interface": reference.interface,
+        },
+    )
+    reference = replace(
+        reference,
+        metadata={
+            **reference.metadata,
+            "peer_role": libcrafter.role,
+            "peer_address": libcrafter.address,
+            "peer_interface": libcrafter.interface,
+        },
+    )
+    return {
+        "libcrafter": libcrafter,
+        "reference_backend": reference,
+    }
+
+
+def _hetzner_endpoint_from_manifest(endpoint, *, manifest: dict[str, str], prefix: str):
+    interface = (
+        manifest.get(f"{prefix}_interface")
+        or manifest.get("private_interface")
+        or endpoint.interface
+    )
+    address = manifest.get(f"{prefix}_private_ipv4") or endpoint.address
+    ipv6_address = manifest.get(f"{prefix}_private_ipv6") or None
+    return replace(
+        endpoint,
+        interface=interface,
+        address=address,
+        ipv6_address=ipv6_address,
+        metadata={
+            **endpoint.metadata,
+            "manifest_applied": True,
+            "interface_source": "hetzner_manifest",
+            "private_interface": interface,
+            "private_ipv4": address,
+            "public_ipv4": manifest.get(f"{prefix}_public_ipv4"),
+            "server_id": manifest.get(f"{prefix}_server_id"),
+            "server_name": manifest.get(f"{prefix}_server_name"),
+        },
+    )
 
 
 def _run_live_lab_provider_command(
@@ -1917,6 +2036,10 @@ def _required_response_string(value: JSONObject, key: str) -> str:
 
 def _live_endpoint_process_timeout(endpoint_timeout: int) -> int:
     return max(120, int(endpoint_timeout) + 90)
+
+
+def _live_endpoint_timeout_for_count(packet_count: int) -> int:
+    return max(30, min(300, 30 + int(packet_count)))
 
 
 def _compare_live_decoded_results(
@@ -4167,6 +4290,8 @@ def _live_reproduction_command(args: argparse.Namespace) -> str:
         argv.extend(["--root", args.root])
     if getattr(args, "dry_run", False):
         argv.append("--dry-run")
+    if getattr(args, "confirm_live_run", False):
+        argv.append("--confirm-live-run")
     if getattr(args, "keep_live_lab", False):
         argv.append("--keep-live-lab")
     return shlex.join(argv)
@@ -4992,6 +5117,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="plan provider-backed live validation without creating infrastructure",
+    )
+    live_parser.add_argument(
+        "--confirm-live-run",
+        action="store_true",
+        help="confirm protected non-dry-run provider execution",
     )
     live_parser.add_argument(
         "--keep-live-lab",
