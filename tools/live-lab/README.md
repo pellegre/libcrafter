@@ -37,14 +37,14 @@ entrypoint for provider lifecycle, bootstrap, and artifact collection. Use the
 oracle runner for deterministic offline, pcap, and live reports:
 
 ```sh
-tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
-tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
-tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 1 --count 10
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
 ```
 
-Scapy is a backend selected by the oracle runner, not a general live-lab coding
-pattern. Provider scripts may install or bootstrap Scapy only as backend
-infrastructure.
+Backend-specific dependencies are selected by the oracle runner, not by
+general live-lab code. Provider scripts may install or bootstrap them only as
+oracle backend infrastructure.
 
 Wireshark/tshark is parser-only in the oracle backend capability registry. It
 can support decode and pcap-read checks, but live-lab providers must not depend
@@ -69,8 +69,8 @@ through the oracle entrypoint:
 ```sh
 tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
-tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 1 --count 10
-tools/oracle/run live --backend scapy --provider hetzner --profile smoke --seed 1 --count 10
+tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
+tools/oracle/run live --provider hetzner --profile smoke --seed 1 --count 10
 ```
 
 Real Hetzner execution is reserved for explicit protected manual workflow
@@ -130,9 +130,9 @@ Expected artifact types include:
 Artifacts should be sufficient to debug a failed live run offline. Secrets must
 not be printed or written to artifact files.
 
-Oracle reports include the profile, seed, count, direction, and packet index.
-Use those coordinates with the same backend, for example `--backend scapy
---seed 1 --index 3`, to reproduce one packet plan.
+Oracle reports include the profile, seed, count, direction, backend, and packet
+index. Use those coordinates with the oracle runner to reproduce one packet
+plan.
 
 ## Cleanup
 

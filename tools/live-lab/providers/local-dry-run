@@ -49,7 +49,6 @@ run_oracle_live_suite() {
 
   mkdir -p "$oracle_artifact_dir"
   "$project_root/tools/oracle/run" live \
-    --backend scapy \
     --provider local-dry-run \
     --profile smoke \
     --seed 1 \

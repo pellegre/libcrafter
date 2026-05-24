@@ -17,6 +17,12 @@ pcaps, or act as a live endpoint.
 
 ## Common Commands
 
+Generate a reusable packet corpus before running a validation mode:
+
+```sh
+tools/oracle/run corpus --backend scapy --profile smoke --seed 1 --count 10
+```
+
 Offline validation compares raw packet vectors and normalized decoded models:
 
 ```sh
@@ -56,14 +62,17 @@ tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smo
 Oracle artifacts default below `target/oracle/`:
 
 ```text
+target/oracle/corpus/
 target/oracle/offline/
 target/oracle/pcap/
 target/oracle/live/
 ```
 
-Reports include the mode, backend, profile, seed, count, direction, and packet
-index. Reproduce a failing generated packet with the same command coordinates
-and add `--index <n>` when the report identifies a single packet.
+The corpus report includes the mode, corpus id, backend, profile, seed, count,
+selected specs, requested filters, and ordered packet indexes. Validation reports
+include the mode, backend, profile, seed, count, direction, and packet index.
+Reproduce a failing generated packet with the same command coordinates and add
+`--index <n>` when the report identifies a single packet.
 
 ## Specs And Backends
 

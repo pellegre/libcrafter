@@ -7,8 +7,8 @@ show_tool_versions() {
   rustc --version
   cargo --version
   python3 --version
-  "$project_root/tools/oracle/run" backend-info --backend scapy >/tmp/libcrafter-scapy-backend.json
-  python3 - /tmp/libcrafter-scapy-backend.json <<'PY'
+  "$project_root/tools/oracle/run" backend-info >/tmp/libcrafter-reference-backend.json
+  python3 - /tmp/libcrafter-reference-backend.json <<'PY'
 from __future__ import annotations
 
 import json
@@ -16,7 +16,7 @@ import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     metadata = json.load(handle)
-print(f"scapy={metadata.get('scapy_version', 'unknown')}")
+print(f"reference_backend={metadata.get('backend', metadata.get('name', 'unknown'))}")
 PY
   if command -v pcap-config >/dev/null 2>&1; then
     printf 'libpcap=%s\n' "$(pcap-config --version)"
