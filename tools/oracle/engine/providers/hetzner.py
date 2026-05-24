@@ -35,6 +35,7 @@ LIBCRAFTER_BOOTSTRAP_PACKAGES = [
     "curl",
     "git",
     "iproute2",
+    "iputils-ping",
     "libpcap-dev",
     "pkg-config",
     "python3",
@@ -44,6 +45,7 @@ REFERENCE_BOOTSTRAP_PACKAGES = [
     "curl",
     "git",
     "iproute2",
+    "iputils-ping",
     "python3",
 ]
 PYTHON_DEPENDENCY_RUNNER = "uv"
