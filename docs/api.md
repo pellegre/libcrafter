@@ -1,4 +1,4 @@
-# Rust API Map
+# Rust API Guide
 
 This document summarizes the public Rust surface for generated packet tools.
 The first alpha focuses on explicit builders, deterministic compile/decode

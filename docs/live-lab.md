@@ -9,9 +9,9 @@ tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 ```
 
 Local static tests should run before any live lab command. Live providers are
-for tests that need root privileges, raw sockets, packet capture, or oracle
-comparison on disposable infrastructure. The oracle is the validation system;
-Scapy is selected explicitly as a reference backend with `--backend scapy`.
+for tests that need root privileges, raw sockets, packet capture, or reference
+comparison on disposable infrastructure. See [validation.md](validation.md) for
+oracle modes and CI expectations.
 
 ## Hetzner Setup
 
@@ -36,12 +36,8 @@ tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```
 
-Oracle offline and pcap validation should pass before creating infrastructure:
-
-```sh
-tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
-tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
-```
+Oracle offline and pcap validation should pass before creating infrastructure.
+The validation commands are documented in [validation.md](validation.md).
 
 Real creation uses provider defaults that can be overridden. Choose values that
 belong to the disposable test environment and do not commit account-specific
@@ -54,7 +50,7 @@ HETZNER_LOCATION=replace-with-location \
 tools/live-lab/libcrafter-live-lab create --provider hetzner
 ```
 
-Plan oracle live validation without creating infrastructure:
+Plan provider-backed oracle live validation without creating infrastructure:
 
 ```sh
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
@@ -70,10 +66,22 @@ tools/live-lab/libcrafter-live-lab run --provider hetzner --suite oracle-live
 Generated provider state is written below `tools/live-lab/.state/hetzner/`.
 Artifacts are written below `tools/live-lab/artifacts/hetzner/`. Both locations
 are ignored by git. Oracle reports and packet artifacts are written below
-`target/oracle/`, with live reports under `target/oracle/live`.
+`target/oracle/`.
 
 Use the same `--profile`, `--seed`, `--count`, and reported `--index` to
 reproduce a single failed oracle packet plan.
+
+## Artifacts
+
+Collect artifacts after a real provider run:
+
+```sh
+tools/live-lab/libcrafter-live-lab artifact --provider hetzner
+```
+
+Keep artifacts local. Do not commit provider account data, public host
+addresses, live host identifiers, packet captures from non-disposable networks,
+or credentials.
 
 ## CI Secrets
 
@@ -81,24 +89,21 @@ Use `HETZNER_API_TOKEN` as the CI secret name. CI jobs should run dry-run
 commands for pull requests and reserve real host creation for explicit,
 protected workflows.
 
-Recommended CI flow:
+Recommended provider dry-run flow:
 
 ```sh
-cargo test --workspace
-tools/oracle/run offline --backend scapy --profile ci --seed 12345 --count 2000
-tools/oracle/run pcap --backend scapy --profile smoke --seed 12345 --count 250
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```
 
-Pull request CI should run offline and pcap oracle validation only. Real live
-runs should be manual, protected, and wrap `create`, `run`, `artifact`, and
-`destroy` in cleanup logic so `destroy` still executes after a failed validation
-step.
+Pull request CI should run offline and pcap oracle validation through
+[validation.md](validation.md). Real live runs should be manual, protected, and
+wrap `create`, `run`, `artifact`, and `destroy` in cleanup logic so `destroy`
+still executes after a failed validation step.
 
-See also `docs/supported-platforms.md` for the alpha support matrix and known
-release gaps.
+See also [supported-platforms.md](supported-platforms.md) for the alpha support
+matrix and known release gaps.
 
 ## Cleanup
 
