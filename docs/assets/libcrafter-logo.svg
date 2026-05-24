@@ -4,7 +4,7 @@
    role="img"
    aria-labelledby="title desc"
    version="1.1"
-   id="svg34"
+   id="svg27"
    xmlns="http://www.w3.org/2000/svg"
    xmlns:svg="http://www.w3.org/2000/svg">
   <title
@@ -12,59 +12,36 @@
   <desc
      id="desc">A minimalist abstract network packet enclosed by a C-shaped frame.</desc>
   <defs
-     id="defs13">
+     id="defs6">
     <style
        id="style4">
       .navy { fill: #10283a; }
       .navy-stroke { fill: none; stroke: #10283a; stroke-width: 60; stroke-linecap: butt; stroke-linejoin: round; }
       .cyan { fill: #00a8e8; }
     </style>
-    <mask
-       id="payload-cutouts"
-       maskUnits="userSpaceOnUse">
-      <rect
-         width="1024"
-         height="1024"
-         fill="#fff"
-         id="rect6" />
-      <rect
-         x="466"
-         y="505"
-         width="342"
-         height="14"
-         rx="7"
-         fill="#000"
-         id="rect8" />
-      <circle
-         cx="723"
-         cy="512"
-         r="31"
-         fill="#000"
-         id="circle10" />
-    </mask>
   </defs>
   <g
      id="mark">
     <path
        class="navy-stroke"
        d="M 844 346 H 352 A 166 166 0 0 0 352 678 H 844"
-       id="path15" />
+       id="path8" />
     <path
        class="navy"
        d="M 838 316 L 874 346 L 838 376 Z"
-       id="path17" />
+       id="path10" />
     <path
        class="navy"
        d="M 838 648 L 874 678 L 838 708 Z"
-       id="path19" />
+       id="path12" />
     <path
        class="navy"
        d="       M 310.8 410       H 356       V 505       H 242.2       A 110 110 0 0 1 310.8 410       Z"
-       id="path21" />
+       id="path14" />
     <path
        class="navy"
        d="       M 242.2 519       H 356       V 614       H 310.8       A 110 110 0 0 1 242.2 519       Z"
-       id="path23" />
+       id="path16" />
     <rect
        class="navy"
        x="370"
@@ -72,7 +49,7 @@
        width="96"
        height="95"
        rx="4"
-       id="rect25" />
+       id="rect18" />
     <rect
        class="navy"
        x="370"
@@ -80,17 +57,17 @@
        width="96"
        height="95"
        rx="4"
-       id="rect27" />
+       id="rect20" />
     <path
        class="cyan"
-       mask="url(#payload-cutouts)"
-       d="       M 480 410       H 815       C 826 410 836.5 414.4 844.3 422.2       L 862 439.9       C 869.7 447.6 874 458.1 874 469       V 555       C 874 565.9 869.7 576.4 862 584.1       L 844.3 601.8       C 836.5 609.6 826 614 815 614       H 480       Z"
-       id="path29" />
+       fill-rule="evenodd"
+       d="       M 480 410       H 815       C 826 410 836.5 414.4 844.3 422.2       L 862 439.9       C 869.7 447.6 874 458.1 874 469       V 555       C 874 565.9 869.7 576.4 862 584.1       L 844.3 601.8       C 836.5 609.6 826 614 815 614       H 480       Z        M 473 505       H 801       A 7 7 0 0 1 808 512       A 7 7 0 0 1 801 519       H 473       A 7 7 0 0 1 466 512       A 7 7 0 0 1 473 505       Z        M 754 512       A 31 31 0 1 1 692 512       A 31 31 0 1 1 754 512       Z"
+       id="path22" />
     <circle
        class="cyan"
        cx="723"
        cy="512"
        r="15"
-       id="circle31" />
+       id="circle24" />
   </g>
 </svg>
