@@ -23,7 +23,6 @@ tools/live-lab/libcrafter-live-lab doctor --provider local-dry-run
 tools/live-lab/libcrafter-live-lab create --provider local-dry-run
 tools/live-lab/libcrafter-live-lab run --provider local-dry-run
 tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite oracle-live
-tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite example-smoke
 tools/live-lab/libcrafter-live-lab artifact --provider local-dry-run
 tools/live-lab/libcrafter-live-lab destroy --provider local-dry-run
 ```
@@ -33,8 +32,8 @@ hyphens. Providers receive the command as their first argument and any remaining
 arguments after provider selection unchanged.
 
 Oracle validation itself is driven by `tools/oracle/run`. Use the live-lab
-entrypoint for provider lifecycle and provider suites; use the oracle runner for
-deterministic offline, pcap, and live reports:
+entrypoint for provider lifecycle, bootstrap, and artifact collection; use the
+oracle runner for deterministic offline, pcap, and live reports:
 
 ```sh
 tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
@@ -49,25 +48,24 @@ infrastructure.
 ## Providers
 
 `local-dry-run` creates no infrastructure, sends no packets, and writes only
-local state and artifact files. Use it to validate the contract before invoking
-a real provider. The `oracle-live` suite runs oracle live orchestration in
-dry-run mode. The `example-smoke` suite preserves the older example smoke
-checks. Oracle behavior validation should use `oracle-live` or direct
-`tools/oracle/run` commands.
+local state and artifact files. Use it to validate the two-endpoint oracle live
+contract before invoking a real provider. The `oracle-live` suite runs oracle
+live orchestration in dry-run mode and writes endpoint protocol artifacts.
 
-`hetzner` is the first real provider. It provisions a disposable Linux host,
-runs the selected validation suite there, collects artifacts, and tears the host
-down through the same command contract. Additional providers should implement
-the same executable interface without changing the Rust packet library.
+`hetzner` is the first real provider. It provisions disposable Linux endpoints,
+bootstraps the `libcrafter` and `reference_backend` roles, collects endpoint
+artifacts, and tears the lab down through the same command contract. Additional
+providers should implement the same executable interface without changing the
+Rust packet library.
 
-Use dry-run checks before invoking Hetzner, then run oracle live validation in
-dry-run mode or run the example smoke suite on the disposable host:
+Use dry-run checks before invoking Hetzner, then run oracle live validation
+through the oracle entrypoint:
 
 ```sh
 tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
-tools/live-lab/libcrafter-live-lab run --provider hetzner --suite oracle-live
-tools/live-lab/libcrafter-live-lab run --provider hetzner --suite example-smoke
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 1 --count 10
+tools/oracle/run live --backend scapy --provider hetzner --profile smoke --seed 1 --count 10
 ```
 
 ## Configuration
@@ -107,6 +105,9 @@ target/oracle/offline/
 target/oracle/pcap/
 target/oracle/live/
 ```
+
+Live reports also include per-endpoint request, response, log, and capture
+artifacts for the `libcrafter` and `reference_backend` roles.
 
 Expected artifact types include:
 

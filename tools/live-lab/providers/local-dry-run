@@ -39,104 +39,6 @@ suite_arg() {
   done
 }
 
-container_runtime_available() {
-  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    printf '%s\n' "docker"
-    return 0
-  fi
-
-  if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
-    printf '%s\n' "podman"
-    return 0
-  fi
-
-  return 1
-}
-
-run_smoke_suite() {
-  local runtime
-  local smoke_artifact_dir="$artifact_dir/smoke"
-  local container_artifact_dir="/workspace/libcrafter/tools/live-lab/artifacts/$provider_name/smoke"
-
-  if [[ ! -f "$manifest" ]]; then
-    write_manifest
-  fi
-
-  mkdir -p "$smoke_artifact_dir"
-
-  if runtime="$(container_runtime_available)"; then
-    LIBCRAFTER_CONTAINER_RUNTIME="$runtime" \
-      "$project_root/tools/live-lab/run-in-image.sh" \
-      --live \
-      -- \
-      env "LIBCRAFTER_LIVE_ARTIFACT_DIR=$container_artifact_dir" \
-        "LIBCRAFTER_PROJECT_ROOT=/workspace/libcrafter" \
-        tests/live/smoke.sh \
-      | tee "$artifact_dir/run.log"
-  else
-    LIBCRAFTER_LIVE_SMOKE_ALLOW_DEGRADED=true \
-      LIBCRAFTER_LIVE_ARTIFACT_DIR="$smoke_artifact_dir" \
-      "$project_root/tests/live/smoke.sh" \
-      | tee "$artifact_dir/run.log"
-  fi
-
-  echo "provider=$provider_name"
-  echo "ran=true"
-  echo "suite=smoke"
-  echo "live_packet_tests=false"
-  echo "artifact_dir=$smoke_artifact_dir"
-  echo "log=$artifact_dir/run.log"
-}
-
-run_example_smoke_suite() {
-  local requested_suite="${1:-example-smoke}"
-  local all_artifact_dir="$artifact_dir/$requested_suite"
-
-  if [[ ! -f "$manifest" ]]; then
-    write_manifest
-  fi
-
-  mkdir -p "$all_artifact_dir"
-  LIBCRAFTER_LIVE_SUITE_MODE=dry-run \
-    LIBCRAFTER_LIVE_ARTIFACT_DIR="$all_artifact_dir" \
-    LIBCRAFTER_PROJECT_ROOT="$project_root" \
-    "$project_root/tests/live/run-all.sh" --dry-run \
-    | tee "$artifact_dir/run-all.log"
-
-  echo "provider=$provider_name"
-  echo "ran=true"
-  echo "suite=$requested_suite"
-  echo "suite_kind=legacy-example-smoke"
-  echo "live_packet_tests=false"
-  echo "artifact_dir=$all_artifact_dir"
-  echo "log=$artifact_dir/run-all.log"
-}
-
-run_reference_interop_suite() {
-  local requested_suite="${1:-reference-interop}"
-  local interop_artifact_dir="$artifact_dir/$requested_suite"
-
-  if [[ ! -f "$manifest" ]]; then
-    write_manifest
-  fi
-
-  mkdir -p "$interop_artifact_dir"
-  LIBCRAFTER_LIVE_SUITE_MODE=dry-run \
-    LIBCRAFTER_LIVE_ARTIFACT_DIR="$artifact_dir" \
-    LIBCRAFTER_PROJECT_ROOT="$project_root" \
-    LIBCRAFTER_REFERENCE_INTEROP_SUITE_NAME="$requested_suite" \
-    "$project_root/tests/live/scapy-interop.sh" --dry-run \
-    | tee "$artifact_dir/$requested_suite.log"
-
-  echo "provider=$provider_name"
-  echo "ran=true"
-  echo "suite=$requested_suite"
-  echo "suite_kind=reference-offline-interop"
-  echo "live_packet_tests=false"
-  echo "artifact_dir=$interop_artifact_dir"
-  echo "log=$artifact_dir/$requested_suite.log"
-}
-
 run_oracle_live_suite() {
   local requested_suite="${1:-oracle-live}"
   local oracle_artifact_dir="$artifact_dir/$requested_suite"
@@ -200,20 +102,8 @@ EOF
     suite="$(suite_arg "$@")"
     if [[ -n "$suite" ]]; then
       case "$suite" in
-        smoke)
-          run_smoke_suite
-          ;;
-        all)
-          run_example_smoke_suite all
-          ;;
-        example-smoke)
-          run_example_smoke_suite "$suite"
-          ;;
         oracle-live)
           run_oracle_live_suite "$suite"
-          ;;
-        reference-interop | scapy-interop)
-          run_reference_interop_suite "$suite"
           ;;
         *)
           echo "error: unknown local-dry-run suite '$suite'" >&2
