@@ -1,8 +1,9 @@
 # Oracle Live Protocol
 
 This document defines the live validation contract for `tools/oracle/run live`.
-It is a protocol and artifact schema only; provider orchestration is implemented
-in later steps.
+The oracle runner owns the live report, packet plan, backend capability checks,
+and reproduction coordinates. Live-lab providers own disposable endpoint
+lifecycle and artifact collection.
 
 ## Live Mode Invariant
 
@@ -16,7 +17,7 @@ Each live run must create or select at least these endpoint roles:
 | Role | Purpose |
 | --- | --- |
 | `libcrafter` | Runs libcrafter-built send, receive, decode, or capture commands. This endpoint is the Rust side of the exchange. |
-| `reference_backend` | Runs the selected reference backend, initially Scapy. This endpoint sends, receives, decodes, or captures packets through backend-owned tooling. |
+| `reference_backend` | Runs the selected reference backend. With `--backend scapy`, this endpoint sends, receives, decodes, or captures packets through Scapy-owned tooling. |
 
 The roles must run in separate isolated instances or network namespaces with a
 private route between them. A provider may place both roles on one physical host
@@ -42,10 +43,10 @@ where those rules apply.
 ### `reference_to_libcrafter`
 
 The `reference_backend` endpoint is the sender. It materializes the generated
-packet plan with the selected backend, initially Scapy, transmits it on the
-private test interface, and records sender logs. The `libcrafter` endpoint is
-the receiver. It captures or decodes the packet with libcrafter and emits a
-normalized decoded observation.
+packet plan with the selected backend, transmits it on the private test
+interface, and records sender logs. The `libcrafter` endpoint is the receiver.
+It captures or decodes the packet with libcrafter and emits a normalized decoded
+observation.
 
 The exchange passes when libcrafter observes the packet behavior declared by the
 spec and the normalized model compares cleanly with the reference expectation.
@@ -90,6 +91,17 @@ runner:
 If credentials or provider resources are unavailable, the provider should return
 a clear skipped report. It must not silently downgrade a live run into a
 single-endpoint loopback test.
+
+## Backend Capabilities
+
+Live mode requires a backend capability set with `encode`, `decode`, and
+`live_endpoint`. Scapy provides those capabilities and is the supported live
+reference backend. Scapy live code is centralized under
+`tools/oracle/engine/backends/scapy/`.
+
+Wireshark/tshark is parser-only. It can participate in decode and pcap-read
+oracle checks, but it cannot materialize live packet sends, write pcaps, or run
+as `reference_backend` for `tools/oracle/run live`.
 
 ## Live Artifact Schema
 

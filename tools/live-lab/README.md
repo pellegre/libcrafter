@@ -1,8 +1,9 @@
 # Libcrafter Live Lab
 
-`tools/live-lab/libcrafter-live-lab` is the provider-agnostic entrypoint for
-live packet validation. It keeps raw packet tests away from the developer
-machine by routing live work through disposable labs.
+`tools/oracle/run live` is the oracle entrypoint for live packet validation.
+`tools/live-lab/libcrafter-live-lab` is the provider-agnostic lifecycle helper
+for disposable labs. It keeps raw packet tests away from the developer machine
+by routing live work through isolated provider targets.
 
 ## Command Contract
 
@@ -32,7 +33,7 @@ hyphens. Providers receive the command as their first argument and any remaining
 arguments after provider selection unchanged.
 
 Oracle validation itself is driven by `tools/oracle/run`. Use the live-lab
-entrypoint for provider lifecycle, bootstrap, and artifact collection; use the
+entrypoint for provider lifecycle, bootstrap, and artifact collection. Use the
 oracle runner for deterministic offline, pcap, and live reports:
 
 ```sh
@@ -44,6 +45,10 @@ tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke -
 Scapy is a backend selected by the oracle runner, not a general live-lab coding
 pattern. Provider scripts may install or bootstrap Scapy only as backend
 infrastructure.
+
+Wireshark/tshark is parser-only in the oracle backend capability registry. It
+can support decode and pcap-read checks, but live-lab providers must not depend
+on it for packet generation, pcap writing, or live endpoint behavior.
 
 ## Providers
 
@@ -67,6 +72,10 @@ tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/oracle/run live --backend scapy --provider hetzner --profile smoke --seed 1 --count 10
 ```
+
+Real Hetzner execution is reserved for explicit protected manual workflow
+dispatch. Pull request and push workflows run only dry-run provider planning and
+do not create infrastructure.
 
 ## Configuration
 
