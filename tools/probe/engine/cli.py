@@ -2058,7 +2058,7 @@ def _command_artifact_paths(command: Mapping[str, JSONValue]) -> list[str]:
 
 
 def _probe_process_timeout_seconds(plan_count: int) -> int:
-    return _probe_timeout_seconds(plan_count) + 60
+    return (_probe_timeout_seconds(plan_count) * max(plan_count, 1)) + 60
 
 
 def _optional_string(value: object) -> str | None:
@@ -2088,7 +2088,7 @@ def _probe_interface(provider: str, *, dry_run: bool) -> str:
 
 
 def _probe_timeout_seconds(plan_count: int) -> int:
-    return max(3, min(30, 2 + plan_count))
+    return 3
 
 
 def _failure_reasons_for_case(case_name: str) -> list[str]:
