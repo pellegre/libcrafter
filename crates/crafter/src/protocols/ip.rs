@@ -404,7 +404,7 @@ pub struct Ipv4 {
 }
 
 impl Ipv4 {
-    /// Create an IPv4 header with deterministic, Scapy-like defaults.
+    /// Create an IPv4 header with deterministic packet-builder defaults.
     pub fn new() -> Self {
         Self {
             version: Field::defaulted(4),
@@ -452,7 +452,7 @@ impl Ipv4 {
         self
     }
 
-    /// Scapy/libcrafter-style alias for total length.
+    /// Compatibility alias for total length.
     pub fn len(self, total_length: u16) -> Self {
         self.total_length(total_length)
     }
@@ -463,7 +463,7 @@ impl Ipv4 {
         self
     }
 
-    /// Scapy/libcrafter-style alias for identification.
+    /// Compatibility alias for identification.
     pub fn id(self, identification: u16) -> Self {
         self.identification(identification)
     }
@@ -504,7 +504,7 @@ impl Ipv4 {
         self
     }
 
-    /// Scapy-style alias for fragment offset.
+    /// Compatibility alias for fragment offset.
     pub fn frag(self, fragment_offset: u16) -> Self {
         self.fragment_offset(fragment_offset)
     }
@@ -521,7 +521,7 @@ impl Ipv4 {
         self
     }
 
-    /// Scapy/libcrafter-style alias for a known protocol number.
+    /// Compatibility alias for a known protocol number.
     pub fn proto(self, protocol: IpProtocol) -> Self {
         self.protocol(protocol.into())
     }
@@ -532,7 +532,7 @@ impl Ipv4 {
         self
     }
 
-    /// Scapy-style alias for checksum.
+    /// Compatibility alias for checksum.
     pub fn chksum(self, checksum: u16) -> Self {
         self.checksum(checksum)
     }
@@ -571,7 +571,7 @@ impl Ipv4 {
         Ok(self)
     }
 
-    /// Scapy/libcrafter-style alias for appending a typed IPv4 option.
+    /// Compatibility alias for appending a typed IPv4 option.
     pub fn ip_option(self, option: Ipv4Option) -> Result<Self> {
         self.ipv4_option(option)
     }

@@ -123,13 +123,13 @@ impl DnsQuestion {
         self
     }
 
-    /// Scapy-style alias for question type.
+    /// Compatibility alias for question type.
     pub fn qtype(mut self, question_type: u16) -> Self {
         self.question_type = question_type;
         self
     }
 
-    /// Scapy-style alias for question class.
+    /// Compatibility alias for question class.
     pub fn qclass(mut self, question_class: u16) -> Self {
         self.question_class = question_class;
         self
@@ -428,7 +428,7 @@ impl Dns {
         self.set_flag(DNS_FLAG_RECURSION_DESIRED, enabled)
     }
 
-    /// Scapy-style alias for recursion desired.
+    /// Compatibility alias for recursion desired.
     pub fn rd(self, enabled: bool) -> Self {
         self.recursion_desired(enabled)
     }

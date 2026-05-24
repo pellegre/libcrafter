@@ -39,7 +39,7 @@ Good examples:
 
 ```text
 feature/complete-oracle
-fix/scapy-normalize-tcp-options
+fix/normalize-tcp-options
 test/oracle-pcap-fixtures
 docs/release-checklist
 ci/conventional-commit-policy

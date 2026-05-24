@@ -53,7 +53,7 @@ tools/live-lab/libcrafter-live-lab create --provider hetzner
 Plan provider-backed oracle live validation without creating infrastructure:
 
 ```sh
-tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 ```
 
 Run oracle live validation through the provider suite when disposable resources
@@ -92,7 +92,7 @@ protected workflows.
 Recommended provider dry-run flow:
 
 ```sh
-tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
 tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```

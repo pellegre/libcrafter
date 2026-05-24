@@ -53,11 +53,42 @@ jobs:
           cargo test -p crafter pcap_write
           cargo test -p crafter pcap_roundtrip
 
+      - name: Check reference backend naming boundary
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          blocked = ("sca" + "py", "wire" + "shark", "t" + "shark")
+          skip_dirs = {".git", ".internal workflow", ".scratch", "target", "tools"}
+          hits = []
+
+          for root, dirs, files in os.walk("."):
+              dirs[:] = [name for name in dirs if name not in skip_dirs]
+              for filename in files:
+                  path = Path(root, filename)
+                  try:
+                      text = path.read_text(encoding="utf-8")
+                  except (OSError, UnicodeDecodeError):
+                      continue
+                  lowered = text.lower()
+                  for term in blocked:
+                      if term in lowered:
+                          hits.append(str(path))
+                          break
+
+          if hits:
+              print("reference backend names must stay under tools/:")
+              for hit in hits:
+                  print(hit)
+              raise SystemExit(1)
+          PY
+
       - name: Build examples
         run: cargo build --examples
 
       - name: Run oracle offline validation
-        run: tools/oracle/run offline --backend scapy --profile ci --seed 12345 --count 2000
+        run: tools/oracle/run offline --profile ci --seed 12345 --count 2000
 
       - name: Run oracle pcap smoke validation
-        run: tools/oracle/run pcap --backend scapy --profile smoke --seed 12345 --count 250
+        run: tools/oracle/run pcap --profile smoke --seed 12345 --count 250

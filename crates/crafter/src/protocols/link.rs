@@ -315,7 +315,7 @@ impl Arp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for sender hardware address.
+    /// Compatibility alias for sender hardware address.
     pub fn hwsrc(self, address: impl Into<MacAddr>) -> Self {
         self.sender_hardware_addr(address)
     }
@@ -333,7 +333,7 @@ impl Arp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for target hardware address.
+    /// Compatibility alias for target hardware address.
     pub fn hwdst(self, address: impl Into<MacAddr>) -> Self {
         self.target_hardware_addr(address)
     }
@@ -352,7 +352,7 @@ impl Arp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for sender protocol address.
+    /// Compatibility alias for sender protocol address.
     pub fn psrc(self, address: Ipv4Addr) -> Self {
         self.sender_protocol_addr(address)
     }
@@ -371,7 +371,7 @@ impl Arp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for target protocol address.
+    /// Compatibility alias for target protocol address.
     pub fn pdst(self, address: Ipv4Addr) -> Self {
         self.target_protocol_addr(address)
     }
@@ -602,7 +602,7 @@ pub struct Vlan {
     ethertype: Field<u16>,
 }
 
-/// Scapy-compatible alias for an 802.1Q tag.
+/// Compatibility alias for an 802.1Q tag.
 pub type Dot1Q = Vlan;
 
 impl Vlan {
@@ -622,7 +622,7 @@ impl Vlan {
         self
     }
 
-    /// Scapy-style alias for priority.
+    /// Compatibility alias for priority.
     pub fn prio(self, pcp: u8) -> Self {
         self.pcp(pcp)
     }
@@ -639,7 +639,7 @@ impl Vlan {
         self
     }
 
-    /// Scapy-style alias for VLAN identifier.
+    /// Compatibility alias for VLAN identifier.
     pub fn vlan(self, vlan_id: u16) -> Self {
         self.vlan_id(vlan_id)
     }

@@ -509,7 +509,7 @@ impl Dhcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for hardware type.
+    /// Compatibility alias for hardware type.
     pub fn htype(self, hardware_type: u8) -> Self {
         self.hardware_type(hardware_type)
     }
@@ -520,7 +520,7 @@ impl Dhcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for hardware address length.
+    /// Compatibility alias for hardware address length.
     pub fn hlen(self, hardware_len: u8) -> Self {
         self.hardware_len(hardware_len)
     }
@@ -537,7 +537,7 @@ impl Dhcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for transaction ID.
+    /// Compatibility alias for transaction ID.
     pub fn xid(self, transaction_id: u32) -> Self {
         self.transaction_id(transaction_id)
     }
@@ -548,7 +548,7 @@ impl Dhcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for elapsed seconds.
+    /// Compatibility alias for elapsed seconds.
     pub fn secs(self, seconds: u16) -> Self {
         self.seconds(seconds)
     }
@@ -565,7 +565,7 @@ impl Dhcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for client IP address.
+    /// Compatibility alias for client IP address.
     pub fn ciaddr(self, address: Ipv4Addr) -> Self {
         self.client_ip_address(address)
     }
@@ -576,7 +576,7 @@ impl Dhcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for your/client IP address.
+    /// Compatibility alias for your/client IP address.
     pub fn yiaddr(self, address: Ipv4Addr) -> Self {
         self.your_ip_address(address)
     }
@@ -587,7 +587,7 @@ impl Dhcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for server IP address.
+    /// Compatibility alias for server IP address.
     pub fn siaddr(self, address: Ipv4Addr) -> Self {
         self.server_ip_address(address)
     }
@@ -598,7 +598,7 @@ impl Dhcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for gateway IP address.
+    /// Compatibility alias for gateway IP address.
     pub fn giaddr(self, address: Ipv4Addr) -> Self {
         self.gateway_ip_address(address)
     }

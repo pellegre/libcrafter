@@ -6,7 +6,7 @@ description: Run libcrafter live packet tests only inside disposable provider la
 # Live Packet Lab
 
 Use this skill when a task requires live packet generation, raw sockets,
-sniffing, packet injection, Scapy reference checks, legacy libcrafter live
+sniffing, packet injection, reference backend checks, legacy libcrafter live
 checks, or provider-hosted network validation.
 
 Live raw packet work must not run on the developer machine. Run local static
@@ -22,7 +22,8 @@ tests first, then use an isolated disposable lab for live validation.
    - `~/.config/libcrafter/live-test.env`
 3. Run the provider doctor or dry-run command before creating hosts.
 4. Create only disposable live-test resources.
-5. Run the requested live packet, Scapy, Rust, and legacy libcrafter validation.
+5. Run the requested live packet, reference backend, Rust, and legacy
+   libcrafter validation.
 6. Collect logs, pcaps, decoded summaries, command output, and provider metadata
    as artifacts.
 7. Destroy disposable resources after every live run, including failed runs.
@@ -61,8 +62,9 @@ test destinations inside the disposable host. Use root only inside the lab.
 Avoid open-ended sniffers and sends; every live command must have a timeout.
 
 Reference validation should compare Rust packet bytes and decoded summaries
-against Scapy where exact equality is meaningful. Use legacy libcrafter checks
-when they help validate compatibility with existing examples.
+against the configured reference backend where exact equality is meaningful.
+Use legacy libcrafter checks when they help validate compatibility with
+existing examples.
 
 Always capture enough artifacts to debug a failed live run offline. The minimum
 artifact set is command logs, generated packet bytes, pcaps, decoded summaries,

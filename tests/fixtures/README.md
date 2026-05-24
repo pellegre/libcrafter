@@ -161,15 +161,16 @@ sanitized and reduced to deterministic fixture data.
 
 ## Oracle Promotion
 
-Backend-backed packet behavior coverage is generated from executable oracle
-specs and written below `target/oracle/`. Keep Scapy and reference-backend code
-inside `tools/oracle/`; crate tests and fixtures must not import Scapy directly.
+Oracle-generated packet behavior coverage is produced by executable specs and
+written below `target/oracle/`. Keep backend-specific reference logic inside
+`tools/oracle/`; crate tests and fixtures must not import or name those
+backends directly.
 
 Useful oracle commands:
 
 ```sh
-tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
-tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
 ```
 
 Before promoting oracle output into this tree:
@@ -191,5 +192,5 @@ tool should write into a temporary artifact directory first so changes can be
 reviewed before fixtures are copied into this tree.
 
 Pull request CI may run deterministic oracle validation, but it must not rewrite
-checked-in fixtures. CI should use the Scapy backend through `tools/oracle/run`
-rather than importing Scapy from tests directly.
+checked-in fixtures. CI should use `tools/oracle/run` rather than importing
+reference backends from tests directly.

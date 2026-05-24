@@ -212,29 +212,29 @@ Always destroy provider resources after the run.
 ## Oracle Validation
 
 Use the oracle runner when generated tools change packet behavior. The oracle is
-the validation system; Scapy is one backend selected with `--backend scapy`.
-Agents should not add ad hoc Scapy imports to tests or scripts when an oracle
-mode covers the same behavior.
+the validation system. Backend-specific names and implementation details belong
+inside `tools/oracle/`; agents should not add ad hoc reference-backend imports
+to tests or scripts when an oracle mode covers the same behavior.
 
 Offline validation compares generated raw packet vectors and normalized decode
 models without root privileges:
 
 ```sh
-tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
+tools/oracle/run offline --profile smoke --seed 1 --count 10
 ```
 
 Pcap validation exercises pcap writer, reader, and roundtrip behavior:
 
 ```sh
-tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
 ```
 
 Live validation routes through a provider. Use `local-dry-run` for agent and CI
 planning, and reserve real providers for explicit live-lab workflows:
 
 ```sh
-tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 1 --count 10
-tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
+tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 ```
 
 Artifacts default below `target/oracle/`, with mode-specific reports under
@@ -243,8 +243,8 @@ failing oracle command should be rerunnable with the same `--profile`, `--seed`,
 `--count`, and, when the report identifies one packet, `--index`.
 
 Pull request CI runs deterministic oracle offline coverage and pcap smoke
-coverage with the Scapy backend. Provider-backed live traffic must stay behind
-explicit live-lab confirmation or dry-run workflows.
+coverage with the configured backend. Provider-backed live traffic must stay
+behind explicit live-lab confirmation or dry-run workflows.
 
 ## send_recv Matching
 
@@ -320,7 +320,7 @@ Use oracle offline artifacts to validate byte-level behavior for deterministic
 packets. Offline generation does not require root.
 
 ```sh
-tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
+tools/oracle/run offline --profile smoke --seed 1 --count 10
 ```
 
 A generated Rust tool can write its compiled bytes to a target file and compare

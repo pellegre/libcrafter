@@ -207,7 +207,7 @@ impl TcpOption {
         Self::MaximumSegmentSize(mss)
     }
 
-    /// Scapy/libcrafter-style alias for MSS.
+    /// Compatibility alias for MSS.
     pub const fn mss(mss: u16) -> Self {
         Self::MaximumSegmentSize(mss)
     }
@@ -480,7 +480,7 @@ pub struct Udp {
 }
 
 impl Udp {
-    /// Create a UDP header with deterministic, Scapy-like defaults.
+    /// Create a UDP header with deterministic packet-builder defaults.
     pub fn new() -> Self {
         Self {
             source_port: Field::defaulted(53),
@@ -510,7 +510,7 @@ impl Udp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for source port.
+    /// Compatibility alias for source port.
     pub fn sport(self, source_port: u16) -> Self {
         self.source_port(source_port)
     }
@@ -521,7 +521,7 @@ impl Udp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for destination port.
+    /// Compatibility alias for destination port.
     pub fn dport(self, destination_port: u16) -> Self {
         self.destination_port(destination_port)
     }
@@ -532,7 +532,7 @@ impl Udp {
         self
     }
 
-    /// Scapy-style alias for UDP length.
+    /// Compatibility alias for UDP length.
     pub fn len(self, length: u16) -> Self {
         self.length(length)
     }
@@ -543,7 +543,7 @@ impl Udp {
         self
     }
 
-    /// Scapy-style alias for checksum.
+    /// Compatibility alias for checksum.
     pub fn chksum(self, checksum: u16) -> Self {
         self.checksum(checksum)
     }
@@ -695,7 +695,7 @@ pub struct Tcp {
 }
 
 impl Tcp {
-    /// Create a TCP header with deterministic, Scapy-like defaults.
+    /// Create a TCP header with deterministic packet-builder defaults.
     pub fn new() -> Self {
         Self {
             source_port: Field::defaulted(20),
@@ -718,7 +718,7 @@ impl Tcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for source port.
+    /// Compatibility alias for source port.
     pub fn sport(self, source_port: u16) -> Self {
         self.source_port(source_port)
     }
@@ -729,7 +729,7 @@ impl Tcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for destination port.
+    /// Compatibility alias for destination port.
     pub fn dport(self, destination_port: u16) -> Self {
         self.destination_port(destination_port)
     }
@@ -740,7 +740,7 @@ impl Tcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for sequence number.
+    /// Compatibility alias for sequence number.
     pub fn seq(self, sequence_number: u32) -> Self {
         self.sequence_number(sequence_number)
     }
@@ -751,7 +751,7 @@ impl Tcp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for acknowledgment number.
+    /// Compatibility alias for acknowledgment number.
     pub fn ack(self, acknowledgment_number: u32) -> Self {
         self.acknowledgment_number(acknowledgment_number)
     }
@@ -762,7 +762,7 @@ impl Tcp {
         self
     }
 
-    /// Scapy-style alias for data offset.
+    /// Compatibility alias for data offset.
     pub fn dataofs(self, data_offset: u8) -> Self {
         self.data_offset(data_offset)
     }
@@ -848,7 +848,7 @@ impl Tcp {
         self
     }
 
-    /// Scapy-style alias for checksum.
+    /// Compatibility alias for checksum.
     pub fn chksum(self, checksum: u16) -> Self {
         self.checksum(checksum)
     }
@@ -859,7 +859,7 @@ impl Tcp {
         self
     }
 
-    /// Scapy-style alias for urgent pointer.
+    /// Compatibility alias for urgent pointer.
     pub fn urgptr(self, urgent_pointer: u16) -> Self {
         self.urgent_pointer(urgent_pointer)
     }

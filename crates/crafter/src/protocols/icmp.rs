@@ -238,7 +238,7 @@ impl Icmp {
         self
     }
 
-    /// Scapy-style alias for checksum.
+    /// Compatibility alias for checksum.
     pub fn chksum(self, checksum: u16) -> Self {
         self.checksum(checksum)
     }
@@ -255,7 +255,7 @@ impl Icmp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for identifier.
+    /// Compatibility alias for identifier.
     pub fn id(self, identifier: u16) -> Self {
         self.identifier(identifier)
     }
@@ -266,7 +266,7 @@ impl Icmp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for sequence number.
+    /// Compatibility alias for sequence number.
     pub fn seq(self, sequence_number: u16) -> Self {
         self.sequence_number(sequence_number)
     }
@@ -294,7 +294,7 @@ impl Icmp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for RFC 4884 length.
+    /// Compatibility alias for RFC 4884 length.
     pub fn len(self, length: u8) -> Self {
         self.length(length)
     }
@@ -305,7 +305,7 @@ impl Icmp {
         self
     }
 
-    /// Scapy/libcrafter-style alias for next-hop MTU.
+    /// Compatibility alias for next-hop MTU.
     pub fn mtu(self, mtu_next_hop: u16) -> Self {
         self.mtu_next_hop(mtu_next_hop)
     }
@@ -646,7 +646,7 @@ impl Icmpv6 {
         self
     }
 
-    /// Scapy-style alias for checksum.
+    /// Compatibility alias for checksum.
     pub fn chksum(self, checksum: u16) -> Self {
         self.checksum(checksum)
     }
@@ -663,7 +663,7 @@ impl Icmpv6 {
         self
     }
 
-    /// Scapy/libcrafter-style alias for identifier.
+    /// Compatibility alias for identifier.
     pub fn id(self, identifier: u16) -> Self {
         self.identifier(identifier)
     }
@@ -674,7 +674,7 @@ impl Icmpv6 {
         self
     }
 
-    /// Scapy/libcrafter-style alias for sequence number.
+    /// Compatibility alias for sequence number.
     pub fn seq(self, sequence_number: u16) -> Self {
         self.sequence_number(sequence_number)
     }
@@ -685,7 +685,7 @@ impl Icmpv6 {
         self
     }
 
-    /// Scapy/libcrafter-style alias for RFC 4884 length.
+    /// Compatibility alias for RFC 4884 length.
     pub fn len(self, length: u8) -> Self {
         self.length(length)
     }
