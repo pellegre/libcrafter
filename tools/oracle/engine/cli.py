@@ -274,21 +274,10 @@ def _generate(args: argparse.Namespace) -> int:
 
 
 def _corpus(args: argparse.Namespace) -> int:
-    from .corpus import build_corpus_report, write_corpus_report
-    from .generator import generate_plans
+    from .corpus import write_corpus_report
 
     try:
-        plans = generate_plans(
-            seed=args.seed,
-            profile=args.profile,
-            backend=args.backend,
-            count=args.count,
-            root=args.root,
-            family=args.family,
-            case=args.case_name,
-            feature=args.feature,
-            index=args.index,
-        )
+        report = _build_corpus_report_from_generation(args)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -298,9 +287,34 @@ def _corpus(args: argparse.Namespace) -> int:
         output_dir = REPO_ROOT / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     plans_path = output_dir / "plans.json"
+    write_corpus_report(plans_path, report)
+    print(f"corpus: status=generated count={len(report.packets)} plans={plans_path}")
+    return 0
+
+
+def _build_corpus_report_from_generation(
+    args: argparse.Namespace,
+    *,
+    direction: str = "reference_to_libcrafter",
+):
+    from .corpus import build_corpus_report
+    from .generator import generate_plans
+
+    plans = generate_plans(
+        seed=args.seed,
+        profile=args.profile,
+        backend=args.backend,
+        count=args.count,
+        root=args.root,
+        family=args.family,
+        case=args.case_name,
+        feature=args.feature,
+        direction=direction,
+        index=args.index,
+    )
     backend_versions = _backend_versions(args.backend)
     libcrafter_info = _libcrafter_info()
-    report = build_corpus_report(
+    return build_corpus_report(
         backend=args.backend,
         profile=args.profile,
         seed=args.seed,
@@ -322,9 +336,6 @@ def _corpus(args: argparse.Namespace) -> int:
             "libcrafter": libcrafter_info,
         },
     )
-    write_corpus_report(plans_path, report)
-    print(f"corpus: status=generated count={len(plans)} plans={plans_path}")
-    return 0
 
 
 def _offline_required_capabilities(
@@ -341,6 +352,72 @@ def _offline_required_capabilities(
     if args.direction == "libcrafter_to_reference":
         return ("decode",)
     return ()
+
+
+def _offline_corpus_plans(
+    args: argparse.Namespace,
+) -> tuple[list[PacketPlan], list[str], JSONObject]:
+    from .corpus import CorpusFormatError, load_corpus_report
+
+    corpus_path: Path | None = None
+    corpus_source = "generated"
+    if args.corpus is None:
+        corpus_report = _build_corpus_report_from_generation(args, direction=args.direction)
+    else:
+        corpus_source = "provided"
+        corpus_path = Path(args.corpus)
+        if not corpus_path.is_absolute():
+            corpus_path = REPO_ROOT / corpus_path
+        corpus_report = load_corpus_report(corpus_path)
+        if corpus_report.backend != args.backend:
+            raise CorpusFormatError(
+                f"{corpus_path}: backend {corpus_report.backend!r} does not match "
+                f"requested backend {args.backend!r}"
+            )
+
+    packets = list(corpus_report.packets)
+    if args.index is not None:
+        packets = [packet for packet in packets if packet.plan.index == args.index]
+
+    plans: list[PacketPlan] = []
+    eligibility: list[JSONObject] = []
+    skipped_count = 0
+    for position, packet in enumerate(packets):
+        eligible = packet.offline.eligible is not False
+        reason = None if eligible else packet.offline.reason or "offline eligibility marked false"
+        decision: JSONObject = {
+            "position": position,
+            "packet_id": packet.packet_id,
+            "corpus_index": packet.index,
+            "packet_index": packet.plan.index,
+            "direction": args.direction,
+            "eligible": eligible,
+            "reason": reason,
+        }
+        eligibility.append(decision)
+        if not eligible:
+            skipped_count += 1
+            continue
+        plans.append(replace(packet.plan, direction=args.direction))
+
+    selected_specs = list(
+        dict.fromkeys([*corpus_report.selected_specs, *_selected_specs_for_plans(plans)])
+    )
+    metadata: JSONObject = {
+        "corpus_id": corpus_report.corpus_id,
+        "corpus_source": corpus_source,
+        "corpus_path": str(corpus_path) if corpus_path is not None else None,
+        "corpus_backend": corpus_report.backend,
+        "corpus_profile": corpus_report.profile,
+        "corpus_seed": corpus_report.seed,
+        "corpus_count": corpus_report.count,
+        "generated_count": len(packets),
+        "offline_eligible_count": len(plans),
+        "offline_skipped_count": skipped_count,
+        "packet_indexes": [plan.index for plan in plans],
+        "offline_eligibility": eligibility,
+    }
+    return plans, selected_specs, metadata
 
 
 def _pcap_required_capabilities(
@@ -2771,7 +2848,7 @@ def _offline(args: argparse.Namespace) -> int:
             mode="offline",
             required=required_capabilities,
             operation=f"offline {args.direction}",
-            report_path=_offline_output_dir(args.out) / "report.json",
+            report_path=_offline_report_output_dir(args) / "report.json",
             selected_specs=GENERATOR_SELECTED_SPECS,
         )
         if unsupported is not None:
@@ -2781,7 +2858,7 @@ def _offline(args: argparse.Namespace) -> int:
                 args,
                 mode="offline",
                 operation=f"offline {args.direction}",
-                report_path=_offline_output_dir(args.out) / "report.json",
+                report_path=_offline_report_output_dir(args) / "report.json",
                 selected_specs=GENERATOR_SELECTED_SPECS,
             )
 
@@ -2793,20 +2870,11 @@ def _offline(args: argparse.Namespace) -> int:
         print(f"unsupported offline direction: {args.direction}", file=sys.stderr)
         return 2
 
-    from .generator import generate_plans
-
-    plans = generate_plans(
-        seed=args.seed,
-        profile=args.profile,
-        backend=args.backend,
-        count=args.count,
-        root=args.root,
-        family=args.family,
-        case=args.case_name,
-        feature=args.feature,
-        direction=args.direction,
-        index=args.index,
-    )
+    try:
+        plans, selected_specs, corpus_metadata = _offline_corpus_plans(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if args.emit_vectors or args.emit_decoded:
         if args.backend == "scapy":
             from .backends.scapy.packets import encode_packet_plans
@@ -2826,6 +2894,7 @@ def _offline(args: argparse.Namespace) -> int:
             metadata = {
                 "emit_decoded": True,
                 "requested_count": args.count,
+                **corpus_metadata,
                 "decoded": [model.to_dict() for model in decoded],
             }
             if args.emit_vectors:
@@ -2838,7 +2907,7 @@ def _offline(args: argparse.Namespace) -> int:
                 seed=args.seed,
                 count=len(decoded),
                 status="decoded",
-                selected_specs=list(GENERATOR_SELECTED_SPECS),
+                selected_specs=selected_specs,
                 backend_versions=_backend_versions(args.backend),
                 libcrafter=_libcrafter_info(),
                 metadata=metadata,
@@ -2853,12 +2922,13 @@ def _offline(args: argparse.Namespace) -> int:
             seed=args.seed,
             count=len(vectors),
             status="vectors",
-            selected_specs=list(GENERATOR_SELECTED_SPECS),
+            selected_specs=selected_specs,
             backend_versions=_backend_versions(args.backend),
             libcrafter=_libcrafter_info(),
             metadata={
                 "emit_vectors": True,
                 "requested_count": args.count,
+                **corpus_metadata,
                 "vectors": [vector.to_dict() for vector in vectors],
             },
         )
@@ -2872,10 +2942,11 @@ def _offline(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(plans),
         status="dry-plan",
-        selected_specs=list(GENERATOR_SELECTED_SPECS),
+        selected_specs=selected_specs,
         metadata={
             "dry_plan": True,
             "requested_count": args.count,
+            **corpus_metadata,
             "plans": [plan.to_dict() for plan in plans],
         },
     )
@@ -2890,13 +2961,12 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
 
     from .backends.scapy.normalize import decode_vectors
     from .backends.scapy.packets import encode_packet_plans
-    from .generator import generate_plans
 
     if args.backend != "scapy":
         print(f"unsupported backend: {args.backend}", file=sys.stderr)
         return 2
 
-    output_dir = _offline_output_dir(args.out)
+    output_dir = _offline_report_output_dir(args)
     artifacts_root = output_dir / "artifacts"
     artifacts_root.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "report.json"
@@ -2907,19 +2977,11 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         )
     )
 
-    plans = generate_plans(
-        seed=args.seed,
-        profile=args.profile,
-        backend=args.backend,
-        count=args.count,
-        root=args.root,
-        family=args.family,
-        case=args.case_name,
-        feature=args.feature,
-        direction=args.direction,
-        index=args.index,
-    )
-    selected_specs = _selected_specs_for_plans(plans)
+    try:
+        plans, selected_specs, corpus_metadata = _offline_corpus_plans(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     backend_capabilities = _offline_backend_capabilities(args)
     vectors = encode_packet_plans(plans)
     expected_decoded = decode_vectors(vectors)
@@ -2939,6 +3001,7 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
+            **corpus_metadata,
             "backend_capabilities": backend_capabilities,
             "vectors": [vector.to_dict() for vector in vectors],
         },
@@ -2961,6 +3024,7 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
             libcrafter=libcrafter_info,
             metadata={
                 "direction": args.direction,
+                **corpus_metadata,
                 "backend_capabilities": backend_capabilities,
                 "decoded": [model.to_dict() for model in expected_decoded],
             },
@@ -3026,7 +3090,7 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
-            "generated_count": len(plans),
+            **corpus_metadata,
             "artifact_dir": str(run_dir) if preserve_artifacts else None,
             "backend_capabilities": backend_capabilities,
             "libcrafter_bridge": {
@@ -3063,13 +3127,12 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         print(f"unsupported backend: {args.backend}", file=sys.stderr)
         return 2
 
-    from .generator import generate_plans
     if args.backend == "scapy":
         from .backends.scapy.normalize import decode_vectors
     else:
         from .backends.wireshark.normalize import decode_vectors
 
-    output_dir = _offline_output_dir(args.out)
+    output_dir = _offline_report_output_dir(args)
     artifacts_root = output_dir / "artifacts"
     artifacts_root.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "report.json"
@@ -3083,19 +3146,11 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
 
     backend_versions = _backend_versions(args.backend)
     libcrafter_info = _libcrafter_info()
-    plans = generate_plans(
-        seed=args.seed,
-        profile=args.profile,
-        backend=args.backend,
-        count=args.count,
-        root=args.root,
-        family=args.family,
-        case=args.case_name,
-        feature=args.feature,
-        direction=args.direction,
-        index=args.index,
-    )
-    selected_specs = _selected_specs_for_plans(plans)
+    try:
+        plans, selected_specs, corpus_metadata = _offline_corpus_plans(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     backend_capabilities = _offline_backend_capabilities(args)
 
     plan_report = RunReport(
@@ -3111,7 +3166,7 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
-            "generated_count": len(plans),
+            **corpus_metadata,
             "backend_capabilities": backend_capabilities,
             "plans": [plan.to_dict() for plan in plans],
         },
@@ -3167,6 +3222,7 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         libcrafter=libcrafter_info,
         metadata={
             "direction": args.direction,
+            **corpus_metadata,
             "backend_capabilities": backend_capabilities,
             "decoded": [model.to_dict() for model in actual_decoded],
         },
@@ -3236,7 +3292,7 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         metadata={
             "direction": args.direction,
             "requested_count": args.count,
-            "generated_count": len(plans),
+            **corpus_metadata,
             "artifact_dir": str(run_dir) if preserve_artifacts else None,
             "backend_capabilities": backend_capabilities,
             "libcrafter_materializer": {
@@ -4382,6 +4438,15 @@ def _offline_output_dir(out: str) -> Path:
     return output_root / "offline"
 
 
+def _offline_report_output_dir(args: argparse.Namespace) -> Path:
+    output_root = Path(args.out)
+    if not output_root.is_absolute():
+        output_root = REPO_ROOT / output_root
+    if getattr(args, "corpus", None) is not None:
+        return output_root / "offline"
+    return _offline_output_dir(args.out)
+
+
 def _pcap_output_dir(out: str) -> Path:
     output_root = Path(out)
     if not output_root.is_absolute():
@@ -4399,6 +4464,22 @@ def _live_output_dir(out: str) -> Path:
 
 
 def _reproduction_command(args: argparse.Namespace, index: int) -> str:
+    if getattr(args, "corpus", None) is not None:
+        return shlex.join(
+            [
+                "tools/oracle/run",
+                "offline",
+                "--backend",
+                args.backend,
+                "--direction",
+                args.direction,
+                "--corpus",
+                args.corpus,
+                "--index",
+                str(index),
+            ]
+        )
+
     argv = [
         "tools/oracle/run",
         "offline",
@@ -5224,6 +5305,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("reference_to_libcrafter", "libcrafter_to_reference"),
         default="reference_to_libcrafter",
         help="offline validation direction (default: %(default)s)",
+    )
+    offline_parser.add_argument(
+        "--corpus",
+        help="read packet plans from a corpus plans.json artifact",
     )
     offline_parser.add_argument(
         "--keep-artifacts",
