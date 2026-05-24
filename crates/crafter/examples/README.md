@@ -57,13 +57,19 @@ output path without capturing traffic.
 
 ## Protocols
 
-Runnable now:
-
 | Example | Safety mode | Command |
 | --- | --- | --- |
-| `dns_query` | Dry-run by default | `cargo run -p crafter --example dns_query` |
+| `arp_who_has` | Dry-run | `cargo run -p crafter --example arp_who_has` |
+| `dns_query` | Dry-run send/receive plus offline decode | `cargo run -p crafter --example dns_query -- --name example.com` |
+| `dhcp_discover` | Dry-run by default, live-gated with `--live` | `cargo run -p crafter --example dhcp_discover` |
+| `vlan` | Offline | `cargo run -p crafter --example vlan` |
+| `linux_sll` | Offline | `cargo run -p crafter --example linux_sll` |
+| `null_loopback` | Offline | `cargo run -p crafter --example null_loopback` |
 | `tcp_options` | Offline | `cargo run -p crafter --example tcp_options` |
 
-Planned: `arp_who_has.rs`, `dhcp_discover.rs`, `icmpv6_echo.rs`, `vlan.rs`,
-`linux_sll.rs`, `null_loopback.rs`, `ipv4_options.rs`, and
-`ipv6_extensions.rs`.
+`dhcp_discover --live` is available only after
+`--i-understand-isolated-lab` and `LIBCRAFTER_LIVE_LAB=1` are supplied. The
+documented command never transmits traffic. `arp_who_has` always shows a
+link-layer dry-run plan and never attempts MAC discovery.
+
+Planned: `icmpv6_echo.rs`, `ipv4_options.rs`, and `ipv6_extensions.rs`.
