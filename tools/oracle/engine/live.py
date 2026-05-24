@@ -312,8 +312,8 @@ def libcrafter_dry_run_command_plan(
             "run",
             "-q",
             "-p",
-            "crafter",
-            "--example",
+            "oracle-adapters",
+            "--bin",
             "oracle_vectors",
             "--",
             "--json",
@@ -325,8 +325,8 @@ def libcrafter_dry_run_command_plan(
             "run",
             "-q",
             "-p",
-            "crafter",
-            "--example",
+            "oracle-adapters",
+            "--bin",
             "oracle_decode_vectors",
             "--",
             "--input",
@@ -357,13 +357,13 @@ def validate_libcrafter_command_plan(command: LiveCommandPlan) -> LiveValidation
     argv = command.argv
     if command.role != "libcrafter":
         errors.append(f"unexpected libcrafter command role: {command.role}")
-    expected_prefix = ["cargo", "run", "-q", "-p", "crafter", "--example"]
+    expected_prefix = ["cargo", "run", "-q", "-p", "oracle-adapters", "--bin"]
     if len(argv) < 8 or argv[:6] != expected_prefix:
         errors.append(
-            "libcrafter command must use `cargo run -q -p crafter --example`"
+            "libcrafter command must use `cargo run -q -p oracle-adapters --bin`"
         )
     elif argv[6] not in {"oracle_vectors", "oracle_decode_vectors"}:
-        errors.append(f"unsupported libcrafter dry-run example: {argv[6]}")
+        errors.append(f"unsupported libcrafter dry-run binary: {argv[6]}")
     if "--live" in argv:
         errors.append("local dry-run libcrafter command must not include --live")
     if command.sends_live_packets:

@@ -89,7 +89,7 @@ def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
         "would_create_infrastructure": dry_run,
         "network": {
             "resource_type": "hetzner-cloud-network",
-            "name_prefix": "libcrafter-oracle-live",
+            "name_prefix": "oracle-adapters-live",
             "ip_range": PRIVATE_NETWORK_CIDR,
             "network_zone": PRIVATE_NETWORK_ZONE,
         },
@@ -121,7 +121,7 @@ def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
                 "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
                 "uv": "install_if_missing",
                 "rust": "install_if_missing",
-                "validation": "cargo build -p crafter --example oracle_live_endpoint",
+                "validation": "cargo build -p oracle-adapters --bin oracle_live_endpoint",
                 "artifact": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
             },
             "reference_backend": {
@@ -235,7 +235,7 @@ def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
                 (
                     "sync-repository && apt-get install libcrafter packages && "
                     "rustup install-if-missing && "
-                    "cargo build -p crafter --example oracle_live_endpoint"
+                    "cargo build -p oracle-adapters --bin oracle_live_endpoint"
                 ),
             ],
             sends_live_packets=False,
@@ -249,7 +249,7 @@ def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
                 "uv": "install_if_missing",
                 "rust": "install_if_missing",
-                "validation": "cargo build -p crafter --example oracle_live_endpoint",
+                "validation": "cargo build -p oracle-adapters --bin oracle_live_endpoint",
                 "artifact_path": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
             },
         ),
@@ -329,7 +329,7 @@ def validate_hetzner_endpoint_bootstrap(
             errors.append("libcrafter bootstrap must install Rust when missing")
         if (
             libcrafter.metadata.get("validation")
-            != "cargo build -p crafter --example oracle_live_endpoint"
+            != "cargo build -p oracle-adapters --bin oracle_live_endpoint"
         ):
             errors.append("libcrafter bootstrap must validate oracle_live_endpoint build")
 

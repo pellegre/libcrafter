@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/crafter",
+    "tools/oracle/adapters",
 ]
 resolver = "2"
 

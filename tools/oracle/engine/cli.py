@@ -1824,7 +1824,7 @@ def _hetzner_endpoint_remote_command(
                 f"cd {quoted_remote_dir}",
                 'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
                 (
-                    "cargo run -q -p crafter --example oracle_live_endpoint -- "
+                    "cargo run -q -p oracle-adapters --bin oracle_live_endpoint -- "
                     f"--live --input {quoted_request} --out {quoted_out}"
                 ),
             ]
@@ -3602,8 +3602,8 @@ def _run_libcrafter_decode_bridge(vector_path: Path, run_dir: Path) -> JSONObjec
         "run",
         "-q",
         "-p",
-        "crafter",
-        "--example",
+        "oracle-adapters",
+        "--bin",
         "oracle_decode_vectors",
         "--",
         "--input",
@@ -3713,8 +3713,8 @@ def _run_libcrafter_plan_materializer(plan_path: Path, run_dir: Path) -> JSONObj
         "run",
         "-q",
         "-p",
-        "crafter",
-        "--example",
+        "oracle-adapters",
+        "--bin",
         "oracle_materialize_plans",
         "--",
         "--input",
@@ -3825,8 +3825,8 @@ def _run_libcrafter_vector_emitter(run_dir: Path) -> JSONObject:
         "run",
         "-q",
         "-p",
-        "crafter",
-        "--example",
+        "oracle-adapters",
+        "--bin",
         "oracle_vectors",
         "--",
         "--json",
@@ -3872,8 +3872,8 @@ def _run_libcrafter_pcap_reader(pcap_path: Path, run_dir: Path, label: str) -> J
         "run",
         "-q",
         "-p",
-        "crafter",
-        "--example",
+        "oracle-adapters",
+        "--bin",
         "oracle_pcap",
         "--",
         "--read-pcap",
@@ -3895,8 +3895,8 @@ def _run_libcrafter_pcap_writer(
         "run",
         "-q",
         "-p",
-        "crafter",
-        "--example",
+        "oracle-adapters",
+        "--bin",
         "oracle_pcap",
         "--",
         "--write-pcap",
@@ -4181,7 +4181,7 @@ def _libcrafter_case_plan(
         metadata={
             "plan_id": f"libcrafter:{index}",
             "case": name,
-            "generator": "cargo run -q -p crafter --example oracle_vectors -- --json",
+            "generator": "cargo run -q -p oracle-adapters --bin oracle_vectors -- --json",
             "source": "libcrafter oracle vector emitter",
         },
     )

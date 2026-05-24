@@ -10,7 +10,7 @@ type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
 const DIRECTION: &str = "libcrafter_to_reference";
 const ROUNDTRIP_DIRECTION: &str = "roundtrip";
-const GENERATOR: &str = "crafter example oracle_vectors";
+const GENERATOR: &str = "libcrafter oracle vector emitter";
 
 fn main() -> ExampleResult<()> {
     let args = env::args().skip(1).collect::<Vec<_>>();
@@ -48,7 +48,7 @@ fn main() -> ExampleResult<()> {
 
 fn print_usage() {
     println!(
-        "usage: cargo run -p crafter --example oracle_vectors -- [--list|--json]\n\nEmit deterministic libcrafter packet vectors for oracle reference validation."
+        "usage: cargo run -p oracle-adapters --bin oracle_vectors -- [--list|--json]\n\nEmit deterministic libcrafter packet vectors for oracle reference validation."
     );
 }
 
@@ -66,7 +66,7 @@ fn build_manifest() -> ExampleResult<Value> {
         "generator": GENERATOR,
         "cases": cases,
         "metadata": {
-            "case_source": "crates/crafter/examples/oracle_vectors/cases.rs"
+            "case_source": "tools/oracle/adapters/src/bin/oracle_vectors/cases.rs"
         }
     }))
 }
