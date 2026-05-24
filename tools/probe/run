@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "${script_dir}/../.." && pwd)"
+
+export PROBE_REPO_ROOT="${repo_root}"
+export PYTHONPATH="${script_dir}${PYTHONPATH:+:${PYTHONPATH}}"
+
+uv_bin="${PROBE_UV:-uv}"
+python_bin="${PROBE_PYTHON:-python3}"
+
+if ! uv_path="$(command -v "${uv_bin}")"; then
+    echo "error: uv is required to run probe Python tooling" >&2
+    echo "hint: install uv from https://docs.astral.sh/uv/ or set PROBE_UV" >&2
+    exit 69
+fi
+
+cd "${script_dir}"
+exec "${uv_path}" run \
+    --quiet \
+    --no-project \
+    -- \
+    "${python_bin}" -m engine.cli "$@"
