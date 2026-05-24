@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from .model import ComparisonResult, DecodedModel, JSONObject, JSONValue, PacketPlan
+from .model import (
+    ComparisonResult,
+    DecodedModel,
+    JSONObject,
+    JSONValue,
+    PacketPlan,
+    decoded_backend_metadata,
+    decoded_model_object,
+    normalized_decoded_model,
+)
 
 
 MAX_DIFFERENCES = 100
@@ -23,8 +32,14 @@ def compare_decoded_models(
     """Compare two normalized decoded models and return a structured result."""
 
     use_partial_fields = partial_expected or _assertions_are_partial(expected)
-    expected_model = comparable_decoded_model(expected)
-    actual_model = comparable_decoded_model(actual)
+    expected_model = comparable_decoded_model(
+        expected,
+        fallback_feature_tags=plan.feature_tags,
+    )
+    actual_model = comparable_decoded_model(
+        actual,
+        fallback_feature_tags=plan.feature_tags,
+    )
     differences: list[JSONObject] = []
 
     _diff("layers", expected_model["layers"], actual_model["layers"], differences)
@@ -33,6 +48,12 @@ def compare_decoded_models(
     else:
         _diff("fields", expected_model["fields"], actual_model["fields"], differences)
     _diff("root", expected_model["root"], actual_model["root"], differences)
+    _diff(
+        "feature_tags",
+        expected_model["feature_tags"],
+        actual_model["feature_tags"],
+        differences,
+    )
 
     actual_bytes_hex = actual_strict_bytes_hex or actual_model.get("source_hex")
     byte_equal = expected_model.get("source_hex") == actual_bytes_hex
@@ -58,22 +79,26 @@ def compare_decoded_models(
         metadata={
             "plan_id": _plan_id(plan),
             "partial_expected": use_partial_fields,
+            "feature_tags": list(plan.feature_tags),
+            "backend_metadata": {
+                "expected": decoded_backend_metadata(expected),
+                "actual": decoded_backend_metadata(actual),
+            },
         },
     )
 
 
-def comparable_decoded_model(model: DecodedModel | Mapping[str, object]) -> JSONObject:
+def comparable_decoded_model(
+    model: DecodedModel | Mapping[str, object],
+    *,
+    fallback_feature_tags: Sequence[str] = (),
+) -> JSONObject:
     """Return the deterministic subset used for cross-backend comparisons."""
 
-    raw_model = _model_dict(model)
-    fields = _object(raw_model.get("fields", {}), "fields")
-    return {
-        "backend": _optional_string(raw_model.get("backend")),
-        "layers": _string_list(raw_model.get("layers", []), "layers"),
-        "fields": _canonical_fields(fields),
-        "root": _optional_string(raw_model.get("root")),
-        "source_hex": _optional_string(raw_model.get("source_hex")),
-    }
+    return normalized_decoded_model(
+        model,
+        fallback_feature_tags=fallback_feature_tags,
+    )
 
 
 def failure_indexes(results: Sequence[ComparisonResult]) -> list[int]:
@@ -85,44 +110,6 @@ def failure_indexes(results: Sequence[ComparisonResult]) -> list[int]:
             continue
         output.append(result.plan.index)
     return output
-
-
-def _canonical_fields(fields: Mapping[str, object]) -> JSONObject:
-    output: JSONObject = {}
-    for layer_name, raw_fields in fields.items():
-        layer_fields = _object(raw_fields, f"fields.{layer_name}")
-        canonical_layer: JSONObject = {}
-        for field_name, value in layer_fields.items():
-            canonical_value = _canonical_field_value(layer_name, field_name, value)
-            if canonical_value is _SKIP:
-                continue
-            canonical_layer[field_name] = canonical_value
-        output[layer_name] = canonical_layer
-    return output
-
-
-def _canonical_field_value(layer_name: str, field_name: str, value: object) -> JSONValue | object:
-    if layer_name == "payload" and field_name == "ascii":
-        return _SKIP
-    if layer_name == "ipv6_routing" and field_name in {
-        "alert",
-        "hmac",
-        "last_entry",
-        "lastentry",
-        "oam",
-        "protected",
-        "reserved",
-        "tag",
-        "tlv_objects",
-        "unused1",
-        "unused2",
-    }:
-        return _SKIP
-    if field_name == "options":
-        return _SKIP
-    if field_name == "hex" and isinstance(value, str):
-        return value.lower()
-    return _json_value(value)
 
 
 def _diff(path: str, expected: JSONValue, actual: JSONValue, differences: list[JSONObject]) -> None:
@@ -196,40 +183,6 @@ def _append_difference(
         )
 
 
-def _model_dict(model: DecodedModel | Mapping[str, object]) -> JSONObject:
-    if isinstance(model, DecodedModel):
-        return model.to_dict()
-    return _object(model, "decoded model")
-
-
-def _object(value: object, name: str) -> JSONObject:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{name} must be an object")
-    output: JSONObject = {}
-    for key, item in value.items():
-        if not isinstance(key, str):
-            raise ValueError(f"{name} keys must be strings")
-        output[key] = _json_value(item)
-    return output
-
-
-def _string_list(value: object, name: str) -> list[str]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        raise ValueError(f"{name} must be a list of strings")
-    output: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            raise ValueError(f"{name} must be a list of strings")
-        output.append(item)
-    return output
-
-
-def _optional_string(value: object) -> str | None:
-    if value is None or isinstance(value, str):
-        return value
-    return str(value)
-
-
 def _json_value(value: object) -> JSONValue:
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
@@ -250,15 +203,8 @@ def _plan_id(plan: PacketPlan) -> str | None:
 
 
 def _assertions_are_partial(model: DecodedModel | Mapping[str, object]) -> bool:
-    raw_model = _model_dict(model)
+    raw_model = decoded_model_object(model)
     metadata = raw_model.get("metadata")
     if not isinstance(metadata, Mapping):
         return False
     return metadata.get("assertions_are_partial") is True
-
-
-class _Skip:
-    pass
-
-
-_SKIP = _Skip()
