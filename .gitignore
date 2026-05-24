@@ -81,6 +81,11 @@ tags
 /target/
 Cargo.lock
 
+# Python cache files #
+######################
+__pycache__/
+*.py[cod]
+
 # Local environment and live-lab state #
 #######################################
 .env
