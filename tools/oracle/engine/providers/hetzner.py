@@ -28,6 +28,28 @@ LIBCRAFTER_PRIVATE_ADDRESS = "10.42.19.10"
 REFERENCE_PRIVATE_ADDRESS = "10.42.19.20"
 LIBCRAFTER_PRIVATE_IPV6_ADDRESS = "fd42:19::10"
 REFERENCE_PRIVATE_IPV6_ADDRESS = "fd42:19::20"
+LIBCRAFTER_BOOTSTRAP_PACKAGES = [
+    "build-essential",
+    "ca-certificates",
+    "clang",
+    "curl",
+    "git",
+    "iproute2",
+    "libpcap-dev",
+    "pkg-config",
+    "python3",
+    "python3-pip",
+    "python3-venv",
+]
+REFERENCE_BOOTSTRAP_PACKAGES = [
+    "ca-certificates",
+    "curl",
+    "git",
+    "iproute2",
+    "python3",
+    "python3-pip",
+    "python3-venv",
+]
 
 
 def hetzner_token_configured() -> bool:
@@ -95,6 +117,24 @@ def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
         },
         "public_network_policy": "ssh_control_plane_only",
         "packet_exchange_network": "private",
+        "endpoint_bootstrap": {
+            "repository_sync": "both_endpoints",
+            "libcrafter": {
+                "system_packages": LIBCRAFTER_BOOTSTRAP_PACKAGES,
+                "rust": "install_if_missing",
+                "validation": "cargo build -p crafter --example oracle_live_endpoint",
+                "artifact": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
+            },
+            "reference_backend": {
+                "system_packages": REFERENCE_BOOTSTRAP_PACKAGES,
+                "validation": "tools/oracle/run backend-info --backend scapy",
+                "tshark": {
+                    "availability_reported": True,
+                    "required_for_scapy_live_exchange": False,
+                },
+                "artifact": "live-artifacts/bootstrap/reference_backend/bootstrap.env",
+            },
+        },
     }
 
 
@@ -174,10 +214,143 @@ def hetzner_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                     "always_attempt": command in {"artifact", "destroy"},
                     "oracle_two_endpoint": True,
                     "private_network": True,
+                    "runs_endpoint_bootstrap": command == "run",
                 },
             )
         )
     return commands
+
+
+def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
+    """Plan role-specific endpoint bootstrap work for the Hetzner lab."""
+
+    return [
+        LiveCommandPlan(
+            role="libcrafter",
+            purpose="bootstrap-libcrafter-endpoint",
+            argv=[
+                "bash",
+                "-lc",
+                (
+                    "sync-repository && apt-get install libcrafter packages && "
+                    "rustup install-if-missing && "
+                    "cargo build -p crafter --example oracle_live_endpoint"
+                ),
+            ],
+            sends_live_packets=False,
+            expects_live_packets=False,
+            metadata={
+                "provider": PROVIDER_NAME,
+                "dry_run": dry_run,
+                "repository_sync": True,
+                "private_network": True,
+                "system_packages": LIBCRAFTER_BOOTSTRAP_PACKAGES,
+                "rust": "install_if_missing",
+                "validation": "cargo build -p crafter --example oracle_live_endpoint",
+                "artifact_path": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
+            },
+        ),
+        LiveCommandPlan(
+            role="reference_backend",
+            purpose="bootstrap-reference-endpoint",
+            argv=[
+                "bash",
+                "-lc",
+                (
+                    "sync-repository && apt-get install reference packages && "
+                    "tools/oracle/run backend-info --backend scapy && "
+                    "report optional tshark availability"
+                ),
+            ],
+            sends_live_packets=False,
+            expects_live_packets=False,
+            metadata={
+                "provider": PROVIDER_NAME,
+                "backend": "scapy",
+                "dry_run": dry_run,
+                "repository_sync": True,
+                "private_network": True,
+                "system_packages": REFERENCE_BOOTSTRAP_PACKAGES,
+                "validation": "tools/oracle/run backend-info --backend scapy",
+                "tshark": {
+                    "availability_reported": True,
+                    "required_for_scapy_live_exchange": False,
+                },
+                "artifact_path": "live-artifacts/bootstrap/reference_backend/bootstrap.env",
+            },
+        ),
+    ]
+
+
+def validate_hetzner_endpoint_bootstrap(
+    commands: list[LiveCommandPlan],
+    *,
+    dry_run: bool,
+) -> LiveValidationCheck:
+    """Validate that both Hetzner endpoint roles are bootstrapped."""
+
+    errors: list[str] = []
+    commands_by_role = {command.role: command for command in commands}
+    for role in ("libcrafter", "reference_backend"):
+        if role not in commands_by_role:
+            errors.append(f"missing endpoint bootstrap role: {role}")
+
+    for command in commands:
+        if command.sends_live_packets or command.expects_live_packets:
+            errors.append("endpoint bootstrap commands cannot exchange live packets")
+        if command.metadata.get("provider") != PROVIDER_NAME:
+            errors.append(f"endpoint bootstrap must target Hetzner: {command.role}")
+        if not bool(command.metadata.get("repository_sync")):
+            errors.append(f"endpoint bootstrap must sync repository: {command.role}")
+        if not bool(command.metadata.get("private_network")):
+            errors.append(f"endpoint bootstrap must preserve private topology: {command.role}")
+        if not command.metadata.get("artifact_path"):
+            errors.append(f"endpoint bootstrap must write artifacts: {command.role}")
+
+    libcrafter = commands_by_role.get("libcrafter")
+    if libcrafter is not None:
+        packages = set(libcrafter.metadata.get("system_packages", []))
+        for package in ("libpcap-dev", "pkg-config", "clang"):
+            if package not in packages:
+                errors.append(f"libcrafter bootstrap missing package: {package}")
+        if libcrafter.metadata.get("rust") != "install_if_missing":
+            errors.append("libcrafter bootstrap must install Rust when missing")
+        if (
+            libcrafter.metadata.get("validation")
+            != "cargo build -p crafter --example oracle_live_endpoint"
+        ):
+            errors.append("libcrafter bootstrap must validate oracle_live_endpoint build")
+
+    reference = commands_by_role.get("reference_backend")
+    if reference is not None:
+        packages = set(reference.metadata.get("system_packages", []))
+        for package in ("python3", "python3-pip", "python3-venv"):
+            if package not in packages:
+                errors.append(f"reference bootstrap missing package: {package}")
+        if reference.metadata.get("validation") != (
+            "tools/oracle/run backend-info --backend scapy"
+        ):
+            errors.append("reference bootstrap must validate Scapy backend availability")
+        tshark = reference.metadata.get("tshark")
+        if not isinstance(tshark, dict):
+            errors.append("reference bootstrap must report tshark availability")
+        elif tshark.get("required_for_scapy_live_exchange") is not False:
+            errors.append("tshark must remain optional for Scapy live exchange")
+
+    return LiveValidationCheck(
+        name="hetzner-endpoint-bootstrap",
+        passed=not errors,
+        subject="libcrafter,reference_backend",
+        errors=errors,
+        metadata={
+            "provider": PROVIDER_NAME,
+            "dry_run": dry_run,
+            "endpoint_count": 2,
+            "repository_sync": "both_endpoints",
+            "private_network": True,
+            "tshark_required": False,
+        },
+    )
 
 
 def validate_hetzner_provider_workflow(
