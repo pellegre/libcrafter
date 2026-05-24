@@ -7,6 +7,7 @@ or captures packets and must not be treated as provider-backed live exchange.
 from __future__ import annotations
 
 import shlex
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from .model import DecodedModel, JSONObject, JsonModel, PacketPlan
@@ -109,6 +110,14 @@ class LiveEndpointIndexStatus(JsonModel):
     sent: bool = False
     received: bool = False
     decoded_count: int = 0
+    sent_raw_hex: str | None = None
+    send_root: str | None = None
+    send_mode: str | None = None
+    observed_raw_hex: str | None = None
+    capture_root: str | None = None
+    capture_link_type: str | None = None
+    capture_path: str | None = None
+    byte_length: int | None = None
     capture_paths: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     metadata: JSONObject = field(default_factory=dict)
@@ -233,6 +242,10 @@ def build_live_endpoint_batch_request(
 ) -> LiveEndpointBatchRequest:
     """Build the endpoint protocol request for provider execution."""
 
+    request_metadata = dict(metadata or {})
+    request_metadata.update(
+        _live_endpoint_request_wire_metadata(packet_plans, direction=direction)
+    )
     return LiveEndpointBatchRequest(
         provider=provider,
         backend=backend,
@@ -248,7 +261,7 @@ def build_live_endpoint_batch_request(
         interface=endpoint.interface,
         timeout_seconds=timeout_seconds,
         artifact_paths=artifact_paths,
-        metadata=metadata or {},
+        metadata=request_metadata,
     )
 
 
@@ -257,6 +270,7 @@ def dry_run_live_endpoint_batch_response(
 ) -> LiveEndpointBatchResponse:
     """Return a no-packet response for validating the endpoint protocol locally."""
 
+    phase_role = _endpoint_phase_role(request)
     statuses = [
         LiveEndpointIndexStatus(
             index=plan.index,
@@ -265,10 +279,20 @@ def dry_run_live_endpoint_batch_response(
             sent=False,
             received=False,
             decoded_count=0,
+            send_root=_plan_compare_root(plan) if phase_role == "sender" else None,
+            send_mode=_send_mode_for_root(_plan_compare_root(plan))
+            if phase_role == "sender"
+            else None,
+            capture_root=_plan_compare_root(plan) if phase_role == "receiver" else None,
             capture_paths=[],
             errors=[],
             metadata={
                 "packet_plan_index": plan.index,
+                "packet_id": _plan_packet_id(plan),
+                "corpus_id": _plan_corpus_id(plan),
+                "compare_root": _plan_compare_root(plan),
+                "mutable_fields": _plan_mutable_fields(plan),
+                "expected_sender_role": _expected_sender_role(request.direction),
                 "dry_run": True,
                 "live_packet_exchange": False,
                 "no_live_packets_sent": True,
@@ -422,6 +446,16 @@ def validate_live_endpoint_batch_contract(
         if status.decoded_count < 0:
             errors.append(f"decoded_count must not be negative for index {status.index}")
 
+    phase_role = _endpoint_phase_role(request)
+    _validate_endpoint_request_wire_metadata(request, errors)
+    _validate_endpoint_status_wire_fields(
+        request,
+        response.per_index_status,
+        phase_role=phase_role,
+        dry_run=dry_run,
+        errors=errors,
+    )
+
     if dry_run:
         if response.sent_count != 0:
             errors.append("dry-run endpoint response must not report sent packets")
@@ -452,6 +486,271 @@ def validate_live_endpoint_batch_contract(
             "dry_run": dry_run,
         },
     )
+
+
+def _live_endpoint_request_wire_metadata(
+    packet_plans: Sequence[PacketPlan],
+    *,
+    direction: str,
+) -> JSONObject:
+    packet_metadata = [
+        _live_endpoint_packet_wire_metadata(plan, direction=direction)
+        for plan in packet_plans
+    ]
+    corpus_ids = [
+        packet["corpus_id"]
+        for packet in packet_metadata
+        if isinstance(packet.get("corpus_id"), str) and packet["corpus_id"]
+    ]
+    metadata: JSONObject = {
+        "packet_ids": [
+            packet.get("packet_id")
+            for packet in packet_metadata
+            if isinstance(packet.get("packet_id"), str)
+        ],
+        "packets": packet_metadata,
+    }
+    if corpus_ids:
+        metadata["corpus_id"] = corpus_ids[0]
+    return metadata
+
+
+def _live_endpoint_packet_wire_metadata(
+    plan: PacketPlan,
+    *,
+    direction: str,
+) -> JSONObject:
+    return {
+        "index": plan.index,
+        "corpus_id": _plan_corpus_id(plan),
+        "packet_id": _plan_packet_id(plan),
+        "compare_root": _plan_compare_root(plan),
+        "strict_bytes": plan.strict_bytes,
+        "mutable_fields": _plan_mutable_fields(plan),
+        "expected_sender_role": _expected_sender_role(direction),
+    }
+
+
+def _validate_endpoint_request_wire_metadata(
+    request: LiveEndpointBatchRequest,
+    errors: list[str],
+) -> None:
+    metadata = request.metadata
+    packet_metadata = metadata.get("packets")
+    if not isinstance(packet_metadata, list):
+        errors.append("endpoint request metadata.packets must describe packet wire metadata")
+        packet_metadata = []
+    if len(packet_metadata) != len(request.packet_plans):
+        errors.append("endpoint request metadata.packets must match packet plan count")
+
+    expected_packet_ids = [
+        packet_id for plan in request.packet_plans if (packet_id := _plan_packet_id(plan))
+    ]
+    packet_ids = metadata.get("packet_ids")
+    if not isinstance(packet_ids, list) or any(
+        not isinstance(packet_id, str) for packet_id in packet_ids
+    ):
+        errors.append("endpoint request metadata.packet_ids must be a list of strings")
+    elif expected_packet_ids and packet_ids != expected_packet_ids:
+        errors.append("endpoint request metadata.packet_ids must match packet plan ids")
+
+    expected_corpus_ids = [
+        corpus_id for plan in request.packet_plans if (corpus_id := _plan_corpus_id(plan))
+    ]
+    if expected_corpus_ids:
+        corpus_id = metadata.get("corpus_id")
+        if corpus_id != expected_corpus_ids[0]:
+            errors.append("endpoint request metadata.corpus_id must match packet corpus id")
+
+    expected_sender_role = _expected_sender_role(request.direction)
+    for offset, plan in enumerate(request.packet_plans):
+        if offset >= len(packet_metadata):
+            continue
+        raw_packet = packet_metadata[offset]
+        if not isinstance(raw_packet, Mapping):
+            errors.append(f"endpoint request metadata.packets[{offset}] must be an object")
+            continue
+        packet = {key: value for key, value in raw_packet.items() if isinstance(key, str)}
+        if packet.get("index") != plan.index:
+            errors.append(f"endpoint request metadata.packets[{offset}].index mismatch")
+        expected_packet_id = _plan_packet_id(plan)
+        if expected_packet_id and packet.get("packet_id") != expected_packet_id:
+            errors.append(f"endpoint request metadata.packets[{offset}].packet_id mismatch")
+        expected_compare_root = _plan_compare_root(plan)
+        if packet.get("compare_root") != expected_compare_root:
+            errors.append(
+                f"endpoint request metadata.packets[{offset}].compare_root mismatch"
+            )
+        mutable_fields = packet.get("mutable_fields")
+        if not isinstance(mutable_fields, list) or any(
+            not isinstance(field, str) for field in mutable_fields
+        ):
+            errors.append(
+                f"endpoint request metadata.packets[{offset}].mutable_fields must be strings"
+            )
+        elif mutable_fields != _plan_mutable_fields(plan):
+            errors.append(
+                f"endpoint request metadata.packets[{offset}].mutable_fields mismatch"
+            )
+        if packet.get("expected_sender_role") != expected_sender_role:
+            errors.append(
+                f"endpoint request metadata.packets[{offset}].expected_sender_role mismatch"
+            )
+
+
+def _validate_endpoint_status_wire_fields(
+    request: LiveEndpointBatchRequest,
+    statuses: Sequence[LiveEndpointIndexStatus],
+    *,
+    phase_role: str,
+    dry_run: bool,
+    errors: list[str],
+) -> None:
+    plans_by_index = {plan.index: plan for plan in request.packet_plans}
+    for status in statuses:
+        plan = plans_by_index.get(status.index)
+        compare_root = _plan_compare_root(plan) if plan is not None else None
+        if phase_role == "sender":
+            if status.send_root is None:
+                errors.append(f"sender status {status.index} requires send_root")
+            if status.send_mode is None:
+                errors.append(f"sender status {status.index} requires send_mode")
+            if status.sent and not _is_hex_string(status.sent_raw_hex):
+                errors.append(f"sender status {status.index} requires sent_raw_hex")
+            if status.sent and not _positive_int(status.byte_length):
+                errors.append(f"sender status {status.index} requires positive byte_length")
+            if not dry_run and status.sent and status.sent_raw_hex is None:
+                errors.append(f"sender status {status.index} missing sent byte evidence")
+        elif phase_role == "receiver":
+            if status.capture_root not in {None, compare_root}:
+                errors.append(
+                    f"receiver status {status.index} capture_root must match compare root"
+                )
+            if status.received:
+                if not _is_hex_string(status.observed_raw_hex):
+                    errors.append(
+                        f"receiver status {status.index} requires observed_raw_hex"
+                    )
+                if status.capture_root is None:
+                    errors.append(f"receiver status {status.index} requires capture_root")
+                if status.capture_link_type is None:
+                    errors.append(
+                        f"receiver status {status.index} requires capture_link_type"
+                    )
+                if status.capture_path is None:
+                    errors.append(f"receiver status {status.index} requires capture_path")
+                if not _positive_int(status.byte_length):
+                    errors.append(
+                        f"receiver status {status.index} requires positive byte_length"
+                    )
+
+
+def _endpoint_phase_role(request: LiveEndpointBatchRequest) -> str:
+    metadata = request.metadata
+    phase_role = metadata.get("phase_role")
+    if isinstance(phase_role, str) and phase_role:
+        return phase_role
+    expected_sender = _expected_sender_role(request.direction)
+    if request.endpoint_role == expected_sender:
+        return "sender"
+    return "receiver"
+
+
+def _expected_sender_role(direction: str) -> str | None:
+    if direction == "reference_to_libcrafter":
+        return "reference_backend"
+    if direction == "libcrafter_to_reference":
+        return "libcrafter"
+    return None
+
+
+def _plan_corpus_metadata(plan: PacketPlan | None) -> JSONObject:
+    if plan is None:
+        return {}
+    value = plan.metadata.get("corpus")
+    if isinstance(value, Mapping):
+        return {key: item for key, item in value.items() if isinstance(key, str)}
+    return {}
+
+
+def _plan_wire_metadata(plan: PacketPlan | None) -> JSONObject:
+    if plan is None:
+        return {}
+    value = plan.metadata.get("wire")
+    if isinstance(value, Mapping):
+        return {key: item for key, item in value.items() if isinstance(key, str)}
+    return {}
+
+
+def _plan_corpus_id(plan: PacketPlan | None) -> str | None:
+    value = _plan_corpus_metadata(plan).get("corpus_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _plan_packet_id(plan: PacketPlan | None) -> str | None:
+    corpus_packet_id = _plan_corpus_metadata(plan).get("packet_id")
+    if isinstance(corpus_packet_id, str) and corpus_packet_id:
+        return corpus_packet_id
+    if plan is None:
+        return None
+    plan_id = plan.metadata.get("plan_id")
+    return plan_id if isinstance(plan_id, str) and plan_id else None
+
+
+def _plan_compare_root(plan: PacketPlan | None) -> str | None:
+    wire_root = _plan_wire_metadata(plan).get("compare_root")
+    if isinstance(wire_root, str) and wire_root:
+        return wire_root
+    if plan is None:
+        return None
+    root = plan.metadata.get("root_decoder", plan.metadata.get("root"))
+    if isinstance(root, str) and root:
+        return root
+    if plan.family == "ipv4":
+        return "l3:ipv4"
+    if plan.family == "ipv6":
+        return "l3:ipv6"
+    return None
+
+
+def _plan_mutable_fields(plan: PacketPlan | None) -> list[str]:
+    raw_fields = _plan_wire_metadata(plan).get("mutable_fields", [])
+    if not isinstance(raw_fields, Sequence) or isinstance(
+        raw_fields,
+        (str, bytes, bytearray),
+    ):
+        return []
+    return [field for field in raw_fields if isinstance(field, str)]
+
+
+def _send_mode_for_root(root: str | None) -> str | None:
+    if root in {
+        "CookedLinux",
+        "Ether",
+        "Loopback",
+        "link:ethernet",
+        "link:linux-cooked",
+        "link:linux-sll",
+        "link:null-loopback",
+    }:
+        return "link-layer"
+    if root is None:
+        return None
+    return "network-layer"
+
+
+def _is_hex_string(value: str | None) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        bytes.fromhex(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _positive_int(value: int | None) -> bool:
+    return isinstance(value, int) and value > 0
 
 
 def validate_local_dry_run_exchange(exchange: LiveExchangePlan) -> LiveValidationCheck:

@@ -244,6 +244,7 @@ fn run_sender(
         .map(|prepared| prepared.packet.clone())
         .collect::<Vec<_>>();
     let ethernet_addresses = live_ethernet_addresses(request)?;
+    let wraps_l3_with_ethernet = ethernet_addresses.is_some();
     let send_mode = if let Some((source, destination)) = ethernet_addresses {
         packets = packets
             .into_iter()
@@ -280,6 +281,15 @@ fn run_sender(
         if sent {
             live_sent_count += 1;
         }
+        let sent_raw_hex = hex_bytes(attempts[0].plan().bytes());
+        let send_mode_label = send_mode_label(attempts[0].plan().requested_mode());
+        let byte_length = attempts[0].plan().len();
+        let plan_send_mode = send_mode_for_root(&prepared_packet.root)?;
+        let send_root = if wraps_l3_with_ethernet && plan_send_mode == SendMode::NetworkLayer {
+            "link:ethernet"
+        } else {
+            prepared_packet.root.as_str()
+        };
         send_reports.push(json!({
             "index": prepared_packet.index,
             "attempts": attempts.len(),
@@ -301,6 +311,10 @@ fn run_sender(
             json!({
                 "raw_hex": prepared_packet.raw_hex,
                 "root": prepared_packet.root,
+                "sent_raw_hex": sent_raw_hex,
+                "send_root": send_root,
+                "send_mode": send_mode_label,
+                "byte_length": byte_length,
                 "send_reports": send_reports.last().cloned().unwrap_or(Value::Null),
             }),
         ));
@@ -357,6 +371,7 @@ fn run_receiver(
                     json!({
                         "root": prepared_packet.root,
                         "expected_raw_hex": prepared_packet.raw_hex,
+                        "capture_root": prepared_packet.root,
                     }),
                 )
             })
@@ -383,11 +398,23 @@ fn run_receiver(
     }
     let captured = sniffer.collect()?;
 
+    let capture_dir = artifact_path(out_dir, &request.artifact_paths, "captures", "captures");
+    fs::create_dir_all(&capture_dir)?;
+    let capture_summary_path = capture_dir.join("observed.json");
+    let capture_path = capture_summary_path.to_string_lossy().to_string();
+
     let mut decoded_models = Vec::with_capacity(captured.len());
+    let mut observed_packets = Vec::with_capacity(captured.len());
     for (offset, captured_packet) in captured.iter().enumerate() {
         let expected = prepared.get(offset);
         let root = expected.map(|packet| packet.root.as_str());
         let observed = packet_for_root(captured_packet.packet(), root)?;
+        let observed_compiled = observed.compile()?;
+        let observed_raw_hex = hex_bytes(observed_compiled.as_bytes());
+        let capture_root = root
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| "unknown".to_string());
+        let capture_link_type = format!("{:?}", captured_packet.link_type());
         decoded_models.push(decoded_model(
             &observed,
             root,
@@ -395,17 +422,23 @@ fn run_receiver(
                 .map(|packet| packet.feature_tags.clone())
                 .unwrap_or_default(),
         )?);
+        observed_packets.push(json!({
+            "index": expected.map(|packet| packet.index).unwrap_or(offset),
+            "observed_raw_hex": observed_raw_hex,
+            "capture_root": capture_root,
+            "capture_link_type": capture_link_type,
+            "capture_path": capture_path.clone(),
+            "byte_length": observed_compiled.as_bytes().len(),
+        }));
     }
     write_json(&decoded_path, &json!(decoded_models))?;
 
-    let capture_dir = artifact_path(out_dir, &request.artifact_paths, "captures", "captures");
-    fs::create_dir_all(&capture_dir)?;
-    let capture_summary_path = capture_dir.join("observed.json");
     write_json(
         &capture_summary_path,
         &json!({
             "packet_count": captured.len(),
             "packets": decoded_models,
+            "observed_packets": observed_packets,
         }),
     )?;
 
@@ -414,6 +447,7 @@ fn run_receiver(
         .enumerate()
         .map(|(offset, prepared_packet)| {
             let received = offset < captured.len();
+            let observed_packet = observed_packets.get(offset).cloned().unwrap_or(Value::Null);
             index_status(
                 request,
                 prepared_packet.index,
@@ -434,6 +468,26 @@ fn run_receiver(
                 json!({
                     "root": prepared_packet.root,
                     "expected_raw_hex": prepared_packet.raw_hex,
+                    "observed_raw_hex": observed_packet
+                        .get("observed_raw_hex")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    "capture_root": observed_packet
+                        .get("capture_root")
+                        .cloned()
+                        .unwrap_or_else(|| json!(prepared_packet.root)),
+                    "capture_link_type": observed_packet
+                        .get("capture_link_type")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    "capture_path": observed_packet
+                        .get("capture_path")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    "byte_length": observed_packet
+                        .get("byte_length")
+                        .cloned()
+                        .unwrap_or(Value::Null),
                 }),
             )
         })
@@ -491,9 +545,20 @@ fn send_report_json(report: &SendReport) -> Value {
         "interface": report.plan().interface(),
         "length": report.plan().len(),
         "raw_hex": hex_bytes(report.plan().bytes()),
+        "sent_raw_hex": hex_bytes(report.plan().bytes()),
+        "byte_length": report.plan().len(),
         "send_mode": format!("{:?}", report.plan().requested_mode()),
+        "send_mode_label": send_mode_label(report.plan().requested_mode()),
         "target": format!("{:?}", report.plan().target()),
     })
+}
+
+fn send_mode_label(mode: SendMode) -> &'static str {
+    match mode {
+        SendMode::Auto => "auto",
+        SendMode::LinkLayer => "link-layer",
+        SendMode::NetworkLayer => "network-layer",
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -593,10 +658,34 @@ fn index_status(
         "sent": sent,
         "received": received,
         "decoded_count": decoded_count,
+        "sent_raw_hex": status_string(&metadata, "sent_raw_hex"),
+        "send_root": status_string(&metadata, "send_root"),
+        "send_mode": status_string(&metadata, "send_mode"),
+        "observed_raw_hex": status_string(&metadata, "observed_raw_hex"),
+        "capture_root": status_string(&metadata, "capture_root"),
+        "capture_link_type": status_string(&metadata, "capture_link_type"),
+        "capture_path": status_string(&metadata, "capture_path"),
+        "byte_length": status_usize(&metadata, "byte_length"),
         "capture_paths": capture_paths,
         "errors": errors,
         "metadata": metadata,
     })
+}
+
+fn status_string(metadata: &Value, key: &str) -> Value {
+    metadata
+        .get(key)
+        .and_then(Value::as_str)
+        .map(|value| json!(value))
+        .unwrap_or(Value::Null)
+}
+
+fn status_usize(metadata: &Value, key: &str) -> Value {
+    metadata
+        .get(key)
+        .and_then(Value::as_u64)
+        .map(|value| json!(value))
+        .unwrap_or(Value::Null)
 }
 
 fn write_json(path: &Path, value: &Value) -> ExampleResult<()> {
