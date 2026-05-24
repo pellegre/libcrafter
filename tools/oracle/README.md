@@ -78,6 +78,10 @@ registered backend capability set. Unsupported mode/backend combinations return
 oracle reports that identify the missing capability instead of silently taking a
 different path.
 
+The Rust-side libcrafter adapters live in `tools/oracle/adapters/` as an
+internal workspace package. They depend on the public `crafter` crate API and
+must not add oracle-only code to `crates/crafter`.
+
 ## CI Policy
 
 Pull request CI runs deterministic offline and pcap oracle validation with the

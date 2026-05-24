@@ -136,7 +136,7 @@ fn input_path(value: String) -> Option<PathBuf> {
 
 fn print_usage() {
     println!(
-        "usage: cargo run -p crafter --example oracle_live_endpoint -- [--dry-run|--live] --input PATH|- [--out DIR]\n\nRun the libcrafter side of an oracle live endpoint batch. Dry-run is the default and compiles packet plans without sending or capturing traffic."
+        "usage: cargo run -p oracle-adapters --bin oracle_live_endpoint -- [--dry-run|--live] --input PATH|- [--out DIR]\n\nRun the libcrafter side of an oracle live endpoint batch. Dry-run is the default and compiles packet plans without sending or capturing traffic."
     );
 }
 

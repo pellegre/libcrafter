@@ -139,7 +139,7 @@ fn parse_link_type(value: &str) -> ExampleResult<PcapLinkType> {
 
 fn print_usage() {
     println!(
-        "usage: cargo run -p crafter --example oracle_pcap -- (--read-pcap PATH | --write-pcap PATH --input PATH|-) [--link-type ethernet]\n\nRead or write classic pcap files for oracle validation and emit JSON metadata."
+        "usage: cargo run -p oracle-adapters --bin oracle_pcap -- (--read-pcap PATH | --write-pcap PATH --input PATH|-) [--link-type ethernet]\n\nRead or write classic pcap files for oracle validation and emit JSON metadata."
     );
 }
 

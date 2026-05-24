@@ -93,7 +93,7 @@ fn input_path(value: String) -> Option<PathBuf> {
 
 fn print_usage() {
     println!(
-        "usage: cargo run -p crafter --example oracle_materialize_plans -- [--input PATH|-]\n\nMaterialize oracle packet plans with libcrafter and emit raw vector JSON. Reads stdin when --input is omitted or set to -."
+        "usage: cargo run -p oracle-adapters --bin oracle_materialize_plans -- [--input PATH|-]\n\nMaterialize oracle packet plans with libcrafter and emit raw vector JSON. Reads stdin when --input is omitted or set to -."
     );
 }
 
