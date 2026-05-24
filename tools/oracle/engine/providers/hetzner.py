@@ -47,6 +47,124 @@ REFERENCE_BOOTSTRAP_PACKAGES = [
     "python3",
 ]
 PYTHON_DEPENDENCY_RUNNER = "uv"
+CAPABILITY_REPORT_ARTIFACT = "live-artifacts/oracle-live/capabilities.json"
+PROVIDER_CAPABILITY_NAMES = (
+    "ipv4_unicast",
+    "ipv6_unicast",
+    "link_layer_send",
+    "link_layer_capture",
+    "broadcast",
+    "provider_mac_known",
+    "controlled_services",
+    "controlled_router",
+)
+
+
+def hetzner_default_provider_capabilities(
+    *,
+    dry_run: bool,
+    source: str = "planned-defaults",
+) -> JSONObject:
+    """Return conservative Hetzner capability defaults used before discovery."""
+
+    capabilities = {
+        "provider": PROVIDER_NAME,
+        "dry_run": dry_run,
+        "source": source,
+        "live_packet_exchange": True,
+        "ipv4_unicast": True,
+        "ipv6_unicast": False,
+        "link_layer_send": False,
+        "link_layer_capture": False,
+        "broadcast": False,
+        "provider_mac_known": False,
+        "controlled_services": True,
+        "controlled_router": False,
+        "capability_report_artifact": CAPABILITY_REPORT_ARTIFACT,
+        "checks": {
+            "ipv4_unicast": {
+                "status": "planned" if dry_run else "default",
+                "value": True,
+                "reason": "Hetzner private network endpoint IPv4 addresses are planned",
+            },
+            "ipv6_unicast": {
+                "status": "not_planned",
+                "value": False,
+                "reason": "private-network IPv6 is not configured by the current lab bootstrap",
+            },
+            "link_layer_send": {
+                "status": "not_proven",
+                "value": False,
+                "reason": "link-layer frame preservation is not assumed for the provider path",
+            },
+            "link_layer_capture": {
+                "status": "not_proven",
+                "value": False,
+                "reason": "link-layer capture preservation is not assumed for the provider path",
+            },
+            "broadcast": {
+                "status": "not_proven",
+                "value": False,
+                "reason": "broadcast delivery is not assumed for the provider private network",
+            },
+            "provider_mac_known": {
+                "status": "manifest_required",
+                "value": False,
+                "reason": "real bootstrap records provider interface MACs after provisioning",
+            },
+            "controlled_services": {
+                "status": "planned" if dry_run else "default",
+                "value": True,
+                "reason": "both disposable endpoints are controlled by the live-lab bootstrap",
+            },
+            "controlled_router": {
+                "status": "not_available",
+                "value": False,
+                "reason": "the two-endpoint lab has no controlled routed hop",
+            },
+        },
+    }
+    return normalize_hetzner_provider_capabilities(capabilities)
+
+
+def normalize_hetzner_provider_capabilities(
+    raw: JSONObject,
+    *,
+    dry_run: bool | None = None,
+    source: str | None = None,
+) -> JSONObject:
+    """Return flat capability keys plus legacy aliases consumed by corpus logic."""
+
+    capabilities = raw.get("capabilities")
+    if isinstance(capabilities, dict):
+        base = {key: value for key, value in raw.items() if key != "capabilities"}
+        base.update(
+            {
+                key: value
+                for key, value in capabilities.items()
+                if isinstance(key, str)
+            }
+        )
+    else:
+        base = dict(raw)
+
+    if dry_run is not None:
+        base["dry_run"] = dry_run
+    if source is not None:
+        base["source"] = source
+    base.setdefault("provider", PROVIDER_NAME)
+    base.setdefault("live_packet_exchange", True)
+
+    for key in PROVIDER_CAPABILITY_NAMES:
+        base[key] = bool(base.get(key, False))
+
+    base["ipv4"] = bool(base["ipv4_unicast"])
+    base["ipv6"] = bool(base["ipv6_unicast"])
+    base["l2"] = bool(base["link_layer_send"] and base["link_layer_capture"])
+    base["provider_mac"] = bool(base["provider_mac_known"])
+    base["controlled_service"] = bool(base["controlled_services"])
+    base["capability_names"] = list(PROVIDER_CAPABILITY_NAMES)
+    return base
 
 
 def hetzner_token_configured() -> bool:
@@ -82,6 +200,7 @@ def hetzner_token_configured() -> bool:
 def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
     """Return the provider resources required for an oracle live lab."""
 
+    provider_capabilities = hetzner_default_provider_capabilities(dry_run=dry_run)
     return {
         "provider": PROVIDER_NAME,
         "dry_run": dry_run,
@@ -114,6 +233,7 @@ def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
         },
         "public_network_policy": "ssh_control_plane_only",
         "packet_exchange_network": "private",
+        "provider_capabilities": provider_capabilities,
         "endpoint_bootstrap": {
             "repository_sync": "both_endpoints",
             "libcrafter": {
@@ -123,6 +243,7 @@ def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
                 "rust": "install_if_missing",
                 "validation": "cargo build -p oracle-adapters --bin oracle_live_endpoint",
                 "artifact": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
+                "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
             },
             "reference_backend": {
                 "system_packages": REFERENCE_BOOTSTRAP_PACKAGES,
@@ -134,6 +255,7 @@ def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
                     "required_for_scapy_live_exchange": False,
                 },
                 "artifact": "live-artifacts/bootstrap/reference_backend/bootstrap.env",
+                "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
             },
         },
     }
@@ -225,6 +347,7 @@ def hetzner_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
 def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
     """Plan role-specific endpoint bootstrap work for the Hetzner lab."""
 
+    provider_capabilities = hetzner_default_provider_capabilities(dry_run=dry_run)
     return [
         LiveCommandPlan(
             role="libcrafter",
@@ -251,6 +374,8 @@ def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "rust": "install_if_missing",
                 "validation": "cargo build -p oracle-adapters --bin oracle_live_endpoint",
                 "artifact_path": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
+                "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
+                "provider_capabilities": provider_capabilities,
             },
         ),
         LiveCommandPlan(
@@ -282,6 +407,8 @@ def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
                     "required_for_scapy_live_exchange": False,
                 },
                 "artifact_path": "live-artifacts/bootstrap/reference_backend/bootstrap.env",
+                "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
+                "provider_capabilities": provider_capabilities,
             },
         ),
     ]
@@ -311,6 +438,8 @@ def validate_hetzner_endpoint_bootstrap(
             errors.append(f"endpoint bootstrap must preserve private topology: {command.role}")
         if not command.metadata.get("artifact_path"):
             errors.append(f"endpoint bootstrap must write artifacts: {command.role}")
+        if command.metadata.get("capability_artifact") != CAPABILITY_REPORT_ARTIFACT:
+            errors.append(f"endpoint bootstrap must report capabilities: {command.role}")
 
     libcrafter = commands_by_role.get("libcrafter")
     if libcrafter is not None:

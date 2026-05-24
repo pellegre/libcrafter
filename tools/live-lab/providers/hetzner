@@ -580,13 +580,14 @@ run_endpoint_script() {
   local role="$1"
   local host="$2"
   local private_ipv4="$3"
-  local remote_dir_value="$4"
-  local script="$5"
+  local peer_private_ipv4="$4"
+  local remote_dir_value="$5"
+  local script="$6"
   local quoted_script
 
   printf -v quoted_script '%q' "$script"
   ssh_remote_host "$host" \
-    "cd '$remote_dir_value' && LIBCRAFTER_ENDPOINT_ROLE='$role' LIBCRAFTER_PRIVATE_IPV4='$private_ipv4' bash -lc $quoted_script"
+    "cd '$remote_dir_value' && LIBCRAFTER_ENDPOINT_ROLE='$role' LIBCRAFTER_PRIVATE_IPV4='$private_ipv4' LIBCRAFTER_PEER_PRIVATE_IPV4='$peer_private_ipv4' LIBCRAFTER_PRIVATE_INTERFACE='$private_interface' bash -lc $quoted_script"
 }
 
 libcrafter_bootstrap_script() {
@@ -688,6 +689,235 @@ fi
 EOF
 }
 
+endpoint_capability_probe_script() {
+  cat <<'EOF'
+set -euo pipefail
+role="${LIBCRAFTER_ENDPOINT_ROLE:?}"
+private_ipv4="${LIBCRAFTER_PRIVATE_IPV4:?}"
+peer_private_ipv4="${LIBCRAFTER_PEER_PRIVATE_IPV4:?}"
+configured_interface="${LIBCRAFTER_PRIVATE_INTERFACE:-auto}"
+artifact="live-artifacts/bootstrap/$role/capability.env"
+mkdir -p "live-artifacts/bootstrap/$role"
+
+interface="$configured_interface"
+if [[ -z "$interface" || "$interface" == "auto" ]] || ! ip link show "$interface" >/dev/null 2>&1; then
+  interface="$(ip -o -4 addr show | awk -v ip="$private_ipv4" '$0 ~ ip {print $2; exit}')"
+fi
+if [[ -z "$interface" ]]; then
+  interface="unknown"
+fi
+
+mac_address=""
+provider_mac_known=false
+if [[ "$interface" != "unknown" && -r "/sys/class/net/$interface/address" ]]; then
+  mac_address="$(cat "/sys/class/net/$interface/address")"
+  if [[ -n "$mac_address" ]]; then
+    provider_mac_known=true
+  fi
+fi
+
+ipv4_configured=false
+if [[ "$interface" != "unknown" ]] && ip -4 addr show dev "$interface" | grep -Fq "$private_ipv4"; then
+  ipv4_configured=true
+fi
+
+ipv4_unicast=false
+if command -v ping >/dev/null 2>&1; then
+  if timeout 8 ping -4 -c 1 -W 2 "$peer_private_ipv4" >/dev/null 2>&1; then
+    ipv4_unicast=true
+  fi
+fi
+
+ipv6_unicast=false
+if [[ "$interface" != "unknown" ]] && ip -6 addr show dev "$interface" scope global | grep -q 'inet6 '; then
+  ipv6_unicast=false
+fi
+
+controlled_services=false
+if command -v python3 >/dev/null 2>&1; then
+  if timeout 8 python3 - <<'PY' >/dev/null 2>&1
+import socket
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(1)
+PY
+  then
+    controlled_services=true
+  fi
+fi
+
+cat > "$artifact" <<EOF2
+role=$role
+interface=$interface
+private_ipv4=$private_ipv4
+peer_private_ipv4=$peer_private_ipv4
+ipv4_configured=$ipv4_configured
+ipv4_unicast=$ipv4_unicast
+ipv6_unicast=$ipv6_unicast
+link_layer_send=false
+link_layer_capture=false
+broadcast=false
+provider_mac_known=$provider_mac_known
+provider_mac=$mac_address
+controlled_services=$controlled_services
+controlled_router=false
+finished_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+EOF2
+cat "$artifact"
+EOF
+}
+
+env_bool() {
+  local file="$1"
+  local key="$2"
+  local default_value="${3:-false}"
+  local value
+
+  if [[ -f "$file" ]]; then
+    value="$(awk -F= -v key="$key" '$1 == key {print $2; exit}' "$file")"
+    case "$value" in
+      true|false)
+        printf '%s\n' "$value"
+        return 0
+        ;;
+    esac
+  fi
+
+  printf '%s\n' "$default_value"
+}
+
+write_provider_capability_artifacts() {
+  local oracle_artifact_dir="$1"
+  local dry_run="$2"
+  local libcrafter_env="${3:-}"
+  local reference_env="${4:-}"
+  local report_json="$oracle_artifact_dir/capabilities.json"
+  local report_env="$oracle_artifact_dir/capabilities.env"
+  local ipv4_unicast=false
+  local ipv6_unicast=false
+  local link_layer_send=false
+  local link_layer_capture=false
+  local broadcast=false
+  local provider_mac_known=false
+  local controlled_services=false
+  local controlled_router=false
+  local source="bootstrap-discovery"
+  local live_packet_exchange=true
+
+  mkdir -p "$oracle_artifact_dir"
+
+  if [[ "$dry_run" == true ]]; then
+    source="planned-defaults"
+    ipv4_unicast=true
+    controlled_services=true
+  else
+    local libcrafter_ipv4
+    local reference_ipv4
+    local libcrafter_ipv6
+    local reference_ipv6
+    local libcrafter_mac
+    local reference_mac
+    local libcrafter_services
+    local reference_services
+
+    libcrafter_ipv4="$(env_bool "$libcrafter_env" ipv4_unicast false)"
+    reference_ipv4="$(env_bool "$reference_env" ipv4_unicast false)"
+    libcrafter_ipv6="$(env_bool "$libcrafter_env" ipv6_unicast false)"
+    reference_ipv6="$(env_bool "$reference_env" ipv6_unicast false)"
+    libcrafter_mac="$(env_bool "$libcrafter_env" provider_mac_known false)"
+    reference_mac="$(env_bool "$reference_env" provider_mac_known false)"
+    libcrafter_services="$(env_bool "$libcrafter_env" controlled_services false)"
+    reference_services="$(env_bool "$reference_env" controlled_services false)"
+
+    [[ "$libcrafter_ipv4" == true && "$reference_ipv4" == true ]] && ipv4_unicast=true
+    [[ "$libcrafter_ipv6" == true && "$reference_ipv6" == true ]] && ipv6_unicast=true
+    if [[ "$libcrafter_mac" == true && "$reference_mac" == true && -n "${libcrafter_private_mac:-}" && -n "${reference_private_mac:-}" ]]; then
+      provider_mac_known=true
+    fi
+    [[ "$libcrafter_services" == true && "$reference_services" == true ]] && controlled_services=true
+  fi
+
+  cat >"$report_env" <<EOF
+provider=$provider_name
+dry_run=$dry_run
+source=$source
+live_packet_exchange=$live_packet_exchange
+ipv4_unicast=$ipv4_unicast
+ipv6_unicast=$ipv6_unicast
+link_layer_send=$link_layer_send
+link_layer_capture=$link_layer_capture
+broadcast=$broadcast
+provider_mac_known=$provider_mac_known
+controlled_services=$controlled_services
+controlled_router=$controlled_router
+libcrafter_endpoint_report=$libcrafter_env
+reference_endpoint_report=$reference_env
+finished_at=$(timestamp_utc)
+EOF
+
+  cat >"$report_json" <<EOF
+{
+  "schema_version": 1,
+  "provider": "$provider_name",
+  "dry_run": $dry_run,
+  "source": "$source",
+  "live_packet_exchange": $live_packet_exchange,
+  "ipv4_unicast": $ipv4_unicast,
+  "ipv6_unicast": $ipv6_unicast,
+  "link_layer_send": $link_layer_send,
+  "link_layer_capture": $link_layer_capture,
+  "broadcast": $broadcast,
+  "provider_mac_known": $provider_mac_known,
+  "controlled_services": $controlled_services,
+  "controlled_router": $controlled_router,
+  "capabilities": {
+    "ipv4_unicast": $ipv4_unicast,
+    "ipv6_unicast": $ipv6_unicast,
+    "link_layer_send": $link_layer_send,
+    "link_layer_capture": $link_layer_capture,
+    "broadcast": $broadcast,
+    "provider_mac_known": $provider_mac_known,
+    "controlled_services": $controlled_services,
+    "controlled_router": $controlled_router
+  },
+  "checks": {
+    "ipv4_unicast": {
+      "status": "$([[ "$ipv4_unicast" == true ]] && echo passed || echo failed)",
+      "libcrafter_endpoint_report": "$libcrafter_env",
+      "reference_endpoint_report": "$reference_env"
+    },
+    "ipv6_unicast": {
+      "status": "$([[ "$ipv6_unicast" == true ]] && echo passed || echo unavailable)"
+    },
+    "link_layer_send": {
+      "status": "not_proven"
+    },
+    "link_layer_capture": {
+      "status": "not_proven"
+    },
+    "broadcast": {
+      "status": "not_proven"
+    },
+    "provider_mac_known": {
+      "status": "$([[ "$provider_mac_known" == true ]] && echo passed || echo failed)"
+    },
+    "controlled_services": {
+      "status": "$([[ "$controlled_services" == true ]] && echo passed || echo failed)"
+    },
+    "controlled_router": {
+      "status": "unavailable"
+    }
+  },
+  "artifacts": {
+    "env": "$report_env",
+    "libcrafter_endpoint": "$libcrafter_env",
+    "reference_endpoint": "$reference_env"
+  },
+  "finished_at": "$(timestamp_utc)"
+}
+EOF
+}
+
 write_bootstrap_dry_run_artifacts() {
   local oracle_artifact_dir="$1"
   local bootstrap_dir="$oracle_artifact_dir/bootstrap"
@@ -717,6 +947,7 @@ reference_backend_validation=tools/oracle/run backend-info
 tshark_availability=reported_optional_not_required
 artifact=live-artifacts/bootstrap/reference_backend/bootstrap.env
 EOF
+  write_provider_capability_artifacts "$oracle_artifact_dir" true
 }
 
 bootstrap_live_endpoints() {
@@ -725,6 +956,7 @@ bootstrap_live_endpoints() {
   local suite_bootstrap_dir="$oracle_artifact_dir/bootstrap"
   local libcrafter_script
   local reference_script
+  local capability_script
 
   load_manifest
   require_tool ssh
@@ -745,18 +977,33 @@ bootstrap_live_endpoints() {
 
   libcrafter_script="$(libcrafter_bootstrap_script)"
   reference_script="$(reference_bootstrap_script)"
+  capability_script="$(endpoint_capability_probe_script)"
 
   log "bootstrapping Hetzner libcrafter endpoint"
-  run_endpoint_script "libcrafter" "$libcrafter_public_ipv4" "$libcrafter_private_ipv4" "$remote_dir_value" "$libcrafter_script" \
+  run_endpoint_script "libcrafter" "$libcrafter_public_ipv4" "$libcrafter_private_ipv4" "$reference_private_ipv4" "$remote_dir_value" "$libcrafter_script" \
     | tee "$suite_bootstrap_dir/libcrafter/bootstrap.log"
   log "bootstrapping Hetzner reference endpoint"
-  run_endpoint_script "reference_backend" "$reference_public_ipv4" "$reference_private_ipv4" "$remote_dir_value" "$reference_script" \
+  run_endpoint_script "reference_backend" "$reference_public_ipv4" "$reference_private_ipv4" "$libcrafter_private_ipv4" "$remote_dir_value" "$reference_script" \
     | tee "$suite_bootstrap_dir/reference/bootstrap.log"
+
+  log "discovering Hetzner libcrafter endpoint capabilities"
+  run_endpoint_script "libcrafter" "$libcrafter_public_ipv4" "$libcrafter_private_ipv4" "$reference_private_ipv4" "$remote_dir_value" "$capability_script" \
+    | tee "$suite_bootstrap_dir/libcrafter/capability.env"
+  log "discovering Hetzner reference endpoint capabilities"
+  run_endpoint_script "reference_backend" "$reference_public_ipv4" "$reference_private_ipv4" "$libcrafter_private_ipv4" "$remote_dir_value" "$capability_script" \
+    | tee "$suite_bootstrap_dir/reference/capability.env"
+
+  write_provider_capability_artifacts \
+    "$oracle_artifact_dir" \
+    false \
+    "$suite_bootstrap_dir/libcrafter/capability.env" \
+    "$suite_bootstrap_dir/reference/capability.env"
 
   echo "provider=$provider_name"
   echo "bootstrap=true"
   echo "libcrafter_bootstrap_artifact=$suite_bootstrap_dir/libcrafter/bootstrap.log"
   echo "reference_bootstrap_artifact=$suite_bootstrap_dir/reference/bootstrap.log"
+  echo "capability_report=$oracle_artifact_dir/capabilities.json"
 }
 
 default_remote_command() {
@@ -1178,6 +1425,7 @@ EOF
       echo "reason=no_token"
       echo "creates_infrastructure=false"
       echo "artifact_dir=$oracle_artifact_dir"
+      echo "capability_report=$oracle_artifact_dir/capabilities.json"
       return 0
     fi
 
@@ -1224,6 +1472,7 @@ EOF
   echo "log=$artifact_dir/$requested_suite.log"
   echo "bootstrap_libcrafter_endpoint=$oracle_artifact_dir/bootstrap/libcrafter"
   echo "bootstrap_reference_endpoint=$oracle_artifact_dir/bootstrap/reference"
+  echo "capability_report=$oracle_artifact_dir/capabilities.json"
 
   return "$suite_status"
 }

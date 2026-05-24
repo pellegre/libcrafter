@@ -68,12 +68,19 @@ _WIRE_PROVIDER_CAPABILITY_PROFILES: dict[str, JSONObject] = {
     "hetzner": {
         "provider": "hetzner",
         "live_packet_exchange": True,
+        "ipv4_unicast": True,
+        "ipv6_unicast": False,
+        "link_layer_send": False,
+        "link_layer_capture": False,
+        "broadcast": False,
+        "provider_mac_known": False,
+        "controlled_services": True,
+        "controlled_router": False,
         "ipv4": True,
         "ipv6": False,
         "l2": False,
-        "broadcast": False,
         "provider_mac": False,
-        "controlled_service": False,
+        "controlled_service": True,
     },
 }
 
@@ -566,18 +573,31 @@ def _wire_profile_decision(
         reasons.append(SKIP_BACKEND_UNSUPPORTED)
     if not _capability_bool(capabilities, "live_packet_exchange"):
         reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
-    if _requires_ipv4(plan) and not _capability_bool(capabilities, "ipv4"):
+    if _requires_ipv4(plan) and not _provider_capability_bool(
+        capabilities,
+        "ipv4_unicast",
+        "ipv4",
+    ):
         reasons.append(SKIP_REQUIRES_IPV4)
-    if _requires_ipv6(plan) and not _capability_bool(capabilities, "ipv6"):
+    if _requires_ipv6(plan) and not _provider_capability_bool(
+        capabilities,
+        "ipv6_unicast",
+        "ipv6",
+    ):
         reasons.append(SKIP_REQUIRES_IPV6)
-    if _requires_l2(plan) and not _capability_bool(capabilities, "l2"):
+    if _requires_l2(plan) and not _provider_l2_capability(capabilities):
         reasons.append(SKIP_REQUIRES_L2)
     if _requires_broadcast(plan) and not _capability_bool(capabilities, "broadcast"):
         reasons.append(SKIP_REQUIRES_BROADCAST)
-    if _requires_provider_mac(plan) and not _capability_bool(capabilities, "provider_mac"):
-        reasons.append(SKIP_REQUIRES_PROVIDER_MAC)
-    if _requires_controlled_service(plan) and not _capability_bool(
+    if _requires_provider_mac(plan) and not _provider_capability_bool(
         capabilities,
+        "provider_mac_known",
+        "provider_mac",
+    ):
+        reasons.append(SKIP_REQUIRES_PROVIDER_MAC)
+    if _requires_controlled_service(plan) and not _provider_capability_bool(
+        capabilities,
+        "controlled_services",
         "controlled_service",
     ):
         reasons.append(SKIP_REQUIRES_CONTROLLED_SERVICE)
@@ -620,12 +640,14 @@ def _wire_profile_decision(
             "case": plan.case,
             "feature_tags": list(plan.feature_tags),
             "requirements": {
-                "ipv4": _requires_ipv4(plan),
-                "ipv6": _requires_ipv6(plan),
-                "l2": _requires_l2(plan),
+                "ipv4_unicast": _requires_ipv4(plan),
+                "ipv6_unicast": _requires_ipv6(plan),
+                "link_layer_send": _requires_l2(plan),
+                "link_layer_capture": _requires_l2(plan),
                 "broadcast": _requires_broadcast(plan),
-                "provider_mac": _requires_provider_mac(plan),
-                "controlled_service": _requires_controlled_service(plan),
+                "provider_mac_known": _requires_provider_mac(plan),
+                "controlled_services": _requires_controlled_service(plan),
+                "controlled_router": False,
             },
             "mutation_policy": policy,
         },
@@ -666,6 +688,13 @@ def _wire_capability_metadata(capabilities: Mapping[str, object]) -> JSONObject:
     keys = (
         "provider",
         "live_packet_exchange",
+        "ipv4_unicast",
+        "ipv6_unicast",
+        "link_layer_send",
+        "link_layer_capture",
+        "provider_mac_known",
+        "controlled_services",
+        "controlled_router",
         "ipv4",
         "ipv6",
         "l2",
@@ -902,6 +931,23 @@ def _fields_contain_value(value: object, needles: set[str]) -> bool:
 
 def _capability_bool(capabilities: Mapping[str, object], key: str) -> bool:
     return bool(capabilities.get(key))
+
+
+def _provider_capability_bool(
+    capabilities: Mapping[str, object],
+    key: str,
+    *aliases: str,
+) -> bool:
+    return any(bool(capabilities.get(name)) for name in (key, *aliases))
+
+
+def _provider_l2_capability(capabilities: Mapping[str, object]) -> bool:
+    if bool(capabilities.get("l2")):
+        return True
+    return bool(
+        capabilities.get("link_layer_send")
+        and capabilities.get("link_layer_capture")
+    )
 
 
 def _first_reason(reasons: Sequence[str]) -> str | None:
