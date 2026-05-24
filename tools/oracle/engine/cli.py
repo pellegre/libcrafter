@@ -17,6 +17,14 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
+from .backends import (
+    BackendCapabilityName,
+    BackendRegistration,
+    UnknownBackendError,
+    backend_report_metadata,
+    get_backend,
+    registered_backend_names,
+)
 from .compare import compare_decoded_models, failure_indexes
 from .model import (
     ComparisonResult,
@@ -225,7 +233,7 @@ def _non_negative_int(value: str) -> int:
 def _add_generation_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend",
-        choices=("scapy",),
+        choices=registered_backend_names(),
         default="scapy",
         help="reference backend to target (default: %(default)s)",
     )
@@ -276,21 +284,274 @@ def _not_implemented(args: argparse.Namespace) -> int:
     return 2
 
 
-def _pcap(args: argparse.Namespace) -> int:
-    if args.backend != "scapy":
-        print(f"unsupported backend: {args.backend}", file=sys.stderr)
+def _offline_required_capabilities(
+    args: argparse.Namespace,
+) -> tuple[BackendCapabilityName, ...]:
+    if args.emit_decoded:
+        return ("encode", "decode")
+    if args.emit_vectors:
+        return ("encode",)
+    if args.dry_plan:
+        return ()
+    if args.direction == "reference_to_libcrafter":
+        return ("encode", "decode")
+    if args.direction == "libcrafter_to_reference":
+        return ("decode",)
+    return ()
+
+
+def _pcap_required_capabilities(
+    args: argparse.Namespace,
+) -> tuple[BackendCapabilityName, ...]:
+    if args.direction == "reference_to_libcrafter":
+        return ("encode", "pcap_write", "pcap_read")
+    if args.direction == "libcrafter_to_reference":
+        return ("pcap_read",)
+    if args.direction == "roundtrip":
+        return ("encode", "pcap_write", "pcap_read")
+    return ()
+
+
+def _require_backend_capabilities(
+    args: argparse.Namespace,
+    *,
+    mode: str,
+    required: tuple[BackendCapabilityName, ...],
+    operation: str,
+    report_path: Path | None,
+    selected_specs: Sequence[str] = (),
+) -> int | None:
+    try:
+        backend = get_backend(args.backend)
+    except UnknownBackendError as exc:
+        print(str(exc), file=sys.stderr)
         return 2
 
+    missing = backend.capabilities.missing(required)
+    if missing:
+        message = _missing_capability_message(backend, missing, operation)
+        return _write_backend_support_report(
+            args=args,
+            mode=mode,
+            backend=backend,
+            message=message,
+            operation=operation,
+            required=required,
+            missing=missing,
+            report_path=report_path,
+            selected_specs=selected_specs,
+        )
+
+    if required and not backend.availability.available:
+        reason = backend.availability.reason or "backend dependency is unavailable"
+        message = (
+            f"unsupported backend availability: backend {backend.name} is unavailable: "
+            f"{reason}; {operation} requires {', '.join(required)}"
+        )
+        return _write_backend_support_report(
+            args=args,
+            mode=mode,
+            backend=backend,
+            message=message,
+            operation=operation,
+            required=required,
+            missing=(),
+            report_path=report_path,
+            selected_specs=selected_specs,
+        )
+
+    return None
+
+
+def _missing_capability_message(
+    backend: BackendRegistration,
+    missing: Sequence[str],
+    operation: str,
+) -> str:
+    required = ", ".join(missing)
+    if backend.parser_only and any(
+        capability in {"encode", "pcap_write"} for capability in missing
+    ):
+        return (
+            f"unsupported backend capability: backend {backend.name} is parser-only "
+            f"and cannot write; {operation} requires {required}"
+        )
+    if backend.parser_only and "live_endpoint" in missing:
+        return (
+            f"unsupported backend capability: backend {backend.name} is parser-only "
+            f"and cannot act as a live endpoint; {operation} requires {required}"
+        )
+    return (
+        f"unsupported backend capability: backend {backend.name} lacks {required}; "
+        f"{operation} requires {required}"
+    )
+
+
+def _backend_not_implemented_report(
+    args: argparse.Namespace,
+    *,
+    mode: str,
+    operation: str,
+    report_path: Path | None,
+    selected_specs: Sequence[str] = (),
+) -> int:
+    backend = get_backend(args.backend)
+    message = (
+        f"unsupported backend implementation: backend {backend.name} has compatible "
+        f"capabilities, but {operation} is not wired to an oracle adapter yet"
+    )
+    return _write_backend_support_report(
+        args=args,
+        mode=mode,
+        backend=backend,
+        message=message,
+        operation=operation,
+        required=(),
+        missing=(),
+        report_path=report_path,
+        selected_specs=selected_specs,
+    )
+
+
+def _write_backend_support_report(
+    *,
+    args: argparse.Namespace,
+    mode: str,
+    backend: BackendRegistration,
+    message: str,
+    operation: str,
+    required: Sequence[str],
+    missing: Sequence[str],
+    report_path: Path | None,
+    selected_specs: Sequence[str],
+) -> int:
+    artifacts = [] if report_path is None else [str(report_path)]
+    direction = getattr(args, "direction", "backend")
+    if not isinstance(direction, str):
+        direction = "backend"
+    differences: list[JSONObject] = [
+        {
+            "path": "backend.capabilities",
+            "expected": list(required),
+            "actual": backend.capabilities.enabled(),
+        }
+    ]
+    if not backend.availability.available:
+        differences.append(
+            {
+                "path": "backend.availability",
+                "expected": "available",
+                "actual": backend.availability.to_dict(),
+            }
+        )
+
+    reproduction_command = _requested_command()
+    result = ComparisonResult(
+        passed=False,
+        direction=direction,
+        expected={
+            "operation": operation,
+            "required_capabilities": list(required),
+            "backend_available": True,
+        },
+        actual={
+            "backend": backend.to_dict(),
+            "missing_capabilities": list(missing),
+            "message": message,
+        },
+        strict_bytes=False,
+        byte_equal=None,
+        differences=differences,
+        reproduction_command=reproduction_command,
+        metadata={
+            "operation": operation,
+            "unsupported": True,
+            "required_capabilities": list(required),
+            "missing_capabilities": list(missing),
+        },
+    )
+    report = RunReport(
+        mode=mode,
+        backend=backend.name,
+        profile=_arg_int_or_string(args, "profile", "unknown"),
+        seed=_arg_int(args, "seed", 0),
+        count=0,
+        status="unsupported",
+        selected_specs=list(selected_specs),
+        artifacts=artifacts,
+        artifact_paths=artifacts,
+        results=[result],
+        failures=[result],
+        reproduction_commands=[reproduction_command],
+        backend_versions=_backend_versions(backend.name),
+        libcrafter=_libcrafter_info(),
+        metadata={
+            "operation": operation,
+            "backend": backend.to_dict(),
+            "requested_count": _arg_int(args, "count", 0),
+            "unsupported_reason": message,
+        },
+    )
+    if report_path is not None:
+        write_json(report_path, report)
+        print(f"{message}; report={report_path}", file=sys.stderr)
+    else:
+        print(message, file=sys.stderr)
+    return 2
+
+
+def _arg_int(args: argparse.Namespace, name: str, default: int) -> int:
+    value = getattr(args, name, default)
+    return value if isinstance(value, int) else default
+
+
+def _arg_int_or_string(args: argparse.Namespace, name: str, default: str) -> str:
+    value = getattr(args, name, default)
+    return value if isinstance(value, str) else default
+
+
+def _requested_command() -> str:
+    return shlex.join(["tools/oracle/run", *sys.argv[1:]])
+
+
+def _pcap(args: argparse.Namespace) -> int:
     if args.dry_plan:
         return _pcap_dry_plan(args)
+
+    unsupported = _require_backend_capabilities(
+        args,
+        mode="pcap",
+        required=_pcap_required_capabilities(args),
+        operation=f"pcap {args.direction}",
+        report_path=_pcap_output_dir(args.out) / "report.json",
+        selected_specs=(PCAP_CONTRACT_SPEC, "builtin-stack-grammar"),
+    )
+    if unsupported is not None:
+        return unsupported
+    if args.backend != "scapy":
+        return _backend_not_implemented_report(
+            args,
+            mode="pcap",
+            operation=f"pcap {args.direction}",
+            report_path=_pcap_output_dir(args.out) / "report.json",
+            selected_specs=(PCAP_CONTRACT_SPEC, "builtin-stack-grammar"),
+        )
 
     return _pcap_execute(args)
 
 
 def _live(args: argparse.Namespace) -> int:
-    if args.backend != "scapy":
-        print(f"unsupported backend: {args.backend}", file=sys.stderr)
-        return 2
+    unsupported = _require_backend_capabilities(
+        args,
+        mode="live",
+        required=("live_endpoint",),
+        operation=f"live {args.provider}",
+        report_path=_live_output_dir(args.out) / "report.json",
+        selected_specs=("live",),
+    )
+    if unsupported is not None:
+        return unsupported
+
     if args.provider == "local-dry-run":
         return _live_local_dry_run(args)
     if args.provider == "hetzner":
@@ -1123,6 +1384,27 @@ def _pcap_execute(args: argparse.Namespace) -> int:
 
 
 def _offline(args: argparse.Namespace) -> int:
+    required_capabilities = _offline_required_capabilities(args)
+    if required_capabilities:
+        unsupported = _require_backend_capabilities(
+            args,
+            mode="offline",
+            required=required_capabilities,
+            operation=f"offline {args.direction}",
+            report_path=_offline_output_dir(args.out) / "report.json",
+            selected_specs=("builtin-stack-grammar",),
+        )
+        if unsupported is not None:
+            return unsupported
+        if args.backend != "scapy":
+            return _backend_not_implemented_report(
+                args,
+                mode="offline",
+                operation=f"offline {args.direction}",
+                report_path=_offline_output_dir(args.out) / "report.json",
+                selected_specs=("builtin-stack-grammar",),
+            )
+
     if not args.dry_plan and not args.emit_vectors and not args.emit_decoded:
         if args.direction == "reference_to_libcrafter":
             return _offline_reference_to_libcrafter(args)
@@ -2331,11 +2613,15 @@ def _model_to_object(model: object) -> JSONObject:
 
 
 def _backend_versions(backend: str) -> JSONObject:
-    if backend == "scapy":
-        from .backends.scapy.bootstrap import backend_info
-
-        return {"scapy": backend_info()}
-    return {}
+    try:
+        return {
+            backend: backend_report_metadata(
+                backend,
+                include_dependency_metadata=True,
+            )
+        }
+    except UnknownBackendError:
+        return {}
 
 
 def _libcrafter_info() -> JSONObject:
@@ -2625,14 +2911,16 @@ def _pcap_plan(plan: PacketPlan, pcap_case: JSONObject, direction: str) -> Packe
 
 
 def _backend_info(args: argparse.Namespace) -> int:
-    if args.backend == "scapy":
-        from .backends.scapy.bootstrap import backend_info
-
-        sys.stdout.write(dumps_json(backend_info()))
-        return 0
-
-    print(f"unsupported backend: {args.backend}", file=sys.stderr)
-    return 2
+    try:
+        metadata = backend_report_metadata(
+            args.backend,
+            include_dependency_metadata=True,
+        )
+    except UnknownBackendError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    sys.stdout.write(dumps_json(metadata))
+    return 0
 
 
 def _legacy_live_example(args: argparse.Namespace) -> int:
@@ -2654,7 +2942,24 @@ def _self_check(args: argparse.Namespace) -> int:
     from .generator import run_self_checks
 
     run_self_checks()
-    sys.stdout.write(dumps_json({"status": "ok", "checks": ["generator"]}))
+    scapy_backend = get_backend("scapy")
+    wireshark_backend = get_backend("wireshark")
+    if (
+        not scapy_backend.capabilities.encode
+        or not scapy_backend.capabilities.pcap_write
+    ):
+        raise AssertionError("Scapy backend must expose writer capabilities")
+    if (
+        wireshark_backend.capabilities.encode
+        or wireshark_backend.capabilities.pcap_write
+    ):
+        raise AssertionError("Wireshark backend must remain parser-only")
+    if (
+        not wireshark_backend.capabilities.decode
+        or not wireshark_backend.capabilities.pcap_read
+    ):
+        raise AssertionError("Wireshark backend must expose parser capabilities")
+    sys.stdout.write(dumps_json({"status": "ok", "checks": ["generator", "backends"]}))
     return 0
 
 
@@ -3047,7 +3352,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backend_info_parser.add_argument(
         "--backend",
-        choices=("scapy",),
+        choices=registered_backend_names(),
         default="scapy",
         help="backend to inspect (default: %(default)s)",
     )
