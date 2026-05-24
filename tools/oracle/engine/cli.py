@@ -1114,10 +1114,12 @@ def _live_hetzner_execute(
                 return 2
 
             direction_plans = [
-                _live_plan_with_endpoint_addresses(
-                    replace(plan, direction=direction),
-                    sender=sender,
-                    receiver=receiver,
+                _hetzner_live_transit_plan(
+                    _live_plan_with_endpoint_addresses(
+                        replace(plan, direction=direction),
+                        sender=sender,
+                        receiver=receiver,
+                    )
                 )
                 for plan in plans
             ]
@@ -1700,6 +1702,21 @@ def _live_plan_with_endpoint_addresses(
     return replace(plan, fields=fields, metadata=metadata)
 
 
+def _hetzner_live_transit_plan(plan: PacketPlan) -> PacketPlan:
+    return replace(
+        plan,
+        strict_bytes=False,
+        metadata={
+            **plan.metadata,
+            "live_mutable_fields": [
+                "ipv4.ttl",
+                "ipv4.checksum",
+            ],
+            "strict_bytes": False,
+        },
+    )
+
+
 def _upload_hetzner_endpoint_request(
     *,
     manifest: dict[str, str],
@@ -2057,8 +2074,8 @@ def _compare_live_decoded_results(
         plan = plans[index]
         results.append(
             compare_decoded_models(
-                expected=expected[index],
-                actual=actual[index],
+                expected=_live_comparison_model(expected[index]),
+                actual=_live_comparison_model(actual[index]),
                 plan=plan,
                 direction=direction,
                 reproduction_command=_live_reproduction_command(args),
@@ -2095,6 +2112,19 @@ def _compare_live_decoded_results(
             )
         )
     return results
+
+
+def _live_comparison_model(model: JSONObject) -> JSONObject:
+    output = json.loads(json.dumps(model))
+    if not isinstance(output, dict):
+        return model
+    fields = output.get("fields")
+    if isinstance(fields, dict):
+        ipv4 = fields.get("ipv4")
+        if isinstance(ipv4, dict):
+            ipv4.pop("ttl", None)
+            ipv4.pop("checksum", None)
+    return output
 
 
 def _command_artifact_paths(command: JSONObject) -> list[str]:
