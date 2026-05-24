@@ -1618,6 +1618,7 @@ def _hetzner_endpoint_from_manifest(endpoint, *, manifest: dict[str, str], prefi
             "interface_source": "hetzner_manifest",
             "private_interface": interface,
             "private_ipv4": address,
+            "mac_address": manifest.get(f"{prefix}_private_mac"),
             "public_ipv4": manifest.get(f"{prefix}_public_ipv4"),
             "server_id": manifest.get(f"{prefix}_server_id"),
             "server_name": manifest.get(f"{prefix}_server_name"),

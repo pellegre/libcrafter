@@ -238,11 +238,20 @@ fn run_sender(
     mode: RunMode,
     prepared: &[PreparedPacket],
 ) -> ExampleResult<Value> {
-    let packets = prepared
+    let mut packets = prepared
         .iter()
         .map(|prepared| prepared.packet.clone())
         .collect::<Vec<_>>();
-    let send_mode = common_send_mode(prepared)?;
+    let ethernet_addresses = live_ethernet_addresses(request)?;
+    let send_mode = if let Some((source, destination)) = ethernet_addresses {
+        packets = packets
+            .into_iter()
+            .map(|packet| ethernet_wrap_packet(packet, source, destination))
+            .collect();
+        SendMode::LinkLayer
+    } else {
+        common_send_mode(prepared)?
+    };
     let mut batch = BatchSend::new()
         .iface(request.interface.clone())
         .concurrency_limit(64)
@@ -377,9 +386,11 @@ fn run_receiver(
     let mut decoded_models = Vec::with_capacity(captured.len());
     for (offset, captured_packet) in captured.iter().enumerate() {
         let expected = prepared.get(offset);
+        let root = expected.map(|packet| packet.root.as_str());
+        let observed = packet_for_root(captured_packet.packet(), root)?;
         decoded_models.push(decoded_model(
-            captured_packet.packet(),
-            expected.map(|packet| packet.root.as_str()),
+            &observed,
+            root,
             expected
                 .map(|packet| packet.feature_tags.clone())
                 .unwrap_or_default(),
@@ -532,6 +543,36 @@ fn live_capture_filter(request: &EndpointRequest) -> Option<String> {
     ))
 }
 
+fn live_ethernet_addresses(request: &EndpointRequest) -> ExampleResult<Option<(MacAddr, MacAddr)>> {
+    let Some(source) = address_text(&request.local_addresses, "mac") else {
+        return Ok(None);
+    };
+    let Some(destination) = address_text(&request.peer_addresses, "mac") else {
+        return Ok(None);
+    };
+    Ok(Some((
+        MacAddr::from_str(source)?,
+        MacAddr::from_str(destination)?,
+    )))
+}
+
+fn address_text<'a>(addresses: &'a Value, key: &str) -> Option<&'a str> {
+    addresses
+        .get(key)?
+        .as_str()
+        .filter(|value| !value.is_empty())
+}
+
+fn ethernet_wrap_packet(packet: Packet, source: MacAddr, destination: MacAddr) -> Packet {
+    Packet::from_layer(
+        Ethernet::new()
+            .src(source)
+            .dst(destination)
+            .ethertype(ETHERTYPE_IPV4),
+    )
+    .concat(packet)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn index_status(
     request: &EndpointRequest,
@@ -580,6 +621,32 @@ fn artifact_path(out_dir: &Path, artifact_paths: &Value, key: &str, fallback: &s
     }
 }
 
+fn packet_for_root(packet: &Packet, root: Option<&str>) -> ExampleResult<Packet> {
+    match root {
+        Some("IP" | "IPv4" | "l3:ipv4") => {
+            let compiled = packet.compile()?;
+            let bytes = compiled.as_bytes();
+            let payload = if packet.layer::<Ethernet>().is_some() && bytes.len() >= 14 {
+                &bytes[14..]
+            } else {
+                bytes
+            };
+            Ok(Packet::decode_from_l3(NetworkLayer::Ipv4, payload)?)
+        }
+        Some("IPv6" | "l3:ipv6") => {
+            let compiled = packet.compile()?;
+            let bytes = compiled.as_bytes();
+            let payload = if packet.layer::<Ethernet>().is_some() && bytes.len() >= 14 {
+                &bytes[14..]
+            } else {
+                bytes
+            };
+            Ok(Packet::decode_from_l3(NetworkLayer::Ipv6, payload)?)
+        }
+        _ => Ok(packet.clone()),
+    }
+}
+
 fn decoded_model(
     packet: &Packet,
     root: Option<&str>,
@@ -596,7 +663,9 @@ fn decoded_model(
         summaries.push(Value::String(layer.summary()));
         let mut layer_fields = Map::new();
         for (field, value) in layer.inspection_fields() {
-            layer_fields.insert(field.to_string(), Value::String(value));
+            if let Some((field_name, field_value)) = normalize_field(name, field, &value)? {
+                layer_fields.insert(field_name, field_value);
+            }
         }
         fields.insert(name.to_string(), Value::Object(layer_fields));
     }
@@ -620,11 +689,65 @@ fn normalize_layer_name(name: &str) -> &str {
     match name {
         "Ethernet" => "ethernet",
         "IPv4" => "ipv4",
+        "Ipv4" => "ipv4",
         "IPv6" => "ipv6",
+        "Ipv6" => "ipv6",
         "UDP" => "udp",
+        "Udp" => "udp",
         "Raw" => "payload",
         value => value,
     }
+}
+
+fn normalize_field(
+    layer: &str,
+    field: &str,
+    value: &str,
+) -> ExampleResult<Option<(String, Value)>> {
+    match (layer, field) {
+        ("ipv4", "ihl") => Ok(Some(("header_length".to_string(), json!(u64_text(value)?)))),
+        ("ipv4", "total_length") => Ok(Some(("length".to_string(), json!(u64_text(value)?)))),
+        ("ipv4", "id") => Ok(Some((
+            "identification".to_string(),
+            json!(u64_text(value)?),
+        ))),
+        ("ipv4", "protocol") => Ok(Some((
+            "protocol".to_string(),
+            json!(protocol_number(value)?),
+        ))),
+        ("ipv4", "checksum")
+        | ("ipv4", "fragment_offset")
+        | ("ipv4", "tos")
+        | ("ipv4", "ttl")
+        | ("ipv4", "version") => Ok(Some((field.to_string(), json!(u64_text(value)?)))),
+        ("ipv4", "src") | ("ipv4", "dst") | ("ipv4", "flags") => {
+            Ok(Some((field.to_string(), json!(value))))
+        }
+        ("udp", "sport") => Ok(Some(("src_port".to_string(), json!(u64_text(value)?)))),
+        ("udp", "dport") => Ok(Some(("dst_port".to_string(), json!(u64_text(value)?)))),
+        ("udp", "checksum") | ("udp", "length") => {
+            Ok(Some((field.to_string(), json!(u64_text(value)?))))
+        }
+        ("payload", "bytes") => Ok(Some((
+            "hex".to_string(),
+            json!(value
+                .split_whitespace()
+                .collect::<String>()
+                .to_ascii_lowercase()),
+        ))),
+        ("payload", "len") => Ok(Some(("length".to_string(), json!(u64_text(value)?)))),
+        ("payload", "text_lossy") => Ok(None),
+        _ => Ok(Some((field.to_string(), json!(value)))),
+    }
+}
+
+fn protocol_number(value: &str) -> ExampleResult<u64> {
+    if let Some(start) = value.find('(') {
+        if let Some(end) = value[start + 1..].find(')') {
+            return u64_text(&value[start + 1..start + 1 + end]);
+        }
+    }
+    u64_text(value)
 }
 
 fn build_packet(plan: &Value) -> ExampleResult<Packet> {
