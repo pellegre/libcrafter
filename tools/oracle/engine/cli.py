@@ -574,10 +574,12 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         validate_libcrafter_command_plan,
     )
     from .providers.hetzner import (
+        hetzner_endpoint_bootstrap_plan,
         hetzner_endpoints,
         hetzner_private_network_plan,
         hetzner_provider_workflow,
         hetzner_token_configured,
+        validate_hetzner_endpoint_bootstrap,
         validate_hetzner_dry_run_exchange,
         validate_hetzner_provider_workflow,
     )
@@ -622,9 +624,11 @@ def _live_hetzner(args: argparse.Namespace) -> int:
 
     endpoints = hetzner_endpoints(dry_run=True)
     provider_workflow = hetzner_provider_workflow(dry_run=True)
+    endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=True)
     bootstrap_command = backend_bootstrap_command_plan()
     validations = [
         validate_backend_bootstrap_command(bootstrap_command),
+        validate_hetzner_endpoint_bootstrap(endpoint_bootstrap, dry_run=True),
         validate_hetzner_provider_workflow(provider_workflow, dry_run=True),
     ]
     exchanges: list[LiveExchangePlan] = []
@@ -765,6 +769,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             "execution_directions": directions,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=True),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
+            "endpoint_bootstrap": [command.to_dict() for command in endpoint_bootstrap],
             "artifact_collection": {
                 "always_attempt": True,
                 "command": provider_workflow[3].to_dict(),
@@ -790,6 +795,12 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         f"live {args.provider}: status={status} exchanges={len(exchanges)} "
         f"creates_infrastructure=false report={report_path}"
     )
+    print(
+        "endpoints=libcrafter:"
+        f"{endpoints['libcrafter'].address},reference_backend:"
+        f"{endpoints['reference_backend'].address} private_network=true "
+        "bootstrap=planned"
+    )
     if failed_validations:
         print(f"failed_validations={len(failed_validations)}", file=sys.stderr)
         print(f"reproduce: {_live_reproduction_command(args)}", file=sys.stderr)
@@ -806,6 +817,7 @@ def _live_hetzner_skip_no_token(
 ) -> int:
     from .live import LIVE_SELECTED_SPECS
     from .providers.hetzner import (
+        hetzner_endpoint_bootstrap_plan,
         hetzner_endpoints,
         hetzner_private_network_plan,
         hetzner_provider_workflow,
@@ -813,6 +825,7 @@ def _live_hetzner_skip_no_token(
 
     endpoints = hetzner_endpoints(dry_run=False)
     provider_workflow = hetzner_provider_workflow(dry_run=False)
+    endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
     result = ComparisonResult(
         passed=True,
         direction=args.direction,
@@ -871,6 +884,9 @@ def _live_hetzner_skip_no_token(
             "provider_workflow_if_credentials_available": [
                 command.to_dict() for command in provider_workflow
             ],
+            "endpoint_bootstrap_if_credentials_available": [
+                command.to_dict() for command in endpoint_bootstrap
+            ],
             "artifact_collection": {
                 "always_attempt": True,
                 "command": provider_workflow[3].to_dict(),
@@ -901,6 +917,7 @@ def _live_hetzner_requires_dry_run_report(
 ) -> int:
     from .live import LIVE_SELECTED_SPECS
     from .providers.hetzner import (
+        hetzner_endpoint_bootstrap_plan,
         hetzner_endpoints,
         hetzner_private_network_plan,
         hetzner_provider_workflow,
@@ -908,6 +925,7 @@ def _live_hetzner_requires_dry_run_report(
 
     endpoints = hetzner_endpoints(dry_run=False)
     provider_workflow = hetzner_provider_workflow(dry_run=False)
+    endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
     result = ComparisonResult(
         passed=False,
         direction=args.direction,
@@ -962,6 +980,7 @@ def _live_hetzner_requires_dry_run_report(
             "creates_infrastructure": False,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=False),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
+            "endpoint_bootstrap": [command.to_dict() for command in endpoint_bootstrap],
             "artifact_collection": {
                 "always_attempt": True,
                 "command": provider_workflow[3].to_dict(),
