@@ -55,6 +55,7 @@ impl LibpcapCapture {
         snaplen: u32,
         promisc: bool,
         immediate: bool,
+        nonblocking: bool,
     ) -> Result<Self> {
         if iface.trim().is_empty() {
             return Err(PcapError::LiveCaptureUnavailable(
@@ -68,6 +69,10 @@ impl LibpcapCapture {
             .timeout(timeout_to_millis(timeout))
             .immediate_mode(immediate)
             .open()?;
+
+        if nonblocking {
+            capture = capture.setnonblock()?;
+        }
 
         if let Some(filter) = filter.filter(|filter| !filter.trim().is_empty()) {
             capture.filter(filter, true)?;
