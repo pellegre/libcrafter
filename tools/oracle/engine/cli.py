@@ -120,14 +120,6 @@ FINAL_REPORT_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "10",
         ),
     ),
-    (
-        "legacy-reference-interop-smoke",
-        ("tools/reference/check-reference-interop", "--smoke"),
-    ),
-    (
-        "legacy-scapy-interop-smoke",
-        ("tools/reference/check-scapy-interop", "--smoke"),
-    ),
 )
 SCAPY_IMPORT_RE = re.compile(r"\b(?:from\s+scapy\b|import\s+scapy\b)")
 REPORT_SCAN_ROOTS = (
@@ -4891,18 +4883,13 @@ def _skip_report_scan_path(path: Path) -> bool:
 
 
 def _classify_scapy_import_match(relative_path: str) -> str:
-    if (
-        relative_path == "tools/reference/scapy-fixtures.py"
-        or relative_path.startswith("tests/fixtures/")
-        or "/fixtures/" in relative_path
-    ):
+    if relative_path.startswith("tests/fixtures/") or "/fixtures/" in relative_path:
         return "fixture data"
     if (
-        relative_path.startswith("tools/reference/")
-        or relative_path.startswith("tests/live/")
+        relative_path.startswith("tests/live/")
         or relative_path.startswith("tools/live-lab/")
     ):
-        return "legacy wrapper"
+        return "live wrapper"
     if (
         relative_path.startswith("docs/")
         or relative_path.startswith(".agents/skills/")

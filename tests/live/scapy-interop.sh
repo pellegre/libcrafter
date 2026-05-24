@@ -36,12 +36,19 @@ cd "$project_root"
 } | tee "$versions_file"
 
 run_logged reference-interop-default \
-  tools/reference/check-reference-interop \
+  "$project_root/tools/oracle/run" offline \
+    --backend scapy \
+    --profile smoke \
+    --seed 1 \
+    --count 50 \
     --out "$suite_dir/default" \
     --keep-artifacts
 run_logged reference-interop-pcap \
-  tools/reference/check-reference-interop \
-    --family pcap \
+  "$project_root/tools/oracle/run" pcap \
+    --backend scapy \
+    --profile smoke \
+    --seed 1 \
+    --count 50 \
     --out "$suite_dir/pcap" \
     --keep-artifacts
 
