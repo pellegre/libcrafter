@@ -570,7 +570,7 @@ def _tcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
         "ack": _int(_required_field(tcp_fields, "tcp", "acknowledgement", "ack"), 0),
         "window": _int(_required_field(tcp_fields, "tcp", "window"), 0),
         "reserved": _int(_required_field(tcp_fields, "tcp", "reserved"), 0),
-        "urgptr": _int(_required_field(tcp_fields, "tcp", "urgent_pointer", "urgptr"), 0),
+        "urgptr": _int(_optional_field(tcp_fields, "urgent_pointer", "urgptr"), 0),
     }
     if "checksum" in tcp_fields or "chksum" in tcp_fields:
         kwargs["chksum"] = _int(_optional_field(tcp_fields, "checksum", "chksum"), 0)
@@ -590,19 +590,19 @@ def _dns(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
     qname = _text(question.get("qname"), "")
     if not qname.endswith("."):
         qname = f"{qname}."
-    flags = _dns_flags(_required_field(dns_fields, "dns", "flags"))
+    flags = _dns_flags(_optional_field(dns_fields, "flags"))
     questions = _dns_questions(dns_fields, scapy_all)
     answers = _dns_answers(dns_fields, scapy_all)
     return scapy_all.DNS(
-        id=_int(_required_field(dns_fields, "dns", "transaction_id", "id"), 0),
-        qr=_bool_int(_required_field(dns_fields, "dns", "is_response"), 0),
-        opcode=_dns_opcode(_required_field(dns_fields, "dns", "opcode")),
+        id=_int(_optional_field(dns_fields, "transaction_id", "id"), 0),
+        qr=_bool_int(_optional_field(dns_fields, "is_response"), 0),
+        opcode=_dns_opcode(_optional_field(dns_fields, "opcode")),
         qdcount=_dns_count(dns_fields.get("questions"), 1),
         ancount=_dns_count(dns_fields.get("answers"), 0),
         aa=flags["aa"],
         tc=flags["tc"],
         rd=flags["rd"],
-        rcode=_dns_response_code(_required_field(dns_fields, "dns", "response_code")),
+        rcode=_dns_response_code(_optional_field(dns_fields, "response_code")),
         qd=questions
         or scapy_all.DNSQR(
             qname=qname,

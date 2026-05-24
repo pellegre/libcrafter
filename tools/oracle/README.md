@@ -57,6 +57,16 @@ workflow is intentionally creating disposable resources:
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 ```
 
+Expanded wire protocol smoke checks force corpus selection for DNS, TCP, ICMP,
+and IPv6 packets while keeping provider execution in dry-run mode:
+
+```sh
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 11 --count 40 --case dns-query --out target/oracle/step-11-dns
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 11 --count 40 --case ipv4-tcp-syn --out target/oracle/step-11-tcp
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 11 --count 40 --case ipv4-icmp --out target/oracle/step-11-icmp
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 11 --count 40 --family ipv6 --out target/oracle/step-11-ipv6
+```
+
 ## Artifacts And Reproduction
 
 Oracle artifacts default below `target/oracle/`:
