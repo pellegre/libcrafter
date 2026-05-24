@@ -37,8 +37,5 @@ fn public_module_paths_expose_representative_items() -> crafter::Result<()> {
     assert!(send_options.is_dry_run());
     assert_eq!(send_options.interface_name(), Some("dry-run0"));
 
-    #[allow(unused_imports)]
-    use crafter::live::{artifact, provider, validation};
-
     Ok(())
 }

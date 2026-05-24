@@ -24,7 +24,6 @@ one crate:
 | `crafter::core` | Packet model, layer model, encode/decode, checksums, formatting, and protocol registry. |
 | `crafter::pcap` | Pcap reader/writer helpers and libpcap-backed capture adapters. |
 | `crafter::net` | Interfaces, raw sockets, send, send-receive, routing helpers, and address helpers. |
-| `crafter::live` | Disposable live-lab helpers and integration-test support only. |
 
 ## Packet Composition
 
