@@ -16,6 +16,12 @@ artifact_dir="$artifact_root/$provider_name"
 manifest="$state_dir/manifest.env"
 api_base="${HETZNER_API_BASE:-https://api.hetzner.cloud/v1}"
 hetzner_smoke_cleanup_needed=false
+private_network_cidr="${HETZNER_PRIVATE_NETWORK_CIDR:-10.42.19.0/24}"
+private_network_zone="${HETZNER_NETWORK_ZONE:-us-east}"
+private_interface="${HETZNER_PRIVATE_INTERFACE:-ens10}"
+private_prefix_len="${HETZNER_PRIVATE_PREFIX_LEN:-24}"
+libcrafter_private_ipv4="${HETZNER_LIBCRAFTER_PRIVATE_IPV4:-10.42.19.10}"
+reference_private_ipv4="${HETZNER_REFERENCE_PRIVATE_IPV4:-10.42.19.20}"
 
 timestamp_utc() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -86,27 +92,72 @@ require_token() {
   fi
 }
 
+require_live_confirmation() {
+  local confirmation="${LIBCRAFTER_ORACLE_LIVE_CONFIRM:-${LIBCRAFTER_LIVE_LAB_CONFIRM:-${CONFIRM_LIVE_LAB:-}}}"
+
+  if [[ "$confirmation" != "run" ]]; then
+    echo "error: non-dry-run Hetzner create requires explicit confirmation from the oracle live command path" >&2
+    echo "hint: set LIBCRAFTER_LIVE_LAB_CONFIRM=run only for the intended disposable live run" >&2
+    exit 78
+  fi
+}
+
 ensure_dirs() {
   mkdir -p "$state_dir" "$artifact_dir"
 }
 
 write_manifest() {
-  local server_id="$1"
-  local server_name="$2"
-  local server_ipv4="$3"
-  local server_ipv6="$4"
-  local ssh_key="$5"
-  local hcloud_ssh_key_id="${6:-}"
+  local lab_name="$1"
+  local network_id="$2"
+  local network_name="$3"
+  local ssh_key="$4"
+  local hcloud_ssh_key_id="$5"
+  local libcrafter_server_id="$6"
+  local libcrafter_server_name="$7"
+  local libcrafter_public_ipv4="$8"
+  local libcrafter_public_ipv6="$9"
+  local reference_server_id="${10}"
+  local reference_server_name="${11}"
+  local reference_public_ipv4="${12}"
+  local reference_public_ipv6="${13}"
 
   ensure_dirs
   {
     printf 'provider=%q\n' "$provider_name"
     printf 'created_at=%q\n' "$(timestamp_utc)"
-    printf 'resource_type=%q\n' "hetzner-cloud-server"
-    printf 'server_id=%q\n' "$server_id"
-    printf 'server_name=%q\n' "$server_name"
-    printf 'server_ipv4=%q\n' "$server_ipv4"
-    printf 'server_ipv6=%q\n' "$server_ipv6"
+    printf 'resource_type=%q\n' "hetzner-two-endpoint-private-network-lab"
+    printf 'lab_name=%q\n' "$lab_name"
+    printf 'network_id=%q\n' "$network_id"
+    printf 'network_name=%q\n' "$network_name"
+    printf 'network_ip_range=%q\n' "$private_network_cidr"
+    printf 'network_zone=%q\n' "$private_network_zone"
+    printf 'private_interface=%q\n' "$private_interface"
+    printf 'endpoint_count=%q\n' "2"
+    printf 'libcrafter_role=%q\n' "libcrafter"
+    printf 'libcrafter_server_id=%q\n' "$libcrafter_server_id"
+    printf 'libcrafter_server_name=%q\n' "$libcrafter_server_name"
+    printf 'libcrafter_public_ipv4=%q\n' "$libcrafter_public_ipv4"
+    printf 'libcrafter_public_ipv6=%q\n' "$libcrafter_public_ipv6"
+    printf 'libcrafter_ssh_host=%q\n' "$libcrafter_public_ipv4"
+    printf 'libcrafter_ssh_address=%q\n' "${HETZNER_SSH_USER:-root}@$libcrafter_public_ipv4"
+    printf 'libcrafter_private_ipv4=%q\n' "$libcrafter_private_ipv4"
+    printf 'libcrafter_interface=%q\n' "$private_interface"
+    printf 'reference_role=%q\n' "reference_backend"
+    printf 'reference_server_id=%q\n' "$reference_server_id"
+    printf 'reference_server_name=%q\n' "$reference_server_name"
+    printf 'reference_public_ipv4=%q\n' "$reference_public_ipv4"
+    printf 'reference_public_ipv6=%q\n' "$reference_public_ipv6"
+    printf 'reference_ssh_host=%q\n' "$reference_public_ipv4"
+    printf 'reference_ssh_address=%q\n' "${HETZNER_SSH_USER:-root}@$reference_public_ipv4"
+    printf 'reference_private_ipv4=%q\n' "$reference_private_ipv4"
+    printf 'reference_interface=%q\n' "$private_interface"
+    printf 'cleanup_server_ids=%q\n' "$libcrafter_server_id $reference_server_id"
+    printf 'cleanup_network_id=%q\n' "$network_id"
+    printf 'cleanup_ssh_key_id=%q\n' "$hcloud_ssh_key_id"
+    printf 'server_id=%q\n' "$libcrafter_server_id"
+    printf 'server_name=%q\n' "$libcrafter_server_name"
+    printf 'server_ipv4=%q\n' "$libcrafter_public_ipv4"
+    printf 'server_ipv6=%q\n' "$libcrafter_public_ipv6"
     printf 'ssh_user=%q\n' "${HETZNER_SSH_USER:-root}"
     printf 'ssh_private_key=%q\n' "$ssh_key"
     printf 'hcloud_ssh_key_id=%q\n' "$hcloud_ssh_key_id"
@@ -146,6 +197,127 @@ api() {
       -X "$method" \
       -H "Authorization: Bearer $HETZNER_API_TOKEN" \
       "$api_base$path"
+  fi
+}
+
+wait_for_action() {
+  local action_id="$1"
+  local attempt
+  local status
+  local error_message
+
+  if [[ -z "$action_id" || "$action_id" == "null" ]]; then
+    return 0
+  fi
+
+  for attempt in $(seq 1 60); do
+    status="$(api GET "/actions/$action_id" | jq -r '.action.status // empty')"
+    case "$status" in
+      success)
+        return 0
+        ;;
+      error)
+        error_message="$(api GET "/actions/$action_id" | jq -r '.action.error.message // "unknown error"')"
+        echo "error: Hetzner action $action_id failed: $error_message" >&2
+        return 70
+        ;;
+    esac
+    sleep 3
+  done
+
+  echo "error: Hetzner action $action_id did not finish in time" >&2
+  return 75
+}
+
+create_network() {
+  local name="$1"
+  local payload
+  local response
+  local network_id
+
+  payload="$(jq -n \
+    --arg name "$name" \
+    --arg ip_range "$private_network_cidr" \
+    '{
+      name: $name,
+      ip_range: $ip_range,
+      labels: {
+        project: "libcrafter",
+        purpose: "live-lab",
+        provider: "hetzner",
+        topology: "two-endpoint-private"
+      }
+    }')"
+
+  response="$(api POST "/networks" "$payload")"
+  network_id="$(jq -r '.network.id // empty' <<<"$response")"
+
+  if [[ -z "$network_id" || "$network_id" == "null" ]]; then
+    echo "error: Hetzner network response did not include a network id" >&2
+    return 70
+  fi
+
+  printf '%s\n' "$network_id"
+}
+
+add_network_subnet() {
+  local network_id="$1"
+  local payload
+  local response
+  local action_id
+
+  payload="$(jq -n \
+    --arg network_zone "$private_network_zone" \
+    --arg ip_range "$private_network_cidr" \
+    '{
+      type: "cloud",
+      network_zone: $network_zone,
+      ip_range: $ip_range
+    }')"
+
+  response="$(api POST "/networks/$network_id/actions/add_subnet" "$payload")"
+  action_id="$(jq -r '.action.id // empty' <<<"$response")"
+  wait_for_action "$action_id"
+}
+
+attach_server_to_network() {
+  local server_id="$1"
+  local network_id="$2"
+  local private_ip="$3"
+  local payload
+  local response
+  local action_id
+
+  payload="$(jq -n \
+    --argjson network "$network_id" \
+    --arg ip "$private_ip" \
+    '{
+      network: $network,
+      ip: $ip
+    }')"
+
+  response="$(api POST "/servers/$server_id/actions/attach_to_network" "$payload")"
+  action_id="$(jq -r '.action.id // empty' <<<"$response")"
+  wait_for_action "$action_id"
+}
+
+cleanup_partial_create() {
+  local network_id="${1:-}"
+  local hcloud_ssh_key_id="${2:-}"
+  shift 2 || true
+  local server_id
+
+  for server_id in "$@"; do
+    if [[ -n "$server_id" && "$server_id" != "null" ]]; then
+      api DELETE "/servers/$server_id" >/dev/null || true
+    fi
+  done
+
+  if [[ -n "$network_id" && "$network_id" != "null" ]]; then
+    api DELETE "/networks/$network_id" >/dev/null || true
+  fi
+  if [[ -n "$hcloud_ssh_key_id" && "$hcloud_ssh_key_id" != "null" ]]; then
+    api DELETE "/ssh_keys/$hcloud_ssh_key_id" >/dev/null || true
   fi
 }
 
@@ -221,7 +393,7 @@ create_ssh_key() {
 
   if [[ -z "$key_id" || "$key_id" == "null" ]]; then
     echo "error: Hetzner SSH key response did not include a key id" >&2
-    exit 70
+    return 70
   fi
 
   printf '%s\n' "$key_id"
@@ -235,16 +407,43 @@ ssh_options() {
     -o ConnectTimeout=10
 }
 
-ssh_remote() {
-  local remote="${ssh_user:?ssh_user is missing}@${server_ipv4:?server_ipv4 is missing}"
+ssh_remote_host() {
+  local host="$1"
+  shift
+  local remote="${ssh_user:?ssh_user is missing}@$host"
   ssh $(ssh_options) "$remote" "$@"
+}
+
+ssh_remote() {
+  local host="${server_ipv4:-${libcrafter_public_ipv4:-}}"
+
+  if [[ -z "$host" ]]; then
+    echo "error: no default Hetzner SSH host is available" >&2
+    exit 66
+  fi
+
+  ssh_remote_host "$host" "$@"
+}
+
+scp_from_remote_host() {
+  local host="$1"
+  local remote_path="$2"
+  local local_path="$3"
+  local remote="${ssh_user:?ssh_user is missing}@$host"
+  scp $(ssh_options) -r "$remote:$remote_path" "$local_path"
 }
 
 scp_from_remote() {
   local remote_path="$1"
   local local_path="$2"
-  local remote="${ssh_user:?ssh_user is missing}@${server_ipv4:?server_ipv4 is missing}"
-  scp $(ssh_options) -r "$remote:$remote_path" "$local_path"
+  local host="${server_ipv4:-${libcrafter_public_ipv4:-}}"
+
+  if [[ -z "$host" ]]; then
+    echo "error: no default Hetzner SCP host is available" >&2
+    exit 66
+  fi
+
+  scp_from_remote_host "$host" "$remote_path" "$local_path"
 }
 
 wait_for_server_running() {
@@ -261,21 +460,44 @@ wait_for_server_running() {
   done
 
   echo "error: Hetzner server $server_id did not become running in time" >&2
-  exit 75
+  return 75
 }
 
 wait_for_ssh() {
+  local host="${1:-${server_ipv4:-${libcrafter_public_ipv4:-}}}"
   local attempt
 
+  if [[ -z "$host" ]]; then
+    echo "error: no Hetzner SSH host is available" >&2
+    return 66
+  fi
+
   for attempt in $(seq 1 60); do
-    if ssh_remote "true" >/dev/null 2>&1; then
+    if ssh_remote_host "$host" "true" >/dev/null 2>&1; then
       return 0
     fi
     sleep 5
   done
 
-  echo "error: SSH did not become ready for Hetzner server ${server_id:-unknown}" >&2
-  exit 75
+  echo "error: SSH did not become ready for Hetzner host $host" >&2
+  return 75
+}
+
+configure_private_interface() {
+  local host="$1"
+  local private_ip="$2"
+  local attempt
+
+  for attempt in $(seq 1 40); do
+    if ssh_remote_host "$host" "ip link show '$private_interface' >/dev/null 2>&1"; then
+      ssh_remote_host "$host" "ip link set '$private_interface' up && ip address replace '$private_ip/$private_prefix_len' dev '$private_interface'"
+      return 0
+    fi
+    sleep 3
+  done
+
+  echo "error: private interface $private_interface did not appear on Hetzner host $host" >&2
+  return 75
 }
 
 default_remote_command() {
@@ -296,12 +518,14 @@ create_payload() {
   local name="$1"
   local user_data="$2"
   local hcloud_ssh_key_id="$3"
+  local role="${4:-endpoint}"
   local server_type="${HETZNER_SERVER_TYPE:-cpx11}"
   local image="${HETZNER_IMAGE:-ubuntu-24.04}"
   local location="${HETZNER_LOCATION:-ash}"
 
   jq -n \
     --arg name "$name" \
+    --arg role "$role" \
     --arg server_type "$server_type" \
     --arg image "$image" \
     --arg location "$location" \
@@ -318,7 +542,9 @@ create_payload() {
       labels: {
         project: "libcrafter",
         purpose: "live-lab",
-        provider: "hetzner"
+        provider: "hetzner",
+        role: $role,
+        topology: "two-endpoint-private"
       }
     }'
 }
@@ -336,6 +562,11 @@ run_doctor() {
   echo "token_configured=$([[ -n "${HETZNER_API_TOKEN:-}" ]] && echo true || echo false)"
   echo "state_dir=$state_dir"
   echo "artifact_dir=$artifact_dir"
+  echo "lab_topology=two-endpoint-private-network"
+  echo "endpoint_roles=libcrafter,reference_backend"
+  echo "private_network_cidr=$private_network_cidr"
+  echo "private_network_zone=$private_network_zone"
+  echo "private_interface=$private_interface"
 
   if [[ "$dry_run" == true ]]; then
     echo "creates_infrastructure=false"
@@ -356,84 +587,206 @@ run_doctor() {
 run_create() {
   local dry_run=false
   local name
+  local network_name
+  local network_id=""
   local key_path
   local public_key
   local user_data
   local payload
   local response
-  local server_id
-  local server_ipv4
-  local server_ipv6
-  local hcloud_ssh_key_id
+  local hcloud_ssh_key_id=""
+  local libcrafter_server_id=""
+  local libcrafter_server_name
+  local libcrafter_public_ipv4
+  local libcrafter_public_ipv6
+  local reference_server_id=""
+  local reference_server_name
+  local reference_public_ipv4
+  local reference_public_ipv6
 
   if has_arg "--dry-run" "$@"; then
     dry_run=true
   fi
 
   name="$(server_name)"
+  network_name="$name-network"
+  libcrafter_server_name="$name-libcrafter"
+  reference_server_name="$name-reference"
 
   if [[ "$dry_run" == true ]]; then
     ensure_dirs
     cat >"$artifact_dir/create.dry-run.log" <<EOF
 $(timestamp_utc) Hetzner create dry-run completed without infrastructure changes.
+topology=two-endpoint-private-network
 server_type=${HETZNER_SERVER_TYPE:-cpx11}
 image=${HETZNER_IMAGE:-ubuntu-24.04}
 location=${HETZNER_LOCATION:-ash}
+network_name=$network_name
+network_ip_range=$private_network_cidr
+network_zone=$private_network_zone
+private_interface=$private_interface
+libcrafter_server_name=$libcrafter_server_name
+libcrafter_private_ipv4=$libcrafter_private_ipv4
+reference_server_name=$reference_server_name
+reference_private_ipv4=$reference_private_ipv4
 token_configured=$([[ -n "${HETZNER_API_TOKEN:-}" ]] && echo true || echo false)
 EOF
     echo "provider=$provider_name"
     echo "created=false"
     echo "dry_run=true"
     echo "creates_infrastructure=false"
-    echo "would_create_server=$name"
+    echo "would_create_two_endpoint_lab=true"
+    echo "would_create_network=$network_name"
+    echo "network_ip_range=$private_network_cidr"
+    echo "network_zone=$private_network_zone"
+    echo "endpoint_count=2"
+    echo "libcrafter_endpoint=$libcrafter_server_name"
+    echo "libcrafter_private_ipv4=$libcrafter_private_ipv4"
+    echo "reference_endpoint=$reference_server_name"
+    echo "reference_private_ipv4=$reference_private_ipv4"
+    echo "private_interface=$private_interface"
+    echo "ssh_key=shared"
     echo "log=$artifact_dir/create.dry-run.log"
     return 0
   fi
 
   require_tool curl
   require_tool jq
+  require_tool ssh
   require_tool ssh-keygen
   require_token
+  require_live_confirmation
   ensure_dirs
 
   key_path="$(ensure_ssh_key)"
   public_key="$(<"$key_path.pub")"
-  hcloud_ssh_key_id="$(create_ssh_key "$name" "$public_key")"
+  if ! hcloud_ssh_key_id="$(create_ssh_key "$name" "$public_key")"; then
+    exit 70
+  fi
   user_data="$(cloud_init_for_key "$public_key")"
-  payload="$(create_payload "$name" "$user_data" "$hcloud_ssh_key_id")"
+  ssh_private_key="$key_path"
+  ssh_user="${HETZNER_SSH_USER:-root}"
 
-  log "creating Hetzner server $name"
+  log "creating Hetzner private network $network_name"
+  if ! network_id="$(create_network "$network_name")"; then
+    cleanup_partial_create "" "$hcloud_ssh_key_id"
+    exit 70
+  fi
+  if ! add_network_subnet "$network_id"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id"
+    exit 70
+  fi
+
+  payload="$(create_payload "$libcrafter_server_name" "$user_data" "$hcloud_ssh_key_id" "libcrafter")"
+  log "creating Hetzner libcrafter endpoint $libcrafter_server_name"
   if ! response="$(api POST "/servers" "$payload")"; then
-    api DELETE "/ssh_keys/$hcloud_ssh_key_id" >/dev/null || true
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id"
     exit 70
   fi
-  server_id="$(jq -r '.server.id' <<<"$response")"
-  server_ipv4="$(jq -r '.server.public_net.ipv4.ip // empty' <<<"$response")"
-  server_ipv6="$(jq -r '.server.public_net.ipv6.ip // empty' <<<"$response")"
+  libcrafter_server_id="$(jq -r '.server.id // empty' <<<"$response")"
+  libcrafter_public_ipv4="$(jq -r '.server.public_net.ipv4.ip // empty' <<<"$response")"
+  libcrafter_public_ipv6="$(jq -r '.server.public_net.ipv6.ip // empty' <<<"$response")"
 
-  if [[ -z "$server_id" || "$server_id" == "null" ]]; then
-    api DELETE "/ssh_keys/$hcloud_ssh_key_id" >/dev/null || true
-    echo "error: Hetzner create response did not include a server id" >&2
+  if [[ -z "$libcrafter_server_id" || "$libcrafter_server_id" == "null" ]]; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id"
+    echo "error: Hetzner libcrafter endpoint response did not include a server id" >&2
     exit 70
   fi
 
-  write_manifest "$server_id" "$name" "$server_ipv4" "$server_ipv6" "$key_path" "$hcloud_ssh_key_id"
-  wait_for_server_running "$server_id"
+  payload="$(create_payload "$reference_server_name" "$user_data" "$hcloud_ssh_key_id" "reference_backend")"
+  log "creating Hetzner reference endpoint $reference_server_name"
+  if ! response="$(api POST "/servers" "$payload")"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id"
+    exit 70
+  fi
+  reference_server_id="$(jq -r '.server.id // empty' <<<"$response")"
+  reference_public_ipv4="$(jq -r '.server.public_net.ipv4.ip // empty' <<<"$response")"
+  reference_public_ipv6="$(jq -r '.server.public_net.ipv6.ip // empty' <<<"$response")"
+
+  if [[ -z "$reference_server_id" || "$reference_server_id" == "null" ]]; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id"
+    echo "error: Hetzner reference endpoint response did not include a server id" >&2
+    exit 70
+  fi
+
+  if ! wait_for_server_running "$libcrafter_server_id"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
+    exit 75
+  fi
+  if ! wait_for_server_running "$reference_server_id"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
+    exit 75
+  fi
+
+  if ! attach_server_to_network "$libcrafter_server_id" "$network_id" "$libcrafter_private_ipv4"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
+    exit 70
+  fi
+  if ! attach_server_to_network "$reference_server_id" "$network_id" "$reference_private_ipv4"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
+    exit 70
+  fi
+
+  if ! wait_for_ssh "$libcrafter_public_ipv4"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
+    exit 75
+  fi
+  if ! wait_for_ssh "$reference_public_ipv4"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
+    exit 75
+  fi
+  if ! configure_private_interface "$libcrafter_public_ipv4" "$libcrafter_private_ipv4"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
+    exit 75
+  fi
+  if ! configure_private_interface "$reference_public_ipv4" "$reference_private_ipv4"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
+    exit 75
+  fi
+
+  write_manifest \
+    "$name" \
+    "$network_id" \
+    "$network_name" \
+    "$key_path" \
+    "$hcloud_ssh_key_id" \
+    "$libcrafter_server_id" \
+    "$libcrafter_server_name" \
+    "$libcrafter_public_ipv4" \
+    "$libcrafter_public_ipv6" \
+    "$reference_server_id" \
+    "$reference_server_name" \
+    "$reference_public_ipv4" \
+    "$reference_public_ipv6"
 
   cat >"$artifact_dir/create.log" <<EOF
-$(timestamp_utc) Hetzner server created.
+$(timestamp_utc) Hetzner two-endpoint private-network lab created.
 provider=$provider_name
-server_id=$server_id
-server_name=$name
-server_ipv4=$server_ipv4
-server_ipv6=$server_ipv6
+lab_name=$name
+network_id=$network_id
+network_name=$network_name
+libcrafter_server_id=$libcrafter_server_id
+libcrafter_server_name=$libcrafter_server_name
+libcrafter_public_ipv4=$libcrafter_public_ipv4
+libcrafter_private_ipv4=$libcrafter_private_ipv4
+reference_server_id=$reference_server_id
+reference_server_name=$reference_server_name
+reference_public_ipv4=$reference_public_ipv4
+reference_private_ipv4=$reference_private_ipv4
 EOF
 
   echo "provider=$provider_name"
   echo "created=true"
-  echo "server_id=$server_id"
-  echo "server_name=$name"
-  echo "server_ipv4=$server_ipv4"
+  echo "lab_name=$name"
+  echo "network_id=$network_id"
+  echo "network_name=$network_name"
+  echo "endpoint_count=2"
+  echo "libcrafter_server_id=$libcrafter_server_id"
+  echo "libcrafter_public_ipv4=$libcrafter_public_ipv4"
+  echo "libcrafter_private_ipv4=$libcrafter_private_ipv4"
+  echo "reference_server_id=$reference_server_id"
+  echo "reference_public_ipv4=$reference_public_ipv4"
+  echo "reference_private_ipv4=$reference_private_ipv4"
   echo "manifest=$manifest"
 }
 
@@ -773,11 +1126,27 @@ run_artifact() {
   load_manifest
   mkdir -p "$artifact_dir"
 
-  if [[ -n "${server_ipv4:-}" && -n "${ssh_private_key:-}" ]]; then
-    if ssh_remote "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
-      rm -rf "$artifact_dir/remote"
-      mkdir -p "$artifact_dir/remote"
-      scp_from_remote "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/" || true
+  if [[ -n "${ssh_private_key:-}" ]]; then
+    if [[ -n "${libcrafter_public_ipv4:-}" ]]; then
+      if ssh_remote_host "$libcrafter_public_ipv4" "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
+        rm -rf "$artifact_dir/remote/libcrafter"
+        mkdir -p "$artifact_dir/remote/libcrafter"
+        scp_from_remote_host "$libcrafter_public_ipv4" "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/libcrafter/" || true
+      fi
+    elif [[ -n "${server_ipv4:-}" ]]; then
+      if ssh_remote "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
+        rm -rf "$artifact_dir/remote"
+        mkdir -p "$artifact_dir/remote"
+        scp_from_remote "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/" || true
+      fi
+    fi
+
+    if [[ -n "${reference_public_ipv4:-}" ]]; then
+      if ssh_remote_host "$reference_public_ipv4" "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
+        rm -rf "$artifact_dir/remote/reference"
+        mkdir -p "$artifact_dir/remote/reference"
+        scp_from_remote_host "$reference_public_ipv4" "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/reference/" || true
+      fi
     fi
   fi
 
@@ -787,6 +1156,12 @@ run_artifact() {
 }
 
 run_destroy() {
+  local server_ids=()
+  local server_id_value
+  local network_id_value
+  local ssh_key_id_value
+  local attempt
+
   if [[ ! -f "$manifest" ]]; then
     mkdir -p "$artifact_dir"
     cat >"$artifact_dir/destroy.log" <<EOF
@@ -802,20 +1177,42 @@ EOF
   require_tool curl
   require_token
 
-  if [[ -n "${server_id:-}" ]]; then
-    log "destroying Hetzner server $server_id"
-    api DELETE "/servers/$server_id" >/dev/null || true
+  if [[ -n "${cleanup_server_ids:-}" ]]; then
+    read -r -a server_ids <<<"$cleanup_server_ids"
+  elif [[ -n "${server_id:-}" ]]; then
+    server_ids=("$server_id")
   fi
-  if [[ -n "${hcloud_ssh_key_id:-}" ]]; then
-    api DELETE "/ssh_keys/$hcloud_ssh_key_id" >/dev/null || true
+
+  for server_id_value in "${server_ids[@]}"; do
+    if [[ -n "$server_id_value" && "$server_id_value" != "null" ]]; then
+      log "destroying Hetzner server $server_id_value"
+      api DELETE "/servers/$server_id_value" >/dev/null || true
+    fi
+  done
+
+  network_id_value="${cleanup_network_id:-${network_id:-}}"
+  if [[ -n "$network_id_value" && "$network_id_value" != "null" ]]; then
+    for attempt in $(seq 1 20); do
+      if api DELETE "/networks/$network_id_value" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 3
+    done
+  fi
+
+  ssh_key_id_value="${cleanup_ssh_key_id:-${hcloud_ssh_key_id:-}}"
+  if [[ -n "$ssh_key_id_value" && "$ssh_key_id_value" != "null" ]]; then
+    api DELETE "/ssh_keys/$ssh_key_id_value" >/dev/null || true
   fi
 
   mkdir -p "$artifact_dir"
   cat >"$artifact_dir/destroy.log" <<EOF
 $(timestamp_utc) Hetzner destroy requested.
 provider=$provider_name
-server_id=${server_id:-}
-server_name=${server_name:-}
+lab_name=${lab_name:-}
+server_ids=${cleanup_server_ids:-${server_id:-}}
+network_id=${network_id_value:-}
+ssh_key_id=${ssh_key_id_value:-}
 EOF
 
   rm -rf "$state_dir"
