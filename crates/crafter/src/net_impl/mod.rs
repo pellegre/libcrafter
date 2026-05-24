@@ -12,7 +12,7 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
-use crate::pcap_impl::{PcapError, Sniffer};
+use crate::pcap::{PcapError, Sniffer};
 use crate::{
     Arp, ArpOperation, CompiledPacket, CrafterError, Dhcp, Dns, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6,
     Layer, LinkType, NetworkLayer, Packet, Tcp, Udp, BOOTP_REPLY, DHCP_CLIENT_PORT,
