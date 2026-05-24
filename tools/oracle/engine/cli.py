@@ -3642,21 +3642,6 @@ def _backend_info(args: argparse.Namespace) -> int:
     return 0
 
 
-def _legacy_live_example(args: argparse.Namespace) -> int:
-    if args.backend == "scapy":
-        from .backends.scapy.live_examples import run_case
-
-        return run_case(
-            case_name=args.case_name,
-            suite_dir=Path(args.suite_dir),
-            host_if=args.host_if,
-            host_mac=args.host_mac,
-        )
-
-    print(f"unsupported backend: {args.backend}", file=sys.stderr)
-    return 2
-
-
 def _self_check(args: argparse.Namespace) -> int:
     from .generator import run_self_checks
     from .spec_loader import run_self_checks as run_spec_self_checks
@@ -4156,46 +4141,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="run strict cross-file spec validation",
     )
     specs_validate_parser.set_defaults(func=_specs_validate)
-
-    legacy_live_example_parser = subparsers.add_parser(
-        "legacy-live-example",
-        help="run legacy live example helpers",
-        description=(
-            "Run legacy Scapy-backed live example smoke helpers. These helpers "
-            "are not oracle validation contracts."
-        ),
-    )
-    legacy_live_example_parser.add_argument(
-        "--backend",
-        choices=("scapy",),
-        default="scapy",
-        help="reference backend to target (default: %(default)s)",
-    )
-    legacy_live_example_parser.add_argument(
-        "--case",
-        dest="case_name",
-        choices=(
-            "loopback-icmp-bytes",
-            "loopback-icmp-live",
-            "loopback-udp-tcp-bytes",
-            "loopback-udp-tcp-live",
-            "veth-arp-bytes",
-            "veth-arp-live",
-            "dns-local-bytes",
-            "dns-local-live",
-            "pcap-generate-live-pcap",
-        ),
-        required=True,
-        help="legacy example helper to run",
-    )
-    legacy_live_example_parser.add_argument(
-        "--suite-dir",
-        required=True,
-        help="suite artifact directory",
-    )
-    legacy_live_example_parser.add_argument("--host-if")
-    legacy_live_example_parser.add_argument("--host-mac")
-    legacy_live_example_parser.set_defaults(func=_legacy_live_example)
 
     report_parser = subparsers.add_parser(
         "report",
