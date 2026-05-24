@@ -367,10 +367,9 @@ packages:
   - pkg-config
   - libpcap-dev
   - python3
-  - python3-pip
-  - python3-venv
 runcmd:
-  - [ sh, -c, "python3 -m pip install --break-system-packages scapy || true" ]
+  - [ sh, -c, "curl -LsSf https://astral.sh/uv/install.sh | sh" ]
+  - [ sh, -c, "ln -sf /root/.local/bin/uv /usr/local/bin/uv" ]
 EOF
 }
 
@@ -607,9 +606,17 @@ apt-get install -y --no-install-recommends \
   iproute2 \
   libpcap-dev \
   pkg-config \
-  python3 \
-  python3-pip \
-  python3-venv
+  python3
+install_uv() {
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+    ln -sf "$(command -v uv)" /usr/local/bin/uv || true
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+  command -v uv >/dev/null 2>&1
+}
+install_uv
 if ! command -v cargo >/dev/null 2>&1; then
   curl -fsS https://sh.rustup.rs | sh -s -- -y
 fi
@@ -620,7 +627,9 @@ cargo build -p crafter --example oracle_live_endpoint
   echo "role=$LIBCRAFTER_ENDPOINT_ROLE"
   echo "private_ipv4=$LIBCRAFTER_PRIVATE_IPV4"
   echo "repository_synced=true"
-  echo "system_packages=build-essential ca-certificates clang curl git iproute2 libpcap-dev pkg-config python3 python3-pip python3-venv"
+  echo "system_packages=build-essential ca-certificates clang curl git iproute2 libpcap-dev pkg-config python3"
+  echo "python_dependency_runner=uv"
+  echo "uv=$(command -v uv)"
   echo "rustc=$(rustc --version)"
   echo "cargo=$(cargo --version)"
   echo "libcrafter_example=oracle_live_endpoint"
@@ -643,9 +652,17 @@ apt-get install -y --no-install-recommends \
   curl \
   git \
   iproute2 \
-  python3 \
-  python3-pip \
-  python3-venv
+  python3
+install_uv() {
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+    ln -sf "$(command -v uv)" /usr/local/bin/uv || true
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+  command -v uv >/dev/null 2>&1
+}
+install_uv
 mkdir -p "live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE"
 tools/oracle/run backend-info --backend scapy \
   > "live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/scapy-backend.json"
@@ -660,7 +677,9 @@ fi
   echo "role=$LIBCRAFTER_ENDPOINT_ROLE"
   echo "private_ipv4=$LIBCRAFTER_PRIVATE_IPV4"
   echo "repository_synced=true"
-  echo "system_packages=ca-certificates curl git iproute2 python3 python3-pip python3-venv"
+  echo "system_packages=ca-certificates curl git iproute2 python3"
+  echo "python_dependency_runner=uv"
+  echo "uv=$(command -v uv)"
   echo "scapy_backend=ok"
   echo "tshark_available=$tshark_available"
   echo "tshark_required=false"
@@ -679,7 +698,9 @@ role=libcrafter
 dry_run=true
 repository_sync=planned
 private_ipv4=$libcrafter_private_ipv4
-system_packages=build-essential ca-certificates clang curl git iproute2 libpcap-dev pkg-config python3 python3-pip python3-venv
+system_packages=build-essential ca-certificates clang curl git iproute2 libpcap-dev pkg-config python3
+python_dependency_runner=uv
+uv_install=if-missing
 rust_install=if-missing
 validation=cargo build -p crafter --example oracle_live_endpoint
 artifact=live-artifacts/bootstrap/libcrafter/bootstrap.env
@@ -689,7 +710,9 @@ role=reference_backend
 dry_run=true
 repository_sync=planned
 private_ipv4=$reference_private_ipv4
-system_packages=ca-certificates curl git iproute2 python3 python3-pip python3-venv
+system_packages=ca-certificates curl git iproute2 python3
+python_dependency_runner=uv
+uv_install=if-missing
 scapy_validation=tools/oracle/run backend-info --backend scapy
 tshark_availability=reported_optional_not_required
 artifact=live-artifacts/bootstrap/reference_backend/bootstrap.env
@@ -743,6 +766,10 @@ cd "$HOME/libcrafter"
 if ! command -v cargo >/dev/null 2>&1; then
   curl -fsS https://sh.rustup.rs | sh -s -- -y
 fi
+if ! command -v uv >/dev/null 2>&1; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+fi
+export PATH="$HOME/.local/bin:$PATH"
 . "$HOME/.cargo/env"
 cargo test --workspace
 tools/oracle/run backend-info --backend scapy >/dev/null

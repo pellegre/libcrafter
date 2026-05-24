@@ -1113,7 +1113,7 @@ def _load_yaml_object(path: Path) -> JSONObject:
     except ModuleNotFoundError as exc:
         raise SpecValidationError(
             "PyYAML is required to load oracle specs; run through tools/oracle/run "
-            "or install tools/oracle/requirements.txt"
+            "so uv can provide oracle Python dependencies"
         ) from exc
 
     with path.open("r", encoding="utf-8") as handle:
