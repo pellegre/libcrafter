@@ -288,19 +288,29 @@ def _run_sender(
 
     for vector in vectors:
         packet = decode_root(vector.root or vector.decoder or "Raw", vector.to_bytes())
+        send_packet, send_root, send_mode = _materialized_send_packet(
+            scapy_all,
+            packet,
+            request,
+            vector.root,
+        )
+        sent_raw = bytes(scapy_all.raw(send_packet))
         send_record: JSONObject = {
             "index": vector.plan.index,
             "dry_run": dry_run,
             "root": vector.root,
             "raw_hex": vector.raw_hex,
             "length": len(vector.to_bytes()),
-            "send_mode": _send_mode_for_root(vector.root),
+            "send_root": send_root,
+            "sent_raw_hex": sent_raw.hex(),
+            "byte_length": len(sent_raw),
+            "send_mode": send_mode,
         }
         sent = False
         packet_errors: list[str] = []
         if not dry_run:
             try:
-                _send_packet(scapy_all, packet, request, vector.root)
+                _send_packet(scapy_all, send_packet, request, send_mode)
                 time.sleep(LIVE_SEND_INTERVAL_SECONDS)
                 sent = True
                 sent_count += 1
@@ -321,6 +331,10 @@ def _run_sender(
                 metadata={
                     "root": vector.root,
                     "raw_hex": vector.raw_hex,
+                    "sent_raw_hex": sent_raw.hex(),
+                    "send_root": send_root,
+                    "send_mode": send_mode,
+                    "byte_length": len(sent_raw),
                     "feature_tags": list(vector.plan.feature_tags),
                 },
             )
@@ -373,6 +387,7 @@ def _run_receiver(
                 metadata={
                     "root": vector.root,
                     "expected_raw_hex": vector.raw_hex,
+                    "capture_root": vector.root,
                     "feature_tags": list(vector.plan.feature_tags),
                 },
             )
@@ -428,8 +443,11 @@ def _run_receiver(
             continue
 
         try:
+            observed_raw = _observed_packet_bytes(scapy_all, captured[offset], vector)
             decoded = _decode_observed_packet(scapy_all, captured[offset], vector)
             decoded_models.append(decoded.to_dict())
+            capture_path = str(capture_summary_path)
+            capture_link_type = _packet_link_type(captured[offset])
             statuses.append(
                 _index_status(
                     request,
@@ -443,6 +461,11 @@ def _run_receiver(
                     metadata={
                         "root": vector.root,
                         "expected_raw_hex": vector.raw_hex,
+                        "observed_raw_hex": observed_raw.hex(),
+                        "capture_root": vector.root,
+                        "capture_link_type": capture_link_type,
+                        "capture_path": capture_path,
+                        "byte_length": len(observed_raw),
                     },
                 )
             )
@@ -460,6 +483,9 @@ def _run_receiver(
                     metadata={
                         "root": vector.root,
                         "expected_raw_hex": vector.raw_hex,
+                        "capture_root": vector.root,
+                        "capture_link_type": _packet_link_type(captured[offset]),
+                        "capture_path": str(capture_summary_path),
                     },
                 )
             )
@@ -471,6 +497,18 @@ def _run_receiver(
             "packet_count": len(captured),
             "decoded_count": len(decoded_models),
             "packets": decoded_models,
+            "observed_packets": [
+                {
+                    "index": status["index"],
+                    "observed_raw_hex": status.get("observed_raw_hex"),
+                    "capture_root": status.get("capture_root"),
+                    "capture_link_type": status.get("capture_link_type"),
+                    "byte_length": status.get("byte_length"),
+                    "capture_path": status.get("capture_path"),
+                }
+                for status in statuses
+                if status.get("received")
+            ],
         },
     )
     return _endpoint_response(
@@ -502,12 +540,25 @@ def _send_packet(
     scapy_all: Any,
     packet: Any,
     request: JSONObject,
-    root: str | None,
+    send_mode: str,
 ) -> None:
     kwargs = {"iface": _required_string(request, "interface"), "verbose": False}
-    if _send_mode_for_root(root) == "link-layer":
+    if send_mode == "link-layer":
         scapy_all.sendp(packet, **kwargs)
-    elif _can_send_as_ethernet(request):
+    else:
+        scapy_all.send(packet, **kwargs)
+
+
+def _materialized_send_packet(
+    scapy_all: Any,
+    packet: Any,
+    request: JSONObject,
+    root: str | None,
+) -> tuple[Any, str | None, str]:
+    send_mode = _send_mode_for_root(root)
+    if send_mode == "link-layer":
+        return packet, root, send_mode
+    if _can_send_as_ethernet(request):
         ether_type = 0x86DD if packet.haslayer(scapy_all.IPv6) else 0x0800
         frame = (
             scapy_all.Ether(
@@ -517,9 +568,8 @@ def _send_packet(
             )
             / packet
         )
-        scapy_all.sendp(frame, **kwargs)
-    else:
-        scapy_all.send(packet, **kwargs)
+        return frame, "link:ethernet", "link-layer"
+    return packet, root, send_mode
 
 
 def _can_send_as_ethernet(request: JSONObject) -> bool:
@@ -557,13 +607,23 @@ def _decode_observed_packet(
 ) -> DecodedModel:
     root = vector.root or vector.decoder
     observed = _packet_for_root(scapy_all, packet, root)
-    raw_bytes = bytes(scapy_all.raw(observed))
+    raw_bytes = _observed_packet_bytes(scapy_all, packet, vector)
     return normalize_packet(
         observed,
         root=root,
         source_hex=raw_bytes.hex(),
         feature_tags=vector.plan.feature_tags,
     )
+
+
+def _observed_packet_bytes(
+    scapy_all: Any,
+    packet: Any,
+    vector: EncodedVector,
+) -> bytes:
+    root = vector.root or vector.decoder
+    observed = _packet_for_root(scapy_all, packet, root)
+    return bytes(scapy_all.raw(observed))
 
 
 def _packet_for_root(scapy_all: Any, packet: Any, root: str | None) -> Any:
@@ -654,10 +714,30 @@ def _index_status(
         "sent": sent,
         "received": received,
         "decoded_count": decoded_count,
+        "sent_raw_hex": _optional_status_string(metadata.get("sent_raw_hex")),
+        "send_root": _optional_status_string(metadata.get("send_root")),
+        "send_mode": _optional_status_string(metadata.get("send_mode")),
+        "observed_raw_hex": _optional_status_string(metadata.get("observed_raw_hex")),
+        "capture_root": _optional_status_string(metadata.get("capture_root")),
+        "capture_link_type": _optional_status_string(metadata.get("capture_link_type")),
+        "capture_path": _optional_status_string(metadata.get("capture_path")),
+        "byte_length": _optional_status_int(metadata.get("byte_length")),
         "capture_paths": capture_paths,
         "errors": errors,
         "metadata": metadata,
     }
+
+
+def _optional_status_string(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _optional_status_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
 
 
 def _read_request(input_path: str) -> object:

@@ -2551,10 +2551,28 @@ def _live_status_from_object(value: object, name: str):
         sent=bool(status.get("sent")),
         received=bool(status.get("received")),
         decoded_count=_object_int(status.get("decoded_count"), 0),
+        sent_raw_hex=_optional_string(status.get("sent_raw_hex")),
+        send_root=_optional_string(status.get("send_root")),
+        send_mode=_optional_string(status.get("send_mode")),
+        observed_raw_hex=_optional_string(status.get("observed_raw_hex")),
+        capture_root=_optional_string(status.get("capture_root")),
+        capture_link_type=_optional_string(status.get("capture_link_type")),
+        capture_path=_optional_string(status.get("capture_path")),
+        byte_length=_optional_response_int(status.get("byte_length")),
         capture_paths=_string_values(status.get("capture_paths", [])),
         errors=_string_values(status.get("errors", [])),
         metadata=_json_object(status.get("metadata", {}), f"{name}.metadata"),
     )
+
+
+def _optional_response_int(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value, 0)
+    return None
 
 
 def _required_response_string(value: JSONObject, key: str) -> str:
@@ -2998,6 +3016,7 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
                 "version": 1,
                 "batches": endpoint_protocol_batches,
             },
+            "validation_count": len(validations),
             "exchanges": [exchange.to_dict() for exchange in exchanges],
             "validations": [validation.to_dict() for validation in validations],
         },
