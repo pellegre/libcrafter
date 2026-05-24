@@ -79,6 +79,8 @@ class CorpusEligibility(JsonModel):
     eligible: bool | None = None
     reason: str | None = None
     skip_reasons: list[str] = field(default_factory=list)
+    compare_root: str | None = None
+    strict_bytes: bool | None = None
     mutable_fields: list[str] = field(default_factory=list)
     metadata: JSONObject = field(default_factory=dict)
 
@@ -91,6 +93,12 @@ class CorpusEligibility(JsonModel):
         reason = raw.get("reason")
         if reason is not None and not isinstance(reason, str):
             raise CorpusFormatError(f"{name}.reason must be a string or null")
+        compare_root = raw.get("compare_root")
+        if compare_root is not None and not isinstance(compare_root, str):
+            raise CorpusFormatError(f"{name}.compare_root must be a string or null")
+        strict_bytes = raw.get("strict_bytes")
+        if strict_bytes is not None and not isinstance(strict_bytes, bool):
+            raise CorpusFormatError(f"{name}.strict_bytes must be a boolean or null")
         try:
             skip_reasons = string_list(raw.get("skip_reasons", []), f"{name}.skip_reasons")
             mutable_fields = string_list(raw.get("mutable_fields", []), f"{name}.mutable_fields")
@@ -105,9 +113,25 @@ class CorpusEligibility(JsonModel):
             eligible=eligible,
             reason=reason,
             skip_reasons=skip_reasons,
+            compare_root=compare_root,
+            strict_bytes=strict_bytes,
             mutable_fields=mutable_fields,
             metadata=metadata,
         )
+
+    def to_dict(self) -> JSONObject:
+        output: JSONObject = {
+            "eligible": self.eligible,
+            "reason": self.reason,
+            "skip_reasons": list(self.skip_reasons),
+            "mutable_fields": list(self.mutable_fields),
+            "metadata": dict(self.metadata),
+        }
+        if self.compare_root is not None:
+            output["compare_root"] = self.compare_root
+        if self.strict_bytes is not None:
+            output["strict_bytes"] = self.strict_bytes
+        return output
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,6 +506,8 @@ def _wire_eligibility(
             "provider": selected_provider,
             "eligible": False,
             "skip_reasons": [SKIP_PROVIDER_CAPABILITY_UNAVAILABLE],
+            "compare_root": _wire_compare_root(plan),
+            "strict_bytes": bool(plan.strict_bytes),
             "mutable_fields": [],
             "metadata": {
                 "provider_available": False,
@@ -489,6 +515,14 @@ def _wire_eligibility(
             },
         }
     reasons = _string_list_value(selected.get("skip_reasons", []), "wire.skip_reasons")
+    compare_root = _optional_string_value(
+        selected.get("compare_root"),
+        "wire.compare_root",
+    )
+    strict_bytes = _optional_bool_value(
+        selected.get("strict_bytes"),
+        "wire.strict_bytes",
+    )
     mutable_fields = _string_list_value(
         selected.get("mutable_fields", []),
         "wire.mutable_fields",
@@ -498,6 +532,8 @@ def _wire_eligibility(
         eligible=bool(selected.get("eligible")),
         reason=_first_reason(reasons),
         skip_reasons=reasons,
+        compare_root=compare_root,
+        strict_bytes=strict_bytes,
         mutable_fields=mutable_fields,
         metadata={
             **metadata,
@@ -539,12 +575,27 @@ def _wire_profile_decision(
         reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
 
     reasons = _unique_strings(reasons)
-    mutable_fields = _wire_mutable_fields(plan)
+    provider = str(capabilities.get("provider", "unknown"))
+    policy = wire_comparison_policy(plan, provider=provider)
+    mutable_fields = _string_list_value(
+        policy.get("mutable_fields", []),
+        "wire.mutable_fields",
+    )
+    compare_root = _optional_string_value(
+        policy.get("compare_root"),
+        "wire.compare_root",
+    )
+    strict_bytes = _optional_bool_value(
+        policy.get("strict_bytes"),
+        "wire.strict_bytes",
+    )
     return {
-        "provider": str(capabilities.get("provider", "unknown")),
+        "provider": provider,
         "eligible": not reasons,
         "reason": _first_reason(reasons),
         "skip_reasons": reasons,
+        "compare_root": compare_root,
+        "strict_bytes": strict_bytes,
         "mutable_fields": mutable_fields,
         "metadata": {
             "required_backend_capabilities": list(required),
@@ -564,6 +615,7 @@ def _wire_profile_decision(
                 "provider_mac": _requires_provider_mac(plan),
                 "controlled_service": _requires_controlled_service(plan),
             },
+            "mutation_policy": policy,
         },
     }
 
@@ -717,13 +769,113 @@ def _is_wire_provider_unsafe_feature(plan: PacketPlan) -> bool:
     return bool(set(plan.feature_tags).intersection({"malformed", "non_strict_reencode"}))
 
 
-def _wire_mutable_fields(plan: PacketPlan) -> list[str]:
+def wire_comparison_policy(
+    plan: PacketPlan,
+    *,
+    provider: str = _WIRE_DEFAULT_PROVIDER,
+) -> JSONObject:
+    """Return the wire byte-comparison policy for a packet and provider."""
+
+    compare_root = _wire_compare_root(plan)
+    mutable_fields = _wire_mutable_fields(plan, provider=provider)
+    byte_mutable_fields = _wire_byte_mutable_fields(plan, provider=provider)
+    strict_bytes = bool(plan.strict_bytes and not byte_mutable_fields)
+    return {
+        "provider": provider,
+        "compare_root": compare_root,
+        "strict_bytes": strict_bytes,
+        "mutable_fields": mutable_fields,
+        "byte_mutable_fields": byte_mutable_fields,
+        "transit_mutations": _wire_transit_mutations(plan, provider=provider),
+    }
+
+
+def _wire_compare_root(plan: PacketPlan) -> str | None:
+    root = _packet_root(plan)
+    if root is not None:
+        return root
+    if _requires_ipv4(plan):
+        return "l3:ipv4"
+    if _requires_ipv6(plan):
+        return "l3:ipv6"
+    return None
+
+
+def _wire_mutable_fields(
+    plan: PacketPlan,
+    *,
+    provider: str = _WIRE_DEFAULT_PROVIDER,
+) -> list[str]:
     fields: list[str] = []
+    if provider != "hetzner":
+        return fields
     if "ipv4" in plan.stack:
         fields.extend(["ipv4.ttl", "ipv4.checksum"])
-    if _requires_l2(plan):
-        fields.extend(["ethernet.src", "ethernet.dst"])
+    if _wire_provider_adds_link_layer_metadata(plan, provider=provider):
+        fields.extend(["ethernet.src", "ethernet.dst", "ethernet.ethertype"])
     return _unique_strings(fields)
+
+
+def _wire_transit_mutations(
+    plan: PacketPlan,
+    *,
+    provider: str = _WIRE_DEFAULT_PROVIDER,
+) -> list[JSONObject]:
+    mutations: list[JSONObject] = []
+    if provider != "hetzner":
+        return mutations
+    if "ipv4" in plan.stack:
+        mutations.extend(
+            [
+                {
+                    "field": "ipv4.ttl",
+                    "reason": "provider live transit may decrement TTL before capture",
+                },
+                {
+                    "field": "ipv4.checksum",
+                    "reason": "IPv4 header checksum follows provider TTL mutation",
+                },
+            ]
+        )
+    if _wire_provider_adds_link_layer_metadata(plan, provider=provider):
+        mutations.append(
+            {
+                "field": "ethernet.*",
+                "reason": "provider capture may expose Ethernet metadata around an L3 send",
+                "covered_fields": ["ethernet.src", "ethernet.dst", "ethernet.ethertype"],
+            }
+        )
+    return mutations
+
+
+def _wire_byte_mutable_fields(
+    plan: PacketPlan,
+    *,
+    provider: str = _WIRE_DEFAULT_PROVIDER,
+) -> list[str]:
+    compare_root = _wire_compare_root(plan) or ""
+    return [
+        field
+        for field in _wire_mutable_fields(plan, provider=provider)
+        if _wire_mutable_field_affects_compare_bytes(field, compare_root)
+    ]
+
+
+def _wire_mutable_field_affects_compare_bytes(field: str, compare_root: str) -> bool:
+    layer = field.split(".", 1)[0]
+    if compare_root.startswith("l3:"):
+        return layer not in {"ethernet", "linux_cooked", "null_loopback"}
+    if compare_root.startswith("link:"):
+        return True
+    return True
+
+
+def _wire_provider_adds_link_layer_metadata(
+    plan: PacketPlan,
+    *,
+    provider: str,
+) -> bool:
+    return provider == "hetzner" and (_wire_compare_root(plan) or "").startswith("l3:")
 
 
 def _fields_contain_value(value: object, needles: set[str]) -> bool:
@@ -926,6 +1078,22 @@ def _string_list_value(value: object, name: str) -> list[str]:
         return string_list(value, name)
     except ValueError as exc:
         raise CorpusFormatError(str(exc)) from exc
+
+
+def _optional_string_value(value: object, name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CorpusFormatError(f"{name} must be a string or null")
+    return value
+
+
+def _optional_bool_value(value: object, name: str) -> bool | None:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise CorpusFormatError(f"{name} must be a boolean or null")
+    return value
 
 
 def _eligibility_value(

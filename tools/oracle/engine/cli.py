@@ -1841,6 +1841,7 @@ def _hetzner_live_transit_plan(plan: PacketPlan) -> PacketPlan:
         layer: dict(layer_fields)
         for layer, layer_fields in plan.fields.items()
     }
+    wire_policy = _live_wire_policy(plan, provider="hetzner")
     rewrites: list[JSONObject] = []
     ipv4 = fields.get("ipv4")
     if isinstance(ipv4, dict) and int(ipv4.get("ttl", 64)) < 2:
@@ -1857,17 +1858,54 @@ def _hetzner_live_transit_plan(plan: PacketPlan) -> PacketPlan:
     return replace(
         plan,
         fields=fields,
-        strict_bytes=False,
+        strict_bytes=bool(wire_policy.get("strict_bytes", plan.strict_bytes)),
         metadata={
             **plan.metadata,
+            "wire": wire_policy,
             "live_transit_rewrites": rewrites,
-            "live_mutable_fields": [
-                "ipv4.ttl",
-                "ipv4.checksum",
-            ],
-            "strict_bytes": False,
+            "live_mutable_fields": list(wire_policy.get("mutable_fields", [])),
+            "strict_bytes": bool(wire_policy.get("strict_bytes", plan.strict_bytes)),
         },
     )
+
+
+def _live_wire_policy(plan: PacketPlan, *, provider: str) -> JSONObject:
+    raw_policy = plan.metadata.get("wire")
+    if isinstance(raw_policy, Mapping):
+        policy = {
+            key: value
+            for key, value in raw_policy.items()
+            if isinstance(key, str)
+        }
+    else:
+        from .corpus import wire_comparison_policy
+
+        policy = wire_comparison_policy(plan, provider=provider)
+
+    mutable_fields = policy.get("mutable_fields", [])
+    if not isinstance(mutable_fields, Sequence) or isinstance(
+        mutable_fields,
+        (str, bytes, bytearray),
+    ):
+        mutable_fields = []
+    policy["mutable_fields"] = [
+        field
+        for field in mutable_fields
+        if isinstance(field, str) and field
+    ]
+
+    strict_bytes = policy.get("strict_bytes")
+    if not isinstance(strict_bytes, bool):
+        byte_mutable_fields = policy.get("byte_mutable_fields", policy["mutable_fields"])
+        strict_bytes = bool(plan.strict_bytes and not byte_mutable_fields)
+    policy["strict_bytes"] = strict_bytes
+
+    compare_root = policy.get("compare_root")
+    if compare_root is not None and not isinstance(compare_root, str):
+        compare_root = None
+    policy["compare_root"] = compare_root
+    policy.setdefault("provider", provider)
+    return policy
 
 
 def _upload_hetzner_endpoint_request(
@@ -2222,29 +2260,27 @@ def _compare_live_decoded_results(
     plans: list[PacketPlan],
 ) -> list[ComparisonResult]:
     results: list[ComparisonResult] = []
-    remaining_actual = [
-        (
-            candidate,
-            _live_comparison_model(candidate),
-        )
-        for candidate in actual
-    ]
+    remaining_actual = list(actual)
     for index in range(min(len(expected), len(plans))):
         if not remaining_actual:
             break
         plan = plans[index]
-        expected_model = _live_comparison_model(expected[index])
+        expected_model = _live_comparison_model(expected[index], plan=plan)
         expected_fingerprint = _live_model_fingerprint(expected_model)
         exact_index = next(
             (
                 candidate_index
-                for candidate_index, (_, candidate_model) in enumerate(remaining_actual)
-                if _live_model_fingerprint(candidate_model) == expected_fingerprint
+                for candidate_index, candidate in enumerate(remaining_actual)
+                if _live_model_fingerprint(
+                    _live_comparison_model(candidate, plan=plan)
+                )
+                == expected_fingerprint
             ),
             None,
         )
         if exact_index is not None:
-            candidate, candidate_model = remaining_actual.pop(exact_index)
+            candidate = remaining_actual.pop(exact_index)
+            candidate_model = _live_comparison_model(candidate, plan=plan)
             result = compare_decoded_models(
                 expected=expected_model,
                 actual=candidate_model,
@@ -2254,27 +2290,30 @@ def _compare_live_decoded_results(
                 actual_strict_bytes_hex=_strict_bytes_hex(candidate),
             )
         else:
-            candidates = [
-                (
-                    candidate_index,
-                    candidate,
-                    candidate_model,
-                    compare_decoded_models(
-                        expected=expected_model,
-                        actual=candidate_model,
-                        plan=plan,
-                        direction=direction,
-                        reproduction_command=_live_reproduction_command(args),
-                        actual_strict_bytes_hex=_strict_bytes_hex(candidate),
-                    ),
+            candidates = []
+            for candidate_index, candidate in enumerate(remaining_actual):
+                candidate_model = _live_comparison_model(candidate, plan=plan)
+                candidates.append(
+                    (
+                        candidate_index,
+                        candidate,
+                        candidate_model,
+                        compare_decoded_models(
+                            expected=expected_model,
+                            actual=candidate_model,
+                            plan=plan,
+                            direction=direction,
+                            reproduction_command=_live_reproduction_command(args),
+                            actual_strict_bytes_hex=_strict_bytes_hex(candidate),
+                        ),
+                    )
                 )
-                for candidate_index, (candidate, candidate_model) in enumerate(remaining_actual)
-            ]
             candidate_index, _, _, result = min(
                 candidates,
                 key=lambda candidate: _live_comparison_score(candidate[3]),
             )
             remaining_actual.pop(candidate_index)
+        result = _annotate_live_comparison_result(result, plan)
         results.append(result)
 
     shared_count = len(results)
@@ -2303,6 +2342,12 @@ def _compare_live_decoded_results(
                 metadata={
                     "live_packet_exchange": False,
                     "reason": "receiver decoded packet count mismatch",
+                    "wire_policy": _live_wire_policy(plan, provider="hetzner"),
+                    "live_address_rewrite": plan.metadata.get("live_address_rewrite"),
+                    "live_transit_rewrites": plan.metadata.get(
+                        "live_transit_rewrites",
+                        [],
+                    ),
                 },
             )
         )
@@ -2325,17 +2370,54 @@ def _live_model_fingerprint(model: JSONObject) -> str:
     )
 
 
-def _live_comparison_model(model: JSONObject) -> JSONObject:
+def _live_comparison_model(model: JSONObject, *, plan: PacketPlan) -> JSONObject:
     output = json.loads(json.dumps(model))
     if not isinstance(output, dict):
         return model
     fields = output.get("fields")
     if isinstance(fields, dict):
-        ipv4 = fields.get("ipv4")
-        if isinstance(ipv4, dict):
-            ipv4.pop("ttl", None)
-            ipv4.pop("checksum", None)
+        for mutable_field in _live_mutable_fields(plan):
+            _remove_live_mutable_field(fields, mutable_field)
     return output
+
+
+def _annotate_live_comparison_result(
+    result: ComparisonResult,
+    plan: PacketPlan,
+) -> ComparisonResult:
+    wire_policy = _live_wire_policy(plan, provider="hetzner")
+    return replace(
+        result,
+        metadata={
+            **result.metadata,
+            "wire_policy": wire_policy,
+            "live_address_rewrite": plan.metadata.get("live_address_rewrite"),
+            "live_transit_rewrites": plan.metadata.get("live_transit_rewrites", []),
+        },
+    )
+
+
+def _live_mutable_fields(plan: PacketPlan) -> list[str]:
+    return [
+        field
+        for field in _live_wire_policy(plan, provider="hetzner").get("mutable_fields", [])
+        if isinstance(field, str)
+    ]
+
+
+def _remove_live_mutable_field(fields: JSONObject, mutable_field: str) -> None:
+    parts = mutable_field.split(".")
+    if len(parts) < 2:
+        return
+    if parts[0] == "fields":
+        parts = parts[1:]
+    current: object = fields
+    for part in parts[:-1]:
+        if not isinstance(current, dict):
+            return
+        current = current.get(part)
+    if isinstance(current, dict):
+        current.pop(parts[-1], None)
 
 
 def _command_artifact_paths(command: JSONObject) -> list[str]:
