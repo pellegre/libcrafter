@@ -1,19 +1,98 @@
 # Packet Fixture Strategy
 
 This directory holds offline fixtures for local tests. Fixtures must be safe to
-run without root, live network access, cloud credentials, or packet injection.
+run without root, live network access, cloud credentials, packet injection, or
+host-specific interface state.
+
+Local tests consume committed fixtures only. They must not silently regenerate
+files in this tree.
 
 ## Categories
 
-- `bytes/`: golden serialized packet bytes produced from deterministic packet
-  definitions. These are used for encoder tests, checksum tests, and decode
-  roundtrips.
-- `pcaps/`: small pcap or pcapng captures used for read/write and decode tests.
-  Captures must be synthetic, sanitized, or generated in disposable labs.
-- `summaries/`: expected text or JSON summaries for packet display, hexdump, and
-  layer inspection tests.
-- `malformed/`: intentionally truncated, inconsistent, or unsupported inputs used
-  to verify structured decode errors and panic-free parsing.
+- `bytes/`: compact packet bytes used by decode, summary, field assertion, and
+  compile/decode/compile tests. Use `.bin` for opaque bytes and `.hex` when
+  line-oriented review is useful.
+- `pcaps/`: classic pcap files for supported offline link types. These exercise
+  public pcap reader behavior, link type mapping, timestamps, record lengths,
+  and packet decoding.
+- `summaries/`: stable expected `summary()` output, or richer fixture output
+  when a test needs `show()` or hexdump text.
+- `malformed/`: line-oriented malformed input corpora with structured expected
+  error categories.
+
+## Test Ownership
+
+The integration fixture catalog lives in
+`crates/crafter/tests/fixture_suite.rs`. When adding a valid fixture, update
+`VALID_FIXTURES` and, if it closes a required coverage gap, update the
+`coverage_for_case` mapping. The catalog entry records:
+
+- `name`: lowercase dash-separated case name.
+- `path`: path below `tests/fixtures/`.
+- `contents`: checked-in bytes or checked-in hex text.
+- `target`: public decode entrypoint, such as a link type, L3 protocol, raw
+  decode, or DHCP option decoder.
+- `expected_layers`: typed layers that must be present after decode.
+- `preserve_exact_bytes`: whether decode/compile must preserve the fixture bytes.
+- `summary_path`: optional expected summary fixture.
+
+All files under `tests/fixtures/bytes/` must be listed in `VALID_FIXTURES`.
+All files under `tests/fixtures/pcaps/` must be listed in `PCAP_FIXTURES`.
+The catalog tests fail if checked-in fixtures are missing from the catalogs or
+if a required supported protocol family loses coverage.
+
+The deterministic malformed packet corpus is consumed by
+`crates/crafter/tests/resilience.rs`. The malformed pcap corpus is consumed by
+`crates/crafter/tests/fixture_suite.rs`.
+
+## Current Coverage Matrix
+
+Valid byte fixtures cover:
+
+- raw payload decode: `raw-hello-agents.hex`
+- Ethernet unknown ethertype with raw payload:
+  `ethernet-experimental-raw.bin`
+- Ethernet ARP request and reply: `arp-who-has.bin`,
+  `ethernet-arp-reply.hex`
+- Ethernet VLAN IPv4 UDP payload: `ethernet-vlan-ipv4-udp-raw.bin`
+- Linux cooked ARP payload: `linux-sll-arp-who-has.hex`
+- null loopback IPv4 and IPv6 payloads:
+  `null-loopback-ipv4-udp-raw.hex`, `null-loopback-ipv6-raw.hex`
+- IPv4 ICMP echo and ICMP error:
+  `ipv4-icmp-echo-request.bin`,
+  `ipv4-icmp-destination-unreachable.hex`
+- IPv4 options and TCP options:
+  `ipv4-options-traceroute-udp-raw.hex`, `ipv4-tcp-syn-options.hex`
+- IPv4 UDP DNS query and response:
+  `ipv4-udp-dns-query-example-com.bin`,
+  `ipv4-udp-dns-response-example-com.hex`
+- IPv4 UDP DHCP message and DHCP option corpus:
+  `ipv4-udp-dhcp-discover.hex`, `dhcp-offer-options.hex`
+- IPv6 ICMPv6 echo and ICMPv6 error:
+  `ipv6-icmp-echo-request.bin`, `ipv6-icmpv6-time-exceeded.hex`
+- IPv6 UDP, TCP, and fragment extension-header stacks:
+  `ipv6-udp-raw.hex`, `ipv6-tcp-raw.hex`,
+  `ipv6-fragment-udp-raw.hex`
+
+Summary fixtures cover representative raw, ARP, Linux cooked, IPv4 TCP options,
+IPv4 DNS response, IPv4 DHCP, and IPv6 fragment stacks.
+
+Pcap fixtures cover:
+
+- Ethernet link type with ARP request and reply records.
+- RawIp link type with IPv4 and IPv6 packets.
+- LinuxSll link type with an ARP payload.
+- NullLoopback link type with an IPv4 UDP payload.
+
+Malformed packet fixtures cover short or inconsistent Ethernet, VLAN, ARP,
+Linux cooked, null loopback, IPv4, IPv4 options, IPv6 extension headers, UDP,
+TCP, TCP options, ICMP, ICMPv6, DNS, DHCP, and DHCP option inputs. The random
+resilience tests remain broad panic guards; named malformed fixtures provide the
+deterministic regression coverage.
+
+Malformed pcap fixtures cover unknown magic, unsupported major version, zero
+snapshot length, partial record headers, captured length greater than snaplen,
+and truncated record bodies.
 
 ## Naming Conventions
 
@@ -26,30 +105,65 @@ Use lowercase, dash-separated names that describe the protocol stack and case:
 Examples:
 
 ```text
-ipv4-icmp-raw-echo-request.bin
-ethernet-ipv4-tcp-syn-options.bin
-dns-udp-ipv4-query-example-com.summary.txt
-ipv6-routing-type0-reference.json
-ipv4-truncated-header.malformed.bin
+ipv4-icmp-echo-request.bin
+ethernet-vlan-ipv4-udp-raw.bin
+ipv4-tcp-syn-options.hex
+ipv6-fragment-udp-raw.summary.txt
 ```
 
 Prefer stable, deterministic packets. Do not include wall-clock timestamps,
 random identifiers, real account data, or host-specific interface addresses
 unless the test explicitly documents and normalizes them.
 
-## Oracle Coverage
+## Malformed Decode Corpus
+
+`malformed/core-decode-corpus.hex` uses one case per non-comment line:
+
+```text
+name|target|expected-kind|expected-context-or-field|hex
+```
+
+Supported `target` values are defined by the resilience test runner and include
+packet decode targets such as `ethernet`, `linux-sll`, `null-loopback`, `ipv4`,
+and `ipv6`, plus focused decoders such as `ipv4-options`, `tcp-options`,
+`dhcp`, `dhcp-options`, and `dns-name`.
+
+Supported `expected-kind` values currently map to structured `CrafterError`
+variants:
+
+- `buffer-too-short`: assert the stable error context.
+- `invalid-field-value`: assert the stable field name.
+
+The tests assert the enum variant and context or field, not full display
+strings. Keep case names lowercase and dash-separated, and keep hex payloads
+minimal enough to make the failing field obvious.
+
+`malformed/pcap-corpus.hex` uses:
+
+```text
+name|expected-kind|hex
+```
+
+Supported pcap `expected-kind` values are `invalid-header` and
+`invalid-record`, matching `PcapError` categories.
+
+## Pcap Fixtures
+
+Pcap fixtures are classic pcap files with deterministic timestamps. The current
+catalog asserts exact `PcapTimestamp` values, timestamp precision, captured and
+original lengths, record bytes, pcap link type, crate link type, and decoded
+packet fields.
+
+Use microsecond precision unless the fixture is specifically exercising another
+precision. A pcap should normally contain one conversation or one behavior under
+test. Do not commit captures from personal networks unless they have been
+sanitized and reduced to deterministic fixture data.
+
+## Oracle Promotion
 
 Backend-backed packet behavior coverage is generated from executable oracle
-specs and written below `target/oracle/`. Do not copy generated backend vectors
-into this fixture tree. If a crate-level Rust test needs stable byte input, place
-the reviewed bytes under `bytes/` with a name that describes the packet behavior,
-not the backend that produced it.
-
-Reference output must be generated in a deterministic mode. Use `--seed` and, for
-single-case reproduction, `--index` with the oracle runner so a failing packet
-plan can be regenerated exactly. Any fields that the generator fills implicitly,
-such as checksums and lengths, should be called out in the oracle report so Rust
-tests can assert the same behavior when a generic fixture is promoted.
+specs and written below `target/oracle/`. Keep Scapy and reference-backend code
+inside `tools/oracle/`; crate tests and fixtures must not import Scapy directly.
 
 Useful oracle commands:
 
@@ -58,48 +172,21 @@ tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
 tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
 ```
 
-Oracle artifacts default below `target/oracle/`. Review generated files there
-before promoting any generic fixture bytes or metadata into this tree.
+Before promoting oracle output into this tree:
 
-## Pcap Fixtures
-
-Pcap fixtures should be small and focused. A pcap should normally contain one
-conversation or one behavior under test. Prefer synthetic captures generated in
-the disposable live lab, loopback, or network namespaces. Do not commit captures
-from personal networks unless they have been sanitized.
-
-When pcap timestamps matter, document whether tests compare exact timestamps,
-normalize them, or ignore them.
-
-## Malformed Decode Fixtures
-
-Malformed fixtures are expected to fail decoding with structured errors. They
-should never require panic catching to pass. Name malformed fixtures after the
-error being exercised when possible:
-
-```text
-malformed/ipv4-ihl-too-small.bin
-malformed/tcp-options-overrun.bin
-malformed/dns-truncated-question.bin
-```
-
-Tests should assert the error category and useful context rather than depending
-on unstable wording.
-
-## Expected Summary Fixtures
-
-Summary fixtures capture stable human-readable or machine-readable output from
-packet inspection APIs. Use `.summary.txt` for display output and `.summary.json`
-when tests need structured comparison.
-
-Keep summaries compact. They should verify field names, layer order, important
-values, and raw payload preservation without duplicating every byte unless the
-test is specifically about formatting.
+- Regenerate with explicit `--seed`, and use `--index` for a single failing or
+  interesting case when needed.
+- Review the artifact under `target/oracle/`; do not make tests depend on that
+  directory being present.
+- Copy only synthetic, generic bytes or metadata into `tests/fixtures/`.
+- Add or update the appropriate Rust catalog entry and coverage mapping.
+- Add a summary fixture only when stable human-readable output is part of the
+  intended regression check.
+- Run the focused fixture test and the full validation preflight before review.
 
 ## Regeneration
 
-Fixture regeneration must be explicit. Local tests consume committed fixtures;
-they must not silently regenerate them. Any live-lab or reference regeneration
+Fixture regeneration must be explicit. Any live-lab or reference regeneration
 tool should write into a temporary artifact directory first so changes can be
 reviewed before fixtures are copied into this tree.
 
