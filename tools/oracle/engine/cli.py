@@ -1428,7 +1428,7 @@ def _offline(args: argparse.Namespace) -> int:
         )
         if unsupported is not None:
             return unsupported
-        if args.backend != "scapy":
+        if args.backend not in {"scapy", "wireshark"}:
             return _backend_not_implemented_report(
                 args,
                 mode="offline",
@@ -1711,18 +1711,21 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
     if args.direction != "libcrafter_to_reference":
         print(f"unsupported offline direction: {args.direction}", file=sys.stderr)
         return 2
-    if args.backend != "scapy":
+    if args.backend not in {"scapy", "wireshark"}:
         print(f"unsupported backend: {args.backend}", file=sys.stderr)
         return 2
 
-    from .backends.scapy.normalize import decode_vectors
     from .generator import generate_plans
+    if args.backend == "scapy":
+        from .backends.scapy.normalize import decode_vectors
+    else:
+        from .backends.wireshark.normalize import decode_vectors
 
     output_dir = _offline_output_dir(args.out)
     artifacts_root = output_dir / "artifacts"
     artifacts_root.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "report.json"
-    scapy_decoded_path = output_dir / "scapy-decoded.json"
+    backend_decoded_path = output_dir / f"{args.backend}-decoded.json"
     run_dir = Path(
         tempfile.mkdtemp(
             prefix=f"{args.direction}.",
@@ -1804,7 +1807,7 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
     )
 
     actual_decoded = decode_vectors(vectors) if vectors else []
-    scapy_report = RunReport(
+    backend_report = RunReport(
         mode="offline",
         backend=args.backend,
         profile=args.profile,
@@ -1820,9 +1823,9 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
             "decoded": [model.to_dict() for model in actual_decoded],
         },
     )
-    actual_path = run_dir / "scapy-decoded.json"
-    write_json(actual_path, scapy_report)
-    write_json(scapy_decoded_path, scapy_report)
+    actual_path = run_dir / f"{args.backend}-decoded.json"
+    write_json(actual_path, backend_report)
+    write_json(backend_decoded_path, backend_report)
 
     results = _compare_offline_results(
         args=args,
@@ -1845,7 +1848,7 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
     )
     preserve_artifacts = args.keep_artifacts or status != "passed"
 
-    artifacts = [str(report_path), str(scapy_decoded_path)]
+    artifacts = [str(report_path), str(backend_decoded_path)]
     if preserve_artifacts:
         artifacts.extend(
             [
@@ -2047,10 +2050,9 @@ def _pcap_read_reference_records(backend: str, pcap_path: Path) -> list[JSONObje
 
         return read_pcap(pcap_path)
     if backend == "wireshark":
-        raise RuntimeError(
-            "unsupported backend implementation: backend wireshark is parser-only "
-            "and pcap read capable, but tshark pcap record normalization is not wired yet"
-        )
+        from .backends.wireshark.pcap import read_pcap
+
+        return read_pcap(pcap_path)
     raise RuntimeError(f"unsupported pcap read backend: {backend}")
 
 
