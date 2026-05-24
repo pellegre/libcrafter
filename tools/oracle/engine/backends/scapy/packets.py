@@ -233,6 +233,8 @@ def _ipv4(fields: Mapping[str, JSONObject], stack: list[str], index: int, scapy_
         kwargs["flags"] = "DF"
     if "fragment_offset" in ipv4_fields or "frag" in ipv4_fields:
         kwargs["frag"] = _int(ipv4_fields.get("fragment_offset", ipv4_fields.get("frag")), 0)
+    if "options" in ipv4_fields:
+        kwargs["options"] = _ipv4_options(ipv4_fields["options"], scapy_all)
     next_layer = _next_payload_layer(stack, index)
     if next_layer not in {"icmp", "tcp", "udp"}:
         protocol = ipv4_fields.get("protocol", ipv4_fields.get("proto"))
@@ -361,7 +363,7 @@ def _tcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
     if "urgent_pointer" in tcp_fields or "urgptr" in tcp_fields:
         kwargs["urgptr"] = _int(tcp_fields.get("urgent_pointer", tcp_fields.get("urgptr")), 0)
     if "options" in tcp_fields:
-        kwargs["options"] = tcp_fields["options"]
+        kwargs["options"] = _tcp_options(tcp_fields["options"])
     return scapy_all.TCP(**kwargs)
 
 
@@ -375,18 +377,24 @@ def _dns(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
     if not qname.endswith("."):
         qname = f"{qname}."
     flags = _dns_flags(dns_fields.get("flags"))
+    questions = _dns_questions(dns_fields, scapy_all)
+    answers = _dns_answers(dns_fields, scapy_all)
     return scapy_all.DNS(
         id=_int(dns_fields.get("id", dns_fields.get("transaction_id")), 0xBEEF),
         qr=_bool_int(dns_fields.get("is_response"), 0),
         opcode=_dns_opcode(dns_fields.get("opcode")),
+        qdcount=_dns_count(dns_fields.get("questions"), 1),
+        ancount=_dns_count(dns_fields.get("answers"), 0),
         aa=flags["aa"],
         tc=flags["tc"],
         rd=flags["rd"],
         rcode=_dns_response_code(dns_fields.get("response_code")),
-        qd=scapy_all.DNSQR(
+        qd=questions
+        or scapy_all.DNSQR(
             qname=qname,
             qtype=_text(dns_fields.get("qtype", question.get("qtype")), "A"),
         ),
+        an=answers,
     )
 
 
@@ -440,6 +448,77 @@ def _payload_bytes(fields: Mapping[str, JSONObject]) -> bytes:
         return _text(payload.get("value"), "").encode("utf-8")
     length = _int(payload.get("length"), 0)
     return bytes(length)
+
+
+def _ipv4_options(value: object, scapy_all: Any) -> object:
+    raw = _option_bytes(value)
+    if raw is not None:
+        if not raw:
+            return []
+        return [scapy_all.IPOption(raw)]
+    return value
+
+
+def _tcp_options(value: object) -> object:
+    raw = _option_bytes(value)
+    if raw is None:
+        return value
+    return _tcp_option_tuples(raw)
+
+
+def _option_bytes(value: object) -> bytes | None:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, Mapping):
+        hex_value = value.get("hex")
+        if isinstance(hex_value, str):
+            return bytes.fromhex(hex_value)
+    if isinstance(value, str):
+        return bytes.fromhex(value)
+    return None
+
+
+def _tcp_option_tuples(raw: bytes) -> list[object]:
+    options: list[object] = []
+    index = 0
+    while index < len(raw):
+        kind = raw[index]
+        if kind == 0:
+            options.append(("EOL", None))
+            index += 1
+            continue
+        if kind == 1:
+            options.append(("NOP", None))
+            index += 1
+            continue
+        if index + 1 >= len(raw):
+            options.append((kind, b""))
+            break
+        length = raw[index + 1]
+        if length < 2 or index + length > len(raw):
+            options.append((kind, raw[index + 2 :]))
+            break
+        data = raw[index + 2 : index + length]
+        if kind == 2 and len(data) == 2:
+            options.append(("MSS", int.from_bytes(data, "big")))
+        elif kind == 3 and len(data) == 1:
+            options.append(("WScale", data[0]))
+        elif kind in {4, 5}:
+            options.append((kind, data))
+        elif kind == 8 and len(data) == 8:
+            options.append(
+                (
+                    "Timestamp",
+                    (
+                        int.from_bytes(data[0:4], "big"),
+                        int.from_bytes(data[4:8], "big"),
+                    ),
+                )
+            )
+        else:
+            options.append((kind, data))
+        index += length
+    return options
 
 
 def _default_ethernet_dst(stack: list[str]) -> str:
@@ -663,6 +742,57 @@ def _first_question(dns_fields: Mapping[str, object]) -> JSONObject:
         if isinstance(first, str):
             return {"qname": first}
     return {}
+
+
+def _dns_questions(dns_fields: Mapping[str, object], scapy_all: Any) -> object | None:
+    questions = dns_fields.get("questions")
+    if not isinstance(questions, list) or not questions:
+        return None
+    chain = None
+    for question in questions:
+        if isinstance(question, Mapping):
+            qname = _text(question.get("qname", question.get("name")), "example.com.")
+            qtype = _text(question.get("qtype", question.get("type")), "A")
+        else:
+            qname = _text(question, "example.com.")
+            qtype = "A"
+        if not qname.endswith("."):
+            qname = f"{qname}."
+        entry = scapy_all.DNSQR(qname=qname, qtype=qtype)
+        chain = entry if chain is None else chain / entry
+    return chain
+
+
+def _dns_answers(dns_fields: Mapping[str, object], scapy_all: Any) -> object | None:
+    answers = dns_fields.get("answers")
+    if not isinstance(answers, list) or not answers:
+        return None
+    chain = None
+    for answer in answers:
+        if not isinstance(answer, Mapping):
+            continue
+        rr_type = _text(answer.get("type"), "A").upper()
+        name = _text(answer.get("name", answer.get("rrname")), "example.com.")
+        if not name.endswith("."):
+            name = f"{name}."
+        if rr_type == "CNAME":
+            rdata = _text(answer.get("target", answer.get("rdata")), "alias.example.com.")
+        else:
+            rdata = _text(answer.get("address", answer.get("rdata")), "192.0.2.53")
+        entry = scapy_all.DNSRR(
+            rrname=name,
+            type=rr_type,
+            ttl=_int(answer.get("ttl"), 60),
+            rdata=rdata,
+        )
+        chain = entry if chain is None else chain / entry
+    return chain
+
+
+def _dns_count(value: object, default: int) -> int:
+    if isinstance(value, list):
+        return len(value)
+    return default
 
 
 def _root_decoder(stack: list[str]) -> str:

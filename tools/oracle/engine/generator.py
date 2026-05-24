@@ -61,7 +61,16 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
     "ethernet": {"dst", "src", "ethertype"},
     "icmp": {"type", "code", "identifier", "sequence"},
     "icmpv6": {"type", "code", "identifier", "sequence"},
-    "ipv4": {"src", "dst", "ttl", "protocol", "identification", "flags", "fragment_offset"},
+    "ipv4": {
+        "src",
+        "dst",
+        "ttl",
+        "protocol",
+        "identification",
+        "flags",
+        "fragment_offset",
+        "options",
+    },
     "ipv6": {"src", "dst", "traffic_class", "flow_label", "next_header", "hop_limit"},
     "linux_cooked": {"packet_type", "address_type", "address_length", "source_address", "protocol"},
     "null_loopback": {"type"},
@@ -75,6 +84,7 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "flags",
         "window",
         "urgent_pointer",
+        "options",
     },
     "udp": {"src_port", "dst_port", "checksum"},
     "vlan": {"priority", "drop_eligible", "vlan_id", "ethertype"},
@@ -83,8 +93,28 @@ _SUPPORTED_FIELD_DOMAINS: dict[tuple[str, str], set[object]] = {
     ("dns", "answers"): set(),
     ("icmp", "type"): {"echo_reply", "echo_request"},
     ("icmpv6", "type"): {"echo_reply", "echo_request"},
-    ("ipv4", "options"): set(),
-    ("tcp", "options"): set(),
+    ("ipv4", "options"): {
+        "eol",
+        "nop",
+        "record_route",
+        "loose_source_route",
+        "timestamp",
+        "traceroute",
+        "generic",
+    },
+    ("tcp", "options"): {
+        "eol",
+        "nop",
+        "mss",
+        "window_scale",
+        "sack_permitted",
+        "sack_blocks",
+        "timestamp",
+        "mptcp",
+        "fast_open",
+        "edo",
+        "generic",
+    },
     ("udp", "checksum"): {"zero_ipv4"},
 }
 _SCAPY_MATERIALIZED_LAYERS = {
@@ -278,6 +308,7 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
                 "strict_bytes": feature.strict_bytes,
                 "malformed": feature.malformed,
                 "coverage_cases": list(feature.coverage_cases),
+                "behaviors": list(_object_list(feature.raw.get("behaviors", []), "feature.behaviors")),
                 "categories": _feature_categories(
                     feature.name,
                     feature.directions,
@@ -390,7 +421,29 @@ class PacketGenerator:
             feature=selected_feature,
         )
 
-        fields = self._fields(rng, stack)
+        fields = self._fields(
+            rng,
+            stack,
+            feature=selected_feature,
+            case=selected_case,
+        )
+        behavior = self._feature_behavior(
+            rng,
+            feature=selected_feature,
+            case=selected_case,
+        )
+        if behavior is not None:
+            self._apply_feature_behavior(
+                fields,
+                stack=stack,
+                feature=selected_feature,
+                case=selected_case,
+                behavior=behavior,
+            )
+        malformed = self._is_malformed_case(selected_feature, selected_case)
+        if malformed:
+            strict_bytes = False
+            feature_tags = list(dict.fromkeys([*feature_tags, "malformed", "non_strict_reencode"]))
         plan_id = plan_identifier(
             seed=self.seed,
             profile=self.profile,
@@ -442,8 +495,11 @@ class PacketGenerator:
                 "stack_name": stack_name,
                 "stack_families": stack_families,
                 "feature": selected_feature,
+                "feature_behavior": behavior,
+                "malformed": malformed,
                 "selected_specs": selected_specs,
                 "strict_bytes": strict_bytes,
+                "comparison_policy": "non_strict_reencode" if malformed else "strict_reencode",
                 "reproduction": reproduction,
             },
         )
@@ -548,7 +604,7 @@ class PacketGenerator:
             ):
                 if stack_layers not in (["ipv4", "udp", "payload"], ["ipv6", "udp", "payload"]):
                     continue
-            if feature is None and case is None and "dhcp" in stack_layers:
+            if feature is None and case is None and self.profile == "smoke" and "dhcp" in stack_layers:
                 continue
             candidates.append(stack)
         return candidates
@@ -656,9 +712,42 @@ class PacketGenerator:
             matching = [case for case in coverage_cases if case in feature_cases]
             if matching:
                 return weighted_choice(rng, tuple((case, 1) for case in matching))
+            compatible = self._compatible_feature_cases(
+                stack=_string_list(stack.get("layers"), "stack.layers"),
+                feature=feature,
+                direction="reference_to_libcrafter",
+            )
+            if compatible:
+                return weighted_choice(rng, tuple((case, 1) for case in compatible))
         if not coverage_cases:
+            coverage_cases = []
+
+        choices: list[tuple[str, int]] = []
+        for stack_case in coverage_cases:
+            weight = self._case_weight(stack_case, categories=_case_categories([stack_case]))
+            if weight > 0:
+                choices.append((stack_case, weight))
+        stack_layers = _string_list(stack.get("layers"), "stack.layers")
+        for feature_name, feature_spec in self._matching_features_for_stack(
+            stack=stack_layers,
+            direction="reference_to_libcrafter",
+        ):
+            categories = _string_list(feature_spec.get("categories", []), "feature.categories")
+            for feature_case in _string_list(
+                feature_spec.get("coverage_cases", []),
+                "feature.coverage_cases",
+            ):
+                if feature_case in coverage_cases:
+                    continue
+                weight = self._case_weight(
+                    feature_case,
+                    categories=[*categories, *_case_categories([feature_case])],
+                )
+                if weight > 0:
+                    choices.append((feature_case, weight))
+        if not choices:
             return "default"
-        return weighted_choice(rng, tuple((case, 1) for case in coverage_cases))
+        return weighted_choice(rng, choices)
 
     def _choose_feature(
         self,
@@ -695,22 +784,62 @@ class PacketGenerator:
     ) -> list[tuple[str, JSONObject]]:
         features = _object(self.grammar.get("features", {}), "features")
         output: list[tuple[str, JSONObject]] = []
-        for name, raw_feature in features.items():
-            feature = _object(raw_feature, f"features.{name}")
-            layers = _string_list(feature.get("layers"), f"features.{name}.layers")
-            directions = _string_list(feature.get("directions"), f"features.{name}.directions")
+        for name, feature in self._matching_features_for_stack(stack=stack, direction=direction):
             cases = _string_list(
                 feature.get("coverage_cases", []),
                 f"features.{name}.coverage_cases",
             )
             if case not in cases:
                 continue
+            output.append((name, feature))
+        return output
+
+    def _matching_features_for_stack(
+        self,
+        *,
+        stack: Sequence[str],
+        direction: str,
+    ) -> list[tuple[str, JSONObject]]:
+        features = _object(self.grammar.get("features", {}), "features")
+        output: list[tuple[str, JSONObject]] = []
+        for name, raw_feature in features.items():
+            if not _auto_sample_feature(name):
+                continue
+            feature = _object(raw_feature, f"features.{name}")
+            layers = _string_list(feature.get("layers"), f"features.{name}.layers")
+            directions = _string_list(feature.get("directions"), f"features.{name}.directions")
             if not _layers_cover_feature(stack, layers):
                 continue
             if direction not in directions and "roundtrip" not in directions:
                 continue
             output.append((name, feature))
         return output
+
+    def _compatible_feature_cases(
+        self,
+        *,
+        stack: Sequence[str],
+        feature: str,
+        direction: str,
+    ) -> list[str]:
+        feature_spec = self._feature_spec(feature)
+        layers = _string_list(feature_spec.get("layers"), "feature.layers")
+        directions = _string_list(feature_spec.get("directions"), "feature.directions")
+        if not _layers_cover_feature(stack, layers):
+            return []
+        if direction not in directions and "roundtrip" not in directions:
+            return []
+        cases = _string_list(feature_spec.get("coverage_cases", []), "feature.coverage_cases")
+        if feature == "ipv6_fragment_routing":
+            return _ipv6_extension_cases_for_stack(stack, cases)
+        return cases
+
+    def _case_weight(self, case: str, *, categories: Sequence[str]) -> int:
+        weights = self._profile_feature_weights()
+        normalized = [*categories]
+        if _is_malformed_case_name(case):
+            normalized.append("malformed")
+        return max((weights.get(category, 0) for category in normalized), default=0)
 
     def _strict_bytes(self, feature: str | None) -> bool:
         if feature is None:
@@ -759,7 +888,14 @@ class PacketGenerator:
             raise ValueError(f"spec error: no layer spec declares {layer}")
         return _object(layers[layer], f"layers.{layer}")
 
-    def _fields(self, rng: random.Random, stack: Sequence[str]) -> dict[str, JSONObject]:
+    def _fields(
+        self,
+        rng: random.Random,
+        stack: Sequence[str],
+        *,
+        feature: str | None,
+        case: str,
+    ) -> dict[str, JSONObject]:
         payload_min, payload_max = self._payload_bounds()
         ctx = _SamplingContext(
             rng=rng,
@@ -768,6 +904,8 @@ class PacketGenerator:
             stack=list(stack),
             payload_min=payload_min,
             payload_max=payload_max,
+            feature=feature,
+            case=case,
         )
 
         fields: dict[str, JSONObject] = {}
@@ -795,6 +933,86 @@ class PacketGenerator:
                 ctx.sampled_layers[layer] = sampled
 
         return fields
+
+    def _feature_behavior(
+        self,
+        rng: random.Random,
+        *,
+        feature: str | None,
+        case: str,
+    ) -> str | None:
+        if feature is None:
+            return None
+        feature_spec = self._feature_spec(feature)
+        behaviors = _object_list(feature_spec.get("behaviors", []), f"features.{feature}.behaviors")
+        names = [
+            _string(behavior.get("name"), f"features.{feature}.behaviors.name")
+            for behavior in behaviors
+            if isinstance(behavior, Mapping) and isinstance(behavior.get("name"), str)
+        ]
+        if not names:
+            return None
+        for name in names:
+            if _identifier_part(name) in _identifier_part(case):
+                return name
+        return weighted_choice(rng, tuple((name, 1) for name in names))
+
+    def _apply_feature_behavior(
+        self,
+        fields: dict[str, JSONObject],
+        *,
+        stack: Sequence[str],
+        feature: str | None,
+        case: str,
+        behavior: str,
+    ) -> None:
+        if feature == "tcp_options" and "tcp" in fields:
+            fields["tcp"]["options"] = {"hex": _tcp_options_hex(case, behavior)}
+            if case == "tcp-all-flags-reserved-offset":
+                fields["tcp"]["flags"] = "all"
+                fields["tcp"]["reserved"] = 7
+        elif feature == "ipv4_options" and "ipv4" in fields:
+            fields["ipv4"]["options"] = {"hex": _ipv4_options_hex(case, behavior)}
+            fields["ipv4"]["flags"] = "none"
+            fields["ipv4"]["fragment_offset"] = 0
+        elif feature == "ipv6_fragment_routing":
+            if "ipv6_fragment" in fields:
+                fields["ipv6_fragment"]["more_fragments"] = False
+                fields["ipv6_fragment"]["fragment_offset"] = 0
+            if "ipv6_routing" in fields:
+                routing = fields["ipv6_routing"]
+                if "segment" in case:
+                    routing["type"] = 4
+                    routing["segments_left"] = 1
+                    routing["addresses"] = ["2001:db8:ffff::1"]
+                elif "mobile" in case:
+                    routing["type"] = 2
+                    routing["segments_left"] = 1
+                    routing["addresses"] = ["2001:db8:ffff::2"]
+                else:
+                    routing["type"] = 0
+                    routing["segments_left"] = 0
+        elif feature == "icmpv4_errors" and "icmp" in fields:
+            fields["icmp"]["type"] = _icmp_error_type_for_case(case, behavior, ipv6=False)
+            fields["icmp"]["code"] = 0
+        elif feature == "icmpv6_errors" and "icmpv6" in fields:
+            fields["icmpv6"]["type"] = _icmp_error_type_for_case(case, behavior, ipv6=True)
+            fields["icmpv6"]["code"] = 0
+        elif feature == "dns_behavior" and "dns" in fields:
+            _apply_dns_behavior(fields["dns"], case=case, behavior=behavior)
+        elif feature == "dhcp_behavior" and "dhcp" in fields:
+            _apply_dhcp_behavior(fields["dhcp"], case=case, behavior=behavior)
+
+    def _is_malformed_case(self, feature: str | None, case: str) -> bool:
+        if _is_malformed_case_name(case):
+            return True
+        if feature is None:
+            return False
+        feature_spec = self._feature_spec(feature)
+        malformed = feature_spec.get("malformed")
+        if not isinstance(malformed, bool):
+            raise ValueError(f"features.{feature}.malformed must be a boolean")
+        return malformed
 
     def _validate_layer_backend_support(self, layer: str, spec: JSONObject) -> None:
         support = _object(spec.get("backend_support"), f"layers.{layer}.backend_support")
@@ -981,6 +1199,8 @@ class _SamplingContext:
     stack: list[str]
     payload_min: int
     payload_max: int
+    feature: str | None
+    case: str
     sampled_layers: dict[str, JSONObject] = field(default_factory=dict)
     _payload: bytes | None = None
     _src_mac: str | None = None
@@ -1079,6 +1299,18 @@ def _object_list(value: object, name: str) -> list[object]:
 
 
 def _domain_weight(ctx: _SamplingContext, layer: str, field_name: str, domain: object) -> int:
+    if field_name == "options" and layer == "ipv4":
+        if ctx.feature == "ipv4_options" or "ipv4-options" in ctx.case:
+            return max(1, ctx.feature_weights.get("boundary", 1))
+        return 0
+    if field_name == "options" and layer == "tcp":
+        if ctx.feature == "tcp_options" or "tcp-options" in ctx.case or ctx.case == "tcp-all-flags-reserved-offset":
+            return max(1, ctx.feature_weights.get("boundary", 1))
+        return 0
+    if field_name == "answers" and layer == "dns":
+        if ctx.feature == "dns_behavior" and "response" in ctx.case:
+            return max(1, ctx.feature_weights.get("boundary", 1))
+        return 0
     if ctx.profile == "smoke" and _is_boundary_domain(domain):
         return 0
     if ctx.profile == "smoke" and layer in {"dns", "dhcp"}:
@@ -1205,13 +1437,19 @@ def _sample_ipv4_field(
     if field_name == "identification":
         return _integer_domain_value(ctx, domain, field_name, bits=16)
     if field_name == "flags":
+        if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcp")):
+            return "none"
         if ctx.profile == "smoke":
             return "none"
         return str(domain)
     if field_name == "fragment_offset":
+        if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcp")):
+            return 0
         if current_fields.get("flags") == "mf":
             return _integer_domain_value(ctx, domain, field_name, bits=13)
         return 0
+    if field_name == "options":
+        return {"hex": _ipv4_options_hex(ctx.case, str(domain))}
     raise ValueError(f"spec error: unsupported ipv4 field sampler: {field_name}")
 
 
@@ -1273,6 +1511,8 @@ def _sample_tcp_field(
         return domain
     if field_name == "window":
         return _integer_domain_value(ctx, domain, field_name, bits=16)
+    if field_name == "options":
+        return {"hex": _tcp_options_hex(ctx.case, str(domain))}
     raise ValueError(f"spec error: unsupported tcp field sampler: {field_name}")
 
 
@@ -1309,6 +1549,8 @@ def _sample_dns_field(ctx: _SamplingContext, field_name: str, domain: object) ->
                 }
             )
         return questions
+    if field_name == "answers":
+        return _dns_answers_for_domain(ctx, domain)
     raise ValueError(f"spec error: unsupported dns field sampler: {field_name}")
 
 
@@ -1344,6 +1586,88 @@ def _dhcp_option_domains(ctx: _SamplingContext, domain: object) -> list[object]:
         options.append(("param_req_list", [1, 3, 6]))
     options.append("end")
     return options
+
+
+def _tcp_options_hex(case: str, behavior: str) -> str:
+    key = f"{case} {behavior}".replace("_", "-")
+    if "sack" in key:
+        return "0402050a0000000100000002"
+    if any(token in key for token in ("mptcp", "fast-open", "edo", "generic", "advanced")):
+        return "1e04000122040102fd040000fe040102"
+    if "header-boundary" in key or "all-flags" in key:
+        return "01010101"
+    return "020405b4010303070402080a0102030405060708"
+
+
+def _ipv4_options_hex(case: str, behavior: str) -> str:
+    key = f"{case} {behavior}".replace("_", "-")
+    if "source-route" in key:
+        return "830704c0000201"
+    if "record-route" in key:
+        return "07070400000000"
+    if "timestamp" in key or "traceroute" in key or "generic" in key:
+        return "440c05000000000000000000120c00010000ffffc0000201"
+    if "nop" in key:
+        return "01010101"
+    return "00000000"
+
+
+def _icmp_error_type_for_case(case: str, behavior: str, *, ipv6: bool) -> str:
+    key = f"{case} {behavior}".replace("_", "-")
+    if "packet-too-big" in key:
+        return "packet_too_big" if ipv6 else "destination_unreachable"
+    if "time-exceeded" in key:
+        return "time_exceeded"
+    if "parameter-problem" in key:
+        return "parameter_problem"
+    if "redirect" in key and not ipv6:
+        return "redirect"
+    return "destination_unreachable"
+
+
+def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None:
+    key = f"{case} {behavior}".replace("_", "-")
+    if "response" in key:
+        fields["is_response"] = True
+        fields.pop("answers", None)
+    if "multiple-questions" in key:
+        fields["questions"] = [
+            {"qname": "example.com.", "qtype": "A"},
+            {"qname": "example.net.", "qtype": "AAAA"},
+        ]
+    if "truncated" in key:
+        fields["flags"] = ["recursion_desired", "truncated"]
+        fields["response_code"] = "server_failure"
+
+
+def _dns_answers_for_domain(ctx: _SamplingContext, domain: object) -> list[JSONObject]:
+    if domain == "aaaa":
+        return [{"name": "example.net.", "type": "AAAA", "ttl": 60, "address": ctx.dst_ipv6}]
+    if domain == "cname":
+        return [{"name": "example.org.", "type": "CNAME", "ttl": 60, "target": "alias.example.org."}]
+    return [{"name": "example.com.", "type": "A", "ttl": 60, "address": ctx.dst_ipv4}]
+
+
+def _apply_dhcp_behavior(fields: JSONObject, *, case: str, behavior: str) -> None:
+    key = f"{case} {behavior}".replace("_", "-")
+    if "offer" in key or "ack" in key:
+        fields["op"] = "bootreply"
+        fields["your_ip"] = "192.0.2.100"
+        fields["options"] = ["message-type=offer", "server_id=192.0.2.1", "end"]
+    elif "request" in key:
+        fields["options"] = ["message-type=request", "requested_addr=192.0.2.100", "end"]
+    elif "inform" in key:
+        fields["options"] = ["message-type=inform", "hostname=libcrafter-oracle", "end"]
+    elif "release" in key:
+        fields["options"] = ["message-type=release", "server_id=192.0.2.1", "end"]
+
+
+def _is_malformed_case_name(case: str) -> bool:
+    return "malformed" in case.replace("_", "-")
+
+
+def _auto_sample_feature(feature: str) -> bool:
+    return feature != "icmpv4_errors"
 
 
 def _sample_linux_cooked_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
@@ -1578,7 +1902,27 @@ def _case_categories(cases: Sequence[str]) -> list[str]:
 
 def _layers_cover_feature(stack: Sequence[str], feature_layers: Sequence[str]) -> bool:
     stack_set = set(stack)
+    feature_set = set(feature_layers)
+    if {"ipv6_fragment", "ipv6_routing"}.issubset(feature_set):
+        return "ipv6" in stack_set and bool(stack_set.intersection({"ipv6_fragment", "ipv6_routing"}))
+    if {"ipv4", "ipv6"}.issubset(feature_set):
+        return bool(stack_set.intersection(feature_set))
     return all(layer in stack_set for layer in feature_layers)
+
+
+def _ipv6_extension_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) -> list[str]:
+    stack_set = set(stack)
+    output: list[str] = []
+    for case in cases:
+        normalized = case.replace("_", "-")
+        if "ipv6-fragment" in normalized and "ipv6_fragment" in stack_set:
+            output.append(case)
+        elif (
+            any(token in normalized for token in ("routing", "segment", "mobile", "extension-chain"))
+            and "ipv6_routing" in stack_set
+        ):
+            output.append(case)
+    return output
 
 
 def _ethertype_for_stack(stack: Sequence[str], layer: str) -> str:
