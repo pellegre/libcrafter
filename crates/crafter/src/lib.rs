@@ -50,7 +50,7 @@ pub mod packet;
 pub mod protocols;
 pub mod registry;
 
-mod net_impl;
+pub mod net;
 pub mod pcap;
 
 pub use error::{CrafterError, Result};
@@ -101,7 +101,7 @@ pub use registry::{
     ProtocolRegistry, TcpBindingContext, UdpBindingContext,
 };
 
-pub use net_impl::{
+pub use net::{
     default_interface, default_interface_in, default_interface_name, find_interface,
     find_interface_in, get_ip_strings, get_ips, get_my_ip, get_my_ip_in, get_my_ipv6,
     get_my_ipv6_in, get_my_mac, get_my_mac_in, interface_for, interface_for_in, interfaces,
@@ -169,11 +169,6 @@ pub mod core {
         TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK,
         TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TIMESTAMP, TCP_OPTION_WINDOW_SCALE,
     };
-}
-
-/// Network interface, send, send/receive, batch, and address helper APIs.
-pub mod net {
-    pub use crate::net_impl::*;
 }
 
 /// Common imports for generated packet tools and examples.

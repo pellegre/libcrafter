@@ -37,5 +37,10 @@ fn public_module_paths_expose_representative_items() -> crafter::Result<()> {
     assert!(send_options.is_dry_run());
     assert_eq!(send_options.interface_name(), Some("dry-run0"));
 
+    let _socket_options = crafter::net::socket::SendOptions::new().dry_run();
+    let _range = crafter::net::range::Ipv4Range::parse("192.0.2.1").unwrap();
+    let _batch = crafter::net::batch::BatchSendRecv::new().dry_run();
+    let _matcher = crafter::net::send_recv::ReplyMatcher::from_packet(&packet);
+
     Ok(())
 }
