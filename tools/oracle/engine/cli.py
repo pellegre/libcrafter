@@ -3126,6 +3126,7 @@ def _compare_live_direction_results(
         status.index: status for status in receiver_response.per_index_status
     }
     actual_by_index = _live_decoded_models_by_index(receiver_response)
+    expected_by_index = _live_sender_decoded_models_by_index(plans, sender_response)
     failure_artifacts = _live_endpoint_failure_artifacts(
         sender_response,
         receiver_response,
@@ -3135,7 +3136,10 @@ def _compare_live_direction_results(
 
     results: list[ComparisonResult] = []
     for position, plan in enumerate(plans):
-        expected_model = expected[position] if position < len(expected) else {}
+        expected_model = expected_by_index.get(
+            plan.index,
+            expected[position] if position < len(expected) else {},
+        )
         results.append(
             _compare_live_packet_result(
                 args=args,
@@ -3352,6 +3356,59 @@ def _live_decoded_models_by_index(response) -> dict[int, JSONObject]:
             output.setdefault(status.index, decoded_models[decoded_index].to_dict())
             decoded_index += 1
     return output
+
+
+def _live_sender_decoded_models_by_index(
+    plans: Sequence[PacketPlan],
+    sender_response,
+) -> dict[int, JSONObject]:
+    from .backends.scapy.normalize import decode_vectors
+
+    sender_statuses = {
+        status.index: status for status in sender_response.per_index_status
+    }
+    vectors: list[EncodedVector] = []
+    indexes: list[int] = []
+    for plan in plans:
+        status = sender_statuses.get(plan.index)
+        if status is None or status.sent_raw_hex is None:
+            continue
+        wire_policy = _live_wire_policy(plan, provider="hetzner")
+        compare_root = _optional_string(wire_policy.get("compare_root"))
+        comparable_hex, _extract = _live_extract_comparable_hex(
+            status.sent_raw_hex,
+            raw_root=status.send_root,
+            compare_root=compare_root,
+        )
+        root = _live_canonical_root(compare_root)
+        if comparable_hex is None or root is None:
+            continue
+        try:
+            raw = bytes.fromhex(comparable_hex)
+        except ValueError:
+            continue
+        vectors.append(
+            EncodedVector.from_bytes(
+                plan=replace(plan, strict_bytes=False),
+                backend="live-sender",
+                raw=raw,
+                root=root,
+                decoder=root,
+                metadata={
+                    "source": "sender_sent_raw_hex",
+                    "sender_role": sender_response.endpoint_role,
+                    "send_root": status.send_root,
+                    "compare_root": compare_root,
+                },
+            )
+        )
+        indexes.append(plan.index)
+
+    decoded = decode_vectors(vectors) if vectors else []
+    return {
+        index: model.to_dict()
+        for index, model in zip(indexes, decoded, strict=False)
+    }
 
 
 def _live_endpoint_failure_artifacts(
