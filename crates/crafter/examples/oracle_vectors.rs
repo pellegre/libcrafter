@@ -85,10 +85,12 @@ fn oracle_case(case: &Value) -> ExampleResult<Value> {
     let expected_stack = normalize_stack(array_field(object, "expected_stack")?)?;
     let field_assertions = normalize_field_assertions(array_field(object, "field_assertions")?)?;
     let assertion_fields = assertion_fields(&field_assertions)?;
+    let feature_tags = case_feature_tags(object, &expected_stack);
 
     let mut output = Map::new();
     copy_field(object, &mut output, "name")?;
     copy_field(object, &mut output, "family")?;
+    output.insert("feature_tags".to_string(), json!(feature_tags.clone()));
     output.insert("direction".to_string(), json!(DIRECTION));
     output.insert(
         "directions".to_string(),
@@ -114,6 +116,7 @@ fn oracle_case(case: &Value) -> ExampleResult<Value> {
             "fields": assertion_fields,
             "root": object.get("root_decoder").or_else(|| object.get("root")).cloned().unwrap_or(Value::Null),
             "source_hex": raw_hex,
+            "feature_tags": feature_tags,
             "metadata": {
                 "assertions_are_partial": true
             }
@@ -129,6 +132,28 @@ fn oracle_case(case: &Value) -> ExampleResult<Value> {
     );
 
     Ok(Value::Object(output))
+}
+
+fn case_feature_tags(object: &Map<String, Value>, expected_stack: &[Value]) -> Vec<String> {
+    let mut tags = Vec::new();
+    if let Some(values) = object.get("feature_tags").and_then(Value::as_array) {
+        for value in values {
+            if let Some(tag) = value.as_str() {
+                tags.push(tag.to_string());
+            }
+        }
+    }
+    if tags.is_empty() {
+        if let Some(family) = object.get("family").and_then(Value::as_str) {
+            tags.push(family.to_string());
+        }
+        for layer in expected_stack {
+            if let Some(layer) = layer.as_str() {
+                tags.push(layer.to_string());
+            }
+        }
+    }
+    dedupe(tags)
 }
 
 fn normalize_stack(stack: &[Value]) -> ExampleResult<Vec<Value>> {
@@ -350,6 +375,16 @@ fn unique_field_key(existing: &Map<String, Value>, layer: &str) -> String {
         }
         index += 1;
     }
+}
+
+fn dedupe(values: Vec<String>) -> Vec<String> {
+    let mut output = Vec::new();
+    for value in values {
+        if !output.contains(&value) {
+            output.push(value);
+        }
+    }
+    output
 }
 
 fn copy_field(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from ...model import DecodedModel, EncodedVector, JSONObject, JSONValue, PacketPlan
@@ -124,6 +124,15 @@ _PROTOCOLS: dict[str, int] = {
     "tcp": 6,
     "udp": 17,
 }
+_ROOT_ALIASES: dict[str, str] = {
+    "CookedLinux": "link:linux-cooked",
+    "Ether": "link:ethernet",
+    "IP": "l3:ipv4",
+    "IPv6": "l3:ipv6",
+    "Loopback": "link:null-loopback",
+    "Raw": "link:raw",
+    "link:linux-sll": "link:linux-cooked",
+}
 
 
 def decode_root(root: str, raw: bytes) -> Any:
@@ -160,11 +169,17 @@ def decode_bytes(
     *,
     root: str,
     source_hex: str | None = None,
+    feature_tags: Sequence[str] = (),
 ) -> DecodedModel:
     """Decode raw bytes and return the normalized Scapy model."""
 
     packet = decode_root(root, raw)
-    return normalize_packet(packet, root=root, source_hex=source_hex or raw.hex())
+    return normalize_packet(
+        packet,
+        root=root,
+        source_hex=source_hex or raw.hex(),
+        feature_tags=feature_tags,
+    )
 
 
 def decode_vector(vector: EncodedVector) -> DecodedModel:
@@ -173,7 +188,12 @@ def decode_vector(vector: EncodedVector) -> DecodedModel:
     root = vector.root or vector.decoder
     if root is None:
         raise ValueError("encoded vector is missing root decoder metadata")
-    return decode_bytes(vector.to_bytes(), root=root, source_hex=vector.raw_hex)
+    return decode_bytes(
+        vector.to_bytes(),
+        root=root,
+        source_hex=vector.raw_hex,
+        feature_tags=vector.plan.feature_tags,
+    )
 
 
 def decode_vectors(vectors: Iterable[EncodedVector]) -> list[DecodedModel]:
@@ -187,6 +207,7 @@ def normalize_packet(
     *,
     root: str | None = None,
     source_hex: str | None = None,
+    feature_tags: Sequence[str] = (),
 ) -> DecodedModel:
     """Convert a Scapy packet object into an oracle DecodedModel."""
 
@@ -221,8 +242,9 @@ def normalize_packet(
         backend=BACKEND_NAME,
         layers=normalized_layers,
         fields=normalized_fields,
-        root=root,
+        root=_normalize_root_name(root),
         source_hex=source_hex,
+        feature_tags=list(feature_tags),
         metadata=metadata,
     )
 
@@ -281,6 +303,12 @@ def _normalize_layer_name(native_name: str) -> str:
     if native_name.startswith("ICMPv6"):
         return "icmpv6"
     return _LAYER_ALIASES.get(native_name, native_name.lower())
+
+
+def _normalize_root_name(root: str | None) -> str | None:
+    if root is None:
+        return None
+    return _ROOT_ALIASES.get(root, root)
 
 
 def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:

@@ -28,6 +28,14 @@ struct EncodedVector {
     raw_hex: String,
     root: Option<String>,
     decoder: Option<String>,
+    #[serde(default)]
+    plan: Option<PacketPlan>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PacketPlan {
+    #[serde(default)]
+    feature_tags: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,6 +45,7 @@ struct DecodedModel {
     fields: BTreeMap<String, BTreeMap<String, Value>>,
     root: Option<String>,
     source_hex: String,
+    feature_tags: Vec<String>,
     metadata: Value,
 }
 
@@ -154,10 +163,16 @@ fn decode_vector(vector: &EncodedVector) -> ExampleResult<DecodedModel> {
         .ok_or("vector is missing root decoder metadata")?;
     let bytes = decode_hex(&vector.raw_hex)?;
     let packet = decode_for_root(root, &bytes)?;
+    let feature_tags = vector
+        .plan
+        .as_ref()
+        .map(|plan| plan.feature_tags.clone())
+        .unwrap_or_default();
     Ok(normalize_packet(
         &packet,
-        Some(root.to_string()),
+        Some(normalize_root_name(root).to_string()),
         vector.raw_hex.clone(),
+        feature_tags,
     ))
 }
 
@@ -191,7 +206,12 @@ fn decode_for_root(root: &str, bytes: &[u8]) -> ExampleResult<Packet> {
     Ok(decoded?)
 }
 
-fn normalize_packet(packet: &Packet, root: Option<String>, source_hex: String) -> DecodedModel {
+fn normalize_packet(
+    packet: &Packet,
+    root: Option<String>,
+    source_hex: String,
+    feature_tags: Vec<String>,
+) -> DecodedModel {
     let packet_layers = packet.iter().collect::<Vec<_>>();
     let mut layers = Vec::with_capacity(packet_layers.len());
     let mut fields = BTreeMap::new();
@@ -216,6 +236,7 @@ fn normalize_packet(packet: &Packet, root: Option<String>, source_hex: String) -
         fields,
         root,
         source_hex,
+        feature_tags,
         metadata: json!({
             "native": {
                 "summary": packet.summary(),
@@ -280,6 +301,18 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         layer.name()
     }
     .to_string()
+}
+
+fn normalize_root_name(root: &str) -> &str {
+    match root {
+        "CookedLinux" | "link:linux-sll" => "link:linux-cooked",
+        "Ether" => "link:ethernet",
+        "IP" => "l3:ipv4",
+        "IPv6" => "l3:ipv6",
+        "Loopback" => "link:null-loopback",
+        "Raw" => "link:raw",
+        _ => root,
+    }
 }
 
 fn normalized_layer_fields(layer: &dyn Layer) -> BTreeMap<String, Value> {

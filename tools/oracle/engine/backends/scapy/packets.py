@@ -99,6 +99,7 @@ def encode_packet_plan(plan: PacketPlan) -> EncodedVector:
         decoder=_scapy_decoder(stack),
         metadata={
             "backend": BACKEND_NAME,
+            "feature_tags": list(plan.feature_tags),
             "scapy_version": scapy_version,
             "stack_tags": list(plan.feature_tags),
             "strict_bytes": plan.strict_bytes,

@@ -488,7 +488,7 @@ def _write_backend_support_report(
         direction = "backend"
     differences: list[JSONObject] = [
         {
-            "path": "backend.capabilities",
+            "path": "capabilities.enabled",
             "expected": list(required),
             "actual": backend.capabilities.enabled(),
         }
@@ -496,7 +496,7 @@ def _write_backend_support_report(
     if not backend.availability.available:
         differences.append(
             {
-                "path": "backend.availability",
+                "path": "availability",
                 "expected": "available",
                 "actual": backend.availability.to_dict(),
             }
@@ -512,7 +512,6 @@ def _write_backend_support_report(
             "backend_available": True,
         },
         actual={
-            "backend": backend.to_dict(),
             "missing_capabilities": list(missing),
             "message": message,
         },
@@ -525,6 +524,9 @@ def _write_backend_support_report(
             "unsupported": True,
             "required_capabilities": list(required),
             "missing_capabilities": list(missing),
+            "backend_metadata": {
+                "actual": backend.to_dict(),
+            },
         },
     )
     report = RunReport(
@@ -2776,6 +2778,8 @@ def _offline_output_dir(out: str) -> Path:
     output_root = Path(out)
     if not output_root.is_absolute():
         output_root = REPO_ROOT / output_root
+    if output_root.resolve() != (REPO_ROOT / DEFAULT_OUTPUT_ROOT).resolve():
+        return output_root
     return output_root / "offline"
 
 
