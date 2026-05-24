@@ -2069,20 +2069,34 @@ def _compare_live_decoded_results(
     plans: list[PacketPlan],
 ) -> list[ComparisonResult]:
     results: list[ComparisonResult] = []
-    shared_count = min(len(expected), len(actual), len(plans))
-    for index in range(shared_count):
+    remaining_actual = list(actual)
+    for index in range(min(len(expected), len(plans))):
+        if not remaining_actual:
+            break
         plan = plans[index]
-        results.append(
-            compare_decoded_models(
-                expected=_live_comparison_model(expected[index]),
-                actual=_live_comparison_model(actual[index]),
-                plan=plan,
-                direction=direction,
-                reproduction_command=_live_reproduction_command(args),
-                actual_strict_bytes_hex=_strict_bytes_hex(actual[index]),
+        expected_model = _live_comparison_model(expected[index])
+        candidates = [
+            (
+                candidate_index,
+                compare_decoded_models(
+                    expected=expected_model,
+                    actual=_live_comparison_model(candidate),
+                    plan=plan,
+                    direction=direction,
+                    reproduction_command=_live_reproduction_command(args),
+                    actual_strict_bytes_hex=_strict_bytes_hex(candidate),
+                ),
             )
+            for candidate_index, candidate in enumerate(remaining_actual)
+        ]
+        candidate_index, result = min(
+            candidates,
+            key=lambda candidate: _live_comparison_score(candidate[1]),
         )
+        results.append(result)
+        remaining_actual.pop(candidate_index)
 
+    shared_count = len(results)
     if len(actual) == len(expected) == len(plans):
         return results
 
@@ -2112,6 +2126,10 @@ def _compare_live_decoded_results(
             )
         )
     return results
+
+
+def _live_comparison_score(result: ComparisonResult) -> tuple[int, int]:
+    return (0 if result.passed else 1, len(result.differences))
 
 
 def _live_comparison_model(model: JSONObject) -> JSONObject:
