@@ -7,27 +7,20 @@ repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 export ORACLE_REPO_ROOT="${repo_root}"
 export PYTHONPATH="${script_dir}${PYTHONPATH:+:${PYTHONPATH}}"
 
+pyyaml_requirement="PyYAML>=6.0,<7"
+uv_bin="${ORACLE_UV:-uv}"
 python_bin="${ORACLE_PYTHON:-python3}"
-if ! "${python_bin}" - <<'PY' >/dev/null 2>&1
-import yaml
-PY
-then
-    deps_venv="${ORACLE_PY_DEPS_VENV:-${repo_root}/target/oracle/python-deps}"
-    if [ ! -x "${deps_venv}/bin/python" ]; then
-        mkdir -p "$(dirname -- "${deps_venv}")"
-        "${python_bin}" -m venv "${deps_venv}"
-    fi
-    if ! "${deps_venv}/bin/python" - <<'PY' >/dev/null 2>&1
-import yaml
-PY
-    then
-        "${deps_venv}/bin/python" -m pip install \
-            --disable-pip-version-check \
-            --no-cache-dir \
-            -r "${script_dir}/requirements.txt"
-    fi
-    python_bin="${deps_venv}/bin/python"
+
+if ! uv_path="$(command -v "${uv_bin}")"; then
+    echo "error: uv is required to run oracle Python tooling" >&2
+    echo "hint: install uv from https://docs.astral.sh/uv/ or set ORACLE_UV" >&2
+    exit 69
 fi
 
 cd "${repo_root}"
-exec "${python_bin}" -m engine.cli "$@"
+exec "${uv_path}" run \
+    --quiet \
+    --no-project \
+    --with "${pyyaml_requirement}" \
+    -- \
+    "${python_bin}" -m engine.cli "$@"

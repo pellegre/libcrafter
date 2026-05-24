@@ -5,14 +5,11 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import subprocess
 import sys
-from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 from ...model import JSONObject
-from ...report import REPO_ROOT
 
 
 SCAPY_REQUIREMENT = "scapy>=2.5,<3"
@@ -20,8 +17,6 @@ PYYAML_REQUIREMENT = "PyYAML>=6.0,<7"
 BACKEND_PYTHON_REQUIREMENTS = (SCAPY_REQUIREMENT, PYYAML_REQUIREMENT)
 BOOTSTRAPPED_ENV = "LIBCRAFTER_SCAPY_BOOTSTRAPPED"
 BOOTSTRAP_SOURCE_ENV = "LIBCRAFTER_SCAPY_BOOTSTRAP_SOURCE"
-SCAPY_VENV_ENV = "LIBCRAFTER_SCAPY_VENV"
-DEFAULT_SCAPY_VENV = REPO_ROOT / ".libcrafter-live" / "oracle-scapy-venv"
 
 
 class ScapyBootstrapError(RuntimeError):
@@ -72,10 +67,8 @@ def scapy_report_metadata(scapy_module: ModuleType | None = None) -> JSONObject:
     }
 
     if source == "uv":
-        uv_path = shutil.which("uv")
+        uv_path = shutil.which(os.environ.get("ORACLE_UV", "uv"))
         metadata["bootstrap"]["uv"] = uv_path or "unknown"
-    elif source == "venv":
-        metadata["bootstrap"]["venv"] = str(_venv_dir())
 
     return metadata
 
@@ -99,32 +92,29 @@ def _reexec_with_scapy() -> None:
     if os.environ.get(BOOTSTRAPPED_ENV) == "1":
         raise ScapyBootstrapError("Scapy is not importable after dependency bootstrap")
 
-    uv = shutil.which("uv")
-    if uv is not None:
-        env = _bootstrap_env("uv")
-        os.execvpe(
-            uv,
-            [
-                uv,
-                "run",
-                "--quiet",
-                "--no-project",
-                "--with",
-                BACKEND_PYTHON_REQUIREMENTS[0],
-                "--with",
-                BACKEND_PYTHON_REQUIREMENTS[1],
-                "--",
-                "python3",
-                *_reexec_python_args(),
-            ],
-            env,
+    uv = shutil.which(os.environ.get("ORACLE_UV", "uv"))
+    if uv is None:
+        raise ScapyBootstrapError(
+            "Scapy is not importable and uv is required to bootstrap oracle backend "
+            "dependencies"
         )
 
-    python = _ensure_scapy_venv()
-    env = _bootstrap_env("venv")
+    env = _bootstrap_env("uv")
     os.execvpe(
-        str(python),
-        [str(python), *_reexec_python_args()],
+        uv,
+        [
+            uv,
+            "run",
+            "--quiet",
+            "--no-project",
+            "--with",
+            BACKEND_PYTHON_REQUIREMENTS[0],
+            "--with",
+            BACKEND_PYTHON_REQUIREMENTS[1],
+            "--",
+            os.environ.get("ORACLE_PYTHON", "python3"),
+            *_reexec_python_args(),
+        ],
         env,
     )
 
@@ -146,45 +136,3 @@ def _reexec_python_args() -> list[str]:
     if not sys.argv:
         raise ScapyBootstrapError("cannot determine current Python entrypoint")
     return [sys.argv[0], *sys.argv[1:]]
-
-
-def _venv_dir() -> Path:
-    return Path(os.environ.get(SCAPY_VENV_ENV, str(DEFAULT_SCAPY_VENV)))
-
-
-def _venv_python(venv_dir: Path) -> Path:
-    if os.name == "nt":
-        return venv_dir / "Scripts" / "python.exe"
-    return venv_dir / "bin" / "python"
-
-
-def _ensure_scapy_venv() -> Path:
-    venv_dir = _venv_dir()
-    python = _venv_python(venv_dir)
-    if not python.exists():
-        subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
-
-    if _python_imports_backend_requirements(python):
-        return python
-
-    subprocess.run(
-        [str(python), "-m", "pip", "install", "--upgrade", "pip"],
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
-    subprocess.run(
-        [str(python), "-m", "pip", "install", *BACKEND_PYTHON_REQUIREMENTS],
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
-    return python
-
-
-def _python_imports_backend_requirements(python: Path) -> bool:
-    result = subprocess.run(
-        [str(python), "-c", "import scapy.all; import yaml"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    return result.returncode == 0

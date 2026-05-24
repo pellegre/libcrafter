@@ -20,18 +20,15 @@ RUN apt-get update \
         net-tools \
         pkg-config \
         python3 \
-        python3-pip \
-        python3-venv \
         xxd \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m venv /opt/scapy-venv \
-    && /opt/scapy-venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /opt/scapy-venv/bin/pip install --no-cache-dir scapy
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -sf /root/.local/bin/uv /usr/local/bin/uv
 
 RUN rustup component add clippy rustfmt
 
-ENV PATH="/opt/scapy-venv/bin:${PATH}"
+ENV PATH="/root/.local/bin:${PATH}"
 ENV LIBCRAFTER_PROJECT_ROOT="/workspace/libcrafter"
 
 COPY entrypoint.sh /usr/local/bin/libcrafter-live-entrypoint

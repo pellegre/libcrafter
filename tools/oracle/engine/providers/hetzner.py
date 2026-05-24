@@ -38,8 +38,6 @@ LIBCRAFTER_BOOTSTRAP_PACKAGES = [
     "libpcap-dev",
     "pkg-config",
     "python3",
-    "python3-pip",
-    "python3-venv",
 ]
 REFERENCE_BOOTSTRAP_PACKAGES = [
     "ca-certificates",
@@ -47,9 +45,8 @@ REFERENCE_BOOTSTRAP_PACKAGES = [
     "git",
     "iproute2",
     "python3",
-    "python3-pip",
-    "python3-venv",
 ]
+PYTHON_DEPENDENCY_RUNNER = "uv"
 
 
 def hetzner_token_configured() -> bool:
@@ -121,12 +118,16 @@ def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
             "repository_sync": "both_endpoints",
             "libcrafter": {
                 "system_packages": LIBCRAFTER_BOOTSTRAP_PACKAGES,
+                "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
+                "uv": "install_if_missing",
                 "rust": "install_if_missing",
                 "validation": "cargo build -p crafter --example oracle_live_endpoint",
                 "artifact": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
             },
             "reference_backend": {
                 "system_packages": REFERENCE_BOOTSTRAP_PACKAGES,
+                "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
+                "uv": "install_if_missing",
                 "validation": "tools/oracle/run backend-info --backend scapy",
                 "tshark": {
                     "availability_reported": True,
@@ -245,6 +246,8 @@ def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "repository_sync": True,
                 "private_network": True,
                 "system_packages": LIBCRAFTER_BOOTSTRAP_PACKAGES,
+                "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
+                "uv": "install_if_missing",
                 "rust": "install_if_missing",
                 "validation": "cargo build -p crafter --example oracle_live_endpoint",
                 "artifact_path": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
@@ -271,6 +274,8 @@ def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "repository_sync": True,
                 "private_network": True,
                 "system_packages": REFERENCE_BOOTSTRAP_PACKAGES,
+                "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
+                "uv": "install_if_missing",
                 "validation": "tools/oracle/run backend-info --backend scapy",
                 "tshark": {
                     "availability_reported": True,
@@ -313,6 +318,13 @@ def validate_hetzner_endpoint_bootstrap(
         for package in ("libpcap-dev", "pkg-config", "clang"):
             if package not in packages:
                 errors.append(f"libcrafter bootstrap missing package: {package}")
+        if (
+            libcrafter.metadata.get("python_dependency_runner")
+            != PYTHON_DEPENDENCY_RUNNER
+        ):
+            errors.append("libcrafter bootstrap must use uv for Python dependencies")
+        if libcrafter.metadata.get("uv") != "install_if_missing":
+            errors.append("libcrafter bootstrap must install uv when missing")
         if libcrafter.metadata.get("rust") != "install_if_missing":
             errors.append("libcrafter bootstrap must install Rust when missing")
         if (
@@ -324,9 +336,16 @@ def validate_hetzner_endpoint_bootstrap(
     reference = commands_by_role.get("reference_backend")
     if reference is not None:
         packages = set(reference.metadata.get("system_packages", []))
-        for package in ("python3", "python3-pip", "python3-venv"):
+        for package in ("python3", "curl"):
             if package not in packages:
                 errors.append(f"reference bootstrap missing package: {package}")
+        if (
+            reference.metadata.get("python_dependency_runner")
+            != PYTHON_DEPENDENCY_RUNNER
+        ):
+            errors.append("reference bootstrap must use uv for Python dependencies")
+        if reference.metadata.get("uv") != "install_if_missing":
+            errors.append("reference bootstrap must install uv when missing")
         if reference.metadata.get("validation") != (
             "tools/oracle/run backend-info --backend scapy"
         ):

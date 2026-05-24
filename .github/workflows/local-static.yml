@@ -25,7 +25,12 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libpcap-dev pkg-config python3-pip python3-venv
+          sudo apt-get install -y --no-install-recommends curl libpcap-dev pkg-config python3
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install Rust toolchain
         run: |
