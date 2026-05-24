@@ -30,6 +30,8 @@ _IPV6_NEXT_HEADERS: dict[str, int] = {
     "fragment": 44,
     "routing": 43,
     "icmpv6": 58,
+    "payload": 253,
+    "raw": 253,
     "tcp": 6,
     "unknown": 253,
     "udp": 17,
@@ -56,6 +58,8 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ethernet": "Ether",
     "icmp": "ICMP",
     "icmpv6": "ICMPv6EchoRequest",
+    "ipv6_fragment": "IPv6ExtHdrFragment",
+    "ipv6_routing": "IPv6ExtHdrRouting",
     "ipv4": "IP",
     "ipv6": "IPv6",
     "payload": "Raw",
@@ -126,6 +130,10 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _ipv4(fields, stack, index, scapy_all)
     if layer == "ipv6":
         return _ipv6(fields, stack, index, scapy_all)
+    if layer == "ipv6_fragment":
+        return _ipv6_fragment(fields, stack, index, scapy_all)
+    if layer == "ipv6_routing":
+        return _ipv6_routing(fields, stack, index, scapy_all)
     if layer == "icmp":
         return _icmp(fields, scapy_all)
     if layer == "icmpv6":
@@ -136,6 +144,8 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _tcp(fields, scapy_all)
     if layer == "dns":
         return _dns(fields, scapy_all)
+    if layer == "dhcp":
+        return _dhcp(fields, scapy_all)
 
     raise ValueError(f"unsupported Scapy materialization layer: {layer}")
 
@@ -248,6 +258,48 @@ def _ipv6(fields: Mapping[str, JSONObject], stack: list[str], index: int, scapy_
     return scapy_all.IPv6(**kwargs)
 
 
+def _ipv6_fragment(
+    fields: Mapping[str, JSONObject],
+    stack: list[str],
+    index: int,
+    scapy_all: Any,
+) -> Any:
+    fragment_fields = _layer_fields(fields, "ipv6_fragment")
+    kwargs: dict[str, Any] = {
+        "nh": _protocol_value(
+            fragment_fields.get("next_header", fragment_fields.get("nh", _next_payload_layer(stack, index))),
+            _IPV6_NEXT_HEADERS,
+        ),
+        "id": _int(fragment_fields.get("identification", fragment_fields.get("id")), 0x12345678),
+        "offset": _int(fragment_fields.get("fragment_offset", fragment_fields.get("offset")), 0),
+        "m": _int(fragment_fields.get("more_fragments", fragment_fields.get("m")), 0),
+    }
+    if "reserved" in fragment_fields:
+        kwargs["res1"] = _int(fragment_fields.get("reserved"), 0)
+    return scapy_all.IPv6ExtHdrFragment(**kwargs)
+
+
+def _ipv6_routing(
+    fields: Mapping[str, JSONObject],
+    stack: list[str],
+    index: int,
+    scapy_all: Any,
+) -> Any:
+    routing_fields = _layer_fields(fields, "ipv6_routing")
+    kwargs: dict[str, Any] = {
+        "nh": _protocol_value(
+            routing_fields.get("next_header", routing_fields.get("nh", _next_payload_layer(stack, index))),
+            _IPV6_NEXT_HEADERS,
+        ),
+        "type": _int(routing_fields.get("type", routing_fields.get("routing_type")), 0),
+        "segleft": _int(routing_fields.get("segments_left", routing_fields.get("segleft")), 0),
+    }
+    addresses = routing_fields.get("addresses")
+    if isinstance(addresses, list):
+        kwargs["addresses"] = addresses
+    return scapy_all.IPv6ExtHdrRouting(**kwargs)
+
+
 def _icmp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
     icmp_fields = _layer_fields(fields, "icmp")
     return scapy_all.ICMP(
@@ -326,6 +378,21 @@ def _dns(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
             qtype=_text(dns_fields.get("qtype", question.get("qtype")), "A"),
         ),
     )
+
+
+def _dhcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
+    dhcp_fields = _layer_fields(fields, "dhcp")
+    bootp = scapy_all.BOOTP(
+        op=_dhcp_op(dhcp_fields.get("op")),
+        htype=_int(dhcp_fields.get("hardware_type", dhcp_fields.get("htype")), 1),
+        hlen=_int(dhcp_fields.get("hardware_length", dhcp_fields.get("hlen")), 6),
+        xid=_int(dhcp_fields.get("transaction_id", dhcp_fields.get("xid")), 0x12345678),
+        flags=_dhcp_flags(dhcp_fields.get("flags")),
+        ciaddr=_text(dhcp_fields.get("client_ip", dhcp_fields.get("ciaddr")), "0.0.0.0"),
+        yiaddr=_text(dhcp_fields.get("your_ip", dhcp_fields.get("yiaddr")), "0.0.0.0"),
+        chaddr=_dhcp_chaddr(dhcp_fields.get("client_hardware_address", dhcp_fields.get("chaddr"))),
+    )
+    return bootp / scapy_all.DHCP(options=_dhcp_options(dhcp_fields.get("options")))
 
 
 def _canonical_stack(stack: list[str]) -> list[str]:
@@ -467,6 +534,51 @@ def _tcp_flags(value: object) -> object:
             output += flag_names.get(lowered, item)
         return output
     return value
+
+
+def _dhcp_op(value: object) -> int:
+    if isinstance(value, str):
+        lowered = value.lower().replace("_", "-")
+        if lowered in {"bootrequest", "request"}:
+            return 1
+        if lowered in {"bootreply", "reply"}:
+            return 2
+    return _int(value, 1)
+
+
+def _dhcp_flags(value: object) -> int:
+    if isinstance(value, str):
+        lowered = value.lower().replace("_", "-")
+        if lowered in {"broadcast", "b"}:
+            return 0x8000
+        if lowered in {"none", "0"}:
+            return 0
+    return _int(value, 0)
+
+
+def _dhcp_chaddr(value: object) -> bytes:
+    mac = _text(value, "00:00:5e:00:53:01")
+    raw = bytes.fromhex(mac.replace(":", ""))
+    return raw.ljust(16, b"\x00")
+
+
+def _dhcp_options(value: object) -> list[object]:
+    if not isinstance(value, list):
+        return [("message-type", "discover"), "end"]
+    options: list[object] = []
+    for item in value:
+        if isinstance(item, str):
+            if item == "end":
+                options.append("end")
+                continue
+            if "=" in item:
+                name, raw_value = item.split("=", 1)
+                options.append((name, raw_value))
+                continue
+        options.append(item)
+    if not options or options[-1] != "end":
+        options.append("end")
+    return options
 
 
 def _first_question(dns_fields: Mapping[str, object]) -> JSONObject:

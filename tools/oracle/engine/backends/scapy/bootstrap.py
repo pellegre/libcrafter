@@ -16,6 +16,8 @@ from ...report import REPO_ROOT
 
 
 SCAPY_REQUIREMENT = "scapy>=2.5,<3"
+PYYAML_REQUIREMENT = "PyYAML>=6.0,<7"
+BACKEND_PYTHON_REQUIREMENTS = (SCAPY_REQUIREMENT, PYYAML_REQUIREMENT)
 BOOTSTRAPPED_ENV = "LIBCRAFTER_SCAPY_BOOTSTRAPPED"
 BOOTSTRAP_SOURCE_ENV = "LIBCRAFTER_SCAPY_BOOTSTRAP_SOURCE"
 SCAPY_VENV_ENV = "LIBCRAFTER_SCAPY_VENV"
@@ -108,7 +110,9 @@ def _reexec_with_scapy() -> None:
                 "--quiet",
                 "--no-project",
                 "--with",
-                SCAPY_REQUIREMENT,
+                BACKEND_PYTHON_REQUIREMENTS[0],
+                "--with",
+                BACKEND_PYTHON_REQUIREMENTS[1],
                 "--",
                 "python3",
                 *_reexec_python_args(),
@@ -160,7 +164,7 @@ def _ensure_scapy_venv() -> Path:
     if not python.exists():
         subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
 
-    if _python_imports_scapy(python):
+    if _python_imports_backend_requirements(python):
         return python
 
     subprocess.run(
@@ -169,16 +173,16 @@ def _ensure_scapy_venv() -> Path:
         stdout=subprocess.DEVNULL,
     )
     subprocess.run(
-        [str(python), "-m", "pip", "install", SCAPY_REQUIREMENT],
+        [str(python), "-m", "pip", "install", *BACKEND_PYTHON_REQUIREMENTS],
         check=True,
         stdout=subprocess.DEVNULL,
     )
     return python
 
 
-def _python_imports_scapy(python: Path) -> bool:
+def _python_imports_backend_requirements(python: Path) -> bool:
     result = subprocess.run(
-        [str(python), "-c", "import scapy.all"],
+        [str(python), "-c", "import scapy.all; import yaml"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,

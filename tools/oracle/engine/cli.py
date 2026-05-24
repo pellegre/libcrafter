@@ -272,6 +272,10 @@ def _add_generation_options(parser: argparse.ArgumentParser) -> None:
         help="protocol family filter from stacks.yaml",
     )
     parser.add_argument(
+        "--root",
+        help="root decoder filter from stacks.yaml, such as link:ethernet or l3:ipv4",
+    )
+    parser.add_argument(
         "--index",
         type=_non_negative_int,
         help="generate one packet plan at the selected index",
@@ -284,6 +288,56 @@ def _not_implemented(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     return 2
+
+
+def _generate(args: argparse.Namespace) -> int:
+    from .generator import generate_plans
+
+    try:
+        plans = generate_plans(
+            seed=args.seed,
+            profile=args.profile,
+            count=args.count,
+            root=args.root,
+            family=args.family,
+            case=args.case_name,
+            feature=args.feature,
+            direction=args.direction,
+            index=args.index,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    output_dir = Path(args.out)
+    if not output_dir.is_absolute():
+        output_dir = REPO_ROOT / output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plans_path = output_dir / "plans.json"
+    report = RunReport(
+        mode="generate",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=len(plans),
+        status="generated",
+        selected_specs=list(GENERATOR_SELECTED_SPECS),
+        artifacts=[str(plans_path)],
+        artifact_paths=[str(plans_path)],
+        metadata={
+            "direction": args.direction,
+            "requested_count": args.count,
+            "generated_count": len(plans),
+            "root": args.root,
+            "family": args.family,
+            "case": args.case_name,
+            "feature": args.feature,
+            "plans": [plan.to_dict() for plan in plans],
+        },
+    )
+    write_json(plans_path, report)
+    print(f"generate: status=generated count={len(plans)} plans={plans_path}")
+    return 0
 
 
 def _offline_required_capabilities(
@@ -593,6 +647,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             seed=args.seed,
             profile=args.profile,
             count=args.count,
+            root=args.root,
             family=args.family,
             case=args.case_name,
             feature=args.feature,
@@ -1013,6 +1068,7 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
             seed=args.seed,
             profile=args.profile,
             count=args.count,
+            root=args.root,
             family=args.family,
             case=args.case_name,
             feature=args.feature,
@@ -1199,6 +1255,7 @@ def _pcap_dry_plan(args: argparse.Namespace) -> int:
         seed=args.seed,
         profile=args.profile,
         count=args.count,
+        root=args.root,
         family=args.family,
         case=args.case_name,
         feature=args.feature,
@@ -1257,6 +1314,7 @@ def _pcap_execute(args: argparse.Namespace) -> int:
             seed=args.seed,
             profile=args.profile,
             count=args.count,
+            root=args.root,
             family=args.family,
             case=args.case_name,
             feature=args.feature,
@@ -1421,9 +1479,11 @@ def _offline(args: argparse.Namespace) -> int:
         seed=args.seed,
         profile=args.profile,
         count=args.count,
+        root=args.root,
         family=args.family,
         case=args.case_name,
         feature=args.feature,
+        direction=args.direction,
         index=args.index,
     )
     if args.emit_vectors or args.emit_decoded:
@@ -1530,9 +1590,11 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         seed=args.seed,
         profile=args.profile,
         count=args.count,
+        root=args.root,
         family=args.family,
         case=args.case_name,
         feature=args.feature,
+        direction=args.direction,
         index=args.index,
     )
     vectors = encode_packet_plans(plans)
@@ -2747,6 +2809,8 @@ def _reproduction_command(args: argparse.Namespace, index: int) -> str:
         argv.extend(["--feature", args.feature])
     if args.family is not None:
         argv.extend(["--family", args.family])
+    if args.root is not None:
+        argv.extend(["--root", args.root])
     return shlex.join(argv)
 
 
@@ -2775,6 +2839,8 @@ def _live_reproduction_command(args: argparse.Namespace) -> str:
         argv.extend(["--feature", args.feature])
     if args.family is not None:
         argv.extend(["--family", args.family])
+    if args.root is not None:
+        argv.extend(["--root", args.root])
     if getattr(args, "dry_run", False):
         argv.append("--dry-run")
     return shlex.join(argv)
@@ -2803,6 +2869,8 @@ def _pcap_reproduction_command(args: argparse.Namespace, index: int, direction: 
         argv.extend(["--feature", args.feature])
     if args.family is not None:
         argv.extend(["--family", args.family])
+    if args.root is not None:
+        argv.extend(["--root", args.root])
     return shlex.join(argv)
 
 
@@ -3224,6 +3292,27 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="MODE",
         required=True,
     )
+
+    generate_parser = subparsers.add_parser(
+        "generate",
+        help="generate deterministic packet plans",
+        description="Generate deterministic oracle packet plans.",
+    )
+    _add_common_options(generate_parser)
+    _add_generation_options(generate_parser)
+    generate_parser.add_argument(
+        "--direction",
+        default="reference_to_libcrafter",
+        choices=(
+            "reference_to_libcrafter",
+            "libcrafter_to_reference",
+            "roundtrip",
+            "live",
+            "live_exchange",
+        ),
+        help="plan direction metadata (default: %(default)s)",
+    )
+    generate_parser.set_defaults(func=_generate)
 
     offline_parser = subparsers.add_parser(
         "offline",
