@@ -40,6 +40,10 @@ from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 
 
 PCAP_CONTRACT_SPEC = "features/pcap.yaml"
+GENERATOR_SELECTED_SPECS = (
+    "tools/oracle/specs/stacks.yaml",
+    "tools/oracle/specs/profiles.yaml",
+)
 FINAL_REPORT_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("formatting", ("cargo", "fmt", "--all", "--", "--check")),
     ("clippy", ("cargo", "clippy", "--workspace", "--all-targets")),
@@ -239,9 +243,8 @@ def _add_generation_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--profile",
-        choices=("smoke", "ci", "wild", "boundary", "fuzz"),
         default="smoke",
-        help="sampling profile (default: %(default)s)",
+        help="sampling profile from profiles.yaml (default: %(default)s)",
     )
     parser.add_argument(
         "--seed",
@@ -266,8 +269,7 @@ def _add_generation_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--family",
-        choices=("ipv4", "ipv6"),
-        help="protocol family filter",
+        help="protocol family filter from stacks.yaml",
     )
     parser.add_argument(
         "--index",
@@ -524,7 +526,7 @@ def _pcap(args: argparse.Namespace) -> int:
         required=_pcap_required_capabilities(args),
         operation=f"pcap {args.direction}",
         report_path=_pcap_output_dir(args.out) / "report.json",
-        selected_specs=(PCAP_CONTRACT_SPEC, "builtin-stack-grammar"),
+        selected_specs=(PCAP_CONTRACT_SPEC, *GENERATOR_SELECTED_SPECS),
     )
     if unsupported is not None:
         return unsupported
@@ -534,7 +536,7 @@ def _pcap(args: argparse.Namespace) -> int:
             mode="pcap",
             operation=f"pcap {args.direction}",
             report_path=_pcap_output_dir(args.out) / "report.json",
-            selected_specs=(PCAP_CONTRACT_SPEC, "builtin-stack-grammar"),
+            selected_specs=(PCAP_CONTRACT_SPEC, *GENERATOR_SELECTED_SPECS),
         )
 
     return _pcap_execute(args)
@@ -1214,7 +1216,7 @@ def _pcap_dry_plan(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(plans),
         status="dry-plan",
-        selected_specs=[PCAP_CONTRACT_SPEC, "builtin-stack-grammar"],
+        selected_specs=[PCAP_CONTRACT_SPEC, *GENERATOR_SELECTED_SPECS],
         metadata={
             "dry_plan": True,
             "requested_count": args.count,
@@ -1271,7 +1273,7 @@ def _pcap_execute(args: argparse.Namespace) -> int:
             seed=args.seed,
             count=len(vectors),
             status="vectors",
-            selected_specs=[PCAP_CONTRACT_SPEC, "builtin-stack-grammar"],
+            selected_specs=[PCAP_CONTRACT_SPEC, *GENERATOR_SELECTED_SPECS],
             backend_versions=backend_versions,
             libcrafter=libcrafter_info,
             metadata={
@@ -1333,7 +1335,7 @@ def _pcap_execute(args: argparse.Namespace) -> int:
             seed=args.seed,
             count=len(results),
             status=status,
-            selected_specs=[PCAP_CONTRACT_SPEC, "builtin-stack-grammar"],
+            selected_specs=[PCAP_CONTRACT_SPEC, *GENERATOR_SELECTED_SPECS],
             artifacts=artifacts,
             artifact_paths=artifacts,
             results=results,
@@ -1392,7 +1394,7 @@ def _offline(args: argparse.Namespace) -> int:
             required=required_capabilities,
             operation=f"offline {args.direction}",
             report_path=_offline_output_dir(args.out) / "report.json",
-            selected_specs=("builtin-stack-grammar",),
+            selected_specs=GENERATOR_SELECTED_SPECS,
         )
         if unsupported is not None:
             return unsupported
@@ -1402,7 +1404,7 @@ def _offline(args: argparse.Namespace) -> int:
                 mode="offline",
                 operation=f"offline {args.direction}",
                 report_path=_offline_output_dir(args.out) / "report.json",
-                selected_specs=("builtin-stack-grammar",),
+                selected_specs=GENERATOR_SELECTED_SPECS,
             )
 
     if not args.dry_plan and not args.emit_vectors and not args.emit_decoded:
@@ -1455,7 +1457,7 @@ def _offline(args: argparse.Namespace) -> int:
                 seed=args.seed,
                 count=len(decoded),
                 status="decoded",
-                selected_specs=["builtin-stack-grammar"],
+                selected_specs=list(GENERATOR_SELECTED_SPECS),
                 backend_versions=_backend_versions(args.backend),
                 libcrafter=_libcrafter_info(),
                 metadata=metadata,
@@ -1470,7 +1472,7 @@ def _offline(args: argparse.Namespace) -> int:
             seed=args.seed,
             count=len(vectors),
             status="vectors",
-            selected_specs=["builtin-stack-grammar"],
+            selected_specs=list(GENERATOR_SELECTED_SPECS),
             backend_versions=_backend_versions(args.backend),
             libcrafter=_libcrafter_info(),
             metadata={
@@ -1489,7 +1491,7 @@ def _offline(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(plans),
         status="dry-plan",
-        selected_specs=["builtin-stack-grammar"],
+        selected_specs=list(GENERATOR_SELECTED_SPECS),
         metadata={
             "dry_plan": True,
             "requested_count": args.count,
@@ -1545,7 +1547,7 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(vectors),
         status="vectors",
-        selected_specs=["builtin-stack-grammar"],
+        selected_specs=list(GENERATOR_SELECTED_SPECS),
         backend_versions=backend_versions,
         libcrafter=libcrafter_info,
         metadata={
@@ -1567,7 +1569,7 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
             seed=args.seed,
             count=len(expected_decoded),
             status="decoded",
-            selected_specs=["builtin-stack-grammar"],
+            selected_specs=list(GENERATOR_SELECTED_SPECS),
             backend_versions=backend_versions,
             libcrafter=libcrafter_info,
             metadata={
@@ -1621,7 +1623,7 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(results),
         status=status,
-        selected_specs=["builtin-stack-grammar"],
+        selected_specs=list(GENERATOR_SELECTED_SPECS),
         artifacts=artifacts,
         artifact_paths=artifacts,
         results=results,
@@ -2940,7 +2942,9 @@ def _legacy_live_example(args: argparse.Namespace) -> int:
 
 def _self_check(args: argparse.Namespace) -> int:
     from .generator import run_self_checks
+    from .spec_loader import load_oracle_specs
 
+    load_oracle_specs()
     run_self_checks()
     scapy_backend = get_backend("scapy")
     wireshark_backend = get_backend("wireshark")
@@ -2959,7 +2963,30 @@ def _self_check(args: argparse.Namespace) -> int:
         or not wireshark_backend.capabilities.pcap_read
     ):
         raise AssertionError("Wireshark backend must expose parser capabilities")
-    sys.stdout.write(dumps_json({"status": "ok", "checks": ["generator", "backends"]}))
+    sys.stdout.write(dumps_json({"status": "ok", "checks": ["specs", "generator", "backends"]}))
+    return 0
+
+
+def _specs_validate(args: argparse.Namespace) -> int:
+    from .spec_loader import SpecValidationError, load_oracle_specs
+
+    try:
+        specs = load_oracle_specs()
+    except SpecValidationError as exc:
+        print(f"spec validation failed: {exc}", file=sys.stderr)
+        return 2
+
+    summary = specs.summary()
+    if args.json:
+        sys.stdout.write(dumps_json(summary))
+    else:
+        counts = _json_object(summary["counts"], "spec validation counts")
+        print(
+            "oracle specs: "
+            f"status=ok roots={counts['roots']} families={counts['families']} "
+            f"stacks={counts['stacks']} profiles={counts['profiles']} "
+            f"layers={counts['layers']} features={counts['features']}"
+        )
     return 0
 
 
@@ -3289,9 +3316,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fixtures_parser.add_argument(
         "--profile",
-        choices=("smoke", "ci", "wild", "boundary", "fuzz"),
         default="smoke",
-        help="fixture generation profile metadata (default: %(default)s)",
+        help="fixture generation profile metadata from profiles.yaml (default: %(default)s)",
     )
     fixtures_parser.add_argument(
         "--seed",
@@ -3357,6 +3383,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="backend to inspect (default: %(default)s)",
     )
     backend_info_parser.set_defaults(func=_backend_info)
+
+    specs_parser = subparsers.add_parser(
+        "specs",
+        help="inspect executable oracle specs",
+        description="Inspect executable oracle specs.",
+    )
+    specs_subparsers = specs_parser.add_subparsers(
+        dest="specs_command",
+        metavar="COMMAND",
+        required=True,
+    )
+    specs_validate_parser = specs_subparsers.add_parser(
+        "validate",
+        help="load and validate all executable oracle specs",
+        description="Load and validate all executable oracle specs.",
+    )
+    specs_validate_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the validation summary as JSON",
+    )
+    specs_validate_parser.set_defaults(func=_specs_validate)
 
     legacy_live_example_parser = subparsers.add_parser(
         "legacy-live-example",

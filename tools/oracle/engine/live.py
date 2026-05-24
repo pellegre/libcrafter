@@ -14,7 +14,11 @@ from .model import JSONObject, JsonModel, PacketPlan
 
 LOCAL_DRY_RUN_PROVIDER = "local-dry-run"
 LIVE_PROTOCOL_SPEC = "tools/oracle/LIVE.md"
-LIVE_SELECTED_SPECS = [LIVE_PROTOCOL_SPEC, "builtin-stack-grammar"]
+LIVE_SELECTED_SPECS = [
+    LIVE_PROTOCOL_SPEC,
+    "tools/oracle/specs/stacks.yaml",
+    "tools/oracle/specs/profiles.yaml",
+]
 LIVE_EXCHANGE_DIRECTIONS = ("libcrafter_to_reference", "reference_to_libcrafter")
 
 
