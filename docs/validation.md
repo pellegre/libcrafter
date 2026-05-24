@@ -17,6 +17,19 @@ tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
 Use `--profile`, `--seed`, and `--count` to make failures reproducible. When a
 report identifies a packet index, rerun with the same inputs and `--index`.
 
+The checked-in fixture suite complements oracle validation. Fixture tests decode
+committed bytes and pcaps, assert typed layers and stable fields, compare selected
+summaries, verify byte-preserving roundtrips where promised, and exercise named
+malformed inputs with structured error assertions. These tests run without Scapy
+or `target/oracle/` artifacts.
+
+Useful focused fixture checks:
+
+```sh
+cargo test -p crafter --test fixture_suite
+cargo test -p crafter --test resilience malformed_corpus_reports_structured_errors
+```
+
 ## Pcap Validation
 
 Pcap validation exercises packet materialization, pcap write/read behavior, and
@@ -58,6 +71,7 @@ Recommended local preflight:
 
 ```sh
 cargo test --workspace
+! rg -n "^(from|import) scapy" crates tests
 tools/oracle/run offline --backend scapy --profile ci --seed 12345 --count 2000
 tools/oracle/run pcap --backend scapy --profile smoke --seed 12345 --count 250
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
@@ -65,3 +79,5 @@ tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smo
 
 Oracle artifacts default below `target/oracle/`, with mode-specific reports
 under `target/oracle/offline`, `target/oracle/pcap`, and `target/oracle/live`.
+Keep promoted fixture bytes under `tests/fixtures/` and the Scapy/reference
+backend ownership under `tools/oracle/`.
