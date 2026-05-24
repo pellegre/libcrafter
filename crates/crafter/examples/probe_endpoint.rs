@@ -5,7 +5,7 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{self, Read};
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -85,6 +85,28 @@ struct ProbePlan {
     expected_acknowledgment_number: Option<u32>,
     #[serde(default)]
     window: Option<u16>,
+    #[serde(default)]
+    query_id: Option<u16>,
+    #[serde(default)]
+    query_name: Option<String>,
+    #[serde(default)]
+    query_type: Option<String>,
+    #[serde(default)]
+    query_type_value: Option<u16>,
+    #[serde(default)]
+    query_class_value: Option<u16>,
+    #[serde(default)]
+    expected_answer_name: Option<String>,
+    #[serde(default)]
+    expected_answer_type: Option<String>,
+    #[serde(default)]
+    expected_answer_type_value: Option<u16>,
+    #[serde(default)]
+    expected_answer_data: Option<String>,
+    #[serde(default)]
+    expected_response_code: Option<u8>,
+    #[serde(default)]
+    answer_ttl: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -227,6 +249,8 @@ fn run_endpoint(
             (RunMode::Live, "icmp-echo") => run_icmp_live(request, plan)?,
             (RunMode::DryRun, "tcp-syn-open" | "tcp-syn-closed") => run_tcp_dry_run(request, plan)?,
             (RunMode::Live, "tcp-syn-open" | "tcp-syn-closed") => run_tcp_live(request, plan)?,
+            (RunMode::DryRun, "dns-query") => run_dns_dry_run(request, plan)?,
+            (RunMode::Live, "dns-query") => run_dns_live(request, plan)?,
             _ => {
                 let message = format!("unsupported probe case: {}", plan.case);
                 errors.push(message.clone());
@@ -678,6 +702,199 @@ fn run_tcp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResu
     ))
 }
 
+fn run_dns_dry_run(
+    request: &ProbeEndpointRequest,
+    plan: &ProbePlan,
+) -> ExampleResult<ProbeOutcome> {
+    let packet = dns_packet(plan)?;
+    let report = SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .dry_run(),
+    )
+    .send(&packet)?;
+    let sent_raw_hex = hex_bytes(report.plan().bytes());
+    let observed = observed_response(
+        plan,
+        false,
+        None,
+        json!({}),
+        json!({
+            "planned_only": true,
+            "send_report": send_report_json(&report),
+            "sent_raw_hex": sent_raw_hex,
+            "capture_filter": capture_filter(plan),
+            "target_service": target_service_json(plan),
+        }),
+    );
+    let result = json!({
+        "case": plan.case,
+        "sequence": plan.sequence,
+        "status": "planned",
+        "endpoint_role": "stimulus",
+        "passed": null,
+        "observed_response": observed,
+        "metadata": {
+            "dry_run": true,
+            "probe_plan": plan_json(plan),
+            "planned_only": true,
+            "sent_raw_hex": sent_raw_hex,
+            "capture_filter": capture_filter(plan),
+            "target_service": target_service_json(plan),
+        }
+    });
+    Ok(ProbeOutcome {
+        result,
+        observed_response: observed,
+        sent: false,
+        received: false,
+    })
+}
+
+fn run_dns_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResult<ProbeOutcome> {
+    let packet = dns_packet(plan)?;
+    let timeout = Duration::from_secs(request.timeout_seconds.max(1));
+    let mut sniffer = match Sniffer::interface(request.interface.clone())
+        .timeout(timeout)
+        .count(64)
+        .filter(&capture_filter(plan))
+        .open()
+    {
+        Ok(sniffer) => sniffer,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("capture open failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
+    let send_report = match SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .live(),
+    )
+    .send(&packet)
+    {
+        Ok(report) => report,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("send failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
+
+    let sent = send_report.bytes_sent() > 0;
+    let mut wrong_peer = None;
+    let mut wrong_payload = None;
+    while let Some(captured) = match sniffer.next_packet() {
+        Ok(packet) => packet,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("capture decode failed: {err}")],
+                Some(send_report_json(&send_report)),
+                sent,
+                false,
+            ));
+        }
+    } {
+        match validate_dns_candidate(plan, captured.packet(), captured.data())? {
+            CandidateValidation::Ignore => {}
+            CandidateValidation::Passed(decoded) => {
+                let raw_hex = hex_bytes(captured.data());
+                let observed = observed_response(
+                    plan,
+                    true,
+                    Some(raw_hex.clone()),
+                    decoded.clone(),
+                    json!({
+                        "send_report": send_report_json(&send_report),
+                        "capture_filter": capture_filter(plan),
+                    }),
+                );
+                let result = json!({
+                    "case": plan.case,
+                    "sequence": plan.sequence,
+                    "status": "passed",
+                    "endpoint_role": "stimulus",
+                    "passed": true,
+                    "observed_response": observed,
+                    "metadata": {
+                        "dry_run": false,
+                        "probe_plan": plan_json(plan),
+                        "raw_hex": raw_hex,
+                        "decoded": decoded,
+                    }
+                });
+                return Ok(ProbeOutcome {
+                    result,
+                    observed_response: observed,
+                    sent,
+                    received: true,
+                });
+            }
+            CandidateValidation::WrongPeer(decoded) => {
+                wrong_peer = Some(decoded);
+            }
+            CandidateValidation::WrongPayload(decoded) => {
+                wrong_payload = Some(decoded);
+            }
+        }
+    }
+
+    if let Some(decoded) = wrong_payload {
+        return Ok(failed_outcome(
+            plan,
+            FAILURE_WRONG_PAYLOAD,
+            vec!["captured DNS response did not match expected question or answer".to_string()],
+            Some(json!({
+                "send_report": send_report_json(&send_report),
+                "decoded": decoded,
+            })),
+            sent,
+            true,
+        ));
+    }
+
+    if let Some(decoded) = wrong_peer {
+        return Ok(failed_outcome(
+            plan,
+            FAILURE_WRONG_PEER,
+            vec!["captured DNS response did not match expected peer or ports".to_string()],
+            Some(json!({
+                "send_report": send_report_json(&send_report),
+                "decoded": decoded,
+            })),
+            sent,
+            true,
+        ));
+    }
+
+    Ok(failed_outcome(
+        plan,
+        FAILURE_TIMEOUT,
+        vec!["timed out waiting for DNS response".to_string()],
+        Some(json!({
+            "send_report": send_report_json(&send_report),
+            "capture_filter": capture_filter(plan),
+        })),
+        sent,
+        false,
+    ))
+}
+
 fn failed_outcome(
     plan: &ProbePlan,
     reason: &str,
@@ -935,6 +1152,183 @@ fn validate_tcp_candidate(
     Ok(CandidateValidation::Passed(decoded))
 }
 
+fn validate_dns_candidate(
+    plan: &ProbePlan,
+    packet: &Packet,
+    raw: &[u8],
+) -> ExampleResult<CandidateValidation> {
+    let Some(udp) = packet.layer::<Udp>() else {
+        return Ok(CandidateValidation::Ignore);
+    };
+
+    let expected_source: Ipv4Addr = required_str(
+        plan.expected_reply_source_ipv4.as_deref(),
+        "expected_reply_source_ipv4",
+    )?
+    .parse()?;
+    let expected_destination: Ipv4Addr = required_str(
+        plan.expected_reply_destination_ipv4.as_deref(),
+        "expected_reply_destination_ipv4",
+    )?
+    .parse()?;
+    let expected_source_port = required_u16(plan.destination_port, "destination_port")?;
+    let expected_destination_port = required_u16(plan.source_port, "source_port")?;
+    let mut peer_mismatches = Vec::new();
+
+    match packet.layer::<Ipv4>() {
+        Some(ipv4) => {
+            if ipv4.source() != expected_source {
+                peer_mismatches.push(json!({
+                    "field": "ipv4.src",
+                    "expected": expected_source.to_string(),
+                    "actual": ipv4.source().to_string(),
+                }));
+            }
+            if ipv4.destination() != expected_destination {
+                peer_mismatches.push(json!({
+                    "field": "ipv4.dst",
+                    "expected": expected_destination.to_string(),
+                    "actual": ipv4.destination().to_string(),
+                }));
+            }
+        }
+        None => peer_mismatches.push(json!({
+            "field": "ipv4",
+            "expected": "present",
+            "actual": "missing",
+        })),
+    }
+
+    if udp.source_port_value() != expected_source_port {
+        peer_mismatches.push(json!({
+            "field": "udp.sport",
+            "expected": expected_source_port,
+            "actual": udp.source_port_value(),
+        }));
+    }
+    if udp.destination_port_value() != expected_destination_port {
+        peer_mismatches.push(json!({
+            "field": "udp.dport",
+            "expected": expected_destination_port,
+            "actual": udp.destination_port_value(),
+        }));
+    }
+
+    let decoded = decoded_packet_json(packet, raw);
+    if !peer_mismatches.is_empty() {
+        return Ok(CandidateValidation::WrongPeer(json!({
+            "packet": decoded,
+            "mismatches": peer_mismatches,
+        })));
+    }
+
+    let Some(dns) = packet.layer::<Dns>() else {
+        return Ok(CandidateValidation::WrongPayload(json!({
+            "packet": decoded,
+            "mismatches": [{
+                "field": "dns",
+                "expected": "present",
+                "actual": "missing",
+            }],
+        })));
+    };
+
+    let expected_query_id = required_u16(plan.query_id, "query_id")?;
+    let expected_qname =
+        canonical_dns_name(required_str(plan.query_name.as_deref(), "query_name")?);
+    let expected_qtype = dns_type_value(plan)?;
+    let expected_qclass = plan.query_class_value.unwrap_or(DNS_CLASS_IN);
+    let expected_answer_name = canonical_dns_name(required_str(
+        plan.expected_answer_name.as_deref(),
+        "expected_answer_name",
+    )?);
+    let expected_answer_type = plan.expected_answer_type_value.unwrap_or(expected_qtype);
+    let expected_answer_data =
+        required_str(plan.expected_answer_data.as_deref(), "expected_answer_data")?;
+    let expected_rcode = plan.expected_response_code.unwrap_or(0);
+    let mut mismatches = Vec::new();
+
+    if dns.id_value() != expected_query_id {
+        mismatches.push(json!({
+            "field": "dns.id",
+            "expected": expected_query_id,
+            "actual": dns.id_value(),
+        }));
+    }
+    if !dns.is_response() {
+        mismatches.push(json!({
+            "field": "dns.qr",
+            "expected": true,
+            "actual": false,
+        }));
+    }
+    let actual_rcode = (dns.flags_value() & 0x000f) as u8;
+    if actual_rcode != expected_rcode {
+        mismatches.push(json!({
+            "field": "dns.rcode",
+            "expected": expected_rcode,
+            "actual": actual_rcode,
+        }));
+    }
+
+    match dns.questions().first() {
+        Some(question) => {
+            if question.name() != expected_qname {
+                mismatches.push(json!({
+                    "field": "dns.question.name",
+                    "expected": expected_qname,
+                    "actual": question.name(),
+                }));
+            }
+            if question.question_type() != expected_qtype {
+                mismatches.push(json!({
+                    "field": "dns.question.type",
+                    "expected": expected_qtype,
+                    "actual": question.question_type(),
+                }));
+            }
+            if question.question_class() != expected_qclass {
+                mismatches.push(json!({
+                    "field": "dns.question.class",
+                    "expected": expected_qclass,
+                    "actual": question.question_class(),
+                }));
+            }
+        }
+        None => mismatches.push(json!({
+            "field": "dns.question",
+            "expected": "present",
+            "actual": "missing",
+        })),
+    }
+
+    let matching_answer = dns.answers().iter().find(|answer| {
+        answer.name() == expected_answer_name
+            && answer.record_type() == expected_answer_type
+            && dns_record_data_matches(answer.data(), expected_answer_data)
+    });
+    if matching_answer.is_none() {
+        mismatches.push(json!({
+            "field": "dns.answer",
+            "expected": {
+                "name": expected_answer_name,
+                "type": expected_answer_type,
+                "data": expected_answer_data,
+            },
+            "actual": dns_answers_json(dns),
+        }));
+    }
+
+    if !mismatches.is_empty() {
+        return Ok(CandidateValidation::WrongPayload(json!({
+            "packet": decoded,
+            "mismatches": mismatches,
+        })));
+    }
+
+    Ok(CandidateValidation::Passed(decoded))
+}
+
 fn icmp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let source: Ipv4Addr = required_str(plan.source_ipv4.as_deref(), "source_ipv4")?.parse()?;
     let destination: Ipv4Addr =
@@ -962,6 +1356,20 @@ fn tcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
             .seq(sequence_number)
             .flags(TCP_FLAG_SYN)
             .window(window))
+}
+
+fn dns_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
+    let source: Ipv4Addr = required_str(plan.source_ipv4.as_deref(), "source_ipv4")?.parse()?;
+    let destination: Ipv4Addr =
+        required_str(plan.destination_ipv4.as_deref(), "destination_ipv4")?.parse()?;
+    let source_port = required_u16(plan.source_port, "source_port")?;
+    let destination_port = required_u16(plan.destination_port, "destination_port")?;
+    let query_id = required_u16(plan.query_id, "query_id")?;
+    let query_name = required_str(plan.query_name.as_deref(), "query_name")?;
+    let query_type = dns_type_value(plan)?;
+    Ok(Ipv4::new().src(source).dst(destination)
+        / Udp::new().sport(source_port).dport(destination_port)
+        / Dns::query(query_name, query_type).id(query_id))
 }
 
 fn observed_response(
@@ -1000,6 +1408,17 @@ fn plan_json(plan: &ProbePlan) -> Value {
         "tcp_sequence_number": plan.tcp_sequence_number,
         "expected_acknowledgment_number": plan.expected_acknowledgment_number,
         "window": plan.window,
+        "query_id": plan.query_id,
+        "query_name": plan.query_name,
+        "query_type": plan.query_type,
+        "query_type_value": plan.query_type_value,
+        "query_class_value": plan.query_class_value,
+        "expected_answer_name": plan.expected_answer_name,
+        "expected_answer_type": plan.expected_answer_type,
+        "expected_answer_type_value": plan.expected_answer_type_value,
+        "expected_answer_data": plan.expected_answer_data,
+        "expected_response_code": plan.expected_response_code,
+        "answer_ttl": plan.answer_ttl,
         "target_service": target_service_json(plan),
         "capture_filter": capture_filter(plan),
     })
@@ -1009,6 +1428,8 @@ fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let ipv4 = packet.layer::<Ipv4>();
     let icmp = packet.layer::<Icmp>();
     let tcp = packet.layer::<Tcp>();
+    let udp = packet.layer::<Udp>();
+    let dns = packet.layer::<Dns>();
     json!({
         "backend": BACKEND_NAME,
         "summary": packet.summary(),
@@ -1034,6 +1455,13 @@ fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
             "flags_value": layer.flags_value(),
             "window": layer.window_value(),
         })),
+        "udp": udp.map(|layer| json!({
+            "sport": layer.source_port_value(),
+            "dport": layer.destination_port_value(),
+            "length": layer.length_value(),
+            "checksum": layer.checksum_value(),
+        })),
+        "dns": dns.map(dns_json),
         "payload_hex": hex_bytes(raw_payload(packet)),
     })
 }
@@ -1060,6 +1488,15 @@ fn capture_filter(plan: &ProbePlan) -> String {
             plan.destination_port.unwrap_or(0),
             plan.source_port.unwrap_or(0),
         ),
+        "dns-query" => format!(
+            "udp and src host {} and dst host {} and src port {} and dst port {}",
+            plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+            plan.expected_reply_destination_ipv4
+                .as_deref()
+                .unwrap_or(""),
+            plan.destination_port.unwrap_or(0),
+            plan.source_port.unwrap_or(0),
+        ),
         _ => String::new(),
     }
 }
@@ -1071,6 +1508,7 @@ fn expected_response(plan: &ProbePlan) -> &str {
             "icmp-echo" => "icmp_echo_reply",
             "tcp-syn-open" => "tcp_syn_ack",
             "tcp-syn-closed" => "tcp_rst",
+            "dns-query" => "dns_response",
             _ => "unknown",
         })
 }
@@ -1087,7 +1525,127 @@ fn target_service_json(plan: &ProbePlan) -> Value {
             "kind": "closed-port",
             "port": plan.destination_port,
         }),
+        "dns-query" => json!({
+            "required": true,
+            "kind": "udp-dns-responder",
+            "port": plan.destination_port,
+            "query_name": plan.query_name,
+            "query_type": plan.query_type,
+            "answer_data": plan.expected_answer_data,
+        }),
         _ => json!({}),
+    }
+}
+
+fn dns_type_value(plan: &ProbePlan) -> ExampleResult<u16> {
+    if let Some(value) = plan.query_type_value {
+        return Ok(value);
+    }
+    match plan
+        .query_type
+        .as_deref()
+        .unwrap_or("A")
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "A" => Ok(DNS_TYPE_A),
+        "AAAA" => Ok(DNS_TYPE_AAAA),
+        other => Err(format!("unsupported DNS query type: {other}").into()),
+    }
+}
+
+fn canonical_dns_name(name: &str) -> String {
+    let trimmed = name.trim().trim_end_matches('.').to_ascii_lowercase();
+    if trimmed.is_empty() {
+        ".".to_string()
+    } else {
+        format!("{trimmed}.")
+    }
+}
+
+fn dns_record_data_matches(data: &DnsRecordData, expected: &str) -> bool {
+    match data {
+        DnsRecordData::A(address) => expected
+            .parse::<Ipv4Addr>()
+            .is_ok_and(|expected| *address == expected),
+        DnsRecordData::Aaaa(address) => expected
+            .parse::<Ipv6Addr>()
+            .is_ok_and(|expected| *address == expected),
+        DnsRecordData::Name(name) => canonical_dns_name(name) == canonical_dns_name(expected),
+        DnsRecordData::Txt(strings) => strings
+            .iter()
+            .filter_map(|bytes| std::str::from_utf8(bytes).ok())
+            .any(|value| value == expected),
+        DnsRecordData::Mx {
+            preference,
+            exchange,
+        } => format!("{preference} {}", canonical_dns_name(exchange)) == expected,
+        DnsRecordData::Raw(bytes) => hex_bytes(bytes) == expected,
+    }
+}
+
+fn dns_json(dns: &Dns) -> Value {
+    json!({
+        "id": dns.id_value(),
+        "flags": dns.flags_value(),
+        "is_response": dns.is_response(),
+        "response_code": dns.flags_value() & 0x000f,
+        "questions": dns.questions().iter().map(|question| json!({
+            "name": question.name(),
+            "type": question.question_type(),
+            "class": question.question_class(),
+        })).collect::<Vec<_>>(),
+        "answers": dns_answers_json(dns),
+    })
+}
+
+fn dns_answers_json(dns: &Dns) -> Value {
+    Value::Array(dns.answers().iter().map(dns_record_json).collect())
+}
+
+fn dns_record_json(record: &DnsRecord) -> Value {
+    json!({
+        "name": record.name(),
+        "type": record.record_type(),
+        "class": record.class(),
+        "ttl": record.ttl(),
+        "data": dns_record_data_json(record.data()),
+    })
+}
+
+fn dns_record_data_json(data: &DnsRecordData) -> Value {
+    match data {
+        DnsRecordData::A(address) => json!({
+            "kind": "A",
+            "value": address.to_string(),
+        }),
+        DnsRecordData::Aaaa(address) => json!({
+            "kind": "AAAA",
+            "value": address.to_string(),
+        }),
+        DnsRecordData::Name(name) => json!({
+            "kind": "name",
+            "value": name,
+        }),
+        DnsRecordData::Mx {
+            preference,
+            exchange,
+        } => json!({
+            "kind": "mx",
+            "preference": preference,
+            "exchange": exchange,
+        }),
+        DnsRecordData::Txt(strings) => json!({
+            "kind": "txt",
+            "values": strings
+                .iter()
+                .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+                .collect::<Vec<_>>(),
+        }),
+        DnsRecordData::Raw(bytes) => json!({
+            "kind": "raw",
+            "hex": hex_bytes(bytes),
+        }),
     }
 }
 

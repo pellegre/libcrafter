@@ -1046,7 +1046,7 @@ tcp_open_listener_port=18080
 tcp_closed_port=18081
 tcp_closed_port_state=reserved_unbound
 dns_service=planned
-dns_service_port=1053
+dns_service_port=53
 controlled_router=false
 ttl_expired_probe=skip_provider_capability_unavailable
 EOF
@@ -1146,7 +1146,7 @@ tcp_open_listener_port=18080
 tcp_closed_port=18081
 tcp_closed_port_state=reserved_unbound
 dns_service=planned
-dns_service_port=1053
+dns_service_port=53
 controlled_router=false
 ttl_expired_probe=skip_provider_capability_unavailable
 finished_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
