@@ -1,25 +1,27 @@
 mod common;
 
-use common::{print_help_if_requested, ExampleResult};
+use common::{local_ipv4, print_help_if_requested, remote_ipv4, ExampleResult};
 use crafter::prelude::*;
 
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example hello_world -- [--dry-run]\n\nBuild and inspect a Raw/Raw Hello World packet without sending traffic.",
+        "usage: cargo run --example hello_world --\n\nBuild a documentation-safe IPv4/ICMP/Raw packet without sending traffic.",
     ) {
         return Ok(());
     }
 
-    let packet = Packet::new()
-        .push(Raw::from("Hello "))
-        .push(Raw::from("World!"));
+    let packet = Ipv4::new()
+        .src(local_ipv4())
+        .dst(remote_ipv4())
+        .protocol(IPPROTO_ICMP)
+        / Icmp::echo_request().id(0x1234).seq(1)
+        / Raw::from("Hello, libcrafter!");
     let compiled = packet.compile()?;
 
-    println!("mode: dry-run");
+    println!("mode: offline");
     println!("summary: {}", packet.summary());
-    println!("{}", packet.show());
+    println!("bytes: {}", compiled.len());
     println!("hexdump:\n{}", compiled.hexdump());
-    println!("raw string: {:?}", packet.raw_string_lossy()?);
 
     Ok(())
 }
