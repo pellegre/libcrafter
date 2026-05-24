@@ -96,7 +96,7 @@ Scapy comparison model.
 | Path | Current Scapy surface | Migration target |
 | --- | --- | --- |
 | `crates/crafter/tests/scapy_reference.rs` | Rust test harness for Scapy-generated fixtures. Reads `LIBCRAFTER_SCAPY_FIXTURE_DIR` or `tests/fixtures/scapy` for static golden checks, and generates temporary oracle fixture vectors for broad behavior checks. | Keep until oracle normalized models replace Scapy-specific metadata assertions. |
-| `crates/crafter/examples/scapy_interop_vectors.rs` | Emits deterministic libcrafter packet vectors with `libcrafter_to_scapy` metadata for Scapy parser validation. | Rename or replace with a backend-neutral oracle vector emitter. |
+| `crates/crafter/examples/oracle_vectors.rs` | Emits deterministic libcrafter packet vectors with backend-neutral oracle metadata. | Keep as the oracle-owned vector contract for Rust-generated packet cases. |
 | `crates/crafter/src/pcap_impl.rs` | Unit tests reference `fixture_bytes!("scapy/arp-request.bin")`. | Keep as fixture-backed tests until oracle pcap coverage replaces or supplements them. |
 | `crates/crafter/src/protocols/link.rs` | Unit tests reference Scapy fixture bytes for Ethernet, ARP, and VLAN behavior. | Keep until oracle specs cover equivalent link behavior. |
 | `crates/crafter/src/protocols/ip.rs` | Unit tests reference Scapy IPv4 ICMP fixture bytes and Scapy checksum expectations. | Keep until oracle specs cover equivalent IPv4 behavior. |
