@@ -26,13 +26,20 @@ documented as commands yet.
 
 ## Net Workflows
 
-Planned: `send_plan.rs`, `send_packet.rs`, `send_recv_icmp.rs`,
-`reply_matching.rs`, `batch_send.rs`, `batch_send_recv.rs`,
-`interface_helpers.rs`, and `ip_ranges.rs`.
+| Example | Safety mode | Command |
+| --- | --- | --- |
+| `send_plan` | Dry-run | `cargo run -p crafter --example send_plan` |
+| `send_packet` | Dry-run by default, live-gated with `--live` | `cargo run -p crafter --example send_packet` |
+| `send_recv_icmp` | Dry-run | `cargo run -p crafter --example send_recv_icmp` |
+| `reply_matching` | Offline | `cargo run -p crafter --example reply_matching` |
+| `batch_send` | Dry-run | `cargo run -p crafter --example batch_send` |
+| `batch_send_recv` | Dry-run | `cargo run -p crafter --example batch_send_recv` |
+| `interface_helpers` | Offline | `cargo run -p crafter --example interface_helpers` |
+| `ip_ranges` | Offline | `cargo run -p crafter --example ip_ranges` |
 
-The send and send/receive examples will default to dry-run mode on `dry-run0`.
-Any live mode will be gated by the live-lab acknowledgement and environment
-marker.
+`send_packet --live` is available only after `--i-understand-isolated-lab` and
+`LIBCRAFTER_LIVE_LAB=1` are supplied. The default command never transmits
+traffic.
 
 ## Pcap And Sniffing
 
