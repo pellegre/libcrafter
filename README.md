@@ -1,4 +1,6 @@
-# libcrafter
+<h1 align="center">
+  <img src="docs/assets/libcrafter-lockup.svg" alt="libcrafter" width="560">
+</h1>
 
 `libcrafter` is a Rust alpha workspace for building, decoding, capturing, and
 sending network packets.
