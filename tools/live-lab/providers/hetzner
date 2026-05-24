@@ -556,7 +556,7 @@ configure_private_interface() {
   for attempt in $(seq 1 40); do
     if detected_interface="$(detect_private_interface "$host" 2>/dev/null)"; then
       private_interface="$detected_interface"
-      ssh_remote_host "$host" "ip link set '$detected_interface' up && ip address replace '$private_ip/$private_prefix_len' dev '$detected_interface'"
+      ssh_remote_host "$host" "ip link set '$detected_interface' up && ip address replace '$private_ip/$private_prefix_len' dev '$detected_interface' && { ip route replace '$private_network_cidr' dev '$detected_interface' src '$private_ip' || true; }"
       return 0
     fi
     sleep 3
@@ -760,7 +760,9 @@ fi
 
 ipv4_unicast=false
 if command -v ping >/dev/null 2>&1; then
-  if timeout 8 ping -4 -c 1 -W 2 "$peer_private_ipv4" >/dev/null 2>&1; then
+  if [[ "$interface" != "unknown" ]] && timeout 8 ping -4 -I "$interface" -c 1 -W 2 "$peer_private_ipv4" >/dev/null 2>&1; then
+    ipv4_unicast=true
+  elif timeout 8 ping -4 -c 1 -W 2 "$peer_private_ipv4" >/dev/null 2>&1; then
     ipv4_unicast=true
   fi
 fi
@@ -838,6 +840,7 @@ write_provider_capability_artifacts() {
   local provider_mac_known=false
   local controlled_services=false
   local controlled_router=false
+  local ipv4_unicast_source="probe"
   local source="bootstrap-discovery"
   local live_packet_exchange=true
 
@@ -850,6 +853,8 @@ write_provider_capability_artifacts() {
   else
     local libcrafter_ipv4
     local reference_ipv4
+    local libcrafter_ipv4_configured
+    local reference_ipv4_configured
     local libcrafter_ipv6
     local reference_ipv6
     local libcrafter_mac
@@ -859,6 +864,8 @@ write_provider_capability_artifacts() {
 
     libcrafter_ipv4="$(env_bool "$libcrafter_env" ipv4_unicast false)"
     reference_ipv4="$(env_bool "$reference_env" ipv4_unicast false)"
+    libcrafter_ipv4_configured="$(env_bool "$libcrafter_env" ipv4_configured false)"
+    reference_ipv4_configured="$(env_bool "$reference_env" ipv4_configured false)"
     libcrafter_ipv6="$(env_bool "$libcrafter_env" ipv6_unicast false)"
     reference_ipv6="$(env_bool "$reference_env" ipv6_unicast false)"
     libcrafter_mac="$(env_bool "$libcrafter_env" provider_mac_known false)"
@@ -866,7 +873,13 @@ write_provider_capability_artifacts() {
     libcrafter_services="$(env_bool "$libcrafter_env" controlled_services false)"
     reference_services="$(env_bool "$reference_env" controlled_services false)"
 
-    [[ "$libcrafter_ipv4" == true && "$reference_ipv4" == true ]] && ipv4_unicast=true
+    if [[ "$libcrafter_ipv4" == true && "$reference_ipv4" == true ]]; then
+      ipv4_unicast=true
+      ipv4_unicast_source="bidirectional_ping"
+    elif [[ "$libcrafter_ipv4_configured" == true && "$reference_ipv4_configured" == true ]]; then
+      ipv4_unicast=true
+      ipv4_unicast_source="configured_private_addresses"
+    fi
     [[ "$libcrafter_ipv6" == true && "$reference_ipv6" == true ]] && ipv6_unicast=true
     if [[ "$libcrafter_mac" == true && "$reference_mac" == true && -n "${libcrafter_private_mac:-}" && -n "${reference_private_mac:-}" ]]; then
       provider_mac_known=true
@@ -880,6 +893,7 @@ dry_run=$dry_run
 source=$source
 live_packet_exchange=$live_packet_exchange
 ipv4_unicast=$ipv4_unicast
+ipv4_unicast_source=$ipv4_unicast_source
 ipv6_unicast=$ipv6_unicast
 link_layer_send=$link_layer_send
 link_layer_capture=$link_layer_capture
@@ -900,6 +914,7 @@ EOF
   "source": "$source",
   "live_packet_exchange": $live_packet_exchange,
   "ipv4_unicast": $ipv4_unicast,
+  "ipv4_unicast_source": "$ipv4_unicast_source",
   "ipv6_unicast": $ipv6_unicast,
   "link_layer_send": $link_layer_send,
   "link_layer_capture": $link_layer_capture,
@@ -919,7 +934,7 @@ EOF
   },
   "checks": {
     "ipv4_unicast": {
-      "status": "$([[ "$ipv4_unicast" == true ]] && echo passed || echo failed)",
+      "status": "$([[ "$ipv4_unicast" == true ]] && echo "$ipv4_unicast_source" || echo failed)",
       "libcrafter_endpoint_report": "$libcrafter_env",
       "reference_endpoint_report": "$reference_env"
     },
