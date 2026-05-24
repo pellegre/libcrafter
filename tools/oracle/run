@@ -7,5 +7,27 @@ repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 export ORACLE_REPO_ROOT="${repo_root}"
 export PYTHONPATH="${script_dir}${PYTHONPATH:+:${PYTHONPATH}}"
 
+python_bin="${ORACLE_PYTHON:-python3}"
+if ! "${python_bin}" - <<'PY' >/dev/null 2>&1
+import yaml
+PY
+then
+    deps_venv="${ORACLE_PY_DEPS_VENV:-${repo_root}/target/oracle/python-deps}"
+    if [ ! -x "${deps_venv}/bin/python" ]; then
+        mkdir -p "$(dirname -- "${deps_venv}")"
+        "${python_bin}" -m venv "${deps_venv}"
+    fi
+    if ! "${deps_venv}/bin/python" - <<'PY' >/dev/null 2>&1
+import yaml
+PY
+    then
+        "${deps_venv}/bin/python" -m pip install \
+            --disable-pip-version-check \
+            --no-cache-dir \
+            -r "${script_dir}/requirements.txt"
+    fi
+    python_bin="${deps_venv}/bin/python"
+fi
+
 cd "${repo_root}"
-exec python3 -m engine.cli "$@"
+exec "${python_bin}" -m engine.cli "$@"

@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import ipaddress
-import json
 import random
 import sys
 from collections.abc import Mapping, Sequence
@@ -13,13 +12,11 @@ from pathlib import Path
 from typing import TypeVar
 
 from .model import JSONObject, PacketPlan
-from .report import REPO_ROOT
+from .spec_loader import load_oracle_specs
 
 
 T = TypeVar("T")
 
-SUPPORTED_PROFILES = ("smoke", "ci", "wild", "boundary", "fuzz")
-SUPPORTED_FAMILIES = ("ipv4", "ipv6")
 EPHEMERAL_PORT_MIN = 49152
 EPHEMERAL_PORT_MAX = 65535
 
@@ -29,47 +26,6 @@ _IPV4_DOCUMENTATION_NETWORKS = (
     ipaddress.IPv4Network("203.0.113.0/24"),
 )
 _IPV6_DOCUMENTATION_NETWORK = ipaddress.IPv6Network("2001:db8::/32")
-
-_PROFILE_FAMILY_WEIGHTS: dict[str, tuple[tuple[str, int], ...]] = {
-    "smoke": (("ipv4", 4), ("ipv6", 1)),
-    "ci": (("ipv4", 3), ("ipv6", 2)),
-    "wild": (("ipv4", 3), ("ipv6", 2)),
-    "boundary": (("ipv4", 1), ("ipv6", 1)),
-    "fuzz": (("ipv4", 1), ("ipv6", 1)),
-}
-_PROFILE_PAYLOAD_BOUNDS: dict[str, tuple[int, int]] = {
-    "smoke": (0, 32),
-    "ci": (0, 256),
-    "wild": (0, 512),
-    "boundary": (0, 1500),
-    "fuzz": (0, 128),
-}
-
-DEFAULT_STACK_GRAMMAR: JSONObject = {
-    "version": 1,
-    "families": {
-        "ipv4": {
-            "stack": ["ethernet", "ipv4", "udp", "payload"],
-            "case": "udp-payload",
-            "feature_tags": ["ethernet", "ipv4", "udp", "payload"],
-        },
-        "ipv6": {
-            "stack": ["ethernet", "ipv6", "udp", "payload"],
-            "case": "udp-payload",
-            "feature_tags": ["ethernet", "ipv6", "udp", "payload"],
-        },
-    },
-    "profiles": {
-        profile: {
-            "family_weights": [
-                {"name": name, "weight": weight}
-                for name, weight in _PROFILE_FAMILY_WEIGHTS[profile]
-            ],
-            "payload_length": list(_PROFILE_PAYLOAD_BOUNDS[profile]),
-        }
-        for profile in SUPPORTED_PROFILES
-    },
-}
 
 
 def weighted_choice(rng: random.Random, choices: Sequence[tuple[T, int]]) -> T:
@@ -175,22 +131,10 @@ def plan_identifier(
 
 
 def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
-    """Load stack grammar JSON, or return the built-in bootstrap grammar."""
+    """Load the executable YAML specs as generator grammar."""
 
-    grammar_path = _default_stack_grammar_path() if path is None else Path(path)
-    if grammar_path is None or not grammar_path.exists():
-        return _json_clone(DEFAULT_STACK_GRAMMAR)
-    if grammar_path.suffix.lower() != ".json":
-        raise ValueError(
-            f"unsupported stack grammar format: {grammar_path}; "
-            "use JSON until the oracle spec loader is introduced"
-        )
-
-    with grammar_path.open("r", encoding="utf-8") as handle:
-        loaded = json.load(handle)
-    if not isinstance(loaded, dict):
-        raise ValueError(f"stack grammar must be a JSON object: {grammar_path}")
-    return _json_object(loaded)
+    spec_root = None if path is None else Path(path)
+    return load_oracle_specs(spec_root).to_generator_grammar()
 
 
 class PacketGenerator:
@@ -203,11 +147,12 @@ class PacketGenerator:
         profile: str,
         grammar: Mapping[str, object] | None = None,
     ) -> None:
-        if profile not in SUPPORTED_PROFILES:
+        self.grammar = _json_object(load_stack_grammar() if grammar is None else grammar)
+        profiles = _object(self.grammar.get("profiles"), "profiles")
+        if profile not in profiles:
             raise ValueError(f"unsupported profile: {profile}")
         self.seed = seed
         self.profile = profile
-        self.grammar = _json_object(load_stack_grammar() if grammar is None else grammar)
 
     def generate(
         self,
@@ -222,7 +167,8 @@ class PacketGenerator:
 
         rng = random.Random(_derive_seed(self.seed, self.profile, index, family, case, feature))
         selected_family = family or self._choose_family(rng)
-        if selected_family not in SUPPORTED_FAMILIES:
+        families = _object(self.grammar.get("families"), "families")
+        if selected_family not in families:
             raise ValueError(f"unsupported family: {selected_family}")
 
         family_spec = self._family_spec(selected_family)
@@ -269,7 +215,7 @@ class PacketGenerator:
         profile_spec = _object(profiles.get(self.profile), f"profiles.{self.profile}")
         raw_weights = profile_spec.get("family_weights")
         if raw_weights is None:
-            return weighted_choice(rng, _PROFILE_FAMILY_WEIGHTS[self.profile])
+            raise ValueError(f"profiles.{self.profile}.family_weights is required")
 
         choices: list[tuple[str, int]] = []
         if not isinstance(raw_weights, Sequence) or isinstance(raw_weights, (str, bytes)):
@@ -292,7 +238,7 @@ class PacketGenerator:
         profile_spec = _object(profiles.get(self.profile), f"profiles.{self.profile}")
         value = profile_spec.get("payload_length")
         if value is None:
-            return _PROFILE_PAYLOAD_BOUNDS[self.profile]
+            raise ValueError(f"profiles.{self.profile}.payload_length is required")
         if (
             not isinstance(value, Sequence)
             or isinstance(value, (str, bytes))
@@ -444,18 +390,6 @@ def _identifier_part(value: str) -> str:
     for char in value.lower():
         output.append(char if char.isalnum() else "-")
     return "".join(output).strip("-") or "default"
-
-
-def _default_stack_grammar_path() -> Path | None:
-    candidates = (REPO_ROOT / "tools/oracle/specs/stacks.json",)
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _json_clone(value: JSONObject) -> JSONObject:
-    return _json_object(json.loads(json.dumps(value)))
 
 
 def _json_object(value: object) -> JSONObject:

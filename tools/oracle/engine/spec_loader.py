@@ -1,0 +1,867 @@
+"""Validated loader for executable oracle YAML specs."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from .model import JSONObject, JSONValue, JsonModel, to_jsonable
+from .report import REPO_ROOT
+
+
+SPEC_ROOT = REPO_ROOT / "tools/oracle/specs"
+SUPPORTED_SPEC_VERSION = 1
+BACKEND_CAPABILITY_KEYS = (
+    "encode",
+    "decode",
+    "pcap_read",
+    "pcap_write",
+    "live_endpoint",
+)
+
+
+class SpecValidationError(ValueError):
+    """Raised when an oracle spec file cannot be loaded or validated."""
+
+
+@dataclass(frozen=True, slots=True)
+class BackendSupport(JsonModel):
+    """Backend support metadata declared by one spec file."""
+
+    name: str
+    status: str
+    encode: bool = False
+    decode: bool = False
+    pcap_read: bool = False
+    pcap_write: bool = False
+    live_endpoint: bool = False
+    native_layers: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+    metadata: JSONObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RootSpec(JsonModel):
+    """One packet root and the families it can carry."""
+
+    name: str
+    layers: tuple[str, ...]
+    families: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FamilySpec(JsonModel):
+    """One stack family used by deterministic packet generation."""
+
+    name: str
+    default_stack: tuple[str, ...]
+    feature_tags: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StackSpec(JsonModel):
+    """One named protocol stack from stacks.yaml."""
+
+    name: str
+    root: str
+    layers: tuple[str, ...]
+    coverage_cases: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class StackConstraint(JsonModel):
+    """Parent/child layer constraint from stacks.yaml."""
+
+    name: str
+    parent: str
+    children: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SamplingWeight(JsonModel):
+    """Named integer weight used by a sampling profile."""
+
+    name: str
+    weight: int
+
+
+@dataclass(frozen=True, slots=True)
+class PayloadLength(JsonModel):
+    """Inclusive generated payload length bounds."""
+
+    minimum: int
+    maximum: int
+
+    def as_pair(self) -> list[int]:
+        return [self.minimum, self.maximum]
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileSpec(JsonModel):
+    """One deterministic sampling profile."""
+
+    name: str
+    purpose: str
+    default_count: int
+    family_weights: tuple[SamplingWeight, ...]
+    payload_length: PayloadLength
+    feature_weights: dict[str, int]
+    backend_support: dict[str, BackendSupport] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class LayerField(JsonModel):
+    """One layer field and the domains it can sample from."""
+
+    name: str
+    field_type: str
+    required: bool
+    domains: tuple[JSONValue, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class LayerSpec(JsonModel):
+    """One protocol layer spec."""
+
+    name: str
+    summary: str
+    roots: tuple[str, ...]
+    parents: tuple[str, ...]
+    children: tuple[str, ...]
+    fields: tuple[LayerField, ...]
+    coverage_cases: tuple[str, ...]
+    backend_support: dict[str, BackendSupport]
+    raw: JSONObject
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureSpec(JsonModel):
+    """One packet behavior feature spec."""
+
+    name: str
+    summary: str
+    layers: tuple[str, ...]
+    directions: tuple[str, ...]
+    strict_bytes: bool
+    malformed: bool
+    coverage_cases: tuple[str, ...]
+    backend_support: dict[str, BackendSupport]
+    raw: JSONObject
+
+
+@dataclass(frozen=True, slots=True)
+class OracleSpecs(JsonModel):
+    """All loaded oracle specs, normalized for execution."""
+
+    roots: dict[str, RootSpec]
+    families: dict[str, FamilySpec]
+    stacks: dict[str, StackSpec]
+    constraints: dict[str, StackConstraint]
+    profiles: dict[str, ProfileSpec]
+    layers: dict[str, LayerSpec]
+    features: dict[str, FeatureSpec]
+    backend_support: dict[str, BackendSupport]
+    source_paths: tuple[str, ...]
+
+    def to_generator_grammar(self) -> JSONObject:
+        """Return the JSON-compatible grammar consumed by PacketGenerator."""
+
+        return {
+            "version": SUPPORTED_SPEC_VERSION,
+            "families": {
+                family.name: {
+                    "stack": list(family.default_stack),
+                    "case": _default_case_for_family(family, self.stacks.values()),
+                    "feature_tags": list(family.feature_tags),
+                }
+                for family in self.families.values()
+            },
+            "profiles": {
+                profile.name: {
+                    "default_count": profile.default_count,
+                    "family_weights": [
+                        {"name": weight.name, "weight": weight.weight}
+                        for weight in profile.family_weights
+                    ],
+                    "payload_length": profile.payload_length.as_pair(),
+                    "feature_weights": dict(profile.feature_weights),
+                }
+                for profile in self.profiles.values()
+            },
+        }
+
+    def summary(self) -> JSONObject:
+        """Return a concise validation summary for the CLI."""
+
+        return {
+            "status": "ok",
+            "version": SUPPORTED_SPEC_VERSION,
+            "source_paths": list(self.source_paths),
+            "counts": {
+                "roots": len(self.roots),
+                "families": len(self.families),
+                "stacks": len(self.stacks),
+                "constraints": len(self.constraints),
+                "profiles": len(self.profiles),
+                "layers": len(self.layers),
+                "features": len(self.features),
+            },
+            "profiles": list(self.profiles),
+            "families": list(self.families),
+            "backends": list(self.backend_support),
+        }
+
+
+def load_oracle_specs(spec_root: str | Path | None = None) -> OracleSpecs:
+    """Load and validate all oracle specs under ``tools/oracle/specs``."""
+
+    root = SPEC_ROOT if spec_root is None else Path(spec_root)
+    if not root.exists():
+        raise SpecValidationError(f"oracle spec root does not exist: {root}")
+    if not root.is_dir():
+        raise SpecValidationError(f"oracle spec root must be a directory: {root}")
+
+    stacks_path = root / "stacks.yaml"
+    profiles_path = root / "profiles.yaml"
+    layer_paths = tuple(sorted((root / "layers").glob("*.yaml")))
+    feature_paths = tuple(sorted((root / "features").glob("*.yaml")))
+
+    if not layer_paths:
+        raise SpecValidationError(f"no layer specs found under {root / 'layers'}")
+    if not feature_paths:
+        raise SpecValidationError(f"no feature specs found under {root / 'features'}")
+
+    stacks_doc = _load_yaml_object(stacks_path)
+    profiles_doc = _load_yaml_object(profiles_path)
+    roots, families, stacks, constraints, stack_backend_support = _load_stacks(stacks_doc, stacks_path)
+    profiles, profile_backend_support = _load_profiles(profiles_doc, profiles_path)
+
+    layers: dict[str, LayerSpec] = {}
+    for path in layer_paths:
+        layer = _load_layer(_load_yaml_object(path), path)
+        _insert_unique(layers, layer.name, layer, path, "layer")
+
+    features: dict[str, FeatureSpec] = {}
+    for path in feature_paths:
+        feature = _load_feature(_load_yaml_object(path), path)
+        _insert_unique(features, feature.name, feature, path, "feature")
+
+    _validate_cross_references(
+        root=Path(root),
+        roots=roots,
+        families=families,
+        stacks=stacks,
+        profiles=profiles,
+        layers=layers,
+        features=features,
+    )
+
+    backend_support = _merge_backend_support(
+        stack_backend_support,
+        profile_backend_support,
+        *(layer.backend_support for layer in layers.values()),
+        *(feature.backend_support for feature in features.values()),
+    )
+    source_paths = tuple(
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in (stacks_path, profiles_path, *layer_paths, *feature_paths)
+    )
+    return OracleSpecs(
+        roots=roots,
+        families=families,
+        stacks=stacks,
+        constraints=constraints,
+        profiles=profiles,
+        layers=layers,
+        features=features,
+        backend_support=backend_support,
+        source_paths=source_paths,
+    )
+
+
+def _load_stacks(
+    document: JSONObject,
+    path: Path,
+) -> tuple[
+    dict[str, RootSpec],
+    dict[str, FamilySpec],
+    dict[str, StackSpec],
+    dict[str, StackConstraint],
+    dict[str, BackendSupport],
+]:
+    _validate_header(document, path, kind="stack_grammar")
+    roots: dict[str, RootSpec] = {}
+    for index, item in enumerate(_required_list(document, "roots", path)):
+        item_obj = _object(item, path, f"roots[{index}]")
+        root = RootSpec(
+            name=_required_name(item_obj, "name", path, f"roots[{index}]", allow_colon=True),
+            layers=_required_name_tuple(item_obj, "layers", path, f"roots[{index}]"),
+            families=_required_name_tuple(item_obj, "families", path, f"roots[{index}]"),
+        )
+        _insert_unique(roots, root.name, root, path, "root")
+
+    families: dict[str, FamilySpec] = {}
+    for index, item in enumerate(_required_list(document, "families", path)):
+        item_obj = _object(item, path, f"families[{index}]")
+        family = FamilySpec(
+            name=_required_name(item_obj, "name", path, f"families[{index}]"),
+            default_stack=_required_name_tuple(
+                item_obj,
+                "default_stack",
+                path,
+                f"families[{index}]",
+            ),
+            feature_tags=_required_name_tuple(
+                item_obj,
+                "feature_tags",
+                path,
+                f"families[{index}]",
+            ),
+        )
+        _insert_unique(families, family.name, family, path, "family")
+
+    stacks: dict[str, StackSpec] = {}
+    for index, item in enumerate(_required_list(document, "stacks", path)):
+        item_obj = _object(item, path, f"stacks[{index}]")
+        stack = StackSpec(
+            name=_required_name(item_obj, "name", path, f"stacks[{index}]"),
+            root=_required_name(item_obj, "root", path, f"stacks[{index}]", allow_colon=True),
+            layers=_required_name_tuple(item_obj, "layers", path, f"stacks[{index}]"),
+            coverage_cases=_optional_name_tuple(
+                item_obj,
+                "coverage_cases",
+                path,
+                f"stacks[{index}]",
+            ),
+        )
+        _insert_unique(stacks, stack.name, stack, path, "stack")
+
+    constraints: dict[str, StackConstraint] = {}
+    for index, item in enumerate(_optional_list(document, "constraints", path)):
+        item_obj = _object(item, path, f"constraints[{index}]")
+        constraint = StackConstraint(
+            name=_required_name(item_obj, "name", path, f"constraints[{index}]"),
+            parent=_required_name(item_obj, "parent", path, f"constraints[{index}]"),
+            children=_required_name_tuple(item_obj, "children", path, f"constraints[{index}]"),
+        )
+        _insert_unique(constraints, constraint.name, constraint, path, "constraint")
+
+    return roots, families, stacks, constraints, _backend_support(document, path)
+
+
+def _load_profiles(
+    document: JSONObject,
+    path: Path,
+) -> tuple[dict[str, ProfileSpec], dict[str, BackendSupport]]:
+    _validate_header(document, path, kind="profiles")
+    profiles: dict[str, ProfileSpec] = {}
+    for index, item in enumerate(_required_list(document, "profiles", path)):
+        item_obj = _object(item, path, f"profiles[{index}]")
+        profile_name = _required_name(item_obj, "name", path, f"profiles[{index}]")
+        weights = tuple(
+            _sampling_weight(weight, path, f"profiles[{index}].family_weights[{weight_index}]")
+            for weight_index, weight in enumerate(
+                _required_list(item_obj, "family_weights", path, f"profiles[{index}]")
+            )
+        )
+        payload_length_obj = _required_object(
+            item_obj,
+            "payload_length",
+            path,
+            f"profiles[{index}]",
+        )
+        payload_length = PayloadLength(
+            minimum=_required_int(payload_length_obj, "min", path, f"profiles[{index}].payload_length"),
+            maximum=_required_int(payload_length_obj, "max", path, f"profiles[{index}].payload_length"),
+        )
+        if payload_length.minimum > payload_length.maximum:
+            raise SpecValidationError(
+                f"{path}: profiles[{index}].payload_length min exceeds max"
+            )
+        feature_weights = _int_mapping(
+            _required_object(item_obj, "feature_weights", path, f"profiles[{index}]"),
+            path,
+            f"profiles[{index}].feature_weights",
+        )
+        profile = ProfileSpec(
+            name=profile_name,
+            purpose=_required_string(item_obj, "purpose", path, f"profiles[{index}]"),
+            default_count=_required_positive_int(
+                item_obj,
+                "default_count",
+                path,
+                f"profiles[{index}]",
+            ),
+            family_weights=weights,
+            payload_length=payload_length,
+            feature_weights=feature_weights,
+        )
+        _insert_unique(profiles, profile.name, profile, path, "profile")
+    return profiles, _backend_support(document, path)
+
+
+def _load_layer(document: JSONObject, path: Path) -> LayerSpec:
+    _validate_header(document, path, kind="layer")
+    fields: list[LayerField] = []
+    for index, item in enumerate(_required_list(document, "fields", path)):
+        item_obj = _object(item, path, f"fields[{index}]")
+        field_spec = LayerField(
+            name=_required_name(item_obj, "name", path, f"fields[{index}]"),
+            field_type=_required_name(item_obj, "type", path, f"fields[{index}]"),
+            required=_required_bool(item_obj, "required", path, f"fields[{index}]"),
+            domains=tuple(
+                to_jsonable(value)
+                for value in _required_list(item_obj, "domains", path, f"fields[{index}]")
+            ),
+        )
+        fields.append(field_spec)
+    return LayerSpec(
+        name=_required_name(document, "name", path, "document"),
+        summary=_required_string(document, "summary", path, "document"),
+        roots=_required_name_tuple(document, "roots", path, "document", allow_empty=True),
+        parents=_required_name_tuple(document, "parents", path, "document", allow_empty=True),
+        children=_required_name_tuple(document, "children", path, "document", allow_empty=True),
+        fields=tuple(fields),
+        coverage_cases=_required_name_tuple(document, "coverage_cases", path, "document"),
+        backend_support=_backend_support(document, path),
+        raw=document,
+    )
+
+
+def _load_feature(document: JSONObject, path: Path) -> FeatureSpec:
+    _validate_header(document, path, kind="feature")
+    return FeatureSpec(
+        name=_required_name(document, "name", path, "document"),
+        summary=_required_string(document, "summary", path, "document"),
+        layers=_required_name_tuple(document, "layers", path, "document"),
+        directions=_required_name_tuple(document, "directions", path, "document"),
+        strict_bytes=_required_bool(document, "strict_bytes", path, "document"),
+        malformed=_required_bool(document, "malformed", path, "document"),
+        coverage_cases=_required_name_tuple(document, "coverage_cases", path, "document"),
+        backend_support=_backend_support(document, path),
+        raw=document,
+    )
+
+
+def _sampling_weight(value: object, path: Path, context: str) -> SamplingWeight:
+    item = _object(value, path, context)
+    weight = _required_int(item, "weight", path, context)
+    if weight < 0:
+        raise SpecValidationError(f"{path}: {context}.weight must be non-negative")
+    return SamplingWeight(
+        name=_required_name(item, "name", path, context),
+        weight=weight,
+    )
+
+
+def _backend_support(document: Mapping[str, object], path: Path) -> dict[str, BackendSupport]:
+    support_obj = document.get("backend_support", {})
+    if support_obj is None:
+        return {}
+    support = _object(support_obj, path, "backend_support")
+    output: dict[str, BackendSupport] = {}
+    for raw_backend, raw_value in support.items():
+        backend_name = _normalize_name(raw_backend, path, "backend_support backend")
+        value = _object(raw_value, path, f"backend_support.{backend_name}")
+        metadata = {
+            key: item
+            for key, item in value.items()
+            if key
+            not in {
+                "status",
+                "native_layers",
+                "notes",
+                *BACKEND_CAPABILITY_KEYS,
+            }
+        }
+        output[backend_name] = BackendSupport(
+            name=backend_name,
+            status=_required_string(value, "status", path, f"backend_support.{backend_name}"),
+            encode=_optional_bool(value, "encode", path, f"backend_support.{backend_name}"),
+            decode=_optional_bool(value, "decode", path, f"backend_support.{backend_name}"),
+            pcap_read=_optional_bool(value, "pcap_read", path, f"backend_support.{backend_name}"),
+            pcap_write=_optional_bool(value, "pcap_write", path, f"backend_support.{backend_name}"),
+            live_endpoint=_optional_bool(
+                value,
+                "live_endpoint",
+                path,
+                f"backend_support.{backend_name}",
+            ),
+            native_layers=_optional_name_tuple(
+                value,
+                "native_layers",
+                path,
+                f"backend_support.{backend_name}",
+                preserve_case=True,
+            ),
+            notes=_optional_string_tuple(value, "notes", path, f"backend_support.{backend_name}"),
+            metadata=_json_object(to_jsonable(metadata), path, f"backend_support.{backend_name}.metadata"),
+        )
+    return output
+
+
+def _merge_backend_support(
+    *support_maps: Mapping[str, BackendSupport],
+) -> dict[str, BackendSupport]:
+    merged: dict[str, BackendSupport] = {}
+    for support in support_maps:
+        for name, item in support.items():
+            existing = merged.get(name)
+            if existing is None:
+                merged[name] = item
+                continue
+            merged[name] = BackendSupport(
+                name=name,
+                status=_merge_status(existing.status, item.status),
+                encode=existing.encode or item.encode,
+                decode=existing.decode or item.decode,
+                pcap_read=existing.pcap_read or item.pcap_read,
+                pcap_write=existing.pcap_write or item.pcap_write,
+                live_endpoint=existing.live_endpoint or item.live_endpoint,
+                native_layers=tuple(
+                    dict.fromkeys([*existing.native_layers, *item.native_layers])
+                ),
+                notes=tuple(dict.fromkeys([*existing.notes, *item.notes])),
+                metadata={**existing.metadata, **item.metadata},
+            )
+    return merged
+
+
+def _merge_status(left: str, right: str) -> str:
+    order = {"planned": 0, "partial": 1, "supported": 2}
+    if order.get(right, -1) > order.get(left, -1):
+        return right
+    return left
+
+
+def _validate_cross_references(
+    *,
+    root: Path,
+    roots: Mapping[str, RootSpec],
+    families: Mapping[str, FamilySpec],
+    stacks: Mapping[str, StackSpec],
+    profiles: Mapping[str, ProfileSpec],
+    layers: Mapping[str, LayerSpec],
+    features: Mapping[str, FeatureSpec],
+) -> None:
+    for stack in stacks.values():
+        if stack.root not in roots:
+            raise SpecValidationError(
+                f"{root / 'stacks.yaml'}: stack {stack.name} references unknown root {stack.root}"
+            )
+        if not stack.layers:
+            raise SpecValidationError(f"{root / 'stacks.yaml'}: stack {stack.name} has no layers")
+
+    for family in families.values():
+        if not family.default_stack:
+            raise SpecValidationError(
+                f"{root / 'stacks.yaml'}: family {family.name} has an empty default_stack"
+            )
+
+    for profile in profiles.values():
+        if not profile.family_weights:
+            raise SpecValidationError(
+                f"{root / 'profiles.yaml'}: profile {profile.name} has no family weights"
+            )
+        for weight in profile.family_weights:
+            if weight.name not in families:
+                raise SpecValidationError(
+                    f"{root / 'profiles.yaml'}: profile {profile.name} references "
+                    f"unknown family {weight.name}"
+                )
+        if sum(weight.weight for weight in profile.family_weights) <= 0:
+            raise SpecValidationError(
+                f"{root / 'profiles.yaml'}: profile {profile.name} has no positive family weights"
+            )
+
+    known_layer_names = set(layers)
+    for root_spec in roots.values():
+        known_layer_names.update(root_spec.layers)
+    for stack in stacks.values():
+        known_layer_names.update(stack.layers)
+    for layer in layers.values():
+        known_layer_names.update(layer.parents)
+        known_layer_names.update(layer.children)
+    known_layer_names.discard("root")
+
+    for feature in features.values():
+        for layer_name in feature.layers:
+            if layer_name not in known_layer_names:
+                raise SpecValidationError(
+                    f"{root / 'features'}: feature {feature.name} references "
+                    f"unknown layer {layer_name}"
+                )
+
+
+def _default_case_for_family(
+    family: FamilySpec,
+    stacks: Sequence[StackSpec] | object,
+) -> str:
+    for stack in stacks:
+        if not isinstance(stack, StackSpec):
+            continue
+        if stack.layers == family.default_stack and stack.coverage_cases:
+            return stack.coverage_cases[0]
+    return "default"
+
+
+def _load_yaml_object(path: Path) -> JSONObject:
+    if not path.exists():
+        raise SpecValidationError(f"missing oracle spec file: {path}")
+    try:
+        import yaml
+    except ModuleNotFoundError as exc:
+        raise SpecValidationError(
+            "PyYAML is required to load oracle specs; run through tools/oracle/run "
+            "or install tools/oracle/requirements.txt"
+        ) from exc
+
+    with path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
+    return _json_object(to_jsonable(data), path, "document")
+
+
+def _validate_header(document: Mapping[str, object], path: Path, *, kind: str) -> None:
+    version = _required_int(document, "version", path, "document")
+    if version != SUPPORTED_SPEC_VERSION:
+        raise SpecValidationError(
+            f"{path}: unsupported spec version {version}; expected {SUPPORTED_SPEC_VERSION}"
+        )
+    actual_kind = _required_string(document, "kind", path, "document")
+    if actual_kind != kind:
+        raise SpecValidationError(f"{path}: expected kind {kind}, got {actual_kind}")
+    _required_name(document, "name", path, "document")
+
+
+def _insert_unique(
+    target: dict[str, Any],
+    name: str,
+    value: Any,
+    path: Path,
+    label: str,
+) -> None:
+    if name in target:
+        raise SpecValidationError(f"{path}: duplicate {label} name {name}")
+    target[name] = value
+
+
+def _required_object(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str,
+) -> JSONObject:
+    if key not in document:
+        raise SpecValidationError(f"{path}: {context}.{key} is required")
+    return _object(document[key], path, f"{context}.{key}")
+
+
+def _required_list(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str = "document",
+) -> list[JSONValue]:
+    if key not in document:
+        raise SpecValidationError(f"{path}: {context}.{key} is required")
+    value = document[key]
+    if not isinstance(value, list):
+        raise SpecValidationError(f"{path}: {context}.{key} must be a list")
+    return value
+
+
+def _optional_list(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str = "document",
+) -> list[JSONValue]:
+    value = document.get(key, [])
+    if not isinstance(value, list):
+        raise SpecValidationError(f"{path}: {context}.{key} must be a list")
+    return value
+
+
+def _required_name_tuple(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str,
+    *,
+    allow_empty: bool = False,
+    preserve_case: bool = False,
+) -> tuple[str, ...]:
+    values = _required_list(document, key, path, context)
+    if not allow_empty and not values:
+        raise SpecValidationError(f"{path}: {context}.{key} must not be empty")
+    return tuple(
+        _normalize_name(value, path, f"{context}.{key}[{index}]", preserve_case=preserve_case)
+        for index, value in enumerate(values)
+    )
+
+
+def _optional_name_tuple(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str,
+    *,
+    preserve_case: bool = False,
+) -> tuple[str, ...]:
+    return tuple(
+        _normalize_name(value, path, f"{context}.{key}[{index}]", preserve_case=preserve_case)
+        for index, value in enumerate(_optional_list(document, key, path, context))
+    )
+
+
+def _optional_string_tuple(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str,
+) -> tuple[str, ...]:
+    return tuple(
+        _string(value, path, f"{context}.{key}[{index}]")
+        for index, value in enumerate(_optional_list(document, key, path, context))
+    )
+
+
+def _required_name(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str,
+    *,
+    allow_colon: bool = False,
+    preserve_case: bool = False,
+) -> str:
+    return _normalize_name(
+        _required_string(document, key, path, context),
+        path,
+        f"{context}.{key}",
+        allow_colon=allow_colon,
+        preserve_case=preserve_case,
+    )
+
+
+def _normalize_name(
+    value: object,
+    path: Path,
+    context: str,
+    *,
+    allow_colon: bool = True,
+    preserve_case: bool = False,
+) -> str:
+    name = _string(value, path, context).strip()
+    if not name:
+        raise SpecValidationError(f"{path}: {context} must not be empty")
+    if not preserve_case:
+        name = name.lower()
+    if not allow_colon and ":" in name:
+        raise SpecValidationError(f"{path}: {context} must not contain ':'")
+    return name
+
+
+def _required_string(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str,
+) -> str:
+    if key not in document:
+        raise SpecValidationError(f"{path}: {context}.{key} is required")
+    return _string(document[key], path, f"{context}.{key}")
+
+
+def _string(value: object, path: Path, context: str) -> str:
+    if not isinstance(value, str):
+        raise SpecValidationError(f"{path}: {context} must be a string")
+    return value
+
+
+def _required_int(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str,
+) -> int:
+    if key not in document:
+        raise SpecValidationError(f"{path}: {context}.{key} is required")
+    value = document[key]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise SpecValidationError(f"{path}: {context}.{key} must be an integer")
+    return value
+
+
+def _required_positive_int(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str,
+) -> int:
+    value = _required_int(document, key, path, context)
+    if value < 1:
+        raise SpecValidationError(f"{path}: {context}.{key} must be positive")
+    return value
+
+
+def _required_bool(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str,
+) -> bool:
+    if key not in document:
+        raise SpecValidationError(f"{path}: {context}.{key} is required")
+    value = document[key]
+    if not isinstance(value, bool):
+        raise SpecValidationError(f"{path}: {context}.{key} must be a boolean")
+    return value
+
+
+def _optional_bool(
+    document: Mapping[str, object],
+    key: str,
+    path: Path,
+    context: str,
+) -> bool:
+    value = document.get(key, False)
+    if not isinstance(value, bool):
+        raise SpecValidationError(f"{path}: {context}.{key} must be a boolean")
+    return value
+
+
+def _int_mapping(
+    document: Mapping[str, object],
+    path: Path,
+    context: str,
+) -> dict[str, int]:
+    output: dict[str, int] = {}
+    for key, value in document.items():
+        if not isinstance(key, str):
+            raise SpecValidationError(f"{path}: {context} keys must be strings")
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise SpecValidationError(f"{path}: {context}.{key} must be an integer")
+        if value < 0:
+            raise SpecValidationError(f"{path}: {context}.{key} must be non-negative")
+        output[_normalize_name(key, path, f"{context}.{key}")] = value
+    return output
+
+
+def _object(value: object, path: Path, context: str) -> JSONObject:
+    if not isinstance(value, Mapping):
+        raise SpecValidationError(f"{path}: {context} must be an object")
+    output: JSONObject = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise SpecValidationError(f"{path}: {context} object keys must be strings")
+        output[key] = item  # type: ignore[assignment]
+    return output
+
+
+def _json_object(value: JSONValue, path: Path, context: str) -> JSONObject:
+    if not isinstance(value, dict):
+        raise SpecValidationError(f"{path}: {context} must be an object")
+    return value
