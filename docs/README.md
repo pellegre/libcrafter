@@ -6,10 +6,11 @@ This directory contains user and contributor documentation for the Rust
 - [API guide](api.md) summarizes the public crate, modules, packet composition
   style, and helper APIs.
 - [Examples](examples.md) explains how to build and run the Rust examples.
-- [Oracle validation](validation.md) describes offline, pcap, and live
+- [Oracle validation](validation.md) describes corpus, offline, pcap, and wire
   reference validation.
-- [Live lab](live-lab.md) covers disposable provider setup, credentials,
-  artifacts, and cleanup.
+- [Probe validation](probe.md) describes kernel and service behavior probes.
+- [Live lab](live-lab.md) covers shared disposable provider setup,
+  credentials, artifacts, and cleanup.
 - [Supported platforms](supported-platforms.md) records the alpha support
   matrix and known gaps.
 

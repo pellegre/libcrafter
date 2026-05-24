@@ -24,6 +24,18 @@ on:
         description: "Oracle live packet plan count."
         required: true
         default: "2"
+      probe_live_profile:
+        description: "Probe live profile for Hetzner dry-run and real exchange."
+        required: true
+        default: "smoke"
+      probe_live_seed:
+        description: "Probe live deterministic seed."
+        required: true
+        default: "21"
+      probe_live_count:
+        description: "Probe live case count."
+        required: true
+        default: "25"
 
 permissions:
   contents: read
@@ -33,12 +45,15 @@ env:
 
 jobs:
   dry-run:
-    name: oracle Hetzner live dry run
+    name: Hetzner live dry runs
     runs-on: ubuntu-latest
     env:
       ORACLE_LIVE_PROFILE: ${{ github.event.inputs.oracle_live_profile || 'smoke' }}
       ORACLE_LIVE_SEED: ${{ github.event.inputs.oracle_live_seed || '1' }}
       ORACLE_LIVE_COUNT: ${{ github.event.inputs.oracle_live_count || '2' }}
+      PROBE_LIVE_PROFILE: ${{ github.event.inputs.probe_live_profile || 'smoke' }}
+      PROBE_LIVE_SEED: ${{ github.event.inputs.probe_live_seed || '21' }}
+      PROBE_LIVE_COUNT: ${{ github.event.inputs.probe_live_count || '25' }}
 
     steps:
       - name: Checkout
@@ -61,17 +76,25 @@ jobs:
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
 
-      - name: Upload oracle live dry-run artifacts
+      - name: Run probe Hetzner dry run
+        run: |
+          tools/probe/run --provider hetzner --dry-run \
+            --profile "$PROBE_LIVE_PROFILE" \
+            --seed "$PROBE_LIVE_SEED" \
+            --count "$PROBE_LIVE_COUNT"
+
+      - name: Upload live dry-run artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: libcrafter-oracle-live-dry-run-${{ github.run_id }}
+          name: libcrafter-live-dry-run-${{ github.run_id }}
           if-no-files-found: ignore
           path: |
             target/oracle/live
+            target/probe
 
   hetzner-live:
-    name: protected Hetzner oracle live exchange
+    name: protected Hetzner live exchange
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_hetzner_live == 'run' }}
     environment: hetzner-live
@@ -85,6 +108,10 @@ jobs:
       ORACLE_LIVE_PROFILE: ${{ github.event.inputs.oracle_live_profile }}
       ORACLE_LIVE_SEED: ${{ github.event.inputs.oracle_live_seed }}
       ORACLE_LIVE_COUNT: ${{ github.event.inputs.oracle_live_count }}
+      PROBE_LIVE_PROFILE: ${{ github.event.inputs.probe_live_profile }}
+      PROBE_LIVE_SEED: ${{ github.event.inputs.probe_live_seed }}
+      PROBE_LIVE_COUNT: ${{ github.event.inputs.probe_live_count }}
+      LIBCRAFTER_LIVE_LAB_CONFIRM: ${{ github.event.inputs.confirm_hetzner_live }}
       LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR: ${{ github.workspace }}/target/live-lab-artifacts
       LIBCRAFTER_LIVE_LAB_STATE_DIR: ${{ github.workspace }}/target/live-lab-state
 
@@ -120,12 +147,29 @@ jobs:
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
 
-      - name: Upload oracle live artifacts
+      - name: Run real Hetzner probe exchange
+        run: |
+          tools/live-lab/libcrafter-live-lab run --provider hetzner --suite probe \
+            --confirm-live-run \
+            --profile "$PROBE_LIVE_PROFILE" \
+            --seed "$PROBE_LIVE_SEED" \
+            --count "$PROBE_LIVE_COUNT"
+
+      - name: Collect remaining live-lab artifacts
+        if: ${{ always() }}
+        run: tools/live-lab/libcrafter-live-lab artifact --provider hetzner || true
+
+      - name: Destroy remaining live-lab resources
+        if: ${{ always() }}
+        run: tools/live-lab/libcrafter-live-lab destroy --provider hetzner || true
+
+      - name: Upload live artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: libcrafter-oracle-live-hetzner-${{ github.run_id }}
+          name: libcrafter-live-hetzner-${{ github.run_id }}
           if-no-files-found: ignore
           path: |
             target/oracle/live
+            target/probe
             target/live-lab-artifacts
