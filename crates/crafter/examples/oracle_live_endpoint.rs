@@ -496,6 +496,7 @@ fn send_report_json(report: &SendReport) -> Value {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn endpoint_response(
     request: &EndpointRequest,
     mode: RunMode,
