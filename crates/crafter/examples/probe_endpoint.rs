@@ -390,7 +390,6 @@ fn run_icmp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleRes
         .timeout(timeout)
         .count(32)
         .filter("icmp")
-        .immediate_mode(false)
         .nonblock()
         .open()
     {
@@ -580,7 +579,6 @@ fn run_tcp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResu
         .timeout(timeout)
         .count(64)
         .filter(&capture_filter(plan))
-        .immediate_mode(false)
         .nonblock()
         .open()
     {
@@ -775,7 +773,6 @@ fn run_dns_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResu
         .timeout(timeout)
         .count(64)
         .filter(&capture_filter(plan))
-        .immediate_mode(false)
         .nonblock()
         .open()
     {
@@ -975,7 +972,6 @@ fn run_ttl_expired_live(
         .timeout(timeout)
         .count(64)
         .filter(&capture_filter(plan))
-        .immediate_mode(false)
         .nonblock()
         .open()
     {
