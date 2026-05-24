@@ -1,5 +1,8 @@
 <h1 align="center">
-  <img src="docs/assets/libcrafter-lockup.svg" alt="libcrafter" width="560">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/libcrafter-lockup-dark.svg">
+    <img src="docs/assets/libcrafter-lockup.svg" alt="libcrafter" width="560">
+  </picture>
 </h1>
 
 `libcrafter` is a Rust alpha workspace for building, decoding, capturing, and
