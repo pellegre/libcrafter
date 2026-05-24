@@ -639,6 +639,7 @@ apt-get install -y --no-install-recommends \
   clang \
   curl \
   git \
+  iptables \
   iproute2 \
   iputils-ping \
   libpcap-dev \
@@ -664,7 +665,7 @@ cargo build -p oracle-adapters --bin oracle_live_endpoint
   echo "role=$LIBCRAFTER_ENDPOINT_ROLE"
   echo "private_ipv4=$LIBCRAFTER_PRIVATE_IPV4"
   echo "repository_synced=true"
-  echo "system_packages=build-essential ca-certificates clang curl git iproute2 iputils-ping libpcap-dev pkg-config python3"
+  echo "system_packages=build-essential ca-certificates clang curl git iptables iproute2 iputils-ping libpcap-dev pkg-config python3"
   echo "python_dependency_runner=uv"
   echo "uv=$(command -v uv)"
   echo "rustc=$(rustc --version)"
@@ -980,7 +981,7 @@ role=libcrafter
 dry_run=true
 repository_sync=planned
 private_ipv4=$libcrafter_private_ipv4
-system_packages=build-essential ca-certificates clang curl git iproute2 iputils-ping libpcap-dev pkg-config python3
+system_packages=build-essential ca-certificates clang curl git iptables iproute2 iputils-ping libpcap-dev pkg-config python3
 python_dependency_runner=uv
 uv_install=if-missing
 rust_install=if-missing
@@ -1014,7 +1015,7 @@ dry_run=true
 repository_sync=planned
 private_ipv4=$libcrafter_private_ipv4
 peer_private_ipv4=$reference_private_ipv4
-system_packages=build-essential ca-certificates clang curl git iproute2 iputils-ping libpcap-dev pkg-config python3
+system_packages=build-essential ca-certificates clang curl git iptables iproute2 iputils-ping libpcap-dev pkg-config python3
 python_dependency_runner=uv
 uv_install=if-missing
 rust_install=if-missing
@@ -1066,6 +1067,7 @@ apt-get install -y --no-install-recommends \
   clang \
   curl \
   git \
+  iptables \
   iproute2 \
   iputils-ping \
   libpcap-dev \
@@ -1095,7 +1097,7 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 1 
   echo "private_ipv4=$LIBCRAFTER_PRIVATE_IPV4"
   echo "peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4"
   echo "repository_synced=true"
-  echo "system_packages=build-essential ca-certificates clang curl git iproute2 iputils-ping libpcap-dev pkg-config python3"
+  echo "system_packages=build-essential ca-certificates clang curl git iptables iproute2 iputils-ping libpcap-dev pkg-config python3"
   echo "python_dependency_runner=uv"
   echo "uv=$(command -v uv)"
   echo "rustc=$(rustc --version)"

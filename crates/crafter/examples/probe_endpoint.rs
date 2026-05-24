@@ -15,7 +15,9 @@ const BACKEND_NAME: &str = "libcrafter";
 const FAILURE_TIMEOUT: &str = "timeout";
 const FAILURE_WRONG_PEER: &str = "wrong_peer";
 const FAILURE_WRONG_PAYLOAD: &str = "wrong_payload";
+const FAILURE_WRONG_FLAGS: &str = "wrong_flags";
 const FAILURE_DECODE_FAILED: &str = "decode_failed";
+const FAILURE_TARGET_SETUP_FAILED: &str = "target_setup_failed";
 
 #[derive(Debug)]
 struct Args {
@@ -46,7 +48,7 @@ struct ProbeEndpointRequest {
     local_ipv4: String,
     peer_ipv4: String,
     timeout_seconds: u64,
-    probe_plans: Vec<IcmpEchoPlan>,
+    probe_plans: Vec<ProbePlan>,
     #[serde(default)]
     artifact_paths: Value,
     #[serde(default)]
@@ -54,16 +56,35 @@ struct ProbeEndpointRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct IcmpEchoPlan {
+struct ProbePlan {
     case: String,
     sequence: usize,
-    identifier: u16,
-    sequence_number: u16,
-    payload_hex: String,
-    source_ipv4: String,
-    destination_ipv4: String,
-    expected_reply_source_ipv4: String,
-    expected_reply_destination_ipv4: String,
+    #[serde(default)]
+    expected_response: Option<String>,
+    #[serde(default)]
+    identifier: Option<u16>,
+    #[serde(default)]
+    sequence_number: Option<u16>,
+    #[serde(default)]
+    payload_hex: Option<String>,
+    #[serde(default)]
+    source_ipv4: Option<String>,
+    #[serde(default)]
+    destination_ipv4: Option<String>,
+    #[serde(default)]
+    expected_reply_source_ipv4: Option<String>,
+    #[serde(default)]
+    expected_reply_destination_ipv4: Option<String>,
+    #[serde(default)]
+    source_port: Option<u16>,
+    #[serde(default)]
+    destination_port: Option<u16>,
+    #[serde(default)]
+    tcp_sequence_number: Option<u32>,
+    #[serde(default)]
+    expected_acknowledgment_number: Option<u32>,
+    #[serde(default)]
+    window: Option<u16>,
 }
 
 #[derive(Debug)]
@@ -201,26 +222,23 @@ fn run_endpoint(
     let mut errors = Vec::new();
 
     for plan in &request.probe_plans {
-        if plan.case != "icmp-echo" {
-            let message = format!("unsupported probe case: {}", plan.case);
-            errors.push(message.clone());
-            let outcome = failed_outcome(
-                plan,
-                FAILURE_DECODE_FAILED,
-                vec![message],
-                None,
-                false,
-                false,
-            );
-            results.push(outcome.result);
-            observed_responses.push(outcome.observed_response);
-            continue;
-        }
-
-        let outcome = if args.mode.is_dry_run() {
-            run_icmp_dry_run(request, plan)?
-        } else {
-            run_icmp_live(request, plan)?
+        let outcome = match (args.mode, plan.case.as_str()) {
+            (RunMode::DryRun, "icmp-echo") => run_icmp_dry_run(request, plan)?,
+            (RunMode::Live, "icmp-echo") => run_icmp_live(request, plan)?,
+            (RunMode::DryRun, "tcp-syn-open" | "tcp-syn-closed") => run_tcp_dry_run(request, plan)?,
+            (RunMode::Live, "tcp-syn-open" | "tcp-syn-closed") => run_tcp_live(request, plan)?,
+            _ => {
+                let message = format!("unsupported probe case: {}", plan.case);
+                errors.push(message.clone());
+                failed_outcome(
+                    plan,
+                    FAILURE_DECODE_FAILED,
+                    vec![message],
+                    None,
+                    false,
+                    false,
+                )
+            }
         };
         if outcome.sent {
             sent_count += 1;
@@ -261,7 +279,9 @@ fn run_endpoint(
                 FAILURE_TIMEOUT,
                 FAILURE_WRONG_PEER,
                 FAILURE_WRONG_PAYLOAD,
-                FAILURE_DECODE_FAILED
+                FAILURE_WRONG_FLAGS,
+                FAILURE_DECODE_FAILED,
+                FAILURE_TARGET_SETUP_FAILED
             ]
         }
     });
@@ -281,7 +301,7 @@ fn run_endpoint(
 
 fn run_icmp_dry_run(
     request: &ProbeEndpointRequest,
-    plan: &IcmpEchoPlan,
+    plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
     let packet = icmp_packet(plan)?;
     let report = SocketSender::new(
@@ -327,10 +347,7 @@ fn run_icmp_dry_run(
     })
 }
 
-fn run_icmp_live(
-    request: &ProbeEndpointRequest,
-    plan: &IcmpEchoPlan,
-) -> ExampleResult<ProbeOutcome> {
+fn run_icmp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResult<ProbeOutcome> {
     let packet = icmp_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer = match Sniffer::interface(request.interface.clone())
@@ -387,7 +404,7 @@ fn run_icmp_live(
             ));
         }
     } {
-        match validate_candidate(plan, captured.packet(), captured.data())? {
+        match validate_icmp_candidate(plan, captured.packet(), captured.data())? {
             CandidateValidation::Ignore => {}
             CandidateValidation::Passed(decoded) => {
                 let raw_hex = hex_bytes(captured.data());
@@ -468,8 +485,201 @@ fn run_icmp_live(
     ))
 }
 
+fn run_tcp_dry_run(
+    request: &ProbeEndpointRequest,
+    plan: &ProbePlan,
+) -> ExampleResult<ProbeOutcome> {
+    let packet = tcp_packet(plan)?;
+    let report = SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .dry_run(),
+    )
+    .send(&packet)?;
+    let sent_raw_hex = hex_bytes(report.plan().bytes());
+    let observed = observed_response(
+        plan,
+        false,
+        None,
+        json!({}),
+        json!({
+            "planned_only": true,
+            "send_report": send_report_json(&report),
+            "sent_raw_hex": sent_raw_hex,
+            "capture_filter": capture_filter(plan),
+            "target_service": target_service_json(plan),
+        }),
+    );
+    let result = json!({
+        "case": plan.case,
+        "sequence": plan.sequence,
+        "status": "planned",
+        "endpoint_role": "stimulus",
+        "passed": null,
+        "observed_response": observed,
+        "metadata": {
+            "dry_run": true,
+            "probe_plan": plan_json(plan),
+            "planned_only": true,
+            "sent_raw_hex": sent_raw_hex,
+            "capture_filter": capture_filter(plan),
+            "target_service": target_service_json(plan),
+        }
+    });
+    Ok(ProbeOutcome {
+        result,
+        observed_response: observed,
+        sent: false,
+        received: false,
+    })
+}
+
+fn run_tcp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResult<ProbeOutcome> {
+    let packet = tcp_packet(plan)?;
+    let timeout = Duration::from_secs(request.timeout_seconds.max(1));
+    let mut sniffer = match Sniffer::interface(request.interface.clone())
+        .timeout(timeout)
+        .count(64)
+        .filter(&capture_filter(plan))
+        .open()
+    {
+        Ok(sniffer) => sniffer,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("capture open failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
+    let send_report = match SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .live(),
+    )
+    .send(&packet)
+    {
+        Ok(report) => report,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("send failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
+
+    let sent = send_report.bytes_sent() > 0;
+    let mut wrong_peer = None;
+    let mut wrong_flags = None;
+    while let Some(captured) = match sniffer.next_packet() {
+        Ok(packet) => packet,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("capture decode failed: {err}")],
+                Some(send_report_json(&send_report)),
+                sent,
+                false,
+            ));
+        }
+    } {
+        match validate_tcp_candidate(plan, captured.packet(), captured.data())? {
+            CandidateValidation::Ignore => {}
+            CandidateValidation::Passed(decoded) => {
+                let raw_hex = hex_bytes(captured.data());
+                let observed = observed_response(
+                    plan,
+                    true,
+                    Some(raw_hex.clone()),
+                    decoded.clone(),
+                    json!({
+                        "send_report": send_report_json(&send_report),
+                        "capture_filter": capture_filter(plan),
+                    }),
+                );
+                let result = json!({
+                    "case": plan.case,
+                    "sequence": plan.sequence,
+                    "status": "passed",
+                    "endpoint_role": "stimulus",
+                    "passed": true,
+                    "observed_response": observed,
+                    "metadata": {
+                        "dry_run": false,
+                        "probe_plan": plan_json(plan),
+                        "raw_hex": raw_hex,
+                        "decoded": decoded,
+                    }
+                });
+                return Ok(ProbeOutcome {
+                    result,
+                    observed_response: observed,
+                    sent,
+                    received: true,
+                });
+            }
+            CandidateValidation::WrongPeer(decoded) => {
+                wrong_peer = Some(decoded);
+            }
+            CandidateValidation::WrongPayload(decoded) => {
+                wrong_flags = Some(decoded);
+            }
+        }
+    }
+
+    if let Some(decoded) = wrong_flags {
+        return Ok(failed_outcome(
+            plan,
+            FAILURE_WRONG_FLAGS,
+            vec!["captured TCP response flags did not match expectation".to_string()],
+            Some(json!({
+                "send_report": send_report_json(&send_report),
+                "decoded": decoded,
+            })),
+            sent,
+            true,
+        ));
+    }
+
+    if let Some(decoded) = wrong_peer {
+        return Ok(failed_outcome(
+            plan,
+            FAILURE_WRONG_PEER,
+            vec!["captured TCP response did not match expected peer or ports".to_string()],
+            Some(json!({
+                "send_report": send_report_json(&send_report),
+                "decoded": decoded,
+            })),
+            sent,
+            true,
+        ));
+    }
+
+    Ok(failed_outcome(
+        plan,
+        FAILURE_TIMEOUT,
+        vec![format!("timed out waiting for {}", expected_response(plan))],
+        Some(json!({
+            "send_report": send_report_json(&send_report),
+            "capture_filter": capture_filter(plan),
+        })),
+        sent,
+        false,
+    ))
+}
+
 fn failed_outcome(
-    plan: &IcmpEchoPlan,
+    plan: &ProbePlan,
     reason: &str,
     errors: Vec<String>,
     metadata: Option<Value>,
@@ -509,8 +719,8 @@ fn failed_outcome(
     }
 }
 
-fn validate_candidate(
-    plan: &IcmpEchoPlan,
+fn validate_icmp_candidate(
+    plan: &ProbePlan,
     packet: &Packet,
     raw: &[u8],
 ) -> ExampleResult<CandidateValidation> {
@@ -521,9 +731,19 @@ fn validate_candidate(
         return Ok(CandidateValidation::Ignore);
     }
 
-    let expected_source: Ipv4Addr = plan.expected_reply_source_ipv4.parse()?;
-    let expected_destination: Ipv4Addr = plan.expected_reply_destination_ipv4.parse()?;
+    let expected_source: Ipv4Addr = required_str(
+        plan.expected_reply_source_ipv4.as_deref(),
+        "expected_reply_source_ipv4",
+    )?
+    .parse()?;
+    let expected_destination: Ipv4Addr = required_str(
+        plan.expected_reply_destination_ipv4.as_deref(),
+        "expected_reply_destination_ipv4",
+    )?
+    .parse()?;
     let mut mismatches = Vec::new();
+    let identifier = required_u16(plan.identifier, "identifier")?;
+    let sequence_number = required_u16(plan.sequence_number, "sequence_number")?;
 
     match packet.layer::<Ipv4>() {
         Some(ipv4) => {
@@ -556,17 +776,17 @@ fn validate_candidate(
             "actual": icmp.code_value(),
         }));
     }
-    if icmp.identifier_value() != Some(plan.identifier) {
+    if icmp.identifier_value() != Some(identifier) {
         mismatches.push(json!({
             "field": "icmp.identifier",
-            "expected": plan.identifier,
+            "expected": identifier,
             "actual": icmp.identifier_value(),
         }));
     }
-    if icmp.sequence_number_value() != Some(plan.sequence_number) {
+    if icmp.sequence_number_value() != Some(sequence_number) {
         mismatches.push(json!({
             "field": "icmp.sequence",
-            "expected": plan.sequence_number,
+            "expected": sequence_number,
             "actual": icmp.sequence_number_value(),
         }));
     }
@@ -579,7 +799,7 @@ fn validate_candidate(
         })));
     }
 
-    let expected_payload = decode_hex(&plan.payload_hex)?;
+    let expected_payload = decode_hex(required_str(plan.payload_hex.as_deref(), "payload_hex")?)?;
     let actual_payload = raw_payload(packet);
     if actual_payload != expected_payload.as_slice() {
         return Ok(CandidateValidation::WrongPayload(json!({
@@ -592,19 +812,160 @@ fn validate_candidate(
     Ok(CandidateValidation::Passed(decoded))
 }
 
-fn icmp_packet(plan: &IcmpEchoPlan) -> ExampleResult<Packet> {
-    let source: Ipv4Addr = plan.source_ipv4.parse()?;
-    let destination: Ipv4Addr = plan.destination_ipv4.parse()?;
-    let payload = decode_hex(&plan.payload_hex)?;
+fn validate_tcp_candidate(
+    plan: &ProbePlan,
+    packet: &Packet,
+    raw: &[u8],
+) -> ExampleResult<CandidateValidation> {
+    let Some(tcp) = packet.layer::<Tcp>() else {
+        return Ok(CandidateValidation::Ignore);
+    };
+
+    let expected_source: Ipv4Addr = required_str(
+        plan.expected_reply_source_ipv4.as_deref(),
+        "expected_reply_source_ipv4",
+    )?
+    .parse()?;
+    let expected_destination: Ipv4Addr = required_str(
+        plan.expected_reply_destination_ipv4.as_deref(),
+        "expected_reply_destination_ipv4",
+    )?
+    .parse()?;
+    let expected_source_port = required_u16(plan.destination_port, "destination_port")?;
+    let expected_destination_port = required_u16(plan.source_port, "source_port")?;
+    let expected_ack = required_u32(
+        plan.expected_acknowledgment_number,
+        "expected_acknowledgment_number",
+    )?;
+    let mut peer_mismatches = Vec::new();
+
+    match packet.layer::<Ipv4>() {
+        Some(ipv4) => {
+            if ipv4.source() != expected_source {
+                peer_mismatches.push(json!({
+                    "field": "ipv4.src",
+                    "expected": expected_source.to_string(),
+                    "actual": ipv4.source().to_string(),
+                }));
+            }
+            if ipv4.destination() != expected_destination {
+                peer_mismatches.push(json!({
+                    "field": "ipv4.dst",
+                    "expected": expected_destination.to_string(),
+                    "actual": ipv4.destination().to_string(),
+                }));
+            }
+        }
+        None => peer_mismatches.push(json!({
+            "field": "ipv4",
+            "expected": "present",
+            "actual": "missing",
+        })),
+    }
+
+    if tcp.source_port_value() != expected_source_port {
+        peer_mismatches.push(json!({
+            "field": "tcp.sport",
+            "expected": expected_source_port,
+            "actual": tcp.source_port_value(),
+        }));
+    }
+    if tcp.destination_port_value() != expected_destination_port {
+        peer_mismatches.push(json!({
+            "field": "tcp.dport",
+            "expected": expected_destination_port,
+            "actual": tcp.destination_port_value(),
+        }));
+    }
+
+    let decoded = decoded_packet_json(packet, raw);
+    if !peer_mismatches.is_empty() {
+        return Ok(CandidateValidation::WrongPeer(json!({
+            "packet": decoded,
+            "mismatches": peer_mismatches,
+        })));
+    }
+
+    let flags = tcp.flags_value();
+    let mut flag_mismatches = Vec::new();
+    match plan.case.as_str() {
+        "tcp-syn-open" => {
+            if flags & TCP_FLAG_SYN == 0 {
+                flag_mismatches.push(flag_mismatch("tcp.flags.syn", true, false));
+            }
+            if flags & TCP_FLAG_ACK == 0 {
+                flag_mismatches.push(flag_mismatch("tcp.flags.ack", true, false));
+            }
+            if flags & TCP_FLAG_RST != 0 {
+                flag_mismatches.push(flag_mismatch("tcp.flags.rst", false, true));
+            }
+            if tcp.acknowledgment_number_value() != expected_ack {
+                flag_mismatches.push(json!({
+                    "field": "tcp.ack",
+                    "expected": expected_ack,
+                    "actual": tcp.acknowledgment_number_value(),
+                }));
+            }
+        }
+        "tcp-syn-closed" => {
+            if flags & TCP_FLAG_RST == 0 {
+                flag_mismatches.push(flag_mismatch("tcp.flags.rst", true, false));
+            }
+            if flags & TCP_FLAG_SYN != 0 {
+                flag_mismatches.push(flag_mismatch("tcp.flags.syn", false, true));
+            }
+            if flags & TCP_FLAG_ACK != 0 && tcp.acknowledgment_number_value() != expected_ack {
+                flag_mismatches.push(json!({
+                    "field": "tcp.ack",
+                    "expected": expected_ack,
+                    "actual": tcp.acknowledgment_number_value(),
+                }));
+            }
+        }
+        _ => return Ok(CandidateValidation::Ignore),
+    }
+
+    if !flag_mismatches.is_empty() {
+        return Ok(CandidateValidation::WrongPayload(json!({
+            "packet": decoded,
+            "mismatches": flag_mismatches,
+        })));
+    }
+
+    Ok(CandidateValidation::Passed(decoded))
+}
+
+fn icmp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
+    let source: Ipv4Addr = required_str(plan.source_ipv4.as_deref(), "source_ipv4")?.parse()?;
+    let destination: Ipv4Addr =
+        required_str(plan.destination_ipv4.as_deref(), "destination_ipv4")?.parse()?;
+    let payload = decode_hex(required_str(plan.payload_hex.as_deref(), "payload_hex")?)?;
+    let identifier = required_u16(plan.identifier, "identifier")?;
+    let sequence_number = required_u16(plan.sequence_number, "sequence_number")?;
     Ok(Ipv4::new().src(source).dst(destination)
-        / Icmp::echo_request()
-            .id(plan.identifier)
-            .seq(plan.sequence_number)
+        / Icmp::echo_request().id(identifier).seq(sequence_number)
         / Raw::from_bytes(payload))
 }
 
+fn tcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
+    let source: Ipv4Addr = required_str(plan.source_ipv4.as_deref(), "source_ipv4")?.parse()?;
+    let destination: Ipv4Addr =
+        required_str(plan.destination_ipv4.as_deref(), "destination_ipv4")?.parse()?;
+    let source_port = required_u16(plan.source_port, "source_port")?;
+    let destination_port = required_u16(plan.destination_port, "destination_port")?;
+    let sequence_number = required_u32(plan.tcp_sequence_number, "tcp_sequence_number")?;
+    let window = plan.window.unwrap_or(64240);
+    Ok(Ipv4::new().src(source).dst(destination)
+        / Tcp::new()
+            .sport(source_port)
+            .dport(destination_port)
+            .seq(sequence_number)
+            .flags(TCP_FLAG_SYN)
+            .window(window))
+}
+
 fn observed_response(
-    plan: &IcmpEchoPlan,
+    plan: &ProbePlan,
     observed: bool,
     raw_hex: Option<String>,
     decoded: Value,
@@ -615,14 +976,14 @@ fn observed_response(
         "sequence": plan.sequence,
         "endpoint_role": "stimulus",
         "observed": observed,
-        "response_type": "icmp_echo_reply",
+        "response_type": expected_response(plan),
         "raw_hex": raw_hex,
         "decoded": decoded,
         "metadata": metadata,
     })
 }
 
-fn plan_json(plan: &IcmpEchoPlan) -> Value {
+fn plan_json(plan: &ProbePlan) -> Value {
     json!({
         "case": plan.case,
         "sequence": plan.sequence,
@@ -633,6 +994,13 @@ fn plan_json(plan: &IcmpEchoPlan) -> Value {
         "destination_ipv4": plan.destination_ipv4,
         "expected_reply_source_ipv4": plan.expected_reply_source_ipv4,
         "expected_reply_destination_ipv4": plan.expected_reply_destination_ipv4,
+        "expected_response": plan.expected_response,
+        "source_port": plan.source_port,
+        "destination_port": plan.destination_port,
+        "tcp_sequence_number": plan.tcp_sequence_number,
+        "expected_acknowledgment_number": plan.expected_acknowledgment_number,
+        "window": plan.window,
+        "target_service": target_service_json(plan),
         "capture_filter": capture_filter(plan),
     })
 }
@@ -640,6 +1008,7 @@ fn plan_json(plan: &IcmpEchoPlan) -> Value {
 fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let ipv4 = packet.layer::<Ipv4>();
     let icmp = packet.layer::<Icmp>();
+    let tcp = packet.layer::<Tcp>();
     json!({
         "backend": BACKEND_NAME,
         "summary": packet.summary(),
@@ -656,6 +1025,15 @@ fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
             "identifier": layer.identifier_value(),
             "sequence": layer.sequence_number_value(),
         })),
+        "tcp": tcp.map(|layer| json!({
+            "sport": layer.source_port_value(),
+            "dport": layer.destination_port_value(),
+            "seq": layer.sequence_number_value(),
+            "ack": layer.acknowledgment_number_value(),
+            "flags": tcp_flag_names(layer.flags_value()),
+            "flags_value": layer.flags_value(),
+            "window": layer.window_value(),
+        })),
         "payload_hex": hex_bytes(raw_payload(packet)),
     })
 }
@@ -664,11 +1042,78 @@ fn raw_payload(packet: &Packet) -> &[u8] {
     packet.layer::<Raw>().map(Raw::as_bytes).unwrap_or(&[])
 }
 
-fn capture_filter(plan: &IcmpEchoPlan) -> String {
-    format!(
-        "icmp and src host {} and dst host {}",
-        plan.expected_reply_source_ipv4, plan.expected_reply_destination_ipv4
-    )
+fn capture_filter(plan: &ProbePlan) -> String {
+    match plan.case.as_str() {
+        "icmp-echo" => format!(
+            "icmp and src host {} and dst host {}",
+            plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+            plan.expected_reply_destination_ipv4
+                .as_deref()
+                .unwrap_or("")
+        ),
+        "tcp-syn-open" | "tcp-syn-closed" => format!(
+            "tcp and src host {} and dst host {} and src port {} and dst port {}",
+            plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+            plan.expected_reply_destination_ipv4
+                .as_deref()
+                .unwrap_or(""),
+            plan.destination_port.unwrap_or(0),
+            plan.source_port.unwrap_or(0),
+        ),
+        _ => String::new(),
+    }
+}
+
+fn expected_response(plan: &ProbePlan) -> &str {
+    plan.expected_response
+        .as_deref()
+        .unwrap_or(match plan.case.as_str() {
+            "icmp-echo" => "icmp_echo_reply",
+            "tcp-syn-open" => "tcp_syn_ack",
+            "tcp-syn-closed" => "tcp_rst",
+            _ => "unknown",
+        })
+}
+
+fn target_service_json(plan: &ProbePlan) -> Value {
+    match plan.case.as_str() {
+        "tcp-syn-open" => json!({
+            "required": true,
+            "kind": "tcp-listener",
+            "port": plan.destination_port,
+        }),
+        "tcp-syn-closed" => json!({
+            "required": false,
+            "kind": "closed-port",
+            "port": plan.destination_port,
+        }),
+        _ => json!({}),
+    }
+}
+
+fn flag_mismatch(field: &str, expected: bool, actual: bool) -> Value {
+    json!({
+        "field": field,
+        "expected": expected,
+        "actual": actual,
+    })
+}
+
+fn tcp_flag_names(flags: u16) -> Vec<&'static str> {
+    [
+        (TCP_FLAG_FIN, "fin"),
+        (TCP_FLAG_SYN, "syn"),
+        (TCP_FLAG_RST, "rst"),
+        (TCP_FLAG_PSH, "psh"),
+        (TCP_FLAG_ACK, "ack"),
+        (TCP_FLAG_URG, "urg"),
+        (TCP_FLAG_ECE, "ece"),
+        (TCP_FLAG_CWR, "cwr"),
+        (TCP_FLAG_NS, "ns"),
+    ]
+    .iter()
+    .filter_map(|(flag, name)| (flags & *flag != 0).then_some(*name))
+    .collect()
 }
 
 fn send_report_json(report: &SendReport) -> Value {
@@ -704,6 +1149,20 @@ fn write_json(path: &Path, value: &Value) -> ExampleResult<()> {
     bytes.push(b'\n');
     fs::write(path, bytes)?;
     Ok(())
+}
+
+fn required_str<'a>(value: Option<&'a str>, field: &str) -> ExampleResult<&'a str> {
+    value
+        .filter(|item| !item.is_empty())
+        .ok_or_else(|| format!("probe plan missing required field {field}").into())
+}
+
+fn required_u16(value: Option<u16>, field: &str) -> ExampleResult<u16> {
+    value.ok_or_else(|| format!("probe plan missing required field {field}").into())
+}
+
+fn required_u32(value: Option<u32>, field: &str) -> ExampleResult<u32> {
+    value.ok_or_else(|| format!("probe plan missing required field {field}").into())
 }
 
 fn decode_hex(hex: &str) -> ExampleResult<Vec<u8>> {
