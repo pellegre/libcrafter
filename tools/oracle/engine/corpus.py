@@ -35,6 +35,7 @@ SKIP_REQUIRES_BROADCAST = "requires_broadcast"
 SKIP_REQUIRES_PROVIDER_MAC = "requires_provider_mac"
 SKIP_REQUIRES_CONTROLLED_SERVICE = "requires_controlled_service"
 SKIP_PROVIDER_CAPABILITY_UNAVAILABLE = "provider_capability_unavailable"
+SKIP_WIRE_COMPARE_ROOT_UNAVAILABLE = "wire_compare_root_unavailable"
 
 _PCAP_LINK_TYPES_BY_ROOT = {
     "link:ethernet": "DLT_EN10MB",
@@ -44,6 +45,15 @@ _PCAP_LINK_TYPES_BY_ROOT = {
     "l3:ipv6": "DLT_RAW",
 }
 _WIRE_DEFAULT_PROVIDER = "hetzner"
+_WIRE_COMPARE_ROOT_ALIASES = {
+    "Ether": "link:ethernet",
+    "IP": "l3:ipv4",
+    "IPv4": "l3:ipv4",
+    "IPv6": "l3:ipv6",
+    "link:ethernet": "link:ethernet",
+    "l3:ipv4": "l3:ipv4",
+    "l3:ipv6": "l3:ipv6",
+}
 _WIRE_PROVIDER_CAPABILITY_PROFILES: dict[str, JSONObject] = {
     "local-dry-run": {
         "provider": "local-dry-run",
@@ -574,9 +584,11 @@ def _wire_profile_decision(
     if _is_wire_provider_unsafe_feature(plan):
         reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
 
-    reasons = _unique_strings(reasons)
     provider = str(capabilities.get("provider", "unknown"))
     policy = wire_comparison_policy(plan, provider=provider)
+    if policy.get("compare_root") is None:
+        reasons.append(SKIP_WIRE_COMPARE_ROOT_UNAVAILABLE)
+    reasons = _unique_strings(reasons)
     mutable_fields = _string_list_value(
         policy.get("mutable_fields", []),
         "wire.mutable_fields",
@@ -793,7 +805,7 @@ def wire_comparison_policy(
 def _wire_compare_root(plan: PacketPlan) -> str | None:
     root = _packet_root(plan)
     if root is not None:
-        return root
+        return _WIRE_COMPARE_ROOT_ALIASES.get(root)
     if _requires_ipv4(plan):
         return "l3:ipv4"
     if _requires_ipv6(plan):

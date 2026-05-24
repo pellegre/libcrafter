@@ -63,6 +63,14 @@ struct PreparedPacket {
     feature_tags: Vec<String>,
 }
 
+#[derive(Debug)]
+struct CaptureSlice {
+    compare_root: String,
+    full_raw: Vec<u8>,
+    comparable_raw: Vec<u8>,
+    packet: Packet,
+}
+
 fn main() -> ExampleResult<()> {
     let args = parse_args()?;
     let input = read_input(args.input.clone())?;
@@ -359,7 +367,9 @@ fn run_receiver(
         let statuses = prepared
             .iter()
             .map(|prepared_packet| {
-                index_status(
+                let compare_root =
+                    compare_root_for_index(request, prepared_packet.index, &prepared_packet.root)?;
+                Ok(index_status(
                     request,
                     prepared_packet.index,
                     "dry-run-planned",
@@ -371,11 +381,11 @@ fn run_receiver(
                     json!({
                         "root": prepared_packet.root,
                         "expected_raw_hex": prepared_packet.raw_hex,
-                        "capture_root": prepared_packet.root,
+                        "capture_root": compare_root,
                     }),
-                )
+                ))
             })
-            .collect::<Vec<_>>();
+            .collect::<ExampleResult<Vec<_>>>()?;
         return Ok(endpoint_response(
             request,
             mode,
@@ -407,28 +417,33 @@ fn run_receiver(
     let mut observed_packets = Vec::with_capacity(captured.len());
     for (offset, captured_packet) in captured.iter().enumerate() {
         let expected = prepared.get(offset);
-        let root = expected.map(|packet| packet.root.as_str());
-        let observed = packet_for_root(captured_packet.packet(), root)?;
-        let observed_compiled = observed.compile()?;
-        let observed_raw_hex = hex_bytes(observed_compiled.as_bytes());
-        let capture_root = root
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| "unknown".to_string());
+        let compare_root = match expected {
+            Some(packet) => compare_root_for_index(request, packet.index, &packet.root)?,
+            None => "link:ethernet".to_string(),
+        };
+        let capture_slice = capture_slice_for_root(captured_packet, &compare_root)?;
+        let observed_raw_hex = hex_bytes(&capture_slice.comparable_raw);
+        let full_capture_raw_hex = hex_bytes(&capture_slice.full_raw);
         let capture_link_type = format!("{:?}", captured_packet.link_type());
         decoded_models.push(decoded_model(
-            &observed,
-            root,
+            &capture_slice.packet,
+            Some(&capture_slice.compare_root),
+            &capture_slice.comparable_raw,
             expected
                 .map(|packet| packet.feature_tags.clone())
                 .unwrap_or_default(),
         )?);
         observed_packets.push(json!({
             "index": expected.map(|packet| packet.index).unwrap_or(offset),
-            "observed_raw_hex": observed_raw_hex,
-            "capture_root": capture_root,
+            "observed_raw_hex": observed_raw_hex.clone(),
+            "comparable_raw_hex": observed_raw_hex,
+            "full_capture_raw_hex": full_capture_raw_hex,
+            "capture_root": capture_slice.compare_root,
             "capture_link_type": capture_link_type,
             "capture_path": capture_path.clone(),
-            "byte_length": observed_compiled.as_bytes().len(),
+            "byte_length": capture_slice.comparable_raw.len(),
+            "comparable_byte_length": capture_slice.comparable_raw.len(),
+            "full_capture_byte_length": capture_slice.full_raw.len(),
         }));
     }
     write_json(&decoded_path, &json!(decoded_models))?;
@@ -472,6 +487,14 @@ fn run_receiver(
                         .get("observed_raw_hex")
                         .cloned()
                         .unwrap_or(Value::Null),
+                    "comparable_raw_hex": observed_packet
+                        .get("comparable_raw_hex")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    "full_capture_raw_hex": observed_packet
+                        .get("full_capture_raw_hex")
+                        .cloned()
+                        .unwrap_or(Value::Null),
                     "capture_root": observed_packet
                         .get("capture_root")
                         .cloned()
@@ -486,6 +509,14 @@ fn run_receiver(
                         .unwrap_or(Value::Null),
                     "byte_length": observed_packet
                         .get("byte_length")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    "comparable_byte_length": observed_packet
+                        .get("comparable_byte_length")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    "full_capture_byte_length": observed_packet
+                        .get("full_capture_byte_length")
                         .cloned()
                         .unwrap_or(Value::Null),
                 }),
@@ -630,11 +661,16 @@ fn address_text<'a>(addresses: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn ethernet_wrap_packet(packet: Packet, source: MacAddr, destination: MacAddr) -> Packet {
+    let ethertype = if packet.layer::<Ipv6>().is_some() {
+        ETHERTYPE_IPV6
+    } else {
+        ETHERTYPE_IPV4
+    };
     Packet::from_layer(
         Ethernet::new()
             .src(source)
             .dst(destination)
-            .ethertype(ETHERTYPE_IPV4),
+            .ethertype(ethertype),
     )
     .concat(packet)
 }
@@ -711,38 +747,12 @@ fn artifact_path(out_dir: &Path, artifact_paths: &Value, key: &str, fallback: &s
     }
 }
 
-fn packet_for_root(packet: &Packet, root: Option<&str>) -> ExampleResult<Packet> {
-    match root {
-        Some("IP" | "IPv4" | "l3:ipv4") => {
-            let compiled = packet.compile()?;
-            let bytes = compiled.as_bytes();
-            let payload = if packet.layer::<Ethernet>().is_some() && bytes.len() >= 14 {
-                &bytes[14..]
-            } else {
-                bytes
-            };
-            Ok(Packet::decode_from_l3(NetworkLayer::Ipv4, payload)?)
-        }
-        Some("IPv6" | "l3:ipv6") => {
-            let compiled = packet.compile()?;
-            let bytes = compiled.as_bytes();
-            let payload = if packet.layer::<Ethernet>().is_some() && bytes.len() >= 14 {
-                &bytes[14..]
-            } else {
-                bytes
-            };
-            Ok(Packet::decode_from_l3(NetworkLayer::Ipv6, payload)?)
-        }
-        _ => Ok(packet.clone()),
-    }
-}
-
 fn decoded_model(
     packet: &Packet,
     root: Option<&str>,
+    source_bytes: &[u8],
     feature_tags: Vec<String>,
 ) -> ExampleResult<Value> {
-    let compiled = packet.compile()?;
     let mut fields = Map::new();
     let mut layers = Vec::new();
     let mut summaries = Vec::new();
@@ -765,7 +775,7 @@ fn decoded_model(
         "layers": layers,
         "fields": fields,
         "root": root,
-        "source_hex": hex_bytes(compiled.as_bytes()),
+        "source_hex": hex_bytes(source_bytes),
         "feature_tags": feature_tags,
         "metadata": {
             "backend": BACKEND_NAME,
@@ -773,6 +783,106 @@ fn decoded_model(
             "layer_summaries": summaries,
         },
     }))
+}
+
+fn capture_slice_for_root(
+    captured: &PcapPacket,
+    compare_root: &str,
+) -> ExampleResult<CaptureSlice> {
+    let root = canonical_compare_root(compare_root)?;
+    let full_raw = captured.data().to_vec();
+    match root {
+        "l3:ipv4" => {
+            let offset = ip_header_offset(&full_raw, 4, ETHERTYPE_IPV4)?;
+            let comparable_raw = full_raw[offset..].to_vec();
+            let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &comparable_raw)?;
+            Ok(CaptureSlice {
+                compare_root: root.to_string(),
+                full_raw,
+                comparable_raw,
+                packet,
+            })
+        }
+        "l3:ipv6" => {
+            let offset = ip_header_offset(&full_raw, 6, ETHERTYPE_IPV6)?;
+            let comparable_raw = full_raw[offset..].to_vec();
+            let packet = Packet::decode_from_l3(NetworkLayer::Ipv6, &comparable_raw)?;
+            Ok(CaptureSlice {
+                compare_root: root.to_string(),
+                full_raw,
+                comparable_raw,
+                packet,
+            })
+        }
+        "link:ethernet" => {
+            if captured.packet().layer::<Ethernet>().is_none() {
+                return Err(
+                    "captured packet has no Ethernet frame for link:ethernet compare root".into(),
+                );
+            }
+            Ok(CaptureSlice {
+                compare_root: root.to_string(),
+                comparable_raw: full_raw.clone(),
+                full_raw,
+                packet: captured.packet().clone(),
+            })
+        }
+        _ => Err(format!("wire compare root unavailable for live capture: {compare_root}").into()),
+    }
+}
+
+fn ip_header_offset(bytes: &[u8], version: u8, ethertype: u16) -> ExampleResult<usize> {
+    if bytes.first().is_some_and(|byte| byte >> 4 == version) {
+        return Ok(0);
+    }
+    if bytes.len() >= 14 && u16::from_be_bytes([bytes[12], bytes[13]]) == ethertype {
+        return Ok(14);
+    }
+    if bytes.len() >= 18
+        && u16::from_be_bytes([bytes[12], bytes[13]]) == ETHERTYPE_VLAN
+        && u16::from_be_bytes([bytes[16], bytes[17]]) == ethertype
+    {
+        return Ok(18);
+    }
+    if bytes.len() >= 16 && u16::from_be_bytes([bytes[14], bytes[15]]) == ethertype {
+        return Ok(16);
+    }
+    Err(
+        format!("captured packet cannot be sliced at IP header for ethertype 0x{ethertype:04x}")
+            .into(),
+    )
+}
+
+fn compare_root_for_index(
+    request: &EndpointRequest,
+    index: usize,
+    fallback: &str,
+) -> ExampleResult<String> {
+    let compare_root = request
+        .metadata
+        .get("packets")
+        .and_then(Value::as_array)
+        .and_then(|packets| {
+            packets.iter().find_map(|packet| {
+                let packet_index = packet.get("index")?.as_u64()?;
+                if usize::try_from(packet_index).ok()? == index {
+                    packet.get("compare_root")?.as_str()
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or(fallback);
+    Ok(canonical_compare_root(compare_root)?.to_string())
+}
+
+fn canonical_compare_root(root: &str) -> ExampleResult<&'static str> {
+    match root {
+        "Ether" | "link:ethernet" => Ok("link:ethernet"),
+        "IP" | "IPv4" | "l3:ipv4" => Ok("l3:ipv4"),
+        "IPv6" | "l3:ipv6" => Ok("l3:ipv6"),
+        _ => Err(format!("wire compare root unavailable for live capture: {root}").into()),
+    }
 }
 
 fn normalize_layer_name(name: &str) -> &str {
