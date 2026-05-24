@@ -38,6 +38,7 @@ from .model import (
     PacketPlan,
     RunReport,
     dumps_json,
+    read_json,
     write_json,
 )
 from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
@@ -446,11 +447,14 @@ def _live_corpus_plans(
     *,
     wire_provider: str,
     direction: str,
+    provider_capabilities: Mapping[str, object] | None = None,
 ) -> tuple[list[PacketPlan], list[str], JSONObject]:
     from .corpus import (
         CorpusFormatError,
         SKIP_PROVIDER_CAPABILITY_UNAVAILABLE,
+        corpus_eligibility_summary,
         load_corpus_report,
+        populate_corpus_eligibility,
         wire_comparison_policy,
     )
 
@@ -471,6 +475,18 @@ def _live_corpus_plans(
             )
 
     packets = list(corpus_report.packets)
+    provider_capabilities_object: JSONObject | None = None
+    if provider_capabilities is not None:
+        provider_capabilities_object = _json_object(
+            json.loads(dumps_json(provider_capabilities)),
+            "provider_capabilities",
+        )
+        packets = populate_corpus_eligibility(
+            backend=args.backend,
+            packets=packets,
+            provider_capabilities=provider_capabilities_object,
+            wire_provider=wire_provider,
+        )
     if args.index is not None:
         packets = [packet for packet in packets if packet.plan.index == args.index]
 
@@ -570,6 +586,10 @@ def _live_corpus_plans(
         "wire_eligibility": eligibility,
         "packet_indexes": [plan.index for plan in plans],
     }
+    if provider_capabilities_object is not None:
+        metadata["provider_capabilities"] = provider_capabilities_object
+        metadata["provider_capability_source"] = provider_capabilities_object.get("source")
+        metadata["eligibility"] = corpus_eligibility_summary(packets)
     return plans, selected_specs, metadata
 
 
@@ -1039,6 +1059,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         validate_libcrafter_command_plan,
     )
     from .providers.hetzner import (
+        hetzner_default_provider_capabilities,
         hetzner_endpoint_bootstrap_plan,
         hetzner_endpoints,
         hetzner_private_network_plan,
@@ -1051,10 +1072,13 @@ def _live_hetzner(args: argparse.Namespace) -> int:
 
     try:
         directions = live_execution_directions(args.direction)
+        dry_run = bool(args.dry_run)
+        provider_capabilities = hetzner_default_provider_capabilities(dry_run=dry_run)
         plans, corpus_selected_specs, corpus_metadata = _live_corpus_plans(
             args,
             wire_provider="hetzner",
             direction=directions[0] if directions else "reference_to_libcrafter",
+            provider_capabilities=provider_capabilities,
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -1075,7 +1099,6 @@ def _live_hetzner(args: argparse.Namespace) -> int:
     )
 
     token_configured = hetzner_token_configured()
-    dry_run = bool(args.dry_run)
     if not dry_run and not token_configured:
         return _live_hetzner_skip_no_token(
             args=args,
@@ -1093,14 +1116,6 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             corpus_metadata=corpus_metadata,
         )
     if not dry_run:
-        if not plans:
-            return _live_hetzner_skip_no_wire_eligible(
-                args=args,
-                report_path=report_path,
-                directions=directions,
-                selected_specs=selected_specs,
-                corpus_metadata=corpus_metadata,
-            )
         return _live_hetzner_execute(
             args=args,
             report_path=report_path,
@@ -1650,6 +1665,7 @@ def _live_hetzner_execute(
     keep_live_lab = bool(getattr(args, "keep_live_lab", False))
     live_packet_exchange = False
     live_direction_counts = _live_empty_direction_counts(corpus_metadata, directions)
+    skipped_reason: str | None = None
 
     try:
         doctor = _run_live_lab_provider_command(
@@ -1696,6 +1712,17 @@ def _live_hetzner_execute(
 
         manifest = _read_hetzner_manifest(manifest_path)
         endpoints = _hetzner_endpoints_from_manifest(endpoints, manifest)
+        discovered_capabilities = _read_hetzner_provider_capabilities()
+        plans, updated_selected_specs, corpus_metadata = _live_corpus_plans(
+            args,
+            wire_provider="hetzner",
+            direction=directions[0] if directions else "reference_to_libcrafter",
+            provider_capabilities=discovered_capabilities,
+        )
+        selected_specs = list(dict.fromkeys([*selected_specs, *updated_selected_specs]))
+        live_direction_counts = _live_empty_direction_counts(corpus_metadata, directions)
+        if not plans:
+            skipped_reason = "no_wire_eligible_packets"
         remote_dir = manifest.get("remote_dir", "/root/libcrafter")
         remote_artifact_root = posixpath.join(
             remote_dir,
@@ -1704,7 +1731,7 @@ def _live_hetzner_execute(
             "exchange",
         )
 
-        for direction in directions:
+        for direction in [] if skipped_reason is not None else directions:
             if direction == "reference_to_libcrafter":
                 sender = endpoints["reference_backend"]
                 receiver = endpoints["libcrafter"]
@@ -2001,17 +2028,51 @@ def _live_hetzner_execute(
                 }
             )
 
-    failures = [result for result in results if not result.passed]
     provider_failures = [
         command
         for command in provider_commands
         if isinstance(command.get("exit_code"), int) and command["exit_code"] != 0
     ]
-    status = (
-        "passed"
-        if results and not failures and not execution_errors and not provider_failures
-        else "failed"
-    )
+    if skipped_reason is not None and not execution_errors and not provider_failures:
+        results.append(
+            ComparisonResult(
+                passed=True,
+                direction=args.direction,
+                expected={
+                    "provider": args.provider,
+                    "wire_eligible_count": 0,
+                    "live_packet_exchange": False,
+                },
+                actual={
+                    "provider": args.provider,
+                    "skipped": True,
+                    "wire_eligible_count": 0,
+                    "wire_skipped_count": corpus_metadata["wire_skipped_count"],
+                    "wire_skip_reasons": corpus_metadata["wire_skip_reasons"],
+                    "live_packet_exchange": False,
+                },
+                strict_bytes=False,
+                byte_equal=None,
+                metadata={
+                    "provider": args.provider,
+                    "skipped": True,
+                    "skip_reason": skipped_reason,
+                    "creates_infrastructure": any(
+                        command.get("label") == "02-create"
+                        and command.get("exit_code") == 0
+                        for command in provider_commands
+                    ),
+                    "live_packet_exchange": False,
+                },
+            )
+        )
+    failures = [result for result in results if not result.passed]
+    if skipped_reason is not None and not failures and not execution_errors and not provider_failures:
+        status = "skipped"
+    elif results and not failures and not execution_errors and not provider_failures:
+        status = "passed"
+    else:
+        status = "failed"
     artifact_paths = _dedupe_paths(
         [str(report_path)]
         + [
@@ -2046,6 +2107,8 @@ def _live_hetzner_execute(
         metadata={
             "provider": args.provider,
             "dry_run": False,
+            "skipped": status == "skipped",
+            "skip_reason": skipped_reason,
             "creates_infrastructure": any(
                 command.get("label") == "02-create" and command.get("exit_code") == 0
                 for command in provider_commands
@@ -2224,6 +2287,64 @@ def _run_live_lab_provider_command(
         "stdout_path": str(stdout_path),
         "stderr_path": str(stderr_path),
     }
+
+
+def _hetzner_provider_capability_report_path() -> Path:
+    artifact_root = Path(
+        os.environ.get(
+            "LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR",
+            str(REPO_ROOT / "tools" / "live-lab" / "artifacts"),
+        )
+    )
+    if not artifact_root.is_absolute():
+        artifact_root = REPO_ROOT / artifact_root
+    return artifact_root / "hetzner" / "oracle-live" / "capabilities.json"
+
+
+def _read_hetzner_provider_capabilities() -> JSONObject:
+    from .providers.hetzner import (
+        hetzner_default_provider_capabilities,
+        normalize_hetzner_provider_capabilities,
+    )
+
+    capability_path = _hetzner_provider_capability_report_path()
+    try:
+        raw_report = read_json(capability_path)
+        if not isinstance(raw_report, dict):
+            raise RuntimeError("capability report must be a JSON object")
+        capabilities = normalize_hetzner_provider_capabilities(
+            _json_object(raw_report, "provider_capabilities"),
+            dry_run=False,
+            source=str(raw_report.get("source") or "bootstrap-discovery"),
+        )
+        capabilities["capability_report_path"] = str(capability_path)
+        return capabilities
+    except Exception as exc:
+        capabilities = hetzner_default_provider_capabilities(
+            dry_run=False,
+            source="bootstrap-discovery-unavailable",
+        )
+        capabilities.update(
+            {
+                "live_packet_exchange": False,
+                "ipv4_unicast": False,
+                "ipv6_unicast": False,
+                "link_layer_send": False,
+                "link_layer_capture": False,
+                "broadcast": False,
+                "provider_mac_known": False,
+                "controlled_services": False,
+                "controlled_router": False,
+                "ipv4": False,
+                "ipv6": False,
+                "l2": False,
+                "provider_mac": False,
+                "controlled_service": False,
+                "capability_report_path": str(capability_path),
+                "discovery_error": str(exc),
+            }
+        )
+        return capabilities
 
 
 def _live_plan_with_endpoint_addresses(
