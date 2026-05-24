@@ -690,6 +690,8 @@ def _validate_endpoint_request_wire_metadata(
         corpus_id = metadata.get("corpus_id")
         if corpus_id != expected_corpus_ids[0]:
             errors.append("endpoint request metadata.corpus_id must match packet corpus id")
+        if len(set(expected_corpus_ids)) != 1:
+            errors.append("endpoint request packet plans must share one corpus id")
 
     expected_sender_role = _expected_sender_role(request.direction)
     for offset, plan in enumerate(request.packet_plans):
@@ -705,6 +707,9 @@ def _validate_endpoint_request_wire_metadata(
         expected_packet_id = _plan_packet_id(plan)
         if expected_packet_id and packet.get("packet_id") != expected_packet_id:
             errors.append(f"endpoint request metadata.packets[{offset}].packet_id mismatch")
+        expected_corpus_id = _plan_corpus_id(plan)
+        if expected_corpus_id and packet.get("corpus_id") != expected_corpus_id:
+            errors.append(f"endpoint request metadata.packets[{offset}].corpus_id mismatch")
         expected_compare_root = _plan_compare_root(plan)
         if packet.get("compare_root") != expected_compare_root:
             errors.append(
