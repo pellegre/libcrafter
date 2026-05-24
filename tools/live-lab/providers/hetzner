@@ -77,6 +77,41 @@ suite_arg() {
   done
 }
 
+project_path() {
+  local path="$1"
+
+  case "$path" in
+    /*)
+      printf '%s\n' "$path"
+      ;;
+    *)
+      printf '%s/%s\n' "$project_root" "$path"
+      ;;
+  esac
+}
+
+preserve_suite_corpus() {
+  local corpus_path="$1"
+  local oracle_artifact_dir="$2"
+  local source_path
+  local corpus_dir
+  local destination_path
+
+  source_path="$(project_path "$corpus_path")"
+  if [[ ! -f "$source_path" ]]; then
+    echo "error: corpus artifact not found: $corpus_path" >&2
+    exit 66
+  fi
+
+  corpus_dir="$oracle_artifact_dir/corpus"
+  destination_path="$corpus_dir/$(basename "$source_path")"
+  mkdir -p "$corpus_dir"
+  if [[ "$source_path" != "$destination_path" ]]; then
+    cp "$source_path" "$destination_path"
+  fi
+  printf '%s\n' "$destination_path"
+}
+
 require_tool() {
   local tool="$1"
 
@@ -1392,17 +1427,140 @@ cleanup_hetzner_smoke_host() {
 run_oracle_live_suite() {
   local requested_suite="${1:-oracle-live}"
   local oracle_artifact_dir="$artifact_dir/$requested_suite"
+  local backend=""
+  local profile="smoke"
+  local seed="1"
+  local count="10"
+  local direction="live_exchange"
+  local corpus_path=""
+  local preserved_corpus_path=""
   local dry_run=false
+  local keep_live_lab=false
   local created_for_oracle=false
   local suite_status=0
+  local oracle_args=()
+  local generation_args=()
 
   shift || true
-  if has_arg "--dry-run" "$@"; then
-    dry_run=true
-  fi
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --suite)
+        if [[ $# -lt 2 ]]; then
+          echo "error: --suite requires a value" >&2
+          exit 64
+        fi
+        shift 2
+        ;;
+      --suite=*)
+        shift
+        ;;
+      --dry-run)
+        dry_run=true
+        shift
+        ;;
+      --keep-live-lab)
+        keep_live_lab=true
+        shift
+        ;;
+      --backend)
+        if [[ $# -lt 2 ]]; then
+          echo "error: --backend requires a value" >&2
+          exit 64
+        fi
+        backend="$2"
+        shift 2
+        ;;
+      --backend=*)
+        backend="${1#--backend=}"
+        shift
+        ;;
+      --profile)
+        if [[ $# -lt 2 ]]; then
+          echo "error: --profile requires a value" >&2
+          exit 64
+        fi
+        profile="$2"
+        shift 2
+        ;;
+      --profile=*)
+        profile="${1#--profile=}"
+        shift
+        ;;
+      --seed)
+        if [[ $# -lt 2 ]]; then
+          echo "error: --seed requires a value" >&2
+          exit 64
+        fi
+        seed="$2"
+        shift 2
+        ;;
+      --seed=*)
+        seed="${1#--seed=}"
+        shift
+        ;;
+      --count)
+        if [[ $# -lt 2 ]]; then
+          echo "error: --count requires a value" >&2
+          exit 64
+        fi
+        count="$2"
+        shift 2
+        ;;
+      --count=*)
+        count="${1#--count=}"
+        shift
+        ;;
+      --direction)
+        if [[ $# -lt 2 ]]; then
+          echo "error: --direction requires a value" >&2
+          exit 64
+        fi
+        direction="$2"
+        shift 2
+        ;;
+      --direction=*)
+        direction="${1#--direction=}"
+        shift
+        ;;
+      --corpus)
+        if [[ $# -lt 2 ]]; then
+          echo "error: --corpus requires a value" >&2
+          exit 64
+        fi
+        corpus_path="$2"
+        shift 2
+        ;;
+      --corpus=*)
+        corpus_path="${1#--corpus=}"
+        shift
+        ;;
+      --root|--family|--case|--feature|--index)
+        if [[ $# -lt 2 ]]; then
+          echo "error: $1 requires a value" >&2
+          exit 64
+        fi
+        generation_args+=("$1" "$2")
+        shift 2
+        ;;
+      --root=*|--family=*|--case=*|--feature=*|--index=*)
+        generation_args+=("$1")
+        shift
+        ;;
+      *)
+        echo "error: unknown oracle-live suite argument '$1'" >&2
+        exit 64
+        ;;
+    esac
+  done
 
   ensure_dirs
   mkdir -p "$oracle_artifact_dir"
+  if [[ -n "$corpus_path" ]]; then
+    preserved_corpus_path="$(preserve_suite_corpus "$corpus_path" "$oracle_artifact_dir")"
+  else
+    rm -rf "$oracle_artifact_dir/corpus"
+  fi
+
   run_doctor --dry-run | tee "$oracle_artifact_dir/doctor.dry-run.log"
   run_create --dry-run | tee "$oracle_artifact_dir/create.dry-run.log"
 
@@ -1431,8 +1589,10 @@ EOF
 
     if [[ ! -f "$manifest" ]]; then
       created_for_oracle=true
-      hetzner_smoke_cleanup_needed=true
-      trap cleanup_hetzner_smoke_host EXIT
+      if [[ "$keep_live_lab" != true ]]; then
+        hetzner_smoke_cleanup_needed=true
+        trap cleanup_hetzner_smoke_host EXIT
+      fi
       run_create
     fi
 
@@ -1443,23 +1603,42 @@ EOF
     fi
   fi
 
-  "$project_root/tools/oracle/run" live \
-    --provider hetzner \
-    --profile smoke \
-    --seed 1 \
-    --count 10 \
-    --dry-run \
-    --out "$oracle_artifact_dir" \
-    | tee "$artifact_dir/$requested_suite.log"
+  oracle_args=(
+    live
+    --provider hetzner
+    --profile "$profile"
+    --seed "$seed"
+    --count "$count"
+    --direction "$direction"
+    --dry-run
+    --out "$oracle_artifact_dir"
+  )
+  if [[ -n "$backend" ]]; then
+    oracle_args+=(--backend "$backend")
+  fi
+  if [[ -n "$preserved_corpus_path" ]]; then
+    oracle_args+=(--corpus "$preserved_corpus_path")
+  fi
+  oracle_args+=("${generation_args[@]}")
+
+  if "$project_root/tools/oracle/run" "${oracle_args[@]}" | tee "$artifact_dir/$requested_suite.log"; then
+    :
+  else
+    suite_status=$?
+  fi
 
   if [[ -f "$manifest" ]]; then
     run_artifact || true
   fi
 
   if [[ "$created_for_oracle" == true ]]; then
-    run_destroy || true
-    hetzner_smoke_cleanup_needed=false
-    trap - EXIT
+    if [[ "$keep_live_lab" == true ]]; then
+      echo "keep_live_lab=true"
+    else
+      run_destroy || true
+      hetzner_smoke_cleanup_needed=false
+      trap - EXIT
+    fi
   fi
 
   echo "provider=$provider_name"
@@ -1470,6 +1649,9 @@ EOF
   echo "creates_infrastructure=false"
   echo "artifact_dir=$oracle_artifact_dir"
   echo "log=$artifact_dir/$requested_suite.log"
+  if [[ -n "$preserved_corpus_path" ]]; then
+    echo "corpus_artifact=$preserved_corpus_path"
+  fi
   echo "bootstrap_libcrafter_endpoint=$oracle_artifact_dir/bootstrap/libcrafter"
   echo "bootstrap_reference_endpoint=$oracle_artifact_dir/bootstrap/reference"
   echo "capability_report=$oracle_artifact_dir/capabilities.json"
@@ -1478,29 +1660,32 @@ EOF
 }
 
 run_artifact() {
-  load_manifest
   mkdir -p "$artifact_dir"
 
-  if [[ -n "${ssh_private_key:-}" ]]; then
-    if [[ -n "${libcrafter_public_ipv4:-}" ]]; then
-      if ssh_remote_host "$libcrafter_public_ipv4" "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
-        rm -rf "$artifact_dir/remote/libcrafter"
-        mkdir -p "$artifact_dir/remote/libcrafter"
-        scp_from_remote_host "$libcrafter_public_ipv4" "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/libcrafter/" || true
-      fi
-    elif [[ -n "${server_ipv4:-}" ]]; then
-      if ssh_remote "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
-        rm -rf "$artifact_dir/remote"
-        mkdir -p "$artifact_dir/remote"
-        scp_from_remote "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/" || true
-      fi
-    fi
+  if [[ -f "$manifest" ]]; then
+    load_manifest
 
-    if [[ -n "${reference_public_ipv4:-}" ]]; then
-      if ssh_remote_host "$reference_public_ipv4" "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
-        rm -rf "$artifact_dir/remote/reference"
-        mkdir -p "$artifact_dir/remote/reference"
-        scp_from_remote_host "$reference_public_ipv4" "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/reference/" || true
+    if [[ -n "${ssh_private_key:-}" ]]; then
+      if [[ -n "${libcrafter_public_ipv4:-}" ]]; then
+        if ssh_remote_host "$libcrafter_public_ipv4" "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
+          rm -rf "$artifact_dir/remote/libcrafter"
+          mkdir -p "$artifact_dir/remote/libcrafter"
+          scp_from_remote_host "$libcrafter_public_ipv4" "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/libcrafter/" || true
+        fi
+      elif [[ -n "${server_ipv4:-}" ]]; then
+        if ssh_remote "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
+          rm -rf "$artifact_dir/remote"
+          mkdir -p "$artifact_dir/remote"
+          scp_from_remote "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/" || true
+        fi
+      fi
+
+      if [[ -n "${reference_public_ipv4:-}" ]]; then
+        if ssh_remote_host "$reference_public_ipv4" "test -d '${remote_dir:-/root/libcrafter}/live-artifacts'" >/dev/null 2>&1; then
+          rm -rf "$artifact_dir/remote/reference"
+          mkdir -p "$artifact_dir/remote/reference"
+          scp_from_remote_host "$reference_public_ipv4" "${remote_dir:-/root/libcrafter}/live-artifacts/." "$artifact_dir/remote/reference/" || true
+        fi
       fi
     fi
   fi

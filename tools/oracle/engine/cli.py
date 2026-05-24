@@ -593,6 +593,105 @@ def _live_corpus_plans(
     return plans, selected_specs, metadata
 
 
+def _write_live_corpus_batch_artifact(
+    output_dir: Path,
+    *,
+    corpus_metadata: Mapping[str, object],
+    plans: Sequence[PacketPlan],
+    directions: Sequence[str],
+) -> Path:
+    """Persist the ordered wire-eligible corpus batch used by live endpoints."""
+
+    artifact_path = output_dir / "artifacts" / "corpus" / "wire-eligible-batch.json"
+    write_json(
+        artifact_path,
+        {
+            "corpus_id": corpus_metadata.get("corpus_id"),
+            "corpus_source": corpus_metadata.get("corpus_source"),
+            "corpus_path": corpus_metadata.get("corpus_path"),
+            "wire_provider": corpus_metadata.get("wire_provider"),
+            "generated_count": corpus_metadata.get("generated_count"),
+            "wire_eligible_count": corpus_metadata.get("wire_eligible_count"),
+            "wire_skipped_count": corpus_metadata.get("wire_skipped_count"),
+            "wire_skip_reasons": corpus_metadata.get("wire_skip_reasons", {}),
+            "execution_directions": list(directions),
+            "packet_indexes": [plan.index for plan in plans],
+            "packets": [plan.to_dict() for plan in plans],
+            "wire_eligibility": corpus_metadata.get("wire_eligibility", []),
+        },
+    )
+    return artifact_path
+
+
+def _write_live_endpoint_protocol_artifacts(request, response) -> list[str]:
+    """Write endpoint request/response artifacts referenced by the protocol."""
+
+    artifact_paths = request.artifact_paths
+    paths: list[str] = []
+    request_path = artifact_paths.get("request")
+    if isinstance(request_path, str) and request_path:
+        write_json(request_path, request)
+        paths.append(request_path)
+    response_path = artifact_paths.get("response")
+    if isinstance(response_path, str) and response_path:
+        write_json(response_path, response)
+        paths.append(response_path)
+    decoded_path = artifact_paths.get("decoded_models")
+    if isinstance(decoded_path, str) and decoded_path:
+        write_json(decoded_path, response.decoded_models)
+        paths.append(decoded_path)
+    captures_path = artifact_paths.get("captures")
+    if isinstance(captures_path, str) and captures_path:
+        Path(captures_path).mkdir(parents=True, exist_ok=True)
+        paths.append(captures_path)
+    return paths
+
+
+def _live_endpoint_pair_validation(
+    *,
+    direction: str,
+    sender_request,
+    receiver_request,
+):
+    from .live import LiveValidationCheck
+
+    errors: list[str] = []
+    sender_corpus = sender_request.metadata.get("corpus_id")
+    receiver_corpus = receiver_request.metadata.get("corpus_id")
+    if sender_corpus != receiver_corpus:
+        errors.append("sender and receiver endpoint requests must share corpus_id")
+
+    sender_indexes = [plan.index for plan in sender_request.packet_plans]
+    receiver_indexes = [plan.index for plan in receiver_request.packet_plans]
+    if sender_indexes != receiver_indexes:
+        errors.append("sender and receiver endpoint requests must preserve packet order")
+
+    sender_packet_ids = _live_endpoint_request_packet_ids(sender_request)
+    receiver_packet_ids = _live_endpoint_request_packet_ids(receiver_request)
+    if sender_packet_ids != receiver_packet_ids:
+        errors.append("sender and receiver endpoint requests must share packet ids")
+
+    return LiveValidationCheck(
+        name="live-endpoint-pair-batch",
+        passed=not errors,
+        subject=direction,
+        errors=errors,
+        metadata={
+            "direction": direction,
+            "corpus_id": sender_corpus,
+            "packet_indexes": sender_indexes,
+            "packet_ids": sender_packet_ids,
+        },
+    )
+
+
+def _live_endpoint_request_packet_ids(request) -> list[str]:
+    packet_ids = request.metadata.get("packet_ids")
+    if isinstance(packet_ids, list):
+        return [packet_id for packet_id in packet_ids if isinstance(packet_id, str)]
+    return []
+
+
 def _live_wire_provider_decision(
     wire: Mapping[str, object],
     *,
@@ -1054,8 +1153,12 @@ def _live_hetzner(args: argparse.Namespace) -> int:
     from .live import (
         LIVE_SELECTED_SPECS,
         LiveExchangePlan,
+        build_live_endpoint_batch_request,
+        dry_run_live_endpoint_batch_response,
         libcrafter_dry_run_command_plan,
+        live_endpoint_artifact_paths,
         live_execution_directions,
+        validate_live_endpoint_batch_contract,
         validate_libcrafter_command_plan,
     )
     from .providers.hetzner import (
@@ -1129,6 +1232,12 @@ def _live_hetzner(args: argparse.Namespace) -> int:
     provider_workflow = hetzner_provider_workflow(dry_run=True)
     endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=True)
     bootstrap_command = backend_bootstrap_command_plan()
+    corpus_batch_artifact = _write_live_corpus_batch_artifact(
+        output_dir,
+        corpus_metadata=corpus_metadata,
+        plans=plans,
+        directions=directions,
+    )
     validations = [
         validate_backend_bootstrap_command(bootstrap_command),
         validate_hetzner_endpoint_bootstrap(endpoint_bootstrap, dry_run=True),
@@ -1136,6 +1245,8 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         _live_corpus_accounting_validation(corpus_metadata, provider="hetzner"),
     ]
     exchanges: list[LiveExchangePlan] = []
+    endpoint_protocol_batches: list[JSONObject] = []
+    endpoint_artifact_paths: list[str] = [str(corpus_batch_artifact)]
 
     for plan in plans:
         for direction in directions:
@@ -1195,6 +1306,107 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             )
             exchanges.append(exchange)
             validations.append(validate_hetzner_dry_run_exchange(exchange))
+
+    for direction in directions:
+        direction_plans = [replace(plan, direction=direction) for plan in plans]
+        if direction == "reference_to_libcrafter":
+            sender = endpoints["reference_backend"]
+            receiver = endpoints["libcrafter"]
+        elif direction == "libcrafter_to_reference":
+            sender = endpoints["libcrafter"]
+            receiver = endpoints["reference_backend"]
+        else:
+            print(f"unsupported live direction: {direction}", file=sys.stderr)
+            return 2
+
+        sender_request = build_live_endpoint_batch_request(
+            provider=args.provider,
+            backend=args.backend,
+            seed=args.seed,
+            profile=args.profile,
+            packet_plans=direction_plans,
+            direction=direction,
+            endpoint=sender,
+            peer=receiver,
+            artifact_paths=live_endpoint_artifact_paths(
+                output_dir=str(output_dir),
+                direction=direction,
+                endpoint_role=sender.role,
+            ),
+            metadata={
+                "phase_role": "sender",
+                "dry_run": True,
+                "planned_live_packet_exchange": True,
+                "live_packet_exchange": False,
+                "no_live_packets_sent": True,
+                "batch_size": len(direction_plans),
+            },
+        )
+        receiver_request = build_live_endpoint_batch_request(
+            provider=args.provider,
+            backend=args.backend,
+            seed=args.seed,
+            profile=args.profile,
+            packet_plans=direction_plans,
+            direction=direction,
+            endpoint=receiver,
+            peer=sender,
+            artifact_paths=live_endpoint_artifact_paths(
+                output_dir=str(output_dir),
+                direction=direction,
+                endpoint_role=receiver.role,
+            ),
+            metadata={
+                "phase_role": "receiver",
+                "dry_run": True,
+                "planned_live_packet_exchange": True,
+                "live_packet_exchange": False,
+                "no_live_packets_sent": True,
+                "batch_size": len(direction_plans),
+            },
+        )
+        sender_response = dry_run_live_endpoint_batch_response(sender_request)
+        receiver_response = dry_run_live_endpoint_batch_response(receiver_request)
+        sender_validation = validate_live_endpoint_batch_contract(
+            sender_request,
+            sender_response,
+            dry_run=True,
+        )
+        receiver_validation = validate_live_endpoint_batch_contract(
+            receiver_request,
+            receiver_response,
+            dry_run=True,
+        )
+        pair_validation = _live_endpoint_pair_validation(
+            direction=direction,
+            sender_request=sender_request,
+            receiver_request=receiver_request,
+        )
+        validations.extend([sender_validation, receiver_validation, pair_validation])
+        endpoint_artifact_paths.extend(
+            _write_live_endpoint_protocol_artifacts(sender_request, sender_response)
+        )
+        endpoint_artifact_paths.extend(
+            _write_live_endpoint_protocol_artifacts(receiver_request, receiver_response)
+        )
+        endpoint_protocol_batches.extend(
+            [
+                {
+                    "phase_role": "sender",
+                    "request": sender_request.to_dict(),
+                    "response": sender_response.to_dict(),
+                    "validation": sender_validation.to_dict(),
+                    "pair_validation": pair_validation.to_dict(),
+                },
+                {
+                    "phase_role": "receiver",
+                    "request": receiver_request.to_dict(),
+                    "response": receiver_response.to_dict(),
+                    "validation": receiver_validation.to_dict(),
+                    "pair_validation": pair_validation.to_dict(),
+                },
+            ]
+        )
 
     failed_validations = [validation for validation in validations if not validation.passed]
     status = "dry-run" if not failed_validations else "failed"
@@ -1259,8 +1471,8 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         count=len(exchanges),
         status=status,
         selected_specs=selected_specs,
-        artifacts=[str(report_path)],
-        artifact_paths=[str(report_path)],
+        artifacts=_dedupe_paths([str(report_path), *endpoint_artifact_paths]),
+        artifact_paths=_dedupe_paths([str(report_path), *endpoint_artifact_paths]),
         results=[result],
         failures=[] if result.passed else [result],
         reproduction_commands=(
@@ -1279,6 +1491,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             "token_configured": token_configured,
             **corpus_metadata,
             **live_count_metadata,
+            "live_corpus_artifact": str(corpus_batch_artifact),
             "execution_directions": directions,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=True),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
@@ -1297,6 +1510,11 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             },
             "endpoints": {
                 name: endpoint.to_dict() for name, endpoint in endpoints.items()
+            },
+            "endpoint_protocol": {
+                "version": 1,
+                "batches": endpoint_protocol_batches,
+                "artifact_paths": _dedupe_paths(endpoint_artifact_paths),
             },
             "exchanges": [exchange.to_dict() for exchange in exchanges],
             "validations": [validation.to_dict() for validation in validations],
@@ -1666,6 +1884,13 @@ def _live_hetzner_execute(
     live_packet_exchange = False
     live_direction_counts = _live_empty_direction_counts(corpus_metadata, directions)
     skipped_reason: str | None = None
+    corpus_batch_artifact = _write_live_corpus_batch_artifact(
+        output_dir,
+        corpus_metadata=corpus_metadata,
+        plans=plans,
+        directions=directions,
+    )
+    endpoint_artifact_paths: list[str] = [str(corpus_batch_artifact)]
 
     try:
         doctor = _run_live_lab_provider_command(
@@ -1721,6 +1946,13 @@ def _live_hetzner_execute(
         )
         selected_specs = list(dict.fromkeys([*selected_specs, *updated_selected_specs]))
         live_direction_counts = _live_empty_direction_counts(corpus_metadata, directions)
+        corpus_batch_artifact = _write_live_corpus_batch_artifact(
+            output_dir,
+            corpus_metadata=corpus_metadata,
+            plans=plans,
+            directions=directions,
+        )
+        endpoint_artifact_paths.append(str(corpus_batch_artifact))
         if not plans:
             skipped_reason = "no_wire_eligible_packets"
         remote_dir = manifest.get("remote_dir", "/root/libcrafter")
@@ -1820,8 +2052,30 @@ def _live_hetzner_execute(
             )
             local_direction_dir = output_dir / "artifacts" / "hetzner-exchange" / direction
             local_direction_dir.mkdir(parents=True, exist_ok=True)
-            write_json(local_direction_dir / f"{sender.role}.request.json", sender_request)
-            write_json(local_direction_dir / f"{receiver.role}.request.json", receiver_request)
+            sender_local_request_path = local_direction_dir / f"{sender.role}.request.json"
+            receiver_local_request_path = (
+                local_direction_dir / f"{receiver.role}.request.json"
+            )
+            write_json(sender_local_request_path, sender_request)
+            write_json(receiver_local_request_path, receiver_request)
+            endpoint_artifact_paths.extend(
+                [str(sender_local_request_path), str(receiver_local_request_path)]
+            )
+
+            pair_validation = _live_endpoint_pair_validation(
+                direction=direction,
+                sender_request=sender_request,
+                receiver_request=receiver_request,
+            )
+            endpoint_protocol_batches.append(
+                {
+                    "phase_role": "pair",
+                    "direction": direction,
+                    "validation": pair_validation.to_dict(),
+                }
+            )
+            if not pair_validation.passed:
+                execution_errors.append(f"{direction}: endpoint request pair validation failed")
 
             upload_receiver = _upload_hetzner_endpoint_request(
                 manifest=manifest,
@@ -1830,6 +2084,7 @@ def _live_hetzner_execute(
                 request_json=receiver_request.to_json(),
                 output_dir=local_direction_dir,
                 label=f"upload-{receiver.role}",
+                local_request_path=receiver_local_request_path,
             )
             upload_sender = _upload_hetzner_endpoint_request(
                 manifest=manifest,
@@ -1838,6 +2093,7 @@ def _live_hetzner_execute(
                 request_json=sender_request.to_json(),
                 output_dir=local_direction_dir,
                 label=f"upload-{sender.role}",
+                local_request_path=sender_local_request_path,
             )
             endpoint_protocol_batches.extend([upload_receiver, upload_sender])
             if upload_receiver["exit_code"] != 0 or upload_sender["exit_code"] != 0:
@@ -1938,6 +2194,20 @@ def _live_hetzner_execute(
             if sender_response is None or receiver_response is None:
                 execution_errors.append(f"{direction}: endpoint execution did not return JSON")
                 continue
+            sender_local_response_path = local_direction_dir / f"{sender.role}.response.json"
+            receiver_local_response_path = (
+                local_direction_dir / f"{receiver.role}.response.json"
+            )
+            write_json(sender_local_response_path, sender_response)
+            write_json(receiver_local_response_path, receiver_response)
+            endpoint_artifact_paths.extend(
+                [
+                    str(sender_local_response_path),
+                    str(receiver_local_response_path),
+                    *_live_endpoint_response_artifact_paths(sender_response),
+                    *_live_endpoint_response_artifact_paths(receiver_response),
+                ]
+            )
 
             sender_validation = validate_live_endpoint_batch_contract(
                 sender_request,
@@ -1956,12 +2226,14 @@ def _live_hetzner_execute(
                         "request": receiver_request.to_dict(),
                         "response": receiver_response.to_dict(),
                         "validation": receiver_validation.to_dict(),
+                        "local_response_path": str(receiver_local_response_path),
                     },
                     {
                         "phase_role": "sender",
                         "request": sender_request.to_dict(),
                         "response": sender_response.to_dict(),
                         "validation": sender_validation.to_dict(),
+                        "local_response_path": str(sender_local_response_path),
                     },
                 ]
             )
@@ -2075,6 +2347,7 @@ def _live_hetzner_execute(
         status = "failed"
     artifact_paths = _dedupe_paths(
         [str(report_path)]
+        + endpoint_artifact_paths
         + [
             path
             for command in provider_commands + endpoint_protocol_batches
@@ -2121,6 +2394,7 @@ def _live_hetzner_execute(
             "token_configured": True,
             **corpus_metadata,
             **_live_count_metadata(live_direction_counts),
+            "live_corpus_artifact": str(corpus_batch_artifact),
             "execution_directions": directions,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=False),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
@@ -2142,6 +2416,7 @@ def _live_hetzner_execute(
             "endpoint_protocol": {
                 "version": 1,
                 "batches": endpoint_protocol_batches,
+                "artifact_paths": _dedupe_paths(endpoint_artifact_paths),
             },
             "exchanges": [exchange.to_dict() for exchange in exchanges],
             "execution_errors": execution_errors,
@@ -2286,7 +2561,20 @@ def _run_live_lab_provider_command(
         "label": label,
         "stdout_path": str(stdout_path),
         "stderr_path": str(stderr_path),
+        "collected_artifacts": _existing_paths_from_stdout(process.stdout),
     }
+
+
+def _existing_paths_from_stdout(stdout: str) -> list[str]:
+    paths: list[str] = []
+    for line in stdout.splitlines():
+        value = line.strip()
+        if not value or "=" in value:
+            continue
+        path = Path(value)
+        if path.exists():
+            paths.append(str(path))
+    return _dedupe_paths(paths)
 
 
 def _hetzner_provider_capability_report_path() -> Path:
@@ -2464,6 +2752,7 @@ def _upload_hetzner_endpoint_request(
     request_json: str,
     output_dir: Path,
     label: str,
+    local_request_path: Path | None = None,
 ) -> JSONObject:
     stdout_path = output_dir / f"{label}.stdout.txt"
     stderr_path = output_dir / f"{label}.stderr.txt"
@@ -2488,6 +2777,7 @@ def _upload_hetzner_endpoint_request(
         "argv": argv,
         "exit_code": process.returncode,
         "label": label,
+        "request_path": str(local_request_path) if local_request_path is not None else None,
         "remote_request_path": remote_request_path,
         "stdout_path": str(stdout_path),
         "stderr_path": str(stderr_path),
@@ -3427,11 +3717,21 @@ def _remove_live_mutable_field(fields: JSONObject, mutable_field: str) -> None:
 
 def _command_artifact_paths(command: JSONObject) -> list[str]:
     paths: list[str] = []
-    for key in ("stdout_path", "stderr_path"):
+    for key in ("stdout_path", "stderr_path", "request_path", "response_path"):
         value = command.get(key)
         if isinstance(value, str):
             paths.append(value)
+    paths.extend(_string_values(command.get("collected_artifacts", [])))
     return paths
+
+
+def _live_endpoint_response_artifact_paths(response) -> list[str]:
+    paths: list[str] = []
+    paths.extend(
+        value for value in response.artifact_paths.values() if isinstance(value, str)
+    )
+    paths.extend(capture.path for capture in response.captures)
+    return _dedupe_paths(paths)
 
 
 def _live_local_dry_run(args: argparse.Namespace) -> int:
