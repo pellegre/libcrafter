@@ -17,84 +17,48 @@ import tempfile
 from typing import Any, Callable
 
 
-def import_scapy() -> dict[str, Any]:
-    try:
-        import scapy  # type: ignore[import-untyped]
-        from scapy.all import (  # type: ignore[import-untyped]
-            ARP,
-            BOOTP,
-            DHCP,
-            DNS,
-            DNSQR,
-            Dot1Q,
-            Ether,
-            ICMP,
-            IP,
-            IPOption,
-            IPv6,
-            load_contrib,
-            Raw,
-            TCP,
-            UDP,
-            conf,
-            raw,
-        )
-        from scapy.layers.inet6 import (  # type: ignore[import-untyped]
-            ICMPv6DestUnreach,
-            ICMPv6EchoReply,
-            ICMPv6EchoRequest,
-            ICMPv6PacketTooBig,
-            ICMPv6ParamProblem,
-            ICMPv6TimeExceeded,
-            IPv6ExtHdrFragment,
-            IPv6ExtHdrRouting,
-            IPv6ExtHdrSegmentRouting,
-        )
-        from scapy.layers.l2 import CookedLinux, Loopback  # type: ignore[import-untyped]
-        load_contrib("mpls")
-        from scapy.contrib.mpls import (  # type: ignore[import-untyped]
-            ICMPExtension_MPLS,
-            MPLS,
-        )
-        from scapy.layers.inet import ICMPExtension_Header  # type: ignore[import-untyped]
-    except ModuleNotFoundError as exc:
-        if exc.name != "scapy":
-            raise
-        maybe_reexec_with_uv()
-        raise
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-    conf.verb = 0
+from tools.oracle.engine.backends.scapy.bootstrap import import_scapy as import_oracle_scapy
+
+
+def import_scapy() -> dict[str, Any]:
+    scapy = import_oracle_scapy()
+    scapy_all = scapy["all"]
+    scapy_all.load_contrib("mpls")
     return {
-        "ARP": ARP,
-        "BOOTP": BOOTP,
-        "CookedLinux": CookedLinux,
-        "DHCP": DHCP,
-        "DNS": DNS,
-        "DNSQR": DNSQR,
-        "Dot1Q": Dot1Q,
-        "Ether": Ether,
-        "ICMP": ICMP,
-        "ICMPExtension_Header": ICMPExtension_Header,
-        "ICMPExtension_MPLS": ICMPExtension_MPLS,
-        "ICMPv6DestUnreach": ICMPv6DestUnreach,
-        "ICMPv6EchoReply": ICMPv6EchoReply,
-        "ICMPv6EchoRequest": ICMPv6EchoRequest,
-        "ICMPv6PacketTooBig": ICMPv6PacketTooBig,
-        "ICMPv6ParamProblem": ICMPv6ParamProblem,
-        "ICMPv6TimeExceeded": ICMPv6TimeExceeded,
-        "IP": IP,
-        "IPOption": IPOption,
-        "IPv6": IPv6,
-        "IPv6ExtHdrFragment": IPv6ExtHdrFragment,
-        "IPv6ExtHdrRouting": IPv6ExtHdrRouting,
-        "IPv6ExtHdrSegmentRouting": IPv6ExtHdrSegmentRouting,
-        "Loopback": Loopback,
-        "MPLS": MPLS,
-        "Raw": Raw,
-        "TCP": TCP,
-        "UDP": UDP,
-        "version": getattr(scapy, "__version__", "unknown"),
-        "raw": raw,
+        "ARP": scapy_all.ARP,
+        "BOOTP": scapy_all.BOOTP,
+        "CookedLinux": scapy_all.CookedLinux,
+        "DHCP": scapy_all.DHCP,
+        "DNS": scapy_all.DNS,
+        "DNSQR": scapy_all.DNSQR,
+        "Dot1Q": scapy_all.Dot1Q,
+        "Ether": scapy_all.Ether,
+        "ICMP": scapy_all.ICMP,
+        "ICMPExtension_Header": scapy_all.ICMPExtension_Header,
+        "ICMPExtension_MPLS": scapy_all.ICMPExtension_MPLS,
+        "ICMPv6DestUnreach": scapy_all.ICMPv6DestUnreach,
+        "ICMPv6EchoReply": scapy_all.ICMPv6EchoReply,
+        "ICMPv6EchoRequest": scapy_all.ICMPv6EchoRequest,
+        "ICMPv6PacketTooBig": scapy_all.ICMPv6PacketTooBig,
+        "ICMPv6ParamProblem": scapy_all.ICMPv6ParamProblem,
+        "ICMPv6TimeExceeded": scapy_all.ICMPv6TimeExceeded,
+        "IP": scapy_all.IP,
+        "IPOption": scapy_all.IPOption,
+        "IPv6": scapy_all.IPv6,
+        "IPv6ExtHdrFragment": scapy_all.IPv6ExtHdrFragment,
+        "IPv6ExtHdrRouting": scapy_all.IPv6ExtHdrRouting,
+        "IPv6ExtHdrSegmentRouting": scapy_all.IPv6ExtHdrSegmentRouting,
+        "Loopback": scapy_all.Loopback,
+        "MPLS": scapy_all.MPLS,
+        "Raw": scapy_all.Raw,
+        "TCP": scapy_all.TCP,
+        "UDP": scapy_all.UDP,
+        "version": scapy["version"],
+        "raw": scapy_all.raw,
     }
 
 
@@ -170,7 +134,6 @@ UDP = SCAPY["UDP"]
 raw = SCAPY["raw"]
 SCAPY_VERSION = SCAPY["version"]
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 SCAPY_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "scapy"
 ORACLE_FIXTURE_DIR = REPO_ROOT / "target" / "oracle" / "fixtures"
 CASE_MANIFEST = REPO_ROOT / "tools" / "oracle" / "specs" / "fixtures" / "scapy-cases.json"

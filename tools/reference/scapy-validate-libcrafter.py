@@ -13,27 +13,25 @@ import sys
 from typing import Any
 
 
-def import_scapy() -> dict[str, Any]:
-    try:
-        import scapy  # type: ignore[import-untyped]
-        from scapy.all import Ether, IP, IPv6, Raw, conf, raw  # type: ignore[import-untyped]
-        from scapy.layers.l2 import CookedLinux, Loopback  # type: ignore[import-untyped]
-    except ModuleNotFoundError as exc:
-        if exc.name != "scapy":
-            raise
-        maybe_reexec_with_scapy()
-        raise
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-    conf.verb = 0
+from tools.oracle.engine.backends.scapy.bootstrap import import_scapy as import_oracle_scapy
+
+
+def import_scapy() -> dict[str, Any]:
+    scapy = import_oracle_scapy()
+    scapy_all = scapy["all"]
     return {
-        "CookedLinux": CookedLinux,
-        "Ether": Ether,
-        "IP": IP,
-        "IPv6": IPv6,
-        "Loopback": Loopback,
-        "Raw": Raw,
-        "raw": raw,
-        "version": getattr(scapy, "__version__", "unknown"),
+        "CookedLinux": scapy_all.CookedLinux,
+        "Ether": scapy_all.Ether,
+        "IP": scapy_all.IP,
+        "IPv6": scapy_all.IPv6,
+        "Loopback": scapy_all.Loopback,
+        "Raw": scapy_all.Raw,
+        "raw": scapy_all.raw,
+        "version": scapy["version"],
     }
 
 

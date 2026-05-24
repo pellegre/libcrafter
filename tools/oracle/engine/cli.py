@@ -1976,7 +1976,7 @@ def _pcap_libcrafter_to_reference(
     vectors: list[EncodedVector],
     plans: list[PacketPlan],
 ) -> JSONObject:
-    from .backends.scapy.pcap import read_pcap
+    from .backends.scapy.pcap import pcap_link_type_for_vectors, read_pcap
 
     pcap_path = run_dir / "libcrafter-reference.pcap"
     bridge = _run_libcrafter_pcap_writer(
@@ -1984,7 +1984,7 @@ def _pcap_libcrafter_to_reference(
         pcap_path=pcap_path,
         run_dir=run_dir,
         label="libcrafter-reference",
-        link_type="ethernet",
+        link_type=pcap_link_type_for_vectors(vectors, requested="ethernet"),
     )
     expected_records = _pcap_records(bridge["report"])
     expected_path = run_dir / "libcrafter-reference-written.json"

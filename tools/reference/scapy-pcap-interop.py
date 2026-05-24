@@ -13,49 +13,32 @@ import sys
 from typing import Any
 
 
-def import_scapy() -> dict[str, Any]:
-    try:
-        import scapy  # type: ignore[import-untyped]
-        from scapy.all import (  # type: ignore[import-untyped]
-            ARP,
-            BOOTP,
-            DHCP,
-            DNS,
-            DNSQR,
-            Ether,
-            ICMPv6EchoRequest,
-            IP,
-            IPv6,
-            Raw,
-            UDP,
-            conf,
-            raw,
-            rdpcap,
-            wrpcap,
-        )
-    except ModuleNotFoundError as exc:
-        if exc.name != "scapy":
-            raise
-        maybe_reexec_with_scapy()
-        raise
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-    conf.verb = 0
+from tools.oracle.engine.backends.scapy.bootstrap import import_scapy as import_oracle_scapy
+
+
+def import_scapy() -> dict[str, Any]:
+    scapy = import_oracle_scapy()
+    scapy_all = scapy["all"]
     return {
-        "ARP": ARP,
-        "BOOTP": BOOTP,
-        "DHCP": DHCP,
-        "DNS": DNS,
-        "DNSQR": DNSQR,
-        "Ether": Ether,
-        "ICMPv6EchoRequest": ICMPv6EchoRequest,
-        "IP": IP,
-        "IPv6": IPv6,
-        "Raw": Raw,
-        "UDP": UDP,
-        "raw": raw,
-        "rdpcap": rdpcap,
-        "version": getattr(scapy, "__version__", "unknown"),
-        "wrpcap": wrpcap,
+        "ARP": scapy_all.ARP,
+        "BOOTP": scapy_all.BOOTP,
+        "DHCP": scapy_all.DHCP,
+        "DNS": scapy_all.DNS,
+        "DNSQR": scapy_all.DNSQR,
+        "Ether": scapy_all.Ether,
+        "ICMPv6EchoRequest": scapy_all.ICMPv6EchoRequest,
+        "IP": scapy_all.IP,
+        "IPv6": scapy_all.IPv6,
+        "Raw": scapy_all.Raw,
+        "UDP": scapy_all.UDP,
+        "raw": scapy_all.raw,
+        "rdpcap": scapy_all.rdpcap,
+        "version": scapy["version"],
+        "wrpcap": scapy_all.wrpcap,
     }
 
 
@@ -134,8 +117,6 @@ raw = SCAPY["raw"]
 rdpcap = SCAPY["rdpcap"]
 SCAPY_VERSION = SCAPY["version"]
 wrpcap = SCAPY["wrpcap"]
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 SRC_MAC = "02:00:5e:00:53:01"
 DST_MAC = "02:00:5e:00:53:02"

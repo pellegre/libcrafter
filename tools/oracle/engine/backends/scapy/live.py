@@ -8,6 +8,7 @@ from collections.abc import Sequence
 
 from ...live import LiveCommandPlan, LiveValidationCheck
 from ...model import PacketPlan
+from ..registry import BackendCapabilities, BackendRegistration, get_backend
 
 
 BACKEND_NAME = "scapy"
@@ -35,9 +36,11 @@ def dry_run_command_plan(
     plan: PacketPlan,
     direction: str,
     role: str,
+    capabilities: BackendCapabilities | BackendRegistration | None = None,
 ) -> LiveCommandPlan:
     """Build a Scapy endpoint command plan for local dry-run validation."""
 
+    _require_live_capability(capabilities)
     if role not in {"sender", "receiver"}:
         raise ValueError(f"unsupported Scapy live dry-run role: {role}")
 
@@ -166,6 +169,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not args.dry_run:
         parser.error("Scapy live helper only supports --dry-run in this step")
+    _require_live_capability(None)
 
     print(
         json.dumps(
@@ -181,6 +185,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     )
     return 0
+
+
+def _require_live_capability(
+    capabilities: BackendCapabilities | BackendRegistration | None,
+) -> None:
+    resolved = _capability_contract(capabilities)
+    if not resolved.live_endpoint:
+        raise ValueError("unsupported backend capability: Scapy live helper requires live_endpoint")
+
+
+def _capability_contract(
+    capabilities: BackendCapabilities | BackendRegistration | None,
+) -> BackendCapabilities:
+    if capabilities is None:
+        return get_backend(BACKEND_NAME).capabilities
+    if isinstance(capabilities, BackendRegistration):
+        return capabilities.capabilities
+    return capabilities
 
 
 if __name__ == "__main__":

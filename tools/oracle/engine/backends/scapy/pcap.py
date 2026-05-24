@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ...model import EncodedVector, JSONObject
+from ..registry import BackendCapabilities, BackendRegistration, get_backend
 from .bootstrap import import_scapy
 from .normalize import normalize_packet
 
@@ -45,16 +46,19 @@ def with_pcap_metadata(
     vectors: list[EncodedVector],
     *,
     link_type: str = "ethernet",
+    capabilities: BackendCapabilities | BackendRegistration | None = None,
 ) -> list[EncodedVector]:
     """Attach deterministic pcap metadata consumed by both pcap writers."""
 
+    _require_capability(capabilities, "pcap_write", "annotate Scapy pcap records")
     _root_for_link_type(link_type)
     output: list[EncodedVector] = []
     for position, vector in enumerate(vectors):
+        record_link_type = _pcap_link_type_for_vector(vector, link_type)
         metadata = dict(vector.metadata)
         metadata["pcap_record"] = {
             "index": position,
-            "link_type": _link_type_object(link_type),
+            "link_type": _link_type_object(record_link_type),
             "timestamp": timestamp_for_record(vector.plan.seed, vector.plan.index),
         }
         output.append(replace(vector, metadata=metadata))
@@ -73,32 +77,53 @@ def timestamp_for_record(seed: int, index: int) -> JSONObject:
     }
 
 
-def write_pcap(path: str | Path, vectors: list[EncodedVector]) -> list[JSONObject]:
+def write_pcap(
+    path: str | Path,
+    vectors: list[EncodedVector],
+    *,
+    capabilities: BackendCapabilities | BackendRegistration | None = None,
+) -> list[JSONObject]:
     """Write vectors to a classic pcap with Scapy ``wrpcap``."""
 
+    _require_capability(capabilities, "pcap_write", "write Scapy pcap")
     if not vectors:
         raise ValueError("pcap writer requires at least one vector")
 
     scapy_all = import_scapy()["all"]
-    packets: list[Any] = []
     records: list[JSONObject] = []
+    decoded_packets: list[Any] = []
     for position, vector in enumerate(vectors):
         record = _vector_record(vector, position)
         root = vector.root or vector.decoder or record["root"]
         packet = _decode_packet_for_write(root, vector.to_bytes(), scapy_all)
         packet.time = _decimal_timestamp(_object(record["timestamp"], "timestamp"))
-        packets.append(packet)
         records.append(record)
+        decoded_packets.append(packet)
 
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    scapy_all.wrpcap(str(output_path), packets)
+    link_type = _single_pcap_link_type(records)
+    writer = scapy_all.PcapWriter(
+        str(output_path),
+        linktype=_datalink_for_link_type(link_type),
+        sync=True,
+    )
+    try:
+        for packet in decoded_packets:
+            writer.write(packet)
+    finally:
+        writer.close()
     return records
 
 
-def read_pcap(path: str | Path) -> list[JSONObject]:
+def read_pcap(
+    path: str | Path,
+    *,
+    capabilities: BackendCapabilities | BackendRegistration | None = None,
+) -> list[JSONObject]:
     """Read a classic pcap with Scapy ``rdpcap`` and normalize packet records."""
 
+    _require_capability(capabilities, "pcap_read", "read Scapy pcap")
     input_path = Path(path)
     header = read_pcap_header(input_path)
     link_type_object = _object(header["link_type"], "link_type")
@@ -168,6 +193,44 @@ def expected_records(vectors: list[EncodedVector]) -> list[JSONObject]:
     """Return expected pcap records for annotated vectors."""
 
     return [_vector_record(vector, position) for position, vector in enumerate(vectors)]
+
+
+def pcap_link_type_for_vectors(
+    vectors: list[EncodedVector],
+    *,
+    requested: str = "ethernet",
+) -> str:
+    """Return the single classic-pcap link type supported by a vector batch."""
+
+    link_types = {_pcap_link_type_for_vector(vector, requested) for vector in vectors}
+    if len(link_types) != 1:
+        supported = ", ".join(sorted(link_types))
+        raise ValueError(f"classic pcap requires one link type; got {supported}")
+    return next(iter(link_types))
+
+
+def _pcap_link_type_for_vector(vector: EncodedVector, requested: str) -> str:
+    root = vector.root or vector.decoder
+    if root in {"IP", "IPv6", "Raw", "l3:ipv4", "l3:ipv6", "link:raw"}:
+        return "raw"
+    if root in {"Ether", "link:ethernet"}:
+        return "ethernet"
+    return requested
+
+
+def _single_pcap_link_type(records: list[JSONObject]) -> str:
+    link_types = {
+        _string(_object(record["link_type"], "link_type")["name"], "link_type.name")
+        for record in records
+    }
+    if len(link_types) != 1:
+        supported = ", ".join(sorted(link_types))
+        raise ValueError(f"classic pcap requires one link type; got {supported}")
+    return next(iter(link_types))
+
+
+def _datalink_for_link_type(link_type: str) -> int:
+    return int(_link_type_object(link_type)["datalink"])
 
 
 def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> Any:
@@ -261,6 +324,28 @@ def _root_for_link_type(link_type: str) -> str:
     if root is None:
         raise ValueError(f"unsupported pcap link type: {link_type}")
     return root
+
+
+def _require_capability(
+    capabilities: BackendCapabilities | BackendRegistration | None,
+    capability: str,
+    operation: str,
+) -> None:
+    resolved = _capability_contract(capabilities)
+    if not bool(getattr(resolved, capability, False)):
+        raise ValueError(
+            f"unsupported backend capability: Scapy {operation} requires {capability}"
+        )
+
+
+def _capability_contract(
+    capabilities: BackendCapabilities | BackendRegistration | None,
+) -> BackendCapabilities:
+    if capabilities is None:
+        return get_backend("scapy").capabilities
+    if isinstance(capabilities, BackendRegistration):
+        return capabilities.capabilities
+    return capabilities
 
 
 def _object(value: object, name: str) -> JSONObject:

@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from ...model import DecodedModel, EncodedVector, JSONObject, JSONValue, PacketPlan
+from ..registry import BackendCapabilities, BackendRegistration, get_backend
 from .bootstrap import import_scapy
 
 
@@ -135,9 +136,15 @@ _ROOT_ALIASES: dict[str, str] = {
 }
 
 
-def decode_root(root: str, raw: bytes) -> Any:
+def decode_root(
+    root: str,
+    raw: bytes,
+    *,
+    capabilities: BackendCapabilities | BackendRegistration | None = None,
+) -> Any:
     """Decode raw bytes with a Scapy decoder selected by oracle root name."""
 
+    _require_decode_capability(capabilities)
     scapy_all = import_scapy()["all"]
     decoders = {
         "CookedLinux": "CookedLinux",
@@ -170,10 +177,11 @@ def decode_bytes(
     root: str,
     source_hex: str | None = None,
     feature_tags: Sequence[str] = (),
+    capabilities: BackendCapabilities | BackendRegistration | None = None,
 ) -> DecodedModel:
     """Decode raw bytes and return the normalized Scapy model."""
 
-    packet = decode_root(root, raw)
+    packet = decode_root(root, raw, capabilities=capabilities)
     return normalize_packet(
         packet,
         root=root,
@@ -182,7 +190,11 @@ def decode_bytes(
     )
 
 
-def decode_vector(vector: EncodedVector) -> DecodedModel:
+def decode_vector(
+    vector: EncodedVector,
+    *,
+    capabilities: BackendCapabilities | BackendRegistration | None = None,
+) -> DecodedModel:
     """Decode one encoded vector through its root decoder metadata."""
 
     root = vector.root or vector.decoder
@@ -193,13 +205,19 @@ def decode_vector(vector: EncodedVector) -> DecodedModel:
         root=root,
         source_hex=vector.raw_hex,
         feature_tags=vector.plan.feature_tags,
+        capabilities=capabilities,
     )
 
 
-def decode_vectors(vectors: Iterable[EncodedVector]) -> list[DecodedModel]:
+def decode_vectors(
+    vectors: Iterable[EncodedVector],
+    *,
+    capabilities: BackendCapabilities | BackendRegistration | None = None,
+) -> list[DecodedModel]:
     """Decode vectors in order."""
 
-    return [decode_vector(vector) for vector in vectors]
+    _require_decode_capability(capabilities)
+    return [decode_vector(vector, capabilities=capabilities) for vector in vectors]
 
 
 def normalize_packet(
@@ -328,6 +346,8 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
         if output.get("data") == {"hex": "", "ascii": ""}:
             output.pop("data", None)
         _fill_icmp_rest_of_header(output)
+        if layer_name == "icmpv6":
+            _normalize_icmpv6_rest_of_header(output)
     if layer_name == "ipv6_fragment":
         _normalize_ipv6_fragment_fields(output)
     if layer_name == "ipv6_routing":
@@ -541,6 +561,21 @@ def _fill_icmp_rest_of_header(fields: JSONObject) -> None:
         fields["rest_of_header"] = f"{identifier:04x}{sequence:04x}"
 
 
+def _normalize_icmpv6_rest_of_header(fields: JSONObject) -> None:
+    icmp_type = fields.get("type")
+    if icmp_type in {2, "packet_too_big"} and isinstance(fields.get("mtu"), int):
+        fields["rest_of_header"] = f"{fields.pop('mtu'):08x}"
+    elif icmp_type in {4, "parameter_problem"} and isinstance(fields.get("ptr"), int):
+        fields["rest_of_header"] = f"{fields.pop('ptr'):08x}"
+    elif icmp_type in {1, 3, "destination_unreachable", "time_exceeded"}:
+        fields.setdefault("rest_of_header", "00000000")
+
+    if fields.get("ext") is None:
+        fields.pop("ext", None)
+    if fields.get("extpad") == {"hex": "", "ascii": ""}:
+        fields.pop("extpad", None)
+
+
 def _normalize_ipv6_fragment_fields(fields: JSONObject) -> None:
     aliases = {
         "id": "identification",
@@ -580,6 +615,24 @@ def _field_key(existing: Mapping[str, JSONObject], layer_name: str) -> str:
     while f"{layer_name}#{index}" in existing:
         index += 1
     return f"{layer_name}#{index}"
+
+
+def _require_decode_capability(
+    capabilities: BackendCapabilities | BackendRegistration | None,
+) -> None:
+    resolved = _capability_contract(capabilities)
+    if not resolved.decode:
+        raise ValueError("unsupported backend capability: Scapy decoding requires decode")
+
+
+def _capability_contract(
+    capabilities: BackendCapabilities | BackendRegistration | None,
+) -> BackendCapabilities:
+    if capabilities is None:
+        return get_backend(BACKEND_NAME).capabilities
+    if isinstance(capabilities, BackendRegistration):
+        return capabilities.capabilities
+    return capabilities
 
 
 def _expected_stack(plan: PacketPlan) -> list[str]:
