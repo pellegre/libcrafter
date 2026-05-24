@@ -391,6 +391,7 @@ fn run_icmp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleRes
         .count(32)
         .filter("icmp")
         .immediate_mode(false)
+        .nonblock()
         .open()
     {
         Ok(sniffer) => sniffer,
@@ -580,6 +581,7 @@ fn run_tcp_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResu
         .count(64)
         .filter(&capture_filter(plan))
         .immediate_mode(false)
+        .nonblock()
         .open()
     {
         Ok(sniffer) => sniffer,
@@ -774,6 +776,7 @@ fn run_dns_live(request: &ProbeEndpointRequest, plan: &ProbePlan) -> ExampleResu
         .count(64)
         .filter(&capture_filter(plan))
         .immediate_mode(false)
+        .nonblock()
         .open()
     {
         Ok(sniffer) => sniffer,
@@ -973,6 +976,7 @@ fn run_ttl_expired_live(
         .count(64)
         .filter(&capture_filter(plan))
         .immediate_mode(false)
+        .nonblock()
         .open()
     {
         Ok(sniffer) => sniffer,

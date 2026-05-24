@@ -29,6 +29,7 @@ pub struct Sniffer {
     snaplen: u32,
     promisc: bool,
     immediate: bool,
+    nonblocking: bool,
 }
 
 impl Sniffer {
@@ -42,6 +43,7 @@ impl Sniffer {
             snaplen: DEFAULT_SNAPLEN,
             promisc: true,
             immediate: true,
+            nonblocking: false,
         }
     }
 
@@ -124,6 +126,20 @@ impl Sniffer {
         self
     }
 
+    /// Enable or disable nonblocking reads for live capture.
+    ///
+    /// Nonblocking live capture lets [`Capture::next_packet`] enforce the
+    /// configured wall-clock timeout even when no packet arrives.
+    pub fn nonblocking(mut self, nonblocking: bool) -> Self {
+        self.nonblocking = nonblocking;
+        self
+    }
+
+    /// Enable nonblocking reads for live capture.
+    pub fn nonblock(self) -> Self {
+        self.nonblocking(true)
+    }
+
     /// Open the capture and return an iterator over decoded packets.
     pub fn open(self) -> Result<Capture> {
         self.open_with_cancel(Arc::new(AtomicBool::new(false)))
@@ -195,6 +211,7 @@ impl Sniffer {
                 self.snaplen,
                 self.promisc,
                 self.immediate,
+                self.nonblocking,
             )?),
         };
 
@@ -204,6 +221,7 @@ impl Sniffer {
             yielded: 0,
             deadline,
             cancel,
+            nonblocking: self.nonblocking,
         })
     }
 }
@@ -238,28 +256,35 @@ pub struct Capture {
     yielded: usize,
     deadline: Option<Instant>,
     cancel: Arc<AtomicBool>,
+    nonblocking: bool,
 }
 
 impl Capture {
     /// Read the next decoded packet, returning `Ok(None)` on EOF, timeout,
     /// cancellation, or count exhaustion.
     pub fn next_packet(&mut self) -> Result<Option<PcapPacket>> {
-        if self.cancel.load(Ordering::Relaxed) || self.reached_limit() || self.timed_out() {
-            return Ok(None);
-        }
+        loop {
+            if self.cancel.load(Ordering::Relaxed) || self.reached_limit() || self.timed_out() {
+                return Ok(None);
+            }
 
-        let Some(record) = self.inner.next_record()? else {
-            return Ok(None);
-        };
-        self.yielded += 1;
-        let packet = record.decode()?;
-        Ok(Some(PcapPacket::new(
-            record.timestamp(),
-            record.original_len(),
-            record.data(),
-            record.pcap_link_type(),
-            packet,
-        )))
+            let Some(record) = self.inner.next_record()? else {
+                if self.nonblocking {
+                    thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                return Ok(None);
+            };
+            self.yielded += 1;
+            let packet = record.decode()?;
+            return Ok(Some(PcapPacket::new(
+                record.timestamp(),
+                record.original_len(),
+                record.data(),
+                record.pcap_link_type(),
+                packet,
+            )));
+        }
     }
 
     /// Collect remaining packets into memory.
