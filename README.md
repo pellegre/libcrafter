@@ -47,8 +47,10 @@ Read and write pcaps without root:
 use crafter::prelude::*;
 
 fn inspect(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    for captured in read_pcap_filtered(path, "icmp")? {
-        println!("{}", captured.packet().summary());
+    let reader = PcapReader::open(path)?;
+    for record in reader.records() {
+        let packet = record?.decode()?;
+        println!("{}", packet.summary());
     }
     Ok(())
 }
@@ -103,10 +105,10 @@ Rust examples live under `crates/crafter/examples/` and build against the
 public `crafter` crate:
 
 ```sh
-cargo build --examples
-cargo run --example hello_world -- --dry-run
-cargo run --example ping -- --iface dry-run0
-cargo run --example dns_query -- --dry-run --name example.com
+cargo build -p crafter --examples
+cargo run -p crafter --example hello_world
+cargo run -p crafter --example send_plan
+cargo run -p crafter --example dns_query -- --name example.com
 ```
 
 The example set focuses on packet construction, offline pcap workflows, and

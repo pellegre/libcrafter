@@ -1,27 +1,37 @@
 # Examples
 
 The Rust examples live under `crates/crafter/examples/` and build against the
-public `crafter` facade API. They are intended to be small templates that agents
-can copy when generating packet tools.
+public `crafter` facade API. The suite covers packet construction, decode,
+inspection, registry customization, pcap read/write, offline sniffing,
+live-gated capture, send planning, send/receive reports, batch workflows,
+interface helpers, IPv4 ranges, reply matching, and representative protocol
+layers.
 
-Most examples are safe-by-default packet builders or offline readers. They use
-dry-run send plans unless `--live` is explicitly supplied.
+For the complete inventory, safety classification, and per-example command map,
+see [`crates/crafter/examples/README.md`](../crates/crafter/examples/README.md).
 
-## Local Runs
+## Representative Commands
 
 Build every example:
 
 ```sh
-cargo build --examples
+cargo build -p crafter --examples
 ```
 
-Run representative examples locally:
+Run a compact local tour:
 
 ```sh
-cargo run --example hello_world -- --dry-run
-cargo run --example ping -- --iface dry-run0
-cargo run --example dns_query -- --dry-run --name example.com
+cargo run -p crafter --example hello_world
+cargo run -p crafter --example packet_inspection
+cargo run -p crafter --example pcap_write
+cargo run -p crafter --example pcap_read
+cargo run -p crafter --example sniffer_offline
+cargo run -p crafter --example send_plan
+cargo run -p crafter --example send_recv_icmp
+cargo run -p crafter --example batch_send_recv
+cargo run -p crafter --example dns_query -- --name example.com
 ```
 
-Examples that accept `--live` still default to dry-run mode and should be used
-only for bounded validation in controlled environments.
+Examples are safe by default. Live-capable examples require `--live`,
+`--i-understand-isolated-lab`, and `LIBCRAFTER_LIVE_LAB=1` before opening live
+send or capture handles.
