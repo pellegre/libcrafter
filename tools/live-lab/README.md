@@ -24,7 +24,6 @@ tools/live-lab/libcrafter-live-lab create --provider local-dry-run
 tools/live-lab/libcrafter-live-lab run --provider local-dry-run
 tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite oracle-live
 tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite example-smoke
-tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite reference-interop
 tools/live-lab/libcrafter-live-lab artifact --provider local-dry-run
 tools/live-lab/libcrafter-live-lab destroy --provider local-dry-run
 ```
@@ -53,9 +52,8 @@ infrastructure.
 local state and artifact files. Use it to validate the contract before invoking
 a real provider. The `oracle-live` suite runs oracle live orchestration in
 dry-run mode. The `example-smoke` suite preserves the older example smoke
-checks. The `reference-interop` and `scapy-interop` suite names are
-compatibility aliases; new documentation and CI should prefer `oracle-live` or
-direct `tools/oracle/run` commands.
+checks. Oracle behavior validation should use `oracle-live` or direct
+`tools/oracle/run` commands.
 
 `hetzner` is the first real provider. It provisions a disposable Linux host,
 runs the selected validation suite there, collects artifacts, and tears the host

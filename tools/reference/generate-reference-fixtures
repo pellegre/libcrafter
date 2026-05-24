@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-# Backend-neutral compatibility alias for oracle fixture generation.
-exec "$script_dir/generate-scapy-fixtures" "$@"
