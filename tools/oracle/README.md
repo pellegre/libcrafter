@@ -1,10 +1,19 @@
 # Oracle Validation
 
-`tools/oracle/run` is the packet behavior validation entrypoint. It owns the
-sampling plan, report format, artifact layout, and reproduction coordinates.
-Scapy is selected as a reference backend with `--backend scapy`; backend code
-lives under `tools/oracle/engine/backends/scapy/` and should not leak into tests
-as direct imports.
+`tools/oracle/run` is the supported packet behavior validation entrypoint. It
+owns spec loading, generated stacks, profile sampling, case selection, backend
+capability checks, report format, artifact layout, and reproduction
+coordinates.
+
+Packet behavior coverage is data-driven. Add or adjust coverage through
+`tools/oracle/specs/` and backend adapters under `tools/oracle/engine/backends/`;
+do not add ad hoc Scapy snippets to tests, scripts, or examples. Scapy is the
+full read/write/live reference backend selected with `--backend scapy`, and its
+code belongs under `tools/oracle/engine/backends/scapy/`.
+
+Wireshark/tshark is registered as a parser-only backend. It can decode packets
+and read pcaps for comparison paths, but it does not encode packet bytes, write
+pcaps, or act as a live endpoint.
 
 ## Common Commands
 
@@ -18,6 +27,14 @@ Pcap validation compares pcap writer, reader, and roundtrip behavior:
 
 ```sh
 tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
+```
+
+Parser-only decode and pcap-read checks can use Wireshark/tshark when `tshark`
+is available on `PATH`:
+
+```sh
+tools/oracle/run offline --backend wireshark --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --backend wireshark --direction libcrafter_to_reference --profile smoke --seed 1 --count 10
 ```
 
 Live validation goes through a provider. The local provider is a dry run that
@@ -48,9 +65,23 @@ Reports include the mode, backend, profile, seed, count, direction, and packet
 index. Reproduce a failing generated packet with the same command coordinates
 and add `--index <n>` when the report identifies a single packet.
 
+## Specs And Backends
+
+Executable specs define packet families, stack roots, features, pcap contracts,
+profiles, case IDs, and backend support metadata. The generator samples from
+those specs and rejects invalid stack/feature combinations before a backend is
+invoked.
+
+Backend adapters materialize packets, normalize decoded observations, read or
+write pcaps, and provide live endpoint command plans according to their
+registered backend capability set. Unsupported mode/backend combinations return
+oracle reports that identify the missing capability instead of silently taking a
+different path.
+
 ## CI Policy
 
 Pull request CI runs deterministic offline and pcap oracle validation with the
-Scapy backend. Live provider workflows must not create infrastructure on normal
-pull request runs; they should use dry-run checks or require explicit protected
-workflow confirmation.
+Scapy backend. The live-lab workflow runs provider dry-run planning on normal
+pull request and push events. Real Hetzner live exchanges run only from a
+protected manual workflow dispatch with explicit confirmation and configured
+credentials.
