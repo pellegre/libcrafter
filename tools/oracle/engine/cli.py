@@ -2069,32 +2069,60 @@ def _compare_live_decoded_results(
     plans: list[PacketPlan],
 ) -> list[ComparisonResult]:
     results: list[ComparisonResult] = []
-    remaining_actual = list(actual)
+    remaining_actual = [
+        (
+            candidate,
+            _live_comparison_model(candidate),
+        )
+        for candidate in actual
+    ]
     for index in range(min(len(expected), len(plans))):
         if not remaining_actual:
             break
         plan = plans[index]
         expected_model = _live_comparison_model(expected[index])
-        candidates = [
+        expected_fingerprint = _live_model_fingerprint(expected_model)
+        exact_index = next(
             (
-                candidate_index,
-                compare_decoded_models(
-                    expected=expected_model,
-                    actual=_live_comparison_model(candidate),
-                    plan=plan,
-                    direction=direction,
-                    reproduction_command=_live_reproduction_command(args),
-                    actual_strict_bytes_hex=_strict_bytes_hex(candidate),
-                ),
-            )
-            for candidate_index, candidate in enumerate(remaining_actual)
-        ]
-        candidate_index, result = min(
-            candidates,
-            key=lambda candidate: _live_comparison_score(candidate[1]),
+                candidate_index
+                for candidate_index, (_, candidate_model) in enumerate(remaining_actual)
+                if _live_model_fingerprint(candidate_model) == expected_fingerprint
+            ),
+            None,
         )
+        if exact_index is not None:
+            candidate, candidate_model = remaining_actual.pop(exact_index)
+            result = compare_decoded_models(
+                expected=expected_model,
+                actual=candidate_model,
+                plan=plan,
+                direction=direction,
+                reproduction_command=_live_reproduction_command(args),
+                actual_strict_bytes_hex=_strict_bytes_hex(candidate),
+            )
+        else:
+            candidates = [
+                (
+                    candidate_index,
+                    candidate,
+                    candidate_model,
+                    compare_decoded_models(
+                        expected=expected_model,
+                        actual=candidate_model,
+                        plan=plan,
+                        direction=direction,
+                        reproduction_command=_live_reproduction_command(args),
+                        actual_strict_bytes_hex=_strict_bytes_hex(candidate),
+                    ),
+                )
+                for candidate_index, (candidate, candidate_model) in enumerate(remaining_actual)
+            ]
+            candidate_index, _, _, result = min(
+                candidates,
+                key=lambda candidate: _live_comparison_score(candidate[3]),
+            )
+            remaining_actual.pop(candidate_index)
         results.append(result)
-        remaining_actual.pop(candidate_index)
 
     shared_count = len(results)
     if len(actual) == len(expected) == len(plans):
@@ -2130,6 +2158,18 @@ def _compare_live_decoded_results(
 
 def _live_comparison_score(result: ComparisonResult) -> tuple[int, int]:
     return (0 if result.passed else 1, len(result.differences))
+
+
+def _live_model_fingerprint(model: JSONObject) -> str:
+    return json.dumps(
+        {
+            "layers": model.get("layers"),
+            "fields": model.get("fields"),
+            "root": model.get("root"),
+            "feature_tags": model.get("feature_tags"),
+        },
+        sort_keys=True,
+    )
 
 
 def _live_comparison_model(model: JSONObject) -> JSONObject:
