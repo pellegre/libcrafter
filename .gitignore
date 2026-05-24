@@ -91,6 +91,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+.scratch/
 !tools/live-lab/run-in-image.sh
 !tools/live-lab/image/entrypoint.sh
 !tools/reference/legacy-libcrafter.sh
