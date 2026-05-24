@@ -4,10 +4,10 @@ mod support;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crafter::core::{
-    decode_dns_name, Arp, Dhcp, DhcpOption, Dns, Ethernet, Icmp, Icmpv6, IpProtocol, Ipv4,
-    Ipv4Option, Ipv6, LinkType, LinuxSll, MacAddr, NetworkLayer, NullLoopback, Packet, Raw, Tcp,
-    TcpOption, Udp, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH,
-    TCP_FLAG_SYN,
+    decode_dns_name, Arp, CrafterError, Dhcp, DhcpOption, Dns, Ethernet, Icmp, Icmpv6, IpProtocol,
+    Ipv4, Ipv4Option, Ipv6, LinkType, LinuxSll, MacAddr, NetworkLayer, NullLoopback, Packet, Raw,
+    Tcp, TcpOption, Udp, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, TCP_FLAG_ACK,
+    TCP_FLAG_PSH, TCP_FLAG_SYN,
 };
 use proptest::prelude::*;
 
@@ -25,10 +25,23 @@ enum DecodeTarget {
     DnsName,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpectedErrorKind {
+    BufferTooShort,
+    InvalidFieldValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExpectedError {
+    kind: ExpectedErrorKind,
+    context_or_field: &'static str,
+}
+
 #[derive(Debug)]
 struct MalformedCase {
     name: &'static str,
     target: DecodeTarget,
+    expected_error: ExpectedError,
     bytes: Vec<u8>,
 }
 
@@ -53,63 +66,80 @@ fn exercise_packet_decode(target: PacketDecodeTarget, bytes: &[u8]) {
     }
 }
 
-fn decode_malformed_case(case: &MalformedCase) {
+fn decode_malformed_case(case: &MalformedCase) -> crafter::core::Result<()> {
     match case.target {
         DecodeTarget::Ethernet => {
-            exercise_packet_decode(PacketDecodeTarget::Link(LinkType::Ethernet), &case.bytes)
+            decode_packet(PacketDecodeTarget::Link(LinkType::Ethernet), &case.bytes).map(drop)
         }
         DecodeTarget::LinuxSll => {
-            exercise_packet_decode(PacketDecodeTarget::Link(LinkType::LinuxSll), &case.bytes)
+            decode_packet(PacketDecodeTarget::Link(LinkType::LinuxSll), &case.bytes).map(drop)
         }
-        DecodeTarget::NullLoopback => exercise_packet_decode(
+        DecodeTarget::NullLoopback => decode_packet(
             PacketDecodeTarget::Link(LinkType::NullLoopback),
             &case.bytes,
-        ),
+        )
+        .map(drop),
         DecodeTarget::Ipv4 => {
-            exercise_packet_decode(PacketDecodeTarget::L3(NetworkLayer::Ipv4), &case.bytes)
+            decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4), &case.bytes).map(drop)
         }
         DecodeTarget::Ipv6 => {
-            exercise_packet_decode(PacketDecodeTarget::L3(NetworkLayer::Ipv6), &case.bytes)
+            decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6), &case.bytes).map(drop)
         }
-        DecodeTarget::Ipv4Options => {
-            let _ = Ipv4Option::decode_all(&case.bytes);
-        }
-        DecodeTarget::TcpOptions => {
-            let _ = TcpOption::decode_all(&case.bytes);
-        }
-        DecodeTarget::Dhcp => {
-            let _ = Dhcp::decode(&case.bytes);
-        }
-        DecodeTarget::DhcpOptions => {
-            let _ = DhcpOption::decode_all(&case.bytes);
-        }
-        DecodeTarget::DnsName => {
-            let _ = decode_dns_name(&case.bytes, 0);
-        }
+        DecodeTarget::Ipv4Options => Ipv4Option::decode_all(&case.bytes).map(drop),
+        DecodeTarget::TcpOptions => TcpOption::decode_all(&case.bytes).map(drop),
+        DecodeTarget::Dhcp => Dhcp::decode(&case.bytes).map(drop),
+        DecodeTarget::DhcpOptions => DhcpOption::decode_all(&case.bytes).map(drop),
+        DecodeTarget::DnsName => decode_dns_name(&case.bytes, 0).map(drop),
     }
 }
 
 fn malformed_cases() -> Vec<MalformedCase> {
     fixture_str!("malformed/core-decode-corpus.hex")
         .lines()
-        .filter_map(|line| {
+        .enumerate()
+        .filter_map(|(line_index, line)| {
+            let line_number = line_index + 1;
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 return None;
             }
 
-            let mut parts = line.split('|');
-            let name = parts.next().expect("malformed corpus case name");
-            let target = parts.next().expect("malformed corpus target");
-            let hex = parts.next().expect("malformed corpus hex bytes");
+            let mut parts = line.split('|').map(str::trim);
+            let name = parts.next().unwrap_or_else(|| {
+                panic!("malformed corpus line {line_number} is missing a case name")
+            });
+            let target = parts.next().unwrap_or_else(|| {
+                panic!("malformed corpus case {name} is missing a decode target")
+            });
+            let expected_kind = parts.next().unwrap_or_else(|| {
+                panic!("malformed corpus case {name} is missing an expected error kind")
+            });
+            let expected_context_or_field = parts.next().unwrap_or_else(|| {
+                panic!("malformed corpus case {name} is missing an expected error context or field")
+            });
+            let hex = parts
+                .next()
+                .unwrap_or_else(|| panic!("malformed corpus case {name} is missing hex bytes"));
             assert!(
                 parts.next().is_none(),
                 "malformed corpus case {name} has too many fields"
+            );
+            assert!(
+                !name.is_empty(),
+                "malformed corpus line {line_number} has an empty case name"
+            );
+            assert!(
+                !expected_context_or_field.is_empty(),
+                "malformed corpus case {name} has an empty expected context or field"
             );
 
             Some(MalformedCase {
                 name,
                 target: parse_target(name, target),
+                expected_error: ExpectedError {
+                    kind: parse_expected_error_kind(name, expected_kind),
+                    context_or_field: expected_context_or_field,
+                },
                 bytes: parse_hex(name, hex),
             })
         })
@@ -132,6 +162,14 @@ fn parse_target(name: &str, target: &str) -> DecodeTarget {
     }
 }
 
+fn parse_expected_error_kind(name: &str, expected_kind: &str) -> ExpectedErrorKind {
+    match expected_kind {
+        "buffer-too-short" => ExpectedErrorKind::BufferTooShort,
+        "invalid-field-value" => ExpectedErrorKind::InvalidFieldValue,
+        _ => panic!("malformed corpus case {name} has unknown expected kind {expected_kind}"),
+    }
+}
+
 fn parse_hex(name: &str, hex: &str) -> Vec<u8> {
     let hex = hex
         .chars()
@@ -151,6 +189,110 @@ fn parse_hex(name: &str, hex: &str) -> Vec<u8> {
                 .unwrap_or_else(|_| panic!("malformed corpus case {name} has invalid hex {byte}"))
         })
         .collect()
+}
+
+fn assert_error_matches(case: &MalformedCase, error: CrafterError) {
+    match (case.expected_error.kind, error) {
+        (ExpectedErrorKind::BufferTooShort, CrafterError::BufferTooShort { context, .. }) => {
+            assert_eq!(
+                context, case.expected_error.context_or_field,
+                "malformed corpus case {} returned an unexpected buffer context",
+                case.name
+            )
+        }
+        (ExpectedErrorKind::InvalidFieldValue, CrafterError::InvalidFieldValue { field, .. }) => {
+            assert_eq!(
+                field, case.expected_error.context_or_field,
+                "malformed corpus case {} returned an unexpected invalid field",
+                case.name
+            )
+        }
+        (expected, actual) => panic!(
+            "malformed corpus case {} expected {expected:?}, got {actual:?}",
+            case.name
+        ),
+    }
+}
+
+fn required_malformed_families() -> &'static [&'static str] {
+    &[
+        "short ethernet",
+        "truncated vlan",
+        "short arp",
+        "short linux sll",
+        "short null loopback",
+        "short ipv4",
+        "bad ipv4 version",
+        "bad ipv4 ihl",
+        "short ipv4 total length",
+        "ipv4 option overrun",
+        "short ipv6 base",
+        "bad ipv6 version",
+        "ipv6 payload length mismatch",
+        "truncated ipv6 routing header",
+        "truncated ipv6 fragment header",
+        "malformed ipv6 segment routing header",
+        "short udp header",
+        "invalid udp length",
+        "short tcp header",
+        "tcp data offset underflow",
+        "tcp data offset overrun",
+        "tcp option overrun",
+        "invalid tcp fixed option length",
+        "short icmp header",
+        "short icmpv6 header",
+        "short dns message",
+        "truncated dns question",
+        "dns pointer cycle",
+        "dns pointer out of range",
+        "dns label length overrun",
+        "short dhcp packet",
+        "missing dhcp magic cookie",
+        "truncated dhcp option",
+        "invalid dhcp fixed option length",
+        "invalid dhcp text option",
+    ]
+}
+
+fn malformed_family(name: &str) -> Option<&'static str> {
+    match name {
+        "short-ethernet" => Some("short ethernet"),
+        "truncated-vlan-header" => Some("truncated vlan"),
+        "short-arp-header" | "truncated-arp-addresses" => Some("short arp"),
+        "short-linux-sll" => Some("short linux sll"),
+        "short-null-loopback" => Some("short null loopback"),
+        "short-ipv4-header" => Some("short ipv4"),
+        "bad-ipv4-version" => Some("bad ipv4 version"),
+        "bad-ipv4-ihl" => Some("bad ipv4 ihl"),
+        "ipv4-total-length-shorter-than-header" => Some("short ipv4 total length"),
+        "ipv4-option-length-overrun" | "ipv4-option-decoder-overrun" => Some("ipv4 option overrun"),
+        "short-ipv6-base-header" => Some("short ipv6 base"),
+        "bad-ipv6-version" => Some("bad ipv6 version"),
+        "ipv6-payload-length-mismatch" => Some("ipv6 payload length mismatch"),
+        "truncated-ipv6-routing-header" => Some("truncated ipv6 routing header"),
+        "truncated-ipv6-fragment-header" => Some("truncated ipv6 fragment header"),
+        "malformed-ipv6-segment-routing-header" => Some("malformed ipv6 segment routing header"),
+        "udp-short-header" => Some("short udp header"),
+        "udp-invalid-length" => Some("invalid udp length"),
+        "tcp-short-header" => Some("short tcp header"),
+        "tcp-data-offset-underflow" => Some("tcp data offset underflow"),
+        "tcp-data-offset-overrun" => Some("tcp data offset overrun"),
+        "tcp-option-length-overrun" => Some("tcp option overrun"),
+        "tcp-option-invalid-fixed-length" => Some("invalid tcp fixed option length"),
+        "icmp-short-header" => Some("short icmp header"),
+        "icmpv6-short-header" => Some("short icmpv6 header"),
+        "dns-short-message" => Some("short dns message"),
+        "dns-truncated-question" => Some("truncated dns question"),
+        "dns-compression-loop" | "dns-name-pointer-cycle" => Some("dns pointer cycle"),
+        "dns-pointer-out-of-range" => Some("dns pointer out of range"),
+        "dns-label-length-overrun" => Some("dns label length overrun"),
+        "dhcp-short-fixed-header" => Some("short dhcp packet"),
+        "dhcp-missing-magic-cookie" => Some("missing dhcp magic cookie"),
+        "dhcp-truncated-option" => Some("truncated dhcp option"),
+        "dhcp-invalid-fixed-option-length" => Some("invalid dhcp fixed option length"),
+        "dhcp-invalid-utf8-text-option" => Some("invalid dhcp text option"),
+        _ => None,
+    }
 }
 
 fn assert_roundtrip(target: PacketDecodeTarget, packet: Packet) {
@@ -193,33 +335,13 @@ fn malformed_corpus_decoder_paths_do_not_panic() {
         );
     }
 
-    for expected_name in [
-        "short-ethernet",
-        "short-arp",
-        "invalid-vlan-length",
-        "bad-linux-sll-length",
-        "bad-null-loopback-family-bytes",
-        "bad-ipv4-ihl",
-        "ipv4-total-length-shorter-than-header",
-        "ipv4-option-overrun",
-        "truncated-ipv6-base",
-        "ipv6-payload-length-mismatch",
-        "truncated-ipv6-routing-header",
-        "truncated-ipv6-fragment-header",
-        "truncated-ipv6-mobile-routing-header",
-        "truncated-ipv6-segment-routing-header",
-        "udp-length-underflow",
-        "tcp-data-offset-underflow",
-        "tcp-data-offset-overrun",
-        "tcp-option-length-overrun",
-        "icmp-short-headers",
-        "dns-compression-loop",
-        "dns-pointer-out-of-range",
-        "dhcp-missing-magic-cookie",
-        "dhcp-truncated-option",
-    ] {
+    let covered = cases
+        .iter()
+        .filter_map(|case| malformed_family(case.name))
+        .collect::<std::collections::HashSet<_>>();
+    for expected_name in required_malformed_families() {
         assert!(
-            cases.iter().any(|case| case.name == expected_name),
+            covered.contains(expected_name),
             "malformed corpus missing named coverage for {expected_name}"
         );
     }
@@ -229,7 +351,49 @@ fn malformed_corpus_decoder_paths_do_not_panic() {
             !case.name.is_empty(),
             "malformed corpus case name must be stable"
         );
-        decode_malformed_case(case);
+        let _ = decode_malformed_case(case);
+    }
+}
+
+#[test]
+fn malformed_corpus_reports_structured_errors() {
+    let cases = malformed_cases();
+    assert!(!cases.is_empty(), "malformed corpus must not be empty");
+
+    for expected in [
+        DecodeTarget::Ethernet,
+        DecodeTarget::LinuxSll,
+        DecodeTarget::NullLoopback,
+        DecodeTarget::Ipv4,
+        DecodeTarget::Ipv6,
+        DecodeTarget::Ipv4Options,
+        DecodeTarget::TcpOptions,
+        DecodeTarget::Dhcp,
+        DecodeTarget::DhcpOptions,
+        DecodeTarget::DnsName,
+    ] {
+        assert!(
+            cases.iter().any(|case| case.target == expected),
+            "malformed corpus missing {expected:?} coverage"
+        );
+    }
+
+    let covered = cases
+        .iter()
+        .filter_map(|case| malformed_family(case.name))
+        .collect::<std::collections::HashSet<_>>();
+    for required in required_malformed_families() {
+        assert!(
+            covered.contains(required),
+            "malformed corpus missing required coverage for {required}"
+        );
+    }
+
+    for case in &cases {
+        let Err(error) = decode_malformed_case(case) else {
+            panic!("malformed corpus case {} unexpectedly decoded", case.name);
+        };
+        assert_error_matches(case, error);
     }
 }
 
