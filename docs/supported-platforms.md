@@ -40,7 +40,7 @@ tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite all
 
 For provider-backed runs, configure credentials outside the repository. The
 Hetzner provider reads only the `HETZNER_API_TOKEN` variable or the ignored
-local env file described in `docs/live-lab.md`.
+local env file described in [live-lab.md](live-lab.md).
 
 ## Known Protocol Coverage Gaps
 

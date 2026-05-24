@@ -107,7 +107,8 @@ cargo run --example dns_query -- --dry-run --name example.com
 
 The example set focuses on packet construction, offline pcap workflows, and
 bounded validation flows that are dry-run by default.
-See [docs/examples.md](docs/examples.md).
+See [docs/README.md](docs/README.md) for the full documentation index and
+[docs/examples.md](docs/examples.md) for example commands.
 
 ## Live Testing
 
@@ -130,13 +131,18 @@ ignored local file documented in [docs/live-lab.md](docs/live-lab.md). Do not
 store real credentials, provider account data, public IPs, or live host IDs in
 tracked files.
 
-## Release Notes And Platform Support
+Oracle validation modes are documented in
+[docs/validation.md](docs/validation.md).
 
+## Documentation And Release Notes
+
+- [docs/README.md](docs/README.md) is the documentation index.
+- [docs/api.md](docs/api.md) describes the public Rust API shape.
+- [docs/validation.md](docs/validation.md) describes oracle validation modes
+  and CI expectations.
 - [CHANGELOG.md](CHANGELOG.md) records the Rust alpha scope.
 - [docs/supported-platforms.md](docs/supported-platforms.md) lists supported
   platforms, live-test requirements, and protocol coverage gaps.
-- [docs/agent-cookbook.md](docs/agent-cookbook.md) gives copyable recipes for
-  generated packet tools.
 
 ### Release Checklist
 
