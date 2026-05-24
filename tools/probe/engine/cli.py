@@ -413,6 +413,7 @@ def _build_report(
         )
 
     metadata: JSONObject = {
+        "provider": request.provider,
         "requested_count": request.count,
         "planned_count": len(planned_cases),
         "selected_count": len(selected_cases),
@@ -424,7 +425,10 @@ def _build_report(
         "planned_case_names": [case.name for case in planned_cases],
         "selected_specs": list(PROBE_SELECTED_SPECS),
         "dry_run": dry_run,
+        "creates_infrastructure": False,
+        "requires_provider_lifecycle": request.provider == "hetzner",
         "mutates_lab": False if dry_run else None,
+        "target_service_setup": _target_service_setup_plan(dry_run=dry_run),
     }
     return ProbeReport(
         mode="probe",
@@ -464,6 +468,38 @@ def _live_status(request: ProbeRunRequest) -> str:
     if not request.confirm_live_run:
         return "requires-confirmation"
     return STATUS_UNSUPPORTED
+
+
+def _target_service_setup_plan(*, dry_run: bool) -> JSONObject:
+    return {
+        "role": "target",
+        "planned": True,
+        "starts_services": not dry_run,
+        "dry_run_starts_services": False,
+        "services": [
+            {
+                "name": "tcp-open-listener",
+                "protocol": "tcp",
+                "port": 18080,
+                "purpose": "tcp-syn-open",
+            },
+            {
+                "name": "dns-responder",
+                "protocol": "udp",
+                "port": 1053,
+                "purpose": "dns-query",
+            },
+        ],
+        "closed_tcp_port": {
+            "port": 18081,
+            "state": "reserved-unbound",
+            "purpose": "tcp-syn-closed",
+        },
+        "controlled_router": {
+            "available": False,
+            "skip_reason": "provider_capability_unavailable",
+        },
+    }
 
 
 def _report_path(
