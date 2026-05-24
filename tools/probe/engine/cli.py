@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import os
+import posixpath
 import shlex
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -18,6 +23,7 @@ from .model import (
     ProbeResult,
     ProbeRunRequest,
     ProbeSkip,
+    json_object,
     write_json,
 )
 from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
@@ -27,7 +33,13 @@ PROBE_SELECTED_SPECS = ("probe-contracts",)
 SKIP_CAPABILITY_UNAVAILABLE = "provider_capability_unavailable"
 SKIP_CONFIRMATION_REQUIRED = "confirm_live_run_required"
 STATUS_DRY_RUN = "dry-run"
+STATUS_FAILED = "failed"
+STATUS_PASSED = "passed"
 STATUS_UNSUPPORTED = "unsupported"
+FAILURE_TIMEOUT = "timeout"
+FAILURE_WRONG_PEER = "wrong_peer"
+FAILURE_WRONG_PAYLOAD = "wrong_payload"
+FAILURE_DECODE_FAILED = "decode_failed"
 
 
 _PROBE_CASES: tuple[ProbeCase, ...] = (
@@ -184,6 +196,7 @@ def _run(args: argparse.Namespace) -> int:
             seed=request.seed,
             count=request.count,
         )
+        probe_plans = _probe_plans_for_cases(request, planned_cases)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -195,6 +208,7 @@ def _run(args: argparse.Namespace) -> int:
             request=request,
             selected_cases=selected_cases,
             planned_cases=planned_cases,
+            probe_plans=probe_plans,
             report_path=report_path,
         )
         write_json(report_path, report)
@@ -208,6 +222,7 @@ def _run(args: argparse.Namespace) -> int:
         request=request,
         selected_cases=selected_cases,
         planned_cases=planned_cases,
+        probe_plans=probe_plans,
         report_path=report_path,
         status=status,
     )
@@ -217,7 +232,7 @@ def _run(args: argparse.Namespace) -> int:
         f"planned={len(report.results)} report={report_path}",
         file=sys.stderr,
     )
-    return 2
+    return 0 if report.status == STATUS_PASSED else 2
 
 
 def _request_from_args(args: argparse.Namespace) -> ProbeRunRequest:
@@ -278,17 +293,112 @@ def _planned_cases(
     return [ordered[index % len(ordered)] for index in range(count)]
 
 
+def _probe_plans_for_cases(
+    request: ProbeRunRequest,
+    planned_cases: Sequence[ProbeCase],
+) -> list[JSONObject]:
+    return [
+        _probe_plan_for_case(request=request, case=case, sequence=sequence)
+        for sequence, case in enumerate(planned_cases)
+    ]
+
+
+def _probe_plan_for_case(
+    *,
+    request: ProbeRunRequest,
+    case: ProbeCase,
+    sequence: int,
+) -> JSONObject:
+    if case.name == "icmp-echo":
+        return _icmp_echo_probe_plan(
+            profile=request.profile,
+            seed=request.seed,
+            sequence=sequence,
+        )
+    return {
+        "schema_version": 1,
+        "case": case.name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": request.profile,
+        "seed": request.seed,
+        "stimulus": case.stimulus,
+        "expected_response": case.expected_response,
+        "planned_only": True,
+    }
+
+
+def _icmp_echo_probe_plan(
+    *,
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    digest = _deterministic_bytes("icmp-echo", profile, seed, sequence)
+    identifier = int.from_bytes(digest[0:2], "big") or 1
+    sequence_number = int.from_bytes(digest[2:4], "big")
+    stimulus_ipv4, target_ipv4 = _deterministic_ipv4_pair(profile, seed, sequence)
+    payload = (
+        f"libcrafter-probe:icmp-echo:{profile}:{seed}:{sequence}:"
+        f"{digest.hex()[:16]}"
+    ).encode("ascii")
+    return {
+        "schema_version": 1,
+        "case": "icmp-echo",
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "icmp_echo_request",
+        "expected_response": "icmp_echo_reply",
+        "identifier": identifier,
+        "sequence_number": sequence_number,
+        "payload_hex": payload.hex(),
+        "payload_length": len(payload),
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "capture_filter": (
+            f"icmp and src host {target_ipv4} and dst host {stimulus_ipv4}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "icmp_type": 0,
+            "icmp_code": 0,
+            "identifier": identifier,
+            "sequence_number": sequence_number,
+            "payload_hex": payload.hex(),
+        },
+    }
+
+
+def _deterministic_bytes(case: str, profile: str, seed: int, sequence: int) -> bytes:
+    material = f"{case}\0{profile}\0{seed}\0{sequence}".encode("utf-8")
+    return hashlib.sha256(material).digest()
+
+
+def _deterministic_ipv4_pair(profile: str, seed: int, sequence: int) -> tuple[str, str]:
+    digest = _deterministic_bytes("endpoint-addresses", profile, seed, sequence)
+    second = 64 + digest[0] % 64
+    third = digest[1]
+    return f"10.{second}.{third}.10", f"10.{second}.{third}.20"
+
+
 def _dry_run_report(
     *,
     request: ProbeRunRequest,
     selected_cases: Sequence[ProbeCase],
     planned_cases: Sequence[ProbeCase],
+    probe_plans: Sequence[JSONObject],
     report_path: Path,
 ) -> ProbeReport:
     return _build_report(
         request=request,
         selected_cases=selected_cases,
         planned_cases=planned_cases,
+        probe_plans=probe_plans,
         report_path=report_path,
         status=STATUS_DRY_RUN,
         dry_run=True,
@@ -300,13 +410,29 @@ def _guarded_live_report(
     request: ProbeRunRequest,
     selected_cases: Sequence[ProbeCase],
     planned_cases: Sequence[ProbeCase],
+    probe_plans: Sequence[JSONObject],
     report_path: Path,
     status: str,
 ) -> ProbeReport:
+    if request.provider == "hetzner" and request.confirm_live_run:
+        icmp_plans = [plan for plan in probe_plans if plan.get("case") == "icmp-echo"]
+        unsupported = [
+            case.name for case in planned_cases if case.name != "icmp-echo"
+        ]
+        if icmp_plans and not unsupported:
+            return _hetzner_icmp_live_report(
+                request=request,
+                selected_cases=selected_cases,
+                planned_cases=planned_cases,
+                probe_plans=probe_plans,
+                report_path=report_path,
+            )
+
     return _build_report(
         request=request,
         selected_cases=selected_cases,
         planned_cases=planned_cases,
+        probe_plans=probe_plans,
         report_path=report_path,
         status=status,
         dry_run=False,
@@ -318,17 +444,30 @@ def _build_report(
     request: ProbeRunRequest,
     selected_cases: Sequence[ProbeCase],
     planned_cases: Sequence[ProbeCase],
+    probe_plans: Sequence[JSONObject],
     report_path: Path,
     status: str,
     dry_run: bool,
 ) -> ProbeReport:
     provider_capabilities = _PROVIDER_CAPABILITIES[request.provider]
+    probe_plans_by_sequence = {
+        int(plan["sequence"]): plan
+        for plan in probe_plans
+        if isinstance(plan.get("sequence"), int)
+    }
+    endpoint_request_path = _write_probe_endpoint_request_artifact(
+        report_path=report_path,
+        request=request,
+        probe_plans=probe_plans,
+        dry_run=dry_run,
+    )
     results: list[ProbeResult] = []
     skips: list[ProbeSkip] = []
     observed_responses: list[ObservedResponse] = []
     skip_counts: dict[str, int] = {}
 
     for sequence, case in enumerate(planned_cases):
+        probe_plan = probe_plans_by_sequence.get(sequence, {})
         missing = _missing_capabilities(case, provider_capabilities)
         if missing:
             skip = ProbeSkip(
@@ -340,6 +479,7 @@ def _build_report(
                     "missing_capabilities": list(missing),
                     "provider": request.provider,
                     "dry_run": dry_run,
+                    "probe_plan": probe_plan,
                 },
             )
             skips.append(skip)
@@ -352,7 +492,7 @@ def _build_report(
                     endpoint_role=_primary_endpoint_role(case),
                     passed=None,
                     skip=skip,
-                    metadata={"dry_run": dry_run},
+                    metadata={"dry_run": dry_run, "probe_plan": probe_plan},
                 )
             )
             continue
@@ -365,6 +505,7 @@ def _build_report(
                 metadata={
                     "provider": request.provider,
                     "requires_confirm_live_run": True,
+                    "probe_plan": probe_plan,
                 },
             )
             skips.append(skip)
@@ -377,7 +518,7 @@ def _build_report(
                     endpoint_role=_primary_endpoint_role(case),
                     passed=None,
                     skip=skip,
-                    metadata={"dry_run": dry_run},
+                    metadata={"dry_run": dry_run, "probe_plan": probe_plan},
                 )
             )
             continue
@@ -393,6 +534,8 @@ def _build_report(
                 "planned_only": True,
                 "stimulus": case.stimulus,
                 "expected_response": case.expected_response,
+                "probe_plan": probe_plan,
+                "failure_reasons": _failure_reasons_for_case(case.name),
             },
         )
         observed_responses.append(observed)
@@ -408,21 +551,34 @@ def _build_report(
                     "dry_run": dry_run,
                     "provider": request.provider,
                     "planned_only": True,
+                    "probe_plan": probe_plan,
+                    "failure_reasons": _failure_reasons_for_case(case.name),
                 },
             )
         )
 
+    artifact_paths = [str(report_path)]
+    if endpoint_request_path is not None:
+        artifact_paths.append(str(endpoint_request_path))
+
     metadata: JSONObject = {
         "provider": request.provider,
+        "cases": [case.name for case in selected_cases],
         "requested_count": request.count,
         "planned_count": len(planned_cases),
         "selected_count": len(selected_cases),
+        "executed_count": 0,
+        "passed_count": 0,
+        "failed_count": 0,
+        "executed_cases": [],
+        "failed_counts_by_reason": {},
         "skipped_count": len(skips),
         "observed_count": sum(1 for response in observed_responses if response.observed),
         "provider_capabilities": dict(provider_capabilities),
         "skip_counts_by_reason": skip_counts,
         "selected_case_names": [case.name for case in selected_cases],
         "planned_case_names": [case.name for case in planned_cases],
+        "probe_plans": list(probe_plans),
         "selected_specs": list(PROBE_SELECTED_SPECS),
         "dry_run": dry_run,
         "creates_infrastructure": False,
@@ -443,10 +599,623 @@ def _build_report(
         results=results,
         skips=skips,
         observed_responses=observed_responses,
-        artifacts=[str(report_path)],
-        artifact_paths=[str(report_path)],
+        artifacts=artifact_paths,
+        artifact_paths=artifact_paths,
         metadata=metadata,
     )
+
+
+def _write_probe_endpoint_request_artifact(
+    *,
+    report_path: Path,
+    request: ProbeRunRequest,
+    probe_plans: Sequence[JSONObject],
+    dry_run: bool,
+) -> Path | None:
+    endpoint_plans = [plan for plan in probe_plans if plan.get("case") == "icmp-echo"]
+    if not endpoint_plans:
+        return None
+
+    artifact_dir = report_path.parent / "artifacts" / "probe-endpoint"
+    request_path = artifact_dir / "stimulus.request.json"
+    first_plan = endpoint_plans[0]
+    endpoint_request: JSONObject = {
+        "schema_version": 1,
+        "provider": request.provider,
+        "profile": request.profile,
+        "seed": request.seed,
+        "dry_run": dry_run,
+        "endpoint_role": "stimulus",
+        "interface": _probe_interface(request.provider, dry_run=dry_run),
+        "local_ipv4": str(first_plan.get("source_ipv4", "")),
+        "peer_ipv4": str(first_plan.get("destination_ipv4", "")),
+        "timeout_seconds": _probe_timeout_seconds(len(endpoint_plans)),
+        "probe_plans": list(endpoint_plans),
+        "artifact_paths": {
+            "request": str(request_path),
+            "response": str(artifact_dir / "stimulus.response.json"),
+            "captures": str(artifact_dir / "captures"),
+        },
+        "metadata": {
+            "planned_only": dry_run,
+            "case_count": len(endpoint_plans),
+            "failure_reasons": _failure_reasons_for_case("icmp-echo"),
+        },
+    }
+    write_json(request_path, endpoint_request)
+    return request_path
+
+
+def _hetzner_icmp_live_report(
+    *,
+    request: ProbeRunRequest,
+    selected_cases: Sequence[ProbeCase],
+    planned_cases: Sequence[ProbeCase],
+    probe_plans: Sequence[JSONObject],
+    report_path: Path,
+) -> ProbeReport:
+    output_dir = report_path.parent
+    endpoint_dir = output_dir / "artifacts" / "hetzner-icmp-echo"
+    endpoint_dir.mkdir(parents=True, exist_ok=True)
+    provider_commands: list[JSONObject] = []
+    execution_errors: list[str] = []
+    endpoint_response: JSONObject | None = None
+    live_plans = list(probe_plans)
+    local_request_path = endpoint_dir / "stimulus.request.json"
+    manifest_path = _hetzner_manifest_path()
+    manifest: dict[str, str] = {}
+
+    try:
+        manifest = _read_hetzner_manifest(manifest_path)
+        source_ipv4 = manifest.get("libcrafter_private_ipv4", "")
+        target_ipv4 = manifest.get("reference_private_ipv4", "")
+        interface = (
+            manifest.get("libcrafter_interface")
+            or manifest.get("private_interface")
+            or _probe_interface("hetzner", dry_run=False)
+        )
+        live_plans = [
+            _probe_plan_with_endpoint_addresses(
+                plan,
+                source_ipv4=source_ipv4,
+                target_ipv4=target_ipv4,
+            )
+            for plan in probe_plans
+        ]
+        remote_dir = manifest.get("remote_dir", "/root/libcrafter")
+        remote_artifact_root = posixpath.join(
+            remote_dir,
+            "live-artifacts",
+            "probe",
+            "icmp-echo",
+        )
+        remote_request_path = posixpath.join(
+            remote_artifact_root,
+            "inputs",
+            "stimulus.request.json",
+        )
+        endpoint_request = _probe_endpoint_request_object(
+            request=request,
+            probe_plans=live_plans,
+            dry_run=False,
+            interface=interface,
+            artifact_root=remote_artifact_root,
+            request_path=remote_request_path,
+        )
+        write_json(local_request_path, endpoint_request)
+
+        upload = _upload_hetzner_probe_request(
+            manifest=manifest,
+            local_request_path=local_request_path,
+            remote_request_path=remote_request_path,
+            output_dir=endpoint_dir,
+        )
+        provider_commands.append(upload)
+        if upload["exit_code"] != 0:
+            execution_errors.append("failed to upload probe endpoint request")
+        else:
+            execution = _run_hetzner_probe_endpoint(
+                manifest=manifest,
+                remote_dir=remote_dir,
+                remote_request_path=remote_request_path,
+                remote_artifact_root=remote_artifact_root,
+                output_dir=endpoint_dir,
+                timeout_seconds=_probe_process_timeout_seconds(len(live_plans)),
+            )
+            provider_commands.append(execution)
+            endpoint_response = execution.get("response") if isinstance(
+                execution.get("response"), dict
+            ) else None
+            execution_errors.extend(_string_list(execution.get("errors", [])))
+            if execution["exit_code"] != 0:
+                execution_errors.append("probe endpoint command failed")
+            if endpoint_response is None:
+                execution_errors.append("probe endpoint did not return JSON")
+    except Exception as exc:  # pragma: no cover - live-provider only.
+        execution_errors.append(str(exc))
+
+    if endpoint_response is None:
+        results, observed_responses = _failed_live_probe_results(
+            planned_cases=planned_cases,
+            probe_plans=live_plans,
+            reason=FAILURE_DECODE_FAILED,
+            errors=execution_errors,
+        )
+    else:
+        results, observed_responses = _probe_results_from_endpoint_response(
+            endpoint_response
+        )
+
+    failures = [result for result in results if result.passed is False]
+    status = STATUS_PASSED if results and not failures and not execution_errors else STATUS_FAILED
+    failed_counts = _failed_counts_by_reason(results)
+    artifact_paths = [
+        str(report_path),
+        str(local_request_path),
+        *[
+            path
+            for command in provider_commands
+            for path in _command_artifact_paths(command)
+        ],
+    ]
+    if endpoint_response is not None:
+        artifact_paths.extend(_string_list(endpoint_response.get("artifacts", [])))
+        artifact_paths.extend(_string_list(endpoint_response.get("artifact_paths", [])))
+    artifact_paths = _dedupe_paths(artifact_paths)
+
+    return ProbeReport(
+        mode="probe",
+        provider=request.provider,
+        profile=request.profile,
+        seed=request.seed,
+        count=len(planned_cases),
+        status=status,
+        request=request,
+        cases=list(selected_cases),
+        endpoint_roles=list(_ENDPOINT_ROLES),
+        results=results,
+        skips=[],
+        observed_responses=observed_responses,
+        artifacts=artifact_paths,
+        artifact_paths=artifact_paths,
+        metadata={
+            "provider": request.provider,
+            "cases": [case.name for case in selected_cases],
+            "requested_count": request.count,
+            "planned_count": len(planned_cases),
+            "selected_count": len(selected_cases),
+            "executed_count": sum(1 for result in results if result.status != "skipped"),
+            "passed_count": sum(1 for result in results if result.passed is True),
+            "failed_count": len(failures),
+            "executed_cases": _dedupe_strings(
+                [result.case for result in results if result.status != "skipped"]
+            ),
+            "failed_counts_by_reason": failed_counts,
+            "skipped_count": 0,
+            "observed_count": sum(
+                1 for response in observed_responses if response.observed
+            ),
+            "provider_capabilities": dict(_PROVIDER_CAPABILITIES[request.provider]),
+            "skip_counts_by_reason": {},
+            "selected_case_names": [case.name for case in selected_cases],
+            "planned_case_names": [case.name for case in planned_cases],
+            "probe_plans": live_plans,
+            "selected_specs": list(PROBE_SELECTED_SPECS),
+            "dry_run": False,
+            "creates_infrastructure": False,
+            "requires_provider_lifecycle": True,
+            "mutates_lab": True,
+            "live_packet_exchange": status == STATUS_PASSED,
+            "manifest": {"path": str(manifest_path), "loaded": bool(manifest)},
+            "provider_commands": provider_commands,
+            "execution_errors": execution_errors,
+            "target_service_setup": _target_service_setup_plan(dry_run=False),
+        },
+    )
+
+
+def _probe_endpoint_request_object(
+    *,
+    request: ProbeRunRequest,
+    probe_plans: Sequence[JSONObject],
+    dry_run: bool,
+    interface: str,
+    artifact_root: str,
+    request_path: str,
+) -> JSONObject:
+    first_plan = probe_plans[0] if probe_plans else {}
+    return {
+        "schema_version": 1,
+        "provider": request.provider,
+        "profile": request.profile,
+        "seed": request.seed,
+        "dry_run": dry_run,
+        "endpoint_role": "stimulus",
+        "interface": interface,
+        "local_ipv4": str(first_plan.get("source_ipv4", "")),
+        "peer_ipv4": str(first_plan.get("destination_ipv4", "")),
+        "timeout_seconds": _probe_timeout_seconds(len(probe_plans)),
+        "probe_plans": list(probe_plans),
+        "artifact_paths": {
+            "request": request_path,
+            "response": posixpath.join(artifact_root, "stimulus.response.json"),
+            "captures": posixpath.join(artifact_root, "captures"),
+        },
+        "metadata": {
+            "planned_only": dry_run,
+            "case_count": len(probe_plans),
+            "failure_reasons": _failure_reasons_for_case("icmp-echo"),
+        },
+    }
+
+
+def _probe_plan_with_endpoint_addresses(
+    plan: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+) -> JSONObject:
+    if plan.get("case") != "icmp-echo":
+        return dict(plan)
+    updated = dict(plan)
+    updated["source_ipv4"] = source_ipv4
+    updated["destination_ipv4"] = target_ipv4
+    updated["expected_reply_source_ipv4"] = target_ipv4
+    updated["expected_reply_destination_ipv4"] = source_ipv4
+    updated["capture_filter"] = f"icmp and src host {target_ipv4} and dst host {source_ipv4}"
+    validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
+    validation["source_ipv4"] = target_ipv4
+    validation["destination_ipv4"] = source_ipv4
+    updated["validation"] = validation
+    updated["live_address_rewrite"] = {
+        "source": "hetzner_manifest",
+        "stimulus_ipv4": source_ipv4,
+        "target_ipv4": target_ipv4,
+    }
+    return updated
+
+
+def _hetzner_manifest_path() -> Path:
+    state_root = Path(
+        os.environ.get(
+            "LIBCRAFTER_LIVE_LAB_STATE_DIR",
+            str(REPO_ROOT / "tools" / "live-lab" / ".state"),
+        )
+    )
+    if not state_root.is_absolute():
+        state_root = REPO_ROOT / state_root
+    return state_root / "hetzner" / "manifest.env"
+
+
+def _read_hetzner_manifest(path: Path) -> dict[str, str]:
+    if not path.exists():
+        raise FileNotFoundError(f"Hetzner manifest not found: {path}")
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = shlex.split(stripped, posix=True)
+        if len(parts) != 1 or "=" not in parts[0]:
+            continue
+        key, value = parts[0].split("=", 1)
+        values[key] = value
+    return values
+
+
+def _upload_hetzner_probe_request(
+    *,
+    manifest: Mapping[str, str],
+    local_request_path: Path,
+    remote_request_path: str,
+    output_dir: Path,
+) -> JSONObject:
+    remote_parent = posixpath.dirname(remote_request_path)
+    command = f"mkdir -p {shlex.quote(remote_parent)} && cat > {shlex.quote(remote_request_path)}"
+    return _run_command(
+        _hetzner_endpoint_ssh_argv(manifest, "stimulus", command),
+        output_dir=output_dir,
+        label="upload-stimulus-request",
+        input_text=local_request_path.read_text(encoding="utf-8"),
+    )
+
+
+def _run_hetzner_probe_endpoint(
+    *,
+    manifest: Mapping[str, str],
+    remote_dir: str,
+    remote_request_path: str,
+    remote_artifact_root: str,
+    output_dir: Path,
+    timeout_seconds: int,
+) -> JSONObject:
+    quoted_remote_dir = shlex.quote(remote_dir)
+    quoted_request = shlex.quote(remote_request_path)
+    quoted_out = shlex.quote(remote_artifact_root)
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            f"cd {quoted_remote_dir}",
+            'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
+            (
+                "cargo run -q -p crafter --example probe_endpoint -- "
+                f"--live --input {quoted_request} --out {quoted_out}"
+            ),
+        ]
+    )
+    return _run_command(
+        _hetzner_endpoint_ssh_argv(
+            manifest,
+            "stimulus",
+            f"bash -lc {shlex.quote(script)}",
+        ),
+        output_dir=output_dir,
+        label="probe-endpoint-stimulus",
+        timeout_seconds=timeout_seconds,
+        parse_json=True,
+    )
+
+
+def _hetzner_endpoint_ssh_argv(
+    manifest: Mapping[str, str],
+    endpoint_role: str,
+    remote_command: str,
+) -> list[str]:
+    prefix = "libcrafter" if endpoint_role == "stimulus" else "reference"
+    host = manifest.get(f"{prefix}_ssh_host") or manifest.get(f"{prefix}_public_ipv4")
+    user = manifest.get("ssh_user", "root")
+    key = manifest.get("ssh_private_key")
+    if not host:
+        raise RuntimeError(f"Hetzner manifest is missing {prefix} SSH host")
+    if not key:
+        raise RuntimeError("Hetzner manifest is missing ssh_private_key")
+    known_hosts = _hetzner_manifest_path().parent / "known_hosts"
+    return [
+        "ssh",
+        "-i",
+        key,
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        f"UserKnownHostsFile={known_hosts}",
+        "-o",
+        "ConnectTimeout=10",
+        f"{user}@{host}",
+        remote_command,
+    ]
+
+
+def _run_command(
+    argv: Sequence[str],
+    *,
+    output_dir: Path,
+    label: str,
+    input_text: str | None = None,
+    timeout_seconds: int | None = None,
+    parse_json: bool = False,
+) -> JSONObject:
+    stdout_path = output_dir / f"{label}.stdout.txt"
+    stderr_path = output_dir / f"{label}.stderr.txt"
+    try:
+        process = subprocess.run(
+            list(argv),
+            cwd=REPO_ROOT,
+            input=input_text,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        stdout = process.stdout
+        stderr = process.stderr
+        exit_code = process.returncode
+        errors: list[str] = []
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        exit_code = 124
+        errors = [f"{label}: command timed out after {timeout_seconds}s"]
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
+    response: JSONObject | None = None
+    if parse_json:
+        response, parse_errors = _parse_json_stdout(stdout, label)
+        errors.extend(parse_errors)
+    return {
+        "argv": _redacted_argv(argv),
+        "exit_code": exit_code,
+        "label": label,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "response": response,
+        "errors": errors,
+    }
+
+
+def _redacted_argv(argv: Sequence[str]) -> list[str]:
+    redacted: list[str] = []
+    redact_next = False
+    for arg in argv:
+        if redact_next:
+            redacted.append("<redacted>")
+            redact_next = False
+            continue
+        if arg == "-i":
+            redacted.append(arg)
+            redact_next = True
+            continue
+        if arg.startswith("UserKnownHostsFile="):
+            redacted.append("UserKnownHostsFile=<redacted>")
+            continue
+        if "@" in arg and not arg.startswith("-"):
+            user, _, _host = arg.partition("@")
+            redacted.append(f"{user}@<redacted>")
+            continue
+        redacted.append(arg)
+    return redacted
+
+
+def _parse_json_stdout(stdout: str, label: str) -> tuple[JSONObject | None, list[str]]:
+    if not stdout.strip():
+        return None, [f"{label}: endpoint produced no JSON response"]
+    try:
+        value = json.loads(stdout)
+    except json.JSONDecodeError:
+        start = stdout.find("{")
+        end = stdout.rfind("}")
+        if start < 0 or end <= start:
+            return None, [f"{label}: endpoint stdout was not JSON"]
+        try:
+            value = json.loads(stdout[start : end + 1])
+        except json.JSONDecodeError as exc:
+            return None, [f"{label}: endpoint stdout JSON parse failed: {exc}"]
+    if not isinstance(value, Mapping):
+        return None, [f"{label}: endpoint response must be a JSON object"]
+    return json_object(value, f"{label}.response"), []
+
+
+def _probe_results_from_endpoint_response(
+    response: JSONObject,
+) -> tuple[list[ProbeResult], list[ObservedResponse]]:
+    results: list[ProbeResult] = []
+    observed_responses: list[ObservedResponse] = []
+    raw_results = response.get("results", [])
+    if not isinstance(raw_results, Sequence) or isinstance(
+        raw_results, (str, bytes, bytearray)
+    ):
+        raw_results = []
+
+    for raw_result in raw_results:
+        if not isinstance(raw_result, Mapping):
+            continue
+        result_obj = json_object(raw_result, "endpoint.results[]")
+        observed = None
+        raw_observed = result_obj.get("observed_response")
+        if isinstance(raw_observed, Mapping):
+            observed_obj = json_object(raw_observed, "endpoint.observed_response")
+            observed = ObservedResponse(
+                case=str(observed_obj.get("case", result_obj.get("case", ""))),
+                sequence=int(observed_obj.get("sequence", result_obj.get("sequence", 0))),
+                endpoint_role=str(observed_obj.get("endpoint_role", "stimulus")),
+                observed=bool(observed_obj.get("observed")),
+                response_type=_optional_string(observed_obj.get("response_type")),
+                raw_hex=_optional_string(observed_obj.get("raw_hex")),
+                decoded=json_object(observed_obj.get("decoded", {}), "observed.decoded"),
+                metadata=json_object(observed_obj.get("metadata", {}), "observed.metadata"),
+            )
+            observed_responses.append(observed)
+        results.append(
+            ProbeResult(
+                case=str(result_obj.get("case", "")),
+                sequence=int(result_obj.get("sequence", 0)),
+                status=str(result_obj.get("status", STATUS_FAILED)),
+                endpoint_role=str(result_obj.get("endpoint_role", "stimulus")),
+                passed=(
+                    bool(result_obj["passed"])
+                    if isinstance(result_obj.get("passed"), bool)
+                    else None
+                ),
+                observed_response=observed,
+                metadata=json_object(result_obj.get("metadata", {}), "result.metadata"),
+            )
+        )
+    return results, observed_responses
+
+
+def _failed_live_probe_results(
+    *,
+    planned_cases: Sequence[ProbeCase],
+    probe_plans: Sequence[JSONObject],
+    reason: str,
+    errors: Sequence[str],
+) -> tuple[list[ProbeResult], list[ObservedResponse]]:
+    plans_by_sequence = {
+        int(plan["sequence"]): plan
+        for plan in probe_plans
+        if isinstance(plan.get("sequence"), int)
+    }
+    results = [
+        ProbeResult(
+            case=case.name,
+            sequence=sequence,
+            status=STATUS_FAILED,
+            endpoint_role=_primary_endpoint_role(case),
+            passed=False,
+            metadata={
+                "failure_reason": reason,
+                "errors": list(errors),
+                "probe_plan": plans_by_sequence.get(sequence, {}),
+            },
+        )
+        for sequence, case in enumerate(planned_cases)
+    ]
+    return results, []
+
+
+def _failed_counts_by_reason(results: Sequence[ProbeResult]) -> JSONObject:
+    counts: dict[str, int] = {}
+    for result in results:
+        if result.passed is not False:
+            continue
+        reason = result.metadata.get("failure_reason")
+        if isinstance(reason, str) and reason:
+            counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def _command_artifact_paths(command: Mapping[str, JSONValue]) -> list[str]:
+    paths: list[str] = []
+    for key in ("stdout_path", "stderr_path", "request_path"):
+        value = command.get(key)
+        if isinstance(value, str) and value:
+            paths.append(value)
+    return paths
+
+
+def _probe_process_timeout_seconds(plan_count: int) -> int:
+    return _probe_timeout_seconds(plan_count) + 60
+
+
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    return [str(item) for item in value if isinstance(item, str)]
+
+
+def _dedupe_paths(paths: Sequence[str]) -> list[str]:
+    return list(dict.fromkeys(path for path in paths if path))
+
+
+def _dedupe_strings(values: Sequence[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
+
+
+def _probe_interface(provider: str, *, dry_run: bool) -> str:
+    if provider == "local-dry-run":
+        return "dry-run0"
+    if dry_run:
+        return os.environ.get("HETZNER_PRIVATE_INTERFACE", "eth1")
+    return os.environ.get("HETZNER_PRIVATE_INTERFACE", "auto")
+
+
+def _probe_timeout_seconds(plan_count: int) -> int:
+    return max(3, min(30, 2 + plan_count))
+
+
+def _failure_reasons_for_case(case_name: str) -> list[str]:
+    if case_name == "icmp-echo":
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_DECODE_FAILED,
+        ]
+    return []
 
 
 def _missing_capabilities(

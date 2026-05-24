@@ -1018,7 +1018,7 @@ system_packages=build-essential ca-certificates clang curl git iproute2 iputils-
 python_dependency_runner=uv
 uv_install=if-missing
 rust_install=if-missing
-validation=tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 1
+validation=cargo build -p crafter --example probe_endpoint && tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 1
 artifact=live-artifacts/bootstrap/stimulus/bootstrap.env
 EOF
   cat >"$bootstrap_dir/target/bootstrap.dry-run.env" <<EOF
@@ -1086,7 +1086,7 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 . "$HOME/.cargo/env"
 mkdir -p "live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE"
-cargo build -p crafter --example basic_send --example capture_pcap
+cargo build -p crafter --example basic_send --example capture_pcap --example probe_endpoint
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 1 \
   --out "live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/probe-plan" >/dev/null
 {
@@ -1100,6 +1100,7 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 1 
   echo "uv=$(command -v uv)"
   echo "rustc=$(rustc --version)"
   echo "cargo=$(cargo --version)"
+  echo "libcrafter_example=probe_endpoint"
   echo "probe_plan=live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/probe-plan/report.json"
   echo "services_started=false"
   echo "finished_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
