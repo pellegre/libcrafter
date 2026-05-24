@@ -324,6 +324,12 @@ def _probe_plan_for_case(
             seed=request.seed,
             sequence=sequence,
         )
+    if case.name == "dns-query":
+        return _dns_query_probe_plan(
+            profile=request.profile,
+            seed=request.seed,
+            sequence=sequence,
+        )
     return {
         "schema_version": 1,
         "case": case.name,
@@ -443,6 +449,104 @@ def _tcp_syn_probe_plan(
             "allow_rst_ack": case_name == "tcp-syn-closed",
         },
     }
+
+
+def _dns_query_probe_plan(
+    *,
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    digest = _deterministic_bytes("dns-query", profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = _deterministic_ipv4_pair(profile, seed, sequence)
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    query_type_value = 1 if sequence % 2 == 0 else 28
+    query_type = "A" if query_type_value == 1 else "AAAA"
+    query_name = _dns_query_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    if query_type == "A":
+        answer_data = f"203.0.113.{1 + digest[4] % 250}"
+    else:
+        answer_data = (
+            "2001:db8:"
+            f"{int.from_bytes(digest[4:6], 'big'):x}:"
+            f"{int.from_bytes(digest[6:8], 'big'):x}::"
+            f"{1 + digest[8] % 65534:x}"
+        )
+    destination_port = 53
+    answer_ttl = 60 + digest[9] % 180
+    return {
+        "schema_version": 1,
+        "case": "dns-query",
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": query_type,
+        "query_type_value": query_type_value,
+        "query_class": "IN",
+        "query_class_value": 1,
+        "expected_answer_name": query_name,
+        "expected_answer_type": query_type,
+        "expected_answer_type_value": query_type_value,
+        "expected_answer_data": answer_data,
+        "expected_response_code": 0,
+        "answer_ttl": answer_ttl,
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": query_type,
+            "answer_data": answer_data,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": 0,
+            "question": {
+                "name": query_name,
+                "type": query_type,
+                "class": "IN",
+            },
+            "answer": {
+                "name": query_name,
+                "type": query_type,
+                "data": answer_data,
+                "ttl": answer_ttl,
+            },
+        },
+    }
+
+
+def _dns_query_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
+    label = _dns_label(profile)
+    suffix = digest.hex()[:10]
+    return f"probe-{seed}-{sequence}-{suffix}.{label}.libcrafter.test."
+
+
+def _dns_label(value: str) -> str:
+    label = "".join(char.lower() if char.isalnum() else "-" for char in value)
+    label = "-".join(part for part in label.split("-") if part)
+    return (label or "profile")[:32].strip("-") or "profile"
 
 
 def _deterministic_bytes(case: str, profile: str, seed: int, sequence: int) -> bytes:
@@ -725,7 +829,9 @@ def _write_probe_endpoint_request_artifact(
     return request_path
 
 
-_PROBE_ENDPOINT_CASES = frozenset({"icmp-echo", "tcp-syn-open", "tcp-syn-closed"})
+_PROBE_ENDPOINT_CASES = frozenset(
+    {"icmp-echo", "tcp-syn-open", "tcp-syn-closed", "dns-query"}
+)
 
 
 def _probe_endpoint_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
@@ -1032,6 +1138,24 @@ def _probe_plan_with_endpoint_addresses(
             }
         )
         updated["stimulus_rst_guard"] = rst_guard
+    elif case_name == "dns-query":
+        source_port = int(updated.get("source_port", 0))
+        destination_port = int(updated.get("destination_port", 53))
+        updated["capture_filter"] = (
+            f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        )
+        target_service = dict(
+            json_object(updated.get("target_service", {}), "probe_plan.target_service")
+        )
+        target_service.update(
+            {
+                "bind_ipv4": target_ipv4,
+                "port": destination_port,
+                "source_ipv4": source_ipv4,
+            }
+        )
+        updated["target_service"] = target_service
     validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
     validation["source_ipv4"] = target_ipv4
     validation["destination_ipv4"] = source_ipv4
@@ -1133,7 +1257,8 @@ def _prepare_hetzner_probe_target(
     output_dir: Path,
 ) -> JSONObject | None:
     tcp_plans = _tcp_probe_plans(probe_plans)
-    if not tcp_plans:
+    dns_plans = _dns_probe_plans(probe_plans)
+    if not tcp_plans and not dns_plans:
         return None
     remote_artifact_root = posixpath.join(
         remote_dir,
@@ -1153,8 +1278,10 @@ def _prepare_hetzner_probe_target(
     )
     script = _target_service_setup_script(
         artifact_root=remote_artifact_root,
+        bind_ipv4=manifest.get("reference_private_ipv4") or "0.0.0.0",
         open_ports=open_ports,
         closed_ports=closed_ports,
+        dns_plans=dns_plans,
     )
     return _run_command(
         _hetzner_endpoint_ssh_argv(
@@ -1241,12 +1368,21 @@ def _cleanup_hetzner_stimulus_rst_guards(
 def _target_service_setup_script(
     *,
     artifact_root: str,
+    bind_ipv4: str,
     open_ports: Sequence[int],
     closed_ports: Sequence[int],
+    dns_plans: Sequence[JSONObject],
 ) -> str:
+    dns_plan_json = json.dumps(list(dns_plans), sort_keys=True)
+    dns_ports = _dedupe_ints(
+        int(plan["destination_port"])
+        for plan in dns_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
     lines = [
         "set -euo pipefail",
         f"artifact_root={shlex.quote(artifact_root)}",
+        f"dns_bind_ipv4={shlex.quote(bind_ipv4)}",
         'mkdir -p "$artifact_root"',
         'cleanup="$artifact_root/cleanup.sh"',
         ': > "$cleanup"',
@@ -1268,6 +1404,25 @@ def _target_service_setup_script(
         "PY",
         "}",
     ]
+    for port in dns_ports:
+        lines.extend(
+            [
+                "python3 - \"$dns_bind_ipv4\" \"$1\" <<'PY'".replace("$1", str(port)),
+                "import socket",
+                "import sys",
+                "bind_ip = sys.argv[1]",
+                "port = int(sys.argv[2])",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+                "try:",
+                "    sock.bind((bind_ip, port))",
+                "except OSError as exc:",
+                "    print(f'udp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
+                "    sys.exit(1)",
+                "finally:",
+                "    sock.close()",
+                "PY",
+            ]
+        )
     for port in closed_ports:
         lines.append(f"check_port_free {port}")
         lines.append(f"echo closed_port_{port}=free")
@@ -1322,6 +1477,162 @@ def _target_service_setup_script(
                 "  exit 73",
                 "fi",
                 f"echo listener_{port}=running",
+            ]
+        )
+    if dns_ports:
+        zone_path = posixpath.join(artifact_root, "dns-zone.json")
+        service_path = posixpath.join(artifact_root, "dns-responder.py")
+        lines.extend(
+            [
+                f"cat > {shlex.quote(zone_path)} <<'JSON'",
+                dns_plan_json,
+                "JSON",
+                f"cat > {shlex.quote(service_path)} <<'PY'",
+                "import ipaddress",
+                "import json",
+                "import signal",
+                "import socket",
+                "import struct",
+                "import sys",
+                "import time",
+                "",
+                "stop = False",
+                "",
+                "def handle_stop(_signum, _frame):",
+                "    global stop",
+                "    stop = True",
+                "",
+                "signal.signal(signal.SIGTERM, handle_stop)",
+                "signal.signal(signal.SIGINT, handle_stop)",
+                "",
+                "zone_path, bind_ip, port_text = sys.argv[1:4]",
+                "port = int(port_text)",
+                "plans = json.load(open(zone_path, encoding='utf-8'))",
+                "records = {}",
+                "for plan in plans:",
+                "    name = str(plan['query_name']).lower().rstrip('.') + '.'",
+                "    qtype = int(plan['query_type_value'])",
+                "    records[(name, qtype)] = {",
+                "        'answer_data': str(plan['expected_answer_data']),",
+                "        'ttl': int(plan.get('answer_ttl', 60)),",
+                "    }",
+                "",
+                "def read_name(message, offset):",
+                "    labels = []",
+                "    jumped = False",
+                "    consumed = 0",
+                "    seen = set()",
+                "    while True:",
+                "        if offset >= len(message):",
+                "            raise ValueError('name offset out of range')",
+                "        length = message[offset]",
+                "        if length & 0xc0 == 0xc0:",
+                "            if offset + 1 >= len(message):",
+                "                raise ValueError('truncated compression pointer')",
+                "            pointer = ((length & 0x3f) << 8) | message[offset + 1]",
+                "            if pointer in seen:",
+                "                raise ValueError('compression pointer loop')",
+                "            seen.add(pointer)",
+                "            if not jumped:",
+                "                consumed += 2",
+                "            offset = pointer",
+                "            jumped = True",
+                "            continue",
+                "        offset += 1",
+                "        if not jumped:",
+                "            consumed += 1",
+                "        if length == 0:",
+                "            return '.'.join(labels).lower() + '.', consumed",
+                "        if length & 0xc0:",
+                "            raise ValueError('unsupported dns label kind')",
+                "        label = message[offset:offset + length]",
+                "        if len(label) != length:",
+                "            raise ValueError('truncated dns label')",
+                "        labels.append(label.decode('ascii'))",
+                "        offset += length",
+                "        if not jumped:",
+                "            consumed += length",
+                "",
+                "def encode_name(name):",
+                "    out = bytearray()",
+                "    for label in name.rstrip('.').split('.'):",
+                "        raw = label.encode('ascii')",
+                "        out.append(len(raw))",
+                "        out.extend(raw)",
+                "    out.append(0)",
+                "    return bytes(out)",
+                "",
+                "def response_for(query):",
+                "    if len(query) < 12:",
+                "        raise ValueError('query shorter than dns header')",
+                "    txid, flags, qdcount, _ancount, _nscount, _arcount = struct.unpack('!HHHHHH', query[:12])",
+                "    if qdcount < 1:",
+                "        raise ValueError('query has no question')",
+                "    name, consumed = read_name(query, 12)",
+                "    question_end = 12 + consumed + 4",
+                "    if question_end > len(query):",
+                "        raise ValueError('truncated dns question')",
+                "    qtype, qclass = struct.unpack('!HH', query[12 + consumed:question_end])",
+                "    question = query[12:question_end]",
+                "    record = records.get((name, qtype))",
+                "    rd = flags & 0x0100",
+                "    if record is None or qclass != 1:",
+                "        header = struct.pack('!HHHHHH', txid, 0x8000 | rd | 3, 1, 0, 0, 0)",
+                "        return header + question, {'name': name, 'qtype': qtype, 'rcode': 3}",
+                "    if qtype == 1:",
+                "        rdata = ipaddress.IPv4Address(record['answer_data']).packed",
+                "    elif qtype == 28:",
+                "        rdata = ipaddress.IPv6Address(record['answer_data']).packed",
+                "    else:",
+                "        raise ValueError(f'unsupported qtype {qtype}')",
+                "    answer = b'\\xc0\\x0c' + struct.pack('!HHIH', qtype, 1, record['ttl'], len(rdata)) + rdata",
+                "    header = struct.pack('!HHHHHH', txid, 0x8000 | rd | 0x0400 | 0x0080, 1, 1, 0, 0)",
+                "    return header + question + answer, {'name': name, 'qtype': qtype, 'rcode': 0}",
+                "",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+                "sock.bind((bind_ip, port))",
+                "sock.settimeout(1.0)",
+                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port}), flush=True)",
+                "while not stop:",
+                "    try:",
+                "        data, addr = sock.recvfrom(4096)",
+                "    except socket.timeout:",
+                "        continue",
+                "    try:",
+                "        response, meta = response_for(data)",
+                "        sock.sendto(response, addr)",
+                "        meta.update({'event': 'answered', 'client': addr[0], 'client_port': addr[1]})",
+                "        print(json.dumps(meta, sort_keys=True), flush=True)",
+                "    except Exception as exc:",
+                "        print(json.dumps({'event': 'error', 'error': str(exc)}), file=sys.stderr, flush=True)",
+                "sock.close()",
+                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
+                "PY",
+            ]
+        )
+    for port in dns_ports:
+        stdout_path = posixpath.join(artifact_root, f"dns-responder-{port}.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, f"dns-responder-{port}.stderr.txt")
+        pid_path = posixpath.join(artifact_root, f"dns-responder-{port}.pid")
+        lines.extend(
+            [
+                (
+                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'dns-responder.py'))} "
+                    f"{shlex.quote(posixpath.join(artifact_root, 'dns-zone.json'))} "
+                    f"\"$dns_bind_ipv4\" {port} "
+                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.5",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                f"  echo dns_responder_{port}=failed >&2",
+                "  exit 73",
+                "fi",
+                f"echo dns_responder_{port}=running",
             ]
         )
     lines.append("echo target_service_setup=ok")
@@ -1395,6 +1706,10 @@ def _tcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
         for plan in probe_plans
         if str(plan.get("case", "")).startswith("tcp-syn-")
     ]
+
+
+def _dns_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    return [plan for plan in probe_plans if plan.get("case") == "dns-query"]
 
 
 def _dedupe_ints(values: Sequence[int]) -> list[int]:
@@ -1668,6 +1983,15 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_DECODE_FAILED,
             FAILURE_TARGET_SETUP_FAILED,
         ]
+    if case_name == "dns-query":
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_WRONG_FLAGS,
+            FAILURE_DECODE_FAILED,
+            FAILURE_TARGET_SETUP_FAILED,
+        ]
     return []
 
 
@@ -1707,10 +2031,16 @@ def _target_service_setup_plan(
         for plan in probe_plans
         if plan.get("case") == "tcp-syn-closed"
     )
+    dns_plans = _dns_probe_plans(probe_plans)
+    dns_ports = _dedupe_ints(
+        int(plan["destination_port"])
+        for plan in dns_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
     return {
         "role": "target",
         "planned": True,
-        "starts_services": not dry_run,
+        "starts_services": not dry_run and bool(tcp_open_ports or dns_ports),
         "dry_run_starts_services": False,
         "services": [
             *[
@@ -1723,12 +2053,25 @@ def _target_service_setup_plan(
                 }
                 for port in tcp_open_ports
             ],
-            {
-                "name": "dns-responder",
-                "protocol": "udp",
-                "port": 1053,
-                "purpose": "dns-query",
-            },
+            *[
+                {
+                    "name": "dns-responder",
+                    "protocol": "udp",
+                    "port": port,
+                    "purpose": "dns-query",
+                    "deterministic": True,
+                    "query_count": sum(
+                        1
+                        for plan in dns_plans
+                        if int(plan.get("destination_port", 0)) == port
+                    ),
+                    "log_paths": [
+                        f"live-artifacts/probe/target-services/dns-responder-{port}.stdout.txt",
+                        f"live-artifacts/probe/target-services/dns-responder-{port}.stderr.txt",
+                    ],
+                }
+                for port in dns_ports
+            ],
         ],
         "closed_tcp_ports": [
             {
