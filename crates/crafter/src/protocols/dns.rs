@@ -671,7 +671,18 @@ pub fn decode_dns_name(message: &[u8], offset: usize) -> Result<(String, usize)>
         match length & DNS_NAME_POINTER_MASK {
             0x00 => {
                 if length == 0 {
-                    let used = consumed.unwrap_or(cursor + 1 - offset);
+                    let used = match consumed {
+                        Some(consumed) => consumed,
+                        None => cursor
+                            .checked_add(1)
+                            .and_then(|end| end.checked_sub(offset))
+                            .ok_or_else(|| {
+                                CrafterError::invalid_field_value(
+                                    "dns.name",
+                                    "name cursor moved before original offset",
+                                )
+                            })?,
+                    };
                     let name = if labels.is_empty() {
                         ".".to_string()
                     } else {
