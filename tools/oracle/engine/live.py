@@ -191,6 +191,9 @@ def live_endpoint_addresses(endpoint: LiveEndpoint) -> JSONObject:
     addresses: JSONObject = {"ipv4": endpoint.address}
     if endpoint.ipv6_address is not None:
         addresses["ipv6"] = endpoint.ipv6_address
+    mac_address = endpoint.metadata.get("mac_address")
+    if isinstance(mac_address, str) and mac_address:
+        addresses["mac"] = mac_address
     return addresses
 
 

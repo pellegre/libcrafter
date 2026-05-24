@@ -121,6 +121,8 @@ write_manifest() {
   local reference_server_name="${11}"
   local reference_public_ipv4="${12}"
   local reference_public_ipv6="${13}"
+  local libcrafter_private_mac="${14}"
+  local reference_private_mac="${15}"
 
   ensure_dirs
   {
@@ -142,6 +144,7 @@ write_manifest() {
     printf 'libcrafter_ssh_host=%q\n' "$libcrafter_public_ipv4"
     printf 'libcrafter_ssh_address=%q\n' "${HETZNER_SSH_USER:-root}@$libcrafter_public_ipv4"
     printf 'libcrafter_private_ipv4=%q\n' "$libcrafter_private_ipv4"
+    printf 'libcrafter_private_mac=%q\n' "$libcrafter_private_mac"
     printf 'libcrafter_interface=%q\n' "$private_interface"
     printf 'reference_role=%q\n' "reference_backend"
     printf 'reference_server_id=%q\n' "$reference_server_id"
@@ -151,6 +154,7 @@ write_manifest() {
     printf 'reference_ssh_host=%q\n' "$reference_public_ipv4"
     printf 'reference_ssh_address=%q\n' "${HETZNER_SSH_USER:-root}@$reference_public_ipv4"
     printf 'reference_private_ipv4=%q\n' "$reference_private_ipv4"
+    printf 'reference_private_mac=%q\n' "$reference_private_mac"
     printf 'reference_interface=%q\n' "$private_interface"
     printf 'cleanup_server_ids=%q\n' "$libcrafter_server_id $reference_server_id"
     printf 'cleanup_network_id=%q\n' "$network_id"
@@ -502,6 +506,13 @@ detect_private_interface() {
   ssh_remote_host "$host" "override='$override'; if [ -n \"\$override\" ]; then ip link show \"\$override\" >/dev/null 2>&1 && printf '%s\n' \"\$override\"; exit; fi; default_if=\$(ip route show default 0.0.0.0/0 | awk '{print \$5; exit}'); for dev in \$(ls /sys/class/net); do case \"\$dev\" in lo|\"\$default_if\") continue ;; esac; [ -e \"/sys/class/net/\$dev\" ] && printf '%s\n' \"\$dev\" && exit 0; done; exit 1"
 }
 
+read_interface_mac() {
+  local host="$1"
+  local interface="$2"
+
+  ssh_remote_host "$host" "cat '/sys/class/net/$interface/address'"
+}
+
 configure_private_interface() {
   local host="$1"
   local private_ip="$2"
@@ -824,10 +835,12 @@ run_create() {
   local libcrafter_server_name
   local libcrafter_public_ipv4
   local libcrafter_public_ipv6
+  local libcrafter_private_mac=""
   local reference_server_id=""
   local reference_server_name
   local reference_public_ipv4
   local reference_public_ipv6
+  local reference_private_mac=""
 
   if has_arg "--dry-run" "$@"; then
     dry_run=true
@@ -971,6 +984,14 @@ EOF
     cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
     exit 75
   fi
+  if ! libcrafter_private_mac="$(read_interface_mac "$libcrafter_public_ipv4" "$private_interface")"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
+    exit 75
+  fi
+  if ! reference_private_mac="$(read_interface_mac "$reference_public_ipv4" "$private_interface")"; then
+    cleanup_partial_create "$network_id" "$hcloud_ssh_key_id" "$libcrafter_server_id" "$reference_server_id"
+    exit 75
+  fi
 
   write_manifest \
     "$name" \
@@ -985,7 +1006,9 @@ EOF
     "$reference_server_id" \
     "$reference_server_name" \
     "$reference_public_ipv4" \
-    "$reference_public_ipv6"
+    "$reference_public_ipv6" \
+    "$libcrafter_private_mac" \
+    "$reference_private_mac"
 
   cat >"$artifact_dir/create.log" <<EOF
 $(timestamp_utc) Hetzner two-endpoint private-network lab created.
@@ -997,10 +1020,12 @@ libcrafter_server_id=$libcrafter_server_id
 libcrafter_server_name=$libcrafter_server_name
 libcrafter_public_ipv4=$libcrafter_public_ipv4
 libcrafter_private_ipv4=$libcrafter_private_ipv4
+libcrafter_private_mac=$libcrafter_private_mac
 reference_server_id=$reference_server_id
 reference_server_name=$reference_server_name
 reference_public_ipv4=$reference_public_ipv4
 reference_private_ipv4=$reference_private_ipv4
+reference_private_mac=$reference_private_mac
 EOF
 
   echo "provider=$provider_name"

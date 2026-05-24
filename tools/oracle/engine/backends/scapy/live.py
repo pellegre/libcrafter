@@ -504,8 +504,26 @@ def _send_packet(
     kwargs = {"iface": _required_string(request, "interface"), "verbose": False}
     if _send_mode_for_root(root) == "link-layer":
         scapy_all.sendp(packet, **kwargs)
+    elif _can_send_as_ethernet(request):
+        ether_type = 0x86DD if packet.haslayer(scapy_all.IPv6) else 0x0800
+        frame = (
+            scapy_all.Ether(
+                src=_address_value(request, "local_addresses", "mac"),
+                dst=_address_value(request, "peer_addresses", "mac"),
+                type=ether_type,
+            )
+            / packet
+        )
+        scapy_all.sendp(frame, **kwargs)
     else:
         scapy_all.send(packet, **kwargs)
+
+
+def _can_send_as_ethernet(request: JSONObject) -> bool:
+    return (
+        _address_value(request, "local_addresses", "mac") is not None
+        and _address_value(request, "peer_addresses", "mac") is not None
+    )
 
 
 def _matches_live_capture(scapy_all: Any, packet: Any, request: JSONObject) -> bool:
