@@ -6,11 +6,10 @@
 //! - packet construction, decode, checksums, and protocol layers
 //! - pcap read/write and sniffing helpers
 //! - interface, send, send/receive, batch, and address helpers
-//! - disposable live-lab support placeholders
 //!
 //! Public modules are organized as `crafter::core`, `crafter::pcap`,
-//! `crafter::net`, `crafter::live`, and `crafter::prelude`. Most examples
-//! should start with `use crafter::prelude::*;`.
+//! `crafter::net`, and `crafter::prelude`. Most examples should start with
+//! `use crafter::prelude::*;`.
 //!
 //! The API may change before a stable release.
 //!
@@ -51,7 +50,6 @@ pub mod packet;
 pub mod protocols;
 pub mod registry;
 
-mod live_impl;
 mod net_impl;
 mod pcap_impl;
 
@@ -182,11 +180,6 @@ pub mod pcap {
 /// Network interface, send, send/receive, batch, and address helper APIs.
 pub mod net {
     pub use crate::net_impl::*;
-}
-
-/// Disposable live-lab helper APIs.
-pub mod live {
-    pub use crate::live_impl::*;
 }
 
 /// Common imports for generated packet tools and examples.
