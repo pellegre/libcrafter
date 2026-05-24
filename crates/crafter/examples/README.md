@@ -43,12 +43,17 @@ traffic.
 
 ## Pcap And Sniffing
 
-Planned: `pcap_write.rs`, `pcap_read.rs`, `sniffer_offline.rs`, and
-`capture_pcap.rs`.
+| Example | Safety mode | Command |
+| --- | --- | --- |
+| `pcap_write` | Offline | `cargo run -p crafter --example pcap_write -- --out target/examples/pcap-write.pcap --count 3` |
+| `pcap_read` | Offline | `cargo run -p crafter --example pcap_read -- --in target/examples/pcap-write.pcap --filter tcp` |
+| `sniffer_offline` | Offline | `cargo run -p crafter --example sniffer_offline -- --pcap target/examples/pcap-write.pcap --filter tcp --count 2` |
+| `capture_pcap` | Live-gated; prints a plan by default | `cargo run -p crafter --example capture_pcap -- --iface dry-run0 --out target/examples/capture-plan.pcap --count 1` |
 
-The pcap write/read and offline sniffer examples will use generated pcap files
-under `target/`. The capture example will be live-gated before it is documented
-as a runnable command in this suite.
+`capture_pcap.rs` opens a live capture handle only when `--live`,
+`--i-understand-isolated-lab`, and `LIBCRAFTER_LIVE_LAB=1` are all supplied.
+The documented command prints the planned interface, filter, count, timeout, and
+output path without capturing traffic.
 
 ## Protocols
 

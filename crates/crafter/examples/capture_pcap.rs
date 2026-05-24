@@ -4,32 +4,50 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use common::{
-    arg_value, default_target_path, ensure_parent, parse_usize_arg, print_help_if_requested,
-    ExampleResult,
+    arg_or, arg_value, default_target_path, ensure_parent, live_mode, parse_usize_arg,
+    print_help_if_requested, ExampleResult, ADVANCED_LIVE_ACK_FLAG, EXAMPLE_IFACE, LIVE_LAB_ENV,
 };
 use crafter::prelude::*;
 
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example capture_pcap -- --iface IFACE --out FILE [--filter EXPR] [--count N] [--timeout-seconds N]\n\nCapture packets from an interface with libpcap and write a pcap file.",
+        "usage: cargo run --example capture_pcap -- [--live] [--iface IFACE] [--out FILE] [--filter EXPR] [--count N] [--timeout-seconds N]\n\nPrint a live capture plan by default; only --live opens libpcap and writes captured packets.",
     ) {
         return Ok(());
     }
 
-    let iface = arg_value("--iface").unwrap_or_else(|| "lo".to_string());
+    let iface = arg_or("--iface", EXAMPLE_IFACE);
     let out: PathBuf = arg_value("--out")
         .map(Into::into)
-        .unwrap_or_else(|| default_target_path("libcrafter-capture.pcap"));
+        .unwrap_or_else(|| default_target_path("examples/capture.pcap"));
     let filter = arg_value("--filter");
     let count = parse_usize_arg("--count", 1)?;
     let timeout_seconds = parse_usize_arg("--timeout-seconds", 15)?;
+    let live = live_mode("capture_pcap")?;
 
+    println!("example: capture_pcap");
+    println!("interface: {iface}");
+    println!("filter: {}", filter.as_deref().unwrap_or("(none)"));
+    println!("count: {count}");
+    println!("timeout_seconds: {timeout_seconds}");
+    println!("pcap: {}", out.display());
+
+    if !live {
+        println!("mode: plan");
+        println!(
+            "safety: no live capture handle opened; add --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_LAB_ENV}=1 inside an isolated lab"
+        );
+        return Ok(());
+    }
+
+    println!("mode: live-lab");
+    println!("safety: live capture guard satisfied");
     ensure_parent(&out)?;
 
     let mut sniffer = Sniffer::interface(iface.clone())
         .count(count)
         .timeout(Duration::from_secs(timeout_seconds as u64));
-    if let Some(filter) = filter {
+    if let Some(filter) = filter.as_deref() {
         sniffer = sniffer.filter(filter);
     }
 
@@ -48,8 +66,6 @@ fn main() -> ExampleResult<()> {
     }
     writer.flush()?;
 
-    println!("interface: {iface}");
-    println!("pcap: {}", out.display());
     println!("packets: {}", packets.len());
     println!("link_type: {:?}", link_type);
 
