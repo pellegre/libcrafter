@@ -1,0 +1,108 @@
+{
+  "artifact_paths": {
+    "captures": "artifacts/libcrafter_to_reference/libcrafter/captures",
+    "decoded_models": "artifacts/libcrafter_to_reference/libcrafter/decoded-models.json",
+    "request": "artifacts/libcrafter_to_reference/libcrafter/request.json",
+    "response": "artifacts/libcrafter_to_reference/libcrafter/response.json",
+    "root": "artifacts/libcrafter_to_reference/libcrafter",
+    "stderr": "artifacts/libcrafter_to_reference/libcrafter/stderr.log",
+    "stdout": "artifacts/libcrafter_to_reference/libcrafter/stdout.log"
+  },
+  "backend": "scapy",
+  "direction": "libcrafter_to_reference",
+  "endpoint_id": "fixture-libcrafter",
+  "endpoint_role": "libcrafter",
+  "interface": "dry-run0",
+  "local_addresses": {
+    "ipv4": "192.0.2.10",
+    "ipv6": "2001:db8:1::10"
+  },
+  "metadata": {
+    "dry_run": true,
+    "live_packet_exchange": false,
+    "no_live_packets_sent": true,
+    "phase_role": "sender"
+  },
+  "packet_plans": [
+    {
+      "case": "live-smoke-ipv4-udp",
+      "direction": "libcrafter_to_reference",
+      "family": "ipv4",
+      "feature_tags": [
+        "baseline",
+        "ipv4",
+        "udp",
+        "payload",
+        "live_exchange"
+      ],
+      "fields": {
+        "ipv4": {
+          "dst": "198.51.100.20",
+          "flags": "none",
+          "identification": 4660,
+          "protocol": "udp",
+          "src": "192.0.2.10",
+          "ttl": 64
+        },
+        "payload": {
+          "hex": "6c6962637261667465722d6c697665",
+          "length": 15
+        },
+        "udp": {
+          "dst_port": 53000,
+          "src_port": 42000
+        }
+      },
+      "index": 0,
+      "metadata": {
+        "comparison_policy": "strict_reencode",
+        "feature": "live_exchange",
+        "generator": "oracle.fixture.v1",
+        "malformed": false,
+        "plan_id": "fixture/live-smoke/index-000000/root-l3-ipv4/stack-ipv4-udp-payload",
+        "reproduction": {
+          "count": 1,
+          "direction": "libcrafter_to_reference",
+          "family": "ipv4",
+          "index": 0,
+          "profile": "smoke",
+          "root": "l3:ipv4",
+          "seed": 1
+        },
+        "root": "l3:ipv4",
+        "root_decoder": "l3:ipv4",
+        "selected_specs": [
+          "tools/oracle/LIVE.md",
+          "tools/oracle/specs/stacks.yaml",
+          "tools/oracle/specs/profiles.yaml",
+          "root:l3:ipv4",
+          "stack:ipv4_udp_payload",
+          "feature:live_exchange"
+        ],
+        "stack_families": [
+          "ipv4",
+          "transport"
+        ],
+        "stack_name": "ipv4_udp_payload",
+        "strict_bytes": true
+      },
+      "profile": "smoke",
+      "seed": 1,
+      "stack": [
+        "ipv4",
+        "udp",
+        "payload"
+      ],
+      "strict_bytes": true
+    }
+  ],
+  "peer_addresses": {
+    "ipv4": "192.0.2.20",
+    "ipv6": "2001:db8:1::20"
+  },
+  "peer_role": "reference_backend",
+  "profile": "smoke",
+  "provider": "local-dry-run",
+  "seed": 1,
+  "timeout_seconds": 30
+}
