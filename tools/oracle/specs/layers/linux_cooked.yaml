@@ -1,0 +1,56 @@
+version: 1
+kind: layer
+name: linux_cooked
+summary: Linux cooked capture pseudo-link header used by pcap link type 113.
+
+roots:
+  - "link:linux-cooked"
+parents:
+  - root
+children:
+  - ipv4
+
+fields:
+  - name: packet_type
+    type: uint16
+    required: true
+    domains:
+      - host
+      - broadcast
+      - multicast
+  - name: address_type
+    type: uint16
+    required: true
+    domains:
+      - ethernet
+  - name: address_length
+    type: uint16
+    required: true
+    domains:
+      - 6
+  - name: source_address
+    type: bytes
+    required: true
+    domains:
+      - documentation_mac_padded
+  - name: protocol
+    type: uint16
+    required: true
+    domains:
+      - ipv4
+
+coverage_cases:
+  - linux-cooked-ipv4-udp
+  - crafter-linux-cooked-ipv4-udp
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - CookedLinux
+    decode: true
+    pcap_read: true
+  libcrafter:
+    status: supported
+    decode: true
+    pcap_read: true
