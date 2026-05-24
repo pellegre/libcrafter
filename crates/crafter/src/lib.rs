@@ -102,12 +102,11 @@ pub use registry::{
 };
 
 pub use net_impl::{
-    arp_resolve, default_interface, default_interface_in, default_interface_name,
-    derive_mac_from_ipv6, find_interface, find_interface_in, get_ip_strings, get_ips, get_mac,
-    get_my_ip, get_my_ip_in, get_my_ipv6, get_my_ipv6_in, get_my_mac, get_my_mac_in, interface_for,
-    interface_for_in, interfaces, parse_ip_range, parse_numbers, reply_filter, reply_matches,
-    resolve_mac, send_packet, send_packets, send_plan, send_recv_packet, send_recv_packets,
-    ArpResolveOptions, ArpResolveReport, BatchSend, BatchSendEntry, BatchSendRecv,
+    default_interface, default_interface_in, default_interface_name, find_interface,
+    find_interface_in, get_ip_strings, get_ips, get_my_ip, get_my_ip_in, get_my_ipv6,
+    get_my_ipv6_in, get_my_mac, get_my_mac_in, interface_for, interface_for_in, interfaces,
+    parse_ip_range, parse_numbers, reply_filter, reply_matches, send_packet, send_packets,
+    send_plan, send_recv_packet, send_recv_packets, BatchSend, BatchSendEntry, BatchSendRecv,
     BatchSendRecvEntry, BatchSendRecvReport, BatchSendReport, InterfaceAddress, InterfaceInfo,
     Ipv4Range, NetError, PacketBatchSendExt, PacketBatchSendRecvExt, PacketSendExt,
     PacketSendRecvExt, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
@@ -181,19 +180,17 @@ pub mod net {
 pub mod prelude {
     pub use crate::core::*;
     pub use crate::{
-        arp_resolve, default_interface, default_interface_in, default_interface_name,
-        derive_mac_from_ipv6, dump_pcap, find_interface, find_interface_in, get_ip_strings,
-        get_ips, get_mac, get_my_ip, get_my_ip_in, get_my_ipv6, get_my_ipv6_in, get_my_mac,
-        get_my_mac_in, interface_for, interface_for_in, interfaces, parse_ip_range, parse_numbers,
-        read_pcap, read_pcap_filtered, reply_filter, reply_matches, resolve_mac, send_packet,
-        send_packets, send_plan, send_recv_packet, send_recv_packets, ArpResolveOptions,
-        ArpResolveReport, BatchSend, BatchSendEntry, BatchSendRecv, BatchSendRecvEntry,
-        BatchSendRecvReport, BatchSendReport, Capture, CaptureControl, CaptureHandle, FileSniffer,
-        InterfaceAddress, InterfaceInfo, Ipv4Range, NetError, PacketBatchSendExt,
-        PacketBatchSendRecvExt, PacketSendExt, PacketSendRecvExt, PcapError, PcapHeader,
-        PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords, PcapTimestamp, PcapWriter,
-        PcapWriterOptions, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
-        SendRecvOptions, SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend, SocketSender,
-        TimestampPrecision,
+        default_interface, default_interface_in, default_interface_name, dump_pcap, find_interface,
+        find_interface_in, get_ip_strings, get_ips, get_my_ip, get_my_ip_in, get_my_ipv6,
+        get_my_ipv6_in, get_my_mac, get_my_mac_in, interface_for, interface_for_in, interfaces,
+        parse_ip_range, parse_numbers, read_pcap, read_pcap_filtered, reply_filter, reply_matches,
+        send_packet, send_packets, send_plan, send_recv_packet, send_recv_packets, BatchSend,
+        BatchSendEntry, BatchSendRecv, BatchSendRecvEntry, BatchSendRecvReport, BatchSendReport,
+        Capture, CaptureControl, CaptureHandle, FileSniffer, InterfaceAddress, InterfaceInfo,
+        Ipv4Range, NetError, PacketBatchSendExt, PacketBatchSendRecvExt, PacketSendExt,
+        PacketSendRecvExt, PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord,
+        PcapRecords, PcapTimestamp, PcapWriter, PcapWriterOptions, RawSender, ReplyMatcher,
+        SendMode, SendOptions, SendPlan, SendRecv, SendRecvOptions, SendRecvReport, SendReport,
+        SendTarget, Sniffer, SocketSend, SocketSender, TimestampPrecision,
     };
 }
