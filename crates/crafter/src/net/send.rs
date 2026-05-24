@@ -83,7 +83,7 @@ impl SendOptions {
         self
     }
 
-    /// Scapy/libcrafter-style alias for [`Self::interface`].
+    /// Compatibility alias for [`Self::interface`].
     pub fn iface(self, interface: impl Into<String>) -> Self {
         self.interface(interface)
     }

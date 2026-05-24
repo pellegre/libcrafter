@@ -56,7 +56,7 @@ jobs:
 
       - name: Run oracle Hetzner live dry run
         run: |
-          tools/oracle/run live --backend scapy --provider hetzner --dry-run \
+          tools/oracle/run live --provider hetzner --dry-run \
             --profile "$ORACLE_LIVE_PROFILE" \
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
@@ -115,7 +115,7 @@ jobs:
 
       - name: Run real Hetzner oracle live exchange
         run: |
-          tools/oracle/run live --backend scapy --provider hetzner \
+          tools/oracle/run live --provider hetzner \
             --profile "$ORACLE_LIVE_PROFILE" \
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"

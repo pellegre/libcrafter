@@ -127,7 +127,7 @@ impl Ipv6 {
         self
     }
 
-    /// Scapy-style alias for traffic class.
+    /// Compatibility alias for traffic class.
     pub fn tc(self, traffic_class: u8) -> Self {
         self.traffic_class(traffic_class)
     }
@@ -138,7 +138,7 @@ impl Ipv6 {
         self
     }
 
-    /// Scapy-style alias for flow label.
+    /// Compatibility alias for flow label.
     pub fn fl(self, flow_label: u32) -> Self {
         self.flow_label(flow_label)
     }
@@ -149,7 +149,7 @@ impl Ipv6 {
         self
     }
 
-    /// Scapy-style alias for payload length.
+    /// Compatibility alias for payload length.
     pub fn plen(self, payload_length: u16) -> Self {
         self.payload_length(payload_length)
     }
@@ -160,7 +160,7 @@ impl Ipv6 {
         self
     }
 
-    /// Scapy/libcrafter-style alias for next header.
+    /// Compatibility alias for next header.
     pub fn nh(self, next_header: u8) -> Self {
         self.next_header(next_header)
     }
@@ -171,7 +171,7 @@ impl Ipv6 {
         self
     }
 
-    /// Scapy/libcrafter-style alias for hop limit.
+    /// Compatibility alias for hop limit.
     pub fn hlim(self, hop_limit: u8) -> Self {
         self.hop_limit(hop_limit)
     }
@@ -384,7 +384,7 @@ impl Ipv6RoutingHeader {
         self
     }
 
-    /// Scapy/libcrafter-style alias for next header.
+    /// Compatibility alias for next header.
     pub fn nh(self, next_header: u8) -> Self {
         self.next_header(next_header)
     }
@@ -575,7 +575,7 @@ impl Ipv6FragmentHeader {
         self
     }
 
-    /// Scapy/libcrafter-style alias for next header.
+    /// Compatibility alias for next header.
     pub fn nh(self, next_header: u8) -> Self {
         self.next_header(next_header)
     }
@@ -592,7 +592,7 @@ impl Ipv6FragmentHeader {
         self
     }
 
-    /// Scapy-style alias for fragment offset.
+    /// Compatibility alias for fragment offset.
     pub fn frag(self, fragment_offset: u16) -> Self {
         self.fragment_offset(fragment_offset)
     }
@@ -620,7 +620,7 @@ impl Ipv6FragmentHeader {
         self
     }
 
-    /// Scapy/libcrafter-style alias for identification.
+    /// Compatibility alias for identification.
     pub fn id(self, identification: u32) -> Self {
         self.identification(identification)
     }
@@ -768,7 +768,7 @@ impl Ipv6MobileRoutingHeader {
         self
     }
 
-    /// Scapy/libcrafter-style alias for next header.
+    /// Compatibility alias for next header.
     pub fn nh(self, next_header: u8) -> Self {
         self.next_header(next_header)
     }
@@ -1003,7 +1003,7 @@ impl Ipv6SegmentRoutingHeader {
         self
     }
 
-    /// Scapy/libcrafter-style alias for next header.
+    /// Compatibility alias for next header.
     pub fn nh(self, next_header: u8) -> Self {
         self.next_header(next_header)
     }

@@ -17,8 +17,7 @@ kind/short-slug
 ```
 
 Use typed names such as `feature/complete-oracle` or
-`fix/scapy-normalize-tcp-options`, not bare task names such as
-`complete-oracle`.
+`fix/normalize-tcp-options`, not bare task names such as `complete-oracle`.
 
 ## PR Title
 
