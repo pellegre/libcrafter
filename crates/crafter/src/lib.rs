@@ -51,7 +51,7 @@ pub mod protocols;
 pub mod registry;
 
 mod net_impl;
-mod pcap_impl;
+pub mod pcap;
 
 pub use error::{CrafterError, Result};
 pub use field::{Field, FieldState};
@@ -113,7 +113,7 @@ pub use net_impl::{
     PacketSendRecvExt, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
     SendRecvOptions, SendRecvReport, SendReport, SendTarget, SocketSend, SocketSender,
 };
-pub use pcap_impl::{
+pub use pcap::{
     dump_pcap, read_pcap, read_pcap_filtered, Capture, CaptureControl, CaptureHandle, FileSniffer,
     PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords,
     PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer, TimestampPrecision,
@@ -170,11 +170,6 @@ pub mod core {
         TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK,
         TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TIMESTAMP, TCP_OPTION_WINDOW_SCALE,
     };
-}
-
-/// Pcap read/write and capture APIs.
-pub mod pcap {
-    pub use crate::pcap_impl::*;
 }
 
 /// Network interface, send, send/receive, batch, and address helper APIs.
