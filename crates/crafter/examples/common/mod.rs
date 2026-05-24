@@ -29,6 +29,8 @@ pub const REMOTE_IPV6: Ipv6Addr = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0
 pub const LOCAL_MAC: MacAddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
 /// Documentation-safe remote MAC address: 02:00:5e:00:53:02.
 pub const REMOTE_MAC: MacAddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]);
+/// Link type used by generated offline pcap examples.
+pub const EXAMPLE_PCAP_LINK_TYPE: PcapLinkType = PcapLinkType::Ethernet;
 
 pub const fn local_ipv4() -> Ipv4Addr {
     LOCAL_IPV4
@@ -300,7 +302,11 @@ pub fn example_ethernet_tcp_packet(
     payload: &str,
 ) -> ExampleResult<Packet> {
     Ok(Ethernet::new().src_str(src_mac)?.dst_str(dst_mac)?
-        / Ipv4::new().src(src_ip).dst(dst_ip).id(0x2222)
+        / Ipv4::new()
+            .src(src_ip)
+            .dst(dst_ip)
+            .id(0x2222)
+            .protocol(IPPROTO_TCP)
         / Tcp::new()
             .sport(src_port)
             .dport(dst_port)
@@ -308,37 +314,40 @@ pub fn example_ethernet_tcp_packet(
         / Raw::from(payload))
 }
 
-pub fn write_example_pcap(path: &Path, count: usize) -> ExampleResult<Vec<Packet>> {
-    ensure_parent(path)?;
-
+pub fn example_pcap_packets(count: usize) -> ExampleResult<Vec<Packet>> {
+    const BASE_TCP_SOURCE_PORT: u16 = 62_345;
     let src_ip = LOCAL_IPV4;
     let dst_ip = REMOTE_IPV4;
     let src_mac = LOCAL_MAC.to_string();
     let dst_mac = REMOTE_MAC.to_string();
 
-    let mut packets = Vec::new();
-    packets.push(example_ethernet_tcp_packet(
-        src_ip,
-        dst_ip,
-        &src_mac,
-        &dst_mac,
-        62345,
-        80,
-        "SomeTCPPayload\n",
-    )?);
-
-    for offset in 1..count.max(1) {
+    let mut packets = Vec::with_capacity(count);
+    for offset in 0..count {
+        let port_offset = u16::try_from(offset).unwrap_or(u16::MAX - BASE_TCP_SOURCE_PORT);
+        let payload = format!("SomeTCPPayload-{offset}\n");
         packets.push(example_ethernet_tcp_packet(
             src_ip,
             dst_ip,
             &src_mac,
             &dst_mac,
-            62345 + offset as u16,
+            BASE_TCP_SOURCE_PORT.saturating_add(port_offset),
             80,
-            "SomeTCPPayload\n",
+            &payload,
         )?);
     }
 
-    dump_pcap(path, &packets, LinkType::Ethernet)?;
+    Ok(packets)
+}
+
+pub fn write_example_pcap(path: &Path, count: usize) -> ExampleResult<Vec<Packet>> {
+    ensure_parent(path)?;
+
+    let packets = example_pcap_packets(count)?;
+    let mut writer = PcapWriter::create(path, EXAMPLE_PCAP_LINK_TYPE)?;
+    for packet in &packets {
+        writer.write_packet(packet)?;
+    }
+    writer.flush()?;
+
     Ok(packets)
 }
