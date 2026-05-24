@@ -62,7 +62,7 @@ jobs:
             > "$RUNNER_TEMP/pr-commit-subjects.txt"
 
       - name: Validate PR commit subjects
-        run: tools/policy/check-conventional-commits --subjects-file "$RUNNER_TEMP/pr-commit-subjects.txt"
+        run: .agents/scripts/check-conventional-commits --subjects-file "$RUNNER_TEMP/pr-commit-subjects.txt"
 
   push-commits:
     name: conventional pushed commits
@@ -85,4 +85,4 @@ jobs:
           else
             range="$BEFORE..$AFTER"
           fi
-          tools/policy/check-conventional-commits --range "$range"
+          .agents/scripts/check-conventional-commits --range "$range"

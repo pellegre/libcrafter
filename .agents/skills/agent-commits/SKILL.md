@@ -47,13 +47,13 @@ docs(live-lab): clarify Hetzner dry runs
 Before committing, install the tracked hook once in the checkout:
 
 ```sh
-tools/git-hooks/install
+.agents/scripts/install-git-hooks
 ```
 
 Before rewording or pushing commit history, validate the affected range:
 
 ```sh
-tools/policy/check-conventional-commits --range origin/master..HEAD
+.agents/scripts/check-conventional-commits --range origin/master..HEAD
 ```
 
 For a single proposed message, validate through the hook or checker rather than

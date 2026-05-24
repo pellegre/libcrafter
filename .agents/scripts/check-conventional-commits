@@ -6,9 +6,9 @@ subject_regex="^(${allowed_types})\([a-z0-9][a-z0-9._/-]*\)!?: .+$"
 
 usage() {
   cat <<USAGE
-usage: tools/policy/check-conventional-commits --message-file FILE
-       tools/policy/check-conventional-commits --range RANGE
-       tools/policy/check-conventional-commits --subjects-file FILE
+usage: .agents/scripts/check-conventional-commits --message-file FILE
+       .agents/scripts/check-conventional-commits --range RANGE
+       .agents/scripts/check-conventional-commits --subjects-file FILE
 
 Validate commit subjects with the Conventional Commits style used by this repo.
 

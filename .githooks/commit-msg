@@ -2,4 +2,4 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-exec "$repo_root/tools/policy/check-conventional-commits" --message-file "$1"
+exec "$repo_root/.agents/scripts/check-conventional-commits" --message-file "$1"
