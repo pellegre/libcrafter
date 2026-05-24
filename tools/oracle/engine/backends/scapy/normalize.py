@@ -191,15 +191,20 @@ def normalize_packet(
     """Convert a Scapy packet object into an oracle DecodedModel."""
 
     layers = _packet_layers(packet)
-    normalized_layers = [_normalize_layer_name(layer["name"]) for layer in layers]
+    normalized_layers: list[str] = []
     normalized_fields: dict[str, JSONObject] = {}
     for occurrence, layer in enumerate(layers):
-        normalized_layer = normalized_layers[occurrence]
-        key = _field_key(normalized_fields, normalized_layer)
-        normalized_fields[key] = _normalize_fields(
+        normalized_layer = _normalize_layer_name(_text(layer["name"]))
+        layer_fields = _normalize_fields(
             normalized_layer,
             _object(layer["fields"], f"{layer['name']}.fields"),
         )
+        if normalized_layer == "dhcp" and "dhcp" in normalized_fields:
+            normalized_fields["dhcp"].update(layer_fields)
+            continue
+        key = _field_key(normalized_fields, normalized_layer)
+        normalized_fields[key] = layer_fields
+        normalized_layers.append(normalized_layer)
 
     metadata: JSONObject = {
         "native": {
@@ -281,11 +286,94 @@ def _normalize_layer_name(native_name: str) -> str:
 def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
     if layer_name == "payload":
         return _normalize_payload_fields(fields)
+    if layer_name == "dns":
+        return _normalize_dns_fields(fields)
+    if layer_name == "dhcp":
+        return _normalize_dhcp_fields(fields)
 
     output: JSONObject = {}
     for native_name, value in fields.items():
         normalized_name = _normalize_field_name(layer_name, native_name)
         output[normalized_name] = _normalize_field_value(layer_name, normalized_name, value)
+    if layer_name in {"icmp", "icmpv6"}:
+        output.pop("unused", None)
+        if output.get("data") == {"hex": "", "ascii": ""}:
+            output.pop("data", None)
+        _fill_icmp_rest_of_header(output)
+    if layer_name == "ipv6_fragment":
+        _normalize_ipv6_fragment_fields(output)
+    if layer_name == "ipv6_routing":
+        _normalize_ipv6_routing_fields(output)
+    return output
+
+
+def _normalize_dns_fields(fields: JSONObject) -> JSONObject:
+    aliases = {
+        "id": "transaction_id",
+        "qr": "is_response",
+        "rcode": "response_code",
+        "aa": "authoritative",
+        "tc": "truncated",
+        "rd": "recursion_desired",
+        "ra": "recursion_available",
+        "ad": "authenticated_data",
+        "cd": "checking_disabled",
+        "qdcount": "question_count",
+        "ancount": "answer_count",
+        "nscount": "authority_count",
+        "arcount": "additional_count",
+    }
+    output: JSONObject = {}
+    for native_name, value in fields.items():
+        if native_name in {"qd", "an", "ns", "ar"}:
+            continue
+        normalized_name = aliases.get(native_name, _normalize_field_name("dns", native_name))
+        if normalized_name in {
+            "authoritative",
+            "truncated",
+            "recursion_desired",
+            "recursion_available",
+            "authenticated_data",
+            "checking_disabled",
+            "is_response",
+        }:
+            output[normalized_name] = _bool_flag(value)
+        else:
+            output[normalized_name] = _normalize_field_value("dns", normalized_name, value)
+    return output
+
+
+def _normalize_dhcp_fields(fields: JSONObject) -> JSONObject:
+    aliases = {
+        "op": "opcode",
+        "htype": "hardware_type",
+        "hlen": "hardware_length",
+        "xid": "transaction_id",
+        "secs": "seconds",
+        "ciaddr": "client_ip",
+        "yiaddr": "your_ip",
+        "siaddr": "server_ip",
+        "giaddr": "relay_ip",
+        "chaddr": "client_hardware_address",
+    }
+    output: JSONObject = {}
+    for native_name, value in fields.items():
+        if native_name in {"sname", "file"}:
+            continue
+        if native_name == "options" and isinstance(value, list):
+            output["option_count"] = len(value)
+            continue
+        normalized_name = aliases.get(native_name, _normalize_field_name("dhcp", native_name))
+        output[normalized_name] = _normalize_field_value("dhcp", normalized_name, value)
+    if "client_hardware_address" in output:
+        output["client_hardware_address"] = _normalize_dhcp_chaddr(
+            output["client_hardware_address"],
+            output.get("hardware_length"),
+        )
+    options = output.get("options")
+    if isinstance(options, Mapping) and options.get("hex") == "63825363":
+        output["magic_cookie"] = 0x63825363
+        output.pop("options", None)
     return output
 
 
@@ -315,11 +403,19 @@ def _normalize_field_name(layer_name: str, native_name: str) -> str:
 def _normalize_field_value(layer_name: str, field_name: str, value: JSONValue) -> JSONValue:
     if layer_name == "icmpv6" and field_name == "type" and isinstance(value, str):
         return _normalize_icmpv6_type(value)
+    if layer_name == "icmp" and field_name == "type" and isinstance(value, str):
+        return _normalize_icmpv4_type(value)
     if layer_name == "linux_sll" and field_name == "source_address":
         return _normalize_linux_sll_source_address(value)
     if field_name == "flags":
+        if layer_name == "tcp":
+            return _normalize_tcp_flags(value)
+        if layer_name == "dhcp":
+            return _normalize_dhcp_flags(value)
         return _normalize_flags(value)
     if field_name == "is_response" and isinstance(value, int):
+        return bool(value)
+    if field_name in {"more_fragments"} and isinstance(value, int):
         return bool(value)
     return value
 
@@ -343,6 +439,102 @@ def _normalize_icmpv6_type(value: str) -> str:
         "time_exceeded": "time_exceeded",
     }
     return aliases.get(lowered, lowered)
+
+
+def _normalize_icmpv4_type(value: str) -> str:
+    lowered = value.lower().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "dest_unreach": "destination_unreachable",
+        "destination_unreachable": "destination_unreachable",
+        "echo_reply": "echo_reply",
+        "echo_request": "echo_request",
+        "parameter_problem": "parameter_problem",
+        "redirect": "redirect",
+        "time_exceeded": "time_exceeded",
+    }
+    return aliases.get(lowered, lowered)
+
+
+def _normalize_tcp_flags(value: JSONValue) -> JSONValue:
+    if not isinstance(value, str):
+        return value
+    if not value:
+        return "none"
+    names = {
+        "F": "fin",
+        "S": "syn",
+        "R": "rst",
+        "P": "psh",
+        "A": "ack",
+        "U": "urg",
+        "E": "ece",
+        "C": "cwr",
+        "N": "ns",
+    }
+    if all(char in names for char in value):
+        return "|".join(names[char] for char in value)
+    return value.lower().replace("+", "|").replace(" ", "_")
+
+
+def _normalize_dhcp_flags(value: JSONValue) -> JSONValue:
+    if value == "B":
+        return 0x8000
+    if value in {"", "none", "0"}:
+        return 0
+    return _normalize_flags(value)
+
+
+def _normalize_dhcp_chaddr(value: JSONValue, hardware_length: JSONValue) -> JSONValue:
+    if not isinstance(value, Mapping):
+        return value
+    hex_value = value.get("hex")
+    if not isinstance(hex_value, str):
+        return value
+    length = hardware_length if isinstance(hardware_length, int) else 6
+    return {"hex": hex_value[: length * 2]}
+
+
+def _bool_flag(value: JSONValue) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        return value not in {"", "0", "false", "False"}
+    return bool(value)
+
+
+def _fill_icmp_rest_of_header(fields: JSONObject) -> None:
+    if "rest_of_header" in fields:
+        return
+    identifier = fields.get("identifier")
+    sequence = fields.get("sequence")
+    if isinstance(identifier, int) and isinstance(sequence, int):
+        fields["rest_of_header"] = f"{identifier:04x}{sequence:04x}"
+
+
+def _normalize_ipv6_fragment_fields(fields: JSONObject) -> None:
+    aliases = {
+        "id": "identification",
+        "offset": "fragment_offset",
+        "m": "more_fragments",
+        "res1": "reserved",
+        "res2": "res",
+    }
+    for old, new in aliases.items():
+        if old in fields and new not in fields:
+            fields[new] = fields.pop(old)
+    if isinstance(fields.get("more_fragments"), int):
+        fields["more_fragments"] = bool(fields["more_fragments"])
+
+
+def _normalize_ipv6_routing_fields(fields: JSONObject) -> None:
+    if "segleft" in fields and "segments_left" not in fields:
+        fields["segments_left"] = fields.pop("segleft")
+    if fields.get("reserved") == 0:
+        fields["reserved"] = "00000000"
+    if fields.get("addresses") == []:
+        fields.pop("addresses", None)
 
 
 def _normalize_linux_sll_source_address(value: JSONValue) -> JSONValue:

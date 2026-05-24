@@ -104,8 +104,22 @@ def _canonical_fields(fields: Mapping[str, object]) -> JSONObject:
 def _canonical_field_value(layer_name: str, field_name: str, value: object) -> JSONValue | object:
     if layer_name == "payload" and field_name == "ascii":
         return _SKIP
-    if field_name == "options" and value in ("", []):
-        return ""
+    if layer_name == "ipv6_routing" and field_name in {
+        "alert",
+        "hmac",
+        "last_entry",
+        "lastentry",
+        "oam",
+        "protected",
+        "reserved",
+        "tag",
+        "tlv_objects",
+        "unused1",
+        "unused2",
+    }:
+        return _SKIP
+    if field_name == "options":
+        return _SKIP
     if field_name == "hex" and isinstance(value, str):
         return value.lower()
     return _json_value(value)
