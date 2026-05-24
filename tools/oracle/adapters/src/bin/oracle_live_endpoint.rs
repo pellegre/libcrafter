@@ -1277,6 +1277,9 @@ fn ipv4_layer(plan: &Value) -> ExampleResult<Ipv4> {
     if let Some(value) = optional(fields, &["fragment_offset", "frag"]) {
         layer = layer.frag(u16_value(value)?);
     }
+    if let Some(value) = optional(fields, &["options"]) {
+        layer = layer.options(option_bytes(value)?);
+    }
     Ok(layer)
 }
 
