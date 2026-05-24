@@ -8,6 +8,18 @@ description: Prepare libcrafter pull requests so squash commits inherit complian
 Use this skill whenever you open, update, title, review, or prepare a pull
 request for this repository.
 
+## Branch Name
+
+Branches created for PR work must follow the repo-local `agent-branches` skill:
+
+```text
+kind/short-slug
+```
+
+Use typed names such as `feature/complete-oracle` or
+`fix/scapy-normalize-tcp-options`, not bare task names such as
+`complete-oracle`.
+
 ## PR Title
 
 The PR title becomes the squash commit subject, so it must follow the same
