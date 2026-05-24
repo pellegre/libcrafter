@@ -5283,8 +5283,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     report_parser = subparsers.add_parser(
         "report",
-        help="run final oracle migration validation and write a summary",
-        description="Run final oracle migration validation and write a summary.",
+        help="run final oracle validation and write a summary",
+        description="Run final oracle validation and write a summary.",
     )
     report_parser.add_argument(
         "--out",
