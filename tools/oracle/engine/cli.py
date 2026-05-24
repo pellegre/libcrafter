@@ -41,9 +41,15 @@ from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 
 
 PCAP_CONTRACT_SPEC = "features/pcap.yaml"
+PCAP_LINK_TYPES_SPEC = "features/pcap-link-types.yaml"
 GENERATOR_SELECTED_SPECS = (
     "tools/oracle/specs/stacks.yaml",
     "tools/oracle/specs/profiles.yaml",
+)
+PCAP_SELECTED_SPECS = (
+    PCAP_CONTRACT_SPEC,
+    PCAP_LINK_TYPES_SPEC,
+    *GENERATOR_SELECTED_SPECS,
 )
 FINAL_REPORT_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("formatting", ("cargo", "fmt", "--all", "--", "--check")),
@@ -143,75 +149,6 @@ REPORT_SCAN_EXCLUDED_DIRS = {
     "target",
     "venv",
 }
-PCAP_DRY_PLAN_CASES: tuple[JSONObject, ...] = (
-    {
-        "name": "scapy-writes-pcap-libcrafter-reads",
-        "directions": ["reference_to_libcrafter"],
-        "writer": "scapy",
-        "reader": "libcrafter",
-        "file_format": "pcap",
-        "link_type": "ethernet",
-        "strict_bytes": True,
-        "timestamp_policy": "exact_when_deterministic_else_normalized",
-    },
-    {
-        "name": "libcrafter-writes-pcap-scapy-reads",
-        "directions": ["libcrafter_to_reference"],
-        "writer": "libcrafter",
-        "reader": "scapy",
-        "file_format": "pcap",
-        "link_type": "ethernet",
-        "strict_bytes": True,
-        "timestamp_policy": "exact_when_deterministic_else_normalized",
-    },
-    {
-        "name": "ethernet-link-type",
-        "directions": ["reference_to_libcrafter", "libcrafter_to_reference"],
-        "file_format": "pcap",
-        "link_type": "ethernet",
-        "roots": ["link:ethernet"],
-        "strict_bytes": True,
-        "timestamp_policy": "exact_when_deterministic_else_normalized",
-    },
-    {
-        "name": "linux-cooked-link-type",
-        "directions": ["reference_to_libcrafter", "libcrafter_to_reference"],
-        "file_format": "pcap",
-        "link_type": "linux_cooked",
-        "roots": ["link:linux-cooked", "link:linux-sll"],
-        "strict_bytes": True,
-        "timestamp_policy": "exact_when_deterministic_else_normalized",
-    },
-    {
-        "name": "null-loopback-link-type",
-        "directions": ["reference_to_libcrafter", "libcrafter_to_reference"],
-        "file_format": "pcap",
-        "link_type": "null_loopback",
-        "roots": ["link:null-loopback"],
-        "strict_bytes": True,
-        "timestamp_policy": "exact_when_deterministic_else_normalized",
-    },
-    {
-        "name": "raw-link-type",
-        "directions": ["reference_to_libcrafter", "libcrafter_to_reference"],
-        "file_format": "pcap",
-        "link_type": "raw",
-        "roots": ["link:raw", "l3:ipv4", "l3:ipv6"],
-        "strict_bytes": True,
-        "support": "where_supported",
-        "timestamp_policy": "exact_when_deterministic_else_normalized",
-    },
-    {
-        "name": "pcapng-mixed-link-types",
-        "directions": ["reference_to_libcrafter", "libcrafter_to_reference", "roundtrip"],
-        "file_format": "pcapng",
-        "link_types": ["ethernet", "linux_cooked", "null_loopback", "raw"],
-        "strict_bytes": False,
-        "support": "where_supported",
-        "timestamp_policy": "exact_when_deterministic_else_normalized_or_ignored",
-    },
-)
-
 
 def _add_common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -584,17 +521,17 @@ def _pcap(args: argparse.Namespace) -> int:
         required=_pcap_required_capabilities(args),
         operation=f"pcap {args.direction}",
         report_path=_pcap_output_dir(args.out) / "report.json",
-        selected_specs=(PCAP_CONTRACT_SPEC, *GENERATOR_SELECTED_SPECS),
+        selected_specs=PCAP_SELECTED_SPECS,
     )
     if unsupported is not None:
         return unsupported
-    if args.backend != "scapy":
+    if args.backend != "scapy" and args.direction != "libcrafter_to_reference":
         return _backend_not_implemented_report(
             args,
             mode="pcap",
             operation=f"pcap {args.direction}",
             report_path=_pcap_output_dir(args.out) / "report.json",
-            selected_specs=(PCAP_CONTRACT_SPEC, *GENERATOR_SELECTED_SPECS),
+            selected_specs=PCAP_SELECTED_SPECS,
         )
 
     return _pcap_execute(args)
@@ -1239,39 +1176,50 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
     return 0 if status == "passed" else 1
 
 
-def _pcap_dry_plan(args: argparse.Namespace) -> int:
-    from .generator import generate_plans
+class PcapUnsupportedError(ValueError):
+    """Raised when a selected pcap spec case cannot execute in this repository."""
 
-    directions = _pcap_execution_directions(args.direction)
-    pcap_cases: list[JSONObject] = []
+
+def _pcap_dry_plan(args: argparse.Namespace) -> int:
+    from .generator import PacketGenerator
+
     try:
-        for direction in directions:
-            pcap_cases.extend(
-                _select_pcap_cases(
-                    direction=direction,
-                    case_name=args.case_name,
-                    feature=args.feature,
+        directions = _pcap_execution_directions(args.direction)
+        pcap_cases = [
+            pcap_case
+            for direction in directions
+            for pcap_case in _pcap_cases_for_direction(
+                args=args,
+                direction=direction,
+                dry_plan=True,
+            )
+        ]
+        generator = PacketGenerator(seed=args.seed, profile=args.profile, backend=args.backend)
+        plans = []
+        indices = _pcap_indices(args)
+        for offset, index in enumerate(indices):
+            pcap_case = pcap_cases[offset % len(pcap_cases)]
+            link_type = _pcap_link_types_for_case(pcap_case)[offset % len(_pcap_link_types_for_case(pcap_case))]
+            root = _pcap_generation_root(args.root, link_type, index)
+            plan = generator.generate(
+                index=index,
+                root=root,
+                family=args.family,
+                case=_pcap_generator_case(link_type, root),
+                direction=directions[offset % len(directions)],
+            )
+            plans.append(
+                _pcap_plan(
+                    plan,
+                    pcap_case,
+                    directions[offset % len(directions)],
+                    link_type=link_type,
+                    file_format=_pcap_file_format_for_case(pcap_case),
                 )
             )
-    except ValueError as exc:
+    except (ValueError, PcapUnsupportedError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
-
-    base_plans = generate_plans(
-        seed=args.seed,
-        profile=args.profile,
-        backend=args.backend,
-        count=args.count,
-        root=args.root,
-        family=args.family,
-        case=args.case_name,
-        feature=args.feature,
-        index=args.index,
-    )
-    plans = [
-        _pcap_plan(plan, pcap_cases[offset % len(pcap_cases)], args.direction)
-        for offset, plan in enumerate(base_plans)
-    ]
 
     report = RunReport(
         mode="pcap",
@@ -1280,7 +1228,7 @@ def _pcap_dry_plan(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(plans),
         status="dry-plan",
-        selected_specs=[PCAP_CONTRACT_SPEC, *GENERATOR_SELECTED_SPECS],
+        selected_specs=list(PCAP_SELECTED_SPECS),
         metadata={
             "dry_plan": True,
             "requested_count": args.count,
@@ -1300,15 +1248,27 @@ def _pcap_dry_plan(args: argparse.Namespace) -> int:
 
 
 def _pcap_execute(args: argparse.Namespace) -> int:
-    from .backends.scapy.packets import encode_packet_plans
-    from .backends.scapy.pcap import with_pcap_metadata
-    from .generator import generate_plans
-
-    directions = _pcap_execution_directions(args.direction)
     output_dir = _pcap_output_dir(args.out)
     artifacts_root = output_dir / "artifacts"
     artifacts_root.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "report.json"
+
+    try:
+        directions = _pcap_execution_directions(args.direction)
+        direction_groups = [
+            (direction, _pcap_vector_groups(args, direction))
+            for direction in directions
+        ]
+    except PcapUnsupportedError as exc:
+        return _write_pcap_unsupported_report(
+            args=args,
+            message=str(exc),
+            report_path=report_path,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
     run_dir = Path(
         tempfile.mkdtemp(
             prefix=f"{args.direction}.",
@@ -1317,71 +1277,75 @@ def _pcap_execute(args: argparse.Namespace) -> int:
     )
 
     try:
-        plans = generate_plans(
-            seed=args.seed,
-            profile=args.profile,
-            backend=args.backend,
-            count=args.count,
-            root=args.root,
-            family=args.family,
-            case=args.case_name,
-            feature=args.feature,
-            index=args.index,
-        )
-        vectors = with_pcap_metadata(encode_packet_plans(plans), link_type="ethernet")
         backend_versions = _backend_versions(args.backend)
         libcrafter_info = _libcrafter_info()
 
-        vector_report = RunReport(
-            mode="pcap",
-            backend=args.backend,
-            profile=args.profile,
-            seed=args.seed,
-            count=len(vectors),
-            status="vectors",
-            selected_specs=[PCAP_CONTRACT_SPEC, *GENERATOR_SELECTED_SPECS],
-            backend_versions=backend_versions,
-            libcrafter=libcrafter_info,
-            metadata={
-                "direction": args.direction,
-                "execution_directions": directions,
-                "requested_count": args.count,
-                "vectors": [vector.to_dict() for vector in vectors],
-            },
-        )
-        vector_path = run_dir / "pcap-vectors.json"
-        write_json(vector_path, vector_report)
-
         results: list[ComparisonResult] = []
         direction_metadata: list[JSONObject] = []
-        direction_artifacts: list[str] = [str(vector_path)]
+        direction_artifacts: list[str] = []
         bridge_exit_codes: list[int] = []
-        for direction in directions:
-            if direction == "reference_to_libcrafter":
-                run = _pcap_reference_to_libcrafter(
-                    args=args,
-                    run_dir=run_dir,
-                    vector_path=vector_path,
-                    vectors=vectors,
-                    plans=plans,
+        generated_count = 0
+        for direction, groups in direction_groups:
+            for group in groups:
+                vectors = group["vectors"]
+                plans = group["plans"]
+                if not isinstance(vectors, list) or not isinstance(plans, list):
+                    raise RuntimeError("pcap vector group is malformed")
+                generated_count += len(plans)
+                link_type = group["link_type"]
+                if not isinstance(link_type, str):
+                    raise RuntimeError("pcap vector group link_type must be a string")
+                label = _pcap_group_label(direction, link_type)
+                vector_path = run_dir / f"{label}.vectors.json"
+                vector_report = RunReport(
+                    mode="pcap",
+                    backend=args.backend,
+                    profile=args.profile,
+                    seed=args.seed,
+                    count=len(vectors),
+                    status="vectors",
+                    selected_specs=list(PCAP_SELECTED_SPECS),
+                    backend_versions=backend_versions,
+                    libcrafter=libcrafter_info,
+                    metadata={
+                        "direction": direction,
+                        "execution_directions": directions,
+                        "requested_count": args.count,
+                        "pcap_case": group["pcap_case"],
+                        "file_format": group["file_format"],
+                        "link_type": group["link_type"],
+                        "vectors": [vector.to_dict() for vector in vectors],
+                    },
                 )
-            elif direction == "libcrafter_to_reference":
-                run = _pcap_libcrafter_to_reference(
-                    args=args,
-                    run_dir=run_dir,
-                    vector_path=vector_path,
-                    vectors=vectors,
-                    plans=plans,
-                )
-            else:
-                raise RuntimeError(f"unsupported pcap execution direction: {direction}")
+                write_json(vector_path, vector_report)
 
-            results.extend(run["results"])  # type: ignore[arg-type]
-            direction_metadata.append(_json_object(run["metadata"], "pcap direction metadata"))
-            direction_artifacts.extend(_string_values(run["artifacts"]))
-            exit_code = run.get("bridge_exit_code")
-            if isinstance(exit_code, int):
-                bridge_exit_codes.append(exit_code)
+                if direction == "reference_to_libcrafter":
+                    run = _pcap_reference_to_libcrafter(
+                        args=args,
+                        run_dir=run_dir,
+                        vector_path=vector_path,
+                        vectors=vectors,  # type: ignore[arg-type]
+                        plans=plans,  # type: ignore[arg-type]
+                        label=label,
+                    )
+                elif direction == "libcrafter_to_reference":
+                    run = _pcap_libcrafter_to_reference(
+                        args=args,
+                        run_dir=run_dir,
+                        vector_path=vector_path,
+                        vectors=vectors,  # type: ignore[arg-type]
+                        plans=plans,  # type: ignore[arg-type]
+                        label=label,
+                    )
+                else:
+                    raise RuntimeError(f"unsupported pcap execution direction: {direction}")
+
+                results.extend(run["results"])  # type: ignore[arg-type]
+                direction_metadata.append(_json_object(run["metadata"], "pcap direction metadata"))
+                direction_artifacts.extend(_string_values(run["artifacts"]))
+                exit_code = run.get("bridge_exit_code")
+                if isinstance(exit_code, int):
+                    bridge_exit_codes.append(exit_code)
 
         failures = [result for result in results if not result.passed]
         status = "passed" if not failures and all(code == 0 for code in bridge_exit_codes) else "failed"
@@ -1401,7 +1365,7 @@ def _pcap_execute(args: argparse.Namespace) -> int:
             seed=args.seed,
             count=len(results),
             status=status,
-            selected_specs=[PCAP_CONTRACT_SPEC, *GENERATOR_SELECTED_SPECS],
+            selected_specs=list(PCAP_SELECTED_SPECS),
             artifacts=artifacts,
             artifact_paths=artifacts,
             results=results,
@@ -1417,7 +1381,7 @@ def _pcap_execute(args: argparse.Namespace) -> int:
                 "direction": args.direction,
                 "execution_directions": directions,
                 "requested_count": args.count,
-                "generated_count": len(plans),
+                "generated_count": generated_count,
                 "artifact_dir": str(run_dir) if preserve_artifacts else None,
                 "directions": direction_metadata,
                 "timestamp_policy": {
@@ -1961,18 +1925,19 @@ def _pcap_reference_to_libcrafter(
     vector_path: Path,
     vectors: list[EncodedVector],
     plans: list[PacketPlan],
+    label: str,
 ) -> JSONObject:
     from .backends.scapy.pcap import read_pcap, write_pcap
 
-    pcap_path = run_dir / "scapy-reference.pcap"
+    pcap_path = run_dir / f"{label}.scapy-reference.pcap"
     write_pcap(pcap_path, vectors)
     expected_records = read_pcap(pcap_path)
-    expected_path = run_dir / "scapy-reference-read.json"
+    expected_path = run_dir / f"{label}.scapy-reference-read.json"
     write_json(expected_path, {"records": expected_records})
 
-    bridge = _run_libcrafter_pcap_reader(pcap_path, run_dir, "scapy-reference")
+    bridge = _run_libcrafter_pcap_reader(pcap_path, run_dir, f"{label}.scapy-reference")
     actual_records = _pcap_records(bridge["report"])
-    actual_path = run_dir / "libcrafter-read-scapy-reference.json"
+    actual_path = run_dir / f"{label}.libcrafter-read-scapy-reference.json"
     write_json(actual_path, bridge["report"])
 
     results = _compare_pcap_records(
@@ -2001,6 +1966,7 @@ def _pcap_reference_to_libcrafter(
             "direction": "reference_to_libcrafter",
             "writer": "scapy",
             "reader": "libcrafter",
+            "label": label,
             "pcap": str(pcap_path),
             "record_count": len(expected_records),
             "libcrafter_bridge": {
@@ -2018,23 +1984,24 @@ def _pcap_libcrafter_to_reference(
     vector_path: Path,
     vectors: list[EncodedVector],
     plans: list[PacketPlan],
+    label: str,
 ) -> JSONObject:
-    from .backends.scapy.pcap import pcap_link_type_for_vectors, read_pcap
+    from .backends.scapy.pcap import pcap_link_type_for_vectors
 
-    pcap_path = run_dir / "libcrafter-reference.pcap"
+    pcap_path = run_dir / f"{label}.libcrafter-reference.pcap"
     bridge = _run_libcrafter_pcap_writer(
         vector_path=vector_path,
         pcap_path=pcap_path,
         run_dir=run_dir,
-        label="libcrafter-reference",
+        label=f"{label}.libcrafter-reference",
         link_type=pcap_link_type_for_vectors(vectors, requested="ethernet"),
     )
     expected_records = _pcap_records(bridge["report"])
-    expected_path = run_dir / "libcrafter-reference-written.json"
+    expected_path = run_dir / f"{label}.libcrafter-reference-written.json"
     write_json(expected_path, bridge["report"])
 
-    actual_records = read_pcap(pcap_path)
-    actual_path = run_dir / "scapy-read-libcrafter-reference.json"
+    actual_records = _pcap_read_reference_records(args.backend, pcap_path)
+    actual_path = run_dir / f"{label}.{args.backend}-read-libcrafter-reference.json"
     write_json(actual_path, {"records": actual_records})
 
     results = _compare_pcap_records(
@@ -2062,7 +2029,8 @@ def _pcap_libcrafter_to_reference(
         "metadata": {
             "direction": "libcrafter_to_reference",
             "writer": "libcrafter",
-            "reader": "scapy",
+            "reader": args.backend,
+            "label": label,
             "pcap": str(pcap_path),
             "record_count": len(expected_records),
             "libcrafter_bridge": {
@@ -2071,6 +2039,19 @@ def _pcap_libcrafter_to_reference(
             },
         },
     }
+
+
+def _pcap_read_reference_records(backend: str, pcap_path: Path) -> list[JSONObject]:
+    if backend == "scapy":
+        from .backends.scapy.pcap import read_pcap
+
+        return read_pcap(pcap_path)
+    if backend == "wireshark":
+        raise RuntimeError(
+            "unsupported backend implementation: backend wireshark is parser-only "
+            "and pcap read capable, but tshark pcap record normalization is not wired yet"
+        )
+    raise RuntimeError(f"unsupported pcap read backend: {backend}")
 
 
 def _compare_pcap_records(
@@ -3213,40 +3194,154 @@ def _pcap_execution_directions(direction: str) -> list[str]:
     raise ValueError(f"unsupported pcap direction: {direction}")
 
 
-def _select_pcap_cases(
+def _pcap_cases_for_direction(
     *,
+    args: argparse.Namespace,
     direction: str,
-    case_name: str | None,
-    feature: str | None,
+    dry_plan: bool,
 ) -> list[JSONObject]:
-    selected: list[JSONObject] = []
-    for pcap_case in PCAP_DRY_PLAN_CASES:
-        directions = _string_values(pcap_case.get("directions"))
-        if direction not in directions:
-            continue
-        if case_name is not None and pcap_case.get("name") != case_name:
-            continue
-        if feature is not None and feature not in {"pcap", "pcap_contracts"}:
-            continue
-        selected.append(dict(pcap_case))
+    all_cases = [
+        pcap_case
+        for pcap_case in _pcap_spec_cases()
+        if _pcap_case_supports_direction(pcap_case, direction)
+        and _pcap_case_matches_filter(pcap_case, args.case_name, args.feature)
+    ]
+    if dry_plan:
+        selected = all_cases
+    else:
+        selected = [
+            pcap_case
+            for pcap_case in all_cases
+            if _pcap_case_roles_match(pcap_case, direction, args.backend)
+        ]
+        if (
+            not selected
+            and args.case_name is None
+            and (direction == "libcrafter_to_reference" or args.feature == "pcap_link_types")
+        ):
+            selected = [
+                _pcap_case_with_roles(pcap_case, direction, args.backend)
+                for pcap_case in all_cases
+                if pcap_case.get("writer") is None
+                and pcap_case.get("reader") is None
+                and _pcap_case_has_link_or_format(pcap_case)
+                and _pcap_file_format_for_case(pcap_case) == "pcap"
+            ]
+        if not selected and args.case_name is not None:
+            selected = [
+                _pcap_case_with_roles(pcap_case, direction, args.backend)
+                for pcap_case in all_cases
+                if _pcap_case_has_link_or_format(pcap_case)
+            ]
 
-    if selected:
-        return selected
+    if not selected:
+        detail = f" direction={direction!r}"
+        if args.case_name is not None:
+            detail += f" case={args.case_name!r}"
+        if args.feature is not None:
+            detail += f" feature={args.feature!r}"
+        raise ValueError(f"no pcap spec cases match{detail}")
 
-    detail = f" direction={direction!r}"
-    if case_name is not None:
-        detail += f" case={case_name!r}"
-    if feature is not None:
-        detail += f" feature={feature!r}"
-    raise ValueError(f"no pcap dry-plan contracts match{detail}")
+    return [dict(pcap_case) for pcap_case in selected]
 
 
-def _pcap_plan(plan: PacketPlan, pcap_case: JSONObject, direction: str) -> PacketPlan:
+def _pcap_spec_cases() -> list[JSONObject]:
+    from .spec_loader import load_oracle_specs
+
+    specs = load_oracle_specs()
+    feature = specs.features.get("pcap_contracts")
+    if feature is None:
+        raise ValueError("pcap feature spec is missing: pcap_contracts")
+    raw_cases = feature.raw.get("supported_cases", [])
+    if not isinstance(raw_cases, list):
+        raise ValueError("features/pcap.yaml supported_cases must be a list")
+    cases: list[JSONObject] = []
+    for raw_case in raw_cases:
+        if not isinstance(raw_case, dict):
+            raise ValueError("features/pcap.yaml supported_cases entries must be objects")
+        pcap_case = dict(raw_case)
+        pcap_case.setdefault("strict_bytes", feature.strict_bytes)
+        pcap_case.setdefault("timestamp_policy", "exact")
+        pcap_case["feature"] = feature.name
+        cases.append(pcap_case)  # type: ignore[arg-type]
+    return cases
+
+
+def _pcap_vector_groups(args: argparse.Namespace, direction: str) -> list[JSONObject]:
+    from .backends.scapy.packets import encode_packet_plan
+    from .backends.scapy.pcap import with_pcap_metadata
+    from .generator import PacketGenerator
+
+    cases = _pcap_cases_for_direction(args=args, direction=direction, dry_plan=False)
+    generator = PacketGenerator(seed=args.seed, profile=args.profile, backend=args.backend)
+    groups: dict[tuple[str, str], JSONObject] = {}
+    for offset, index in enumerate(_pcap_indices(args)):
+        pcap_case = cases[offset % len(cases)]
+        file_format = _pcap_file_format_for_case(pcap_case)
+        if file_format != "pcap":
+            raise PcapUnsupportedError(
+                f"unsupported pcap file format: {file_format} from case "
+                f"{pcap_case.get('name')}; libcrafter pcap mode supports classic pcap only"
+            )
+        link_types = _pcap_link_types_for_case(pcap_case)
+        link_type = link_types[offset % len(link_types)]
+        root = _pcap_generation_root(args.root, link_type, index)
+        plan = generator.generate(
+            index=index,
+            root=root,
+            family=args.family,
+            case=_pcap_generator_case(link_type, root),
+            direction=direction,
+        )
+        plan = _pcap_plan(
+            plan,
+            pcap_case,
+            direction,
+            link_type=link_type,
+            file_format=file_format,
+        )
+        vector = encode_packet_plan(plan)
+        vector = with_pcap_metadata(
+            [vector],
+            link_type=_pcap_writer_link_type(link_type),
+        )[0]
+        record_link_type = _pcap_vector_link_type(vector)
+        key = (file_format, record_link_type)
+        group = groups.setdefault(
+            key,
+            {
+                "file_format": file_format,
+                "link_type": record_link_type,
+                "pcap_case": pcap_case,
+                "plans": [],
+                "vectors": [],
+            },
+        )
+        group["plans"].append(plan)  # type: ignore[union-attr]
+        group["vectors"].append(vector)  # type: ignore[union-attr]
+    return list(groups.values())
+
+
+def _pcap_plan(
+    plan: PacketPlan,
+    pcap_case: JSONObject,
+    direction: str,
+    *,
+    link_type: str,
+    file_format: str,
+) -> PacketPlan:
     strict_bytes = pcap_case.get("strict_bytes")
     metadata = dict(plan.metadata)
     metadata["pcap"] = pcap_case
     metadata["selected_spec"] = PCAP_CONTRACT_SPEC
     metadata["timestamp_policy"] = pcap_case.get("timestamp_policy")
+    metadata["pcap_file_format"] = file_format
+    metadata["pcap_link_type"] = link_type
+    selected_specs = _string_values(metadata.get("selected_specs", []))
+    for spec in PCAP_SELECTED_SPECS:
+        if spec not in selected_specs:
+            selected_specs.append(spec)
+    metadata["selected_specs"] = selected_specs
     feature_tags = list(dict.fromkeys([*plan.feature_tags, "pcap"]))
     case_name = pcap_case.get("name")
     return replace(
@@ -3256,6 +3351,213 @@ def _pcap_plan(plan: PacketPlan, pcap_case: JSONObject, direction: str) -> Packe
         strict_bytes=strict_bytes if isinstance(strict_bytes, bool) else plan.strict_bytes,
         feature_tags=feature_tags,
         metadata=metadata,
+    )
+
+
+def _pcap_indices(args: argparse.Namespace) -> list[int]:
+    if args.index is not None:
+        return [args.index]
+    return list(range(args.count))
+
+
+def _pcap_case_supports_direction(pcap_case: JSONObject, direction: str) -> bool:
+    directions = _pcap_case_directions(pcap_case)
+    return direction in directions or "roundtrip" in directions
+
+
+def _pcap_case_directions(pcap_case: JSONObject) -> list[str]:
+    directions = _string_values(pcap_case.get("directions"))
+    direction = pcap_case.get("direction")
+    if isinstance(direction, str):
+        directions.append(direction)
+    return list(dict.fromkeys(directions))
+
+
+def _pcap_case_matches_filter(
+    pcap_case: JSONObject,
+    case_name: str | None,
+    feature: str | None,
+) -> bool:
+    if case_name is not None and pcap_case.get("name") != case_name:
+        return False
+    if feature is None:
+        return True
+    if feature in {"pcap", "pcap_contracts"}:
+        return True
+    if feature == "pcap_link_types":
+        return pcap_case.get("writer") is None and pcap_case.get("reader") is None
+    return False
+
+
+def _pcap_case_roles_match(
+    pcap_case: JSONObject,
+    direction: str,
+    backend: str,
+) -> bool:
+    writer = pcap_case.get("writer")
+    reader = pcap_case.get("reader")
+    if direction == "reference_to_libcrafter":
+        return writer == backend and reader == "libcrafter"
+    if direction == "libcrafter_to_reference":
+        return writer == "libcrafter" and reader == backend
+    return False
+
+
+def _pcap_case_with_roles(
+    pcap_case: JSONObject,
+    direction: str,
+    backend: str,
+) -> JSONObject:
+    output = dict(pcap_case)
+    if direction == "reference_to_libcrafter":
+        output["writer"] = backend
+        output["reader"] = "libcrafter"
+    elif direction == "libcrafter_to_reference":
+        output["writer"] = "libcrafter"
+        output["reader"] = backend
+    return output
+
+
+def _pcap_case_has_link_or_format(pcap_case: JSONObject) -> bool:
+    return any(
+        key in pcap_case
+        for key in ("file_format", "file_formats", "link_type", "link_types", "roots")
+    )
+
+
+def _pcap_file_format_for_case(pcap_case: JSONObject) -> str:
+    file_formats = _string_values(pcap_case.get("file_formats"))
+    file_format = pcap_case.get("file_format")
+    if isinstance(file_format, str):
+        file_formats.insert(0, file_format)
+    file_formats = list(dict.fromkeys(file_formats))
+    if not file_formats:
+        return "pcap"
+    if "pcap" in file_formats:
+        return "pcap"
+    return file_formats[0]
+
+
+def _pcap_link_types_for_case(pcap_case: JSONObject) -> list[str]:
+    link_types = [_pcap_canonical_link_type(item) for item in _string_values(pcap_case.get("link_types"))]
+    link_type = pcap_case.get("link_type")
+    if isinstance(link_type, str):
+        link_types.insert(0, _pcap_canonical_link_type(link_type))
+    roots = _string_values(pcap_case.get("roots"))
+    for root in roots:
+        link_types.append(_pcap_link_type_for_root(root))
+    link_types = list(dict.fromkeys(link_types))
+    if link_types:
+        return link_types
+    return ["ethernet"]
+
+
+def _pcap_generation_root(requested_root: str | None, link_type: str, index: int) -> str:
+    if requested_root is not None:
+        requested_link_type = _pcap_link_type_for_root(requested_root)
+        if requested_link_type != link_type:
+            raise ValueError(
+                f"root {requested_root!r} is incompatible with pcap link type {link_type!r}"
+            )
+        return requested_root
+    if link_type == "ethernet":
+        return "link:ethernet"
+    if link_type == "linux_cooked":
+        return "link:linux-cooked"
+    if link_type == "null_loopback":
+        return "link:null-loopback"
+    if link_type == "raw":
+        return "l3:ipv6" if index % 2 else "l3:ipv4"
+    raise ValueError(f"unsupported pcap link type: {link_type}")
+
+
+def _pcap_generator_case(link_type: str, root: str) -> str:
+    if link_type == "ethernet":
+        return "arp-request"
+    if link_type == "linux_cooked":
+        return "linux-cooked-ipv4-udp"
+    if link_type == "null_loopback":
+        return "null-loopback-ipv4-little-endian"
+    if link_type == "raw" and root == "link:raw":
+        return "raw-payload-link"
+    if link_type == "raw" and root == "l3:ipv6":
+        return "udp-ipv6-checksum-length"
+    if link_type == "raw":
+        return "ipv4-udp"
+    raise ValueError(f"unsupported pcap link type: {link_type}")
+
+
+def _pcap_link_type_for_root(root: str) -> str:
+    normalized = root.replace("_", "-")
+    if normalized in {"link:ethernet", "ether"}:
+        return "ethernet"
+    if normalized in {"link:linux-cooked", "link:linux-sll", "cookedlinux"}:
+        return "linux_cooked"
+    if normalized in {"link:null-loopback", "loopback"}:
+        return "null_loopback"
+    if normalized in {"link:raw", "l3:ipv4", "l3:ipv6", "ip", "ipv6", "raw"}:
+        return "raw"
+    raise ValueError(f"unsupported pcap root for link type selection: {root}")
+
+
+def _pcap_canonical_link_type(link_type: str) -> str:
+    normalized = link_type.replace("-", "_")
+    if normalized in {"linux_sll", "linux_cooked"}:
+        return "linux_cooked"
+    if normalized in {"ether", "ethernet"}:
+        return "ethernet"
+    if normalized in {"null", "null_loopback", "loopback"}:
+        return "null_loopback"
+    if normalized in {"raw", "raw_ip"}:
+        return "raw"
+    raise ValueError(f"unsupported pcap link type: {link_type}")
+
+
+def _pcap_writer_link_type(link_type: str) -> str:
+    if link_type == "linux_cooked":
+        return "linux_sll"
+    return link_type
+
+
+def _pcap_vector_link_type(vector: EncodedVector) -> str:
+    record = vector.metadata.get("pcap_record")
+    if not isinstance(record, dict):
+        raise ValueError("pcap vector metadata is missing pcap_record")
+    link_type = record.get("link_type")
+    if not isinstance(link_type, dict):
+        raise ValueError("pcap vector metadata is missing link_type")
+    name = link_type.get("name")
+    if not isinstance(name, str):
+        raise ValueError("pcap vector link_type.name must be a string")
+    return name
+
+
+def _pcap_group_label(direction: str, link_type: str) -> str:
+    safe_link_type = re.sub(r"[^A-Za-z0-9_.-]+", "-", link_type)
+    return f"{direction}.{safe_link_type}"
+
+
+def _write_pcap_unsupported_report(
+    *,
+    args: argparse.Namespace,
+    message: str,
+    report_path: Path,
+) -> int:
+    try:
+        backend = get_backend(args.backend)
+    except UnknownBackendError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return _write_backend_support_report(
+        args=args,
+        mode="pcap",
+        backend=backend,
+        message=message,
+        operation=f"pcap {args.direction}",
+        required=(),
+        missing=(),
+        report_path=report_path,
+        selected_specs=PCAP_SELECTED_SPECS,
     )
 
 

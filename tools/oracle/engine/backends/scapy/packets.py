@@ -48,6 +48,8 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ipv6_routing": "IPv6ExtHdrRouting",
     "ipv4": "IP",
     "ipv6": "IPv6",
+    "linux_cooked": "CookedLinux",
+    "null_loopback": "Loopback",
     "payload": "Raw",
     "raw": "Raw",
     "tcp": "TCP",
@@ -56,12 +58,18 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
 }
 _SCAPY_DECODER_BY_ROOT: dict[str, str] = {
     "link:ethernet": "Ether",
+    "link:linux-cooked": "CookedLinux",
+    "link:linux-sll": "CookedLinux",
+    "link:null-loopback": "Loopback",
     "link:raw": "Raw",
     "l3:ipv4": "IP",
     "l3:ipv6": "IPv6",
 }
 _ROOT_FIRST_LAYERS: dict[str, set[str]] = {
     "link:ethernet": {"ethernet"},
+    "link:linux-cooked": {"linux_cooked"},
+    "link:linux-sll": {"linux_cooked"},
+    "link:null-loopback": {"null_loopback"},
     "link:raw": {"payload"},
     "l3:ipv4": {"ipv4"},
     "l3:ipv6": {"ipv6"},
@@ -177,6 +185,14 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "segleft",
         "type",
     },
+    "linux_cooked": {
+        "address_length",
+        "address_type",
+        "packet_type",
+        "protocol",
+        "source_address",
+    },
+    "null_loopback": {"type"},
     "payload": {"bytes_hex", "hex", "length", "text", "value"},
     "tcp": {
         "ack",
@@ -279,6 +295,10 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return scapy_all.Raw(load=_payload_bytes(fields))
     if layer == "ethernet":
         return _ethernet(plan, scapy_all)
+    if layer == "linux_cooked":
+        return _linux_cooked(plan.fields, scapy_all)
+    if layer == "null_loopback":
+        return _null_loopback(plan.fields, scapy_all)
     if layer == "vlan":
         return _vlan(plan, scapy_all)
     if layer == "arp":
@@ -326,6 +346,40 @@ def _vlan(plan: PacketPlan, scapy_all: Any) -> Any:
         "dei": _int(_required_field(fields, "vlan", "drop_eligible", "dei"), 0),
     }
     return scapy_all.Dot1Q(**kwargs)
+
+
+def _linux_cooked(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
+    sll_fields = _layer_fields(fields, "linux_cooked")
+    kwargs: dict[str, Any] = {
+        "pkttype": _linux_sll_packet_type(
+            _required_field(sll_fields, "linux_cooked", "packet_type")
+        ),
+        "lladdrtype": _hardware_type_value(
+            _required_field(sll_fields, "linux_cooked", "address_type")
+        ),
+        "lladdrlen": _int(
+            _required_field(sll_fields, "linux_cooked", "address_length"),
+            6,
+        ),
+        "src": _bytes_field(
+            _required_field(sll_fields, "linux_cooked", "source_address"),
+            pad_to=8,
+        ),
+        "proto": _ethertype_value(
+            _required_field(sll_fields, "linux_cooked", "protocol")
+        ),
+    }
+    return scapy_all.CookedLinux(**kwargs)
+
+
+def _null_loopback(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
+    null_fields = _layer_fields(fields, "null_loopback")
+    kwargs = {
+        "type": _address_family_value(
+            _required_field(null_fields, "null_loopback", "type")
+        )
+    }
+    return scapy_all.Loopback(**kwargs)
 
 
 def _arp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
@@ -802,6 +856,54 @@ def _hardware_type_value(value: object) -> int:
             return 1
         return int(lowered, 0)
     return _int(value, 1)
+
+
+def _linux_sll_packet_type(value: object) -> int:
+    if isinstance(value, str):
+        lowered = value.lower().replace("-", "_")
+        mapping = {
+            "host": 0,
+            "broadcast": 1,
+            "multicast": 2,
+            "otherhost": 3,
+            "outgoing": 4,
+        }
+        if lowered in mapping:
+            return mapping[lowered]
+        return int(lowered, 0)
+    return _int(value, 0)
+
+
+def _address_family_value(value: object) -> int:
+    if isinstance(value, str):
+        lowered = value.lower().replace("-", "_")
+        mapping = {
+            "ipv4": 2,
+            "ip": 2,
+            "ipv6": 24,
+        }
+        if lowered in mapping:
+            return mapping[lowered]
+        return int(lowered, 0)
+    return _int(value, 2)
+
+
+def _bytes_field(value: object, *, pad_to: int | None = None) -> bytes:
+    if isinstance(value, bytes):
+        raw = value
+    elif isinstance(value, Mapping):
+        hex_value = value.get("hex")
+        if not isinstance(hex_value, str):
+            raise ValueError(f"bytes field object requires hex, got {value!r}")
+        raw = bytes.fromhex(hex_value)
+    elif isinstance(value, str):
+        cleaned = value.replace(":", "").replace("-", "")
+        raw = bytes.fromhex(cleaned)
+    else:
+        raise ValueError(f"expected bytes-compatible value, got {value!r}")
+    if pad_to is not None and len(raw) < pad_to:
+        raw = raw + (b"\x00" * (pad_to - len(raw)))
+    return raw
 
 
 def _protocol_value(value: object, mapping: Mapping[str, int]) -> int:

@@ -1678,7 +1678,7 @@ def _sample_linux_cooked_field(ctx: _SamplingContext, field_name: str, domain: o
     if field_name == "address_length":
         return 6
     if field_name == "source_address":
-        return {"hex": ctx.src_mac.replace(":", "")}
+        return {"hex": f"{ctx.src_mac.replace(':', '')}0000"}
     if field_name == "protocol":
         return "ipv4"
     raise ValueError(f"spec error: unsupported linux_cooked field sampler: {field_name}")

@@ -30,12 +30,14 @@ _LINK_TYPES: dict[int, str] = {
 }
 _ROOTS_BY_LINK_TYPE: dict[str, str] = {
     "ethernet": "link:ethernet",
+    "linux_cooked": "link:linux-cooked",
     "linux_sll": "link:linux-sll",
     "null_loopback": "link:null-loopback",
     "raw": "link:raw",
 }
 _DATALINK_BY_LINK_TYPE: dict[str, int] = {
     "ethernet": 1,
+    "linux_cooked": 113,
     "linux_sll": 113,
     "null_loopback": 0,
     "raw": 101,
@@ -215,7 +217,11 @@ def _pcap_link_type_for_vector(vector: EncodedVector, requested: str) -> str:
         return "raw"
     if root in {"Ether", "link:ethernet"}:
         return "ethernet"
-    return requested
+    if root in {"CookedLinux", "link:linux-cooked", "link:linux-sll"}:
+        return "linux_sll"
+    if root in {"Loopback", "link:null-loopback"}:
+        return "null_loopback"
+    return _canonical_link_type_name(requested)
 
 
 def _single_pcap_link_type(records: list[JSONObject]) -> str:
@@ -306,7 +312,7 @@ def _decimal_timestamp(timestamp: JSONObject) -> Decimal:
 
 
 def _link_type_object(name: str, *, datalink: int | None = None) -> JSONObject:
-    normalized = name.replace("-", "_")
+    normalized = _canonical_link_type_name(name)
     if normalized.startswith("unknown:"):
         value = int(normalized.split(":", 1)[1])
         return {"name": normalized, "datalink": value}
@@ -319,11 +325,18 @@ def _link_type_object(name: str, *, datalink: int | None = None) -> JSONObject:
 
 
 def _root_for_link_type(link_type: str) -> str:
-    normalized = link_type.replace("-", "_")
+    normalized = _canonical_link_type_name(link_type)
     root = _ROOTS_BY_LINK_TYPE.get(normalized)
     if root is None:
         raise ValueError(f"unsupported pcap link type: {link_type}")
     return root
+
+
+def _canonical_link_type_name(name: str) -> str:
+    normalized = name.replace("-", "_")
+    if normalized == "linux_cooked":
+        return "linux_sll"
+    return normalized
 
 
 def _require_capability(

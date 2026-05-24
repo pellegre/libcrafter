@@ -97,6 +97,25 @@ stacks:
       - arp-request
       - arp-reply
       - crafter-arp-reply
+  - name: linux_cooked_ipv4_udp
+    root: "link:linux-cooked"
+    layers:
+      - linux_cooked
+      - ipv4
+      - udp
+      - payload
+    coverage_cases:
+      - linux-cooked-ipv4-udp
+      - crafter-linux-cooked-ipv4-udp
+  - name: null_loopback_ipv4_udp
+    root: "link:null-loopback"
+    layers:
+      - null_loopback
+      - ipv4
+      - udp
+      - payload
+    coverage_cases:
+      - null-loopback-ipv4-little-endian
   - name: vlan_ipv4_udp
     root: "link:ethernet"
     layers:
