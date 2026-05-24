@@ -8,34 +8,22 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      confirm_live_lab:
-        description: "Type run to create disposable live-lab infrastructure."
-        required: true
-        default: "no"
-      provider:
-        description: "Live-lab provider executable under tools/live-lab/providers."
-        required: true
-        default: "hetzner"
-      suite:
-        description: "Live-lab suite to run."
-        required: true
-        default: "all"
-      run_oracle_live_dry_run:
-        description: "Type run to execute the oracle Hetzner live dry run."
+      confirm_hetzner_live:
+        description: "Type run to create Hetzner resources and exchange live packets."
         required: true
         default: "no"
       oracle_live_profile:
-        description: "Oracle live profile for the manual Hetzner dry run."
+        description: "Oracle live profile for Hetzner dry-run and real exchange."
         required: true
         default: "smoke"
       oracle_live_seed:
-        description: "Oracle live deterministic seed for the manual Hetzner dry run."
+        description: "Oracle live deterministic seed."
         required: true
-        default: "12345"
+        default: "1"
       oracle_live_count:
-        description: "Oracle live packet plan count for the manual Hetzner dry run."
+        description: "Oracle live packet plan count."
         required: true
-        default: "10"
+        default: "2"
 
 permissions:
   contents: read
@@ -45,34 +33,12 @@ env:
 
 jobs:
   dry-run:
-    name: provider dry run
+    name: oracle Hetzner live dry run
     runs-on: ubuntu-latest
     env:
-      LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR: ${{ github.workspace }}/target/live-lab-artifacts
-      LIBCRAFTER_LIVE_LAB_STATE_DIR: ${{ github.workspace }}/target/live-lab-state
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install provider tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends curl jq openssh-client tar
-
-      - name: Run provider dry runs
-        run: |
-          tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
-          tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
-
-  oracle-live:
-    name: oracle hetzner live dry run
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_oracle_live_dry_run == 'run' }}
-    env:
-      ORACLE_LIVE_PROFILE: ${{ github.event.inputs.oracle_live_profile }}
-      ORACLE_LIVE_SEED: ${{ github.event.inputs.oracle_live_seed }}
-      ORACLE_LIVE_COUNT: ${{ github.event.inputs.oracle_live_count }}
+      ORACLE_LIVE_PROFILE: ${{ github.event.inputs.oracle_live_profile || 'smoke' }}
+      ORACLE_LIVE_SEED: ${{ github.event.inputs.oracle_live_seed || '1' }}
+      ORACLE_LIVE_COUNT: ${{ github.event.inputs.oracle_live_count || '2' }}
 
     steps:
       - name: Checkout
@@ -85,10 +51,61 @@ jobs:
 
       - name: Run oracle Hetzner live dry run
         run: |
-          tools/oracle/run live \
-            --backend scapy \
-            --provider hetzner \
-            --dry-run \
+          tools/oracle/run live --backend scapy --provider hetzner --dry-run \
+            --profile "$ORACLE_LIVE_PROFILE" \
+            --seed "$ORACLE_LIVE_SEED" \
+            --count "$ORACLE_LIVE_COUNT"
+
+      - name: Upload oracle live dry-run artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcrafter-oracle-live-dry-run-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: |
+            target/oracle/live
+
+  hetzner-live:
+    name: protected Hetzner oracle live exchange
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_hetzner_live == 'run' }}
+    environment: hetzner-live
+    timeout-minutes: 90
+    concurrency:
+      group: hetzner-oracle-live
+      cancel-in-progress: false
+    env:
+      CONFIRM_HETZNER_LIVE: ${{ github.event.inputs.confirm_hetzner_live }}
+      HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+      ORACLE_LIVE_PROFILE: ${{ github.event.inputs.oracle_live_profile }}
+      ORACLE_LIVE_SEED: ${{ github.event.inputs.oracle_live_seed }}
+      ORACLE_LIVE_COUNT: ${{ github.event.inputs.oracle_live_count }}
+      LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR: ${{ github.workspace }}/target/live-lab-artifacts
+      LIBCRAFTER_LIVE_LAB_STATE_DIR: ${{ github.workspace }}/target/live-lab-state
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate protected inputs
+        run: |
+          if [ "${CONFIRM_HETZNER_LIVE}" != "run" ]; then
+            echo "::error::Set confirm_hetzner_live=run to create Hetzner resources."
+            exit 78
+          fi
+          if [ -z "${HETZNER_API_TOKEN:-}" ]; then
+            echo "::error::HETZNER_API_TOKEN secret is required for real Hetzner live exchange."
+            exit 78
+          fi
+
+      - name: Install oracle and provider dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl jq openssh-client python3-pip python3-venv tar
+
+      - name: Run real Hetzner oracle live exchange
+        run: |
+          tools/oracle/run live --backend scapy --provider hetzner \
             --profile "$ORACLE_LIVE_PROFILE" \
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
@@ -97,77 +114,8 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: libcrafter-oracle-live-${{ github.run_id }}
+          name: libcrafter-oracle-live-hetzner-${{ github.run_id }}
           if-no-files-found: ignore
           path: |
             target/oracle/live
-
-  live:
-    name: disposable live lab
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    timeout-minutes: 90
-    env:
-      CONFIRM_LIVE_LAB: ${{ github.event.inputs.confirm_live_lab }}
-      LIVE_LAB_PROVIDER: ${{ github.event.inputs.provider }}
-      LIVE_LAB_SUITE: ${{ github.event.inputs.suite }}
-      HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
-      LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR: ${{ github.workspace }}/target/live-lab-artifacts
-      LIBCRAFTER_LIVE_LAB_STATE_DIR: ${{ github.workspace }}/target/live-lab-state
-
-    steps:
-      - name: Checkout
-        if: ${{ env.CONFIRM_LIVE_LAB == 'run' }}
-        uses: actions/checkout@v4
-
-      - name: Check confirmation
-        run: |
-          if [ "${CONFIRM_LIVE_LAB}" = "run" ]; then
-            echo "confirmed=true"
-          else
-            echo "confirmed=false"
-            echo "Set confirm_live_lab=run to create disposable infrastructure."
-          fi
-
-      - name: Install provider tools
-        if: ${{ env.CONFIRM_LIVE_LAB == 'run' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends curl jq openssh-client tar
-
-      - name: Require provider secret
-        if: ${{ env.CONFIRM_LIVE_LAB == 'run' }}
-        run: |
-          case "$LIVE_LAB_PROVIDER" in
-            hetzner)
-              if [ -z "${HETZNER_API_TOKEN:-}" ]; then
-                echo "::error::HETZNER_API_TOKEN secret is required for the Hetzner live lab."
-                exit 78
-              fi
-              ;;
-            *)
-              echo "provider=$LIVE_LAB_PROVIDER"
-              ;;
-          esac
-
-      - name: Run live-lab suite
-        if: ${{ env.CONFIRM_LIVE_LAB == 'run' }}
-        run: |
-          tools/live-lab/libcrafter-live-lab run \
-            --provider "$LIVE_LAB_PROVIDER" \
-            --suite "$LIVE_LAB_SUITE"
-
-      - name: Destroy live-lab resources
-        if: ${{ always() && env.CONFIRM_LIVE_LAB == 'run' }}
-        run: |
-          tools/live-lab/libcrafter-live-lab destroy \
-            --provider "$LIVE_LAB_PROVIDER" || true
-
-      - name: Upload live-lab artifacts
-        if: ${{ always() && env.CONFIRM_LIVE_LAB == 'run' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: libcrafter-live-lab-${{ github.run_id }}
-          if-no-files-found: ignore
-          path: |
             target/live-lab-artifacts
