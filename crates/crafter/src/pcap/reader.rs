@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{self, BufReader, Read};
 use std::path::Path;
 
 use crate::LinkType;
@@ -96,8 +96,13 @@ where
 
     fn read_next_record(&mut self) -> Result<Option<PcapRecord>> {
         let mut header = [0u8; PCAP_RECORD_HEADER_LEN];
-        if !read_exact_or_eof(&mut self.reader, &mut header)? {
-            return Ok(None);
+        match read_exact_or_eof(&mut self.reader, &mut header) {
+            Ok(true) => {}
+            Ok(false) => return Ok(None),
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                return Err(PcapError::InvalidRecord("partial pcap record header"));
+            }
+            Err(err) => return Err(PcapError::Io(err)),
         }
 
         let ts_sec = read_u32(&header[0..4], self.endian);
@@ -117,7 +122,12 @@ where
         }
 
         let mut data = vec![0u8; captured_len as usize];
-        self.reader.read_exact(&mut data)?;
+        if let Err(err) = self.reader.read_exact(&mut data) {
+            if err.kind() == io::ErrorKind::UnexpectedEof {
+                return Err(PcapError::InvalidRecord("truncated pcap record body"));
+            }
+            return Err(PcapError::Io(err));
+        }
 
         Ok(Some(PcapRecord::new(
             PcapTimestamp::new(ts_sec as u64, ts_frac, self.header.precision)?,

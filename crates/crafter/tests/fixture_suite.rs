@@ -16,6 +16,7 @@ use crafter::core::{
     ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6,
     IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
 };
+use crafter::{PcapError, PcapLinkType, PcapReader, PcapTimestamp, TimestampPrecision};
 use support::fixture_path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +82,15 @@ enum CoverageFamily {
     DhcpOptions,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PcapCoverageFamily {
+    Ethernet,
+    RawIpIpv4,
+    RawIpIpv6,
+    LinuxSll,
+    NullLoopback,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ValidFixtureCase {
     name: &'static str,
@@ -92,12 +102,38 @@ struct ValidFixtureCase {
     summary_path: Option<&'static str>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PcapFixtureCase {
+    name: &'static str,
+    path: &'static str,
+    contents: &'static [u8],
+    pcap_link_type: PcapLinkType,
+    link_type: LinkType,
+    timestamp_precision: TimestampPrecision,
+    coverage: PcapCoverageFamily,
+    records: &'static [PcapFixtureRecord],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PcapFixtureRecord {
+    seconds: u64,
+    fractional: u32,
+    fixture_name: &'static str,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MalformedFixtureRow {
     name: String,
     target: String,
     expected_kind: Option<String>,
     expected_context_or_field: Option<String>,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MalformedPcapRow {
+    name: String,
+    expected_kind: String,
     bytes: Vec<u8>,
 }
 
@@ -319,6 +355,86 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
     },
 ];
 
+const PCAP_FIXTURES: &[PcapFixtureCase] = &[
+    PcapFixtureCase {
+        name: "ethernet-arp-request-reply",
+        path: "pcaps/ethernet-arp-request-reply.pcap",
+        contents: fixture_bytes!("pcaps/ethernet-arp-request-reply.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ethernet,
+        records: &[
+            PcapFixtureRecord {
+                seconds: 10,
+                fractional: 101,
+                fixture_name: "arp-who-has",
+            },
+            PcapFixtureRecord {
+                seconds: 10,
+                fractional: 202,
+                fixture_name: "ethernet-arp-reply",
+            },
+        ],
+    },
+    PcapFixtureCase {
+        name: "raw-ipv4-icmp-echo-request",
+        path: "pcaps/raw-ipv4-icmp-echo-request.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-icmp-echo-request.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 20,
+            fractional: 1,
+            fixture_name: "ipv4-icmp-echo-request",
+        }],
+    },
+    PcapFixtureCase {
+        name: "raw-ipv6-icmp-echo-request",
+        path: "pcaps/raw-ipv6-icmp-echo-request.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv6-icmp-echo-request.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv6,
+        records: &[PcapFixtureRecord {
+            seconds: 20,
+            fractional: 2,
+            fixture_name: "ipv6-icmp-echo-request",
+        }],
+    },
+    PcapFixtureCase {
+        name: "linux-sll-arp-who-has",
+        path: "pcaps/linux-sll-arp-who-has.pcap",
+        contents: fixture_bytes!("pcaps/linux-sll-arp-who-has.pcap"),
+        pcap_link_type: PcapLinkType::LinuxSll,
+        link_type: LinkType::LinuxSll,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::LinuxSll,
+        records: &[PcapFixtureRecord {
+            seconds: 30,
+            fractional: 3,
+            fixture_name: "linux-sll-arp-who-has",
+        }],
+    },
+    PcapFixtureCase {
+        name: "null-loopback-ipv4-udp-raw",
+        path: "pcaps/null-loopback-ipv4-udp-raw.pcap",
+        contents: fixture_bytes!("pcaps/null-loopback-ipv4-udp-raw.pcap"),
+        pcap_link_type: PcapLinkType::NullLoopback,
+        link_type: LinkType::NullLoopback,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::NullLoopback,
+        records: &[PcapFixtureRecord {
+            seconds: 40,
+            fractional: 4,
+            fixture_name: "null-loopback-ipv4-udp-raw",
+        }],
+    },
+];
+
 const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     (CoverageFamily::RawPayload, "raw payload decode"),
     (
@@ -361,6 +477,23 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     (CoverageFamily::DhcpOptions, "DHCP option corpus"),
 ];
 
+const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
+    (PcapCoverageFamily::Ethernet, "Ethernet pcap link type"),
+    (
+        PcapCoverageFamily::RawIpIpv4,
+        "RawIp pcap with IPv4 payload",
+    ),
+    (
+        PcapCoverageFamily::RawIpIpv6,
+        "RawIp pcap with IPv6 payload",
+    ),
+    (PcapCoverageFamily::LinuxSll, "Linux cooked pcap link type"),
+    (
+        PcapCoverageFamily::NullLoopback,
+        "null loopback pcap link type",
+    ),
+];
+
 fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
     match name {
         "raw-hello-agents" => &[CoverageFamily::RawPayload],
@@ -392,6 +525,25 @@ fn fixture_bytes_for_case(case: &ValidFixtureCase) -> Vec<u8> {
     match case.contents {
         FixtureContents::Bytes(bytes) => bytes.to_vec(),
         FixtureContents::Hex(hex) => decode_hex(case.name, hex),
+    }
+}
+
+fn valid_fixture_case(name: &str) -> &'static ValidFixtureCase {
+    VALID_FIXTURES
+        .iter()
+        .find(|case| case.name == name)
+        .unwrap_or_else(|| panic!("pcap fixture references unknown byte fixture {name}"))
+}
+
+fn packet_target_for_case(case: &ValidFixtureCase) -> PacketDecodeTarget {
+    match case.target {
+        FixtureDecodeTarget::Packet(target) => target,
+        FixtureDecodeTarget::DhcpOptions => {
+            panic!(
+                "pcap fixture {} references DHCP option-only fixture",
+                case.name
+            )
+        }
     }
 }
 
@@ -1051,6 +1203,42 @@ fn parse_malformed_row(path: &str, line: &str) -> Option<MalformedFixtureRow> {
     })
 }
 
+fn parse_malformed_pcap_rows(path: &str) -> Vec<MalformedPcapRow> {
+    fixture_str!("malformed/pcap-corpus.hex")
+        .lines()
+        .filter_map(|line| parse_malformed_pcap_row(path, line))
+        .collect()
+}
+
+fn parse_malformed_pcap_row(path: &str, line: &str) -> Option<MalformedPcapRow> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+
+    let fields = line.split('|').collect::<Vec<_>>();
+    let [name, expected_kind, hex] = fields.as_slice() else {
+        panic!("malformed pcap fixture {path} row {line:?} must have 3 pipe-separated fields");
+    };
+
+    Some(MalformedPcapRow {
+        name: (*name).to_string(),
+        expected_kind: (*expected_kind).to_string(),
+        bytes: decode_hex(name, hex),
+    })
+}
+
+fn assert_pcap_error_kind(row: &MalformedPcapRow, err: PcapError) {
+    match (row.expected_kind.as_str(), err) {
+        ("invalid-header", PcapError::InvalidHeader(_)) => {}
+        ("invalid-record", PcapError::InvalidRecord(_)) => {}
+        (expected, actual) => panic!(
+            "malformed pcap fixture {} expected {expected}, got {actual:?}",
+            row.name
+        ),
+    }
+}
+
 fn ensure_fixture_exists(path: &str) {
     let full_path = fixture_path(path);
     assert!(
@@ -1176,6 +1364,128 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
 }
 
 #[test]
+fn pcap_fixture_corpus_decodes_supported_link_types() {
+    let covered = PCAP_FIXTURES
+        .iter()
+        .map(|case| case.coverage)
+        .collect::<HashSet<_>>();
+    for (required, label) in REQUIRED_PCAP_COVERAGE {
+        assert!(
+            covered.contains(required),
+            "pcap fixture catalog is missing required coverage for {label}"
+        );
+    }
+
+    let pcap_root = fixture_path("pcaps");
+    let catalog_paths = PCAP_FIXTURES
+        .iter()
+        .map(|case| case.path)
+        .collect::<HashSet<_>>();
+    let mut pcap_fixture_paths = HashSet::new();
+    for file in fixture_files(&pcap_root) {
+        let relative = file.strip_prefix(fixture_path("")).unwrap_or_else(|err| {
+            panic!(
+                "pcap fixture path {} should be under fixture root: {err}",
+                file.display()
+            )
+        });
+        let is_gitkeep = relative.file_name().and_then(|name| name.to_str()) == Some(".gitkeep");
+        if !is_gitkeep {
+            let path = relative
+                .to_str()
+                .unwrap_or_else(|| panic!("fixture path {relative:?} should be UTF-8"));
+            pcap_fixture_paths.insert(path.to_string());
+        }
+    }
+
+    for case in PCAP_FIXTURES {
+        assert_lower_dash_name(case.name, case.name);
+        ensure_fixture_exists(case.path);
+        assert!(
+            pcap_fixture_paths.contains(case.path),
+            "pcap catalog entry {} must live under tests/fixtures/pcaps",
+            case.path
+        );
+
+        let reader = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should parse header: {err}", case.path));
+        assert_eq!(reader.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(reader.link_type(), case.link_type);
+        assert_eq!(reader.header().pcap_link_type(), case.pcap_link_type);
+        assert_eq!(reader.header().link_type(), case.link_type);
+        assert_eq!(reader.header().precision(), case.timestamp_precision);
+        assert!(reader.header().snaplen() >= 64);
+
+        let records = reader
+            .collect_records()
+            .unwrap_or_else(|err| panic!("pcap fixture {} should read records: {err}", case.path));
+        assert_eq!(
+            records.len(),
+            case.records.len(),
+            "pcap fixture {} record count changed",
+            case.path
+        );
+
+        let packets = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header twice: {err}",
+                    case.path
+                )
+            })
+            .collect_packets()
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} should decode packets: {err}", case.path)
+            });
+        assert_eq!(packets.len(), records.len());
+
+        for ((record, packet), expected) in records.iter().zip(packets.iter()).zip(case.records) {
+            let expected_fixture = valid_fixture_case(expected.fixture_name);
+            let expected_bytes = fixture_bytes_for_case(expected_fixture);
+            let expected_timestamp = PcapTimestamp::new(
+                expected.seconds,
+                expected.fractional,
+                case.timestamp_precision,
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} timestamp should be valid: {err}",
+                    case.path
+                )
+            });
+
+            assert_eq!(record.timestamp(), expected_timestamp);
+            assert_eq!(record.pcap_link_type(), case.pcap_link_type);
+            assert_eq!(record.link_type(), case.link_type);
+            assert_eq!(record.captured_len(), expected_bytes.len() as u32);
+            assert_eq!(record.original_len(), expected_bytes.len() as u32);
+            assert_eq!(record.data(), expected_bytes.as_slice());
+
+            assert_eq!(packet.timestamp(), expected_timestamp);
+            assert_eq!(packet.original_len(), expected_bytes.len() as u32);
+            assert_eq!(packet.pcap_link_type(), case.pcap_link_type);
+            assert_eq!(packet.link_type(), case.link_type);
+
+            assert_packet_surface(expected_fixture, packet.packet());
+            assert_fixture_fields(expected_fixture, packet.packet());
+            assert_compile_decode_compile(
+                expected_fixture,
+                packet_target_for_case(expected_fixture),
+                packet.packet(),
+                &expected_bytes,
+            );
+        }
+    }
+
+    for path in pcap_fixture_paths {
+        assert!(
+            catalog_paths.contains(path.as_str()),
+            "pcap fixture {path} must be listed in PCAP_FIXTURES"
+        );
+    }
+}
+
+#[test]
 fn fixture_tree_hygiene_matches_readme_conventions() {
     let root = fixture_path("");
     let catalog_paths = VALID_FIXTURES
@@ -1259,6 +1569,57 @@ fn malformed_corpus_rows_are_well_formed() {
         if let Some(expected_kind) = &row.expected_kind {
             assert_lower_dash_name(expected_kind, &row.name);
         }
+    }
+}
+
+#[test]
+fn malformed_pcap_fixtures_report_structured_errors() {
+    let rows = parse_malformed_pcap_rows("malformed/pcap-corpus.hex");
+    assert!(!rows.is_empty(), "malformed pcap corpus must not be empty");
+
+    let required_rows = HashSet::from([
+        "unknown-magic",
+        "unsupported-major-version",
+        "zero-snapshot-length",
+        "partial-record-header",
+        "captured-length-greater-than-snapshot",
+        "truncated-record-body",
+    ]);
+    let valid_error_kinds = HashSet::from(["invalid-header", "invalid-record"]);
+    let mut covered_rows = HashSet::new();
+
+    for row in rows {
+        assert_lower_dash_name(&row.name, &row.name);
+        assert!(
+            valid_error_kinds.contains(row.expected_kind.as_str()),
+            "malformed pcap fixture {} has unknown expected error kind {}",
+            row.name,
+            row.expected_kind
+        );
+        assert!(
+            !row.bytes.is_empty(),
+            "malformed pcap fixture {} should carry input bytes",
+            row.name
+        );
+
+        let result = PcapReader::from_reader(row.bytes.as_slice())
+            .and_then(|reader| reader.collect_records().map(|_| ()));
+        let err = match result {
+            Ok(()) => panic!(
+                "malformed pcap fixture {} unexpectedly decoded successfully",
+                row.name
+            ),
+            Err(err) => err,
+        };
+        assert_pcap_error_kind(&row, err);
+        covered_rows.insert(row.name);
+    }
+
+    for required in required_rows {
+        assert!(
+            covered_rows.contains(required),
+            "malformed pcap corpus is missing required case {required}"
+        );
     }
 }
 
