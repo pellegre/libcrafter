@@ -2,24 +2,33 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .backends.registry import (
+    BACKEND_CAPABILITY_NAMES,
+    BackendRegistration,
+    get_backend_capability_registration,
+    registered_backend_capability_names,
+)
 from .model import JSONObject, JSONValue, JsonModel, to_jsonable
 from .report import REPO_ROOT
 
 
 SPEC_ROOT = REPO_ROOT / "tools/oracle/specs"
 SUPPORTED_SPEC_VERSION = 1
-BACKEND_CAPABILITY_KEYS = (
-    "encode",
-    "decode",
-    "pcap_read",
-    "pcap_write",
-    "live_endpoint",
+BACKEND_CAPABILITY_KEYS = BACKEND_CAPABILITY_NAMES
+BACKEND_SUPPORT_STATUSES = ("planned", "partial", "supported")
+FEATURE_DIRECTIONS = (
+    "reference_to_libcrafter",
+    "libcrafter_to_reference",
+    "roundtrip",
+    "live",
+    "live_exchange",
 )
+PCAP_FILE_FORMATS = ("pcap", "pcapng")
 
 
 class SpecValidationError(ValueError):
@@ -214,7 +223,11 @@ class OracleSpecs(JsonModel):
         }
 
 
-def load_oracle_specs(spec_root: str | Path | None = None) -> OracleSpecs:
+def load_oracle_specs(
+    spec_root: str | Path | None = None,
+    *,
+    strict: bool = True,
+) -> OracleSpecs:
     """Load and validate all oracle specs under ``tools/oracle/specs``."""
 
     root = SPEC_ROOT if spec_root is None else Path(spec_root)
@@ -248,15 +261,24 @@ def load_oracle_specs(spec_root: str | Path | None = None) -> OracleSpecs:
         feature = _load_feature(_load_yaml_object(path), path)
         _insert_unique(features, feature.name, feature, path, "feature")
 
-    _validate_cross_references(
-        root=Path(root),
-        roots=roots,
-        families=families,
-        stacks=stacks,
-        profiles=profiles,
-        layers=layers,
-        features=features,
-    )
+    if strict:
+        _validate_cross_references(
+            root=Path(root),
+            roots=roots,
+            families=families,
+            stacks=stacks,
+            constraints=constraints,
+            profiles=profiles,
+            layers=layers,
+            features=features,
+        )
+        _validate_backend_mappings(
+            root=Path(root),
+            stack_backend_support=stack_backend_support,
+            profile_backend_support=profile_backend_support,
+            layers=layers,
+            features=features,
+        )
 
     backend_support = _merge_backend_support(
         stack_backend_support,
@@ -465,6 +487,12 @@ def _backend_support(document: Mapping[str, object], path: Path) -> dict[str, Ba
     for raw_backend, raw_value in support.items():
         backend_name = _normalize_name(raw_backend, path, "backend_support backend")
         value = _object(raw_value, path, f"backend_support.{backend_name}")
+        status = _required_string(value, "status", path, f"backend_support.{backend_name}")
+        if status not in BACKEND_SUPPORT_STATUSES:
+            supported = ", ".join(BACKEND_SUPPORT_STATUSES)
+            raise SpecValidationError(
+                f"{path}: backend_support.{backend_name}.status must be one of {supported}"
+            )
         metadata = {
             key: item
             for key, item in value.items()
@@ -476,9 +504,9 @@ def _backend_support(document: Mapping[str, object], path: Path) -> dict[str, Ba
                 *BACKEND_CAPABILITY_KEYS,
             }
         }
-        output[backend_name] = BackendSupport(
+        backend_support = BackendSupport(
             name=backend_name,
-            status=_required_string(value, "status", path, f"backend_support.{backend_name}"),
+            status=status,
             encode=_optional_bool(value, "encode", path, f"backend_support.{backend_name}"),
             decode=_optional_bool(value, "decode", path, f"backend_support.{backend_name}"),
             pcap_read=_optional_bool(value, "pcap_read", path, f"backend_support.{backend_name}"),
@@ -499,6 +527,12 @@ def _backend_support(document: Mapping[str, object], path: Path) -> dict[str, Ba
             notes=_optional_string_tuple(value, "notes", path, f"backend_support.{backend_name}"),
             metadata=_json_object(to_jsonable(metadata), path, f"backend_support.{backend_name}.metadata"),
         )
+        _validate_backend_support_entry(
+            backend_support,
+            path,
+            f"backend_support.{backend_name}",
+        )
+        output[backend_name] = backend_support
     return output
 
 
@@ -542,10 +576,14 @@ def _validate_cross_references(
     roots: Mapping[str, RootSpec],
     families: Mapping[str, FamilySpec],
     stacks: Mapping[str, StackSpec],
+    constraints: Mapping[str, StackConstraint],
     profiles: Mapping[str, ProfileSpec],
     layers: Mapping[str, LayerSpec],
     features: Mapping[str, FeatureSpec],
 ) -> None:
+    known_layer_names = _known_layer_names(roots, layers)
+    adjacency = _layer_adjacency(layers, constraints, known_layer_names, root)
+
     for stack in stacks.values():
         if stack.root not in roots:
             raise SpecValidationError(
@@ -553,19 +591,45 @@ def _validate_cross_references(
             )
         if not stack.layers:
             raise SpecValidationError(f"{root / 'stacks.yaml'}: stack {stack.name} has no layers")
+        if stack.layers[0] not in roots[stack.root].layers:
+            raise SpecValidationError(
+                f"{root / 'stacks.yaml'}: stack {stack.name} starts with "
+                f"{stack.layers[0]}, which is not declared by root {stack.root}"
+            )
+        _validate_layer_sequence(
+            root / "stacks.yaml",
+            f"stack {stack.name}",
+            stack.layers,
+            known_layer_names,
+            adjacency,
+        )
 
     for family in families.values():
         if not family.default_stack:
             raise SpecValidationError(
                 f"{root / 'stacks.yaml'}: family {family.name} has an empty default_stack"
             )
+        _validate_layer_sequence(
+            root / "stacks.yaml",
+            f"family {family.name}.default_stack",
+            family.default_stack,
+            known_layer_names,
+            adjacency,
+        )
 
     for profile in profiles.values():
         if not profile.family_weights:
             raise SpecValidationError(
                 f"{root / 'profiles.yaml'}: profile {profile.name} has no family weights"
             )
+        weight_names: set[str] = set()
         for weight in profile.family_weights:
+            if weight.name in weight_names:
+                raise SpecValidationError(
+                    f"{root / 'profiles.yaml'}: profile {profile.name} duplicates "
+                    f"family weight {weight.name}"
+                )
+            weight_names.add(weight.name)
             if weight.name not in families:
                 raise SpecValidationError(
                     f"{root / 'profiles.yaml'}: profile {profile.name} references "
@@ -575,24 +639,364 @@ def _validate_cross_references(
             raise SpecValidationError(
                 f"{root / 'profiles.yaml'}: profile {profile.name} has no positive family weights"
             )
+        if not profile.feature_weights:
+            raise SpecValidationError(
+                f"{root / 'profiles.yaml'}: profile {profile.name} has no feature weights"
+            )
+        if sum(profile.feature_weights.values()) <= 0:
+            raise SpecValidationError(
+                f"{root / 'profiles.yaml'}: profile {profile.name} has no positive feature weights"
+            )
 
+    for layer in layers.values():
+        for root_name in layer.roots:
+            if root_name not in roots:
+                raise SpecValidationError(
+                    f"{root / 'layers'}: layer {layer.name} references unknown root {root_name}"
+                )
+        for parent in layer.parents:
+            if parent == "root":
+                continue
+            if parent not in known_layer_names:
+                raise SpecValidationError(
+                    f"{root / 'layers'}: layer {layer.name} references unknown parent {parent}"
+                )
+        for child in layer.children:
+            if child not in known_layer_names:
+                raise SpecValidationError(
+                    f"{root / 'layers'}: layer {layer.name} references unknown child {child}"
+                )
+
+    for feature in features.values():
+        _validate_feature_references(
+            root=root,
+            feature=feature,
+            roots=roots,
+            known_layer_names=known_layer_names,
+        )
+
+
+def _known_layer_names(
+    roots: Mapping[str, RootSpec],
+    layers: Mapping[str, LayerSpec],
+) -> set[str]:
     known_layer_names = set(layers)
     for root_spec in roots.values():
         known_layer_names.update(root_spec.layers)
-    for stack in stacks.values():
-        known_layer_names.update(stack.layers)
     for layer in layers.values():
         known_layer_names.update(layer.parents)
         known_layer_names.update(layer.children)
+        for extension in _extension_layer_names(layer):
+            known_layer_names.add(extension)
     known_layer_names.discard("root")
+    return known_layer_names
 
-    for feature in features.values():
-        for layer_name in feature.layers:
-            if layer_name not in known_layer_names:
+
+def _extension_layer_names(layer: LayerSpec) -> tuple[str, ...]:
+    names: list[str] = []
+    raw_extensions = layer.raw.get("extension_layers", [])
+    if not isinstance(raw_extensions, list):
+        return ()
+    for extension in raw_extensions:
+        if not isinstance(extension, Mapping):
+            continue
+        name = extension.get("name")
+        if isinstance(name, str):
+            names.append(name.strip().lower())
+    return tuple(name for name in names if name)
+
+
+def _layer_adjacency(
+    layers: Mapping[str, LayerSpec],
+    constraints: Mapping[str, StackConstraint],
+    known_layer_names: set[str],
+    root: Path,
+) -> dict[str, set[str]]:
+    adjacency: dict[str, set[str]] = {
+        layer.name: set(layer.children) for layer in layers.values()
+    }
+    for constraint in constraints.values():
+        if constraint.parent not in known_layer_names:
+            raise SpecValidationError(
+                f"{root / 'stacks.yaml'}: constraint {constraint.name} references "
+                f"unknown parent {constraint.parent}"
+            )
+        for child in constraint.children:
+            if child not in known_layer_names:
                 raise SpecValidationError(
-                    f"{root / 'features'}: feature {feature.name} references "
-                    f"unknown layer {layer_name}"
+                    f"{root / 'stacks.yaml'}: constraint {constraint.name} references "
+                    f"unknown child {child}"
                 )
+        adjacency.setdefault(constraint.parent, set()).update(constraint.children)
+    return adjacency
+
+
+def _validate_layer_sequence(
+    path: Path,
+    context: str,
+    sequence: Sequence[str],
+    known_layer_names: set[str],
+    adjacency: Mapping[str, set[str]],
+) -> None:
+    for layer_name in sequence:
+        if layer_name not in known_layer_names:
+            raise SpecValidationError(
+                f"{path}: {context} references unknown layer {layer_name}"
+            )
+    for parent, child in zip(sequence, sequence[1:]):
+        allowed_children = adjacency.get(parent)
+        if allowed_children is not None and child not in allowed_children:
+            raise SpecValidationError(
+                f"{path}: {context} has unsupported child {child} after {parent}"
+            )
+
+
+def _validate_feature_references(
+    *,
+    root: Path,
+    feature: FeatureSpec,
+    roots: Mapping[str, RootSpec],
+    known_layer_names: set[str],
+) -> None:
+    for layer_name in feature.layers:
+        if layer_name not in known_layer_names:
+            raise SpecValidationError(
+                f"{root / 'features'}: feature {feature.name} references "
+                f"unknown layer {layer_name}"
+            )
+    for direction in feature.directions:
+        _validate_feature_direction(root / "features", feature.name, direction)
+    _validate_feature_supported_cases(
+        root=root,
+        feature=feature,
+        roots=roots,
+    )
+
+
+def _validate_feature_direction(path: Path, feature_name: str, direction: str) -> None:
+    if direction not in FEATURE_DIRECTIONS:
+        supported = ", ".join(FEATURE_DIRECTIONS)
+        raise SpecValidationError(
+            f"{path}: feature {feature_name} references unknown direction {direction}; "
+            f"supported: {supported}"
+        )
+
+
+def _validate_feature_supported_cases(
+    *,
+    root: Path,
+    feature: FeatureSpec,
+    roots: Mapping[str, RootSpec],
+) -> None:
+    path = root / "features"
+    for index, raw_case in enumerate(_optional_list(feature.raw, "supported_cases", path)):
+        case = _object(raw_case, path, f"feature {feature.name}.supported_cases[{index}]")
+        case_name = _optional_case_name(case, index)
+
+        if "direction" in case:
+            _validate_feature_direction(
+                path,
+                f"{feature.name}.{case_name}",
+                _normalize_name(
+                    case["direction"],
+                    path,
+                    f"feature {feature.name}.supported_cases[{index}].direction",
+                ),
+            )
+        for direction in _optional_name_tuple(
+            case,
+            "directions",
+            path,
+            f"feature {feature.name}.supported_cases[{index}]",
+        ):
+            _validate_feature_direction(path, f"{feature.name}.{case_name}", direction)
+
+        for file_format in _case_file_formats(case, path, feature.name, index):
+            if file_format not in PCAP_FILE_FORMATS:
+                supported = ", ".join(PCAP_FILE_FORMATS)
+                raise SpecValidationError(
+                    f"{path}: feature {feature.name}.{case_name} references "
+                    f"unknown file format {file_format}; supported: {supported}"
+                )
+
+        for root_name in _optional_name_tuple(
+            case,
+            "roots",
+            path,
+            f"feature {feature.name}.supported_cases[{index}]",
+        ):
+            if root_name not in roots:
+                raise SpecValidationError(
+                    f"{path}: feature {feature.name}.{case_name} references "
+                    f"unknown root {root_name}"
+                )
+
+        if "writer" in case:
+            writer = _normalize_name(
+                case["writer"],
+                path,
+                f"feature {feature.name}.supported_cases[{index}].writer",
+            )
+            _validate_case_backend_role(
+                path=path,
+                feature=feature,
+                case_name=case_name,
+                backend_name=writer,
+                capability="pcap_write" if _case_uses_pcap(case) else "encode",
+                role="writer",
+            )
+        if "reader" in case:
+            reader = _normalize_name(
+                case["reader"],
+                path,
+                f"feature {feature.name}.supported_cases[{index}].reader",
+            )
+            _validate_case_backend_role(
+                path=path,
+                feature=feature,
+                case_name=case_name,
+                backend_name=reader,
+                capability="pcap_read" if _case_uses_pcap(case) else "decode",
+                role="reader",
+            )
+
+
+def _optional_case_name(case: Mapping[str, object], index: int) -> str:
+    name = case.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip().lower()
+    return f"case[{index}]"
+
+
+def _case_file_formats(
+    case: Mapping[str, object],
+    path: Path,
+    feature_name: str,
+    index: int,
+) -> tuple[str, ...]:
+    formats: list[str] = []
+    if "file_format" in case:
+        formats.append(
+            _normalize_name(
+                case["file_format"],
+                path,
+                f"feature {feature_name}.supported_cases[{index}].file_format",
+            )
+        )
+    formats.extend(
+        _optional_name_tuple(
+            case,
+            "file_formats",
+            path,
+            f"feature {feature_name}.supported_cases[{index}]",
+        )
+    )
+    return tuple(formats)
+
+
+def _case_uses_pcap(case: Mapping[str, object]) -> bool:
+    return "file_format" in case or "file_formats" in case
+
+
+def _validate_case_backend_role(
+    *,
+    path: Path,
+    feature: FeatureSpec,
+    case_name: str,
+    backend_name: str,
+    capability: str,
+    role: str,
+) -> None:
+    if backend_name not in feature.backend_support:
+        raise SpecValidationError(
+            f"{path}: feature {feature.name}.{case_name} {role} backend "
+            f"{backend_name} has no backend_support mapping"
+        )
+    backend = _backend_registration(backend_name, path, f"feature {feature.name}.{case_name}.{role}")
+    _validate_backend_capability(
+        backend=backend,
+        capability=capability,
+        path=path,
+        context=f"feature {feature.name}.{case_name}.{role}",
+    )
+
+
+def _validate_backend_mappings(
+    *,
+    root: Path,
+    stack_backend_support: Mapping[str, BackendSupport],
+    profile_backend_support: Mapping[str, BackendSupport],
+    layers: Mapping[str, LayerSpec],
+    features: Mapping[str, FeatureSpec],
+) -> None:
+    if not stack_backend_support:
+        raise SpecValidationError(f"{root / 'stacks.yaml'}: backend_support is required")
+    if not profile_backend_support:
+        raise SpecValidationError(f"{root / 'profiles.yaml'}: backend_support is required")
+    for layer in layers.values():
+        if not layer.backend_support:
+            raise SpecValidationError(
+                f"{root / 'layers'}: layer {layer.name} is missing backend_support"
+            )
+    for feature in features.values():
+        if not feature.backend_support:
+            raise SpecValidationError(
+                f"{root / 'features'}: feature {feature.name} is missing backend_support"
+            )
+
+
+def _validate_backend_support_entry(
+    support: BackendSupport,
+    path: Path,
+    context: str,
+) -> None:
+    backend = _backend_registration(support.name, path, context)
+    for capability in BACKEND_CAPABILITY_KEYS:
+        if not bool(getattr(support, capability)):
+            continue
+        _validate_backend_capability(
+            backend=backend,
+            capability=capability,
+            path=path,
+            context=f"{context}.{capability}",
+        )
+
+
+def _backend_registration(
+    backend_name: str,
+    path: Path,
+    context: str,
+) -> BackendRegistration:
+    try:
+        return get_backend_capability_registration(backend_name)
+    except ValueError as exc:
+        supported = ", ".join(registered_backend_capability_names())
+        raise SpecValidationError(
+            f"{path}: {context} references unknown backend {backend_name}; "
+            f"supported: {supported}"
+        ) from exc
+
+
+def _validate_backend_capability(
+    *,
+    backend: BackendRegistration,
+    capability: str,
+    path: Path,
+    context: str,
+) -> None:
+    if capability not in BACKEND_CAPABILITY_KEYS:
+        raise SpecValidationError(f"{path}: {context} references unknown capability {capability}")
+    if backend.capabilities.supports(capability):  # type: ignore[arg-type]
+        return
+    if backend.parser_only and capability in {"encode", "pcap_write", "live_endpoint"}:
+        raise SpecValidationError(
+            f"{path}: {context} requests {capability} from parser-only backend "
+            f"{backend.name}"
+        )
+    raise SpecValidationError(
+        f"{path}: {context} requests unsupported capability {capability} from "
+        f"backend {backend.name}"
+    )
 
 
 def _default_case_for_family(
@@ -605,6 +1009,100 @@ def _default_case_for_family(
         if stack.layers == family.default_stack and stack.coverage_cases:
             return stack.coverage_cases[0]
     return "default"
+
+
+def run_self_checks() -> tuple[str, ...]:
+    """Exercise the valid spec set and focused invalid in-memory fixtures."""
+
+    load_oracle_specs(strict=True)
+    _expect_spec_validation_error(
+        "invalid_stack_layer",
+        _invalid_stack_layer_fixture,
+    )
+    _expect_spec_validation_error(
+        "parser_only_writer",
+        lambda: _validate_backend_support_entry(
+            BackendSupport(name="wireshark", status="supported", encode=True),
+            Path("<oracle-spec-self-check>"),
+            "backend_support.wireshark",
+        ),
+    )
+    return ("specs", "invalid_stack_layer", "parser_only_writer")
+
+
+def _expect_spec_validation_error(name: str, check: Callable[[], None]) -> None:
+    try:
+        check()
+    except SpecValidationError:
+        return
+    raise AssertionError(f"spec self-check did not reject {name}")
+
+
+def _invalid_stack_layer_fixture() -> None:
+    path = Path("<oracle-spec-self-check>")
+    backend_support = {
+        "scapy": BackendSupport(
+            name="scapy",
+            status="supported",
+            encode=True,
+            decode=True,
+        )
+    }
+    roots = {
+        "link:ethernet": RootSpec(
+            name="link:ethernet",
+            layers=("ethernet",),
+            families=("ipv4",),
+        )
+    }
+    families = {
+        "ipv4": FamilySpec(
+            name="ipv4",
+            default_stack=("ethernet", "payload"),
+            feature_tags=("baseline",),
+        )
+    }
+    stacks = {
+        "bad": StackSpec(
+            name="bad",
+            root="link:ethernet",
+            layers=("ethernet", "missing"),
+        )
+    }
+    profiles = {
+        "smoke": ProfileSpec(
+            name="smoke",
+            purpose="self-check",
+            default_count=1,
+            family_weights=(SamplingWeight(name="ipv4", weight=1),),
+            payload_length=PayloadLength(minimum=0, maximum=1),
+            feature_weights={"baseline": 1},
+            backend_support=backend_support,
+        )
+    }
+    layers = {
+        "ethernet": LayerSpec(
+            name="ethernet",
+            summary="self-check",
+            roots=("link:ethernet",),
+            parents=("root",),
+            children=("payload",),
+            fields=(),
+            coverage_cases=("baseline",),
+            backend_support=backend_support,
+            raw={},
+        )
+    }
+    _validate_cross_references(
+        root=path,
+        roots=roots,
+        families=families,
+        stacks=stacks,
+        constraints={},
+        profiles=profiles,
+        layers=layers,
+        features={},
+    )
 
 
 def _load_yaml_object(path: Path) -> JSONObject:

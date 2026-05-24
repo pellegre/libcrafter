@@ -122,12 +122,28 @@ def registered_backend_names() -> tuple[str, ...]:
     return tuple(_BACKEND_FACTORIES)
 
 
+def registered_backend_capability_names() -> tuple[str, ...]:
+    """Return backend names that may appear in executable spec support entries."""
+
+    return tuple(_CAPABILITY_FACTORIES)
+
+
 def get_backend(name: str) -> BackendRegistration:
     """Resolve one backend registration, refreshing availability as needed."""
 
     factory = _BACKEND_FACTORIES.get(name)
     if factory is None:
         supported = ", ".join(registered_backend_names())
+        raise UnknownBackendError(f"unsupported backend: {name}; supported: {supported}")
+    return factory()
+
+
+def get_backend_capability_registration(name: str) -> BackendRegistration:
+    """Resolve a backend capability model used by executable specs."""
+
+    factory = _CAPABILITY_FACTORIES.get(name)
+    if factory is None:
+        supported = ", ".join(registered_backend_capability_names())
         raise UnknownBackendError(f"unsupported backend: {name}; supported: {supported}")
     return factory()
 
@@ -193,7 +209,33 @@ def _wireshark_backend() -> BackendRegistration:
     )
 
 
+def _libcrafter_backend() -> BackendRegistration:
+    return BackendRegistration(
+        name="libcrafter",
+        display_name="libcrafter",
+        backend_type="read-write",
+        capabilities=BackendCapabilities(
+            encode=True,
+            decode=True,
+            pcap_read=True,
+            pcap_write=True,
+            live_endpoint=True,
+        ),
+        availability=BackendAvailability(
+            available=True,
+            dependency="cargo workspace",
+            reason="local Rust oracle endpoint",
+        ),
+        description="Local libcrafter packet writer/parser endpoint.",
+    )
+
+
 _BACKEND_FACTORIES = {
     "scapy": _scapy_backend,
     "wireshark": _wireshark_backend,
+}
+
+_CAPABILITY_FACTORIES = {
+    **_BACKEND_FACTORIES,
+    "libcrafter": _libcrafter_backend,
 }
