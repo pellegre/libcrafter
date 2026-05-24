@@ -15,7 +15,7 @@ import sys
 import tempfile
 import tomllib
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -2606,42 +2606,20 @@ class PcapUnsupportedError(ValueError):
 
 
 def _pcap_dry_plan(args: argparse.Namespace) -> int:
-    from .generator import PacketGenerator
-
     try:
         directions = _pcap_execution_directions(args.direction)
-        pcap_cases = [
-            pcap_case
-            for direction in directions
-            for pcap_case in _pcap_cases_for_direction(
-                args=args,
-                direction=direction,
-                dry_plan=True,
-            )
+        direction_groups, selected_specs, corpus_metadata = _pcap_corpus_plan_groups(
+            args,
+            directions,
+            materialize=False,
+        )
+        plans = [
+            plan
+            for groups in direction_groups.values()
+            for group in groups
+            for plan in group["plans"]  # type: ignore[index]
+            if isinstance(plan, PacketPlan)
         ]
-        generator = PacketGenerator(seed=args.seed, profile=args.profile, backend=args.backend)
-        plans = []
-        indices = _pcap_indices(args)
-        for offset, index in enumerate(indices):
-            pcap_case = pcap_cases[offset % len(pcap_cases)]
-            link_type = _pcap_link_types_for_case(pcap_case)[offset % len(_pcap_link_types_for_case(pcap_case))]
-            root = _pcap_generation_root(args.root, link_type, index)
-            plan = generator.generate(
-                index=index,
-                root=root,
-                family=args.family,
-                case=_pcap_generator_case(link_type, root),
-                direction=directions[offset % len(directions)],
-            )
-            plans.append(
-                _pcap_plan(
-                    plan,
-                    pcap_case,
-                    directions[offset % len(directions)],
-                    link_type=link_type,
-                    file_format=_pcap_file_format_for_case(pcap_case),
-                )
-            )
     except (ValueError, PcapUnsupportedError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -2653,18 +2631,19 @@ def _pcap_dry_plan(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(plans),
         status="dry-plan",
-        selected_specs=list(PCAP_SELECTED_SPECS),
+        selected_specs=selected_specs,
         metadata={
             "dry_plan": True,
             "requested_count": args.count,
             "direction": args.direction,
             "execution_directions": directions,
+            **corpus_metadata,
             "timestamp_policy": {
                 "deterministic": "exact",
                 "backend_precision_differs": "normalized",
                 "backend_generated_or_unavailable": "ignored",
             },
-            "pcap_cases": pcap_cases,
+            "directions": _pcap_group_summaries(direction_groups),
             "plans": [plan.to_dict() for plan in plans],
         },
     )
@@ -2680,8 +2659,13 @@ def _pcap_execute(args: argparse.Namespace) -> int:
 
     try:
         directions = _pcap_execution_directions(args.direction)
+        groups_by_direction, selected_specs, corpus_metadata = _pcap_corpus_plan_groups(
+            args,
+            directions,
+            materialize=True,
+        )
         direction_groups = [
-            (direction, _pcap_vector_groups(args, direction))
+            (direction, groups_by_direction.get(direction, []))
             for direction in directions
         ]
     except PcapUnsupportedError as exc:
@@ -2729,7 +2713,7 @@ def _pcap_execute(args: argparse.Namespace) -> int:
                     seed=args.seed,
                     count=len(vectors),
                     status="vectors",
-                    selected_specs=list(PCAP_SELECTED_SPECS),
+                    selected_specs=selected_specs,
                     backend_versions=backend_versions,
                     libcrafter=libcrafter_info,
                     metadata={
@@ -2790,7 +2774,7 @@ def _pcap_execute(args: argparse.Namespace) -> int:
             seed=args.seed,
             count=len(results),
             status=status,
-            selected_specs=list(PCAP_SELECTED_SPECS),
+            selected_specs=selected_specs,
             artifacts=artifacts,
             artifact_paths=artifacts,
             results=results,
@@ -2807,6 +2791,7 @@ def _pcap_execute(args: argparse.Namespace) -> int:
                 "execution_directions": directions,
                 "requested_count": args.count,
                 "generated_count": generated_count,
+                **corpus_metadata,
                 "artifact_dir": str(run_dir) if preserve_artifacts else None,
                 "directions": direction_metadata,
                 "timestamp_policy": {
@@ -4544,6 +4529,29 @@ def _live_reproduction_command(args: argparse.Namespace) -> str:
 
 
 def _pcap_reproduction_command(args: argparse.Namespace, index: int, direction: str) -> str:
+    if getattr(args, "corpus", None) is not None:
+        argv = [
+            "tools/oracle/run",
+            "pcap",
+            "--backend",
+            args.backend,
+            "--direction",
+            direction,
+            "--corpus",
+            args.corpus,
+            "--index",
+            str(index),
+        ]
+        if args.case_name is not None:
+            argv.extend(["--case", args.case_name])
+        if args.feature is not None:
+            argv.extend(["--feature", args.feature])
+        if args.family is not None:
+            argv.extend(["--family", args.family])
+        if args.root is not None:
+            argv.extend(["--root", args.root])
+        return shlex.join(argv)
+
     argv = [
         "tools/oracle/run",
         "pcap",
@@ -4702,6 +4710,342 @@ def _pcap_spec_cases() -> list[JSONObject]:
         pcap_case["feature"] = feature.name
         cases.append(pcap_case)  # type: ignore[arg-type]
     return cases
+
+
+def _pcap_corpus_plan_groups(
+    args: argparse.Namespace,
+    directions: Sequence[str],
+    *,
+    materialize: bool,
+) -> tuple[dict[str, list[JSONObject]], list[str], JSONObject]:
+    from .corpus import CorpusFormatError, load_corpus_report
+
+    corpus_path: Path | None = None
+    corpus_source = "generated"
+    if getattr(args, "corpus", None) is None:
+        corpus_direction = directions[0] if directions else "reference_to_libcrafter"
+        corpus_report = _build_corpus_report_from_generation(
+            args,
+            direction=corpus_direction,
+        )
+    else:
+        corpus_source = "provided"
+        corpus_path = Path(args.corpus)
+        if not corpus_path.is_absolute():
+            corpus_path = REPO_ROOT / corpus_path
+        corpus_report = load_corpus_report(corpus_path)
+        if corpus_report.backend != args.backend:
+            raise CorpusFormatError(
+                f"{corpus_path}: backend {corpus_report.backend!r} does not match "
+                f"requested backend {args.backend!r}"
+            )
+
+    packets = list(corpus_report.packets)
+    if args.index is not None:
+        packets = [packet for packet in packets if packet.plan.index == args.index]
+
+    cases_by_direction: dict[str, list[JSONObject]] = {}
+    case_filter_reasons: dict[str, str] = {}
+    for direction in directions:
+        try:
+            cases_by_direction[direction] = _pcap_cases_for_direction(
+                args=args,
+                direction=direction,
+                dry_plan=False,
+            )
+        except ValueError as exc:
+            if not str(exc).startswith("no pcap spec cases match"):
+                raise
+            cases_by_direction[direction] = []
+            case_filter_reasons[direction] = str(exc)
+
+    requested_link_type = (
+        _pcap_link_type_for_root(args.root) if args.root is not None else None
+    )
+
+    encode_packet_plan = None
+    with_pcap_metadata = None
+    if materialize:
+        from .backends.scapy.packets import encode_packet_plan as scapy_encode_packet_plan
+        from .backends.scapy.pcap import with_pcap_metadata as scapy_with_pcap_metadata
+
+        encode_packet_plan = scapy_encode_packet_plan
+        with_pcap_metadata = scapy_with_pcap_metadata
+
+    groups_by_direction: dict[str, list[JSONObject]] = {direction: [] for direction in directions}
+    group_maps: dict[str, dict[tuple[str, str], JSONObject]] = {
+        direction: {} for direction in directions
+    }
+    selected_plans: list[PacketPlan] = []
+    eligibility: list[JSONObject] = []
+    skip_reasons: dict[str, int] = {}
+    eligible_positions: set[int] = set()
+    eligible_packet_indexes: list[int] = []
+
+    for position, packet in enumerate(packets):
+        root = _pcap_packet_root(packet.plan)
+        packet_link_type: str | None = None
+        root_reason: str | None = None
+        if root is None:
+            root_reason = "pcap_link_type_unavailable"
+        else:
+            try:
+                packet_link_type = _pcap_link_type_for_root(root)
+            except ValueError:
+                root_reason = "pcap_link_type_unavailable"
+        if (
+            requested_link_type is not None
+            and packet_link_type is not None
+            and packet_link_type != requested_link_type
+        ):
+            root_reason = "pcap_link_type_unavailable"
+
+        direction_decisions: list[JSONObject] = []
+        packet_eligible = False
+        corpus_skip_reason = None
+        if packet.pcap.eligible is False:
+            corpus_skip_reason = _pcap_normalized_skip_reason(packet.pcap.reason)
+
+        for direction in directions:
+            decision: JSONObject = {
+                "direction": direction,
+                "eligible": False,
+                "reason": None,
+                "root": root,
+                "pcap_link_type": packet_link_type,
+            }
+            if corpus_skip_reason is not None:
+                decision["reason"] = corpus_skip_reason
+                direction_decisions.append(decision)
+                continue
+            if root_reason is not None or packet_link_type is None:
+                decision["reason"] = root_reason or "pcap_link_type_unavailable"
+                direction_decisions.append(decision)
+                continue
+
+            pcap_case_selection = _select_pcap_case_for_packet(
+                cases_by_direction[direction],
+                packet_link_type,
+            )
+            if pcap_case_selection is None:
+                decision["reason"] = _pcap_unavailable_reason_for_cases(
+                    cases_by_direction[direction],
+                    packet_link_type,
+                    case_filter_empty=direction in case_filter_reasons,
+                )
+                direction_decisions.append(decision)
+                continue
+
+            pcap_case, file_format = pcap_case_selection
+            plan = _pcap_plan(
+                _pcap_corpus_packet_plan(
+                    packet.plan,
+                    corpus_id=corpus_report.corpus_id,
+                    packet_id=packet.packet_id,
+                    corpus_index=packet.index,
+                    direction=direction,
+                ),
+                pcap_case,
+                direction,
+                link_type=packet_link_type,
+                file_format=file_format,
+            )
+            group_link_type = _pcap_record_link_type_for_plan(packet_link_type)
+            vector = None
+            if materialize:
+                if encode_packet_plan is None or with_pcap_metadata is None:
+                    raise RuntimeError("pcap corpus materialization is not initialized")
+                vector = encode_packet_plan(plan)
+                vector = with_pcap_metadata(
+                    [vector],
+                    link_type=_pcap_writer_link_type(packet_link_type),
+                )[0]
+                group_link_type = _pcap_vector_link_type(vector)
+
+            key = (file_format, group_link_type)
+            group = group_maps[direction].setdefault(
+                key,
+                {
+                    "file_format": file_format,
+                    "link_type": group_link_type,
+                    "pcap_case": pcap_case,
+                    "plans": [],
+                    "vectors": [],
+                },
+            )
+            group["plans"].append(plan)  # type: ignore[union-attr]
+            if vector is not None:
+                group["vectors"].append(vector)  # type: ignore[union-attr]
+            decision.update(
+                {
+                    "eligible": True,
+                    "reason": None,
+                    "pcap_case": pcap_case.get("name"),
+                    "pcap_file_format": file_format,
+                    "pcap_record_link_type": group_link_type,
+                }
+            )
+            direction_decisions.append(decision)
+            packet_eligible = True
+            selected_plans.append(plan)
+
+        if packet_eligible:
+            eligible_positions.add(position)
+            eligible_packet_indexes.append(packet.plan.index)
+        else:
+            reason = _pcap_packet_skip_reason(direction_decisions)
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+
+        eligibility.append(
+            {
+                "position": position,
+                "packet_id": packet.packet_id,
+                "corpus_index": packet.index,
+                "packet_index": packet.plan.index,
+                "eligible": packet_eligible,
+                "reason": None
+                if packet_eligible
+                else _pcap_packet_skip_reason(direction_decisions),
+                "directions": direction_decisions,
+            }
+        )
+
+    for direction in directions:
+        groups_by_direction[direction] = list(group_maps[direction].values())
+
+    selected_specs = list(
+        dict.fromkeys(
+            [
+                *corpus_report.selected_specs,
+                *PCAP_SELECTED_SPECS,
+                *_selected_specs_for_plans(selected_plans),
+            ]
+        )
+    )
+    metadata: JSONObject = {
+        "corpus_id": corpus_report.corpus_id,
+        "corpus_source": corpus_source,
+        "corpus_path": str(corpus_path) if corpus_path is not None else None,
+        "corpus_backend": corpus_report.backend,
+        "corpus_profile": corpus_report.profile,
+        "corpus_seed": corpus_report.seed,
+        "corpus_count": corpus_report.count,
+        "generated_count": len(packets),
+        "pcap_eligible_count": len(eligible_positions),
+        "pcap_skipped_count": len(packets) - len(eligible_positions),
+        "pcap_skip_reasons": skip_reasons,
+        "packet_indexes": list(dict.fromkeys(eligible_packet_indexes)),
+        "pcap_eligibility": eligibility,
+    }
+    return groups_by_direction, selected_specs, metadata
+
+
+def _pcap_packet_root(plan: PacketPlan) -> str | None:
+    root = plan.metadata.get("root_decoder", plan.metadata.get("root"))
+    return root if isinstance(root, str) and root else None
+
+
+def _pcap_corpus_packet_plan(
+    plan: PacketPlan,
+    *,
+    corpus_id: str,
+    packet_id: str,
+    corpus_index: int,
+    direction: str,
+) -> PacketPlan:
+    metadata = dict(plan.metadata)
+    metadata["corpus"] = {
+        "corpus_id": corpus_id,
+        "packet_id": packet_id,
+        "corpus_index": corpus_index,
+        "packet_index": plan.index,
+        "packet_case": plan.case,
+    }
+    return replace(plan, direction=direction, metadata=metadata)
+
+
+def _select_pcap_case_for_packet(
+    pcap_cases: Sequence[JSONObject],
+    link_type: str,
+) -> tuple[JSONObject, str] | None:
+    for pcap_case in pcap_cases:
+        file_format = _pcap_file_format_for_case(pcap_case)
+        if file_format != "pcap":
+            continue
+        if link_type not in _pcap_link_types_for_case(pcap_case):
+            continue
+        return pcap_case, file_format
+    return None
+
+
+def _pcap_unavailable_reason_for_cases(
+    pcap_cases: Sequence[JSONObject],
+    link_type: str,
+    *,
+    case_filter_empty: bool,
+) -> str:
+    if case_filter_empty:
+        return "pcap_case_filter"
+    for pcap_case in pcap_cases:
+        if link_type not in _pcap_link_types_for_case(pcap_case):
+            continue
+        if _pcap_file_format_for_case(pcap_case) != "pcap":
+            return "pcap_case_filter"
+    return "pcap_link_type_unavailable"
+
+
+def _pcap_record_link_type_for_plan(link_type: str) -> str:
+    if link_type == "linux_cooked":
+        return "linux_sll"
+    return link_type
+
+
+def _pcap_normalized_skip_reason(reason: str | None) -> str:
+    if reason in {"pcap_link_type_unavailable", "pcap_case_filter"}:
+        return reason
+    return "pcap_case_filter"
+
+
+def _pcap_packet_skip_reason(direction_decisions: Sequence[JSONObject]) -> str:
+    reasons = [
+        decision.get("reason")
+        for decision in direction_decisions
+        if isinstance(decision.get("reason"), str)
+    ]
+    if "pcap_link_type_unavailable" in reasons:
+        return "pcap_link_type_unavailable"
+    if "pcap_case_filter" in reasons:
+        return "pcap_case_filter"
+    return "pcap_case_filter"
+
+
+def _pcap_group_summaries(groups_by_direction: Mapping[str, list[JSONObject]]) -> list[JSONObject]:
+    summaries: list[JSONObject] = []
+    for direction, groups in groups_by_direction.items():
+        group_summaries: list[JSONObject] = []
+        for group in groups:
+            plans = group.get("plans")
+            plan_list = (
+                [plan for plan in plans if isinstance(plan, PacketPlan)]
+                if isinstance(plans, list)
+                else []
+            )
+            group_summaries.append(
+                {
+                    "file_format": group.get("file_format"),
+                    "link_type": group.get("link_type"),
+                    "pcap_case": group.get("pcap_case"),
+                    "count": len(plan_list),
+                    "packet_indexes": [plan.index for plan in plan_list],
+                }
+            )
+        summaries.append(
+            {
+                "direction": direction,
+                "groups": group_summaries,
+            }
+        )
+    return summaries
 
 
 def _pcap_vector_groups(args: argparse.Namespace, direction: str) -> list[JSONObject]:
@@ -5344,6 +5688,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("reference_to_libcrafter", "libcrafter_to_reference", "roundtrip"),
         default="roundtrip",
         help="pcap validation direction (default: %(default)s)",
+    )
+    pcap_parser.add_argument(
+        "--corpus",
+        help="read packet plans from a corpus plans.json artifact",
     )
     pcap_parser.add_argument(
         "--keep-artifacts",
