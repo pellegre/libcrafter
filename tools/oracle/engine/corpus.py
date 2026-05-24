@@ -26,6 +26,46 @@ from .model import (
 
 CORPUS_SCHEMA_VERSION = 1
 CORPUS_MODE = "corpus"
+SKIP_BACKEND_UNSUPPORTED = "backend_unsupported"
+SKIP_PCAP_LINK_TYPE_UNAVAILABLE = "pcap_link_type_unavailable"
+SKIP_REQUIRES_IPV4 = "requires_ipv4"
+SKIP_REQUIRES_IPV6 = "requires_ipv6"
+SKIP_REQUIRES_L2 = "requires_l2"
+SKIP_REQUIRES_BROADCAST = "requires_broadcast"
+SKIP_REQUIRES_PROVIDER_MAC = "requires_provider_mac"
+SKIP_REQUIRES_CONTROLLED_SERVICE = "requires_controlled_service"
+SKIP_PROVIDER_CAPABILITY_UNAVAILABLE = "provider_capability_unavailable"
+
+_PCAP_LINK_TYPES_BY_ROOT = {
+    "link:ethernet": "DLT_EN10MB",
+    "link:linux-cooked": "DLT_LINUX_SLL",
+    "link:null-loopback": "DLT_NULL",
+    "l3:ipv4": "DLT_RAW",
+    "l3:ipv6": "DLT_RAW",
+}
+_WIRE_DEFAULT_PROVIDER = "hetzner"
+_WIRE_PROVIDER_CAPABILITY_PROFILES: dict[str, JSONObject] = {
+    "local-dry-run": {
+        "provider": "local-dry-run",
+        "live_packet_exchange": False,
+        "ipv4": True,
+        "ipv6": True,
+        "l2": False,
+        "broadcast": False,
+        "provider_mac": False,
+        "controlled_service": False,
+    },
+    "hetzner": {
+        "provider": "hetzner",
+        "live_packet_exchange": True,
+        "ipv4": True,
+        "ipv6": False,
+        "l2": False,
+        "broadcast": False,
+        "provider_mac": False,
+        "controlled_service": False,
+    },
+}
 
 
 class CorpusFormatError(ValueError):
@@ -38,6 +78,7 @@ class CorpusEligibility(JsonModel):
 
     eligible: bool | None = None
     reason: str | None = None
+    skip_reasons: list[str] = field(default_factory=list)
     mutable_fields: list[str] = field(default_factory=list)
     metadata: JSONObject = field(default_factory=dict)
 
@@ -51,13 +92,19 @@ class CorpusEligibility(JsonModel):
         if reason is not None and not isinstance(reason, str):
             raise CorpusFormatError(f"{name}.reason must be a string or null")
         try:
+            skip_reasons = string_list(raw.get("skip_reasons", []), f"{name}.skip_reasons")
             mutable_fields = string_list(raw.get("mutable_fields", []), f"{name}.mutable_fields")
             metadata = json_object(raw.get("metadata", {}), f"{name}.metadata")
         except ValueError as exc:
             raise CorpusFormatError(str(exc)) from exc
+        if reason is not None and reason not in skip_reasons:
+            skip_reasons.insert(0, reason)
+        if reason is None and skip_reasons:
+            reason = skip_reasons[0]
         return cls(
             eligible=eligible,
             reason=reason,
+            skip_reasons=skip_reasons,
             mutable_fields=mutable_fields,
             metadata=metadata,
         )
@@ -91,6 +138,11 @@ class CorpusPacket(JsonModel):
     @classmethod
     def from_dict(cls, value: object, name: str) -> "CorpusPacket":
         raw = _json_object(value, name)
+        eligibility = raw.get("eligibility")
+        if isinstance(eligibility, Mapping):
+            eligibility_raw = _json_object(eligibility, f"{name}.eligibility")
+        else:
+            eligibility_raw = {}
         packet_id = _required_string(raw, "packet_id", name)
         index = _required_int(raw, "index", name)
         plan = packet_plan_from_object(_required(raw, "plan", name), f"{name}.plan")
@@ -98,10 +150,37 @@ class CorpusPacket(JsonModel):
             packet_id=packet_id,
             index=index,
             plan=plan,
-            offline=CorpusEligibility.from_dict(_required(raw, "offline", name), f"{name}.offline"),
-            pcap=CorpusEligibility.from_dict(_required(raw, "pcap", name), f"{name}.pcap"),
-            wire=CorpusEligibility.from_dict(_required(raw, "wire", name), f"{name}.wire"),
+            offline=CorpusEligibility.from_dict(
+                _eligibility_value(raw, eligibility_raw, "offline", name),
+                f"{name}.offline",
+            ),
+            pcap=CorpusEligibility.from_dict(
+                _eligibility_value(raw, eligibility_raw, "pcap", name),
+                f"{name}.pcap",
+            ),
+            wire=CorpusEligibility.from_dict(
+                _eligibility_value(raw, eligibility_raw, "wire", name),
+                f"{name}.wire",
+            ),
         )
+
+    def to_dict(self) -> JSONObject:
+        offline = self.offline.to_dict()
+        pcap = self.pcap.to_dict()
+        wire = self.wire.to_dict()
+        return {
+            "packet_id": self.packet_id,
+            "index": self.index,
+            "plan": self.plan.to_dict(),
+            "offline": offline,
+            "pcap": pcap,
+            "wire": wire,
+            "eligibility": {
+                "offline": offline,
+                "pcap": pcap,
+                "wire": wire,
+            },
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,15 +251,21 @@ class CorpusReport(JsonModel):
         corpus_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> "CorpusReport":
+        packets = populate_corpus_eligibility(
+            backend=backend,
+            packets=[CorpusPacket.from_plan(plan) for plan in plans],
+        )
+        resolved_metadata = json_object(metadata or {}, "metadata")
+        resolved_metadata["eligibility"] = corpus_eligibility_summary(packets)
         return cls.from_packets(
             backend=backend,
             profile=profile,
             seed=seed,
             count=count,
-            packets=[CorpusPacket.from_plan(plan) for plan in plans],
+            packets=packets,
             selected_specs=selected_specs,
             corpus_id=corpus_id,
-            metadata=metadata,
+            metadata=resolved_metadata,
         )
 
     @classmethod
@@ -261,6 +346,448 @@ def build_corpus_report(
         selected_specs=selected_specs,
         metadata=metadata,
     )
+
+
+def populate_corpus_eligibility(
+    *,
+    backend: str,
+    packets: Sequence[CorpusPacket],
+    provider_capabilities: Mapping[str, object] | None = None,
+    wire_provider: str = _WIRE_DEFAULT_PROVIDER,
+) -> list[CorpusPacket]:
+    """Return packets with offline, pcap, and wire eligibility populated."""
+
+    profiles = _wire_provider_capability_profiles(provider_capabilities)
+    return [
+        CorpusPacket(
+            packet_id=packet.packet_id,
+            index=packet.index,
+            plan=packet.plan,
+            offline=_offline_eligibility(packet.plan, backend),
+            pcap=_pcap_eligibility(packet.plan, backend),
+            wire=_wire_eligibility(
+                packet.plan,
+                backend,
+                profiles=profiles,
+                selected_provider=wire_provider,
+            ),
+        )
+        for packet in packets
+    ]
+
+
+def corpus_eligibility_summary(packets: Sequence[CorpusPacket]) -> JSONObject:
+    """Aggregate corpus skip counts by mode and stable reason string."""
+
+    modes = ("offline", "pcap", "wire")
+    eligible_counts: dict[str, int] = {mode: 0 for mode in modes}
+    skipped_counts: dict[str, int] = {mode: 0 for mode in modes}
+    skip_counts: dict[str, dict[str, int]] = {mode: {} for mode in modes}
+    wire_provider_counts = _wire_provider_eligibility_counts(packets)
+
+    for packet in packets:
+        for mode in modes:
+            eligibility = getattr(packet, mode)
+            if eligibility.eligible is True:
+                eligible_counts[mode] += 1
+                continue
+            skipped_counts[mode] += 1
+            reasons = _eligibility_skip_reasons(eligibility)
+            if not reasons:
+                reasons = [SKIP_PROVIDER_CAPABILITY_UNAVAILABLE]
+            for reason in reasons:
+                skip_counts[mode][reason] = skip_counts[mode].get(reason, 0) + 1
+
+    return {
+        "total_packets": len(packets),
+        "eligible_counts": eligible_counts,
+        "skipped_counts": skipped_counts,
+        "skip_counts_by_mode": skip_counts,
+        "wire_default_provider": _WIRE_DEFAULT_PROVIDER,
+        "wire_provider_profiles": sorted(_WIRE_PROVIDER_CAPABILITY_PROFILES),
+        "wire_provider_eligible_counts": wire_provider_counts["eligible"],
+        "wire_provider_skipped_counts": wire_provider_counts["skipped"],
+        "wire_provider_skip_counts_by_reason": wire_provider_counts["skip_reasons"],
+    }
+
+
+def _offline_eligibility(plan: PacketPlan, backend: str) -> CorpusEligibility:
+    required = ("encode", "decode")
+    missing = _missing_backend_capabilities(backend, required)
+    reasons = [SKIP_BACKEND_UNSUPPORTED] if missing else []
+    return CorpusEligibility(
+        eligible=not reasons,
+        reason=_first_reason(reasons),
+        skip_reasons=reasons,
+        metadata={
+            "required_backend_capabilities": list(required),
+            "missing_backend_capabilities": missing,
+            "backend_capabilities": _enabled_backend_capabilities(backend),
+            "root": _packet_root(plan),
+            "stack": list(plan.stack),
+            "family": plan.family,
+            "case": plan.case,
+            "feature_tags": list(plan.feature_tags),
+        },
+    )
+
+
+def _pcap_eligibility(plan: PacketPlan, backend: str) -> CorpusEligibility:
+    required = ("pcap_read", "pcap_write")
+    missing = _missing_backend_capabilities(backend, required)
+    reasons: list[str] = []
+    if missing:
+        reasons.append(SKIP_BACKEND_UNSUPPORTED)
+    root = _packet_root(plan)
+    link_type = _PCAP_LINK_TYPES_BY_ROOT.get(root or "")
+    if link_type is None:
+        reasons.append(SKIP_PCAP_LINK_TYPE_UNAVAILABLE)
+    reasons = _unique_strings(reasons)
+    return CorpusEligibility(
+        eligible=not reasons,
+        reason=_first_reason(reasons),
+        skip_reasons=reasons,
+        metadata={
+            "required_backend_capabilities": list(required),
+            "missing_backend_capabilities": missing,
+            "backend_capabilities": _enabled_backend_capabilities(backend),
+            "root": root,
+            "pcap_link_type": link_type,
+            "stack": list(plan.stack),
+            "family": plan.family,
+            "case": plan.case,
+            "feature_tags": list(plan.feature_tags),
+        },
+    )
+
+
+def _wire_eligibility(
+    plan: PacketPlan,
+    backend: str,
+    *,
+    profiles: Mapping[str, JSONObject],
+    selected_provider: str,
+) -> CorpusEligibility:
+    profile_decisions: dict[str, JSONObject] = {}
+    for provider, capabilities in profiles.items():
+        profile_decisions[provider] = _wire_profile_decision(
+            plan,
+            backend,
+            capabilities=capabilities,
+        )
+
+    selected = profile_decisions.get(selected_provider)
+    if selected is None:
+        selected = {
+            "provider": selected_provider,
+            "eligible": False,
+            "skip_reasons": [SKIP_PROVIDER_CAPABILITY_UNAVAILABLE],
+            "mutable_fields": [],
+            "metadata": {
+                "provider_available": False,
+                "available_providers": sorted(profile_decisions),
+            },
+        }
+    reasons = _string_list_value(selected.get("skip_reasons", []), "wire.skip_reasons")
+    mutable_fields = _string_list_value(
+        selected.get("mutable_fields", []),
+        "wire.mutable_fields",
+    )
+    metadata = _json_object(selected.get("metadata", {}), "wire.metadata")
+    return CorpusEligibility(
+        eligible=bool(selected.get("eligible")),
+        reason=_first_reason(reasons),
+        skip_reasons=reasons,
+        mutable_fields=mutable_fields,
+        metadata={
+            **metadata,
+            "provider": selected_provider,
+            "provider_profiles": profile_decisions,
+        },
+    )
+
+
+def _wire_profile_decision(
+    plan: PacketPlan,
+    backend: str,
+    *,
+    capabilities: Mapping[str, object],
+) -> JSONObject:
+    required = ("encode", "decode", "live_endpoint")
+    missing = _missing_backend_capabilities(backend, required)
+    reasons: list[str] = []
+    if missing:
+        reasons.append(SKIP_BACKEND_UNSUPPORTED)
+    if not _capability_bool(capabilities, "live_packet_exchange"):
+        reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
+    if _requires_ipv4(plan) and not _capability_bool(capabilities, "ipv4"):
+        reasons.append(SKIP_REQUIRES_IPV4)
+    if _requires_ipv6(plan) and not _capability_bool(capabilities, "ipv6"):
+        reasons.append(SKIP_REQUIRES_IPV6)
+    if _requires_l2(plan) and not _capability_bool(capabilities, "l2"):
+        reasons.append(SKIP_REQUIRES_L2)
+    if _requires_broadcast(plan) and not _capability_bool(capabilities, "broadcast"):
+        reasons.append(SKIP_REQUIRES_BROADCAST)
+    if _requires_provider_mac(plan) and not _capability_bool(capabilities, "provider_mac"):
+        reasons.append(SKIP_REQUIRES_PROVIDER_MAC)
+    if _requires_controlled_service(plan) and not _capability_bool(
+        capabilities,
+        "controlled_service",
+    ):
+        reasons.append(SKIP_REQUIRES_CONTROLLED_SERVICE)
+    if _is_wire_provider_unsafe_feature(plan):
+        reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
+
+    reasons = _unique_strings(reasons)
+    mutable_fields = _wire_mutable_fields(plan)
+    return {
+        "provider": str(capabilities.get("provider", "unknown")),
+        "eligible": not reasons,
+        "reason": _first_reason(reasons),
+        "skip_reasons": reasons,
+        "mutable_fields": mutable_fields,
+        "metadata": {
+            "required_backend_capabilities": list(required),
+            "missing_backend_capabilities": missing,
+            "backend_capabilities": _enabled_backend_capabilities(backend),
+            "capabilities": _wire_capability_metadata(capabilities),
+            "root": _packet_root(plan),
+            "stack": list(plan.stack),
+            "family": plan.family,
+            "case": plan.case,
+            "feature_tags": list(plan.feature_tags),
+            "requirements": {
+                "ipv4": _requires_ipv4(plan),
+                "ipv6": _requires_ipv6(plan),
+                "l2": _requires_l2(plan),
+                "broadcast": _requires_broadcast(plan),
+                "provider_mac": _requires_provider_mac(plan),
+                "controlled_service": _requires_controlled_service(plan),
+            },
+        },
+    }
+
+
+def _wire_provider_capability_profiles(
+    provider_capabilities: Mapping[str, object] | None,
+) -> dict[str, JSONObject]:
+    profiles = {
+        name: dict(profile)
+        for name, profile in _WIRE_PROVIDER_CAPABILITY_PROFILES.items()
+    }
+    if provider_capabilities is None:
+        return profiles
+
+    if isinstance(provider_capabilities.get("provider"), str):
+        provider = str(provider_capabilities["provider"])
+        base = profiles.get(provider, {"provider": provider})
+        profiles[provider] = {
+            **base,
+            **json_object(provider_capabilities, "provider_capabilities"),
+        }
+        return profiles
+
+    for provider, raw_profile in provider_capabilities.items():
+        if not isinstance(provider, str) or not isinstance(raw_profile, Mapping):
+            continue
+        base = profiles.get(provider, {"provider": provider})
+        profiles[provider] = {
+            **base,
+            **json_object(raw_profile, f"provider_capabilities.{provider}"),
+        }
+    return profiles
+
+
+def _wire_capability_metadata(capabilities: Mapping[str, object]) -> JSONObject:
+    keys = (
+        "provider",
+        "live_packet_exchange",
+        "ipv4",
+        "ipv6",
+        "l2",
+        "broadcast",
+        "provider_mac",
+        "controlled_service",
+    )
+    return {
+        key: coerce_json_value(capabilities[key])
+        for key in keys
+        if key in capabilities
+    }
+
+
+def _missing_backend_capabilities(backend: str, required: Sequence[str]) -> list[str]:
+    try:
+        from .backends import get_backend
+
+        registration = get_backend(backend)
+    except ValueError:
+        return list(required)
+    capabilities = registration.capabilities
+    return [
+        capability
+        for capability in required
+        if not bool(getattr(capabilities, capability, False))
+    ]
+
+
+def _enabled_backend_capabilities(backend: str) -> list[str]:
+    try:
+        from .backends import get_backend
+
+        return get_backend(backend).capabilities.enabled()
+    except ValueError:
+        return []
+
+
+def _packet_root(plan: PacketPlan) -> str | None:
+    root = plan.metadata.get("root_decoder", plan.metadata.get("root"))
+    return root if isinstance(root, str) and root else None
+
+
+def _requires_ipv4(plan: PacketPlan) -> bool:
+    root = _packet_root(plan)
+    return root == "l3:ipv4" or plan.family == "ipv4" or "ipv4" in plan.stack
+
+
+def _requires_ipv6(plan: PacketPlan) -> bool:
+    root = _packet_root(plan)
+    return root == "l3:ipv6" or plan.family == "ipv6" or bool(
+        set(plan.stack).intersection({"ipv6", "icmpv6", "ipv6_fragment", "ipv6_routing"})
+    )
+
+
+def _requires_l2(plan: PacketPlan) -> bool:
+    root = _packet_root(plan)
+    return bool(root and root.startswith("link:")) or bool(
+        set(plan.stack).intersection(
+            {
+                "ethernet",
+                "vlan",
+                "arp",
+                "dhcp",
+                "linux_cooked",
+                "null_loopback",
+            }
+        )
+    )
+
+
+def _requires_broadcast(plan: PacketPlan) -> bool:
+    if set(plan.stack).intersection({"arp", "dhcp"}):
+        return True
+    return _fields_contain_value(
+        plan.fields,
+        {
+            "ff:ff:ff:ff:ff:ff",
+            "255.255.255.255",
+            "broadcast",
+        },
+    )
+
+
+def _requires_provider_mac(plan: PacketPlan) -> bool:
+    return bool(
+        set(plan.stack).intersection(
+            {
+                "ethernet",
+                "vlan",
+                "arp",
+                "dhcp",
+                "linux_cooked",
+            }
+        )
+    )
+
+
+def _requires_controlled_service(plan: PacketPlan) -> bool:
+    case = (plan.case or "").replace("_", "-")
+    if "dhcp" in plan.stack:
+        return True
+    if "dns" in plan.stack and "response" in case:
+        return True
+    if "tcp" in plan.stack and ("open" in case or "service" in case):
+        return True
+    return False
+
+
+def _is_wire_provider_unsafe_feature(plan: PacketPlan) -> bool:
+    if bool(plan.metadata.get("malformed")):
+        return True
+    return bool(set(plan.feature_tags).intersection({"malformed", "non_strict_reencode"}))
+
+
+def _wire_mutable_fields(plan: PacketPlan) -> list[str]:
+    fields: list[str] = []
+    if "ipv4" in plan.stack:
+        fields.extend(["ipv4.ttl", "ipv4.checksum"])
+    if _requires_l2(plan):
+        fields.extend(["ethernet.src", "ethernet.dst"])
+    return _unique_strings(fields)
+
+
+def _fields_contain_value(value: object, needles: set[str]) -> bool:
+    if isinstance(value, str):
+        return value.lower() in needles
+    if isinstance(value, Mapping):
+        return any(_fields_contain_value(item, needles) for item in value.values())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return any(_fields_contain_value(item, needles) for item in value)
+    return False
+
+
+def _capability_bool(capabilities: Mapping[str, object], key: str) -> bool:
+    return bool(capabilities.get(key))
+
+
+def _first_reason(reasons: Sequence[str]) -> str | None:
+    return reasons[0] if reasons else None
+
+
+def _unique_strings(values: Sequence[str]) -> list[str]:
+    return list(dict.fromkeys(values))
+
+
+def _eligibility_skip_reasons(eligibility: CorpusEligibility) -> list[str]:
+    if eligibility.skip_reasons:
+        return list(eligibility.skip_reasons)
+    if eligibility.reason is not None:
+        return [eligibility.reason]
+    return []
+
+
+def _wire_provider_eligibility_counts(
+    packets: Sequence[CorpusPacket],
+) -> dict[str, dict[str, int] | dict[str, dict[str, int]]]:
+    eligible: dict[str, int] = {}
+    skipped: dict[str, int] = {}
+    skip_reasons: dict[str, dict[str, int]] = {}
+    for packet in packets:
+        profiles = packet.wire.metadata.get("provider_profiles")
+        if not isinstance(profiles, Mapping):
+            continue
+        for provider, raw_decision in profiles.items():
+            if not isinstance(provider, str) or not isinstance(raw_decision, Mapping):
+                continue
+            decision = _json_object(raw_decision, f"wire.provider_profiles.{provider}")
+            if bool(decision.get("eligible")):
+                eligible[provider] = eligible.get(provider, 0) + 1
+                continue
+            skipped[provider] = skipped.get(provider, 0) + 1
+            reasons = _string_list_value(
+                decision.get("skip_reasons", []),
+                f"wire.provider_profiles.{provider}.skip_reasons",
+            )
+            if not reasons:
+                reasons = [SKIP_PROVIDER_CAPABILITY_UNAVAILABLE]
+            provider_counts = skip_reasons.setdefault(provider, {})
+            for reason in reasons:
+                provider_counts[reason] = provider_counts.get(reason, 0) + 1
+    return {
+        "eligible": eligible,
+        "skipped": skipped,
+        "skip_reasons": skip_reasons,
+    }
 
 
 def load_corpus_report(path: str | Path) -> CorpusReport:
@@ -399,6 +926,17 @@ def _string_list_value(value: object, name: str) -> list[str]:
         return string_list(value, name)
     except ValueError as exc:
         raise CorpusFormatError(str(exc)) from exc
+
+
+def _eligibility_value(
+    raw: Mapping[str, object],
+    eligibility: Mapping[str, object],
+    key: str,
+    name: str,
+) -> object:
+    if key in eligibility:
+        return eligibility[key]
+    return _required(raw, key, name)
 
 
 def _required(raw: Mapping[str, object], key: str, name: str) -> object:
