@@ -1164,15 +1164,15 @@ mod dns_name_decode {
 }
 
 #[cfg(test)]
-mod dns_scapy_fixtures {
+mod dns_golden_bytes {
     use super::{Dns, DnsQuestion, DNS_TYPE_A};
     use crate::{Ipv4, LinkType, Packet, Udp};
     use core::net::Ipv4Addr;
 
-    const DNS_QUERY_FIXTURE: &[u8] = fixture_bytes!("scapy/dns-query.bin");
+    const DNS_QUERY_FIXTURE: &[u8] = fixture_bytes!("bytes/ipv4-udp-dns-query-example-com.bin");
 
     #[test]
-    fn dns_query_matches_scapy_fixture() {
+    fn dns_query_matches_golden_bytes() {
         let bytes = (Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 10))
             .dst(Ipv4Addr::new(198, 51, 100, 53))
@@ -1201,7 +1201,7 @@ mod dns_scapy_fixtures {
 
     #[test]
     fn non_dns_udp_payload_stays_raw_even_when_decoding_from_link() {
-        let raw_fixture = fixture_bytes!("scapy/vlan-ipv4-udp.bin");
+        let raw_fixture = fixture_bytes!("bytes/ethernet-vlan-ipv4-udp-raw.bin");
         let decoded = Packet::decode_from_link(LinkType::Ethernet, raw_fixture).unwrap();
         assert!(decoded.layer::<Dns>().is_none());
     }

@@ -314,17 +314,16 @@ for entry in report.entries() {
 }
 ```
 
-## Fixture Comparison
+## Oracle Comparison
 
-Use oracle fixtures to validate byte-level behavior for deterministic packets.
-Fixture generation is offline and does not require root.
+Use oracle offline artifacts to validate byte-level behavior for deterministic
+packets. Offline generation does not require root.
 
 ```sh
-tools/oracle/run fixtures --backend scapy --list
-tools/oracle/run fixtures --backend scapy --only ipv4-icmp --seed 1 --out target/oracle/fixtures
+tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
 ```
 
 A generated Rust tool can write its compiled bytes to a target file and compare
-against `target/oracle/fixtures/ipv4-icmp.bin`. Prefer exact byte comparison
-for stable headers and structured field comparison when timestamps, random ids,
-route state, or OS-assigned values are expected to vary.
+against the raw vector artifacts under `target/oracle/offline/`. Prefer exact
+byte comparison for stable headers and structured field comparison when
+timestamps, random ids, route state, or OS-assigned values are expected to vary.

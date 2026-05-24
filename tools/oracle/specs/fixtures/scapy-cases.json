@@ -41,7 +41,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Ethernet II frame with an experimental ethertype and raw payload fallback."
+      "notes": "Oracle fixture case. Ethernet II frame with an experimental ethertype and raw payload fallback."
     },
     {
       "name": "arp-request",
@@ -54,7 +54,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. ARP who-has request with documentation IPv4 and deterministic local MAC values."
+      "notes": "Oracle fixture case. ARP who-has request with documentation IPv4 and deterministic local MAC values."
     },
     {
       "name": "ipv4-icmp",
@@ -68,7 +68,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 ICMP echo request with DF, checksum, length, and raw payload preservation."
+      "notes": "Oracle fixture case. IPv4 ICMP echo request with DF, checksum, length, and raw payload preservation."
     },
     {
       "name": "ipv6-icmp",
@@ -81,7 +81,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv6 ICMPv6 echo request with flow label, hop limit, checksum, and payload."
+      "notes": "Oracle fixture case. IPv6 ICMPv6 echo request with flow label, hop limit, checksum, and payload."
     },
     {
       "name": "dns-query",
@@ -95,7 +95,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 UDP DNS A query for example.com."
+      "notes": "Oracle fixture case. IPv4 UDP DNS A query for example.com."
     },
     {
       "name": "vlan-ipv4-udp",
@@ -111,7 +111,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. 802.1Q PCP and VLAN ID with IPv4 UDP payload."
+      "notes": "Oracle fixture case. 802.1Q PCP and VLAN ID with IPv4 UDP payload."
     },
     {
       "name": "raw-payload-link",
@@ -123,7 +123,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Raw link bytes decode as raw and roundtrip without interpretation."
+      "notes": "Oracle fixture case. Raw link bytes decode as raw and roundtrip without interpretation."
     },
     {
       "name": "arp-reply",
@@ -136,7 +136,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. ARP is-at reply covers opcode, sender and target hardware/protocol addresses."
+      "notes": "Oracle fixture case. ARP is-at reply covers opcode, sender and target hardware/protocol addresses."
     },
     {
       "name": "vlan-boundary-fields",
@@ -152,7 +152,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. 802.1Q boundary case for PCP 7, DEI 1, VLAN ID 4094, and payload preservation."
+      "notes": "Oracle fixture case. 802.1Q boundary case for PCP 7, DEI 1, VLAN ID 4094, and payload preservation."
     },
     {
       "name": "linux-cooked-ipv4-udp",
@@ -167,7 +167,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Linux cooked capture boundary with IPv4 UDP payload and deterministic address fields."
+      "notes": "Oracle fixture case. Linux cooked capture boundary with IPv4 UDP payload and deterministic address fields."
     },
     {
       "name": "null-loopback-ipv4-little-endian",
@@ -181,7 +181,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. BSD null loopback little-endian IPv4 family header followed by ICMP payload."
+      "notes": "Oracle fixture case. BSD null loopback little-endian IPv4 family header followed by ICMP payload."
     },
     {
       "name": "null-loopback-ipv6-big-endian",
@@ -209,7 +209,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Covers IPv4 UDP length, checksum, ports, and raw payload."
+      "notes": "Oracle fixture case. Covers IPv4 UDP length, checksum, ports, and raw payload."
     },
     {
       "name": "ipv4-tcp-syn",
@@ -222,7 +222,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Covers TCP SYN fields, sequence, window, and IPv4 checksum."
+      "notes": "Oracle fixture case. Covers TCP SYN fields, sequence, window, and IPv4 checksum."
     },
     {
       "name": "ipv4-boundary-fields",
@@ -235,7 +235,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 TOS, TTL 0, reserved/DF/MF flags, max fragment offset, unknown protocol raw fallback, and automatic total length/header checksum."
+      "notes": "Oracle fixture case. IPv4 TOS, TTL 0, reserved/DF/MF flags, max fragment offset, unknown protocol raw fallback, and automatic total length/header checksum."
     },
     {
       "name": "ipv4-unknown-protocol-raw",
@@ -248,7 +248,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Unknown IPv4 protocol number must preserve the payload as raw bytes."
+      "notes": "Oracle fixture case. Unknown IPv4 protocol number must preserve the payload as raw bytes."
     },
     {
       "name": "ipv4-fragment-mf-offset",
@@ -261,7 +261,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 nonzero fragment offset with MF set validates flags, offset units, and payload boundaries."
+      "notes": "Oracle fixture case. IPv4 nonzero fragment offset with MF set validates flags, offset units, and payload boundaries."
     },
     {
       "name": "ipv4-ttl-255",
@@ -274,7 +274,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 TTL 255 with DF and raw fallback complements the TTL 0 boundary case."
+      "notes": "Oracle fixture case. IPv4 TTL 255 with DF and raw fallback complements the TTL 0 boundary case."
     },
     {
       "name": "ipv4-options",
@@ -287,7 +287,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Covers EOL, NOP, record-route, and generic IPv4 option encodings."
+      "notes": "Oracle fixture case. Covers EOL, NOP, record-route, and generic IPv4 option encodings."
     },
     {
       "name": "ipv4-options-source-route-traceroute",
@@ -300,7 +300,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Loose source route, strict source route, traceroute, and padding bytes must remain stable."
+      "notes": "Oracle fixture case. Loose source route, strict source route, traceroute, and padding bytes must remain stable."
     },
     {
       "name": "ipv6-boundary-fields",
@@ -313,7 +313,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv6 traffic class, max flow label, hop limit 0, payload length, and raw fallback."
+      "notes": "Oracle fixture case. IPv6 traffic class, max flow label, hop limit 0, payload length, and raw fallback."
     },
     {
       "name": "ipv6-unknown-next-header-raw",
@@ -326,7 +326,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Unknown IPv6 next header must preserve the payload as raw bytes; this also covers flow label 0 and hop limit 255."
+      "notes": "Oracle fixture case. Unknown IPv6 next header must preserve the payload as raw bytes; this also covers flow label 0 and hop limit 255."
     },
     {
       "name": "ipv6-fragment-udp",
@@ -341,7 +341,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv6 fragment extension header validates offset, M flag, ID, next-header chaining, and UDP payload."
+      "notes": "Oracle fixture case. IPv6 fragment extension header validates offset, M flag, ID, next-header chaining, and UDP payload."
     },
     {
       "name": "ipv6-routing-generic",
@@ -355,7 +355,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Generic IPv6 routing extension validates header length, next-header chaining, and raw tail preservation."
+      "notes": "Oracle fixture case. Generic IPv6 routing extension validates header length, next-header chaining, and raw tail preservation."
     },
     {
       "name": "ipv6-mobile-routing",
@@ -369,7 +369,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Mobile routing header variant uses 2001:db8 addresses and validates routing type preservation."
+      "notes": "Oracle fixture case. Mobile routing header variant uses 2001:db8 addresses and validates routing type preservation."
     },
     {
       "name": "ipv6-segment-routing-udp",
@@ -384,7 +384,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Segment routing header validates segment list, segments-left, next-header chaining, and UDP payload."
+      "notes": "Oracle fixture case. Segment routing header validates segment list, segments-left, next-header chaining, and UDP payload."
     },
     {
       "name": "ipv6-extension-chain-tcp-raw",
@@ -399,7 +399,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv6 routing extension must decode before TCP and preserve TCP raw payload."
+      "notes": "Oracle fixture case. IPv6 routing extension must decode before TCP and preserve TCP raw payload."
     },
     {
       "name": "ipv6-routing-icmpv6",
@@ -413,7 +413,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv6 routing extension chains into ICMPv6 echo while preserving checksum and payload."
+      "notes": "Oracle fixture case. IPv6 routing extension chains into ICMPv6 echo while preserving checksum and payload."
     },
     {
       "name": "udp-ipv6-checksum-length",
@@ -427,7 +427,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. UDP over IPv6 validates pseudo-header checksum, UDP length, and payload preservation."
+      "notes": "Oracle fixture case. UDP over IPv6 validates pseudo-header checksum, UDP length, and payload preservation."
     },
     {
       "name": "udp-ipv4-zero-checksum",
@@ -441,7 +441,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. UDP over IPv4 zero checksum is valid and must remain distinguishable from recomputed checksum cases."
+      "notes": "Oracle fixture case. UDP over IPv4 zero checksum is valid and must remain distinguishable from recomputed checksum cases."
     },
     {
       "name": "tcp-all-flags-reserved-offset",
@@ -455,7 +455,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. TCP all flags, reserved bits, data offset, window, urgent pointer, and payload preservation."
+      "notes": "Oracle fixture case. TCP all flags, reserved bits, data offset, window, urgent pointer, and payload preservation."
     },
     {
       "name": "tcp-options",
@@ -468,7 +468,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. Covers MSS, SACK permitted, timestamp, window scale, and option padding."
+      "notes": "Oracle fixture case. Covers MSS, SACK permitted, timestamp, window scale, and option padding."
     },
     {
       "name": "tcp-options-sack-blocks",
@@ -481,7 +481,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. TCP SACK block option validates repeated block boundaries and stable option encoding."
+      "notes": "Oracle fixture case. TCP SACK block option validates repeated block boundaries and stable option encoding."
     },
     {
       "name": "tcp-options-mptcp-fastopen-edo-generic",
@@ -495,7 +495,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. MPTCP, Fast Open, EDO, and generic TCP option encodings must be preserved even if parsed generically."
+      "notes": "Oracle fixture case. MPTCP, Fast Open, EDO, and generic TCP option encodings must be preserved even if parsed generically."
     },
     {
       "name": "tcp-udp-unknown-ports-raw",
@@ -523,7 +523,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. IPv4 ICMP echo reply complements the checked-in echo request case."
+      "notes": "Oracle fixture case. IPv4 ICMP echo reply complements the oracle echo request case."
     },
     {
       "name": "icmpv4-destination-unreachable",
@@ -671,7 +671,7 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "Checked-in Scapy fixture. DHCP discover validates op, htype, hlen, xid, flags, chaddr, hostname, parameter request list, pad, and end."
+      "notes": "Oracle fixture case. DHCP discover validates op, htype, hlen, xid, flags, chaddr, hostname, parameter request list, pad, and end."
     },
     {
       "name": "dhcp-request-offer-ack",

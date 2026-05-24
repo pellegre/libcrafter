@@ -41,11 +41,10 @@ generator must reject it and resample instead of relying on backend exceptions.
 
 ## Fixture Case Specs
 
-`tools/oracle/specs/fixtures/` contains backend-owned fixture case matrices used
-to generate temporary vectors and compatibility reports. The Scapy case matrix
-in `fixtures/scapy-cases.json` is the full generated behavior source; the
-checked-in `tests/fixtures/scapy/cases.json` file is only a manifest for the
-small static golden subset.
+`tools/oracle/specs/fixtures/` contains backend-owned case matrices that seed
+oracle generation and compatibility reports. The Scapy case matrix in
+`fixtures/scapy-cases.json` documents historical packet behaviors that now run
+through oracle modes and write artifacts below `target/oracle/`.
 
 ## Profiles
 

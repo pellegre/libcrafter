@@ -1173,7 +1173,7 @@ mod ipv4 {
     use crate::{Icmp, LinkType, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
-    const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("scapy/ipv4-icmp.bin");
+    const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("bytes/ipv4-icmp-echo-request.bin");
 
     fn src() -> Ipv4Addr {
         Ipv4Addr::new(192, 0, 2, 10)
@@ -1184,7 +1184,7 @@ mod ipv4 {
     }
 
     #[test]
-    fn ipv4_header_matches_scapy_fixture_with_raw_icmp_payload() {
+    fn ipv4_header_matches_golden_bytes_with_raw_icmp_payload() {
         let packet = Ipv4::new()
             .src(src())
             .dst(dst())
@@ -1386,10 +1386,10 @@ mod ipv4_checksum {
     use crate::{checksum::verify_internet_checksum, Raw};
     use core::net::Ipv4Addr;
 
-    const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("scapy/ipv4-icmp.bin");
+    const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("bytes/ipv4-icmp-echo-request.bin");
 
     #[test]
-    fn ipv4_header_checksum_matches_scapy_fixture() {
+    fn ipv4_header_checksum_matches_golden_bytes() {
         let packet = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 10))
             .dst(Ipv4Addr::new(198, 51, 100, 20))
