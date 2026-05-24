@@ -9,6 +9,7 @@ from .registry import (
     UnknownBackendError,
     backend_report_metadata,
     get_backend,
+    get_backend_capability_registration,
     registered_backend_names,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "UnknownBackendError",
     "backend_report_metadata",
     "get_backend",
+    "get_backend_capability_registration",
     "registered_backend_names",
 ]
