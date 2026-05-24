@@ -420,6 +420,263 @@ def _offline_corpus_plans(
     return plans, selected_specs, metadata
 
 
+def _live_corpus_plans(
+    args: argparse.Namespace,
+    *,
+    wire_provider: str,
+    direction: str,
+) -> tuple[list[PacketPlan], list[str], JSONObject]:
+    from .corpus import (
+        CorpusFormatError,
+        SKIP_PROVIDER_CAPABILITY_UNAVAILABLE,
+        load_corpus_report,
+        wire_comparison_policy,
+    )
+
+    corpus_path: Path | None = None
+    corpus_source = "generated"
+    if getattr(args, "corpus", None) is None:
+        corpus_report = _build_corpus_report_from_generation(args, direction=direction)
+    else:
+        corpus_source = "provided"
+        corpus_path = Path(args.corpus)
+        if not corpus_path.is_absolute():
+            corpus_path = REPO_ROOT / corpus_path
+        corpus_report = load_corpus_report(corpus_path)
+        if corpus_report.backend != args.backend:
+            raise CorpusFormatError(
+                f"{corpus_path}: backend {corpus_report.backend!r} does not match "
+                f"requested backend {args.backend!r}"
+            )
+
+    packets = list(corpus_report.packets)
+    if args.index is not None:
+        packets = [packet for packet in packets if packet.plan.index == args.index]
+
+    plans: list[PacketPlan] = []
+    eligibility: list[JSONObject] = []
+    skip_reasons: dict[str, int] = {}
+    skipped_count = 0
+    for position, packet in enumerate(packets):
+        decision = _live_wire_provider_decision(
+            packet.wire.to_dict(),
+            provider=wire_provider,
+            fallback_reason=SKIP_PROVIDER_CAPABILITY_UNAVAILABLE,
+        )
+        eligible = bool(decision.get("eligible"))
+        reasons = _live_wire_skip_reasons(
+            decision,
+            fallback_reason=SKIP_PROVIDER_CAPABILITY_UNAVAILABLE,
+        )
+        packet_decision: JSONObject = {
+            "position": position,
+            "packet_id": packet.packet_id,
+            "corpus_index": packet.index,
+            "packet_index": packet.plan.index,
+            "provider": wire_provider,
+            "eligible": eligible,
+            "reason": None if eligible else reasons[0],
+            "skip_reasons": [] if eligible else reasons,
+        }
+        if decision.get("compare_root") is not None:
+            packet_decision["compare_root"] = decision["compare_root"]
+        if isinstance(decision.get("strict_bytes"), bool):
+            packet_decision["strict_bytes"] = decision["strict_bytes"]
+        mutable_fields = _string_values(decision.get("mutable_fields", []))
+        if mutable_fields:
+            packet_decision["mutable_fields"] = mutable_fields
+        eligibility.append(packet_decision)
+        if not eligible:
+            skipped_count += 1
+            for reason in reasons:
+                skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+            continue
+
+        policy = _live_wire_policy_from_decision(
+            packet.plan,
+            decision=decision,
+            provider=wire_provider,
+            fallback=wire_comparison_policy,
+        )
+        metadata = {
+            **packet.plan.metadata,
+            "corpus": {
+                "corpus_id": corpus_report.corpus_id,
+                "packet_id": packet.packet_id,
+                "corpus_index": packet.index,
+                "packet_index": packet.plan.index,
+                "corpus_source": corpus_source,
+                "corpus_path": str(corpus_path) if corpus_path is not None else None,
+            },
+            "wire": policy,
+            "wire_eligibility": decision,
+        }
+        strict_bytes = decision.get("strict_bytes")
+        plans.append(
+            replace(
+                packet.plan,
+                direction=direction,
+                strict_bytes=(
+                    strict_bytes if isinstance(strict_bytes, bool) else packet.plan.strict_bytes
+                ),
+                metadata=metadata,
+            )
+        )
+
+    selected_specs = list(
+        dict.fromkeys(
+            [
+                *corpus_report.selected_specs,
+                *_selected_specs_for_plans(plans),
+            ]
+        )
+    )
+    metadata: JSONObject = {
+        "corpus_id": corpus_report.corpus_id,
+        "corpus_source": corpus_source,
+        "corpus_path": str(corpus_path) if corpus_path is not None else None,
+        "corpus_backend": corpus_report.backend,
+        "corpus_profile": corpus_report.profile,
+        "corpus_seed": corpus_report.seed,
+        "corpus_count": corpus_report.count,
+        "requested_count": args.count,
+        "generated_count": len(packets),
+        "wire_provider": wire_provider,
+        "wire_eligible_count": len(plans),
+        "wire_skipped_count": skipped_count,
+        "wire_skip_reasons": skip_reasons,
+        "wire_skip_counts_by_reason": dict(skip_reasons),
+        "wire_eligibility": eligibility,
+        "packet_indexes": [plan.index for plan in plans],
+    }
+    return plans, selected_specs, metadata
+
+
+def _live_wire_provider_decision(
+    wire: Mapping[str, object],
+    *,
+    provider: str,
+    fallback_reason: str,
+) -> JSONObject:
+    metadata = wire.get("metadata")
+    if isinstance(metadata, Mapping):
+        profiles = metadata.get("provider_profiles")
+        if isinstance(profiles, Mapping):
+            raw_decision = profiles.get(provider)
+            if isinstance(raw_decision, Mapping):
+                return {
+                    key: value
+                    for key, value in raw_decision.items()
+                    if isinstance(key, str)
+                }
+
+        if metadata.get("provider") == provider:
+            return {
+                key: value
+                for key, value in wire.items()
+                if isinstance(key, str)
+            }
+
+    return {
+        "provider": provider,
+        "eligible": False,
+        "reason": fallback_reason,
+        "skip_reasons": [fallback_reason],
+        "compare_root": wire.get("compare_root"),
+        "strict_bytes": wire.get("strict_bytes"),
+        "mutable_fields": wire.get("mutable_fields", []),
+        "metadata": {
+            "provider_available": False,
+            "requested_provider": provider,
+        },
+    }
+
+
+def _live_wire_skip_reasons(
+    decision: Mapping[str, object],
+    *,
+    fallback_reason: str,
+) -> list[str]:
+    reasons = _string_values(decision.get("skip_reasons", []))
+    reason = decision.get("reason")
+    if isinstance(reason, str) and reason and reason not in reasons:
+        reasons.insert(0, reason)
+    return reasons or [fallback_reason]
+
+
+def _live_wire_policy_from_decision(
+    plan: PacketPlan,
+    *,
+    decision: Mapping[str, object],
+    provider: str,
+    fallback,
+) -> JSONObject:
+    metadata = decision.get("metadata")
+    if isinstance(metadata, Mapping):
+        raw_policy = metadata.get("mutation_policy")
+        if isinstance(raw_policy, Mapping):
+            return {
+                key: value
+                for key, value in raw_policy.items()
+                if isinstance(key, str)
+            }
+
+    policy = fallback(plan, provider=provider)
+    if decision.get("compare_root") is not None:
+        policy["compare_root"] = decision["compare_root"]
+    if isinstance(decision.get("strict_bytes"), bool):
+        policy["strict_bytes"] = decision["strict_bytes"]
+    mutable_fields = _string_values(decision.get("mutable_fields", []))
+    if mutable_fields:
+        policy["mutable_fields"] = mutable_fields
+    policy["provider"] = provider
+    return policy
+
+
+def _live_corpus_accounting_validation(
+    metadata: Mapping[str, object],
+    *,
+    provider: str,
+):
+    from .live import LiveValidationCheck
+
+    generated_count = int(metadata.get("generated_count", 0))
+    eligible_count = int(metadata.get("wire_eligible_count", 0))
+    skipped_count = int(metadata.get("wire_skipped_count", 0))
+    raw_eligibility = metadata.get("wire_eligibility", [])
+    eligibility = raw_eligibility if isinstance(raw_eligibility, list) else []
+    decision_eligible = sum(
+        1
+        for decision in eligibility
+        if isinstance(decision, Mapping) and bool(decision.get("eligible"))
+    )
+    decision_skipped = len(eligibility) - decision_eligible
+    errors: list[str] = []
+    if generated_count != len(eligibility):
+        errors.append("wire eligibility decisions must match generated packet count")
+    if eligible_count + skipped_count != generated_count:
+        errors.append("wire eligible plus skipped count must equal generated count")
+    if decision_eligible != eligible_count:
+        errors.append("wire eligible count must match eligibility decisions")
+    if decision_skipped != skipped_count:
+        errors.append("wire skipped count must match eligibility decisions")
+    if skipped_count and not isinstance(metadata.get("wire_skip_reasons"), Mapping):
+        errors.append("wire skipped packets must include skip counts by reason")
+
+    return LiveValidationCheck(
+        name="live-corpus-accounting",
+        passed=not errors,
+        subject=f"{provider}:generated-{generated_count}",
+        errors=errors,
+        metadata={
+            "provider": provider,
+            "generated_count": generated_count,
+            "wire_eligible_count": eligible_count,
+            "wire_skipped_count": skipped_count,
+        },
+    )
+
+
 def _pcap_required_capabilities(
     args: argparse.Namespace,
 ) -> tuple[BackendCapabilityName, ...]:
@@ -690,7 +947,6 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         validate_backend_bootstrap_command,
         validate_dry_run_command_plan as validate_scapy_dry_run_command_plan,
     )
-    from .generator import generate_plans
     from .live import (
         LIVE_SELECTED_SPECS,
         LiveExchangePlan,
@@ -711,17 +967,10 @@ def _live_hetzner(args: argparse.Namespace) -> int:
 
     try:
         directions = live_execution_directions(args.direction)
-        root, family, case_name, feature = _hetzner_live_generation_selection(args)
-        plans = generate_plans(
-            seed=args.seed,
-            profile=args.profile,
-            backend=args.backend,
-            count=args.count,
-            root=root,
-            family=family,
-            case=case_name,
-            feature=feature,
-            index=args.index,
+        plans, corpus_selected_specs, corpus_metadata = _live_corpus_plans(
+            args,
+            wire_provider="hetzner",
+            direction=directions[0] if directions else "reference_to_libcrafter",
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -730,6 +979,16 @@ def _live_hetzner(args: argparse.Namespace) -> int:
     output_dir = _live_output_dir(args.out)
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "report.json"
+    selected_specs = list(
+        dict.fromkeys([*LIVE_SELECTED_SPECS, *corpus_selected_specs])
+    )
+
+    print(
+        f"live {args.provider}: generated={corpus_metadata['generated_count']} "
+        f"wire_eligible={corpus_metadata['wire_eligible_count']} "
+        f"wire_skipped={corpus_metadata['wire_skipped_count']} "
+        f"wire_skip_reasons={corpus_metadata['wire_skip_reasons']}"
+    )
 
     token_configured = hetzner_token_configured()
     dry_run = bool(args.dry_run)
@@ -738,21 +997,33 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             args=args,
             report_path=report_path,
             directions=directions,
-            generated_count=len(plans),
+            selected_specs=selected_specs,
+            corpus_metadata=corpus_metadata,
         )
     if not dry_run and not bool(getattr(args, "confirm_live_run", False)):
         return _live_hetzner_requires_dry_run_report(
             args=args,
             report_path=report_path,
             directions=directions,
-            generated_count=len(plans),
+            selected_specs=selected_specs,
+            corpus_metadata=corpus_metadata,
         )
     if not dry_run:
+        if not plans:
+            return _live_hetzner_skip_no_wire_eligible(
+                args=args,
+                report_path=report_path,
+                directions=directions,
+                selected_specs=selected_specs,
+                corpus_metadata=corpus_metadata,
+            )
         return _live_hetzner_execute(
             args=args,
             report_path=report_path,
             directions=directions,
             plans=plans,
+            selected_specs=selected_specs,
+            corpus_metadata=corpus_metadata,
         )
 
     endpoints = hetzner_endpoints(dry_run=True)
@@ -763,6 +1034,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         validate_backend_bootstrap_command(bootstrap_command),
         validate_hetzner_endpoint_bootstrap(endpoint_bootstrap, dry_run=True),
         validate_hetzner_provider_workflow(provider_workflow, dry_run=True),
+        _live_corpus_accounting_validation(corpus_metadata, provider="hetzner"),
     ]
     exchanges: list[LiveExchangePlan] = []
 
@@ -837,6 +1109,9 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             "private_network": True,
             "endpoint_count": 2,
             "validations_pass": True,
+            "generated_count": corpus_metadata["generated_count"],
+            "wire_eligible_count": corpus_metadata["wire_eligible_count"],
+            "wire_skipped_count": corpus_metadata["wire_skipped_count"],
         },
         actual={
             "provider": args.provider,
@@ -846,6 +1121,9 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             "endpoint_count": len(endpoints),
             "validations_pass": not failed_validations,
             "failed_validations": [validation.to_dict() for validation in failed_validations],
+            "generated_count": corpus_metadata["generated_count"],
+            "wire_eligible_count": corpus_metadata["wire_eligible_count"],
+            "wire_skipped_count": corpus_metadata["wire_skipped_count"],
         },
         strict_bytes=False,
         byte_equal=None,
@@ -878,7 +1156,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(exchanges),
         status=status,
-        selected_specs=LIVE_SELECTED_SPECS,
+        selected_specs=selected_specs,
         artifacts=[str(report_path)],
         artifact_paths=[str(report_path)],
         results=[result],
@@ -897,9 +1175,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             "live_packet_exchange": False,
             "no_live_packets_sent": True,
             "token_configured": token_configured,
-            "requested_count": args.count,
-            "generated_count": len(plans),
-            "live_generation_constraints": _hetzner_live_generation_constraints(),
+            **corpus_metadata,
             "execution_directions": directions,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=True),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
@@ -927,6 +1203,8 @@ def _live_hetzner(args: argparse.Namespace) -> int:
 
     print(
         f"live {args.provider}: status={status} exchanges={len(exchanges)} "
+        f"wire_eligible={corpus_metadata['wire_eligible_count']} "
+        f"wire_skipped={corpus_metadata['wire_skipped_count']} "
         f"creates_infrastructure=false report={report_path}"
     )
     print(
@@ -947,9 +1225,9 @@ def _live_hetzner_skip_no_token(
     args: argparse.Namespace,
     report_path: Path,
     directions: list[str],
-    generated_count: int,
+    selected_specs: list[str],
+    corpus_metadata: JSONObject,
 ) -> int:
-    from .live import LIVE_SELECTED_SPECS
     from .providers.hetzner import (
         hetzner_endpoint_bootstrap_plan,
         hetzner_endpoints,
@@ -992,7 +1270,7 @@ def _live_hetzner_skip_no_token(
         seed=args.seed,
         count=0,
         status="skipped",
-        selected_specs=LIVE_SELECTED_SPECS,
+        selected_specs=selected_specs,
         artifacts=[str(report_path)],
         artifact_paths=[str(report_path)],
         results=[result],
@@ -1009,8 +1287,7 @@ def _live_hetzner_skip_no_token(
             "live_packet_exchange": False,
             "no_live_packets_sent": True,
             "token_configured": False,
-            "requested_count": args.count,
-            "generated_count": generated_count,
+            **corpus_metadata,
             "execution_directions": directions,
             "planned_infrastructure_if_credentials_available": hetzner_private_network_plan(
                 dry_run=False
@@ -1047,9 +1324,9 @@ def _live_hetzner_requires_dry_run_report(
     args: argparse.Namespace,
     report_path: Path,
     directions: list[str],
-    generated_count: int,
+    selected_specs: list[str],
+    corpus_metadata: JSONObject,
 ) -> int:
-    from .live import LIVE_SELECTED_SPECS
     from .providers.hetzner import (
         hetzner_endpoint_bootstrap_plan,
         hetzner_endpoints,
@@ -1099,7 +1376,7 @@ def _live_hetzner_requires_dry_run_report(
         seed=args.seed,
         count=0,
         status="failed",
-        selected_specs=LIVE_SELECTED_SPECS,
+        selected_specs=selected_specs,
         artifacts=[str(report_path)],
         artifact_paths=[str(report_path)],
         results=[result],
@@ -1128,7 +1405,7 @@ def _live_hetzner_requires_dry_run_report(
                 name: endpoint.to_dict() for name, endpoint in endpoints.items()
             },
             "execution_directions": directions,
-            "generated_count": generated_count,
+            **corpus_metadata,
         },
     )
     write_json(report_path, report)
@@ -1140,17 +1417,110 @@ def _live_hetzner_requires_dry_run_report(
     return 2
 
 
+def _live_hetzner_skip_no_wire_eligible(
+    *,
+    args: argparse.Namespace,
+    report_path: Path,
+    directions: list[str],
+    selected_specs: list[str],
+    corpus_metadata: JSONObject,
+) -> int:
+    from .providers.hetzner import (
+        hetzner_endpoint_bootstrap_plan,
+        hetzner_endpoints,
+        hetzner_private_network_plan,
+        hetzner_provider_workflow,
+    )
+
+    endpoints = hetzner_endpoints(dry_run=False)
+    provider_workflow = hetzner_provider_workflow(dry_run=False)
+    endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
+    result = ComparisonResult(
+        passed=True,
+        direction=args.direction,
+        expected={
+            "provider": args.provider,
+            "wire_eligible_count": 0,
+            "live_packet_exchange": False,
+        },
+        actual={
+            "provider": args.provider,
+            "skipped": True,
+            "wire_eligible_count": 0,
+            "wire_skipped_count": corpus_metadata["wire_skipped_count"],
+            "wire_skip_reasons": corpus_metadata["wire_skip_reasons"],
+            "live_packet_exchange": False,
+        },
+        strict_bytes=False,
+        byte_equal=None,
+        metadata={
+            "provider": args.provider,
+            "skipped": True,
+            "skip_reason": "no_wire_eligible_packets",
+            "creates_infrastructure": False,
+            "live_packet_exchange": False,
+        },
+    )
+    report = RunReport(
+        mode="live",
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=0,
+        status="skipped",
+        selected_specs=selected_specs,
+        artifacts=[str(report_path)],
+        artifact_paths=[str(report_path)],
+        results=[result],
+        failures=[],
+        backend_versions=_backend_versions(args.backend),
+        libcrafter=_libcrafter_info(),
+        metadata={
+            "provider": args.provider,
+            "dry_run": False,
+            "skipped": True,
+            "skip_reason": "no_wire_eligible_packets",
+            "creates_infrastructure": False,
+            "planned_live_packet_exchange": False,
+            "live_packet_exchange": False,
+            "no_live_packets_sent": True,
+            "token_configured": True,
+            **corpus_metadata,
+            "execution_directions": directions,
+            "planned_infrastructure_if_packets_eligible": hetzner_private_network_plan(
+                dry_run=False
+            ),
+            "provider_workflow_if_packets_eligible": [
+                command.to_dict() for command in provider_workflow
+            ],
+            "endpoint_bootstrap_if_packets_eligible": [
+                command.to_dict() for command in endpoint_bootstrap
+            ],
+            "endpoints": {
+                name: endpoint.to_dict() for name, endpoint in endpoints.items()
+            },
+        },
+    )
+    write_json(report_path, report)
+    print(
+        f"live {args.provider}: status=skipped reason=no_wire_eligible_packets "
+        f"creates_infrastructure=false report={report_path}"
+    )
+    return 0
+
+
 def _live_hetzner_execute(
     *,
     args: argparse.Namespace,
     report_path: Path,
     directions: list[str],
     plans: list[PacketPlan],
+    selected_specs: list[str],
+    corpus_metadata: JSONObject,
 ) -> int:
     from .backends.scapy.normalize import decode_vectors
     from .backends.scapy.packets import encode_packet_plans
     from .live import (
-        LIVE_SELECTED_SPECS,
         LiveCommandPlan,
         LiveExchangePlan,
         build_live_endpoint_batch_request,
@@ -1553,7 +1923,7 @@ def _live_hetzner_execute(
         seed=args.seed,
         count=len(results),
         status=status,
-        selected_specs=LIVE_SELECTED_SPECS,
+        selected_specs=selected_specs,
         artifacts=artifact_paths,
         artifact_paths=artifact_paths,
         results=results,
@@ -1581,9 +1951,7 @@ def _live_hetzner_execute(
             "planned_live_packet_exchange": True,
             "live_packet_exchange": bool(live_packet_exchange and status == "passed"),
             "token_configured": True,
-            "requested_count": args.count,
-            "generated_count": len(plans),
-            "live_generation_constraints": _hetzner_live_generation_constraints(),
+            **corpus_metadata,
             "execution_directions": directions,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=False),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
@@ -1651,53 +2019,6 @@ def _read_hetzner_manifest(path: Path) -> dict[str, str]:
         key, value = parts[0].split("=", 1)
         values[key] = value
     return values
-
-
-def _hetzner_live_generation_selection(
-    args: argparse.Namespace,
-) -> tuple[str, str, str, None]:
-    """Return the currently materialized live stack for Hetzner exchanges."""
-
-    if args.root not in (None, "l3:ipv4"):
-        raise ValueError(
-            "Hetzner live exchange currently supports --root l3:ipv4 only; "
-            f"got {args.root}"
-        )
-    if args.family not in (None, "ipv4"):
-        raise ValueError(
-            "Hetzner live exchange currently supports --family ipv4 only; "
-            f"got {args.family}"
-        )
-    if args.case_name not in (None, "ipv4-udp"):
-        raise ValueError(
-            "Hetzner live exchange currently supports --case ipv4-udp only; "
-            f"got {args.case_name}"
-        )
-    if args.feature is not None:
-        raise ValueError(
-            "Hetzner live exchange currently supports baseline ipv4-udp only; "
-            f"got --feature {args.feature}"
-        )
-    return "l3:ipv4", "ipv4", "ipv4-udp", None
-
-
-def _hetzner_live_generation_constraints() -> JSONObject:
-    return {
-        "reason": "current libcrafter live endpoint materializes and safely sends l3 ipv4 udp payload batches",
-        "root": "l3:ipv4",
-        "family": "ipv4",
-        "case": "ipv4-udp",
-        "transit_safe_fields": {
-            "ipv4.ttl": "generated TTL values below 2 are rewritten for provider live transit",
-        },
-        "unsupported_in_live": [
-            "ipv6",
-            "tcp",
-            "icmp",
-            "dns",
-            "link-layer roots",
-        ],
-    }
 
 
 def _hetzner_endpoints_from_manifest(endpoints, manifest: dict[str, str]):
@@ -2436,7 +2757,6 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
         validate_backend_bootstrap_command,
         validate_dry_run_command_plan as validate_scapy_dry_run_command_plan,
     )
-    from .generator import generate_plans
     from .live import (
         LIVE_SELECTED_SPECS,
         LiveExchangePlan,
@@ -2453,16 +2773,10 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
 
     try:
         directions = live_execution_directions(args.direction)
-        plans = generate_plans(
-            seed=args.seed,
-            profile=args.profile,
-            backend=args.backend,
-            count=args.count,
-            root=args.root,
-            family=args.family,
-            case=args.case_name,
-            feature=args.feature,
-            index=args.index,
+        plans, corpus_selected_specs, corpus_metadata = _live_corpus_plans(
+            args,
+            wire_provider="hetzner",
+            direction=directions[0] if directions else "reference_to_libcrafter",
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -2471,10 +2785,23 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
     output_dir = _live_output_dir(args.out)
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "report.json"
+    selected_specs = list(
+        dict.fromkeys([*LIVE_SELECTED_SPECS, *corpus_selected_specs])
+    )
+
+    print(
+        f"live {args.provider}: generated={corpus_metadata['generated_count']} "
+        f"wire_eligible={corpus_metadata['wire_eligible_count']} "
+        f"wire_skipped={corpus_metadata['wire_skipped_count']} "
+        f"wire_skip_reasons={corpus_metadata['wire_skip_reasons']}"
+    )
 
     endpoints = local_dry_run_endpoints()
     bootstrap_command = backend_bootstrap_command_plan()
-    validations = [validate_backend_bootstrap_command(bootstrap_command)]
+    validations = [
+        validate_backend_bootstrap_command(bootstrap_command),
+        _live_corpus_accounting_validation(corpus_metadata, provider="hetzner"),
+    ]
     exchanges: list[LiveExchangePlan] = []
 
     for plan in plans:
@@ -2598,6 +2925,9 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
             "live_packet_exchange": False,
             "validations_pass": True,
             "endpoint_protocol_batches": len(directions) * 2,
+            "generated_count": corpus_metadata["generated_count"],
+            "wire_eligible_count": corpus_metadata["wire_eligible_count"],
+            "wire_skipped_count": corpus_metadata["wire_skipped_count"],
         },
         actual={
             "provider": args.provider,
@@ -2606,6 +2936,9 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
             "validations_pass": not failed_validations,
             "endpoint_protocol_batches": len(endpoint_protocol_batches),
             "failed_validations": [validation.to_dict() for validation in failed_validations],
+            "generated_count": corpus_metadata["generated_count"],
+            "wire_eligible_count": corpus_metadata["wire_eligible_count"],
+            "wire_skipped_count": corpus_metadata["wire_skipped_count"],
         },
         strict_bytes=False,
         byte_equal=None,
@@ -2636,7 +2969,7 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
         seed=args.seed,
         count=len(exchanges),
         status=status,
-        selected_specs=LIVE_SELECTED_SPECS,
+        selected_specs=selected_specs,
         artifacts=[str(report_path)],
         artifact_paths=[str(report_path)],
         results=[result],
@@ -2652,8 +2985,7 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
             "live_packet_exchange": False,
             "no_live_packets_sent": True,
             "real_provider_backed_live_mode": "not executed by local-dry-run",
-            "requested_count": args.count,
-            "generated_count": len(plans),
+            **corpus_metadata,
             "execution_directions": directions,
             "backend_bootstrap": {
                 "command": bootstrap_command.to_dict(),
@@ -2674,6 +3006,8 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
 
     print(
         f"live {args.provider}: status={status} exchanges={len(exchanges)} "
+        f"wire_eligible={corpus_metadata['wire_eligible_count']} "
+        f"wire_skipped={corpus_metadata['wire_skipped_count']} "
         f"live_packet_exchange=false report={report_path}"
     )
     if failed_validations:
@@ -4525,7 +4859,7 @@ def _live_output_dir(out: str) -> Path:
     output_root = Path(out)
     if not output_root.is_absolute():
         output_root = REPO_ROOT / output_root
-    if output_root.resolve() != (REPO_ROOT / DEFAULT_OUTPUT_ROOT).resolve():
+    if output_root.name == "live":
         return output_root
     return output_root / "live"
 
@@ -4584,13 +4918,19 @@ def _live_reproduction_command(args: argparse.Namespace) -> str:
         args.provider,
         "--direction",
         args.direction,
-        "--profile",
-        args.profile,
-        "--seed",
-        str(args.seed),
-        "--count",
-        str(args.count),
     ]
+    if getattr(args, "corpus", None) is not None:
+        argv.extend(["--corpus", args.corpus])
+    argv.extend(
+        [
+            "--profile",
+            args.profile,
+            "--seed",
+            str(args.seed),
+            "--count",
+            str(args.count),
+        ]
+    )
     if args.index is not None:
         argv.extend(["--index", str(args.index)])
     if args.case_name is not None:
@@ -5805,6 +6145,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("libcrafter_to_reference", "reference_to_libcrafter", "live_exchange"),
         default="live_exchange",
         help="live validation direction (default: %(default)s)",
+    )
+    live_parser.add_argument(
+        "--corpus",
+        help="read packet plans from a corpus plans.json artifact",
     )
     live_parser.add_argument(
         "--dry-run",
