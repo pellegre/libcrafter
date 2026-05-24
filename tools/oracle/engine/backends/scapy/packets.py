@@ -209,7 +209,9 @@ def _arp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
         ),
     }
     if "hardware_type" in arp_fields or "hwtype" in arp_fields:
-        kwargs["hwtype"] = _int(arp_fields.get("hardware_type", arp_fields.get("hwtype")), 1)
+        kwargs["hwtype"] = _hardware_type_value(
+            arp_fields.get("hardware_type", arp_fields.get("hwtype"))
+        )
     if "protocol_type" in arp_fields or "ptype" in arp_fields:
         kwargs["ptype"] = _ethertype_value(arp_fields.get("protocol_type", arp_fields.get("ptype")))
     return scapy_all.ARP(**kwargs)
@@ -316,6 +318,8 @@ def _icmpv6(fields: Mapping[str, JSONObject], stack: list[str], scapy_all: Any) 
         "id": _int(icmpv6_fields.get("id", icmpv6_fields.get("identifier")), 0x4242),
         "seq": _int(icmpv6_fields.get("seq", icmpv6_fields.get("sequence")), 1),
     }
+    if "code" in icmpv6_fields:
+        kwargs["code"] = _int(icmpv6_fields.get("code"), 0)
     if "payload" not in stack:
         payload = _payload_bytes(fields)
         if payload:
@@ -370,9 +374,15 @@ def _dns(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
     )
     if not qname.endswith("."):
         qname = f"{qname}."
+    flags = _dns_flags(dns_fields.get("flags"))
     return scapy_all.DNS(
         id=_int(dns_fields.get("id", dns_fields.get("transaction_id")), 0xBEEF),
-        rd=_int(dns_fields.get("rd"), 1),
+        qr=_bool_int(dns_fields.get("is_response"), 0),
+        opcode=_dns_opcode(dns_fields.get("opcode")),
+        aa=flags["aa"],
+        tc=flags["tc"],
+        rd=flags["rd"],
+        rcode=_dns_response_code(dns_fields.get("response_code")),
         qd=scapy_all.DNSQR(
             qname=qname,
             qtype=_text(dns_fields.get("qtype", question.get("qtype")), "A"),
@@ -384,7 +394,7 @@ def _dhcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
     dhcp_fields = _layer_fields(fields, "dhcp")
     bootp = scapy_all.BOOTP(
         op=_dhcp_op(dhcp_fields.get("op")),
-        htype=_int(dhcp_fields.get("hardware_type", dhcp_fields.get("htype")), 1),
+        htype=_hardware_type_value(dhcp_fields.get("hardware_type", dhcp_fields.get("htype"))),
         hlen=_int(dhcp_fields.get("hardware_length", dhcp_fields.get("hlen")), 6),
         xid=_int(dhcp_fields.get("transaction_id", dhcp_fields.get("xid")), 0x12345678),
         flags=_dhcp_flags(dhcp_fields.get("flags")),
@@ -457,6 +467,15 @@ def _ethertype_value(value: object) -> int:
             return _ETHERTYPES[lowered]
         return int(lowered, 0)
     return _int(value, 0x9000)
+
+
+def _hardware_type_value(value: object) -> int:
+    if isinstance(value, str):
+        lowered = value.lower()
+        if lowered in {"ether", "ethernet"}:
+            return 1
+        return int(lowered, 0)
+    return _int(value, 1)
 
 
 def _protocol_value(value: object, mapping: Mapping[str, int]) -> int:
@@ -579,6 +598,60 @@ def _dhcp_options(value: object) -> list[object]:
     if not options or options[-1] != "end":
         options.append("end")
     return options
+
+
+def _bool_int(value: object, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, str):
+        lowered = value.lower().replace("_", "-")
+        if lowered in {"true", "yes", "response"}:
+            return 1
+        if lowered in {"false", "no", "query"}:
+            return 0
+    return _int(value, default)
+
+
+def _dns_opcode(value: object) -> int:
+    if isinstance(value, str):
+        lowered = value.lower().replace("_", "-")
+        if lowered == "query":
+            return 0
+        return int(lowered, 0)
+    return _int(value, 0)
+
+
+def _dns_response_code(value: object) -> int:
+    if isinstance(value, str):
+        lowered = value.lower().replace("_", "-")
+        aliases = {
+            "no-error": 0,
+            "server-failure": 2,
+            "name-error": 3,
+        }
+        if lowered in aliases:
+            return aliases[lowered]
+        return int(lowered, 0)
+    return _int(value, 0)
+
+
+def _dns_flags(value: object) -> dict[str, int]:
+    flags = {"aa": 0, "tc": 0, "rd": 1}
+    if value is None:
+        return flags
+    values = value if isinstance(value, list) else [value]
+    flags = {"aa": 0, "tc": 0, "rd": 0}
+    for item in values:
+        if not isinstance(item, str):
+            continue
+        lowered = item.lower().replace("-", "_")
+        if lowered == "authoritative":
+            flags["aa"] = 1
+        elif lowered == "truncated":
+            flags["tc"] = 1
+        elif lowered == "recursion_desired":
+            flags["rd"] = 1
+    return flags
 
 
 def _first_question(dns_fields: Mapping[str, object]) -> JSONObject:

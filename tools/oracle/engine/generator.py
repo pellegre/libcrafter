@@ -8,6 +8,7 @@ import ipaddress
 import random
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeVar
 
@@ -19,6 +20,7 @@ T = TypeVar("T")
 
 EPHEMERAL_PORT_MIN = 49152
 EPHEMERAL_PORT_MAX = 65535
+SUPPORTED_LAYER_BACKEND = "libcrafter"
 
 _IPV4_DOCUMENTATION_NETWORKS = (
     ipaddress.IPv4Network("192.0.2.0/24"),
@@ -26,6 +28,79 @@ _IPV4_DOCUMENTATION_NETWORKS = (
     ipaddress.IPv4Network("203.0.113.0/24"),
 )
 _IPV6_DOCUMENTATION_NETWORK = ipaddress.IPv6Network("2001:db8::/32")
+_DERIVED_DOMAINS = {"derived"}
+_SUPPORTED_FIELDS: dict[str, set[str]] = {
+    "arp": {
+        "hardware_type",
+        "protocol_type",
+        "opcode",
+        "sender_hardware_address",
+        "sender_protocol_address",
+        "target_hardware_address",
+        "target_protocol_address",
+    },
+    "dhcp": {
+        "op",
+        "hardware_type",
+        "hardware_length",
+        "transaction_id",
+        "flags",
+        "client_ip",
+        "your_ip",
+        "client_hardware_address",
+        "options",
+    },
+    "dns": {
+        "transaction_id",
+        "is_response",
+        "opcode",
+        "flags",
+        "response_code",
+        "questions",
+    },
+    "ethernet": {"dst", "src", "ethertype"},
+    "icmp": {"type", "code", "identifier", "sequence"},
+    "icmpv6": {"type", "code", "identifier", "sequence"},
+    "ipv4": {"src", "dst", "ttl", "protocol", "identification", "flags", "fragment_offset"},
+    "ipv6": {"src", "dst", "traffic_class", "flow_label", "next_header", "hop_limit"},
+    "linux_cooked": {"packet_type", "address_type", "address_length", "source_address", "protocol"},
+    "null_loopback": {"type"},
+    "payload": {"hex", "length"},
+    "tcp": {
+        "src_port",
+        "dst_port",
+        "sequence",
+        "acknowledgement",
+        "reserved",
+        "flags",
+        "window",
+        "urgent_pointer",
+    },
+    "udp": {"src_port", "dst_port", "checksum"},
+    "vlan": {"priority", "drop_eligible", "vlan_id", "ethertype"},
+}
+_SUPPORTED_FIELD_DOMAINS: dict[tuple[str, str], set[object]] = {
+    ("dns", "answers"): set(),
+    ("icmp", "type"): {"echo_reply", "echo_request"},
+    ("icmpv6", "type"): {"echo_reply", "echo_request"},
+    ("ipv4", "options"): set(),
+    ("tcp", "options"): set(),
+    ("udp", "checksum"): {"zero_ipv4"},
+}
+_SCAPY_MATERIALIZED_LAYERS = {
+    "arp",
+    "dhcp",
+    "dns",
+    "ethernet",
+    "icmp",
+    "icmpv6",
+    "ipv4",
+    "ipv6",
+    "payload",
+    "tcp",
+    "udp",
+    "vlan",
+}
 
 
 def weighted_choice(rng: random.Random, choices: Sequence[tuple[T, int]]) -> T:
@@ -177,6 +252,24 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
             }
             for profile in specs.profiles.values()
         },
+        "layers": {
+            layer.name: {
+                "name": layer.name,
+                "fields": [
+                    _layer_field_grammar(layer.raw, field.name, field.field_type, field.required, field.domains)
+                    for field in layer.fields
+                ],
+                "backend_support": {
+                    name: {
+                        "status": support.status,
+                        "encode": support.encode,
+                        "decode": support.decode,
+                    }
+                    for name, support in layer.backend_support.items()
+                },
+            }
+            for layer in specs.layers.values()
+        },
         "features": {
             feature.name: {
                 "name": feature.name,
@@ -197,6 +290,31 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
     }
 
 
+def _layer_field_grammar(
+    layer_raw: JSONObject,
+    name: str,
+    field_type: str,
+    required: bool,
+    domains: Sequence[object],
+) -> JSONObject:
+    output: JSONObject = {
+        "name": name,
+        "type": field_type,
+        "required": required,
+        "domains": list(domains),  # type: ignore[list-item]
+    }
+    raw_fields = layer_raw.get("fields", [])
+    if isinstance(raw_fields, list):
+        for raw_field in raw_fields:
+            if not isinstance(raw_field, Mapping) or raw_field.get("name") != name:
+                continue
+            for key in ("profile_domains", "profiles", "sampling"):
+                if key in raw_field:
+                    output[key] = raw_field[key]  # type: ignore[assignment]
+            break
+    return output
+
+
 class PacketGenerator:
     """Seeded packet plan generator independent of any backend."""
 
@@ -205,6 +323,7 @@ class PacketGenerator:
         *,
         seed: int,
         profile: str,
+        backend: str = "scapy",
         grammar: Mapping[str, object] | None = None,
     ) -> None:
         self.grammar = _json_object(load_stack_grammar() if grammar is None else grammar)
@@ -213,6 +332,7 @@ class PacketGenerator:
             raise ValueError(f"unsupported profile: {profile}")
         self.seed = seed
         self.profile = profile
+        self.backend = backend
 
     def generate(
         self,
@@ -633,135 +753,617 @@ class PacketGenerator:
             raise ValueError("payload_length must be a two-integer list")
         return value[0], value[1]
 
+    def _layer_spec(self, layer: str) -> JSONObject:
+        layers = _object(self.grammar.get("layers"), "layers")
+        if layer not in layers:
+            raise ValueError(f"spec error: no layer spec declares {layer}")
+        return _object(layers[layer], f"layers.{layer}")
+
     def _fields(self, rng: random.Random, stack: Sequence[str]) -> dict[str, JSONObject]:
         payload_min, payload_max = self._payload_bounds()
-        payload = byte_payload(rng, min_length=payload_min, max_length=payload_max)
-        src_mac = documentation_mac(rng)
-        dst_mac = _different_mac(rng, src_mac)
-        src_port = ephemeral_port(rng)
-        dst_port = _different_port(rng, src_port)
+        ctx = _SamplingContext(
+            rng=rng,
+            profile=self.profile,
+            feature_weights=self._profile_feature_weights(),
+            stack=list(stack),
+            payload_min=payload_min,
+            payload_max=payload_max,
+        )
 
         fields: dict[str, JSONObject] = {}
-        if "ethernet" in stack:
-            fields["ethernet"] = {
-                "src": src_mac,
-                "dst": dst_mac,
-                "type": _ethertype_for_stack(stack, "ethernet"),
-            }
-        if "vlan" in stack:
-            fields["vlan"] = {
-                "priority": bounded_int(rng, 0, 7),
-                "drop_eligible": bounded_int(rng, 0, 1),
-                "vlan_id": bounded_int(rng, 1, 4094),
-                "ethertype": _ethertype_for_stack(stack, "vlan"),
-            }
-        if "arp" in stack:
-            sender_ip = documentation_ipv4(rng)
-            target_ip = _different_ipv4(rng, sender_ip)
-            fields["arp"] = {
-                "opcode": weighted_choice(rng, (("request", 3), ("reply", 1))),
-                "sender_hardware_address": src_mac,
-                "target_hardware_address": dst_mac,
-                "sender_protocol_address": sender_ip,
-                "target_protocol_address": target_ip,
-            }
-        if "udp" in stack:
-            if "dns" in stack:
-                dst_port = 53
-            elif "dhcp" in stack:
-                src_port, dst_port = 68, 67
-            fields["udp"] = {
-                "src_port": src_port,
-                "dst_port": dst_port,
-            }
-        if "tcp" in stack:
-            fields["tcp"] = {
-                "src_port": src_port,
-                "dst_port": weighted_choice(rng, ((80, 2), (443, 2), (8080, 1))),
-                "flags": weighted_choice(rng, (("syn", 5), ("ack", 2), ("all", 1))),
-                "sequence": bounded_int(rng, 0, (1 << 32) - 1),
-                "window": bounded_int(rng, 1, 65535),
-            }
-        if "icmp" in stack:
-            fields["icmp"] = {
-                "type": weighted_choice(rng, (("echo-request", 3), ("echo-reply", 1))),
-                "code": 0,
-                "identifier": bounded_int(rng, 0, 65535),
-                "sequence": bounded_int(rng, 0, 65535),
-            }
-        if "icmpv6" in stack:
-            fields["icmpv6"] = {
-                "type": weighted_choice(rng, (("echo_request", 3), ("echo_reply", 1))),
-                "identifier": bounded_int(rng, 0, 65535),
-                "sequence": bounded_int(rng, 0, 65535),
-            }
-        if "dns" in stack:
-            fields["dns"] = {
-                "transaction_id": bounded_int(rng, 0, 65535),
-                "questions": [
-                    {
-                        "qname": weighted_choice(
-                            rng,
-                            (("example.com.", 3), ("example.net.", 1), ("libcrafter.test.", 1)),
-                        ),
-                        "qtype": weighted_choice(rng, (("A", 3), ("AAAA", 1))),
-                    }
-                ],
-            }
-        if "dhcp" in stack:
-            fields["dhcp"] = {
-                "op": "bootrequest",
-                "hardware_type": "ethernet",
-                "hardware_length": 6,
-                "transaction_id": bounded_int(rng, 0, (1 << 32) - 1),
-                "flags": weighted_choice(rng, (("none", 3), ("broadcast", 1))),
-                "client_ip": "0.0.0.0",
-                "your_ip": "0.0.0.0",
-                "client_hardware_address": src_mac,
-                "options": ["message-type=discover", "end"],
-            }
-        if "payload" in stack:
-            fields["payload"] = {
-                "hex": payload.hex(),
-                "length": len(payload),
-            }
-
-        if "ipv4" in stack:
-            src_ip = documentation_ipv4(rng)
-            dst_ip = _different_ipv4(rng, src_ip)
-            fields["ipv4"] = {
-                "src": src_ip,
-                "dst": dst_ip,
-                "identification": bounded_int(rng, 0, 65535),
-                "ttl": bounded_int(rng, 1, 255),
-                "protocol": _ipv4_protocol_for_stack(stack),
-            }
-        if "ipv6" in stack:
-            src_ip = documentation_ipv6(rng)
-            dst_ip = _different_ipv6(rng, src_ip)
-            fields["ipv6"] = {
-                "src": src_ip,
-                "dst": dst_ip,
-                "traffic_class": bounded_int(rng, 0, 255),
-                "flow_label": bounded_int(rng, 0, (1 << 20) - 1),
-                "hop_limit": bounded_int(rng, 1, 255),
-                "next_header": _ipv6_next_header_for_stack(stack, "ipv6"),
-            }
-        if "ipv6_fragment" in stack:
-            fields["ipv6_fragment"] = {
-                "next_header": _ipv6_next_header_for_stack(stack, "ipv6_fragment"),
-                "fragment_offset": 0,
-                "more_fragments": False,
-                "identification": bounded_int(rng, 0, (1 << 32) - 1),
-            }
-        if "ipv6_routing" in stack:
-            fields["ipv6_routing"] = {
-                "next_header": _ipv6_next_header_for_stack(stack, "ipv6_routing"),
-                "type": 0,
-                "segments_left": 0,
-            }
+        for layer in stack:
+            if layer == "ipv6_fragment":
+                sampled = {
+                    "next_header": _ipv6_next_header_for_stack(stack, "ipv6_fragment"),
+                    "fragment_offset": 0,
+                    "more_fragments": False,
+                    "identification": bounded_int(rng, 0, (1 << 32) - 1),
+                }
+            elif layer == "ipv6_routing":
+                sampled = {
+                    "next_header": _ipv6_next_header_for_stack(stack, "ipv6_routing"),
+                    "type": 0,
+                    "segments_left": 0,
+                }
+            else:
+                spec = self._layer_spec(layer)
+                self._validate_layer_backend_support(layer, spec)
+                sampled = self._sample_layer_fields(ctx, layer, spec)
+                self._validate_sampled_fields(layer, spec, sampled)
+            if sampled:
+                fields[layer] = sampled
+                ctx.sampled_layers[layer] = sampled
 
         return fields
+
+    def _validate_layer_backend_support(self, layer: str, spec: JSONObject) -> None:
+        support = _object(spec.get("backend_support"), f"layers.{layer}.backend_support")
+        for backend_name in (self.backend, SUPPORTED_LAYER_BACKEND):
+            if backend_name not in support:
+                raise ValueError(
+                    f"spec error: layer {layer} has no backend_support for {backend_name}"
+                )
+            entry = _object(
+                support[backend_name],
+                f"layers.{layer}.backend_support.{backend_name}",
+            )
+            status = _string(entry.get("status"), f"layers.{layer}.backend_support.{backend_name}.status")
+            if status == "planned":
+                raise ValueError(
+                    f"spec error: layer {layer} is planned, not supported, for {backend_name}"
+                )
+            if layer in _SCAPY_MATERIALIZED_LAYERS and backend_name == self.backend:
+                if entry.get("encode") is not True:
+                    raise ValueError(
+                        f"spec error: layer {layer} cannot be encoded by backend {backend_name}"
+                    )
+
+    def _sample_layer_fields(
+        self,
+        ctx: "_SamplingContext",
+        layer: str,
+        spec: JSONObject,
+    ) -> JSONObject:
+        output: JSONObject = {}
+        for raw_field in _field_specs(spec, layer):
+            field_name = _string(raw_field.get("name"), f"layers.{layer}.fields.name")
+            if field_name not in _SUPPORTED_FIELDS.get(layer, set()):
+                continue
+            sampled = self._sample_field_value(ctx, layer, raw_field, output)
+            if sampled is _SKIP_FIELD:
+                continue
+            output[field_name] = sampled  # type: ignore[assignment]
+        return output
+
+    def _validate_sampled_fields(
+        self,
+        layer: str,
+        spec: JSONObject,
+        sampled: Mapping[str, object],
+    ) -> None:
+        declared = {
+            _string(field.get("name"), f"layers.{layer}.fields.name")
+            for field in _field_specs(spec, layer)
+        }
+        supported = _SUPPORTED_FIELDS.get(layer, set())
+        for field_name in sampled:
+            if field_name not in declared:
+                raise ValueError(
+                    f"spec error: sampler emitted undeclared field {layer}.{field_name}"
+                )
+            if field_name not in supported:
+                supported_list = ", ".join(sorted(supported)) or "<none>"
+                raise ValueError(
+                    f"spec error: sampler emitted unsupported field {layer}.{field_name}; "
+                    f"{self.backend}/{SUPPORTED_LAYER_BACKEND} supports {supported_list}"
+                )
+
+    def _sample_field_value(
+        self,
+        ctx: "_SamplingContext",
+        layer: str,
+        field_spec: JSONObject,
+        current_fields: Mapping[str, object],
+    ) -> object:
+        field_name = _string(field_spec.get("name"), f"layers.{layer}.fields.name")
+        domains = self._field_domains(layer, field_name, field_spec)
+        domain = self._choose_domain(ctx, layer, field_name, domains)
+
+        if domain is _SKIP_FIELD:
+            return _SKIP_FIELD
+        if layer == "payload":
+            return ctx.payload.hex() if field_name == "hex" else len(ctx.payload)
+        if layer == "ethernet":
+            if field_name == "src":
+                return _mac_for_domain(ctx, domain, ctx.src_mac)
+            if field_name == "dst":
+                return _mac_for_domain(ctx, domain, ctx.dst_mac)
+            if field_name == "ethertype":
+                return _declared_ethertype_for_stack(ctx.stack, "ethernet")
+        if layer == "vlan":
+            if field_name == "ethertype":
+                return _declared_ethertype_for_stack(ctx.stack, "vlan")
+            return _integer_domain_value(ctx, domain, field_name, bits=_field_bits(field_spec))
+        if layer == "arp":
+            return _sample_arp_field(ctx, field_name, domain)
+        if layer == "ipv4":
+            return _sample_ipv4_field(ctx, field_name, domain, current_fields)
+        if layer == "ipv6":
+            return _sample_ipv6_field(ctx, field_name, domain)
+        if layer == "udp":
+            return _sample_udp_field(ctx, field_name, domain)
+        if layer == "tcp":
+            return _sample_tcp_field(ctx, field_name, domain, field_spec)
+        if layer == "icmp":
+            return _sample_icmp_field(ctx, field_name, domain)
+        if layer == "icmpv6":
+            return _sample_icmp_field(ctx, field_name, domain)
+        if layer == "dns":
+            return _sample_dns_field(ctx, field_name, domain)
+        if layer == "dhcp":
+            return _sample_dhcp_field(ctx, field_name, domain)
+        if layer == "linux_cooked":
+            return _sample_linux_cooked_field(ctx, field_name, domain)
+        if layer == "null_loopback":
+            return _sample_null_loopback_field(ctx, field_name)
+
+        raise ValueError(f"spec error: unsupported layer sampler: {layer}")
+
+    def _field_domains(
+        self,
+        layer: str,
+        field_name: str,
+        field_spec: JSONObject,
+    ) -> list[object]:
+        default_domains = _object_list(field_spec.get("domains"), f"layers.{layer}.{field_name}.domains")
+        profile_domains = field_spec.get("profile_domains")
+        if isinstance(profile_domains, Mapping) and self.profile in profile_domains:
+            return _object_list(
+                profile_domains[self.profile],
+                f"layers.{layer}.{field_name}.profile_domains.{self.profile}",
+            )
+        profiles = field_spec.get("profiles")
+        if isinstance(profiles, Mapping) and self.profile in profiles:
+            profile_entry = profiles[self.profile]
+            if isinstance(profile_entry, Mapping) and "domains" in profile_entry:
+                return _object_list(
+                    profile_entry["domains"],
+                    f"layers.{layer}.{field_name}.profiles.{self.profile}.domains",
+                )
+            if isinstance(profile_entry, list):
+                return list(profile_entry)
+        sampling = field_spec.get("sampling")
+        if isinstance(sampling, Mapping):
+            profiles_obj = sampling.get("profiles")
+            if isinstance(profiles_obj, Mapping) and self.profile in profiles_obj:
+                profile_entry = profiles_obj[self.profile]
+                if isinstance(profile_entry, Mapping) and "domains" in profile_entry:
+                    return _object_list(
+                        profile_entry["domains"],
+                        f"layers.{layer}.{field_name}.sampling.profiles.{self.profile}.domains",
+                    )
+        return default_domains
+
+    def _choose_domain(
+        self,
+        ctx: "_SamplingContext",
+        layer: str,
+        field_name: str,
+        domains: Sequence[object],
+    ) -> object:
+        supported_domains = _SUPPORTED_FIELD_DOMAINS.get((layer, field_name))
+        choices: list[tuple[object, int]] = []
+        for domain in domains:
+            if isinstance(domain, str) and domain in _DERIVED_DOMAINS:
+                continue
+            if supported_domains is not None and domain not in supported_domains:
+                continue
+            weight = _domain_weight(ctx, layer, field_name, domain)
+            if weight > 0:
+                choices.append((domain, weight))
+        if not choices:
+            return _SKIP_FIELD
+        return weighted_choice(ctx.rng, choices)
+
+
+class _SkipField:
+    pass
+
+
+_SKIP_FIELD = _SkipField()
+
+
+@dataclass(slots=True)
+class _SamplingContext:
+    rng: random.Random
+    profile: str
+    feature_weights: Mapping[str, int]
+    stack: list[str]
+    payload_min: int
+    payload_max: int
+    sampled_layers: dict[str, JSONObject] = field(default_factory=dict)
+    _payload: bytes | None = None
+    _src_mac: str | None = None
+    _dst_mac: str | None = None
+    _src_port: int | None = None
+    _dst_port: int | None = None
+    _src_ipv4: str | None = None
+    _dst_ipv4: str | None = None
+    _src_ipv6: str | None = None
+    _dst_ipv6: str | None = None
+    _arp_sender_ip: str | None = None
+    _arp_target_ip: str | None = None
+
+    @property
+    def payload(self) -> bytes:
+        if self._payload is None:
+            self._payload = byte_payload(
+                self.rng,
+                min_length=self.payload_min,
+                max_length=self.payload_max,
+            )
+        return self._payload
+
+    @property
+    def src_mac(self) -> str:
+        if self._src_mac is None:
+            self._src_mac = documentation_mac(self.rng)
+        return self._src_mac
+
+    @property
+    def dst_mac(self) -> str:
+        if self._dst_mac is None:
+            self._dst_mac = _different_mac(self.rng, self.src_mac)
+        return self._dst_mac
+
+    @property
+    def src_port(self) -> int:
+        if self._src_port is None:
+            self._src_port = ephemeral_port(self.rng)
+        return self._src_port
+
+    @property
+    def dst_port(self) -> int:
+        if self._dst_port is None:
+            self._dst_port = _different_port(self.rng, self.src_port)
+        return self._dst_port
+
+    @property
+    def src_ipv4(self) -> str:
+        if self._src_ipv4 is None:
+            self._src_ipv4 = documentation_ipv4(self.rng)
+        return self._src_ipv4
+
+    @property
+    def dst_ipv4(self) -> str:
+        if self._dst_ipv4 is None:
+            self._dst_ipv4 = _different_ipv4(self.rng, self.src_ipv4)
+        return self._dst_ipv4
+
+    @property
+    def src_ipv6(self) -> str:
+        if self._src_ipv6 is None:
+            self._src_ipv6 = documentation_ipv6(self.rng)
+        return self._src_ipv6
+
+    @property
+    def dst_ipv6(self) -> str:
+        if self._dst_ipv6 is None:
+            self._dst_ipv6 = _different_ipv6(self.rng, self.src_ipv6)
+        return self._dst_ipv6
+
+    @property
+    def arp_sender_ip(self) -> str:
+        if self._arp_sender_ip is None:
+            self._arp_sender_ip = documentation_ipv4(self.rng)
+        return self._arp_sender_ip
+
+    @property
+    def arp_target_ip(self) -> str:
+        if self._arp_target_ip is None:
+            self._arp_target_ip = _different_ipv4(self.rng, self.arp_sender_ip)
+        return self._arp_target_ip
+
+
+def _field_specs(spec: JSONObject, layer: str) -> list[JSONObject]:
+    raw_fields = spec.get("fields")
+    if not isinstance(raw_fields, Sequence) or isinstance(raw_fields, (str, bytes)):
+        raise ValueError(f"layers.{layer}.fields must be a list")
+    return [_object(field, f"layers.{layer}.fields item") for field in raw_fields]
+
+
+def _object_list(value: object, name: str) -> list[object]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{name} must be a list")
+    return list(value)
+
+
+def _domain_weight(ctx: _SamplingContext, layer: str, field_name: str, domain: object) -> int:
+    if ctx.profile == "smoke" and _is_boundary_domain(domain):
+        return 0
+    if ctx.profile == "smoke" and layer in {"dns", "dhcp"}:
+        return 0 if domain not in {False, 0, 6, "a_in", "bootrequest", "ethernet", "message_type", "none", "query", "zero"} else 10
+    if _is_boundary_domain(domain):
+        return max(0, ctx.feature_weights.get("boundary", 0))
+    return max(1, ctx.feature_weights.get("baseline", 1))
+
+
+def _is_boundary_domain(domain: object) -> bool:
+    if isinstance(domain, bool):
+        return domain is True
+    if isinstance(domain, int):
+        return domain in {0, 1, 255, 4094, 65535}
+    if not isinstance(domain, str):
+        return False
+    return domain in {
+        "all",
+        "boundary",
+        "broadcast",
+        "mf",
+        "packet_too_big",
+        "parameter_problem",
+        "time_exceeded",
+        "truncated",
+        "zero",
+        "zero_ipv4",
+    }
+
+
+def _field_bits(field_spec: JSONObject) -> int:
+    field_type = _string(field_spec.get("type"), "field.type")
+    if field_type.startswith("uint"):
+        return int(field_type.removeprefix("uint"))
+    return 16
+
+
+def _integer_domain_value(
+    ctx: _SamplingContext,
+    domain: object,
+    field_name: str,
+    *,
+    bits: int,
+) -> int:
+    maximum = (1 << bits) - 1
+    if isinstance(domain, bool):
+        return int(domain)
+    if isinstance(domain, int):
+        return domain
+    if domain == "boundary":
+        return weighted_choice(ctx.rng, ((0, 1), (maximum, 1)))
+    if domain == "deterministic":
+        return bounded_int(ctx.rng, 0, maximum)
+    if domain == "dynamic":
+        return ephemeral_port(ctx.rng)
+    if domain == "http":
+        return 80
+    if domain == "https":
+        return 443
+    if domain == "dns_client":
+        return ephemeral_port(ctx.rng)
+    if domain == "dns_server":
+        return 53
+    if domain == "bootpc":
+        return 68
+    if domain == "bootps":
+        return 67
+    raise ValueError(f"spec error: unsupported integer domain for {field_name}: {domain!r}")
+
+
+def _mac_for_domain(ctx: _SamplingContext, domain: object, default: str) -> str:
+    if domain == "broadcast":
+        return "ff:ff:ff:ff:ff:ff"
+    if domain == "zero":
+        return "00:00:00:00:00:00"
+    return default
+
+
+def _ipv4_for_domain(ctx: _SamplingContext, domain: object, default: str, *, dst: bool) -> str:
+    if domain == "zero":
+        return "0.0.0.0"
+    if domain == "broadcast" and dst:
+        return "255.255.255.255"
+    return default
+
+
+def _declared_ethertype_for_stack(stack: Sequence[str], layer: str) -> str:
+    value = _ethertype_for_stack(stack, layer)
+    return "experimental" if value == "unknown" else value
+
+
+def _sample_arp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "hardware_type":
+        return "ethernet"
+    if field_name == "protocol_type":
+        return "ipv4"
+    if field_name == "opcode":
+        return domain
+    if field_name == "sender_hardware_address":
+        return ctx.src_mac
+    if field_name == "target_hardware_address":
+        return _mac_for_domain(ctx, domain, ctx.dst_mac)
+    if field_name == "sender_protocol_address":
+        return ctx.arp_sender_ip
+    if field_name == "target_protocol_address":
+        return ctx.arp_target_ip
+    raise ValueError(f"spec error: unsupported arp field sampler: {field_name}")
+
+
+def _sample_ipv4_field(
+    ctx: _SamplingContext,
+    field_name: str,
+    domain: object,
+    current_fields: Mapping[str, object],
+) -> object:
+    if field_name == "src":
+        return _ipv4_for_domain(ctx, domain, ctx.src_ipv4, dst=False)
+    if field_name == "dst":
+        return _ipv4_for_domain(ctx, domain, ctx.dst_ipv4, dst=True)
+    if field_name == "ttl":
+        return _integer_domain_value(ctx, domain, field_name, bits=8)
+    if field_name == "protocol":
+        return _ipv4_protocol_for_stack(ctx.stack)
+    if field_name == "identification":
+        return _integer_domain_value(ctx, domain, field_name, bits=16)
+    if field_name == "flags":
+        if ctx.profile == "smoke":
+            return "none"
+        return str(domain)
+    if field_name == "fragment_offset":
+        if current_fields.get("flags") == "mf":
+            return _integer_domain_value(ctx, domain, field_name, bits=13)
+        return 0
+    raise ValueError(f"spec error: unsupported ipv4 field sampler: {field_name}")
+
+
+def _sample_ipv6_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "src":
+        return ctx.src_ipv6
+    if field_name == "dst":
+        return ctx.dst_ipv6
+    if field_name == "traffic_class":
+        return _integer_domain_value(ctx, domain, field_name, bits=8)
+    if field_name == "flow_label":
+        return _integer_domain_value(ctx, domain, field_name, bits=20)
+    if field_name == "next_header":
+        return _ipv6_next_header_for_stack(ctx.stack, "ipv6")
+    if field_name == "hop_limit":
+        return _integer_domain_value(ctx, domain, field_name, bits=8)
+    raise ValueError(f"spec error: unsupported ipv6 field sampler: {field_name}")
+
+
+def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "src_port":
+        if "dhcp" in ctx.stack:
+            return 68
+        if "dns" in ctx.stack:
+            return ephemeral_port(ctx.rng)
+        if domain in {"bootpc", "dns_client", "dynamic"}:
+            return _integer_domain_value(ctx, domain, field_name, bits=16)
+        return ctx.src_port
+    if field_name == "dst_port":
+        if "dhcp" in ctx.stack:
+            return 67
+        if "dns" in ctx.stack:
+            return 53
+        if domain in {"bootps", "dns_server"}:
+            return ctx.dst_port
+        if domain == "dynamic":
+            return _integer_domain_value(ctx, domain, field_name, bits=16)
+        return ctx.dst_port
+    if field_name == "checksum" and domain == "zero_ipv4" and "ipv4" in ctx.stack:
+        return 0
+    return _SKIP_FIELD
+
+
+def _sample_tcp_field(
+    ctx: _SamplingContext,
+    field_name: str,
+    domain: object,
+    field_spec: JSONObject,
+) -> object:
+    if field_name == "src_port":
+        return _integer_domain_value(ctx, domain, field_name, bits=16)
+    if field_name == "dst_port":
+        return _integer_domain_value(ctx, domain, field_name, bits=16)
+    if field_name in {"sequence", "acknowledgement", "urgent_pointer"}:
+        return _integer_domain_value(ctx, domain, field_name, bits=_field_bits(field_spec))
+    if field_name == "reserved":
+        return _integer_domain_value(ctx, domain, field_name, bits=3)
+    if field_name == "flags":
+        return domain
+    if field_name == "window":
+        return _integer_domain_value(ctx, domain, field_name, bits=16)
+    raise ValueError(f"spec error: unsupported tcp field sampler: {field_name}")
+
+
+def _sample_icmp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "type":
+        return str(domain).replace("_", "-") if domain in {"echo_reply", "echo_request"} else domain
+    if field_name == "code":
+        return 0
+    if field_name in {"identifier", "sequence"}:
+        return bounded_int(ctx.rng, 0, 65535)
+    raise ValueError(f"spec error: unsupported icmp field sampler: {field_name}")
+
+
+def _sample_dns_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "transaction_id":
+        return _integer_domain_value(ctx, domain, field_name, bits=16)
+    if field_name == "is_response":
+        return False
+    if field_name == "opcode":
+        return "query"
+    if field_name == "flags":
+        return ["recursion_desired"]
+    if field_name == "response_code":
+        return "no_error"
+    if field_name == "questions":
+        question_count = 2 if domain == "multiple_questions" and ctx.profile in {"boundary", "fuzz"} else 1
+        names = ("example.com.", "example.net.", "libcrafter.test.")
+        questions: list[JSONObject] = []
+        for index in range(question_count):
+            questions.append(
+                {
+                    "qname": names[index % len(names)],
+                    "qtype": weighted_choice(ctx.rng, (("A", 3), ("AAAA", 1))),
+                }
+            )
+        return questions
+    raise ValueError(f"spec error: unsupported dns field sampler: {field_name}")
+
+
+def _sample_dhcp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "op":
+        return domain
+    if field_name == "hardware_type":
+        return "ethernet"
+    if field_name == "hardware_length":
+        return 6
+    if field_name == "transaction_id":
+        return bounded_int(ctx.rng, 0, (1 << 32) - 1)
+    if field_name == "flags":
+        return domain
+    if field_name == "client_ip":
+        return "0.0.0.0" if domain == "zero" else ctx.src_ipv4
+    if field_name == "your_ip":
+        return "0.0.0.0" if domain == "zero" else ctx.dst_ipv4
+    if field_name == "client_hardware_address":
+        return ctx.src_mac
+    if field_name == "options":
+        return _dhcp_option_domains(ctx, domain)
+    raise ValueError(f"spec error: unsupported dhcp field sampler: {field_name}")
+
+
+def _dhcp_option_domains(ctx: _SamplingContext, domain: object) -> list[object]:
+    options = ["message-type=discover"]
+    if domain == "hostname" and ctx.profile != "smoke":
+        options.append("hostname=libcrafter-oracle")
+    elif domain == "requested_ip" and ctx.profile in {"boundary", "fuzz"}:
+        options.append(f"requested_addr={ctx.dst_ipv4}")
+    elif domain == "parameter_request_list" and ctx.profile in {"boundary", "fuzz"}:
+        options.append(("param_req_list", [1, 3, 6]))
+    options.append("end")
+    return options
+
+
+def _sample_linux_cooked_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "packet_type":
+        return domain
+    if field_name == "address_type":
+        return "ethernet"
+    if field_name == "address_length":
+        return 6
+    if field_name == "source_address":
+        return {"hex": ctx.src_mac.replace(":", "")}
+    if field_name == "protocol":
+        return "ipv4"
+    raise ValueError(f"spec error: unsupported linux_cooked field sampler: {field_name}")
+
+
+def _sample_null_loopback_field(ctx: _SamplingContext, field_name: str) -> object:
+    if field_name == "type":
+        return "ipv4" if "ipv4" in ctx.stack else "ipv6"
+    raise ValueError(f"spec error: unsupported null_loopback field sampler: {field_name}")
 
 
 def generate_plans(
@@ -769,6 +1371,7 @@ def generate_plans(
     seed: int,
     profile: str,
     count: int,
+    backend: str = "scapy",
     root: str | None = None,
     family: str | None = None,
     case: str | None = None,
@@ -780,7 +1383,7 @@ def generate_plans(
 
     if count < 1:
         raise ValueError(f"count must be positive: {count}")
-    generator = PacketGenerator(seed=seed, profile=profile)
+    generator = PacketGenerator(seed=seed, profile=profile, backend=backend)
     indices = [index] if index is not None else list(range(count))
     return [
         generator.generate(

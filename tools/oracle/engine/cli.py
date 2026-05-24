@@ -297,6 +297,7 @@ def _generate(args: argparse.Namespace) -> int:
         plans = generate_plans(
             seed=args.seed,
             profile=args.profile,
+            backend=args.backend,
             count=args.count,
             root=args.root,
             family=args.family,
@@ -646,6 +647,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         plans = generate_plans(
             seed=args.seed,
             profile=args.profile,
+            backend=args.backend,
             count=args.count,
             root=args.root,
             family=args.family,
@@ -1067,6 +1069,7 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
         plans = generate_plans(
             seed=args.seed,
             profile=args.profile,
+            backend=args.backend,
             count=args.count,
             root=args.root,
             family=args.family,
@@ -1254,6 +1257,7 @@ def _pcap_dry_plan(args: argparse.Namespace) -> int:
     base_plans = generate_plans(
         seed=args.seed,
         profile=args.profile,
+        backend=args.backend,
         count=args.count,
         root=args.root,
         family=args.family,
@@ -1313,6 +1317,7 @@ def _pcap_execute(args: argparse.Namespace) -> int:
         plans = generate_plans(
             seed=args.seed,
             profile=args.profile,
+            backend=args.backend,
             count=args.count,
             root=args.root,
             family=args.family,
@@ -1478,6 +1483,7 @@ def _offline(args: argparse.Namespace) -> int:
     plans = generate_plans(
         seed=args.seed,
         profile=args.profile,
+        backend=args.backend,
         count=args.count,
         root=args.root,
         family=args.family,
@@ -1589,6 +1595,7 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
     plans = generate_plans(
         seed=args.seed,
         profile=args.profile,
+        backend=args.backend,
         count=args.count,
         root=args.root,
         family=args.family,

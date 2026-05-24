@@ -1,0 +1,48 @@
+version: 1
+kind: layer
+name: payload
+summary: Opaque raw payload bytes preserved by enclosing protocol layers.
+
+roots:
+  - "link:raw"
+parents:
+  - root
+  - ethernet
+  - vlan
+  - ipv4
+  - ipv6
+  - udp
+  - tcp
+  - icmp
+  - icmpv6
+  - ipv6_fragment
+  - ipv6_routing
+children: []
+
+fields:
+  - name: hex
+    type: bytes
+    required: true
+    domains:
+      - deterministic
+  - name: length
+    type: uint16
+    required: true
+    domains:
+      - profile_payload_length
+
+coverage_cases:
+  - raw-payload-link
+  - crafter-raw-payload
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - Raw
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true

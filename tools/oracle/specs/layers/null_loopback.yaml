@@ -1,0 +1,36 @@
+version: 1
+kind: layer
+name: null_loopback
+summary: BSD null loopback pseudo-link header used by pcap loopback link types.
+
+roots:
+  - "link:null-loopback"
+parents:
+  - root
+children:
+  - ipv4
+  - ipv6
+
+fields:
+  - name: type
+    type: uint32
+    required: true
+    domains:
+      - ipv4
+      - ipv6
+
+coverage_cases:
+  - null-loopback-ipv4-little-endian
+  - null-loopback-ipv6-big-endian
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - Loopback
+    decode: true
+    pcap_read: true
+  libcrafter:
+    status: supported
+    decode: true
+    pcap_read: true
