@@ -997,9 +997,13 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
     from .live import (
         LIVE_SELECTED_SPECS,
         LiveExchangePlan,
+        build_live_endpoint_batch_request,
+        dry_run_live_endpoint_batch_response,
         libcrafter_dry_run_command_plan,
+        live_endpoint_artifact_paths,
         live_execution_directions,
         local_dry_run_endpoints,
+        validate_live_endpoint_batch_contract,
         validate_libcrafter_command_plan,
         validate_local_dry_run_exchange,
     )
@@ -1086,6 +1090,60 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
             exchanges.append(exchange)
             validations.append(validate_local_dry_run_exchange(exchange))
 
+    endpoint_protocol_batches: list[JSONObject] = []
+    for direction in directions:
+        direction_plans = [replace(plan, direction=direction) for plan in plans]
+        if direction == "reference_to_libcrafter":
+            sender = endpoints["reference_backend"]
+            receiver = endpoints["libcrafter"]
+        elif direction == "libcrafter_to_reference":
+            sender = endpoints["libcrafter"]
+            receiver = endpoints["reference_backend"]
+        else:
+            print(f"unsupported live direction: {direction}", file=sys.stderr)
+            return 2
+
+        for phase_role, endpoint, peer in (
+            ("sender", sender, receiver),
+            ("receiver", receiver, sender),
+        ):
+            request = build_live_endpoint_batch_request(
+                provider=args.provider,
+                backend=args.backend,
+                seed=args.seed,
+                profile=args.profile,
+                packet_plans=direction_plans,
+                direction=direction,
+                endpoint=endpoint,
+                peer=peer,
+                artifact_paths=live_endpoint_artifact_paths(
+                    output_dir=str(output_dir),
+                    direction=direction,
+                    endpoint_role=endpoint.role,
+                ),
+                metadata={
+                    "phase_role": phase_role,
+                    "dry_run": True,
+                    "live_packet_exchange": False,
+                    "no_live_packets_sent": True,
+                },
+            )
+            response = dry_run_live_endpoint_batch_response(request)
+            validation = validate_live_endpoint_batch_contract(
+                request,
+                response,
+                dry_run=True,
+            )
+            validations.append(validation)
+            endpoint_protocol_batches.append(
+                {
+                    "phase_role": phase_role,
+                    "request": request.to_dict(),
+                    "response": response.to_dict(),
+                    "validation": validation.to_dict(),
+                }
+            )
+
     failed_validations = [validation for validation in validations if not validation.passed]
     status = "passed" if not failed_validations else "failed"
     result = ComparisonResult(
@@ -1096,12 +1154,14 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
             "dry_run": True,
             "live_packet_exchange": False,
             "validations_pass": True,
+            "endpoint_protocol_batches": len(directions) * 2,
         },
         actual={
             "provider": args.provider,
             "dry_run": True,
             "live_packet_exchange": False,
             "validations_pass": not failed_validations,
+            "endpoint_protocol_batches": len(endpoint_protocol_batches),
             "failed_validations": [validation.to_dict() for validation in failed_validations],
         },
         strict_bytes=False,
@@ -1158,6 +1218,10 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
             },
             "endpoints": {
                 name: endpoint.to_dict() for name, endpoint in endpoints.items()
+            },
+            "endpoint_protocol": {
+                "version": 1,
+                "batches": endpoint_protocol_batches,
             },
             "exchanges": [exchange.to_dict() for exchange in exchanges],
             "validations": [validation.to_dict() for validation in validations],
@@ -3045,6 +3109,8 @@ def _live_output_dir(out: str) -> Path:
     output_root = Path(out)
     if not output_root.is_absolute():
         output_root = REPO_ROOT / output_root
+    if output_root.resolve() != (REPO_ROOT / DEFAULT_OUTPUT_ROOT).resolve():
+        return output_root
     return output_root / "live"
 
 
