@@ -2942,9 +2942,9 @@ def _legacy_live_example(args: argparse.Namespace) -> int:
 
 def _self_check(args: argparse.Namespace) -> int:
     from .generator import run_self_checks
-    from .spec_loader import load_oracle_specs
+    from .spec_loader import run_self_checks as run_spec_self_checks
 
-    load_oracle_specs()
+    spec_checks = run_spec_self_checks()
     run_self_checks()
     scapy_backend = get_backend("scapy")
     wireshark_backend = get_backend("wireshark")
@@ -2963,7 +2963,14 @@ def _self_check(args: argparse.Namespace) -> int:
         or not wireshark_backend.capabilities.pcap_read
     ):
         raise AssertionError("Wireshark backend must expose parser capabilities")
-    sys.stdout.write(dumps_json({"status": "ok", "checks": ["specs", "generator", "backends"]}))
+    sys.stdout.write(
+        dumps_json(
+            {
+                "status": "ok",
+                "checks": [*spec_checks, "generator", "backends"],
+            }
+        )
+    )
     return 0
 
 
@@ -2971,12 +2978,13 @@ def _specs_validate(args: argparse.Namespace) -> int:
     from .spec_loader import SpecValidationError, load_oracle_specs
 
     try:
-        specs = load_oracle_specs()
+        specs = load_oracle_specs(strict=args.strict)
     except SpecValidationError as exc:
         print(f"spec validation failed: {exc}", file=sys.stderr)
         return 2
 
     summary = specs.summary()
+    summary["strict"] = bool(args.strict)
     if args.json:
         sys.stdout.write(dumps_json(summary))
     else:
@@ -3403,6 +3411,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="print the validation summary as JSON",
+    )
+    specs_validate_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="run strict cross-file spec validation",
     )
     specs_validate_parser.set_defaults(func=_specs_validate)
 

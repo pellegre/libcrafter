@@ -88,7 +88,6 @@ supported_cases:
     link_type: linux_cooked
     roots:
       - link:linux-cooked
-      - link:linux-sll
     datalink_values:
       pcap: DLT_LINUX_SLL
       scapy: CookedLinux
