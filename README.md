@@ -85,16 +85,12 @@ one crate:
 
 The alpha covers the protocols needed by the current Rust example set:
 
-| Link | Network | Transport | Application |
-| --- | --- | --- | --- |
-| Ethernet | IPv4 | TCP | DNS |
-| 802.1Q VLAN | IPv6 | UDP | DHCP |
-| Linux cooked capture | ARP | TCP options | Raw payloads |
-| Null/loopback | ICMP | UDP checksums | |
-| | ICMPv6 | | |
-| | IPv4 options | | |
-| | IPv6 fragment, routing, mobile routing, and segment routing headers | | |
-| | ICMP extensions | | |
+| Layer | Coverage |
+| --- | --- |
+| Link | Ethernet, 802.1Q VLAN, Linux cooked capture, null/loopback |
+| Network and control | ARP, IPv4, IPv4 options, IPv6, IPv6 fragment headers, IPv6 routing headers, IPv6 mobile routing headers, IPv6 segment routing headers, ICMP, ICMPv6, ICMP extensions |
+| Transport | TCP, TCP options, UDP, UDP checksums |
+| Application and payload | DNS, DHCP, raw payloads |
 
 Unknown or unsupported next protocols are preserved as `Raw` payloads where the
 enclosing header is valid.
