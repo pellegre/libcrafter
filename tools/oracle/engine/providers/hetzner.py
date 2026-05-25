@@ -17,11 +17,14 @@ from ..live import (
     LiveValidationCheck,
 )
 from ..model import JSONObject
+from .. import wire_client
 
 
 PROVIDER_NAME = "hetzner"
 LIVE_LAB_ENTRYPOINT = "tools/live-lab/libcrafter-live-lab"
+WIRE_ENTRYPOINT = "tools/wire/wire"
 ORACLE_LIVE_SUITE = "oracle-live"
+ORACLE_PRIVATE_GROUP = "oracle-live-private"
 PRIVATE_NETWORK_CIDR = "10.42.19.0/24"
 PRIVATE_NETWORK_ZONE = "provider-selected"
 LIBCRAFTER_PRIVATE_ADDRESS = "10.42.19.10"
@@ -117,7 +120,7 @@ def hetzner_default_provider_capabilities(
             "controlled_services": {
                 "status": "planned" if dry_run else "default",
                 "value": True,
-                "reason": "both disposable endpoints are controlled by the live-lab bootstrap",
+                "reason": "both disposable endpoints are controlled by the endpoint bootstrap",
             },
             "controlled_router": {
                 "status": "not_available",
@@ -306,8 +309,136 @@ def hetzner_endpoints(*, dry_run: bool) -> dict[str, LiveEndpoint]:
     }
 
 
+def hetzner_wire_endpoint_plan(
+    *,
+    dry_run: bool,
+    client: wire_client.WireClient | None = None,
+    private_group: str = ORACLE_PRIVATE_GROUP,
+) -> dict[str, object]:
+    """Plan the two private wire endpoints used by Hetzner oracle dry-runs."""
+
+    wire = client or wire_client.WireClient()
+    roles = (
+        ("libcrafter", LIBCRAFTER_PRIVATE_ADDRESS, REFERENCE_PRIVATE_ADDRESS),
+        ("reference_backend", REFERENCE_PRIVATE_ADDRESS, LIBCRAFTER_PRIVATE_ADDRESS),
+    )
+    endpoint_plans: list[JSONObject] = []
+    endpoints: dict[str, LiveEndpoint] = {}
+    command_records: list[JSONObject] = []
+    for role, private_ip, peer_address in roles:
+        response = wire.create(
+            provider=PROVIDER_NAME,
+            exposure="private",
+            role=role,
+            private_group=private_group,
+            private_ip=private_ip,
+            dry_run=dry_run,
+        )
+        command_records.append(response.record.to_dict())
+        endpoint_plan = response.json_data or response.metadata()
+        endpoint_plans.append(endpoint_plan)
+        endpoints[role] = _live_endpoint_from_wire_plan(
+            endpoint_plan,
+            role=role,
+            private_ip=private_ip,
+            peer_address=peer_address,
+            dry_run=dry_run,
+        )
+
+    return {
+        "provider": PROVIDER_NAME,
+        "exposure": "private",
+        "dry_run": dry_run,
+        "private_group": private_group,
+        "endpoint_count": len(endpoint_plans),
+        "command_metadata": command_records,
+        "endpoint_plans": endpoint_plans,
+        "endpoints": {role: endpoint.to_dict() for role, endpoint in endpoints.items()},
+        "live_endpoints": endpoints,
+    }
+
+
+def _live_endpoint_from_wire_plan(
+    endpoint_plan: JSONObject,
+    *,
+    role: str,
+    private_ip: str,
+    peer_address: str,
+    dry_run: bool,
+) -> LiveEndpoint:
+    interface = _private_interface(endpoint_plan)
+    address = _string_or(interface.get("ipv4"), private_ip)
+    return LiveEndpoint(
+        endpoint_id=_string_or(endpoint_plan.get("endpoint_id"), f"planned-{role}"),
+        role=role,
+        interface=_string_or(interface.get("name"), "private"),
+        address=address,
+        ipv6_address=(
+            LIBCRAFTER_PRIVATE_IPV6_ADDRESS
+            if role == "libcrafter"
+            else REFERENCE_PRIVATE_IPV6_ADDRESS
+        ),
+        metadata={
+            "provider": PROVIDER_NAME,
+            "exposure": "private",
+            "dry_run": dry_run,
+            "creates_infrastructure": False,
+            "would_create_infrastructure": dry_run,
+            "isolated_network": True,
+            "private_network": True,
+            "private_network_cidr": PRIVATE_NETWORK_CIDR,
+            "network_zone": PRIVATE_NETWORK_ZONE,
+            "resource_type": "wire-endpoint",
+            "peer_role": (
+                "reference_backend" if role == "libcrafter" else "libcrafter"
+            ),
+            "peer_address": peer_address,
+            "wire_endpoint_plan": endpoint_plan,
+            "manifest_path": endpoint_plan.get("manifest_path"),
+            "artifact_dir": endpoint_plan.get("artifact_dir"),
+            "private_group": _wire_private_group(endpoint_plan),
+            "provider_network_id": interface.get("provider_network_id"),
+            **({"backend": "scapy"} if role == "reference_backend" else {}),
+        },
+    )
+
+
+def _private_interface(endpoint_plan: JSONObject) -> JSONObject:
+    interfaces = endpoint_plan.get("interfaces")
+    if isinstance(interfaces, list):
+        for item in interfaces:
+            if isinstance(item, dict) and item.get("exposure") == "private":
+                return {str(key): value for key, value in item.items() if isinstance(key, str)}
+        for item in interfaces:
+            if isinstance(item, dict):
+                return {str(key): value for key, value in item.items() if isinstance(key, str)}
+    return {}
+
+
+def _wire_private_group(endpoint_plan: JSONObject) -> str | None:
+    metadata = endpoint_plan.get("metadata")
+    if isinstance(metadata, dict):
+        private_group = metadata.get("private_group")
+        if isinstance(private_group, str):
+            return private_group
+    interface = _private_interface(endpoint_plan)
+    interface_metadata = interface.get("metadata")
+    if isinstance(interface_metadata, dict):
+        private_group = interface_metadata.get("private_group")
+        if isinstance(private_group, str):
+            return private_group
+    return None
+
+
+def _string_or(value: object, default: str) -> str:
+    return value if isinstance(value, str) and value else default
+
+
 def hetzner_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
     """Plan the provider lifecycle commands used by an oracle live run."""
+
+    if dry_run:
+        return _hetzner_wire_provider_workflow()
 
     workflow = [
         ("doctor", "check-hetzner-provider"),
@@ -340,6 +471,113 @@ def hetzner_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                     "oracle_two_endpoint": True,
                     "private_network": True,
                     "runs_endpoint_bootstrap": command == "run",
+                },
+            )
+        )
+    return commands
+
+
+def _hetzner_wire_provider_workflow() -> list[LiveCommandPlan]:
+    workflow = [
+        (
+            "doctor",
+            "check-hetzner-provider",
+            [
+                WIRE_ENTRYPOINT,
+                "doctor",
+                "--provider",
+                PROVIDER_NAME,
+                "--exposure",
+                "private",
+                "--dry-run",
+            ],
+        ),
+        (
+            "create",
+            "create-libcrafter-private-wire-endpoint",
+            [
+                WIRE_ENTRYPOINT,
+                "create-endpoint",
+                "--provider",
+                PROVIDER_NAME,
+                "--exposure",
+                "private",
+                "--role",
+                "libcrafter",
+                "--private-group",
+                ORACLE_PRIVATE_GROUP,
+                "--private-ip",
+                LIBCRAFTER_PRIVATE_ADDRESS,
+                "--dry-run",
+                "--json",
+            ],
+        ),
+        (
+            "create",
+            "create-reference-private-wire-endpoint",
+            [
+                WIRE_ENTRYPOINT,
+                "create-endpoint",
+                "--provider",
+                PROVIDER_NAME,
+                "--exposure",
+                "private",
+                "--role",
+                "reference_backend",
+                "--private-group",
+                ORACLE_PRIVATE_GROUP,
+                "--private-ip",
+                REFERENCE_PRIVATE_ADDRESS,
+                "--dry-run",
+                "--json",
+            ],
+        ),
+        (
+            "exec",
+            "run-oracle-live-exchange-suite",
+            [
+                WIRE_ENTRYPOINT,
+                "exec",
+                "<endpoint-id>",
+                "--",
+                "tools/oracle/run",
+                "live-endpoint",
+                "--suite",
+                ORACLE_LIVE_SUITE,
+            ],
+        ),
+        (
+            "download",
+            "collect-live-endpoint-artifacts",
+            [WIRE_ENTRYPOINT, "download", "<endpoint-id>", "<remote>", "<local>"],
+        ),
+        (
+            "destroy",
+            "teardown-disposable-hetzner-endpoints",
+            [WIRE_ENTRYPOINT, "destroy-endpoint", "<endpoint-id>", "--json"],
+        ),
+    ]
+    commands: list[LiveCommandPlan] = []
+    for operation, purpose, argv in workflow:
+        commands.append(
+            LiveCommandPlan(
+                role="provider",
+                purpose=purpose,
+                argv=list(argv),
+                sends_live_packets=False,
+                expects_live_packets=False,
+                metadata={
+                    "provider": PROVIDER_NAME,
+                    "exposure": "private",
+                    "dry_run": True,
+                    "creates_infrastructure": False,
+                    "would_create_infrastructure": operation == "create",
+                    "always_attempt": operation in {"download", "destroy"},
+                    "oracle_two_endpoint": True,
+                    "private_network": True,
+                    "private_group": ORACLE_PRIVATE_GROUP,
+                    "wire_command": True,
+                    "operation": operation,
                 },
             )
         )
@@ -512,13 +750,23 @@ def validate_hetzner_provider_workflow(
 
     errors: list[str] = []
     purposes = {command.purpose for command in commands}
-    required = {
-        "check-hetzner-provider",
-        "create-two-endpoint-private-network-lab",
-        "run-oracle-live-exchange-suite",
-        "collect-live-endpoint-artifacts",
-        "teardown-disposable-hetzner-lab",
-    }
+    if dry_run:
+        required = {
+            "check-hetzner-provider",
+            "create-libcrafter-private-wire-endpoint",
+            "create-reference-private-wire-endpoint",
+            "run-oracle-live-exchange-suite",
+            "collect-live-endpoint-artifacts",
+            "teardown-disposable-hetzner-endpoints",
+        }
+    else:
+        required = {
+            "check-hetzner-provider",
+            "create-two-endpoint-private-network-lab",
+            "run-oracle-live-exchange-suite",
+            "collect-live-endpoint-artifacts",
+            "teardown-disposable-hetzner-lab",
+        }
     missing = sorted(required - purposes)
     if missing:
         errors.append(f"missing provider workflow phases: {', '.join(missing)}")
@@ -526,18 +774,24 @@ def validate_hetzner_provider_workflow(
     for command in commands:
         if command.role != "provider":
             errors.append(f"unexpected provider workflow role: {command.role}")
-        if (
+        if dry_run:
+            if len(command.argv) < 2 or command.argv[0] != WIRE_ENTRYPOINT:
+                errors.append(f"provider command must route through {WIRE_ENTRYPOINT}")
+            if command.metadata.get("wire_command") is not True:
+                errors.append("dry-run provider command must be marked as wire_command")
+        elif (
             len(command.argv) < 4
             or command.argv[0] != LIVE_LAB_ENTRYPOINT
             or command.argv[2:4] != ["--provider", PROVIDER_NAME]
         ):
             errors.append(f"provider command must route through {LIVE_LAB_ENTRYPOINT}")
-        if PROVIDER_NAME not in command.argv:
+        if dry_run and command.metadata.get("provider") != PROVIDER_NAME:
             errors.append("provider command must target Hetzner")
-        if dry_run and command.purpose in {
-            "check-hetzner-provider",
-            "create-two-endpoint-private-network-lab",
-            "run-oracle-live-exchange-suite",
+        elif not dry_run and PROVIDER_NAME not in command.argv:
+            errors.append("provider command must target Hetzner")
+        if dry_run and command.metadata.get("operation") in {
+            "doctor",
+            "create",
         } and "--dry-run" not in command.argv:
             errors.append(f"dry-run provider command lacks --dry-run: {command.shell()}")
         if command.sends_live_packets or command.expects_live_packets:
