@@ -30,6 +30,10 @@ from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 
 
 PROBE_SELECTED_SPECS = ("probe-contracts",)
+WIRE_ENTRYPOINT = "tools/wire/wire"
+HETZNER_PROBE_PRIVATE_GROUP_PREFIX = "probe"
+HETZNER_PROBE_STIMULUS_PRIVATE_IPV4 = "10.0.25.10"
+HETZNER_PROBE_TARGET_PRIVATE_IPV4 = "10.0.25.20"
 SKIP_CAPABILITY_UNAVAILABLE = "provider_capability_unavailable"
 SKIP_CONFIRMATION_REQUIRED = "confirm_live_run_required"
 SKIP_REQUIRES_CONTROLLED_ROUTER = "requires_controlled_router"
@@ -642,6 +646,31 @@ def _dry_run_report(
     probe_plans: Sequence[JSONObject],
     report_path: Path,
 ) -> ProbeReport:
+    provider_context: JSONObject = {}
+    if request.provider == "hetzner":
+        wire_endpoint_plan = _hetzner_probe_wire_endpoint_plan(
+            request=request,
+            dry_run=True,
+            output_dir=report_path.parent,
+        )
+        endpoints = json_object(wire_endpoint_plan.get("endpoints", {}), "wire.endpoints")
+        probe_plans = _probe_plans_with_wire_endpoint_addresses(
+            probe_plans,
+            endpoints=endpoints,
+        )
+        provider_context = {
+            "provider_workflow": _hetzner_probe_provider_workflow(
+                request=request,
+                dry_run=True,
+            ),
+            "wire_endpoint_plan": wire_endpoint_plan,
+            "provider_commands": _json_list(
+                wire_endpoint_plan.get("provider_commands", []),
+                "wire.provider_commands",
+            ),
+            "endpoints": endpoints,
+        }
+
     return _build_report(
         request=request,
         selected_cases=selected_cases,
@@ -650,6 +679,7 @@ def _dry_run_report(
         report_path=report_path,
         status=STATUS_DRY_RUN,
         dry_run=True,
+        provider_context=provider_context,
     )
 
 
@@ -708,6 +738,7 @@ def _build_report(
     report_path: Path,
     status: str,
     dry_run: bool,
+    provider_context: JSONObject | None = None,
 ) -> ProbeReport:
     provider_capabilities = _PROVIDER_CAPABILITIES[request.provider]
     probe_plans_by_sequence = {
@@ -836,6 +867,8 @@ def _build_report(
             dry_run=dry_run,
         ),
     }
+    if provider_context:
+        metadata.update(provider_context)
     return ProbeReport(
         mode="probe",
         provider=request.provider,
@@ -910,6 +943,377 @@ def _stimulus_endpoint_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObje
     return [plan for plan in probe_plans if plan.get("case") in _STIMULUS_ENDPOINT_CASES]
 
 
+def _hetzner_probe_provider_workflow(
+    *,
+    request: ProbeRunRequest,
+    dry_run: bool,
+) -> list[JSONObject]:
+    dry_run_flag = ["--dry-run"] if dry_run else []
+    create_guard = [] if dry_run else ["--confirm-live-run", "--write-manifest"]
+    private_group = _hetzner_probe_private_group(request)
+    workflow = [
+        (
+            "doctor",
+            "check-hetzner-private-wire",
+            [
+                WIRE_ENTRYPOINT,
+                "doctor",
+                "--provider",
+                "hetzner",
+                "--exposure",
+                "private",
+                *dry_run_flag,
+                "--json",
+            ],
+        ),
+        (
+            "create",
+            "create-stimulus-private-wire-endpoint",
+            [
+                WIRE_ENTRYPOINT,
+                "create-endpoint",
+                "--provider",
+                "hetzner",
+                "--exposure",
+                "private",
+                "--role",
+                "stimulus",
+                "--private-group",
+                private_group,
+                "--private-ip",
+                HETZNER_PROBE_STIMULUS_PRIVATE_IPV4,
+                *dry_run_flag,
+                *create_guard,
+                "--json",
+            ],
+        ),
+        (
+            "create",
+            "create-target-private-wire-endpoint",
+            [
+                WIRE_ENTRYPOINT,
+                "create-endpoint",
+                "--provider",
+                "hetzner",
+                "--exposure",
+                "private",
+                "--role",
+                "target",
+                "--private-group",
+                private_group,
+                "--private-ip",
+                HETZNER_PROBE_TARGET_PRIVATE_IPV4,
+                *dry_run_flag,
+                *create_guard,
+                "--json",
+            ],
+        ),
+        (
+            "upload",
+            "upload-probe-stimulus-request",
+            [WIRE_ENTRYPOINT, "upload", "<endpoint-id>", "<local-abs>", "<remote-abs>"],
+        ),
+        (
+            "exec",
+            "run-probe-controlled-services-and-stimulus",
+            [WIRE_ENTRYPOINT, "exec", "<endpoint-id>", "--", "bash", "-lc", "<script>"],
+        ),
+        (
+            "download",
+            "download-probe-response-artifacts",
+            [WIRE_ENTRYPOINT, "download", "<endpoint-id>", "<remote-abs>", "<local-abs>"],
+        ),
+        (
+            "destroy",
+            "teardown-disposable-hetzner-wire-endpoints",
+            [WIRE_ENTRYPOINT, "destroy-endpoint", "<endpoint-id>", "--json"],
+        ),
+    ]
+    return [
+        {
+            "role": "provider",
+            "purpose": purpose,
+            "argv": argv,
+            "sends_live_packets": False,
+            "expects_live_packets": False,
+            "metadata": {
+                "provider": "hetzner",
+                "exposure": "private",
+                "dry_run": dry_run,
+                "creates_infrastructure": operation == "create" and not dry_run,
+                "would_create_infrastructure": operation == "create" and dry_run,
+                "private_group": private_group,
+                "private_network": True,
+                "wire_command": True,
+                "operation": operation,
+                "always_attempt": operation in {"download", "destroy"},
+            },
+        }
+        for operation, purpose, argv in workflow
+    ]
+
+
+def _hetzner_probe_wire_endpoint_plan(
+    *,
+    request: ProbeRunRequest,
+    dry_run: bool,
+    output_dir: Path,
+    confirm_live_run: bool = False,
+    created_endpoint_ids: list[str] | None = None,
+) -> JSONObject:
+    private_group = _hetzner_probe_private_group(request)
+    provider_commands: list[JSONObject] = []
+    endpoint_plans: list[JSONObject] = []
+    endpoints: dict[str, JSONObject] = {}
+
+    doctor_args = [
+        "doctor",
+        "--provider",
+        "hetzner",
+        "--exposure",
+        "private",
+        "--json",
+    ]
+    if dry_run:
+        doctor_args.append("--dry-run")
+    doctor = _run_wire_command(
+        doctor_args,
+        output_dir=output_dir,
+        label="01-wire-doctor-private",
+        parse_json=True,
+    )
+    provider_commands.append(doctor)
+
+    roles = (
+        (
+            "stimulus",
+            HETZNER_PROBE_STIMULUS_PRIVATE_IPV4,
+            HETZNER_PROBE_TARGET_PRIVATE_IPV4,
+            "02-wire-create-stimulus",
+        ),
+        (
+            "target",
+            HETZNER_PROBE_TARGET_PRIVATE_IPV4,
+            HETZNER_PROBE_STIMULUS_PRIVATE_IPV4,
+            "03-wire-create-target",
+        ),
+    )
+    for role, private_ip, peer_ip, label in roles:
+        create_args = [
+            "create-endpoint",
+            "--provider",
+            "hetzner",
+            "--exposure",
+            "private",
+            "--role",
+            role,
+            "--private-group",
+            private_group,
+            "--private-ip",
+            private_ip,
+            "--json",
+        ]
+        if dry_run:
+            create_args.append("--dry-run")
+        else:
+            create_args.extend(["--confirm-live-run", "--write-manifest"])
+        if confirm_live_run and "--confirm-live-run" not in create_args:
+            create_args.append("--confirm-live-run")
+
+        create = _run_wire_command(
+            create_args,
+            output_dir=output_dir,
+            label=label,
+            parse_json=True,
+            timeout_seconds=900,
+        )
+        provider_commands.append(create)
+        endpoint_plan = _wire_command_json(create, f"wire.{role}.create")
+        endpoint_plans.append(endpoint_plan)
+        endpoints[role] = _wire_endpoint_from_plan(
+            endpoint_plan,
+            role=role,
+            private_ip=private_ip,
+            peer_private_ip=peer_ip,
+            dry_run=dry_run,
+        )
+        if (
+            not dry_run
+            and created_endpoint_ids is not None
+            and not _wire_command_failed(create)
+        ):
+            endpoint_id = endpoints[role].get("endpoint_id")
+            if isinstance(endpoint_id, str) and endpoint_id:
+                created_endpoint_ids.append(endpoint_id)
+
+    return {
+        "provider": "hetzner",
+        "exposure": "private",
+        "dry_run": dry_run,
+        "private_group": private_group,
+        "endpoint_count": len(endpoint_plans),
+        "endpoint_plans": endpoint_plans,
+        "endpoints": endpoints,
+        "provider_commands": provider_commands,
+    }
+
+
+def _run_wire_command(
+    args: Sequence[str],
+    *,
+    output_dir: Path,
+    label: str,
+    parse_json: bool = False,
+    timeout_seconds: int | None = None,
+) -> JSONObject:
+    command_dir = output_dir / "provider"
+    command_dir.mkdir(parents=True, exist_ok=True)
+    command = _run_command(
+        [_wire_path(), *args],
+        output_dir=command_dir,
+        label=label,
+        timeout_seconds=timeout_seconds,
+        parse_json=parse_json,
+    )
+    argv = _string_list(command.get("argv", []))
+    command.update(
+        {
+            "wire_command": True,
+            "operation": args[0] if args else "",
+            "wire_path": _wire_path(),
+            "command": shlex.join(argv),
+        }
+    )
+    return command
+
+
+def _wire_path() -> str:
+    return str((REPO_ROOT / WIRE_ENTRYPOINT).resolve())
+
+
+def _wire_command_json(command: Mapping[str, JSONValue], name: str) -> JSONObject:
+    response = command.get("response")
+    if isinstance(response, Mapping):
+        return json_object(response, name)
+    return {}
+
+
+def _wire_command_failed(command: Mapping[str, JSONValue]) -> bool:
+    exit_code = command.get("exit_code")
+    return not isinstance(exit_code, int) or exit_code != 0
+
+
+def _wire_endpoint_from_plan(
+    endpoint_plan: JSONObject,
+    *,
+    role: str,
+    private_ip: str,
+    peer_private_ip: str,
+    dry_run: bool,
+) -> JSONObject:
+    interface = _wire_private_interface(endpoint_plan)
+    address = _string_or(interface.get("ipv4"), private_ip)
+    endpoint_id = _string_or(endpoint_plan.get("endpoint_id"), f"planned-{role}")
+    return {
+        "endpoint_id": endpoint_id,
+        "role": role,
+        "interface": _string_or(interface.get("name"), "private"),
+        "address": address,
+        "peer_address": peer_private_ip,
+        "metadata": {
+            "provider": "hetzner",
+            "exposure": "private",
+            "dry_run": dry_run,
+            "private_network": True,
+            "wire_endpoint_plan": endpoint_plan,
+            "manifest_path": endpoint_plan.get("manifest_path"),
+            "artifact_dir": endpoint_plan.get("artifact_dir"),
+            "private_group": _wire_private_group(endpoint_plan),
+            "provider_network_id": interface.get("provider_network_id"),
+        },
+    }
+
+
+def _wire_private_interface(endpoint_plan: JSONObject) -> JSONObject:
+    interfaces = endpoint_plan.get("interfaces")
+    if isinstance(interfaces, Sequence) and not isinstance(
+        interfaces,
+        (str, bytes, bytearray),
+    ):
+        for item in interfaces:
+            if isinstance(item, Mapping) and item.get("exposure") == "private":
+                return json_object(item, "wire.interface")
+        for item in interfaces:
+            if isinstance(item, Mapping):
+                return json_object(item, "wire.interface")
+    return {}
+
+
+def _wire_private_group(endpoint_plan: JSONObject) -> str | None:
+    metadata = endpoint_plan.get("metadata")
+    if isinstance(metadata, Mapping):
+        private_group = metadata.get("private_group")
+        if isinstance(private_group, str):
+            return private_group
+    interface = _wire_private_interface(endpoint_plan)
+    interface_metadata = interface.get("metadata")
+    if isinstance(interface_metadata, Mapping):
+        private_group = interface_metadata.get("private_group")
+        if isinstance(private_group, str):
+            return private_group
+    return None
+
+
+def _probe_plans_with_wire_endpoint_addresses(
+    probe_plans: Sequence[JSONObject],
+    *,
+    endpoints: Mapping[str, JSONValue],
+) -> list[JSONObject]:
+    stimulus_ipv4 = _wire_endpoint_address(
+        endpoints,
+        "stimulus",
+        HETZNER_PROBE_STIMULUS_PRIVATE_IPV4,
+    )
+    target_ipv4 = _wire_endpoint_address(
+        endpoints,
+        "target",
+        HETZNER_PROBE_TARGET_PRIVATE_IPV4,
+    )
+    return [
+        _probe_plan_with_endpoint_addresses(
+            plan,
+            source_ipv4=stimulus_ipv4,
+            target_ipv4=target_ipv4,
+        )
+        for plan in probe_plans
+    ]
+
+
+def _wire_endpoint_address(
+    endpoints: Mapping[str, JSONValue],
+    role: str,
+    fallback: str,
+) -> str:
+    endpoint = endpoints.get(role)
+    if isinstance(endpoint, Mapping):
+        address = endpoint.get("address")
+        if isinstance(address, str) and address:
+            return address
+    return fallback
+
+
+def _hetzner_probe_private_group(request: ProbeRunRequest) -> str:
+    return "-".join(
+        part
+        for part in (
+            HETZNER_PROBE_PRIVATE_GROUP_PREFIX,
+            _slug(request.profile),
+            f"seed-{request.seed}",
+        )
+        if part
+    )
+
+
 def _hetzner_endpoint_live_report(
     *,
     request: ProbeRunRequest,
@@ -924,6 +1328,10 @@ def _hetzner_endpoint_live_report(
     provider_commands: list[JSONObject] = []
     execution_errors: list[str] = []
     endpoint_response: JSONObject | None = None
+    wire_endpoint_plan: JSONObject = {}
+    endpoints: JSONObject = {}
+    created_endpoint_ids: list[str] = []
+    endpoint_artifact_paths: list[str] = []
     provider_capabilities = _PROVIDER_CAPABILITIES[request.provider]
     skipped_results, skips, skip_counts, skipped_sequences = _capability_skip_state(
         request=request,
@@ -944,20 +1352,70 @@ def _hetzner_endpoint_live_report(
         if sequence not in skipped_sequences
     ]
     local_request_path = endpoint_dir / "stimulus.request.json"
-    manifest_path = _hetzner_manifest_path()
-    manifest: dict[str, str] = {}
     target_setup_attempted = False
     rst_guard_attempted = False
+    target_endpoint_id = ""
+    stimulus_endpoint_id = ""
+    remote_dir = _hetzner_wire_remote_dir()
+    remote_artifact_root = posixpath.join(
+        remote_dir,
+        "live-artifacts",
+        "probe",
+        "endpoint",
+    )
 
     if live_plans:
         try:
-            manifest = _read_hetzner_manifest(manifest_path)
-            source_ipv4 = manifest.get("libcrafter_private_ipv4", "")
-            target_ipv4 = manifest.get("reference_private_ipv4", "")
-            interface = (
-                manifest.get("libcrafter_interface")
-                or manifest.get("private_interface")
-                or _probe_interface("hetzner", dry_run=False)
+            wire_endpoint_plan = _hetzner_probe_wire_endpoint_plan(
+                request=request,
+                dry_run=False,
+                output_dir=output_dir,
+                confirm_live_run=True,
+                created_endpoint_ids=created_endpoint_ids,
+            )
+            provider_commands.extend(
+                _json_list(
+                    wire_endpoint_plan.get("provider_commands", []),
+                    "wire.provider_commands",
+                )
+            )
+            failed_provider_commands = [
+                command
+                for command in provider_commands
+                if _wire_command_failed(command)
+            ]
+            if failed_provider_commands:
+                execution_errors.append("Hetzner wire endpoint creation failed")
+                raise RuntimeError("Hetzner wire endpoint creation failed")
+
+            endpoints = json_object(wire_endpoint_plan.get("endpoints", {}), "wire.endpoints")
+            stimulus_endpoint = _json_mapping(
+                endpoints.get("stimulus", {}),
+                "wire.endpoints.stimulus",
+            )
+            target_endpoint = _json_mapping(
+                endpoints.get("target", {}),
+                "wire.endpoints.target",
+            )
+            stimulus_endpoint_id = _string_or(
+                stimulus_endpoint.get("endpoint_id"),
+                "",
+            )
+            target_endpoint_id = _string_or(target_endpoint.get("endpoint_id"), "")
+            if not stimulus_endpoint_id or not target_endpoint_id:
+                raise RuntimeError("wire endpoint plan did not include endpoint IDs")
+
+            source_ipv4 = _string_or(
+                stimulus_endpoint.get("address"),
+                HETZNER_PROBE_STIMULUS_PRIVATE_IPV4,
+            )
+            target_ipv4 = _string_or(
+                target_endpoint.get("address"),
+                HETZNER_PROBE_TARGET_PRIVATE_IPV4,
+            )
+            interface = _string_or(
+                stimulus_endpoint.get("interface"),
+                _probe_interface("hetzner", dry_run=False),
             )
             all_live_plans = [
                 _probe_plan_with_endpoint_addresses(
@@ -972,13 +1430,26 @@ def _hetzner_endpoint_live_report(
                 for plan in all_live_plans
                 if int(plan.get("sequence", -1)) not in skipped_sequences
             ]
-            remote_dir = manifest.get("remote_dir", "/root/libcrafter")
-            remote_artifact_root = posixpath.join(
-                remote_dir,
-                "live-artifacts",
-                "probe",
-                "endpoint",
-            )
+
+            repo_archive = _create_wire_repo_archive(output_dir)
+            endpoint_artifact_paths.append(str(repo_archive))
+            for role, endpoint, peer in (
+                ("stimulus", stimulus_endpoint, target_endpoint),
+                ("target", target_endpoint, stimulus_endpoint),
+            ):
+                bootstrap_records = _bootstrap_wire_probe_endpoint(
+                    endpoint=endpoint,
+                    peer=peer,
+                    repo_archive=repo_archive,
+                    remote_dir=remote_dir,
+                    output_dir=endpoint_dir,
+                    label=f"04-bootstrap-{role}",
+                )
+                provider_commands.extend(bootstrap_records)
+                if any(_wire_command_failed(record) for record in bootstrap_records):
+                    execution_errors.append(f"Hetzner endpoint bootstrap failed: {role}")
+                    raise RuntimeError(f"Hetzner endpoint bootstrap failed: {role}")
+
             remote_request_path = posixpath.join(
                 remote_artifact_root,
                 "inputs",
@@ -994,8 +1465,9 @@ def _hetzner_endpoint_live_report(
             )
             write_json(local_request_path, endpoint_request)
 
-            target_setup = _prepare_hetzner_probe_target(
-                manifest=manifest,
+            target_setup = _prepare_wire_probe_target(
+                endpoint_id=target_endpoint_id,
+                bind_ipv4=target_ipv4,
                 remote_dir=remote_dir,
                 probe_plans=live_plans,
                 output_dir=endpoint_dir,
@@ -1007,8 +1479,8 @@ def _hetzner_endpoint_live_report(
                 if target_setup["exit_code"] != 0:
                     execution_errors.append("target endpoint setup failed")
 
-            rst_setup = _install_hetzner_stimulus_rst_guards(
-                manifest=manifest,
+            rst_setup = _install_wire_stimulus_rst_guards(
+                endpoint_id=stimulus_endpoint_id,
                 probe_plans=live_plans,
                 output_dir=endpoint_dir,
             )
@@ -1020,8 +1492,8 @@ def _hetzner_endpoint_live_report(
                     execution_errors.append("stimulus RST guard setup failed")
 
             if not execution_errors:
-                upload = _upload_hetzner_probe_request(
-                    manifest=manifest,
+                upload = _upload_wire_probe_request(
+                    endpoint_id=stimulus_endpoint_id,
                     local_request_path=local_request_path,
                     remote_request_path=remote_request_path,
                     output_dir=endpoint_dir,
@@ -1033,8 +1505,8 @@ def _hetzner_endpoint_live_report(
                 upload = None
 
             if not execution_errors and upload is not None:
-                execution = _run_hetzner_stimulus_endpoint(
-                    manifest=manifest,
+                execution = _run_wire_stimulus_endpoint(
+                    endpoint_id=stimulus_endpoint_id,
                     remote_dir=remote_dir,
                     remote_request_path=remote_request_path,
                     remote_artifact_root=remote_artifact_root,
@@ -1048,14 +1520,36 @@ def _hetzner_endpoint_live_report(
                 execution_errors.extend(_string_list(execution.get("errors", [])))
                 if execution["exit_code"] != 0:
                     execution_errors.append("stimulus endpoint command failed")
+
+                downloads = _download_wire_probe_artifacts(
+                    endpoint_id=stimulus_endpoint_id,
+                    artifact_paths=json_object(
+                        endpoint_request.get("artifact_paths", {}),
+                        "stimulus.artifact_paths",
+                    ),
+                    output_dir=endpoint_dir,
+                    response_path=endpoint_dir / "stimulus.response.json",
+                )
+                provider_commands.extend(downloads)
+                endpoint_artifact_paths.extend(
+                    [
+                        path
+                        for command in downloads
+                        for path in _command_artifact_paths(command)
+                    ]
+                )
+                if endpoint_response is None:
+                    endpoint_response = _probe_endpoint_response_from_path(
+                        endpoint_dir / "stimulus.response.json"
+                    )
                 if endpoint_response is None:
                     execution_errors.append("stimulus endpoint did not return JSON")
         except Exception as exc:  # pragma: no cover - live-provider only.
             execution_errors.append(str(exc))
         finally:
-            if manifest and rst_guard_attempted:
-                rst_cleanup = _cleanup_hetzner_stimulus_rst_guards(
-                    manifest=manifest,
+            if stimulus_endpoint_id and rst_guard_attempted:
+                rst_cleanup = _cleanup_wire_stimulus_rst_guards(
+                    endpoint_id=stimulus_endpoint_id,
                     probe_plans=live_plans,
                     output_dir=endpoint_dir,
                 )
@@ -1063,16 +1557,39 @@ def _hetzner_endpoint_live_report(
                 execution_errors.extend(_string_list(rst_cleanup.get("errors", [])))
                 if rst_cleanup["exit_code"] != 0:
                     execution_errors.append("stimulus RST guard cleanup failed")
-            if manifest and target_setup_attempted:
-                target_cleanup = _cleanup_hetzner_probe_target(
-                    manifest=manifest,
-                    remote_dir=manifest.get("remote_dir", "/root/libcrafter"),
+            if target_endpoint_id and target_setup_attempted:
+                target_cleanup = _cleanup_wire_probe_target(
+                    endpoint_id=target_endpoint_id,
+                    remote_dir=remote_dir,
                     output_dir=endpoint_dir,
                 )
                 provider_commands.append(target_cleanup)
                 execution_errors.extend(_string_list(target_cleanup.get("errors", [])))
                 if target_cleanup["exit_code"] != 0:
                     execution_errors.append("target endpoint cleanup failed")
+            for role, endpoint_id in (
+                ("stimulus", stimulus_endpoint_id),
+                ("target", target_endpoint_id),
+            ):
+                if not endpoint_id:
+                    continue
+                artifact = _run_wire_command(
+                    ["collect-artifacts", endpoint_id, "--remote", remote_artifact_root],
+                    output_dir=output_dir,
+                    label=f"98-wire-artifacts-{role}",
+                    parse_json=False,
+                    timeout_seconds=300,
+                )
+                provider_commands.append(artifact)
+            for endpoint_id in reversed(created_endpoint_ids):
+                destroy = _run_wire_command(
+                    ["destroy-endpoint", endpoint_id, "--json"],
+                    output_dir=output_dir,
+                    label=f"99-wire-destroy-{endpoint_id}",
+                    parse_json=True,
+                    timeout_seconds=300,
+                )
+                provider_commands.append(destroy)
 
     if not live_plans:
         endpoint_results: list[ProbeResult] = []
@@ -1100,6 +1617,7 @@ def _hetzner_endpoint_live_report(
     artifact_paths = [str(report_path)]
     if local_request_path.exists():
         artifact_paths.append(str(local_request_path))
+    artifact_paths.extend(endpoint_artifact_paths)
     artifact_paths.extend(
         [
             path
@@ -1152,11 +1670,22 @@ def _hetzner_endpoint_live_report(
             "probe_plans": all_live_plans,
             "selected_specs": list(PROBE_SELECTED_SPECS),
             "dry_run": False,
-            "creates_infrastructure": False,
+            "creates_infrastructure": bool(created_endpoint_ids),
             "requires_provider_lifecycle": True,
             "mutates_lab": True,
             "live_packet_exchange": status == STATUS_PASSED and executed_count > 0,
-            "manifest": {"path": str(manifest_path), "loaded": bool(manifest)},
+            "provider_workflow": _hetzner_probe_provider_workflow(
+                request=request,
+                dry_run=False,
+            ),
+            "wire_endpoint_plan": wire_endpoint_plan,
+            "endpoints": endpoints,
+            "wire_endpoint_lifecycle": {
+                "remote_dir": remote_dir,
+                "remote_artifact_root": remote_artifact_root,
+                "created_endpoint_ids": list(created_endpoint_ids),
+                "destroy_attempted": bool(created_endpoint_ids),
+            },
             "provider_commands": provider_commands,
             "execution_errors": execution_errors,
             "target_service_setup": _target_service_setup_plan(
@@ -1283,61 +1812,230 @@ def _probe_plan_with_endpoint_addresses(
     validation["destination_ipv4"] = source_ipv4
     updated["validation"] = validation
     updated["live_address_rewrite"] = {
-        "source": "hetzner_manifest",
+        "source": "wire_endpoint_plan",
         "stimulus_ipv4": source_ipv4,
         "target_ipv4": target_ipv4,
     }
     return updated
 
 
-def _hetzner_manifest_path() -> Path:
-    state_root = Path(
-        os.environ.get(
-            "LIBCRAFTER_LIVE_LAB_STATE_DIR",
-            str(REPO_ROOT / "tools" / "live-lab" / ".state"),
-        )
+def _hetzner_wire_remote_dir() -> str:
+    remote_dir = os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR") or "/root/libcrafter"
+    if not remote_dir.startswith("/"):
+        raise RuntimeError("Hetzner wire remote_dir must be an absolute path")
+    if "'" in remote_dir:
+        raise RuntimeError("Hetzner wire remote_dir must not contain single quotes")
+    return remote_dir.rstrip("/") or "/"
+
+
+def _create_wire_repo_archive(output_dir: Path) -> Path:
+    artifact_dir = output_dir / "artifacts" / "wire"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = artifact_dir / "libcrafter-repo.tar.gz"
+    command = _run_command(
+        [
+            "tar",
+            "-C",
+            str(REPO_ROOT),
+            "--exclude=.git",
+            "--exclude=target",
+            "--exclude=tools/live-lab/.state",
+            "--exclude=tools/live-lab/artifacts",
+            "--exclude=tools/wire/.state",
+            "--exclude=tools/wire/artifacts",
+            "-czf",
+            str(archive_path),
+            ".",
+        ],
+        output_dir=artifact_dir,
+        label="repo-archive",
     )
-    if not state_root.is_absolute():
-        state_root = REPO_ROOT / state_root
-    return state_root / "hetzner" / "manifest.env"
+    if command["exit_code"] != 0:
+        raise RuntimeError("failed to create wire repo archive")
+    return archive_path
 
 
-def _read_hetzner_manifest(path: Path) -> dict[str, str]:
-    if not path.exists():
-        raise FileNotFoundError(f"Hetzner manifest not found: {path}")
-    values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        parts = shlex.split(stripped, posix=True)
-        if len(parts) != 1 or "=" not in parts[0]:
-            continue
-        key, value = parts[0].split("=", 1)
-        values[key] = value
-    return values
-
-
-def _upload_hetzner_probe_request(
+def _bootstrap_wire_probe_endpoint(
     *,
-    manifest: Mapping[str, str],
+    endpoint: Mapping[str, JSONValue],
+    peer: Mapping[str, JSONValue],
+    repo_archive: Path,
+    remote_dir: str,
+    output_dir: Path,
+    label: str,
+) -> list[JSONObject]:
+    endpoint_id = _string_or(endpoint.get("endpoint_id"), "")
+    if not endpoint_id:
+        raise RuntimeError("wire endpoint is missing endpoint_id")
+    remote_parent = posixpath.dirname(remote_dir.rstrip("/")) or "/"
+    remote_archive = posixpath.join(remote_parent, "libcrafter-repo.tar.gz")
+    upload = _run_wire_command(
+        ["upload", endpoint_id, str(repo_archive.resolve()), remote_archive],
+        output_dir=output_dir,
+        label=f"{label}-upload-repo",
+        timeout_seconds=900,
+    )
+    if upload["exit_code"] != 0:
+        return [upload]
+
+    bootstrap = _run_wire_command(
+        [
+            "exec",
+            endpoint_id,
+            "--",
+            "bash",
+            "-lc",
+            _wire_probe_bootstrap_script(
+                endpoint=endpoint,
+                peer=peer,
+                remote_archive=remote_archive,
+                remote_dir=remote_dir,
+            ),
+        ],
+        output_dir=output_dir,
+        label=f"{label}-exec",
+        timeout_seconds=1800,
+    )
+    return [upload, bootstrap]
+
+
+def _wire_probe_bootstrap_script(
+    *,
+    endpoint: Mapping[str, JSONValue],
+    peer: Mapping[str, JSONValue],
+    remote_archive: str,
+    remote_dir: str,
+) -> str:
+    role = shlex.quote(_string_or(endpoint.get("role"), "probe"))
+    private_ipv4 = shlex.quote(_string_or(endpoint.get("address"), ""))
+    peer_private_ipv4 = shlex.quote(_string_or(peer.get("address"), ""))
+    private_interface = shlex.quote(_string_or(endpoint.get("interface"), "private"))
+    quoted_archive = shlex.quote(remote_archive)
+    quoted_remote_dir = shlex.quote(remote_dir)
+    common = "\n".join(
+        [
+            "set -euo pipefail",
+            "if command -v cloud-init >/dev/null 2>&1; then "
+            "cloud-init status --wait >/dev/null 2>&1 || true; fi",
+            f"rm -rf {quoted_remote_dir}",
+            f"mkdir -p {quoted_remote_dir}",
+            f"tar -xzf {quoted_archive} -C {quoted_remote_dir}",
+            f"cd {quoted_remote_dir}",
+            f"export LIBCRAFTER_ENDPOINT_ROLE={role}",
+            f"export LIBCRAFTER_PRIVATE_IPV4={private_ipv4}",
+            f"export LIBCRAFTER_PEER_PRIVATE_IPV4={peer_private_ipv4}",
+            f"export LIBCRAFTER_PRIVATE_INTERFACE={private_interface}",
+            "export DEBIAN_FRONTEND=noninteractive",
+            "mkdir -p \"live-artifacts/probe/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE\"",
+            "apt-get update",
+        ]
+    )
+    if _string_or(endpoint.get("role"), "") == "stimulus":
+        return "\n".join(
+            [
+                common,
+                (
+                    "apt-get install -y --no-install-recommends "
+                    "build-essential ca-certificates clang curl git iproute2 "
+                    "iptables iputils-ping libpcap-dev pkg-config python3"
+                ),
+                "if ! command -v cargo >/dev/null 2>&1; then "
+                "curl -fsS https://sh.rustup.rs | sh -s -- -y; fi",
+                "if [ -f \"$HOME/.cargo/env\" ]; then . \"$HOME/.cargo/env\"; fi",
+                "cargo build -p probe-adapters --bin stimulus_endpoint",
+                "{",
+                "  echo \"role=$LIBCRAFTER_ENDPOINT_ROLE\"",
+                "  echo \"private_ipv4=$LIBCRAFTER_PRIVATE_IPV4\"",
+                "  echo \"peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4\"",
+                "  echo \"private_interface=$LIBCRAFTER_PRIVATE_INTERFACE\"",
+                "  echo \"repository_synced=true\"",
+                "  echo \"libcrafter_probe_bin=stimulus_endpoint\"",
+                "  echo \"libcrafter_probe_bin_build=ok\"",
+                "  echo \"finished_at=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\"",
+                "} > \"live-artifacts/probe/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/bootstrap.env\"",
+            ]
+        )
+
+    return "\n".join(
+        [
+            common,
+            (
+                "apt-get install -y --no-install-recommends "
+                "ca-certificates curl git iproute2 iputils-ping python3"
+            ),
+            "{",
+            "  echo \"role=$LIBCRAFTER_ENDPOINT_ROLE\"",
+            "  echo \"private_ipv4=$LIBCRAFTER_PRIVATE_IPV4\"",
+            "  echo \"peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4\"",
+            "  echo \"private_interface=$LIBCRAFTER_PRIVATE_INTERFACE\"",
+            "  echo \"repository_synced=true\"",
+            "  echo \"target_service_runtime=python3\"",
+            "  echo \"finished_at=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\"",
+            "} > \"live-artifacts/probe/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/bootstrap.env\"",
+        ]
+    )
+
+
+def _upload_wire_probe_request(
+    *,
+    endpoint_id: str,
     local_request_path: Path,
     remote_request_path: str,
     output_dir: Path,
 ) -> JSONObject:
     remote_parent = posixpath.dirname(remote_request_path)
-    command = f"mkdir -p {shlex.quote(remote_parent)} && cat > {shlex.quote(remote_request_path)}"
-    return _run_command(
-        _hetzner_endpoint_ssh_argv(manifest, "stimulus", command),
+    mkdir = _run_wire_command(
+        [
+            "exec",
+            endpoint_id,
+            "--",
+            "bash",
+            "-lc",
+            f"mkdir -p {shlex.quote(remote_parent)}",
+        ],
         output_dir=output_dir,
-        label="upload-stimulus-request",
-        input_text=local_request_path.read_text(encoding="utf-8"),
+        label="upload-stimulus-request-mkdir",
+        timeout_seconds=60,
     )
+    upload = (
+        _run_wire_command(
+            ["upload", endpoint_id, str(local_request_path.resolve()), remote_request_path],
+            output_dir=output_dir,
+            label="upload-stimulus-request",
+            timeout_seconds=120,
+        )
+        if mkdir["exit_code"] == 0
+        else None
+    )
+    commands = [mkdir] + ([] if upload is None else [upload])
+    exit_code = next(
+        (
+            int(command.get("exit_code", 1))
+            for command in commands
+            if command.get("exit_code") != 0
+        ),
+        0,
+    )
+    return {
+        "wire_command": True,
+        "operation": "upload",
+        "endpoint_id": endpoint_id,
+        "label": "upload-stimulus-request",
+        "exit_code": exit_code,
+        "request_path": str(local_request_path),
+        "remote_request_path": remote_request_path,
+        "commands": commands,
+        "errors": [
+            error
+            for command in commands
+            for error in _string_list(command.get("errors", []))
+        ],
+    }
 
 
-def _run_hetzner_stimulus_endpoint(
+def _run_wire_stimulus_endpoint(
     *,
-    manifest: Mapping[str, str],
+    endpoint_id: str,
     remote_dir: str,
     remote_request_path: str,
     remote_artifact_root: str,
@@ -1358,12 +2056,8 @@ def _run_hetzner_stimulus_endpoint(
             ),
         ]
     )
-    return _run_command(
-        _hetzner_endpoint_ssh_argv(
-            manifest,
-            "stimulus",
-            f"bash -lc {shlex.quote(script)}",
-        ),
+    return _run_wire_command(
+        ["exec", endpoint_id, "--", "bash", "-lc", script],
         output_dir=output_dir,
         label="stimulus-endpoint",
         timeout_seconds=timeout_seconds,
@@ -1371,9 +2065,10 @@ def _run_hetzner_stimulus_endpoint(
     )
 
 
-def _prepare_hetzner_probe_target(
+def _prepare_wire_probe_target(
     *,
-    manifest: Mapping[str, str],
+    endpoint_id: str,
+    bind_ipv4: str,
     remote_dir: str,
     probe_plans: Sequence[JSONObject],
     output_dir: Path,
@@ -1400,26 +2095,22 @@ def _prepare_hetzner_probe_target(
     )
     script = _target_service_setup_script(
         artifact_root=remote_artifact_root,
-        bind_ipv4=manifest.get("reference_private_ipv4") or "0.0.0.0",
+        bind_ipv4=bind_ipv4,
         open_ports=open_ports,
         closed_ports=closed_ports,
         dns_plans=dns_plans,
     )
-    return _run_command(
-        _hetzner_endpoint_ssh_argv(
-            manifest,
-            "target",
-            f"bash -lc {shlex.quote(script)}",
-        ),
+    return _run_wire_command(
+        ["exec", endpoint_id, "--", "bash", "-lc", script],
         output_dir=output_dir,
         label="probe-target-setup",
         timeout_seconds=60,
     )
 
 
-def _cleanup_hetzner_probe_target(
+def _cleanup_wire_probe_target(
     *,
-    manifest: Mapping[str, str],
+    endpoint_id: str,
     remote_dir: str,
     output_dir: Path,
 ) -> JSONObject:
@@ -1436,55 +2127,98 @@ def _cleanup_hetzner_probe_target(
             f"if [ -x {shlex.quote(cleanup_script)} ]; then {shlex.quote(cleanup_script)}; fi",
         ]
     )
-    return _run_command(
-        _hetzner_endpoint_ssh_argv(
-            manifest,
-            "target",
-            f"bash -lc {shlex.quote(script)}",
-        ),
+    return _run_wire_command(
+        ["exec", endpoint_id, "--", "bash", "-lc", script],
         output_dir=output_dir,
         label="probe-target-cleanup",
         timeout_seconds=60,
     )
 
 
-def _install_hetzner_stimulus_rst_guards(
+def _install_wire_stimulus_rst_guards(
     *,
-    manifest: Mapping[str, str],
+    endpoint_id: str,
     probe_plans: Sequence[JSONObject],
     output_dir: Path,
 ) -> JSONObject | None:
     tcp_plans = _tcp_probe_plans(probe_plans)
     if not tcp_plans:
         return None
-    return _run_command(
-        _hetzner_endpoint_ssh_argv(
-            manifest,
-            "stimulus",
-            f"bash -lc {shlex.quote(_rst_guard_script(tcp_plans, install=True))}",
-        ),
+    return _run_wire_command(
+        ["exec", endpoint_id, "--", "bash", "-lc", _rst_guard_script(tcp_plans, install=True)],
         output_dir=output_dir,
         label="probe-stimulus-rst-guard-setup",
         timeout_seconds=60,
     )
 
 
-def _cleanup_hetzner_stimulus_rst_guards(
+def _cleanup_wire_stimulus_rst_guards(
     *,
-    manifest: Mapping[str, str],
+    endpoint_id: str,
     probe_plans: Sequence[JSONObject],
     output_dir: Path,
 ) -> JSONObject:
-    return _run_command(
-        _hetzner_endpoint_ssh_argv(
-            manifest,
-            "stimulus",
-            f"bash -lc {shlex.quote(_rst_guard_script(_tcp_probe_plans(probe_plans), install=False))}",
-        ),
+    return _run_wire_command(
+        [
+            "exec",
+            endpoint_id,
+            "--",
+            "bash",
+            "-lc",
+            _rst_guard_script(_tcp_probe_plans(probe_plans), install=False),
+        ],
         output_dir=output_dir,
         label="probe-stimulus-rst-guard-cleanup",
         timeout_seconds=60,
     )
+
+
+def _download_wire_probe_artifacts(
+    *,
+    endpoint_id: str,
+    artifact_paths: Mapping[str, JSONValue],
+    output_dir: Path,
+    response_path: Path,
+) -> list[JSONObject]:
+    local_root = output_dir / "downloads" / "stimulus"
+    downloads: list[JSONObject] = []
+    local_by_key = {
+        "response": response_path,
+        "captures": local_root / "captures",
+    }
+    for key, local_path in local_by_key.items():
+        remote_path = artifact_paths.get(key)
+        if not isinstance(remote_path, str) or not remote_path.startswith("/"):
+            continue
+        record = _run_wire_command(
+            ["download", endpoint_id, remote_path, str(local_path.resolve())],
+            output_dir=output_dir,
+            label=f"download-stimulus-{key}",
+            timeout_seconds=300,
+        )
+        record.update(
+            {
+                "endpoint_id": endpoint_id,
+                "endpoint_role": "stimulus",
+                "artifact_key": key,
+                "remote_path": remote_path,
+                "local_path": str(local_path),
+            }
+        )
+        downloads.append(record)
+    return downloads
+
+
+def _probe_endpoint_response_from_path(path: Path) -> JSONObject | None:
+    if not path.exists():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(value, Mapping):
+        return None
+    return json_object(value, "stimulus.response")
 
 
 def _target_service_setup_script(
@@ -1838,35 +2572,6 @@ def _dedupe_ints(values: Sequence[int]) -> list[int]:
     return list(dict.fromkeys(values))
 
 
-def _hetzner_endpoint_ssh_argv(
-    manifest: Mapping[str, str],
-    endpoint_role: str,
-    remote_command: str,
-) -> list[str]:
-    prefix = "libcrafter" if endpoint_role == "stimulus" else "reference"
-    host = manifest.get(f"{prefix}_ssh_host") or manifest.get(f"{prefix}_public_ipv4")
-    user = manifest.get("ssh_user", "root")
-    key = manifest.get("ssh_private_key")
-    if not host:
-        raise RuntimeError(f"Hetzner manifest is missing {prefix} SSH host")
-    if not key:
-        raise RuntimeError("Hetzner manifest is missing ssh_private_key")
-    known_hosts = _hetzner_manifest_path().parent / "known_hosts"
-    return [
-        "ssh",
-        "-i",
-        key,
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-        "-o",
-        f"UserKnownHostsFile={known_hosts}",
-        "-o",
-        "ConnectTimeout=10",
-        f"{user}@{host}",
-        remote_command,
-    ]
-
-
 def _run_command(
     argv: Sequence[str],
     *,
@@ -2065,10 +2770,30 @@ def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _string_or(value: object, default: str) -> str:
+    return value if isinstance(value, str) and value else default
+
+
 def _string_list(value: object) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         return []
     return [str(item) for item in value if isinstance(item, str)]
+
+
+def _json_mapping(value: object, name: str) -> JSONObject:
+    if isinstance(value, Mapping):
+        return json_object(value, name)
+    return {}
+
+
+def _json_list(value: object, name: str) -> list[JSONObject]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return []
+    return [
+        json_object(item, f"{name}[]")
+        for item in value
+        if isinstance(item, Mapping)
+    ]
 
 
 def _dedupe_paths(paths: Sequence[str]) -> list[str]:
