@@ -7,6 +7,10 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from .model import dumps_json
+from .providers import hetzner
+from .registry import ProviderExposureError
+
 
 COMMANDS = (
     "doctor",
@@ -176,6 +180,57 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_doctor(args: argparse.Namespace) -> int:
+    try:
+        report = hetzner.doctor(
+            provider=args.provider,
+            exposure=args.exposure,
+            dry_run=args.dry_run,
+        )
+    except ProviderExposureError as exc:
+        if args.json:
+            sys.stdout.write(
+                dumps_json(
+                    {
+                        "provider": args.provider,
+                        "exposure": args.exposure,
+                        "dry_run": args.dry_run,
+                        "ok": False,
+                        "error": str(exc),
+                    }
+                )
+            )
+        else:
+            print(str(exc), file=sys.stderr)
+        return 2
+
+    if args.json:
+        sys.stdout.write(dumps_json(report))
+    else:
+        _print_doctor_report(report)
+
+    if args.dry_run:
+        return 0
+    return 0 if bool(report["ok"]) else 1
+
+
+def _print_doctor_report(report: dict[str, object]) -> None:
+    status = "ok" if bool(report["ok"]) else "failed"
+    print(
+        "wire doctor: "
+        f"provider={report['provider']} exposure={report['exposure']} "
+        f"dry_run={str(report['dry_run']).lower()} status={status}"
+    )
+    checks = report["checks"]
+    if not isinstance(checks, list):
+        return
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        check_status = "ok" if bool(check.get("ok")) else "failed"
+        print(f"- {check.get('name')}: {check_status}: {check.get('message')}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the wire command-line interface."""
     parser = build_parser()
@@ -183,5 +238,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if getattr(args, "command", None) is None:
         parser.print_help(sys.stdout)
         return 0
+    if args.command_name == "doctor":
+        return _run_doctor(args)
     parser.error(f"{args.command_name!r} is not implemented yet")
     return 2
