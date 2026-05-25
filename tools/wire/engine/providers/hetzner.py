@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import shutil
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +20,7 @@ from ..model import (
 )
 from ..process import CommandResult, run_command
 from ..registry import validate_request
-from ..ssh import create_key_pair, ensure_known_hosts_file
+from ..ssh import create_key_pair, ensure_known_hosts_file, run_ssh_command, wait_for_ssh
 from ..state import endpoint_layout, ensure_endpoint_dirs, write_endpoint_manifest
 
 
@@ -33,6 +34,19 @@ CONFIRMATION_ERROR = (
 DEFAULT_SERVER_TYPE = "cx22"
 DEFAULT_IMAGE = "ubuntu-24.04"
 DEFAULT_LOCATION = "hel1"
+DEFAULT_SERVER_RUNNING_TIMEOUT = 300
+DEFAULT_SERVER_RUNNING_INTERVAL = 5
+INTERFACE_DISCOVERY_COMMAND = "\n".join(
+    [
+        "set -eu",
+        "printf '%s\\n' __WIRE_IP_ADDR__",
+        "ip -j address show scope global",
+        "printf '%s\\n' __WIRE_IP_LINK__",
+        "ip -j link show",
+        "printf '%s\\n' __WIRE_IP_ROUTE__",
+        "ip -j route get 1.1.1.1 || true",
+    ]
+)
 
 
 def doctor(
@@ -166,6 +180,9 @@ def _create_wan_endpoint(
 
     server_id: str | None = None
     ssh_key_id: str | None = None
+    public_ipv4: str | None = None
+    public_ipv6: str | None = None
+    ssh_host: str | None = None
     server_name = _server_name(endpoint_id)
     ssh_key_name = f"{server_name}-key"
     hcloud_env = {HCLOUD_TOKEN_ENV: token}
@@ -224,6 +241,90 @@ def _create_wan_endpoint(
         if ssh_host is None:
             raise RuntimeError("hcloud server create did not return a public IPv4 or IPv6 address")
 
+        provider_resources = _wan_provider_resources(
+            provider=provider,
+            server_id=server_id,
+            server_name=server_name,
+            ssh_key_id=ssh_key_id,
+            ssh_key_name=ssh_key_name,
+            public_ipv4=public_ipv4,
+            public_ipv6=public_ipv6,
+        )
+        initial_interfaces = [
+            NetworkInterface(
+                name="public",
+                exposure=exposure,
+                ipv4=public_ipv4,
+                ipv6=public_ipv6,
+                metadata={
+                    "source": "hcloud",
+                    "server_id": server_id,
+                    "server_name": server_name,
+                },
+            )
+        ]
+        base_metadata = _wan_manifest_metadata(
+            created=True,
+            dry_run=False,
+            layout=layout,
+            server_id=server_id,
+            server_name=server_name,
+            ssh_key_id=ssh_key_id,
+            ssh_key_name=ssh_key_name,
+        )
+
+        write_endpoint_manifest(
+            EndpointManifest(
+                endpoint_id=endpoint_id,
+                provider=provider,
+                exposure=exposure,
+                status="creating",
+                role=role,
+                created_at=created_at,
+                ssh=EndpointSSHInfo(
+                    host=ssh_host,
+                    user="root",
+                    identity_file=str(layout.private_key_path),
+                    known_hosts_file=str(layout.known_hosts_path),
+                    metadata={
+                        "created_by": "tools/wire",
+                        "server_name": server_name,
+                    },
+                ),
+                interfaces=initial_interfaces,
+                provider_resources=provider_resources,
+                artifact_dir=str(layout.artifact_dir),
+                metadata={
+                    **base_metadata,
+                    "discovery": {
+                        "server_running": False,
+                        "ssh_ready": False,
+                        "interfaces": False,
+                    },
+                },
+            )
+        )
+
+        running_server = wait_for_server_running(server_id=server_id, env=hcloud_env)
+        try:
+            wait_for_ssh(
+                host=ssh_host,
+                user="root",
+                identity_file=layout.private_key_path,
+                known_hosts=layout.known_hosts_path,
+            )
+        except TimeoutError as exc:
+            raise RuntimeError(str(exc)) from exc
+        discovered_interfaces = discover_endpoint_interfaces(
+            host=ssh_host,
+            user="root",
+            identity_file=layout.private_key_path,
+            known_hosts=layout.known_hosts_path,
+            exposure=exposure,
+            public_ipv4=public_ipv4,
+            public_ipv6=public_ipv6,
+        )
+
         manifest = EndpointManifest(
             endpoint_id=endpoint_id,
             provider=provider,
@@ -241,53 +342,15 @@ def _create_wan_endpoint(
                     "server_name": server_name,
                 },
             ),
-            interfaces=[
-                NetworkInterface(
-                    name="public",
-                    exposure=exposure,
-                    ipv4=public_ipv4,
-                    ipv6=public_ipv6,
-                    metadata={
-                        "server_id": server_id,
-                        "server_name": server_name,
-                    },
-                )
-            ],
-            provider_resources=ProviderResources(
-                resources=[
-                    ProviderResource(
-                        kind="server",
-                        provider_id=server_id,
-                        name=server_name,
-                        cleanup=True,
-                        metadata={
-                            "type": "server",
-                            "public_ipv4": public_ipv4,
-                            "public_ipv6": public_ipv6,
-                        },
-                    ),
-                    ProviderResource(
-                        kind="ssh-key",
-                        provider_id=ssh_key_id,
-                        name=ssh_key_name,
-                        cleanup=True,
-                        metadata={"type": "ssh-key"},
-                    ),
-                ],
-                cleanup_order=["server", "ssh-key"],
-                metadata={"created_by": "tools/wire", "provider": provider},
-            ),
+            interfaces=discovered_interfaces or initial_interfaces,
+            provider_resources=provider_resources,
             artifact_dir=str(layout.artifact_dir),
             metadata={
-                "created": True,
-                "dry_run": False,
-                "state_dir": str(layout.state_dir),
-                "manifest_path": str(layout.manifest_path),
-                "cleanup": {
-                    "server_id": server_id,
-                    "ssh_key_id": ssh_key_id,
-                    "server_name": server_name,
-                    "ssh_key_name": ssh_key_name,
+                **base_metadata,
+                "discovery": {
+                    "server_running": running_server.get("status") == "running",
+                    "ssh_ready": True,
+                    "interfaces": bool(discovered_interfaces),
                 },
             },
         )
@@ -298,9 +361,165 @@ def _create_wan_endpoint(
         output["state_dir"] = str(manifest_path.parent)
         output["manifest_path"] = str(manifest_path)
         return output
-    except Exception:
+    except Exception as exc:
+        if server_id is not None or ssh_key_id is not None:
+            _write_failed_wan_manifest(
+                endpoint_id=endpoint_id,
+                provider=provider,
+                exposure=exposure,
+                role=role,
+                created_at=created_at,
+                layout=layout,
+                server_id=server_id,
+                server_name=server_name,
+                ssh_key_id=ssh_key_id,
+                ssh_key_name=ssh_key_name,
+                public_ipv4=public_ipv4,
+                public_ipv6=public_ipv6,
+                ssh_host=ssh_host,
+                error=str(exc),
+            )
         _cleanup_partial_wan(server_id=server_id, ssh_key_id=ssh_key_id, env=hcloud_env)
         raise
+
+
+def wait_for_server_running(
+    *,
+    server_id: str,
+    env: Mapping[str, str],
+    timeout: float = DEFAULT_SERVER_RUNNING_TIMEOUT,
+    interval: float = DEFAULT_SERVER_RUNNING_INTERVAL,
+) -> dict[str, object]:
+    """Wait for a Hetzner server to report the running state."""
+
+    deadline = time.monotonic() + _positive_float(timeout, "timeout")
+    sleep_interval = _positive_float(interval, "interval")
+    last_status = "unknown"
+
+    while True:
+        server = _hcloud_json(
+            [HCLOUD_COMMAND, "server", "describe", server_id, "-o", "json"],
+            env=env,
+        )
+        server_object = _json_object(server.get("server", server), "server")
+        status = server_object.get("status")
+        if isinstance(status, str) and status:
+            last_status = status
+        if last_status == "running":
+            return server_object
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                f"server running wait timed out for Hetzner server {server_id}: "
+                f"last status={last_status}"
+            )
+        time.sleep(min(sleep_interval, remaining))
+
+
+def discover_endpoint_interfaces(
+    *,
+    host: str,
+    user: str,
+    identity_file: str | Path,
+    known_hosts: str | Path,
+    exposure: str,
+    public_ipv4: str | None = None,
+    public_ipv6: str | None = None,
+) -> list[NetworkInterface]:
+    """Discover endpoint interfaces with Linux ip commands over SSH."""
+
+    result = run_ssh_command(
+        host=host,
+        user=user,
+        identity_file=identity_file,
+        known_hosts=known_hosts,
+        command=INTERFACE_DISCOVERY_COMMAND,
+        timeout=30,
+    )
+    if not result.ok:
+        raise RuntimeError(_command_error("interface discovery over ssh failed", result))
+    return parse_ip_interface_discovery(
+        result.stdout,
+        exposure=exposure,
+        public_ipv4=public_ipv4,
+        public_ipv6=public_ipv6,
+    )
+
+
+def parse_ip_interface_discovery(
+    output: str,
+    *,
+    exposure: str,
+    public_ipv4: str | None = None,
+    public_ipv6: str | None = None,
+) -> list[NetworkInterface]:
+    """Parse JSON emitted by the endpoint interface discovery command."""
+
+    sections = _interface_discovery_sections(output)
+    addresses = _json_list(sections["addr"], "ip address output")
+    links = _json_list(sections["link"], "ip link output")
+    routes = _json_list(sections["route"], "ip route output") if sections["route"] else []
+    link_by_name = {
+        item.get("ifname"): item for item in links if isinstance(item.get("ifname"), str)
+    }
+    route_dev = _route_dev(routes)
+
+    discovered: list[NetworkInterface] = []
+    for item in addresses:
+        ifname = item.get("ifname")
+        if not isinstance(ifname, str) or ifname == "":
+            continue
+        addr_info = item.get("addr_info")
+        if not isinstance(addr_info, list):
+            continue
+
+        ipv4 = _interface_address(addr_info, family="inet")
+        ipv6 = _interface_address(addr_info, family="inet6")
+        if ipv4 is None and ipv6 is None:
+            continue
+
+        link = link_by_name.get(ifname, {})
+        mac = _optional_mapping_string(link, "address") or _optional_mapping_string(item, "address")
+        matched_public = (
+            (public_ipv4 is not None and ipv4 == public_ipv4)
+            or (public_ipv6 is not None and ipv6 == public_ipv6)
+        )
+        default_route = route_dev == ifname
+        discovered.append(
+            NetworkInterface(
+                name=ifname,
+                exposure=exposure,
+                ipv4=ipv4,
+                ipv6=ipv6,
+                mac=mac,
+                metadata={
+                    "source": "ip-ssh-discovery",
+                    "ifindex": _optional_mapping_int(item, "ifindex"),
+                    "operstate": _optional_mapping_string(link, "operstate")
+                    or _optional_mapping_string(item, "operstate"),
+                    "mtu": _optional_mapping_int(link, "mtu")
+                    or _optional_mapping_int(item, "mtu"),
+                    "matched_public_address": matched_public,
+                    "default_route": default_route,
+                    "hcloud_public_ipv4": public_ipv4,
+                    "hcloud_public_ipv6": public_ipv6,
+                },
+            )
+        )
+
+    if public_ipv4 is not None or public_ipv6 is not None:
+        public_matches = [
+            interface
+            for interface in discovered
+            if bool(interface.metadata.get("matched_public_address"))
+        ]
+        if public_matches:
+            return public_matches
+    route_matches = [
+        interface for interface in discovered if bool(interface.metadata.get("default_route"))
+    ]
+    return route_matches or discovered
 
 
 def _planned_endpoint_manifest(
@@ -453,6 +672,220 @@ def _planned_private_metadata(
     return metadata
 
 
+def _wan_provider_resources(
+    *,
+    provider: str,
+    server_id: str | None,
+    server_name: str,
+    ssh_key_id: str | None,
+    ssh_key_name: str,
+    public_ipv4: str | None,
+    public_ipv6: str | None,
+) -> ProviderResources:
+    resources: list[ProviderResource] = []
+    if server_id is not None:
+        resources.append(
+            ProviderResource(
+                kind="server",
+                provider_id=server_id,
+                name=server_name,
+                cleanup=True,
+                metadata={
+                    "type": "server",
+                    "public_ipv4": public_ipv4,
+                    "public_ipv6": public_ipv6,
+                },
+            )
+        )
+    if ssh_key_id is not None:
+        resources.append(
+            ProviderResource(
+                kind="ssh-key",
+                provider_id=ssh_key_id,
+                name=ssh_key_name,
+                cleanup=True,
+                metadata={"type": "ssh-key"},
+            )
+        )
+    return ProviderResources(
+        resources=resources,
+        cleanup_order=["server", "ssh-key"],
+        metadata={"created_by": "tools/wire", "provider": provider},
+    )
+
+
+def _write_failed_wan_manifest(
+    *,
+    endpoint_id: str,
+    provider: str,
+    exposure: str,
+    role: str,
+    created_at: str,
+    layout: object,
+    server_id: str | None,
+    server_name: str,
+    ssh_key_id: str | None,
+    ssh_key_name: str,
+    public_ipv4: str | None,
+    public_ipv6: str | None,
+    ssh_host: str | None,
+    error: str,
+) -> None:
+    try:
+        write_endpoint_manifest(
+            EndpointManifest(
+                endpoint_id=endpoint_id,
+                provider=provider,
+                exposure=exposure,
+                status="failed",
+                role=role,
+                created_at=created_at,
+                ssh=EndpointSSHInfo(
+                    host=ssh_host or "pending",
+                    user="root",
+                    identity_file=str(getattr(layout, "private_key_path")),
+                    known_hosts_file=str(getattr(layout, "known_hosts_path")),
+                    metadata={
+                        "created_by": "tools/wire",
+                        "server_name": server_name,
+                    },
+                ),
+                interfaces=[
+                    NetworkInterface(
+                        name="public",
+                        exposure=exposure,
+                        ipv4=public_ipv4,
+                        ipv6=public_ipv6,
+                        metadata={
+                            "source": "hcloud-partial",
+                            "server_id": server_id,
+                            "server_name": server_name,
+                        },
+                    )
+                ],
+                provider_resources=_wan_provider_resources(
+                    provider=provider,
+                    server_id=server_id,
+                    server_name=server_name,
+                    ssh_key_id=ssh_key_id,
+                    ssh_key_name=ssh_key_name,
+                    public_ipv4=public_ipv4,
+                    public_ipv6=public_ipv6,
+                ),
+                artifact_dir=str(getattr(layout, "artifact_dir")),
+                metadata={
+                    **_wan_manifest_metadata(
+                        created=True,
+                        dry_run=False,
+                        layout=layout,
+                        server_id=server_id,
+                        server_name=server_name,
+                        ssh_key_id=ssh_key_id,
+                        ssh_key_name=ssh_key_name,
+                    ),
+                    "error": error,
+                },
+            )
+        )
+    except Exception:
+        return
+
+
+def _wan_manifest_metadata(
+    *,
+    created: bool,
+    dry_run: bool,
+    layout: object,
+    server_id: str | None,
+    server_name: str,
+    ssh_key_id: str | None,
+    ssh_key_name: str,
+) -> dict[str, object]:
+    state_dir = getattr(layout, "state_dir")
+    manifest_path = getattr(layout, "manifest_path")
+    return {
+        "created": created,
+        "dry_run": dry_run,
+        "state_dir": str(state_dir),
+        "manifest_path": str(manifest_path),
+        "cleanup": {
+            "server_id": server_id,
+            "ssh_key_id": ssh_key_id,
+            "server_name": server_name,
+            "ssh_key_name": ssh_key_name,
+        },
+    }
+
+
+def _interface_discovery_sections(output: str) -> dict[str, str]:
+    lines = output.splitlines()
+    markers = {
+        "addr": "__WIRE_IP_ADDR__",
+        "link": "__WIRE_IP_LINK__",
+        "route": "__WIRE_IP_ROUTE__",
+    }
+    positions: dict[str, int] = {}
+    for name, marker in markers.items():
+        try:
+            positions[name] = lines.index(marker)
+        except ValueError as exc:
+            raise RuntimeError(f"interface discovery output missing marker {marker}") from exc
+
+    return {
+        "addr": "\n".join(lines[positions["addr"] + 1 : positions["link"]]).strip(),
+        "link": "\n".join(lines[positions["link"] + 1 : positions["route"]]).strip(),
+        "route": "\n".join(lines[positions["route"] + 1 :]).strip(),
+    }
+
+
+def _json_list(value: str, name: str) -> list[dict[str, object]]:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{name} was not valid JSON") from exc
+    if not isinstance(parsed, list):
+        raise RuntimeError(f"{name} must be a JSON list")
+    output: list[dict[str, object]] = []
+    for item in parsed:
+        if isinstance(item, Mapping):
+            output.append(dict(item))
+    return output
+
+
+def _route_dev(routes: list[dict[str, object]]) -> str | None:
+    for route in routes:
+        dev = route.get("dev")
+        if isinstance(dev, str) and dev:
+            return dev
+    return None
+
+
+def _interface_address(addr_info: list[object], *, family: str) -> str | None:
+    for address in addr_info:
+        if not isinstance(address, Mapping):
+            continue
+        if address.get("family") != family:
+            continue
+        local = address.get("local")
+        if isinstance(local, str) and local:
+            return local
+    return None
+
+
+def _optional_mapping_string(value: Mapping[str, object], key: str) -> str | None:
+    item = value.get(key)
+    return item if isinstance(item, str) and item else None
+
+
+def _optional_mapping_int(value: Mapping[str, object], key: str) -> int | None:
+    item = value.get(key)
+    if isinstance(item, bool):
+        return None
+    if isinstance(item, int):
+        return item
+    return None
+
+
 def _compat_provider_resource(resource: object) -> dict[str, object]:
     if not isinstance(resource, Mapping):
         return {"type": "unknown", "value": str(resource)}
@@ -573,3 +1006,12 @@ def _ip_address(value: object) -> str | None:
         ip = value.get("ip")
         return ip if isinstance(ip, str) and ip else None
     return None
+
+
+def _positive_float(value: float, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive number")
+    output = float(value)
+    if output <= 0:
+        raise ValueError(f"{name} must be a positive number")
+    return output
