@@ -14,7 +14,6 @@ Every commit subject must use:
 
 ```text
 type(scope): subject
-type: subject
 ```
 
 Allowed types:
@@ -31,7 +30,8 @@ Allowed types:
 - `style`: formatting-only changes
 - `test`: tests, fixtures, validation harnesses
 
-Scopes are lowercase and may use digits, `.`, `_`, `/`, or `-`.
+Scopes are required. They are lowercase and may use digits, `.`, `_`, `/`, or
+`-`.
 
 Good examples:
 

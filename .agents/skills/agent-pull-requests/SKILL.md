@@ -26,15 +26,14 @@ Conventional Commits policy as regular commits:
 
 ```text
 type(scope): subject
-type: subject
 ```
 
 Allowed types are `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 `refactor`, `revert`, `style`, and `test`.
 
-Use the narrowest useful scope, such as `ci`, `pcap`, `live-lab`, `interop`,
-`docs`, `net`, or a protocol family. Do not include PR numbers, reviewer thanks,
-or branch metadata in the title.
+Scopes are required. Use the narrowest useful scope, such as `ci`, `pcap`,
+`live-lab`, `interop`, `docs`, `net`, or a protocol family. Do not include PR
+numbers, reviewer thanks, or branch metadata in the title.
 
 ## PR Body
 
