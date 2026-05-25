@@ -142,6 +142,25 @@ class WireClient:
             manifest=manifest,
         )
 
+    def doctor(
+        self,
+        *,
+        provider: str,
+        exposure: str,
+        dry_run: bool = False,
+    ) -> WireCommandResponse:
+        argv: list[str] = [
+            "doctor",
+            "--provider",
+            provider,
+            "--exposure",
+            exposure,
+            "--json",
+        ]
+        if dry_run:
+            argv.append("--dry-run")
+        return self._run("doctor", argv, parse_json=True)
+
     def destroy(self, endpoint_id: str) -> WireCommandResponse:
         return self._run(
             "destroy-endpoint",
@@ -149,10 +168,21 @@ class WireClient:
             parse_json=True,
         )
 
-    def exec(self, endpoint_id: str, command: Sequence[str]) -> WireCommandResponse:
+    def exec(
+        self,
+        endpoint_id: str,
+        command: Sequence[str],
+        *,
+        timeout: float | None = None,
+    ) -> WireCommandResponse:
         if not command:
             raise ValueError("wire exec requires at least one command argument")
-        return self._run("exec", ["exec", endpoint_id, "--", *command], parse_json=False)
+        return self._run(
+            "exec",
+            ["exec", endpoint_id, "--", *command],
+            parse_json=False,
+            timeout=timeout,
+        )
 
     def upload(
         self,
@@ -181,15 +211,30 @@ class WireClient:
     def ssh_info(self, endpoint_id: str) -> WireCommandResponse:
         return self._run("ssh-info", ["ssh-info", endpoint_id, "--json"], parse_json=True)
 
+    def collect_artifacts(
+        self,
+        endpoint_id: str,
+        remote_path: str | None = None,
+    ) -> WireCommandResponse:
+        argv = ["collect-artifacts", endpoint_id]
+        if remote_path is not None:
+            argv.extend(["--remote", remote_path])
+        return self._run("collect-artifacts", argv, parse_json=False)
+
     def _run(
         self,
         operation: str,
         args: Sequence[str],
         *,
         parse_json: bool,
+        timeout: float | None = None,
     ) -> WireCommandResponse:
         argv = [self.wire_path, *args]
-        result = self.runner(argv, cwd=self.cwd, timeout=self.timeout)
+        result = self.runner(
+            argv,
+            cwd=self.cwd,
+            timeout=self.timeout if timeout is None else timeout,
+        )
         parsed = _parse_json_stdout(result.stdout, operation) if parse_json else None
         record = _record_command(operation, self.wire_path, result)
         return WireCommandResponse(result=result, record=record, json_data=parsed)
@@ -231,6 +276,20 @@ def create(
     )
 
 
+def doctor(
+    *,
+    provider: str,
+    exposure: str,
+    dry_run: bool = False,
+    client: WireClient | None = None,
+) -> WireCommandResponse:
+    return (client or WireClient()).doctor(
+        provider=provider,
+        exposure=exposure,
+        dry_run=dry_run,
+    )
+
+
 def destroy(endpoint_id: str, *, client: WireClient | None = None) -> WireCommandResponse:
     return (client or WireClient()).destroy(endpoint_id)
 
@@ -239,9 +298,10 @@ def exec(
     endpoint_id: str,
     command: Sequence[str],
     *,
+    timeout: float | None = None,
     client: WireClient | None = None,
 ) -> WireCommandResponse:
-    return (client or WireClient()).exec(endpoint_id, command)
+    return (client or WireClient()).exec(endpoint_id, command, timeout=timeout)
 
 
 def upload(
@@ -266,6 +326,15 @@ def download(
 
 def ssh_info(endpoint_id: str, *, client: WireClient | None = None) -> WireCommandResponse:
     return (client or WireClient()).ssh_info(endpoint_id)
+
+
+def collect_artifacts(
+    endpoint_id: str,
+    remote_path: str | None = None,
+    *,
+    client: WireClient | None = None,
+) -> WireCommandResponse:
+    return (client or WireClient()).collect_artifacts(endpoint_id, remote_path)
 
 
 def _record_command(
