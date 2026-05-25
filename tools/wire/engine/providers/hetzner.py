@@ -7,6 +7,7 @@ import os
 import secrets
 import shutil
 import time
+from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -22,7 +23,15 @@ from ..model import (
 from ..process import CommandResult, run_command
 from ..registry import validate_request
 from ..ssh import create_key_pair, ensure_known_hosts_file, run_ssh_command, wait_for_ssh
-from ..state import endpoint_layout, ensure_endpoint_dirs, write_endpoint_manifest
+from ..state import (
+    DEFAULT_PRIVATE_CIDR,
+    endpoint_layout,
+    ensure_endpoint_dirs,
+    planned_private_group_record,
+    read_private_group_record,
+    update_private_group_allocation,
+    write_endpoint_manifest,
+)
 
 
 TOKEN_ENV = "HETZNER_API_TOKEN"
@@ -35,6 +44,7 @@ CONFIRMATION_ERROR = (
 DEFAULT_SERVER_TYPE = "cx22"
 DEFAULT_IMAGE = "ubuntu-24.04"
 DEFAULT_LOCATION = "hel1"
+DEFAULT_PRIVATE_NETWORK_ZONE = "eu-central"
 DEFAULT_SERVER_RUNNING_TIMEOUT = 300
 DEFAULT_SERVER_RUNNING_INTERVAL = 5
 INTERFACE_DISCOVERY_COMMAND = "\n".join(
@@ -123,6 +133,7 @@ def create_endpoint(
     dry_run: bool = False,
     confirm_live_run: bool = False,
     env: Mapping[str, str] | None = None,
+    command_runner: HcloudRunner = run_command,
 ) -> dict[str, object]:
     """Create or plan one Hetzner endpoint."""
 
@@ -138,12 +149,28 @@ def create_endpoint(
             private_ip=private_ip,
         )
 
-    if exposure != "wan":
-        raise NotImplementedError("real hetzner create-endpoint is only implemented for wan")
     if not confirm_live_run:
         raise PermissionError(CONFIRMATION_ERROR)
 
-    return _create_wan_endpoint(provider=provider, exposure=exposure, role=role, env=env)
+    if exposure == "wan":
+        return _create_wan_endpoint(
+            provider=provider,
+            exposure=exposure,
+            role=role,
+            env=env,
+            command_runner=command_runner,
+        )
+    if exposure == "private":
+        return _create_private_endpoint(
+            provider=provider,
+            exposure=exposure,
+            role=role,
+            private_group=private_group,
+            private_ip=private_ip,
+            env=env,
+            command_runner=command_runner,
+        )
+    raise NotImplementedError(f"real hetzner create-endpoint is not implemented for {exposure}")
 
 
 def destroy_endpoint(
@@ -261,12 +288,13 @@ def _create_wan_endpoint(
     exposure: str,
     role: str,
     env: Mapping[str, str] | None,
+    command_runner: HcloudRunner = run_command,
 ) -> dict[str, object]:
     environ = os.environ if env is None else env
     token = _hetzner_token(environ)
     if not token:
         raise RuntimeError(f"{TOKEN_ENV} or {HCLOUD_TOKEN_ENV} must be configured")
-    if shutil.which(HCLOUD_COMMAND) is None:
+    if command_runner is run_command and shutil.which(HCLOUD_COMMAND) is None:
         raise RuntimeError(f"{HCLOUD_COMMAND} was not found on PATH")
 
     created_at = _utc_now()
@@ -298,6 +326,7 @@ def _create_wan_endpoint(
                 "json",
             ],
             env=hcloud_env,
+            command_runner=command_runner,
         )
         ssh_key_id = _object_id(_json_object(ssh_key.get("ssh_key", ssh_key), "ssh_key"))
 
@@ -328,6 +357,7 @@ def _create_wan_endpoint(
                 "json",
             ],
             env=hcloud_env,
+            command_runner=command_runner,
         )
         server_object = _json_object(server.get("server", server), "server")
         server_id = _object_id(server_object)
@@ -402,7 +432,11 @@ def _create_wan_endpoint(
             )
         )
 
-        running_server = wait_for_server_running(server_id=server_id, env=hcloud_env)
+        running_server = wait_for_server_running(
+            server_id=server_id,
+            env=hcloud_env,
+            command_runner=command_runner,
+        )
         try:
             wait_for_ssh(
                 host=ssh_host,
@@ -480,12 +514,304 @@ def _create_wan_endpoint(
         raise
 
 
+def _create_private_endpoint(
+    *,
+    provider: str,
+    exposure: str,
+    role: str,
+    private_group: str | None,
+    private_ip: str | None,
+    env: Mapping[str, str] | None,
+    command_runner: HcloudRunner = run_command,
+) -> dict[str, object]:
+    if private_group is None:
+        raise ValueError("--private-group is required for real private Hetzner endpoints")
+
+    environ = os.environ if env is None else env
+    token = _hetzner_token(environ)
+    if not token:
+        raise RuntimeError(f"{TOKEN_ENV} or {HCLOUD_TOKEN_ENV} must be configured")
+    if command_runner is run_command and shutil.which(HCLOUD_COMMAND) is None:
+        raise RuntimeError(f"{HCLOUD_COMMAND} was not found on PATH")
+
+    created_at = _utc_now()
+    endpoint_id = _real_endpoint_id(provider=provider, exposure=exposure, role=role)
+    layout = ensure_endpoint_dirs(endpoint_id)
+    ensure_known_hosts_file(layout.known_hosts_path)
+    _ensure_endpoint_key(layout.private_key_path, endpoint_id)
+
+    hcloud_env = {HCLOUD_TOKEN_ENV: token}
+    private_cidr = _env_or_default(environ, "HETZNER_PRIVATE_CIDR", DEFAULT_PRIVATE_CIDR)
+    network_zone = _env_or_default(
+        environ,
+        "HETZNER_NETWORK_ZONE",
+        DEFAULT_PRIVATE_NETWORK_ZONE,
+    )
+
+    network_created = False
+    server_id: str | None = None
+    ssh_key_id: str | None = None
+    public_ipv4: str | None = None
+    public_ipv6: str | None = None
+    ssh_host: str | None = None
+    private_ipv4: str | None = private_ip
+    network_resource: dict[str, object] = {}
+    group_record_written = False
+    server_name = _server_name(endpoint_id)
+    ssh_key_name = f"{server_name}-key"
+
+    try:
+        private_network = _ensure_private_network(
+            provider=provider,
+            private_group=private_group,
+            private_cidr=private_cidr,
+            network_zone=network_zone,
+            env=hcloud_env,
+            command_runner=command_runner,
+        )
+        network_created = bool(private_network["created"])
+        network_resource = _json_object(private_network["resource"], "private network resource")
+        private_ipv4 = _allocate_private_ipv4(
+            provider=provider,
+            private_group=private_group,
+            private_cidr=private_cidr,
+            requested_private_ip=private_ip,
+        )
+
+        ssh_key = _hcloud_json(
+            [
+                HCLOUD_COMMAND,
+                "ssh-key",
+                "create",
+                "--name",
+                ssh_key_name,
+                "--public-key-from-file",
+                str(_public_key_path(layout.private_key_path)),
+                "-o",
+                "json",
+            ],
+            env=hcloud_env,
+            command_runner=command_runner,
+        )
+        ssh_key_id = _object_id(_json_object(ssh_key.get("ssh_key", ssh_key), "ssh_key"))
+
+        server = _hcloud_json(
+            [
+                HCLOUD_COMMAND,
+                "server",
+                "create",
+                "--name",
+                server_name,
+                "--type",
+                _env_or_default(environ, "HETZNER_SERVER_TYPE", DEFAULT_SERVER_TYPE),
+                "--image",
+                _env_or_default(environ, "HETZNER_IMAGE", DEFAULT_IMAGE),
+                "--location",
+                _env_or_default(environ, "HETZNER_LOCATION", DEFAULT_LOCATION),
+                "--ssh-key",
+                ssh_key_name,
+                "--label",
+                "libcrafter-wire=true",
+                "--label",
+                f"libcrafter-wire-endpoint-id={_label_value(endpoint_id)}",
+                "--label",
+                f"libcrafter-wire-role={_label_value(role)}",
+                "--label",
+                "libcrafter-wire-exposure=private",
+                "--label",
+                f"libcrafter-wire-private-group={_label_value(private_group)}",
+                "-o",
+                "json",
+            ],
+            env=hcloud_env,
+            command_runner=command_runner,
+        )
+        server_object = _json_object(server.get("server", server), "server")
+        server_id = _object_id(server_object)
+        public_net = _json_object(server_object.get("public_net", {}), "server.public_net")
+        public_ipv4 = _ip_address(public_net.get("ipv4"))
+        public_ipv6 = _ip_address(public_net.get("ipv6"))
+        ssh_host = public_ipv4 or public_ipv6
+        if ssh_host is None:
+            raise RuntimeError("hcloud server create did not return a public IPv4 or IPv6 address")
+
+        private_interface = _private_network_interface(
+            exposure=exposure,
+            private_group=private_group,
+            private_ipv4=private_ipv4,
+            network_resource=network_resource,
+            server_id=server_id,
+            server_name=server_name,
+        )
+        base_metadata = _private_manifest_metadata(
+            created=True,
+            dry_run=False,
+            layout=layout,
+            private_group=private_group,
+            private_ipv4=private_ipv4,
+            network_resource=network_resource,
+            network_created=network_created,
+            server_id=server_id,
+            server_name=server_name,
+            ssh_key_id=ssh_key_id,
+            ssh_key_name=ssh_key_name,
+        )
+
+        write_endpoint_manifest(
+            EndpointManifest(
+                endpoint_id=endpoint_id,
+                provider=provider,
+                exposure=exposure,
+                status="creating",
+                role=role,
+                created_at=created_at,
+                ssh=EndpointSSHInfo(
+                    host=ssh_host,
+                    user="root",
+                    identity_file=str(layout.private_key_path),
+                    known_hosts_file=str(layout.known_hosts_path),
+                    metadata={
+                        "created_by": "tools/wire",
+                        "server_name": server_name,
+                        "control_plane": "public",
+                    },
+                ),
+                interfaces=[private_interface],
+                provider_resources=_private_endpoint_provider_resources(
+                    provider=provider,
+                    server_id=server_id,
+                    server_name=server_name,
+                    ssh_key_id=ssh_key_id,
+                    ssh_key_name=ssh_key_name,
+                    public_ipv4=public_ipv4,
+                    public_ipv6=public_ipv6,
+                ),
+                artifact_dir=str(layout.artifact_dir),
+                metadata={
+                    **base_metadata,
+                    "discovery": {
+                        "server_running": False,
+                        "ssh_ready": False,
+                        "interfaces": False,
+                    },
+                },
+            )
+        )
+
+        _attach_server_to_private_network(
+            server_id=server_id,
+            network_resource=network_resource,
+            private_ipv4=private_ipv4,
+            env=hcloud_env,
+            command_runner=command_runner,
+        )
+        running_server = wait_for_server_running(
+            server_id=server_id,
+            env=hcloud_env,
+            command_runner=command_runner,
+        )
+        try:
+            wait_for_ssh(
+                host=ssh_host,
+                user="root",
+                identity_file=layout.private_key_path,
+                known_hosts=layout.known_hosts_path,
+            )
+        except TimeoutError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+        private_group_record = update_private_group_allocation(
+            provider=provider,
+            group=private_group,
+            endpoint_id=endpoint_id,
+            private_ipv4=private_ipv4,
+            private_cidr=private_cidr,
+            network_resource=network_resource,
+        )
+        group_record_written = True
+
+        manifest = EndpointManifest(
+            endpoint_id=endpoint_id,
+            provider=provider,
+            exposure=exposure,
+            status="active",
+            role=role,
+            created_at=created_at,
+            ssh=EndpointSSHInfo(
+                host=ssh_host,
+                user="root",
+                identity_file=str(layout.private_key_path),
+                known_hosts_file=str(layout.known_hosts_path),
+                metadata={
+                    "created_by": "tools/wire",
+                    "server_name": server_name,
+                    "control_plane": "public",
+                },
+            ),
+            interfaces=[private_interface],
+            provider_resources=_private_endpoint_provider_resources(
+                provider=provider,
+                server_id=server_id,
+                server_name=server_name,
+                ssh_key_id=ssh_key_id,
+                ssh_key_name=ssh_key_name,
+                public_ipv4=public_ipv4,
+                public_ipv6=public_ipv6,
+            ),
+            artifact_dir=str(layout.artifact_dir),
+            metadata={
+                **base_metadata,
+                "private_group_record": private_group_record.to_dict(),
+                "discovery": {
+                    "server_running": running_server.get("status") == "running",
+                    "ssh_ready": True,
+                    "interfaces": True,
+                },
+            },
+        )
+        manifest_path = write_endpoint_manifest(manifest)
+        output = manifest.to_dict()
+        output["created"] = True
+        output["dry_run"] = False
+        output["state_dir"] = str(manifest_path.parent)
+        output["manifest_path"] = str(manifest_path)
+        return output
+    except Exception as exc:
+        if server_id is not None or ssh_key_id is not None:
+            _write_failed_private_manifest(
+                endpoint_id=endpoint_id,
+                provider=provider,
+                exposure=exposure,
+                role=role,
+                created_at=created_at,
+                layout=layout,
+                private_group=private_group,
+                private_ipv4=private_ipv4,
+                network_resource=network_resource,
+                server_id=server_id,
+                server_name=server_name,
+                ssh_key_id=ssh_key_id,
+                ssh_key_name=ssh_key_name,
+                public_ipv4=public_ipv4,
+                public_ipv6=public_ipv6,
+                ssh_host=ssh_host,
+                error=str(exc),
+            )
+        _cleanup_partial_wan(server_id=server_id, ssh_key_id=ssh_key_id, env=hcloud_env)
+        if network_created and not group_record_written:
+            network_id = _network_resource_id(network_resource)
+            if network_id is not None:
+                _hcloud_cleanup([HCLOUD_COMMAND, "network", "delete", network_id], env=hcloud_env)
+        raise
+
+
 def wait_for_server_running(
     *,
     server_id: str,
     env: Mapping[str, str],
     timeout: float = DEFAULT_SERVER_RUNNING_TIMEOUT,
     interval: float = DEFAULT_SERVER_RUNNING_INTERVAL,
+    command_runner: HcloudRunner = run_command,
 ) -> dict[str, object]:
     """Wait for a Hetzner server to report the running state."""
 
@@ -497,6 +823,7 @@ def wait_for_server_running(
         server = _hcloud_json(
             [HCLOUD_COMMAND, "server", "describe", server_id, "-o", "json"],
             env=env,
+            command_runner=command_runner,
         )
         server_object = _json_object(server.get("server", server), "server")
         status = server_object.get("status")
@@ -659,8 +986,14 @@ def _planned_endpoint_manifest(
     if exposure == "private":
         private_metadata = _planned_private_metadata(private_group, private_ip)
         metadata["private"] = private_metadata
+        metadata["private_network"] = private_metadata
         if private_group is not None:
             metadata["private_group"] = private_group
+            metadata["private_group_record"] = planned_private_group_record(
+                provider=provider,
+                group=private_group,
+                network_resource=private_metadata,
+            ).to_dict()
 
     manifest = EndpointManifest(
         endpoint_id=endpoint_id,
@@ -767,6 +1100,291 @@ def _planned_private_metadata(
     if private_ip is not None:
         metadata["ipv4"] = private_ip
     return metadata
+
+
+def _ensure_private_network(
+    *,
+    provider: str,
+    private_group: str,
+    private_cidr: str,
+    network_zone: str,
+    env: Mapping[str, str],
+    command_runner: HcloudRunner,
+) -> dict[str, object]:
+    network_name = _private_network_name(private_group)
+    created = False
+
+    network_object: dict[str, object] | None = None
+    try:
+        record = read_private_group_record(provider, private_group)
+    except FileNotFoundError:
+        record = None
+
+    if record is not None:
+        network_id = _network_resource_id(record.network_resource)
+        if network_id is not None:
+            network_object = _hcloud_json_optional(
+                [HCLOUD_COMMAND, "network", "describe", network_id, "-o", "json"],
+                env=env,
+                command_runner=command_runner,
+            )
+
+    if network_object is None:
+        network_object = _hcloud_json_optional(
+            [HCLOUD_COMMAND, "network", "describe", network_name, "-o", "json"],
+            env=env,
+            command_runner=command_runner,
+        )
+
+    if network_object is None:
+        created = True
+        network_created = _hcloud_json(
+            [
+                HCLOUD_COMMAND,
+                "network",
+                "create",
+                "--name",
+                network_name,
+                "--ip-range",
+                private_cidr,
+                "--label",
+                "libcrafter-wire=true",
+                "--label",
+                f"libcrafter-wire-private-group={_label_value(private_group)}",
+                "-o",
+                "json",
+            ],
+            env=env,
+            command_runner=command_runner,
+        )
+        network_object = _json_object(network_created.get("network", network_created), "network")
+    else:
+        network_object = _json_object(network_object.get("network", network_object), "network")
+
+    if not _network_has_subnet(
+        network_object,
+        private_cidr=private_cidr,
+        network_zone=network_zone,
+    ):
+        _hcloud_ok(
+            [
+                HCLOUD_COMMAND,
+                "network",
+                "add-subnet",
+                _object_id(network_object),
+                "--type",
+                "server",
+                "--network-zone",
+                network_zone,
+                "--ip-range",
+                private_cidr,
+                "-o",
+                "json",
+            ],
+            env=env,
+            command_runner=command_runner,
+        )
+        described = _hcloud_json(
+            [HCLOUD_COMMAND, "network", "describe", _object_id(network_object), "-o", "json"],
+            env=env,
+            command_runner=command_runner,
+        )
+        network_object = _json_object(described.get("network", described), "network")
+
+    return {
+        "created": created,
+        "resource": _private_network_resource(
+            network_object,
+            private_group=private_group,
+            private_cidr=private_cidr,
+            network_zone=network_zone,
+        ),
+    }
+
+
+def _attach_server_to_private_network(
+    *,
+    server_id: str,
+    network_resource: Mapping[str, object],
+    private_ipv4: str,
+    env: Mapping[str, str],
+    command_runner: HcloudRunner,
+) -> dict[str, object]:
+    network_id = _network_resource_id(network_resource)
+    if network_id is None:
+        raise RuntimeError("private network resource did not include a network id")
+    result = _hcloud_ok(
+        [
+            HCLOUD_COMMAND,
+            "server",
+            "attach-to-network",
+            server_id,
+            "--network",
+            network_id,
+            "--ip",
+            private_ipv4,
+            "-o",
+            "json",
+        ],
+        env=env,
+        command_runner=command_runner,
+    )
+    if result.stdout.strip():
+        return _parse_hcloud_json(result)
+    return {}
+
+
+def _allocate_private_ipv4(
+    *,
+    provider: str,
+    private_group: str,
+    private_cidr: str,
+    requested_private_ip: str | None,
+) -> str:
+    network = _ipv4_network(private_cidr)
+    try:
+        record = read_private_group_record(provider, private_group)
+        allocated = set(record.allocated_private_ipv4s)
+    except FileNotFoundError:
+        allocated = set()
+
+    if requested_private_ip is not None:
+        address = _ipv4_address(requested_private_ip, "private_ip")
+        if address not in network:
+            raise ValueError(f"private_ip {requested_private_ip} is outside {private_cidr}")
+        if requested_private_ip in allocated:
+            raise ValueError(f"private_ip {requested_private_ip} is already allocated")
+        return requested_private_ip
+
+    for address in network.hosts():
+        private_ipv4 = str(address)
+        if private_ipv4.endswith(".1"):
+            continue
+        if private_ipv4 not in allocated:
+            return private_ipv4
+    raise RuntimeError(f"no private IPv4 addresses are available in {private_cidr}")
+
+
+def _private_network_interface(
+    *,
+    exposure: str,
+    private_group: str,
+    private_ipv4: str,
+    network_resource: Mapping[str, object],
+    server_id: str,
+    server_name: str,
+) -> NetworkInterface:
+    return NetworkInterface(
+        name="private",
+        exposure=exposure,
+        ipv4=private_ipv4,
+        provider_network_id=_network_resource_id(network_resource),
+        metadata={
+            "source": "hcloud",
+            "private_group": private_group,
+            "private_ip": private_ipv4,
+            "server_id": server_id,
+            "server_name": server_name,
+            "network": dict(network_resource),
+        },
+    )
+
+
+def _private_network_name(private_group: str) -> str:
+    return f"wire-{_path_component(private_group)}"
+
+
+def _network_has_subnet(
+    network_object: Mapping[str, object],
+    *,
+    private_cidr: str,
+    network_zone: str,
+) -> bool:
+    subnets = network_object.get("subnets")
+    if not isinstance(subnets, list):
+        return False
+    for item in subnets:
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("type") != "server":
+            continue
+        if item.get("ip_range") != private_cidr:
+            continue
+        return True
+    return False
+
+
+def _private_network_resource(
+    network_object: Mapping[str, object],
+    *,
+    private_group: str,
+    private_cidr: str,
+    network_zone: str,
+) -> dict[str, object]:
+    raw_subnets = network_object.get("subnets", [])
+    if not isinstance(raw_subnets, list):
+        raw_subnets = []
+    subnets = [
+        dict(item)
+        for item in raw_subnets
+        if isinstance(item, Mapping)
+        and item.get("type") == "server"
+        and item.get("ip_range") == private_cidr
+    ]
+    name = network_object.get("name")
+    return {
+        "type": "network",
+        "provider": "hetzner",
+        "network_id": _object_id(network_object),
+        "network_name": name if isinstance(name, str) and name else _private_network_name(private_group),
+        "private_group": private_group,
+        "ip_range": _optional_mapping_string(network_object, "ip_range") or private_cidr,
+        "subnet": subnets[0] if subnets else {
+            "type": "server",
+            "network_zone": network_zone,
+            "ip_range": private_cidr,
+        },
+    }
+
+
+def _network_resource_id(network_resource: Mapping[str, object]) -> str | None:
+    for key in ("network_id", "provider_id", "id"):
+        value = network_resource.get(key)
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _private_endpoint_provider_resources(
+    *,
+    provider: str,
+    server_id: str | None,
+    server_name: str,
+    ssh_key_id: str | None,
+    ssh_key_name: str,
+    public_ipv4: str | None,
+    public_ipv6: str | None,
+) -> ProviderResources:
+    resources = _wan_provider_resources(
+        provider=provider,
+        server_id=server_id,
+        server_name=server_name,
+        ssh_key_id=ssh_key_id,
+        ssh_key_name=ssh_key_name,
+        public_ipv4=public_ipv4,
+        public_ipv6=public_ipv6,
+    )
+    return ProviderResources(
+        resources=resources.resources,
+        cleanup_order=["server", "ssh-key"],
+        metadata={
+            **resources.metadata,
+            "exposure": "private",
+            "private_network_cleanup": "private-group-owned",
+        },
+    )
 
 
 def _wan_provider_resources(
@@ -888,6 +1506,94 @@ def _write_failed_wan_manifest(
         return
 
 
+def _write_failed_private_manifest(
+    *,
+    endpoint_id: str,
+    provider: str,
+    exposure: str,
+    role: str,
+    created_at: str,
+    layout: object,
+    private_group: str,
+    private_ipv4: str | None,
+    network_resource: Mapping[str, object],
+    server_id: str | None,
+    server_name: str,
+    ssh_key_id: str | None,
+    ssh_key_name: str,
+    public_ipv4: str | None,
+    public_ipv6: str | None,
+    ssh_host: str | None,
+    error: str,
+) -> None:
+    try:
+        write_endpoint_manifest(
+            EndpointManifest(
+                endpoint_id=endpoint_id,
+                provider=provider,
+                exposure=exposure,
+                status="failed",
+                role=role,
+                created_at=created_at,
+                ssh=EndpointSSHInfo(
+                    host=ssh_host or "pending",
+                    user="root",
+                    identity_file=str(getattr(layout, "private_key_path")),
+                    known_hosts_file=str(getattr(layout, "known_hosts_path")),
+                    metadata={
+                        "created_by": "tools/wire",
+                        "server_name": server_name,
+                        "control_plane": "public",
+                    },
+                ),
+                interfaces=[
+                    NetworkInterface(
+                        name="private",
+                        exposure=exposure,
+                        ipv4=private_ipv4,
+                        provider_network_id=_network_resource_id(network_resource),
+                        metadata={
+                            "source": "hcloud-partial",
+                            "private_group": private_group,
+                            "private_ip": private_ipv4,
+                            "server_id": server_id,
+                            "server_name": server_name,
+                            "network": dict(network_resource),
+                        },
+                    )
+                ],
+                provider_resources=_private_endpoint_provider_resources(
+                    provider=provider,
+                    server_id=server_id,
+                    server_name=server_name,
+                    ssh_key_id=ssh_key_id,
+                    ssh_key_name=ssh_key_name,
+                    public_ipv4=public_ipv4,
+                    public_ipv6=public_ipv6,
+                ),
+                artifact_dir=str(getattr(layout, "artifact_dir")),
+                metadata={
+                    **_private_manifest_metadata(
+                        created=True,
+                        dry_run=False,
+                        layout=layout,
+                        private_group=private_group,
+                        private_ipv4=private_ipv4,
+                        network_resource=network_resource,
+                        network_created=False,
+                        server_id=server_id,
+                        server_name=server_name,
+                        ssh_key_id=ssh_key_id,
+                        ssh_key_name=ssh_key_name,
+                    ),
+                    "error": error,
+                },
+            )
+        )
+    except Exception:
+        return
+
+
 def _wan_manifest_metadata(
     *,
     created: bool,
@@ -912,6 +1618,45 @@ def _wan_manifest_metadata(
             "ssh_key_name": ssh_key_name,
         },
     }
+
+
+def _private_manifest_metadata(
+    *,
+    created: bool,
+    dry_run: bool,
+    layout: object,
+    private_group: str,
+    private_ipv4: str | None,
+    network_resource: Mapping[str, object],
+    network_created: bool,
+    server_id: str | None,
+    server_name: str,
+    ssh_key_id: str | None,
+    ssh_key_name: str,
+) -> dict[str, object]:
+    metadata = _wan_manifest_metadata(
+        created=created,
+        dry_run=dry_run,
+        layout=layout,
+        server_id=server_id,
+        server_name=server_name,
+        ssh_key_id=ssh_key_id,
+        ssh_key_name=ssh_key_name,
+    )
+    metadata.update(
+        {
+            "private_group": private_group,
+            "private_ip": private_ipv4,
+            "private_network": dict(network_resource),
+            "private": {
+                "private_group": private_group,
+                "private_ip": private_ipv4,
+                "network": dict(network_resource),
+                "network_created": network_created,
+            },
+        }
+    )
+    return metadata
 
 
 def _interface_discovery_sections(output: str) -> dict[str, str]:
@@ -1051,10 +1796,45 @@ def _public_key_path(private_key_path: Path) -> Path:
     return private_key_path.with_name(f"{private_key_path.name}.pub")
 
 
-def _hcloud_json(argv: list[str], *, env: Mapping[str, str]) -> dict[str, object]:
-    result = run_command(argv, env=env, timeout=180)
+def _hcloud_json(
+    argv: list[str],
+    *,
+    env: Mapping[str, str],
+    command_runner: HcloudRunner = run_command,
+) -> dict[str, object]:
+    result = command_runner(argv, env=env, timeout=180)
     if not result.ok:
         raise RuntimeError(_command_error("hcloud command failed", result))
+    return _parse_hcloud_json(result)
+
+
+def _hcloud_json_optional(
+    argv: list[str],
+    *,
+    env: Mapping[str, str],
+    command_runner: HcloudRunner,
+) -> dict[str, object] | None:
+    result = command_runner(argv, env=env, timeout=180)
+    if not result.ok:
+        if _is_missing_resource_result(result):
+            return None
+        raise RuntimeError(_command_error("hcloud command failed", result))
+    return _parse_hcloud_json(result)
+
+
+def _hcloud_ok(
+    argv: list[str],
+    *,
+    env: Mapping[str, str],
+    command_runner: HcloudRunner,
+) -> CommandResult:
+    result = command_runner(argv, env=env, timeout=180)
+    if not result.ok:
+        raise RuntimeError(_command_error("hcloud command failed", result))
+    return result
+
+
+def _parse_hcloud_json(result: CommandResult) -> dict[str, object]:
     try:
         value = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -1193,6 +1973,26 @@ def _ip_address(value: object) -> str | None:
         ip = value.get("ip")
         return ip if isinstance(ip, str) and ip else None
     return None
+
+
+def _ipv4_network(value: str) -> IPv4Network:
+    try:
+        network = ip_network(value)
+    except ValueError as exc:
+        raise ValueError(f"private_cidr must be a valid IPv4 CIDR: {value}") from exc
+    if not isinstance(network, IPv4Network):
+        raise ValueError(f"private_cidr must be an IPv4 CIDR: {value}")
+    return network
+
+
+def _ipv4_address(value: str, name: str) -> IPv4Address:
+    try:
+        address = ip_address(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a valid IPv4 address: {value}") from exc
+    if not isinstance(address, IPv4Address):
+        raise ValueError(f"{name} must be an IPv4 address: {value}")
+    return address
 
 
 def _positive_float(value: float, name: str) -> float:
