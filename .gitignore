@@ -99,6 +99,8 @@ __pycache__/
 .libcrafter-live/
 tools/live-lab/.state/
 tools/live-lab/artifacts/
+tools/wire/.state/
+tools/wire/artifacts/
 
 # Generated artifacts #
 #######################

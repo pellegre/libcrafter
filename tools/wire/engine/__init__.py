@@ -1,0 +1,1 @@
+"""Wire endpoint lifecycle package."""
