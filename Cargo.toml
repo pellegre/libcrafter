@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/crafter",
+    "crafter",
     "tools/oracle/adapters",
     "tools/probe/adapters",
 ]

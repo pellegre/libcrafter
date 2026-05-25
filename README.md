@@ -97,7 +97,7 @@ enclosing header is valid.
 
 ## Examples
 
-Rust examples live under `crates/crafter/examples/` and build against the
+Rust examples live under `crafter/examples/` and build against the
 public `crafter` crate:
 
 ```sh

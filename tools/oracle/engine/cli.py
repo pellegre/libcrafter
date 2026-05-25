@@ -7038,7 +7038,7 @@ def _skip_report_scan_path(path: Path) -> bool:
 
 def _classify_scapy_import_match(relative_path: str) -> str:
     if (
-        relative_path.startswith("crates/crafter/tests/fixtures/")
+        relative_path.startswith("crafter/tests/fixtures/")
         or "/fixtures/" in relative_path
     ):
         return "fixture data"

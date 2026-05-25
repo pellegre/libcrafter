@@ -23,7 +23,7 @@ files in this tree.
 ## Test Ownership
 
 The integration fixture catalog lives in
-`crates/crafter/tests/fixture_suite.rs`. When adding a valid fixture, update
+`crafter/tests/fixture_suite.rs`. When adding a valid fixture, update
 `VALID_FIXTURES` and, if it closes a required coverage gap, update the
 `coverage_for_case` mapping. The catalog entry records:
 
@@ -42,8 +42,8 @@ The catalog tests fail if checked-in fixtures are missing from the catalogs or
 if a required supported protocol family loses coverage.
 
 The deterministic malformed packet corpus is consumed by
-`crates/crafter/tests/resilience.rs`. The malformed pcap corpus is consumed by
-`crates/crafter/tests/fixture_suite.rs`.
+`crafter/tests/resilience.rs`. The malformed pcap corpus is consumed by
+`crafter/tests/fixture_suite.rs`.
 
 ## Current Coverage Matrix
 
@@ -180,7 +180,7 @@ Before promoting oracle output into this tree:
 - Review the artifact under `target/oracle/`; do not make tests depend on that
   directory being present.
 - Copy only synthetic, generic bytes or metadata into
-  `crates/crafter/tests/fixtures/`.
+  `crafter/tests/fixtures/`.
 - Add or update the appropriate Rust catalog entry and coverage mapping.
 - Add a summary fixture only when stable human-readable output is part of the
   intended regression check.

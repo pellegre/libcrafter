@@ -1,6 +1,6 @@
 # Examples
 
-The Rust examples live under `crates/crafter/examples/` and build against the
+The Rust examples live under `crafter/examples/` and build against the
 public `crafter` facade API. The suite covers packet construction, decode,
 inspection, registry customization, pcap read/write, offline sniffing,
 live-gated capture, send planning, send/receive reports, batch workflows,
@@ -8,7 +8,7 @@ interface helpers, IPv4 ranges, reply matching, and representative protocol
 layers.
 
 For the complete inventory, safety classification, and per-example command map,
-see [`crates/crafter/examples/README.md`](../crates/crafter/examples/README.md).
+see [`crafter/examples/README.md`](../crafter/examples/README.md).
 
 ## Representative Commands
 
