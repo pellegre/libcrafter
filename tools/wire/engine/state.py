@@ -234,6 +234,42 @@ def update_private_group_allocation(
     return updated
 
 
+def remove_private_group_allocation(
+    *,
+    provider: str,
+    group: str,
+    endpoint_id: str,
+    private_ipv4: str | None = None,
+    config: WireConfig | None = None,
+) -> PrivateGroupRecord:
+    """Remove one endpoint allocation from an internal private group record."""
+
+    record = read_private_group_record(provider, group, config)
+    endpoint_ids = [
+        allocated_endpoint_id
+        for allocated_endpoint_id in record.allocated_endpoint_ids
+        if allocated_endpoint_id != endpoint_id
+    ]
+    private_ipv4s = [*record.allocated_private_ipv4s]
+    if private_ipv4 is not None:
+        private_ipv4s = [
+            allocated_private_ipv4
+            for allocated_private_ipv4 in private_ipv4s
+            if allocated_private_ipv4 != private_ipv4
+        ]
+
+    updated = PrivateGroupRecord(
+        provider=record.provider,
+        group=record.group,
+        private_cidr=record.private_cidr,
+        network_resource=record.network_resource,
+        allocated_endpoint_ids=endpoint_ids,
+        allocated_private_ipv4s=private_ipv4s,
+    )
+    write_private_group_record(updated, config)
+    return updated
+
+
 def ensure_endpoint_dirs(endpoint_id: str, config: WireConfig | None = None) -> EndpointLayout:
     """Create the local state and artifact directories for an endpoint."""
 
