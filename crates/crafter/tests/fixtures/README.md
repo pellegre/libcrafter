@@ -28,7 +28,7 @@ The integration fixture catalog lives in
 `coverage_for_case` mapping. The catalog entry records:
 
 - `name`: lowercase dash-separated case name.
-- `path`: path below `tests/fixtures/`.
+- `path`: path below this fixture directory.
 - `contents`: checked-in bytes or checked-in hex text.
 - `target`: public decode entrypoint, such as a link type, L3 protocol, raw
   decode, or DHCP option decoder.
@@ -36,8 +36,8 @@ The integration fixture catalog lives in
 - `preserve_exact_bytes`: whether decode/compile must preserve the fixture bytes.
 - `summary_path`: optional expected summary fixture.
 
-All files under `tests/fixtures/bytes/` must be listed in `VALID_FIXTURES`.
-All files under `tests/fixtures/pcaps/` must be listed in `PCAP_FIXTURES`.
+All files under `bytes/` must be listed in `VALID_FIXTURES`.
+All files under `pcaps/` must be listed in `PCAP_FIXTURES`.
 The catalog tests fail if checked-in fixtures are missing from the catalogs or
 if a required supported protocol family loses coverage.
 
@@ -179,7 +179,8 @@ Before promoting oracle output into this tree:
   interesting case when needed.
 - Review the artifact under `target/oracle/`; do not make tests depend on that
   directory being present.
-- Copy only synthetic, generic bytes or metadata into `tests/fixtures/`.
+- Copy only synthetic, generic bytes or metadata into
+  `crates/crafter/tests/fixtures/`.
 - Add or update the appropriate Rust catalog entry and coverage mapping.
 - Add a summary fixture only when stable human-readable output is part of the
   intended regression check.

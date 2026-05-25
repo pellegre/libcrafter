@@ -1403,7 +1403,7 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
         ensure_fixture_exists(case.path);
         assert!(
             pcap_fixture_paths.contains(case.path),
-            "pcap catalog entry {} must live under tests/fixtures/pcaps",
+            "pcap catalog entry {} must live under the fixture pcaps/ directory",
             case.path
         );
 
@@ -1522,7 +1522,7 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
         ensure_fixture_exists(case.path);
         assert!(
             bytes_fixture_paths.contains(case.path),
-            "catalog entry {} must live under tests/fixtures/bytes",
+            "catalog entry {} must live under the fixture bytes/ directory",
             case.path
         );
     }

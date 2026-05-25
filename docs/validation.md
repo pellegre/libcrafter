@@ -114,5 +114,5 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 Oracle artifacts default below `target/oracle/`, with mode-specific reports
 under `target/oracle/corpus`, `target/oracle/offline`, `target/oracle/pcap`,
 and `target/oracle/live`.
-Keep promoted fixture bytes under `tests/fixtures/` and reference backend
-ownership under `tools/oracle/`.
+Keep promoted fixture bytes under `crates/crafter/tests/fixtures/` and
+reference backend ownership under `tools/oracle/`.
