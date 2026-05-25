@@ -99,7 +99,7 @@ different path.
 
 The Rust-side libcrafter adapters live in `tools/oracle/adapters/` as an
 internal workspace package. They depend on the public `crafter` crate API and
-must not add oracle-only code to `crates/crafter`.
+must not add oracle-only code to `crafter`.
 
 ## CI Policy
 
