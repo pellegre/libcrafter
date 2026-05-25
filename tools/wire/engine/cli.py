@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from posixpath import basename
 
 from .model import EndpointManifest, dumps_json, write_json
 from .process import CommandResult, run_command
 from .providers import hetzner
 from .registry import ProviderExposureError
-from .ssh import CommandRunner, download as ssh_download, run_ssh_command, upload as ssh_upload
+from .ssh import (
+    CommandRunner,
+    download as ssh_download,
+    run_ssh_command,
+    ssh_argv,
+    upload as ssh_upload,
+)
 from .state import (
     endpoint_known_hosts_path,
     endpoint_private_key_path,
@@ -191,6 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect_artifacts.add_argument(
         "--remote",
         metavar="REMOTE_ABS",
+        type=_absolute_remote_path,
         help="absolute remote artifact path to collect",
     )
     collect_artifacts.set_defaults(command_name="collect-artifacts")
@@ -429,6 +438,39 @@ def download_endpoint(
     return result
 
 
+def collect_artifacts(
+    manifest: EndpointManifest,
+    remote_path: str | None = None,
+    *,
+    runner: CommandRunner = run_command,
+) -> dict[str, object]:
+    """Return the endpoint artifact directory and optionally download one remote path."""
+
+    artifact_dir = Path(manifest.artifact_dir).resolve()
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    output: dict[str, object] = {
+        "endpoint_id": manifest.endpoint_id,
+        "artifact_dir": str(artifact_dir),
+        "collected": False,
+    }
+    if remote_path is None:
+        return output
+
+    artifact_name = basename(remote_path.rstrip("/")) or "artifact"
+    local_path = artifact_dir / artifact_name
+    result = download_endpoint(manifest, remote_path, local_path, runner=runner)
+    output.update(
+        {
+            "collected": result.ok,
+            "remote_path": remote_path,
+            "local_path": str(local_path),
+            "exit_code": result.exit_code,
+            "ok": result.ok,
+        }
+    )
+    return output
+
+
 def _run_upload_endpoint(args: argparse.Namespace) -> int:
     try:
         manifest = read_endpoint_manifest(args.endpoint_id)
@@ -451,6 +493,18 @@ def _run_download_endpoint(args: argparse.Namespace) -> int:
     return _forward_command_result(result)
 
 
+def _run_collect_artifacts(args: argparse.Namespace) -> int:
+    try:
+        manifest = read_endpoint_manifest(args.endpoint_id)
+        output = collect_artifacts(manifest, args.remote)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    print(output["artifact_dir"])
+    return 0 if bool(output.get("ok", True)) else int(output.get("exit_code", 1))
+
+
 def _run_ssh_info(args: argparse.Namespace) -> int:
     try:
         manifest = read_endpoint_manifest(args.endpoint_id)
@@ -469,13 +523,7 @@ def _run_ssh_info(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
         return 1
 
-    output = {
-        "endpoint_id": manifest.endpoint_id,
-        "provider": manifest.provider,
-        "exposure": manifest.exposure,
-        "status": manifest.status,
-        "ssh": manifest.ssh.to_dict(),
-    }
+    output = _ssh_info_output(manifest)
     if args.json:
         sys.stdout.write(dumps_json(output))
     else:
@@ -542,18 +590,14 @@ def _print_destroy_endpoint_report(output: dict[str, object]) -> None:
 
 
 def _print_ssh_info(output: dict[str, object]) -> None:
-    ssh = output["ssh"]
-    if not isinstance(ssh, dict):
-        return
     print(
         "wire ssh-info: "
-        f"endpoint_id={output['endpoint_id']} host={ssh.get('host')} "
-        f"user={ssh.get('user')} port={ssh.get('port')}"
+        f"endpoint_id={output['endpoint_id']} host={output.get('host')} "
+        f"user={output.get('user')} port={output.get('port')}"
     )
-    if ssh.get("identity_file"):
-        print(f"identity: {ssh['identity_file']}")
-    if ssh.get("known_hosts_file"):
-        print(f"known_hosts: {ssh['known_hosts_file']}")
+    print(f"identity: {output['identity_file']}")
+    print(f"known_hosts: {output['known_hosts_file']}")
+    print(f"ssh: {output['ssh_command']}")
 
 
 def _print_endpoint_list(output: dict[str, object]) -> None:
@@ -619,6 +663,40 @@ def _write_transfer_artifacts(
     )
 
 
+def _ssh_info_output(manifest: EndpointManifest) -> dict[str, object]:
+    identity_file = manifest.ssh.identity_file or str(
+        endpoint_private_key_path(manifest.endpoint_id)
+    )
+    known_hosts_file = manifest.ssh.known_hosts_file or str(
+        endpoint_known_hosts_path(manifest.endpoint_id)
+    )
+    argv = ssh_argv(
+        host=manifest.ssh.host,
+        user=manifest.ssh.user,
+        port=manifest.ssh.port,
+        identity_file=identity_file,
+        known_hosts=known_hosts_file,
+    )
+    return {
+        "endpoint_id": manifest.endpoint_id,
+        "provider": manifest.provider,
+        "exposure": manifest.exposure,
+        "status": manifest.status,
+        "host": manifest.ssh.host,
+        "port": manifest.ssh.port,
+        "user": manifest.ssh.user,
+        "identity_file": identity_file,
+        "known_hosts_file": known_hosts_file,
+        "ssh_command": shlex.join(argv),
+        "ssh": {
+            **manifest.ssh.to_dict(),
+            "identity_file": identity_file,
+            "known_hosts_file": known_hosts_file,
+            "command": argv,
+        },
+    }
+
+
 def _transfer_artifact_paths(manifest: EndpointManifest, operation: str) -> tuple[Path, Path, Path]:
     if operation not in {"upload", "download"}:
         raise ValueError(f"unsupported transfer operation: {operation}")
@@ -658,6 +736,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_upload_endpoint(args)
     if args.command_name == "download":
         return _run_download_endpoint(args)
+    if args.command_name == "collect-artifacts":
+        return _run_collect_artifacts(args)
     if args.command_name == "ssh-info":
         return _run_ssh_info(args)
     if args.command_name == "list-endpoints":
