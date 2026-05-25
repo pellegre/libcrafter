@@ -96,6 +96,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="persist the endpoint manifest; required for dry-run manifest writes",
     )
+    create_endpoint.add_argument(
+        "--confirm-live-run",
+        action="store_true",
+        help="confirm protected non-dry-run provider execution",
+    )
     create_endpoint.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     create_endpoint.set_defaults(command_name="create-endpoint")
 
@@ -229,8 +234,15 @@ def _run_create_endpoint(args: argparse.Namespace) -> int:
             private_group=args.private_group,
             private_ip=args.private_ip,
             dry_run=args.dry_run,
+            confirm_live_run=args.confirm_live_run,
         )
-    except (NotImplementedError, ProviderExposureError, ValueError) as exc:
+    except (
+        NotImplementedError,
+        PermissionError,
+        ProviderExposureError,
+        RuntimeError,
+        ValueError,
+    ) as exc:
         if args.json:
             sys.stdout.write(
                 dumps_json(
@@ -248,14 +260,14 @@ def _run_create_endpoint(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
         return 2
 
-    if args.write_manifest:
+    if args.write_manifest or not args.dry_run:
         stored_manifest = EndpointManifest.from_dict(manifest)
         manifest_path = write_endpoint_manifest(stored_manifest)
         manifest["state_dir"] = str(manifest_path.parent)
         manifest["manifest_path"] = str(manifest_path)
 
     if args.json:
-        sys.stdout.write(dumps_json(manifest))
+        sys.stdout.write(dumps_json(hetzner.cli_output_manifest(manifest)))
     else:
         _print_create_endpoint_report(manifest)
     return 0
