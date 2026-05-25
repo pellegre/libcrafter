@@ -7,11 +7,11 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .model import EndpointManifest, dumps_json
+from .model import EndpointManifest, dumps_json, write_json
 from .process import CommandResult, run_command
 from .providers import hetzner
 from .registry import ProviderExposureError
-from .ssh import CommandRunner, run_ssh_command
+from .ssh import CommandRunner, download as ssh_download, run_ssh_command, upload as ssh_upload
 from .state import (
     endpoint_known_hosts_path,
     endpoint_private_key_path,
@@ -37,6 +37,12 @@ COMMANDS = (
 def _absolute_local_path(value: str) -> str:
     if not Path(value).is_absolute():
         raise argparse.ArgumentTypeError(f"{value!r} must be an absolute local path")
+    return value
+
+
+def _absolute_remote_path(value: str) -> str:
+    if not Path(value).is_absolute():
+        raise argparse.ArgumentTypeError(f"{value!r} must be an absolute remote path")
     return value
 
 
@@ -148,7 +154,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=_absolute_local_path,
         help="absolute local source path",
     )
-    upload.add_argument("remote_path", metavar="REMOTE_ABS", help="absolute remote destination path")
+    upload.add_argument(
+        "remote_path",
+        metavar="REMOTE_ABS",
+        type=_absolute_remote_path,
+        help="absolute remote destination path",
+    )
     upload.set_defaults(command_name="upload")
 
     download = subparsers.add_parser(
@@ -157,7 +168,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Download REMOTE_ABS from one endpoint to LOCAL_ABS.",
     )
     download.add_argument("endpoint_id", metavar="ENDPOINT_ID", help="endpoint to use")
-    download.add_argument("remote_path", metavar="REMOTE_ABS", help="absolute remote source path")
+    download.add_argument(
+        "remote_path",
+        metavar="REMOTE_ABS",
+        type=_absolute_remote_path,
+        help="absolute remote source path",
+    )
     download.add_argument(
         "local_path",
         metavar="LOCAL_ABS",
@@ -349,6 +365,92 @@ def _run_exec_endpoint(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
+def upload_endpoint(
+    manifest: EndpointManifest,
+    local_path: str | Path,
+    remote_path: str,
+    *,
+    runner: CommandRunner = run_command,
+) -> CommandResult:
+    """Upload a local path to one endpoint and write transfer artifacts."""
+
+    result = ssh_upload(
+        host=manifest.ssh.host,
+        user=manifest.ssh.user,
+        port=manifest.ssh.port,
+        identity_file=manifest.ssh.identity_file
+        or endpoint_private_key_path(manifest.endpoint_id),
+        known_hosts=manifest.ssh.known_hosts_file
+        or endpoint_known_hosts_path(manifest.endpoint_id),
+        local_path=local_path,
+        remote_path=remote_path,
+        recursive=Path(local_path).is_dir(),
+        runner=runner,
+    )
+    _write_transfer_artifacts(
+        manifest,
+        operation="upload",
+        result=result,
+        local_path=local_path,
+        remote_path=remote_path,
+    )
+    return result
+
+
+def download_endpoint(
+    manifest: EndpointManifest,
+    remote_path: str,
+    local_path: str | Path,
+    *,
+    runner: CommandRunner = run_command,
+) -> CommandResult:
+    """Download a remote path from one endpoint and write transfer artifacts."""
+
+    result = ssh_download(
+        host=manifest.ssh.host,
+        user=manifest.ssh.user,
+        port=manifest.ssh.port,
+        identity_file=manifest.ssh.identity_file
+        or endpoint_private_key_path(manifest.endpoint_id),
+        known_hosts=manifest.ssh.known_hosts_file
+        or endpoint_known_hosts_path(manifest.endpoint_id),
+        remote_path=remote_path,
+        local_path=local_path,
+        recursive=True,
+        runner=runner,
+    )
+    _write_transfer_artifacts(
+        manifest,
+        operation="download",
+        result=result,
+        local_path=local_path,
+        remote_path=remote_path,
+    )
+    return result
+
+
+def _run_upload_endpoint(args: argparse.Namespace) -> int:
+    try:
+        manifest = read_endpoint_manifest(args.endpoint_id)
+        result = upload_endpoint(manifest, args.local_path, args.remote_path)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    return _forward_command_result(result)
+
+
+def _run_download_endpoint(args: argparse.Namespace) -> int:
+    try:
+        manifest = read_endpoint_manifest(args.endpoint_id)
+        result = download_endpoint(manifest, args.remote_path, args.local_path)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    return _forward_command_result(result)
+
+
 def _run_ssh_info(args: argparse.Namespace) -> int:
     try:
         manifest = read_endpoint_manifest(args.endpoint_id)
@@ -485,6 +587,58 @@ def _exec_artifact_paths(manifest: EndpointManifest) -> tuple[Path, Path]:
     return artifact_dir / "stdout", artifact_dir / "stderr"
 
 
+def _write_transfer_artifacts(
+    manifest: EndpointManifest,
+    *,
+    operation: str,
+    result: CommandResult,
+    local_path: str | Path,
+    remote_path: str,
+) -> None:
+    stdout_path, stderr_path, report_path = _transfer_artifact_paths(manifest, operation)
+    stdout_path.write_text(result.stdout, encoding="utf-8")
+    stderr_path.write_text(result.stderr, encoding="utf-8")
+    write_json(
+        report_path,
+        {
+            "operation": operation,
+            "endpoint_id": manifest.endpoint_id,
+            "local_path": str(local_path),
+            "remote_path": remote_path,
+            "exit_code": result.exit_code,
+            "ok": result.ok,
+            "timed_out": result.timed_out,
+            "timeout": result.timeout,
+            "error": result.error,
+            "command": result.command,
+            "artifacts": {
+                "stdout": stdout_path,
+                "stderr": stderr_path,
+            },
+        },
+    )
+
+
+def _transfer_artifact_paths(manifest: EndpointManifest, operation: str) -> tuple[Path, Path, Path]:
+    if operation not in {"upload", "download"}:
+        raise ValueError(f"unsupported transfer operation: {operation}")
+    artifact_dir = Path(manifest.artifact_dir)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    return (
+        artifact_dir / f"{operation}.stdout",
+        artifact_dir / f"{operation}.stderr",
+        artifact_dir / f"{operation}.json",
+    )
+
+
+def _forward_command_result(result: CommandResult) -> int:
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    if result.error:
+        print(result.error, file=sys.stderr)
+    return result.exit_code
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the wire command-line interface."""
     parser = build_parser()
@@ -500,6 +654,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_destroy_endpoint(args)
     if args.command_name == "exec":
         return _run_exec_endpoint(args)
+    if args.command_name == "upload":
+        return _run_upload_endpoint(args)
+    if args.command_name == "download":
+        return _run_download_endpoint(args)
     if args.command_name == "ssh-info":
         return _run_ssh_info(args)
     if args.command_name == "list-endpoints":
