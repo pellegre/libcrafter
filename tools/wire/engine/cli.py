@@ -214,6 +214,41 @@ def _run_doctor(args: argparse.Namespace) -> int:
     return 0 if bool(report["ok"]) else 1
 
 
+def _run_create_endpoint(args: argparse.Namespace) -> int:
+    try:
+        manifest = hetzner.create_endpoint(
+            provider=args.provider,
+            exposure=args.exposure,
+            role=args.role,
+            private_group=args.private_group,
+            private_ip=args.private_ip,
+            dry_run=args.dry_run,
+        )
+    except (NotImplementedError, ProviderExposureError, ValueError) as exc:
+        if args.json:
+            sys.stdout.write(
+                dumps_json(
+                    {
+                        "provider": args.provider,
+                        "exposure": args.exposure,
+                        "dry_run": args.dry_run,
+                        "created": False,
+                        "ok": False,
+                        "error": str(exc),
+                    }
+                )
+            )
+        else:
+            print(str(exc), file=sys.stderr)
+        return 2
+
+    if args.json:
+        sys.stdout.write(dumps_json(manifest))
+    else:
+        _print_create_endpoint_report(manifest)
+    return 0
+
+
 def _print_doctor_report(report: dict[str, object]) -> None:
     status = "ok" if bool(report["ok"]) else "failed"
     print(
@@ -231,6 +266,17 @@ def _print_doctor_report(report: dict[str, object]) -> None:
         print(f"- {check.get('name')}: {check_status}: {check.get('message')}")
 
 
+def _print_create_endpoint_report(manifest: dict[str, object]) -> None:
+    created = str(bool(manifest["created"])).lower()
+    print(
+        "wire create-endpoint: "
+        f"provider={manifest['provider']} exposure={manifest['exposure']} "
+        f"endpoint_id={manifest['endpoint_id']} created={created}"
+    )
+    print(f"state: {manifest['manifest_path']}")
+    print(f"artifacts: {manifest['artifact_dir']}")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the wire command-line interface."""
     parser = build_parser()
@@ -240,5 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command_name == "doctor":
         return _run_doctor(args)
+    if args.command_name == "create-endpoint":
+        return _run_create_endpoint(args)
     parser.error(f"{args.command_name!r} is not implemented yet")
     return 2
