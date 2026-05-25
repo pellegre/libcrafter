@@ -7,9 +7,10 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .model import dumps_json
+from .model import EndpointManifest, dumps_json
 from .providers import hetzner
 from .registry import ProviderExposureError
+from .state import list_endpoint_manifests, read_endpoint_manifest, write_endpoint_manifest
 
 
 COMMANDS = (
@@ -89,6 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="plan endpoint creation without creating provider resources",
+    )
+    create_endpoint.add_argument(
+        "--write-manifest",
+        action="store_true",
+        help="persist the endpoint manifest; required for dry-run manifest writes",
     )
     create_endpoint.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     create_endpoint.set_defaults(command_name="create-endpoint")
@@ -242,10 +248,66 @@ def _run_create_endpoint(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
         return 2
 
+    if args.write_manifest:
+        stored_manifest = EndpointManifest.from_dict(manifest)
+        manifest_path = write_endpoint_manifest(stored_manifest)
+        manifest["state_dir"] = str(manifest_path.parent)
+        manifest["manifest_path"] = str(manifest_path)
+
     if args.json:
         sys.stdout.write(dumps_json(manifest))
     else:
         _print_create_endpoint_report(manifest)
+    return 0
+
+
+def _run_ssh_info(args: argparse.Namespace) -> int:
+    try:
+        manifest = read_endpoint_manifest(args.endpoint_id)
+    except (FileNotFoundError, ValueError) as exc:
+        if args.json:
+            sys.stdout.write(
+                dumps_json(
+                    {
+                        "endpoint_id": args.endpoint_id,
+                        "ok": False,
+                        "error": str(exc),
+                    }
+                )
+            )
+        else:
+            print(str(exc), file=sys.stderr)
+        return 1
+
+    output = {
+        "endpoint_id": manifest.endpoint_id,
+        "provider": manifest.provider,
+        "exposure": manifest.exposure,
+        "status": manifest.status,
+        "ssh": manifest.ssh.to_dict(),
+    }
+    if args.json:
+        sys.stdout.write(dumps_json(output))
+    else:
+        _print_ssh_info(output)
+    return 0
+
+
+def _run_list_endpoints(args: argparse.Namespace) -> int:
+    try:
+        manifests = list_endpoint_manifests()
+    except (FileNotFoundError, ValueError) as exc:
+        if args.json:
+            sys.stdout.write(dumps_json({"endpoints": [], "ok": False, "error": str(exc)}))
+        else:
+            print(str(exc), file=sys.stderr)
+        return 1
+
+    output = {"endpoints": [manifest.to_dict() for manifest in manifests]}
+    if args.json:
+        sys.stdout.write(dumps_json(output))
+    else:
+        _print_endpoint_list(output)
     return 0
 
 
@@ -277,6 +339,37 @@ def _print_create_endpoint_report(manifest: dict[str, object]) -> None:
     print(f"artifacts: {manifest['artifact_dir']}")
 
 
+def _print_ssh_info(output: dict[str, object]) -> None:
+    ssh = output["ssh"]
+    if not isinstance(ssh, dict):
+        return
+    print(
+        "wire ssh-info: "
+        f"endpoint_id={output['endpoint_id']} host={ssh.get('host')} "
+        f"user={ssh.get('user')} port={ssh.get('port')}"
+    )
+    if ssh.get("identity_file"):
+        print(f"identity: {ssh['identity_file']}")
+    if ssh.get("known_hosts_file"):
+        print(f"known_hosts: {ssh['known_hosts_file']}")
+
+
+def _print_endpoint_list(output: dict[str, object]) -> None:
+    endpoints = output["endpoints"]
+    if not isinstance(endpoints, list) or not endpoints:
+        print("wire list-endpoints: no endpoints")
+        return
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        print(
+            f"{endpoint.get('endpoint_id')}\t"
+            f"{endpoint.get('provider')}\t"
+            f"{endpoint.get('exposure')}\t"
+            f"{endpoint.get('status')}"
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the wire command-line interface."""
     parser = build_parser()
@@ -288,5 +381,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_doctor(args)
     if args.command_name == "create-endpoint":
         return _run_create_endpoint(args)
+    if args.command_name == "ssh-info":
+        return _run_ssh_info(args)
+    if args.command_name == "list-endpoints":
+        return _run_list_endpoints(args)
     parser.error(f"{args.command_name!r} is not implemented yet")
     return 2
