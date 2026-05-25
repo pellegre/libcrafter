@@ -8,9 +8,17 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .model import EndpointManifest, dumps_json
+from .process import CommandResult, run_command
 from .providers import hetzner
 from .registry import ProviderExposureError
-from .state import list_endpoint_manifests, read_endpoint_manifest, write_endpoint_manifest
+from .ssh import CommandRunner, run_ssh_command
+from .state import (
+    endpoint_known_hosts_path,
+    endpoint_private_key_path,
+    list_endpoint_manifests,
+    read_endpoint_manifest,
+    write_endpoint_manifest,
+)
 
 
 COMMANDS = (
@@ -300,6 +308,47 @@ def _run_destroy_endpoint(args: argparse.Namespace) -> int:
     return 0
 
 
+def exec_endpoint(
+    manifest: EndpointManifest,
+    remote_command: Sequence[str],
+    *,
+    runner: CommandRunner = run_command,
+) -> CommandResult:
+    """Run a remote command for one endpoint and write stdout/stderr artifacts."""
+
+    command = _remote_command_parts(remote_command)
+    stdout_path, stderr_path = _exec_artifact_paths(manifest)
+    result = run_ssh_command(
+        host=manifest.ssh.host,
+        user=manifest.ssh.user,
+        port=manifest.ssh.port,
+        identity_file=manifest.ssh.identity_file
+        or endpoint_private_key_path(manifest.endpoint_id),
+        known_hosts=manifest.ssh.known_hosts_file
+        or endpoint_known_hosts_path(manifest.endpoint_id),
+        command=command,
+        runner=runner,
+    )
+    stdout_path.write_text(result.stdout, encoding="utf-8")
+    stderr_path.write_text(result.stderr, encoding="utf-8")
+    return result
+
+
+def _run_exec_endpoint(args: argparse.Namespace) -> int:
+    try:
+        manifest = read_endpoint_manifest(args.endpoint_id)
+        result = exec_endpoint(manifest, args.remote_command)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    if result.error:
+        print(result.error, file=sys.stderr)
+    return result.exit_code
+
+
 def _run_ssh_info(args: argparse.Namespace) -> int:
     try:
         manifest = read_endpoint_manifest(args.endpoint_id)
@@ -421,6 +470,21 @@ def _print_endpoint_list(output: dict[str, object]) -> None:
         )
 
 
+def _remote_command_parts(remote_command: Sequence[str]) -> list[str]:
+    command = list(remote_command)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        raise ValueError("wire exec requires COMMAND after ENDPOINT_ID --")
+    return command
+
+
+def _exec_artifact_paths(manifest: EndpointManifest) -> tuple[Path, Path]:
+    artifact_dir = Path(manifest.artifact_dir)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    return artifact_dir / "stdout", artifact_dir / "stderr"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the wire command-line interface."""
     parser = build_parser()
@@ -434,6 +498,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_create_endpoint(args)
     if args.command_name == "destroy-endpoint":
         return _run_destroy_endpoint(args)
+    if args.command_name == "exec":
+        return _run_exec_endpoint(args)
     if args.command_name == "ssh-info":
         return _run_ssh_info(args)
     if args.command_name == "list-endpoints":
