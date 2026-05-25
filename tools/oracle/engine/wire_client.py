@@ -134,7 +134,7 @@ class WireClient:
         response = self._run("create-endpoint", argv, parse_json=True)
         if response.json_data is None:
             raise WireClientError("wire create-endpoint did not emit JSON")
-        manifest = EndpointManifest.from_dict(response.json_data)
+        manifest = EndpointManifest.from_dict(_endpoint_manifest_json(response.json_data))
         return WireCommandResponse(
             result=response.result,
             record=response.record,
@@ -307,6 +307,20 @@ def _json_object(value: Mapping[str, object]) -> JSONObject:
             raise WireClientError("wire JSON object keys must be strings")
         output[key] = _json_value(item)
     return output
+
+
+def _endpoint_manifest_json(value: JSONObject) -> JSONObject:
+    """Return a typed-manifest view of the wire CLI compatibility JSON."""
+
+    manifest = dict(value)
+    provider_resources = manifest.get("provider_resources")
+    if isinstance(provider_resources, list):
+        manifest["provider_resources"] = {
+            "resources": provider_resources,
+            "cleanup_order": [],
+            "metadata": {},
+        }
+    return manifest
 
 
 def _json_value(value: object) -> JSONValue:

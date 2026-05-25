@@ -1168,6 +1168,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         hetzner_private_network_plan,
         hetzner_provider_workflow,
         hetzner_token_configured,
+        hetzner_wire_endpoint_plan,
         validate_hetzner_endpoint_bootstrap,
         validate_hetzner_dry_run_exchange,
         validate_hetzner_provider_workflow,
@@ -1228,7 +1229,12 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             corpus_metadata=corpus_metadata,
         )
 
-    endpoints = hetzner_endpoints(dry_run=True)
+    wire_endpoint_plan = hetzner_wire_endpoint_plan(dry_run=True)
+    live_endpoints = wire_endpoint_plan.pop("live_endpoints")
+    if not isinstance(live_endpoints, dict):
+        print("wire endpoint plan did not include live endpoints", file=sys.stderr)
+        return 2
+    endpoints = live_endpoints
     provider_workflow = hetzner_provider_workflow(dry_run=True)
     endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=True)
     bootstrap_command = backend_bootstrap_command_plan()
@@ -1494,15 +1500,16 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             "live_corpus_artifact": str(corpus_batch_artifact),
             "execution_directions": directions,
             "planned_infrastructure": hetzner_private_network_plan(dry_run=True),
+            "wire_endpoint_plan": wire_endpoint_plan,
             "provider_workflow": [command.to_dict() for command in provider_workflow],
             "endpoint_bootstrap": [command.to_dict() for command in endpoint_bootstrap],
             "artifact_collection": {
                 "always_attempt": True,
-                "command": provider_workflow[3].to_dict(),
+                "command": provider_workflow[4].to_dict(),
             },
             "teardown": {
                 "always_attempt": True,
-                "command": provider_workflow[4].to_dict(),
+                "command": provider_workflow[5].to_dict(),
             },
             "backend_bootstrap": {
                 "command": bootstrap_command.to_dict(),
