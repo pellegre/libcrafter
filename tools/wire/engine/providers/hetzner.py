@@ -7,7 +7,8 @@ import os
 import secrets
 import shutil
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -47,6 +48,7 @@ INTERFACE_DISCOVERY_COMMAND = "\n".join(
         "ip -j route get 1.1.1.1 || true",
     ]
 )
+HcloudRunner = Callable[..., CommandResult]
 
 
 def doctor(
@@ -142,6 +144,101 @@ def create_endpoint(
         raise PermissionError(CONFIRMATION_ERROR)
 
     return _create_wan_endpoint(provider=provider, exposure=exposure, role=role, env=env)
+
+
+def destroy_endpoint(
+    manifest: EndpointManifest,
+    *,
+    env: Mapping[str, str] | None = None,
+    command_runner: HcloudRunner = run_command,
+) -> dict[str, object]:
+    """Destroy Hetzner resources recorded in one endpoint manifest."""
+
+    if manifest.provider != "hetzner":
+        raise ValueError(f"endpoint provider is not hetzner: {manifest.provider}")
+
+    resources = _cleanup_resources(manifest)
+    if manifest.status == "destroyed":
+        output = _destroy_output(
+            manifest=manifest,
+            actions=[],
+            skipped=[
+                _destroy_action(resource, action="skip", reason="endpoint already destroyed")
+                for resource in resources
+            ],
+            destroyed=False,
+            already_destroyed=True,
+        )
+        return output
+
+    actions: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+    real_resources = [
+        resource for resource in resources if _destroy_command(resource) is not None
+    ]
+    hcloud_env: Mapping[str, str] = {}
+    if real_resources:
+        environ = os.environ if env is None else env
+        token = _hetzner_token(environ)
+        if command_runner is run_command and not token:
+            raise RuntimeError(f"{TOKEN_ENV} or {HCLOUD_TOKEN_ENV} must be configured")
+        if command_runner is run_command and shutil.which(HCLOUD_COMMAND) is None:
+            raise RuntimeError(f"{HCLOUD_COMMAND} was not found on PATH")
+        hcloud_env = {HCLOUD_TOKEN_ENV: token} if token else {}
+
+    for resource in resources:
+        argv = _destroy_command(resource)
+        if argv is None:
+            skipped.append(
+                _destroy_action(
+                    resource,
+                    action="skip",
+                    reason=f"resource kind {resource.kind!r} is not destroyed by hetzner provider",
+                )
+            )
+            continue
+
+        result = command_runner(argv, env=hcloud_env, timeout=120)
+        if result.ok:
+            actions.append(_destroy_action(resource, action="delete", result=result))
+            continue
+        if _is_missing_resource_result(result):
+            actions.append(
+                _destroy_action(
+                    resource,
+                    action="already-missing",
+                    result=result,
+                    reason="provider resource was already missing",
+                )
+            )
+            continue
+        raise RuntimeError(_command_error("hcloud destroy command failed", result))
+
+    destroyed_at = _utc_now()
+    destroyed_manifest = replace(
+        manifest,
+        status="destroyed",
+        metadata={
+            **manifest.metadata,
+            "destroyed_at": destroyed_at,
+            "destroy": {
+                "provider": "hetzner",
+                "actions": actions,
+                "skipped": skipped,
+            },
+        },
+    )
+    manifest_path = write_endpoint_manifest(destroyed_manifest)
+    output = _destroy_output(
+        manifest=destroyed_manifest,
+        actions=actions,
+        skipped=skipped,
+        destroyed=True,
+        already_destroyed=False,
+    )
+    output["manifest_path"] = str(manifest_path)
+    output["state_dir"] = str(manifest_path.parent)
+    return output
 
 
 def cli_output_manifest(manifest: Mapping[str, object]) -> dict[str, object]:
@@ -975,6 +1072,96 @@ def _cleanup_partial_wan(
         _hcloud_cleanup([HCLOUD_COMMAND, "server", "delete", server_id], env=env)
     if ssh_key_id is not None:
         _hcloud_cleanup([HCLOUD_COMMAND, "ssh-key", "delete", ssh_key_id], env=env)
+
+
+def _cleanup_resources(manifest: EndpointManifest) -> list[ProviderResource]:
+    resources = [
+        resource for resource in manifest.provider_resources.resources if resource.cleanup
+    ]
+    cleanup_order = manifest.provider_resources.cleanup_order
+    if not cleanup_order:
+        return resources
+
+    order = {_normalized_resource_kind(kind): index for index, kind in enumerate(cleanup_order)}
+    return sorted(
+        resources,
+        key=lambda resource: (order.get(_normalized_resource_kind(resource.kind), len(order)),),
+    )
+
+
+def _destroy_command(resource: ProviderResource) -> list[str] | None:
+    kind = _normalized_resource_kind(resource.kind)
+    if kind == "server":
+        return [HCLOUD_COMMAND, "server", "delete", resource.provider_id]
+    if kind == "ssh-key":
+        return [HCLOUD_COMMAND, "ssh-key", "delete", resource.provider_id]
+    if kind == "network":
+        return [HCLOUD_COMMAND, "network", "delete", resource.provider_id]
+    return None
+
+
+def _normalized_resource_kind(kind: str) -> str:
+    return kind.replace("_", "-")
+
+
+def _destroy_action(
+    resource: ProviderResource,
+    *,
+    action: str,
+    result: CommandResult | None = None,
+    reason: str | None = None,
+) -> dict[str, object]:
+    output: dict[str, object] = {
+        "action": action,
+        "kind": resource.kind,
+        "provider_id": resource.provider_id,
+        "name": resource.name,
+    }
+    if reason is not None:
+        output["reason"] = reason
+    if result is not None:
+        output["command"] = result.command
+        output["exit_code"] = result.exit_code
+    return output
+
+
+def _destroy_output(
+    *,
+    manifest: EndpointManifest,
+    actions: list[dict[str, object]],
+    skipped: list[dict[str, object]],
+    destroyed: bool,
+    already_destroyed: bool,
+) -> dict[str, object]:
+    return {
+        "ok": True,
+        "endpoint_id": manifest.endpoint_id,
+        "provider": manifest.provider,
+        "exposure": manifest.exposure,
+        "status": manifest.status,
+        "destroyed": destroyed,
+        "already_destroyed": already_destroyed,
+        "artifact_dir": manifest.artifact_dir,
+        "actions": actions,
+        "skipped": skipped,
+    }
+
+
+def _is_missing_resource_result(result: CommandResult) -> bool:
+    text = " ".join(
+        part.strip().lower() for part in (result.stderr, result.stdout, result.error or "")
+    )
+    missing_markers = (
+        "not found",
+        "not_found",
+        "404",
+        "does not exist",
+        "no such",
+        "could not find",
+        "was not found",
+        "already deleted",
+    )
+    return any(marker in text for marker in missing_markers)
 
 
 def _hcloud_cleanup(argv: list[str], *, env: Mapping[str, str]) -> None:

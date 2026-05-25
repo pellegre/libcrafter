@@ -273,6 +273,33 @@ def _run_create_endpoint(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_destroy_endpoint(args: argparse.Namespace) -> int:
+    try:
+        manifest = read_endpoint_manifest(args.endpoint_id)
+        output = hetzner.destroy_endpoint(manifest)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        if args.json:
+            sys.stdout.write(
+                dumps_json(
+                    {
+                        "endpoint_id": args.endpoint_id,
+                        "ok": False,
+                        "destroyed": False,
+                        "error": str(exc),
+                    }
+                )
+            )
+        else:
+            print(str(exc), file=sys.stderr)
+        return 1
+
+    if args.json:
+        sys.stdout.write(dumps_json(output))
+    else:
+        _print_destroy_endpoint_report(output)
+    return 0
+
+
 def _run_ssh_info(args: argparse.Namespace) -> int:
     try:
         manifest = read_endpoint_manifest(args.endpoint_id)
@@ -351,6 +378,18 @@ def _print_create_endpoint_report(manifest: dict[str, object]) -> None:
     print(f"artifacts: {manifest['artifact_dir']}")
 
 
+def _print_destroy_endpoint_report(output: dict[str, object]) -> None:
+    print(
+        "wire destroy-endpoint: "
+        f"endpoint_id={output['endpoint_id']} status={output['status']} "
+        f"destroyed={str(bool(output['destroyed'])).lower()}"
+    )
+    if output.get("manifest_path"):
+        print(f"state: {output['manifest_path']}")
+    if output.get("artifact_dir"):
+        print(f"artifacts: {output['artifact_dir']}")
+
+
 def _print_ssh_info(output: dict[str, object]) -> None:
     ssh = output["ssh"]
     if not isinstance(ssh, dict):
@@ -393,6 +432,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_doctor(args)
     if args.command_name == "create-endpoint":
         return _run_create_endpoint(args)
+    if args.command_name == "destroy-endpoint":
+        return _run_destroy_endpoint(args)
     if args.command_name == "ssh-info":
         return _run_ssh_info(args)
     if args.command_name == "list-endpoints":
