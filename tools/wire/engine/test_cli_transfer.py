@@ -7,7 +7,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.wire.engine.cli import download_endpoint, upload_endpoint
+from tools.wire.engine.cli import (
+    _ssh_info_output,
+    collect_artifacts,
+    download_endpoint,
+    upload_endpoint,
+)
 from tools.wire.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
@@ -163,6 +168,81 @@ class WireTransferEndpointTest(unittest.TestCase):
                     "/tmp/request.json",
                     runner=fake_runner,
                 )
+
+    def test_collect_artifacts_print_target_downloads_remote_into_artifact_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _manifest(root)
+            calls: list[tuple[str, ...]] = []
+
+            def fake_runner(argv: list[str], **_: object) -> CommandResult:
+                calls.append(tuple(argv))
+                return CommandResult(
+                    argv=tuple(argv),
+                    redacted_argv=tuple(argv),
+                    cwd=None,
+                    exit_code=0,
+                    stdout="artifact stdout\n",
+                    stderr="artifact stderr\n",
+                )
+
+            output = collect_artifacts(
+                manifest,
+                "/var/tmp/wire/report.tar.gz",
+                runner=fake_runner,
+            )
+
+            artifact_dir = root / "artifacts" / "hetzner-wan-test"
+            self.assertEqual(output["artifact_dir"], str(artifact_dir))
+            self.assertEqual(output["local_path"], str(artifact_dir / "report.tar.gz"))
+            self.assertEqual(output["remote_path"], "/var/tmp/wire/report.tar.gz")
+            self.assertEqual(output["collected"], True)
+            self.assertEqual(
+                calls[-1],
+                (
+                    "scp",
+                    "-r",
+                    "-i",
+                    str(root / "state" / "id_ed25519"),
+                    "-P",
+                    "2222",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                    "-o",
+                    f"UserKnownHostsFile={root / 'state' / 'known_hosts'}",
+                    "-o",
+                    "ConnectTimeout=10",
+                    "ubuntu@198.51.100.20:/var/tmp/wire/report.tar.gz",
+                    str(artifact_dir / "report.tar.gz"),
+                ),
+            )
+
+    def test_collect_artifacts_without_remote_creates_and_returns_artifact_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _manifest(root)
+
+            output = collect_artifacts(manifest)
+
+            artifact_dir = root / "artifacts" / "hetzner-wan-test"
+            self.assertEqual(output["artifact_dir"], str(artifact_dir))
+            self.assertEqual(output["collected"], False)
+            self.assertTrue(artifact_dir.is_dir())
+
+    def test_ssh_info_output_includes_printable_command_and_connection_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _manifest(root)
+
+            output = _ssh_info_output(manifest)
+
+            self.assertEqual(output["host"], "198.51.100.20")
+            self.assertEqual(output["port"], 2222)
+            self.assertEqual(output["user"], "ubuntu")
+            self.assertEqual(output["identity_file"], str(root / "state" / "id_ed25519"))
+            self.assertEqual(output["known_hosts_file"], str(root / "state" / "known_hosts"))
+            self.assertIn("ssh -i", output["ssh_command"])
+            self.assertIn("ubuntu@198.51.100.20", output["ssh_command"])
 
 
 def _manifest(root: Path) -> EndpointManifest:
