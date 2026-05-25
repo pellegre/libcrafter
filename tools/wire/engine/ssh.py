@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -13,6 +14,8 @@ DEFAULT_SSH_PORT = 22
 DEFAULT_CONNECT_TIMEOUT = 10
 DEFAULT_STRICT_HOST_KEY_CHECKING = "accept-new"
 DEFAULT_KEY_TYPE = "ed25519"
+DEFAULT_SSH_WAIT_TIMEOUT = 300
+DEFAULT_SSH_WAIT_INTERVAL = 5
 
 CommandRunner = Callable[..., CommandResult]
 
@@ -170,6 +173,45 @@ def run_ssh_command(
         ),
         timeout=timeout,
     )
+
+
+def wait_for_ssh(
+    *,
+    host: str,
+    user: str,
+    identity_file: str | Path,
+    known_hosts: str | Path,
+    port: int = DEFAULT_SSH_PORT,
+    connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
+    wait_timeout: float = DEFAULT_SSH_WAIT_TIMEOUT,
+    interval: float = DEFAULT_SSH_WAIT_INTERVAL,
+    runner: CommandRunner = run_command,
+) -> CommandResult:
+    """Wait until SSH accepts a simple command and return the successful result."""
+
+    deadline = time.monotonic() + _positive_float(wait_timeout, "wait_timeout")
+    sleep_interval = _positive_float(interval, "interval")
+    last_result: CommandResult | None = None
+
+    while True:
+        last_result = run_ssh_command(
+            host=host,
+            user=user,
+            identity_file=identity_file,
+            known_hosts=known_hosts,
+            command="true",
+            port=port,
+            connect_timeout=connect_timeout,
+            runner=runner,
+            timeout=connect_timeout + 5,
+        )
+        if last_result.ok:
+            return last_result
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(_ssh_wait_error(host=host, port=port, result=last_result))
+        time.sleep(min(sleep_interval, remaining))
 
 
 def upload(
@@ -330,3 +372,17 @@ def _positive_int(value: int, name: str) -> int:
     if output <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return output
+
+
+def _positive_float(value: float, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a positive number")
+    output = float(value)
+    if output <= 0:
+        raise ValueError(f"{name} must be a positive number")
+    return output
+
+
+def _ssh_wait_error(*, host: str, port: int, result: CommandResult) -> str:
+    details = result.stderr.strip() or result.stdout.strip() or result.error or "no output"
+    return f"wait for ssh timed out for {host}:{port}: {details}"
