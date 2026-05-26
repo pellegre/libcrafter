@@ -1,17 +1,18 @@
 ---
-name: wire-validation
-description: Run libcrafter wire-level packet validation through disposable endpoints with local checks, provider dry-runs, artifacts, secret handling, and endpoint teardown. Use when a task needs real packet send, receive, capture, injection, probe, or provider-hosted network validation.
+name: wire-endpoint
+description: Provision and use disposable remote wire endpoints such as VMs or VPS instances for libcrafter packet work. Use when a task needs real packets off the developer machine, including raw sends, captures, traceroute-style workflows, probes, provider-backed checks, artifact collection, and endpoint teardown.
 ---
 
-# Wire Validation
+# Wire Endpoint
 
-Use this skill when a task requires wire-level packet generation, raw sockets,
-sniffing, packet injection, reference backend checks, legacy libcrafter wire
-checks, probe validation, or provider-hosted network validation.
+Use this skill when a task requires a disposable remote endpoint for wire-level
+packet generation, raw sockets, sniffing, packet injection, traceroute-style
+workflows, reference backend checks, legacy libcrafter wire checks, probes, or
+provider-hosted packet work.
 
 Wire work that can send, receive, or capture real packets must not run on the
 developer machine. Run local static checks first, then use disposable wire
-endpoints for provider-backed validation.
+endpoints for provider-backed execution.
 
 ## Required Order
 
@@ -26,9 +27,9 @@ endpoints for provider-backed validation.
    - `tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10`
 3. Create only disposable wire endpoints, and only with an explicit protected
    wire-run confirmation such as `--confirm-live-run`.
-4. Run the requested wire packet exchange, reference backend, Rust, probe, and
-   legacy libcrafter validation through `tools/oracle`, `tools/probe`, or
-   `tools/wire`.
+4. Run the requested wire packet exchange, reference backend, Rust, probe,
+   traceroute-style workflow, or legacy libcrafter check through `tools/oracle`,
+   `tools/probe`, `tools/wire`, or a bounded command on the endpoint.
 5. Collect logs, pcaps, decoded summaries, command output, reports, and provider
    metadata as artifacts.
 6. Destroy disposable wire endpoints after every wire run, including failed runs.
@@ -64,7 +65,7 @@ Hetzner is the current provider-backed endpoint implementation, but the
 workflow must stay provider-agnostic so additional providers can be added
 without changing test semantics.
 
-## Wire Test Rules
+## Wire Endpoint Rules
 
 Prefer loopback, network namespaces, veth pairs, private networks, or explicit
 test destinations inside disposable endpoints. Use root only inside the
