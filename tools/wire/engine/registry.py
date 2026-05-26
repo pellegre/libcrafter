@@ -11,6 +11,7 @@ class ProviderExposureError(ValueError):
 
 _SUPPORTED_EXPOSURES_BY_PROVIDER: Mapping[str, frozenset[str]] = {
     "hetzner": frozenset({"wan", "private"}),
+    "qemu": frozenset({"wan", "private"}),
     "virtualbox": frozenset({"lan"}),
 }
 

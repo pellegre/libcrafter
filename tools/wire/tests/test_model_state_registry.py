@@ -15,7 +15,7 @@ from tools.wire.engine.model import (
     read_json,
     write_json,
 )
-from tools.wire.engine.providers import hetzner, resolve_provider, virtualbox
+from tools.wire.engine.providers import hetzner, qemu, resolve_provider, virtualbox
 from tools.wire.engine.registry import (
     ProviderExposureError,
     is_supported_request,
@@ -33,10 +33,18 @@ from tools.wire.engine.state import (
 
 class WireRegistryTest(unittest.TestCase):
     def test_hetzner_supports_only_wan_and_private(self) -> None:
-        self.assertEqual(registered_providers(), ("hetzner", "virtualbox"))
+        self.assertEqual(registered_providers(), ("hetzner", "qemu", "virtualbox"))
         self.assertEqual(supported_exposures("hetzner"), ("private", "wan"))
         self.assertTrue(is_supported_request("hetzner", "wan"))
         self.assertTrue(is_supported_request("hetzner", "private"))
+
+    def test_qemu_supports_only_wan_and_private(self) -> None:
+        self.assertEqual(supported_exposures("qemu"), ("private", "wan"))
+        self.assertTrue(is_supported_request("qemu", "wan"))
+        self.assertTrue(is_supported_request("qemu", "private"))
+        for exposure in ("lan", "wifi"):
+            with self.subTest(exposure=exposure):
+                self.assertFalse(is_supported_request("qemu", exposure))
 
     def test_virtualbox_supports_only_lan(self) -> None:
         self.assertEqual(supported_exposures("virtualbox"), ("lan",))
@@ -62,7 +70,11 @@ class WireRegistryTest(unittest.TestCase):
 
     def test_resolve_provider_returns_supported_provider_module(self) -> None:
         self.assertIs(resolve_provider("hetzner", "wan"), hetzner)
+        self.assertIs(resolve_provider("qemu", "wan"), qemu)
+        self.assertIs(resolve_provider("qemu", "private"), qemu)
         self.assertIs(resolve_provider("virtualbox", "lan"), virtualbox)
+        with self.assertRaisesRegex(ProviderExposureError, "supported exposures"):
+            resolve_provider("qemu", "lan")
         with self.assertRaisesRegex(ProviderExposureError, "supported exposures"):
             resolve_provider("virtualbox", "wan")
 
