@@ -40,9 +40,10 @@ use crafter::prelude::*;
   ranges, and capture packets through bounded pcap workflows.
 - Compare packet behavior against reference backends and real network stacks
   through repository validation tooling.
-- Run packet work from one endpoint or a fleet of provider-backed endpoints
-  when raw sockets, capture privileges, or external network reachability are
-  needed.
+- Provision disposable network positions through a wire provider — clean
+  vantage points for sending, capturing, and reaching networks the developer
+  host cannot — and fan the same primitive across several endpoints in
+  parallel when broader coverage is needed.
 
 ## Packet Construction
 
@@ -111,13 +112,19 @@ traffic only in networks where you are authorized to send and capture packets.
 ## Agent-Directed Wire Workflows
 
 Wire tooling lives under `tools/wire`, `tools/oracle`, and `tools/probe`.
-Together they let an agent create endpoints, transfer adapters, execute packet
-work, collect artifacts, and destroy provider resources when the run is done.
+Together they let an agent provision a disposable network position, transfer
+adapters, run packet work from it, collect artifacts, and destroy the
+underlying provider resources when the run is done.
 
-The important capability is not the endpoint lifecycle itself. The endpoint is
-where an agent can generate traffic, observe responses from real stacks, and use
-that feedback to continue exploring the surrounding network environment at the
-packet level.
+The endpoint lifecycle is the easy part to describe; what matters is what an
+endpoint *is*. An endpoint is a clean place from which an agent can generate
+traffic, watch how real network stacks respond, and feed those observations
+back into its next step. Running the same primitive across several endpoints
+in parallel is the same idea at width.
+
+`tools/wire` owns the provider contract — provision, command execution,
+artifact collection, SSH access, destroy — so `tools/oracle` and `tools/probe`
+consume an endpoint without depending on which provider produced it.
 
 ```sh
 tools/wire/run doctor --provider hetzner --exposure wan --dry-run

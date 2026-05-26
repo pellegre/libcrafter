@@ -60,6 +60,12 @@ must use documentation address space (`192.0.2.0/24`, `198.51.100.0/24`,
 `2001:db8::/32`) and dry-run plans. Real targets enter the picture only when an
 authorized human or agent has said so.
 
+Wire endpoints exist so that the live path does not have to originate from the
+developer machine. When an agent needs to send crafted traffic for real, the
+correct move is to provision a disposable provider endpoint, run the work from
+there, collect the artifacts, and destroy it — not to elevate privileges on
+the host the agent is running on.
+
 ## Agents write tools; the crate stays a primitive
 
 `crafter` is not a packet analyzer, a fuzzer, or a scanner. Those are generated
