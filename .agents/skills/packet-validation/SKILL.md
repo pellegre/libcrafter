@@ -1,9 +1,9 @@
 ---
-name: oracle
-description: Add oracle coverage for libcrafter packet behavior changes.
+name: packet-validation
+description: Add or run libcrafter packet behavior validation through oracle specs, backend adapters, offline checks, pcap checks, live checks, and artifacts. Use when packet behavior changes need validation coverage.
 ---
 
-# Oracle Coverage
+# Packet Validation
 
 Use this skill when a change affects packet behavior, including:
 
@@ -38,6 +38,6 @@ Use this skill when a change affects packet behavior, including:
 7. Record any unsupported behavior, intentional mismatch, or required follow-up
    in the oracle artifacts or nearby docs.
 
-Agents add packet behavior coverage through specs and backend adapters, not by
+Add packet behavior coverage through specs and backend adapters, not by
 creating standalone reference-backend code paths outside the oracle backend
 tree.

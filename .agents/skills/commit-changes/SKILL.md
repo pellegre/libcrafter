@@ -1,9 +1,9 @@
 ---
-name: agent-commits
-description: Commit libcrafter changes with the repository's Conventional Commits policy and scoped staging discipline.
+name: commit-changes
+description: Create, amend, reword, split, squash, or prepare libcrafter commits with the repository's Conventional Commits policy and scoped staging discipline.
 ---
 
-# Agent Commits
+# Commit Changes
 
 Use this skill whenever you create, amend, reword, split, squash, or otherwise
 prepare commits in this repository.

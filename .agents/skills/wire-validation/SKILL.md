@@ -1,9 +1,9 @@
 ---
-name: wire
-description: Run libcrafter wire-level packet validation through disposable wire endpoints with dry runs, artifacts, and teardown.
+name: wire-validation
+description: Run libcrafter wire-level packet validation through disposable endpoints with local checks, provider dry-runs, artifacts, secret handling, and endpoint teardown. Use when a task needs real packet send, receive, capture, injection, probe, or provider-hosted network validation.
 ---
 
-# Wire
+# Wire Validation
 
 Use this skill when a task requires wire-level packet generation, raw sockets,
 sniffing, packet injection, reference backend checks, legacy libcrafter wire

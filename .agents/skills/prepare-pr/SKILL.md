@@ -1,16 +1,16 @@
 ---
-name: agent-pull-requests
-description: Prepare libcrafter pull requests so squash commits inherit compliant titles and required validation is documented.
+name: prepare-pr
+description: Open, update, title, review, or prepare libcrafter pull requests so squash commits inherit compliant titles and required validation is documented.
 ---
 
-# Agent Pull Requests
+# Prepare PR
 
 Use this skill whenever you open, update, title, review, or prepare a pull
 request for this repository.
 
 ## Branch Name
 
-Branches created for PR work must follow the repo-local `agent-branches` skill:
+Branches created for PR work must follow the repo-local `create-branch` skill:
 
 ```text
 kind/short-slug
