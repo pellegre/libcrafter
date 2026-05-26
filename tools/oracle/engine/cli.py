@@ -1168,26 +1168,18 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         validate_live_endpoint_batch_contract,
         validate_libcrafter_command_plan,
     )
-    from .providers.hetzner import (
-        hetzner_default_provider_capabilities,
-        hetzner_endpoint_bootstrap_plan,
-        hetzner_endpoints,
-        hetzner_private_network_plan,
-        hetzner_provider_workflow,
-        hetzner_token_configured,
-        hetzner_wire_endpoint_plan,
-        validate_hetzner_endpoint_bootstrap,
-        validate_hetzner_dry_run_exchange,
-        validate_hetzner_provider_workflow,
-    )
+    from .providers.registry import resolve_live_provider
 
     try:
+        provider_adapter = resolve_live_provider(args.provider)
         directions = live_execution_directions(args.direction)
         dry_run = bool(args.dry_run)
-        provider_capabilities = hetzner_default_provider_capabilities(dry_run=dry_run)
+        provider_capabilities = provider_adapter.default_provider_capabilities(
+            dry_run=dry_run,
+        )
         plans, corpus_selected_specs, corpus_metadata = _live_corpus_plans(
             args,
-            wire_provider="hetzner",
+            wire_provider=provider_adapter.name,
             direction=directions[0] if directions else "reference_to_libcrafter",
             provider_capabilities=provider_capabilities,
         )
@@ -1209,7 +1201,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         f"wire_skip_reasons={corpus_metadata['wire_skip_reasons']}"
     )
 
-    token_configured = hetzner_token_configured()
+    token_configured = provider_adapter.token_configured()
     if not dry_run and not bool(getattr(args, "confirm_live_run", False)):
         return _live_hetzner_requires_dry_run_report(
             args=args,
@@ -1221,6 +1213,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
     if not dry_run and not token_configured:
         return _live_hetzner_skip_no_token(
             args=args,
+            provider_adapter=provider_adapter,
             report_path=report_path,
             directions=directions,
             selected_specs=selected_specs,
@@ -1229,6 +1222,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
     if not dry_run:
         return _live_hetzner_execute(
             args=args,
+            provider_adapter=provider_adapter,
             report_path=report_path,
             directions=directions,
             plans=plans,
@@ -1236,14 +1230,14 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             corpus_metadata=corpus_metadata,
         )
 
-    wire_endpoint_plan = hetzner_wire_endpoint_plan(dry_run=True)
+    wire_endpoint_plan = provider_adapter.wire_endpoint_plan(dry_run=True)
     live_endpoints = wire_endpoint_plan.pop("live_endpoints")
     if not isinstance(live_endpoints, dict):
         print("wire endpoint plan did not include live endpoints", file=sys.stderr)
         return 2
     endpoints = live_endpoints
-    provider_workflow = hetzner_provider_workflow(dry_run=True)
-    endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=True)
+    provider_workflow = provider_adapter.provider_workflow(dry_run=True)
+    endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=True)
     bootstrap_command = backend_bootstrap_command_plan()
     corpus_batch_artifact = _write_live_corpus_batch_artifact(
         output_dir,
@@ -1253,9 +1247,12 @@ def _live_hetzner(args: argparse.Namespace) -> int:
     )
     validations = [
         validate_backend_bootstrap_command(bootstrap_command),
-        validate_hetzner_endpoint_bootstrap(endpoint_bootstrap, dry_run=True),
-        validate_hetzner_provider_workflow(provider_workflow, dry_run=True),
-        _live_corpus_accounting_validation(corpus_metadata, provider="hetzner"),
+        provider_adapter.validate_endpoint_bootstrap(endpoint_bootstrap, dry_run=True),
+        provider_adapter.validate_provider_workflow(provider_workflow, dry_run=True),
+        _live_corpus_accounting_validation(
+            corpus_metadata,
+            provider=provider_adapter.name,
+        ),
     ]
     exchanges: list[LiveExchangePlan] = []
     endpoint_protocol_batches: list[JSONObject] = []
@@ -1318,7 +1315,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
                 },
             )
             exchanges.append(exchange)
-            validations.append(validate_hetzner_dry_run_exchange(exchange))
+            validations.append(provider_adapter.validate_dry_run_exchange(exchange))
 
     for direction in directions:
         direction_plans = [replace(plan, direction=direction) for plan in plans]
@@ -1506,7 +1503,9 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             **live_count_metadata,
             "live_corpus_artifact": str(corpus_batch_artifact),
             "execution_directions": directions,
-            "planned_infrastructure": hetzner_private_network_plan(dry_run=True),
+            "planned_infrastructure": provider_adapter.planned_infrastructure(
+                dry_run=True,
+            ),
             "wire_endpoint_plan": wire_endpoint_plan,
             "provider_workflow": [command.to_dict() for command in provider_workflow],
             "endpoint_bootstrap": [command.to_dict() for command in endpoint_bootstrap],
@@ -1564,21 +1563,15 @@ def _live_hetzner(args: argparse.Namespace) -> int:
 def _live_hetzner_skip_no_token(
     *,
     args: argparse.Namespace,
+    provider_adapter,
     report_path: Path,
     directions: list[str],
     selected_specs: list[str],
     corpus_metadata: JSONObject,
 ) -> int:
-    from .providers.hetzner import (
-        hetzner_endpoint_bootstrap_plan,
-        hetzner_endpoints,
-        hetzner_private_network_plan,
-        hetzner_provider_workflow,
-    )
-
-    endpoints = hetzner_endpoints(dry_run=False)
-    provider_workflow = hetzner_provider_workflow(dry_run=False)
-    endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
+    endpoints = provider_adapter.endpoints(dry_run=False)
+    provider_workflow = provider_adapter.provider_workflow(dry_run=False)
+    endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=False)
     live_count_metadata = _live_count_metadata(
         _live_empty_direction_counts(corpus_metadata, directions)
     )
@@ -1634,7 +1627,7 @@ def _live_hetzner_skip_no_token(
             **corpus_metadata,
             **live_count_metadata,
             "execution_directions": directions,
-            "planned_infrastructure_if_credentials_available": hetzner_private_network_plan(
+            "planned_infrastructure_if_credentials_available": provider_adapter.planned_infrastructure(
                 dry_run=False
             ),
             "provider_workflow_if_credentials_available": [
@@ -1645,17 +1638,17 @@ def _live_hetzner_skip_no_token(
             ],
             "artifact_collection": {
                 "always_attempt": True,
-                "command": _live_provider_workflow_command(
-                    provider_workflow,
-                    "collect-live-endpoint-artifacts",
-                ).to_dict(),
+                    "command": _live_provider_workflow_command(
+                        provider_workflow,
+                        provider_adapter.artifact_collection_purpose,
+                    ).to_dict(),
             },
             "teardown": {
                 "always_attempt": True,
-                "command": _live_provider_workflow_command(
-                    provider_workflow,
-                    "teardown-disposable-hetzner-endpoints",
-                ).to_dict(),
+                    "command": _live_provider_workflow_command(
+                        provider_workflow,
+                        provider_adapter.teardown_purpose,
+                    ).to_dict(),
             },
             "endpoints": {
                 name: endpoint.to_dict() for name, endpoint in endpoints.items()
@@ -1877,6 +1870,7 @@ def _live_hetzner_skip_no_wire_eligible(
 def _live_hetzner_execute(
     *,
     args: argparse.Namespace,
+    provider_adapter,
     report_path: Path,
     directions: list[str],
     plans: list[PacketPlan],
@@ -1893,21 +1887,14 @@ def _live_hetzner_execute(
         live_endpoint_artifact_paths,
         validate_live_endpoint_batch_contract,
     )
-    from .providers.hetzner import (
-        hetzner_endpoint_bootstrap_plan,
-        hetzner_default_provider_capabilities,
-        hetzner_private_network_plan,
-        hetzner_provider_workflow,
-        hetzner_wire_endpoint_plan,
-    )
 
     output_dir = report_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
     wire = wire_client.WireClient()
     endpoints = {}
-    provider_workflow = hetzner_provider_workflow(dry_run=False)
-    endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
+    provider_workflow = provider_adapter.provider_workflow(dry_run=False)
+    endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=False)
     wire_endpoint_plan: JSONObject = {}
     provider_commands: list[JSONObject] = []
     endpoint_protocol_batches: list[JSONObject] = []
@@ -1926,7 +1913,7 @@ def _live_hetzner_execute(
         directions=directions,
     )
     endpoint_artifact_paths: list[str] = [str(corpus_batch_artifact)]
-    remote_dir = _hetzner_wire_remote_dir()
+    remote_dir = provider_adapter.remote_dir()
     remote_artifact_root = posixpath.join(
         remote_dir,
         "live-artifacts",
@@ -1936,7 +1923,10 @@ def _live_hetzner_execute(
 
     try:
         doctor = _run_wire_command(
-            wire.doctor(provider="hetzner", exposure="private"),
+            wire.doctor(
+                provider=provider_adapter.wire_provider,
+                exposure=provider_adapter.wire_exposure,
+            ),
             output_dir=output_dir,
             label="01-doctor",
         )
@@ -1945,7 +1935,7 @@ def _live_hetzner_execute(
             execution_errors.append("Hetzner provider doctor failed")
             raise RuntimeError("Hetzner provider doctor failed")
 
-        planned_wire_endpoint_plan = hetzner_wire_endpoint_plan(
+        planned_wire_endpoint_plan = provider_adapter.wire_endpoint_plan(
             dry_run=False,
             client=wire,
             confirm_live_run=True,
@@ -1986,7 +1976,7 @@ def _live_hetzner_execute(
                 execution_errors.append(f"Hetzner endpoint bootstrap failed: {role}")
                 raise RuntimeError(f"Hetzner endpoint bootstrap failed: {role}")
 
-        discovered_capabilities = hetzner_default_provider_capabilities(
+        discovered_capabilities = provider_adapter.default_provider_capabilities(
             dry_run=False,
             source="wire-endpoint-bootstrap",
         )
@@ -1998,7 +1988,7 @@ def _live_hetzner_execute(
         endpoint_artifact_paths.append(str(capability_path))
         plans, updated_selected_specs, corpus_metadata = _live_corpus_plans(
             args,
-            wire_provider="hetzner",
+            wire_provider=provider_adapter.name,
             direction=directions[0] if directions else "reference_to_libcrafter",
             provider_capabilities=discovered_capabilities,
         )
@@ -2026,7 +2016,7 @@ def _live_hetzner_execute(
                 return 2
 
             direction_plans = [
-                _hetzner_live_transit_plan(
+                provider_adapter.apply_transit_plan(
                     _live_plan_with_endpoint_addresses(
                         replace(plan, direction=direction),
                         sender=sender,
@@ -2093,7 +2083,9 @@ def _live_hetzner_execute(
 
             sender_request_path = _remote_artifact_path(sender_request, "request")
             receiver_request_path = _remote_artifact_path(receiver_request, "request")
-            local_direction_dir = output_dir / "artifacts" / "hetzner-exchange" / direction
+            local_direction_dir = (
+                output_dir / "artifacts" / f"{provider_adapter.name}-exchange" / direction
+            )
             local_direction_dir.mkdir(parents=True, exist_ok=True)
             sender_local_request_path = local_direction_dir / f"{sender.role}.request.json"
             receiver_local_request_path = (
@@ -2149,7 +2141,7 @@ def _live_hetzner_execute(
                 argv=_wire_exec_argv(
                     wire,
                     receiver.endpoint_id,
-                    _hetzner_endpoint_remote_command(
+                    provider_adapter.endpoint_remote_command(
                         endpoint_role=receiver.role,
                         remote_dir=remote_dir,
                         request_path=receiver_request_path,
@@ -2175,7 +2167,7 @@ def _live_hetzner_execute(
                 argv=_wire_exec_argv(
                     wire,
                     sender.endpoint_id,
-                    _hetzner_endpoint_remote_command(
+                    provider_adapter.endpoint_remote_command(
                         endpoint_role=sender.role,
                         remote_dir=remote_dir,
                         request_path=sender_request_path,
@@ -2219,7 +2211,7 @@ def _live_hetzner_execute(
             receiver_process = _start_wire_endpoint_batch(
                 wire=wire,
                 endpoint_id=receiver.endpoint_id,
-                command=_hetzner_endpoint_remote_command(
+                command=provider_adapter.endpoint_remote_command(
                     endpoint_role=receiver.role,
                     remote_dir=remote_dir,
                     request_path=receiver_request_path,
@@ -2232,7 +2224,7 @@ def _live_hetzner_execute(
             sender_execution = _run_wire_endpoint_batch(
                 wire=wire,
                 endpoint_id=sender.endpoint_id,
-                command=_hetzner_endpoint_remote_command(
+                command=provider_adapter.endpoint_remote_command(
                     endpoint_role=sender.role,
                     remote_dir=remote_dir,
                     request_path=sender_request_path,
@@ -2378,6 +2370,7 @@ def _live_hetzner_execute(
                 expected=expected_models,
                 plans=direction_plans,
                 corpus_metadata=corpus_metadata,
+                provider_adapter=provider_adapter,
                 sender_response=sender_response,
                 receiver_response=receiver_response,
                 sender_execution=sender_execution,
@@ -2504,7 +2497,9 @@ def _live_hetzner_execute(
             **_live_count_metadata(live_direction_counts),
             "live_corpus_artifact": str(corpus_batch_artifact),
             "execution_directions": directions,
-            "planned_infrastructure": hetzner_private_network_plan(dry_run=False),
+            "planned_infrastructure": provider_adapter.planned_infrastructure(
+                dry_run=False,
+            ),
             "wire_endpoint_plan": wire_endpoint_plan,
             "wire_endpoint_lifecycle": {
                 "remote_dir": remote_dir,
@@ -2519,7 +2514,7 @@ def _live_hetzner_execute(
                 "always_attempt": True,
                 "command": _live_provider_workflow_command(
                     provider_workflow,
-                    "collect-live-endpoint-artifacts",
+                    provider_adapter.artifact_collection_purpose,
                 ).to_dict(),
             },
             "teardown": {
@@ -2527,7 +2522,7 @@ def _live_hetzner_execute(
                 "keep_wire_endpoints": keep_wire_endpoints,
                 "command": _live_provider_workflow_command(
                     provider_workflow,
-                    "teardown-disposable-hetzner-endpoints",
+                    provider_adapter.teardown_purpose,
                 ).to_dict(),
             },
             "endpoints": {
@@ -2894,7 +2889,17 @@ def _hetzner_live_transit_plan(plan: PacketPlan) -> PacketPlan:
     )
 
 
-def _live_wire_policy(plan: PacketPlan, *, provider: str) -> JSONObject:
+def _live_wire_policy(
+    plan: PacketPlan,
+    *,
+    provider: str | None = None,
+    provider_adapter=None,
+) -> JSONObject:
+    provider_name = (
+        provider_adapter.name
+        if provider_adapter is not None
+        else provider or "hetzner"
+    )
     raw_policy = plan.metadata.get("wire")
     if isinstance(raw_policy, Mapping):
         policy = {
@@ -2902,10 +2907,12 @@ def _live_wire_policy(plan: PacketPlan, *, provider: str) -> JSONObject:
             for key, value in raw_policy.items()
             if isinstance(key, str)
         }
+    elif provider_adapter is not None:
+        policy = provider_adapter.wire_comparison_policy(plan)
     else:
         from .corpus import wire_comparison_policy
 
-        policy = wire_comparison_policy(plan, provider=provider)
+        policy = wire_comparison_policy(plan, provider=provider_name)
 
     mutable_fields = policy.get("mutable_fields", [])
     if not isinstance(mutable_fields, Sequence) or isinstance(
@@ -2929,7 +2936,7 @@ def _live_wire_policy(plan: PacketPlan, *, provider: str) -> JSONObject:
     if compare_root is not None and not isinstance(compare_root, str):
         compare_root = None
     policy["compare_root"] = compare_root
-    policy.setdefault("provider", provider)
+    policy.setdefault("provider", provider_name)
     return policy
 
 
@@ -3330,6 +3337,7 @@ def _compare_live_direction_results(
     expected: list[JSONObject],
     plans: list[PacketPlan],
     corpus_metadata: Mapping[str, object],
+    provider_adapter,
     sender_response,
     receiver_response,
     sender_execution: JSONObject,
@@ -3342,7 +3350,11 @@ def _compare_live_direction_results(
         status.index: status for status in receiver_response.per_index_status
     }
     actual_by_index = _live_decoded_models_by_index(receiver_response)
-    expected_by_index = _live_sender_decoded_models_by_index(plans, sender_response)
+    expected_by_index = _live_sender_decoded_models_by_index(
+        plans,
+        sender_response,
+        provider_adapter=provider_adapter,
+    )
     failure_artifacts = _live_endpoint_failure_artifacts(
         sender_response,
         receiver_response,
@@ -3366,6 +3378,7 @@ def _compare_live_direction_results(
                 sender_status=sender_statuses.get(plan.index),
                 receiver_status=receiver_statuses.get(plan.index),
                 failure_artifacts=failure_artifacts,
+                provider_adapter=provider_adapter,
             )
         )
 
@@ -3411,8 +3424,9 @@ def _compare_live_packet_result(
     sender_status,
     receiver_status,
     failure_artifacts: list[str],
+    provider_adapter,
 ) -> ComparisonResult:
-    wire_policy = _live_wire_policy(plan, provider="hetzner")
+    wire_policy = _live_wire_policy(plan, provider_adapter=provider_adapter)
     byte_differences, byte_metadata = _live_wire_byte_differences(
         plan=plan,
         sender_status=sender_status,
@@ -3422,7 +3436,11 @@ def _compare_live_packet_result(
 
     decode_differences: list[JSONObject] = []
     decode_passed = False
-    comparable_expected = _live_comparison_model(expected_model, plan=plan)
+    comparable_expected = _live_comparison_model(
+        expected_model,
+        plan=plan,
+        provider_adapter=provider_adapter,
+    )
     comparable_actual: JSONObject | None = None
     if actual_model is None:
         decode_differences.append(
@@ -3433,7 +3451,11 @@ def _compare_live_packet_result(
             }
         )
     else:
-        comparable_actual = _live_comparison_model(actual_model, plan=plan)
+        comparable_actual = _live_comparison_model(
+            actual_model,
+            plan=plan,
+            provider_adapter=provider_adapter,
+        )
         decode_result = compare_decoded_models(
             expected=comparable_expected,
             actual=comparable_actual,
@@ -3490,6 +3512,7 @@ def _compare_live_packet_result(
             },
         ),
         plan,
+        provider_adapter=provider_adapter,
     )
 
 
@@ -3577,6 +3600,8 @@ def _live_decoded_models_by_index(response) -> dict[int, JSONObject]:
 def _live_sender_decoded_models_by_index(
     plans: Sequence[PacketPlan],
     sender_response,
+    *,
+    provider_adapter,
 ) -> dict[int, JSONObject]:
     from .backends.scapy.normalize import decode_vectors
 
@@ -3589,7 +3614,7 @@ def _live_sender_decoded_models_by_index(
         status = sender_statuses.get(plan.index)
         if status is None or status.sent_raw_hex is None:
             continue
-        wire_policy = _live_wire_policy(plan, provider="hetzner")
+        wire_policy = _live_wire_policy(plan, provider_adapter=provider_adapter)
         compare_root = _optional_string(wire_policy.get("compare_root"))
         comparable_hex, _extract = _live_extract_comparable_hex(
             status.sent_raw_hex,
@@ -3938,13 +3963,21 @@ def _plan_id(plan: PacketPlan) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _live_comparison_model(model: JSONObject, *, plan: PacketPlan) -> JSONObject:
+def _live_comparison_model(
+    model: JSONObject,
+    *,
+    plan: PacketPlan,
+    provider_adapter,
+) -> JSONObject:
     output = json.loads(json.dumps(model))
     if not isinstance(output, dict):
         return model
     fields = output.get("fields")
     if isinstance(fields, dict):
-        for mutable_field in _live_mutable_fields(plan):
+        for mutable_field in _live_mutable_fields(
+            plan,
+            provider_adapter=provider_adapter,
+        ):
             _remove_live_mutable_field(fields, mutable_field)
     return output
 
@@ -3952,8 +3985,10 @@ def _live_comparison_model(model: JSONObject, *, plan: PacketPlan) -> JSONObject
 def _annotate_live_comparison_result(
     result: ComparisonResult,
     plan: PacketPlan,
+    *,
+    provider_adapter,
 ) -> ComparisonResult:
-    wire_policy = _live_wire_policy(plan, provider="hetzner")
+    wire_policy = _live_wire_policy(plan, provider_adapter=provider_adapter)
     return replace(
         result,
         metadata={
@@ -3965,10 +4000,17 @@ def _annotate_live_comparison_result(
     )
 
 
-def _live_mutable_fields(plan: PacketPlan) -> list[str]:
+def _live_mutable_fields(
+    plan: PacketPlan,
+    *,
+    provider_adapter,
+) -> list[str]:
     return [
         field
-        for field in _live_wire_policy(plan, provider="hetzner").get("mutable_fields", [])
+        for field in _live_wire_policy(
+            plan,
+            provider_adapter=provider_adapter,
+        ).get("mutable_fields", [])
         if isinstance(field, str)
     ]
 
