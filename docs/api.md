@@ -13,9 +13,8 @@ use crafter::prelude::*;
 
 ## One Public Crate
 
-Install and depend on `crafter` only. The repository is still named
-`libcrafter`, but the public Rust surface is organized as modules inside the
-one crate:
+Install and depend on `crafter` only. The public Rust surface is organized as
+modules inside the one crate:
 
 | Module | Responsibility |
 | --- | --- |
