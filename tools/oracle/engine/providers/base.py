@@ -92,6 +92,16 @@ class LiveProviderAdapter(Protocol):
     def remote_dir(self) -> str:
         """Return the absolute repository directory used on wire endpoints."""
 
+    def endpoint_bootstrap_command(
+        self,
+        *,
+        endpoint: LiveEndpoint,
+        peer: LiveEndpoint,
+        remote_archive: str,
+        remote_dir: str,
+    ) -> list[str]:
+        """Return the remote repository bootstrap command for one endpoint."""
+
     def endpoint_remote_command(
         self,
         *,
