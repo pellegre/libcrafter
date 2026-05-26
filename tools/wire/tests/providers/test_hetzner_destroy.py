@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from tools.wire.engine import cli as wire_cli
 from tools.wire.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
@@ -26,6 +30,43 @@ from tools.wire.engine.state import (
 
 
 class HetznerDestroyEndpointTest(unittest.TestCase):
+    def test_cli_destroy_endpoint_routes_through_resolved_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _manifest(root)
+            fake_provider = mock.Mock()
+            fake_provider.destroy_endpoint.return_value = {
+                "endpoint_id": manifest.endpoint_id,
+                "ok": True,
+                "status": "destroyed",
+                "destroyed": True,
+            }
+
+            stdout = io.StringIO()
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+                with (
+                    mock.patch.object(
+                        wire_cli,
+                        "resolve_provider",
+                        return_value=fake_provider,
+                    ) as resolver,
+                    redirect_stdout(stdout),
+                ):
+                    exit_code = wire_cli.main(
+                        ["destroy-endpoint", manifest.endpoint_id, "--json"]
+                    )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        resolver.assert_called_once_with("hetzner", "wan")
+        fake_provider.destroy_endpoint.assert_called_once()
+        self.assertEqual(
+            fake_provider.destroy_endpoint.call_args.args[0].endpoint_id,
+            manifest.endpoint_id,
+        )
+        self.assertTrue(payload["destroyed"])
+
     def test_destroy_endpoint_deletes_resources_and_marks_manifest_destroyed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

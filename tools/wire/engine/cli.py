@@ -11,7 +11,7 @@ from posixpath import basename
 
 from .model import EndpointManifest, dumps_json, write_json
 from .process import CommandResult, run_command
-from .providers import hetzner
+from .providers import resolve_provider
 from .registry import ProviderExposureError
 from .ssh import (
     CommandRunner,
@@ -226,7 +226,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _run_doctor(args: argparse.Namespace) -> int:
     try:
-        report = hetzner.doctor(
+        provider = resolve_provider(args.provider, args.exposure)
+        report = provider.doctor(
             provider=args.provider,
             exposure=args.exposure,
             dry_run=args.dry_run,
@@ -260,7 +261,8 @@ def _run_doctor(args: argparse.Namespace) -> int:
 
 def _run_create_endpoint(args: argparse.Namespace) -> int:
     try:
-        manifest = hetzner.create_endpoint(
+        provider = resolve_provider(args.provider, args.exposure)
+        manifest = provider.create_endpoint(
             provider=args.provider,
             exposure=args.exposure,
             role=args.role,
@@ -300,7 +302,7 @@ def _run_create_endpoint(args: argparse.Namespace) -> int:
         manifest["manifest_path"] = str(manifest_path)
 
     if args.json:
-        sys.stdout.write(dumps_json(hetzner.cli_output_manifest(manifest)))
+        sys.stdout.write(dumps_json(_provider_cli_output_manifest(provider, manifest)))
     else:
         _print_create_endpoint_report(manifest)
     return 0
@@ -309,7 +311,8 @@ def _run_create_endpoint(args: argparse.Namespace) -> int:
 def _run_destroy_endpoint(args: argparse.Namespace) -> int:
     try:
         manifest = read_endpoint_manifest(args.endpoint_id)
-        output = hetzner.destroy_endpoint(manifest)
+        provider = resolve_provider(manifest.provider, manifest.exposure)
+        output = provider.destroy_endpoint(manifest)
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         if args.json:
             sys.stdout.write(
@@ -331,6 +334,19 @@ def _run_destroy_endpoint(args: argparse.Namespace) -> int:
     else:
         _print_destroy_endpoint_report(output)
     return 0
+
+
+def _provider_cli_output_manifest(
+    provider: object,
+    manifest: dict[str, object],
+) -> dict[str, object]:
+    formatter = getattr(provider, "cli_output_manifest", None)
+    if formatter is None:
+        return manifest
+    output = formatter(manifest)
+    if not isinstance(output, dict):
+        raise TypeError("provider cli_output_manifest must return a JSON object")
+    return output
 
 
 def exec_endpoint(
