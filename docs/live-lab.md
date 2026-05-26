@@ -1,14 +1,10 @@
-# Live Lab
+# Wire Provider Lab
 
-The live lab runs packet tests away from the developer machine. The entrypoint is
-provider agnostic:
+Disposable provider lifecycle is owned by `tools/wire`. Oracle and probe own the
+packet workload, reports, and reproduction coordinates. Use wire for endpoint
+creation, command execution, artifact collection, SSH details, and cleanup.
 
-```sh
-tools/live-lab/libcrafter-live-lab doctor --provider local-dry-run
-tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
-```
-
-Local static tests should run before any live lab command. Live providers are
+Local static tests should run before any provider command. Live providers are
 for tests that need root privileges, raw sockets, packet capture, reference
 comparison, or kernel/service replies on disposable infrastructure. See
 [validation.md](validation.md) for oracle modes and CI expectations, and
@@ -16,41 +12,22 @@ comparison, or kernel/service replies on disposable infrastructure. See
 
 ## Hetzner Setup
 
-The Hetzner provider reads `HETZNER_API_TOKEN` from the process environment. If
-the variable is not already set, it also supports the ignored local env file at
-`~/.config/libcrafter/live-test.env`:
-
-```sh
-mkdir -p ~/.config/libcrafter
-chmod 700 ~/.config/libcrafter
-printf 'HETZNER_API_TOKEN=replace-with-token\n' > ~/.config/libcrafter/live-test.env
-chmod 600 ~/.config/libcrafter/live-test.env
-```
-
-Do not place real token values in repo files, shell history snippets, logs, or
-examples. The provider prints only whether a token is configured.
+The Hetzner wire provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
+process environment. Do not place real token values in repo files, shell history
+snippets, logs, or examples. The provider prints only whether credentials are
+configured.
 
 Run dry-run checks first:
 
 ```sh
-tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
-tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
+tools/wire/wire doctor --provider hetzner --exposure wan --dry-run
+tools/wire/wire doctor --provider hetzner --exposure private --dry-run
+tools/wire/wire create-endpoint --provider hetzner --exposure wan --dry-run --write-manifest
 ```
 
 Oracle offline and pcap validation plus probe dry-runs should pass before
 creating infrastructure. The validation commands are documented in
 [validation.md](validation.md) and [probe.md](probe.md).
-
-Real creation uses provider defaults that can be overridden. Choose values that
-belong to the disposable test environment and do not commit account-specific
-settings:
-
-```sh
-HETZNER_SERVER_TYPE=replace-with-server-type \
-HETZNER_IMAGE=replace-with-image \
-HETZNER_LOCATION=replace-with-location \
-tools/live-lab/libcrafter-live-lab create --provider hetzner
-```
 
 Plan provider-backed oracle and probe live validation without creating
 infrastructure:
@@ -60,34 +37,45 @@ tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
-Run oracle or probe live validation through the provider suite when disposable
-resources are intentionally available:
+Start protected live validation only when disposable resources are intended:
 
 ```sh
-tools/live-lab/libcrafter-live-lab run --provider hetzner --suite oracle-live
-LIBCRAFTER_LIVE_LAB_CONFIRM=run tools/live-lab/libcrafter-live-lab run --provider hetzner --suite probe --confirm-live-run
+tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
+tools/probe/run --provider hetzner --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
-Generated provider state is written below `tools/live-lab/.state/hetzner/`.
-Artifacts are written below `tools/live-lab/artifacts/hetzner/`. Both locations
-are ignored by git. Oracle reports and packet artifacts are written below
-`target/oracle/`; probe reports are written below `target/probe/`.
+Generated endpoint state is written below `tools/wire/.state/`. Artifacts are
+written below `tools/wire/artifacts/`. Both locations are ignored by git.
+Oracle reports and packet artifacts are written below `target/oracle/`; probe
+reports are written below `target/probe/`.
 
 Use the same `--profile`, `--seed`, `--count`, and reported `--index` to
 reproduce a single failed oracle packet plan. For probe, preserve the reported
 sequence number, case name, seed, and profile.
 
-## Artifacts
+## Direct Endpoint Operations
 
-Collect artifacts after a real provider run:
+The high-level oracle and probe runners create and destroy their own endpoints.
+Use direct wire commands only for debugging, inspection, or manual provider
+maintenance:
 
 ```sh
-tools/live-lab/libcrafter-live-lab artifact --provider hetzner
+tools/wire/wire create-endpoint --provider hetzner --exposure wan --confirm-live-run --json
+tools/wire/wire list-endpoints --json
+tools/wire/wire ssh-info ENDPOINT_ID --json
+tools/wire/wire collect-artifacts ENDPOINT_ID
+tools/wire/wire destroy-endpoint ENDPOINT_ID --json
 ```
 
-Keep artifacts local. Do not commit provider account data, public host
-addresses, live host identifiers, packet captures from non-disposable networks,
-or credentials.
+For private endpoint experiments, pass the same `--private-group` to each
+endpoint and unique `--private-ip` values inside the supported private range.
+
+## Artifacts
+
+Collect artifacts through wire or the owning oracle/probe runner. Keep artifacts
+local. Do not commit provider account data, public host addresses, live host
+identifiers, packet captures from non-disposable networks, private keys, or
+credentials.
 
 ## CI Secrets
 
@@ -98,17 +86,15 @@ protected workflows with environment approval.
 Recommended provider dry-run flow:
 
 ```sh
+tools/wire/wire doctor --provider hetzner --exposure private --dry-run
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
-tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
-tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
 ```
 
 Pull request CI should run corpus, offline, pcap, Hetzner wire dry-run, and
 probe dry-run validation through [validation.md](validation.md). Real live runs
-should be manual, protected, and wrap `create`, `run`, `artifact`, and
-`destroy` in cleanup logic so `destroy` still executes after a failed
-validation step.
+should be manual, protected, and keep cleanup logic around wire endpoint
+destruction so resources are still torn down after a failed validation step.
 
 See also [supported-platforms.md](supported-platforms.md) for the alpha support
 matrix and known release gaps.
@@ -118,10 +104,10 @@ matrix and known release gaps.
 Destroy disposable hosts as soon as live validation finishes:
 
 ```sh
-tools/live-lab/libcrafter-live-lab destroy --provider hetzner
+tools/wire/wire destroy-endpoint ENDPOINT_ID --json
 ```
 
 If a command fails before cleanup, keep the ignored state directory until
-`destroy` succeeds. The manifest contains the provider resource id needed for
-cleanup. After cleanup, artifacts can be kept locally for debugging and removed
-manually when no longer needed.
+`destroy-endpoint` succeeds. The endpoint manifest contains the provider
+resource ids needed for cleanup. After cleanup, artifacts can be kept locally
+for debugging and removed manually when no longer needed.

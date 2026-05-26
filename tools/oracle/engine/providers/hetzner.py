@@ -8,7 +8,6 @@ infrastructure, or send packets.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from ..live import (
     LiveCommandPlan,
@@ -174,35 +173,11 @@ def normalize_hetzner_provider_capabilities(
 def hetzner_token_configured() -> bool:
     """Return whether the process environment has Hetzner credentials."""
 
-    if os.environ.get("HETZNER_API_TOKEN"):
-        return True
-
-    env_file = Path(
-        os.environ.get(
-            "LIBCRAFTER_LIVE_LAB_ENV",
-            "~/.config/libcrafter/live-test.env",
-        )
-    ).expanduser()
-    try:
-        lines = env_file.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return False
-
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if stripped.startswith("export "):
-            stripped = stripped.removeprefix("export ").lstrip()
-        if not stripped.startswith("HETZNER_API_TOKEN="):
-            continue
-        value = stripped.split("=", 1)[1].strip().strip("\"'")
-        return bool(value)
-    return False
+    return bool(os.environ.get("HETZNER_API_TOKEN") or os.environ.get("HCLOUD_TOKEN"))
 
 
 def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
-    """Return the provider resources required for an oracle live lab."""
+    """Return the provider resources required for an oracle wire lab."""
 
     provider_capabilities = hetzner_default_provider_capabilities(dry_run=dry_run)
     return {

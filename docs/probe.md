@@ -42,36 +42,28 @@ Run local static checks and dry-runs first:
 ```sh
 cargo test --workspace
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
-tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
-tools/live-lab/libcrafter-live-lab create --provider hetzner --dry-run
+tools/wire/wire doctor --provider hetzner --exposure private --dry-run
+tools/wire/wire create-endpoint --provider hetzner --exposure private --role probe-stimulus --private-group probe-smoke --private-ip 10.0.25.10 --dry-run --write-manifest
 ```
 
 Start a protected live run only when disposable resources are intended:
 
 ```sh
-LIBCRAFTER_LIVE_LAB_CONFIRM=run \
-tools/live-lab/libcrafter-live-lab run --provider hetzner --suite probe \
-  --confirm-live-run --profile smoke --seed 21 --count 25
+tools/probe/run --provider hetzner --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
-The provider wrapper bootstraps both endpoints, configures the private network,
-starts target services, installs temporary TCP RST guards on the stimulus
-endpoint, runs the `stimulus_endpoint` binary from `tools/probe/adapters`, collects
-artifacts, and cleans up probe services. Destroy the lab when the run is
-complete:
-
-```sh
-LIBCRAFTER_LIVE_LAB_CONFIRM=run tools/live-lab/libcrafter-live-lab artifact --provider hetzner
-LIBCRAFTER_LIVE_LAB_CONFIRM=run tools/live-lab/libcrafter-live-lab destroy --provider hetzner
-```
+The probe runner uses `tools/wire` to create both endpoints, configure the
+private network, start target services, install temporary TCP RST guards on the
+stimulus endpoint, run the `stimulus_endpoint` binary from
+`tools/probe/adapters`, collect artifacts, and clean up endpoint resources.
 
 ## Artifacts
 
 Probe reports include selected cases, generated probe plans, execution counts,
 skip counts, provider command metadata, observed responses, and per-case
 failure reasons. Local reports are written below `target/probe/`. Provider
-artifacts are written below `tools/live-lab/artifacts/hetzner/` for local runs
-or the configured live-lab artifact directory in CI.
+artifacts are written below `tools/wire/artifacts/` for local runs or the
+configured wire artifact directory in CI.
 
 Do not commit provider state, public host addresses, live host identifiers,
 packet captures from non-disposable networks, or credentials.

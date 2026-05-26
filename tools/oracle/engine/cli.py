@@ -1914,7 +1914,7 @@ def _live_hetzner_execute(
     exchanges: list[LiveExchangePlan] = []
     results: list[ComparisonResult] = []
     execution_errors: list[str] = []
-    keep_live_lab = bool(getattr(args, "keep_live_lab", False))
+    keep_wire_endpoints = bool(getattr(args, "keep_wire_endpoints", False))
     created_endpoint_ids: list[str] = []
     live_packet_exchange = False
     live_direction_counts = _live_empty_direction_counts(corpus_metadata, directions)
@@ -2398,7 +2398,7 @@ def _live_hetzner_execute(
                 label=f"98-artifact-{role}",
             )
             provider_commands.append(artifact)
-        if not keep_live_lab:
+        if not keep_wire_endpoints:
             for endpoint_id in reversed(created_endpoint_ids):
                 destroy = _run_wire_command(
                     wire.destroy(endpoint_id),
@@ -2412,7 +2412,6 @@ def _live_hetzner_execute(
                     "argv": [],
                     "exit_code": 0,
                     "label": "99-destroy-skipped",
-                    "keep_live_lab": True,
                     "keep_wire_endpoints": True,
                     "endpoint_ids": list(created_endpoint_ids),
                 }
@@ -2511,7 +2510,7 @@ def _live_hetzner_execute(
                 "remote_dir": remote_dir,
                 "remote_artifact_root": remote_artifact_root,
                 "created_endpoint_ids": list(created_endpoint_ids),
-                "keep_wire_endpoints": keep_live_lab,
+                "keep_wire_endpoints": keep_wire_endpoints,
             },
             "provider_workflow": [command.to_dict() for command in provider_workflow],
             "provider_commands": provider_commands,
@@ -2524,9 +2523,8 @@ def _live_hetzner_execute(
                 ).to_dict(),
             },
             "teardown": {
-                "always_attempt": not keep_live_lab,
-                "keep_live_lab": keep_live_lab,
-                "keep_wire_endpoints": keep_live_lab,
+                "always_attempt": not keep_wire_endpoints,
+                "keep_wire_endpoints": keep_wire_endpoints,
                 "command": _live_provider_workflow_command(
                     provider_workflow,
                     "teardown-disposable-hetzner-endpoints",
@@ -2559,11 +2557,7 @@ def _live_hetzner_execute(
 
 
 def _hetzner_wire_remote_dir() -> str:
-    remote_dir = (
-        os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR")
-        or os.environ.get("LIBCRAFTER_LIVE_LAB_REMOTE_DIR")
-        or "/root/libcrafter"
-    )
+    remote_dir = os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR") or "/root/libcrafter"
     if not remote_dir.startswith("/"):
         raise RuntimeError("Hetzner wire remote_dir must be an absolute path")
     if "'" in remote_dir:
@@ -2635,8 +2629,8 @@ def _create_wire_repo_archive(output_dir: Path) -> Path:
         str(REPO_ROOT),
         "--exclude=.git",
         "--exclude=target",
-        "--exclude=tools/live-lab/.state",
-        "--exclude=tools/live-lab/artifacts",
+        "--exclude=tools/wire/.state",
+        "--exclude=tools/wire/artifacts",
         "-czf",
         str(archive_path),
         ".",
@@ -6218,8 +6212,8 @@ def _live_reproduction_command(args: argparse.Namespace) -> str:
         argv.append("--dry-run")
     if getattr(args, "confirm_live_run", False):
         argv.append("--confirm-live-run")
-    if getattr(args, "keep_live_lab", False):
-        argv.append("--keep-live-lab")
+    if getattr(args, "keep_wire_endpoints", False):
+        argv.append("--keep-wire-endpoints")
     return shlex.join(argv)
 
 
@@ -7269,8 +7263,6 @@ def _classify_scapy_import_match(relative_path: str) -> str:
         or "/fixtures/" in relative_path
     ):
         return "fixture data"
-    if relative_path.startswith("tools/live-lab/"):
-        return "live provider infrastructure"
     if (
         relative_path.startswith("docs/")
         or relative_path.startswith(".agents/skills/")
@@ -7437,9 +7429,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="confirm protected non-dry-run provider execution",
     )
     live_parser.add_argument(
-        "--keep-live-lab",
+        "--keep-wire-endpoints",
         action="store_true",
-        help="keep Hetzner live-lab resources after a non-dry-run for debugging",
+        help="keep Hetzner wire endpoints after a non-dry-run for debugging",
     )
     live_parser.set_defaults(func=_live)
 

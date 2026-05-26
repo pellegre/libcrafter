@@ -1,4 +1,4 @@
-name: live-lab
+name: wire-live
 
 on:
   pull_request:
@@ -111,9 +111,8 @@ jobs:
       PROBE_LIVE_PROFILE: ${{ github.event.inputs.probe_live_profile }}
       PROBE_LIVE_SEED: ${{ github.event.inputs.probe_live_seed }}
       PROBE_LIVE_COUNT: ${{ github.event.inputs.probe_live_count }}
-      LIBCRAFTER_LIVE_LAB_CONFIRM: ${{ github.event.inputs.confirm_hetzner_live }}
-      LIBCRAFTER_LIVE_LAB_ARTIFACT_DIR: ${{ github.workspace }}/target/live-lab-artifacts
-      LIBCRAFTER_LIVE_LAB_STATE_DIR: ${{ github.workspace }}/target/live-lab-state
+      LIBCRAFTER_WIRE_ARTIFACT_ROOT: ${{ github.workspace }}/target/wire-artifacts
+      LIBCRAFTER_WIRE_STATE_ROOT: ${{ github.workspace }}/target/wire-state
 
     steps:
       - name: Checkout
@@ -143,25 +142,68 @@ jobs:
       - name: Run real Hetzner oracle live exchange
         run: |
           tools/oracle/run live --provider hetzner \
+            --confirm-live-run \
             --profile "$ORACLE_LIVE_PROFILE" \
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
 
       - name: Run real Hetzner probe exchange
         run: |
-          tools/live-lab/libcrafter-live-lab run --provider hetzner --suite probe \
+          tools/probe/run --provider hetzner \
             --confirm-live-run \
             --profile "$PROBE_LIVE_PROFILE" \
             --seed "$PROBE_LIVE_SEED" \
             --count "$PROBE_LIVE_COUNT"
 
-      - name: Collect remaining live-lab artifacts
+      - name: Collect remaining wire artifacts
         if: ${{ always() }}
-        run: tools/live-lab/libcrafter-live-lab artifact --provider hetzner || true
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
 
-      - name: Destroy remaining live-lab resources
+          result = subprocess.run(
+              ["tools/wire/wire", "list-endpoints", "--json"],
+              check=False,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.DEVNULL,
+              text=True,
+          )
+          if result.returncode != 0:
+              raise SystemExit(0)
+          for endpoint in json.loads(result.stdout or "{}").get("endpoints", []):
+              endpoint_id = endpoint.get("endpoint_id")
+              if endpoint_id:
+                  subprocess.run(
+                      ["tools/wire/wire", "collect-artifacts", endpoint_id],
+                      check=False,
+                  )
+          PY
+
+      - name: Destroy remaining wire resources
         if: ${{ always() }}
-        run: tools/live-lab/libcrafter-live-lab destroy --provider hetzner || true
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+
+          result = subprocess.run(
+              ["tools/wire/wire", "list-endpoints", "--json"],
+              check=False,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.DEVNULL,
+              text=True,
+          )
+          if result.returncode != 0:
+              raise SystemExit(0)
+          for endpoint in reversed(json.loads(result.stdout or "{}").get("endpoints", [])):
+              endpoint_id = endpoint.get("endpoint_id")
+              if endpoint_id:
+                  subprocess.run(
+                      ["tools/wire/wire", "destroy-endpoint", endpoint_id, "--json"],
+                      check=False,
+                  )
+          PY
 
       - name: Upload live artifacts
         if: ${{ always() }}
@@ -172,4 +214,4 @@ jobs:
           path: |
             target/oracle/live
             target/probe
-            target/live-lab-artifacts
+            target/wire-artifacts

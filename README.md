@@ -124,14 +124,14 @@ cargo doc --workspace --no-deps
 Live raw-packet validation must run in a disposable provider lab:
 
 ```sh
-tools/live-lab/libcrafter-live-lab doctor --provider local-dry-run
-tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite all
+tools/wire/wire doctor --provider hetzner --exposure wan --dry-run
+tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
-The Hetzner provider reads `HETZNER_API_TOKEN` from the environment or from the
-ignored local file documented in [docs/live-lab.md](docs/live-lab.md). Do not
-store real credentials, provider account data, public IPs, or live host IDs in
-tracked files.
+The Hetzner wire provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
+environment. Do not store real credentials, provider account data, public IPs,
+or live host IDs in tracked files.
 
 Oracle validation modes are documented in
 [docs/validation.md](docs/validation.md). Kernel and service behavior probes

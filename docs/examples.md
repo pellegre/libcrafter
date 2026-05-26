@@ -32,6 +32,6 @@ cargo run -p crafter --example batch_send_recv
 cargo run -p crafter --example dns_query -- --name example.com
 ```
 
-Examples are safe by default. Live-capable examples require `--live`,
-`--i-understand-isolated-lab`, and `LIBCRAFTER_LIVE_LAB=1` before opening live
-send or capture handles.
+Examples are safe by default. Live-capable examples require `--live` and
+`--i-understand-isolated-lab` before opening live send or capture handles, and
+should run only inside disposable wire endpoints.

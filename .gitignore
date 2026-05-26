@@ -86,19 +86,15 @@ Cargo.lock
 __pycache__/
 *.py[cod]
 
-# Local environment and live-lab state #
-#######################################
+# Local environment and provider state #
+########################################
 .env
 .env.*
 !.env.example
 .scratch/
-!tools/live-lab/run-in-image.sh
-!tools/live-lab/image/entrypoint.sh
 !tools/reference/legacy-libcrafter.sh
 !tests/live/*.sh
 .libcrafter-live/
-tools/live-lab/.state/
-tools/live-lab/artifacts/
 tools/wire/.state/
 tools/wire/artifacts/
 

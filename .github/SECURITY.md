@@ -14,5 +14,5 @@ is enabled for this repository. Include:
 - a minimal reproduction when possible
 - whether packet capture, raw sockets, or provider credentials are involved
 
-Do not include real provider tokens, public live-lab host identifiers, or packet
+Do not include real provider tokens, public wire endpoint identifiers, or packet
 captures containing sensitive traffic in public reports.

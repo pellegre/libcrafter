@@ -85,11 +85,11 @@ tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 ```
 
-Real provider-backed validation is reserved for explicit live-lab workflows on
-disposable infrastructure:
+Real provider-backed validation is reserved for explicit protected workflows on
+disposable wire endpoints:
 
 ```sh
-tools/live-lab/libcrafter-live-lab run --provider hetzner --suite oracle-live
+tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
 ```
 
 See [live-lab.md](live-lab.md) for provider credentials, artifacts, and cleanup.

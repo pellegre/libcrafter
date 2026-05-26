@@ -257,7 +257,7 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | `pcap_write` | Generated Ethernet/IPv4/TCP packets written to a pcap file. |
 | `pcap_read` | Pcap metadata inspection, packet collection, and streaming `PcapReader` workflows. |
 | `sniffer_offline` | Offline `Sniffer` filtering and bounded packet iteration. |
-| `capture_pcap` | Bounded libpcap capture configuration and pcap writing after live-lab opt-in. |
+| `capture_pcap` | Bounded libpcap capture configuration and pcap writing after isolated-lab opt-in. |
 | `arp_who_has` | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. |
 | `dns_query` | DNS query construction, dry-run send/receive reporting, and synthetic response decoding. |
 | `dhcp_discover` | DHCP discover construction with an explicit client MAC and link-layer send options. |
