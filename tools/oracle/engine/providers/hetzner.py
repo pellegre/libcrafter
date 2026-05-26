@@ -8,14 +8,18 @@ infrastructure, or send packets.
 from __future__ import annotations
 
 import os
+import shlex
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 
+from .base import LiveProviderAdapter
 from ..live import (
     LiveCommandPlan,
     LiveEndpoint,
     LiveExchangePlan,
     LiveValidationCheck,
 )
-from ..model import JSONObject
+from ..model import JSONObject, PacketPlan
 from .. import wire_client
 
 
@@ -794,3 +798,280 @@ def validate_hetzner_dry_run_exchange(
             "live_packet_exchange": False,
         },
     )
+
+
+def hetzner_wire_remote_dir() -> str:
+    """Return the repository directory used by Hetzner wire endpoints."""
+
+    remote_dir = os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR") or "/root/libcrafter"
+    if not remote_dir.startswith("/"):
+        raise RuntimeError("Hetzner wire remote_dir must be an absolute path")
+    if "'" in remote_dir:
+        raise RuntimeError("Hetzner wire remote_dir must not contain single quotes")
+    return remote_dir.rstrip("/") or "/"
+
+
+def hetzner_endpoint_remote_command(
+    *,
+    endpoint_role: str,
+    remote_dir: str,
+    request_path: str,
+    out_dir: str,
+) -> list[str]:
+    """Return the endpoint protocol command executed on a Hetzner wire endpoint."""
+
+    quoted_remote_dir = shlex.quote(remote_dir)
+    quoted_request = shlex.quote(request_path)
+    quoted_out = shlex.quote(out_dir)
+    if endpoint_role == "libcrafter":
+        script = "\n".join(
+            [
+                "set -euo pipefail",
+                f"cd {quoted_remote_dir}",
+                'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
+                (
+                    "cargo run -q -p oracle-adapters --bin live_endpoint -- "
+                    f"--live --input {quoted_request} --out {quoted_out}"
+                ),
+            ]
+        )
+    else:
+        script = "\n".join(
+            [
+                "set -euo pipefail",
+                f"cd {quoted_remote_dir}",
+                'export PYTHONPATH="tools/oracle${PYTHONPATH:+:$PYTHONPATH}"',
+                (
+                    "python3 -m engine.backends.scapy.live "
+                    f"--live --input {quoted_request} --out {quoted_out}"
+                ),
+            ]
+        )
+    return ["bash", "-lc", script]
+
+
+def hetzner_live_transit_plan(plan: PacketPlan) -> PacketPlan:
+    """Apply Hetzner transit rewrites before expected-model generation."""
+
+    fields = {
+        layer: dict(layer_fields)
+        for layer, layer_fields in plan.fields.items()
+    }
+    wire_policy = hetzner_wire_comparison_policy(plan)
+    rewrites: list[JSONObject] = []
+    ipv4 = fields.get("ipv4")
+    if isinstance(ipv4, dict) and int(ipv4.get("ttl", 64)) < 2:
+        rewrites.append(
+            {
+                "field": "ipv4.ttl",
+                "from": ipv4.get("ttl"),
+                "to": 64,
+                "reason": "provider live transit decrements TTL before capture",
+            }
+        )
+        ipv4["ttl"] = 64
+
+    return replace(
+        plan,
+        fields=fields,
+        strict_bytes=bool(wire_policy.get("strict_bytes", plan.strict_bytes)),
+        metadata={
+            **plan.metadata,
+            "wire": wire_policy,
+            "live_transit_rewrites": rewrites,
+            "live_mutable_fields": list(wire_policy.get("mutable_fields", [])),
+            "strict_bytes": bool(wire_policy.get("strict_bytes", plan.strict_bytes)),
+        },
+    )
+
+
+def hetzner_wire_comparison_policy(plan: PacketPlan) -> JSONObject:
+    """Return Hetzner wire comparison policy for one packet plan."""
+
+    raw_policy = plan.metadata.get("wire")
+    if isinstance(raw_policy, Mapping):
+        policy = {
+            key: value
+            for key, value in raw_policy.items()
+            if isinstance(key, str)
+        }
+    else:
+        from ..corpus import wire_comparison_policy
+
+        policy = wire_comparison_policy(plan, provider=PROVIDER_NAME)
+
+    mutable_fields = policy.get("mutable_fields", [])
+    if not isinstance(mutable_fields, Sequence) or isinstance(
+        mutable_fields,
+        (str, bytes, bytearray),
+    ):
+        mutable_fields = []
+    policy["mutable_fields"] = [
+        field
+        for field in mutable_fields
+        if isinstance(field, str) and field
+    ]
+
+    strict_bytes = policy.get("strict_bytes")
+    if not isinstance(strict_bytes, bool):
+        byte_mutable_fields = policy.get("byte_mutable_fields", policy["mutable_fields"])
+        strict_bytes = bool(plan.strict_bytes and not byte_mutable_fields)
+    policy["strict_bytes"] = strict_bytes
+
+    compare_root = policy.get("compare_root")
+    if compare_root is not None and not isinstance(compare_root, str):
+        compare_root = None
+    policy["compare_root"] = compare_root
+    policy.setdefault("provider", PROVIDER_NAME)
+    return policy
+
+
+@dataclass(frozen=True, slots=True)
+class HetznerLiveProviderAdapter:
+    """Oracle live adapter for the existing Hetzner private wire lab."""
+
+    name: str = PROVIDER_NAME
+    wire_provider: str = PROVIDER_NAME
+    wire_exposure: str = "private"
+    endpoint_roles: tuple[str, str] = ("libcrafter", "reference_backend")
+    private_group: str | None = ORACLE_PRIVATE_GROUP
+    endpoint_private_ips: Mapping[str, str] = field(
+        default_factory=lambda: {
+            "libcrafter": LIBCRAFTER_PRIVATE_ADDRESS,
+            "reference_backend": REFERENCE_PRIVATE_ADDRESS,
+        }
+    )
+    artifact_collection_purpose: str = "collect-live-endpoint-artifacts"
+    teardown_purpose: str = "teardown-disposable-hetzner-endpoints"
+
+    def token_configured(self) -> bool:
+        """Return whether Hetzner credentials are present."""
+
+        return hetzner_token_configured()
+
+    def default_provider_capabilities(
+        self,
+        *,
+        dry_run: bool,
+        source: str = "planned-defaults",
+    ) -> JSONObject:
+        """Return Hetzner capability defaults before endpoint discovery."""
+
+        return hetzner_default_provider_capabilities(dry_run=dry_run, source=source)
+
+    def normalize_provider_capabilities(
+        self,
+        raw: JSONObject,
+        *,
+        dry_run: bool | None = None,
+        source: str | None = None,
+    ) -> JSONObject:
+        """Normalize Hetzner provider capabilities for corpus filtering."""
+
+        return normalize_hetzner_provider_capabilities(
+            raw,
+            dry_run=dry_run,
+            source=source,
+        )
+
+    def planned_infrastructure(self, *, dry_run: bool) -> JSONObject:
+        """Return planned Hetzner private lab infrastructure."""
+
+        return hetzner_private_network_plan(dry_run=dry_run)
+
+    def endpoints(self, *, dry_run: bool) -> dict[str, LiveEndpoint]:
+        """Return the two Hetzner endpoint roles."""
+
+        return hetzner_endpoints(dry_run=dry_run)
+
+    def wire_endpoint_plan(
+        self,
+        *,
+        dry_run: bool,
+        client: wire_client.WireClient | None = None,
+        private_group: str | None = None,
+        confirm_live_run: bool = False,
+        created_endpoint_ids: list[str] | None = None,
+    ) -> dict[str, object]:
+        """Create or plan the two Hetzner private wire endpoints."""
+
+        return hetzner_wire_endpoint_plan(
+            dry_run=dry_run,
+            client=client,
+            private_group=private_group or self.private_group or ORACLE_PRIVATE_GROUP,
+            confirm_live_run=confirm_live_run,
+            created_endpoint_ids=created_endpoint_ids,
+        )
+
+    def provider_workflow(self, *, dry_run: bool) -> list[LiveCommandPlan]:
+        """Return Hetzner provider lifecycle command plans."""
+
+        return hetzner_provider_workflow(dry_run=dry_run)
+
+    def endpoint_bootstrap_plan(self, *, dry_run: bool) -> list[LiveCommandPlan]:
+        """Return Hetzner endpoint bootstrap command plans."""
+
+        return hetzner_endpoint_bootstrap_plan(dry_run=dry_run)
+
+    def validate_provider_workflow(
+        self,
+        commands: list[LiveCommandPlan],
+        *,
+        dry_run: bool,
+    ) -> LiveValidationCheck:
+        """Validate Hetzner provider lifecycle planning."""
+
+        return validate_hetzner_provider_workflow(commands, dry_run=dry_run)
+
+    def validate_endpoint_bootstrap(
+        self,
+        commands: list[LiveCommandPlan],
+        *,
+        dry_run: bool,
+    ) -> LiveValidationCheck:
+        """Validate Hetzner endpoint bootstrap planning."""
+
+        return validate_hetzner_endpoint_bootstrap(commands, dry_run=dry_run)
+
+    def validate_dry_run_exchange(
+        self,
+        exchange: LiveExchangePlan,
+    ) -> LiveValidationCheck:
+        """Validate a Hetzner provider-backed dry-run exchange."""
+
+        return validate_hetzner_dry_run_exchange(exchange)
+
+    def remote_dir(self) -> str:
+        """Return the remote repository directory for Hetzner wire endpoints."""
+
+        return hetzner_wire_remote_dir()
+
+    def endpoint_remote_command(
+        self,
+        *,
+        endpoint_role: str,
+        remote_dir: str,
+        request_path: str,
+        out_dir: str,
+    ) -> list[str]:
+        """Return the Hetzner endpoint protocol command for one role."""
+
+        return hetzner_endpoint_remote_command(
+            endpoint_role=endpoint_role,
+            remote_dir=remote_dir,
+            request_path=request_path,
+            out_dir=out_dir,
+        )
+
+    def apply_transit_plan(self, plan: PacketPlan) -> PacketPlan:
+        """Apply Hetzner transit rewrites before live comparison."""
+
+        return hetzner_live_transit_plan(plan)
+
+    def wire_comparison_policy(self, plan: PacketPlan) -> JSONObject:
+        """Return the Hetzner wire comparison policy for one packet."""
+
+        return hetzner_wire_comparison_policy(plan)
+
+
+HETZNER_LIVE_PROVIDER_ADAPTER: LiveProviderAdapter = HetznerLiveProviderAdapter()
