@@ -14,6 +14,7 @@ from unittest import mock
 from tools.wire.engine.model import NetworkInterface
 from tools.wire.engine.process import CommandResult
 from tools.wire.engine.providers import hetzner
+from tools.wire.engine.providers.hetzner import create as hetzner_create
 from tools.wire.engine.state import read_endpoint_manifest, read_private_group_record
 
 
@@ -234,10 +235,10 @@ class HetznerCreateEndpointTest(unittest.TestCase):
 @contextmanager
 def _patched_endpoint_helpers():
     with (
-        mock.patch.object(hetzner, "_ensure_endpoint_key", return_value=None),
-        mock.patch.object(hetzner, "wait_for_ssh", return_value=None),
+        mock.patch.object(hetzner_create, "_ensure_endpoint_key", return_value=None),
+        mock.patch.object(hetzner_create, "wait_for_ssh", return_value=None),
         mock.patch.object(
-            hetzner,
+            hetzner_create,
             "discover_endpoint_interfaces",
             return_value=_discovered_interfaces(),
         ),
