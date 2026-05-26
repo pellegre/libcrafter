@@ -32,7 +32,7 @@ repo paths.
 
 ## Network Experiments
 
-For QEMU, USB dongle, live packet, or LAN probing work:
+For QEMU, USB dongle, wire-level packet, or LAN probing work:
 
 - Keep host mutation in documented setup steps. Do not hide root-requiring
   changes inside casual scratch scripts.
@@ -42,7 +42,7 @@ For QEMU, USB dongle, live packet, or LAN probing work:
   observed MAC/IP addresses in the workspace README.
 - Put captures and logs in scratch artifacts. Redact secrets before promoting
   any output.
-- Use the `live-packet-lab` skill for live raw-packet validation workflows.
+- Use the `wire` skill for wire-level raw-packet validation workflows.
 
 ## Script Rules
 
