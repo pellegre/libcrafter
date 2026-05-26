@@ -10,9 +10,9 @@ and Rust tools can build protocol-correct packets, generate traffic on the
 wire, decode what comes back, and correlate live network stimuli and responses.
 
 The framework gives agents direct packet construction, send/receive, capture,
-pcap, oracle, and probe capabilities. Instead of calling only fixed protocol
-clients, agents can generate the packets themselves and decide how to interact
-with the network at the protocol level.
+and pcap capabilities. Instead of calling only fixed protocol clients, agents
+can generate the packets themselves and decide how to interact with the network
+at the protocol level.
 
 ## Version 2.0.0
 
@@ -39,8 +39,8 @@ use crafter::prelude::*;
   decisions.
 - Send packets, match replies, batch traffic, resolve interfaces, parse target
   ranges, and capture packets through bounded pcap workflows.
-- Use oracle and probe tooling to compare packet behavior against reference
-  backends and real network stacks.
+- Compare packet behavior against reference backends and real network stacks
+  through repository validation tooling.
 - Run packet work from one endpoint or a fleet of provider-backed endpoints
   when raw sockets, capture privileges, or external network reachability are
   needed.
