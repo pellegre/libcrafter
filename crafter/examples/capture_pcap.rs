@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use common::{
     arg_or, arg_value, default_target_path, ensure_parent, live_mode, parse_usize_arg,
-    print_help_if_requested, ExampleResult, ADVANCED_LIVE_ACK_FLAG, EXAMPLE_IFACE, LIVE_LAB_ENV,
+    print_help_if_requested, ExampleResult, ADVANCED_LIVE_ACK_FLAG, EXAMPLE_IFACE, LIVE_WIRE_ENV,
 };
 use crafter::prelude::*;
 
@@ -35,7 +35,7 @@ fn main() -> ExampleResult<()> {
     if !live {
         println!("mode: plan");
         println!(
-            "safety: no live capture handle opened; add --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_LAB_ENV}=1 on an isolated wire endpoint"
+            "safety: no live capture handle opened; add --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_WIRE_ENV}=1 on an isolated wire endpoint"
         );
         return Ok(());
     }
