@@ -22,6 +22,10 @@ from .model import (
     string_list,
     write_json,
 )
+from .providers.policy import (
+    wire_compare_root as provider_wire_compare_root,
+    wire_comparison_policy as provider_wire_comparison_policy,
+)
 
 
 CORPUS_SCHEMA_VERSION = 1
@@ -605,7 +609,11 @@ def _wire_profile_decision(
         reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
 
     provider = str(capabilities.get("provider", "unknown"))
-    policy = wire_comparison_policy(plan, provider=provider)
+    policy = wire_comparison_policy(
+        plan,
+        provider=provider,
+        provider_capabilities=capabilities,
+    )
     if policy.get("compare_root") is None:
         reasons.append(SKIP_WIRE_COMPARE_ROOT_UNAVAILABLE)
     reasons = _unique_strings(reasons)
@@ -814,92 +822,74 @@ def wire_comparison_policy(
     plan: PacketPlan,
     *,
     provider: str = _WIRE_DEFAULT_PROVIDER,
+    provider_capabilities: Mapping[str, object] | None = None,
 ) -> JSONObject:
     """Return the wire byte-comparison policy for a packet and provider."""
 
-    compare_root = _wire_compare_root(plan)
-    mutable_fields = _wire_mutable_fields(plan, provider=provider)
-    byte_mutable_fields = _wire_byte_mutable_fields(plan, provider=provider)
-    strict_bytes = bool(plan.strict_bytes and not byte_mutable_fields)
-    return {
-        "provider": provider,
-        "compare_root": compare_root,
-        "strict_bytes": strict_bytes,
-        "mutable_fields": mutable_fields,
-        "byte_mutable_fields": byte_mutable_fields,
-        "transit_mutations": _wire_transit_mutations(plan, provider=provider),
-    }
+    try:
+        return provider_wire_comparison_policy(
+            plan,
+            provider=provider,
+            provider_capabilities=provider_capabilities,
+        )
+    except ValueError as exc:
+        raise CorpusFormatError(str(exc)) from exc
 
 
 def _wire_compare_root(plan: PacketPlan) -> str | None:
-    root = _packet_root(plan)
-    if root is not None:
-        return _WIRE_COMPARE_ROOT_ALIASES.get(root)
-    if _requires_ipv4(plan):
-        return "l3:ipv4"
-    if _requires_ipv6(plan):
-        return "l3:ipv6"
-    return None
+    return provider_wire_compare_root(plan)
 
 
 def _wire_mutable_fields(
     plan: PacketPlan,
     *,
     provider: str = _WIRE_DEFAULT_PROVIDER,
+    provider_capabilities: Mapping[str, object] | None = None,
 ) -> list[str]:
-    fields: list[str] = []
-    if provider != "hetzner":
-        return fields
-    if "ipv4" in plan.stack:
-        fields.extend(["ipv4.ttl", "ipv4.checksum"])
-    if _wire_provider_adds_link_layer_metadata(plan, provider=provider):
-        fields.extend(["ethernet.src", "ethernet.dst", "ethernet.ethertype"])
-    return _unique_strings(fields)
+    policy = provider_wire_comparison_policy(
+        plan,
+        provider=provider,
+        provider_capabilities=provider_capabilities,
+    )
+    return _string_list_value(policy.get("mutable_fields", []), "wire.mutable_fields")
 
 
 def _wire_transit_mutations(
     plan: PacketPlan,
     *,
     provider: str = _WIRE_DEFAULT_PROVIDER,
+    provider_capabilities: Mapping[str, object] | None = None,
 ) -> list[JSONObject]:
-    mutations: list[JSONObject] = []
-    if provider != "hetzner":
-        return mutations
-    if "ipv4" in plan.stack:
-        mutations.extend(
-            [
-                {
-                    "field": "ipv4.ttl",
-                    "reason": "provider live transit may decrement TTL before capture",
-                },
-                {
-                    "field": "ipv4.checksum",
-                    "reason": "IPv4 header checksum follows provider TTL mutation",
-                },
-            ]
-        )
-    if _wire_provider_adds_link_layer_metadata(plan, provider=provider):
-        mutations.append(
-            {
-                "field": "ethernet.*",
-                "reason": "provider capture may expose Ethernet metadata around an L3 send",
-                "covered_fields": ["ethernet.src", "ethernet.dst", "ethernet.ethertype"],
-            }
-        )
-    return mutations
+    policy = provider_wire_comparison_policy(
+        plan,
+        provider=provider,
+        provider_capabilities=provider_capabilities,
+    )
+    raw = policy.get("transit_mutations", [])
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes, bytearray)):
+        return []
+    return [
+        _json_object(item, "wire.transit_mutations")
+        for item in raw
+        if isinstance(item, Mapping)
+    ]
 
 
 def _wire_byte_mutable_fields(
     plan: PacketPlan,
     *,
     provider: str = _WIRE_DEFAULT_PROVIDER,
+    provider_capabilities: Mapping[str, object] | None = None,
 ) -> list[str]:
-    compare_root = _wire_compare_root(plan) or ""
-    return [
-        field
-        for field in _wire_mutable_fields(plan, provider=provider)
-        if _wire_mutable_field_affects_compare_bytes(field, compare_root)
-    ]
+    policy = provider_wire_comparison_policy(
+        plan,
+        provider=provider,
+        provider_capabilities=provider_capabilities,
+    )
+    return _string_list_value(
+        policy.get("byte_mutable_fields", []),
+        "wire.byte_mutable_fields",
+    )
 
 
 def _wire_mutable_field_affects_compare_bytes(field: str, compare_root: str) -> bool:
@@ -916,7 +906,13 @@ def _wire_provider_adds_link_layer_metadata(
     *,
     provider: str,
 ) -> bool:
-    return provider == "hetzner" and (_wire_compare_root(plan) or "").startswith("l3:")
+    return bool(
+        (_wire_compare_root(plan) or "").startswith("l3:")
+        and any(
+            field.startswith("ethernet.")
+            for field in _wire_mutable_fields(plan, provider=provider)
+        )
+    )
 
 
 def _fields_contain_value(value: object, needles: set[str]) -> bool:

@@ -896,7 +896,7 @@ def hetzner_wire_comparison_policy(plan: PacketPlan) -> JSONObject:
             if isinstance(key, str)
         }
     else:
-        from ..corpus import wire_comparison_policy
+        from .policy import wire_comparison_policy
 
         policy = wire_comparison_policy(plan, provider=PROVIDER_NAME)
 
