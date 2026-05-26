@@ -1,10 +1,9 @@
 # Rust API Guide
 
 This document summarizes the public Rust surface for generated packet tools.
-The first alpha focuses on explicit builders, deterministic compile/decode
-behavior, bounded pcap workflows, and wire-endpoint-only live traffic.
-The only public crate is `crafter`, and its API may change before a stable
-release.
+Version 2.0.0 focuses on explicit builders, deterministic compile/decode
+behavior, bounded pcap workflows, and packet-level wire workflows. The only
+public crate is `crafter`.
 
 Most examples should start with:
 

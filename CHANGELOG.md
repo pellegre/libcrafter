@@ -1,9 +1,9 @@
 # Changelog
 
-## 0.1.0-alpha.1 - Rust Packet Crafting Alpha
+## 2.0.0 - Packet-Level Network Interaction
 
-This is the first public alpha of the Rust packet crafting workspace, released
-as one public crate: `crafter`.
+This is the first public release of the Rust packet-level network interaction
+workspace, released as one public crate: `crafter`.
 
 ### Added
 
@@ -24,14 +24,14 @@ as one public crate: `crafter`.
   workflows, interface helpers, address range helpers, and ARP resolution.
 - Safe-by-default Rust examples for basic, intermediate, and gated advanced
   packet workflows.
-- Provider-agnostic disposable wire endpoint tooling with local dry-run and Hetzner
-  providers.
+- Provider-agnostic wire endpoint tooling with local dry-run and Hetzner
+  providers for endpoint-backed packet workflows.
 - Reference fixture harnesses, malformed decode corpus, property tests,
   and GitHub Actions workflows.
 
-### Known Gaps
+### Known Boundaries
 
-- The Rust API is alpha and may change before a stable release.
+- The 0.1.x Rust API may evolve as protocol and wire workflow coverage grows.
 - The decoder is intentionally smaller than a full packet analyzer and focuses
   on the current example surface.
 - TCP stream reassembly, packet fragmentation/reassembly, full pcapng support,
@@ -39,7 +39,8 @@ as one public crate: `crafter`.
 - DNS encoding is deterministic and uncompressed; DNS decoding accepts
   compressed names.
 - Live packet sends and captures require platform privileges and should run only
-  on disposable wire endpoints.
+  in authorized wire environments.
+- QEMU and VirtualBox wire providers are not included in 2.0.0.
 
 ### Safety
 

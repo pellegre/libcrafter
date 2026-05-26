@@ -8,7 +8,7 @@ fn prelude_builds_and_compiles_packet() -> crafter::Result<()> {
         .src(Ipv4Addr::new(192, 0, 2, 10))
         .dst(Ipv4Addr::new(198, 51, 100, 20))
         / Icmp::echo_request().id(0x4242).seq(1)
-        / Raw::from("alpha");
+        / Raw::from("hello");
 
     let compiled = packet.compile()?;
 

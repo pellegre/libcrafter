@@ -96,9 +96,6 @@ probe dry-run validation through [validation.md](validation.md). Real provider
 runs should be manual, protected, and keep cleanup logic around wire endpoint
 destruction so resources are still torn down after a failed validation step.
 
-See also [supported-platforms.md](supported-platforms.md) for the alpha support
-matrix and known release gaps.
-
 ## Cleanup
 
 Destroy disposable hosts as soon as provider validation finishes:

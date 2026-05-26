@@ -1,6 +1,6 @@
 # Security Policy
 
-`libcrafter` is currently an alpha packet-building and validation workspace.
+`libcrafter` is a packet-building, send/receive, capture, and validation workspace.
 Please report security-sensitive issues privately instead of opening a public
 issue.
 

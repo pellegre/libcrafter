@@ -259,7 +259,6 @@ impl InterfaceInfo {
 }
 
 /// Parsed IPv4 target range compatible with libcrafter's wildcard examples.
-
 pub fn interfaces() -> Vec<InterfaceInfo> {
     datalink::interfaces()
         .iter()

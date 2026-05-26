@@ -43,7 +43,7 @@ fix/normalize-tcp-options
 test/oracle-pcap-fixtures
 docs/release-checklist
 ci/conventional-commit-policy
-release/crafter-alpha
+release/crafter-0-1
 ```
 
 Bad examples:
