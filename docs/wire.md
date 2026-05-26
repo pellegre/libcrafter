@@ -1,8 +1,12 @@
 # Wire Endpoint Provider Guide
 
-Disposable provider lifecycle is owned by `tools/wire`. Oracle and probe own the
-packet workload, reports, and reproduction coordinates. Use wire for endpoint
-creation, command execution, artifact collection, SSH details, and cleanup.
+`tools/wire` defines the provider contract for disposable endpoints —
+provision, command execution, artifact collection, SSH access, and destroy —
+so that `tools/oracle` and `tools/probe` can run a packet workload against an
+endpoint without depending on which provider produced it. Oracle and probe own
+the workload, reports, and reproduction coordinates; wire owns the lifecycle.
+Hetzner is the current provider implementation, and the rest of this document
+covers it.
 
 Local static tests should run before any provider command. Provider-backed wire
 endpoints are for tests that need root privileges, raw sockets, packet capture,
