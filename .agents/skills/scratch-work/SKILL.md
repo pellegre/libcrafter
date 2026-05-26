@@ -42,7 +42,7 @@ For QEMU, USB dongle, wire-level packet, or LAN probing work:
   observed MAC/IP addresses in the workspace README.
 - Put captures and logs in scratch artifacts. Redact secrets before promoting
   any output.
-- Use the `wire-validation` skill for wire-level raw-packet validation workflows.
+- Use the `wire-endpoint` skill for wire-level raw-packet workflows.
 
 ## Script Rules
 
