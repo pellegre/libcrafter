@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from tools.wire.engine import cli as wire_cli
 from tools.wire.engine.cli import (
     _ssh_info_output,
     collect_artifacts,
@@ -20,6 +25,7 @@ from tools.wire.engine.model import (
     ProviderResources,
 )
 from tools.wire.engine.process import CommandResult
+from tools.wire.engine.state import write_endpoint_manifest
 
 
 class WireTransferEndpointTest(unittest.TestCase):
@@ -91,6 +97,55 @@ class WireTransferEndpointTest(unittest.TestCase):
             self.assertEqual(report["local_path"], str(local_path))
             self.assertEqual(report["remote_path"], "/tmp/request.json")
 
+    def test_upload_endpoint_uses_virtualbox_manifest_ssh_details(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _virtualbox_manifest(root)
+            local_path = root / "input.txt"
+            local_path.write_text("request\n", encoding="utf-8")
+            calls: list[tuple[str, ...]] = []
+
+            def fake_runner(argv: list[str], **_: object) -> CommandResult:
+                calls.append(tuple(argv))
+                return CommandResult(
+                    argv=tuple(argv),
+                    redacted_argv=tuple(argv),
+                    cwd=None,
+                    exit_code=0,
+                    stdout="upload stdout\n",
+                    stderr="",
+                )
+
+            result = upload_endpoint(
+                manifest,
+                local_path,
+                "/tmp/request.json",
+                runner=fake_runner,
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(
+                calls,
+                [
+                    (
+                        "scp",
+                        "-i",
+                        str(root / "wire-state" / "endpoints" / "vbox-lan-test" / "id_ed25519"),
+                        "-P",
+                        "25222",
+                        "-o",
+                        "StrictHostKeyChecking=accept-new",
+                        "-o",
+                        "UserKnownHostsFile="
+                        f"{root / 'wire-state' / 'endpoints' / 'vbox-lan-test' / 'known_hosts'}",
+                        "-o",
+                        "ConnectTimeout=10",
+                        str(local_path),
+                        "ubuntu@127.0.0.1:/tmp/request.json",
+                    )
+                ],
+            )
+
     def test_download_endpoint_builds_scp_argv_and_writes_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -153,6 +208,55 @@ class WireTransferEndpointTest(unittest.TestCase):
             self.assertEqual(report["ok"], False)
             self.assertEqual(report["local_path"], str(local_path))
             self.assertEqual(report["remote_path"], "/tmp/response.json")
+
+    def test_download_endpoint_uses_virtualbox_manifest_ssh_details(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _virtualbox_manifest(root)
+            local_path = root / "output" / "response.json"
+            calls: list[tuple[str, ...]] = []
+
+            def fake_runner(argv: list[str], **_: object) -> CommandResult:
+                calls.append(tuple(argv))
+                return CommandResult(
+                    argv=tuple(argv),
+                    redacted_argv=tuple(argv),
+                    cwd=None,
+                    exit_code=0,
+                    stdout="download stdout\n",
+                    stderr="",
+                )
+
+            result = download_endpoint(
+                manifest,
+                "/tmp/response.json",
+                local_path,
+                runner=fake_runner,
+            )
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(
+                calls,
+                [
+                    (
+                        "scp",
+                        "-r",
+                        "-i",
+                        str(root / "wire-state" / "endpoints" / "vbox-lan-test" / "id_ed25519"),
+                        "-P",
+                        "25222",
+                        "-o",
+                        "StrictHostKeyChecking=accept-new",
+                        "-o",
+                        "UserKnownHostsFile="
+                        f"{root / 'wire-state' / 'endpoints' / 'vbox-lan-test' / 'known_hosts'}",
+                        "-o",
+                        "ConnectTimeout=10",
+                        "ubuntu@127.0.0.1:/tmp/response.json",
+                        str(local_path),
+                    )
+                ],
+            )
 
     def test_upload_endpoint_rejects_relative_local_path_before_running_scp(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -244,6 +348,66 @@ class WireTransferEndpointTest(unittest.TestCase):
             self.assertIn("ssh -i", output["ssh_command"])
             self.assertIn("ubuntu@198.51.100.20", output["ssh_command"])
 
+    def test_ssh_info_and_list_endpoints_use_virtualbox_manifest_from_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _virtualbox_manifest(root)
+            identity_file = str(
+                root / "wire-state" / "endpoints" / "vbox-lan-test" / "id_ed25519"
+            )
+            known_hosts = str(
+                root / "wire-state" / "endpoints" / "vbox-lan-test" / "known_hosts"
+            )
+
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+
+                ssh_stdout = io.StringIO()
+                with contextlib.redirect_stdout(ssh_stdout):
+                    ssh_exit = wire_cli.main(["ssh-info", manifest.endpoint_id, "--json"])
+                ssh_output = json.loads(ssh_stdout.getvalue())
+
+                self.assertEqual(ssh_exit, 0)
+                self.assertEqual(ssh_output["provider"], "virtualbox")
+                self.assertEqual(ssh_output["exposure"], "lan")
+                self.assertEqual(ssh_output["host"], "127.0.0.1")
+                self.assertEqual(ssh_output["port"], 25222)
+                self.assertEqual(ssh_output["user"], "ubuntu")
+                self.assertEqual(ssh_output["identity_file"], identity_file)
+                self.assertEqual(ssh_output["known_hosts_file"], known_hosts)
+                self.assertEqual(
+                    ssh_output["ssh"]["command"],
+                    [
+                        "ssh",
+                        "-i",
+                        identity_file,
+                        "-p",
+                        "25222",
+                        "-o",
+                        "StrictHostKeyChecking=accept-new",
+                        "-o",
+                        f"UserKnownHostsFile={known_hosts}",
+                        "-o",
+                        "ConnectTimeout=10",
+                        "ubuntu@127.0.0.1",
+                    ],
+                )
+
+                list_stdout = io.StringIO()
+                with contextlib.redirect_stdout(list_stdout):
+                    list_exit = wire_cli.main(["list-endpoints", "--json"])
+                list_output = json.loads(list_stdout.getvalue())
+
+                self.assertEqual(list_exit, 0)
+                self.assertEqual(len(list_output["endpoints"]), 1)
+                endpoint = list_output["endpoints"][0]
+                self.assertEqual(endpoint["endpoint_id"], "vbox-lan-test")
+                self.assertEqual(endpoint["provider"], "virtualbox")
+                self.assertEqual(endpoint["exposure"], "lan")
+                self.assertEqual(endpoint["status"], "active")
+                self.assertEqual(endpoint["ssh"]["host"], "127.0.0.1")
+                self.assertEqual(endpoint["ssh"]["port"], 25222)
+
 
 def _manifest(root: Path) -> EndpointManifest:
     return EndpointManifest(
@@ -264,6 +428,63 @@ def _manifest(root: Path) -> EndpointManifest:
         provider_resources=ProviderResources(),
         artifact_dir=str(root / "artifacts" / "hetzner-wan-test"),
     )
+
+
+def _virtualbox_manifest(root: Path) -> EndpointManifest:
+    endpoint_id = "vbox-lan-test"
+    endpoint_state_dir = root / "wire-state" / "endpoints" / endpoint_id
+    artifact_dir = root / "wire-artifacts" / endpoint_id
+    return EndpointManifest(
+        endpoint_id=endpoint_id,
+        provider="virtualbox",
+        exposure="lan",
+        status="active",
+        role="test",
+        created_at="2026-05-26T00:00:00Z",
+        ssh=EndpointSSHInfo(
+            host="127.0.0.1",
+            user="ubuntu",
+            port=25222,
+            identity_file=str(endpoint_state_dir / "id_ed25519"),
+            known_hosts_file=str(endpoint_state_dir / "known_hosts"),
+        ),
+        interfaces=[
+            NetworkInterface(
+                name="control",
+                exposure="nat",
+                ipv4="10.0.2.15",
+                metadata={"purpose": "ssh"},
+            ),
+            NetworkInterface(
+                name="enp0s8",
+                exposure="lan",
+                ipv4="192.168.1.77",
+                mac="08:00:27:aa:bb:cc",
+                metadata={"purpose": "packet"},
+            ),
+        ],
+        provider_resources=ProviderResources(
+            metadata={"created_by": "tools/wire-test", "provider": "virtualbox"},
+        ),
+        artifact_dir=str(artifact_dir),
+        metadata={
+            "state_dir": str(endpoint_state_dir),
+            "manifest_path": str(endpoint_state_dir / "endpoint.json"),
+        },
+    )
+
+
+@contextlib.contextmanager
+def _wire_env(root: Path):
+    with mock.patch.dict(
+        os.environ,
+        {
+            "LIBCRAFTER_WIRE_STATE_ROOT": str(root / "wire-state"),
+            "LIBCRAFTER_WIRE_ARTIFACT_ROOT": str(root / "wire-artifacts"),
+        },
+        clear=False,
+    ):
+        yield
 
 
 if __name__ == "__main__":
