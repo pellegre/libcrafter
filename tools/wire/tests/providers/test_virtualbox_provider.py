@@ -13,6 +13,13 @@ from pathlib import Path
 from unittest import mock
 
 from tools.wire.engine import cli as wire_cli
+from tools.wire.engine.model import (
+    EndpointManifest,
+    EndpointSSHInfo,
+    NetworkInterface,
+    ProviderResource,
+    ProviderResources,
+)
 from tools.wire.engine.process import CommandResult
 from tools.wire.engine.providers import resolve_provider, virtualbox
 from tools.wire.engine.providers.virtualbox.constants import VBOX_BRIDGE_IFACE_ENV
@@ -22,6 +29,7 @@ from tools.wire.engine.providers.vm import (
     QEMU_IMG_COMMAND,
 )
 from tools.wire.engine.registry import ProviderExposureError
+from tools.wire.engine.state import read_endpoint_manifest, write_endpoint_manifest
 
 
 class VirtualBoxRegistryTest(unittest.TestCase):
@@ -377,6 +385,122 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
         self.assertEqual(resources[0]["metadata"]["registered"], True)
 
 
+class VirtualBoxDestroyEndpointTest(unittest.TestCase):
+    def test_destroy_running_vm_uses_acpi_then_poweroff_and_unregisters(self) -> None:
+        fake = _VirtualBoxDestroyFakeRunner(state="running")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _virtualbox_manifest(root)
+            artifact_file = Path(manifest.artifact_dir) / "probe.txt"
+            artifact_file.parent.mkdir(parents=True, exist_ok=True)
+            artifact_file.write_text("preserve me\n", encoding="utf-8")
+
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+                output = virtualbox.destroy_endpoint(
+                    read_endpoint_manifest(manifest.endpoint_id),
+                    command_runner=fake,
+                    shutdown_timeout=0,
+                    poll_interval=0,
+                )
+                stored = read_endpoint_manifest(manifest.endpoint_id)
+                artifact_preserved = artifact_file.exists()
+
+        self.assertTrue(output["ok"])
+        self.assertTrue(output["destroyed"])
+        self.assertEqual(stored.status, "destroyed")
+        self.assertTrue(artifact_preserved)
+        self.assertEqual(
+            fake.vbox_calls,
+            [
+                ("VBoxManage", "showvminfo", "wire-virtualbox-lan-test", "--machinereadable"),
+                ("VBoxManage", "controlvm", "wire-virtualbox-lan-test", "acpipowerbutton"),
+                ("VBoxManage", "controlvm", "wire-virtualbox-lan-test", "poweroff"),
+                ("VBoxManage", "unregistervm", "wire-virtualbox-lan-test", "--delete"),
+            ],
+        )
+        self.assertEqual(
+            [action["action"] for action in output["actions"]],
+            ["inspect", "acpi-shutdown", "poweroff", "unregister"],
+        )
+        self.assertEqual(stored.metadata["virtualbox"]["vm_registered"], False)
+        self.assertEqual(stored.metadata["destroy"]["provider"], "virtualbox")
+
+    def test_destroy_powered_off_vm_only_unregisters(self) -> None:
+        fake = _VirtualBoxDestroyFakeRunner(state="poweroff")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _virtualbox_manifest(root)
+
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+                output = virtualbox.destroy_endpoint(
+                    read_endpoint_manifest(manifest.endpoint_id),
+                    command_runner=fake,
+                )
+                stored = read_endpoint_manifest(manifest.endpoint_id)
+
+        self.assertEqual(stored.status, "destroyed")
+        self.assertEqual(
+            fake.vbox_calls,
+            [
+                ("VBoxManage", "showvminfo", "wire-virtualbox-lan-test", "--machinereadable"),
+                ("VBoxManage", "unregistervm", "wire-virtualbox-lan-test", "--delete"),
+            ],
+        )
+        self.assertEqual(
+            [action["action"] for action in output["actions"]],
+            ["inspect", "unregister"],
+        )
+        self.assertEqual(
+            [skip["action"] for skip in output["skipped"]],
+            ["skip"],
+        )
+
+    def test_destroy_missing_vm_marks_manifest_destroyed(self) -> None:
+        fake = _VirtualBoxDestroyFakeRunner(missing=True)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _virtualbox_manifest(root)
+
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+                output = virtualbox.destroy_endpoint(
+                    read_endpoint_manifest(manifest.endpoint_id),
+                    command_runner=fake,
+                )
+                stored = read_endpoint_manifest(manifest.endpoint_id)
+
+        self.assertEqual(stored.status, "destroyed")
+        self.assertEqual(
+            fake.vbox_calls,
+            [("VBoxManage", "showvminfo", "wire-virtualbox-lan-test", "--machinereadable")],
+        )
+        self.assertEqual(
+            [action["action"] for action in output["actions"]],
+            ["already-missing"],
+        )
+
+    def test_destroy_already_destroyed_manifest_does_not_contact_virtualbox(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _virtualbox_manifest(root, status="destroyed")
+
+            def fail_runner(argv: Sequence[object], **_: object) -> CommandResult:
+                self.fail(f"destroyed endpoint should not contact provider: {argv}")
+
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+                output = virtualbox.destroy_endpoint(
+                    read_endpoint_manifest(manifest.endpoint_id),
+                    command_runner=fail_runner,
+                )
+
+        self.assertTrue(output["ok"])
+        self.assertTrue(output["already_destroyed"])
+        self.assertFalse(output["destroyed"])
+
+
 @contextmanager
 def _wire_env(root: Path, extra: Mapping[str, str] | None = None) -> Iterator[None]:
     env = {
@@ -395,6 +519,86 @@ def _wire_env(root: Path, extra: Mapping[str, str] | None = None) -> Iterator[No
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def _virtualbox_manifest(root: Path, *, status: str = "active") -> EndpointManifest:
+    endpoint_id = "virtualbox-lan-test"
+    state_dir = root / "wire-state" / "endpoints" / endpoint_id
+    artifact_dir = root / "wire-artifacts" / endpoint_id
+    vm_name = "wire-virtualbox-lan-test"
+    return EndpointManifest(
+        endpoint_id=endpoint_id,
+        provider="virtualbox",
+        exposure="lan",
+        status=status,
+        role="test",
+        created_at="2026-05-26T22:45:00Z",
+        ssh=EndpointSSHInfo(
+            host="127.0.0.1",
+            user="root",
+            port=25222,
+            identity_file=str(state_dir / "id_ed25519"),
+            known_hosts_file=str(state_dir / "known_hosts"),
+            metadata={
+                "transport": "virtualbox-nat-port-forward",
+                "vm_name": vm_name,
+                "control_interface": "enp0s3",
+            },
+        ),
+        interfaces=[
+            NetworkInterface(
+                name="enp0s3",
+                exposure="control",
+                ipv4="10.0.2.15",
+                metadata={"type": "nat-control", "host_port": 25222},
+            ),
+            NetworkInterface(
+                name="enp0s8",
+                exposure="lan",
+                ipv4="192.168.1.44",
+                metadata={"type": "bridged-lan", "bridge_interface": "wlan0"},
+            ),
+        ],
+        provider_resources=ProviderResources(
+            resources=[
+                ProviderResource(
+                    kind="virtualbox-vm",
+                    provider_id=vm_name,
+                    name=vm_name,
+                    metadata={
+                        "type": "virtualbox-vm",
+                        "vm_name": vm_name,
+                        "registered": True,
+                    },
+                ),
+                ProviderResource(
+                    kind="local-file",
+                    provider_id=str(state_dir),
+                    name="endpoint-state",
+                    metadata={"type": "local-file", "path": str(state_dir)},
+                ),
+            ],
+            cleanup_order=["virtualbox-vm", "local-file"],
+            metadata={
+                "provider": "virtualbox",
+                "exposure": "lan",
+                "vm_registered": True,
+            },
+        ),
+        artifact_dir=str(artifact_dir),
+        metadata={
+            "created": True,
+            "dry_run": False,
+            "state_dir": str(state_dir),
+            "manifest_path": str(state_dir / "endpoint.json"),
+            "virtualbox": {
+                "command": "VBoxManage",
+                "vm_name": vm_name,
+                "vm_registered": True,
+                "basefolder": str(state_dir / "virtualbox"),
+            },
+        },
+    )
 
 
 class _VirtualBoxLiveFakeRunner:
@@ -435,6 +639,41 @@ class _VirtualBoxLiveFakeRunner:
                 return _result(parts)
             if parts[-1] == LINUX_INTERFACE_DISCOVERY_COMMAND:
                 return _result(parts, stdout=_virtualbox_discovery_output())
+        raise AssertionError(f"unexpected command: {parts}")
+
+
+class _VirtualBoxDestroyFakeRunner:
+    def __init__(self, *, state: str = "poweroff", missing: bool = False) -> None:
+        self.state = state
+        self.missing = missing
+        self.calls: list[tuple[str, ...]] = []
+
+    @property
+    def vbox_calls(self) -> list[tuple[str, ...]]:
+        return [call for call in self.calls if call[0] == "VBoxManage"]
+
+    def __call__(self, argv: Sequence[object], **_: object) -> CommandResult:
+        parts = tuple(str(part) for part in argv)
+        self.calls.append(parts)
+        if parts == ("VBoxManage", "showvminfo", "wire-virtualbox-lan-test", "--machinereadable"):
+            if self.missing:
+                return _result(
+                    parts,
+                    exit_code=1,
+                    stderr="Could not find a registered machine named 'wire-virtualbox-lan-test'",
+                )
+            return _result(
+                parts,
+                stdout=f'name="wire-virtualbox-lan-test"\nVMState="{self.state}"\n',
+            )
+        if parts == ("VBoxManage", "controlvm", "wire-virtualbox-lan-test", "acpipowerbutton"):
+            return _result(parts)
+        if parts == ("VBoxManage", "controlvm", "wire-virtualbox-lan-test", "poweroff"):
+            self.state = "poweroff"
+            return _result(parts)
+        if parts == ("VBoxManage", "unregistervm", "wire-virtualbox-lan-test", "--delete"):
+            self.missing = True
+            return _result(parts)
         raise AssertionError(f"unexpected command: {parts}")
 
 
