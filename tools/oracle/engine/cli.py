@@ -1977,7 +1977,7 @@ def _live_provider_execute(
         provider_commands.extend(
             _wire_create_command_records(
                 wire_endpoint_plan.get("command_metadata", []),
-                labels=("02-create-libcrafter", "02-create-reference-backend"),
+                labels=_wire_create_labels(provider_adapter),
             )
         )
 
@@ -1995,6 +1995,7 @@ def _live_provider_execute(
                 remote_dir=remote_dir,
                 output_dir=output_dir,
                 label=f"03-bootstrap-{role}",
+                provider_adapter=provider_adapter,
             )
             provider_commands.extend(bootstrap_records)
             if any(record.get("exit_code") != 0 for record in bootstrap_records):
@@ -2110,7 +2111,11 @@ def _live_provider_execute(
             sender_request_path = _remote_artifact_path(sender_request, "request")
             receiver_request_path = _remote_artifact_path(receiver_request, "request")
             local_direction_dir = (
-                output_dir / "artifacts" / f"{provider_adapter.name}-exchange" / direction
+                output_dir
+                / "artifacts"
+                / "provider-exchange"
+                / provider_adapter.name
+                / direction
             )
             local_direction_dir.mkdir(parents=True, exist_ok=True)
             sender_local_request_path = local_direction_dir / f"{sender.role}.request.json"
@@ -2411,20 +2416,33 @@ def _live_provider_execute(
         for role, endpoint in endpoints.items():
             if not hasattr(endpoint, "endpoint_id"):
                 continue
-            artifact = _run_wire_command(
-                wire.collect_artifacts(endpoint.endpoint_id, remote_artifact_root),
+            artifact = _run_wire_command_safely(
+                lambda endpoint=endpoint: wire.collect_artifacts(
+                    endpoint.endpoint_id,
+                    remote_artifact_root,
+                ),
                 output_dir=output_dir,
                 label=f"98-artifact-{role}",
             )
             provider_commands.append(artifact)
+            if artifact.get("exit_code") != 0:
+                execution_errors.append(
+                    f"{provider_adapter.name} artifact collection failed for {role}: "
+                    f"{artifact.get('error', 'wire command failed')}"
+                )
         if not keep_wire_endpoints:
             for endpoint_id in reversed(created_endpoint_ids):
-                destroy = _run_wire_command(
-                    wire.destroy(endpoint_id),
+                destroy = _run_wire_command_safely(
+                    lambda endpoint_id=endpoint_id: wire.destroy(endpoint_id),
                     output_dir=output_dir,
                     label=f"99-destroy-{endpoint_id}",
                 )
                 provider_commands.append(destroy)
+                if destroy.get("exit_code") != 0:
+                    execution_errors.append(
+                        f"{provider_adapter.name} endpoint teardown failed for "
+                        f"{endpoint_id}: {destroy.get('error', 'wire command failed')}"
+                    )
         elif created_endpoint_ids:
             provider_commands.append(
                 {
@@ -2610,6 +2628,28 @@ def _run_wire_command(response, *, output_dir: Path, label: str) -> JSONObject:
     return metadata
 
 
+def _run_wire_command_safely(command, *, output_dir: Path, label: str) -> JSONObject:
+    try:
+        return _run_wire_command(command(), output_dir=output_dir, label=label)
+    except Exception as exc:  # pragma: no cover - depends on wire process failures.
+        command_dir = output_dir / "provider"
+        command_dir.mkdir(parents=True, exist_ok=True)
+        stdout_path = command_dir / f"{label}.stdout.txt"
+        stderr_path = command_dir / f"{label}.stderr.txt"
+        stdout_path.write_text("", encoding="utf-8")
+        stderr_path.write_text(str(exc), encoding="utf-8")
+        return {
+            "argv": [],
+            "exit_code": 1,
+            "ok": False,
+            "label": label,
+            "wire_command": True,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "error": str(exc),
+        }
+
+
 def _existing_paths_from_stdout(stdout: str) -> list[str]:
     paths: list[str] = []
     for line in stdout.splitlines():
@@ -2620,6 +2660,17 @@ def _existing_paths_from_stdout(stdout: str) -> list[str]:
         if path.exists():
             paths.append(str(path))
     return _dedupe_paths(paths)
+
+
+def _wire_create_labels(provider_adapter) -> tuple[str, ...]:
+    roles = getattr(provider_adapter, "endpoint_roles", ("libcrafter", "reference_backend"))
+    if (
+        isinstance(roles, Sequence)
+        and not isinstance(roles, (str, bytes, bytearray))
+        and all(isinstance(role, str) and role for role in roles)
+    ):
+        return tuple(f"02-create-{role}" for role in roles)
+    return ("02-create-libcrafter", "02-create-reference-backend")
 
 
 def _wire_create_command_records(
@@ -2686,6 +2737,7 @@ def _bootstrap_wire_endpoint(
     remote_dir: str,
     output_dir: Path,
     label: str,
+    provider_adapter,
 ) -> list[JSONObject]:
     remote_parent = posixpath.dirname(remote_dir.rstrip("/")) or "/"
     remote_archive = posixpath.join(remote_parent, "libcrafter-repo.tar.gz")
@@ -2700,128 +2752,18 @@ def _bootstrap_wire_endpoint(
     bootstrap = _run_wire_command(
         wire.exec(
             endpoint.endpoint_id,
-            [
-                "bash",
-                "-lc",
-                _wire_endpoint_bootstrap_script(
-                    endpoint=endpoint,
-                    peer=peer,
-                    remote_archive=remote_archive,
-                    remote_dir=remote_dir,
-                ),
-            ],
+            provider_adapter.endpoint_bootstrap_command(
+                endpoint=endpoint,
+                peer=peer,
+                remote_archive=remote_archive,
+                remote_dir=remote_dir,
+            ),
             timeout=1800,
         ),
         output_dir=output_dir,
         label=f"{label}-exec",
     )
     return [upload, bootstrap]
-
-
-def _wire_endpoint_bootstrap_script(
-    *,
-    endpoint,
-    peer,
-    remote_archive: str,
-    remote_dir: str,
-) -> str:
-    role = shlex.quote(endpoint.role)
-    private_ipv4 = shlex.quote(endpoint.address)
-    peer_private_ipv4 = shlex.quote(peer.address)
-    private_interface = shlex.quote(endpoint.interface)
-    quoted_archive = shlex.quote(remote_archive)
-    quoted_remote_dir = shlex.quote(remote_dir)
-
-    common = "\n".join(
-        [
-            "set -euo pipefail",
-            "if command -v cloud-init >/dev/null 2>&1; then "
-            "cloud-init status --wait >/dev/null 2>&1 || true; fi",
-            f"rm -rf {quoted_remote_dir}",
-            f"mkdir -p {quoted_remote_dir}",
-            f"tar -xzf {quoted_archive} -C {quoted_remote_dir}",
-            f"cd {quoted_remote_dir}",
-            f"export LIBCRAFTER_ENDPOINT_ROLE={role}",
-            f"export LIBCRAFTER_PRIVATE_IPV4={private_ipv4}",
-            f"export LIBCRAFTER_PEER_PRIVATE_IPV4={peer_private_ipv4}",
-            f"export LIBCRAFTER_PRIVATE_INTERFACE={private_interface}",
-            "export DEBIAN_FRONTEND=noninteractive",
-            "mkdir -p \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE\"",
-            "apt-get update",
-        ]
-    )
-    install_uv = "\n".join(
-        [
-            "install_uv() {",
-            "  if ! command -v uv >/dev/null 2>&1; then",
-            "    curl -LsSf https://astral.sh/uv/install.sh | sh",
-            "    export PATH=\"$HOME/.local/bin:$PATH\"",
-            "    ln -sf \"$(command -v uv)\" /usr/local/bin/uv || true",
-            "  fi",
-            "  export PATH=\"$HOME/.local/bin:$PATH\"",
-            "  command -v uv >/dev/null 2>&1",
-            "}",
-            "install_uv",
-        ]
-    )
-    if endpoint.role == "libcrafter":
-        return "\n".join(
-            [
-                common,
-                (
-                    "apt-get install -y --no-install-recommends "
-                    "build-essential ca-certificates clang curl git iproute2 "
-                    "iputils-ping libpcap-dev pkg-config python3"
-                ),
-                install_uv,
-                "if ! command -v cargo >/dev/null 2>&1; then "
-                "curl -fsS https://sh.rustup.rs | sh -s -- -y; fi",
-                "if [ -f \"$HOME/.cargo/env\" ]; then . \"$HOME/.cargo/env\"; fi",
-                "cargo build -p oracle-adapters --bin live_endpoint",
-                "{",
-                "  echo \"role=$LIBCRAFTER_ENDPOINT_ROLE\"",
-                "  echo \"private_ipv4=$LIBCRAFTER_PRIVATE_IPV4\"",
-                "  echo \"peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4\"",
-                "  echo \"private_interface=$LIBCRAFTER_PRIVATE_INTERFACE\"",
-                "  echo \"repository_synced=true\"",
-                "  echo \"python_dependency_runner=uv\"",
-                "  echo \"uv=$(command -v uv)\"",
-                "  echo \"rustc=$(rustc --version)\"",
-                "  echo \"cargo=$(cargo --version)\"",
-                "  echo \"libcrafter_oracle_bin=live_endpoint\"",
-                "  echo \"libcrafter_oracle_bin_build=ok\"",
-                "  echo \"finished_at=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\"",
-                "} > \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/bootstrap.env\"",
-            ]
-        )
-
-    return "\n".join(
-        [
-            common,
-            (
-                "apt-get install -y --no-install-recommends "
-                "ca-certificates curl git iproute2 iputils-ping python3"
-            ),
-            install_uv,
-            "tools/oracle/run backend-info --backend scapy "
-            "> \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/reference-backend.json\"",
-            "if command -v tshark >/dev/null 2>&1; then "
-            "tshark_available=true; else tshark_available=false; fi",
-            "{",
-            "  echo \"role=$LIBCRAFTER_ENDPOINT_ROLE\"",
-            "  echo \"private_ipv4=$LIBCRAFTER_PRIVATE_IPV4\"",
-            "  echo \"peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4\"",
-            "  echo \"private_interface=$LIBCRAFTER_PRIVATE_INTERFACE\"",
-            "  echo \"repository_synced=true\"",
-            "  echo \"python_dependency_runner=uv\"",
-            "  echo \"uv=$(command -v uv)\"",
-            "  echo \"reference_backend_info=ok\"",
-            "  echo \"tshark_available=$tshark_available\"",
-            "  echo \"tshark_required=false\"",
-            "  echo \"finished_at=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\"",
-            "} > \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/bootstrap.env\"",
-        ]
-    )
 
 
 def _write_wire_provider_capabilities(

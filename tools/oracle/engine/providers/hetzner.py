@@ -850,6 +850,133 @@ def hetzner_endpoint_remote_command(
     return ["bash", "-lc", script]
 
 
+def hetzner_endpoint_bootstrap_command(
+    *,
+    endpoint: LiveEndpoint,
+    peer: LiveEndpoint,
+    remote_archive: str,
+    remote_dir: str,
+) -> list[str]:
+    """Return the repository bootstrap command for one Hetzner endpoint."""
+
+    return [
+        "bash",
+        "-lc",
+        _hetzner_endpoint_bootstrap_script(
+            endpoint=endpoint,
+            peer=peer,
+            remote_archive=remote_archive,
+            remote_dir=remote_dir,
+        ),
+    ]
+
+
+def _hetzner_endpoint_bootstrap_script(
+    *,
+    endpoint: LiveEndpoint,
+    peer: LiveEndpoint,
+    remote_archive: str,
+    remote_dir: str,
+) -> str:
+    role = shlex.quote(endpoint.role)
+    private_ipv4 = shlex.quote(endpoint.address)
+    peer_private_ipv4 = shlex.quote(peer.address)
+    private_interface = shlex.quote(endpoint.interface)
+    quoted_archive = shlex.quote(remote_archive)
+    quoted_remote_dir = shlex.quote(remote_dir)
+
+    common = "\n".join(
+        [
+            "set -euo pipefail",
+            "if command -v cloud-init >/dev/null 2>&1; then "
+            "cloud-init status --wait >/dev/null 2>&1 || true; fi",
+            f"rm -rf {quoted_remote_dir}",
+            f"mkdir -p {quoted_remote_dir}",
+            f"tar -xzf {quoted_archive} -C {quoted_remote_dir}",
+            f"cd {quoted_remote_dir}",
+            f"export LIBCRAFTER_ENDPOINT_ROLE={role}",
+            f"export LIBCRAFTER_PRIVATE_IPV4={private_ipv4}",
+            f"export LIBCRAFTER_PEER_PRIVATE_IPV4={peer_private_ipv4}",
+            f"export LIBCRAFTER_PRIVATE_INTERFACE={private_interface}",
+            "export DEBIAN_FRONTEND=noninteractive",
+            "mkdir -p \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE\"",
+            "apt-get update",
+        ]
+    )
+    install_uv = "\n".join(
+        [
+            "install_uv() {",
+            "  if ! command -v uv >/dev/null 2>&1; then",
+            "    curl -LsSf https://astral.sh/uv/install.sh | sh",
+            "    export PATH=\"$HOME/.local/bin:$PATH\"",
+            "    ln -sf \"$(command -v uv)\" /usr/local/bin/uv || true",
+            "  fi",
+            "  export PATH=\"$HOME/.local/bin:$PATH\"",
+            "  command -v uv >/dev/null 2>&1",
+            "}",
+            "install_uv",
+        ]
+    )
+    if endpoint.role == "libcrafter":
+        return "\n".join(
+            [
+                common,
+                (
+                    "apt-get install -y --no-install-recommends "
+                    "build-essential ca-certificates clang curl git iproute2 "
+                    "iputils-ping libpcap-dev pkg-config python3"
+                ),
+                install_uv,
+                "if ! command -v cargo >/dev/null 2>&1; then "
+                "curl -fsS https://sh.rustup.rs | sh -s -- -y; fi",
+                "if [ -f \"$HOME/.cargo/env\" ]; then . \"$HOME/.cargo/env\"; fi",
+                "cargo build -p oracle-adapters --bin live_endpoint",
+                "{",
+                "  echo \"role=$LIBCRAFTER_ENDPOINT_ROLE\"",
+                "  echo \"private_ipv4=$LIBCRAFTER_PRIVATE_IPV4\"",
+                "  echo \"peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4\"",
+                "  echo \"private_interface=$LIBCRAFTER_PRIVATE_INTERFACE\"",
+                "  echo \"repository_synced=true\"",
+                "  echo \"python_dependency_runner=uv\"",
+                "  echo \"uv=$(command -v uv)\"",
+                "  echo \"rustc=$(rustc --version)\"",
+                "  echo \"cargo=$(cargo --version)\"",
+                "  echo \"libcrafter_oracle_bin=live_endpoint\"",
+                "  echo \"libcrafter_oracle_bin_build=ok\"",
+                "  echo \"finished_at=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\"",
+                "} > \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/bootstrap.env\"",
+            ]
+        )
+
+    return "\n".join(
+        [
+            common,
+            (
+                "apt-get install -y --no-install-recommends "
+                "ca-certificates curl git iproute2 iputils-ping python3"
+            ),
+            install_uv,
+            "tools/oracle/run backend-info --backend scapy "
+            "> \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/reference-backend.json\"",
+            "if command -v tshark >/dev/null 2>&1; then "
+            "tshark_available=true; else tshark_available=false; fi",
+            "{",
+            "  echo \"role=$LIBCRAFTER_ENDPOINT_ROLE\"",
+            "  echo \"private_ipv4=$LIBCRAFTER_PRIVATE_IPV4\"",
+            "  echo \"peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4\"",
+            "  echo \"private_interface=$LIBCRAFTER_PRIVATE_INTERFACE\"",
+            "  echo \"repository_synced=true\"",
+            "  echo \"python_dependency_runner=uv\"",
+            "  echo \"uv=$(command -v uv)\"",
+            "  echo \"reference_backend_info=ok\"",
+            "  echo \"tshark_available=$tshark_available\"",
+            "  echo \"tshark_required=false\"",
+            "  echo \"finished_at=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\"",
+            "} > \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/bootstrap.env\"",
+        ]
+    )
+
+
 def hetzner_live_transit_plan(plan: PacketPlan) -> PacketPlan:
     """Apply Hetzner transit rewrites before expected-model generation."""
 
@@ -1047,6 +1174,23 @@ class HetznerLiveProviderAdapter:
         """Return the remote repository directory for Hetzner wire endpoints."""
 
         return hetzner_wire_remote_dir()
+
+    def endpoint_bootstrap_command(
+        self,
+        *,
+        endpoint: LiveEndpoint,
+        peer: LiveEndpoint,
+        remote_archive: str,
+        remote_dir: str,
+    ) -> list[str]:
+        """Return the Hetzner repository bootstrap command for one endpoint."""
+
+        return hetzner_endpoint_bootstrap_command(
+            endpoint=endpoint,
+            peer=peer,
+            remote_archive=remote_archive,
+            remote_dir=remote_dir,
+        )
 
     def endpoint_remote_command(
         self,
