@@ -5,23 +5,49 @@
   </picture>
 </h1>
 
-`libcrafter` is a Rust alpha workspace for building, decoding, capturing, and
-safely testing network packets.
+`libcrafter` is a Rust workspace for packet-level network interaction. Agents
+and Rust tools can build protocol-correct packets, generate traffic on the
+wire, decode what comes back, and correlate live network stimuli and responses.
 
-The Rust API keeps a packet-stacking style: protocol layers compose directly,
-dependent fields are filled during compile, raw bytes can be decoded back into
-typed layers, and live traffic is opt-in rather than a default side effect.
+The framework gives agents direct packet construction, send/receive, capture,
+pcap, oracle, and probe capabilities. Instead of calling only fixed protocol
+clients, agents can generate the packets themselves and decide how to interact
+with the network at the protocol level.
 
-## Rust Alpha
+## Version 2.0.0
 
-The only public crate is `crafter`. The API is alpha and may change before a
-stable release. Most generated tools and examples should import:
+The public crate is `crafter`:
+
+```toml
+crafter = "2.0.0"
+```
+
+The repository is still named `libcrafter`, but Cargo users should depend on
+the `crafter` crate and import the prelude in most generated tools and examples:
 
 ```rust
 use crafter::prelude::*;
 ```
 
-Build a packet with explicit builders:
+## What Agents Can Do
+
+- Generate packet stacks across link, network, transport, control, and
+  application protocols.
+- Compile packets with auto-filled lengths, protocol numbers, header lengths,
+  and checksums while preserving fields that were set explicitly.
+- Decode observed traffic back into typed layers for inspection and follow-up
+  decisions.
+- Send packets, match replies, batch traffic, resolve interfaces, parse target
+  ranges, and capture packets through bounded pcap workflows.
+- Use oracle and probe tooling to compare packet behavior against reference
+  backends and real network stacks.
+- Run packet work from one endpoint or a fleet of provider-backed endpoints
+  when raw sockets, capture privileges, or external network reachability are
+  needed.
+
+## Packet Construction
+
+Build protocol stacks with explicit builders or `/` composition:
 
 ```rust
 use crafter::prelude::*;
@@ -41,7 +67,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Read and write pcaps without root:
+`compile` fills dependent fields such as checksums and lengths. Explicit user
+values are preserved so agents can choose either protocol-correct defaults or
+deliberately shaped packets.
+
+## Decode, Capture, And Pcap
+
+Decode raw bytes from explicit link or network contexts:
 
 ```rust
 use crafter::prelude::*;
@@ -56,8 +88,13 @@ fn inspect(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Send paths are safe by default in examples. Use dry-run plans for local tools
-and reserve live sends for disposable wire endpoints:
+The pcap APIs support classic pcap read/write, libpcap BPF filters, offline
+sniffing, bounded live capture hooks, and stable packet summaries for tests and
+agent logs.
+
+## Send And Receive
+
+Local examples use dry-run planning unless live traffic is requested explicitly:
 
 ```rust
 let plan = packet.send_dry_run(
@@ -68,22 +105,40 @@ let plan = packet.send_dry_run(
 println!("{:?}", plan.target());
 ```
 
-## Crate And Modules
+Live workflows expose raw send, send/receive matching, batch sends, interface
+helpers, route hints, reply filters, and timeout-bounded capture. Run live
+traffic only in networks where you are authorized to send and capture packets.
 
-Install and depend on `crafter` only. The repository is still named
-`libcrafter`, but the public Rust surface is organized as modules inside the
-one crate:
+## Agent-Directed Wire Workflows
+
+Wire tooling lives under `tools/wire`, `tools/oracle`, and `tools/probe`.
+Together they let an agent create endpoints, transfer adapters, execute packet
+work, collect artifacts, and destroy provider resources when the run is done.
+
+The important capability is not the endpoint lifecycle itself. The endpoint is
+where an agent can generate traffic, observe responses from real stacks, and use
+that feedback to continue exploring the surrounding network environment at the
+packet level.
+
+```sh
+tools/wire/run doctor --provider hetzner --exposure wan --dry-run
+tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
+```
+
+Hetzner is the current provider-backed endpoint implementation. QEMU and
+VirtualBox providers are not part of version 2.0.0.
+
+## Crate And Modules
 
 | Module | Purpose |
 | --- | --- |
-| `crafter::prelude` | Common imports for examples and generated tools. |
+| `crafter::prelude` | Common imports for examples and agent-written tools. |
 | `crafter::core` | Packet model, layer composition, encode/decode, checksums, protocol registry, formatting. |
 | `crafter::pcap` | Classic pcap read/write, libpcap BPF filters, offline sniffing, bounded live capture hooks. |
 | `crafter::net` | Interface helpers, raw send planning, live send backends, send/receive matching, batch workflows. |
 
 ## Protocol Coverage
-
-The alpha covers the protocols needed by the current Rust example set:
 
 | Layer | Coverage |
 | --- | --- |
@@ -92,13 +147,13 @@ The alpha covers the protocols needed by the current Rust example set:
 | Transport | TCP, TCP options, UDP, UDP checksums |
 | Application and payload | DNS, DHCP, raw payloads |
 
-Unknown or unsupported next protocols are preserved as `Raw` payloads where the
+Unknown or unsupported next protocols are preserved as `Raw` payloads when the
 enclosing header is valid.
 
 ## Examples
 
-Rust examples live under `crafter/examples/` and build against the
-public `crafter` crate:
+Rust examples live under `crafter/examples/` and build against the public
+`crafter` crate:
 
 ```sh
 cargo build -p crafter --examples
@@ -107,21 +162,26 @@ cargo run -p crafter --example send_plan
 cargo run -p crafter --example dns_query -- --name example.com
 ```
 
-The example set focuses on packet construction, offline pcap workflows, and
-bounded validation flows that are dry-run by default.
-See [docs/README.md](docs/README.md) for the full documentation index and
-[docs/examples.md](docs/examples.md) for example commands.
+The example set covers packet construction, protocol options, decode entry
+points, pcap workflows, send planning, send/receive matching, batch traffic,
+interface helpers, and bounded validation flows.
 
-## Wire Endpoint Testing
+## Validation
 
-Local tests do not require root or provider credentials:
+Local validation does not require provider credentials:
 
 ```sh
 cargo test --workspace
 cargo doc --workspace --no-deps
 ```
 
-Live raw-packet validation must run on disposable wire endpoints:
+The full local release gate is:
+
+```sh
+.agents/scripts/check-crafter-release --static
+```
+
+Provider-backed packet validation should start with dry-runs:
 
 ```sh
 tools/wire/run doctor --provider hetzner --exposure wan --dry-run
@@ -131,32 +191,22 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 
 The Hetzner wire provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
 environment. Do not store real credentials, provider account data, public IPs,
-or live host IDs in tracked files.
+live host IDs, or packet captures from sensitive networks in tracked files.
 
-Oracle validation modes are documented in
-[docs/validation.md](docs/validation.md). Kernel and service behavior probes
-are documented in [docs/probe.md](docs/probe.md).
-
-## Documentation And Release Notes
+## Documentation
 
 - [docs/README.md](docs/README.md) is the documentation index.
 - [docs/api.md](docs/api.md) describes the public Rust API shape.
+- [docs/examples.md](docs/examples.md) lists example commands and workflows.
 - [docs/validation.md](docs/validation.md) describes oracle validation modes
   and CI expectations.
-- [docs/probe.md](docs/probe.md) describes wire-backed kernel and service behavior
-  probes.
-- [CHANGELOG.md](CHANGELOG.md) records the Rust alpha scope.
-- [docs/supported-platforms.md](docs/supported-platforms.md) lists supported
-  platforms, live-test requirements, and protocol coverage gaps.
+- [docs/probe.md](docs/probe.md) describes wire-backed kernel and service
+  behavior probes.
+- [docs/wire.md](docs/wire.md) covers provider endpoint setup, credentials,
+  artifacts, and cleanup.
+- [CHANGELOG.md](CHANGELOG.md) records the version 2.0.0 scope.
 
-### Release Checklist
-
-From a clean reviewed checkout, an authenticated maintainer should run the
-offline release gate from the repository root:
-
-```sh
-.agents/scripts/check-crafter-release --static
-```
+## Publishing
 
 For package-content checks only, run:
 
@@ -165,7 +215,7 @@ For package-content checks only, run:
 ```
 
 For agent-assisted publishing, use `$agent-cargo-publish`. The skill runs the
-same local release gate, performs a `cargo publish` dry run, summarizes the
+local release gate, performs a `cargo publish` dry run, summarizes the
 crate/version/commit and package contents, and requires explicit ask-tool
 approval before the real upload.
 

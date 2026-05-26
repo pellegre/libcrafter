@@ -251,7 +251,6 @@ impl SendRecvReport {
 }
 
 /// Protocol-aware matcher for replies to one request packet.
-
 pub trait PacketSendRecvExt {
     /// Derive a BPF-style filter for likely replies.
     fn reply_filter(&self) -> Result<String>;

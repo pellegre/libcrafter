@@ -7,10 +7,10 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0-alpha.1"
+version = "2.0.0"
 edition = "2021"
 rust-version = "1.78"
-description = "Rust packet crafting, decoding, pcap, and wire endpoint tooling."
+description = "Packet-level network interaction for Rust tools and agents."
 license = "MIT"
 repository = "https://github.com/pellegre/libcrafter"
 homepage = "https://github.com/pellegre/libcrafter"

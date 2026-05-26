@@ -1,7 +1,7 @@
-//! Public alpha crate for the Rust packet crafting workspace.
+//! Public crate for packet-level network interaction.
 //!
-//! `crafter` is the only public crate. It exposes a self-contained alpha API
-//! for examples and generated tools:
+//! `crafter` is the only public crate. It exposes a self-contained API for
+//! examples, generated tools, and agent-directed packet workflows:
 //!
 //! - packet construction, decode, checksums, and protocol layers
 //! - pcap read/write and sniffing helpers
@@ -11,10 +11,8 @@
 //! `crafter::net`, and `crafter::prelude`. Most examples should start with
 //! `use crafter::prelude::*;`.
 //!
-//! The API may change before a stable release.
-//!
-//! The API is safe by default for local development: examples use dry-run send
-//! plans or offline pcaps unless live behavior is explicitly requested.
+//! Local examples use dry-run send plans or offline pcaps unless live behavior
+//! is explicitly requested.
 //!
 //! ```rust
 //! use crafter::prelude::*;

@@ -11,8 +11,5 @@ This directory contains user and contributor documentation for the Rust
 - [Probe validation](probe.md) describes kernel and service behavior probes.
 - [Wire endpoint provider guide](wire.md) covers shared disposable provider setup,
   credentials, artifacts, and cleanup.
-- [Supported platforms](supported-platforms.md) records the alpha support
-  matrix and known gaps.
-
 Agent operating guidance belongs under
 [`.agents/docs/cookbook.md`](../.agents/docs/cookbook.md), not here.
