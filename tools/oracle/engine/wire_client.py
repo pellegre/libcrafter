@@ -243,7 +243,7 @@ class WireClient:
 def default_wire_path() -> Path:
     """Return the absolute repository-local wire CLI path."""
 
-    return repo_root() / "tools" / "wire" / "wire"
+    return repo_root() / "tools" / "wire" / "run"
 
 
 def repo_root() -> Path:

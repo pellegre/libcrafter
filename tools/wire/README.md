@@ -14,9 +14,9 @@ tracks, uses, and destroys one runnable endpoint at a time for callers such as
 - reporting SSH connection details for debugging
 
 `tools/oracle` and `tools/probe` own workload semantics. Packet correctness,
-backend comparison, Scapy behavior, probe case generation, expected responses,
-reports, and reproduction coordinates must stay in those tools, not in
-`tools/wire`.
+backend comparison, reference tool behavior, probe case generation, expected
+responses, reports, and reproduction coordinates must stay in those tools, not
+in `tools/wire`.
 
 ## Terms
 
