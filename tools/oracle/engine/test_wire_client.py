@@ -12,6 +12,13 @@ from tools.wire.engine.process import CommandResult
 
 
 class WireClientTest(unittest.TestCase):
+    def test_default_wire_path_points_to_run_entrypoint(self) -> None:
+        wire_path = wire_client.default_wire_path()
+
+        self.assertEqual(wire_path.name, "run")
+        self.assertEqual(wire_path.parent.name, "wire")
+        self.assertTrue(wire_path.is_file())
+
     def test_create_uses_absolute_wire_path_and_parses_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
