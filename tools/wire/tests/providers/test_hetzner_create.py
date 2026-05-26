@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
 import unittest
 from collections.abc import Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from tools.wire.engine import cli as wire_cli
 from tools.wire.engine.model import NetworkInterface
 from tools.wire.engine.process import CommandResult
 from tools.wire.engine.providers import hetzner
@@ -19,6 +21,87 @@ from tools.wire.engine.state import read_endpoint_manifest, read_private_group_r
 
 
 class HetznerCreateEndpointTest(unittest.TestCase):
+    def test_cli_create_endpoint_routes_dry_run_through_resolved_provider(self) -> None:
+        fake_provider = mock.Mock()
+        fake_provider.create_endpoint.return_value = {
+            "endpoint_id": "hetzner-wan-planned",
+            "provider": "hetzner",
+            "exposure": "wan",
+            "created": False,
+            "dry_run": True,
+        }
+        fake_provider.cli_output_manifest.side_effect = lambda manifest: {
+            **manifest,
+            "formatted_by": "fake-provider",
+        }
+
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with (
+                mock.patch.object(
+                    wire_cli,
+                    "resolve_provider",
+                    return_value=fake_provider,
+                ) as resolver,
+                redirect_stdout(stdout),
+            ):
+                exit_code = wire_cli.main(
+                    [
+                        "create-endpoint",
+                        "--provider",
+                        "hetzner",
+                        "--exposure",
+                        "wan",
+                        "--dry-run",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        resolver.assert_called_once_with("hetzner", "wan")
+        fake_provider.create_endpoint.assert_called_once()
+        self.assertEqual(
+            fake_provider.create_endpoint.call_args.kwargs,
+            {
+                "provider": "hetzner",
+                "exposure": "wan",
+                "role": "libcrafter",
+                "private_group": None,
+                "private_ip": None,
+                "dry_run": True,
+                "confirm_live_run": False,
+            },
+        )
+        self.assertEqual(json.loads(stdout.getvalue())["formatted_by"], "fake-provider")
+
+    def test_cli_create_endpoint_reports_resolved_provider_errors(self) -> None:
+        fake_provider = mock.Mock()
+        fake_provider.create_endpoint.side_effect = RuntimeError("provider exploded")
+
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with (
+                mock.patch.object(wire_cli, "resolve_provider", return_value=fake_provider),
+                redirect_stdout(stdout),
+            ):
+                exit_code = wire_cli.main(
+                    [
+                        "create-endpoint",
+                        "--provider",
+                        "hetzner",
+                        "--exposure",
+                        "wan",
+                        "--dry-run",
+                        "--json",
+                    ]
+                )
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 2)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["created"])
+        self.assertEqual(payload["error"], "provider exploded")
+
     def test_dry_run_manifest_has_absolute_paths_and_no_runner_calls(self) -> None:
         def fake_runner(argv: Sequence[str], **_: object) -> CommandResult:
             self.fail(f"dry-run create should not run hcloud: {argv}")

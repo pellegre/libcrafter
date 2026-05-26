@@ -15,6 +15,7 @@ from tools.wire.engine.model import (
     read_json,
     write_json,
 )
+from tools.wire.engine.providers import hetzner, resolve_provider
 from tools.wire.engine.registry import (
     ProviderExposureError,
     is_supported_request,
@@ -51,6 +52,11 @@ class WireRegistryTest(unittest.TestCase):
             validate_request("virtualbox", "wan")
         with self.assertRaisesRegex(ProviderExposureError, "known exposures"):
             validate_request("hetzner", "bluetooth")
+
+    def test_resolve_provider_returns_supported_provider_module(self) -> None:
+        self.assertIs(resolve_provider("hetzner", "wan"), hetzner)
+        with self.assertRaisesRegex(ProviderExposureError, "supported providers"):
+            resolve_provider("virtualbox", "wan")
 
 
 class WireManifestSerializationTest(unittest.TestCase):
