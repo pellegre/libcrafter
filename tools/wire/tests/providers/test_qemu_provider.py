@@ -17,7 +17,11 @@ from tools.wire.engine.model import EndpointManifest
 from tools.wire.engine.process import CommandResult
 from tools.wire.engine.providers import qemu, resolve_provider
 from tools.wire.engine.providers.qemu.constants import QEMU_ACCEL_ENV, QEMU_SYSTEM_COMMAND
-from tools.wire.engine.providers.vm import CLOUD_LOCALDS_COMMAND, QEMU_IMG_COMMAND
+from tools.wire.engine.providers.vm import (
+    CLOUD_LOCALDS_COMMAND,
+    LINUX_INTERFACE_DISCOVERY_COMMAND,
+    QEMU_IMG_COMMAND,
+)
 from tools.wire.engine.registry import ProviderExposureError
 
 
@@ -213,6 +217,133 @@ class QemuCreateEndpointTest(unittest.TestCase):
                 confirm_live_run=False,
             )
 
+    def test_live_wan_create_runs_qemu_sequence_and_writes_active_manifest(self) -> None:
+        endpoint_id = "qemu-wan-probe-20260526230500-abcdef"
+        fake = _QemuLiveFakeRunner()
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            root = Path(temp_dir)
+            with (
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.vm_endpoint_id",
+                    return_value=endpoint_id,
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.utc_now",
+                    return_value="2026-05-26T23:05:00Z",
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.free_localhost_tcp_port",
+                    return_value=26224,
+                ),
+            ):
+                output = qemu.create_endpoint(
+                    provider="qemu",
+                    exposure="wan",
+                    role="probe",
+                    confirm_live_run=True,
+                    env={
+                        QEMU_ACCEL_ENV: "tcg",
+                        "LIBCRAFTER_QEMU_MEMORY_MB": "1536",
+                        "LIBCRAFTER_QEMU_CPUS": "1",
+                    },
+                    command_runner=fake,
+                    download_runner=_fake_download,
+                    ssh_wait_timeout=1,
+                    ssh_wait_interval=0.01,
+                )
+                manifest_path = Path(str(output["manifest_path"]))
+                manifest_exists = manifest_path.exists()
+                stored = json.loads(manifest_path.read_text(encoding="utf-8"))
+                command_log_exists = Path(
+                    str(output["metadata"]["qemu"]["command_log_path"])  # type: ignore[index]
+                ).exists()
+
+        self.assertTrue(output["created"])
+        self.assertFalse(output["dry_run"])
+        self.assertEqual(output["status"], "active")
+        self.assertEqual(output["endpoint_id"], endpoint_id)
+        self.assertTrue(Path(str(output["manifest_path"])).is_absolute())
+        self.assertTrue(manifest_exists)
+        self.assertTrue(command_log_exists)
+
+        metadata = output["metadata"]["qemu"]  # type: ignore[index]
+        self.assertEqual(metadata["pid"], 4242)
+        self.assertEqual(metadata["acceleration"], "tcg")
+        self.assertEqual(metadata["memory_mb"], 1536)
+        self.assertEqual(metadata["cpus"], 1)
+        self.assertEqual(metadata["ssh_port"], 26224)
+        self.assertTrue(Path(str(metadata["pidfile_path"])).is_absolute())
+        self.assertTrue(Path(str(metadata["serial_log_path"])).is_absolute())
+        self.assertTrue(Path(str(metadata["qemu_log_path"])).is_absolute())
+        self.assertIn(root / "wire-state", Path(str(metadata["pidfile_path"])).parents)
+
+        self.assertEqual(len(fake.qemu_calls), 1)
+        qemu_call = fake.qemu_calls[0]
+        self.assertEqual(qemu_call[qemu_call.index("-accel") + 1], "tcg")
+        self.assertEqual(qemu_call[qemu_call.index("-m") + 1], "1536")
+        self.assertEqual(qemu_call[qemu_call.index("-smp") + 1], "1")
+        self.assertIn("-daemonize", qemu_call)
+        self.assertIn("-pidfile", qemu_call)
+        self.assertIn("user,id=control0,hostfwd=tcp:127.0.0.1:26224-:22", qemu_call)
+        self.assertIn("virtio-net-pci,netdev=control0", qemu_call)
+
+        interfaces = {interface["name"]: interface for interface in output["interfaces"]}  # type: ignore[index]
+        self.assertEqual(interfaces["enp0s1"]["exposure"], "wan")
+        self.assertEqual(interfaces["enp0s1"]["ipv4"], "10.0.2.15")
+        self.assertEqual(interfaces["enp0s1"]["metadata"]["type"], "qemu-user-net")
+        self.assertTrue(interfaces["enp0s1"]["metadata"]["outbound_nat"])
+        self.assertEqual(output["ssh"]["host"], "127.0.0.1")  # type: ignore[index]
+        self.assertEqual(output["ssh"]["port"], 26224)  # type: ignore[index]
+
+        self.assertEqual(stored["status"], "active")
+        self.assertEqual(stored["metadata"]["qemu"]["pid"], 4242)
+        resource_kinds = [resource["kind"] for resource in stored["provider_resources"]["resources"]]
+        self.assertIn("process", resource_kinds)
+
+    def test_live_wan_create_writes_failed_manifest_after_ssh_timeout(self) -> None:
+        endpoint_id = "qemu-wan-probe-20260526230600-abcdef"
+        fake = _QemuLiveFakeRunner(fail_ssh=True)
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            root = Path(temp_dir)
+            with (
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.vm_endpoint_id",
+                    return_value=endpoint_id,
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.utc_now",
+                    return_value="2026-05-26T23:06:00Z",
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.free_localhost_tcp_port",
+                    return_value=26225,
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "wait for ssh timed out"):
+                    qemu.create_endpoint(
+                        provider="qemu",
+                        exposure="wan",
+                        role="probe",
+                        confirm_live_run=True,
+                        env={},
+                        command_runner=fake,
+                        download_runner=_fake_download,
+                        ssh_wait_timeout=0.01,
+                        ssh_wait_interval=0.001,
+                    )
+
+            manifest_path = root / "wire-state" / "endpoints" / endpoint_id / "endpoint.json"
+            self.assertTrue(manifest_path.exists())
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["status"], "failed")
+        self.assertTrue(manifest["metadata"]["created"])
+        self.assertEqual(manifest["metadata"]["qemu"]["pid"], 4242)
+        self.assertIn("wait for ssh timed out", manifest["metadata"]["error"])
+        resources = manifest["provider_resources"]["resources"]
+        self.assertEqual(resources[0]["kind"], "qemu-vm")
+        self.assertEqual(resources[1]["kind"], "process")
+
     def test_cli_qemu_wan_dry_run_json(self) -> None:
         stdout = io.StringIO()
         with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
@@ -268,6 +399,91 @@ def _fail_runner(argv: Sequence[object], **_: object) -> CommandResult:
     raise AssertionError(f"unexpected command: {argv}")
 
 
+class _QemuLiveFakeRunner:
+    def __init__(self, *, fail_ssh: bool = False) -> None:
+        self.calls: list[tuple[str, ...]] = []
+        self.fail_ssh = fail_ssh
+
+    @property
+    def qemu_calls(self) -> list[tuple[str, ...]]:
+        return [call for call in self.calls if call[0] == QEMU_SYSTEM_COMMAND]
+
+    def __call__(self, argv: Sequence[object], **_: object) -> CommandResult:
+        parts = tuple(str(part) for part in argv)
+        self.calls.append(parts)
+        if parts[0] == "ssh-keygen":
+            key_path = Path(parts[parts.index("-f") + 1])
+            key_path.write_text("private\n", encoding="utf-8")
+            key_path.with_name(f"{key_path.name}.pub").write_text(
+                "ssh-ed25519 AAAAlive\n",
+                encoding="utf-8",
+            )
+            return _result(parts)
+        if parts[0] == CLOUD_LOCALDS_COMMAND:
+            Path(parts[-3]).write_text("seed\n", encoding="utf-8")
+            return _result(parts)
+        if parts[:2] == (QEMU_IMG_COMMAND, "create"):
+            Path(parts[-1]).write_text("qcow2 overlay\n", encoding="utf-8")
+            return _result(parts)
+        if parts[0] == QEMU_SYSTEM_COMMAND:
+            pidfile_path = Path(parts[parts.index("-pidfile") + 1])
+            pidfile_path.write_text("4242\n", encoding="utf-8")
+            serial_index = parts.index("-serial") + 1
+            serial_path = Path(parts[serial_index].removeprefix("file:"))
+            serial_path.write_text("serial\n", encoding="utf-8")
+            qemu_log_path = Path(parts[parts.index("-D") + 1])
+            qemu_log_path.write_text("qemu log\n", encoding="utf-8")
+            return _result(parts)
+        if parts[0] == "ssh":
+            if parts[-1] == "true":
+                if self.fail_ssh:
+                    return _result(parts, exit_code=255, stderr="connection refused")
+                return _result(parts)
+            if parts[-1] == LINUX_INTERFACE_DISCOVERY_COMMAND:
+                return _result(parts, stdout=_qemu_discovery_output())
+        raise AssertionError(f"unexpected command: {parts}")
+
+
+def _fake_download(_: str, output_path: Path) -> None:
+    output_path.write_text("base-image\n", encoding="utf-8")
+
+
+def _qemu_discovery_output() -> str:
+    addresses = [
+        {
+            "ifindex": 2,
+            "ifname": "enp0s1",
+            "address": "52:54:00:aa:bb:cc",
+            "operstate": "UP",
+            "mtu": 1500,
+            "addr_info": [
+                {"family": "inet", "local": "10.0.2.15", "prefixlen": 24},
+                {"family": "inet6", "local": "fec0::5054:ff:feaa:bbcc", "prefixlen": 64},
+            ],
+        }
+    ]
+    links = [
+        {
+            "ifindex": 2,
+            "ifname": "enp0s1",
+            "address": "52:54:00:aa:bb:cc",
+            "operstate": "UP",
+            "mtu": 1500,
+        }
+    ]
+    routes = [{"dst": "1.1.1.1", "dev": "enp0s1", "prefsrc": "10.0.2.15"}]
+    return "\n".join(
+        [
+            "__WIRE_IP_ADDR__",
+            json.dumps(addresses),
+            "__WIRE_IP_LINK__",
+            json.dumps(links),
+            "__WIRE_IP_ROUTE__",
+            json.dumps(routes),
+        ]
+    )
+
+
 def _result(
     argv: Sequence[str],
     *,
@@ -287,4 +503,3 @@ def _result(
 
 if __name__ == "__main__":
     unittest.main()
-
