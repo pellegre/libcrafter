@@ -21,6 +21,8 @@ class LiveProviderAdapter(Protocol):
     endpoint_private_ips: Mapping[str, str]
     artifact_collection_purpose: str
     teardown_purpose: str
+    credential_label: str
+    missing_credential_reason: str
 
     def token_configured(self) -> bool:
         """Return whether real provider credentials are present."""

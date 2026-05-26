@@ -943,6 +943,8 @@ class HetznerLiveProviderAdapter:
     )
     artifact_collection_purpose: str = "collect-live-endpoint-artifacts"
     teardown_purpose: str = "teardown-disposable-hetzner-endpoints"
+    credential_label: str = "HETZNER_API_TOKEN"
+    missing_credential_reason: str = "missing HETZNER_API_TOKEN"
 
     def token_configured(self) -> bool:
         """Return whether Hetzner credentials are present."""
