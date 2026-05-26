@@ -83,7 +83,7 @@ class WireCommandResponse:
 
 
 class WireClient:
-    """Small process boundary around ``tools/wire/wire`` for oracle callers."""
+    """Small process boundary around ``tools/wire/run`` for oracle callers."""
 
     def __init__(
         self,
