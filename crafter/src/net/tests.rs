@@ -804,7 +804,7 @@ mod batch_send_recv {
 }
 
 #[cfg(test)]
-mod send_recv_live_lab {
+mod send_recv_wire_endpoint {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
@@ -813,7 +813,7 @@ mod send_recv_live_lab {
     use crate::net::{PacketSendRecvExt, SendRecv};
 
     #[test]
-    #[ignore = "requires root and a disposable live packet lab"]
+    #[ignore = "requires root and a disposable wire endpoint"]
     fn send_recv_icmp_loopback_smoke() {
         let request = Ipv4::new()
             .src(Ipv4Addr::LOCALHOST)

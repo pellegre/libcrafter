@@ -97,10 +97,10 @@ pub fn flag_present(name: &str) -> bool {
 }
 
 pub const ADVANCED_LIVE_ACK_FLAG: &str = "--i-understand-isolated-lab";
-pub const LIVE_LAB_ENV: &str = "LIBCRAFTER_LIVE_LAB";
+pub const LIVE_WIRE_ENV: &str = "LIBCRAFTER_WIRE_ENDPOINT";
 
-pub fn live_lab_marker_present() -> bool {
-    env::var(LIVE_LAB_ENV)
+pub fn live_wire_marker_present() -> bool {
+    env::var(LIVE_WIRE_ENV)
         .map(|value| {
             matches!(
                 value.trim().to_ascii_lowercase().as_str(),
@@ -110,7 +110,7 @@ pub fn live_lab_marker_present() -> bool {
         .unwrap_or(false)
 }
 
-pub fn require_advanced_live_lab(example: &str) -> ExampleResult<()> {
+pub fn require_advanced_wire_endpoint(example: &str) -> ExampleResult<()> {
     if !flag_present("--live") {
         return Ok(());
     }
@@ -119,8 +119,8 @@ pub fn require_advanced_live_lab(example: &str) -> ExampleResult<()> {
     if !flag_present(ADVANCED_LIVE_ACK_FLAG) {
         missing.push(format!("CLI acknowledgement flag {ADVANCED_LIVE_ACK_FLAG}"));
     }
-    if !live_lab_marker_present() {
-        missing.push(format!("environment marker {LIVE_LAB_ENV}=1"));
+    if !live_wire_marker_present() {
+        missing.push(format!("environment marker {LIVE_WIRE_ENV}=1"));
     }
 
     if missing.is_empty() {
@@ -137,7 +137,7 @@ pub fn require_advanced_live_lab(example: &str) -> ExampleResult<()> {
 pub fn live_mode(example: &str) -> ExampleResult<bool> {
     let live = flag_present("--live");
     if live {
-        require_advanced_live_lab(example)?;
+        require_advanced_wire_endpoint(example)?;
     }
     Ok(live)
 }
@@ -146,9 +146,9 @@ pub fn print_advanced_safety(example: &str, live: bool) {
     println!("example: {example}");
     println!("mode: {}", if live { "wire-endpoint" } else { "dry-run" });
     if live {
-        println!("safety: --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_LAB_ENV}=1 were required");
+        println!("safety: --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_WIRE_ENV}=1 were required");
     } else {
-        println!("safety: no packets are transmitted without --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_LAB_ENV}=1");
+        println!("safety: no packets are transmitted without --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_WIRE_ENV}=1");
     }
 }
 
