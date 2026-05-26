@@ -16,6 +16,11 @@ from tools.wire.engine import cli as wire_cli
 from tools.wire.engine.process import CommandResult
 from tools.wire.engine.providers import resolve_provider, virtualbox
 from tools.wire.engine.providers.virtualbox.constants import VBOX_BRIDGE_IFACE_ENV
+from tools.wire.engine.providers.vm import (
+    CLOUD_LOCALDS_COMMAND,
+    LINUX_INTERFACE_DISCOVERY_COMMAND,
+    QEMU_IMG_COMMAND,
+)
 from tools.wire.engine.registry import ProviderExposureError
 
 
@@ -163,6 +168,214 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
         self.assertTrue(payload["dry_run"])
         self.assertIsInstance(payload["provider_resources"], list)
 
+    def test_live_create_runs_vboxmanage_sequence_and_writes_active_manifest(self) -> None:
+        endpoint_id = "virtualbox-lan-probe-20260526223300-abcdef"
+        fake = _VirtualBoxLiveFakeRunner()
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            root = Path(temp_dir)
+            with (
+                mock.patch(
+                    "tools.wire.engine.providers.virtualbox.create.vm_endpoint_id",
+                    return_value=endpoint_id,
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.virtualbox.create.utc_now",
+                    return_value="2026-05-26T22:33:00Z",
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.virtualbox.create.free_localhost_tcp_port",
+                    return_value=25222,
+                ),
+            ):
+                output = virtualbox.create_endpoint(
+                    provider="virtualbox",
+                    exposure="lan",
+                    role="probe",
+                    confirm_live_run=True,
+                    env={VBOX_BRIDGE_IFACE_ENV: "wlan0"},
+                    command_runner=fake,
+                    download_runner=_fake_download,
+                    ssh_wait_timeout=1,
+                    ssh_wait_interval=0.01,
+                )
+                manifest_path = Path(str(output["manifest_path"]))
+                manifest_exists = manifest_path.exists()
+                stored = json.loads(manifest_path.read_text(encoding="utf-8"))
+                command_log_exists = Path(
+                    str(output["metadata"]["virtualbox"]["command_log_path"])  # type: ignore[index]
+                ).exists()
+
+        self.assertTrue(output["created"])
+        self.assertFalse(output["dry_run"])
+        self.assertEqual(output["status"], "active")
+        self.assertEqual(output["endpoint_id"], endpoint_id)
+        self.assertTrue(Path(str(output["manifest_path"])).is_absolute())
+        self.assertTrue(manifest_exists)
+
+        metadata = output["metadata"]["virtualbox"]  # type: ignore[index]
+        vm_name = str(metadata["vm_name"])
+        disk_path = str(output["metadata"]["vm_guest_artifacts"]["disk_path"])  # type: ignore[index]
+        seed_iso_path = str(output["metadata"]["vm_guest_artifacts"]["seed_iso_path"])  # type: ignore[index]
+        self.assertEqual(
+            fake.vbox_calls,
+            [
+                ("VBoxManage", "list", "bridgedifs"),
+                (
+                    "VBoxManage",
+                    "createvm",
+                    "--name",
+                    vm_name,
+                    "--basefolder",
+                    str(metadata["basefolder"]),
+                    "--ostype",
+                    "Ubuntu_64",
+                    "--register",
+                ),
+                (
+                    "VBoxManage",
+                    "modifyvm",
+                    vm_name,
+                    "--memory",
+                    "2048",
+                    "--cpus",
+                    "2",
+                    "--boot1",
+                    "disk",
+                    "--boot2",
+                    "dvd",
+                    "--boot3",
+                    "none",
+                    "--boot4",
+                    "none",
+                ),
+                (
+                    "VBoxManage",
+                    "modifyvm",
+                    vm_name,
+                    "--nic1",
+                    "nat",
+                    "--natpf1",
+                    "wire-ssh,tcp,127.0.0.1,25222,,22",
+                ),
+                (
+                    "VBoxManage",
+                    "modifyvm",
+                    vm_name,
+                    "--nic2",
+                    "bridged",
+                    "--bridgeadapter2",
+                    "wlan0",
+                ),
+                (
+                    "VBoxManage",
+                    "storagectl",
+                    vm_name,
+                    "--name",
+                    "SATA",
+                    "--add",
+                    "sata",
+                    "--controller",
+                    "IntelAhci",
+                    "--portcount",
+                    "2",
+                    "--bootable",
+                    "on",
+                ),
+                (
+                    "VBoxManage",
+                    "storageattach",
+                    vm_name,
+                    "--storagectl",
+                    "SATA",
+                    "--port",
+                    "0",
+                    "--device",
+                    "0",
+                    "--type",
+                    "hdd",
+                    "--medium",
+                    disk_path,
+                ),
+                (
+                    "VBoxManage",
+                    "storageattach",
+                    vm_name,
+                    "--storagectl",
+                    "SATA",
+                    "--port",
+                    "1",
+                    "--device",
+                    "0",
+                    "--type",
+                    "dvddrive",
+                    "--medium",
+                    seed_iso_path,
+                ),
+                ("VBoxManage", "startvm", vm_name, "--type", "headless"),
+            ],
+        )
+
+        interfaces = {interface["name"]: interface for interface in output["interfaces"]}  # type: ignore[index]
+        self.assertEqual(interfaces["enp0s3"]["exposure"], "control")
+        self.assertEqual(interfaces["enp0s3"]["metadata"]["type"], "nat-control")
+        self.assertEqual(interfaces["enp0s3"]["metadata"]["host_port"], 25222)
+        self.assertEqual(interfaces["enp0s8"]["exposure"], "lan")
+        self.assertEqual(interfaces["enp0s8"]["ipv4"], "192.168.1.44")
+        self.assertEqual(interfaces["enp0s8"]["metadata"]["bridge_interface"], "wlan0")
+        self.assertEqual(output["ssh"]["host"], "127.0.0.1")  # type: ignore[index]
+        self.assertEqual(output["ssh"]["port"], 25222)  # type: ignore[index]
+        self.assertTrue(command_log_exists)
+
+        self.assertEqual(stored["status"], "active")
+        self.assertEqual(stored["metadata"]["virtualbox"]["bridge_interface"], "wlan0")
+        self.assertIn(root / "wire-state", Path(stored["metadata"]["virtualbox"]["basefolder"]).parents)
+
+    def test_live_create_writes_failed_manifest_after_partial_vbox_failure(self) -> None:
+        endpoint_id = "virtualbox-lan-probe-20260526223400-abcdef"
+        fake = _VirtualBoxLiveFakeRunner(fail_memory_modify=True)
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            root = Path(temp_dir)
+            with (
+                mock.patch(
+                    "tools.wire.engine.providers.virtualbox.create.vm_endpoint_id",
+                    return_value=endpoint_id,
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.virtualbox.create.utc_now",
+                    return_value="2026-05-26T22:34:00Z",
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.virtualbox.create.free_localhost_tcp_port",
+                    return_value=25223,
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "VirtualBox command failed"):
+                    virtualbox.create_endpoint(
+                        provider="virtualbox",
+                        exposure="lan",
+                        role="probe",
+                        confirm_live_run=True,
+                        env={VBOX_BRIDGE_IFACE_ENV: "wlan0"},
+                        command_runner=fake,
+                        download_runner=_fake_download,
+                        ssh_wait_timeout=1,
+                        ssh_wait_interval=0.01,
+                    )
+
+            manifest_path = (
+                root / "wire-state" / "endpoints" / endpoint_id / "endpoint.json"
+            )
+            self.assertTrue(manifest_path.exists())
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["status"], "failed")
+        self.assertTrue(manifest["metadata"]["created"])
+        self.assertTrue(manifest["metadata"]["virtualbox"]["vm_registered"])
+        self.assertIn("VirtualBox command failed", manifest["metadata"]["error"])
+        resources = manifest["provider_resources"]["resources"]
+        self.assertEqual(resources[0]["kind"], "virtualbox-vm")
+        self.assertEqual(resources[0]["metadata"]["registered"], True)
+
 
 @contextmanager
 def _wire_env(root: Path, extra: Mapping[str, str] | None = None) -> Iterator[None]:
@@ -182,6 +395,51 @@ def _wire_env(root: Path, extra: Mapping[str, str] | None = None) -> Iterator[No
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+class _VirtualBoxLiveFakeRunner:
+    def __init__(self, *, fail_memory_modify: bool = False) -> None:
+        self.calls: list[tuple[str, ...]] = []
+        self.fail_memory_modify = fail_memory_modify
+
+    @property
+    def vbox_calls(self) -> list[tuple[str, ...]]:
+        return [call for call in self.calls if call[0] == "VBoxManage"]
+
+    def __call__(self, argv: Sequence[object], **_: object) -> CommandResult:
+        parts = tuple(str(part) for part in argv)
+        self.calls.append(parts)
+        if parts == ("VBoxManage", "list", "bridgedifs"):
+            return _result(parts, stdout=_bridgedifs())
+        if parts[0] == "ssh-keygen":
+            key_path = Path(parts[parts.index("-f") + 1])
+            key_path.write_text("private\n", encoding="utf-8")
+            key_path.with_name(f"{key_path.name}.pub").write_text(
+                "ssh-ed25519 AAAAlive\n",
+                encoding="utf-8",
+            )
+            return _result(parts)
+        if parts[0] == CLOUD_LOCALDS_COMMAND:
+            Path(parts[-3]).write_text("seed\n", encoding="utf-8")
+            return _result(parts)
+        if parts[:2] == (QEMU_IMG_COMMAND, "convert"):
+            Path(parts[-1]).write_text("vdi\n", encoding="utf-8")
+            return _result(parts)
+        if parts[:3] == ("VBoxManage", "modifyvm", "wire-virtualbox-lan-probe-20260526223400-abcdef"):
+            if self.fail_memory_modify and "--memory" in parts:
+                return _result(parts, exit_code=1, stderr="modify failed")
+        if parts[0] == "VBoxManage":
+            return _result(parts)
+        if parts[0] == "ssh":
+            if parts[-1] == "true":
+                return _result(parts)
+            if parts[-1] == LINUX_INTERFACE_DISCOVERY_COMMAND:
+                return _result(parts, stdout=_virtualbox_discovery_output())
+        raise AssertionError(f"unexpected command: {parts}")
+
+
+def _fake_download(_: str, output_path: Path) -> None:
+    output_path.write_text("base-image\n", encoding="utf-8")
 
 
 def _bridgedifs() -> str:
@@ -209,6 +467,60 @@ VBoxNetworkName: HostInterfaceNetworking-wlan0
 """
 
 
+def _virtualbox_discovery_output() -> str:
+    addresses = [
+        {
+            "ifindex": 2,
+            "ifname": "enp0s3",
+            "address": "08:00:27:aa:bb:cc",
+            "operstate": "UP",
+            "mtu": 1500,
+            "addr_info": [
+                {"family": "inet", "local": "10.0.2.15", "prefixlen": 24},
+                {"family": "inet6", "local": "fe80::a00:27ff:feaa:bbcc", "prefixlen": 64},
+            ],
+        },
+        {
+            "ifindex": 3,
+            "ifname": "enp0s8",
+            "address": "08:00:27:dd:ee:ff",
+            "operstate": "UP",
+            "mtu": 1500,
+            "addr_info": [
+                {"family": "inet", "local": "192.168.1.44", "prefixlen": 24},
+                {"family": "inet6", "local": "fe80::a00:27ff:fedd:eeff", "prefixlen": 64},
+            ],
+        },
+    ]
+    links = [
+        {
+            "ifindex": 2,
+            "ifname": "enp0s3",
+            "address": "08:00:27:aa:bb:cc",
+            "operstate": "UP",
+            "mtu": 1500,
+        },
+        {
+            "ifindex": 3,
+            "ifname": "enp0s8",
+            "address": "08:00:27:dd:ee:ff",
+            "operstate": "UP",
+            "mtu": 1500,
+        },
+    ]
+    routes = [{"dst": "1.1.1.1", "dev": "enp0s3", "prefsrc": "10.0.2.15"}]
+    return "\n".join(
+        [
+            "__WIRE_IP_ADDR__",
+            json.dumps(addresses),
+            "__WIRE_IP_LINK__",
+            json.dumps(links),
+            "__WIRE_IP_ROUTE__",
+            json.dumps(routes),
+        ]
+    )
+
+
 def _result(
     argv: Sequence[str],
     *,
@@ -228,4 +540,3 @@ def _result(
 
 if __name__ == "__main__":
     unittest.main()
-
