@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import os
 import posixpath
 import re
 import shlex
@@ -2595,15 +2594,6 @@ def _live_provider_execute(
     return 0 if status == "passed" else 1
 
 
-def _hetzner_wire_remote_dir() -> str:
-    remote_dir = os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR") or "/root/libcrafter"
-    if not remote_dir.startswith("/"):
-        raise RuntimeError("Hetzner wire remote_dir must be an absolute path")
-    if "'" in remote_dir:
-        raise RuntimeError("Hetzner wire remote_dir must not contain single quotes")
-    return remote_dir.rstrip("/") or "/"
-
-
 def _run_wire_command(response, *, output_dir: Path, label: str) -> JSONObject:
     command_dir = output_dir / "provider"
     command_dir.mkdir(parents=True, exist_ok=True)
@@ -2824,39 +2814,6 @@ def _live_plan_with_endpoint_addresses(
     return replace(plan, fields=fields, metadata=metadata)
 
 
-def _hetzner_live_transit_plan(plan: PacketPlan) -> PacketPlan:
-    fields = {
-        layer: dict(layer_fields)
-        for layer, layer_fields in plan.fields.items()
-    }
-    wire_policy = _live_wire_policy(plan, provider="hetzner")
-    rewrites: list[JSONObject] = []
-    ipv4 = fields.get("ipv4")
-    if isinstance(ipv4, dict) and int(ipv4.get("ttl", 64)) < 2:
-        rewrites.append(
-            {
-                "field": "ipv4.ttl",
-                "from": ipv4.get("ttl"),
-                "to": 64,
-                "reason": "provider live transit decrements TTL before capture",
-            }
-        )
-        ipv4["ttl"] = 64
-
-    return replace(
-        plan,
-        fields=fields,
-        strict_bytes=bool(wire_policy.get("strict_bytes", plan.strict_bytes)),
-        metadata={
-            **plan.metadata,
-            "wire": wire_policy,
-            "live_transit_rewrites": rewrites,
-            "live_mutable_fields": list(wire_policy.get("mutable_fields", [])),
-            "strict_bytes": bool(wire_policy.get("strict_bytes", plan.strict_bytes)),
-        },
-    )
-
-
 def _live_wire_policy(
     plan: PacketPlan,
     *,
@@ -2866,7 +2823,7 @@ def _live_wire_policy(
     provider_name = (
         provider_adapter.name
         if provider_adapter is not None
-        else provider or "hetzner"
+        else provider
     )
     raw_policy = plan.metadata.get("wire")
     if isinstance(raw_policy, Mapping):
@@ -2878,6 +2835,8 @@ def _live_wire_policy(
     elif provider_adapter is not None:
         policy = provider_adapter.wire_comparison_policy(plan)
     else:
+        if provider_name is None:
+            raise RuntimeError("live wire policy requires a provider adapter or name")
         from .corpus import wire_comparison_policy
 
         policy = wire_comparison_policy(plan, provider=provider_name)
@@ -2965,43 +2924,6 @@ def _upload_wire_endpoint_request(
 
 def _wire_exec_argv(wire, endpoint_id: str, command: Sequence[str]) -> list[str]:
     return [wire.wire_path, "exec", endpoint_id, "--", *command]
-
-
-def _hetzner_endpoint_remote_command(
-    *,
-    endpoint_role: str,
-    remote_dir: str,
-    request_path: str,
-    out_dir: str,
-) -> list[str]:
-    quoted_remote_dir = shlex.quote(remote_dir)
-    quoted_request = shlex.quote(request_path)
-    quoted_out = shlex.quote(out_dir)
-    if endpoint_role == "libcrafter":
-        script = "\n".join(
-            [
-                "set -euo pipefail",
-                f"cd {quoted_remote_dir}",
-                'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
-                (
-                    "cargo run -q -p oracle-adapters --bin live_endpoint -- "
-                    f"--live --input {quoted_request} --out {quoted_out}"
-                ),
-            ]
-        )
-    else:
-        script = "\n".join(
-            [
-                "set -euo pipefail",
-                f"cd {quoted_remote_dir}",
-                'export PYTHONPATH="tools/oracle${PYTHONPATH:+:$PYTHONPATH}"',
-                (
-                    "python3 -m engine.backends.scapy.live "
-                    f"--live --input {quoted_request} --out {quoted_out}"
-                ),
-            ]
-        )
-    return ["bash", "-lc", script]
 
 
 def _start_wire_endpoint_batch(

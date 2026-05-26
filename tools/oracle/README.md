@@ -43,15 +43,17 @@ tools/oracle/run offline --backend wireshark --profile smoke --seed 1 --count 10
 tools/oracle/run pcap --backend wireshark --direction libcrafter_to_reference --profile smoke --seed 1 --count 10
 ```
 
-Live validation goes through a provider. The local provider is a dry run that
-does not send packets or create infrastructure:
+Live validation uses the oracle live provider boundary. `local-dry-run` is the
+non-provider-backed planning path; it does not send packets or create
+infrastructure:
 
 ```sh
 tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 1 --count 10
 ```
 
-Provider-backed live planning must stay dry-run unless a protected workflow is
-intentionally creating disposable wire endpoints:
+Provider-backed live planning is selected by a registered oracle live provider
+adapter. Hetzner is the current provider-backed adapter and must stay dry-run
+unless a protected workflow is intentionally creating disposable wire endpoints:
 
 ```sh
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
@@ -97,6 +99,13 @@ registered backend capability set. Unsupported mode/backend combinations return
 oracle reports that identify the missing capability instead of silently taking a
 different path.
 
+Provider-backed live adapters live under `tools/oracle/engine/providers/`. They
+own provider-specific endpoint plans, lifecycle command plans, bootstrap,
+remote endpoint commands, capabilities, and wire comparison policy. The generic
+live runner still owns packet generation, endpoint protocol comparison, report
+assembly, and provider execution flow. `tools/wire` remains responsible for
+creating endpoints and collecting artifacts.
+
 The Rust-side libcrafter adapters live in `tools/oracle/adapters/` as an
 internal workspace package. They depend on the public `crafter` crate API and
 must not add oracle-only code to `crafter`.
@@ -105,5 +114,6 @@ must not add oracle-only code to `crafter`.
 
 Pull request CI runs deterministic offline and pcap oracle validation with the
 Scapy backend. The live workflow runs provider dry-run planning on normal pull
-request and push events. Real Hetzner live exchanges run only from a protected
-manual workflow dispatch with explicit confirmation and configured credentials.
+request and push events through the selected oracle live provider adapter. Real
+Hetzner live exchanges run only from a protected manual workflow dispatch with
+explicit confirmation and configured credentials.

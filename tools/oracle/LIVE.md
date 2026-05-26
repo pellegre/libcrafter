@@ -24,6 +24,26 @@ private route between them. A provider may place both roles on one physical host
 only when the isolation boundary gives each role its own network namespace and
 virtual interface pair.
 
+## Oracle Live Provider Adapters
+
+Provider-backed live mode is selected through oracle live provider adapters
+registered under `tools/oracle/engine/providers/`. The `--provider` name selects
+an oracle-side adapter, not direct branches in packet generation or report
+assembly. The adapter owns provider-specific capabilities, endpoint plans,
+wire lifecycle command plans, endpoint bootstrap commands, remote endpoint
+commands, and provider transit/comparison policy.
+
+The generic oracle runner keeps ownership of packet plan generation, endpoint
+protocol batching, repository archiving, upload/download orchestration,
+response parsing, comparison, and live report assembly. Adding another
+provider-backed oracle live mode should mean registering another adapter for
+that provider name. It should not require edits to packet generation, endpoint
+protocol comparison, report assembly, or the generic provider execution flow.
+
+`local-dry-run` is intentionally separate from this provider-backed adapter
+registry. It is a CI-safe planning mode that does not create wire endpoints and
+does not represent a provider-backed live exchange.
+
 ## Exchange Directions
 
 Live reports use the same backend-neutral direction names as offline and pcap
@@ -71,7 +91,7 @@ artifacts for all phases needed to reproduce the failure.
 ## Provider Capabilities
 
 A provider that claims live support must expose these capabilities to the oracle
-runner:
+runner through its oracle live provider adapter:
 
 - Create at least two isolated instances or network namespaces.
 - Assign the `libcrafter` role to one endpoint and `reference_backend` to the
@@ -91,6 +111,11 @@ runner:
 If credentials or provider resources are unavailable, the provider should return
 a clear skipped report. It must not silently downgrade a live run into a
 single-endpoint loopback test.
+
+`tools/wire` remains the owner of disposable endpoint lifecycle and artifact
+transport. An oracle live provider adapter maps oracle roles and provider
+policy onto `tools/wire` commands; it does not replace the wire provider
+implementation.
 
 ## Backend Capabilities
 

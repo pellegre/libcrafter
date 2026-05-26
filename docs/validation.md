@@ -72,13 +72,21 @@ skipped with a stable reason.
 
 ## Wire Validation
 
-Wire validation routes packet exchange through a provider. It uses the same
-corpus contract as offline and pcap modes, then filters each packet by provider
-capabilities and explicit mutation policy. Reports keep generated, eligible,
-skipped, sent, captured, parsed, byte comparison, decode comparison, passed,
-and failed counts.
+Wire validation routes provider-backed packet exchange through an oracle live
+provider adapter. It uses the same corpus contract as offline and pcap modes,
+then filters each packet by adapter-provided provider capabilities and explicit
+mutation policy. Reports keep generated, eligible, skipped, sent, captured,
+parsed, byte comparison, decode comparison, passed, and failed counts.
 
-Use local or provider dry-runs for planning and CI-safe checks:
+Provider-backed adapters are selected by `--provider` and registered under
+`tools/oracle/engine/providers/`. They own provider-specific endpoint plans,
+wire lifecycle command plans, bootstrap, remote endpoint commands, capabilities,
+and comparison policy. Packet generation, endpoint protocol comparison, report
+assembly, and the generic provider execution flow remain in the oracle runner.
+`tools/wire` remains responsible for endpoint lifecycle and artifact transport.
+
+Use the non-provider-backed local dry-run or provider-backed dry-runs for
+planning and CI-safe checks:
 
 ```sh
 tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
@@ -86,7 +94,8 @@ tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 
 ```
 
 Real provider-backed validation is reserved for explicit protected workflows on
-disposable wire endpoints:
+disposable wire endpoints. Hetzner is the currently documented provider-backed
+adapter:
 
 ```sh
 tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
@@ -97,8 +106,9 @@ See [wire.md](wire.md) for provider credentials, artifacts, and cleanup.
 ## CI Expectations
 
 Pull request CI should run deterministic corpus, offline, pcap, Hetzner wire
-dry-run, and probe dry-run checks. Real live packet exchange must stay behind
-explicit protected workflow confirmation and cleanup logic.
+dry-run, and probe dry-run checks. The Hetzner oracle check is still selected
+through the oracle live provider adapter registry. Real live packet exchange
+must stay behind explicit protected workflow confirmation and cleanup logic.
 
 Recommended local preflight:
 

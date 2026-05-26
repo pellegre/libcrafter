@@ -8,6 +8,12 @@ the workload, reports, and reproduction coordinates; wire owns the lifecycle.
 Hetzner is the current provider implementation, and the rest of this document
 covers it.
 
+Oracle live provider adapter registration is separate: adapters under
+`tools/oracle/engine/providers/` select how oracle maps `--provider` names to
+wire endpoint plans, bootstrap, remote endpoint commands, capabilities, and
+comparison policy. They call into `tools/wire`; they do not move or replace
+wire provider implementations.
+
 Local static tests should run before any provider command. Provider-backed wire
 endpoints are for tests that need root privileges, raw sockets, packet capture,
 reference comparison, or kernel/service replies on disposable infrastructure.
