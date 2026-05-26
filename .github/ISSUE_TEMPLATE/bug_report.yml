@@ -31,7 +31,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: OS, Rust version, libpcap version, Python version when relevant, and whether this was offline or in a disposable live lab.
+      description: OS, Rust version, libpcap version, Python version when relevant, and whether this was offline or in a disposable wire provider lab.
       placeholder: |
         rustc --version
         cargo --version

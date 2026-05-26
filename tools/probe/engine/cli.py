@@ -1839,8 +1839,6 @@ def _create_wire_repo_archive(output_dir: Path) -> Path:
             str(REPO_ROOT),
             "--exclude=.git",
             "--exclude=target",
-            "--exclude=tools/live-lab/.state",
-            "--exclude=tools/live-lab/artifacts",
             "--exclude=tools/wire/.state",
             "--exclude=tools/wire/artifacts",
             "-czf",

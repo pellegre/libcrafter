@@ -28,19 +28,20 @@ but it is not yet part of the acceptance matrix.
 
 Live send, capture, and send/receive workflows are developed for
 Linux disposable labs. They require suitable privileges inside the lab and may
-depend on reference packet tooling, Docker, and basic networking tools installed
-by the live-lab image.
+depend on reference packet tooling and basic networking tools installed on the
+wire endpoint.
 
 Live raw-packet tests must not run on a developer workstation by default. Use:
 
 ```sh
-tools/live-lab/libcrafter-live-lab doctor --provider local-dry-run
-tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite all
+tools/wire/wire doctor --provider hetzner --exposure wan --dry-run
+tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
 For provider-backed runs, configure credentials outside the repository. The
-Hetzner provider reads only the `HETZNER_API_TOKEN` variable or the ignored
-local env file described in [live-lab.md](live-lab.md).
+Hetzner wire provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
+process environment.
 
 ## Known Protocol Coverage Gaps
 
@@ -70,4 +71,4 @@ The alpha is not suitable for:
 - Running unreviewed traffic-changing tools on shared networks.
 - Replacing a full packet analyzer.
 - Acting as a production TCP/IP stack.
-- Publishing provider credentials or live-lab state.
+- Publishing provider credentials or wire endpoint state.

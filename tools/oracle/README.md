@@ -50,8 +50,8 @@ does not send packets or create infrastructure:
 tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 1 --count 10
 ```
 
-Provider-backed live planning must stay dry-run unless a protected live-lab
-workflow is intentionally creating disposable resources:
+Provider-backed live planning must stay dry-run unless a protected workflow is
+intentionally creating disposable wire endpoints:
 
 ```sh
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
@@ -104,7 +104,6 @@ must not add oracle-only code to `crafter`.
 ## CI Policy
 
 Pull request CI runs deterministic offline and pcap oracle validation with the
-Scapy backend. The live-lab workflow runs provider dry-run planning on normal
-pull request and push events. Real Hetzner live exchanges run only from a
-protected manual workflow dispatch with explicit confirmation and configured
-credentials.
+Scapy backend. The live workflow runs provider dry-run planning on normal pull
+request and push events. Real Hetzner live exchanges run only from a protected
+manual workflow dispatch with explicit confirmation and configured credentials.
