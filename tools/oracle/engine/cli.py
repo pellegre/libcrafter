@@ -1103,6 +1103,21 @@ def _live_provider_workflow_command(commands: Sequence[object], purpose: str) ->
     raise RuntimeError(f"provider workflow is missing purpose {purpose!r}")
 
 
+def _live_provider_credential_label(provider_adapter) -> str:
+    label = getattr(provider_adapter, "credential_label", None)
+    if isinstance(label, str) and label:
+        return label
+    name = getattr(provider_adapter, "name", "provider")
+    return f"{name} credentials"
+
+
+def _live_provider_missing_credential_reason(provider_adapter) -> str:
+    reason = getattr(provider_adapter, "missing_credential_reason", None)
+    if isinstance(reason, str) and reason:
+        return reason
+    return f"missing {_live_provider_credential_label(provider_adapter)}"
+
+
 def _pcap(args: argparse.Namespace) -> int:
     if args.dry_plan:
         return _pcap_dry_plan(args)
@@ -1143,14 +1158,19 @@ def _live(args: argparse.Namespace) -> int:
 
     if args.provider == "local-dry-run":
         return _live_local_dry_run(args)
-    if args.provider == "hetzner":
-        return _live_hetzner(args)
 
-    print(f"unsupported live provider: {args.provider}", file=sys.stderr)
-    return 2
+    from .providers.registry import resolve_live_provider
+
+    try:
+        provider_adapter = resolve_live_provider(args.provider)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    return _live_provider(args, provider_adapter)
 
 
-def _live_hetzner(args: argparse.Namespace) -> int:
+def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
     from .backends.scapy.live import (
         backend_bootstrap_command_plan,
         dry_run_command_plan as scapy_dry_run_command_plan,
@@ -1168,10 +1188,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
         validate_live_endpoint_batch_contract,
         validate_libcrafter_command_plan,
     )
-    from .providers.registry import resolve_live_provider
-
     try:
-        provider_adapter = resolve_live_provider(args.provider)
         directions = live_execution_directions(args.direction)
         dry_run = bool(args.dry_run)
         provider_capabilities = provider_adapter.default_provider_capabilities(
@@ -1202,16 +1219,28 @@ def _live_hetzner(args: argparse.Namespace) -> int:
     )
 
     token_configured = provider_adapter.token_configured()
-    if not dry_run and not bool(getattr(args, "confirm_live_run", False)):
-        return _live_hetzner_requires_dry_run_report(
+    if not plans:
+        return _live_provider_skip_no_wire_eligible(
             args=args,
+            provider_adapter=provider_adapter,
+            report_path=report_path,
+            directions=directions,
+            selected_specs=selected_specs,
+            corpus_metadata=corpus_metadata,
+            dry_run=dry_run,
+            token_configured=token_configured,
+        )
+    if not dry_run and not bool(getattr(args, "confirm_live_run", False)):
+        return _live_provider_requires_confirmation_report(
+            args=args,
+            provider_adapter=provider_adapter,
             report_path=report_path,
             directions=directions,
             selected_specs=selected_specs,
             corpus_metadata=corpus_metadata,
         )
     if not dry_run and not token_configured:
-        return _live_hetzner_skip_no_token(
+        return _live_provider_skip_no_token(
             args=args,
             provider_adapter=provider_adapter,
             report_path=report_path,
@@ -1220,7 +1249,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
             corpus_metadata=corpus_metadata,
         )
     if not dry_run:
-        return _live_hetzner_execute(
+        return _live_provider_execute(
             args=args,
             provider_adapter=provider_adapter,
             report_path=report_path,
@@ -1513,14 +1542,14 @@ def _live_hetzner(args: argparse.Namespace) -> int:
                 "always_attempt": True,
                 "command": _live_provider_workflow_command(
                     provider_workflow,
-                    "collect-live-endpoint-artifacts",
+                    provider_adapter.artifact_collection_purpose,
                 ).to_dict(),
             },
             "teardown": {
                 "always_attempt": True,
                 "command": _live_provider_workflow_command(
                     provider_workflow,
-                    "teardown-disposable-hetzner-endpoints",
+                    provider_adapter.teardown_purpose,
                 ).to_dict(),
             },
             "backend_bootstrap": {
@@ -1560,7 +1589,7 @@ def _live_hetzner(args: argparse.Namespace) -> int:
     return 0 if status == "dry-run" else 1
 
 
-def _live_hetzner_skip_no_token(
+def _live_provider_skip_no_token(
     *,
     args: argparse.Namespace,
     provider_adapter,
@@ -1572,6 +1601,9 @@ def _live_hetzner_skip_no_token(
     endpoints = provider_adapter.endpoints(dry_run=False)
     provider_workflow = provider_adapter.provider_workflow(dry_run=False)
     endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=False)
+    credential_label = _live_provider_credential_label(provider_adapter)
+    missing_credential_reason = _live_provider_missing_credential_reason(provider_adapter)
+    print_reason = missing_credential_reason.replace(" ", "_")
     live_count_metadata = _live_count_metadata(
         _live_empty_direction_counts(corpus_metadata, directions)
     )
@@ -1580,13 +1612,13 @@ def _live_hetzner_skip_no_token(
         direction=args.direction,
         expected={
             "provider": args.provider,
-            "credential": "HETZNER_API_TOKEN",
+            "credential": credential_label,
             "token_configured": True,
         },
         actual={
             "provider": args.provider,
             "skipped": True,
-            "reason": "missing HETZNER_API_TOKEN",
+            "reason": missing_credential_reason,
             "token_configured": False,
             "creates_infrastructure": False,
         },
@@ -1595,7 +1627,7 @@ def _live_hetzner_skip_no_token(
         metadata={
             "provider": args.provider,
             "skipped": True,
-            "skip_reason": "missing HETZNER_API_TOKEN",
+            "skip_reason": missing_credential_reason,
             "creates_infrastructure": False,
             "live_packet_exchange": False,
         },
@@ -1618,7 +1650,7 @@ def _live_hetzner_skip_no_token(
             "provider": args.provider,
             "dry_run": False,
             "skipped": True,
-            "skip_reason": "missing HETZNER_API_TOKEN",
+            "skip_reason": missing_credential_reason,
             "creates_infrastructure": False,
             "would_create_infrastructure_with_credentials": True,
             "live_packet_exchange": False,
@@ -1638,17 +1670,17 @@ def _live_hetzner_skip_no_token(
             ],
             "artifact_collection": {
                 "always_attempt": True,
-                    "command": _live_provider_workflow_command(
-                        provider_workflow,
-                        provider_adapter.artifact_collection_purpose,
-                    ).to_dict(),
+                "command": _live_provider_workflow_command(
+                    provider_workflow,
+                    provider_adapter.artifact_collection_purpose,
+                ).to_dict(),
             },
             "teardown": {
                 "always_attempt": True,
-                    "command": _live_provider_workflow_command(
-                        provider_workflow,
-                        provider_adapter.teardown_purpose,
-                    ).to_dict(),
+                "command": _live_provider_workflow_command(
+                    provider_workflow,
+                    provider_adapter.teardown_purpose,
+                ).to_dict(),
             },
             "endpoints": {
                 name: endpoint.to_dict() for name, endpoint in endpoints.items()
@@ -1657,30 +1689,24 @@ def _live_hetzner_skip_no_token(
     )
     write_json(report_path, report)
     print(
-        f"live {args.provider}: status=skipped reason=missing_HETZNER_API_TOKEN "
+        f"live {args.provider}: status=skipped reason={print_reason} "
         f"creates_infrastructure=false report={report_path}"
     )
     return 0
 
 
-def _live_hetzner_requires_dry_run_report(
+def _live_provider_requires_confirmation_report(
     *,
     args: argparse.Namespace,
+    provider_adapter,
     report_path: Path,
     directions: list[str],
     selected_specs: list[str],
     corpus_metadata: JSONObject,
 ) -> int:
-    from .providers.hetzner import (
-        hetzner_endpoint_bootstrap_plan,
-        hetzner_endpoints,
-        hetzner_private_network_plan,
-        hetzner_provider_workflow,
-    )
-
-    endpoints = hetzner_endpoints(dry_run=False)
-    provider_workflow = hetzner_provider_workflow(dry_run=False)
-    endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
+    endpoints = provider_adapter.endpoints(dry_run=False)
+    provider_workflow = provider_adapter.provider_workflow(dry_run=False)
+    endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=False)
     live_count_metadata = _live_count_metadata(
         _live_empty_direction_counts(corpus_metadata, directions)
     )
@@ -1737,21 +1763,23 @@ def _live_hetzner_requires_dry_run_report(
             "provider": args.provider,
             "dry_run": False,
             "creates_infrastructure": False,
-            "planned_infrastructure": hetzner_private_network_plan(dry_run=False),
+            "planned_infrastructure": provider_adapter.planned_infrastructure(
+                dry_run=False
+            ),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
             "endpoint_bootstrap": [command.to_dict() for command in endpoint_bootstrap],
             "artifact_collection": {
                 "always_attempt": True,
                 "command": _live_provider_workflow_command(
                     provider_workflow,
-                    "collect-live-endpoint-artifacts",
+                    provider_adapter.artifact_collection_purpose,
                 ).to_dict(),
             },
             "teardown": {
                 "always_attempt": True,
                 "command": _live_provider_workflow_command(
                     provider_workflow,
-                    "teardown-disposable-hetzner-endpoints",
+                    provider_adapter.teardown_purpose,
                 ).to_dict(),
             },
             "endpoints": {
@@ -1771,24 +1799,20 @@ def _live_hetzner_requires_dry_run_report(
     return 2
 
 
-def _live_hetzner_skip_no_wire_eligible(
+def _live_provider_skip_no_wire_eligible(
     *,
     args: argparse.Namespace,
+    provider_adapter,
     report_path: Path,
     directions: list[str],
     selected_specs: list[str],
     corpus_metadata: JSONObject,
+    dry_run: bool,
+    token_configured: bool,
 ) -> int:
-    from .providers.hetzner import (
-        hetzner_endpoint_bootstrap_plan,
-        hetzner_endpoints,
-        hetzner_private_network_plan,
-        hetzner_provider_workflow,
-    )
-
-    endpoints = hetzner_endpoints(dry_run=False)
-    provider_workflow = hetzner_provider_workflow(dry_run=False)
-    endpoint_bootstrap = hetzner_endpoint_bootstrap_plan(dry_run=False)
+    endpoints = provider_adapter.endpoints(dry_run=dry_run)
+    provider_workflow = provider_adapter.provider_workflow(dry_run=dry_run)
+    endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=dry_run)
     live_count_metadata = _live_count_metadata(
         _live_empty_direction_counts(corpus_metadata, directions)
     )
@@ -1834,19 +1858,19 @@ def _live_hetzner_skip_no_wire_eligible(
         libcrafter=_libcrafter_info(),
         metadata={
             "provider": args.provider,
-            "dry_run": False,
+            "dry_run": dry_run,
             "skipped": True,
             "skip_reason": "no_wire_eligible_packets",
             "creates_infrastructure": False,
             "planned_live_packet_exchange": False,
             "live_packet_exchange": False,
             "no_live_packets_sent": True,
-            "token_configured": True,
+            "token_configured": token_configured,
             **corpus_metadata,
             **live_count_metadata,
             "execution_directions": directions,
-            "planned_infrastructure_if_packets_eligible": hetzner_private_network_plan(
-                dry_run=False
+            "planned_infrastructure_if_packets_eligible": provider_adapter.planned_infrastructure(
+                dry_run=dry_run
             ),
             "provider_workflow_if_packets_eligible": [
                 command.to_dict() for command in provider_workflow
@@ -1867,7 +1891,7 @@ def _live_hetzner_skip_no_wire_eligible(
     return 0
 
 
-def _live_hetzner_execute(
+def _live_provider_execute(
     *,
     args: argparse.Namespace,
     provider_adapter,
@@ -1932,8 +1956,9 @@ def _live_hetzner_execute(
         )
         provider_commands.append(doctor)
         if doctor["exit_code"] != 0:
-            execution_errors.append("Hetzner provider doctor failed")
-            raise RuntimeError("Hetzner provider doctor failed")
+            message = f"{provider_adapter.name} provider doctor failed"
+            execution_errors.append(message)
+            raise RuntimeError(message)
 
         planned_wire_endpoint_plan = provider_adapter.wire_endpoint_plan(
             dry_run=False,
@@ -1973,8 +1998,9 @@ def _live_hetzner_execute(
             )
             provider_commands.extend(bootstrap_records)
             if any(record.get("exit_code") != 0 for record in bootstrap_records):
-                execution_errors.append(f"Hetzner endpoint bootstrap failed: {role}")
-                raise RuntimeError(f"Hetzner endpoint bootstrap failed: {role}")
+                message = f"{provider_adapter.name} endpoint bootstrap failed: {role}"
+                execution_errors.append(message)
+                raise RuntimeError(message)
 
         discovered_capabilities = provider_adapter.default_provider_capabilities(
             dry_run=False,
@@ -7444,9 +7470,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_options(live_parser)
     _add_generation_options(live_parser)
+    from .providers.registry import registered_provider_names
+
     live_parser.add_argument(
         "--provider",
-        choices=("local-dry-run", "hetzner"),
+        choices=("local-dry-run", *registered_provider_names()),
         required=True,
         help="live provider to use",
     )
@@ -7473,7 +7501,7 @@ def build_parser() -> argparse.ArgumentParser:
     live_parser.add_argument(
         "--keep-wire-endpoints",
         action="store_true",
-        help="keep Hetzner wire endpoints after a non-dry-run for debugging",
+        help="keep provider wire endpoints after a non-dry-run for debugging",
     )
     live_parser.set_defaults(func=_live)
 

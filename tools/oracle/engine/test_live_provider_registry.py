@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
+from tools.oracle.engine import cli
 from tools.oracle.engine.model import PacketPlan
 from tools.oracle.engine.providers.hetzner import ORACLE_PRIVATE_GROUP
 from tools.oracle.engine.providers.registry import (
@@ -122,6 +126,51 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(reference_command[:2], ["bash", "-lc"])
         self.assertIn("python3 -m engine.backends.scapy.live", reference_command[2])
 
+    def test_live_parser_accepts_local_dry_run_and_registered_providers(self) -> None:
+        parser = cli.build_parser()
+
+        local_args = parser.parse_args(["live", "--provider", "local-dry-run"])
+        hetzner_args = parser.parse_args(["live", "--provider", "hetzner"])
+
+        self.assertEqual(local_args.provider, "local-dry-run")
+        self.assertEqual(hetzner_args.provider, "hetzner")
+        with (
+            self.assertRaises(SystemExit),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            parser.parse_args(["live", "--provider", "virtualbox"])
+
+    def test_live_dispatch_resolves_hetzner_adapter(self) -> None:
+        args = _live_args("hetzner")
+        seen: dict[str, object] = {}
+
+        def fake_live_provider(_args, adapter) -> int:
+            seen["provider"] = _args.provider
+            seen["adapter"] = adapter
+            return 17
+
+        with patch.object(cli, "_live_provider", side_effect=fake_live_provider):
+            code = cli._live(args)
+
+        self.assertEqual(code, 17)
+        self.assertEqual(seen["provider"], "hetzner")
+        self.assertIs(seen["adapter"], resolve_live_provider("hetzner"))
+
+    def test_live_dispatch_rejects_unknown_provider_before_planning(self) -> None:
+        args = _live_args("virtualbox")
+        stderr = io.StringIO()
+
+        with (
+            patch.object(cli, "_live_provider") as live_provider,
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = cli._live(args)
+
+        self.assertEqual(code, 2)
+        live_provider.assert_not_called()
+        self.assertIn("virtualbox", stderr.getvalue())
+        self.assertIn("hetzner", stderr.getvalue())
+
 
 class _FakeRecord:
     def __init__(self, role: str) -> None:
@@ -181,6 +230,19 @@ class _FakeWireClient:
                 "metadata": {"private_group": private_group},
             },
         )
+
+
+def _live_args(provider: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        backend="scapy",
+        provider=provider,
+        out="target/oracle/test-live-provider-dispatch",
+        direction="live_exchange",
+        dry_run=True,
+        profile="smoke",
+        seed=1,
+        count=1,
+    )
 
 
 if __name__ == "__main__":
