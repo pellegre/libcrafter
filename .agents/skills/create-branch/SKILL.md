@@ -1,11 +1,11 @@
 ---
-name: agent-branches
-description: Create or rename libcrafter agent branches and worktrees with typed branch names such as feature/slug or fix/slug instead of bare task names.
+name: create-branch
+description: Create, rename, check out, or prepare libcrafter branches and worktrees with typed branch names such as feature/slug or fix/slug instead of bare task names.
 ---
 
-# Agent Branches
+# Create Branch
 
-Use this skill whenever an agent creates, renames, checks out, or prepares a
+Use this skill whenever you create, rename, check out, or prepare a
 branch or worktree for repository work.
 
 ## Branch Name Format
