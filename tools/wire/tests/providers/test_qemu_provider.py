@@ -16,13 +16,19 @@ from tools.wire.engine import cli as wire_cli
 from tools.wire.engine.model import EndpointManifest
 from tools.wire.engine.process import CommandResult
 from tools.wire.engine.providers import qemu, resolve_provider
-from tools.wire.engine.providers.qemu.constants import QEMU_ACCEL_ENV, QEMU_SYSTEM_COMMAND
+from tools.wire.engine.providers.qemu.constants import (
+    QEMU_ACCEL_ENV,
+    QEMU_DEFAULT_PRIVATE_CIDR,
+    QEMU_PRIVATE_CIDR_ENV,
+    QEMU_SYSTEM_COMMAND,
+)
 from tools.wire.engine.providers.vm import (
     CLOUD_LOCALDS_COMMAND,
     LINUX_INTERFACE_DISCOVERY_COMMAND,
     QEMU_IMG_COMMAND,
 )
 from tools.wire.engine.registry import ProviderExposureError
+from tools.wire.engine.state import read_private_group_record, update_private_group_allocation
 
 
 class QemuRegistryTest(unittest.TestCase):
@@ -180,6 +186,19 @@ class QemuCreateEndpointTest(unittest.TestCase):
             output["metadata"]["private_group_record"]["network_resource"]["network_id"],  # type: ignore[index]
             "qemu-private-group-pair-a",
         )
+        self.assertEqual(
+            output["metadata"]["private_group_record"]["private_cidr"],  # type: ignore[index]
+            QEMU_DEFAULT_PRIVATE_CIDR,
+        )
+        self.assertEqual(
+            output["metadata"]["private_network"]["backend"],  # type: ignore[index]
+            "socket-mcast",
+        )
+        self.assertEqual(
+            output["metadata"]["private_network"]["ip_range"],  # type: ignore[index]
+            QEMU_DEFAULT_PRIVATE_CIDR,
+        )
+        self.assertIn("mcast", output["metadata"]["private_network"])  # type: ignore[operator]
         interfaces = {interface["name"]: interface for interface in output["interfaces"]}  # type: ignore[index]
         self.assertEqual(interfaces["private"]["ipv4"], "10.55.0.9")
         self.assertEqual(interfaces["private"]["provider_network_id"], "qemu-private-group-pair-a")
@@ -300,6 +319,145 @@ class QemuCreateEndpointTest(unittest.TestCase):
         resource_kinds = [resource["kind"] for resource in stored["provider_resources"]["resources"]]
         self.assertIn("process", resource_kinds)
 
+    def test_live_private_create_allocates_group_and_starts_socket_network(self) -> None:
+        endpoint_id = "qemu-private-oracle-20260526231000-abcdef"
+        fake = _QemuLiveFakeRunner(private_ipv4="10.77.0.2")
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with (
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.vm_endpoint_id",
+                    return_value=endpoint_id,
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.utc_now",
+                    return_value="2026-05-26T23:10:00Z",
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.free_localhost_tcp_port",
+                    return_value=26226,
+                ),
+            ):
+                output = qemu.create_endpoint(
+                    provider="qemu",
+                    exposure="private",
+                    role="oracle",
+                    private_group="pair-a",
+                    confirm_live_run=True,
+                    env={},
+                    command_runner=fake,
+                    download_runner=_fake_download,
+                    ssh_wait_timeout=1,
+                    ssh_wait_interval=0.01,
+                )
+                stored = json.loads(Path(str(output["manifest_path"])).read_text(encoding="utf-8"))
+                record = read_private_group_record("qemu", "pair-a")
+                network_config = Path(
+                    str(output["metadata"]["vm_guest_artifacts"]["network_config_path"])  # type: ignore[index]
+                ).read_text(encoding="utf-8")
+
+        self.assertTrue(output["created"])
+        self.assertFalse(output["dry_run"])
+        self.assertEqual(output["status"], "active")
+        self.assertEqual(record.allocated_endpoint_ids, [endpoint_id])
+        self.assertEqual(record.allocated_private_ipv4s, ["10.77.0.2"])
+        self.assertEqual(record.private_cidr, QEMU_DEFAULT_PRIVATE_CIDR)
+        self.assertEqual(record.network_resource["network_id"], "qemu-private-group-pair-a")
+        self.assertEqual(output["metadata"]["private_group"], "pair-a")  # type: ignore[index]
+        self.assertEqual(output["metadata"]["private_ip"], "10.77.0.2")  # type: ignore[index]
+        self.assertEqual(
+            output["metadata"]["private_group_record"]["allocated_private_ipv4s"],  # type: ignore[index]
+            ["10.77.0.2"],
+        )
+
+        qemu_call = fake.qemu_calls[0]
+        private_network = output["metadata"]["qemu"]["network"]["private"]  # type: ignore[index]
+        self.assertEqual(private_network["backend"], "socket-mcast")
+        self.assertEqual(private_network["network_id"], "qemu-private-group-pair-a")
+        self.assertIn(f"socket,id=private0,mcast={private_network['mcast']}", qemu_call)
+        self.assertTrue(
+            any(part.startswith("virtio-net-pci,netdev=control0,mac=") for part in qemu_call)
+        )
+        self.assertTrue(
+            any(part.startswith("virtio-net-pci,netdev=private0,mac=") for part in qemu_call)
+        )
+
+        interfaces = {interface["exposure"]: interface for interface in output["interfaces"]}  # type: ignore[index]
+        self.assertEqual(interfaces["control"]["metadata"]["host_port"], 26226)
+        self.assertEqual(interfaces["private"]["name"], "wirepriv0")
+        self.assertEqual(interfaces["private"]["ipv4"], "10.77.0.2")
+        self.assertEqual(interfaces["private"]["provider_network_id"], "qemu-private-group-pair-a")
+        self.assertEqual(interfaces["private"]["metadata"]["private_group"], "pair-a")
+        self.assertEqual(interfaces["private"]["metadata"]["backend"], "socket-mcast")
+        self.assertIn("10.77.0.2/24", network_config)
+        self.assertIn(str(interfaces["private"]["mac"]), network_config)
+        self.assertEqual(stored["metadata"]["private_group_record"]["provider"], "qemu")
+
+    def test_live_private_create_honors_requested_static_ip(self) -> None:
+        endpoint_id = "qemu-private-probe-20260526231100-abcdef"
+        fake = _QemuLiveFakeRunner(private_ipv4="10.88.0.42")
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with (
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.vm_endpoint_id",
+                    return_value=endpoint_id,
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.utc_now",
+                    return_value="2026-05-26T23:11:00Z",
+                ),
+                mock.patch(
+                    "tools.wire.engine.providers.qemu.create.free_localhost_tcp_port",
+                    return_value=26227,
+                ),
+            ):
+                output = qemu.create_endpoint(
+                    provider="qemu",
+                    exposure="private",
+                    role="probe",
+                    private_group="pair-static",
+                    private_ip="10.88.0.42",
+                    confirm_live_run=True,
+                    env={QEMU_PRIVATE_CIDR_ENV: "10.88.0.0/24"},
+                    command_runner=fake,
+                    download_runner=_fake_download,
+                    ssh_wait_timeout=1,
+                    ssh_wait_interval=0.01,
+                )
+                record = read_private_group_record("qemu", "pair-static")
+
+        private_interface = next(
+            interface
+            for interface in output["interfaces"]  # type: ignore[index]
+            if interface["exposure"] == "private"
+        )
+        self.assertEqual(private_interface["ipv4"], "10.88.0.42")
+        self.assertEqual(record.private_cidr, "10.88.0.0/24")
+        self.assertEqual(record.allocated_private_ipv4s, ["10.88.0.42"])
+
+    def test_live_private_create_rejects_allocated_static_ip_before_provider_work(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            update_private_group_allocation(
+                provider="qemu",
+                group="pair-a",
+                endpoint_id="existing",
+                private_ipv4="10.77.0.9",
+                private_cidr=QEMU_DEFAULT_PRIVATE_CIDR,
+                network_resource={"network_id": "qemu-private-group-pair-a"},
+            )
+
+            with self.assertRaisesRegex(ValueError, "already allocated"):
+                qemu.create_endpoint(
+                    provider="qemu",
+                    exposure="private",
+                    role="probe",
+                    private_group="pair-a",
+                    private_ip="10.77.0.9",
+                    confirm_live_run=True,
+                    env={},
+                    command_runner=_fail_runner,
+                    download_runner=_fake_download,
+                )
+
     def test_live_wan_create_writes_failed_manifest_after_ssh_timeout(self) -> None:
         endpoint_id = "qemu-wan-probe-20260526230600-abcdef"
         fake = _QemuLiveFakeRunner(fail_ssh=True)
@@ -400,9 +558,12 @@ def _fail_runner(argv: Sequence[object], **_: object) -> CommandResult:
 
 
 class _QemuLiveFakeRunner:
-    def __init__(self, *, fail_ssh: bool = False) -> None:
+    def __init__(self, *, fail_ssh: bool = False, private_ipv4: str | None = None) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.fail_ssh = fail_ssh
+        self.private_ipv4 = private_ipv4
+        self.control_mac: str | None = None
+        self.private_mac: str | None = None
 
     @property
     def qemu_calls(self) -> list[tuple[str, ...]]:
@@ -426,6 +587,8 @@ class _QemuLiveFakeRunner:
             Path(parts[-1]).write_text("qcow2 overlay\n", encoding="utf-8")
             return _result(parts)
         if parts[0] == QEMU_SYSTEM_COMMAND:
+            self.control_mac = _device_mac(parts, "control0")
+            self.private_mac = _device_mac(parts, "private0")
             pidfile_path = Path(parts[parts.index("-pidfile") + 1])
             pidfile_path.write_text("4242\n", encoding="utf-8")
             serial_index = parts.index("-serial") + 1
@@ -440,6 +603,15 @@ class _QemuLiveFakeRunner:
                     return _result(parts, exit_code=255, stderr="connection refused")
                 return _result(parts)
             if parts[-1] == LINUX_INTERFACE_DISCOVERY_COMMAND:
+                if self.private_ipv4 is not None and self.private_mac is not None:
+                    return _result(
+                        parts,
+                        stdout=_qemu_private_discovery_output(
+                            private_ipv4=self.private_ipv4,
+                            control_mac=self.control_mac or "52:54:00:aa:bb:cc",
+                            private_mac=self.private_mac,
+                        ),
+                    )
                 return _result(parts, stdout=_qemu_discovery_output())
         raise AssertionError(f"unexpected command: {parts}")
 
@@ -482,6 +654,71 @@ def _qemu_discovery_output() -> str:
             json.dumps(routes),
         ]
     )
+
+
+def _qemu_private_discovery_output(
+    *,
+    private_ipv4: str,
+    control_mac: str,
+    private_mac: str,
+) -> str:
+    addresses = [
+        {
+            "ifindex": 2,
+            "ifname": "enp0s1",
+            "address": control_mac,
+            "operstate": "UP",
+            "mtu": 1500,
+            "addr_info": [
+                {"family": "inet", "local": "10.0.2.15", "prefixlen": 24},
+            ],
+        },
+        {
+            "ifindex": 3,
+            "ifname": "wirepriv0",
+            "address": private_mac,
+            "operstate": "UP",
+            "mtu": 1500,
+            "addr_info": [
+                {"family": "inet", "local": private_ipv4, "prefixlen": 24},
+            ],
+        },
+    ]
+    links = [
+        {
+            "ifindex": 2,
+            "ifname": "enp0s1",
+            "address": control_mac,
+            "operstate": "UP",
+            "mtu": 1500,
+        },
+        {
+            "ifindex": 3,
+            "ifname": "wirepriv0",
+            "address": private_mac,
+            "operstate": "UP",
+            "mtu": 1500,
+        },
+    ]
+    routes = [{"dst": "1.1.1.1", "dev": "enp0s1", "prefsrc": "10.0.2.15"}]
+    return "\n".join(
+        [
+            "__WIRE_IP_ADDR__",
+            json.dumps(addresses),
+            "__WIRE_IP_LINK__",
+            json.dumps(links),
+            "__WIRE_IP_ROUTE__",
+            json.dumps(routes),
+        ]
+    )
+
+
+def _device_mac(argv: Sequence[str], netdev: str) -> str | None:
+    prefix = f"virtio-net-pci,netdev={netdev},mac="
+    for part in argv:
+        if part.startswith(prefix):
+            return part.removeprefix(prefix)
+    return None
 
 
 def _result(
