@@ -23,6 +23,7 @@ Every example uses only public APIs from the `crafter` crate, with
 | `send_plan` | Net workflows | Dry-run | Network-layer send planning, compiled bytes, targets, and derived reply filters. | `cargo run -p crafter --example send_plan` |
 | `send_packet` | Net workflows | Dry-run by default; live-gated with `--live` | Network-layer and link-layer send reports using dry-run options by default. | `cargo run -p crafter --example send_packet` |
 | `send_recv_icmp` | Net workflows | Dry-run | ICMP send/receive configuration, retry timing, filters, and dry-run reports. | `cargo run -p crafter --example send_recv_icmp` |
+| `network_ping` | Net workflows | Dry-run by default; live-gated with `--live` | Network-layer ICMP echo send/receive for disposable wire endpoint smoke tests. | `cargo run -p crafter --example network_ping` |
 | `reply_matching` | Net workflows | Offline | Synthetic request/reply matching and generated reply filters. | `cargo run -p crafter --example reply_matching` |
 | `batch_send` | Net workflows | Dry-run | Positional batch send reports for multiple TCP packets. | `cargo run -p crafter --example batch_send` |
 | `batch_send_recv` | Net workflows | Dry-run | Batch send/receive reports across IPv4 and IPv6 requests. | `cargo run -p crafter --example batch_send_recv` |
