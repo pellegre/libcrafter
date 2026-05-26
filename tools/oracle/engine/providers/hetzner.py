@@ -20,7 +20,7 @@ from .. import wire_client
 
 
 PROVIDER_NAME = "hetzner"
-WIRE_ENTRYPOINT = "tools/wire/wire"
+WIRE_ENTRYPOINT = "tools/wire/run"
 ORACLE_LIVE_SUITE = "oracle-live"
 ORACLE_PRIVATE_GROUP = "oracle-live-private"
 PRIVATE_NETWORK_CIDR = "10.42.19.0/24"

@@ -43,8 +43,8 @@ Run local static checks and dry-runs first:
 ```sh
 cargo test --workspace
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
-tools/wire/wire doctor --provider hetzner --exposure private --dry-run
-tools/wire/wire create-endpoint --provider hetzner --exposure private --role probe-stimulus --private-group probe-smoke --private-ip 10.0.25.10 --dry-run --write-manifest
+tools/wire/run doctor --provider hetzner --exposure private --dry-run
+tools/wire/run create-endpoint --provider hetzner --exposure private --role probe-stimulus --private-group probe-smoke --private-ip 10.0.25.10 --dry-run --write-manifest
 ```
 
 Start a protected live run only when disposable resources are intended:

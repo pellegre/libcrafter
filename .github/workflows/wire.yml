@@ -163,7 +163,7 @@ jobs:
           import subprocess
 
           result = subprocess.run(
-              ["tools/wire/wire", "list-endpoints", "--json"],
+              ["tools/wire/run", "list-endpoints", "--json"],
               check=False,
               stdout=subprocess.PIPE,
               stderr=subprocess.DEVNULL,
@@ -175,7 +175,7 @@ jobs:
               endpoint_id = endpoint.get("endpoint_id")
               if endpoint_id:
                   subprocess.run(
-                      ["tools/wire/wire", "collect-artifacts", endpoint_id],
+                      ["tools/wire/run", "collect-artifacts", endpoint_id],
                       check=False,
                   )
           PY
@@ -188,7 +188,7 @@ jobs:
           import subprocess
 
           result = subprocess.run(
-              ["tools/wire/wire", "list-endpoints", "--json"],
+              ["tools/wire/run", "list-endpoints", "--json"],
               check=False,
               stdout=subprocess.PIPE,
               stderr=subprocess.DEVNULL,
@@ -200,7 +200,7 @@ jobs:
               endpoint_id = endpoint.get("endpoint_id")
               if endpoint_id:
                   subprocess.run(
-                      ["tools/wire/wire", "destroy-endpoint", endpoint_id, "--json"],
+                      ["tools/wire/run", "destroy-endpoint", endpoint_id, "--json"],
                       check=False,
                   )
           PY

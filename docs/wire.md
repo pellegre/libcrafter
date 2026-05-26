@@ -20,9 +20,9 @@ configured.
 Run dry-run checks first:
 
 ```sh
-tools/wire/wire doctor --provider hetzner --exposure wan --dry-run
-tools/wire/wire doctor --provider hetzner --exposure private --dry-run
-tools/wire/wire create-endpoint --provider hetzner --exposure wan --dry-run --write-manifest
+tools/wire/run doctor --provider hetzner --exposure wan --dry-run
+tools/wire/run doctor --provider hetzner --exposure private --dry-run
+tools/wire/run create-endpoint --provider hetzner --exposure wan --dry-run --write-manifest
 ```
 
 Oracle offline and pcap validation plus probe dry-runs should pass before
@@ -60,11 +60,11 @@ Use direct wire commands only for debugging, inspection, or manual provider
 maintenance:
 
 ```sh
-tools/wire/wire create-endpoint --provider hetzner --exposure wan --confirm-live-run --json
-tools/wire/wire list-endpoints --json
-tools/wire/wire ssh-info ENDPOINT_ID --json
-tools/wire/wire collect-artifacts ENDPOINT_ID
-tools/wire/wire destroy-endpoint ENDPOINT_ID --json
+tools/wire/run create-endpoint --provider hetzner --exposure wan --confirm-live-run --json
+tools/wire/run list-endpoints --json
+tools/wire/run ssh-info ENDPOINT_ID --json
+tools/wire/run collect-artifacts ENDPOINT_ID
+tools/wire/run destroy-endpoint ENDPOINT_ID --json
 ```
 
 For private endpoint experiments, pass the same `--private-group` to each
@@ -86,7 +86,7 @@ protected workflows with environment approval.
 Recommended provider dry-run flow:
 
 ```sh
-tools/wire/wire doctor --provider hetzner --exposure private --dry-run
+tools/wire/run doctor --provider hetzner --exposure private --dry-run
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
@@ -104,7 +104,7 @@ matrix and known release gaps.
 Destroy disposable hosts as soon as provider validation finishes:
 
 ```sh
-tools/wire/wire destroy-endpoint ENDPOINT_ID --json
+tools/wire/run destroy-endpoint ENDPOINT_ID --json
 ```
 
 If a command fails before cleanup, keep the ignored state directory until

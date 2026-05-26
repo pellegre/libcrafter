@@ -34,7 +34,7 @@ the wire endpoint.
 Live raw-packet tests must not run on a developer workstation by default. Use:
 
 ```sh
-tools/wire/wire doctor --provider hetzner --exposure wan --dry-run
+tools/wire/run doctor --provider hetzner --exposure wan --dry-run
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
