@@ -160,8 +160,8 @@ def _normalize_argv(argv: Sequence[object]) -> tuple[str, ...]:
     parts = tuple(str(part) for part in argv)
     if not parts:
         raise ValueError("argv must contain at least one command argument")
-    if any(part == "" for part in parts):
-        raise ValueError("argv arguments must not be empty strings")
+    if parts[0] == "":
+        raise ValueError("argv command must not be an empty string")
     return parts
 
 
