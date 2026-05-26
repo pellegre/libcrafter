@@ -247,6 +247,7 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | `send_plan` | Network-layer send planning, compiled bytes, targets, and derived reply filters. |
 | `send_packet` | Network-layer and link-layer send reports using dry-run options by default. |
 | `send_recv_icmp` | ICMP send/receive configuration, retry timing, filters, and dry-run reports. |
+| `network_ping` | Network-layer ICMP echo send/receive for disposable wire endpoint smoke tests. |
 | `reply_matching` | Synthetic request/reply matching and generated reply filters. |
 | `batch_send` | Positional batch send reports for multiple TCP packets. |
 | `batch_send_recv` | Batch send/receive reports across IPv4 and IPv6 requests. |
