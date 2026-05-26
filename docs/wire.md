@@ -1,13 +1,13 @@
-# Wire Provider Lab
+# Wire Endpoint Provider Guide
 
 Disposable provider lifecycle is owned by `tools/wire`. Oracle and probe own the
 packet workload, reports, and reproduction coordinates. Use wire for endpoint
 creation, command execution, artifact collection, SSH details, and cleanup.
 
-Local static tests should run before any provider command. Live providers are
-for tests that need root privileges, raw sockets, packet capture, reference
-comparison, or kernel/service replies on disposable infrastructure. See
-[validation.md](validation.md) for oracle modes and CI expectations, and
+Local static tests should run before any provider command. Provider-backed wire
+endpoints are for tests that need root privileges, raw sockets, packet capture,
+reference comparison, or kernel/service replies on disposable infrastructure.
+See [validation.md](validation.md) for oracle modes and CI expectations, and
 [probe.md](probe.md) for behavioral probe cases.
 
 ## Hetzner Setup
@@ -29,7 +29,7 @@ Oracle offline and pcap validation plus probe dry-runs should pass before
 creating infrastructure. The validation commands are documented in
 [validation.md](validation.md) and [probe.md](probe.md).
 
-Plan provider-backed oracle and probe live validation without creating
+Plan provider-backed oracle and probe validation without creating
 infrastructure:
 
 ```sh
@@ -37,7 +37,7 @@ tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
-Start protected live validation only when disposable resources are intended:
+Start protected provider validation only when disposable resources are intended:
 
 ```sh
 tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
@@ -92,8 +92,8 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
 Pull request CI should run corpus, offline, pcap, Hetzner wire dry-run, and
-probe dry-run validation through [validation.md](validation.md). Real live runs
-should be manual, protected, and keep cleanup logic around wire endpoint
+probe dry-run validation through [validation.md](validation.md). Real provider
+runs should be manual, protected, and keep cleanup logic around wire endpoint
 destruction so resources are still torn down after a failed validation step.
 
 See also [supported-platforms.md](supported-platforms.md) for the alpha support
@@ -101,7 +101,7 @@ matrix and known release gaps.
 
 ## Cleanup
 
-Destroy disposable hosts as soon as live validation finishes:
+Destroy disposable hosts as soon as provider validation finishes:
 
 ```sh
 tools/wire/wire destroy-endpoint ENDPOINT_ID --json

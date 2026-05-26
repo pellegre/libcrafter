@@ -127,7 +127,7 @@ pub fn require_advanced_live_lab(example: &str) -> ExampleResult<()> {
         Ok(())
     } else {
         Err(format!(
-            "{example} can change network traffic and is only enabled inside an isolated live lab; missing {}",
+            "{example} can change network traffic and is only enabled on an isolated wire endpoint; missing {}",
             missing.join(" and ")
         )
         .into())
@@ -144,7 +144,7 @@ pub fn live_mode(example: &str) -> ExampleResult<bool> {
 
 pub fn print_advanced_safety(example: &str, live: bool) {
     println!("example: {example}");
-    println!("mode: {}", if live { "live-lab" } else { "dry-run" });
+    println!("mode: {}", if live { "wire-endpoint" } else { "dry-run" });
     if live {
         println!("safety: --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_LAB_ENV}=1 were required");
     } else {

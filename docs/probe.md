@@ -1,7 +1,7 @@
 # Probe Validation
 
-Probe validates behavior from kernels and controlled services in a disposable
-lab. It is separate from oracle validation: oracle checks writer/parser
+Probe validates behavior from kernels and controlled services on disposable
+wire endpoints. It is separate from oracle validation: oracle checks writer/parser
 agreement against a reference backend, while probe sends libcrafter packets and
 expects the peer endpoint or service to answer.
 
@@ -28,15 +28,16 @@ The smoke profile currently samples these cases:
 - `dns-query`: send a DNS query to a controlled UDP DNS responder and validate
   the matching answer.
 - `ttl-expired`: send a low-TTL packet and validate ICMP time exceeded from a
-  controlled routed hop when the lab advertises that capability.
+  controlled routed hop when the provider advertises that capability.
 
-The default Hetzner two-endpoint lab has no controlled router hop, so
+The default Hetzner wire endpoint pair has no controlled router hop, so
 `ttl-expired` is skipped with `requires_controlled_router`. Skips remain in the
 report and do not count as failures when the provider lacks the capability.
 
 ## Protected Hetzner Runs
 
-Real probe runs use the same two-endpoint Hetzner lab as wire oracle validation.
+Real probe runs use the same two-endpoint Hetzner wire endpoint pair as oracle
+validation.
 Run local static checks and dry-runs first:
 
 ```sh

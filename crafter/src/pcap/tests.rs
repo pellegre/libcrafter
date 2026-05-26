@@ -386,7 +386,7 @@ fn bpf_filter_sniffer_offline_uses_libpcap() {
 }
 
 #[test]
-#[ignore = "live capture is reserved for disposable live-lab execution"]
+#[ignore = "live capture is reserved for disposable wire endpoint execution"]
 fn sniffer_live_capture_live_lab_only() {
     let Some(iface) = std::env::var_os("LIBCRAFTER_LIVE_CAPTURE_IFACE") else {
         return;

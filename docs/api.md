@@ -2,7 +2,7 @@
 
 This document summarizes the public Rust surface for generated packet tools.
 The first alpha focuses on explicit builders, deterministic compile/decode
-behavior, bounded pcap workflows, and lab-only live traffic.
+behavior, bounded pcap workflows, and wire-endpoint-only live traffic.
 The only public crate is `crafter`, and its API may change before a stable
 release.
 
@@ -171,7 +171,7 @@ let packets = handle.join()?;
 ```
 
 Sniffing must use timeouts by default in examples and tests. Live sniffing
-belongs in disposable lab workflows, not local static tests.
+belongs in disposable wire endpoint workflows, not local static tests.
 
 ## Send And Send-Receive
 

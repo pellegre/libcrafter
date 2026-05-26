@@ -11,7 +11,7 @@ Every example uses only public APIs from the `crafter` crate, with
 - Dry-run: builds send or send/receive plans and reports without transmitting
   packets.
 - Live-gated: defaults to a safe plan or dry-run and opens live send or capture
-  handles only after the live-lab guard is satisfied.
+  handles only after the wire endpoint guard is satisfied.
 
 | example | area | safety mode | what it demonstrates | command |
 | --- | --- | --- | --- | --- |
@@ -31,7 +31,7 @@ Every example uses only public APIs from the `crafter` crate, with
 | `pcap_write` | Pcap and sniffing | Offline | Generated Ethernet/IPv4/TCP packets written to a pcap file. | `cargo run -p crafter --example pcap_write` |
 | `pcap_read` | Pcap and sniffing | Offline | Pcap metadata inspection, packet collection, and streaming `PcapReader` workflows. | `cargo run -p crafter --example pcap_read` |
 | `sniffer_offline` | Pcap and sniffing | Offline | Offline `Sniffer` filtering and bounded packet iteration. | `cargo run -p crafter --example sniffer_offline` |
-| `capture_pcap` | Pcap and sniffing | Live-gated; plan by default | Bounded libpcap capture configuration and pcap writing in an isolated live lab. | `cargo run -p crafter --example capture_pcap` |
+| `capture_pcap` | Pcap and sniffing | Live-gated; plan by default | Bounded libpcap capture configuration and pcap writing on an isolated wire endpoint. | `cargo run -p crafter --example capture_pcap` |
 | `arp_who_has` | Protocols | Dry-run | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. | `cargo run -p crafter --example arp_who_has` |
 | `dns_query` | Protocols | Dry-run send/receive plus offline decode | DNS query construction, dry-run send/receive reporting, and synthetic response decoding. | `cargo run -p crafter --example dns_query -- --name example.com` |
 | `dhcp_discover` | Protocols | Dry-run by default; live-gated with `--live` | DHCP discover construction with an explicit client MAC and link-layer send options. | `cargo run -p crafter --example dhcp_discover` |

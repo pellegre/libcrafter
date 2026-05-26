@@ -1,4 +1,4 @@
-name: wire-live
+name: wire-endpoints
 
 on:
   pull_request:
@@ -9,31 +9,31 @@ on:
   workflow_dispatch:
     inputs:
       confirm_hetzner_live:
-        description: "Type run to create Hetzner resources and exchange live packets."
+        description: "Type run to create Hetzner wire endpoints and exchange packets."
         required: true
         default: "no"
       oracle_live_profile:
-        description: "Oracle live profile for Hetzner dry-run and real exchange."
+        description: "Oracle profile for Hetzner wire dry-run and real exchange."
         required: true
         default: "smoke"
       oracle_live_seed:
-        description: "Oracle live deterministic seed."
+        description: "Oracle deterministic seed."
         required: true
         default: "1"
       oracle_live_count:
-        description: "Oracle live packet plan count."
+        description: "Oracle packet plan count."
         required: true
         default: "2"
       probe_live_profile:
-        description: "Probe live profile for Hetzner dry-run and real exchange."
+        description: "Probe profile for Hetzner wire dry-run and real exchange."
         required: true
         default: "smoke"
       probe_live_seed:
-        description: "Probe live deterministic seed."
+        description: "Probe deterministic seed."
         required: true
         default: "21"
       probe_live_count:
-        description: "Probe live case count."
+        description: "Probe case count."
         required: true
         default: "25"
 
@@ -45,7 +45,7 @@ env:
 
 jobs:
   dry-run:
-    name: Hetzner live dry runs
+    name: Hetzner wire endpoint dry runs
     runs-on: ubuntu-latest
     env:
       ORACLE_LIVE_PROFILE: ${{ github.event.inputs.oracle_live_profile || 'smoke' }}
@@ -69,38 +69,38 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Run oracle Hetzner live dry run
+      - name: Run oracle Hetzner wire dry run
         run: |
           tools/oracle/run live --provider hetzner --dry-run \
             --profile "$ORACLE_LIVE_PROFILE" \
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
 
-      - name: Run probe Hetzner dry run
+      - name: Run probe Hetzner wire dry run
         run: |
           tools/probe/run --provider hetzner --dry-run \
             --profile "$PROBE_LIVE_PROFILE" \
             --seed "$PROBE_LIVE_SEED" \
             --count "$PROBE_LIVE_COUNT"
 
-      - name: Upload live dry-run artifacts
+      - name: Upload wire dry-run artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: libcrafter-live-dry-run-${{ github.run_id }}
+          name: libcrafter-wire-dry-run-${{ github.run_id }}
           if-no-files-found: ignore
           path: |
             target/oracle/live
             target/probe
 
   hetzner-live:
-    name: protected Hetzner live exchange
+    name: protected Hetzner wire endpoint exchange
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_hetzner_live == 'run' }}
     environment: hetzner-live
     timeout-minutes: 90
     concurrency:
-      group: hetzner-oracle-live
+      group: hetzner-wire-endpoints
       cancel-in-progress: false
     env:
       CONFIRM_HETZNER_LIVE: ${{ github.event.inputs.confirm_hetzner_live }}
@@ -125,7 +125,7 @@ jobs:
             exit 78
           fi
           if [ -z "${HETZNER_API_TOKEN:-}" ]; then
-            echo "::error::HETZNER_API_TOKEN secret is required for real Hetzner live exchange."
+            echo "::error::HETZNER_API_TOKEN secret is required for real Hetzner wire endpoint exchange."
             exit 78
           fi
 
@@ -139,7 +139,7 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Run real Hetzner oracle live exchange
+      - name: Run real Hetzner oracle wire exchange
         run: |
           tools/oracle/run live --provider hetzner \
             --confirm-live-run \
@@ -205,11 +205,11 @@ jobs:
                   )
           PY
 
-      - name: Upload live artifacts
+      - name: Upload wire artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: libcrafter-live-hetzner-${{ github.run_id }}
+          name: libcrafter-wire-hetzner-${{ github.run_id }}
           if-no-files-found: ignore
           path: |
             target/oracle/live

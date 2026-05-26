@@ -92,7 +92,7 @@ disposable wire endpoints:
 tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
 ```
 
-See [live-lab.md](live-lab.md) for provider credentials, artifacts, and cleanup.
+See [wire.md](wire.md) for provider credentials, artifacts, and cleanup.
 
 ## CI Expectations
 
