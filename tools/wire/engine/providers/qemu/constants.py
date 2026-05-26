@@ -11,6 +11,10 @@ QEMU_SYSTEM_COMMAND = "qemu-system-x86_64"
 QEMU_ACCEL_ENV = "LIBCRAFTER_QEMU_ACCEL"
 QEMU_DEFAULT_ACCEL = "tcg"
 SUPPORTED_QEMU_ACCELS = frozenset({"tcg", "kvm"})
+QEMU_MEMORY_MB_ENV = "LIBCRAFTER_QEMU_MEMORY_MB"
+QEMU_DEFAULT_MEMORY_MB = 2048
+QEMU_CPUS_ENV = "LIBCRAFTER_QEMU_CPUS"
+QEMU_DEFAULT_CPUS = 2
 QEMU_SSH_HOST = "127.0.0.1"
 QEMU_SSH_USER = "root"
 QEMU_SSH_GUEST_PORT = 22
@@ -19,4 +23,3 @@ CONFIRMATION_ERROR = (
     "protected provider execution requires --confirm-live-run; no QEMU resources were created"
 )
 QemuRunner = Callable[..., CommandResult]
-
