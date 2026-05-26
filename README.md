@@ -22,8 +22,7 @@ The public crate is `crafter`:
 crafter = "2.0.0"
 ```
 
-The repository is still named `libcrafter`, but Cargo users should depend on
-the `crafter` crate and import the prelude in most generated tools and examples:
+Most generated tools and examples should import the prelude:
 
 ```rust
 use crafter::prelude::*;
