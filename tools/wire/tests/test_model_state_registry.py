@@ -15,7 +15,7 @@ from tools.wire.engine.model import (
     read_json,
     write_json,
 )
-from tools.wire.engine.providers import hetzner, resolve_provider
+from tools.wire.engine.providers import hetzner, resolve_provider, virtualbox
 from tools.wire.engine.registry import (
     ProviderExposureError,
     is_supported_request,
@@ -33,10 +33,17 @@ from tools.wire.engine.state import (
 
 class WireRegistryTest(unittest.TestCase):
     def test_hetzner_supports_only_wan_and_private(self) -> None:
-        self.assertEqual(registered_providers(), ("hetzner",))
+        self.assertEqual(registered_providers(), ("hetzner", "virtualbox"))
         self.assertEqual(supported_exposures("hetzner"), ("private", "wan"))
         self.assertTrue(is_supported_request("hetzner", "wan"))
         self.assertTrue(is_supported_request("hetzner", "private"))
+
+    def test_virtualbox_supports_only_lan(self) -> None:
+        self.assertEqual(supported_exposures("virtualbox"), ("lan",))
+        self.assertTrue(is_supported_request("virtualbox", "lan"))
+        for exposure in ("wan", "private", "wifi"):
+            with self.subTest(exposure=exposure):
+                self.assertFalse(is_supported_request("virtualbox", exposure))
 
     def test_hetzner_rejects_lan_and_wifi_with_explicit_error(self) -> None:
         for exposure in ("lan", "wifi"):
@@ -49,13 +56,14 @@ class WireRegistryTest(unittest.TestCase):
 
     def test_unknown_provider_and_exposure_are_rejected_before_provider_work(self) -> None:
         with self.assertRaisesRegex(ProviderExposureError, "supported providers"):
-            validate_request("virtualbox", "wan")
+            validate_request("aws", "wan")
         with self.assertRaisesRegex(ProviderExposureError, "known exposures"):
             validate_request("hetzner", "bluetooth")
 
     def test_resolve_provider_returns_supported_provider_module(self) -> None:
         self.assertIs(resolve_provider("hetzner", "wan"), hetzner)
-        with self.assertRaisesRegex(ProviderExposureError, "supported providers"):
+        self.assertIs(resolve_provider("virtualbox", "lan"), virtualbox)
+        with self.assertRaisesRegex(ProviderExposureError, "supported exposures"):
             resolve_provider("virtualbox", "wan")
 
 
