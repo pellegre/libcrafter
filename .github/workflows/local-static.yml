@@ -91,7 +91,10 @@ jobs:
         run: cargo build --examples
 
       - name: Compile Python validation tooling
-        run: python3 -m compileall tools/oracle/engine tools/probe/engine
+        run: python3 -m compileall tools/oracle/engine tools/probe/engine tools/wire/engine
+
+      - name: Run wire Python tests
+        run: python3 -m unittest discover -s tools/wire/tests -p 'test_*.py'
 
       - name: Generate oracle CI corpus
         run: tools/oracle/run corpus --profile ci --seed 12345 --count 100 --out target/oracle/ci-corpus
