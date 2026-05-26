@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import tempfile
 import unittest
 from collections.abc import Iterator, Mapping, Sequence
@@ -13,7 +14,13 @@ from pathlib import Path
 from unittest import mock
 
 from tools.wire.engine import cli as wire_cli
-from tools.wire.engine.model import EndpointManifest
+from tools.wire.engine.model import (
+    EndpointManifest,
+    EndpointSSHInfo,
+    NetworkInterface,
+    ProviderResource,
+    ProviderResources,
+)
 from tools.wire.engine.process import CommandResult
 from tools.wire.engine.providers import qemu, resolve_provider
 from tools.wire.engine.providers.qemu.constants import (
@@ -28,7 +35,12 @@ from tools.wire.engine.providers.vm import (
     QEMU_IMG_COMMAND,
 )
 from tools.wire.engine.registry import ProviderExposureError
-from tools.wire.engine.state import read_private_group_record, update_private_group_allocation
+from tools.wire.engine.state import (
+    read_endpoint_manifest,
+    read_private_group_record,
+    update_private_group_allocation,
+    write_endpoint_manifest,
+)
 
 
 class QemuRegistryTest(unittest.TestCase):
@@ -533,6 +545,130 @@ class QemuCreateEndpointTest(unittest.TestCase):
         self.assertIsInstance(payload["provider_resources"], list)
 
 
+class QemuDestroyEndpointTest(unittest.TestCase):
+    def test_destroy_running_pid_terminates_process_and_preserves_artifacts(self) -> None:
+        fake_signal = _ProcessSignalFake()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _qemu_manifest(root)
+            pidfile_path = _qemu_pidfile(root, manifest.endpoint_id)
+            pidfile_path.parent.mkdir(parents=True, exist_ok=True)
+            pidfile_path.write_text("4242\n", encoding="utf-8")
+            artifact_file = Path(manifest.artifact_dir) / "probe.txt"
+            artifact_file.parent.mkdir(parents=True, exist_ok=True)
+            artifact_file.write_text("preserve me\n", encoding="utf-8")
+
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+                output = qemu.destroy_endpoint(
+                    read_endpoint_manifest(manifest.endpoint_id),
+                    process_signal=fake_signal,
+                    shutdown_timeout=1,
+                    poll_interval=0,
+                )
+                stored = read_endpoint_manifest(manifest.endpoint_id)
+                artifact_preserved = artifact_file.exists()
+
+        self.assertTrue(output["ok"])
+        self.assertTrue(output["destroyed"])
+        self.assertEqual(stored.status, "destroyed")
+        self.assertTrue(artifact_preserved)
+        self.assertEqual(
+            fake_signal.calls,
+            [(4242, 0), (4242, int(signal.SIGTERM)), (4242, 0)],
+        )
+        self.assertEqual([action["action"] for action in output["actions"]], ["terminate"])
+        self.assertEqual(stored.metadata["qemu"]["process_running"], False)
+        self.assertEqual(stored.metadata["destroy"]["provider"], "qemu")
+
+    def test_destroy_missing_pidfile_marks_destroyed_without_signaling(self) -> None:
+        fake_signal = _ProcessSignalFake()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _qemu_manifest(root)
+
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+                output = qemu.destroy_endpoint(
+                    read_endpoint_manifest(manifest.endpoint_id),
+                    process_signal=fake_signal,
+                )
+                stored = read_endpoint_manifest(manifest.endpoint_id)
+
+        self.assertEqual(stored.status, "destroyed")
+        self.assertEqual(fake_signal.calls, [])
+        self.assertTrue(output["destroyed"])
+        self.assertTrue(
+            any("pidfile is missing" in str(skip.get("reason", "")) for skip in output["skipped"])
+        )
+
+    def test_destroy_already_destroyed_manifest_does_not_signal(self) -> None:
+        fake_signal = _ProcessSignalFake()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _qemu_manifest(root, status="destroyed")
+
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+                output = qemu.destroy_endpoint(
+                    read_endpoint_manifest(manifest.endpoint_id),
+                    process_signal=fake_signal,
+                )
+
+        self.assertTrue(output["ok"])
+        self.assertTrue(output["already_destroyed"])
+        self.assertFalse(output["destroyed"])
+        self.assertEqual(fake_signal.calls, [])
+
+    def test_destroy_private_endpoint_removes_group_allocation(self) -> None:
+        fake_signal = _ProcessSignalFake(initial_running=False)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _qemu_manifest(root, exposure="private")
+            pidfile_path = _qemu_pidfile(root, manifest.endpoint_id)
+            pidfile_path.parent.mkdir(parents=True, exist_ok=True)
+            pidfile_path.write_text("4242\n", encoding="utf-8")
+
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+                update_private_group_allocation(
+                    provider="qemu",
+                    group="pair-a",
+                    endpoint_id=manifest.endpoint_id,
+                    private_ipv4="10.77.0.2",
+                    private_cidr=QEMU_DEFAULT_PRIVATE_CIDR,
+                    network_resource={"network_id": "qemu-private-group-pair-a"},
+                )
+                update_private_group_allocation(
+                    provider="qemu",
+                    group="pair-a",
+                    endpoint_id="qemu-private-peer",
+                    private_ipv4="10.77.0.3",
+                    private_cidr=QEMU_DEFAULT_PRIVATE_CIDR,
+                    network_resource={"network_id": "qemu-private-group-pair-a"},
+                )
+
+                output = qemu.destroy_endpoint(
+                    read_endpoint_manifest(manifest.endpoint_id),
+                    process_signal=fake_signal,
+                )
+                stored = read_endpoint_manifest(manifest.endpoint_id)
+                record = read_private_group_record("qemu", "pair-a")
+
+        self.assertEqual(stored.status, "destroyed")
+        self.assertEqual(record.allocated_endpoint_ids, ["qemu-private-peer"])
+        self.assertEqual(record.allocated_private_ipv4s, ["10.77.0.3"])
+        self.assertEqual(
+            [action["action"] for action in output["actions"]],
+            ["already-stopped", "remove-private-allocation"],
+        )
+        self.assertEqual(stored.metadata["private_group_destroy"]["record_found"], True)
+        self.assertEqual(
+            stored.metadata["private_group_destroy"]["remaining_endpoints"],
+            ["qemu-private-peer"],
+        )
+
+
 @contextmanager
 def _wire_env(root: Path, extra: Mapping[str, str] | None = None) -> Iterator[None]:
     env = {
@@ -736,6 +872,118 @@ def _result(
         stdout=stdout,
         stderr=stderr,
     )
+
+
+class _ProcessSignalFake:
+    def __init__(self, *, initial_running: bool = True) -> None:
+        self.running = initial_running
+        self.calls: list[tuple[int, int]] = []
+
+    def __call__(self, pid: int, signal_value: int) -> None:
+        self.calls.append((pid, signal_value))
+        if signal_value == 0:
+            if not self.running:
+                raise ProcessLookupError(pid)
+            return
+        if not self.running:
+            raise ProcessLookupError(pid)
+        if signal_value in {int(signal.SIGTERM), int(signal.SIGKILL)}:
+            self.running = False
+
+
+def _qemu_manifest(root: Path, *, status: str = "active", exposure: str = "wan") -> EndpointManifest:
+    endpoint_id = f"qemu-{exposure}-test"
+    state_dir = root / "wire-state" / "endpoints" / endpoint_id
+    artifact_dir = root / "wire-artifacts" / endpoint_id
+    pidfile_path = _qemu_pidfile(root, endpoint_id)
+    vm_name = f"wire-qemu-{exposure}-test"
+    interfaces = [
+        NetworkInterface(
+            name="enp0s1",
+            exposure="wan" if exposure == "wan" else "control",
+            ipv4="10.0.2.15",
+            metadata={"type": "qemu-user-net"},
+        )
+    ]
+    metadata: dict[str, object] = {
+        "created": True,
+        "dry_run": False,
+        "state_dir": str(state_dir),
+        "manifest_path": str(state_dir / "endpoint.json"),
+        "qemu": {
+            "vm_name": vm_name,
+            "pid": 4242,
+            "pidfile_path": str(pidfile_path),
+            "daemonize": True,
+        },
+    }
+    if exposure == "private":
+        metadata.update(
+            {
+                "private_group": "pair-a",
+                "private_ip": "10.77.0.2",
+                "private": {
+                    "private_group": "pair-a",
+                    "private_ip": "10.77.0.2",
+                },
+            }
+        )
+        interfaces.append(
+            NetworkInterface(
+                name="wirepriv0",
+                exposure="private",
+                ipv4="10.77.0.2",
+                provider_network_id="qemu-private-group-pair-a",
+                metadata={"private_group": "pair-a", "type": "qemu-private-net"},
+            )
+        )
+    return EndpointManifest(
+        endpoint_id=endpoint_id,
+        provider="qemu",
+        exposure=exposure,
+        status=status,
+        role="test",
+        created_at="2026-05-26T23:30:00Z",
+        ssh=EndpointSSHInfo(
+            host="127.0.0.1",
+            user="root",
+            port=26222,
+            identity_file=str(state_dir / "id_ed25519"),
+            known_hosts_file=str(state_dir / "known_hosts"),
+            metadata={"transport": "qemu-user-net-hostfwd", "vm_name": vm_name},
+        ),
+        interfaces=interfaces,
+        provider_resources=ProviderResources(
+            resources=[
+                ProviderResource(
+                    kind="qemu-vm",
+                    provider_id=vm_name,
+                    name=vm_name,
+                    metadata={"provider": "qemu", "pid": 4242, "pidfile": str(pidfile_path)},
+                ),
+                ProviderResource(
+                    kind="process",
+                    provider_id="4242",
+                    name=vm_name,
+                    metadata={"provider": "qemu", "vm_name": vm_name, "pidfile": str(pidfile_path)},
+                ),
+                ProviderResource(
+                    kind="local-file",
+                    provider_id=str(artifact_dir / "disk.qcow2"),
+                    name="guest-disk",
+                    metadata={"type": "local-file", "path": str(artifact_dir / "disk.qcow2")},
+                ),
+            ],
+            cleanup_order=["process", "qemu-vm", "local-file"],
+            metadata={"provider": "qemu", "exposure": exposure, "pid": 4242},
+        ),
+        artifact_dir=str(artifact_dir),
+        metadata=metadata,
+    )
+
+
+def _qemu_pidfile(root: Path, endpoint_id: str) -> Path:
+    return root / "wire-state" / "endpoints" / endpoint_id / "qemu" / "qemu.pid"
 
 
 if __name__ == "__main__":
