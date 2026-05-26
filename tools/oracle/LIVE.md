@@ -2,8 +2,8 @@
 
 This document defines the live validation contract for `tools/oracle/run live`.
 The oracle runner owns the live report, packet plan, backend capability checks,
-and reproduction coordinates. Live-lab providers own disposable endpoint
-lifecycle and artifact collection.
+and reproduction coordinates. `tools/wire` owns disposable endpoint lifecycle
+and artifact collection.
 
 ## Live Mode Invariant
 

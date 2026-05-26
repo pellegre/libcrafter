@@ -1,7 +1,8 @@
 # Probe Tool
 
 `tools/probe/` owns behavioral probe validation. Probe sends libcrafter packets
-into disposable lab targets and verifies kernel or controlled service replies.
+into disposable wire endpoint targets and verifies kernel or controlled service
+replies.
 
 The Python runner under `tools/probe/engine/` generates deterministic probe
 plans, writes request artifacts, orchestrates provider execution, and builds

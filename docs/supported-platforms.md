@@ -26,10 +26,10 @@ but it is not yet part of the acceptance matrix.
 
 ## Live Packet Support
 
-Live send, capture, and send/receive workflows are developed for
-Linux disposable labs. They require suitable privileges inside the lab and may
-depend on reference packet tooling and basic networking tools installed on the
-wire endpoint.
+Live send, capture, and send/receive workflows are developed for Linux
+disposable wire endpoints. They require suitable privileges on the endpoint and
+may depend on reference packet tooling and basic networking tools installed on
+the wire endpoint.
 
 Live raw-packet tests must not run on a developer workstation by default. Use:
 
@@ -64,7 +64,7 @@ The alpha is suitable for:
 - Building deterministic fixtures.
 - Decoding and inspecting supported packet families.
 - Offline pcap workflows.
-- Disposable-lab live validation.
+- Disposable wire endpoint validation.
 
 The alpha is not suitable for:
 

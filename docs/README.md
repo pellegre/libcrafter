@@ -9,7 +9,7 @@ This directory contains user and contributor documentation for the Rust
 - [Oracle validation](validation.md) describes corpus, offline, pcap, and wire
   reference validation.
 - [Probe validation](probe.md) describes kernel and service behavior probes.
-- [Wire provider lab](live-lab.md) covers shared disposable provider setup,
+- [Wire endpoint provider guide](wire.md) covers shared disposable provider setup,
   credentials, artifacts, and cleanup.
 - [Supported platforms](supported-platforms.md) records the alpha support
   matrix and known gaps.

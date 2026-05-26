@@ -24,7 +24,7 @@ as one public crate: `crafter`.
   workflows, interface helpers, address range helpers, and ARP resolution.
 - Safe-by-default Rust examples for basic, intermediate, and gated advanced
   packet workflows.
-- Provider-agnostic disposable live-lab tooling with local dry-run and Hetzner
+- Provider-agnostic disposable wire endpoint tooling with local dry-run and Hetzner
   providers.
 - Reference fixture harnesses, malformed decode corpus, property tests,
   and GitHub Actions workflows.
@@ -39,7 +39,7 @@ as one public crate: `crafter`.
 - DNS encoding is deterministic and uncompressed; DNS decoding accepts
   compressed names.
 - Live packet sends and captures require platform privileges and should run only
-  inside disposable live labs.
+  on disposable wire endpoints.
 
 ### Safety
 

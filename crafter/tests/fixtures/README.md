@@ -188,9 +188,9 @@ Before promoting oracle output into this tree:
 
 ## Regeneration
 
-Fixture regeneration must be explicit. Any live-lab or reference regeneration
-tool should write into a temporary artifact directory first so changes can be
-reviewed before fixtures are copied into this tree.
+Fixture regeneration must be explicit. Any wire endpoint or reference
+regeneration tool should write into a temporary artifact directory first so
+changes can be reviewed before fixtures are copied into this tree.
 
 Pull request CI may run deterministic oracle validation, but it must not rewrite
 checked-in fixtures. CI should use `tools/oracle/run` rather than importing

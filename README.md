@@ -57,7 +57,7 @@ fn inspect(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Send paths are safe by default in examples. Use dry-run plans for local tools
-and reserve live sends for disposable labs:
+and reserve live sends for disposable wire endpoints:
 
 ```rust
 let plan = packet.send_dry_run(
@@ -112,7 +112,7 @@ bounded validation flows that are dry-run by default.
 See [docs/README.md](docs/README.md) for the full documentation index and
 [docs/examples.md](docs/examples.md) for example commands.
 
-## Live Testing
+## Wire Endpoint Testing
 
 Local tests do not require root or provider credentials:
 
@@ -121,7 +121,7 @@ cargo test --workspace
 cargo doc --workspace --no-deps
 ```
 
-Live raw-packet validation must run in a disposable provider lab:
+Live raw-packet validation must run on disposable wire endpoints:
 
 ```sh
 tools/wire/wire doctor --provider hetzner --exposure wan --dry-run
@@ -143,7 +143,7 @@ are documented in [docs/probe.md](docs/probe.md).
 - [docs/api.md](docs/api.md) describes the public Rust API shape.
 - [docs/validation.md](docs/validation.md) describes oracle validation modes
   and CI expectations.
-- [docs/probe.md](docs/probe.md) describes live kernel and service behavior
+- [docs/probe.md](docs/probe.md) describes wire-backed kernel and service behavior
   probes.
 - [CHANGELOG.md](CHANGELOG.md) records the Rust alpha scope.
 - [docs/supported-platforms.md](docs/supported-platforms.md) lists supported

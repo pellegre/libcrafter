@@ -35,12 +35,12 @@ fn main() -> ExampleResult<()> {
     if !live {
         println!("mode: plan");
         println!(
-            "safety: no live capture handle opened; add --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_LAB_ENV}=1 inside an isolated lab"
+            "safety: no live capture handle opened; add --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_LAB_ENV}=1 on an isolated wire endpoint"
         );
         return Ok(());
     }
 
-    println!("mode: live-lab");
+    println!("mode: wire-endpoint");
     println!("safety: live capture guard satisfied");
     ensure_parent(&out)?;
 
