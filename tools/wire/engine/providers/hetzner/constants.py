@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from ...process import CommandResult
+from ..vm.discovery import LINUX_INTERFACE_DISCOVERY_COMMAND
 
 TOKEN_ENV = "HETZNER_API_TOKEN"
 HCLOUD_TOKEN_ENV = "HCLOUD_TOKEN"
@@ -19,15 +20,5 @@ DEFAULT_LOCATION = "hel1"
 DEFAULT_PRIVATE_NETWORK_ZONE = "eu-central"
 DEFAULT_SERVER_RUNNING_TIMEOUT = 300
 DEFAULT_SERVER_RUNNING_INTERVAL = 5
-INTERFACE_DISCOVERY_COMMAND = "\n".join(
-    [
-        "set -eu",
-        "printf '%s\\n' __WIRE_IP_ADDR__",
-        "ip -j address show scope global",
-        "printf '%s\\n' __WIRE_IP_LINK__",
-        "ip -j link show",
-        "printf '%s\\n' __WIRE_IP_ROUTE__",
-        "ip -j route get 1.1.1.1 || true",
-    ]
-)
+INTERFACE_DISCOVERY_COMMAND = LINUX_INTERFACE_DISCOVERY_COMMAND
 HcloudRunner = Callable[..., CommandResult]
