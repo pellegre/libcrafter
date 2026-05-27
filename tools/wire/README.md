@@ -82,9 +82,9 @@ Hetzner requires `hcloud` and either `HETZNER_API_TOKEN` or `HCLOUD_TOKEN`.
 Run provider checks before live creation:
 
 ```sh
-tools/wire/wire doctor --provider virtualbox --exposure lan --json
-tools/wire/wire doctor --provider qemu --exposure wan --json
-tools/wire/wire doctor --provider qemu --exposure private --json
+tools/wire/run doctor --provider virtualbox --exposure lan --json
+tools/wire/run doctor --provider qemu --exposure wan --json
+tools/wire/run doctor --provider qemu --exposure private --json
 ```
 
 ## Environment Overrides
@@ -108,17 +108,17 @@ tools/wire/wire doctor --provider qemu --exposure private --json
 Dry-runs plan an endpoint without creating provider resources:
 
 ```sh
-tools/wire/wire create-endpoint --provider virtualbox --exposure lan --dry-run --json
-tools/wire/wire create-endpoint --provider qemu --exposure wan --dry-run --json
-tools/wire/wire create-endpoint --provider qemu --exposure private --private-group lab-a --dry-run --json
+tools/wire/run create-endpoint --provider virtualbox --exposure lan --dry-run --json
+tools/wire/run create-endpoint --provider qemu --exposure wan --dry-run --json
+tools/wire/run create-endpoint --provider qemu --exposure private --private-group lab-a --dry-run --json
 ```
 
 Live creation is protected and requires `--confirm-live-run`:
 
 ```sh
-tools/wire/wire create-endpoint --provider virtualbox --exposure lan --confirm-live-run --json
-tools/wire/wire create-endpoint --provider qemu --exposure wan --confirm-live-run --json
-tools/wire/wire create-endpoint --provider qemu --exposure private --private-group lab-a --confirm-live-run --json
+tools/wire/run create-endpoint --provider virtualbox --exposure lan --confirm-live-run --json
+tools/wire/run create-endpoint --provider qemu --exposure wan --confirm-live-run --json
+tools/wire/run create-endpoint --provider qemu --exposure private --private-group lab-a --confirm-live-run --json
 ```
 
 For real QEMU private endpoints, `--private-group` is required. `--private-ip`
@@ -127,8 +127,8 @@ is optional and requests a specific IPv4 inside the configured private CIDR.
 Unsupported QEMU LAN and Wi-Fi requests fail before provider side effects:
 
 ```sh
-tools/wire/wire create-endpoint --provider qemu --exposure lan --dry-run --json
-tools/wire/wire create-endpoint --provider qemu --exposure wifi --dry-run --json
+tools/wire/run create-endpoint --provider qemu --exposure lan --dry-run --json
+tools/wire/run create-endpoint --provider qemu --exposure wifi --dry-run --json
 ```
 
 Those commands return an unsupported provider/exposure error because QEMU LAN,
@@ -141,13 +141,13 @@ Every operation uses the stored manifest for the endpoint ID returned by
 `create-endpoint`. Upload and download paths must be absolute on both sides.
 
 ```sh
-tools/wire/wire list-endpoints
-tools/wire/wire ssh-info <endpoint_id>
-tools/wire/wire exec <endpoint_id> -- uname -a
-tools/wire/wire upload <endpoint_id> /absolute/local/path /absolute/remote/path
-tools/wire/wire download <endpoint_id> /absolute/remote/path /absolute/local/path
-tools/wire/wire collect-artifacts <endpoint_id>
-tools/wire/wire destroy-endpoint <endpoint_id>
+tools/wire/run list-endpoints
+tools/wire/run ssh-info <endpoint_id>
+tools/wire/run exec <endpoint_id> -- uname -a
+tools/wire/run upload <endpoint_id> /absolute/local/path /absolute/remote/path
+tools/wire/run download <endpoint_id> /absolute/remote/path /absolute/local/path
+tools/wire/run collect-artifacts <endpoint_id>
+tools/wire/run destroy-endpoint <endpoint_id>
 ```
 
 `exec` writes `stdout` and `stderr` artifacts under the endpoint artifact

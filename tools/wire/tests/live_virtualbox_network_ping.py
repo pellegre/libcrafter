@@ -65,7 +65,7 @@ class CommandCapture:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     repo_root = Path(__file__).resolve().parents[3]
-    wire = repo_root / "tools" / "wire" / "wire"
+    wire = repo_root / "tools" / "wire" / "run"
     binary = (
         repo_root / "target" / "debug" / "examples" / "network_ping"
         if args.binary is None
