@@ -104,6 +104,23 @@ command and adapter registry:
 tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
 ```
 
+For local VM providers, use the guarded matrix smoke path. It runs QEMU and
+VirtualBox wire doctor checks first, uses a small corpus, and records
+structured skips by default when VM creation is not explicitly enabled:
+
+```sh
+python3 tools/oracle/tests/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
+```
+
+Use `--allow-vm-create` or `LIBCRAFTER_ORACLE_VM_SMOKE_ALLOW_CREATE=1` in a lab
+run when the matrix should pass `--confirm-live-run` to the same oracle live
+command and create disposable local VMs. Use `--strict-vm-smoke` or
+`LIBCRAFTER_ORACLE_VM_SMOKE_STRICT=1` when missing VM prerequisites or disabled
+VM creation should fail the qualification run. QEMU uses `qemu/private` with
+private group `oracle-live-private`; VirtualBox uses `virtualbox/lan` with the
+bridged interface discovered by `VBoxManage` or requested through
+`LIBCRAFTER_VBOX_BRIDGE_IFACE`.
+
 See [wire.md](wire.md) for provider credentials, artifacts, and cleanup.
 
 ## CI Expectations

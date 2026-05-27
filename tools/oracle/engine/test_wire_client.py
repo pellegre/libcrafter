@@ -82,6 +82,61 @@ class WireClientTest(unittest.TestCase):
             self.assertEqual(metadata["endpoint_id"], "hetzner-wan-test")
             self.assertTrue(Path(str(metadata["wire_path"])).is_absolute())
 
+    def test_create_falls_back_to_stored_manifest_for_compat_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest_path = root / "endpoint.json"
+            manifest = _manifest(root)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            compat_output = {
+                **manifest,
+                "interfaces": {"public": {"ipv4": "198.51.100.20"}},
+                "manifest_path": str(manifest_path),
+            }
+
+            def fake_runner(argv: list[str], **kwargs: object) -> CommandResult:
+                return CommandResult(
+                    argv=tuple(argv),
+                    redacted_argv=tuple(argv),
+                    cwd=kwargs.get("cwd") if isinstance(kwargs.get("cwd"), str) else None,
+                    exit_code=0,
+                    stdout=json.dumps(compat_output),
+                    stderr="",
+                )
+
+            response = wire_client.WireClient(runner=fake_runner).create(
+                provider="hetzner",
+                exposure="wan",
+            )
+
+            self.assertIsNotNone(response.manifest)
+            assert response.manifest is not None
+            self.assertEqual(response.manifest.endpoint_id, "hetzner-wan-test")
+            self.assertEqual(response.manifest.interfaces[0].name, "public")
+
+    def test_create_failure_preserves_wire_error(self) -> None:
+        def fake_runner(argv: list[str], **kwargs: object) -> CommandResult:
+            return CommandResult(
+                argv=tuple(argv),
+                redacted_argv=tuple(argv),
+                cwd=kwargs.get("cwd") if isinstance(kwargs.get("cwd"), str) else None,
+                exit_code=2,
+                stdout=json.dumps(
+                    {
+                        "ok": False,
+                        "created": False,
+                        "error": "provider unavailable",
+                    }
+                ),
+                stderr="",
+            )
+
+        with self.assertRaisesRegex(wire_client.WireClientError, "provider unavailable"):
+            wire_client.WireClient(runner=fake_runner).create(
+                provider="qemu",
+                exposure="private",
+            )
+
     def test_stream_helpers_record_command_metadata_without_json(self) -> None:
         calls: list[tuple[str, ...]] = []
 

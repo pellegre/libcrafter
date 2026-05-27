@@ -44,6 +44,37 @@ protocol comparison, report assembly, or the generic provider execution flow.
 registry. It is a CI-safe planning mode that does not create wire endpoints and
 does not represent a provider-backed live exchange.
 
+The current provider-backed adapters share the same oracle execution path:
+
+| Oracle provider | Wire provider | Wire exposure | Packet exchange |
+| --- | --- | --- | --- |
+| `hetzner` | `hetzner` | `private` | Routed private cloud segment |
+| `qemu` | `qemu` | `private` | Local private VM segment `oracle-live-private` |
+| `virtualbox` | `virtualbox` | `lan` | Bridged LAN guest interface |
+
+Run the three-provider planning matrix without side effects before creating
+infrastructure:
+
+```sh
+python3 tools/oracle/tests/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
+```
+
+Run guarded real VM smoke to verify the local VM prerequisites and matrix
+reporting path:
+
+```sh
+python3 tools/oracle/tests/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
+```
+
+The real VM matrix runs provider doctors first, skips unavailable VM providers
+by default, and also skips actual VM creation unless `--allow-vm-create` or
+`LIBCRAFTER_ORACLE_VM_SMOKE_ALLOW_CREATE=1` is set. When VM creation is allowed,
+the matrix records doctor output, live report paths, endpoint lifecycle
+metadata, artifact roots, endpoint IDs, and cleanup status in
+`matrix-summary.json`. Use `--strict-vm-smoke` or
+`LIBCRAFTER_ORACLE_VM_SMOKE_STRICT=1` for lab qualification where skips should
+fail the command.
+
 ## Exchange Directions
 
 Live reports use the same backend-neutral direction names as offline and pcap
