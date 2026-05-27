@@ -93,7 +93,7 @@ tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 tools/oracle/run live --provider qemu --dry-run --profile smoke --seed 12345 --count 10
 tools/oracle/run live --provider virtualbox --dry-run --profile smoke --seed 12345 --count 10
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 ```
 
 Real provider-backed validation is reserved for explicit protected workflows on
@@ -109,7 +109,7 @@ VirtualBox wire doctor checks first, uses a small corpus, and records
 structured skips by default when VM creation is not explicitly enabled:
 
 ```sh
-python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
 ```
 
 Use `--allow-vm-create` or `LIBCRAFTER_ORACLE_VM_SMOKE_ALLOW_CREATE=1` in a lab
@@ -137,7 +137,7 @@ cargo test --workspace
 tools/oracle/run corpus --profile ci --seed 12345 --count 100 --out target/oracle/final-corpus
 tools/oracle/run offline --corpus target/oracle/final-corpus/plans.json --out target/oracle/final-offline
 tools/oracle/run pcap --corpus target/oracle/final-corpus/plans.json --out target/oracle/final-pcap
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile ci --seed 12345 --count 100 --dry-run --out target/oracle/final-live-matrix
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile ci --seed 12345 --count 100 --dry-run --out target/oracle/final-live-matrix
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run
 ```
 
