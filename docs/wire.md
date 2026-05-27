@@ -73,7 +73,7 @@ Start protected provider validation only when disposable resources are intended:
 
 ```sh
 tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
-python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
 tools/probe/run --provider hetzner --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
@@ -135,7 +135,7 @@ tools/wire/run doctor --provider hetzner --exposure private --dry-run
 tools/wire/run doctor --provider qemu --exposure private --dry-run
 tools/wire/run doctor --provider virtualbox --exposure lan --dry-run
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
