@@ -11,6 +11,9 @@ from tools.oracle.engine.corpus import (
 )
 from tools.oracle.engine.model import PacketPlan
 from tools.oracle.engine.providers.qemu import qemu_default_provider_capabilities
+from tools.oracle.engine.providers.virtualbox import (
+    virtualbox_default_provider_capabilities,
+)
 
 
 class LiveProviderPolicyTest(unittest.TestCase):
@@ -97,6 +100,34 @@ class LiveProviderPolicyTest(unittest.TestCase):
             "mutation_policy"
         ]
         self.assertEqual(policy["provider"], "qemu")
+        self.assertNotIn("ipv4.ttl", policy["mutable_fields"])
+        self.assertNotIn("ipv4.checksum", policy["mutable_fields"])
+        self.assertNotIn("ipv4.ttl", policy["byte_mutable_fields"])
+        self.assertNotIn("ipv4.checksum", policy["byte_mutable_fields"])
+        self.assertFalse(policy["transit_mutations"])
+
+    def test_virtualbox_policy_does_not_inherit_hetzner_ttl_or_checksum_mutables(
+        self,
+    ) -> None:
+        plan = _ipv4_plan()
+        capabilities = virtualbox_default_provider_capabilities(dry_run=True)
+
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(plan)],
+            provider_capabilities=capabilities,
+            wire_provider="virtualbox",
+        )
+
+        self.assertEqual(packet.wire.metadata["provider"], "virtualbox")
+        self.assertTrue(packet.wire.eligible)
+        self.assertNotIn("ipv4.ttl", packet.wire.mutable_fields)
+        self.assertNotIn("ipv4.checksum", packet.wire.mutable_fields)
+
+        policy = packet.wire.metadata["provider_profiles"]["virtualbox"]["metadata"][
+            "mutation_policy"
+        ]
+        self.assertEqual(policy["provider"], "virtualbox")
         self.assertNotIn("ipv4.ttl", policy["mutable_fields"])
         self.assertNotIn("ipv4.checksum", policy["mutable_fields"])
         self.assertNotIn("ipv4.ttl", policy["byte_mutable_fields"])
