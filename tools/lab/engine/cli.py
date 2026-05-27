@@ -7,8 +7,9 @@ import json
 import sys
 from collections.abc import Sequence
 
+from . import session as lab_session_state
 from . import wire_client
-from .model import JSONObject, LabRequest, LabRole
+from .model import JSONObject, LabRequest, LabRole, LabSession
 from .providers import UnknownLabProviderError, registered_providers, resolve_lab_provider
 
 
@@ -268,6 +269,119 @@ def _run_plan(args: argparse.Namespace) -> int:
         )
 
 
+def _run_create(args: argparse.Namespace) -> int:
+    if not args.confirm_live_run:
+        output = {
+            "ok": False,
+            "command": args.command_name,
+            "error": "confirm_live_run_required",
+            "message": "lab create requires --confirm-live-run for non-dry-run execution",
+        }
+        return _write_output(
+            output,
+            args,
+            text="lab create requires --confirm-live-run",
+            exit_code=2,
+        )
+
+    try:
+        adapter = resolve_lab_provider(args.provider)
+        request = LabRequest(
+            provider=adapter.name,
+            profile=args.profile,
+            seed=args.seed,
+            roles=_lab_roles_from_args(
+                provider=adapter.name,
+                role_specs=args.roles,
+                address_specs=args.role_addresses,
+            ),
+            dry_run=False,
+            confirm_live_run=True,
+            remote_dir=args.remote_dir,
+            workload_label=args.workload_label,
+        )
+        lab_session = lab_session_state.create_session(adapter, request)
+        return _write_output(
+            lab_session.to_dict(),
+            args,
+            text=f"lab create: session={lab_session.session_id}",
+        )
+    except (
+        PermissionError,
+        UnknownLabProviderError,
+        ValueError,
+        wire_client.WireClientError,
+    ) as exc:
+        return _write_output(
+            _error_output(args, exc),
+            args,
+            text=str(exc),
+            exit_code=2,
+        )
+
+
+def _run_destroy(args: argparse.Namespace) -> int:
+    try:
+        lab_session = lab_session_state.destroy_session(args.session)
+        cleanup_status = str(lab_session.cleanup_state.get("status", "unknown"))
+        exit_code = 0 if cleanup_status in {"completed", "no_endpoints"} else 1
+        return _write_output(
+            lab_session.to_dict(),
+            args,
+            text=f"lab destroy: session={lab_session.session_id} status={cleanup_status}",
+            exit_code=exit_code,
+        )
+    except (FileNotFoundError, ValueError, wire_client.WireClientError) as exc:
+        return _write_output(
+            _error_output(args, exc),
+            args,
+            text=str(exc),
+            exit_code=1,
+        )
+
+
+def _run_list_sessions(args: argparse.Namespace) -> int:
+    try:
+        sessions = lab_session_state.list_session_manifests()
+    except (FileNotFoundError, ValueError) as exc:
+        return _write_output(
+            _error_output(args, exc),
+            args,
+            text=str(exc),
+            exit_code=1,
+        )
+
+    output: JSONObject = {
+        "ok": True,
+        "sessions": [_session_summary(session) for session in sessions],
+    }
+    return _write_output(
+        output,
+        args,
+        text="\n".join(
+            f"{session.session_id}\t{session.provider}\t{_cleanup_status(session)}"
+            for session in sessions
+        ),
+    )
+
+
+def _run_session_info(args: argparse.Namespace) -> int:
+    try:
+        lab_session = lab_session_state.read_session_manifest(args.session_id)
+    except (FileNotFoundError, ValueError) as exc:
+        return _write_output(
+            _error_output(args, exc),
+            args,
+            text=str(exc),
+            exit_code=1,
+        )
+    return _write_output(
+        lab_session.to_dict(),
+        args,
+        text=f"lab session-info: session={lab_session.session_id}",
+    )
+
+
 def _provider_metadata(provider: object) -> JSONObject:
     return {
         "name": provider.name,
@@ -278,6 +392,27 @@ def _provider_metadata(provider: object) -> JSONObject:
         "missing_credential_reason": provider.missing_credential_reason,
         "capabilities": provider.default_provider_capabilities(dry_run=True),
     }
+
+
+def _session_summary(session: LabSession) -> JSONObject:
+    return {
+        "session_id": session.session_id,
+        "provider": session.provider,
+        "wire_provider": session.wire_provider,
+        "wire_exposure": session.wire_exposure,
+        "roles": [role.name for role in session.roles],
+        "endpoint_ids": [endpoint.endpoint_id for endpoint in session.endpoints],
+        "created_endpoint_ids": list(session.created_endpoint_ids),
+        "dry_run": session.dry_run,
+        "remote_dir": session.remote_dir,
+        "remote_artifact_root": session.remote_artifact_root,
+        "cleanup_state": dict(session.cleanup_state),
+    }
+
+
+def _cleanup_status(session: LabSession) -> str:
+    status = session.cleanup_state.get("status")
+    return status if isinstance(status, str) else "unknown"
 
 
 def _lab_roles_from_args(
@@ -383,6 +518,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_doctor(args)
     if args.command_name == "plan":
         return _run_plan(args)
+    if args.command_name == "create":
+        return _run_create(args)
+    if args.command_name == "destroy":
+        return _run_destroy(args)
+    if args.command_name == "list-sessions":
+        return _run_list_sessions(args)
+    if args.command_name == "session-info":
+        return _run_session_info(args)
     if args.command_name in COMMANDS:
         return _run_not_implemented(args)
     parser.error(f"{args.command_name!r} is not implemented yet")
