@@ -47,6 +47,9 @@ class LiveProviderAdapter(Protocol):
     def planned_infrastructure(self, *, dry_run: bool) -> JSONObject:
         """Return report metadata for provider-backed infrastructure."""
 
+    def packet_exchange_metadata(self, *, dry_run: bool) -> JSONObject:
+        """Return provider-owned metadata for endpoint packet exchange."""
+
     def endpoints(self, *, dry_run: bool) -> dict[str, LiveEndpoint]:
         """Return planned endpoint roles for dry-run or skipped reports."""
 

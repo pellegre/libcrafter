@@ -1117,6 +1117,17 @@ def _live_provider_missing_credential_reason(provider_adapter) -> str:
     return f"missing {_live_provider_credential_label(provider_adapter)}"
 
 
+def _live_provider_packet_exchange_metadata(
+    provider_adapter,
+    *,
+    dry_run: bool,
+) -> JSONObject:
+    return _json_object(
+        provider_adapter.packet_exchange_metadata(dry_run=dry_run),
+        "provider packet exchange metadata",
+    )
+
+
 def _pcap(args: argparse.Namespace) -> int:
     if args.dry_plan:
         return _pcap_dry_plan(args)
@@ -1266,6 +1277,10 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
     endpoints = live_endpoints
     provider_workflow = provider_adapter.provider_workflow(dry_run=True)
     endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=True)
+    packet_exchange_metadata = _live_provider_packet_exchange_metadata(
+        provider_adapter,
+        dry_run=True,
+    )
     bootstrap_command = backend_bootstrap_command_plan()
     corpus_batch_artifact = _write_live_corpus_batch_artifact(
         output_dir,
@@ -1334,12 +1349,12 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
                 receiver_command=receiver_command,
                 live_packet_exchange=False,
                 metadata={
+                    **packet_exchange_metadata,
                     "dry_run": True,
                     "creates_infrastructure": False,
                     "planned_live_packet_exchange": True,
                     "live_packet_exchange": False,
                     "no_live_packets_sent": True,
-                    "private_network": True,
                 },
             )
             exchanges.append(exchange)
@@ -1372,6 +1387,7 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
                 endpoint_role=sender.role,
             ),
             metadata={
+                **packet_exchange_metadata,
                 "phase_role": "sender",
                 "dry_run": True,
                 "planned_live_packet_exchange": True,
@@ -1395,6 +1411,7 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
                 endpoint_role=receiver.role,
             ),
             metadata={
+                **packet_exchange_metadata,
                 "phase_role": "receiver",
                 "dry_run": True,
                 "planned_live_packet_exchange": True,
@@ -1455,10 +1472,10 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
         passed=not failed_validations,
         direction=args.direction,
         expected={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "dry_run": True,
             "creates_infrastructure": False,
-            "private_network": True,
             "endpoint_count": 2,
             "validations_pass": True,
             "generated_count": corpus_metadata["generated_count"],
@@ -1466,10 +1483,10 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
             "wire_skipped_count": corpus_metadata["wire_skipped_count"],
         },
         actual={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "dry_run": True,
             "creates_infrastructure": False,
-            "private_network": True,
             "endpoint_count": len(endpoints),
             "validations_pass": not failed_validations,
             "failed_validations": [validation.to_dict() for validation in failed_validations],
@@ -1492,6 +1509,7 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
         if not failed_validations
         else _live_reproduction_command(args),
         metadata={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "dry_run": True,
             "creates_infrastructure": False,
@@ -1529,6 +1547,7 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
             "token_configured": token_configured,
             **corpus_metadata,
             **live_count_metadata,
+            **packet_exchange_metadata,
             "live_corpus_artifact": str(corpus_batch_artifact),
             "execution_directions": directions,
             "planned_infrastructure": provider_adapter.planned_infrastructure(
@@ -1578,7 +1597,8 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
     print(
         "endpoints=libcrafter:"
         f"{endpoints['libcrafter'].address},reference_backend:"
-        f"{endpoints['reference_backend'].address} private_network=true "
+        f"{endpoints['reference_backend'].address} "
+        f"packet_exchange_network={packet_exchange_metadata['packet_exchange_network']} "
         "bootstrap=planned"
     )
     if failed_validations:
@@ -1603,6 +1623,10 @@ def _live_provider_skip_no_token(
     credential_label = _live_provider_credential_label(provider_adapter)
     missing_credential_reason = _live_provider_missing_credential_reason(provider_adapter)
     print_reason = missing_credential_reason.replace(" ", "_")
+    packet_exchange_metadata = _live_provider_packet_exchange_metadata(
+        provider_adapter,
+        dry_run=False,
+    )
     live_count_metadata = _live_count_metadata(
         _live_empty_direction_counts(corpus_metadata, directions)
     )
@@ -1610,11 +1634,13 @@ def _live_provider_skip_no_token(
         passed=True,
         direction=args.direction,
         expected={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "credential": credential_label,
             "token_configured": True,
         },
         actual={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "skipped": True,
             "reason": missing_credential_reason,
@@ -1624,6 +1650,7 @@ def _live_provider_skip_no_token(
         strict_bytes=False,
         byte_equal=None,
         metadata={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "skipped": True,
             "skip_reason": missing_credential_reason,
@@ -1657,6 +1684,7 @@ def _live_provider_skip_no_token(
             "token_configured": False,
             **corpus_metadata,
             **live_count_metadata,
+            **packet_exchange_metadata,
             "execution_directions": directions,
             "planned_infrastructure_if_credentials_available": provider_adapter.planned_infrastructure(
                 dry_run=False
@@ -1706,6 +1734,10 @@ def _live_provider_requires_confirmation_report(
     endpoints = provider_adapter.endpoints(dry_run=False)
     provider_workflow = provider_adapter.provider_workflow(dry_run=False)
     endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=False)
+    packet_exchange_metadata = _live_provider_packet_exchange_metadata(
+        provider_adapter,
+        dry_run=False,
+    )
     live_count_metadata = _live_count_metadata(
         _live_empty_direction_counts(corpus_metadata, directions)
     )
@@ -1713,11 +1745,13 @@ def _live_provider_requires_confirmation_report(
         passed=False,
         direction=args.direction,
         expected={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "dry_run": False,
             "live_packet_exchange": True,
         },
         actual={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "dry_run": False,
             "live_packet_exchange": False,
@@ -1734,6 +1768,7 @@ def _live_provider_requires_confirmation_report(
         ],
         reproduction_command=_live_reproduction_command(args),
         metadata={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "creates_infrastructure": False,
             "live_packet_exchange": False,
@@ -1762,6 +1797,7 @@ def _live_provider_requires_confirmation_report(
             "provider": args.provider,
             "dry_run": False,
             "creates_infrastructure": False,
+            **packet_exchange_metadata,
             "planned_infrastructure": provider_adapter.planned_infrastructure(
                 dry_run=False
             ),
@@ -1787,6 +1823,7 @@ def _live_provider_requires_confirmation_report(
             "execution_directions": directions,
             **corpus_metadata,
             **live_count_metadata,
+            **packet_exchange_metadata,
         },
     )
     write_json(report_path, report)
@@ -1812,6 +1849,10 @@ def _live_provider_skip_no_wire_eligible(
     endpoints = provider_adapter.endpoints(dry_run=dry_run)
     provider_workflow = provider_adapter.provider_workflow(dry_run=dry_run)
     endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=dry_run)
+    packet_exchange_metadata = _live_provider_packet_exchange_metadata(
+        provider_adapter,
+        dry_run=dry_run,
+    )
     live_count_metadata = _live_count_metadata(
         _live_empty_direction_counts(corpus_metadata, directions)
     )
@@ -1819,11 +1860,13 @@ def _live_provider_skip_no_wire_eligible(
         passed=True,
         direction=args.direction,
         expected={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "wire_eligible_count": 0,
             "live_packet_exchange": False,
         },
         actual={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "skipped": True,
             "wire_eligible_count": 0,
@@ -1834,6 +1877,7 @@ def _live_provider_skip_no_wire_eligible(
         strict_bytes=False,
         byte_equal=None,
         metadata={
+            **packet_exchange_metadata,
             "provider": args.provider,
             "skipped": True,
             "skip_reason": "no_wire_eligible_packets",
@@ -1867,6 +1911,7 @@ def _live_provider_skip_no_wire_eligible(
             "token_configured": token_configured,
             **corpus_metadata,
             **live_count_metadata,
+            **packet_exchange_metadata,
             "execution_directions": directions,
             "planned_infrastructure_if_packets_eligible": provider_adapter.planned_infrastructure(
                 dry_run=dry_run
@@ -1942,6 +1987,10 @@ def _live_provider_execute(
         "live-artifacts",
         "oracle-live",
         "exchange",
+    )
+    packet_exchange_metadata = _live_provider_packet_exchange_metadata(
+        provider_adapter,
+        dry_run=False,
     )
 
     try:
@@ -2078,6 +2127,7 @@ def _live_provider_execute(
                 artifact_paths=sender_artifacts,
                 timeout_seconds=_live_endpoint_timeout_for_count(len(direction_plans)),
                 metadata={
+                    **packet_exchange_metadata,
                     "phase_role": "sender",
                     "dry_run": False,
                     "planned_live_packet_exchange": True,
@@ -2098,6 +2148,7 @@ def _live_provider_execute(
                 artifact_paths=receiver_artifacts,
                 timeout_seconds=_live_endpoint_timeout_for_count(len(direction_plans)),
                 metadata={
+                    **packet_exchange_metadata,
                     "phase_role": "receiver",
                     "dry_run": False,
                     "planned_live_packet_exchange": True,
@@ -2181,6 +2232,7 @@ def _live_provider_execute(
                 sends_live_packets=False,
                 expects_live_packets=True,
                 metadata={
+                    **packet_exchange_metadata,
                     "provider": args.provider,
                     "direction": direction,
                     "phase_role": "receiver",
@@ -2207,6 +2259,7 @@ def _live_provider_execute(
                 sends_live_packets=True,
                 expects_live_packets=False,
                 metadata={
+                    **packet_exchange_metadata,
                     "provider": args.provider,
                     "direction": direction,
                     "phase_role": "sender",
@@ -2231,8 +2284,8 @@ def _live_provider_execute(
                     receiver_command=receiver_command,
                     live_packet_exchange=False,
                     metadata={
+                        **packet_exchange_metadata,
                         "dry_run": False,
-                        "private_network": True,
                         "batch_size": len(direction_plans),
                     },
                 )
@@ -2464,11 +2517,13 @@ def _live_provider_execute(
                 passed=True,
                 direction=args.direction,
                 expected={
+                    **packet_exchange_metadata,
                     "provider": args.provider,
                     "wire_eligible_count": 0,
                     "live_packet_exchange": False,
                 },
                 actual={
+                    **packet_exchange_metadata,
                     "provider": args.provider,
                     "skipped": True,
                     "wire_eligible_count": 0,
@@ -2479,6 +2534,7 @@ def _live_provider_execute(
                 strict_bytes=False,
                 byte_equal=None,
                 metadata={
+                    **packet_exchange_metadata,
                     "provider": args.provider,
                     "skipped": True,
                     "skip_reason": skipped_reason,
@@ -2538,6 +2594,7 @@ def _live_provider_execute(
             "token_configured": True,
             **corpus_metadata,
             **_live_count_metadata(live_direction_counts),
+            **packet_exchange_metadata,
             "live_corpus_artifact": str(corpus_batch_artifact),
             "execution_directions": directions,
             "planned_infrastructure": provider_adapter.planned_infrastructure(
