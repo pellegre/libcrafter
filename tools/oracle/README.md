@@ -67,7 +67,7 @@ baselines, then reuses the corpus through the same live dry-run command shape
 for every selected provider:
 
 ```sh
-python3 tools/oracle/tests/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 ```
 
 Guarded real VM smoke uses the same provider-backed live runner for QEMU and
@@ -75,7 +75,7 @@ VirtualBox. It runs wire doctor checks first and skips unavailable VM providers
 by default while preserving the doctor output in `matrix-summary.json`:
 
 ```sh
-python3 tools/oracle/tests/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
 ```
 
 It also skips actual VM creation unless `--allow-vm-create` or

@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from tools.oracle.tests.live_provider_matrix import (
+from tools.oracle.engine.live_provider_matrix import (
     MatrixValidationError,
     _doctor_skip_reason,
     _provider_doctor_command,

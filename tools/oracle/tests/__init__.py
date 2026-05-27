@@ -1,1 +1,1 @@
-"""Oracle validation test helpers and runnable validation scripts."""
+"""Tests for oracle validation tooling."""
