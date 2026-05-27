@@ -2,6 +2,7 @@
 
 from .base import LabProviderAdapter
 from .hetzner import HETZNER_LAB_PROVIDER_ADAPTER, HetznerLabProviderAdapter
+from .qemu import QEMU_LAB_PROVIDER_ADAPTER, QemuLabProviderAdapter
 from .registry import (
     UnknownLabProviderError,
     registered_providers,
@@ -13,6 +14,8 @@ __all__ = [
     "HETZNER_LAB_PROVIDER_ADAPTER",
     "HetznerLabProviderAdapter",
     "LabProviderAdapter",
+    "QEMU_LAB_PROVIDER_ADAPTER",
+    "QemuLabProviderAdapter",
     "UnknownLabProviderError",
     "registered_providers",
     "registered_provider_names",
