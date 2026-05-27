@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one corpus through offline, pcap, and provider-backed live dry-runs."""
+"""Run one corpus through offline, pcap, and provider-backed live checks."""
 
 from __future__ import annotations
 
@@ -25,6 +25,13 @@ from tools.oracle.engine.providers.registry import (
 )
 
 
+REAL_VM_PROVIDERS = ("qemu", "virtualbox")
+STRICT_VM_SMOKE_ENV = "LIBCRAFTER_ORACLE_VM_SMOKE_STRICT"
+ALLOW_VM_CREATE_ENV = "LIBCRAFTER_ORACLE_VM_SMOKE_ALLOW_CREATE"
+REAL_MAX_COUNT_ENV = "LIBCRAFTER_ORACLE_VM_SMOKE_MAX_COUNT"
+DEFAULT_REAL_MAX_COUNT = 5
+
+
 class MatrixValidationError(RuntimeError):
     """Raised when a matrix report is missing required provider-neutral data."""
 
@@ -44,26 +51,50 @@ def validate_live_report(
     corpus_id: str,
     corpus_path: Path,
     report_path: Path,
+    dry_run: bool = True,
+    doctor: JSONObject | None = None,
 ) -> JSONObject:
-    """Return compact provider summary after validating live dry-run metadata."""
+    """Return compact provider summary after validating live report metadata."""
 
     metadata = _object(report.get("metadata"), "report.metadata")
     errors: list[str] = []
+    expected_status = "dry-run" if dry_run else "passed"
 
     _expect(report.get("mode") == "live", "mode must be 'live'", errors)
-    _expect(report.get("status") == "dry-run", "status must be 'dry-run'", errors)
+    _expect(
+        report.get("status") == expected_status,
+        f"status must be {expected_status!r}",
+        errors,
+    )
     _expect(metadata.get("provider") == provider, "metadata.provider mismatch", errors)
-    _expect(metadata.get("dry_run") is True, "metadata.dry_run must be true", errors)
-    _expect(
-        metadata.get("creates_infrastructure") is False,
-        "metadata.creates_infrastructure must be false",
-        errors,
-    )
-    _expect(
-        metadata.get("no_live_packets_sent") is True,
-        "metadata.no_live_packets_sent must be true",
-        errors,
-    )
+    _expect(metadata.get("dry_run") is dry_run, "metadata.dry_run mismatch", errors)
+    if dry_run:
+        _expect(
+            metadata.get("creates_infrastructure") is False,
+            "metadata.creates_infrastructure must be false",
+            errors,
+        )
+        _expect(
+            metadata.get("no_live_packets_sent") is True,
+            "metadata.no_live_packets_sent must be true",
+            errors,
+        )
+    else:
+        _expect(
+            metadata.get("planned_live_packet_exchange") is True,
+            "metadata.planned_live_packet_exchange must be true",
+            errors,
+        )
+        _expect(
+            isinstance(metadata.get("provider_commands"), list),
+            "metadata.provider_commands must be present",
+            errors,
+        )
+        _expect(
+            isinstance(metadata.get("wire_endpoint_lifecycle"), dict),
+            "metadata.wire_endpoint_lifecycle must be present",
+            errors,
+        )
     _expect(
         metadata.get("corpus_id") == corpus_id,
         "metadata.corpus_id must match matrix corpus",
@@ -136,35 +167,64 @@ def validate_live_report(
     if errors:
         raise MatrixValidationError(f"{report_path}: " + "; ".join(errors))
 
+    wire_lifecycle = _object(
+        metadata.get("wire_endpoint_lifecycle", {}),
+        "metadata.wire_endpoint_lifecycle",
+    )
+    artifact_collection = _object(
+        metadata.get("artifact_collection", {}),
+        "metadata.artifact_collection",
+    )
+    teardown = _object(metadata.get("teardown", {}), "metadata.teardown")
+    provider_workflow = _json_list(metadata.get("provider_workflow", []))
+    provider_commands = _json_list(metadata.get("provider_commands", []))
+    artifact_paths = _string_values(report.get("artifact_paths", report.get("artifacts", [])))
+
     return {
         "provider": provider,
         "wire_provider": adapter.wire_provider,
         "wire_exposure": adapter.wire_exposure,
         "endpoint_roles": list(adapter.endpoint_roles),
         "status": str(report["status"]),
+        "dry_run": dry_run,
         "report_path": str(report_path),
         "corpus_id": corpus_id,
         "wire_eligible_count": int(metadata["wire_eligible_count"]),
         "wire_skipped_count": int(metadata["wire_skipped_count"]),
         "wire_skip_reasons": dict(metadata["wire_skip_reasons"]),
         "exchange_count": int(report.get("count", 0)),
-        "no_live_packets_sent": True,
+        "no_live_packets_sent": dry_run,
+        "live_packet_exchange": bool(metadata.get("live_packet_exchange", False)),
+        "artifact_paths": artifact_paths,
         "lifecycle": {
-            "provider_workflow_count": len(metadata["provider_workflow"]),
+            "provider_workflow_count": len(provider_workflow),
             "endpoint_bootstrap_count": len(metadata["endpoint_bootstrap"]),
-            "artifact_collection": True,
-            "teardown": True,
+            "provider_command_count": len(provider_commands),
+            "artifact_collection": artifact_collection,
+            "teardown": teardown,
+            "wire_endpoint_lifecycle": wire_lifecycle,
+            "endpoint_ids": _string_values(wire_lifecycle.get("created_endpoint_ids", [])),
+            "remote_artifact_root": _optional_string(
+                wire_lifecycle.get("remote_artifact_root")
+            ),
         },
+        "provider_workflow": provider_workflow,
+        "provider_commands": provider_commands,
+        **({"doctor": doctor} if doctor is not None else {}),
     }
 
 
 def build_matrix_summary(
     *,
+    status: str = "passed",
     backend: str,
     profile: str,
     seed: int,
     count: int,
     dry_run: bool,
+    skip_unavailable: bool = False,
+    strict_vm_smoke: bool = False,
+    allow_vm_create: bool = False,
     corpus_path: Path,
     corpus_report: Mapping[str, Any],
     offline_report_path: Path,
@@ -173,8 +233,12 @@ def build_matrix_summary(
     commands: Sequence[JSONObject],
 ) -> JSONObject:
     return {
-        "status": "passed",
+        "status": status,
         "dry_run": dry_run,
+        "real_run": not dry_run,
+        "skip_unavailable": skip_unavailable,
+        "strict_vm_smoke": strict_vm_smoke,
+        "allow_vm_create": allow_vm_create,
         "backend": backend,
         "profile": profile,
         "seed": seed,
@@ -195,32 +259,89 @@ def build_matrix_summary(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run one oracle corpus through provider-backed live dry-runs.",
+        description="Run one oracle corpus through provider-backed live checks.",
     )
     parser.add_argument(
         "--providers",
         type=parse_provider_list,
-        default=list(registered_provider_names()),
+        default=None,
         help="comma-separated provider-backed oracle live providers",
     )
     parser.add_argument("--backend", default="scapy")
     parser.add_argument("--profile", default="smoke")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--count", type=_positive_int, default=10)
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
         "--dry-run",
         action="store_true",
         help="run provider-backed live validations in dry-run mode",
+    )
+    mode.add_argument(
+        "--real",
+        action="store_true",
+        help="run guarded real VM provider-backed live validations",
     )
     parser.add_argument(
         "--out",
         default="target/oracle/provider-matrix-dry-run",
         help="matrix output directory",
     )
+    parser.add_argument(
+        "--skip-unavailable",
+        action="store_true",
+        default=True,
+        help="skip real VM providers whose doctor checks fail (default)",
+    )
+    parser.add_argument(
+        "--strict-vm-smoke",
+        action="store_true",
+        help=(
+            "return a failure when a real VM provider is skipped; also enabled by "
+            f"{STRICT_VM_SMOKE_ENV}=1"
+        ),
+    )
+    parser.add_argument(
+        "--allow-vm-create",
+        action="store_true",
+        help=(
+            "allow guarded real VM smoke to create local VM endpoints; also enabled by "
+            f"{ALLOW_VM_CREATE_ENV}=1"
+        ),
+    )
+    parser.add_argument(
+        "--real-max-count",
+        type=_positive_int,
+        default=_default_real_max_count(),
+        help="maximum packet count allowed for guarded real VM smoke",
+    )
     args = parser.parse_args(argv)
 
-    if not args.dry_run:
-        print("error: live provider matrix currently requires --dry-run", file=sys.stderr)
+    if args.providers is None:
+        args.providers = list(REAL_VM_PROVIDERS if args.real else registered_provider_names())
+    strict_vm_smoke = bool(args.strict_vm_smoke or _env_flag(STRICT_VM_SMOKE_ENV))
+    allow_vm_create = bool(args.allow_vm_create or _env_flag(ALLOW_VM_CREATE_ENV))
+    if args.real:
+        invalid_real_providers = [
+            provider for provider in args.providers if provider not in REAL_VM_PROVIDERS
+        ]
+        if invalid_real_providers:
+            print(
+                "error: --real matrix supports VM providers only: "
+                f"{','.join(REAL_VM_PROVIDERS)}; got {','.join(invalid_real_providers)}",
+                file=sys.stderr,
+            )
+            return 2
+        if args.count > args.real_max_count:
+            print(
+                "error: --real count must be bounded for VM smoke "
+                f"(count={args.count}, max={args.real_max_count})",
+                file=sys.stderr,
+            )
+            return 2
+
+    if not args.skip_unavailable and args.real and not strict_vm_smoke:
+        print("error: real VM matrix requires skip-unavailable or strict mode", file=sys.stderr)
         return 2
 
     repo_root = Path(os.environ.get("ORACLE_REPO_ROOT", _REPO_ROOT)).resolve()
@@ -272,9 +393,54 @@ def main(argv: Sequence[str] | None = None) -> int:
         pcap_report_path = baseline_out / "pcap" / "report.json"
 
         provider_summaries: list[JSONObject] = []
+        skipped_providers: list[str] = []
         for provider in args.providers:
             adapter = resolve_live_provider(provider)
             provider_out = out_dir / "providers" / provider
+            doctor_summary: JSONObject | None = None
+            if args.real:
+                doctor_record = _run_command(
+                    _provider_doctor_command(adapter),
+                    cwd=repo_root,
+                    out_dir=out_dir,
+                    label=f"doctor-{provider}",
+                    check=False,
+                )
+                commands.append(doctor_record)
+                doctor_summary = _doctor_summary(doctor_record)
+                if doctor_record["exit_code"] != 0 or not doctor_summary.get("ok"):
+                    reason = _doctor_skip_reason(doctor_summary)
+                    provider_summaries.append(
+                        _provider_skip_summary(
+                            provider=provider,
+                            adapter=adapter,
+                            corpus_id=corpus_id,
+                            corpus_path=corpus_path,
+                            provider_out=provider_out,
+                            reason=reason,
+                            doctor=doctor_summary,
+                        )
+                    )
+                    skipped_providers.append(provider)
+                    continue
+                if not allow_vm_create:
+                    provider_summaries.append(
+                        _provider_skip_summary(
+                            provider=provider,
+                            adapter=adapter,
+                            corpus_id=corpus_id,
+                            corpus_path=corpus_path,
+                            provider_out=provider_out,
+                            reason=(
+                                "real VM creation not enabled; pass --allow-vm-create "
+                                f"or set {ALLOW_VM_CREATE_ENV}=1"
+                            ),
+                            doctor=doctor_summary,
+                        )
+                    )
+                    skipped_providers.append(provider)
+                    continue
+
             live_command = [
                 *_oracle_command(
                     "live",
@@ -284,17 +450,41 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 "--provider",
                 provider,
-                "--dry-run",
+                *(["--dry-run"] if args.dry_run else ["--confirm-live-run"]),
             ]
-            commands.append(
-                _run_command(
-                    live_command,
-                    cwd=repo_root,
-                    out_dir=out_dir,
-                    label=f"live-{provider}",
-                )
+            live_record = _run_command(
+                live_command,
+                cwd=repo_root,
+                out_dir=out_dir,
+                label=f"live-{provider}",
+                check=args.dry_run,
             )
+            commands.append(live_record)
             report_path = provider_out / "live" / "report.json"
+            if live_record["exit_code"] != 0:
+                live_report = _read_optional_json(report_path)
+                if args.real and _live_failure_is_unavailable(live_report):
+                    reason = _live_skip_reason(live_report)
+                    provider_summaries.append(
+                        _provider_skip_summary(
+                            provider=provider,
+                            adapter=adapter,
+                            corpus_id=corpus_id,
+                            corpus_path=corpus_path,
+                            provider_out=provider_out,
+                            reason=reason,
+                            doctor=doctor_summary,
+                            live_command=live_record,
+                            live_report=live_report,
+                        )
+                    )
+                    skipped_providers.append(provider)
+                    continue
+                raise MatrixValidationError(
+                    f"live-{provider} command exited {live_record['exit_code']}; "
+                    f"stdout={live_record['stdout_path']} stderr={live_record['stderr_path']}"
+                )
+
             report = _object(read_json(report_path), f"{provider} live report")
             provider_summaries.append(
                 validate_live_report(
@@ -304,16 +494,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                     corpus_id=corpus_id,
                     corpus_path=corpus_path,
                     report_path=report_path,
+                    dry_run=args.dry_run,
+                    doctor=doctor_summary,
                 )
             )
 
         summary_path = out_dir / "matrix-summary.json"
+        summary_status = "failed" if skipped_providers and strict_vm_smoke else "passed"
         summary = build_matrix_summary(
+            status=summary_status,
             backend=args.backend,
             profile=args.profile,
             seed=args.seed,
             count=args.count,
-            dry_run=True,
+            dry_run=args.dry_run,
+            skip_unavailable=bool(args.skip_unavailable),
+            strict_vm_smoke=strict_vm_smoke,
+            allow_vm_create=allow_vm_create,
             corpus_path=corpus_path,
             corpus_report=corpus_report,
             offline_report_path=offline_report_path,
@@ -323,9 +520,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         write_json(summary_path, summary)
         print(
-            "provider matrix: status=passed "
+            f"provider matrix: status={summary_status} "
             f"providers={','.join(args.providers)} summary={summary_path}"
         )
+        if skipped_providers and strict_vm_smoke:
+            print(
+                "error: strict VM smoke skipped providers: "
+                f"{','.join(skipped_providers)}",
+                file=sys.stderr,
+            )
+            return 1
         return 0
     except (MatrixValidationError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -363,6 +567,7 @@ def _run_command(
     cwd: Path,
     out_dir: Path,
     label: str,
+    check: bool = True,
 ) -> JSONObject:
     logs_dir = out_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -385,12 +590,134 @@ def _run_command(
         "stdout_path": str(stdout_path),
         "stderr_path": str(stderr_path),
     }
-    if process.returncode != 0:
+    if process.returncode != 0 and check:
         raise MatrixValidationError(
             f"{label} command exited {process.returncode}; "
             f"stdout={stdout_path} stderr={stderr_path}"
         )
     return record
+
+
+def _provider_doctor_command(adapter: LiveProviderAdapter) -> list[str]:
+    return [
+        "tools/wire/run",
+        "doctor",
+        "--provider",
+        adapter.wire_provider,
+        "--exposure",
+        adapter.wire_exposure,
+        "--json",
+    ]
+
+
+def _doctor_summary(record: JSONObject) -> JSONObject:
+    report = _read_optional_json(Path(str(record["stdout_path"])))
+    checks = _json_list(report.get("checks", []) if report is not None else [])
+    failed_checks = [
+        check
+        for check in checks
+        if isinstance(check, dict) and check.get("ok") is not True
+    ]
+    return {
+        "ok": bool(report.get("ok")) if report is not None else False,
+        "command": record,
+        "report": report,
+        "failed_checks": failed_checks,
+    }
+
+
+def _doctor_skip_reason(doctor: JSONObject) -> str:
+    failed_checks = _json_list(doctor.get("failed_checks", []))
+    if failed_checks:
+        details = []
+        for check in failed_checks:
+            if not isinstance(check, dict):
+                continue
+            name = _optional_string(check.get("name")) or "check"
+            message = _optional_string(check.get("message")) or "failed"
+            details.append(f"{name}: {message}")
+        if details:
+            return "provider doctor failed: " + "; ".join(details)
+    command = _object(doctor.get("command", {}), "doctor.command")
+    return f"provider doctor exited {command.get('exit_code', 'unknown')}"
+
+
+def _provider_skip_summary(
+    *,
+    provider: str,
+    adapter: LiveProviderAdapter,
+    corpus_id: str,
+    corpus_path: Path,
+    provider_out: Path,
+    reason: str,
+    doctor: JSONObject | None,
+    live_command: JSONObject | None = None,
+    live_report: JSONObject | None = None,
+) -> JSONObject:
+    report_path = provider_out / "live" / "report.json"
+    output: JSONObject = {
+        "provider": provider,
+        "wire_provider": adapter.wire_provider,
+        "wire_exposure": adapter.wire_exposure,
+        "endpoint_roles": list(adapter.endpoint_roles),
+        "status": "skipped",
+        "dry_run": False,
+        "skip_reason": reason,
+        "report_path": str(report_path) if report_path.is_file() else None,
+        "planned_report_path": str(report_path),
+        "corpus_id": corpus_id,
+        "corpus_path": str(corpus_path),
+        "no_live_packets_sent": True,
+        "live_packet_exchange": False,
+        "doctor": doctor,
+    }
+    if live_command is not None:
+        output["live_command"] = live_command
+    if live_report is not None:
+        output["live_report_status"] = live_report.get("status")
+        output["live_report_metadata"] = _object(
+            live_report.get("metadata", {}),
+            "live_report.metadata",
+        )
+    return output
+
+
+def _live_failure_is_unavailable(report: JSONObject | None) -> bool:
+    if report is None:
+        return False
+    metadata = _object(report.get("metadata", {}), "live_report.metadata")
+    if metadata.get("live_packet_exchange") is True:
+        return False
+    exchanges = metadata.get("exchanges")
+    if isinstance(exchanges, list) and exchanges:
+        return False
+    lifecycle = _object(
+        metadata.get("wire_endpoint_lifecycle", {}),
+        "live_report.metadata.wire_endpoint_lifecycle",
+    )
+    created_endpoint_ids = _string_values(lifecycle.get("created_endpoint_ids", []))
+    if not created_endpoint_ids and metadata.get("creates_infrastructure") is not True:
+        return True
+    errors = _string_values(metadata.get("execution_errors", []))
+    return bool(errors)
+
+
+def _live_skip_reason(report: JSONObject | None) -> str:
+    if report is None:
+        return "real provider run failed before writing a report"
+    metadata = _object(report.get("metadata", {}), "live_report.metadata")
+    errors = _string_values(metadata.get("execution_errors", []))
+    if errors:
+        return "real provider unavailable: " + "; ".join(errors)
+    return "real provider unavailable"
+
+
+def _read_optional_json(path: Path) -> JSONObject | None:
+    try:
+        value = read_json(path)
+    except (OSError, ValueError):
+        return None
+    return _object(value, str(path))
 
 
 def _object(value: Any, name: str) -> JSONObject:
@@ -402,6 +729,28 @@ def _object(value: Any, name: str) -> JSONObject:
             raise MatrixValidationError(f"{name} keys must be strings")
         output[key] = item
     return output
+
+
+def _json_list(value: Any) -> list[JSONObject]:
+    if not isinstance(value, list):
+        return []
+    output: list[JSONObject] = []
+    for item in value:
+        if isinstance(item, dict):
+            output.append(
+                {str(key): value for key, value in item.items() if isinstance(key, str)}
+            )
+    return output
+
+
+def _string_values(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _roles_from_commands(value: Any) -> set[str]:
@@ -437,6 +786,22 @@ def _positive_int(value: str) -> int:
     if parsed < 1:
         raise argparse.ArgumentTypeError("value must be positive")
     return parsed
+
+
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    return value in {"1", "true", "yes", "on", "strict"}
+
+
+def _default_real_max_count() -> int:
+    value = os.environ.get(REAL_MAX_COUNT_ENV)
+    if value is None:
+        return DEFAULT_REAL_MAX_COUNT
+    try:
+        parsed = int(value)
+    except ValueError:
+        return DEFAULT_REAL_MAX_COUNT
+    return parsed if parsed > 0 else DEFAULT_REAL_MAX_COUNT
 
 
 if __name__ == "__main__":

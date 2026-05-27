@@ -5,8 +5,8 @@ provision, command execution, artifact collection, SSH access, and destroy —
 so that `tools/oracle` and `tools/probe` can run a packet workload against an
 endpoint without depending on which provider produced it. Oracle and probe own
 the workload, reports, and reproduction coordinates; wire owns the lifecycle.
-Hetzner is the current provider implementation, and the rest of this document
-covers it.
+The current provider implementations used by oracle live validation are
+Hetzner, QEMU, and VirtualBox.
 
 Oracle live provider adapter registration is separate: adapters under
 `tools/oracle/engine/providers/` select how oracle maps `--provider` names to
@@ -19,6 +19,28 @@ endpoints are for tests that need root privileges, raw sockets, packet capture,
 reference comparison, or kernel/service replies on disposable infrastructure.
 See [validation.md](validation.md) for oracle modes and CI expectations, and
 [probe.md](probe.md) for behavioral probe cases.
+
+## Provider Setup
+
+Hetzner uses `hetzner/private` for oracle live exchange. QEMU uses
+`qemu/private` with private group `oracle-live-private` and deterministic
+oracle role addresses `10.77.0.10` and `10.77.0.20`. VirtualBox uses
+`virtualbox/lan`; the guest LAN address is discovered from the bridged
+interface manifest and is not requested by oracle.
+
+Run provider checks before real endpoint creation:
+
+```sh
+tools/wire/run doctor --provider hetzner --exposure private --json
+tools/wire/run doctor --provider qemu --exposure private --json
+tools/wire/run doctor --provider virtualbox --exposure lan --json
+```
+
+VM provider prerequisites are documented in `tools/wire/README.md`. In short,
+QEMU needs `qemu-system-x86_64`, `qemu-img`, `cloud-localds`, and SSH tooling.
+VirtualBox needs `VBoxManage`, `qemu-img`, `cloud-localds`, SSH tooling, and a
+usable bridged interface. Set `LIBCRAFTER_VBOX_BRIDGE_IFACE` to request a
+specific bridge.
 
 ## Hetzner Setup
 
@@ -51,6 +73,7 @@ Start protected provider validation only when disposable resources are intended:
 
 ```sh
 tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
+python3 tools/oracle/tests/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
 tools/probe/run --provider hetzner --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
@@ -58,6 +81,18 @@ Generated endpoint state is written below `tools/wire/.state/`. Artifacts are
 written below `tools/wire/artifacts/`. Both locations are ignored by git.
 Oracle reports and packet artifacts are written below `target/oracle/`; probe
 reports are written below `target/probe/`.
+
+The VM matrix writes `target/oracle/provider-matrix-vm-real/matrix-summary.json`
+plus per-provider reports under
+`target/oracle/provider-matrix-vm-real/providers/<provider>/live/report.json`.
+The summary preserves doctor results, report paths, endpoint lifecycle
+metadata, endpoint IDs, artifact roots, and cleanup status. By default a
+missing VM prerequisite or disabled VM creation is recorded as a structured
+skip. Add `--allow-vm-create` or set
+`LIBCRAFTER_ORACLE_VM_SMOKE_ALLOW_CREATE=1` when a lab run should actually
+create disposable local VMs. Set `LIBCRAFTER_ORACLE_VM_SMOKE_STRICT=1` or pass
+`--strict-vm-smoke` when a lab qualification run should fail on skipped VM
+providers.
 
 Use the same `--profile`, `--seed`, `--count`, and reported `--index` to
 reproduce a single failed oracle packet plan. For probe, preserve the reported
@@ -97,7 +132,10 @@ Recommended provider dry-run flow:
 
 ```sh
 tools/wire/run doctor --provider hetzner --exposure private --dry-run
+tools/wire/run doctor --provider qemu --exposure private --dry-run
+tools/wire/run doctor --provider virtualbox --exposure lan --dry-run
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+python3 tools/oracle/tests/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 

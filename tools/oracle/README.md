@@ -70,6 +70,20 @@ for every selected provider:
 python3 tools/oracle/tests/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 ```
 
+Guarded real VM smoke uses the same provider-backed live runner for QEMU and
+VirtualBox. It runs wire doctor checks first and skips unavailable VM providers
+by default while preserving the doctor output in `matrix-summary.json`:
+
+```sh
+python3 tools/oracle/tests/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
+```
+
+It also skips actual VM creation unless `--allow-vm-create` or
+`LIBCRAFTER_ORACLE_VM_SMOKE_ALLOW_CREATE=1` is set. Set
+`LIBCRAFTER_ORACLE_VM_SMOKE_STRICT=1` or pass `--strict-vm-smoke` when a lab
+qualification run should fail instead of skip if QEMU or VirtualBox
+prerequisites are missing or VM creation is disabled.
+
 Expanded wire protocol smoke checks force corpus selection for DNS, TCP, ICMP,
 and IPv6 packets while keeping provider execution in dry-run mode:
 

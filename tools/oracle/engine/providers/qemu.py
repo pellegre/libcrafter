@@ -953,7 +953,7 @@ def _qemu_endpoint_bootstrap_script(
                 ),
                 install_uv,
                 "if ! command -v cargo >/dev/null 2>&1; then "
-                "curl -fsS https://sh.rustup.rs | sh -s -- -y; fi",
+                "curl -fsS https://sh.rustup.rs | sh -s -- -y --profile minimal; fi",
                 "if [ -f \"$HOME/.cargo/env\" ]; then . \"$HOME/.cargo/env\"; fi",
                 "cargo build -p oracle-adapters --bin live_endpoint",
                 "{",
