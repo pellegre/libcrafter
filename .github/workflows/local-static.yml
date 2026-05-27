@@ -90,8 +90,29 @@ jobs:
       - name: Build examples
         run: cargo build --examples
 
+      - name: Check Python test layout
+        run: |
+          set -euo pipefail
+          misplaced_engine_tests="$(find tools -path '*/engine/*' -type f -name 'test_*.py' -print)"
+          misplaced_test_code="$(find tools -path '*/tests/*' -type f -name '*.py' ! -name 'test_*.py' ! -name '__init__.py' -print)"
+
+          if [[ -n "$misplaced_engine_tests$misplaced_test_code" ]]; then
+            if [[ -n "$misplaced_engine_tests" ]]; then
+              echo "test files must live under tools/*/tests, not engine:"
+              printf '%s\n' "$misplaced_engine_tests"
+            fi
+            if [[ -n "$misplaced_test_code" ]]; then
+              echo "non-test Python code must not live under tools/*/tests:"
+              printf '%s\n' "$misplaced_test_code"
+            fi
+            exit 1
+          fi
+
       - name: Compile Python validation tooling
-        run: python3 -m compileall tools/oracle/engine tools/probe/engine tools/wire/engine
+        run: python3 -m compileall tools/oracle/engine tools/probe/engine tools/wire/engine tools/wire/smoke
+
+      - name: Run oracle Python tests
+        run: python3 -m unittest discover -s tools/oracle/tests -p 'test_*.py'
 
       - name: Run wire Python tests
         run: python3 -m unittest discover -s tools/wire/tests -p 'test_*.py'

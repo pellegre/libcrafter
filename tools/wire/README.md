@@ -162,14 +162,14 @@ sends one live ICMP echo request on the local LAN. Inspect the command sequence
 without side effects:
 
 ```sh
-python3 tools/wire/tests/live_virtualbox_network_ping.py --plan-only
+python3 tools/wire/smoke/live_virtualbox_network_ping.py --plan-only
 ```
 
 Run it only in an isolated lab where live LAN traffic is expected:
 
 ```sh
 LAN_ROUTER=192.168.0.1 \
-python3 tools/wire/tests/live_virtualbox_network_ping.py \
+python3 tools/wire/smoke/live_virtualbox_network_ping.py \
   --live \
   --i-understand-isolated-lab
 ```
