@@ -21,6 +21,11 @@ from tools.oracle.engine.providers.qemu import (
     PRIVATE_NETWORK_CIDR as QEMU_PRIVATE_NETWORK_CIDR,
     REFERENCE_PRIVATE_ADDRESS as QEMU_REFERENCE_PRIVATE_ADDRESS,
 )
+from tools.oracle.engine.providers.virtualbox import (
+    BRIDGE_INTERFACE_ENV as VIRTUALBOX_BRIDGE_INTERFACE_ENV,
+    PLANNED_LIBCRAFTER_LAN_ADDRESS as VIRTUALBOX_PLANNED_LIBCRAFTER_LAN_ADDRESS,
+    PLANNED_REFERENCE_LAN_ADDRESS as VIRTUALBOX_PLANNED_REFERENCE_LAN_ADDRESS,
+)
 from tools.oracle.engine.providers.registry import (
     UnknownLiveProviderError,
     registered_provider_names,
@@ -30,7 +35,7 @@ from tools.oracle.engine.providers.registry import (
 
 class LiveProviderRegistryTest(unittest.TestCase):
     def test_hetzner_provider_is_registered(self) -> None:
-        self.assertEqual(registered_provider_names(), ("hetzner", "qemu"))
+        self.assertEqual(registered_provider_names(), ("hetzner", "qemu", "virtualbox"))
 
         adapter = resolve_live_provider("hetzner")
 
@@ -56,14 +61,25 @@ class LiveProviderRegistryTest(unittest.TestCase):
             },
         )
 
+    def test_virtualbox_provider_is_registered(self) -> None:
+        adapter = resolve_live_provider("virtualbox")
+
+        self.assertEqual(adapter.name, "virtualbox")
+        self.assertEqual(adapter.wire_provider, "virtualbox")
+        self.assertEqual(adapter.wire_exposure, "lan")
+        self.assertEqual(adapter.endpoint_roles, ("libcrafter", "reference_backend"))
+        self.assertIsNone(adapter.private_group)
+        self.assertEqual(dict(adapter.endpoint_private_ips), {})
+
     def test_unknown_provider_error_names_requested_and_known_providers(self) -> None:
         with self.assertRaises(UnknownLiveProviderError) as error:
-            resolve_live_provider("virtualbox")
+            resolve_live_provider("not-a-provider")
 
         message = str(error.exception)
-        self.assertIn("virtualbox", message)
+        self.assertIn("not-a-provider", message)
         self.assertIn("hetzner", message)
         self.assertIn("qemu", message)
+        self.assertIn("virtualbox", message)
 
     def test_hetzner_adapter_exposes_report_plans(self) -> None:
         adapter = resolve_live_provider("hetzner")
@@ -151,6 +167,66 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertIn("--exposure", doctor.argv)
         self.assertIn("private", doctor.argv)
 
+    def test_virtualbox_adapter_exposes_report_plans(self) -> None:
+        adapter = resolve_live_provider("virtualbox")
+
+        capabilities = adapter.default_provider_capabilities(dry_run=True)
+        infrastructure = adapter.planned_infrastructure(dry_run=True)
+        exchange_metadata = adapter.packet_exchange_metadata(dry_run=True)
+        endpoints = adapter.endpoints(dry_run=True)
+        workflow = adapter.provider_workflow(dry_run=True)
+        bootstrap = adapter.endpoint_bootstrap_plan(dry_run=True)
+
+        self.assertEqual(capabilities["provider"], "virtualbox")
+        self.assertEqual(capabilities["wire_policy"]["transit_decrements_ipv4_ttl"], False)
+        self.assertEqual(infrastructure["provider"], "virtualbox")
+        self.assertEqual(infrastructure["network"]["wire_exposure"], "lan")
+        self.assertEqual(
+            infrastructure["network"]["bridge_interface_env"],
+            VIRTUALBOX_BRIDGE_INTERFACE_ENV,
+        )
+        self.assertEqual(exchange_metadata["provider"], "virtualbox")
+        self.assertEqual(exchange_metadata["wire_provider"], "virtualbox")
+        self.assertEqual(exchange_metadata["wire_exposure"], "lan")
+        self.assertEqual(
+            exchange_metadata["endpoint_roles"],
+            ["libcrafter", "reference_backend"],
+        )
+        self.assertIsNone(exchange_metadata["private_group"])
+        self.assertFalse(exchange_metadata["isolated_network"])
+        self.assertFalse(exchange_metadata["private_network"])
+        self.assertTrue(exchange_metadata["bridged_lan"])
+        self.assertEqual(exchange_metadata["packet_exchange_network"], "lan")
+        self.assertEqual(set(endpoints), {"libcrafter", "reference_backend"})
+        self.assertTrue(all(endpoint.metadata["bridged_lan"] for endpoint in endpoints.values()))
+        self.assertFalse(any(endpoint.metadata["private_network"] for endpoint in endpoints.values()))
+        self.assertEqual(
+            endpoints["libcrafter"].address,
+            VIRTUALBOX_PLANNED_LIBCRAFTER_LAN_ADDRESS,
+        )
+        self.assertEqual(
+            endpoints["reference_backend"].address,
+            VIRTUALBOX_PLANNED_REFERENCE_LAN_ADDRESS,
+        )
+        self.assertTrue(adapter.validate_provider_workflow(workflow, dry_run=True).passed)
+        self.assertTrue(adapter.validate_endpoint_bootstrap(bootstrap, dry_run=True).passed)
+        self.assertEqual(
+            {command.role for command in bootstrap},
+            {"libcrafter", "reference_backend"},
+        )
+
+        workflow_purposes = {command.purpose for command in workflow}
+        self.assertIn(adapter.artifact_collection_purpose, workflow_purposes)
+        self.assertIn(adapter.teardown_purpose, workflow_purposes)
+        doctor = next(command for command in workflow if command.purpose == "check-virtualbox-provider")
+        self.assertIn("--provider", doctor.argv)
+        self.assertIn("virtualbox", doctor.argv)
+        self.assertIn("--exposure", doctor.argv)
+        self.assertIn("lan", doctor.argv)
+        for command in workflow:
+            self.assertNotIn("--private-group", command.argv)
+            self.assertNotIn("--private-ip", command.argv)
+
     def test_hetzner_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
         adapter = resolve_live_provider("hetzner")
         client = _FakeWireClient()
@@ -203,6 +279,42 @@ class LiveProviderRegistryTest(unittest.TestCase):
             plan["live_endpoints"]["reference_backend"].address,
             QEMU_REFERENCE_PRIVATE_ADDRESS,
         )
+
+    def test_virtualbox_adapter_plans_wire_endpoints_with_lan_exposure(self) -> None:
+        adapter = resolve_live_provider("virtualbox")
+        client = _FakeWireClient()
+
+        plan = adapter.wire_endpoint_plan(dry_run=True, client=client)
+
+        self.assertEqual(plan["provider"], "virtualbox")
+        self.assertEqual(plan["wire_provider"], "virtualbox")
+        self.assertEqual(plan["exposure"], "lan")
+        self.assertIsNone(plan["private_group"])
+        self.assertEqual(set(plan["live_endpoints"]), {"libcrafter", "reference_backend"})
+        self.assertEqual(
+            [(call["provider"], call["exposure"], call["role"]) for call in client.calls],
+            [
+                ("virtualbox", "lan", "libcrafter"),
+                ("virtualbox", "lan", "reference_backend"),
+            ],
+        )
+        self.assertEqual([call["private_group"] for call in client.calls], [None, None])
+        self.assertEqual([call["private_ip"] for call in client.calls], [None, None])
+        self.assertTrue(all(call["dry_run"] for call in client.calls))
+        self.assertEqual(
+            plan["live_endpoints"]["libcrafter"].address,
+            VIRTUALBOX_PLANNED_LIBCRAFTER_LAN_ADDRESS,
+        )
+        self.assertEqual(
+            plan["live_endpoints"]["reference_backend"].address,
+            VIRTUALBOX_PLANNED_REFERENCE_LAN_ADDRESS,
+        )
+        self.assertEqual(
+            plan["live_endpoints"]["libcrafter"].metadata["peer_address"],
+            VIRTUALBOX_PLANNED_REFERENCE_LAN_ADDRESS,
+        )
+        self.assertTrue(plan["live_endpoints"]["libcrafter"].metadata["bridged_lan"])
+        self.assertFalse(plan["live_endpoints"]["libcrafter"].metadata["private_network"])
 
     def test_hetzner_adapter_exposes_execution_policy_hooks(self) -> None:
         adapter = resolve_live_provider("hetzner")
@@ -295,24 +407,78 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(reference_command[:2], ["bash", "-lc"])
         self.assertIn("python3 -m engine.backends.scapy.live", reference_command[2])
 
+    def test_virtualbox_adapter_exposes_execution_policy_hooks_without_transit_mutation(self) -> None:
+        adapter = resolve_live_provider("virtualbox")
+        plan = PacketPlan(
+            stack=["ipv4"],
+            fields={"ipv4": {"ttl": 1}},
+            profile="default",
+            seed=7,
+            index=3,
+            direction="reference_to_libcrafter",
+            family="ipv4",
+            metadata={"root": "l3:ipv4"},
+        )
+
+        policy = adapter.wire_comparison_policy(plan)
+        transit_plan = adapter.apply_transit_plan(plan)
+        bootstrap_command = adapter.endpoint_bootstrap_command(
+            endpoint=adapter.endpoints(dry_run=True)["libcrafter"],
+            peer=adapter.endpoints(dry_run=True)["reference_backend"],
+            remote_archive="/tmp/repo.tar.gz",
+            remote_dir="/root/libcrafter",
+        )
+        libcrafter_command = adapter.endpoint_remote_command(
+            endpoint_role="libcrafter",
+            remote_dir="/root/libcrafter",
+            request_path="/tmp/request.json",
+            out_dir="/tmp/out",
+        )
+        reference_command = adapter.endpoint_remote_command(
+            endpoint_role="reference_backend",
+            remote_dir="/root/libcrafter",
+            request_path="/tmp/request.json",
+            out_dir="/tmp/out",
+        )
+
+        self.assertEqual(policy["provider"], "virtualbox")
+        self.assertEqual(policy["compare_root"], "l3:ipv4")
+        self.assertNotIn("ipv4.ttl", policy["mutable_fields"])
+        self.assertNotIn("ipv4.checksum", policy["mutable_fields"])
+        self.assertNotIn("ipv4.ttl", policy["byte_mutable_fields"])
+        self.assertNotIn("ipv4.checksum", policy["byte_mutable_fields"])
+        self.assertTrue(policy["strict_bytes"])
+        self.assertEqual(transit_plan.fields["ipv4"]["ttl"], 1)
+        self.assertEqual(transit_plan.metadata["wire"]["provider"], "virtualbox")
+        self.assertEqual(transit_plan.metadata["live_transit_rewrites"], [])
+        self.assertEqual(bootstrap_command[:2], ["bash", "-lc"])
+        self.assertIn("LIBCRAFTER_LAN_IPV4=192.0.2.110", bootstrap_command[2])
+        self.assertIn("LIBCRAFTER_PEER_LAN_IPV4=192.0.2.120", bootstrap_command[2])
+        self.assertEqual(libcrafter_command[:2], ["bash", "-lc"])
+        self.assertIn("cargo run", libcrafter_command[2])
+        self.assertEqual(reference_command[:2], ["bash", "-lc"])
+        self.assertIn("python3 -m engine.backends.scapy.live", reference_command[2])
+
     def test_live_parser_accepts_local_dry_run_and_registered_providers(self) -> None:
         parser = cli.build_parser()
 
         local_args = parser.parse_args(["live", "--provider", "local-dry-run"])
         hetzner_args = parser.parse_args(["live", "--provider", "hetzner"])
         qemu_args = parser.parse_args(["live", "--provider", "qemu"])
+        virtualbox_args = parser.parse_args(["live", "--provider", "virtualbox"])
 
         self.assertEqual(local_args.provider, "local-dry-run")
         self.assertEqual(hetzner_args.provider, "hetzner")
         self.assertEqual(qemu_args.provider, "qemu")
+        self.assertEqual(virtualbox_args.provider, "virtualbox")
         with (
             self.assertRaises(SystemExit),
             contextlib.redirect_stderr(io.StringIO()),
         ):
-            parser.parse_args(["live", "--provider", "virtualbox"])
+            parser.parse_args(["live", "--provider", "not-a-provider"])
 
     def test_live_dispatch_resolves_registered_provider_adapter(self) -> None:
-        for provider in ("hetzner", "qemu"):
+        for provider in ("hetzner", "qemu", "virtualbox"):
             args = _live_args(provider)
             seen: dict[str, object] = {}
 
@@ -329,7 +495,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             self.assertIs(seen["adapter"], resolve_live_provider(provider))
 
     def test_live_dispatch_rejects_unknown_provider_before_planning(self) -> None:
-        args = _live_args("virtualbox")
+        args = _live_args("not-a-provider")
         stderr = io.StringIO()
 
         with (
@@ -340,7 +506,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
 
         self.assertEqual(code, 2)
         live_provider.assert_not_called()
-        self.assertIn("virtualbox", stderr.getvalue())
+        self.assertIn("not-a-provider", stderr.getvalue())
         self.assertIn("hetzner", stderr.getvalue())
 
     def test_real_live_execution_uses_provider_adapter_boundary(self) -> None:
@@ -496,10 +662,10 @@ class _FakeWireClient:
         provider: str,
         exposure: str,
         role: str,
-        private_group: str,
-        private_ip: str,
-        dry_run: bool,
-        confirm_live_run: bool,
+        private_group: str | None = None,
+        private_ip: str | None = None,
+        dry_run: bool = False,
+        confirm_live_run: bool = False,
     ):
         self.calls.append(
             {
@@ -513,6 +679,26 @@ class _FakeWireClient:
             }
         )
         endpoint_id = f"{provider}-{exposure}-{role}"
+        interface = (
+            {
+                "name": "lan",
+                "exposure": "lan",
+                "ipv4": private_ip,
+                "metadata": {
+                    "bridge_interface": "auto",
+                    "bridge_selection": "auto",
+                    "bridge_env": VIRTUALBOX_BRIDGE_INTERFACE_ENV,
+                    "type": "bridged-lan",
+                },
+            }
+            if provider == "virtualbox"
+            else {
+                "name": "oracle0",
+                "exposure": exposure,
+                "ipv4": private_ip,
+                "metadata": {"private_group": private_group},
+            }
+        )
         return SimpleNamespace(
             manifest=SimpleNamespace(endpoint_id=endpoint_id),
             record=_FakeRecord(role),
@@ -521,15 +707,12 @@ class _FakeWireClient:
                 "provider": provider,
                 "exposure": exposure,
                 "role": role,
-                "interfaces": [
-                    {
-                        "name": "oracle0",
-                        "exposure": exposure,
-                        "ipv4": private_ip,
-                        "metadata": {"private_group": private_group},
-                    }
-                ],
-                "metadata": {"private_group": private_group},
+                "interfaces": [interface],
+                "metadata": (
+                    {"private_group": private_group}
+                    if private_group is not None
+                    else {}
+                ),
             },
         )
 

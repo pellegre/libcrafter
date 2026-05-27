@@ -5,6 +5,7 @@ from __future__ import annotations
 from .base import LiveProviderAdapter
 from .hetzner import HETZNER_LIVE_PROVIDER_ADAPTER
 from .qemu import QEMU_LIVE_PROVIDER_ADAPTER
+from .virtualbox import VIRTUALBOX_LIVE_PROVIDER_ADAPTER
 
 
 class UnknownLiveProviderError(ValueError):
@@ -14,6 +15,7 @@ class UnknownLiveProviderError(ValueError):
 _REGISTERED_PROVIDERS: dict[str, LiveProviderAdapter] = {
     HETZNER_LIVE_PROVIDER_ADAPTER.name: HETZNER_LIVE_PROVIDER_ADAPTER,
     QEMU_LIVE_PROVIDER_ADAPTER.name: QEMU_LIVE_PROVIDER_ADAPTER,
+    VIRTUALBOX_LIVE_PROVIDER_ADAPTER.name: VIRTUALBOX_LIVE_PROVIDER_ADAPTER,
 }
 
 
