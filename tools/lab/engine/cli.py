@@ -7,8 +7,9 @@ import json
 import sys
 from collections.abc import Sequence
 
-from .model import LabRequest, LabRole
-from .providers import registered_providers, resolve_lab_provider
+from . import wire_client
+from .model import JSONObject, LabRequest, LabRole
+from .providers import UnknownLabProviderError, registered_providers, resolve_lab_provider
 
 
 COMMANDS = (
@@ -118,7 +119,27 @@ def _add_session_request_options(parser: argparse.ArgumentParser) -> None:
         dest="roles",
         action="append",
         required=True,
-        help="role to include in the lab session; may be repeated",
+        metavar="ROLE",
+        help="role to include in the lab session, optionally ROLE=IPV4; may be repeated",
+    )
+    parser.add_argument(
+        "--role-address",
+        "--role-private-ip",
+        dest="role_addresses",
+        action="append",
+        default=[],
+        metavar="ROLE=IPV4",
+        help="role IPv4 address override; may be repeated",
+    )
+    parser.add_argument(
+        "--workload-label",
+        "--workload",
+        dest="workload_label",
+        help="workload label used for deterministic session and resource names",
+    )
+    parser.add_argument(
+        "--remote-dir",
+        help="absolute remote repository directory planned for lab bootstrap",
     )
 
 
@@ -140,18 +161,7 @@ def _run_not_implemented(args: argparse.Namespace) -> int:
 def _run_providers(args: argparse.Namespace) -> int:
     output = {
         "ok": True,
-        "providers": [
-            {
-                "name": provider.name,
-                "wire_provider": provider.wire_provider,
-                "wire_exposure": provider.wire_exposure,
-                "credential_label": provider.credential_label,
-                "credentials_available": provider.credentials_available(),
-                "missing_credential_reason": provider.missing_credential_reason,
-                "capabilities": provider.default_provider_capabilities(dry_run=True),
-            }
-            for provider in registered_providers()
-        ],
+        "providers": [_provider_metadata(provider) for provider in registered_providers()],
     }
     if getattr(args, "json", False):
         sys.stdout.write(json.dumps(output, indent=2, sort_keys=True))
@@ -167,6 +177,55 @@ def _run_providers(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_doctor(args: argparse.Namespace) -> int:
+    try:
+        adapter = resolve_lab_provider(args.provider)
+        dry_run = True
+        wire = wire_client.WireClient()
+        response = wire.doctor(
+            provider=adapter.wire_provider,
+            exposure=adapter.wire_exposure,
+            dry_run=dry_run,
+        )
+        wire_doctor = response.json_data or {}
+        wire_ok = bool(wire_doctor.get("ok", response.ok))
+        output: JSONObject = {
+            "ok": wire_ok,
+            "command": args.command_name,
+            "provider": adapter.name,
+            "wire_provider": adapter.wire_provider,
+            "wire_exposure": adapter.wire_exposure,
+            "dry_run": dry_run,
+            "requested_dry_run": bool(getattr(args, "dry_run", False)),
+            "metadata": _provider_metadata(adapter),
+            "wire_doctor": wire_doctor,
+            "command_records": [
+                response.command_plan(
+                    purpose=f"check-{adapter.name}-{adapter.wire_exposure}-wire",
+                ).to_dict()
+            ],
+        }
+        exit_code = 0 if dry_run else (0 if wire_ok else 1)
+        return _write_output(
+            output,
+            args,
+            text=(
+                f"lab doctor: provider={adapter.name} "
+                f"wire={adapter.wire_provider}/{adapter.wire_exposure} "
+                f"dry_run={str(dry_run).lower()} "
+                f"status={'ok' if wire_ok else 'failed'}"
+            ),
+            exit_code=exit_code,
+        )
+    except (UnknownLabProviderError, wire_client.WireClientError, ValueError) as exc:
+        return _write_output(
+            _error_output(args, exc),
+            args,
+            text=str(exc),
+            exit_code=2,
+        )
+
+
 def _run_plan(args: argparse.Namespace) -> int:
     if not args.dry_run:
         output = {
@@ -177,22 +236,122 @@ def _run_plan(args: argparse.Namespace) -> int:
         }
         return _write_output(output, args, text="lab plan requires --dry-run", exit_code=2)
 
-    adapter = resolve_lab_provider(args.provider)
-    request = LabRequest(
-        provider=args.provider,
-        profile=args.profile,
-        seed=args.seed,
-        roles=[LabRole(name=role) for role in args.roles],
-        dry_run=True,
-        confirm_live_run=False,
-    )
-    session = adapter.plan_session(request)
-    output = {
-        "ok": True,
-        "command": args.command_name,
-        "session": session.to_dict(),
+    try:
+        adapter = resolve_lab_provider(args.provider)
+        request = LabRequest(
+            provider=adapter.name,
+            profile=args.profile,
+            seed=args.seed,
+            roles=_lab_roles_from_args(
+                provider=adapter.name,
+                role_specs=args.roles,
+                address_specs=args.role_addresses,
+            ),
+            dry_run=True,
+            confirm_live_run=False,
+            remote_dir=args.remote_dir,
+            workload_label=args.workload_label,
+        )
+        session = adapter.plan_session(request)
+        return _write_output(session.to_dict(), args, text=session.session_id)
+    except (
+        PermissionError,
+        UnknownLabProviderError,
+        ValueError,
+        wire_client.WireClientError,
+    ) as exc:
+        return _write_output(
+            _error_output(args, exc),
+            args,
+            text=str(exc),
+            exit_code=2,
+        )
+
+
+def _provider_metadata(provider: object) -> JSONObject:
+    return {
+        "name": provider.name,
+        "wire_provider": provider.wire_provider,
+        "wire_exposure": provider.wire_exposure,
+        "credential_label": provider.credential_label,
+        "credentials_available": provider.credentials_available(),
+        "missing_credential_reason": provider.missing_credential_reason,
+        "capabilities": provider.default_provider_capabilities(dry_run=True),
     }
-    return _write_output(output, args, text=session.session_id)
+
+
+def _lab_roles_from_args(
+    *,
+    provider: str,
+    role_specs: Sequence[str],
+    address_specs: Sequence[str],
+) -> list[LabRole]:
+    role_names: list[str] = []
+    addresses: dict[str, str] = {}
+
+    for spec in role_specs:
+        role_name, address = _parse_role_spec(spec)
+        role_names.append(role_name)
+        if address is not None:
+            _set_role_address(addresses, role_name, address)
+
+    known_roles = set(role_names)
+    for spec in address_specs:
+        role_name, address = _parse_role_address_spec(spec)
+        if role_name not in known_roles:
+            raise ValueError(f"role address override references unknown role: {role_name}")
+        _set_role_address(addresses, role_name, address)
+
+    roles: list[LabRole] = []
+    for role_name in role_names:
+        address = addresses.get(role_name)
+        if provider == "virtualbox":
+            roles.append(LabRole(name=role_name, planned_ipv4=address))
+        else:
+            roles.append(LabRole(name=role_name, requested_private_ipv4=address))
+    return roles
+
+
+def _parse_role_spec(value: str) -> tuple[str, str | None]:
+    if "=" in value:
+        role, address = value.split("=", 1)
+        return _non_empty(role, "role name"), _non_empty(address, "role address")
+    return _non_empty(value, "role name"), None
+
+
+def _parse_role_address_spec(value: str) -> tuple[str, str]:
+    if "=" in value:
+        role, address = value.split("=", 1)
+    elif ":" in value:
+        role, address = value.split(":", 1)
+    else:
+        raise ValueError(f"role address override must be ROLE=IPV4: {value!r}")
+    return _non_empty(role, "role name"), _non_empty(address, "role address")
+
+
+def _set_role_address(addresses: dict[str, str], role: str, address: str) -> None:
+    existing = addresses.get(role)
+    if existing is not None and existing != address:
+        raise ValueError(
+            f"role {role!r} has conflicting address overrides: {existing}, {address}"
+        )
+    addresses[role] = address
+
+
+def _non_empty(value: str, label: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError(f"{label} must be non-empty")
+    return stripped
+
+
+def _error_output(args: argparse.Namespace, exc: Exception) -> JSONObject:
+    return {
+        "ok": False,
+        "command": args.command_name,
+        "error": type(exc).__name__,
+        "message": str(exc),
+    }
 
 
 def _write_output(
@@ -220,6 +379,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command_name == "providers":
         return _run_providers(args)
+    if args.command_name == "doctor":
+        return _run_doctor(args)
     if args.command_name == "plan":
         return _run_plan(args)
     if args.command_name in COMMANDS:
