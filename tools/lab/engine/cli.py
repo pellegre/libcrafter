@@ -7,7 +7,8 @@ import json
 import sys
 from collections.abc import Sequence
 
-from .providers import registered_providers
+from .model import LabRequest, LabRole
+from .providers import registered_providers, resolve_lab_provider
 
 
 COMMANDS = (
@@ -166,6 +167,50 @@ def _run_providers(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_plan(args: argparse.Namespace) -> int:
+    if not args.dry_run:
+        output = {
+            "ok": False,
+            "command": args.command_name,
+            "error": "confirm_live_run_required",
+            "message": "lab plan currently supports dry-run planning only",
+        }
+        return _write_output(output, args, text="lab plan requires --dry-run", exit_code=2)
+
+    adapter = resolve_lab_provider(args.provider)
+    request = LabRequest(
+        provider=args.provider,
+        profile=args.profile,
+        seed=args.seed,
+        roles=[LabRole(name=role) for role in args.roles],
+        dry_run=True,
+        confirm_live_run=False,
+    )
+    session = adapter.plan_session(request)
+    output = {
+        "ok": True,
+        "command": args.command_name,
+        "session": session.to_dict(),
+    }
+    return _write_output(output, args, text=session.session_id)
+
+
+def _write_output(
+    output: dict[str, object],
+    args: argparse.Namespace,
+    *,
+    text: str,
+    exit_code: int = 0,
+) -> int:
+    if getattr(args, "json", False):
+        sys.stdout.write(json.dumps(output, indent=2, sort_keys=True))
+        sys.stdout.write("\n")
+    else:
+        stream = sys.stdout if exit_code == 0 else sys.stderr
+        print(text, file=stream)
+    return exit_code
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the lab command-line interface."""
     parser = build_parser()
@@ -175,6 +220,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command_name == "providers":
         return _run_providers(args)
+    if args.command_name == "plan":
+        return _run_plan(args)
     if args.command_name in COMMANDS:
         return _run_not_implemented(args)
     parser.error(f"{args.command_name!r} is not implemented yet")

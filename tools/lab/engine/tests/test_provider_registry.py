@@ -7,6 +7,7 @@ import unittest
 from tools.lab.engine.providers import (
     HETZNER_LAB_PROVIDER_ADAPTER,
     LabProviderAdapter,
+    QEMU_LAB_PROVIDER_ADAPTER,
     UnknownLabProviderError,
     registered_provider_names,
     resolve_lab_provider,
@@ -15,17 +16,18 @@ from tools.lab.engine.providers.registry import registered_provider_names as reg
 
 
 class LabProviderRegistryTest(unittest.TestCase):
-    def test_registry_exposes_hetzner_provider(self) -> None:
-        self.assertEqual(registered_provider_names(), ("hetzner",))
-        self.assertEqual(registry_names(), ("hetzner",))
+    def test_registry_exposes_registered_providers(self) -> None:
+        self.assertEqual(registered_provider_names(), ("hetzner", "qemu"))
+        self.assertEqual(registry_names(), ("hetzner", "qemu"))
         self.assertIs(resolve_lab_provider("hetzner"), HETZNER_LAB_PROVIDER_ADAPTER)
+        self.assertIs(resolve_lab_provider("qemu"), QEMU_LAB_PROVIDER_ADAPTER)
 
     def test_unknown_provider_error_reports_known_set(self) -> None:
         with self.assertRaisesRegex(
             UnknownLabProviderError,
-            "unsupported lab provider 'qemu'; known providers: hetzner",
+            "unsupported lab provider 'virtualbox'; known providers: hetzner, qemu",
         ):
-            resolve_lab_provider("qemu")
+            resolve_lab_provider("virtualbox")
 
     def test_provider_protocol_is_exported(self) -> None:
         self.assertEqual(LabProviderAdapter.__name__, "LabProviderAdapter")
