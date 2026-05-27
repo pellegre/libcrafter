@@ -15,6 +15,12 @@ from tools.oracle.engine import cli
 from tools.oracle.engine.live import LiveCommandPlan, LiveEndpoint
 from tools.oracle.engine.model import DecodedModel, PacketPlan, read_json
 from tools.oracle.engine.providers.hetzner import ORACLE_PRIVATE_GROUP
+from tools.oracle.engine.providers.qemu import (
+    LIBCRAFTER_PRIVATE_ADDRESS as QEMU_LIBCRAFTER_PRIVATE_ADDRESS,
+    ORACLE_PRIVATE_GROUP as QEMU_ORACLE_PRIVATE_GROUP,
+    PRIVATE_NETWORK_CIDR as QEMU_PRIVATE_NETWORK_CIDR,
+    REFERENCE_PRIVATE_ADDRESS as QEMU_REFERENCE_PRIVATE_ADDRESS,
+)
 from tools.oracle.engine.providers.registry import (
     UnknownLiveProviderError,
     registered_provider_names,
@@ -24,7 +30,7 @@ from tools.oracle.engine.providers.registry import (
 
 class LiveProviderRegistryTest(unittest.TestCase):
     def test_hetzner_provider_is_registered(self) -> None:
-        self.assertEqual(registered_provider_names(), ("hetzner",))
+        self.assertEqual(registered_provider_names(), ("hetzner", "qemu"))
 
         adapter = resolve_live_provider("hetzner")
 
@@ -34,6 +40,22 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(adapter.endpoint_roles, ("libcrafter", "reference_backend"))
         self.assertEqual(adapter.private_group, ORACLE_PRIVATE_GROUP)
 
+    def test_qemu_provider_is_registered(self) -> None:
+        adapter = resolve_live_provider("qemu")
+
+        self.assertEqual(adapter.name, "qemu")
+        self.assertEqual(adapter.wire_provider, "qemu")
+        self.assertEqual(adapter.wire_exposure, "private")
+        self.assertEqual(adapter.endpoint_roles, ("libcrafter", "reference_backend"))
+        self.assertEqual(adapter.private_group, QEMU_ORACLE_PRIVATE_GROUP)
+        self.assertEqual(
+            dict(adapter.endpoint_private_ips),
+            {
+                "libcrafter": QEMU_LIBCRAFTER_PRIVATE_ADDRESS,
+                "reference_backend": QEMU_REFERENCE_PRIVATE_ADDRESS,
+            },
+        )
+
     def test_unknown_provider_error_names_requested_and_known_providers(self) -> None:
         with self.assertRaises(UnknownLiveProviderError) as error:
             resolve_live_provider("virtualbox")
@@ -41,6 +63,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
         message = str(error.exception)
         self.assertIn("virtualbox", message)
         self.assertIn("hetzner", message)
+        self.assertIn("qemu", message)
 
     def test_hetzner_adapter_exposes_report_plans(self) -> None:
         adapter = resolve_live_provider("hetzner")
@@ -83,6 +106,51 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertIn("--exposure", doctor.argv)
         self.assertIn("private", doctor.argv)
 
+    def test_qemu_adapter_exposes_report_plans(self) -> None:
+        adapter = resolve_live_provider("qemu")
+
+        capabilities = adapter.default_provider_capabilities(dry_run=True)
+        infrastructure = adapter.planned_infrastructure(dry_run=True)
+        exchange_metadata = adapter.packet_exchange_metadata(dry_run=True)
+        endpoints = adapter.endpoints(dry_run=True)
+        workflow = adapter.provider_workflow(dry_run=True)
+        bootstrap = adapter.endpoint_bootstrap_plan(dry_run=True)
+
+        self.assertEqual(capabilities["provider"], "qemu")
+        self.assertEqual(infrastructure["provider"], "qemu")
+        self.assertEqual(infrastructure["network"]["private_group"], QEMU_ORACLE_PRIVATE_GROUP)
+        self.assertEqual(exchange_metadata["provider"], "qemu")
+        self.assertEqual(exchange_metadata["wire_provider"], "qemu")
+        self.assertEqual(exchange_metadata["wire_exposure"], "private")
+        self.assertEqual(
+            exchange_metadata["endpoint_roles"],
+            ["libcrafter", "reference_backend"],
+        )
+        self.assertEqual(exchange_metadata["private_group"], QEMU_ORACLE_PRIVATE_GROUP)
+        self.assertTrue(exchange_metadata["isolated_network"])
+        self.assertTrue(exchange_metadata["private_network"])
+        self.assertEqual(exchange_metadata["private_network_cidr"], QEMU_PRIVATE_NETWORK_CIDR)
+        self.assertEqual(exchange_metadata["packet_exchange_network"], "private")
+        self.assertEqual(set(endpoints), {"libcrafter", "reference_backend"})
+        self.assertTrue(all(endpoint.metadata["private_network"] for endpoint in endpoints.values()))
+        self.assertEqual(endpoints["libcrafter"].address, QEMU_LIBCRAFTER_PRIVATE_ADDRESS)
+        self.assertEqual(endpoints["reference_backend"].address, QEMU_REFERENCE_PRIVATE_ADDRESS)
+        self.assertTrue(adapter.validate_provider_workflow(workflow, dry_run=True).passed)
+        self.assertTrue(adapter.validate_endpoint_bootstrap(bootstrap, dry_run=True).passed)
+        self.assertEqual(
+            {command.role for command in bootstrap},
+            {"libcrafter", "reference_backend"},
+        )
+
+        workflow_purposes = {command.purpose for command in workflow}
+        self.assertIn(adapter.artifact_collection_purpose, workflow_purposes)
+        self.assertIn(adapter.teardown_purpose, workflow_purposes)
+        doctor = next(command for command in workflow if command.purpose == "check-qemu-provider")
+        self.assertIn("--provider", doctor.argv)
+        self.assertIn("qemu", doctor.argv)
+        self.assertIn("--exposure", doctor.argv)
+        self.assertIn("private", doctor.argv)
+
     def test_hetzner_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
         adapter = resolve_live_provider("hetzner")
         client = _FakeWireClient()
@@ -102,6 +170,39 @@ class LiveProviderRegistryTest(unittest.TestCase):
         )
         self.assertTrue(all(call["dry_run"] for call in client.calls))
         self.assertTrue(all(call["private_group"] == ORACLE_PRIVATE_GROUP for call in client.calls))
+
+    def test_qemu_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
+        adapter = resolve_live_provider("qemu")
+        client = _FakeWireClient()
+
+        plan = adapter.wire_endpoint_plan(dry_run=True, client=client)
+
+        self.assertEqual(plan["provider"], "qemu")
+        self.assertEqual(plan["wire_provider"], "qemu")
+        self.assertEqual(plan["exposure"], "private")
+        self.assertEqual(plan["private_group"], QEMU_ORACLE_PRIVATE_GROUP)
+        self.assertEqual(set(plan["live_endpoints"]), {"libcrafter", "reference_backend"})
+        self.assertEqual(
+            [(call["provider"], call["exposure"], call["role"]) for call in client.calls],
+            [
+                ("qemu", "private", "libcrafter"),
+                ("qemu", "private", "reference_backend"),
+            ],
+        )
+        self.assertEqual(
+            [call["private_ip"] for call in client.calls],
+            [QEMU_LIBCRAFTER_PRIVATE_ADDRESS, QEMU_REFERENCE_PRIVATE_ADDRESS],
+        )
+        self.assertTrue(all(call["dry_run"] for call in client.calls))
+        self.assertTrue(all(call["private_group"] == QEMU_ORACLE_PRIVATE_GROUP for call in client.calls))
+        self.assertEqual(
+            plan["live_endpoints"]["libcrafter"].address,
+            QEMU_LIBCRAFTER_PRIVATE_ADDRESS,
+        )
+        self.assertEqual(
+            plan["live_endpoints"]["reference_backend"].address,
+            QEMU_REFERENCE_PRIVATE_ADDRESS,
+        )
 
     def test_hetzner_adapter_exposes_execution_policy_hooks(self) -> None:
         adapter = resolve_live_provider("hetzner")
@@ -142,35 +243,90 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(reference_command[:2], ["bash", "-lc"])
         self.assertIn("python3 -m engine.backends.scapy.live", reference_command[2])
 
+    def test_qemu_adapter_exposes_execution_policy_hooks_without_transit_mutation(self) -> None:
+        adapter = resolve_live_provider("qemu")
+        plan = PacketPlan(
+            stack=["ipv4"],
+            fields={"ipv4": {"ttl": 1}},
+            profile="default",
+            seed=7,
+            index=3,
+            direction="reference_to_libcrafter",
+            family="ipv4",
+            metadata={"root": "l3:ipv4"},
+        )
+
+        policy = adapter.wire_comparison_policy(plan)
+        transit_plan = adapter.apply_transit_plan(plan)
+        bootstrap_command = adapter.endpoint_bootstrap_command(
+            endpoint=adapter.endpoints(dry_run=True)["libcrafter"],
+            peer=adapter.endpoints(dry_run=True)["reference_backend"],
+            remote_archive="/tmp/repo.tar.gz",
+            remote_dir="/root/libcrafter",
+        )
+        libcrafter_command = adapter.endpoint_remote_command(
+            endpoint_role="libcrafter",
+            remote_dir="/root/libcrafter",
+            request_path="/tmp/request.json",
+            out_dir="/tmp/out",
+        )
+        reference_command = adapter.endpoint_remote_command(
+            endpoint_role="reference_backend",
+            remote_dir="/root/libcrafter",
+            request_path="/tmp/request.json",
+            out_dir="/tmp/out",
+        )
+
+        self.assertEqual(policy["provider"], "qemu")
+        self.assertEqual(policy["compare_root"], "l3:ipv4")
+        self.assertNotIn("ipv4.ttl", policy["mutable_fields"])
+        self.assertNotIn("ipv4.checksum", policy["mutable_fields"])
+        self.assertNotIn("ipv4.ttl", policy["byte_mutable_fields"])
+        self.assertNotIn("ipv4.checksum", policy["byte_mutable_fields"])
+        self.assertTrue(policy["strict_bytes"])
+        self.assertEqual(transit_plan.fields["ipv4"]["ttl"], 1)
+        self.assertEqual(transit_plan.metadata["wire"]["provider"], "qemu")
+        self.assertEqual(transit_plan.metadata["live_transit_rewrites"], [])
+        self.assertEqual(bootstrap_command[:2], ["bash", "-lc"])
+        self.assertIn("LIBCRAFTER_PRIVATE_IPV4=10.77.0.10", bootstrap_command[2])
+        self.assertIn("LIBCRAFTER_PEER_PRIVATE_IPV4=10.77.0.20", bootstrap_command[2])
+        self.assertEqual(libcrafter_command[:2], ["bash", "-lc"])
+        self.assertIn("cargo run", libcrafter_command[2])
+        self.assertEqual(reference_command[:2], ["bash", "-lc"])
+        self.assertIn("python3 -m engine.backends.scapy.live", reference_command[2])
+
     def test_live_parser_accepts_local_dry_run_and_registered_providers(self) -> None:
         parser = cli.build_parser()
 
         local_args = parser.parse_args(["live", "--provider", "local-dry-run"])
         hetzner_args = parser.parse_args(["live", "--provider", "hetzner"])
+        qemu_args = parser.parse_args(["live", "--provider", "qemu"])
 
         self.assertEqual(local_args.provider, "local-dry-run")
         self.assertEqual(hetzner_args.provider, "hetzner")
+        self.assertEqual(qemu_args.provider, "qemu")
         with (
             self.assertRaises(SystemExit),
             contextlib.redirect_stderr(io.StringIO()),
         ):
             parser.parse_args(["live", "--provider", "virtualbox"])
 
-    def test_live_dispatch_resolves_hetzner_adapter(self) -> None:
-        args = _live_args("hetzner")
-        seen: dict[str, object] = {}
+    def test_live_dispatch_resolves_registered_provider_adapter(self) -> None:
+        for provider in ("hetzner", "qemu"):
+            args = _live_args(provider)
+            seen: dict[str, object] = {}
 
-        def fake_live_provider(_args, adapter) -> int:
-            seen["provider"] = _args.provider
-            seen["adapter"] = adapter
-            return 17
+            def fake_live_provider(_args, adapter) -> int:
+                seen["provider"] = _args.provider
+                seen["adapter"] = adapter
+                return 17
 
-        with patch.object(cli, "_live_provider", side_effect=fake_live_provider):
-            code = cli._live(args)
+            with patch.object(cli, "_live_provider", side_effect=fake_live_provider):
+                code = cli._live(args)
 
-        self.assertEqual(code, 17)
-        self.assertEqual(seen["provider"], "hetzner")
-        self.assertIs(seen["adapter"], resolve_live_provider("hetzner"))
+            self.assertEqual(code, 17)
+            self.assertEqual(seen["provider"], provider)
+            self.assertIs(seen["adapter"], resolve_live_provider(provider))
 
     def test_live_dispatch_rejects_unknown_provider_before_planning(self) -> None:
         args = _live_args("virtualbox")
