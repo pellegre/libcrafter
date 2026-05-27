@@ -244,6 +244,24 @@ def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
     }
 
 
+def hetzner_packet_exchange_metadata(*, dry_run: bool) -> JSONObject:
+    """Return the packet-exchange network metadata for the Hetzner lab."""
+
+    return {
+        "provider": PROVIDER_NAME,
+        "wire_provider": PROVIDER_NAME,
+        "wire_exposure": "private",
+        "endpoint_roles": ["libcrafter", "reference_backend"],
+        "private_group": ORACLE_PRIVATE_GROUP,
+        "isolated_network": True,
+        "private_network": True,
+        "private_network_cidr": PRIVATE_NETWORK_CIDR,
+        "packet_exchange_network": "private",
+        "packet_exchange_network_label": "hetzner-private-network",
+        "dry_run": dry_run,
+    }
+
+
 def hetzner_endpoints(*, dry_run: bool) -> dict[str, LiveEndpoint]:
     """Return deterministic endpoint roles for the Hetzner oracle lab."""
 
@@ -1107,6 +1125,11 @@ class HetznerLiveProviderAdapter:
         """Return planned Hetzner private lab infrastructure."""
 
         return hetzner_private_network_plan(dry_run=dry_run)
+
+    def packet_exchange_metadata(self, *, dry_run: bool) -> JSONObject:
+        """Return Hetzner packet-exchange network metadata."""
+
+        return hetzner_packet_exchange_metadata(dry_run=dry_run)
 
     def endpoints(self, *, dry_run: bool) -> dict[str, LiveEndpoint]:
         """Return the two Hetzner endpoint roles."""

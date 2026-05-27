@@ -47,12 +47,24 @@ class LiveProviderRegistryTest(unittest.TestCase):
 
         capabilities = adapter.default_provider_capabilities(dry_run=True)
         infrastructure = adapter.planned_infrastructure(dry_run=True)
+        exchange_metadata = adapter.packet_exchange_metadata(dry_run=True)
         endpoints = adapter.endpoints(dry_run=True)
         workflow = adapter.provider_workflow(dry_run=True)
         bootstrap = adapter.endpoint_bootstrap_plan(dry_run=True)
 
         self.assertEqual(capabilities["provider"], "hetzner")
         self.assertEqual(infrastructure["provider"], "hetzner")
+        self.assertEqual(exchange_metadata["provider"], "hetzner")
+        self.assertEqual(exchange_metadata["wire_provider"], "hetzner")
+        self.assertEqual(exchange_metadata["wire_exposure"], "private")
+        self.assertEqual(
+            exchange_metadata["endpoint_roles"],
+            ["libcrafter", "reference_backend"],
+        )
+        self.assertEqual(exchange_metadata["private_group"], ORACLE_PRIVATE_GROUP)
+        self.assertTrue(exchange_metadata["isolated_network"])
+        self.assertTrue(exchange_metadata["private_network"])
+        self.assertEqual(exchange_metadata["packet_exchange_network"], "private")
         self.assertEqual(set(endpoints), {"libcrafter", "reference_backend"})
         self.assertTrue(all(endpoint.metadata["private_network"] for endpoint in endpoints.values()))
         self.assertTrue(adapter.validate_provider_workflow(workflow, dry_run=True).passed)
@@ -244,6 +256,10 @@ class LiveProviderRegistryTest(unittest.TestCase):
             self.assertEqual(report["status"], "passed")
             self.assertEqual(metadata["planned_infrastructure"]["provider"], "fakecloud")
             self.assertEqual(metadata["wire_endpoint_plan"]["provider"], "fakecloud")
+            self.assertEqual(metadata["wire_provider"], "fake-wire")
+            self.assertEqual(metadata["wire_exposure"], "isolated")
+            self.assertEqual(metadata["packet_exchange_network"], "fake-isolated")
+            self.assertFalse(metadata["private_network"])
             self.assertEqual(metadata["wire_endpoint_lifecycle"]["remote_dir"], "/srv/fake-oracle")
             self.assertEqual(
                 metadata["artifact_collection"]["command"]["purpose"],
@@ -685,6 +701,20 @@ class _FakeLiveProviderAdapter:
 
     def planned_infrastructure(self, *, dry_run: bool) -> dict[str, object]:
         return {"provider": self.name, "dry_run": dry_run, "network": "fake-private"}
+
+    def packet_exchange_metadata(self, *, dry_run: bool) -> dict[str, object]:
+        return {
+            "provider": self.name,
+            "wire_provider": self.wire_provider,
+            "wire_exposure": self.wire_exposure,
+            "endpoint_roles": list(self.endpoint_roles),
+            "private_group": self.private_group,
+            "isolated_network": True,
+            "private_network": False,
+            "packet_exchange_network": "fake-isolated",
+            "packet_exchange_network_label": "fake isolated exchange",
+            "dry_run": dry_run,
+        }
 
     def endpoints(self, *, dry_run: bool) -> dict[str, LiveEndpoint]:
         return _fake_live_endpoints(dry_run=dry_run)
