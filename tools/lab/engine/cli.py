@@ -7,6 +7,8 @@ import json
 import sys
 from collections.abc import Sequence
 
+from .providers import registered_providers
+
 
 COMMANDS = (
     "providers",
@@ -134,6 +136,36 @@ def _run_not_implemented(args: argparse.Namespace) -> int:
     return 2
 
 
+def _run_providers(args: argparse.Namespace) -> int:
+    output = {
+        "ok": True,
+        "providers": [
+            {
+                "name": provider.name,
+                "wire_provider": provider.wire_provider,
+                "wire_exposure": provider.wire_exposure,
+                "credential_label": provider.credential_label,
+                "credentials_available": provider.credentials_available(),
+                "missing_credential_reason": provider.missing_credential_reason,
+                "capabilities": provider.default_provider_capabilities(dry_run=True),
+            }
+            for provider in registered_providers()
+        ],
+    }
+    if getattr(args, "json", False):
+        sys.stdout.write(json.dumps(output, indent=2, sort_keys=True))
+        sys.stdout.write("\n")
+    else:
+        for provider in output["providers"]:
+            if not isinstance(provider, dict):
+                continue
+            print(
+                f"{provider['name']}\t"
+                f"wire={provider['wire_provider']}/{provider['wire_exposure']}"
+            )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the lab command-line interface."""
     parser = build_parser()
@@ -141,6 +173,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if getattr(args, "command", None) is None:
         parser.print_help(sys.stdout)
         return 0
+    if args.command_name == "providers":
+        return _run_providers(args)
     if args.command_name in COMMANDS:
         return _run_not_implemented(args)
     parser.error(f"{args.command_name!r} is not implemented yet")
