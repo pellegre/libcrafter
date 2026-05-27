@@ -52,11 +52,22 @@ tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke -
 ```
 
 Provider-backed live planning is selected by a registered oracle live provider
-adapter. Hetzner is the current provider-backed adapter and must stay dry-run
-unless a protected workflow is intentionally creating disposable wire endpoints:
+adapter. Hetzner, QEMU, and VirtualBox share the same oracle live runner and
+must stay dry-run unless a protected workflow is intentionally creating
+disposable wire endpoints:
 
 ```sh
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+tools/oracle/run live --backend scapy --provider qemu --dry-run --profile smoke --seed 12345 --count 10
+tools/oracle/run live --backend scapy --provider virtualbox --dry-run --profile smoke --seed 12345 --count 10
+```
+
+The provider matrix runner generates one corpus, runs offline and pcap
+baselines, then reuses the corpus through the same live dry-run command shape
+for every selected provider:
+
+```sh
+python3 tools/oracle/tests/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 ```
 
 Expanded wire protocol smoke checks force corpus selection for DNS, TCP, ICMP,
@@ -115,5 +126,5 @@ must not add oracle-only code to `crafter`.
 Pull request CI runs deterministic offline and pcap oracle validation with the
 Scapy backend. The live workflow runs provider dry-run planning on normal pull
 request and push events through the selected oracle live provider adapter. Real
-Hetzner live exchanges run only from a protected manual workflow dispatch with
-explicit confirmation and configured credentials.
+provider-backed live exchanges run only from a protected manual workflow
+dispatch with explicit confirmation and configured provider prerequisites.

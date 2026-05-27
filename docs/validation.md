@@ -91,11 +91,14 @@ planning and CI-safe checks:
 ```sh
 tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+tools/oracle/run live --provider qemu --dry-run --profile smoke --seed 12345 --count 10
+tools/oracle/run live --provider virtualbox --dry-run --profile smoke --seed 12345 --count 10
+python3 tools/oracle/tests/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 ```
 
 Real provider-backed validation is reserved for explicit protected workflows on
-disposable wire endpoints. Hetzner is the currently documented provider-backed
-adapter:
+disposable wire endpoints. Provider selection still uses the same live oracle
+command and adapter registry:
 
 ```sh
 tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
@@ -105,10 +108,10 @@ See [wire.md](wire.md) for provider credentials, artifacts, and cleanup.
 
 ## CI Expectations
 
-Pull request CI should run deterministic corpus, offline, pcap, Hetzner wire
-dry-run, and probe dry-run checks. The Hetzner oracle check is still selected
-through the oracle live provider adapter registry. Real live packet exchange
-must stay behind explicit protected workflow confirmation and cleanup logic.
+Pull request CI should run deterministic corpus, offline, pcap, provider-backed
+wire dry-run, and probe dry-run checks. Oracle provider checks are selected
+through the live provider adapter registry. Real live packet exchange must stay
+behind explicit protected workflow confirmation and cleanup logic.
 
 Recommended local preflight:
 
@@ -117,7 +120,7 @@ cargo test --workspace
 tools/oracle/run corpus --profile ci --seed 12345 --count 100 --out target/oracle/final-corpus
 tools/oracle/run offline --corpus target/oracle/final-corpus/plans.json --out target/oracle/final-offline
 tools/oracle/run pcap --corpus target/oracle/final-corpus/plans.json --out target/oracle/final-pcap
-tools/oracle/run live --provider hetzner --dry-run --corpus target/oracle/final-corpus/plans.json --out target/oracle/final-live-dry-run
+python3 tools/oracle/tests/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile ci --seed 12345 --count 100 --dry-run --out target/oracle/final-live-matrix
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run
 ```
 
