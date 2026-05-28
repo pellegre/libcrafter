@@ -16,6 +16,7 @@ from .model import (
     LabRole,
     LabSession,
     json_object,
+    write_json,
 )
 from .process import CommandResult, render_argv, run_command
 from .providers.common import validate_remote_dir
@@ -168,6 +169,41 @@ class RepoPushResult:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class LabBootstrapResult:
+    """Provider-neutral result of repository upload and workload bootstrap."""
+
+    archive_path: Path
+    output_dir: Path
+    remote_archive: str
+    remote_dir: str
+    remote_artifact_root: str
+    command_records: list[LabCommandPlan]
+    endpoint_results: list[JSONObject]
+    artifacts: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors and all(
+            bool(endpoint.get("ok", False)) for endpoint in self.endpoint_results
+        )
+
+    def to_dict(self) -> JSONObject:
+        return {
+            "ok": self.ok,
+            "archive_path": str(self.archive_path),
+            "output_dir": str(self.output_dir),
+            "remote_archive": self.remote_archive,
+            "remote_dir": self.remote_dir,
+            "remote_artifact_root": self.remote_artifact_root,
+            "command_records": [record.to_dict() for record in self.command_records],
+            "endpoint_results": list(self.endpoint_results),
+            "artifacts": list(self.artifacts),
+            "errors": list(self.errors),
+        }
+
+
 def create_repository_archive(
     output_dir: str | Path,
     *,
@@ -240,6 +276,7 @@ def push_repository_to_session(
     archive_name: str = DEFAULT_REPO_ARCHIVE_NAME,
     bootstrap_commands: Mapping[str, BootstrapCommandSpec] | None = None,
     remote_command_timeout: float | None = DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS,
+    output_dir: str | Path | None = None,
 ) -> RepoPushResult:
     """Upload and unpack a repository archive on each endpoint in ``session``."""
 
@@ -264,11 +301,13 @@ def push_repository_to_session(
     hooks = dict(bootstrap_commands or {})
     roles_by_name = {role.name: role for role in session.roles}
     endpoints_by_role = {endpoint.role: endpoint for endpoint in session.endpoints}
+    artifact_root = _optional_output_dir(output_dir)
     command_records: list[LabCommandPlan] = []
     endpoint_results: list[JSONObject] = []
     errors: list[str] = []
 
     for endpoint in session.endpoints:
+        endpoint_artifact_dir = _endpoint_artifact_dir(artifact_root, endpoint)
         role = roles_by_name.get(endpoint.role, LabRole(name=endpoint.role))
         context = RepoBootstrapContext(
             session=session,
@@ -306,6 +345,8 @@ def push_repository_to_session(
             command_records=command_records,
             endpoint_commands=endpoint_commands,
             endpoint_errors=endpoint_errors,
+            artifact_dir=endpoint_artifact_dir,
+            artifact_label="01-prepare-archive-directory",
         )
         if endpoint_errors:
             endpoint_results.append(_endpoint_result(endpoint, endpoint_commands, endpoint_errors))
@@ -320,6 +361,8 @@ def push_repository_to_session(
             command_records=command_records,
             endpoint_commands=endpoint_commands,
             endpoint_errors=endpoint_errors,
+            artifact_dir=endpoint_artifact_dir,
+            artifact_label="02-upload-repository",
         )
         if endpoint_errors:
             endpoint_results.append(_endpoint_result(endpoint, endpoint_commands, endpoint_errors))
@@ -359,6 +402,8 @@ def push_repository_to_session(
             command_records=command_records,
             endpoint_commands=endpoint_commands,
             endpoint_errors=endpoint_errors,
+            artifact_dir=endpoint_artifact_dir,
+            artifact_label="03-unpack-repository",
         )
         if endpoint_errors:
             endpoint_results.append(_endpoint_result(endpoint, endpoint_commands, endpoint_errors))
@@ -394,6 +439,8 @@ def push_repository_to_session(
                 command_records=command_records,
                 endpoint_commands=endpoint_commands,
                 endpoint_errors=endpoint_errors,
+                artifact_dir=endpoint_artifact_dir,
+                artifact_label="04-workload-bootstrap",
             )
 
         endpoint_results.append(_endpoint_result(endpoint, endpoint_commands, endpoint_errors))
@@ -407,6 +454,57 @@ def push_repository_to_session(
         endpoint_results=endpoint_results,
         errors=errors,
     )
+
+
+def bootstrap_lab_session(
+    session: LabSession,
+    bootstrap_commands: Mapping[str, BootstrapCommandSpec],
+    *,
+    remote_dir: str,
+    archive: str | Path | RepoArchiveResult,
+    output_dir: str | Path,
+    client: WireClient | None = None,
+    archive_name: str | None = None,
+    remote_command_timeout: float | None = DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS,
+) -> LabBootstrapResult:
+    """Upload a repository archive and run workload bootstrap on lab endpoints."""
+
+    if not isinstance(bootstrap_commands, Mapping):
+        raise ValueError("bootstrap_commands must be a role-to-command mapping")
+    archive_path = _archive_path(archive)
+    artifact_root = _output_dir(output_dir)
+    push_result = push_repository_to_session(
+        session,
+        archive,
+        client=client,
+        remote_dir=remote_dir,
+        archive_name=archive_name or archive_path.name,
+        bootstrap_commands=bootstrap_commands,
+        remote_command_timeout=remote_command_timeout,
+        output_dir=artifact_root,
+    )
+    result = LabBootstrapResult(
+        archive_path=push_result.archive_path,
+        output_dir=artifact_root,
+        remote_archive=push_result.remote_archive,
+        remote_dir=push_result.remote_dir,
+        remote_artifact_root=_bootstrap_remote_artifact_root(
+            session=session,
+            remote_dir=push_result.remote_dir,
+            requested_remote_dir=remote_dir,
+        ),
+        command_records=push_result.command_records,
+        endpoint_results=push_result.endpoint_results,
+        artifacts=_command_artifacts(push_result.command_records),
+        errors=push_result.errors,
+    )
+    summary_path = artifact_root / "lab-bootstrap-result.json"
+    result = replace(
+        result,
+        artifacts=_dedupe([*result.artifacts, str(summary_path)]),
+    )
+    write_json(summary_path, result)
+    return result
 
 
 def push_repository(
@@ -434,6 +532,24 @@ def push_repository(
         bootstrap_commands=bootstrap_commands,
     )
     return session_with_repo_push_records(session, archive, push_result), push_result
+
+
+def session_with_bootstrap_records(
+    session: LabSession,
+    bootstrap_result: LabBootstrapResult,
+) -> LabSession:
+    """Return ``session`` with lab bootstrap metadata and records appended."""
+
+    metadata = dict(session.metadata)
+    metadata["lab_bootstrap"] = bootstrap_result.to_dict()
+    return replace(
+        session,
+        command_records=[
+            *session.command_records,
+            *bootstrap_result.command_records,
+        ],
+        metadata=json_object(metadata, "session.metadata"),
+    )
 
 
 def session_with_repo_push_records(
@@ -521,10 +637,45 @@ def _repo_remote_dir(remote_dir: str | None) -> str:
     return target_dir
 
 
+def _optional_output_dir(output_dir: str | Path | None) -> Path | None:
+    if output_dir is None:
+        return None
+    return _output_dir(output_dir)
+
+
+def _output_dir(output_dir: str | Path) -> Path:
+    artifact_dir = Path(output_dir).expanduser()
+    if not artifact_dir.is_absolute():
+        artifact_dir = Path.cwd() / artifact_dir
+    artifact_dir = artifact_dir.resolve(strict=False)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    return artifact_dir
+
+
+def _endpoint_artifact_dir(
+    artifact_root: Path | None,
+    endpoint: LabEndpoint,
+) -> Path | None:
+    if artifact_root is None:
+        return None
+    return artifact_root / endpoint.role
+
+
 def _remote_artifact_root(session: LabSession, remote_dir: str) -> str:
     if session.remote_artifact_root is not None:
         return validate_remote_dir(session.remote_artifact_root)
     return posixpath.join(remote_dir, "artifacts")
+
+
+def _bootstrap_remote_artifact_root(
+    *,
+    session: LabSession,
+    remote_dir: str,
+    requested_remote_dir: str | None,
+) -> str:
+    if requested_remote_dir is not None:
+        return posixpath.join(remote_dir, "artifacts")
+    return _remote_artifact_root(session, remote_dir)
 
 
 def _remote_archive_path(remote_dir: str, archive_name: str) -> str:
@@ -585,10 +736,24 @@ def _run_upload_step(
     command_records: list[LabCommandPlan],
     endpoint_commands: list[LabCommandPlan],
     endpoint_errors: list[str],
+    artifact_dir: Path | None = None,
+    artifact_label: str | None = None,
 ) -> None:
     try:
         response = wire.upload(endpoint.endpoint_id, archive_path, remote_archive)
     except Exception as exc:  # pragma: no cover - concrete clients vary.
+        metadata = {
+            "endpoint_id": endpoint.endpoint_id,
+            "archive_path": str(archive_path),
+            "remote_archive": remote_archive,
+            "phase": "upload-repository",
+        }
+        artifacts = _write_exception_artifacts(
+            artifact_dir,
+            artifact_label,
+            exc,
+            metadata=metadata,
+        )
         plan = _exception_command_plan(
             purpose="upload repository archive",
             role=endpoint.role,
@@ -601,18 +766,26 @@ def _run_upload_step(
                 remote_archive,
             ],
             exc=exc,
-            metadata={
-                "endpoint_id": endpoint.endpoint_id,
-                "archive_path": str(archive_path),
-                "remote_archive": remote_archive,
-                "phase": "upload-repository",
-            },
+            metadata=metadata,
+            artifacts=artifacts,
         )
         command_records.append(plan)
         endpoint_commands.append(plan)
         endpoint_errors.append(str(exc))
         return
 
+    metadata = {
+        "endpoint_id": endpoint.endpoint_id,
+        "archive_path": str(archive_path),
+        "remote_archive": remote_archive,
+        "phase": "upload-repository",
+    }
+    artifacts = _write_response_artifacts(
+        response,
+        artifact_dir,
+        artifact_label,
+        metadata=metadata,
+    )
     plan = _response_command_plan(
         response,
         purpose="upload repository archive",
@@ -625,12 +798,8 @@ def _run_upload_step(
             str(archive_path),
             remote_archive,
         ],
-        metadata={
-            "endpoint_id": endpoint.endpoint_id,
-            "archive_path": str(archive_path),
-            "remote_archive": remote_archive,
-            "phase": "upload-repository",
-        },
+        metadata=metadata,
+        artifacts=artifacts,
     )
     command_records.append(plan)
     endpoint_commands.append(plan)
@@ -652,10 +821,18 @@ def _run_endpoint_step(
     command_records: list[LabCommandPlan],
     endpoint_commands: list[LabCommandPlan],
     endpoint_errors: list[str],
+    artifact_dir: Path | None = None,
+    artifact_label: str | None = None,
 ) -> None:
     try:
         response = fn(endpoint_id, command, timeout=timeout)
     except Exception as exc:  # pragma: no cover - concrete clients vary.
+        artifacts = _write_exception_artifacts(
+            artifact_dir,
+            artifact_label,
+            exc,
+            metadata=metadata,
+        )
         plan = _exception_command_plan(
             purpose=purpose,
             role=role,
@@ -663,12 +840,19 @@ def _run_endpoint_step(
             argv=list(fallback_argv),
             exc=exc,
             metadata=metadata,
+            artifacts=artifacts,
         )
         command_records.append(plan)
         endpoint_commands.append(plan)
         endpoint_errors.append(str(exc))
         return
 
+    artifacts = _write_response_artifacts(
+        response,
+        artifact_dir,
+        artifact_label,
+        metadata=metadata,
+    )
     plan = _response_command_plan(
         response,
         purpose=purpose,
@@ -676,6 +860,7 @@ def _run_endpoint_step(
         fallback_operation=operation,
         fallback_argv=list(fallback_argv),
         metadata=metadata,
+        artifacts=artifacts,
     )
     command_records.append(plan)
     endpoint_commands.append(plan)
@@ -691,13 +876,27 @@ def _response_command_plan(
     fallback_operation: str,
     fallback_argv: Sequence[str],
     metadata: Mapping[str, object],
+    artifacts: Sequence[str | Path] = (),
 ) -> LabCommandPlan:
+    artifact_paths = [str(path) for path in artifacts]
     command_plan = getattr(response, "command_plan", None)
     if callable(command_plan):
-        plan = command_plan(purpose=purpose, role=role)
+        try:
+            plan = command_plan(
+                purpose=purpose,
+                role=role,
+                artifacts=artifact_paths,
+            )
+        except TypeError:
+            plan = command_plan(purpose=purpose, role=role)
         if isinstance(plan, Mapping):
             plan = LabCommandPlan.from_dict(plan)
         if isinstance(plan, LabCommandPlan):
+            if artifact_paths:
+                plan = replace(
+                    plan,
+                    artifacts=_dedupe([*plan.artifacts, *artifact_paths]),
+                )
             return _merge_command_metadata(plan, metadata)
 
     plan = LabCommandPlan(
@@ -707,6 +906,7 @@ def _response_command_plan(
         operation=fallback_operation,
         dry_run=False,
         live_mutation=True,
+        artifacts=artifact_paths,
         metadata={
             "ok": _response_ok(response),
             "exit_code": getattr(response, "exit_code", 0),
@@ -755,6 +955,7 @@ def _exception_command_plan(
     argv: Sequence[str],
     exc: Exception,
     metadata: Mapping[str, object],
+    artifacts: Sequence[str | Path] = (),
 ) -> LabCommandPlan:
     return LabCommandPlan(
         purpose=purpose,
@@ -763,12 +964,82 @@ def _exception_command_plan(
         operation=operation,
         dry_run=False,
         live_mutation=True,
+        artifacts=[str(path) for path in artifacts],
         metadata={
             **dict(metadata),
             "ok": False,
             "exit_code": 1,
             "error": str(exc),
         },
+    )
+
+
+def _write_response_artifacts(
+    response: object,
+    artifact_dir: Path | None,
+    artifact_label: str | None,
+    *,
+    metadata: Mapping[str, object],
+) -> list[Path]:
+    if artifact_dir is None or artifact_label is None:
+        return []
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = artifact_dir / f"{artifact_label}.stdout.txt"
+    stderr_path = artifact_dir / f"{artifact_label}.stderr.txt"
+    report_path = artifact_dir / f"{artifact_label}.json"
+    result = getattr(response, "result", None)
+    stdout_path.write_text(str(getattr(result, "stdout", "")), encoding="utf-8")
+    stderr_path.write_text(str(getattr(result, "stderr", "")), encoding="utf-8")
+    write_json(
+        report_path,
+        {
+            **dict(metadata),
+            "ok": _response_ok(response),
+            "exit_code": getattr(response, "exit_code", 0),
+            "error": _optional_response_error(response),
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        },
+    )
+    return [stdout_path, stderr_path, report_path]
+
+
+def _write_exception_artifacts(
+    artifact_dir: Path | None,
+    artifact_label: str | None,
+    exc: Exception,
+    *,
+    metadata: Mapping[str, object],
+) -> list[Path]:
+    if artifact_dir is None or artifact_label is None:
+        return []
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = artifact_dir / f"{artifact_label}.stdout.txt"
+    stderr_path = artifact_dir / f"{artifact_label}.stderr.txt"
+    report_path = artifact_dir / f"{artifact_label}.json"
+    stdout_path.write_text("", encoding="utf-8")
+    stderr_path.write_text(str(exc), encoding="utf-8")
+    write_json(
+        report_path,
+        {
+            **dict(metadata),
+            "ok": False,
+            "exit_code": 1,
+            "error": str(exc),
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        },
+    )
+    return [stdout_path, stderr_path, report_path]
+
+
+def _command_artifacts(command_records: Sequence[LabCommandPlan]) -> list[str]:
+    return _dedupe(
+        [
+            artifact
+            for record in command_records
+            for artifact in record.artifacts
+        ]
     )
 
 
