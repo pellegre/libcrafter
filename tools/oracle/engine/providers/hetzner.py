@@ -12,12 +12,27 @@ import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
+from tools.lab.engine.model import (
+    LabCommandPlan,
+    LabRequest,
+    LabRole,
+)
+from tools.lab.engine.providers.common import validate_remote_dir
+from tools.lab.engine.providers.hetzner import HETZNER_LAB_PROVIDER_ADAPTER
+from tools.wire.engine.model import (
+    EndpointManifest,
+    EndpointSSHInfo,
+    NetworkInterface,
+    ProviderResources,
+)
+
 from .base import LiveProviderAdapter
 from ..live import (
     LiveCommandPlan,
     LiveEndpoint,
     LiveExchangePlan,
     LiveValidationCheck,
+    live_endpoint_from_lab_endpoint,
 )
 from ..model import JSONObject, PacketPlan
 from .. import wire_client
@@ -74,64 +89,12 @@ def hetzner_default_provider_capabilities(
 ) -> JSONObject:
     """Return conservative Hetzner capability defaults used before discovery."""
 
-    capabilities = {
-        "provider": PROVIDER_NAME,
-        "dry_run": dry_run,
-        "source": source,
-        "live_packet_exchange": True,
-        "ipv4_unicast": True,
-        "ipv6_unicast": False,
-        "link_layer_send": False,
-        "link_layer_capture": False,
-        "broadcast": False,
-        "provider_mac_known": False,
-        "controlled_services": True,
-        "controlled_router": False,
-        "capability_report_artifact": CAPABILITY_REPORT_ARTIFACT,
-        "checks": {
-            "ipv4_unicast": {
-                "status": "planned" if dry_run else "default",
-                "value": True,
-                "reason": "Hetzner private network endpoint IPv4 addresses are planned",
-            },
-            "ipv6_unicast": {
-                "status": "not_planned",
-                "value": False,
-                "reason": "private-network IPv6 is not configured by the current lab bootstrap",
-            },
-            "link_layer_send": {
-                "status": "not_proven",
-                "value": False,
-                "reason": "link-layer frame preservation is not assumed for the provider path",
-            },
-            "link_layer_capture": {
-                "status": "not_proven",
-                "value": False,
-                "reason": "link-layer capture preservation is not assumed for the provider path",
-            },
-            "broadcast": {
-                "status": "not_proven",
-                "value": False,
-                "reason": "broadcast delivery is not assumed for the provider private network",
-            },
-            "provider_mac_known": {
-                "status": "manifest_required",
-                "value": False,
-                "reason": "real bootstrap records provider interface MACs after provisioning",
-            },
-            "controlled_services": {
-                "status": "planned" if dry_run else "default",
-                "value": True,
-                "reason": "both disposable endpoints are controlled by the endpoint bootstrap",
-            },
-            "controlled_router": {
-                "status": "not_available",
-                "value": False,
-                "reason": "the two-endpoint lab has no controlled routed hop",
-            },
-        },
-    }
-    return normalize_hetzner_provider_capabilities(capabilities)
+    capabilities = HETZNER_LAB_PROVIDER_ADAPTER.default_provider_capabilities(
+        dry_run=dry_run,
+        source=source,
+    )
+    capabilities["capability_report_artifact"] = CAPABILITY_REPORT_ARTIFACT
+    return capabilities
 
 
 def normalize_hetzner_provider_capabilities(
@@ -142,167 +105,40 @@ def normalize_hetzner_provider_capabilities(
 ) -> JSONObject:
     """Return flat capability keys plus legacy aliases consumed by corpus logic."""
 
-    capabilities = raw.get("capabilities")
-    if isinstance(capabilities, dict):
-        base = {key: value for key, value in raw.items() if key != "capabilities"}
-        base.update(
-            {
-                key: value
-                for key, value in capabilities.items()
-                if isinstance(key, str)
-            }
-        )
-    else:
-        base = dict(raw)
-
-    if dry_run is not None:
-        base["dry_run"] = dry_run
-    if source is not None:
-        base["source"] = source
-    base.setdefault("provider", PROVIDER_NAME)
-    base.setdefault("live_packet_exchange", True)
-
-    for key in PROVIDER_CAPABILITY_NAMES:
-        base[key] = bool(base.get(key, False))
-
-    base["ipv4"] = bool(base["ipv4_unicast"])
-    base["ipv6"] = bool(base["ipv6_unicast"])
-    base["l2"] = bool(base["link_layer_send"] and base["link_layer_capture"])
-    base["provider_mac"] = bool(base["provider_mac_known"])
-    base["controlled_service"] = bool(base["controlled_services"])
-    base["capability_names"] = list(PROVIDER_CAPABILITY_NAMES)
-    return base
+    normalized = HETZNER_LAB_PROVIDER_ADAPTER.normalize_provider_capabilities(
+        raw,
+        dry_run=dry_run,
+        source=source,
+    )
+    normalized["capability_report_artifact"] = raw.get(
+        "capability_report_artifact",
+        CAPABILITY_REPORT_ARTIFACT,
+    )
+    return normalized
 
 
 def hetzner_token_configured() -> bool:
     """Return whether the process environment has Hetzner credentials."""
 
-    return bool(os.environ.get("HETZNER_API_TOKEN") or os.environ.get("HCLOUD_TOKEN"))
+    return HETZNER_LAB_PROVIDER_ADAPTER.credentials_available()
 
 
 def hetzner_private_network_plan(*, dry_run: bool) -> JSONObject:
     """Return the provider resources required for an oracle wire lab."""
 
-    provider_capabilities = hetzner_default_provider_capabilities(dry_run=dry_run)
-    return {
-        "provider": PROVIDER_NAME,
-        "dry_run": dry_run,
-        "creates_infrastructure": not dry_run,
-        "would_create_infrastructure": dry_run,
-        "network": {
-            "resource_type": "hetzner-cloud-network",
-            "name_prefix": "oracle-adapters-live",
-            "ip_range": PRIVATE_NETWORK_CIDR,
-            "network_zone": PRIVATE_NETWORK_ZONE,
-        },
-        "servers": [
-            {
-                "role": "libcrafter",
-                "name_suffix": "libcrafter",
-                "private_address": LIBCRAFTER_PRIVATE_ADDRESS,
-                "private_ipv6_address": LIBCRAFTER_PRIVATE_IPV6_ADDRESS,
-            },
-            {
-                "role": "reference_backend",
-                "name_suffix": "reference",
-                "private_address": REFERENCE_PRIVATE_ADDRESS,
-                "private_ipv6_address": REFERENCE_PRIVATE_IPV6_ADDRESS,
-            },
-        ],
-        "resource_counts": {
-            "servers": 2,
-            "private_networks": 1,
-            "ssh_keys": 1,
-        },
-        "public_network_policy": "ssh_control_plane_only",
-        "packet_exchange_network": "private",
-        "provider_capabilities": provider_capabilities,
-        "endpoint_bootstrap": {
-            "repository_sync": "both_endpoints",
-            "libcrafter": {
-                "system_packages": LIBCRAFTER_BOOTSTRAP_PACKAGES,
-                "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
-                "uv": "install_if_missing",
-                "rust": "install_if_missing",
-                "validation": "cargo build -p oracle-adapters --bin live_endpoint",
-                "artifact": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
-                "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
-            },
-            "reference_backend": {
-                "system_packages": REFERENCE_BOOTSTRAP_PACKAGES,
-                "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
-                "uv": "install_if_missing",
-                "validation": "tools/oracle/run backend-info --backend scapy",
-                "tshark": {
-                    "availability_reported": True,
-                    "required_for_scapy_live_exchange": False,
-                },
-                "artifact": "live-artifacts/bootstrap/reference_backend/bootstrap.env",
-                "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
-            },
-        },
-    }
+    return _oracle_planned_infrastructure(dry_run=dry_run)
 
 
 def hetzner_packet_exchange_metadata(*, dry_run: bool) -> JSONObject:
     """Return the packet-exchange network metadata for the Hetzner lab."""
 
-    return {
-        "provider": PROVIDER_NAME,
-        "wire_provider": PROVIDER_NAME,
-        "wire_exposure": "private",
-        "endpoint_roles": ["libcrafter", "reference_backend"],
-        "private_group": ORACLE_PRIVATE_GROUP,
-        "isolated_network": True,
-        "private_network": True,
-        "private_network_cidr": PRIVATE_NETWORK_CIDR,
-        "packet_exchange_network": "private",
-        "packet_exchange_network_label": "hetzner-private-network",
-        "dry_run": dry_run,
-    }
+    return _oracle_packet_exchange_metadata(dry_run=dry_run)
 
 
 def hetzner_endpoints(*, dry_run: bool) -> dict[str, LiveEndpoint]:
     """Return deterministic endpoint roles for the Hetzner oracle lab."""
 
-    common_metadata: JSONObject = {
-        "provider": PROVIDER_NAME,
-        "dry_run": dry_run,
-        "creates_infrastructure": not dry_run,
-        "would_create_infrastructure": dry_run,
-        "isolated_network": True,
-        "private_network": True,
-        "private_network_cidr": PRIVATE_NETWORK_CIDR,
-        "network_zone": PRIVATE_NETWORK_ZONE,
-        "resource_type": "hetzner-cloud-server",
-    }
-    return {
-        "libcrafter": LiveEndpoint(
-            endpoint_id="hetzner-planned-libcrafter",
-            role="libcrafter",
-            interface="oracle0",
-            address=LIBCRAFTER_PRIVATE_ADDRESS,
-            ipv6_address=LIBCRAFTER_PRIVATE_IPV6_ADDRESS,
-            metadata={
-                **common_metadata,
-                "peer_role": "reference_backend",
-                "peer_address": REFERENCE_PRIVATE_ADDRESS,
-            },
-        ),
-        "reference_backend": LiveEndpoint(
-            endpoint_id="hetzner-planned-reference",
-            role="reference_backend",
-            interface="oracle0",
-            address=REFERENCE_PRIVATE_ADDRESS,
-            ipv6_address=REFERENCE_PRIVATE_IPV6_ADDRESS,
-            metadata={
-                **common_metadata,
-                "backend": "scapy",
-                "peer_role": "libcrafter",
-                "peer_address": LIBCRAFTER_PRIVATE_ADDRESS,
-            },
-        ),
-    }
+    return _oracle_planned_endpoints(dry_run=dry_run)
 
 
 def hetzner_wire_endpoint_plan(
@@ -315,48 +151,13 @@ def hetzner_wire_endpoint_plan(
 ) -> dict[str, object]:
     """Create or plan the two private wire endpoints used by Hetzner oracle runs."""
 
-    wire = client or wire_client.WireClient()
-    roles = (
-        ("libcrafter", LIBCRAFTER_PRIVATE_ADDRESS, REFERENCE_PRIVATE_ADDRESS),
-        ("reference_backend", REFERENCE_PRIVATE_ADDRESS, LIBCRAFTER_PRIVATE_ADDRESS),
+    return _oracle_wire_endpoint_plan(
+        dry_run=dry_run,
+        client=client,
+        private_group=private_group,
+        confirm_live_run=confirm_live_run,
+        created_endpoint_ids=created_endpoint_ids,
     )
-    endpoint_plans: list[JSONObject] = []
-    endpoints: dict[str, LiveEndpoint] = {}
-    command_records: list[JSONObject] = []
-    for role, private_ip, peer_address in roles:
-        response = wire.create(
-            provider=PROVIDER_NAME,
-            exposure="private",
-            role=role,
-            private_group=private_group,
-            private_ip=private_ip,
-            dry_run=dry_run,
-            confirm_live_run=confirm_live_run,
-        )
-        if not dry_run and created_endpoint_ids is not None and response.manifest is not None:
-            created_endpoint_ids.append(response.manifest.endpoint_id)
-        command_records.append(response.record.to_dict())
-        endpoint_plan = response.json_data or response.metadata()
-        endpoint_plans.append(endpoint_plan)
-        endpoints[role] = _live_endpoint_from_wire_plan(
-            endpoint_plan,
-            role=role,
-            private_ip=private_ip,
-            peer_address=peer_address,
-            dry_run=dry_run,
-        )
-
-    return {
-        "provider": PROVIDER_NAME,
-        "exposure": "private",
-        "dry_run": dry_run,
-        "private_group": private_group,
-        "endpoint_count": len(endpoint_plans),
-        "command_metadata": command_records,
-        "endpoint_plans": endpoint_plans,
-        "endpoints": {role: endpoint.to_dict() for role, endpoint in endpoints.items()},
-        "live_endpoints": endpoints,
-    }
 
 
 def _live_endpoint_from_wire_plan(
@@ -435,10 +236,14 @@ def _string_or(value: object, default: str) -> str:
     return value if isinstance(value, str) and value else default
 
 
+def _optional_string(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
 def hetzner_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
     """Plan the provider lifecycle commands used by an oracle live run."""
 
-    return _hetzner_wire_provider_workflow(dry_run=dry_run)
+    return _oracle_provider_workflow(dry_run=dry_run)
 
 
 def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
@@ -821,12 +626,7 @@ def validate_hetzner_dry_run_exchange(
 def hetzner_wire_remote_dir() -> str:
     """Return the repository directory used by Hetzner wire endpoints."""
 
-    remote_dir = os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR") or "/root/libcrafter"
-    if not remote_dir.startswith("/"):
-        raise RuntimeError("Hetzner wire remote_dir must be an absolute path")
-    if "'" in remote_dir:
-        raise RuntimeError("Hetzner wire remote_dir must not contain single quotes")
-    return remote_dir.rstrip("/") or "/"
+    return validate_remote_dir(os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR"))
 
 
 def hetzner_endpoint_remote_command(
@@ -1069,6 +869,514 @@ def hetzner_wire_comparison_policy(plan: PacketPlan) -> JSONObject:
     policy["compare_root"] = compare_root
     policy.setdefault("provider", PROVIDER_NAME)
     return policy
+
+
+def _oracle_lab_request(
+    *,
+    dry_run: bool,
+    private_group: str | None = ORACLE_PRIVATE_GROUP,
+    confirm_live_run: bool = False,
+) -> LabRequest:
+    group = private_group or ORACLE_PRIVATE_GROUP
+    return LabRequest(
+        provider=PROVIDER_NAME,
+        profile=ORACLE_LIVE_SUITE,
+        seed=0,
+        roles=[
+            LabRole(
+                name="libcrafter",
+                requested_private_ipv4=LIBCRAFTER_PRIVATE_ADDRESS,
+            ),
+            LabRole(
+                name="reference_backend",
+                requested_private_ipv4=REFERENCE_PRIVATE_ADDRESS,
+            ),
+        ],
+        dry_run=dry_run,
+        confirm_live_run=confirm_live_run,
+        workload_label=ORACLE_LIVE_SUITE,
+        metadata={
+            "session_id": ORACLE_LIVE_SUITE,
+            "private_group": group,
+            "role_private_ipv4s": {
+                "libcrafter": LIBCRAFTER_PRIVATE_ADDRESS,
+                "reference_backend": REFERENCE_PRIVATE_ADDRESS,
+            },
+        },
+    )
+
+
+def _oracle_planned_infrastructure(*, dry_run: bool) -> JSONObject:
+    request = _oracle_lab_request(dry_run=dry_run)
+    infrastructure = HETZNER_LAB_PROVIDER_ADAPTER.planned_infrastructure(request)
+    provider_capabilities = infrastructure.get("provider_capabilities")
+    if isinstance(provider_capabilities, dict):
+        provider_capabilities["capability_report_artifact"] = CAPABILITY_REPORT_ARTIFACT
+    return infrastructure
+
+
+def _oracle_packet_exchange_metadata(*, dry_run: bool) -> JSONObject:
+    request = _oracle_lab_request(dry_run=dry_run)
+    private_group = HETZNER_LAB_PROVIDER_ADAPTER.private_group(request)
+    return {
+        "provider": PROVIDER_NAME,
+        "wire_provider": HETZNER_LAB_PROVIDER_ADAPTER.wire_provider,
+        "wire_exposure": HETZNER_LAB_PROVIDER_ADAPTER.wire_exposure,
+        "endpoint_roles": ["libcrafter", "reference_backend"],
+        "private_group": private_group,
+        "isolated_network": True,
+        "private_network": True,
+        "private_network_cidr": PRIVATE_NETWORK_CIDR,
+        "packet_exchange_network": HETZNER_LAB_PROVIDER_ADAPTER.wire_exposure,
+        "packet_exchange_network_label": "hetzner-private-network",
+        "dry_run": dry_run,
+    }
+
+
+def _oracle_planned_endpoints(*, dry_run: bool) -> dict[str, LiveEndpoint]:
+    request = _oracle_lab_request(
+        dry_run=dry_run,
+        confirm_live_run=not dry_run,
+    )
+    roles = HETZNER_LAB_PROVIDER_ADAPTER.plan_roles(request)
+    endpoints: dict[str, LiveEndpoint] = {}
+    for role in roles:
+        manifest = _planned_manifest_for_role(role, request=request)
+        lab_endpoint = HETZNER_LAB_PROVIDER_ADAPTER.normalize_endpoint(
+            manifest,
+            role=role,
+            peer_roles=_peer_roles_for(role, roles),
+            request=request,
+        )
+        endpoints[role.name] = live_endpoint_from_lab_endpoint(lab_endpoint)
+    return endpoints
+
+
+def _oracle_wire_endpoint_plan(
+    *,
+    dry_run: bool,
+    client: wire_client.WireClient | None = None,
+    private_group: str | None = ORACLE_PRIVATE_GROUP,
+    confirm_live_run: bool = False,
+    created_endpoint_ids: list[str] | None = None,
+) -> dict[str, object]:
+    request = _oracle_lab_request(
+        dry_run=dry_run,
+        private_group=private_group,
+        confirm_live_run=confirm_live_run,
+    )
+    plan = HETZNER_LAB_PROVIDER_ADAPTER.wire_endpoint_plan(
+        request,
+        client=_OracleLabWireClient(client or wire_client.WireClient()),
+        created_endpoint_ids=created_endpoint_ids,
+    )
+    return _oracle_wire_plan_from_lab_plan(plan)
+
+
+def _oracle_wire_plan_from_lab_plan(plan: JSONObject) -> dict[str, object]:
+    endpoints: dict[str, LiveEndpoint] = {}
+    raw_endpoints = plan.get("endpoints")
+    if isinstance(raw_endpoints, Mapping):
+        for role, endpoint in raw_endpoints.items():
+            if isinstance(role, str) and isinstance(endpoint, Mapping):
+                endpoints[role] = live_endpoint_from_lab_endpoint(endpoint)
+    return {
+        **plan,
+        "wire_exposure": plan.get("exposure", HETZNER_LAB_PROVIDER_ADAPTER.wire_exposure),
+        "command_metadata": plan.get("command_records", []),
+        "live_endpoints": endpoints,
+    }
+
+
+def _oracle_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
+    request = _oracle_lab_request(
+        dry_run=dry_run,
+        confirm_live_run=not dry_run,
+    )
+    commands = [
+        _live_provider_command_from_lab(command)
+        for command in HETZNER_LAB_PROVIDER_ADAPTER.provider_workflow(request)
+    ]
+    insert_at = next(
+        (
+            index
+            for index, command in enumerate(commands)
+            if command.purpose == "collect-live-endpoint-artifacts"
+        ),
+        len(commands),
+    )
+    commands.insert(
+        insert_at,
+        LiveCommandPlan(
+            role="provider",
+            purpose="run-oracle-live-exchange-suite",
+            argv=[
+                WIRE_ENTRYPOINT,
+                "exec",
+                "<endpoint-id>",
+                "--",
+                "tools/oracle/run",
+                "live-endpoint",
+                "--suite",
+                ORACLE_LIVE_SUITE,
+            ],
+            sends_live_packets=False,
+            expects_live_packets=False,
+            metadata={
+                "provider": PROVIDER_NAME,
+                "exposure": HETZNER_LAB_PROVIDER_ADAPTER.wire_exposure,
+                "dry_run": dry_run,
+                "creates_infrastructure": False,
+                "would_create_infrastructure": False,
+                "oracle_two_endpoint": True,
+                "private_network": True,
+                "private_group": ORACLE_PRIVATE_GROUP,
+                "wire_command": True,
+                "operation": "exec",
+            },
+        ),
+    )
+    return commands
+
+
+def _live_provider_command_from_lab(command: LabCommandPlan) -> LiveCommandPlan:
+    metadata: JSONObject = dict(command.metadata)
+    metadata["lab_operation"] = command.operation
+    metadata["operation"] = _oracle_operation(command.operation)
+    metadata.setdefault("provider", PROVIDER_NAME)
+    metadata.setdefault("exposure", HETZNER_LAB_PROVIDER_ADAPTER.wire_exposure)
+    metadata.setdefault("wire_command", True)
+    return LiveCommandPlan(
+        role="provider",
+        purpose=_oracle_workflow_purpose(command),
+        argv=list(command.argv),
+        sends_live_packets=False,
+        expects_live_packets=False,
+        metadata=metadata,
+    )
+
+
+def _oracle_workflow_purpose(command: LabCommandPlan) -> str:
+    if command.operation == "wire.doctor":
+        return "check-hetzner-provider"
+    if command.operation == "wire.create":
+        suffix = "libcrafter" if command.role == "libcrafter" else "reference"
+        return f"create-{suffix}-private-wire-endpoint"
+    if command.operation == "wire.collect_artifacts":
+        return "collect-live-endpoint-artifacts"
+    if command.operation == "wire.destroy":
+        return "teardown-disposable-hetzner-endpoints"
+    return command.purpose
+
+
+def _oracle_operation(operation: str) -> str:
+    return {
+        "wire.doctor": "doctor",
+        "wire.create": "create",
+        "wire.collect_artifacts": "download",
+        "wire.destroy": "destroy",
+    }.get(operation, operation)
+
+
+def _peer_roles_for(role: LabRole, roles: Sequence[LabRole]) -> list[LabRole]:
+    if role.peer_roles:
+        requested = set(role.peer_roles)
+        return [peer for peer in roles if peer.name in requested]
+    return [peer for peer in roles if peer.name != role.name]
+
+
+def _planned_manifest_for_role(role: LabRole, *, request: LabRequest) -> EndpointManifest:
+    private_group = HETZNER_LAB_PROVIDER_ADAPTER.private_group(request)
+    return EndpointManifest(
+        endpoint_id=f"hetzner-planned-{_endpoint_suffix(role.name)}",
+        provider=HETZNER_LAB_PROVIDER_ADAPTER.wire_provider,
+        exposure=HETZNER_LAB_PROVIDER_ADAPTER.wire_exposure,
+        status="planned" if request.dry_run else "created",
+        role=role.name,
+        created_at="1970-01-01T00:00:00Z",
+        ssh=EndpointSSHInfo(host="127.0.0.1", user="root"),
+        interfaces=[
+            NetworkInterface(
+                name="oracle0",
+                exposure=HETZNER_LAB_PROVIDER_ADAPTER.wire_exposure,
+                ipv4=role.requested_private_ipv4 or role.planned_ipv4,
+                ipv6=(
+                    LIBCRAFTER_PRIVATE_IPV6_ADDRESS
+                    if role.name == "libcrafter"
+                    else REFERENCE_PRIVATE_IPV6_ADDRESS
+                ),
+                provider_network_id=private_group,
+                metadata={"private_group": private_group},
+            )
+        ],
+        provider_resources=ProviderResources(),
+        artifact_dir=f"/tmp/libcrafter-wire/{PROVIDER_NAME}/{role.name}",
+        metadata={"private_group": private_group, "planned": True},
+    )
+
+
+def _endpoint_suffix(role: str) -> str:
+    return "reference" if role == "reference_backend" else role
+
+
+@dataclass(frozen=True, slots=True)
+class _LabWireCreateResponse:
+    source: object
+    manifest: EndpointManifest
+    json_data: JSONObject
+    provider: str
+    exposure: str
+    role: str
+    private_group: str | None
+    private_ip: str | None
+    dry_run: bool
+
+    def command_plan(
+        self,
+        *,
+        purpose: str | None = None,
+        role: str | None = None,
+        artifacts: Sequence[str] = (),
+    ) -> LabCommandPlan:
+        metadata = _source_record_metadata(self.source)
+        metadata.update(
+            {
+                "provider": self.provider,
+                "exposure": self.exposure,
+                "private_group": self.private_group,
+                "private_ip": self.private_ip,
+                "wire_command": True,
+            }
+        )
+        return LabCommandPlan(
+            purpose=purpose or f"create {self.role} endpoint",
+            role=role or self.role,
+            argv=_wire_create_argv(
+                provider=self.provider,
+                exposure=self.exposure,
+                role=self.role,
+                private_group=self.private_group,
+                private_ip=self.private_ip,
+                dry_run=self.dry_run,
+            ),
+            operation="wire.create",
+            dry_run=self.dry_run,
+            live_mutation=not self.dry_run,
+            artifacts=list(artifacts),
+            metadata=metadata,
+        )
+
+
+class _OracleLabWireClient:
+    def __init__(self, client: object) -> None:
+        self._client = client
+
+    def create(
+        self,
+        *,
+        provider: str,
+        exposure: str,
+        role: str,
+        private_group: str | None,
+        private_ip: str | None,
+        dry_run: bool,
+        write_manifest: bool,
+        confirm_live_run: bool,
+    ) -> _LabWireCreateResponse:
+        create = getattr(self._client, "create")
+        try:
+            response = create(
+                provider=provider,
+                exposure=exposure,
+                role=role,
+                private_group=private_group,
+                private_ip=private_ip,
+                dry_run=dry_run,
+                write_manifest=write_manifest,
+                confirm_live_run=confirm_live_run,
+            )
+        except TypeError:
+            response = create(
+                provider=provider,
+                exposure=exposure,
+                role=role,
+                private_group=private_group,
+                private_ip=private_ip,
+                dry_run=dry_run,
+                confirm_live_run=confirm_live_run,
+            )
+        manifest = _response_manifest_for_lab(
+            response,
+            provider=provider,
+            exposure=exposure,
+            role=role,
+            private_group=private_group,
+            private_ip=private_ip,
+            dry_run=dry_run,
+        )
+        json_data = _response_json_for_lab(response, manifest)
+        return _LabWireCreateResponse(
+            source=response,
+            manifest=manifest,
+            json_data=json_data,
+            provider=provider,
+            exposure=exposure,
+            role=role,
+            private_group=private_group,
+            private_ip=private_ip,
+            dry_run=dry_run,
+        )
+
+
+def _response_manifest_for_lab(
+    response: object,
+    *,
+    provider: str,
+    exposure: str,
+    role: str,
+    private_group: str | None,
+    private_ip: str | None,
+    dry_run: bool,
+) -> EndpointManifest:
+    manifest = getattr(response, "manifest", None)
+    if isinstance(manifest, EndpointManifest):
+        return manifest
+    json_data = getattr(response, "json_data", None)
+    if isinstance(json_data, Mapping):
+        return _manifest_from_wire_json(
+            json_data,
+            provider=provider,
+            exposure=exposure,
+            role=role,
+            private_group=private_group,
+            private_ip=private_ip,
+            dry_run=dry_run,
+        )
+    endpoint_id = getattr(manifest, "endpoint_id", None)
+    return _manifest_from_wire_json(
+        {"endpoint_id": endpoint_id} if isinstance(endpoint_id, str) else {},
+        provider=provider,
+        exposure=exposure,
+        role=role,
+        private_group=private_group,
+        private_ip=private_ip,
+        dry_run=dry_run,
+    )
+
+
+def _response_json_for_lab(response: object, manifest: EndpointManifest) -> JSONObject:
+    json_data = getattr(response, "json_data", None)
+    if isinstance(json_data, Mapping):
+        return {str(key): value for key, value in json_data.items() if isinstance(key, str)}
+    return manifest.to_dict()
+
+
+def _manifest_from_wire_json(
+    data: Mapping[str, object],
+    *,
+    provider: str,
+    exposure: str,
+    role: str,
+    private_group: str | None,
+    private_ip: str | None,
+    dry_run: bool,
+) -> EndpointManifest:
+    endpoint_id = data.get("endpoint_id")
+    interfaces = data.get("interfaces")
+    interface_models = (
+        [
+            _network_interface_from_json(interface)
+            for interface in interfaces
+            if isinstance(interface, Mapping)
+        ]
+        if isinstance(interfaces, list)
+        else []
+    )
+    if not interface_models:
+        interface_models = [
+            NetworkInterface(
+                name="oracle0",
+                exposure=exposure,
+                ipv4=private_ip,
+                provider_network_id=private_group,
+                metadata={"private_group": private_group} if private_group else {},
+            )
+        ]
+    metadata = data.get("metadata")
+    return EndpointManifest(
+        endpoint_id=endpoint_id if isinstance(endpoint_id, str) else f"{provider}-{exposure}-{role}",
+        provider=provider,
+        exposure=exposure,
+        status="planned" if dry_run else "created",
+        role=role,
+        created_at="1970-01-01T00:00:00Z",
+        ssh=EndpointSSHInfo(host="127.0.0.1", user="root"),
+        interfaces=interface_models,
+        provider_resources=ProviderResources(),
+        artifact_dir=f"/tmp/libcrafter-wire/{provider}/{role}",
+        metadata={
+            **({str(key): value for key, value in metadata.items() if isinstance(key, str)}
+               if isinstance(metadata, Mapping) else {}),
+            **({"private_group": private_group} if private_group else {}),
+        },
+    )
+
+
+def _network_interface_from_json(value: Mapping[str, object]) -> NetworkInterface:
+    metadata = value.get("metadata")
+    return NetworkInterface(
+        name=_string_or(value.get("name"), "private"),
+        exposure=_string_or(value.get("exposure"), "private"),
+        ipv4=_optional_string(value.get("ipv4")),
+        ipv6=_optional_string(value.get("ipv6")),
+        mac=_optional_string(value.get("mac")),
+        provider_network_id=_optional_string(value.get("provider_network_id")),
+        metadata={
+            str(key): item
+            for key, item in metadata.items()
+            if isinstance(key, str)
+        } if isinstance(metadata, Mapping) else {},
+    )
+
+
+def _source_record_metadata(response: object) -> JSONObject:
+    record = getattr(response, "record", None)
+    if record is not None:
+        to_dict = getattr(record, "to_dict", None)
+        if callable(to_dict):
+            value = to_dict()
+            if isinstance(value, Mapping):
+                return {str(key): item for key, item in value.items() if isinstance(key, str)}
+    return {}
+
+
+def _wire_create_argv(
+    *,
+    provider: str,
+    exposure: str,
+    role: str,
+    private_group: str | None,
+    private_ip: str | None,
+    dry_run: bool,
+) -> list[str]:
+    argv = [
+        WIRE_ENTRYPOINT,
+        "create-endpoint",
+        "--provider",
+        provider,
+        "--exposure",
+        exposure,
+        "--role",
+        role,
+        "--json",
+    ]
+    if private_group is not None:
+        argv.extend(["--private-group", private_group])
+    if private_ip is not None:
+        argv.extend(["--private-ip", private_ip])
+    if dry_run:
+        argv.append("--dry-run")
+    return argv
 
 
 @dataclass(frozen=True, slots=True)
