@@ -645,10 +645,12 @@ def _dry_run_report(
     report_path: Path,
 ) -> ProbeReport:
     provider_context: JSONObject = {}
+    stimulus_endpoint: JSONObject = {}
     provider_capabilities = _probe_capabilities_for_request(request, dry_run=True)
     if is_probe_lab_provider(request.provider):
         lab_session = _probe_lab_dry_run_session(request)
         address_context = probe_address_context_from_lab_session(lab_session)
+        stimulus_endpoint = _stimulus_endpoint_context(address_context)
         probe_plans = _probe_plans_with_lab_endpoint_addresses(
             probe_plans,
             address_context=address_context,
@@ -674,6 +676,7 @@ def _dry_run_report(
         dry_run=True,
         provider_context=provider_context,
         provider_capabilities=provider_capabilities,
+        stimulus_endpoint=stimulus_endpoint,
     )
 
 
@@ -734,6 +737,7 @@ def _build_report(
     dry_run: bool,
     provider_context: JSONObject | None = None,
     provider_capabilities: Mapping[str, JSONValue] | None = None,
+    stimulus_endpoint: Mapping[str, JSONValue] | None = None,
 ) -> ProbeReport:
     provider_capabilities = provider_capabilities or _probe_capabilities_for_request(
         request,
@@ -749,6 +753,7 @@ def _build_report(
         request=request,
         probe_plans=probe_plans,
         dry_run=dry_run,
+        stimulus_endpoint=stimulus_endpoint,
     )
     results: list[ProbeResult] = []
     skips: list[ProbeSkip] = []
@@ -892,6 +897,7 @@ def _write_stimulus_endpoint_request_artifact(
     request: ProbeRunRequest,
     probe_plans: Sequence[JSONObject],
     dry_run: bool,
+    stimulus_endpoint: Mapping[str, JSONValue] | None = None,
 ) -> Path | None:
     endpoint_plans = _stimulus_endpoint_plans(probe_plans)
     if not endpoint_plans:
@@ -899,35 +905,19 @@ def _write_stimulus_endpoint_request_artifact(
 
     artifact_dir = report_path.parent / "artifacts" / "stimulus-endpoint"
     request_path = artifact_dir / "stimulus.request.json"
-    first_plan = endpoint_plans[0]
-    endpoint_request: JSONObject = {
-        "schema_version": 1,
-        "provider": request.provider,
-        "profile": request.profile,
-        "seed": request.seed,
-        "dry_run": dry_run,
-        "endpoint_role": "stimulus",
-        "interface": _probe_interface(request.provider, dry_run=dry_run),
-        "local_ipv4": str(first_plan.get("source_ipv4", "")),
-        "peer_ipv4": str(first_plan.get("destination_ipv4", "")),
-        "timeout_seconds": _probe_timeout_seconds(len(endpoint_plans)),
-        "probe_plans": list(endpoint_plans),
-        "artifact_paths": {
-            "request": str(request_path),
-            "response": str(artifact_dir / "stimulus.response.json"),
-            "captures": str(artifact_dir / "captures"),
-        },
-        "metadata": {
-            "planned_only": dry_run,
-            "case_count": len(endpoint_plans),
-            "failure_reasons_by_case": {
-                str(plan.get("case", "")): _failure_reasons_for_case(
-                    str(plan.get("case", ""))
-                )
-                for plan in endpoint_plans
-            },
-        },
-    }
+    endpoint_request = _stimulus_endpoint_request_object(
+        request=request,
+        probe_plans=endpoint_plans,
+        dry_run=dry_run,
+        interface=_stimulus_interface(
+            stimulus_endpoint or {},
+            provider=request.provider,
+            dry_run=dry_run,
+        ),
+        artifact_root=str(artifact_dir),
+        request_path=str(request_path),
+        stimulus_endpoint=stimulus_endpoint,
+    )
     write_json(request_path, endpoint_request)
     return request_path
 
@@ -1177,6 +1167,13 @@ def _lab_endpoint_ipv4(endpoint: Mapping[str, JSONValue], *, role: str) -> str:
     return ipv4
 
 
+def _lab_endpoint_interface(endpoint: Mapping[str, JSONValue], *, role: str) -> str:
+    interface = _string_or(endpoint.get("interface"), "")
+    if not interface:
+        raise RuntimeError(f"lab session did not include {role} endpoint interface")
+    return interface
+
+
 def _wire_command_failed(command: Mapping[str, JSONValue]) -> bool:
     exit_code = command.get("exit_code")
     if isinstance(exit_code, int):
@@ -1238,6 +1235,7 @@ def _lab_endpoint_live_report(
     local_request_path = endpoint_dir / "stimulus.request.json"
     target_setup_attempted = False
     rst_guard_attempted = False
+    stimulus_endpoint: JSONObject = {}
     target_endpoint: JSONObject = {}
     target_endpoint_id = ""
     stimulus_endpoint_id = ""
@@ -1371,6 +1369,7 @@ def _lab_endpoint_live_report(
                 interface=interface,
                 artifact_root=remote_artifact_root,
                 request_path=remote_request_path,
+                stimulus_endpoint=stimulus_endpoint,
             )
             write_json(local_request_path, endpoint_request)
 
@@ -1390,7 +1389,7 @@ def _lab_endpoint_live_report(
 
             rst_setup = _install_wire_stimulus_rst_guards(
                 wire=wire,
-                endpoint_id=stimulus_endpoint_id,
+                stimulus_endpoint=stimulus_endpoint,
                 probe_plans=live_plans,
                 output_dir=endpoint_dir,
             )
@@ -1463,7 +1462,7 @@ def _lab_endpoint_live_report(
             if stimulus_endpoint_id and rst_guard_attempted:
                 rst_cleanup = _cleanup_wire_stimulus_rst_guards(
                     wire=wire,
-                    endpoint_id=stimulus_endpoint_id,
+                    stimulus_endpoint=stimulus_endpoint,
                     probe_plans=live_plans,
                     output_dir=endpoint_dir,
                 )
@@ -1648,8 +1647,15 @@ def _stimulus_endpoint_request_object(
     interface: str,
     artifact_root: str,
     request_path: str,
+    stimulus_endpoint: Mapping[str, JSONValue] | None = None,
 ) -> JSONObject:
     first_plan = probe_plans[0] if probe_plans else {}
+    endpoint_metadata = _stimulus_endpoint_request_metadata(
+        stimulus_endpoint or {},
+        provider=request.provider,
+        interface=interface,
+        dry_run=dry_run,
+    )
     return {
         "schema_version": 1,
         "provider": request.provider,
@@ -1670,6 +1676,7 @@ def _stimulus_endpoint_request_object(
         "metadata": {
             "planned_only": dry_run,
             "case_count": len(probe_plans),
+            "stimulus_endpoint": endpoint_metadata,
             "failure_reasons_by_case": {
                 str(plan.get("case", "")): _failure_reasons_for_case(
                     str(plan.get("case", ""))
@@ -1678,6 +1685,70 @@ def _stimulus_endpoint_request_object(
             },
         },
     }
+
+
+def _stimulus_endpoint_context(
+    address_context: Mapping[str, JSONValue],
+) -> JSONObject:
+    endpoints = _json_mapping(
+        address_context.get("endpoints", {}),
+        "lab_address_context.endpoints",
+    )
+    return _json_mapping(
+        endpoints.get(STIMULUS_ROLE, {}),
+        "lab_address_context.endpoints.stimulus",
+    )
+
+
+def _stimulus_interface(
+    stimulus_endpoint: Mapping[str, JSONValue],
+    *,
+    provider: str,
+    dry_run: bool,
+) -> str:
+    interface = _string_or(stimulus_endpoint.get("interface"), "")
+    return interface or _probe_interface(provider, dry_run=dry_run)
+
+
+def _stimulus_endpoint_request_metadata(
+    stimulus_endpoint: Mapping[str, JSONValue],
+    *,
+    provider: str,
+    interface: str,
+    dry_run: bool,
+) -> JSONObject:
+    metadata = _json_mapping(
+        stimulus_endpoint.get("metadata", {}),
+        "stimulus_endpoint.metadata",
+    )
+    output: JSONObject = {
+        "provider": provider,
+        "role": STIMULUS_ROLE,
+        "interface": interface,
+        "interface_source": "lab_endpoint" if stimulus_endpoint else "probe_default",
+        "dry_run": dry_run,
+    }
+    for source_key, target_key in (
+        ("endpoint_id", "endpoint_id"),
+        ("address", "ipv4"),
+        ("ipv4", "ipv4"),
+        ("peer_address", "peer_ipv4"),
+    ):
+        value = stimulus_endpoint.get(source_key)
+        if isinstance(value, str) and value:
+            output[target_key] = value
+    for key in (
+        "wire_provider",
+        "wire_exposure",
+        "lab_session_id",
+        "private_group",
+        "private_network",
+        "bridged_lan",
+    ):
+        value = metadata.get(key)
+        if value is not None:
+            output[key] = value
+    return output
 
 
 def _probe_plan_with_endpoint_addresses(
@@ -2095,17 +2166,27 @@ def _cleanup_wire_probe_target(
 def _install_wire_stimulus_rst_guards(
     *,
     wire: object,
-    endpoint_id: str,
+    stimulus_endpoint: Mapping[str, JSONValue],
     probe_plans: Sequence[JSONObject],
     output_dir: Path,
 ) -> JSONObject | None:
     tcp_plans = _tcp_probe_plans(probe_plans)
     if not tcp_plans:
         return None
+    endpoint_id = _lab_endpoint_id(stimulus_endpoint, role=STIMULUS_ROLE)
+    interface = _lab_endpoint_interface(stimulus_endpoint, role=STIMULUS_ROLE)
     return _run_lab_wire_command(
         wire.exec(
             endpoint_id,
-            ["bash", "-lc", _rst_guard_script(tcp_plans, install=True)],
+            [
+                "bash",
+                "-lc",
+                _rst_guard_script(
+                    tcp_plans,
+                    install=True,
+                    interface=interface,
+                ),
+            ],
             timeout=60,
         ),
         output_dir=output_dir,
@@ -2116,14 +2197,24 @@ def _install_wire_stimulus_rst_guards(
 def _cleanup_wire_stimulus_rst_guards(
     *,
     wire: object,
-    endpoint_id: str,
+    stimulus_endpoint: Mapping[str, JSONValue],
     probe_plans: Sequence[JSONObject],
     output_dir: Path,
 ) -> JSONObject:
+    endpoint_id = _lab_endpoint_id(stimulus_endpoint, role=STIMULUS_ROLE)
+    interface = _lab_endpoint_interface(stimulus_endpoint, role=STIMULUS_ROLE)
     return _run_lab_wire_command(
         wire.exec(
             endpoint_id,
-            ["bash", "-lc", _rst_guard_script(_tcp_probe_plans(probe_plans), install=False)],
+            [
+                "bash",
+                "-lc",
+                _rst_guard_script(
+                    _tcp_probe_plans(probe_plans),
+                    install=False,
+                    interface=interface,
+                ),
+            ],
             timeout=60,
         ),
         output_dir=output_dir,
@@ -2468,7 +2559,12 @@ def _target_service_setup_script(
     return "\n".join(lines)
 
 
-def _rst_guard_script(probe_plans: Sequence[JSONObject], *, install: bool) -> str:
+def _rst_guard_script(
+    probe_plans: Sequence[JSONObject],
+    *,
+    install: bool,
+    interface: str | None = None,
+) -> str:
     lines = [
         "set -euo pipefail",
         "if ! command -v iptables >/dev/null 2>&1; then",
@@ -2476,7 +2572,7 @@ def _rst_guard_script(probe_plans: Sequence[JSONObject], *, install: bool) -> st
         "  exit 69",
         "fi",
     ]
-    for argv in _rst_guard_iptables_args(probe_plans):
+    for argv in _rst_guard_iptables_args(probe_plans, interface=interface):
         quoted_args = " ".join(shlex.quote(arg) for arg in argv)
         check = f"iptables -C OUTPUT {quoted_args}"
         if install:
@@ -2501,14 +2597,20 @@ def _rst_guard_script(probe_plans: Sequence[JSONObject], *, install: bool) -> st
     return "\n".join(lines)
 
 
-def _rst_guard_iptables_args(probe_plans: Sequence[JSONObject]) -> list[list[str]]:
+def _rst_guard_iptables_args(
+    probe_plans: Sequence[JSONObject],
+    *,
+    interface: str | None = None,
+) -> list[list[str]]:
     rules: list[list[str]] = []
     for plan in probe_plans:
         guard = json_object(plan.get("stimulus_rst_guard", {}), "stimulus_rst_guard")
         if guard.get("required") is not True:
             continue
+        interface_args = ["-o", interface] if interface else []
         rules.append(
             [
+                *interface_args,
                 "-p",
                 "tcp",
                 "-s",
