@@ -41,6 +41,32 @@ PYTHON_DEPENDENCY_RUNNER = "uv"
 DEFAULT_CAPABILITY_REPORT_ARTIFACT = "live-artifacts/oracle-live/capabilities.json"
 LIBCRAFTER_VALIDATION_COMMAND = "cargo build -p oracle-adapters --bin live_endpoint"
 REFERENCE_VALIDATION_COMMAND = "tools/oracle/run backend-info --backend scapy"
+TOPOLOGY_METADATA_KEYS = (
+    "private_network",
+    "private_group",
+    "bridged_lan",
+    "bridge_interface_env",
+)
+
+
+def endpoint_bootstrap_topology(
+    provider_metadata: Mapping[str, object],
+    provider_capabilities: Mapping[str, object] | None = None,
+) -> JSONObject:
+    """Extract oracle bootstrap topology from provider-neutral report metadata."""
+
+    topology: JSONObject = {}
+    for key in TOPOLOGY_METADATA_KEYS:
+        value = provider_metadata.get(key)
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            topology[key] = value
+    topology["capability_artifact"] = _capability_artifact(
+        provider_capabilities or {},
+        {},
+    )
+    return topology
 
 
 def endpoint_bootstrap_plan(

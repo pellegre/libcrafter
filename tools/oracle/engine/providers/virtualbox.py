@@ -29,7 +29,6 @@ from tools.wire.engine.model import (
 
 from .base import LiveProviderAdapter
 from .policy import wire_comparison_policy
-from .. import bootstrap as oracle_bootstrap
 from ..live import (
     LiveCommandPlan,
     LiveEndpoint,
@@ -284,41 +283,6 @@ def virtualbox_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
     return _oracle_provider_workflow(dry_run=dry_run)
 
 
-def virtualbox_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
-    """Plan role-specific endpoint bootstrap work for the VirtualBox LAN lab."""
-
-    return oracle_bootstrap.endpoint_bootstrap_plan(
-        PROVIDER_NAME,
-        dry_run,
-        virtualbox_default_provider_capabilities(dry_run=dry_run),
-        _virtualbox_endpoint_bootstrap_topology(),
-    )
-
-
-def _virtualbox_endpoint_bootstrap_topology() -> JSONObject:
-    return {
-        "private_network": False,
-        "bridged_lan": True,
-        "bridge_interface_env": BRIDGE_INTERFACE_ENV,
-        "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
-    }
-
-
-def validate_virtualbox_endpoint_bootstrap(
-    commands: list[LiveCommandPlan],
-    *,
-    dry_run: bool,
-) -> LiveValidationCheck:
-    """Validate that both VirtualBox endpoint roles are bootstrapped."""
-
-    return oracle_bootstrap.validate_endpoint_bootstrap(
-        PROVIDER_NAME,
-        commands,
-        dry_run=dry_run,
-        topology_metadata=_virtualbox_endpoint_bootstrap_topology(),
-    )
-
-
 def validate_virtualbox_provider_workflow(
     commands: list[LiveCommandPlan],
     *,
@@ -479,34 +443,6 @@ def virtualbox_endpoint_remote_command(
             ]
         )
     return ["bash", "-lc", script]
-
-
-def virtualbox_endpoint_bootstrap_command(
-    *,
-    endpoint: LiveEndpoint,
-    peer: LiveEndpoint,
-    remote_archive: str,
-    remote_dir: str,
-) -> list[str]:
-    """Return the repository bootstrap command for one VirtualBox endpoint."""
-
-    return oracle_bootstrap.endpoint_bootstrap_command(
-        provider=PROVIDER_NAME,
-        endpoint=endpoint,
-        peer=peer,
-        remote_archive=remote_archive,
-        remote_dir=remote_dir,
-        topology_metadata=_virtualbox_endpoint_bootstrap_topology(),
-    )
-
-
-def virtualbox_endpoint_bootstrap_command_hook():
-    """Return the lab repository bootstrap hook for VirtualBox oracle roles."""
-
-    return oracle_bootstrap.endpoint_bootstrap_command_hook(
-        PROVIDER_NAME,
-        _virtualbox_endpoint_bootstrap_topology(),
-    )
 
 
 def virtualbox_live_transit_plan(plan: PacketPlan) -> PacketPlan:
@@ -1162,11 +1098,6 @@ class VirtualBoxLiveProviderAdapter:
 
         return virtualbox_provider_workflow(dry_run=dry_run)
 
-    def endpoint_bootstrap_plan(self, *, dry_run: bool) -> list[LiveCommandPlan]:
-        """Return VirtualBox endpoint bootstrap command plans."""
-
-        return virtualbox_endpoint_bootstrap_plan(dry_run=dry_run)
-
     def validate_provider_workflow(
         self,
         commands: list[LiveCommandPlan],
@@ -1176,16 +1107,6 @@ class VirtualBoxLiveProviderAdapter:
         """Validate VirtualBox provider lifecycle planning."""
 
         return validate_virtualbox_provider_workflow(commands, dry_run=dry_run)
-
-    def validate_endpoint_bootstrap(
-        self,
-        commands: list[LiveCommandPlan],
-        *,
-        dry_run: bool,
-    ) -> LiveValidationCheck:
-        """Validate VirtualBox endpoint bootstrap planning."""
-
-        return validate_virtualbox_endpoint_bootstrap(commands, dry_run=dry_run)
 
     def validate_dry_run_exchange(
         self,
@@ -1199,28 +1120,6 @@ class VirtualBoxLiveProviderAdapter:
         """Return the remote repository directory for VirtualBox wire endpoints."""
 
         return virtualbox_wire_remote_dir()
-
-    def endpoint_bootstrap_command(
-        self,
-        *,
-        endpoint: LiveEndpoint,
-        peer: LiveEndpoint,
-        remote_archive: str,
-        remote_dir: str,
-    ) -> list[str]:
-        """Return the VirtualBox repository bootstrap command for one endpoint."""
-
-        return virtualbox_endpoint_bootstrap_command(
-            endpoint=endpoint,
-            peer=peer,
-            remote_archive=remote_archive,
-            remote_dir=remote_dir,
-        )
-
-    def endpoint_bootstrap_command_hook(self):
-        """Return the lab repository bootstrap hook for VirtualBox endpoints."""
-
-        return virtualbox_endpoint_bootstrap_command_hook()
 
     def endpoint_remote_command(
         self,

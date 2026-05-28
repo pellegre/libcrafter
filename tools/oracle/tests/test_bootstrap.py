@@ -6,6 +6,7 @@ import unittest
 
 from tools.lab.engine.model import LabEndpoint, LabRole, LabSession
 from tools.lab.engine.repo import RepoBootstrapCommand, RepoBootstrapContext
+from tools.oracle.engine import bootstrap as oracle_bootstrap
 from tools.oracle.engine.providers.registry import resolve_live_provider
 
 
@@ -15,9 +16,7 @@ PROVIDERS = ("hetzner", "qemu", "virtualbox")
 class OracleBootstrapTest(unittest.TestCase):
     def test_provider_bootstrap_plans_share_oracle_roles_and_commands(self) -> None:
         plans_by_provider = {
-            provider: resolve_live_provider(provider).endpoint_bootstrap_plan(
-                dry_run=True,
-            )
+            provider: _endpoint_bootstrap_plan(provider)
             for provider in PROVIDERS
         }
 
@@ -42,17 +41,13 @@ class OracleBootstrapTest(unittest.TestCase):
                     any(command.expects_live_packets for command in plans),
                 )
                 self.assertTrue(
-                    resolve_live_provider(provider)
-                    .validate_endpoint_bootstrap(plans, dry_run=True)
-                    .passed,
+                    _validate_endpoint_bootstrap(provider, plans).passed,
                 )
 
     def test_provider_bootstrap_plans_keep_topology_metadata(self) -> None:
         for provider in PROVIDERS:
             with self.subTest(provider=provider):
-                plans = resolve_live_provider(provider).endpoint_bootstrap_plan(
-                    dry_run=True,
-                )
+                plans = _endpoint_bootstrap_plan(provider)
                 for command in plans:
                     if provider == "virtualbox":
                         self.assertFalse(command.metadata["private_network"])
@@ -67,7 +62,10 @@ class OracleBootstrapTest(unittest.TestCase):
     def test_lab_bootstrap_hook_runs_from_unpacked_repository(self) -> None:
         for provider in PROVIDERS:
             adapter = resolve_live_provider(provider)
-            hook = adapter.endpoint_bootstrap_command_hook()
+            hook = oracle_bootstrap.endpoint_bootstrap_command_hook(
+                adapter.name,
+                _endpoint_bootstrap_topology(adapter),
+            )
             with self.subTest(provider=provider):
                 context = _repo_context(provider, adapter)
 
@@ -81,21 +79,52 @@ class OracleBootstrapTest(unittest.TestCase):
                 self.assertNotIn("tar -xzf", script)
                 self.assertNotIn("rm -rf /root/libcrafter", script)
 
-    def test_legacy_adapter_bootstrap_command_does_not_unpack_repository(self) -> None:
+    def test_oracle_bootstrap_command_does_not_unpack_repository(self) -> None:
         for provider in PROVIDERS:
             adapter = resolve_live_provider(provider)
             endpoints = adapter.endpoints(dry_run=True)
             with self.subTest(provider=provider):
-                command = adapter.endpoint_bootstrap_command(
+                command = oracle_bootstrap.endpoint_bootstrap_command(
+                    provider=adapter.name,
                     endpoint=endpoints["libcrafter"],
                     peer=endpoints["reference_backend"],
                     remote_archive="/tmp/repo.tar.gz",
                     remote_dir="/root/libcrafter",
+                    topology_metadata=_endpoint_bootstrap_topology(adapter),
                 )
 
                 self.assertEqual(command[:2], ["bash", "-lc"])
                 self.assertNotIn("tar -xzf", command[2])
                 self.assertNotIn("rm -rf /root/libcrafter", command[2])
+
+
+def _endpoint_bootstrap_plan(provider: str):
+    adapter = resolve_live_provider(provider)
+    capabilities = adapter.default_provider_capabilities(dry_run=True)
+    return oracle_bootstrap.endpoint_bootstrap_plan(
+        adapter.name,
+        True,
+        capabilities,
+        _endpoint_bootstrap_topology(adapter),
+    )
+
+
+def _validate_endpoint_bootstrap(provider: str, plans):
+    adapter = resolve_live_provider(provider)
+    return oracle_bootstrap.validate_endpoint_bootstrap(
+        adapter.name,
+        plans,
+        dry_run=True,
+        topology_metadata=_endpoint_bootstrap_topology(adapter),
+    )
+
+
+def _endpoint_bootstrap_topology(adapter) -> dict[str, object]:
+    capabilities = adapter.default_provider_capabilities(dry_run=True)
+    return oracle_bootstrap.endpoint_bootstrap_topology(
+        adapter.packet_exchange_metadata(dry_run=True),
+        capabilities,
+    )
 
 
 def _repo_context(provider: str, adapter) -> RepoBootstrapContext:

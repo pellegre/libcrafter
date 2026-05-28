@@ -28,7 +28,6 @@ from tools.wire.engine.model import (
 )
 
 from .base import LiveProviderAdapter
-from .. import bootstrap as oracle_bootstrap
 from ..live import (
     LiveCommandPlan,
     LiveEndpoint,
@@ -340,40 +339,6 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
     return commands
 
 
-def hetzner_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
-    """Plan role-specific endpoint bootstrap work for the Hetzner lab."""
-
-    return oracle_bootstrap.endpoint_bootstrap_plan(
-        PROVIDER_NAME,
-        dry_run,
-        hetzner_default_provider_capabilities(dry_run=dry_run),
-        _hetzner_endpoint_bootstrap_topology(),
-    )
-
-
-def _hetzner_endpoint_bootstrap_topology() -> JSONObject:
-    return {
-        "private_network": True,
-        "private_group": ORACLE_PRIVATE_GROUP,
-        "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
-    }
-
-
-def validate_hetzner_endpoint_bootstrap(
-    commands: list[LiveCommandPlan],
-    *,
-    dry_run: bool,
-) -> LiveValidationCheck:
-    """Validate that both Hetzner endpoint roles are bootstrapped."""
-
-    return oracle_bootstrap.validate_endpoint_bootstrap(
-        PROVIDER_NAME,
-        commands,
-        dry_run=dry_run,
-        topology_metadata=_hetzner_endpoint_bootstrap_topology(),
-    )
-
-
 def validate_hetzner_provider_workflow(
     commands: list[LiveCommandPlan],
     *,
@@ -523,34 +488,6 @@ def hetzner_endpoint_remote_command(
             ]
         )
     return ["bash", "-lc", script]
-
-
-def hetzner_endpoint_bootstrap_command(
-    *,
-    endpoint: LiveEndpoint,
-    peer: LiveEndpoint,
-    remote_archive: str,
-    remote_dir: str,
-) -> list[str]:
-    """Return the repository bootstrap command for one Hetzner endpoint."""
-
-    return oracle_bootstrap.endpoint_bootstrap_command(
-        provider=PROVIDER_NAME,
-        endpoint=endpoint,
-        peer=peer,
-        remote_archive=remote_archive,
-        remote_dir=remote_dir,
-        topology_metadata=_hetzner_endpoint_bootstrap_topology(),
-    )
-
-
-def hetzner_endpoint_bootstrap_command_hook():
-    """Return the lab repository bootstrap hook for Hetzner oracle roles."""
-
-    return oracle_bootstrap.endpoint_bootstrap_command_hook(
-        PROVIDER_NAME,
-        _hetzner_endpoint_bootstrap_topology(),
-    )
 
 
 def hetzner_live_transit_plan(plan: PacketPlan) -> PacketPlan:
@@ -1226,11 +1163,6 @@ class HetznerLiveProviderAdapter:
 
         return hetzner_provider_workflow(dry_run=dry_run)
 
-    def endpoint_bootstrap_plan(self, *, dry_run: bool) -> list[LiveCommandPlan]:
-        """Return Hetzner endpoint bootstrap command plans."""
-
-        return hetzner_endpoint_bootstrap_plan(dry_run=dry_run)
-
     def validate_provider_workflow(
         self,
         commands: list[LiveCommandPlan],
@@ -1240,16 +1172,6 @@ class HetznerLiveProviderAdapter:
         """Validate Hetzner provider lifecycle planning."""
 
         return validate_hetzner_provider_workflow(commands, dry_run=dry_run)
-
-    def validate_endpoint_bootstrap(
-        self,
-        commands: list[LiveCommandPlan],
-        *,
-        dry_run: bool,
-    ) -> LiveValidationCheck:
-        """Validate Hetzner endpoint bootstrap planning."""
-
-        return validate_hetzner_endpoint_bootstrap(commands, dry_run=dry_run)
 
     def validate_dry_run_exchange(
         self,
@@ -1263,28 +1185,6 @@ class HetznerLiveProviderAdapter:
         """Return the remote repository directory for Hetzner wire endpoints."""
 
         return hetzner_wire_remote_dir()
-
-    def endpoint_bootstrap_command(
-        self,
-        *,
-        endpoint: LiveEndpoint,
-        peer: LiveEndpoint,
-        remote_archive: str,
-        remote_dir: str,
-    ) -> list[str]:
-        """Return the Hetzner repository bootstrap command for one endpoint."""
-
-        return hetzner_endpoint_bootstrap_command(
-            endpoint=endpoint,
-            peer=peer,
-            remote_archive=remote_archive,
-            remote_dir=remote_dir,
-        )
-
-    def endpoint_bootstrap_command_hook(self):
-        """Return the lab repository bootstrap hook for Hetzner endpoints."""
-
-        return hetzner_endpoint_bootstrap_command_hook()
 
     def endpoint_remote_command(
         self,

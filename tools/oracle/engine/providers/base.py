@@ -68,9 +68,6 @@ class LiveProviderAdapter(Protocol):
     def provider_workflow(self, *, dry_run: bool) -> list[LiveCommandPlan]:
         """Return provider lifecycle command plans."""
 
-    def endpoint_bootstrap_plan(self, *, dry_run: bool) -> list[LiveCommandPlan]:
-        """Return role-specific endpoint bootstrap command plans."""
-
     def validate_provider_workflow(
         self,
         commands: list[LiveCommandPlan],
@@ -78,14 +75,6 @@ class LiveProviderAdapter(Protocol):
         dry_run: bool,
     ) -> LiveValidationCheck:
         """Validate provider lifecycle command invariants."""
-
-    def validate_endpoint_bootstrap(
-        self,
-        commands: list[LiveCommandPlan],
-        *,
-        dry_run: bool,
-    ) -> LiveValidationCheck:
-        """Validate role-specific endpoint bootstrap invariants."""
 
     def validate_dry_run_exchange(
         self,
@@ -95,16 +84,6 @@ class LiveProviderAdapter(Protocol):
 
     def remote_dir(self) -> str:
         """Return the absolute repository directory used on wire endpoints."""
-
-    def endpoint_bootstrap_command(
-        self,
-        *,
-        endpoint: LiveEndpoint,
-        peer: LiveEndpoint,
-        remote_archive: str,
-        remote_dir: str,
-    ) -> list[str]:
-        """Return the remote repository bootstrap command for one endpoint."""
 
     def endpoint_remote_command(
         self,
