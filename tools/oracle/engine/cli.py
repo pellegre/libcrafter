@@ -1714,6 +1714,259 @@ def _live_provider_dry_run_lab_session(args: argparse.Namespace, provider_adapte
     return lab_adapter.plan_session(request)
 
 
+def _live_provider_resolve_lab_adapter(args: argparse.Namespace, provider_adapter):
+    """Return the lab provider adapter backing an oracle live provider."""
+
+    explicit = getattr(provider_adapter, "lab_provider_adapter", None)
+    if explicit is not None:
+        return explicit
+    from tools.lab.engine.providers.registry import resolve_lab_provider
+
+    return resolve_lab_provider(args.provider)
+
+
+def _live_provider_lab_request(
+    args: argparse.Namespace,
+    provider_adapter,
+    *,
+    dry_run: bool,
+    confirm_live_run: bool,
+    remote_dir: str,
+):
+    """Build the provider-neutral lab request for oracle's endpoint roles."""
+
+    from tools.lab.engine.model import LabRequest, LabRole
+
+    endpoint_roles = [
+        role
+        for role in getattr(
+            provider_adapter,
+            "endpoint_roles",
+            ("libcrafter", "reference_backend"),
+        )
+        if isinstance(role, str) and role
+    ]
+    planned_endpoints = provider_adapter.endpoints(dry_run=dry_run)
+    private_ips = {
+        role: address
+        for role, address in dict(getattr(provider_adapter, "endpoint_private_ips", {})).items()
+        if isinstance(role, str) and isinstance(address, str) and address
+    }
+    roles: list[LabRole] = []
+    role_lan_ipv4s: dict[str, str] = {}
+    for role in endpoint_roles:
+        planned_endpoint = planned_endpoints.get(role)
+        planned_ipv4 = (
+            planned_endpoint.address
+            if planned_endpoint is not None and isinstance(planned_endpoint.address, str)
+            else None
+        )
+        requested_private_ipv4 = private_ips.get(role)
+        if requested_private_ipv4 is None and planned_ipv4 is not None:
+            role_lan_ipv4s[role] = planned_ipv4
+        roles.append(
+            LabRole(
+                name=role,
+                requested_private_ipv4=requested_private_ipv4,
+                planned_ipv4=planned_ipv4,
+                peer_roles=[peer for peer in endpoint_roles if peer != role],
+                workload_metadata={
+                    "workload": "oracle-live",
+                    "backend": args.backend,
+                },
+            )
+        )
+
+    metadata: JSONObject = {
+        "session_id": "oracle-live",
+        "workload": "oracle-live",
+        "oracle_live": True,
+        "endpoint_roles": endpoint_roles,
+    }
+    private_group = getattr(provider_adapter, "private_group", None)
+    if isinstance(private_group, str) and private_group:
+        metadata["private_group"] = private_group
+    if private_ips:
+        metadata["role_private_ipv4s"] = private_ips
+    if role_lan_ipv4s:
+        metadata["role_lan_ipv4s"] = role_lan_ipv4s
+
+    return LabRequest(
+        provider=args.provider,
+        profile=args.profile,
+        seed=args.seed,
+        roles=roles,
+        dry_run=dry_run,
+        confirm_live_run=confirm_live_run,
+        remote_dir=remote_dir,
+        workload_label="oracle-live",
+        metadata=metadata,
+    )
+
+
+def _live_provider_bootstrap_commands(
+    provider_adapter,
+    *,
+    endpoints: Mapping[str, object],
+) -> dict[str, object]:
+    """Return lab bootstrap hooks that delegate workload setup to oracle."""
+
+    endpoint_roles = [
+        role
+        for role in getattr(
+            provider_adapter,
+            "endpoint_roles",
+            ("libcrafter", "reference_backend"),
+        )
+        if isinstance(role, str) and role in endpoints
+    ]
+    commands: dict[str, object] = {}
+    for role in endpoint_roles:
+        peer_role = next((peer for peer in endpoint_roles if peer != role), None)
+        if peer_role is None:
+            continue
+
+        def _command(context, *, role: str = role, peer_role: str = peer_role):
+            return provider_adapter.endpoint_bootstrap_command(
+                endpoint=endpoints[role],
+                peer=endpoints[peer_role],
+                remote_archive=context.remote_archive,
+                remote_dir=context.remote_dir,
+            )
+
+        commands[role] = _command
+    return commands
+
+
+def _live_provider_lab_command_records(records: Sequence[object]) -> list[JSONObject]:
+    """Convert lab command records into the oracle provider command report shape."""
+
+    output: list[JSONObject] = []
+    for index, record in enumerate(records):
+        if hasattr(record, "to_dict") and callable(record.to_dict):
+            raw = record.to_dict()
+        elif isinstance(record, Mapping):
+            raw = {
+                key: value
+                for key, value in record.items()
+                if isinstance(key, str)
+            }
+        else:
+            continue
+        item = _json_object(raw, f"lab command record {index}")
+        metadata = _json_object(item.get("metadata", {}), f"lab command record {index}.metadata")
+        item.setdefault("label", _live_provider_lab_command_label(item, index))
+        item.setdefault("wire_command", str(item.get("operation", "")).startswith("wire."))
+        endpoint_id = _live_provider_lab_command_endpoint_id(item)
+        if endpoint_id is not None:
+            item.setdefault("endpoint_id", endpoint_id)
+        for key in ("ok", "exit_code", "error", "stdout_path", "stderr_path"):
+            if key not in item and key in metadata:
+                item[key] = metadata[key]
+        if "exit_code" not in item:
+            ok = item.get("ok")
+            if isinstance(ok, bool):
+                item["exit_code"] = 0 if ok else 1
+        output.append(item)
+    return output
+
+
+def _live_provider_lab_cleanup_attempt_records(
+    cleanup_state: Mapping[str, object],
+) -> list[JSONObject]:
+    """Expose cleanup attempts that could not be represented as command records."""
+
+    if not isinstance(cleanup_state, Mapping):
+        return []
+    output: list[JSONObject] = []
+    for key, label_prefix in (
+        ("artifact_collection", "98-artifact"),
+        ("teardown", "99-destroy"),
+    ):
+        attempts = cleanup_state.get(key)
+        if not isinstance(attempts, Sequence) or isinstance(
+            attempts,
+            (str, bytes, bytearray),
+        ):
+            continue
+        for attempt in attempts:
+            if not isinstance(attempt, Mapping):
+                continue
+            if bool(attempt.get("ok", False)):
+                continue
+            endpoint_id = attempt.get("endpoint_id")
+            role = attempt.get("role")
+            operation = attempt.get("operation")
+            label_subject = role if isinstance(role, str) and role else endpoint_id
+            output.append(
+                _json_object(
+                    {
+                        "argv": [],
+                        "operation": f"wire.{operation}" if isinstance(operation, str) else key,
+                        "wire_command": True,
+                        "endpoint_id": endpoint_id,
+                        "endpoint_role": role,
+                        "label": f"{label_prefix}-{label_subject or len(output)}",
+                        "exit_code": attempt.get("exit_code", 1),
+                        "ok": False,
+                        "error": attempt.get("error"),
+                    },
+                    "lab cleanup attempt",
+                )
+            )
+    return output
+
+
+def _live_provider_lab_command_label(command: Mapping[str, object], index: int) -> str:
+    operation = command.get("operation")
+    role = command.get("role")
+    endpoint_id = _live_provider_lab_command_endpoint_id(command)
+    metadata = command.get("metadata")
+    phase = metadata.get("phase") if isinstance(metadata, Mapping) else None
+    if operation == "wire.create":
+        return f"02-create-{role or index}"
+    if operation == "lab.repo_archive":
+        return "03-repo-archive"
+    if operation in {"wire.upload", "wire.exec"} and isinstance(phase, str):
+        return f"04-bootstrap-{role or endpoint_id or index}-{phase}"
+    if operation == "wire.collect_artifacts":
+        return f"98-artifact-{role or endpoint_id or index}"
+    if operation == "wire.destroy":
+        return f"99-destroy-{endpoint_id or role or index}"
+    return f"lab-command-{index:02d}"
+
+
+def _live_provider_lab_command_endpoint_id(
+    command: Mapping[str, object],
+) -> str | None:
+    metadata = command.get("metadata")
+    if isinstance(metadata, Mapping):
+        endpoint_id = metadata.get("endpoint_id")
+        if isinstance(endpoint_id, str) and endpoint_id:
+            return endpoint_id
+    endpoint_id = command.get("endpoint_id")
+    if isinstance(endpoint_id, str) and endpoint_id:
+        return endpoint_id
+    argv = command.get("argv")
+    if not isinstance(argv, Sequence) or isinstance(argv, (str, bytes, bytearray)):
+        return None
+    parts = [part for part in argv if isinstance(part, str)]
+    for wire_command in (
+        "collect-artifacts",
+        "destroy-endpoint",
+        "exec",
+        "upload",
+        "download",
+    ):
+        try:
+            command_index = parts.index(wire_command)
+        except ValueError:
+            continue
+        if command_index + 1 < len(parts) and parts[command_index + 1]:
+            return parts[command_index + 1]
+    return None
+
+
 def _live_provider_skip_no_token(
     *,
     args: argparse.Namespace,
@@ -2053,20 +2306,25 @@ def _live_provider_execute(
 ) -> int:
     from .backends.scapy.normalize import decode_vectors
     from .backends.scapy.packets import encode_packet_plans
-    from . import wire_client
+    from tools.lab.engine import repo as lab_repo
+    from tools.lab.engine import session as lab_session_state
+    from tools.lab.engine import wire_client as lab_wire_client
     from .live import (
         LiveCommandPlan,
         LiveExchangePlan,
         build_live_endpoint_batch_request,
+        lab_session_oracle_report_metadata,
         live_endpoint_artifact_paths,
+        live_endpoints_from_lab_session,
         validate_live_endpoint_batch_contract,
     )
 
     output_dir = report_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    wire = wire_client.WireClient()
+    wire = lab_wire_client.WireClient()
     endpoints = {}
+    lab_session = None
     provider_workflow = provider_adapter.provider_workflow(dry_run=False)
     endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=False)
     wire_endpoint_plan: JSONObject = {}
@@ -2100,62 +2358,78 @@ def _live_provider_execute(
     )
 
     try:
-        doctor = _run_wire_command(
-            wire.doctor(
-                provider=provider_adapter.wire_provider,
-                exposure=provider_adapter.wire_exposure,
-            ),
-            output_dir=output_dir,
-            label="01-doctor",
+        lab_adapter = _live_provider_resolve_lab_adapter(args, provider_adapter)
+        lab_request = _live_provider_lab_request(
+            args,
+            provider_adapter,
+            dry_run=False,
+            confirm_live_run=True,
+            remote_dir=remote_dir,
         )
-        provider_commands.append(doctor)
-        if doctor["exit_code"] != 0:
-            message = f"{provider_adapter.name} provider doctor failed"
+        lab_session = lab_session_state.create_session(
+            lab_adapter,
+            lab_request,
+            client=wire,
+        )
+        endpoints = live_endpoints_from_lab_session(lab_session)
+        missing_roles = [
+            role
+            for role in provider_adapter.endpoint_roles
+            if role not in endpoints
+        ]
+        if missing_roles:
+            raise RuntimeError(
+                "lab session did not include required endpoint roles: "
+                + ", ".join(missing_roles)
+            )
+        created_endpoint_ids = list(lab_session.created_endpoint_ids)
+        lab_report_metadata = lab_session_oracle_report_metadata(lab_session)
+        wire_endpoint_plan = _json_object(
+            lab_report_metadata["wire_endpoint_plan"],
+            "lab_session.wire_endpoint_plan",
+        )
+
+        repo_archive = lab_repo.create_repository_archive(
+            output_dir / "artifacts" / "lab" / "repo",
+            source_root=REPO_ROOT,
+        )
+        lab_session = replace(
+            lab_session,
+            command_records=[
+                *lab_session.command_records,
+                repo_archive.command_record,
+            ],
+        )
+        endpoint_artifact_paths.extend(
+            [
+                str(repo_archive.archive_path),
+                str(repo_archive.stdout_path),
+                str(repo_archive.stderr_path),
+            ]
+        )
+        bootstrap_result = lab_repo.bootstrap_lab_session(
+            lab_session,
+            _live_provider_bootstrap_commands(
+                provider_adapter,
+                endpoints=endpoints,
+            ),
+            remote_dir=remote_dir,
+            archive=repo_archive,
+            output_dir=output_dir / "artifacts" / "lab" / "bootstrap",
+            client=wire,
+        )
+        lab_session = lab_repo.session_with_bootstrap_records(
+            lab_session,
+            bootstrap_result,
+        )
+        lab_session_state.write_session_manifest(lab_session)
+        endpoint_artifact_paths.extend(bootstrap_result.artifacts)
+        if not bootstrap_result.ok:
+            message = f"{provider_adapter.name} endpoint bootstrap failed"
+            if bootstrap_result.errors:
+                message = f"{message}: {'; '.join(bootstrap_result.errors)}"
             execution_errors.append(message)
             raise RuntimeError(message)
-
-        planned_wire_endpoint_plan = provider_adapter.wire_endpoint_plan(
-            dry_run=False,
-            client=wire,
-            confirm_live_run=True,
-            created_endpoint_ids=created_endpoint_ids,
-        )
-        live_endpoints = planned_wire_endpoint_plan.pop("live_endpoints")
-        if not isinstance(live_endpoints, dict):
-            raise RuntimeError("wire endpoint plan did not include live endpoints")
-        endpoints = live_endpoints
-        wire_endpoint_plan = _json_object(
-            planned_wire_endpoint_plan,
-            "wire_endpoint_plan",
-        )
-        provider_commands.extend(
-            _wire_create_command_records(
-                wire_endpoint_plan.get("command_metadata", []),
-                labels=_wire_create_labels(provider_adapter),
-            )
-        )
-
-        repo_archive = _create_wire_repo_archive(output_dir)
-        endpoint_artifact_paths.append(str(repo_archive))
-        for role, peer_role in (
-            ("libcrafter", "reference_backend"),
-            ("reference_backend", "libcrafter"),
-        ):
-            bootstrap_records = _bootstrap_wire_endpoint(
-                wire=wire,
-                endpoint=endpoints[role],
-                peer=endpoints[peer_role],
-                repo_archive=repo_archive,
-                remote_dir=remote_dir,
-                output_dir=output_dir,
-                label=f"03-bootstrap-{role}",
-                provider_adapter=provider_adapter,
-            )
-            provider_commands.extend(bootstrap_records)
-            if any(record.get("exit_code") != 0 for record in bootstrap_records):
-                message = f"{provider_adapter.name} endpoint bootstrap failed: {role}"
-                execution_errors.append(message)
-                raise RuntimeError(message)
 
         discovered_capabilities = provider_adapter.default_provider_capabilities(
             dry_run=False,
@@ -2568,48 +2842,58 @@ def _live_provider_execute(
             results.extend(direction_results)
             live_direction_counts[direction] = direction_counts
     except Exception as exc:  # pragma: no cover - exercised only by live providers.
+        cleanup_commands = getattr(exc, "lab_cleanup_command_records", None)
+        if isinstance(cleanup_commands, Sequence) and not isinstance(
+            cleanup_commands,
+            (str, bytes, bytearray),
+        ):
+            provider_commands.extend(
+                _live_provider_lab_command_records(cleanup_commands)
+            )
         if not execution_errors:
             execution_errors.append(str(exc))
     finally:
-        for role, endpoint in endpoints.items():
-            if not hasattr(endpoint, "endpoint_id"):
-                continue
-            artifact = _run_wire_command_safely(
-                lambda endpoint=endpoint: wire.collect_artifacts(
-                    endpoint.endpoint_id,
-                    remote_artifact_root,
-                ),
-                output_dir=output_dir,
-                label=f"98-artifact-{role}",
-            )
-            provider_commands.append(artifact)
-            if artifact.get("exit_code") != 0:
-                execution_errors.append(
-                    f"{provider_adapter.name} artifact collection failed for {role}: "
-                    f"{artifact.get('error', 'wire command failed')}"
-                )
-        if not keep_wire_endpoints:
-            for endpoint_id in reversed(created_endpoint_ids):
-                destroy = _run_wire_command_safely(
-                    lambda endpoint_id=endpoint_id: wire.destroy(endpoint_id),
-                    output_dir=output_dir,
-                    label=f"99-destroy-{endpoint_id}",
-                )
-                provider_commands.append(destroy)
-                if destroy.get("exit_code") != 0:
-                    execution_errors.append(
-                        f"{provider_adapter.name} endpoint teardown failed for "
-                        f"{endpoint_id}: {destroy.get('error', 'wire command failed')}"
+        if lab_session is not None:
+            if not keep_wire_endpoints:
+                try:
+                    lab_session = lab_session_state.cleanup_lab_session(
+                        lab_session,
+                        client=wire,
                     )
-        elif created_endpoint_ids:
-            provider_commands.append(
-                {
-                    "argv": [],
-                    "exit_code": 0,
-                    "label": "99-destroy-skipped",
-                    "keep_wire_endpoints": True,
-                    "endpoint_ids": list(created_endpoint_ids),
-                }
+                    lab_session_state.write_session_manifest(lab_session)
+                except Exception as cleanup_exc:  # pragma: no cover - defensive fallback.
+                    execution_errors.append(
+                        f"{provider_adapter.name} lab cleanup failed: {cleanup_exc}"
+                    )
+            elif created_endpoint_ids:
+                lab_session = replace(
+                    lab_session,
+                    cleanup_state={
+                        "status": "skipped",
+                        "endpoint_ids": list(created_endpoint_ids),
+                        "keep_wire_endpoints": True,
+                        "artifact_collection_attempted": False,
+                        "teardown_attempted": False,
+                    },
+                )
+                provider_commands.append(
+                    {
+                        "argv": [],
+                        "exit_code": 0,
+                        "label": "99-destroy-skipped",
+                        "keep_wire_endpoints": True,
+                        "endpoint_ids": list(created_endpoint_ids),
+                    }
+                )
+            provider_commands = [
+                *_live_provider_lab_command_records(lab_session.command_records),
+                *_live_provider_lab_cleanup_attempt_records(lab_session.cleanup_state),
+                *provider_commands,
+            ]
+            cleanup_errors = _string_values(lab_session.cleanup_state.get("errors", []))
+            execution_errors.extend(
+                f"{provider_adapter.name} cleanup failed: {error}"
+                for error in cleanup_errors
             )
 
     provider_failures = [
@@ -2666,6 +2950,30 @@ def _live_provider_execute(
         ]
         + _comparison_artifact_paths(failures)
     )
+    lab_report_metadata = (
+        lab_session_oracle_report_metadata(lab_session)
+        if lab_session is not None
+        else {}
+    )
+    lab_wire_endpoint_lifecycle = (
+        _json_object(
+            lab_report_metadata.get("wire_endpoint_lifecycle", {}),
+            "lab_session.wire_endpoint_lifecycle",
+        )
+        if lab_report_metadata
+        else {}
+    )
+    wire_endpoint_lifecycle = {
+        **lab_wire_endpoint_lifecycle,
+        "remote_dir": remote_dir,
+        "remote_artifact_root": remote_artifact_root,
+        "created_endpoint_ids": list(created_endpoint_ids),
+        "keep_wire_endpoints": keep_wire_endpoints,
+    }
+    if lab_wire_endpoint_lifecycle.get("remote_artifact_root") != remote_artifact_root:
+        wire_endpoint_lifecycle["lab_remote_artifact_root"] = (
+            lab_wire_endpoint_lifecycle.get("remote_artifact_root")
+        )
     report = RunReport(
         mode="live",
         backend=args.backend,
@@ -2703,18 +3011,20 @@ def _live_provider_execute(
             **packet_exchange_metadata,
             "live_corpus_artifact": str(corpus_batch_artifact),
             "execution_directions": directions,
-            "planned_infrastructure": provider_adapter.planned_infrastructure(
-                dry_run=False,
+            "planned_infrastructure": lab_report_metadata.get(
+                "planned_infrastructure",
+                provider_adapter.planned_infrastructure(dry_run=False),
             ),
-            "wire_endpoint_plan": wire_endpoint_plan,
-            "wire_endpoint_lifecycle": {
-                "remote_dir": remote_dir,
-                "remote_artifact_root": remote_artifact_root,
-                "created_endpoint_ids": list(created_endpoint_ids),
-                "keep_wire_endpoints": keep_wire_endpoints,
-            },
+            "wire_endpoint_plan": lab_report_metadata.get(
+                "wire_endpoint_plan",
+                wire_endpoint_plan,
+            ),
+            "wire_endpoint_lifecycle": wire_endpoint_lifecycle,
             "provider_workflow": [command.to_dict() for command in provider_workflow],
+            "lab_provider_workflow": lab_report_metadata.get("provider_workflow", []),
             "provider_commands": provider_commands,
+            "command_records": lab_report_metadata.get("command_records", provider_commands),
+            "lab_session": lab_report_metadata.get("lab_session"),
             "endpoint_bootstrap": [command.to_dict() for command in endpoint_bootstrap],
             "artifact_collection": {
                 "always_attempt": True,
@@ -4089,6 +4399,7 @@ def _command_artifact_paths(command: JSONObject) -> list[str]:
         value = command.get(key)
         if isinstance(value, str):
             paths.append(value)
+    paths.extend(_string_values(command.get("artifacts", [])))
     paths.extend(_string_values(command.get("collected_artifacts", [])))
     nested = command.get("commands")
     if isinstance(nested, list):

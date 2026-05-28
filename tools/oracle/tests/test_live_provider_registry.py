@@ -11,6 +11,14 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from tools.lab.engine.model import (
+    LabCommandPlan,
+    LabEndpoint,
+    LabRequest,
+    LabRole,
+    LabSession,
+)
+from tools.lab.engine.repo import RepoArchiveResult
 from tools.oracle.engine import cli
 from tools.oracle.engine.live import LiveCommandPlan, LiveEndpoint
 from tools.oracle.engine.model import DecodedModel, PacketPlan, read_json
@@ -520,8 +528,8 @@ class LiveProviderRegistryTest(unittest.TestCase):
             corpus_metadata = _fake_corpus_metadata(adapter.name, [plan])
 
             with (
-                patch("tools.oracle.engine.wire_client.WireClient", return_value=wire),
-                patch.object(cli, "_create_wire_repo_archive", side_effect=_fake_archive),
+                patch("tools.lab.engine.wire_client.WireClient", return_value=wire),
+                patch("tools.lab.engine.repo.create_repository_archive", side_effect=_fake_repo_archive),
                 patch.object(cli, "_backend_versions", return_value={}),
                 patch.object(cli, "_libcrafter_info", return_value={}),
                 patch.object(cli, "_live_corpus_plans", return_value=(
@@ -549,7 +557,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(
                 wire.doctor_calls,
-                [{"provider": "fake-wire", "exposure": "isolated"}],
+                [],
             )
             self.assertEqual(
                 [(call["provider"], call["exposure"], call["role"]) for call in wire.create_calls],
@@ -578,6 +586,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             self.assertEqual(report["status"], "passed")
             self.assertEqual(metadata["planned_infrastructure"]["provider"], "fakecloud")
             self.assertEqual(metadata["wire_endpoint_plan"]["provider"], "fakecloud")
+            self.assertEqual(metadata["lab_session"]["provider"], "fakecloud")
             self.assertEqual(metadata["wire_provider"], "fake-wire")
             self.assertEqual(metadata["wire_exposure"], "isolated")
             self.assertEqual(metadata["packet_exchange_network"], "fake-isolated")
@@ -606,8 +615,8 @@ class LiveProviderRegistryTest(unittest.TestCase):
             corpus_metadata = _fake_corpus_metadata(adapter.name, [plan])
 
             with (
-                patch("tools.oracle.engine.wire_client.WireClient", return_value=wire),
-                patch.object(cli, "_create_wire_repo_archive", side_effect=_fake_archive),
+                patch("tools.lab.engine.wire_client.WireClient", return_value=wire),
+                patch("tools.lab.engine.repo.create_repository_archive", side_effect=_fake_repo_archive),
                 patch.object(cli, "_backend_versions", return_value={}),
                 patch.object(cli, "_libcrafter_info", return_value={}),
                 patch.object(cli, "_live_corpus_plans", return_value=(
@@ -806,11 +815,34 @@ def _fake_corpus_metadata(provider: str, plans: list[PacketPlan]) -> dict[str, o
     }
 
 
-def _fake_archive(output_dir: Path) -> Path:
-    archive = output_dir / "artifacts" / "wire" / "fake-repo.tar.gz"
+def _fake_repo_archive(output_dir: Path, **_: object) -> RepoArchiveResult:
+    archive = output_dir / "fake-repo.tar.gz"
     archive.parent.mkdir(parents=True, exist_ok=True)
     archive.write_text("fake archive", encoding="utf-8")
-    return archive
+    stdout = output_dir / "repo-archive.stdout.txt"
+    stderr = output_dir / "repo-archive.stderr.txt"
+    stdout.write_text("", encoding="utf-8")
+    stderr.write_text("", encoding="utf-8")
+    return RepoArchiveResult(
+        archive_path=archive,
+        stdout_path=stdout,
+        stderr_path=stderr,
+        command_record=LabCommandPlan(
+            purpose="create repository archive",
+            role=None,
+            argv=["tar", "-czf", str(archive), "."],
+            operation="lab.repo_archive",
+            dry_run=False,
+            live_mutation=False,
+            artifacts=[str(archive), str(stdout), str(stderr)],
+            metadata={
+                "ok": True,
+                "exit_code": 0,
+                "stdout_path": str(stdout),
+                "stderr_path": str(stderr),
+            },
+        ),
+    )
 
 
 def _fake_encode_packet_plans(plans: list[PacketPlan]):
@@ -1004,6 +1036,7 @@ class _FakeLiveProviderAdapter:
         self.bootstrap_calls: list[dict[str, str]] = []
         self.remote_command_calls: list[dict[str, str]] = []
         self.transit_plan_ttls: list[int] = []
+        self.lab_provider_adapter = _FakeLabProviderAdapter(self)
 
     def token_configured(self) -> bool:
         return True
@@ -1202,6 +1235,119 @@ class _FakeLiveProviderAdapter:
         }
 
 
+class _FakeLabProviderAdapter:
+    def __init__(self, oracle_adapter: _FakeLiveProviderAdapter) -> None:
+        self.oracle_adapter = oracle_adapter
+        self.name = oracle_adapter.name
+        self.wire_provider = oracle_adapter.wire_provider
+        self.wire_exposure = oracle_adapter.wire_exposure
+        self.credential_label = oracle_adapter.credential_label
+        self.missing_credential_reason = oracle_adapter.missing_credential_reason
+
+    def plan_session(
+        self,
+        request: LabRequest,
+        *,
+        client,
+    ) -> LabSession:
+        endpoints: list[LabEndpoint] = []
+        command_records: list[LabCommandPlan] = []
+        created_endpoint_ids: list[str] = []
+        role_addresses = dict(self.oracle_adapter.endpoint_private_ips)
+
+        for role in request.roles:
+            response = client.create(
+                provider=self.wire_provider,
+                exposure=self.wire_exposure,
+                role=role.name,
+                private_group=self.oracle_adapter.private_group,
+                private_ip=role_addresses[role.name],
+                dry_run=request.dry_run,
+                write_manifest=not request.dry_run,
+                confirm_live_run=request.confirm_live_run,
+            )
+            endpoint_id = f"fake-{role.name}"
+            created_endpoint_ids.append(endpoint_id)
+            command_records.append(
+                response.command_plan(
+                    purpose=f"create {role.name} fake lab endpoint",
+                    role=role.name,
+                )
+            )
+            endpoints.append(
+                LabEndpoint(
+                    endpoint_id=endpoint_id,
+                    role=role.name,
+                    interface="fake0",
+                    ipv4=role_addresses[role.name],
+                    peer_addresses={
+                        peer.name: {"ipv4": role_addresses[peer.name]}
+                        for peer in request.roles
+                        if peer.name != role.name
+                    },
+                    wire_manifest={
+                        "endpoint_id": endpoint_id,
+                        "provider": self.wire_provider,
+                        "exposure": self.wire_exposure,
+                        "role": role.name,
+                    },
+                    metadata={
+                        "provider": self.name,
+                        "wire_provider": self.wire_provider,
+                        "wire_exposure": self.wire_exposure,
+                    },
+                )
+            )
+
+        remote_dir = request.remote_dir or "/srv/fake-oracle"
+        return LabSession(
+            provider=self.name,
+            wire_provider=self.wire_provider,
+            wire_exposure=self.wire_exposure,
+            session_id="oracle-live",
+            roles=list(request.roles),
+            endpoints=endpoints,
+            provider_capabilities=self.oracle_adapter.default_provider_capabilities(
+                dry_run=request.dry_run,
+            ),
+            infrastructure_metadata=self.oracle_adapter.planned_infrastructure(
+                dry_run=request.dry_run,
+            ),
+            provider_workflow=[
+                LabCommandPlan(
+                    purpose="check-fake-provider",
+                    role=None,
+                    argv=["fake-wire", "doctor"],
+                    operation="wire.doctor",
+                    dry_run=request.dry_run,
+                    live_mutation=False,
+                    metadata={"provider": self.name, "exposure": self.wire_exposure},
+                )
+            ],
+            command_records=command_records,
+            remote_dir=remote_dir,
+            remote_artifact_root=f"{remote_dir}/artifacts/oracle-live",
+            created_endpoint_ids=created_endpoint_ids,
+            dry_run=request.dry_run,
+            cleanup_state={
+                "status": "not_started",
+                "artifact_collection_attempted": False,
+                "teardown_attempted": False,
+            },
+            metadata={
+                "provider": self.name,
+                "wire_endpoint_plan": {
+                    "provider": self.name,
+                    "wire_provider": self.wire_provider,
+                    "wire_exposure": self.wire_exposure,
+                    "exposure": self.wire_exposure,
+                    "created_endpoint_ids": created_endpoint_ids,
+                    "endpoint_count": len(endpoints),
+                },
+            },
+        )
+
+
 class _FakeLiveWireClient:
     def __init__(self, *, collect_raises: bool = False) -> None:
         self.wire_path = "fake-wire"
@@ -1224,8 +1370,10 @@ class _FakeLiveWireClient:
         private_group: str,
         private_ip: str,
         dry_run: bool,
-        confirm_live_run: bool,
+        write_manifest: bool = True,
+        confirm_live_run: bool = False,
     ):
+        del write_manifest
         self.create_calls.append(
             {
                 "provider": provider,
@@ -1278,6 +1426,8 @@ class _FakeWireCommandResponse:
             error=None,
             exit_code=exit_code,
         )
+        self.ok = exit_code == 0
+        self.exit_code = exit_code
         self.record = _FakeWireCommandRecord(operation, endpoint_id, exit_code)
         self.json_data = None
         self.manifest = (
@@ -1291,6 +1441,32 @@ class _FakeWireCommandResponse:
         if self.manifest is not None:
             metadata["endpoint_id"] = self.manifest.endpoint_id
         return metadata
+
+    def command_plan(
+        self,
+        *,
+        purpose: str | None = None,
+        role: str | None = None,
+        artifacts: list[str] = (),
+    ) -> LabCommandPlan:
+        return LabCommandPlan(
+            purpose=purpose or f"wire {self.record.operation}",
+            role=role,
+            argv=list(self.record.to_dict()["argv"]),
+            operation={
+                "collect-artifacts": "wire.collect_artifacts",
+                "create-endpoint": "wire.create",
+                "destroy-endpoint": "wire.destroy",
+                "download": "wire.download",
+                "doctor": "wire.doctor",
+                "exec": "wire.exec",
+                "upload": "wire.upload",
+            }.get(self.record.operation, f"wire.{self.record.operation}"),
+            dry_run=False,
+            live_mutation=self.record.operation in {"create-endpoint", "destroy-endpoint"},
+            artifacts=list(artifacts),
+            metadata=self.metadata(),
+        )
 
 
 class _FakeWireCommandRecord:
