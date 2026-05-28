@@ -10,7 +10,7 @@ import posixpath
 import shlex
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -1163,6 +1163,20 @@ def _first_plan_address(
     return default
 
 
+def _lab_endpoint_id(endpoint: Mapping[str, JSONValue], *, role: str) -> str:
+    endpoint_id = _string_or(endpoint.get("endpoint_id"), "")
+    if not endpoint_id:
+        raise RuntimeError(f"lab session did not include {role} endpoint ID")
+    return endpoint_id
+
+
+def _lab_endpoint_ipv4(endpoint: Mapping[str, JSONValue], *, role: str) -> str:
+    ipv4 = _string_or(endpoint.get("address"), _string_or(endpoint.get("ipv4"), ""))
+    if not ipv4:
+        raise RuntimeError(f"lab session did not include {role} endpoint IPv4")
+    return ipv4
+
+
 def _wire_command_failed(command: Mapping[str, JSONValue]) -> bool:
     exit_code = command.get("exit_code")
     if isinstance(exit_code, int):
@@ -1224,6 +1238,7 @@ def _lab_endpoint_live_report(
     local_request_path = endpoint_dir / "stimulus.request.json"
     target_setup_attempted = False
     rst_guard_attempted = False
+    target_endpoint: JSONObject = {}
     target_endpoint_id = ""
     stimulus_endpoint_id = ""
     remote_dir = ""
@@ -1258,13 +1273,14 @@ def _lab_endpoint_live_report(
                 endpoints.get(TARGET_ROLE, {}),
                 "lab.endpoints.target",
             )
-            stimulus_endpoint_id = _string_or(
-                stimulus_endpoint.get("endpoint_id"),
-                "",
+            stimulus_endpoint_id = _lab_endpoint_id(
+                stimulus_endpoint,
+                role=STIMULUS_ROLE,
             )
-            target_endpoint_id = _string_or(target_endpoint.get("endpoint_id"), "")
-            if not stimulus_endpoint_id or not target_endpoint_id:
-                raise RuntimeError("lab session did not include endpoint IDs")
+            target_endpoint_id = _lab_endpoint_id(
+                target_endpoint,
+                role=TARGET_ROLE,
+            )
 
             source_ipv4 = _string_or(
                 stimulus_endpoint.get("address"),
@@ -1360,8 +1376,7 @@ def _lab_endpoint_live_report(
 
             target_setup = _prepare_wire_probe_target(
                 wire=wire,
-                endpoint_id=target_endpoint_id,
-                bind_ipv4=target_ipv4,
+                target_endpoint=target_endpoint,
                 artifact_root=target_artifact_root,
                 probe_plans=live_plans,
                 output_dir=endpoint_dir,
@@ -1459,7 +1474,7 @@ def _lab_endpoint_live_report(
             if target_endpoint_id and target_setup_attempted:
                 target_cleanup = _cleanup_wire_probe_target(
                     wire=wire,
-                    endpoint_id=target_endpoint_id,
+                    target_endpoint=target_endpoint,
                     artifact_root=target_artifact_root,
                     output_dir=endpoint_dir,
                 )
@@ -1703,6 +1718,16 @@ def _probe_plan_with_endpoint_addresses(
             f"tcp and src host {target_ipv4} and dst host {source_ipv4} "
             f"and src port {destination_port} and dst port {source_port}"
         )
+        target_service = dict(
+            json_object(updated.get("target_service", {}), "probe_plan.target_service")
+        )
+        target_service.update(
+            {
+                "bind_ipv4": target_ipv4,
+                "source_ipv4": source_ipv4,
+            }
+        )
+        updated["target_service"] = target_service
         rst_guard = dict(
             json_object(updated.get("stimulus_rst_guard", {}), "probe_plan.rst_guard")
         )
@@ -2010,8 +2035,7 @@ def _run_wire_stimulus_endpoint(
 def _prepare_wire_probe_target(
     *,
     wire: object,
-    endpoint_id: str,
-    bind_ipv4: str,
+    target_endpoint: Mapping[str, JSONValue],
     artifact_root: str,
     probe_plans: Sequence[JSONObject],
     output_dir: Path,
@@ -2020,6 +2044,8 @@ def _prepare_wire_probe_target(
     dns_plans = _dns_probe_plans(probe_plans)
     if not tcp_plans and not dns_plans:
         return None
+    endpoint_id = _lab_endpoint_id(target_endpoint, role=TARGET_ROLE)
+    bind_ipv4 = _lab_endpoint_ipv4(target_endpoint, role=TARGET_ROLE)
     open_ports = _dedupe_ints(
         int(plan["destination_port"])
         for plan in tcp_plans
@@ -2047,10 +2073,11 @@ def _prepare_wire_probe_target(
 def _cleanup_wire_probe_target(
     *,
     wire: object,
-    endpoint_id: str,
+    target_endpoint: Mapping[str, JSONValue],
     artifact_root: str,
     output_dir: Path,
 ) -> JSONObject:
+    endpoint_id = _lab_endpoint_id(target_endpoint, role=TARGET_ROLE)
     cleanup_script = posixpath.join(artifact_root, "cleanup.sh")
     script = "\n".join(
         [
@@ -2181,22 +2208,24 @@ def _target_service_setup_script(
     lines = [
         "set -euo pipefail",
         f"artifact_root={shlex.quote(artifact_root)}",
+        f"tcp_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"dns_bind_ipv4={shlex.quote(bind_ipv4)}",
         'mkdir -p "$artifact_root"',
         'cleanup="$artifact_root/cleanup.sh"',
         ': > "$cleanup"',
         'chmod 700 "$cleanup"',
         "check_port_free() {",
-        "  python3 - \"$1\" <<'PY'",
+        "  python3 - \"$1\" \"$2\" <<'PY'",
         "import socket",
         "import sys",
-        "port = int(sys.argv[1])",
+        "bind_ip = sys.argv[1]",
+        "port = int(sys.argv[2])",
         "sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)",
         "try:",
         "    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
-        "    sock.bind(('0.0.0.0', port))",
+        "    sock.bind((bind_ip, port))",
         "except OSError as exc:",
-        "    print(f'port {port} is not free: {exc}', file=sys.stderr)",
+        "    print(f'tcp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
         "    sys.exit(1)",
         "finally:",
         "    sock.close()",
@@ -2223,7 +2252,7 @@ def _target_service_setup_script(
             ]
         )
     for port in closed_ports:
-        lines.append(f"check_port_free {port}")
+        lines.append(f"check_port_free \"$tcp_bind_ipv4\" {port}")
         lines.append(f"echo closed_port_{port}=free")
     for port in open_ports:
         listener_path = posixpath.join(artifact_root, f"tcp-listener-{port}.py")
@@ -2232,7 +2261,7 @@ def _target_service_setup_script(
         pid_path = posixpath.join(artifact_root, f"tcp-listener-{port}.pid")
         lines.extend(
             [
-                f"check_port_free {port}",
+                f"check_port_free \"$tcp_bind_ipv4\" {port}",
                 f"cat > {shlex.quote(listener_path)} <<'PY'",
                 "import signal",
                 "import socket",
@@ -2246,13 +2275,14 @@ def _target_service_setup_script(
                 "",
                 "signal.signal(signal.SIGTERM, handle_stop)",
                 "signal.signal(signal.SIGINT, handle_stop)",
-                "port = int(sys.argv[1])",
+                "bind_ip = sys.argv[1]",
+                "port = int(sys.argv[2])",
                 "sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)",
                 "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
-                "sock.bind(('0.0.0.0', port))",
+                "sock.bind((bind_ip, port))",
                 "sock.listen(128)",
                 "sock.settimeout(1.0)",
-                "print(f'listening on {port}', flush=True)",
+                "print(f'listening on {bind_ip}:{port}', flush=True)",
                 "while not stop:",
                 "    try:",
                 "        conn, _addr = sock.accept()",
@@ -2262,7 +2292,7 @@ def _target_service_setup_script(
                 "sock.close()",
                 "PY",
                 (
-                    f"python3 {shlex.quote(listener_path)} {port} "
+                    f"python3 {shlex.quote(listener_path)} \"$tcp_bind_ipv4\" {port} "
                     f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
                 ),
                 "pid=$!",
@@ -2902,26 +2932,18 @@ def _target_service_setup_plan(
     probe_plans: Sequence[JSONObject],
     dry_run: bool,
 ) -> JSONObject:
-    tcp_open_ports = _dedupe_ints(
-        int(plan["destination_port"])
-        for plan in probe_plans
-        if plan.get("case") == "tcp-syn-open"
+    tcp_open_plans = _plans_by_destination_port(
+        plan for plan in probe_plans if plan.get("case") == "tcp-syn-open"
     )
-    tcp_closed_ports = _dedupe_ints(
-        int(plan["destination_port"])
-        for plan in probe_plans
-        if plan.get("case") == "tcp-syn-closed"
+    tcp_closed_plans = _plans_by_destination_port(
+        plan for plan in probe_plans if plan.get("case") == "tcp-syn-closed"
     )
     dns_plans = _dns_probe_plans(probe_plans)
-    dns_ports = _dedupe_ints(
-        int(plan["destination_port"])
-        for plan in dns_plans
-        if isinstance(plan.get("destination_port"), int)
-    )
+    dns_plans_by_port = _plans_by_destination_port(dns_plans)
     return {
         "role": "target",
         "planned": True,
-        "starts_services": not dry_run and bool(tcp_open_ports or dns_ports),
+        "starts_services": not dry_run and bool(tcp_open_plans or dns_plans_by_port),
         "dry_run_starts_services": False,
         "services": [
             *[
@@ -2931,8 +2953,9 @@ def _target_service_setup_plan(
                     "port": port,
                     "purpose": "tcp-syn-open",
                     "deterministic": True,
+                    **_target_service_address_fields(plan),
                 }
-                for port in tcp_open_ports
+                for port, plan in tcp_open_plans.items()
             ],
             *[
                 {
@@ -2946,12 +2969,13 @@ def _target_service_setup_plan(
                         for plan in dns_plans
                         if int(plan.get("destination_port", 0)) == port
                     ),
+                    **_target_service_address_fields(plan),
                     "log_paths": [
                         f"live-artifacts/probe/target-services/dns-responder-{port}.stdout.txt",
                         f"live-artifacts/probe/target-services/dns-responder-{port}.stderr.txt",
                     ],
                 }
-                for port in dns_ports
+                for port, plan in dns_plans_by_port.items()
             ],
         ],
         "closed_tcp_ports": [
@@ -2960,14 +2984,44 @@ def _target_service_setup_plan(
                 "state": "verified-unbound" if not dry_run else "planned-unbound",
                 "purpose": "tcp-syn-closed",
                 "deterministic": True,
+                **_target_service_address_fields(plan),
             }
-            for port in tcp_closed_ports
+            for port, plan in tcp_closed_plans.items()
         ],
         "controlled_router": {
             "available": False,
             "skip_reason": SKIP_REQUIRES_CONTROLLED_ROUTER,
         },
     }
+
+
+def _plans_by_destination_port(plans: Iterable[JSONObject]) -> dict[int, JSONObject]:
+    by_port: dict[int, JSONObject] = {}
+    for plan in plans:
+        port = int(plan["destination_port"])
+        by_port.setdefault(port, plan)
+    return by_port
+
+
+def _target_service_address_fields(plan: Mapping[str, JSONValue]) -> JSONObject:
+    target_service = _json_mapping(
+        plan.get("target_service", {}),
+        "probe_plan.target_service",
+    )
+    bind_ipv4 = _string_or(
+        target_service.get("bind_ipv4"),
+        _string_or(plan.get("destination_ipv4"), ""),
+    )
+    source_ipv4 = _string_or(
+        target_service.get("source_ipv4"),
+        _string_or(plan.get("source_ipv4"), ""),
+    )
+    fields: JSONObject = {}
+    if bind_ipv4:
+        fields["bind_ipv4"] = bind_ipv4
+    if source_ipv4:
+        fields["source_ipv4"] = source_ipv4
+    return fields
 
 
 def _report_path(
