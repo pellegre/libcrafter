@@ -1190,9 +1190,12 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
     from .live import (
         LIVE_SELECTED_SPECS,
         LiveExchangePlan,
+        LiveValidationCheck,
         build_live_endpoint_batch_request,
         dry_run_live_endpoint_batch_response,
+        lab_session_oracle_report_metadata,
         libcrafter_dry_run_command_plan,
+        live_endpoints_from_lab_session,
         live_endpoint_artifact_paths,
         live_execution_directions,
         validate_live_endpoint_batch_contract,
@@ -1269,12 +1272,25 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
             corpus_metadata=corpus_metadata,
         )
 
-    wire_endpoint_plan = provider_adapter.wire_endpoint_plan(dry_run=True)
-    live_endpoints = wire_endpoint_plan.pop("live_endpoints")
-    if not isinstance(live_endpoints, dict):
-        print("wire endpoint plan did not include live endpoints", file=sys.stderr)
+    try:
+        lab_session = _live_provider_dry_run_lab_session(args, provider_adapter)
+        endpoints = live_endpoints_from_lab_session(lab_session)
+        lab_report_metadata = lab_session_oracle_report_metadata(lab_session)
+    except (PermissionError, ValueError, TypeError) as exc:
+        print(str(exc), file=sys.stderr)
         return 2
-    endpoints = live_endpoints
+    missing_roles = [
+        role
+        for role in provider_adapter.endpoint_roles
+        if role not in endpoints
+    ]
+    if missing_roles:
+        print(
+            "lab session did not include required endpoint roles: "
+            f"{', '.join(missing_roles)}",
+            file=sys.stderr,
+        )
+        return 2
     provider_workflow = provider_adapter.provider_workflow(dry_run=True)
     endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=True)
     packet_exchange_metadata = _live_provider_packet_exchange_metadata(
@@ -1296,6 +1312,21 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
             corpus_metadata,
             provider=provider_adapter.name,
         ),
+        *[
+            LiveValidationCheck(
+                name=f"lab-{check.name}",
+                passed=check.passed,
+                subject=check.subject,
+                errors=list(check.errors),
+                metadata={
+                    **dict(check.metadata),
+                    "provider": lab_session.provider,
+                    "lab_session_id": lab_session.session_id,
+                    "source": "lab_session",
+                },
+            )
+            for check in lab_session.validation_checks
+        ],
     ]
     exchanges: list[LiveExchangePlan] = []
     endpoint_protocol_batches: list[JSONObject] = []
@@ -1550,11 +1581,14 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
             **packet_exchange_metadata,
             "live_corpus_artifact": str(corpus_batch_artifact),
             "execution_directions": directions,
-            "planned_infrastructure": provider_adapter.planned_infrastructure(
-                dry_run=True,
-            ),
-            "wire_endpoint_plan": wire_endpoint_plan,
+            "planned_infrastructure": lab_report_metadata["planned_infrastructure"],
+            "wire_endpoint_plan": lab_report_metadata["wire_endpoint_plan"],
+            "wire_endpoint_lifecycle": lab_report_metadata["wire_endpoint_lifecycle"],
             "provider_workflow": [command.to_dict() for command in provider_workflow],
+            "lab_provider_workflow": lab_report_metadata["provider_workflow"],
+            "provider_commands": lab_report_metadata["provider_commands"],
+            "command_records": lab_report_metadata["command_records"],
+            "lab_session": lab_report_metadata["lab_session"],
             "endpoint_bootstrap": [command.to_dict() for command in endpoint_bootstrap],
             "artifact_collection": {
                 "always_attempt": True,
@@ -1606,6 +1640,78 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
         print(f"reproduce: {_live_reproduction_command(args)}", file=sys.stderr)
 
     return 0 if status == "dry-run" else 1
+
+
+def _live_provider_dry_run_lab_session(args: argparse.Namespace, provider_adapter):
+    """Plan provider-backed oracle topology through the standalone lab adapter."""
+
+    from tools.lab.engine.model import LabRequest, LabRole
+    from tools.lab.engine.providers.registry import resolve_lab_provider
+
+    lab_adapter = resolve_lab_provider(args.provider)
+    planned_endpoints = provider_adapter.endpoints(dry_run=True)
+    private_ips = {
+        role: address
+        for role, address in dict(provider_adapter.endpoint_private_ips).items()
+        if isinstance(role, str) and isinstance(address, str) and address
+    }
+    roles: list[LabRole] = []
+    for role in provider_adapter.endpoint_roles:
+        peer_roles = [
+            peer_role
+            for peer_role in provider_adapter.endpoint_roles
+            if peer_role != role
+        ]
+        private_ip = private_ips.get(role)
+        planned_endpoint = planned_endpoints.get(role)
+        planned_ipv4 = (
+            None
+            if private_ip is not None or planned_endpoint is None
+            else planned_endpoint.address
+        )
+        roles.append(
+            LabRole(
+                name=role,
+                requested_private_ipv4=private_ip,
+                planned_ipv4=planned_ipv4,
+                peer_roles=peer_roles,
+                workload_metadata={
+                    "workload": "oracle-live",
+                    "backend": args.backend,
+                },
+            )
+        )
+
+    metadata: JSONObject = {
+        "workload": "oracle-live",
+        "backend": args.backend,
+        "endpoint_roles": list(provider_adapter.endpoint_roles),
+    }
+    private_group = getattr(provider_adapter, "private_group", None)
+    if isinstance(private_group, str) and private_group:
+        metadata["private_group"] = private_group
+    if private_ips:
+        metadata["role_private_ipv4s"] = dict(private_ips)
+    planned_lan_ips = {
+        role: endpoint.address
+        for role, endpoint in planned_endpoints.items()
+        if role not in private_ips
+    }
+    if planned_lan_ips:
+        metadata["role_lan_ipv4s"] = planned_lan_ips
+
+    request = LabRequest(
+        provider=lab_adapter.name,
+        profile=args.profile,
+        seed=args.seed,
+        roles=roles,
+        dry_run=True,
+        confirm_live_run=False,
+        remote_dir=provider_adapter.remote_dir(),
+        workload_label="oracle-live",
+        metadata=metadata,
+    )
+    return lab_adapter.plan_session(request)
 
 
 def _live_provider_skip_no_token(
