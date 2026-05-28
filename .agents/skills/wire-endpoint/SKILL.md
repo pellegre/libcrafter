@@ -1,14 +1,19 @@
 ---
 name: wire-endpoint
-description: Provision and use disposable remote wire endpoints such as VMs or VPS instances for libcrafter packet work. Use when a task needs real packets off the developer machine, including raw sends, captures, traceroute-style workflows, probes, provider-backed checks, artifact collection, and endpoint teardown.
+description: Provision and use one disposable remote wire endpoint for libcrafter packet work. Use for single-endpoint raw sends, captures, debugging, artifact collection, or endpoint teardown; use lab-session for coordinated multi-endpoint oracle/probe workflows.
 ---
 
 # Wire Endpoint
 
-Use this skill when a task requires a disposable remote endpoint for wire-level
-packet generation, raw sockets, sniffing, packet injection, traceroute-style
-workflows, reference backend checks, legacy libcrafter wire checks, probes, or
-provider-hosted packet work.
+Use this skill when a task requires one disposable remote endpoint for
+wire-level packet generation, raw sockets, sniffing, packet injection,
+traceroute-style workflows, legacy libcrafter wire checks, or manual endpoint
+debugging.
+
+Use `lab-session` instead when the work needs coordinated provider-backed
+oracle/probe execution, multiple endpoints, repository push/bootstrap, shared
+session metadata, artifact collection across endpoints, or provider-neutral
+teardown. Use `lab-provider` for adding or maintaining lab provider adapters.
 
 Wire work that can send, receive, or capture real packets must not run on the
 developer machine. Run local static checks first, then use disposable wire
@@ -23,6 +28,7 @@ endpoints for provider-backed execution.
 2. Run provider dry-runs before creating endpoints:
    - `tools/wire/run doctor --provider hetzner --exposure wan --dry-run`
    - `tools/wire/run doctor --provider hetzner --exposure private --dry-run`
+   - use `lab-session` dry-runs for multi-endpoint oracle/probe workflows
    - `tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10`
    - `tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10`
 3. Create only disposable wire endpoints, and only with an explicit protected
@@ -61,9 +67,9 @@ Wire providers should expose the same high-level workflow:
 - `collect-artifacts`: collect pcaps, logs, summaries, and result files.
 - `destroy-endpoint`: tear down disposable endpoint resources.
 
-Hetzner is the current provider-backed endpoint implementation, but the
-workflow must stay provider-agnostic so additional providers can be added
-without changing test semantics.
+Wire endpoints are the lower-level single-endpoint primitive. Multi-endpoint
+provider-backed validation should use lab-session so provider-specific endpoint
+mechanics do not leak into oracle or probe.
 
 ## Wire Endpoint Rules
 

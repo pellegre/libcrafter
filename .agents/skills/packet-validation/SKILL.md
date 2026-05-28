@@ -31,10 +31,16 @@ Use this skill when a change affects packet behavior, including:
    `tools/oracle/run offline --profile <profile> --seed <seed> --count <count>`.
 5. Run pcap validation when framing, capture/file IO, link type, or persisted
    packet representation is affected.
-6. Use live validation only through `tools/oracle/run live` and oracle
-   providers. Start with local dry-run providers and preserve artifacts from any
-   provider-backed run. Real Hetzner execution requires protected manual
-   workflow dispatch.
+6. Use live validation only through `tools/oracle/run live`, `tools/probe/run`,
+   and lab-backed providers. Start with local dry-run providers and then lab
+   dry-runs for every provider involved:
+   - `tools/lab/run create --provider <provider> --dry-run --profile smoke --seed 1 --role stimulus --role target`
+   - `tools/oracle/run live --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
+   - `tools/probe/run --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
+   Use `lab-session` for multi-endpoint provider-backed execution and
+   `lab-provider` when provider capability contracts or adapters change.
+   Preserve artifacts from any provider-backed run. Real provider execution
+   requires protected manual confirmation.
 7. Record any unsupported behavior, intentional mismatch, or required follow-up
    in the oracle artifacts or nearby docs.
 
