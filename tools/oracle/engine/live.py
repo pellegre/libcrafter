@@ -10,7 +10,9 @@ import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from .model import DecodedModel, JSONObject, JsonModel, PacketPlan
+from tools.lab.engine.model import LabEndpoint, LabSession
+
+from .model import DecodedModel, JSONObject, JsonModel, PacketPlan, coerce_json_value
 
 
 LOCAL_DRY_RUN_PROVIDER = "local-dry-run"
@@ -192,6 +194,243 @@ def local_dry_run_endpoints() -> dict[str, LiveEndpoint]:
             },
         ),
     }
+
+
+def live_endpoint_from_lab_endpoint(
+    endpoint: LabEndpoint | Mapping[str, object],
+    *,
+    session: LabSession | Mapping[str, object] | None = None,
+) -> LiveEndpoint:
+    """Convert a provider-neutral lab endpoint into oracle's live endpoint shape."""
+
+    lab_endpoint = _coerce_lab_endpoint(endpoint)
+    lab_session = _coerce_optional_lab_session(session)
+    return LiveEndpoint(
+        endpoint_id=lab_endpoint.endpoint_id,
+        role=lab_endpoint.role,
+        interface=lab_endpoint.interface,
+        address=lab_endpoint.ipv4,
+        ipv6_address=lab_endpoint.ipv6,
+        metadata=_lab_endpoint_live_metadata(lab_endpoint, session=lab_session),
+    )
+
+
+def live_endpoints_from_lab_session(
+    session: LabSession | Mapping[str, object],
+) -> dict[str, LiveEndpoint]:
+    """Return oracle live endpoints keyed by the role names from a lab session."""
+
+    lab_session = _coerce_lab_session(session)
+    endpoints: dict[str, LiveEndpoint] = {}
+    for endpoint in lab_session.endpoints:
+        if endpoint.role in endpoints:
+            raise ValueError(f"duplicate lab endpoint role: {endpoint.role}")
+        endpoints[endpoint.role] = live_endpoint_from_lab_endpoint(
+            endpoint,
+            session=lab_session,
+        )
+    return endpoints
+
+
+def lab_session_oracle_report_metadata(
+    session: LabSession | Mapping[str, object],
+) -> JSONObject:
+    """Expose lab session data using the existing oracle live report keys."""
+
+    lab_session = _coerce_lab_session(session)
+    endpoints = live_endpoints_from_lab_session(lab_session)
+    infrastructure = dict(lab_session.infrastructure_metadata)
+    provider_workflow = [command.to_dict() for command in lab_session.provider_workflow]
+    command_records = [command.to_dict() for command in lab_session.command_records]
+    endpoint_dicts = {
+        role: endpoint.to_dict()
+        for role, endpoint in endpoints.items()
+    }
+    metadata: JSONObject = {
+        "provider": lab_session.provider,
+        "wire_provider": lab_session.wire_provider,
+        "wire_exposure": lab_session.wire_exposure,
+        "dry_run": lab_session.dry_run,
+        "creates_infrastructure": _metadata_bool(
+            infrastructure,
+            "creates_infrastructure",
+            default=bool(lab_session.created_endpoint_ids),
+        ),
+        "would_create_infrastructure": _metadata_bool(
+            infrastructure,
+            "would_create_infrastructure",
+            default=lab_session.dry_run,
+        ),
+        "endpoint_count": len(endpoints),
+        "planned_infrastructure": infrastructure,
+        "wire_endpoint_plan": _lab_session_wire_endpoint_plan(
+            lab_session,
+            endpoints=endpoints,
+        ),
+        "wire_endpoint_lifecycle": {
+            "remote_dir": lab_session.remote_dir,
+            "remote_artifact_root": lab_session.remote_artifact_root,
+            "created_endpoint_ids": list(lab_session.created_endpoint_ids),
+            "cleanup_state": dict(lab_session.cleanup_state),
+        },
+        "provider_workflow": provider_workflow,
+        "provider_commands": command_records,
+        "command_records": command_records,
+        "endpoints": endpoint_dicts,
+        "lab_session": lab_session.to_dict(),
+    }
+    metadata.update(_selected_lab_session_metadata(lab_session.metadata))
+    return metadata
+
+
+def _coerce_lab_endpoint(value: LabEndpoint | Mapping[str, object]) -> LabEndpoint:
+    if isinstance(value, LabEndpoint):
+        return value
+    if isinstance(value, Mapping):
+        return LabEndpoint.from_dict(value)
+    raise ValueError("lab endpoint must be a LabEndpoint or object")
+
+
+def _coerce_lab_session(value: LabSession | Mapping[str, object]) -> LabSession:
+    if isinstance(value, LabSession):
+        return value
+    if isinstance(value, Mapping):
+        return LabSession.from_dict(value)
+    raise ValueError("lab session must be a LabSession or object")
+
+
+def _coerce_optional_lab_session(
+    value: LabSession | Mapping[str, object] | None,
+) -> LabSession | None:
+    if value is None:
+        return None
+    return _coerce_lab_session(value)
+
+
+def _lab_endpoint_live_metadata(
+    endpoint: LabEndpoint,
+    *,
+    session: LabSession | None,
+) -> JSONObject:
+    metadata: JSONObject = dict(endpoint.metadata)
+    if session is not None:
+        metadata.setdefault("provider", session.provider)
+        metadata.setdefault("wire_provider", session.wire_provider)
+        metadata.setdefault("wire_exposure", session.wire_exposure)
+        metadata.setdefault("exposure", session.wire_exposure)
+        metadata.setdefault("dry_run", session.dry_run)
+        metadata["lab_session_id"] = session.session_id
+        metadata["lab_session_provider"] = session.provider
+        for key, value in _selected_lab_session_metadata(session.metadata).items():
+            metadata.setdefault(key, value)
+
+    if endpoint.mac is not None:
+        metadata["mac_address"] = endpoint.mac
+    if endpoint.peer_addresses:
+        metadata["peer_addresses"] = dict(endpoint.peer_addresses)
+        _add_single_peer_metadata(metadata, endpoint.peer_addresses)
+    if endpoint.wire_manifest:
+        metadata.setdefault("wire_endpoint_plan", dict(endpoint.wire_manifest))
+        manifest_path = endpoint.wire_manifest.get("manifest_path")
+        artifact_dir = endpoint.wire_manifest.get("artifact_dir")
+        if manifest_path is not None:
+            metadata.setdefault("manifest_path", manifest_path)
+        if artifact_dir is not None:
+            metadata.setdefault("artifact_dir", artifact_dir)
+
+    metadata["lab_endpoint"] = endpoint.to_dict()
+    return metadata
+
+
+def _add_single_peer_metadata(
+    metadata: JSONObject,
+    peer_addresses: Mapping[str, object],
+) -> None:
+    if len(peer_addresses) != 1:
+        return
+    peer_role, addresses = next(iter(peer_addresses.items()))
+    if not isinstance(peer_role, str):
+        return
+    metadata.setdefault("peer_role", peer_role)
+    if isinstance(addresses, Mapping):
+        peer_ipv4 = addresses.get("ipv4")
+        if isinstance(peer_ipv4, str) and peer_ipv4:
+            metadata.setdefault("peer_address", peer_ipv4)
+
+
+def _selected_lab_session_metadata(metadata: Mapping[str, object]) -> JSONObject:
+    selected: JSONObject = {}
+    for key in (
+        "private_group",
+        "private_network",
+        "bridged_lan",
+        "wire_policy",
+        "credential_label",
+        "credentials_available",
+        "missing_credential_reason",
+    ):
+        if key in metadata:
+            selected[key] = coerce_json_value(metadata[key])
+    return selected
+
+
+def _lab_session_wire_endpoint_plan(
+    session: LabSession,
+    *,
+    endpoints: Mapping[str, LiveEndpoint],
+) -> JSONObject:
+    raw_plan = session.metadata.get("wire_endpoint_plan")
+    plan: JSONObject = (
+        {
+            key: coerce_json_value(value)
+            for key, value in raw_plan.items()
+            if isinstance(key, str)
+        }
+        if isinstance(raw_plan, Mapping)
+        else {}
+    )
+    plan.pop("live_endpoints", None)
+    plan.setdefault("provider", session.provider)
+    plan.setdefault("wire_provider", session.wire_provider)
+    plan.setdefault("exposure", session.wire_exposure)
+    plan.setdefault("wire_exposure", session.wire_exposure)
+    plan.setdefault("dry_run", session.dry_run)
+    plan.setdefault("endpoint_count", len(endpoints))
+    plan.setdefault(
+        "endpoints",
+        {role: endpoint.to_dict() for role, endpoint in endpoints.items()},
+    )
+    plan.setdefault(
+        "endpoint_plans",
+        [
+            dict(endpoint.wire_manifest)
+            for endpoint in session.endpoints
+            if endpoint.wire_manifest
+        ],
+    )
+    if "command_metadata" not in plan:
+        plan["command_metadata"] = [
+            command.to_dict()
+            for command in session.command_records
+        ]
+    if "created_endpoint_ids" not in plan:
+        plan["created_endpoint_ids"] = list(session.created_endpoint_ids)
+    if "private_group" not in plan and "private_group" in session.metadata:
+        plan["private_group"] = coerce_json_value(session.metadata["private_group"])
+    if "private_network" not in plan and "private_network" in session.metadata:
+        plan["private_network"] = coerce_json_value(session.metadata["private_network"])
+    plan["lab_session_id"] = session.session_id
+    return plan
+
+
+def _metadata_bool(
+    metadata: Mapping[str, object],
+    key: str,
+    *,
+    default: bool,
+) -> bool:
+    value = metadata.get(key)
+    return value if isinstance(value, bool) else default
 
 
 def live_endpoint_addresses(endpoint: LiveEndpoint) -> JSONObject:
