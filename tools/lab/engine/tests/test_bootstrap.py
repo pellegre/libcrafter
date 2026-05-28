@@ -9,6 +9,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from tools.lab.engine.bootstrap import (
+    BootstrapEnvArtifact,
+    context_export_lines,
+    render_workload_bootstrap_script,
+)
 from tools.lab.engine.model import LabCommandPlan, LabEndpoint, LabRole, LabSession
 from tools.lab.engine.process import CommandResult
 from tools.lab.engine.repo import (
@@ -160,6 +165,131 @@ class LabBootstrapApiTest(unittest.TestCase):
                 )
 
 
+class WorkloadBootstrapScriptHelperTest(unittest.TestCase):
+    def test_render_workload_bootstrap_script_uses_unpacked_repo_context(self) -> None:
+        context = _bootstrap_context("stimulus")
+
+        script = render_workload_bootstrap_script(
+            context,
+            artifact_subdir=("probe", "bootstrap"),
+            packages=["ca-certificates", "libpcap-dev"],
+            install_rust=True,
+            cargo_build_commands=[
+                "cargo build -p probe-adapters --bin stimulus_endpoint",
+            ],
+            env_artifacts=[
+                BootstrapEnvArtifact(
+                    values={"repository_synced": "true"},
+                    shell_values={
+                        "role": "$LIBCRAFTER_ENDPOINT_ROLE",
+                        "private_ipv4": "$LIBCRAFTER_PRIVATE_IPV4",
+                        "peer_private_ipv4": "$LIBCRAFTER_PEER_PRIVATE_IPV4",
+                        "finished_at": '$(date -u +"%Y-%m-%dT%H:%M:%SZ")',
+                    },
+                ),
+            ],
+        )
+        lines = script.splitlines()
+
+        self.assertEqual(lines[0], "set -euo pipefail")
+        self.assertIn("cloud-init status --wait", lines[1])
+        self.assertIn("cd /opt/libcrafter-lab/session", lines)
+        self.assertLess(
+            lines.index("cd /opt/libcrafter-lab/session"),
+            lines.index("apt-get update"),
+        )
+        self.assertIn("export LIBCRAFTER_ENDPOINT_ROLE=stimulus", lines)
+        self.assertIn("export LIBCRAFTER_PRIVATE_IPV4=10.77.0.10", lines)
+        self.assertIn("export LIBCRAFTER_PEER_PRIVATE_IPV4=10.77.0.20", lines)
+        self.assertIn("export LIBCRAFTER_PRIVATE_INTERFACE=eth1", lines)
+        self.assertIn("export DEBIAN_FRONTEND=noninteractive", lines)
+        self.assertIn(
+            "export LIBCRAFTER_BOOTSTRAP_ARTIFACT_DIR="
+            "/opt/libcrafter-lab/session/artifacts/probe/bootstrap/stimulus",
+            lines,
+        )
+        self.assertIn('mkdir -p "$LIBCRAFTER_BOOTSTRAP_ARTIFACT_DIR"', lines)
+        self.assertIn(
+            "apt-get install -y --no-install-recommends "
+            "ca-certificates libpcap-dev",
+            lines,
+        )
+        self.assertIn(
+            "if ! command -v cargo >/dev/null 2>&1; then "
+            "curl -fsS https://sh.rustup.rs | sh -s -- -y --profile minimal; fi",
+            lines,
+        )
+        self.assertIn(
+            'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
+            lines,
+        )
+        self.assertIn(
+            "cargo build -p probe-adapters --bin stimulus_endpoint",
+            lines,
+        )
+        self.assertIn("  printf '%s\\n' repository_synced=true", lines)
+        self.assertIn(
+            '  printf \'%s\\n\' "role=$LIBCRAFTER_ENDPOINT_ROLE"',
+            lines,
+        )
+        self.assertIn(
+            "} > /opt/libcrafter-lab/session/artifacts/probe/bootstrap/"
+            "stimulus/bootstrap.env",
+            lines,
+        )
+
+        forbidden_fragments = [
+            "rm -rf",
+            "tar -xzf",
+            "hcloud",
+            "VBoxManage",
+            "qemu-system",
+            "tools/wire/run send",
+            "tcpdump",
+        ]
+        for fragment in forbidden_fragments:
+            self.assertNotIn(fragment, script)
+
+    def test_context_exports_can_allow_missing_peer_for_supported_roles(self) -> None:
+        session = LabSession(
+            provider="qemu",
+            wire_provider="qemu",
+            wire_exposure="private",
+            session_id="lab-smoke-solo",
+            roles=[LabRole(name="observer")],
+            endpoints=[
+                LabEndpoint(
+                    endpoint_id="endpoint-observer",
+                    role="observer",
+                    interface="eth1",
+                    ipv4="10.77.0.30",
+                    wire_manifest={"endpoint_id": "endpoint-observer"},
+                ),
+            ],
+            remote_dir="/opt/libcrafter-lab/session",
+            remote_artifact_root="/opt/libcrafter-lab/session/artifacts",
+            created_endpoint_ids=["endpoint-observer"],
+            dry_run=False,
+        )
+        context = RepoBootstrapContext(
+            session=session,
+            endpoint=session.endpoints[0],
+            role=session.roles[0],
+            remote_archive="/opt/libcrafter-lab/repo.tar.gz",
+            remote_dir="/opt/libcrafter-lab/session",
+            remote_artifact_root="/opt/libcrafter-lab/session/artifacts",
+            endpoints_by_role={"observer": session.endpoints[0]},
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires a peer endpoint"):
+            context_export_lines(context)
+
+        self.assertIn(
+            "export LIBCRAFTER_PEER_PRIVATE_IPV4=''",
+            context_export_lines(context, require_peer=False),
+        )
+
+
 class _FakeWireClient:
     def __init__(self, *, fail_bootstrap_endpoint: str | None = None) -> None:
         self.fail_bootstrap_endpoint = fail_bootstrap_endpoint
@@ -306,6 +436,21 @@ def _session(*, dry_run: bool = False) -> LabSession:
         remote_artifact_root="/opt/libcrafter-lab/session/artifacts",
         created_endpoint_ids=["endpoint-stimulus", "endpoint-target"],
         dry_run=dry_run,
+    )
+
+
+def _bootstrap_context(role: str) -> RepoBootstrapContext:
+    session = _session()
+    endpoints_by_role = {endpoint.role: endpoint for endpoint in session.endpoints}
+    roles_by_name = {item.name: item for item in session.roles}
+    return RepoBootstrapContext(
+        session=session,
+        endpoint=endpoints_by_role[role],
+        role=roles_by_name[role],
+        remote_archive="/opt/libcrafter-lab/repo.tar.gz",
+        remote_dir="/opt/libcrafter-lab/session",
+        remote_artifact_root="/opt/libcrafter-lab/session/artifacts",
+        endpoints_by_role=endpoints_by_role,
     )
 
 
