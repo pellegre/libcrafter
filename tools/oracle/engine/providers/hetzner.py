@@ -19,6 +19,7 @@ from tools.lab.engine.model import (
 )
 from tools.lab.engine.providers.common import validate_remote_dir
 from tools.lab.engine.providers.hetzner import HETZNER_LAB_PROVIDER_ADAPTER
+from tools.lab.engine import wire_client
 from tools.wire.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
@@ -35,7 +36,6 @@ from ..live import (
     live_endpoint_from_lab_endpoint,
 )
 from ..model import JSONObject, PacketPlan
-from .. import wire_client
 
 
 PROVIDER_NAME = "hetzner"

@@ -13,6 +13,14 @@ from tools.wire.engine.model import write_json as write_wire_json
 
 
 class WireClientCreateTest(unittest.TestCase):
+    def test_default_wire_path_points_to_run_entrypoint(self) -> None:
+        wire_path = WireClient().wire_path
+
+        self.assertEqual(Path(wire_path).name, "run")
+        self.assertEqual(Path(wire_path).parent.name, "wire")
+        self.assertTrue(Path(wire_path).is_absolute())
+        self.assertTrue(Path(wire_path).is_file())
+
     def test_create_builds_wire_argv_and_parses_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

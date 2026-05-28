@@ -19,6 +19,7 @@ from tools.lab.engine.model import (
 )
 from tools.lab.engine.providers.common import validate_remote_dir
 from tools.lab.engine.providers.qemu import QEMU_LAB_PROVIDER_ADAPTER
+from tools.lab.engine import wire_client
 from tools.wire.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
@@ -28,7 +29,6 @@ from tools.wire.engine.model import (
 
 from .base import LiveProviderAdapter
 from .policy import wire_comparison_policy
-from .. import wire_client
 from ..live import (
     LiveCommandPlan,
     LiveEndpoint,

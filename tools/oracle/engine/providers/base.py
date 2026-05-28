@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Protocol
 
-from .. import wire_client
+from tools.lab.engine import wire_client
+
 from ..live import LiveCommandPlan, LiveEndpoint, LiveExchangePlan, LiveValidationCheck
 from ..model import JSONObject, PacketPlan
 
