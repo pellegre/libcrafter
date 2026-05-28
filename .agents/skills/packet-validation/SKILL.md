@@ -34,7 +34,7 @@ Use this skill when a change affects packet behavior, including:
 6. Use live validation only through `tools/oracle/run live`, `tools/probe/run`,
    and lab-backed providers. Start with local dry-run providers and then lab
    dry-runs for every provider involved:
-   - `tools/lab/run create --provider <provider> --dry-run --profile smoke --seed 1 --role stimulus --role target`
+   - `tools/lab/run plan --provider <provider> --dry-run --profile smoke --seed 1 --role stimulus --role target`
    - `tools/oracle/run live --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
    - `tools/probe/run --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
    Use `lab-session` for multi-endpoint provider-backed execution and
