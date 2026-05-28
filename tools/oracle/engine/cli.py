@@ -1820,6 +1820,11 @@ def _live_provider_bootstrap_commands(
         )
         if isinstance(role, str) and role in endpoints
     ]
+    hook_factory = getattr(provider_adapter, "endpoint_bootstrap_command_hook", None)
+    if callable(hook_factory):
+        hook = hook_factory()
+        return {role: hook for role in endpoint_roles}
+
     commands: dict[str, object] = {}
     for role in endpoint_roles:
         peer_role = next((peer for peer in endpoint_roles if peer != role), None)
