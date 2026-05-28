@@ -13,6 +13,24 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+_REPO_ROOT_FOR_IMPORTS = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT_FOR_IMPORTS) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT_FOR_IMPORTS))
+
+from tools.lab.engine.model import LabRequest, LabRole, LabSession
+
+from .lab import (
+    LOCAL_DRY_RUN_PROVIDER,
+    PROBE_LAB_ROLES,
+    STIMULUS_ROLE,
+    TARGET_ROLE,
+    is_probe_lab_provider,
+    probe_address_context_from_lab_session,
+    probe_capabilities_for_provider,
+    probe_capabilities_from_lab_capabilities,
+    probe_provider_names,
+    resolve_probe_lab_provider,
+)
 from .model import (
     EndpointRole,
     JSONObject,
@@ -114,26 +132,6 @@ _ENDPOINT_ROLES: tuple[EndpointRole, ...] = (
         capabilities=["controlled_router"],
     ),
 )
-_PROVIDER_CAPABILITIES: dict[str, JSONObject] = {
-    "local-dry-run": {
-        "provider": "local-dry-run",
-        "live_packet_exchange": False,
-        "icmp_echo": True,
-        "tcp_open_port": True,
-        "tcp_closed_port": True,
-        "dns_service": True,
-        "controlled_router": False,
-    },
-    "hetzner": {
-        "provider": "hetzner",
-        "live_packet_exchange": True,
-        "icmp_echo": True,
-        "tcp_open_port": True,
-        "tcp_closed_port": True,
-        "dns_service": True,
-        "controlled_router": False,
-    },
-}
 
 
 def _positive_int(value: str) -> int:
@@ -150,7 +148,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--provider",
-        choices=sorted(_PROVIDER_CAPABILITIES),
+        choices=probe_provider_names(),
         required=True,
         help="probe provider to use",
     )
@@ -647,29 +645,24 @@ def _dry_run_report(
     report_path: Path,
 ) -> ProbeReport:
     provider_context: JSONObject = {}
-    if request.provider == "hetzner":
-        wire_endpoint_plan = _hetzner_probe_wire_endpoint_plan(
-            request=request,
-            dry_run=True,
-            output_dir=report_path.parent,
-        )
-        endpoints = json_object(wire_endpoint_plan.get("endpoints", {}), "wire.endpoints")
-        probe_plans = _probe_plans_with_wire_endpoint_addresses(
+    provider_capabilities = _probe_capabilities_for_request(request, dry_run=True)
+    if is_probe_lab_provider(request.provider):
+        lab_session = _probe_lab_dry_run_session(request)
+        address_context = probe_address_context_from_lab_session(lab_session)
+        probe_plans = _probe_plans_with_lab_endpoint_addresses(
             probe_plans,
-            endpoints=endpoints,
+            address_context=address_context,
         )
-        provider_context = {
-            "provider_workflow": _hetzner_probe_provider_workflow(
-                request=request,
-                dry_run=True,
-            ),
-            "wire_endpoint_plan": wire_endpoint_plan,
-            "provider_commands": _json_list(
-                wire_endpoint_plan.get("provider_commands", []),
-                "wire.provider_commands",
-            ),
-            "endpoints": endpoints,
-        }
+        provider_capabilities = probe_capabilities_from_lab_capabilities(
+            request.provider,
+            lab_session.provider_capabilities,
+            dry_run=True,
+        )
+        provider_context = _lab_session_probe_report_metadata(
+            lab_session,
+            address_context=address_context,
+            provider_capabilities=provider_capabilities,
+        )
 
     return _build_report(
         request=request,
@@ -680,6 +673,7 @@ def _dry_run_report(
         status=STATUS_DRY_RUN,
         dry_run=True,
         provider_context=provider_context,
+        provider_capabilities=provider_capabilities,
     )
 
 
@@ -693,7 +687,7 @@ def _guarded_live_report(
     status: str,
 ) -> ProbeReport:
     if request.provider == "hetzner" and request.confirm_live_run:
-        provider_capabilities = _PROVIDER_CAPABILITIES[request.provider]
+        provider_capabilities = _probe_capabilities_for_request(request, dry_run=False)
         skipped_sequences = {
             sequence
             for sequence, case in enumerate(planned_cases)
@@ -739,8 +733,12 @@ def _build_report(
     status: str,
     dry_run: bool,
     provider_context: JSONObject | None = None,
+    provider_capabilities: Mapping[str, JSONValue] | None = None,
 ) -> ProbeReport:
-    provider_capabilities = _PROVIDER_CAPABILITIES[request.provider]
+    provider_capabilities = provider_capabilities or _probe_capabilities_for_request(
+        request,
+        dry_run=dry_run,
+    )
     probe_plans_by_sequence = {
         int(plan["sequence"]): plan
         for plan in probe_plans
@@ -860,7 +858,7 @@ def _build_report(
         "selected_specs": list(PROBE_SELECTED_SPECS),
         "dry_run": dry_run,
         "creates_infrastructure": False,
-        "requires_provider_lifecycle": request.provider == "hetzner",
+        "requires_provider_lifecycle": is_probe_lab_provider(request.provider),
         "mutates_lab": False if dry_run else None,
         "target_service_setup": _target_service_setup_plan(
             probe_plans=probe_plans,
@@ -941,6 +939,184 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
 
 def _stimulus_endpoint_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     return [plan for plan in probe_plans if plan.get("case") in _STIMULUS_ENDPOINT_CASES]
+
+
+def _probe_capabilities_for_request(
+    request: ProbeRunRequest,
+    *,
+    dry_run: bool,
+) -> JSONObject:
+    return probe_capabilities_for_provider(request.provider, dry_run=dry_run)
+
+
+def _probe_lab_dry_run_session(request: ProbeRunRequest) -> LabSession:
+    adapter = resolve_probe_lab_provider(request.provider)
+    return adapter.plan_session(_probe_lab_request(request))
+
+
+def _probe_lab_request(request: ProbeRunRequest) -> LabRequest:
+    return LabRequest(
+        provider=request.provider,
+        profile=request.profile,
+        seed=request.seed,
+        roles=[
+            LabRole(
+                name=STIMULUS_ROLE,
+                peer_roles=[TARGET_ROLE],
+                capabilities=["raw_send", "packet_capture"],
+                workload_metadata={"workload": "probe", "role": STIMULUS_ROLE},
+            ),
+            LabRole(
+                name=TARGET_ROLE,
+                peer_roles=[STIMULUS_ROLE],
+                capabilities=["kernel_reply", "controlled_services"],
+                workload_metadata={"workload": "probe", "role": TARGET_ROLE},
+            ),
+        ],
+        dry_run=True,
+        confirm_live_run=False,
+        workload_label="probe",
+        metadata={
+            "workload": "probe",
+            "role_names": list(PROBE_LAB_ROLES),
+            "probe": {
+                "provider": request.provider,
+                "profile": request.profile,
+                "seed": request.seed,
+                "count": request.count,
+                "case_names": list(request.case_names),
+                "dry_run": True,
+            },
+        },
+    )
+
+
+def _lab_session_probe_report_metadata(
+    session: LabSession,
+    *,
+    address_context: JSONObject,
+    provider_capabilities: Mapping[str, JSONValue],
+) -> JSONObject:
+    infrastructure = json_object(
+        session.infrastructure_metadata,
+        "lab_session.infrastructure_metadata",
+    )
+    endpoint_context = json_object(
+        address_context.get("endpoints", {}),
+        "lab_address_context.endpoints",
+    )
+    provider_workflow = [command.to_dict() for command in session.provider_workflow]
+    command_records = [command.to_dict() for command in session.command_records]
+
+    metadata: JSONObject = {
+        "provider": session.provider,
+        "wire_provider": session.wire_provider,
+        "wire_exposure": session.wire_exposure,
+        "dry_run": session.dry_run,
+        "creates_infrastructure": _metadata_bool(
+            infrastructure,
+            "creates_infrastructure",
+            default=bool(session.created_endpoint_ids),
+        ),
+        "would_create_infrastructure": _metadata_bool(
+            infrastructure,
+            "would_create_infrastructure",
+            default=session.dry_run,
+        ),
+        "endpoint_count": len(session.endpoints),
+        "planned_infrastructure": infrastructure,
+        "wire_endpoint_plan": _lab_session_wire_endpoint_plan(
+            session,
+            endpoints=endpoint_context,
+        ),
+        "wire_endpoint_lifecycle": {
+            "remote_dir": session.remote_dir,
+            "remote_artifact_root": session.remote_artifact_root,
+            "created_endpoint_ids": list(session.created_endpoint_ids),
+            "cleanup_state": dict(session.cleanup_state),
+        },
+        "provider_workflow": provider_workflow,
+        "provider_commands": command_records,
+        "command_records": command_records,
+        "endpoints": endpoint_context,
+        "lab_address_context": address_context,
+        "lab_session": session.to_dict(),
+        "provider_capabilities": dict(provider_capabilities),
+    }
+    metadata.update(_selected_lab_session_metadata(session.metadata))
+    return metadata
+
+
+def _lab_session_wire_endpoint_plan(
+    session: LabSession,
+    *,
+    endpoints: Mapping[str, JSONValue],
+) -> JSONObject:
+    raw_plan = session.metadata.get("wire_endpoint_plan")
+    plan: JSONObject = (
+        json_object(raw_plan, "lab_session.wire_endpoint_plan")
+        if isinstance(raw_plan, Mapping)
+        else {}
+    )
+    plan.pop("live_endpoints", None)
+    plan.setdefault("provider", session.provider)
+    plan.setdefault("wire_provider", session.wire_provider)
+    plan.setdefault("exposure", session.wire_exposure)
+    plan.setdefault("wire_exposure", session.wire_exposure)
+    plan.setdefault("dry_run", session.dry_run)
+    plan.setdefault("endpoint_count", len(session.endpoints))
+    plan.setdefault("endpoints", dict(endpoints))
+    plan.setdefault(
+        "endpoint_plans",
+        [
+            dict(endpoint.wire_manifest)
+            for endpoint in session.endpoints
+            if endpoint.wire_manifest
+        ],
+    )
+    plan.setdefault(
+        "command_metadata",
+        [command.to_dict() for command in session.command_records],
+    )
+    plan.setdefault("created_endpoint_ids", list(session.created_endpoint_ids))
+    if "private_group" not in plan and "private_group" in session.metadata:
+        plan["private_group"] = _json_metadata_value(session.metadata["private_group"])
+    if "private_network" not in plan and "private_network" in session.metadata:
+        plan["private_network"] = _json_metadata_value(session.metadata["private_network"])
+    if "bridged_lan" not in plan and "bridged_lan" in session.metadata:
+        plan["bridged_lan"] = _json_metadata_value(session.metadata["bridged_lan"])
+    plan["lab_session_id"] = session.session_id
+    return plan
+
+
+def _selected_lab_session_metadata(metadata: Mapping[str, object]) -> JSONObject:
+    selected: JSONObject = {}
+    for key in (
+        "private_group",
+        "private_network",
+        "bridged_lan",
+        "wire_policy",
+        "credential_label",
+        "credentials_available",
+        "missing_credential_reason",
+    ):
+        if key in metadata:
+            selected[key] = _json_metadata_value(metadata[key])
+    return selected
+
+
+def _json_metadata_value(value: object) -> JSONValue:
+    return json_object({"value": value}, "lab_session.metadata")["value"]
+
+
+def _metadata_bool(
+    metadata: Mapping[str, JSONValue],
+    key: str,
+    *,
+    default: bool,
+) -> bool:
+    value = metadata.get(key)
+    return value if isinstance(value, bool) else default
 
 
 def _hetzner_probe_provider_workflow(
@@ -1289,6 +1465,42 @@ def _probe_plans_with_wire_endpoint_addresses(
     ]
 
 
+def _probe_plans_with_lab_endpoint_addresses(
+    probe_plans: Sequence[JSONObject],
+    *,
+    address_context: Mapping[str, JSONValue],
+) -> list[JSONObject]:
+    stimulus_ipv4 = _string_or(
+        address_context.get("stimulus_ipv4"),
+        _first_plan_address(probe_plans, "source_ipv4", "192.0.2.10"),
+    )
+    target_ipv4 = _string_or(
+        address_context.get("target_ipv4"),
+        _first_plan_address(probe_plans, "destination_ipv4", "192.0.2.20"),
+    )
+    return [
+        _probe_plan_with_endpoint_addresses(
+            plan,
+            source_ipv4=stimulus_ipv4,
+            target_ipv4=target_ipv4,
+            rewrite_source="lab_session",
+        )
+        for plan in probe_plans
+    ]
+
+
+def _first_plan_address(
+    probe_plans: Sequence[JSONObject],
+    key: str,
+    default: str,
+) -> str:
+    for plan in probe_plans:
+        value = plan.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return default
+
+
 def _wire_endpoint_address(
     endpoints: Mapping[str, JSONValue],
     role: str,
@@ -1332,7 +1544,7 @@ def _hetzner_endpoint_live_report(
     endpoints: JSONObject = {}
     created_endpoint_ids: list[str] = []
     endpoint_artifact_paths: list[str] = []
-    provider_capabilities = _PROVIDER_CAPABILITIES[request.provider]
+    provider_capabilities = _probe_capabilities_for_request(request, dry_run=False)
     skipped_results, skips, skip_counts, skipped_sequences = _capability_skip_state(
         request=request,
         planned_cases=planned_cases,
@@ -1741,6 +1953,7 @@ def _probe_plan_with_endpoint_addresses(
     *,
     source_ipv4: str,
     target_ipv4: str,
+    rewrite_source: str = "wire_endpoint_plan",
 ) -> JSONObject:
     if plan.get("case") not in _STIMULUS_ENDPOINT_CASES:
         return dict(plan)
@@ -1812,7 +2025,7 @@ def _probe_plan_with_endpoint_addresses(
     validation["destination_ipv4"] = source_ipv4
     updated["validation"] = validation
     updated["live_address_rewrite"] = {
-        "source": "wire_endpoint_plan",
+        "source": rewrite_source,
         "stimulus_ipv4": source_ipv4,
         "target_ipv4": target_ipv4,
     }
@@ -2803,7 +3016,7 @@ def _dedupe_strings(values: Sequence[str]) -> list[str]:
 
 
 def _probe_interface(provider: str, *, dry_run: bool) -> str:
-    if provider == "local-dry-run":
+    if provider == LOCAL_DRY_RUN_PROVIDER:
         return "dry-run0"
     if dry_run:
         return os.environ.get("HETZNER_PRIVATE_INTERFACE", "eth1")
