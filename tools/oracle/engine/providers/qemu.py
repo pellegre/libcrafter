@@ -29,6 +29,7 @@ from tools.wire.engine.model import (
 
 from .base import LiveProviderAdapter
 from .policy import wire_comparison_policy
+from .. import bootstrap as oracle_bootstrap
 from ..live import (
     LiveCommandPlan,
     LiveEndpoint,
@@ -46,27 +47,6 @@ ORACLE_PRIVATE_GROUP = "oracle-live-private"
 PRIVATE_NETWORK_CIDR = "10.77.0.0/24"
 LIBCRAFTER_PRIVATE_ADDRESS = "10.77.0.10"
 REFERENCE_PRIVATE_ADDRESS = "10.77.0.20"
-LIBCRAFTER_BOOTSTRAP_PACKAGES = [
-    "build-essential",
-    "ca-certificates",
-    "clang",
-    "curl",
-    "git",
-    "iproute2",
-    "iputils-ping",
-    "libpcap-dev",
-    "pkg-config",
-    "python3",
-]
-REFERENCE_BOOTSTRAP_PACKAGES = [
-    "ca-certificates",
-    "curl",
-    "git",
-    "iproute2",
-    "iputils-ping",
-    "python3",
-]
-PYTHON_DEPENDENCY_RUNNER = "uv"
 CAPABILITY_REPORT_ARTIFACT = "live-artifacts/oracle-live/capabilities.json"
 PROVIDER_CAPABILITY_NAMES = (
     "ipv4_unicast",
@@ -250,73 +230,20 @@ def qemu_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
 def qemu_endpoint_bootstrap_plan(*, dry_run: bool) -> list[LiveCommandPlan]:
     """Plan role-specific endpoint bootstrap work for the QEMU lab."""
 
-    provider_capabilities = qemu_default_provider_capabilities(dry_run=dry_run)
-    return [
-        LiveCommandPlan(
-            role="libcrafter",
-            purpose="bootstrap-libcrafter-endpoint",
-            argv=[
-                "bash",
-                "-lc",
-                (
-                    "sync-repository && apt-get install libcrafter packages && "
-                    "rustup install-if-missing && "
-                    "cargo build -p oracle-adapters --bin live_endpoint"
-                ),
-            ],
-            sends_live_packets=False,
-            expects_live_packets=False,
-            metadata={
-                "provider": PROVIDER_NAME,
-                "dry_run": dry_run,
-                "repository_sync": True,
-                "private_network": True,
-                "private_group": ORACLE_PRIVATE_GROUP,
-                "system_packages": LIBCRAFTER_BOOTSTRAP_PACKAGES,
-                "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
-                "uv": "install_if_missing",
-                "rust": "install_if_missing",
-                "validation": "cargo build -p oracle-adapters --bin live_endpoint",
-                "artifact_path": "live-artifacts/bootstrap/libcrafter/bootstrap.env",
-                "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
-                "provider_capabilities": provider_capabilities,
-            },
-        ),
-        LiveCommandPlan(
-            role="reference_backend",
-            purpose="bootstrap-reference-endpoint",
-            argv=[
-                "bash",
-                "-lc",
-                (
-                    "sync-repository && apt-get install reference packages && "
-                    "tools/oracle/run backend-info --backend scapy && "
-                    "report optional tshark availability"
-                ),
-            ],
-            sends_live_packets=False,
-            expects_live_packets=False,
-            metadata={
-                "provider": PROVIDER_NAME,
-                "backend": "scapy",
-                "dry_run": dry_run,
-                "repository_sync": True,
-                "private_network": True,
-                "private_group": ORACLE_PRIVATE_GROUP,
-                "system_packages": REFERENCE_BOOTSTRAP_PACKAGES,
-                "python_dependency_runner": PYTHON_DEPENDENCY_RUNNER,
-                "uv": "install_if_missing",
-                "validation": "tools/oracle/run backend-info --backend scapy",
-                "tshark": {
-                    "availability_reported": True,
-                    "required_for_scapy_live_exchange": False,
-                },
-                "artifact_path": "live-artifacts/bootstrap/reference_backend/bootstrap.env",
-                "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
-                "provider_capabilities": provider_capabilities,
-            },
-        ),
-    ]
+    return oracle_bootstrap.endpoint_bootstrap_plan(
+        PROVIDER_NAME,
+        dry_run,
+        qemu_default_provider_capabilities(dry_run=dry_run),
+        _qemu_endpoint_bootstrap_topology(),
+    )
+
+
+def _qemu_endpoint_bootstrap_topology() -> JSONObject:
+    return {
+        "private_network": True,
+        "private_group": ORACLE_PRIVATE_GROUP,
+        "capability_artifact": CAPABILITY_REPORT_ARTIFACT,
+    }
 
 
 def validate_qemu_endpoint_bootstrap(
@@ -326,80 +253,11 @@ def validate_qemu_endpoint_bootstrap(
 ) -> LiveValidationCheck:
     """Validate that both QEMU endpoint roles are bootstrapped."""
 
-    errors: list[str] = []
-    commands_by_role = {command.role: command for command in commands}
-    for role in ("libcrafter", "reference_backend"):
-        if role not in commands_by_role:
-            errors.append(f"missing endpoint bootstrap role: {role}")
-
-    for command in commands:
-        if command.sends_live_packets or command.expects_live_packets:
-            errors.append("endpoint bootstrap commands cannot exchange live packets")
-        if command.metadata.get("provider") != PROVIDER_NAME:
-            errors.append(f"endpoint bootstrap must target QEMU: {command.role}")
-        if not bool(command.metadata.get("repository_sync")):
-            errors.append(f"endpoint bootstrap must sync repository: {command.role}")
-        if not bool(command.metadata.get("private_network")):
-            errors.append(f"endpoint bootstrap must preserve private topology: {command.role}")
-        if command.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
-            errors.append(f"endpoint bootstrap must use QEMU private group: {command.role}")
-        if not command.metadata.get("artifact_path"):
-            errors.append(f"endpoint bootstrap must write artifacts: {command.role}")
-        if command.metadata.get("capability_artifact") != CAPABILITY_REPORT_ARTIFACT:
-            errors.append(f"endpoint bootstrap must report capabilities: {command.role}")
-
-    libcrafter = commands_by_role.get("libcrafter")
-    if libcrafter is not None:
-        packages = set(libcrafter.metadata.get("system_packages", []))
-        for package in ("libpcap-dev", "pkg-config", "clang"):
-            if package not in packages:
-                errors.append(f"libcrafter bootstrap missing package: {package}")
-        if libcrafter.metadata.get("python_dependency_runner") != PYTHON_DEPENDENCY_RUNNER:
-            errors.append("libcrafter bootstrap must use uv for Python dependencies")
-        if libcrafter.metadata.get("uv") != "install_if_missing":
-            errors.append("libcrafter bootstrap must install uv when missing")
-        if libcrafter.metadata.get("rust") != "install_if_missing":
-            errors.append("libcrafter bootstrap must install Rust when missing")
-        if (
-            libcrafter.metadata.get("validation")
-            != "cargo build -p oracle-adapters --bin live_endpoint"
-        ):
-            errors.append("libcrafter bootstrap must validate live_endpoint build")
-
-    reference = commands_by_role.get("reference_backend")
-    if reference is not None:
-        packages = set(reference.metadata.get("system_packages", []))
-        for package in ("python3", "curl"):
-            if package not in packages:
-                errors.append(f"reference bootstrap missing package: {package}")
-        if reference.metadata.get("python_dependency_runner") != PYTHON_DEPENDENCY_RUNNER:
-            errors.append("reference bootstrap must use uv for Python dependencies")
-        if reference.metadata.get("uv") != "install_if_missing":
-            errors.append("reference bootstrap must install uv when missing")
-        if reference.metadata.get("validation") != (
-            "tools/oracle/run backend-info --backend scapy"
-        ):
-            errors.append("reference bootstrap must validate Scapy backend availability")
-        tshark = reference.metadata.get("tshark")
-        if not isinstance(tshark, dict):
-            errors.append("reference bootstrap must report tshark availability")
-        elif tshark.get("required_for_scapy_live_exchange") is not False:
-            errors.append("tshark must remain optional for Scapy live exchange")
-
-    return LiveValidationCheck(
-        name="qemu-endpoint-bootstrap",
-        passed=not errors,
-        subject="libcrafter,reference_backend",
-        errors=errors,
-        metadata={
-            "provider": PROVIDER_NAME,
-            "dry_run": dry_run,
-            "endpoint_count": 2,
-            "repository_sync": "both_endpoints",
-            "private_network": True,
-            "private_group": ORACLE_PRIVATE_GROUP,
-            "tshark_required": False,
-        },
+    return oracle_bootstrap.validate_endpoint_bootstrap(
+        PROVIDER_NAME,
+        commands,
+        dry_run=dry_run,
+        topology_metadata=_qemu_endpoint_bootstrap_topology(),
     )
 
 
@@ -573,121 +431,22 @@ def qemu_endpoint_bootstrap_command(
 ) -> list[str]:
     """Return the repository bootstrap command for one QEMU endpoint."""
 
-    return [
-        "bash",
-        "-lc",
-        _qemu_endpoint_bootstrap_script(
-            endpoint=endpoint,
-            peer=peer,
-            remote_archive=remote_archive,
-            remote_dir=remote_dir,
-        ),
-    ]
-
-
-def _qemu_endpoint_bootstrap_script(
-    *,
-    endpoint: LiveEndpoint,
-    peer: LiveEndpoint,
-    remote_archive: str,
-    remote_dir: str,
-) -> str:
-    role = shlex.quote(endpoint.role)
-    private_ipv4 = shlex.quote(endpoint.address)
-    peer_private_ipv4 = shlex.quote(peer.address)
-    private_interface = shlex.quote(endpoint.interface)
-    quoted_archive = shlex.quote(remote_archive)
-    quoted_remote_dir = shlex.quote(remote_dir)
-
-    common = "\n".join(
-        [
-            "set -euo pipefail",
-            "if command -v cloud-init >/dev/null 2>&1; then "
-            "cloud-init status --wait >/dev/null 2>&1 || true; fi",
-            f"rm -rf {quoted_remote_dir}",
-            f"mkdir -p {quoted_remote_dir}",
-            f"tar -xzf {quoted_archive} -C {quoted_remote_dir}",
-            f"cd {quoted_remote_dir}",
-            f"export LIBCRAFTER_ENDPOINT_ROLE={role}",
-            f"export LIBCRAFTER_PRIVATE_IPV4={private_ipv4}",
-            f"export LIBCRAFTER_PEER_PRIVATE_IPV4={peer_private_ipv4}",
-            f"export LIBCRAFTER_PRIVATE_INTERFACE={private_interface}",
-            "export DEBIAN_FRONTEND=noninteractive",
-            "mkdir -p \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE\"",
-            "apt-get update",
-        ]
+    return oracle_bootstrap.endpoint_bootstrap_command(
+        provider=PROVIDER_NAME,
+        endpoint=endpoint,
+        peer=peer,
+        remote_archive=remote_archive,
+        remote_dir=remote_dir,
+        topology_metadata=_qemu_endpoint_bootstrap_topology(),
     )
-    install_uv = "\n".join(
-        [
-            "install_uv() {",
-            "  if ! command -v uv >/dev/null 2>&1; then",
-            "    curl -LsSf https://astral.sh/uv/install.sh | sh",
-            "    export PATH=\"$HOME/.local/bin:$PATH\"",
-            "    ln -sf \"$(command -v uv)\" /usr/local/bin/uv || true",
-            "  fi",
-            "  export PATH=\"$HOME/.local/bin:$PATH\"",
-            "  command -v uv >/dev/null 2>&1",
-            "}",
-            "install_uv",
-        ]
-    )
-    if endpoint.role == "libcrafter":
-        return "\n".join(
-            [
-                common,
-                (
-                    "apt-get install -y --no-install-recommends "
-                    "build-essential ca-certificates clang curl git iproute2 "
-                    "iputils-ping libpcap-dev pkg-config python3"
-                ),
-                install_uv,
-                "if ! command -v cargo >/dev/null 2>&1; then "
-                "curl -fsS https://sh.rustup.rs | sh -s -- -y --profile minimal; fi",
-                "if [ -f \"$HOME/.cargo/env\" ]; then . \"$HOME/.cargo/env\"; fi",
-                "cargo build -p oracle-adapters --bin live_endpoint",
-                "{",
-                "  echo \"role=$LIBCRAFTER_ENDPOINT_ROLE\"",
-                "  echo \"private_ipv4=$LIBCRAFTER_PRIVATE_IPV4\"",
-                "  echo \"peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4\"",
-                "  echo \"private_interface=$LIBCRAFTER_PRIVATE_INTERFACE\"",
-                "  echo \"repository_synced=true\"",
-                "  echo \"python_dependency_runner=uv\"",
-                "  echo \"uv=$(command -v uv)\"",
-                "  echo \"rustc=$(rustc --version)\"",
-                "  echo \"cargo=$(cargo --version)\"",
-                "  echo \"libcrafter_oracle_bin=live_endpoint\"",
-                "  echo \"libcrafter_oracle_bin_build=ok\"",
-                "  echo \"finished_at=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\"",
-                "} > \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/bootstrap.env\"",
-            ]
-        )
 
-    return "\n".join(
-        [
-            common,
-            (
-                "apt-get install -y --no-install-recommends "
-                "ca-certificates curl git iproute2 iputils-ping python3"
-            ),
-            install_uv,
-            "tools/oracle/run backend-info --backend scapy "
-            "> \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/reference-backend.json\"",
-            "if command -v tshark >/dev/null 2>&1; then "
-            "tshark_available=true; else tshark_available=false; fi",
-            "{",
-            "  echo \"role=$LIBCRAFTER_ENDPOINT_ROLE\"",
-            "  echo \"private_ipv4=$LIBCRAFTER_PRIVATE_IPV4\"",
-            "  echo \"peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4\"",
-            "  echo \"private_interface=$LIBCRAFTER_PRIVATE_INTERFACE\"",
-            "  echo \"repository_synced=true\"",
-            "  echo \"python_dependency_runner=uv\"",
-            "  echo \"uv=$(command -v uv)\"",
-            "  echo \"reference_backend_info=ok\"",
-            "  echo \"tshark_available=$tshark_available\"",
-            "  echo \"tshark_required=false\"",
-            "  echo \"finished_at=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\"",
-            "} > \"live-artifacts/bootstrap/$LIBCRAFTER_ENDPOINT_ROLE/bootstrap.env\"",
-        ]
+
+def qemu_endpoint_bootstrap_command_hook():
+    """Return the lab repository bootstrap hook for QEMU oracle roles."""
+
+    return oracle_bootstrap.endpoint_bootstrap_command_hook(
+        PROVIDER_NAME,
+        _qemu_endpoint_bootstrap_topology(),
     )
 
 
@@ -1417,6 +1176,11 @@ class QemuLiveProviderAdapter:
             remote_archive=remote_archive,
             remote_dir=remote_dir,
         )
+
+    def endpoint_bootstrap_command_hook(self):
+        """Return the lab repository bootstrap hook for QEMU endpoints."""
+
+        return qemu_endpoint_bootstrap_command_hook()
 
     def endpoint_remote_command(
         self,
