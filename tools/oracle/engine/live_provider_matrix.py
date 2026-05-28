@@ -59,6 +59,70 @@ def validate_live_report(
     metadata = _object(report.get("metadata"), "report.metadata")
     errors: list[str] = []
     expected_status = "dry-run" if dry_run else "passed"
+    expected_roles = list(adapter.endpoint_roles)
+    planned_infrastructure = _object_or_error(
+        metadata.get("planned_infrastructure"),
+        "metadata.planned_infrastructure",
+        errors,
+    )
+    wire_endpoint_plan = _object_or_error(
+        metadata.get("wire_endpoint_plan"),
+        "metadata.wire_endpoint_plan",
+        errors,
+    )
+    wire_lifecycle = _object_or_error(
+        metadata.get("wire_endpoint_lifecycle"),
+        "metadata.wire_endpoint_lifecycle",
+        errors,
+    )
+    artifact_collection = _object_or_error(
+        metadata.get("artifact_collection"),
+        "metadata.artifact_collection",
+        errors,
+    )
+    teardown = _object_or_error(metadata.get("teardown"), "metadata.teardown", errors)
+    lab_session = _object_or_error(
+        metadata.get("lab_session"),
+        "metadata.lab_session",
+        errors,
+    )
+    lab_cleanup_state = _object_or_error(
+        lab_session.get("cleanup_state"),
+        "metadata.lab_session.cleanup_state",
+        errors,
+    )
+    lifecycle_cleanup_state = _object_or_error(
+        wire_lifecycle.get("cleanup_state"),
+        "metadata.wire_endpoint_lifecycle.cleanup_state",
+        errors,
+    )
+    provider_workflow = _json_list(metadata.get("provider_workflow", []))
+    lab_provider_workflow = _json_list(metadata.get("lab_provider_workflow", []))
+    provider_commands = _json_list(metadata.get("provider_commands", []))
+    command_records = _json_list(metadata.get("command_records", []))
+    lab_session_workflow = _json_list(lab_session.get("provider_workflow", []))
+    lab_session_commands = _json_list(lab_session.get("command_records", []))
+    lab_validation_checks = _json_list(lab_session.get("validation_checks", []))
+    failed_lab_validations = [
+        _optional_string(check.get("name")) or "validation"
+        for check in lab_validation_checks
+        if check.get("passed") is not True
+    ]
+    lab_role_names = _role_names_from_roles(lab_session.get("roles", []))
+    lab_endpoint_roles = _role_names_from_endpoints(lab_session.get("endpoints", []))
+    plan_endpoint_roles = _role_names_from_plan(wire_endpoint_plan)
+    lifecycle_endpoint_ids = _string_values(wire_lifecycle.get("created_endpoint_ids", []))
+    lab_endpoint_ids = _string_values(lab_session.get("created_endpoint_ids", []))
+    plan_endpoint_ids = _string_values(wire_endpoint_plan.get("created_endpoint_ids", []))
+    lab_session_id = _optional_string(lab_session.get("session_id"))
+    plan_session_id = _optional_string(wire_endpoint_plan.get("lab_session_id"))
+    lab_remote_artifact_root = _optional_string(lab_session.get("remote_artifact_root"))
+    lifecycle_remote_artifact_root = _optional_string(
+        wire_lifecycle.get("remote_artifact_root")
+    )
+    lifecycle_lab_remote_artifact_root = _optional_string(
+        wire_lifecycle.get("lab_remote_artifact_root")
+    )
 
     _expect(report.get("mode") == "live", "mode must be 'live'", errors)
     _expect(
@@ -133,13 +197,187 @@ def validate_live_report(
         errors,
     )
     _expect(
-        isinstance(metadata.get("artifact_collection"), dict),
-        "metadata.artifact_collection must be present",
+        planned_infrastructure.get("provider") == provider,
+        "metadata.planned_infrastructure.provider mismatch",
         errors,
     )
     _expect(
-        isinstance(metadata.get("teardown"), dict),
-        "metadata.teardown must be present",
+        planned_infrastructure.get("wire_provider") == adapter.wire_provider,
+        "metadata.planned_infrastructure.wire_provider mismatch",
+        errors,
+    )
+    _expect(
+        planned_infrastructure.get("wire_exposure") == adapter.wire_exposure,
+        "metadata.planned_infrastructure.wire_exposure mismatch",
+        errors,
+    )
+    _expect(
+        planned_infrastructure.get("dry_run") is dry_run,
+        "metadata.planned_infrastructure.dry_run mismatch",
+        errors,
+    )
+    _expect(
+        wire_endpoint_plan.get("provider") == provider,
+        "metadata.wire_endpoint_plan.provider mismatch",
+        errors,
+    )
+    _expect(
+        wire_endpoint_plan.get("wire_provider") == adapter.wire_provider,
+        "metadata.wire_endpoint_plan.wire_provider mismatch",
+        errors,
+    )
+    _expect(
+        wire_endpoint_plan.get("wire_exposure", wire_endpoint_plan.get("exposure"))
+        == adapter.wire_exposure,
+        "metadata.wire_endpoint_plan.wire_exposure mismatch",
+        errors,
+    )
+    _expect(
+        wire_endpoint_plan.get("dry_run") is dry_run,
+        "metadata.wire_endpoint_plan.dry_run mismatch",
+        errors,
+    )
+    _expect(
+        wire_endpoint_plan.get("endpoint_count") == len(expected_roles),
+        "metadata.wire_endpoint_plan.endpoint_count mismatch",
+        errors,
+    )
+    _expect(
+        _same_role_set(plan_endpoint_roles, expected_roles),
+        "metadata.wire_endpoint_plan endpoints must match endpoint roles",
+        errors,
+    )
+    _expect(
+        plan_endpoint_ids == lab_endpoint_ids,
+        "metadata.wire_endpoint_plan.created_endpoint_ids must match lab_session",
+        errors,
+    )
+    _expect(
+        plan_session_id is not None and plan_session_id == lab_session_id,
+        "metadata.wire_endpoint_plan.lab_session_id must match lab_session",
+        errors,
+    )
+    _expect(
+        lab_session.get("provider") == provider,
+        "metadata.lab_session.provider mismatch",
+        errors,
+    )
+    _expect(
+        lab_session.get("wire_provider") == adapter.wire_provider,
+        "metadata.lab_session.wire_provider mismatch",
+        errors,
+    )
+    _expect(
+        lab_session.get("wire_exposure") == adapter.wire_exposure,
+        "metadata.lab_session.wire_exposure mismatch",
+        errors,
+    )
+    _expect(
+        lab_session.get("dry_run") is dry_run,
+        "metadata.lab_session.dry_run mismatch",
+        errors,
+    )
+    _expect(
+        lab_session_id is not None,
+        "metadata.lab_session.session_id must be present",
+        errors,
+    )
+    _expect(
+        _same_role_set(lab_role_names, expected_roles),
+        "metadata.lab_session.roles must match endpoint roles",
+        errors,
+    )
+    _expect(
+        _same_role_set(lab_endpoint_roles, expected_roles),
+        "metadata.lab_session.endpoints must match endpoint roles",
+        errors,
+    )
+    _expect(
+        bool(lab_validation_checks),
+        "metadata.lab_session.validation_checks must be present",
+        errors,
+    )
+    _expect(
+        not failed_lab_validations,
+        "metadata.lab_session.validation_checks must pass: "
+        + ", ".join(failed_lab_validations),
+        errors,
+    )
+    _expect(
+        bool(lab_session_workflow),
+        "metadata.lab_session.provider_workflow must be a non-empty list",
+        errors,
+    )
+    _expect(
+        bool(lab_provider_workflow),
+        "metadata.lab_provider_workflow must be a non-empty list",
+        errors,
+    )
+    _expect(
+        len(lab_provider_workflow) == len(lab_session_workflow),
+        "metadata.lab_provider_workflow must mirror lab_session.provider_workflow",
+        errors,
+    )
+    _expect(
+        bool(lab_session_commands),
+        "metadata.lab_session.command_records must be a non-empty list",
+        errors,
+    )
+    _expect(
+        bool(command_records),
+        "metadata.command_records must be a non-empty list",
+        errors,
+    )
+    _expect(
+        len(command_records) == len(lab_session_commands),
+        "metadata.command_records must mirror lab_session.command_records",
+        errors,
+    )
+    _expect(
+        bool(provider_commands),
+        "metadata.provider_commands must be a non-empty list",
+        errors,
+    )
+    _expect(
+        len(provider_commands) == len(command_records),
+        "metadata.provider_commands must mirror metadata.command_records",
+        errors,
+    )
+    _expect(
+        isinstance(artifact_collection.get("always_attempt"), bool),
+        "metadata.artifact_collection.always_attempt must be present",
+        errors,
+    )
+    _expect(
+        isinstance(teardown.get("always_attempt"), bool),
+        "metadata.teardown.always_attempt must be present",
+        errors,
+    )
+    _expect(
+        lifecycle_endpoint_ids == lab_endpoint_ids,
+        "metadata.wire_endpoint_lifecycle.created_endpoint_ids must match lab_session",
+        errors,
+    )
+    _expect(
+        lifecycle_cleanup_state == lab_cleanup_state,
+        "metadata.wire_endpoint_lifecycle.cleanup_state must match lab_session.cleanup_state",
+        errors,
+    )
+    _expect(
+        lab_remote_artifact_root is not None,
+        "metadata.lab_session.remote_artifact_root must be present",
+        errors,
+    )
+    _expect(
+        lifecycle_remote_artifact_root is not None,
+        "metadata.wire_endpoint_lifecycle.remote_artifact_root must be present",
+        errors,
+    )
+    _expect(
+        lab_remote_artifact_root is None
+        or lifecycle_remote_artifact_root == lab_remote_artifact_root
+        or lifecycle_lab_remote_artifact_root == lab_remote_artifact_root,
+        "metadata.wire_endpoint_lifecycle remote artifact roots must reference lab_session",
         errors,
     )
     _expect(
@@ -167,17 +405,6 @@ def validate_live_report(
     if errors:
         raise MatrixValidationError(f"{report_path}: " + "; ".join(errors))
 
-    wire_lifecycle = _object(
-        metadata.get("wire_endpoint_lifecycle", {}),
-        "metadata.wire_endpoint_lifecycle",
-    )
-    artifact_collection = _object(
-        metadata.get("artifact_collection", {}),
-        "metadata.artifact_collection",
-    )
-    teardown = _object(metadata.get("teardown", {}), "metadata.teardown")
-    provider_workflow = _json_list(metadata.get("provider_workflow", []))
-    provider_commands = _json_list(metadata.get("provider_commands", []))
     artifact_paths = _string_values(report.get("artifact_paths", report.get("artifacts", [])))
 
     return {
@@ -198,15 +425,32 @@ def validate_live_report(
         "artifact_paths": artifact_paths,
         "lifecycle": {
             "provider_workflow_count": len(provider_workflow),
+            "lab_provider_workflow_count": len(lab_provider_workflow),
             "endpoint_bootstrap_count": len(metadata["endpoint_bootstrap"]),
             "provider_command_count": len(provider_commands),
+            "command_record_count": len(command_records),
             "artifact_collection": artifact_collection,
             "teardown": teardown,
             "wire_endpoint_lifecycle": wire_lifecycle,
-            "endpoint_ids": _string_values(wire_lifecycle.get("created_endpoint_ids", [])),
+            "endpoint_ids": lifecycle_endpoint_ids,
             "remote_artifact_root": _optional_string(
                 wire_lifecycle.get("remote_artifact_root")
             ),
+        },
+        "lab_session": {
+            "session_id": lab_session_id,
+            "provider": provider,
+            "wire_provider": adapter.wire_provider,
+            "wire_exposure": adapter.wire_exposure,
+            "roles": lab_role_names,
+            "endpoint_roles": lab_endpoint_roles,
+            "endpoint_ids": lab_endpoint_ids,
+            "remote_artifact_root": lab_remote_artifact_root,
+            "cleanup_state": lab_cleanup_state,
+            "validation_count": len(lab_validation_checks),
+            "failed_validation_count": len(failed_lab_validations),
+            "provider_workflow_count": len(lab_provider_workflow),
+            "command_record_count": len(command_records),
         },
         "provider_workflow": provider_workflow,
         "provider_commands": provider_commands,
@@ -731,6 +975,17 @@ def _object(value: Any, name: str) -> JSONObject:
     return output
 
 
+def _object_or_error(value: Any, name: str, errors: list[str]) -> JSONObject:
+    if not isinstance(value, dict):
+        errors.append(f"{name} must be present")
+        return {}
+    try:
+        return _object(value, name)
+    except MatrixValidationError as exc:
+        errors.append(str(exc))
+        return {}
+
+
 def _json_list(value: Any) -> list[JSONObject]:
     if not isinstance(value, list):
         return []
@@ -761,6 +1016,40 @@ def _roles_from_commands(value: Any) -> set[str]:
         if isinstance(item, dict) and isinstance(item.get("role"), str):
             roles.add(item["role"])
     return roles
+
+
+def _role_names_from_roles(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item["name"]
+        for item in value
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    ]
+
+
+def _role_names_from_endpoints(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item["role"]
+        for item in value
+        if isinstance(item, dict) and isinstance(item.get("role"), str)
+    ]
+
+
+def _role_names_from_plan(plan: Mapping[str, Any]) -> list[str]:
+    endpoints = plan.get("endpoints")
+    if isinstance(endpoints, dict):
+        return [role for role in endpoints if isinstance(role, str)]
+    endpoint_plans = plan.get("endpoint_plans")
+    if isinstance(endpoint_plans, list):
+        return _role_names_from_endpoints(endpoint_plans)
+    return []
+
+
+def _same_role_set(actual: Sequence[str], expected: Sequence[str]) -> bool:
+    return set(actual) == set(expected)
 
 
 def _required_string(value: Mapping[str, Any], key: str, name: str) -> str:

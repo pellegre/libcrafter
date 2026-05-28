@@ -49,6 +49,11 @@ class LiveProviderMatrixTest(unittest.TestCase):
         self.assertEqual(summary["endpoint_roles"], ["libcrafter", "reference_backend"])
         self.assertTrue(summary["no_live_packets_sent"])
         self.assertEqual(summary["lifecycle"]["endpoint_bootstrap_count"], 2)
+        self.assertEqual(summary["lifecycle"]["lab_provider_workflow_count"], 2)
+        self.assertEqual(summary["lifecycle"]["command_record_count"], 2)
+        self.assertEqual(summary["lab_session"]["provider"], "virtualbox")
+        self.assertEqual(summary["lab_session"]["roles"], ["libcrafter", "reference_backend"])
+        self.assertEqual(summary["lab_session"]["validation_count"], 2)
 
     def test_validate_real_live_report_preserves_vm_lifecycle(self) -> None:
         adapter = resolve_live_provider("qemu")
@@ -89,7 +94,41 @@ class LiveProviderMatrixTest(unittest.TestCase):
         )
         self.assertTrue(summary["lifecycle"]["artifact_collection"]["always_attempt"])
         self.assertTrue(summary["lifecycle"]["teardown"]["always_attempt"])
+        self.assertEqual(summary["lab_session"]["endpoint_ids"], [
+            "qemu-oracle-libcrafter",
+            "qemu-oracle-reference",
+        ])
+        self.assertEqual(
+            summary["lab_session"]["remote_artifact_root"],
+            "/tmp/libcrafter/live-artifacts/oracle-live/exchange",
+        )
         self.assertTrue(summary["doctor"]["ok"])
+
+    def test_validate_live_report_rejects_missing_lab_session_metadata(self) -> None:
+        adapter = resolve_live_provider("qemu")
+        corpus_path = Path("/tmp/libcrafter-corpus/plans.json")
+        report = _live_report(
+            provider="qemu",
+            wire_provider=adapter.wire_provider,
+            wire_exposure=adapter.wire_exposure,
+            endpoint_roles=list(adapter.endpoint_roles),
+            corpus_path=corpus_path,
+        )
+        metadata = report["metadata"]
+        self.assertIsInstance(metadata, dict)
+        del metadata["lab_session"]
+
+        with self.assertRaises(MatrixValidationError) as error:
+            validate_live_report(
+                report,
+                provider="qemu",
+                adapter=adapter,
+                corpus_id="corpus-v1-test",
+                corpus_path=corpus_path,
+                report_path=Path("/tmp/qemu/live/report.json"),
+            )
+
+        self.assertIn("metadata.lab_session", str(error.exception))
 
     def test_validate_live_report_rejects_wrong_adapter_exposure(self) -> None:
         adapter = resolve_live_provider("qemu")
@@ -231,11 +270,89 @@ def _live_report(
     dry_run: bool = True,
     status: str = "dry-run",
 ) -> dict[str, object]:
+    endpoint_ids = (
+        [f"{provider}-oracle-libcrafter", f"{provider}-oracle-reference"]
+        if not dry_run
+        else []
+    )
+    cleanup_state = {
+        "status": "not_started" if dry_run else "completed",
+        "artifact_collection_attempted": not dry_run,
+        "teardown_attempted": not dry_run,
+    }
     lifecycle = {
         "remote_dir": "/tmp/libcrafter",
         "remote_artifact_root": "/tmp/libcrafter/live-artifacts/oracle-live/exchange",
-        "created_endpoint_ids": ["qemu-oracle-libcrafter", "qemu-oracle-reference"],
+        "created_endpoint_ids": endpoint_ids,
         "keep_wire_endpoints": False,
+        "cleanup_state": cleanup_state,
+    }
+    provider_commands = [
+        {
+            "label": f"02-create-{role}",
+            "operation": "wire.create",
+            "role": role,
+            "exit_code": 0,
+        }
+        for role in endpoint_roles
+    ]
+    lab_provider_workflow = [
+        {
+            "purpose": f"check-{provider}-provider",
+            "operation": "wire.doctor",
+            "role": None,
+        },
+        {
+            "purpose": "collect-lab-artifacts",
+            "operation": "wire.collect_artifacts",
+            "role": None,
+        },
+    ]
+    lab_session = {
+        "provider": provider,
+        "wire_provider": wire_provider,
+        "wire_exposure": wire_exposure,
+        "session_id": f"{provider}-oracle-session",
+        "roles": [{"name": role, "peer_roles": []} for role in endpoint_roles],
+        "endpoints": [
+            {
+                "endpoint_id": f"{provider}-oracle-{role}",
+                "role": role,
+                "interface": "lab0",
+                "address": "192.0.2.10",
+            }
+            for role in endpoint_roles
+        ],
+        "provider_capabilities": {"provider": provider, "dry_run": dry_run},
+        "infrastructure_metadata": {
+            "provider": provider,
+            "wire_provider": wire_provider,
+            "wire_exposure": wire_exposure,
+            "dry_run": dry_run,
+            "creates_infrastructure": not dry_run,
+            "would_create_infrastructure": dry_run,
+        },
+        "provider_workflow": lab_provider_workflow,
+        "command_records": provider_commands,
+        "remote_dir": "/tmp/libcrafter",
+        "remote_artifact_root": "/tmp/libcrafter/live-artifacts/oracle-live/exchange",
+        "created_endpoint_ids": endpoint_ids,
+        "dry_run": dry_run,
+        "cleanup_state": cleanup_state,
+        "validation_checks": [
+            {
+                "name": f"{provider}-request",
+                "passed": True,
+                "subject": provider,
+            },
+            {
+                "name": f"{provider}-session",
+                "passed": True,
+                "subject": provider,
+            },
+        ],
+        "schema_version": 1,
+        "metadata": {"provider": provider},
     }
     return {
         "mode": "live",
@@ -263,9 +380,36 @@ def _live_report(
             "wire_eligible_count": 5,
             "wire_skipped_count": 0,
             "wire_skip_reasons": {},
+            "planned_infrastructure": lab_session["infrastructure_metadata"],
+            "wire_endpoint_plan": {
+                "provider": provider,
+                "wire_provider": wire_provider,
+                "wire_exposure": wire_exposure,
+                "exposure": wire_exposure,
+                "dry_run": dry_run,
+                "endpoint_count": len(endpoint_roles),
+                "endpoints": {
+                    role: {
+                        "endpoint_id": f"{provider}-oracle-{role}",
+                        "role": role,
+                    }
+                    for role in endpoint_roles
+                },
+                "endpoint_plans": [
+                    {
+                        "endpoint_id": f"{provider}-oracle-{role}",
+                        "role": role,
+                    }
+                    for role in endpoint_roles
+                ],
+                "command_records": provider_commands,
+                "created_endpoint_ids": endpoint_ids,
+                "lab_session_id": lab_session["session_id"],
+            },
             "provider_workflow": [
                 {"role": "provider", "purpose": f"check-{provider}-provider"},
             ],
+            "lab_provider_workflow": lab_provider_workflow,
             "endpoint_bootstrap": [
                 {"role": "libcrafter", "purpose": "bootstrap"},
                 {"role": "reference_backend", "purpose": "bootstrap"},
@@ -273,10 +417,9 @@ def _live_report(
             "artifact_collection": {"always_attempt": True},
             "teardown": {"always_attempt": True},
             "wire_endpoint_lifecycle": lifecycle,
-            "provider_commands": [
-                {"label": "01-doctor", "exit_code": 0},
-                {"label": "99-destroy-qemu-oracle-reference", "exit_code": 0},
-            ],
+            "provider_commands": provider_commands,
+            "command_records": provider_commands,
+            "lab_session": lab_session,
             "endpoint_protocol": {"batches": []},
         },
     }
