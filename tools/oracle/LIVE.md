@@ -2,8 +2,9 @@
 
 This document defines the live validation contract for `tools/oracle/run live`.
 The oracle runner owns the live report, packet plan, backend capability checks,
-and reproduction coordinates. `tools/wire` owns disposable endpoint lifecycle
-and artifact collection.
+and reproduction coordinates. `tools/lab` owns multi-endpoint provider
+sessions, repository push/bootstrap, artifact collection, and cleanup.
+`tools/wire` owns one endpoint and transport operations.
 
 ## Live Mode Invariant
 
@@ -27,18 +28,19 @@ virtual interface pair.
 ## Oracle Live Provider Adapters
 
 Provider-backed live mode is selected through oracle live provider adapters
-registered under `tools/oracle/engine/providers/`. The `--provider` name selects
-an oracle-side adapter, not direct branches in packet generation or report
-assembly. The adapter owns provider-specific capabilities, endpoint plans,
-wire lifecycle command plans, endpoint bootstrap commands, remote endpoint
-commands, and provider transit/comparison policy.
+registered under `tools/oracle/engine/providers/`. The `--provider` name
+selects an oracle-side adapter, not direct branches in packet generation or
+report assembly. The adapter owns oracle-specific capabilities and provider
+transit/comparison policy while delegating endpoint topology and lifecycle to
+`tools/lab`.
 
 The generic oracle runner keeps ownership of packet plan generation, endpoint
 protocol batching, repository archiving, upload/download orchestration,
 response parsing, comparison, and live report assembly. Adding another
-provider-backed oracle live mode should mean registering another adapter for
-that provider name. It should not require edits to packet generation, endpoint
-protocol comparison, report assembly, or the generic provider execution flow.
+provider-backed oracle live mode should mean registering a lab provider adapter
+and an oracle policy adapter for that provider name. It should not require
+edits to packet generation, endpoint protocol comparison, report assembly, or
+the generic provider execution flow.
 
 `local-dry-run` is intentionally separate from this provider-backed adapter
 registry. It is a CI-safe planning mode that does not create wire endpoints and
@@ -56,6 +58,7 @@ Run the three-provider planning matrix without side effects before creating
 infrastructure:
 
 ```sh
+tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 12345 --role libcrafter --role reference_backend --json
 python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 ```
 
@@ -143,10 +146,11 @@ If credentials or provider resources are unavailable, the provider should return
 a clear skipped report. It must not silently downgrade a live run into a
 single-endpoint loopback test.
 
-`tools/wire` remains the owner of disposable endpoint lifecycle and artifact
-transport. An oracle live provider adapter maps oracle roles and provider
-policy onto `tools/wire` commands; it does not replace the wire provider
-implementation.
+`tools/lab` remains the owner of disposable multi-endpoint session lifecycle,
+repository push/bootstrap, artifact collection, and cleanup. `tools/wire`
+remains the owner of one endpoint and artifact transport. An oracle live
+provider adapter maps oracle roles and comparison policy onto lab sessions; it
+does not replace the lab or wire provider implementation.
 
 ## Backend Capabilities
 

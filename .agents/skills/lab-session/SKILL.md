@@ -16,7 +16,7 @@ or changing provider adapters, use `lab-provider`.
 ## Required Order
 
 1. Start with dry-run planning:
-   - `tools/lab/run create --provider <provider> --dry-run --profile smoke --seed 1 --role stimulus --role target`
+   - `tools/lab/run plan --provider <provider> --dry-run --profile smoke --seed 1 --role stimulus --role target`
    - `tools/oracle/run live --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
    - `tools/probe/run --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
 2. Inspect the lab session metadata before any live work:

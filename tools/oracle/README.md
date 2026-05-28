@@ -52,11 +52,12 @@ tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke -
 ```
 
 Provider-backed live planning is selected by a registered oracle live provider
-adapter. Hetzner, QEMU, and VirtualBox share the same oracle live runner and
-must stay dry-run unless a protected workflow is intentionally creating
-disposable wire endpoints:
+adapter and backed by `tools/lab` sessions. Hetzner, QEMU, and VirtualBox share
+the same oracle live runner and must stay dry-run unless a protected workflow
+is intentionally creating disposable lab endpoints:
 
 ```sh
+tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 12345 --role libcrafter --role reference_backend --json
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 tools/oracle/run live --backend scapy --provider qemu --dry-run --profile smoke --seed 12345 --count 10
 tools/oracle/run live --backend scapy --provider virtualbox --dry-run --profile smoke --seed 12345 --count 10
@@ -125,11 +126,12 @@ oracle reports that identify the missing capability instead of silently taking a
 different path.
 
 Provider-backed live adapters live under `tools/oracle/engine/providers/`. They
-own provider-specific endpoint plans, lifecycle command plans, bootstrap,
-remote endpoint commands, capabilities, and wire comparison policy. The generic
-live runner still owns packet generation, endpoint protocol comparison, report
-assembly, and provider execution flow. `tools/wire` remains responsible for
-creating endpoints and collecting artifacts.
+own oracle-specific capabilities and wire comparison policy while delegating
+provider substrate to `tools/lab`. The generic live runner still owns packet
+generation, endpoint protocol comparison, report assembly, and provider
+execution flow. `tools/lab` owns multi-endpoint session creation, repository
+push/bootstrap, artifact collection, and cleanup; `tools/wire` owns one
+endpoint and transport operations.
 
 The Rust-side libcrafter adapters live in `tools/oracle/adapters/` as an
 internal workspace package. They depend on the public `crafter` crate API and

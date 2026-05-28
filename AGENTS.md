@@ -14,8 +14,9 @@ import `crafter::prelude::*`.
 layered packet construction with auto-filled lengths and checksums, decode
 entrypoints for Ethernet, Linux cooked capture, null/loopback, and raw IPv4 /
 IPv6 inputs, classic pcap read/write with libpcap BPF filters, raw send and
-send/receive matching, and provider-backed wire endpoints (Hetzner) for traffic
-that cannot live on a developer machine.
+send/receive matching, provider-backed wire endpoints, and multi-endpoint lab
+sessions (Hetzner, QEMU, VirtualBox) for traffic that cannot live on a
+developer machine.
 
 TCP stream reassembly, fragmentation/reassembly, full pcapng, full BPF parsing,
 and a complete TCP/IP stack are not in scope yet. The 2.x Rust API may still
@@ -60,11 +61,11 @@ must use documentation address space (`192.0.2.0/24`, `198.51.100.0/24`,
 `2001:db8::/32`) and dry-run plans. Real targets enter the picture only when an
 authorized human or agent has said so.
 
-Wire endpoints exist so that the live path does not have to originate from the
-developer machine. When an agent needs to send crafted traffic for real, the
-correct move is to provision a disposable provider endpoint, run the work from
-there, collect the artifacts, and destroy it — not to elevate privileges on
-the host the agent is running on.
+Wire endpoints and lab sessions exist so that the live path does not have to
+originate from the developer machine. When an agent needs to send crafted
+traffic for real, the correct move is to provision a disposable provider
+endpoint or lab session, run the work from there, collect the artifacts, and
+destroy it — not to elevate privileges on the host the agent is running on.
 
 ## Agents write tools; the crate stays a primitive
 
@@ -109,11 +110,11 @@ get approval first.
 - Run the local release gate before declaring a change ready to ship:
   `.agents/scripts/check-crafter-release --static`.
 - For provider-backed packet validation, start with `--dry-run` against the
-  `oracle`, `probe`, and `wire` runners before any live invocation.
+  `lab`, `oracle`, `probe`, and `wire` runners before any live invocation.
 - Use the repo-local skills when the task they describe comes up:
   `agent-cargo-publish`, `commit-changes`, `prepare-pr`, `packet-validation`,
-  `wire-endpoint`, `scratch-work`, `create-branch`. They encode policy that
-  this file does not repeat.
+  `lab-session`, `lab-provider`, `wire-endpoint`, `scratch-work`,
+  `create-branch`. They encode policy that this file does not repeat.
 - Operating guidance for agents writing generated tools belongs in
   [`.agents/docs/cookbook.md`](.agents/docs/cookbook.md). User-facing crate
   documentation belongs in [`docs/`](docs/). Do not mix the two.

@@ -1,24 +1,21 @@
 # Wire Endpoint Provider Guide
 
-`tools/wire` defines the provider contract for disposable endpoints —
-provision, command execution, artifact collection, SSH access, and destroy —
-so that `tools/oracle` and `tools/probe` can run a packet workload against an
-endpoint without depending on which provider produced it. Oracle and probe own
-the workload, reports, and reproduction coordinates; wire owns the lifecycle.
-The current provider implementations used by oracle live validation are
-Hetzner, QEMU, and VirtualBox.
+`tools/wire` defines the provider contract for one disposable endpoint:
+provision, command execution, upload, download, artifact collection, SSH access,
+and destroy. It is the lower-level endpoint primitive used by `tools/lab`.
 
-Oracle live provider adapter registration is separate: adapters under
-`tools/oracle/engine/providers/` select how oracle maps `--provider` names to
-wire endpoint plans, bootstrap, remote endpoint commands, capabilities, and
-comparison policy. They call into `tools/wire`; they do not move or replace
-wire provider implementations.
+Use `tools/lab` for coordinated multi-endpoint provider sessions. Oracle and
+probe own the workload, reports, and reproduction coordinates; lab owns the
+multi-endpoint session; wire owns one endpoint and transport operations. The
+current provider implementations used by lab-backed validation are Hetzner,
+QEMU, and VirtualBox.
 
 Local static tests should run before any provider command. Provider-backed wire
 endpoints are for tests that need root privileges, raw sockets, packet capture,
 reference comparison, or kernel/service replies on disposable infrastructure.
 See [validation.md](validation.md) for oracle modes and CI expectations, and
-[probe.md](probe.md) for behavioral probe cases.
+[probe.md](probe.md) for behavioral probe cases. See [lab.md](lab.md) for the
+multi-endpoint session layer.
 
 ## Provider Setup
 
@@ -57,14 +54,15 @@ tools/wire/run doctor --provider hetzner --exposure private --dry-run
 tools/wire/run create-endpoint --provider hetzner --exposure wan --dry-run --write-manifest
 ```
 
-Oracle offline and pcap validation plus probe dry-runs should pass before
-creating infrastructure. The validation commands are documented in
-[validation.md](validation.md) and [probe.md](probe.md).
+Oracle offline and pcap validation plus lab-backed oracle/probe dry-runs should
+pass before creating infrastructure. The validation commands are documented in
+[validation.md](validation.md), [probe.md](probe.md), and [lab.md](lab.md).
 
 Plan provider-backed oracle and probe validation without creating
 infrastructure:
 
 ```sh
+tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
@@ -77,8 +75,8 @@ python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox 
 tools/probe/run --provider hetzner --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
-Generated endpoint state is written below `tools/wire/.state/`. Artifacts are
-written below `tools/wire/artifacts/`. Both locations are ignored by git.
+Generated wire endpoint state is written below `tools/wire/.state/`. Lab
+session state and artifacts are written below ignored lab state/artifact roots.
 Oracle reports and packet artifacts are written below `target/oracle/`; probe
 reports are written below `target/probe/`.
 
@@ -100,9 +98,9 @@ sequence number, case name, seed, and profile.
 
 ## Direct Endpoint Operations
 
-The high-level oracle and probe runners create and destroy their own endpoints.
+The high-level oracle and probe runners create and destroy lab sessions.
 Use direct wire commands only for debugging, inspection, or manual provider
-maintenance:
+maintenance of one endpoint:
 
 ```sh
 tools/wire/run create-endpoint --provider hetzner --exposure wan --confirm-live-run --json
@@ -134,9 +132,14 @@ Recommended provider dry-run flow:
 tools/wire/run doctor --provider hetzner --exposure private --dry-run
 tools/wire/run doctor --provider qemu --exposure private --dry-run
 tools/wire/run doctor --provider virtualbox --exposure lan --dry-run
+tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json
+tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
+tools/lab/run plan --provider virtualbox --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
 ```
 
 Pull request CI should run corpus, offline, pcap, Hetzner wire dry-run, and

@@ -70,26 +70,27 @@ decode behavior that should survive file serialization.
 Packets that cannot be represented in the requested pcap mode are reported as
 skipped with a stable reason.
 
-## Wire Validation
+## Live Validation
 
-Wire validation routes provider-backed packet exchange through an oracle live
-provider adapter. It uses the same corpus contract as offline and pcap modes,
-then filters each packet by adapter-provided provider capabilities and explicit
-mutation policy. Reports keep generated, eligible, skipped, sent, captured,
-parsed, byte comparison, decode comparison, passed, and failed counts.
+Live validation routes provider-backed packet exchange through lab-backed
+oracle provider adapters. It uses the same corpus contract as offline and pcap
+modes, then filters each packet by provider capabilities and explicit mutation
+policy. Reports keep generated, eligible, skipped, sent, captured, parsed, byte
+comparison, decode comparison, passed, and failed counts.
 
 Provider-backed adapters are selected by `--provider` and registered under
-`tools/oracle/engine/providers/`. They own provider-specific endpoint plans,
-wire lifecycle command plans, bootstrap, remote endpoint commands, capabilities,
-and comparison policy. Packet generation, endpoint protocol comparison, report
-assembly, and the generic provider execution flow remain in the oracle runner.
-`tools/wire` remains responsible for endpoint lifecycle and artifact transport.
+`tools/oracle/engine/providers/`. They own oracle-specific capabilities and
+comparison policy while delegating substrate setup to `tools/lab`. Packet
+generation, endpoint protocol comparison, report assembly, and the generic
+provider execution flow remain in the oracle runner. `tools/lab` owns
+multi-endpoint sessions; `tools/wire` owns one endpoint and artifact transport.
 
 Use the non-provider-backed local dry-run or provider-backed dry-runs for
 planning and CI-safe checks:
 
 ```sh
 tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
+tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role libcrafter --role reference_backend --json
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 tools/oracle/run live --provider qemu --dry-run --profile smoke --seed 12345 --count 10
 tools/oracle/run live --provider virtualbox --dry-run --profile smoke --seed 12345 --count 10
@@ -121,7 +122,8 @@ private group `oracle-live-private`; VirtualBox uses `virtualbox/lan` with the
 bridged interface discovered by `VBoxManage` or requested through
 `LIBCRAFTER_VBOX_BRIDGE_IFACE`.
 
-See [wire.md](wire.md) for provider credentials, artifacts, and cleanup.
+See [lab.md](lab.md) for lab session metadata and [wire.md](wire.md) for
+single-endpoint provider credentials, artifacts, and cleanup.
 
 ## CI Expectations
 
@@ -139,6 +141,8 @@ tools/oracle/run offline --corpus target/oracle/final-corpus/plans.json --out ta
 tools/oracle/run pcap --corpus target/oracle/final-corpus/plans.json --out target/oracle/final-pcap
 python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile ci --seed 12345 --count 100 --dry-run --out target/oracle/final-live-matrix
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run
+tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run-qemu
+tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run-virtualbox
 ```
 
 Oracle artifacts default below `target/oracle/`, with mode-specific reports
