@@ -79,11 +79,21 @@ policy. Reports keep generated, eligible, skipped, sent, captured, parsed, byte
 comparison, decode comparison, passed, and failed counts.
 
 Provider-backed adapters are selected by `--provider` and registered under
-`tools/oracle/engine/providers/`. They own oracle-specific capabilities and
-comparison policy while delegating substrate setup to `tools/lab`. Packet
-generation, endpoint protocol comparison, report assembly, and the generic
-provider execution flow remain in the oracle runner. `tools/lab` owns
-multi-endpoint sessions; `tools/wire` owns one endpoint and artifact transport.
+`tools/oracle/engine/providers/`. They bind oracle policy to a lab provider,
+but the lab provider adapters own substrate lifecycle only. Providers create,
+connect, describe, and tear down disposable endpoints; they do not install
+oracle packages or define workload bootstrap commands.
+
+`tools/lab` owns repository archive transfer, remote unpack, bootstrap context,
+artifacts, and cleanup records. Oracle owns the `libcrafter` and
+`reference_backend` workload setup that runs after lab has unpacked the
+repository. Packet generation, endpoint protocol comparison, report assembly,
+and the generic provider execution flow remain in the oracle runner.
+`tools/wire` owns one endpoint and artifact transport.
+
+This refactor does not introduce Docker. A future Docker path would be a
+workload runner behind oracle bootstrap for the `libcrafter` or
+`reference_backend` role, not a provider abstraction.
 
 Use the non-provider-backed local dry-run or provider-backed dry-runs for
 planning and CI-safe checks:
@@ -98,8 +108,8 @@ python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,vir
 ```
 
 Real provider-backed validation is reserved for explicit protected workflows on
-disposable wire endpoints. Provider selection still uses the same live oracle
-command and adapter registry:
+disposable wire endpoints and requires `--confirm-live-run`. Provider selection
+still uses the same live oracle command and adapter registry:
 
 ```sh
 tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
@@ -130,7 +140,8 @@ single-endpoint provider credentials, artifacts, and cleanup.
 Pull request CI should run deterministic corpus, offline, pcap, provider-backed
 wire dry-run, and probe dry-run checks. Oracle provider checks are selected
 through the live provider adapter registry. Real live packet exchange must stay
-behind explicit protected workflow confirmation and cleanup logic.
+behind explicit protected workflow confirmation and cleanup logic. Dry-runs are
+the default validation path for provider-backed lab, oracle, and probe checks.
 
 Recommended local preflight:
 

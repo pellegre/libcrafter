@@ -3,7 +3,8 @@
 `tools/lab` is the standalone multi-endpoint substrate tool for libcrafter
 provider-backed work. It composes lower-level `wire` endpoints into named
 roles, persists a lab session manifest, records provider workflow and command
-metadata, and owns repository push/bootstrap, artifact collection, and cleanup.
+metadata, and owns repository archive transfer, remote unpack, bootstrap
+context, artifact collection, and cleanup records.
 
 Oracle and probe use lab sessions so their live behavior is independent of the
 machine where libcrafter or an agent is running. Oracle still owns reference
@@ -15,9 +16,9 @@ validation. Wire still owns one endpoint and transport operations.
 | Tool | Owns |
 | --- | --- |
 | `tools/wire` | One disposable endpoint: doctor, create, exec, upload, download, collect artifacts, destroy. |
-| `tools/lab` | Multi-endpoint sessions: roles, provider capabilities, endpoint topology, repository push/bootstrap, session manifests, cleanup. |
-| `tools/oracle` | Reference packet corpus, offline/pcap/live packet comparison, backend policy, oracle reports. |
-| `tools/probe` | Kernel/service probe cases, target service setup, RST guards, stimulus execution, probe reports. |
+| `tools/lab` | Multi-endpoint sessions: roles, provider capabilities, endpoint topology, repository archive transfer, remote unpack, bootstrap context, session manifests, artifacts, cleanup records. |
+| `tools/oracle` | Reference packet corpus, offline/pcap/live packet comparison, `libcrafter` and `reference_backend` workload setup, backend policy, oracle reports. |
+| `tools/probe` | Kernel/service probe cases, `stimulus` and `target` workload setup, target service setup, RST guards, stimulus execution, probe reports. |
 
 Provider adapters live under `tools/lab/engine/providers/` and are registered by
 name. The current lab-backed providers are:
@@ -26,10 +27,30 @@ name. The current lab-backed providers are:
 - `qemu`: local private VM segment.
 - `virtualbox`: bridged LAN VM endpoints.
 
+## Bootstrap Ownership
+
+Lab providers own endpoint substrate lifecycle only: provider-specific planning,
+creation, connectivity, capability reporting, and teardown. They do not install
+workload packages, build binaries, start services, or decide which role-specific
+commands run after the repository is unpacked.
+
+`tools/lab` owns the provider-neutral repository bootstrap boundary. It builds
+and transfers the repository archive, unpacks it on each endpoint, constructs
+the bootstrap context passed to workload hooks, records command metadata, tracks
+artifacts, and writes cleanup records. Workload bootstrap happens after this
+repository bootstrap step.
+
+Oracle owns the `libcrafter` and `reference_backend` workload setup. Probe owns
+the `stimulus` and `target` workload setup. If Docker or another runtime is
+added later, it should be a workload runner behind those oracle or probe
+bootstrap hooks, not a lab provider abstraction. This refactor does not add
+Docker.
+
 ## Dry-Run Planning
 
 Dry-run planning is the safe default. It validates the provider contract and
-emits deterministic metadata without creating infrastructure:
+bootstrap ownership boundary, then emits deterministic metadata without
+creating infrastructure:
 
 ```sh
 tools/lab/run providers --json
@@ -61,8 +82,9 @@ tools/lab/run destroy SESSION_ID --json
 ```
 
 Most packet validation should enter through oracle or probe rather than direct
-lab commands. Those runners create lab sessions, push the repository, bootstrap
-endpoints, run the workload, collect artifacts, and tear down the session.
+lab commands. Those runners create lab sessions, ask lab to transfer and unpack
+the repository, supply workload-owned bootstrap hooks, run the workload, collect
+artifacts, and tear down the session.
 
 ## Metadata And Artifacts
 

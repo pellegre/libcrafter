@@ -17,7 +17,26 @@ Dry-runs are CI-safe. They write deterministic plans and reports below
 `target/probe/` without creating hosts, sending packets, starting services, or
 requiring provider credentials. Provider-backed dry-runs use `tools/lab` to
 plan the `stimulus` and `target` roles and rewrite probe plans with lab
-endpoint addresses.
+endpoint addresses. Dry-run remains the default safety boundary; live provider
+runs require `--confirm-live-run`.
+
+## Bootstrap Boundary
+
+Lab provider adapters own substrate lifecycle only. They plan, create, connect,
+describe, and tear down disposable endpoints, but they do not install probe
+packages, build `stimulus_endpoint`, start target services, or choose
+role-specific workload commands.
+
+`tools/lab` owns repository archive transfer, remote unpack, bootstrap context,
+artifacts, and cleanup records. Probe owns the workload bootstrap for the
+`stimulus` and `target` roles after the repository is unpacked. The
+`stimulus` role builds the probe adapter binary and prepares packet stimulus;
+the `target` role prepares the controlled service runtime and target-side
+state.
+
+This refactor does not introduce Docker. If Docker or another runner is added
+later, it belongs behind probe workload bootstrap for `stimulus` or `target`,
+not in the provider abstraction.
 
 ## Cases
 
@@ -62,11 +81,11 @@ tools/probe/run --provider qemu --confirm-live-run --profile smoke --seed 21 --c
 tools/probe/run --provider virtualbox --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
-The probe runner uses `tools/lab` to create both endpoints, push and bootstrap
-the repository, collect artifacts, and clean up endpoint resources. Probe keeps
-ownership of target service setup, temporary TCP RST guards on the stimulus
-endpoint, the `stimulus_endpoint` binary from `tools/probe/adapters`, response
-parsing, and result assembly.
+The probe runner uses `tools/lab` to create both endpoints, transfer and unpack
+the repository, run probe-owned bootstrap hooks, collect artifacts, and clean
+up endpoint resources. Probe keeps ownership of target service setup, temporary
+TCP RST guards on the stimulus endpoint, the `stimulus_endpoint` binary from
+`tools/probe/adapters`, response parsing, and result assembly.
 
 ## Artifacts
 
