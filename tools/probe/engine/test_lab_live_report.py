@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 from tools.lab.engine.model import LabCommandPlan, LabEndpoint, LabRole, LabSession
+from tools.lab.engine.repo import RepoBootstrapCommand, RepoBootstrapContext
 from tools.probe.engine import cli
 from tools.probe.engine.model import ProbeRunRequest
 
@@ -367,13 +368,25 @@ def _bootstrap_session(
     output_dir: Path,
     client: object,
 ) -> object:
-    del session, archive, client
+    del archive, client
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "lab-bootstrap-result.json"
     summary_path.write_text("{}", encoding="utf-8")
     self_check = sorted(bootstrap_commands)
     if self_check != ["stimulus", "target"]:
         raise AssertionError(self_check)
+    _assert_probe_bootstrap_command(
+        session,
+        bootstrap_commands["stimulus"],
+        role="stimulus",
+        remote_dir=remote_dir,
+    )
+    _assert_probe_bootstrap_command(
+        session,
+        bootstrap_commands["target"],
+        role="target",
+        remote_dir=remote_dir,
+    )
     bootstrap_record = LabCommandPlan(
         purpose="run workload bootstrap",
         role="stimulus",
@@ -392,6 +405,42 @@ def _bootstrap_session(
         command_records=[bootstrap_record],
         to_dict=lambda: {"ok": True, "remote_artifact_root": f"{remote_dir}/artifacts"},
     )
+
+
+def _assert_probe_bootstrap_command(
+    session: LabSession,
+    hook: object,
+    *,
+    role: str,
+    remote_dir: str,
+) -> None:
+    if not callable(hook):
+        raise AssertionError(f"bootstrap hook for {role} is not callable")
+    endpoints_by_role = {endpoint.role: endpoint for endpoint in session.endpoints}
+    roles_by_name = {lab_role.name: lab_role for lab_role in session.roles}
+    context = RepoBootstrapContext(
+        session=session,
+        endpoint=endpoints_by_role[role],
+        role=roles_by_name[role],
+        remote_archive=f"{remote_dir}/libcrafter-repo.tar.gz",
+        remote_dir=remote_dir,
+        remote_artifact_root=f"{remote_dir}/artifacts",
+        endpoints_by_role=endpoints_by_role,
+    )
+    command = hook(context)
+    if not isinstance(command, RepoBootstrapCommand):
+        raise AssertionError(f"unexpected bootstrap command: {command!r}")
+    if command.metadata.get("workload") != "probe":
+        raise AssertionError(command.metadata)
+    if command.metadata.get("role") != role:
+        raise AssertionError(command.metadata)
+    script = command.argv[2]
+    if "tar -xzf" in script or "tools/wire/run" in script:
+        raise AssertionError(script)
+    if role == "stimulus" and "stimulus_endpoint" not in script:
+        raise AssertionError(script)
+    if role == "target" and "target_service_runtime=python3" not in script:
+        raise AssertionError(script)
 
 
 if __name__ == "__main__":

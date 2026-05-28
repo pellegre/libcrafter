@@ -23,6 +23,7 @@ from tools.lab.engine import repo as lab_repo
 from tools.lab.engine import session as lab_session_state
 from tools.lab.engine import wire_client as lab_wire_client
 
+from . import bootstrap as probe_bootstrap
 from .lab import (
     LOCAL_DRY_RUN_PROVIDER,
     PROBE_LAB_ROLES,
@@ -1327,7 +1328,7 @@ def _lab_endpoint_live_report(
             remote_dir = _string_or(lab_session.remote_dir, "/root/libcrafter")
             bootstrap_result = lab_repo.bootstrap_lab_session(
                 lab_session,
-                _probe_lab_bootstrap_commands(),
+                probe_bootstrap.bootstrap_commands(),
                 remote_dir=remote_dir,
                 archive=repo_archive,
                 output_dir=output_dir / "artifacts" / "lab" / "bootstrap",
@@ -1854,116 +1855,6 @@ def _probe_lab_remote_dir() -> str | None:
     if "'" in remote_dir:
         raise RuntimeError("probe lab remote_dir must not contain single quotes")
     return remote_dir.rstrip("/") or "/"
-
-
-def _probe_lab_bootstrap_commands() -> dict[str, object]:
-    return {
-        STIMULUS_ROLE: _probe_lab_bootstrap_command,
-        TARGET_ROLE: _probe_lab_bootstrap_command,
-    }
-
-
-def _probe_lab_bootstrap_command(context: object) -> object:
-    peer = next(iter(getattr(context, "peer_endpoints", ())), None)
-    endpoint = getattr(context, "endpoint")
-    role = str(getattr(endpoint, "role", "probe"))
-    return lab_repo.RepoBootstrapCommand(
-        argv=[
-            "bash",
-            "-lc",
-            _probe_lab_bootstrap_script(
-                role=role,
-                private_ipv4=str(getattr(endpoint, "ipv4", "")),
-                peer_private_ipv4="" if peer is None else str(getattr(peer, "ipv4", "")),
-                private_interface=str(getattr(endpoint, "interface", "private")),
-                remote_dir=str(getattr(context, "remote_dir")),
-                remote_artifact_root=str(getattr(context, "remote_artifact_root")),
-            ),
-        ],
-        timeout=1800,
-        metadata={
-            "workload": "probe",
-            "role": role,
-            "builds_stimulus_endpoint": role == STIMULUS_ROLE,
-        },
-    )
-
-
-def _probe_lab_bootstrap_script(
-    *,
-    role: str,
-    private_ipv4: str,
-    peer_private_ipv4: str,
-    private_interface: str,
-    remote_dir: str,
-    remote_artifact_root: str,
-) -> str:
-    quoted_role = shlex.quote(role)
-    quoted_private_ipv4 = shlex.quote(private_ipv4)
-    quoted_peer_private_ipv4 = shlex.quote(peer_private_ipv4)
-    quoted_private_interface = shlex.quote(private_interface)
-    quoted_remote_dir = shlex.quote(remote_dir)
-    bootstrap_root = posixpath.join(remote_artifact_root, "probe", "bootstrap", role)
-    quoted_bootstrap_root = shlex.quote(bootstrap_root)
-    common = "\n".join(
-        [
-            "set -euo pipefail",
-            "if command -v cloud-init >/dev/null 2>&1; then "
-            "cloud-init status --wait >/dev/null 2>&1 || true; fi",
-            f"cd {quoted_remote_dir}",
-            f"export LIBCRAFTER_ENDPOINT_ROLE={quoted_role}",
-            f"export LIBCRAFTER_PRIVATE_IPV4={quoted_private_ipv4}",
-            f"export LIBCRAFTER_PEER_PRIVATE_IPV4={quoted_peer_private_ipv4}",
-            f"export LIBCRAFTER_PRIVATE_INTERFACE={quoted_private_interface}",
-            "export DEBIAN_FRONTEND=noninteractive",
-            f"mkdir -p {quoted_bootstrap_root}",
-            "apt-get update",
-        ]
-    )
-    if role == STIMULUS_ROLE:
-        return "\n".join(
-            [
-                common,
-                (
-                    "apt-get install -y --no-install-recommends "
-                    "build-essential ca-certificates clang curl git iproute2 "
-                    "iptables iputils-ping libpcap-dev pkg-config python3"
-                ),
-                "if ! command -v cargo >/dev/null 2>&1; then "
-                "curl -fsS https://sh.rustup.rs | sh -s -- -y; fi",
-                "if [ -f \"$HOME/.cargo/env\" ]; then . \"$HOME/.cargo/env\"; fi",
-                "cargo build -p probe-adapters --bin stimulus_endpoint",
-                "{",
-                "  echo \"role=$LIBCRAFTER_ENDPOINT_ROLE\"",
-                "  echo \"private_ipv4=$LIBCRAFTER_PRIVATE_IPV4\"",
-                "  echo \"peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4\"",
-                "  echo \"private_interface=$LIBCRAFTER_PRIVATE_INTERFACE\"",
-                "  echo \"repository_synced=true\"",
-                "  echo \"libcrafter_probe_bin=stimulus_endpoint\"",
-                "  echo \"libcrafter_probe_bin_build=ok\"",
-                "  echo \"finished_at=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\"",
-                f"}} > {shlex.quote(posixpath.join(bootstrap_root, 'bootstrap.env'))}",
-            ]
-        )
-
-    return "\n".join(
-        [
-            common,
-            (
-                "apt-get install -y --no-install-recommends "
-                "ca-certificates curl git iproute2 iputils-ping python3"
-            ),
-            "{",
-            "  echo \"role=$LIBCRAFTER_ENDPOINT_ROLE\"",
-            "  echo \"private_ipv4=$LIBCRAFTER_PRIVATE_IPV4\"",
-            "  echo \"peer_private_ipv4=$LIBCRAFTER_PEER_PRIVATE_IPV4\"",
-            "  echo \"private_interface=$LIBCRAFTER_PRIVATE_INTERFACE\"",
-            "  echo \"repository_synced=true\"",
-            "  echo \"target_service_runtime=python3\"",
-            "  echo \"finished_at=$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")\"",
-            f"}} > {shlex.quote(posixpath.join(bootstrap_root, 'bootstrap.env'))}",
-        ]
-    )
 
 
 def _run_lab_wire_command(
