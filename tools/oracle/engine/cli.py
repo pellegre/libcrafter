@@ -18,6 +18,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
+from . import bootstrap as oracle_bootstrap
 from .backends import (
     BackendCapabilityName,
     BackendRegistration,
@@ -1128,6 +1129,57 @@ def _live_provider_packet_exchange_metadata(
     )
 
 
+def _live_provider_endpoint_bootstrap_inputs(
+    provider_adapter,
+    *,
+    dry_run: bool,
+) -> tuple[JSONObject, JSONObject]:
+    provider_capabilities = _json_object(
+        provider_adapter.default_provider_capabilities(dry_run=dry_run),
+        "provider capabilities",
+    )
+    topology_metadata = oracle_bootstrap.endpoint_bootstrap_topology(
+        _live_provider_packet_exchange_metadata(provider_adapter, dry_run=dry_run),
+        provider_capabilities,
+    )
+    return provider_capabilities, topology_metadata
+
+
+def _live_provider_endpoint_bootstrap_plan(
+    provider_adapter,
+    *,
+    dry_run: bool,
+) -> list[object]:
+    provider_capabilities, topology_metadata = _live_provider_endpoint_bootstrap_inputs(
+        provider_adapter,
+        dry_run=dry_run,
+    )
+    return oracle_bootstrap.endpoint_bootstrap_plan(
+        provider_adapter.name,
+        dry_run,
+        provider_capabilities,
+        topology_metadata,
+    )
+
+
+def _live_provider_validate_endpoint_bootstrap(
+    provider_adapter,
+    commands,
+    *,
+    dry_run: bool,
+):
+    _, topology_metadata = _live_provider_endpoint_bootstrap_inputs(
+        provider_adapter,
+        dry_run=dry_run,
+    )
+    return oracle_bootstrap.validate_endpoint_bootstrap(
+        provider_adapter.name,
+        commands,
+        dry_run=dry_run,
+        topology_metadata=topology_metadata,
+    )
+
+
 def _pcap(args: argparse.Namespace) -> int:
     if args.dry_plan:
         return _pcap_dry_plan(args)
@@ -1292,7 +1344,10 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
         )
         return 2
     provider_workflow = provider_adapter.provider_workflow(dry_run=True)
-    endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=True)
+    endpoint_bootstrap = _live_provider_endpoint_bootstrap_plan(
+        provider_adapter,
+        dry_run=True,
+    )
     packet_exchange_metadata = _live_provider_packet_exchange_metadata(
         provider_adapter,
         dry_run=True,
@@ -1306,7 +1361,11 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
     )
     validations = [
         validate_backend_bootstrap_command(bootstrap_command),
-        provider_adapter.validate_endpoint_bootstrap(endpoint_bootstrap, dry_run=True),
+        _live_provider_validate_endpoint_bootstrap(
+            provider_adapter,
+            endpoint_bootstrap,
+            dry_run=True,
+        ),
         provider_adapter.validate_provider_workflow(provider_workflow, dry_run=True),
         _live_corpus_accounting_validation(
             corpus_metadata,
@@ -1820,27 +1879,15 @@ def _live_provider_bootstrap_commands(
         )
         if isinstance(role, str) and role in endpoints
     ]
-    hook_factory = getattr(provider_adapter, "endpoint_bootstrap_command_hook", None)
-    if callable(hook_factory):
-        hook = hook_factory()
-        return {role: hook for role in endpoint_roles}
-
-    commands: dict[str, object] = {}
-    for role in endpoint_roles:
-        peer_role = next((peer for peer in endpoint_roles if peer != role), None)
-        if peer_role is None:
-            continue
-
-        def _command(context, *, role: str = role, peer_role: str = peer_role):
-            return provider_adapter.endpoint_bootstrap_command(
-                endpoint=endpoints[role],
-                peer=endpoints[peer_role],
-                remote_archive=context.remote_archive,
-                remote_dir=context.remote_dir,
-            )
-
-        commands[role] = _command
-    return commands
+    _, topology_metadata = _live_provider_endpoint_bootstrap_inputs(
+        provider_adapter,
+        dry_run=False,
+    )
+    hook = oracle_bootstrap.endpoint_bootstrap_command_hook(
+        provider_adapter.name,
+        topology_metadata,
+    )
+    return {role: hook for role in endpoint_roles}
 
 
 def _live_provider_lab_command_records(records: Sequence[object]) -> list[JSONObject]:
@@ -1983,7 +2030,10 @@ def _live_provider_skip_no_token(
 ) -> int:
     endpoints = provider_adapter.endpoints(dry_run=False)
     provider_workflow = provider_adapter.provider_workflow(dry_run=False)
-    endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=False)
+    endpoint_bootstrap = _live_provider_endpoint_bootstrap_plan(
+        provider_adapter,
+        dry_run=False,
+    )
     credential_label = _live_provider_credential_label(provider_adapter)
     missing_credential_reason = _live_provider_missing_credential_reason(provider_adapter)
     print_reason = missing_credential_reason.replace(" ", "_")
@@ -2097,7 +2147,10 @@ def _live_provider_requires_confirmation_report(
 ) -> int:
     endpoints = provider_adapter.endpoints(dry_run=False)
     provider_workflow = provider_adapter.provider_workflow(dry_run=False)
-    endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=False)
+    endpoint_bootstrap = _live_provider_endpoint_bootstrap_plan(
+        provider_adapter,
+        dry_run=False,
+    )
     packet_exchange_metadata = _live_provider_packet_exchange_metadata(
         provider_adapter,
         dry_run=False,
@@ -2212,7 +2265,10 @@ def _live_provider_skip_no_wire_eligible(
 ) -> int:
     endpoints = provider_adapter.endpoints(dry_run=dry_run)
     provider_workflow = provider_adapter.provider_workflow(dry_run=dry_run)
-    endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=dry_run)
+    endpoint_bootstrap = _live_provider_endpoint_bootstrap_plan(
+        provider_adapter,
+        dry_run=dry_run,
+    )
     packet_exchange_metadata = _live_provider_packet_exchange_metadata(
         provider_adapter,
         dry_run=dry_run,
@@ -2331,7 +2387,10 @@ def _live_provider_execute(
     endpoints = {}
     lab_session = None
     provider_workflow = provider_adapter.provider_workflow(dry_run=False)
-    endpoint_bootstrap = provider_adapter.endpoint_bootstrap_plan(dry_run=False)
+    endpoint_bootstrap = _live_provider_endpoint_bootstrap_plan(
+        provider_adapter,
+        dry_run=False,
+    )
     wire_endpoint_plan: JSONObject = {}
     provider_commands: list[JSONObject] = []
     endpoint_protocol_batches: list[JSONObject] = []
@@ -3217,14 +3276,20 @@ def _bootstrap_wire_endpoint(
     if upload["exit_code"] != 0:
         return [upload]
 
+    _, topology_metadata = _live_provider_endpoint_bootstrap_inputs(
+        provider_adapter,
+        dry_run=False,
+    )
     bootstrap = _run_wire_command(
         wire.exec(
             endpoint.endpoint_id,
-            provider_adapter.endpoint_bootstrap_command(
+            oracle_bootstrap.endpoint_bootstrap_command(
+                provider=provider_adapter.name,
                 endpoint=endpoint,
                 peer=peer,
                 remote_archive=remote_archive,
                 remote_dir=remote_dir,
+                topology_metadata=topology_metadata,
             ),
             timeout=1800,
         ),

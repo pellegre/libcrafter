@@ -19,6 +19,7 @@ from tools.lab.engine.model import (
     LabSession,
 )
 from tools.lab.engine.repo import RepoArchiveResult
+from tools.oracle.engine import bootstrap as oracle_bootstrap
 from tools.oracle.engine import cli
 from tools.oracle.engine.live import LiveCommandPlan, LiveEndpoint
 from tools.oracle.engine.model import DecodedModel, PacketPlan, read_json
@@ -97,7 +98,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
         exchange_metadata = adapter.packet_exchange_metadata(dry_run=True)
         endpoints = adapter.endpoints(dry_run=True)
         workflow = adapter.provider_workflow(dry_run=True)
-        bootstrap = adapter.endpoint_bootstrap_plan(dry_run=True)
+        bootstrap = _endpoint_bootstrap_plan(adapter, dry_run=True)
 
         self.assertEqual(capabilities["provider"], "hetzner")
         self.assertEqual(infrastructure["provider"], "hetzner")
@@ -115,7 +116,9 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(set(endpoints), {"libcrafter", "reference_backend"})
         self.assertTrue(all(endpoint.metadata["private_network"] for endpoint in endpoints.values()))
         self.assertTrue(adapter.validate_provider_workflow(workflow, dry_run=True).passed)
-        self.assertTrue(adapter.validate_endpoint_bootstrap(bootstrap, dry_run=True).passed)
+        self.assertTrue(
+            _validate_endpoint_bootstrap(adapter, bootstrap, dry_run=True).passed,
+        )
         self.assertEqual(
             {command.role for command in bootstrap},
             {"libcrafter", "reference_backend"},
@@ -138,7 +141,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
         exchange_metadata = adapter.packet_exchange_metadata(dry_run=True)
         endpoints = adapter.endpoints(dry_run=True)
         workflow = adapter.provider_workflow(dry_run=True)
-        bootstrap = adapter.endpoint_bootstrap_plan(dry_run=True)
+        bootstrap = _endpoint_bootstrap_plan(adapter, dry_run=True)
 
         self.assertEqual(capabilities["provider"], "qemu")
         self.assertEqual(infrastructure["provider"], "qemu")
@@ -160,7 +163,9 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(endpoints["libcrafter"].address, QEMU_LIBCRAFTER_PRIVATE_ADDRESS)
         self.assertEqual(endpoints["reference_backend"].address, QEMU_REFERENCE_PRIVATE_ADDRESS)
         self.assertTrue(adapter.validate_provider_workflow(workflow, dry_run=True).passed)
-        self.assertTrue(adapter.validate_endpoint_bootstrap(bootstrap, dry_run=True).passed)
+        self.assertTrue(
+            _validate_endpoint_bootstrap(adapter, bootstrap, dry_run=True).passed,
+        )
         self.assertEqual(
             {command.role for command in bootstrap},
             {"libcrafter", "reference_backend"},
@@ -183,7 +188,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
         exchange_metadata = adapter.packet_exchange_metadata(dry_run=True)
         endpoints = adapter.endpoints(dry_run=True)
         workflow = adapter.provider_workflow(dry_run=True)
-        bootstrap = adapter.endpoint_bootstrap_plan(dry_run=True)
+        bootstrap = _endpoint_bootstrap_plan(adapter, dry_run=True)
 
         self.assertEqual(capabilities["provider"], "virtualbox")
         self.assertEqual(capabilities["wire_policy"]["transit_decrements_ipv4_ttl"], False)
@@ -217,7 +222,9 @@ class LiveProviderRegistryTest(unittest.TestCase):
             VIRTUALBOX_PLANNED_REFERENCE_LAN_ADDRESS,
         )
         self.assertTrue(adapter.validate_provider_workflow(workflow, dry_run=True).passed)
-        self.assertTrue(adapter.validate_endpoint_bootstrap(bootstrap, dry_run=True).passed)
+        self.assertTrue(
+            _validate_endpoint_bootstrap(adapter, bootstrap, dry_run=True).passed,
+        )
         self.assertEqual(
             {command.role for command in bootstrap},
             {"libcrafter", "reference_backend"},
@@ -378,7 +385,8 @@ class LiveProviderRegistryTest(unittest.TestCase):
 
         policy = adapter.wire_comparison_policy(plan)
         transit_plan = adapter.apply_transit_plan(plan)
-        bootstrap_command = adapter.endpoint_bootstrap_command(
+        bootstrap_command = _endpoint_bootstrap_command(
+            adapter,
             endpoint=adapter.endpoints(dry_run=True)["libcrafter"],
             peer=adapter.endpoints(dry_run=True)["reference_backend"],
             remote_archive="/tmp/repo.tar.gz",
@@ -430,7 +438,8 @@ class LiveProviderRegistryTest(unittest.TestCase):
 
         policy = adapter.wire_comparison_policy(plan)
         transit_plan = adapter.apply_transit_plan(plan)
-        bootstrap_command = adapter.endpoint_bootstrap_command(
+        bootstrap_command = _endpoint_bootstrap_command(
+            adapter,
             endpoint=adapter.endpoints(dry_run=True)["libcrafter"],
             peer=adapter.endpoints(dry_run=True)["reference_backend"],
             remote_archive="/tmp/repo.tar.gz",
@@ -567,13 +576,6 @@ class LiveProviderRegistryTest(unittest.TestCase):
                 ],
             )
             self.assertEqual(wire.destroyed, ["fake-reference_backend", "fake-libcrafter"])
-            self.assertEqual(
-                [(call["endpoint"], call["peer"]) for call in adapter.bootstrap_calls],
-                [
-                    ("libcrafter", "reference_backend"),
-                    ("reference_backend", "libcrafter"),
-                ],
-            )
             self.assertEqual(adapter.transit_plan_ttls, [64])
             self.assertEqual(
                 sorted({call["endpoint_role"] for call in adapter.remote_command_calls}),
@@ -587,6 +589,24 @@ class LiveProviderRegistryTest(unittest.TestCase):
             self.assertEqual(metadata["planned_infrastructure"]["provider"], "fakecloud")
             self.assertEqual(metadata["wire_endpoint_plan"]["provider"], "fakecloud")
             self.assertEqual(metadata["lab_session"]["provider"], "fakecloud")
+            bootstrap_records = _workload_bootstrap_records(metadata["command_records"])
+            self.assertEqual(
+                [
+                    (
+                        record["metadata"]["context"]["role"],
+                        record["metadata"]["context"]["peer_roles"],
+                    )
+                    for record in bootstrap_records
+                ],
+                [
+                    ("libcrafter", ["reference_backend"]),
+                    ("reference_backend", ["libcrafter"]),
+                ],
+            )
+            self.assertEqual(
+                {record["metadata"]["bootstrap"]["provider"] for record in bootstrap_records},
+                {"fakecloud"},
+            )
             self.assertEqual(metadata["wire_provider"], "fake-wire")
             self.assertEqual(metadata["wire_exposure"], "isolated")
             self.assertEqual(metadata["packet_exchange_network"], "fake-isolated")
@@ -724,6 +744,61 @@ class _FakeWireClient:
                 ),
             },
         )
+
+
+def _endpoint_bootstrap_topology(adapter, *, dry_run: bool) -> dict[str, object]:
+    capabilities = adapter.default_provider_capabilities(dry_run=dry_run)
+    return oracle_bootstrap.endpoint_bootstrap_topology(
+        adapter.packet_exchange_metadata(dry_run=dry_run),
+        capabilities,
+    )
+
+
+def _endpoint_bootstrap_plan(adapter, *, dry_run: bool):
+    capabilities = adapter.default_provider_capabilities(dry_run=dry_run)
+    return oracle_bootstrap.endpoint_bootstrap_plan(
+        adapter.name,
+        dry_run,
+        capabilities,
+        _endpoint_bootstrap_topology(adapter, dry_run=dry_run),
+    )
+
+
+def _validate_endpoint_bootstrap(adapter, commands, *, dry_run: bool):
+    return oracle_bootstrap.validate_endpoint_bootstrap(
+        adapter.name,
+        commands,
+        dry_run=dry_run,
+        topology_metadata=_endpoint_bootstrap_topology(adapter, dry_run=dry_run),
+    )
+
+
+def _endpoint_bootstrap_command(
+    adapter,
+    *,
+    endpoint: LiveEndpoint,
+    peer: LiveEndpoint,
+    remote_archive: str,
+    remote_dir: str,
+) -> list[str]:
+    return oracle_bootstrap.endpoint_bootstrap_command(
+        provider=adapter.name,
+        endpoint=endpoint,
+        peer=peer,
+        remote_archive=remote_archive,
+        remote_dir=remote_dir,
+        topology_metadata=_endpoint_bootstrap_topology(adapter, dry_run=True),
+    )
+
+
+def _workload_bootstrap_records(command_records) -> list[dict[str, object]]:
+    return [
+        record
+        for record in command_records
+        if isinstance(record, dict)
+        and isinstance(record.get("metadata"), dict)
+        and record["metadata"].get("phase") == "workload-bootstrap"
+    ]
 
 
 def _live_args(provider: str) -> SimpleNamespace:
@@ -1033,7 +1108,6 @@ class _FakeLiveProviderAdapter:
     missing_credential_reason = "missing FAKE_TOKEN"
 
     def __init__(self) -> None:
-        self.bootstrap_calls: list[dict[str, str]] = []
         self.remote_command_calls: list[dict[str, str]] = []
         self.transit_plan_ttls: list[int] = []
         self.lab_provider_adapter = _FakeLabProviderAdapter(self)
@@ -1148,21 +1222,7 @@ class _FakeLiveProviderAdapter:
             ),
         ]
 
-    def endpoint_bootstrap_plan(self, *, dry_run: bool) -> list[LiveCommandPlan]:
-        return [
-            LiveCommandPlan(
-                role=role,
-                purpose=f"bootstrap-{role}",
-                argv=["fake-bootstrap", role],
-                metadata={"dry_run": dry_run},
-            )
-            for role in self.endpoint_roles
-        ]
-
     def validate_provider_workflow(self, commands, *, dry_run: bool):
-        raise AssertionError("not used by real execution test")
-
-    def validate_endpoint_bootstrap(self, commands, *, dry_run: bool):
         raise AssertionError("not used by real execution test")
 
     def validate_dry_run_exchange(self, exchange):
@@ -1170,24 +1230,6 @@ class _FakeLiveProviderAdapter:
 
     def remote_dir(self) -> str:
         return "/srv/fake-oracle"
-
-    def endpoint_bootstrap_command(
-        self,
-        *,
-        endpoint: LiveEndpoint,
-        peer: LiveEndpoint,
-        remote_archive: str,
-        remote_dir: str,
-    ) -> list[str]:
-        self.bootstrap_calls.append(
-            {
-                "endpoint": endpoint.role,
-                "peer": peer.role,
-                "remote_archive": remote_archive,
-                "remote_dir": remote_dir,
-            }
-        )
-        return ["fake-bootstrap", endpoint.role, peer.role, remote_archive, remote_dir]
 
     def endpoint_remote_command(
         self,
