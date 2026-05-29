@@ -109,10 +109,16 @@ jobs:
           fi
 
       - name: Compile Python validation tooling
-        run: python3 -m compileall tools/oracle/engine tools/probe/engine tools/wire/engine tools/wire/smoke
+        run: python3 -m compileall tools/lab/engine tools/oracle/engine tools/probe/engine tools/wire/engine tools/wire/smoke
+
+      - name: Run lab Python tests
+        run: python3 -m unittest discover -s tools/lab/tests -p 'test_*.py'
 
       - name: Run oracle Python tests
         run: python3 -m unittest discover -s tools/oracle/tests -p 'test_*.py'
+
+      - name: Run probe Python tests
+        run: python3 -m unittest discover -s tools/probe/tests -p 'test_*.py'
 
       - name: Run wire Python tests
         run: python3 -m unittest discover -s tools/wire/tests -p 'test_*.py'
