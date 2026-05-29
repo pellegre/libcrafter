@@ -31,8 +31,8 @@ pub use constants::{
 pub use malformed::DhcpMalformed;
 pub use message::DhcpMessageType;
 pub use option::{
-    scan_dhcp_option_segments, DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionSegment,
-    DhcpOptionValue, OptionOverload,
+    scan_dhcp_option_segments, typed_option_value, DhcpOption, DhcpOptionArea, DhcpOptionCode,
+    DhcpOptionFormat, DhcpOptionKind, DhcpOptionSegment, DhcpOptionValue, OptionOverload,
 };
 pub use registry::{
     option_meta, option_name, option_status, DhcpOptionMeta, DhcpOptionStatus,
