@@ -8,8 +8,9 @@ use crate::error::{CrafterError, Result};
 
 use super::constants::{
     DHCP_OPTION_ALL_SUBNETS_LOCAL, DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_BOOT_FILE_SIZE,
-    DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_COOKIE_SERVER,
-    DHCP_OPTION_DEFAULT_IP_TTL, DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER,
+    DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
+    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_COOKIE_SERVER, DHCP_OPTION_DEFAULT_IP_TTL,
+    DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH,
     DHCP_OPTION_END, DHCP_OPTION_ETHERNET_ENCAPSULATION, DHCP_OPTION_EXTENSIONS_PATH,
     DHCP_OPTION_HOST_NAME, DHCP_OPTION_IMPRESS_SERVER, DHCP_OPTION_INTERFACE_MTU,
     DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_IP_FORWARDING, DHCP_OPTION_LOG_SERVER,
@@ -25,8 +26,8 @@ use super::constants::{
     DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS,
     DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH, DHCP_OPTION_ROUTER,
     DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
-    DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_SWAP_SERVER,
-    DHCP_OPTION_TCP_DEFAULT_TTL, DHCP_OPTION_TCP_KEEPALIVE_GARBAGE,
+    DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_SUBNET_MASK,
+    DHCP_OPTION_SWAP_SERVER, DHCP_OPTION_TCP_DEFAULT_TTL, DHCP_OPTION_TCP_KEEPALIVE_GARBAGE,
     DHCP_OPTION_TCP_KEEPALIVE_INTERVAL, DHCP_OPTION_TIME_OFFSET, DHCP_OPTION_TIME_SERVER,
     DHCP_OPTION_TRAILER_ENCAPSULATION, DHCP_OPTION_VENDOR_CLASS_IDENTIFIER,
     DHCP_OPTION_VENDOR_SPECIFIC, DHCP_OPTION_X_WINDOW_DISPLAY_MANAGER,
@@ -121,6 +122,93 @@ impl OptionOverload {
             DhcpOptionArea::Sname => self.overloads_sname(),
         }
     }
+}
+
+/// A classic RFC 2132 static route entry (option 33).
+///
+/// Source: RFC 2132 section 5.8. Option 33 carries a list of IPv4 address
+/// pairs; the first address of each pair is the route destination and the
+/// second is the router for that destination. Each entry is exactly eight
+/// octets on the wire (two 4-octet addresses), so the option length must be a
+/// non-zero multiple of eight. The default route `0.0.0.0` is an illegal
+/// destination per the RFC, but the codec preserves caller-supplied values
+/// verbatim so intentionally malformed packets can still be built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DhcpStaticRoute {
+    /// Route destination address.
+    pub destination: Ipv4Addr,
+    /// Router address used to reach the destination.
+    pub router: Ipv4Addr,
+}
+
+impl DhcpStaticRoute {
+    /// Create a static route from a destination and router address.
+    pub const fn new(destination: Ipv4Addr, router: Ipv4Addr) -> Self {
+        Self {
+            destination,
+            router,
+        }
+    }
+}
+
+/// A RFC 3442 classless static route entry (option 121).
+///
+/// Source: RFC 3442. Each route in option 121 is a destination descriptor
+/// followed by a 4-octet router address. The destination descriptor is one
+/// octet giving the subnet-mask width (number of one bits, 0-32), followed by
+/// only the significant octets of the subnet number: `ceil(width / 8)` octets.
+/// Insignificant trailing octets are omitted on the wire, so a `/24` route
+/// carries three subnet octets and a `/0` default route carries none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DhcpClasslessRoute {
+    /// Subnet-mask width in bits (number of one bits, 0-32).
+    pub prefix_length: u8,
+    /// Subnet (destination network) number. Only the significant octets, as
+    /// determined by `prefix_length`, are placed on the wire.
+    pub destination: Ipv4Addr,
+    /// Router address used to reach the destination.
+    pub router: Ipv4Addr,
+}
+
+impl DhcpClasslessRoute {
+    /// Create a classless static route from a prefix length, destination
+    /// network, and router address.
+    pub const fn new(prefix_length: u8, destination: Ipv4Addr, router: Ipv4Addr) -> Self {
+        Self {
+            prefix_length,
+            destination,
+            router,
+        }
+    }
+
+    /// Number of significant subnet-number octets on the wire for this route's
+    /// prefix length: `ceil(prefix_length / 8)` (RFC 3442). A prefix length of
+    /// zero (the default route) carries no subnet octets.
+    pub const fn significant_octets(prefix_length: u8) -> usize {
+        (prefix_length as usize).div_ceil(8)
+    }
+}
+
+/// The encoding selector of the RFC 3361 SIP Servers option (option 120).
+///
+/// Source: RFC 3361 section 3. The first payload octet after the length is the
+/// `enc` byte: `0` selects an RFC 1035 domain-name list, `1` selects an IPv4
+/// address list. A server MUST NOT mix the two encodings. Any other `enc`
+/// value is preserved verbatim as [`SipServers::Unknown`] so the raw bytes are
+/// never lost.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SipServers {
+    /// `enc = 0`: an RFC 1035 label-encoded list of SIP server domain names.
+    DomainNames(Vec<String>),
+    /// `enc = 1`: a list of SIP server IPv4 addresses.
+    Addresses(Vec<Ipv4Addr>),
+    /// An unspecified `enc` value with its raw payload (excluding `enc`).
+    Unknown {
+        /// The raw `enc` selector octet.
+        encoding: u8,
+        /// The remaining payload bytes after the `enc` octet.
+        data: Vec<u8>,
+    },
 }
 
 /// A DHCPv4 option codepoint with source-backed registry awareness.
@@ -236,6 +324,17 @@ pub enum DhcpOptionValue {
     OptionOverload(OptionOverload),
     /// A parameter request list (option 55): a sequence of option codes.
     ParameterRequestList(Vec<u8>),
+    /// A list of RFC 2132 static routes (option 33), each a destination and
+    /// router IPv4 address pair.
+    StaticRoutes(Vec<DhcpStaticRoute>),
+    /// A list of RFC 3442 classless static routes (option 121).
+    ClasslessRoutes(Vec<DhcpClasslessRoute>),
+    /// An RFC 3397 / RFC 1035 domain-search list (option 119), decoded to its
+    /// logical fully-qualified domain names.
+    DomainSearch(Vec<String>),
+    /// An RFC 3361 SIP Servers value (option 120): a domain-name list, an IPv4
+    /// address list, or an unspecified encoding preserved verbatim.
+    SipServers(SipServers),
     /// Opaque bytes preserved verbatim for options without a richer decode yet.
     Opaque(Vec<u8>),
 }
@@ -290,6 +389,10 @@ impl DhcpOptionValue {
             }
             Self::MessageType(message_type) => vec![message_type.code()],
             Self::OptionOverload(overload) => vec![overload.code()],
+            Self::StaticRoutes(routes) => encode_static_routes(routes),
+            Self::ClasslessRoutes(routes) => encode_classless_routes(routes),
+            Self::DomainSearch(names) => encode_domain_name_list(names),
+            Self::SipServers(servers) => encode_sip_servers(servers),
             Self::Text(bytes) | Self::ParameterRequestList(bytes) | Self::Opaque(bytes) => {
                 bytes.clone()
             }
@@ -334,18 +437,29 @@ pub enum DhcpOptionFormat {
     MessageType,
     /// The option overload single octet (option 52).
     OptionOverload,
+    /// RFC 2132 static routes (option 33): destination/router IPv4 pairs.
+    StaticRoutes,
+    /// RFC 3442 classless static routes (option 121).
+    ClasslessRoutes,
+    /// RFC 3397 domain-search list (option 119): RFC 1035 label encoding.
+    DomainSearch,
+    /// RFC 3361 SIP servers (option 120): enc byte plus domain or address list.
+    SipServers,
     /// Opaque bytes preserved verbatim (vendor-specific, client/vendor id).
     Opaque,
 }
 
-/// A registered RFC 2132 base DHCPv4 option (codes 1-61).
+/// A registered DHCPv4 option with a source-backed wire format.
 ///
 /// Source: RFC 2132 and the IANA "BOOTP Vendor Extensions and DHCP Options"
 /// registry (updated 2026-02-02). Each kind maps to its wire codepoint and its
 /// [`DhcpOptionFormat`], giving callers a source-backed, format-aware view of
-/// the base options without forcing a bespoke decoder per code. Codepoints
-/// outside this set are still preserved as raw segments and classified by the
-/// option-code registry.
+/// the option without forcing a bespoke decoder per code. This covers the RFC
+/// 2132 base options (codes 1-61) plus later route, domain, and
+/// service-discovery options whose wire formats are specified by their own RFC
+/// (for example option 119 domain search, option 120 SIP servers, and option
+/// 121 classless static routes). Codepoints outside this set are still
+/// preserved as raw segments and classified by the option-code registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(missing_docs)]
 pub enum DhcpOptionKind {
@@ -410,10 +524,13 @@ pub enum DhcpOptionKind {
     RebindingTime,
     VendorClassIdentifier,
     ClientIdentifier,
+    DomainSearch,
+    SipServers,
+    ClasslessStaticRoute,
 }
 
 impl DhcpOptionKind {
-    /// Registered RFC 2132 base option for a wire codepoint, when one exists.
+    /// Registered option kind for a wire codepoint, when one has a typed format.
     pub const fn from_code(code: u8) -> Option<Self> {
         let kind = match code {
             DHCP_OPTION_SUBNET_MASK => Self::SubnetMask,
@@ -477,6 +594,9 @@ impl DhcpOptionKind {
             DHCP_OPTION_REBINDING_TIME => Self::RebindingTime,
             DHCP_OPTION_VENDOR_CLASS_IDENTIFIER => Self::VendorClassIdentifier,
             DHCP_OPTION_CLIENT_IDENTIFIER => Self::ClientIdentifier,
+            DHCP_OPTION_DOMAIN_SEARCH => Self::DomainSearch,
+            DHCP_OPTION_SIP_SERVERS => Self::SipServers,
+            DHCP_OPTION_CLASSLESS_STATIC_ROUTE => Self::ClasslessStaticRoute,
             _ => return None,
         };
         Some(kind)
@@ -546,6 +666,9 @@ impl DhcpOptionKind {
             Self::RebindingTime => DHCP_OPTION_REBINDING_TIME,
             Self::VendorClassIdentifier => DHCP_OPTION_VENDOR_CLASS_IDENTIFIER,
             Self::ClientIdentifier => DHCP_OPTION_CLIENT_IDENTIFIER,
+            Self::DomainSearch => DHCP_OPTION_DOMAIN_SEARCH,
+            Self::SipServers => DHCP_OPTION_SIP_SERVERS,
+            Self::ClasslessStaticRoute => DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
         }
     }
 
@@ -577,7 +700,16 @@ impl DhcpOptionKind {
             | Self::XWindowFontServer
             | Self::XWindowDisplayManager => F::Ipv4List,
             // IPv4 address pairs.
-            Self::PolicyFilter | Self::StaticRoute => F::Ipv4Pairs,
+            Self::PolicyFilter => F::Ipv4Pairs,
+            // Static routes are destination/router IPv4 pairs, surfaced as typed
+            // route structs (RFC 2132 section 5.8).
+            Self::StaticRoute => F::StaticRoutes,
+            // Classless static routes (RFC 3442).
+            Self::ClasslessStaticRoute => F::ClasslessRoutes,
+            // Domain-search list (RFC 3397).
+            Self::DomainSearch => F::DomainSearch,
+            // SIP servers (RFC 3361).
+            Self::SipServers => F::SipServers,
             // Boolean flag byte.
             Self::IpForwarding
             | Self::NonLocalSourceRouting
@@ -665,6 +797,17 @@ pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValu
             validate_fixed_len(field, data.len(), 1)?;
             DhcpOptionValue::OptionOverload(OptionOverload::from_code(data[0]))
         }
+        DhcpOptionFormat::StaticRoutes => {
+            DhcpOptionValue::StaticRoutes(decode_static_routes(data)?)
+        }
+        DhcpOptionFormat::ClasslessRoutes => {
+            DhcpOptionValue::ClasslessRoutes(decode_classless_routes(data)?)
+        }
+        DhcpOptionFormat::DomainSearch => DhcpOptionValue::DomainSearch(decode_domain_name_list(
+            "dhcp.option.domain_search",
+            data,
+        )?),
+        DhcpOptionFormat::SipServers => DhcpOptionValue::SipServers(decode_sip_servers(data)?),
         DhcpOptionFormat::Opaque => {
             if data.is_empty() {
                 DhcpOptionValue::Empty
@@ -1538,6 +1681,303 @@ fn encode_ipv4_list(addresses: &[Ipv4Addr]) -> Vec<u8> {
     bytes
 }
 
+/// Octet length of one RFC 2132 static route entry on the wire (option 33).
+const DHCP_STATIC_ROUTE_ENTRY_LEN: usize = 8;
+/// Octet length of the router address in an RFC 3442 classless route.
+const DHCP_CLASSLESS_ROUTER_LEN: usize = 4;
+/// Maximum subnet-mask width for an RFC 3442 classless route prefix.
+const DHCP_CLASSLESS_MAX_PREFIX: u8 = 32;
+/// Maximum length of a single RFC 1035 label (six-bit length field).
+const DHCP_DNS_LABEL_MAX_LEN: usize = 63;
+/// Two high bits set on a length octet mark an RFC 1035 compression pointer.
+const DHCP_DNS_POINTER_MASK: u8 = 0xC0;
+/// RFC 3361 SIP servers encoding: RFC 1035 domain-name list.
+const DHCP_SIP_ENC_DOMAIN: u8 = 0;
+/// RFC 3361 SIP servers encoding: IPv4 address list.
+const DHCP_SIP_ENC_ADDRESS: u8 = 1;
+
+/// Decode an RFC 2132 static route list (option 33).
+///
+/// Source: RFC 2132 section 5.8. The payload is a sequence of 8-octet entries,
+/// each a destination IPv4 address followed by the router IPv4 address. The
+/// length must be a non-zero multiple of eight; anything else is a structured
+/// error rather than a panic.
+fn decode_static_routes(data: &[u8]) -> Result<Vec<DhcpStaticRoute>> {
+    let field = "dhcp.option.static_route";
+    if data.is_empty() || data.len() % DHCP_STATIC_ROUTE_ENTRY_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "static route option length must be a non-zero multiple of eight",
+        ));
+    }
+    Ok(data
+        .chunks_exact(DHCP_STATIC_ROUTE_ENTRY_LEN)
+        .map(|chunk| {
+            DhcpStaticRoute::new(
+                Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]),
+                Ipv4Addr::new(chunk[4], chunk[5], chunk[6], chunk[7]),
+            )
+        })
+        .collect())
+}
+
+/// Encode an RFC 2132 static route list (option 33).
+fn encode_static_routes(routes: &[DhcpStaticRoute]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(routes.len() * DHCP_STATIC_ROUTE_ENTRY_LEN);
+    for route in routes {
+        bytes.extend_from_slice(&route.destination.octets());
+        bytes.extend_from_slice(&route.router.octets());
+    }
+    bytes
+}
+
+/// Decode an RFC 3442 classless static route list (option 121).
+///
+/// Source: RFC 3442. Each route is a destination descriptor (one mask-width
+/// octet plus `ceil(width / 8)` significant subnet octets) followed by a
+/// 4-octet router address. Prefix lengths above 32, truncated descriptors, and
+/// truncated router addresses all surface as structured errors; the function
+/// never panics on short input.
+fn decode_classless_routes(data: &[u8]) -> Result<Vec<DhcpClasslessRoute>> {
+    let field = "dhcp.option.classless_static_route";
+    let mut routes = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < data.len() {
+        let prefix_length = data[offset];
+        offset += 1;
+        if prefix_length > DHCP_CLASSLESS_MAX_PREFIX {
+            return Err(CrafterError::invalid_field_value(
+                field,
+                "classless route prefix length exceeds 32 bits",
+            ));
+        }
+        let significant = DhcpClasslessRoute::significant_octets(prefix_length);
+        if offset + significant + DHCP_CLASSLESS_ROUTER_LEN > data.len() {
+            return Err(CrafterError::buffer_too_short(
+                field,
+                offset + significant + DHCP_CLASSLESS_ROUTER_LEN,
+                data.len(),
+            ));
+        }
+        let mut subnet = [0u8; 4];
+        subnet[..significant].copy_from_slice(&data[offset..offset + significant]);
+        offset += significant;
+        let router = Ipv4Addr::new(
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        );
+        offset += DHCP_CLASSLESS_ROUTER_LEN;
+        routes.push(DhcpClasslessRoute::new(
+            prefix_length,
+            Ipv4Addr::from(subnet),
+            router,
+        ));
+    }
+
+    Ok(routes)
+}
+
+/// Encode an RFC 3442 classless static route list (option 121).
+///
+/// Only the `ceil(prefix_length / 8)` significant subnet octets are emitted, in
+/// order, before each route's 4-octet router address (RFC 3442).
+fn encode_classless_routes(routes: &[DhcpClasslessRoute]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for route in routes {
+        let significant = DhcpClasslessRoute::significant_octets(route.prefix_length).min(4);
+        bytes.push(route.prefix_length);
+        bytes.extend_from_slice(&route.destination.octets()[..significant]);
+        bytes.extend_from_slice(&route.router.octets());
+    }
+    bytes
+}
+
+/// Decode an RFC 1035 / RFC 3397 domain-name list (option 119 and the option
+/// 120 domain encoding).
+///
+/// Source: RFC 3397 section 2 and RFC 1035 section 4.1.4. Names are sequences
+/// of length-prefixed labels terminated by a zero-length root label, and a
+/// label length whose two high bits are set is a two-octet compression pointer
+/// into the aggregate option data. Truncated labels or pointers, oversized
+/// labels, and forward/self pointer loops surface as structured errors rather
+/// than panics.
+fn decode_domain_name_list(field: &'static str, data: &[u8]) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < data.len() {
+        let (name, next) = decode_domain_name(field, data, offset)?;
+        names.push(name);
+        offset = next;
+    }
+
+    Ok(names)
+}
+
+/// Decode one RFC 1035 domain name starting at `start`, returning the assembled
+/// name and the offset of the first octet after the name in the linear stream
+/// (the byte after the terminating root label or compression pointer).
+fn decode_domain_name(field: &'static str, data: &[u8], start: usize) -> Result<(String, usize)> {
+    let mut labels: Vec<String> = Vec::new();
+    let mut cursor = start;
+    // The offset just past the name in the linear stream, fixed at the first
+    // compression pointer encountered (RFC 1035 section 4.1.4).
+    let mut linear_end: Option<usize> = None;
+    // Bound the jump count by the data length to reject pointer loops.
+    let mut jumps = 0usize;
+
+    loop {
+        if cursor >= data.len() {
+            return Err(CrafterError::buffer_too_short(
+                field,
+                cursor + 1,
+                data.len(),
+            ));
+        }
+        let length = data[cursor];
+
+        if length == 0 {
+            cursor += 1;
+            let end = linear_end.unwrap_or(cursor);
+            return Ok((labels.join("."), end));
+        }
+
+        if length & DHCP_DNS_POINTER_MASK == DHCP_DNS_POINTER_MASK {
+            if cursor + 2 > data.len() {
+                return Err(CrafterError::buffer_too_short(
+                    field,
+                    cursor + 2,
+                    data.len(),
+                ));
+            }
+            let pointer =
+                (usize::from(length & !DHCP_DNS_POINTER_MASK) << 8) | usize::from(data[cursor + 1]);
+            if linear_end.is_none() {
+                linear_end = Some(cursor + 2);
+            }
+            if pointer >= data.len() {
+                return Err(CrafterError::invalid_field_value(
+                    field,
+                    "domain-name compression pointer points outside the option data",
+                ));
+            }
+            jumps += 1;
+            if jumps > data.len() {
+                return Err(CrafterError::invalid_field_value(
+                    field,
+                    "domain-name compression pointers form a loop",
+                ));
+            }
+            cursor = pointer;
+            continue;
+        }
+
+        if length & DHCP_DNS_POINTER_MASK != 0 {
+            return Err(CrafterError::invalid_field_value(
+                field,
+                "domain-name label length has reserved high bits set",
+            ));
+        }
+
+        let label_len = usize::from(length);
+        if label_len > DHCP_DNS_LABEL_MAX_LEN {
+            return Err(CrafterError::invalid_field_value(
+                field,
+                "domain-name label exceeds 63 octets",
+            ));
+        }
+        let label_start = cursor + 1;
+        let label_end = label_start + label_len;
+        if label_end > data.len() {
+            return Err(CrafterError::buffer_too_short(field, label_end, data.len()));
+        }
+        // RFC 1035 labels are not guaranteed UTF-8; preserve the bytes lossily
+        // for the convenience string view. Raw bytes remain inspectable through
+        // the option segments and the option's `payload()`.
+        labels.push(String::from_utf8_lossy(&data[label_start..label_end]).into_owned());
+        cursor = label_end;
+    }
+}
+
+/// Encode an RFC 1035 / RFC 3397 domain-name list without compression.
+///
+/// Each name is split on `.` into labels, every label is emitted as a
+/// length-prefixed run, and the name is terminated by a zero root label. Empty
+/// labels (leading, trailing, or doubled dots) are dropped so a trailing dot in
+/// a fully-qualified name does not produce an invalid zero-length label mid
+/// name. This emitter never uses compression pointers, which is always a valid
+/// RFC 1035 encoding; the decoder still resolves pointers produced elsewhere.
+fn encode_domain_name_list(names: &[String]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for name in names {
+        for label in name.split('.').filter(|label| !label.is_empty()) {
+            let label_bytes = label.as_bytes();
+            let len = label_bytes.len().min(DHCP_DNS_LABEL_MAX_LEN);
+            bytes.push(len as u8);
+            bytes.extend_from_slice(&label_bytes[..len]);
+        }
+        bytes.push(0);
+    }
+    bytes
+}
+
+/// Decode an RFC 3361 SIP servers option (option 120).
+///
+/// Source: RFC 3361 section 3. The first payload octet is the `enc` selector:
+/// `0` introduces an RFC 1035 domain-name list, `1` introduces an IPv4 address
+/// list (length a non-zero multiple of four after the `enc` byte). Any other
+/// `enc` value is preserved verbatim. An empty payload (no `enc` byte) is a
+/// structured error.
+fn decode_sip_servers(data: &[u8]) -> Result<SipServers> {
+    let field = "dhcp.option.sip_servers";
+    let Some((&encoding, rest)) = data.split_first() else {
+        return Err(CrafterError::buffer_too_short(field, 1, 0));
+    };
+    match encoding {
+        DHCP_SIP_ENC_DOMAIN => Ok(SipServers::DomainNames(decode_domain_name_list(
+            field, rest,
+        )?)),
+        DHCP_SIP_ENC_ADDRESS => {
+            if rest.is_empty() || rest.len() % 4 != 0 {
+                return Err(CrafterError::invalid_field_value(
+                    field,
+                    "SIP server address list length must be a non-zero multiple of four",
+                ));
+            }
+            Ok(SipServers::Addresses(decode_ipv4_list(field, rest)?))
+        }
+        other => Ok(SipServers::Unknown {
+            encoding: other,
+            data: rest.to_vec(),
+        }),
+    }
+}
+
+/// Encode an RFC 3361 SIP servers option (option 120).
+fn encode_sip_servers(servers: &SipServers) -> Vec<u8> {
+    match servers {
+        SipServers::DomainNames(names) => {
+            let mut bytes = vec![DHCP_SIP_ENC_DOMAIN];
+            bytes.extend(encode_domain_name_list(names));
+            bytes
+        }
+        SipServers::Addresses(addresses) => {
+            let mut bytes = vec![DHCP_SIP_ENC_ADDRESS];
+            bytes.extend(encode_ipv4_list(addresses));
+            bytes
+        }
+        SipServers::Unknown { encoding, data } => {
+            let mut bytes = Vec::with_capacity(1 + data.len());
+            bytes.push(*encoding);
+            bytes.extend_from_slice(data);
+            bytes
+        }
+    }
+}
+
 /// Maximum payload an option length byte can describe (RFC 2132 section 2).
 pub(super) const DHCP_MAX_OPTION_DATA_LEN: usize = u8::MAX as usize;
 
@@ -2153,17 +2593,18 @@ mod dhcp_rfc2132_base_options {
                 44,
                 DhcpOptionValue::Ipv4List(vec![ip(192, 0, 2, 200), ip(192, 0, 2, 201)]),
             ),
-            // IPv4 address pairs (option 21 policy filter, option 33 static
-            // route) - a brand new format family.
+            // IPv4 address pairs (option 21 policy filter).
             (
                 21,
                 DhcpOptionValue::Ipv4Pairs(vec![(ip(192, 0, 2, 0), ip(255, 255, 255, 0))]),
             ),
+            // Static routes (option 33) decode to typed destination/router
+            // pairs (RFC 2132 section 5.8).
             (
                 33,
-                DhcpOptionValue::Ipv4Pairs(vec![
-                    (ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
-                    (ip(203, 0, 113, 0), ip(192, 0, 2, 2)),
+                DhcpOptionValue::StaticRoutes(vec![
+                    super::DhcpStaticRoute::new(ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
+                    super::DhcpStaticRoute::new(ip(203, 0, 113, 0), ip(192, 0, 2, 2)),
                 ]),
             ),
             // Boolean flag bytes (option 19 IP forwarding, option 27 all subnets
@@ -2381,5 +2822,292 @@ mod dhcp_rfc2132_base_options {
         // back to raw-byte preservation.
         assert!(typed_option_value(224, &[0xde, 0xad]).unwrap().is_none());
         assert!(typed_option_value(82, &[0x01, 0x00]).unwrap().is_none());
+    }
+}
+
+#[cfg(test)]
+mod dhcp_route_domain_service {
+    use super::super::{
+        Dhcp, DhcpClasslessRoute, DhcpMessageType, DhcpOption, DhcpOptionKind, DhcpOptionValue,
+        DhcpStaticRoute, SipServers,
+    };
+    use super::{
+        decode_classless_routes, decode_domain_name_list, decode_static_routes,
+        encode_classless_routes, encode_domain_name_list, encode_static_routes, typed_option_value,
+    };
+    use crate::error::CrafterError;
+    use core::net::Ipv4Addr;
+
+    const STATIC_ROUTE: u8 = super::super::DHCP_OPTION_STATIC_ROUTE; // 33
+    const DOMAIN_SEARCH: u8 = super::super::DHCP_OPTION_DOMAIN_SEARCH; // 119
+    const SIP_SERVERS: u8 = super::super::DHCP_OPTION_SIP_SERVERS; // 120
+    const CLASSLESS_ROUTE: u8 = super::super::DHCP_OPTION_CLASSLESS_STATIC_ROUTE; // 121
+
+    fn ip(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
+        Ipv4Addr::new(a, b, c, d)
+    }
+
+    fn build_and_decode(option: DhcpOption) -> Dhcp {
+        let dhcp = Dhcp::new()
+            .op(super::super::BOOTP_REPLY)
+            .message_type(DhcpMessageType::Ack)
+            .options([option, DhcpOption::End]);
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        Dhcp::decode(&bytes).unwrap()
+    }
+
+    #[test]
+    fn dhcp_classless_routes_roundtrip() {
+        // RFC 3442: a /24 route carries three significant subnet octets, a /0
+        // default route carries none, and a /32 host route carries four. Each
+        // route is followed by a 4-octet router address.
+        let routes = vec![
+            DhcpClasslessRoute::new(24, ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
+            DhcpClasslessRoute::new(0, ip(0, 0, 0, 0), ip(192, 0, 2, 254)),
+            DhcpClasslessRoute::new(32, ip(203, 0, 113, 7), ip(192, 0, 2, 9)),
+            DhcpClasslessRoute::new(16, ip(172, 16, 0, 0), ip(192, 0, 2, 8)),
+        ];
+        let value = DhcpOptionValue::ClasslessRoutes(routes.clone());
+
+        // Wire layout matches the RFC 3442 destination-descriptor encoding:
+        // significant octets = ceil(prefix / 8).
+        let payload = value.encode_payload();
+        let expected: Vec<u8> = vec![
+            24, 198, 51, 100, /* router */ 192, 0, 2, 1, // /24
+            0, /* no subnet octets, router */ 192, 0, 2, 254, // /0
+            32, 203, 0, 113, 7, /* router */ 192, 0, 2, 9, // /32
+            16, 172, 16, /* router */ 192, 0, 2, 8, // /16
+        ];
+        assert_eq!(payload, expected);
+
+        // typed decode reproduces the exact routes.
+        let decoded = typed_option_value(CLASSLESS_ROUTE, &payload)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded, value);
+        assert_eq!(
+            DhcpClasslessRoute::significant_octets(24),
+            3,
+            "ceil(24/8) significant octets",
+        );
+
+        // Full packet round-trip through the typed builder and the accessor.
+        let option = DhcpOption::typed(DhcpOptionKind::ClasslessStaticRoute, value.clone());
+        assert_eq!(option.code(), CLASSLESS_ROUTE);
+        let parsed = build_and_decode(option);
+        assert_eq!(parsed.classless_static_routes().unwrap().unwrap(), routes);
+
+        // Re-compiling the decoded packet reproduces the wire bytes.
+        let bytes = crate::Packet::from_layer(parsed.clone())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let recompiled = crate::Packet::from_layer(Dhcp::decode(&bytes).unwrap())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(recompiled, bytes);
+
+        // The raw decode/encode helpers round-trip directly as well.
+        assert_eq!(decode_classless_routes(&payload).unwrap(), routes);
+        assert_eq!(encode_classless_routes(&routes), payload);
+    }
+
+    #[test]
+    fn dhcp_static_routes_roundtrip() {
+        // RFC 2132 section 5.8: option 33 is destination/router IPv4 pairs.
+        let routes = vec![
+            DhcpStaticRoute::new(ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
+            DhcpStaticRoute::new(ip(203, 0, 113, 0), ip(192, 0, 2, 2)),
+        ];
+        let value = DhcpOptionValue::StaticRoutes(routes.clone());
+        let payload = value.encode_payload();
+        assert_eq!(payload.len(), routes.len() * 8);
+
+        let decoded = typed_option_value(STATIC_ROUTE, &payload).unwrap().unwrap();
+        assert_eq!(decoded, value);
+
+        let option = DhcpOption::typed(DhcpOptionKind::StaticRoute, value);
+        let parsed = build_and_decode(option);
+        assert_eq!(parsed.static_routes().unwrap().unwrap(), routes);
+
+        assert_eq!(decode_static_routes(&payload).unwrap(), routes);
+        assert_eq!(encode_static_routes(&routes), payload);
+    }
+
+    #[test]
+    fn dhcp_domain_search_roundtrip() {
+        // RFC 3397 / RFC 1035: a domain-search list is label-encoded names, each
+        // terminated by a zero root label.
+        let names = vec!["eng.example.com".to_string(), "example.net".to_string()];
+        let value = DhcpOptionValue::DomainSearch(names.clone());
+
+        // The uncompressed encoding is a sequence of length-prefixed labels.
+        let payload = value.encode_payload();
+        let expected: Vec<u8> = {
+            let mut bytes = Vec::new();
+            for name in &names {
+                for label in name.split('.') {
+                    bytes.push(label.len() as u8);
+                    bytes.extend_from_slice(label.as_bytes());
+                }
+                bytes.push(0);
+            }
+            bytes
+        };
+        assert_eq!(payload, expected);
+
+        // typed decode reproduces the logical names.
+        let decoded = typed_option_value(DOMAIN_SEARCH, &payload)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded, value);
+
+        // Full packet round-trip and accessor.
+        let option = DhcpOption::typed(DhcpOptionKind::DomainSearch, value);
+        let parsed = build_and_decode(option);
+        assert_eq!(parsed.domain_search().unwrap().unwrap(), names);
+
+        // The decoder resolves RFC 1035 compression pointers within the
+        // aggregate data: "marketing.example.com" pointing back to "example.com"
+        // from the first name (the RFC 3397 worked example shape).
+        let mut compressed = Vec::new();
+        compressed.extend_from_slice(&[3, b'e', b'n', b'g']); // offset 0: eng
+        compressed.extend_from_slice(&[7, b'e', b'x', b'a', b'm', b'p', b'l', b'e']); // offset 4
+        compressed.extend_from_slice(&[3, b'c', b'o', b'm', 0]); // offset 12
+        let pointer_to_example = compressed.len(); // start of the second name
+        compressed.extend_from_slice(&[9, b'm', b'a', b'r', b'k', b'e', b't', b'i', b'n', b'g']);
+        // Compression pointer to offset 4 ("example.com").
+        compressed.push(0xC0);
+        compressed.push(4);
+        let _ = pointer_to_example;
+        let resolved = decode_domain_name_list("dhcp.option.domain_search", &compressed).unwrap();
+        assert_eq!(
+            resolved,
+            vec![
+                "eng.example.com".to_string(),
+                "marketing.example.com".to_string(),
+            ],
+        );
+
+        // Encoding names with a trailing dot (fully-qualified form) does not emit
+        // a stray zero-length label.
+        let fqdn = encode_domain_name_list(&["host.example.com.".to_string()]);
+        assert_eq!(
+            decode_domain_name_list("dhcp.option.domain_search", &fqdn).unwrap(),
+            vec!["host.example.com".to_string()],
+        );
+    }
+
+    #[test]
+    fn dhcp_sip_servers_roundtrip_both_encodings() {
+        // RFC 3361: enc=0 is a domain-name list, enc=1 is an IPv4 address list.
+        let domains = SipServers::DomainNames(vec![
+            "sip.example.com".to_string(),
+            "sip.example.net".to_string(),
+        ]);
+        let domain_payload = DhcpOptionValue::SipServers(domains.clone()).encode_payload();
+        assert_eq!(domain_payload[0], 0, "enc byte selects domain names");
+        let decoded = typed_option_value(SIP_SERVERS, &domain_payload)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded, DhcpOptionValue::SipServers(domains.clone()));
+
+        let addresses = SipServers::Addresses(vec![ip(192, 0, 2, 10), ip(198, 51, 100, 10)]);
+        let address_payload = DhcpOptionValue::SipServers(addresses.clone()).encode_payload();
+        assert_eq!(address_payload[0], 1, "enc byte selects addresses");
+        let decoded = typed_option_value(SIP_SERVERS, &address_payload)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded, DhcpOptionValue::SipServers(addresses.clone()));
+
+        // An unspecified enc value is preserved verbatim, not coerced.
+        let unknown = typed_option_value(SIP_SERVERS, &[0x09, 0xde, 0xad])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            unknown,
+            DhcpOptionValue::SipServers(SipServers::Unknown {
+                encoding: 0x09,
+                data: vec![0xde, 0xad],
+            }),
+        );
+
+        // Accessor surfaces the address-list encoding from a full packet.
+        let option = DhcpOption::typed(
+            DhcpOptionKind::SipServers,
+            DhcpOptionValue::SipServers(addresses.clone()),
+        );
+        let parsed = build_and_decode(option);
+        assert_eq!(parsed.sip_servers().unwrap().unwrap(), addresses);
+    }
+
+    #[test]
+    fn dhcp_route_domain_service_malformed_inputs() {
+        // Every malformed case is a structured error, never a panic.
+
+        // RFC 3442 classless route: prefix length above 32 is invalid.
+        let bad_prefix = [33u8, 10, 0, 0, 192, 0, 2, 1];
+        assert!(matches!(
+            decode_classless_routes(&bad_prefix),
+            Err(CrafterError::InvalidFieldValue { field, .. }) if field == "dhcp.option.classless_static_route",
+        ));
+
+        // RFC 3442 classless route: a route truncated before its router address.
+        // /24 needs 3 subnet octets + 4 router octets after the descriptor.
+        let truncated_route = [24u8, 10, 0, 0, 192, 0]; // missing two router octets
+        assert!(matches!(
+            decode_classless_routes(&truncated_route),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+        // The same surfaces through typed_option_value without panicking.
+        assert!(typed_option_value(CLASSLESS_ROUTE, &truncated_route).is_err());
+
+        // RFC 2132 static route: length not a multiple of eight.
+        assert!(matches!(
+            decode_static_routes(&[192, 0, 2, 1, 192, 0, 2]),
+            Err(CrafterError::InvalidFieldValue { field, .. }) if field == "dhcp.option.static_route",
+        ));
+
+        // RFC 3397 domain search: a label that runs past the end of the data.
+        let truncated_label = [5u8, b'a', b'b']; // claims 5 bytes, only 2 follow
+        assert!(matches!(
+            decode_domain_name_list("dhcp.option.domain_search", &truncated_label),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+
+        // RFC 3397 domain search: a compression pointer past the end of the data.
+        let bad_pointer = [0xC0u8, 0x40];
+        assert!(matches!(
+            decode_domain_name_list("dhcp.option.domain_search", &bad_pointer),
+            Err(CrafterError::InvalidFieldValue { .. }),
+        ));
+
+        // RFC 3397 domain search: a self-referential pointer loop is rejected
+        // rather than looping forever.
+        let pointer_loop = [0xC0u8, 0x00];
+        assert!(matches!(
+            decode_domain_name_list("dhcp.option.domain_search", &pointer_loop),
+            Err(CrafterError::InvalidFieldValue { .. }),
+        ));
+
+        // RFC 3361 SIP servers: empty payload (no enc byte).
+        assert!(matches!(
+            typed_option_value(SIP_SERVERS, &[]),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+
+        // RFC 3361 SIP servers: address encoding with a length that is not a
+        // multiple of four after the enc byte.
+        assert!(matches!(
+            typed_option_value(SIP_SERVERS, &[1, 192, 0, 2]),
+            Err(CrafterError::InvalidFieldValue { .. }),
+        ));
     }
 }
