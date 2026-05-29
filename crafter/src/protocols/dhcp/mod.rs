@@ -22,16 +22,17 @@ pub use constants::{
     DHCP_MAGIC_COOKIE_LEN, DHCP_MIN_LEN, DHCP_NAK, DHCP_OFFER, DHCP_OPTION_BROADCAST_ADDRESS,
     DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER,
     DHCP_OPTION_END, DHCP_OPTION_HOST_NAME, DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
-    DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_PAD, DHCP_OPTION_PARAMETER_REQUEST_LIST,
-    DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS,
-    DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER, DHCP_OPTION_SUBNET_MASK, DHCP_RELEASE,
-    DHCP_REQUEST, DHCP_SERVER_PORT,
+    DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
+    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RENEWAL_TIME,
+    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER,
+    DHCP_OPTION_SUBNET_MASK, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME,
+    DHCP_RELEASE, DHCP_REQUEST, DHCP_SERVER_PORT,
 };
 pub use malformed::DhcpMalformed;
 pub use message::DhcpMessageType;
 pub use option::{
     scan_dhcp_option_segments, DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionSegment,
-    DhcpOptionValue,
+    DhcpOptionValue, OptionOverload,
 };
 pub use registry::{
     option_meta, option_name, option_status, DhcpOptionMeta, DhcpOptionStatus,
@@ -40,7 +41,10 @@ pub use registry::{
 
 use constants::{DHCP_CHADDR_LEN, DHCP_DEFAULT_PARAMETER_REQUESTS, DHCP_FILE_LEN, DHCP_SNAME_LEN};
 use message::message_type_summary;
-use option::{encode_dhcp_options, encoded_options_len_lossy};
+use option::{
+    decode_overload_area_options, encode_dhcp_options, encode_overload_area_options,
+    encoded_options_len_lossy, find_option_overload,
+};
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -96,6 +100,10 @@ pub struct Dhcp {
     boot_file_name: Vec<u8>,
     magic_cookie: Field<u32>,
     options: Vec<DhcpOption>,
+    /// Options carried in the overloaded `file` field (RFC 2132 section 9.3).
+    file_options: Vec<DhcpOption>,
+    /// Options carried in the overloaded `sname` field (RFC 2132 section 9.3).
+    sname_options: Vec<DhcpOption>,
 }
 
 impl Dhcp {
@@ -118,6 +126,8 @@ impl Dhcp {
             boot_file_name: Vec::new(),
             magic_cookie: Field::defaulted(DHCP_MAGIC_COOKIE),
             options: Vec::new(),
+            file_options: Vec::new(),
+            sname_options: Vec::new(),
         }
     }
 
@@ -326,6 +336,42 @@ impl Dhcp {
         self
     }
 
+    /// Append a DHCP option to the overloaded `file` field area.
+    ///
+    /// Placing any option in the `file` area overloads it (RFC 2132 section
+    /// 9.3); [`Dhcp::compile`] adds the matching option-overload option (52) to
+    /// the normal options area when the caller did not set one explicitly. The
+    /// `file` fixed field can no longer be used as a boot file name string while
+    /// it carries options.
+    pub fn file_option(mut self, option: DhcpOption) -> Self {
+        self.file_options.push(option);
+        self
+    }
+
+    /// Replace all options in the overloaded `file` field area.
+    pub fn file_options(mut self, options: impl Into<Vec<DhcpOption>>) -> Self {
+        self.file_options = options.into();
+        self
+    }
+
+    /// Append a DHCP option to the overloaded `sname` field area.
+    ///
+    /// Placing any option in the `sname` area overloads it (RFC 2132 section
+    /// 9.3); [`Dhcp::compile`] adds the matching option-overload option (52) to
+    /// the normal options area when the caller did not set one explicitly. The
+    /// `sname` fixed field can no longer be used as a server host name string
+    /// while it carries options.
+    pub fn sname_option(mut self, option: DhcpOption) -> Self {
+        self.sname_options.push(option);
+        self
+    }
+
+    /// Replace all options in the overloaded `sname` field area.
+    pub fn sname_options(mut self, options: impl Into<Vec<DhcpOption>>) -> Self {
+        self.sname_options = options.into();
+        self
+    }
+
     /// Append a DHCP message type option.
     pub fn message_type(self, message_type: DhcpMessageType) -> Self {
         self.option(DhcpOption::message_type(message_type))
@@ -502,9 +548,50 @@ impl Dhcp {
         value_or_copy(&self.magic_cookie, DHCP_MAGIC_COOKIE)
     }
 
-    /// DHCP options.
+    /// DHCP options in the normal options area.
     pub fn options_value(&self) -> &[DhcpOption] {
         &self.options
+    }
+
+    /// Options carried in the overloaded `file` field, when any (RFC 2132
+    /// section 9.3).
+    pub fn file_options_value(&self) -> &[DhcpOption] {
+        &self.file_options
+    }
+
+    /// Options carried in the overloaded `sname` field, when any (RFC 2132
+    /// section 9.3).
+    pub fn sname_options_value(&self) -> &[DhcpOption] {
+        &self.sname_options
+    }
+
+    /// Resolve which fixed fields are overloaded with options (RFC 2132 section
+    /// 9.3).
+    ///
+    /// When the caller placed options in the `file` or `sname` areas, that is
+    /// reflected here even before [`Dhcp::compile`] inserts the matching option
+    /// 52. An explicit option 52 in the normal options area is honored when no
+    /// area options were placed, so a decoded packet reports the overload value
+    /// from the wire.
+    pub fn option_overload(&self) -> Option<OptionOverload> {
+        match (self.file_options.is_empty(), self.sname_options.is_empty()) {
+            (false, false) => Some(OptionOverload::Both),
+            (false, true) => Some(OptionOverload::File),
+            (true, false) => Some(OptionOverload::Sname),
+            (true, true) => find_option_overload(&self.options),
+        }
+    }
+
+    /// True when the `file` field is overloaded with options.
+    pub fn file_is_overloaded(&self) -> bool {
+        self.option_overload()
+            .is_some_and(OptionOverload::overloads_file)
+    }
+
+    /// True when the `sname` field is overloaded with options.
+    pub fn sname_is_overloaded(&self) -> bool {
+        self.option_overload()
+            .is_some_and(OptionOverload::overloads_sname)
     }
 
     /// DHCP message type option, when present.
@@ -587,9 +674,62 @@ impl Dhcp {
         })
     }
 
-    /// Encode DHCP options, appending an end marker when needed.
+    /// Encode the normal-area DHCP options, appending an end marker when needed.
+    ///
+    /// When the `file` or `sname` areas carry options and the caller did not
+    /// set an explicit option-overload option (52), one is inserted here so the
+    /// emitted normal options describe the overloaded fields (RFC 2132 section
+    /// 9.3).
     pub fn encoded_options(&self) -> Result<Vec<u8>> {
-        encode_dhcp_options(&self.options)
+        encode_dhcp_options(&self.effective_normal_options())
+    }
+
+    /// Normal-area options with an auto-inserted option-overload option (52)
+    /// when overloaded fields carry options and the caller did not set one.
+    fn effective_normal_options(&self) -> Vec<DhcpOption> {
+        let Some(overload) = self.option_overload() else {
+            return self.options.clone();
+        };
+        if find_option_overload(&self.options).is_some() {
+            // The caller set option 52 explicitly; honor it untouched.
+            return self.options.clone();
+        }
+
+        let mut options = self.options.clone();
+        let overload_option = DhcpOption::option_overload(overload);
+        match options.iter().position(|o| matches!(o, DhcpOption::End)) {
+            Some(end) => options.insert(end, overload_option),
+            None => options.push(overload_option),
+        }
+        options
+    }
+
+    /// Render the `file` fixed-field bytes for the wire (RFC 2131 section 2).
+    ///
+    /// When the field is overloaded it carries its option list, terminated by an
+    /// end marker and zero-padded to 128 octets; otherwise the boot file name
+    /// string bytes are used (truncated/padded by the fixed-field writer).
+    fn encoded_file_field(&self) -> Result<Option<Vec<u8>>> {
+        if self.file_options.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(encode_overload_area_options(
+            "dhcp.file.options",
+            &self.file_options,
+            DHCP_FILE_LEN,
+        )?))
+    }
+
+    /// Render the `sname` fixed-field bytes for the wire (RFC 2131 section 2).
+    fn encoded_sname_field(&self) -> Result<Option<Vec<u8>>> {
+        if self.sname_options.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(encode_overload_area_options(
+            "dhcp.sname.options",
+            &self.sname_options,
+            DHCP_SNAME_LEN,
+        )?))
     }
 
     fn validate(&self) -> Result<()> {
@@ -617,12 +757,27 @@ impl Dhcp {
                 "boot file name field must be at most 128 bytes",
             ));
         }
+        // A field cannot be both a normal string and an overloaded option area.
+        if !self.file_options.is_empty() && !self.boot_file_name.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "dhcp.file",
+                "boot file name string and overloaded file options are mutually exclusive",
+            ));
+        }
+        if !self.sname_options.is_empty() && !self.server_name.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "dhcp.sname",
+                "server name string and overloaded sname options are mutually exclusive",
+            ));
+        }
         self.encoded_options()?;
+        self.encoded_file_field()?;
+        self.encoded_sname_field()?;
         Ok(())
     }
 
     fn encoded_dhcp_len(&self) -> usize {
-        DHCP_MIN_LEN + encoded_options_len_lossy(&self.options)
+        DHCP_MIN_LEN + encoded_options_len_lossy(&self.effective_normal_options())
     }
 }
 
@@ -667,6 +822,16 @@ impl Layer for Dhcp {
                     .unwrap_or_else(|| "none".to_string()),
             ),
             ("options", self.options.len().to_string()),
+            (
+                "overload",
+                match self.option_overload() {
+                    Some(OptionOverload::File) => "file".to_string(),
+                    Some(OptionOverload::Sname) => "sname".to_string(),
+                    Some(OptionOverload::Both) => "file+sname".to_string(),
+                    Some(OptionOverload::Unknown(value)) => format!("unknown({value})"),
+                    None => "none".to_string(),
+                },
+            ),
         ]
     }
 
@@ -690,8 +855,17 @@ impl Layer for Dhcp {
         out.extend_from_slice(&self.server_ip_address_value().octets());
         out.extend_from_slice(&self.gateway_ip_address_value().octets());
         append_fixed_field(out, &self.client_hardware_address, DHCP_CHADDR_LEN);
-        append_fixed_field(out, &self.server_name, DHCP_SNAME_LEN);
-        append_fixed_field(out, &self.boot_file_name, DHCP_FILE_LEN);
+        // RFC 2131 section 4.1: when overloaded, `sname`/`file` carry their
+        // option list (already padded to the fixed width); otherwise they hold
+        // the host name / boot file name string.
+        match self.encoded_sname_field()? {
+            Some(bytes) => out.extend_from_slice(&bytes),
+            None => append_fixed_field(out, &self.server_name, DHCP_SNAME_LEN),
+        }
+        match self.encoded_file_field()? {
+            Some(bytes) => out.extend_from_slice(&bytes),
+            None => append_fixed_field(out, &self.boot_file_name, DHCP_FILE_LEN),
+        }
         out.extend_from_slice(&self.magic_cookie_value().to_be_bytes());
         out.extend_from_slice(&self.encoded_options()?);
         Ok(())
@@ -744,6 +918,30 @@ fn decode_dhcp(bytes: &[u8]) -> Result<Dhcp> {
         ));
     }
 
+    // RFC 2131 section 4.1: interpret the normal options area first so any
+    // option-overload option (52) is available before the `sname`/`file`
+    // fields are examined.
+    let options = DhcpOption::decode_all(&bytes[DHCP_MIN_LEN..])?;
+    let overload = find_option_overload(&options);
+
+    let mut server_name = bytes[44..108].to_vec();
+    let mut boot_file_name = bytes[108..236].to_vec();
+    let mut sname_options = Vec::new();
+    let mut file_options = Vec::new();
+
+    if let Some(overload) = overload {
+        // The `file` field MUST be interpreted before `sname` per RFC 2131
+        // section 4.1, but each is decoded from its own fixed-width field.
+        if overload.overloads_file() {
+            file_options = decode_overload_area_options(DhcpOptionArea::File, &boot_file_name)?;
+            boot_file_name.clear();
+        }
+        if overload.overloads_sname() {
+            sname_options = decode_overload_area_options(DhcpOptionArea::Sname, &server_name)?;
+            server_name.clear();
+        }
+    }
+
     Ok(Dhcp {
         op: Field::user(bytes[0]),
         hardware_type: Field::user(bytes[1]),
@@ -757,10 +955,12 @@ fn decode_dhcp(bytes: &[u8]) -> Result<Dhcp> {
         server_ip_address: Field::user(Ipv4Addr::new(bytes[20], bytes[21], bytes[22], bytes[23])),
         gateway_ip_address: Field::user(Ipv4Addr::new(bytes[24], bytes[25], bytes[26], bytes[27])),
         client_hardware_address: bytes[28..44].to_vec(),
-        server_name: bytes[44..108].to_vec(),
-        boot_file_name: bytes[108..236].to_vec(),
+        server_name,
+        boot_file_name,
         magic_cookie: Field::user(magic_cookie),
-        options: DhcpOption::decode_all(&bytes[DHCP_MIN_LEN..])?,
+        options,
+        file_options,
+        sname_options,
     })
 }
 
@@ -1190,5 +1390,301 @@ mod dhcp_fixed_header {
         // overflowed, and the raw bytes are preserved verbatim.
         assert!(oversized_chaddr.len() > DHCP_MIN_LEN);
         assert_eq!(&oversized_chaddr[28..48], &[0xffu8; 20]);
+    }
+}
+
+#[cfg(test)]
+mod dhcp_option_overload {
+    use super::{
+        Dhcp, DhcpMessageType, DhcpOption, DhcpOptionArea, OptionOverload, DHCP_FILE_LEN,
+        DHCP_MIN_LEN, DHCP_OPTION_OVERLOAD, DHCP_SNAME_LEN,
+    };
+    use crate::error::CrafterError;
+    use crate::Packet;
+    use core::net::Ipv4Addr;
+
+    // Fixed-field byte ranges within the DHCP message (RFC 2131 section 2):
+    // sname[64] starts at offset 44, file[128] starts at offset 108.
+    const SNAME_START: usize = 44;
+    const SNAME_END: usize = SNAME_START + DHCP_SNAME_LEN;
+    const FILE_START: usize = 108;
+    const FILE_END: usize = FILE_START + DHCP_FILE_LEN;
+
+    fn compiled_bytes(dhcp: Dhcp) -> Vec<u8> {
+        Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn dhcp_option_overload_normal_only_keeps_string_fields() {
+        // Without any overloaded options, `sname`/`file` stay plain strings and
+        // no option 52 is emitted.
+        let dhcp = Dhcp::new()
+            .message_type(DhcpMessageType::Discover)
+            .sname("boot-server")
+            .file("pxelinux.0");
+
+        assert_eq!(dhcp.option_overload(), None);
+        assert!(!dhcp.file_is_overloaded());
+        assert!(!dhcp.sname_is_overloaded());
+
+        let bytes = compiled_bytes(dhcp);
+        assert_eq!(&bytes[SNAME_START..SNAME_START + 11], b"boot-server");
+        assert_eq!(&bytes[FILE_START..FILE_START + 10], b"pxelinux.0");
+
+        let parsed = Dhcp::decode(&bytes).unwrap();
+        assert_eq!(parsed.option_overload(), None);
+        assert_eq!(parsed.sname_bytes(), b"boot-server");
+        assert_eq!(parsed.file_bytes(), b"pxelinux.0");
+        assert!(parsed.file_options_value().is_empty());
+        assert!(parsed.sname_options_value().is_empty());
+        // No option 52 appears in the normal options area.
+        assert!(parsed
+            .options_value()
+            .iter()
+            .all(|o| o.code() != DHCP_OPTION_OVERLOAD));
+        assert_eq!(
+            Packet::from_layer(parsed).compile().unwrap().as_bytes(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn dhcp_option_overload_file_only() {
+        // Placing options in the `file` area overloads only `file`; option 52 is
+        // auto-inserted with value 1.
+        let dhcp = Dhcp::new()
+            .message_type(DhcpMessageType::Ack)
+            .sname("boot-server")
+            .file_option(DhcpOption::host_name("from-file"))
+            .file_option(DhcpOption::End);
+
+        assert_eq!(dhcp.option_overload(), Some(OptionOverload::File));
+        assert!(dhcp.file_is_overloaded());
+        assert!(!dhcp.sname_is_overloaded());
+
+        let bytes = compiled_bytes(dhcp);
+        // The normal options area carries the auto-inserted overload option.
+        let parsed = Dhcp::decode(&bytes).unwrap();
+        assert_eq!(parsed.option_overload(), Some(OptionOverload::File));
+        // `sname` stays a string; `file` carries options.
+        assert_eq!(parsed.sname_bytes(), b"boot-server");
+        assert_eq!(parsed.file_bytes(), b"");
+        assert!(parsed.sname_options_value().is_empty());
+        assert_eq!(
+            parsed.file_options_value(),
+            &[DhcpOption::host_name("from-file"), DhcpOption::End]
+        );
+        // Re-encode reproduces the exact wire bytes.
+        assert_eq!(
+            Packet::from_layer(parsed).compile().unwrap().as_bytes(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn dhcp_option_overload_sname_only() {
+        let dhcp = Dhcp::new()
+            .message_type(DhcpMessageType::Ack)
+            .file("pxelinux.0")
+            .sname_option(DhcpOption::host_name("from-sname"))
+            .sname_option(DhcpOption::End);
+
+        assert_eq!(dhcp.option_overload(), Some(OptionOverload::Sname));
+
+        let bytes = compiled_bytes(dhcp);
+        let parsed = Dhcp::decode(&bytes).unwrap();
+        assert_eq!(parsed.option_overload(), Some(OptionOverload::Sname));
+        assert!(parsed.sname_is_overloaded());
+        assert!(!parsed.file_is_overloaded());
+        assert_eq!(parsed.file_bytes(), b"pxelinux.0");
+        assert_eq!(parsed.sname_bytes(), b"");
+        assert_eq!(
+            parsed.sname_options_value(),
+            &[DhcpOption::host_name("from-sname"), DhcpOption::End]
+        );
+        assert!(parsed.file_options_value().is_empty());
+        assert_eq!(
+            Packet::from_layer(parsed).compile().unwrap().as_bytes(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn dhcp_option_overload_decodes_file_and_sname_areas() {
+        // Both fields overloaded: option 52 value 3, with distinct options in
+        // each area plus the normal area. Decode must surface each option with
+        // exact source-area metadata and re-encode consistently.
+        let dhcp = Dhcp::new()
+            .message_type(DhcpMessageType::Ack)
+            .server_identifier(Ipv4Addr::new(192, 0, 2, 1))
+            .file_option(DhcpOption::subnet_mask(Ipv4Addr::new(255, 255, 255, 0)))
+            .file_option(DhcpOption::End)
+            .sname_option(DhcpOption::router([Ipv4Addr::new(192, 0, 2, 254)]))
+            .sname_option(DhcpOption::End);
+
+        assert_eq!(dhcp.option_overload(), Some(OptionOverload::Both));
+
+        let bytes = compiled_bytes(dhcp.clone());
+
+        // Fixed fields are exactly their fixed widths even when overloaded.
+        assert_eq!(
+            bytes.len(),
+            DHCP_MIN_LEN + dhcp.encoded_options().unwrap().len()
+        );
+
+        let parsed = Dhcp::decode(&bytes).unwrap();
+        assert_eq!(parsed.option_overload(), Some(OptionOverload::Both));
+        assert!(parsed.file_is_overloaded());
+        assert!(parsed.sname_is_overloaded());
+
+        // The normal area carries the message type, server id, and option 52.
+        assert_eq!(parsed.message_type_value(), Some(DhcpMessageType::Ack));
+        assert_eq!(
+            parsed.server_identifier_value(),
+            Some(Ipv4Addr::new(192, 0, 2, 1))
+        );
+        assert!(parsed
+            .options_value()
+            .iter()
+            .any(|o| matches!(o, DhcpOption::OptionOverload(OptionOverload::Both))));
+
+        // The file and sname areas carry their own options.
+        assert_eq!(
+            parsed.file_options_value(),
+            &[
+                DhcpOption::subnet_mask(Ipv4Addr::new(255, 255, 255, 0)),
+                DhcpOption::End
+            ]
+        );
+        assert_eq!(
+            parsed.sname_options_value(),
+            &[
+                DhcpOption::router([Ipv4Addr::new(192, 0, 2, 254)]),
+                DhcpOption::End
+            ]
+        );
+
+        // Source-area metadata is exact: scanning each fixed field reports the
+        // matching area for every segment.
+        let file_segments =
+            super::scan_dhcp_option_segments(DhcpOptionArea::File, &bytes[FILE_START..FILE_END])
+                .unwrap();
+        assert!(file_segments.iter().all(|s| s.area == DhcpOptionArea::File));
+        assert_eq!(
+            file_segments[0].code_value(),
+            super::DHCP_OPTION_SUBNET_MASK
+        );
+
+        let sname_segments =
+            super::scan_dhcp_option_segments(DhcpOptionArea::Sname, &bytes[SNAME_START..SNAME_END])
+                .unwrap();
+        assert!(sname_segments
+            .iter()
+            .all(|s| s.area == DhcpOptionArea::Sname));
+        assert_eq!(sname_segments[0].code_value(), super::DHCP_OPTION_ROUTER);
+
+        // Re-encode reproduces the exact wire bytes.
+        assert_eq!(
+            Packet::from_layer(parsed).compile().unwrap().as_bytes(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn dhcp_option_overload_honors_explicit_option_52() {
+        // When the caller sets option 52 explicitly, it is honored untouched and
+        // not duplicated by the auto-insert path.
+        let dhcp = Dhcp::new()
+            .message_type(DhcpMessageType::Ack)
+            .option(DhcpOption::option_overload(OptionOverload::File))
+            .file_option(DhcpOption::host_name("from-file"))
+            .file_option(DhcpOption::End);
+
+        let bytes = compiled_bytes(dhcp);
+        let parsed = Dhcp::decode(&bytes).unwrap();
+        // Exactly one option 52 survives the round-trip.
+        let count = parsed
+            .options_value()
+            .iter()
+            .filter(|o| o.code() == DHCP_OPTION_OVERLOAD)
+            .count();
+        assert_eq!(count, 1);
+        assert_eq!(parsed.option_overload(), Some(OptionOverload::File));
+        assert_eq!(
+            parsed.file_options_value(),
+            &[DhcpOption::host_name("from-file"), DhcpOption::End]
+        );
+        assert_eq!(
+            Packet::from_layer(parsed).compile().unwrap().as_bytes(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn dhcp_option_overload_rejects_string_and_options_in_same_field() {
+        // A field cannot be both a string and an overloaded option area.
+        let file_conflict = Dhcp::new()
+            .message_type(DhcpMessageType::Ack)
+            .file("pxelinux.0")
+            .file_option(DhcpOption::host_name("x"))
+            .file_option(DhcpOption::End);
+        let error = Packet::from_layer(file_conflict).compile().unwrap_err();
+        assert!(matches!(
+            error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.file"
+        ));
+
+        let sname_conflict = Dhcp::new()
+            .message_type(DhcpMessageType::Ack)
+            .sname("boot-server")
+            .sname_option(DhcpOption::host_name("x"))
+            .sname_option(DhcpOption::End);
+        let error = Packet::from_layer(sname_conflict).compile().unwrap_err();
+        assert!(matches!(
+            error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.sname"
+        ));
+    }
+
+    #[test]
+    fn dhcp_option_overload_rejects_options_exceeding_field_width() {
+        // Overloaded option data that does not fit the fixed field width is a
+        // structured error, not a panic.
+        let too_big = Dhcp::new()
+            .message_type(DhcpMessageType::Ack)
+            .sname_option(DhcpOption::generic(60, vec![0u8; 200]))
+            .sname_option(DhcpOption::End);
+        let error = Packet::from_layer(too_big).compile().unwrap_err();
+        assert!(matches!(
+            error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.sname.options"
+        ));
+    }
+
+    #[test]
+    fn dhcp_option_overload_missing_end_marker_in_field_is_structured() {
+        // Build a valid overloaded packet, then corrupt the overloaded `file`
+        // field so it lacks an end marker. Decode must report a structured
+        // error scoped to the file area and never panic.
+        let dhcp = Dhcp::new()
+            .message_type(DhcpMessageType::Ack)
+            .option(DhcpOption::option_overload(OptionOverload::File))
+            .file_option(DhcpOption::host_name("from-file"))
+            .file_option(DhcpOption::End);
+        let mut bytes = compiled_bytes(dhcp);
+        // Overwrite the entire overloaded `file` field with pad bytes so it
+        // contains options-area data but no terminating end marker (255).
+        for byte in &mut bytes[FILE_START..FILE_END] {
+            *byte = super::DHCP_OPTION_PAD;
+        }
+        let error = Dhcp::decode(&bytes).unwrap_err();
+        assert!(matches!(
+            error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.file.options"
+        ));
     }
 }

@@ -170,7 +170,9 @@ mod message_type_tests {
 
     /// Expected IANA codepoints, mirroring the "DHCP Message Type 53 Values"
     /// registry (updated 2026-02-02): values 1..=18.
-    const REGISTERED_CODES: [u8; 18] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+    const REGISTERED_CODES: [u8; 18] = [
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+    ];
 
     #[test]
     fn dhcp_message_type_registry_is_complete() {
@@ -205,7 +207,10 @@ mod message_type_tests {
         }
 
         // The expected codepoints are exactly the contiguous range 1..=18.
-        assert_eq!(REGISTERED_CODES, core::array::from_fn::<u8, 18, _>(|i| (i + 1) as u8));
+        assert_eq!(
+            REGISTERED_CODES,
+            core::array::from_fn::<u8, 18, _>(|i| (i + 1) as u8)
+        );
     }
 
     #[test]

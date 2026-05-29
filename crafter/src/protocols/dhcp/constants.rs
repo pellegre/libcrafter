@@ -38,6 +38,8 @@ pub const DHCP_OPTION_BROADCAST_ADDRESS: u8 = 28;
 pub const DHCP_OPTION_REQUESTED_IP_ADDRESS: u8 = 50;
 /// DHCP lease time option code.
 pub const DHCP_OPTION_IP_ADDRESS_LEASE_TIME: u8 = 51;
+/// DHCP option overload option code (RFC 2132 section 9.3).
+pub const DHCP_OPTION_OVERLOAD: u8 = 52;
 /// DHCP message type option code.
 pub const DHCP_OPTION_MESSAGE_TYPE: u8 = 53;
 /// DHCP server identifier option code.
@@ -52,6 +54,13 @@ pub const DHCP_OPTION_REBINDING_TIME: u8 = 59;
 pub const DHCP_OPTION_CLIENT_IDENTIFIER: u8 = 61;
 /// DHCP end option code.
 pub const DHCP_OPTION_END: u8 = 255;
+
+/// Option overload value: the `file` field holds options (RFC 2132 section 9.3).
+pub const DHCP_OVERLOAD_FILE: u8 = 1;
+/// Option overload value: the `sname` field holds options (RFC 2132 section 9.3).
+pub const DHCP_OVERLOAD_SNAME: u8 = 2;
+/// Option overload value: both `file` and `sname` hold options (RFC 2132 section 9.3).
+pub const DHCP_OVERLOAD_BOTH: u8 = 3;
 
 /// DHCP Discover message type value.
 pub const DHCP_DISCOVER: u8 = 1;
