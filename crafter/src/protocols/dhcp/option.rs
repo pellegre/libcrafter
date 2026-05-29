@@ -26,7 +26,8 @@ use super::constants::{
     DHCP_OPTION_PATH_MTU_PLATEAU_TABLE, DHCP_OPTION_PERFORM_MASK_DISCOVERY,
     DHCP_OPTION_PERFORM_ROUTER_DISCOVERY, DHCP_OPTION_POLICY_FILTER,
     DHCP_OPTION_PXELINUX_CONFIGFILE, DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX,
-    DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RENEWAL_TIME,
+    DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_REBINDING_TIME,
+    DHCP_OPTION_RELAY_AGENT_INFORMATION, DHCP_OPTION_RENEWAL_TIME,
     DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH,
     DHCP_OPTION_ROUTER, DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
     DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_SUBNET_MASK,
@@ -37,6 +38,14 @@ use super::constants::{
     DHCP_OPTION_VENDOR_SPECIFIC, DHCP_OPTION_VI_VENDOR_CLASS, DHCP_OPTION_VI_VENDOR_SPECIFIC,
     DHCP_OPTION_X_WINDOW_DISPLAY_MANAGER, DHCP_OPTION_X_WINDOW_FONT_SERVER, DHCP_OVERLOAD_BOTH,
     DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME, DHCP_PXELINUX_MAGIC_VALUE,
+    DHCP_RELAY_SUBOPTION_AUTHENTICATION, DHCP_RELAY_SUBOPTION_CIRCUIT_ID,
+    DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS, DHCP_RELAY_SUBOPTION_LINK_SELECTION,
+    DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES, DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID,
+    DHCP_RELAY_SUBOPTION_RELAY_FLAGS, DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
+    DHCP_RELAY_SUBOPTION_REMOTE_ID, DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
+    DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID, DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC,
+    DHCP_RELAY_SUBOPTION_VSS, DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_VSS_TYPE_GLOBAL_DEFAULT,
+    DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
 };
 use super::message::DhcpMessageType;
 use super::registry::{option_name, option_status, DhcpOptionStatus};
@@ -401,6 +410,239 @@ impl DhcpVendorIdentifyingOption {
     }
 }
 
+/// One vendor tuple inside the RFC 4243 relay-agent Vendor-Specific Information
+/// sub-option (relay sub-option 9).
+///
+/// Source: RFC 4243 section 4. The sub-option carries one or more tuples, each a
+/// 4-octet IANA Enterprise Number, a one-octet data length, and that many opaque
+/// vendor-defined octets. The data bytes are vendor-defined and preserved
+/// verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DhcpRelayVendorSpecific {
+    /// The vendor's 32-bit IANA Enterprise Number.
+    pub enterprise_number: u32,
+    /// Opaque vendor-defined data, preserved verbatim.
+    pub data: Vec<u8>,
+}
+
+impl DhcpRelayVendorSpecific {
+    /// Create a relay vendor-specific tuple from an enterprise number and data.
+    pub fn new(enterprise_number: u32, data: impl Into<Vec<u8>>) -> Self {
+        Self {
+            enterprise_number,
+            data: data.into(),
+        }
+    }
+}
+
+/// An RFC 6607 Virtual Subnet Selection (VSS) value carried by relay
+/// sub-option 151 (and reused by DHCP VSS options).
+///
+/// Source: RFC 6607 section 4. The value is a one-octet `Type` followed by
+/// type-specific VSS Information: type `0` is an NVT ASCII VPN identifier, type
+/// `1` is a 7-octet RFC 2685 VPN-ID, and type `255` selects the global default
+/// VPN with no following information. The `type` octet and the information bytes
+/// are preserved verbatim so unspecified types still round-trip.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DhcpVssInfo {
+    /// VSS type octet (`0` NVT ASCII, `1` RFC 2685 VPN-ID, `255` global default).
+    pub vss_type: u8,
+    /// Type-specific VSS information bytes, preserved verbatim.
+    pub information: Vec<u8>,
+}
+
+impl DhcpVssInfo {
+    /// Create a VSS value from a type octet and information bytes.
+    pub fn new(vss_type: u8, information: impl Into<Vec<u8>>) -> Self {
+        Self {
+            vss_type,
+            information: information.into(),
+        }
+    }
+
+    /// Create a type-`0` NVT ASCII VPN identifier VSS value.
+    pub fn nvt_ascii(identifier: impl Into<Vec<u8>>) -> Self {
+        Self::new(DHCP_VSS_TYPE_NVT_ASCII, identifier)
+    }
+
+    /// Create a type-`1` RFC 2685 VPN-ID VSS value (7 octets).
+    pub fn vpn_id(vpn_id: impl Into<Vec<u8>>) -> Self {
+        Self::new(DHCP_VSS_TYPE_VPN_ID, vpn_id)
+    }
+
+    /// Create a type-`255` global default VSS value with no information.
+    pub fn global_default() -> Self {
+        Self::new(DHCP_VSS_TYPE_GLOBAL_DEFAULT, Vec::new())
+    }
+}
+
+/// One sub-option of the RFC 3046 Relay Agent Information option (option 82).
+///
+/// Source: RFC 3046 section 2 and the IANA "DHCP Relay Agent Sub-Option Codes"
+/// registry (last updated 2026-05-29). Each sub-option is a code/length/value
+/// triple. Registered sub-options whose wire format is specified are decoded
+/// into typed variants; codes without a single authoritative typed format, and
+/// unknown or reserved codes, are preserved verbatim through
+/// [`DhcpRelaySuboption::Other`] so no bytes are lost.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DhcpRelaySuboption {
+    /// Agent Circuit ID (sub-option 1, RFC 3046): opaque relay-defined bytes.
+    CircuitId(Vec<u8>),
+    /// Agent Remote ID (sub-option 2, RFC 3046): opaque relay-defined bytes.
+    RemoteId(Vec<u8>),
+    /// DOCSIS Device Class (sub-option 4, RFC 3256): a 32-bit class bitfield.
+    DocsisDeviceClass(u32),
+    /// Link Selection (sub-option 5, RFC 3527): a 4-octet subnet IPv4 address.
+    LinkSelection(Ipv4Addr),
+    /// Subscriber-ID (sub-option 6, RFC 3993): opaque NVT ASCII bytes.
+    SubscriberId(Vec<u8>),
+    /// RADIUS Attributes (sub-option 7, RFC 4014): concatenated RADIUS
+    /// attributes, preserved verbatim because their format is RADIUS-defined.
+    RadiusAttributes(Vec<u8>),
+    /// Authentication (sub-option 8, RFC 4030): an RFC 3118-style authentication
+    /// payload, preserved verbatim.
+    Authentication(Vec<u8>),
+    /// Vendor-Specific Information (sub-option 9, RFC 4243): one or more
+    /// enterprise-number plus opaque-data tuples.
+    VendorSpecific(Vec<DhcpRelayVendorSpecific>),
+    /// Relay Agent Flags (sub-option 10, RFC 5010): a one-octet flags field
+    /// (bit 0 / `0x80` is the Unicast flag).
+    RelayFlags(u8),
+    /// Server Identifier Override (sub-option 11, RFC 5107): a 4-octet IPv4
+    /// address overriding the server identifier.
+    ServerIdOverride(Ipv4Addr),
+    /// Relay Agent Identifier (sub-option 12, RFC 6925): opaque relay-defined
+    /// bytes.
+    RelayAgentId(Vec<u8>),
+    /// DHCPv4 Relay Source Port (sub-option 19, RFC 8357): a zero-length flag
+    /// signalling the relay uses a non-`67` UDP source port. The actual port is
+    /// learned from the UDP header, so this sub-option carries no value.
+    RelaySourcePort,
+    /// Virtual Subnet Selection (sub-option 151, RFC 6607): a type octet plus
+    /// VSS information.
+    Vss(DhcpVssInfo),
+    /// Virtual Subnet Selection Control (sub-option 152, RFC 6607): a
+    /// zero-length control sub-option.
+    VssControl,
+    /// Any sub-option without a single authoritative typed format, or an
+    /// unknown/reserved code, preserved as raw code and data bytes.
+    Other {
+        /// Sub-option code.
+        code: u8,
+        /// Sub-option data bytes (after code and length), preserved verbatim.
+        data: Vec<u8>,
+    },
+}
+
+impl DhcpRelaySuboption {
+    /// Create an Agent Circuit ID sub-option (sub-option 1, RFC 3046).
+    pub fn circuit_id(data: impl Into<Vec<u8>>) -> Self {
+        Self::CircuitId(data.into())
+    }
+
+    /// Create an Agent Remote ID sub-option (sub-option 2, RFC 3046).
+    pub fn remote_id(data: impl Into<Vec<u8>>) -> Self {
+        Self::RemoteId(data.into())
+    }
+
+    /// Create a Subscriber-ID sub-option (sub-option 6, RFC 3993).
+    pub fn subscriber_id(data: impl Into<Vec<u8>>) -> Self {
+        Self::SubscriberId(data.into())
+    }
+
+    /// Create a Relay Agent Identifier sub-option (sub-option 12, RFC 6925).
+    pub fn relay_agent_id(data: impl Into<Vec<u8>>) -> Self {
+        Self::RelayAgentId(data.into())
+    }
+
+    /// Create a sub-option from a raw code and data bytes, preserving the code
+    /// and payload verbatim.
+    pub fn other(code: u8, data: impl Into<Vec<u8>>) -> Self {
+        Self::Other {
+            code,
+            data: data.into(),
+        }
+    }
+
+    /// Wire codepoint of this sub-option.
+    pub const fn code(&self) -> u8 {
+        match self {
+            Self::CircuitId(_) => DHCP_RELAY_SUBOPTION_CIRCUIT_ID,
+            Self::RemoteId(_) => DHCP_RELAY_SUBOPTION_REMOTE_ID,
+            Self::DocsisDeviceClass(_) => DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS,
+            Self::LinkSelection(_) => DHCP_RELAY_SUBOPTION_LINK_SELECTION,
+            Self::SubscriberId(_) => DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID,
+            Self::RadiusAttributes(_) => DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES,
+            Self::Authentication(_) => DHCP_RELAY_SUBOPTION_AUTHENTICATION,
+            Self::VendorSpecific(_) => DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC,
+            Self::RelayFlags(_) => DHCP_RELAY_SUBOPTION_RELAY_FLAGS,
+            Self::ServerIdOverride(_) => DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
+            Self::RelayAgentId(_) => DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID,
+            Self::RelaySourcePort => DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
+            Self::Vss(_) => DHCP_RELAY_SUBOPTION_VSS,
+            Self::VssControl => DHCP_RELAY_SUBOPTION_VSS_CONTROL,
+            Self::Other { code, .. } => *code,
+        }
+    }
+
+    /// Encode this sub-option's value bytes (after the code and length octets).
+    fn encode_value(&self) -> Vec<u8> {
+        match self {
+            Self::CircuitId(data)
+            | Self::RemoteId(data)
+            | Self::SubscriberId(data)
+            | Self::RadiusAttributes(data)
+            | Self::Authentication(data)
+            | Self::RelayAgentId(data)
+            | Self::Other { data, .. } => data.clone(),
+            Self::DocsisDeviceClass(value) => value.to_be_bytes().to_vec(),
+            Self::LinkSelection(address) | Self::ServerIdOverride(address) => {
+                address.octets().to_vec()
+            }
+            Self::VendorSpecific(tuples) => encode_relay_vendor_specific(tuples),
+            Self::RelayFlags(flags) => vec![*flags],
+            Self::RelaySourcePort | Self::VssControl => Vec::new(),
+            Self::Vss(vss) => {
+                let mut bytes = Vec::with_capacity(1 + vss.information.len());
+                bytes.push(vss.vss_type);
+                bytes.extend_from_slice(&vss.information);
+                bytes
+            }
+        }
+    }
+}
+
+/// The RFC 3046 Relay Agent Information option (option 82).
+///
+/// Source: RFC 3046 section 2. The option is a container for a sequence of
+/// relay-agent sub-options. There is no pad sub-option and the field is not
+/// terminated with an end marker; the option length bounds the sub-options.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct DhcpRelayAgentInfo {
+    /// The relay-agent sub-options carried in this option, in wire order.
+    pub suboptions: Vec<DhcpRelaySuboption>,
+}
+
+impl DhcpRelayAgentInfo {
+    /// Create a relay agent information value from a list of sub-options.
+    pub fn new(suboptions: impl Into<Vec<DhcpRelaySuboption>>) -> Self {
+        Self {
+            suboptions: suboptions.into(),
+        }
+    }
+
+    /// Append a sub-option and return the updated value (builder style).
+    pub fn with(mut self, suboption: DhcpRelaySuboption) -> Self {
+        self.suboptions.push(suboption);
+        self
+    }
+
+    /// First sub-option with the given code, when present.
+    pub fn suboption(&self, code: u8) -> Option<&DhcpRelaySuboption> {
+        self.suboptions.iter().find(|sub| sub.code() == code)
+    }
+}
+
 /// A DHCPv4 option codepoint with source-backed registry awareness.
 ///
 /// Source: IANA "BOOTP Vendor Extensions and DHCP Options" registry (updated
@@ -541,6 +783,9 @@ pub enum DhcpOptionValue {
     /// An RFC 3925 V-I Vendor-Specific Information value (option 125): one or
     /// more enterprise-number instances each carrying nested suboptions.
     ViVendorSpecific(Vec<DhcpVendorIdentifyingOption>),
+    /// An RFC 3046 Relay Agent Information value (option 82): a sequence of
+    /// relay-agent sub-options.
+    RelayAgentInformation(DhcpRelayAgentInfo),
     /// Opaque bytes preserved verbatim for options without a richer decode yet.
     Opaque(Vec<u8>),
 }
@@ -607,6 +852,7 @@ impl DhcpOptionValue {
             Self::ClientUuid(uuid) => encode_client_uuid(uuid),
             Self::ViVendorClass(instances) => encode_vi_vendor_class(instances),
             Self::ViVendorSpecific(instances) => encode_vi_vendor_specific(instances),
+            Self::RelayAgentInformation(info) => encode_relay_agent_information(info),
             Self::Text(bytes) | Self::ParameterRequestList(bytes) | Self::Opaque(bytes) => {
                 bytes.clone()
             }
@@ -672,6 +918,9 @@ pub enum DhcpOptionFormat {
     /// RFC 3925 V-I Vendor-Specific Information (option 125): enterprise-number
     /// instances carrying nested suboptions.
     ViVendorSpecific,
+    /// RFC 3046 Relay Agent Information (option 82): a sequence of relay-agent
+    /// sub-options.
+    RelayAgentInformation,
     /// Opaque bytes preserved verbatim (vendor-specific, client/vendor id).
     Opaque,
 }
@@ -762,6 +1011,7 @@ pub enum DhcpOptionKind {
     ClientMachineIdentifier,
     ViVendorClass,
     ViVendorSpecificInformation,
+    RelayAgentInformation,
     PxelinuxMagic,
     PxelinuxConfigFile,
     PxelinuxPathPrefix,
@@ -844,6 +1094,7 @@ impl DhcpOptionKind {
             DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER => Self::ClientMachineIdentifier,
             DHCP_OPTION_VI_VENDOR_CLASS => Self::ViVendorClass,
             DHCP_OPTION_VI_VENDOR_SPECIFIC => Self::ViVendorSpecificInformation,
+            DHCP_OPTION_RELAY_AGENT_INFORMATION => Self::RelayAgentInformation,
             DHCP_OPTION_PXELINUX_MAGIC => Self::PxelinuxMagic,
             DHCP_OPTION_PXELINUX_CONFIGFILE => Self::PxelinuxConfigFile,
             DHCP_OPTION_PXELINUX_PATHPREFIX => Self::PxelinuxPathPrefix,
@@ -928,6 +1179,7 @@ impl DhcpOptionKind {
             Self::ClientMachineIdentifier => DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER,
             Self::ViVendorClass => DHCP_OPTION_VI_VENDOR_CLASS,
             Self::ViVendorSpecificInformation => DHCP_OPTION_VI_VENDOR_SPECIFIC,
+            Self::RelayAgentInformation => DHCP_OPTION_RELAY_AGENT_INFORMATION,
             Self::PxelinuxMagic => DHCP_OPTION_PXELINUX_MAGIC,
             Self::PxelinuxConfigFile => DHCP_OPTION_PXELINUX_CONFIGFILE,
             Self::PxelinuxPathPrefix => DHCP_OPTION_PXELINUX_PATHPREFIX,
@@ -1027,6 +1279,8 @@ impl DhcpOptionKind {
             Self::ClientMachineIdentifier => F::ClientUuid,
             Self::ViVendorClass => F::ViVendorClass,
             Self::ViVendorSpecificInformation => F::ViVendorSpecific,
+            // RFC 3046 relay agent information (option 82): nested sub-options.
+            Self::RelayAgentInformation => F::RelayAgentInformation,
             // Opaque/vendor data preserved verbatim. The PXELINUX magic is a
             // fixed 4-octet value whose meaning is positional, so it is kept
             // opaque rather than reinterpreted.
@@ -1100,6 +1354,9 @@ pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValu
         }
         DhcpOptionFormat::ViVendorSpecific => {
             DhcpOptionValue::ViVendorSpecific(decode_vi_vendor_specific(data)?)
+        }
+        DhcpOptionFormat::RelayAgentInformation => {
+            DhcpOptionValue::RelayAgentInformation(decode_relay_agent_information(data)?)
         }
         DhcpOptionFormat::Opaque => {
             if data.is_empty() {
@@ -1435,6 +1692,19 @@ impl DhcpOption {
         Self::typed(
             DhcpOptionKind::ViVendorSpecificInformation,
             DhcpOptionValue::ViVendorSpecific(instances.into()),
+        )
+    }
+
+    /// Create an RFC 3046 Relay Agent Information option (option 82).
+    ///
+    /// The sub-options are serialized to their RFC 3046 sub-option layout
+    /// (code/length/value triples, no pad, no end marker) and re-decode through
+    /// [`DhcpOption::typed_value`] into a
+    /// [`DhcpOptionValue::RelayAgentInformation`].
+    pub fn relay_agent_information(info: DhcpRelayAgentInfo) -> Self {
+        Self::typed(
+            DhcpOptionKind::RelayAgentInformation,
+            DhcpOptionValue::RelayAgentInformation(info),
         )
     }
 
@@ -2657,6 +2927,169 @@ fn read_enterprise_number(field: &'static str, data: &[u8], offset: usize) -> Re
     read_u32_be(&data[offset..end])
 }
 
+/// Decode an RFC 3046 Relay Agent Information option (option 82).
+///
+/// Source: RFC 3046 section 2 and the IANA "DHCP Relay Agent Sub-Option Codes"
+/// registry. The payload is a sequence of code/length/value sub-options with no
+/// pad and no end marker. Registered sub-options whose wire format is specified
+/// decode into typed variants; codes without a single authoritative typed format
+/// and unknown or reserved codes are preserved verbatim. A truncated sub-option
+/// header or a length that runs past the end of the option surfaces as a
+/// structured error rather than a panic.
+fn decode_relay_agent_information(data: &[u8]) -> Result<DhcpRelayAgentInfo> {
+    let field = "dhcp.option.relay_agent_information";
+    let mut suboptions = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < data.len() {
+        let code = data[offset];
+        offset += 1;
+        if offset >= data.len() {
+            return Err(CrafterError::buffer_too_short(
+                field,
+                offset + 1,
+                data.len(),
+            ));
+        }
+        let len = data[offset] as usize;
+        offset += 1;
+        let end = offset + len;
+        if end > data.len() {
+            return Err(CrafterError::buffer_too_short(field, end, data.len()));
+        }
+        let value = &data[offset..end];
+        suboptions.push(decode_relay_suboption(field, code, value)?);
+        offset = end;
+    }
+
+    Ok(DhcpRelayAgentInfo::new(suboptions))
+}
+
+/// Decode one relay-agent sub-option from its code and value bytes.
+fn decode_relay_suboption(
+    field: &'static str,
+    code: u8,
+    value: &[u8],
+) -> Result<DhcpRelaySuboption> {
+    let suboption = match code {
+        DHCP_RELAY_SUBOPTION_CIRCUIT_ID => DhcpRelaySuboption::CircuitId(value.to_vec()),
+        DHCP_RELAY_SUBOPTION_REMOTE_ID => DhcpRelaySuboption::RemoteId(value.to_vec()),
+        DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS => {
+            validate_fixed_len(field, value.len(), 4)?;
+            DhcpRelaySuboption::DocsisDeviceClass(read_u32_be(value)?)
+        }
+        DHCP_RELAY_SUBOPTION_LINK_SELECTION => {
+            DhcpRelaySuboption::LinkSelection(decode_ipv4_option(field, value)?)
+        }
+        DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID => DhcpRelaySuboption::SubscriberId(value.to_vec()),
+        DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES => {
+            DhcpRelaySuboption::RadiusAttributes(value.to_vec())
+        }
+        DHCP_RELAY_SUBOPTION_AUTHENTICATION => DhcpRelaySuboption::Authentication(value.to_vec()),
+        DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC => {
+            DhcpRelaySuboption::VendorSpecific(decode_relay_vendor_specific(field, value)?)
+        }
+        DHCP_RELAY_SUBOPTION_RELAY_FLAGS => {
+            validate_fixed_len(field, value.len(), 1)?;
+            DhcpRelaySuboption::RelayFlags(value[0])
+        }
+        DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE => {
+            DhcpRelaySuboption::ServerIdOverride(decode_ipv4_option(field, value)?)
+        }
+        DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID => DhcpRelaySuboption::RelayAgentId(value.to_vec()),
+        DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT => {
+            // RFC 8357: the relay source port sub-option carries no value; the
+            // length must be zero and the actual port is learned from the UDP
+            // header. A non-zero length is malformed for the typed view.
+            validate_fixed_len(field, value.len(), 0)?;
+            DhcpRelaySuboption::RelaySourcePort
+        }
+        DHCP_RELAY_SUBOPTION_VSS => {
+            // RFC 6607: a one-octet Type followed by type-specific VSS Info.
+            if value.is_empty() {
+                return Err(CrafterError::buffer_too_short(field, 1, value.len()));
+            }
+            DhcpRelaySuboption::Vss(DhcpVssInfo::new(value[0], value[1..].to_vec()))
+        }
+        DHCP_RELAY_SUBOPTION_VSS_CONTROL => {
+            validate_fixed_len(field, value.len(), 0)?;
+            DhcpRelaySuboption::VssControl
+        }
+        _ => DhcpRelaySuboption::Other {
+            code,
+            data: value.to_vec(),
+        },
+    };
+    Ok(suboption)
+}
+
+/// Decode the RFC 4243 relay Vendor-Specific Information sub-option (relay
+/// sub-option 9) into its enterprise-number plus opaque-data tuples.
+///
+/// Source: RFC 4243 section 4. The value is one or more tuples, each a 4-octet
+/// enterprise number, a one-octet data length, and that many opaque octets. A
+/// truncated enterprise number, missing data-len, or a data-len that runs past
+/// the end surfaces as a structured error rather than a panic.
+fn decode_relay_vendor_specific(
+    field: &'static str,
+    data: &[u8],
+) -> Result<Vec<DhcpRelayVendorSpecific>> {
+    let mut tuples = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < data.len() {
+        let enterprise_number = read_enterprise_number(field, data, offset)?;
+        offset += DHCP_ENTERPRISE_NUMBER_LEN;
+        if offset >= data.len() {
+            return Err(CrafterError::buffer_too_short(
+                field,
+                offset + 1,
+                data.len(),
+            ));
+        }
+        let len = data[offset] as usize;
+        offset += 1;
+        let end = offset + len;
+        if end > data.len() {
+            return Err(CrafterError::buffer_too_short(field, end, data.len()));
+        }
+        tuples.push(DhcpRelayVendorSpecific::new(
+            enterprise_number,
+            data[offset..end].to_vec(),
+        ));
+        offset = end;
+    }
+
+    Ok(tuples)
+}
+
+/// Encode an RFC 3046 Relay Agent Information option (option 82) value to its
+/// option payload bytes (without the option code or length byte).
+fn encode_relay_agent_information(info: &DhcpRelayAgentInfo) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for suboption in &info.suboptions {
+        let value = suboption.encode_value();
+        let len = value.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        bytes.push(suboption.code());
+        bytes.push(len as u8);
+        bytes.extend_from_slice(&value[..len]);
+    }
+    bytes
+}
+
+/// Encode the RFC 4243 relay Vendor-Specific Information tuples (relay
+/// sub-option 9) into their sub-option value bytes.
+fn encode_relay_vendor_specific(tuples: &[DhcpRelayVendorSpecific]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for tuple in tuples {
+        bytes.extend_from_slice(&tuple.enterprise_number.to_be_bytes());
+        let len = tuple.data.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        bytes.push(len as u8);
+        bytes.extend_from_slice(&tuple.data[..len]);
+    }
+    bytes
+}
+
 /// Maximum payload an option length byte can describe (RFC 2132 section 2).
 pub(super) const DHCP_MAX_OPTION_DATA_LEN: usize = u8::MAX as usize;
 
@@ -3497,10 +3930,11 @@ mod dhcp_rfc2132_base_options {
             );
         }
 
-        // Codes outside the RFC 2132 base set return Ok(None) so callers fall
-        // back to raw-byte preservation.
+        // Codes outside the typed-format set return Ok(None) so callers fall
+        // back to raw-byte preservation. Code 100 (RFC 4833 PCode) has no
+        // single authoritative typed format here and stays raw.
         assert!(typed_option_value(224, &[0xde, 0xad]).unwrap().is_none());
-        assert!(typed_option_value(82, &[0x01, 0x00]).unwrap().is_none());
+        assert!(typed_option_value(100, &[0x01, 0x00]).unwrap().is_none());
     }
 }
 
@@ -4136,5 +4570,240 @@ mod dhcp_vendor_user_pxe {
         assert_eq!(VENDOR_CLASS_ID, 60);
         assert_eq!(TFTP_SERVER_NAME, 66);
         assert_eq!(BOOTFILE_NAME, 67);
+    }
+}
+
+#[cfg(test)]
+mod dhcp_relay_agent {
+    use super::super::{
+        scan_dhcp_option_segments, Dhcp, DhcpMessageType, DhcpOption, DhcpOptionArea,
+        DhcpRelayAgentInfo, DhcpRelaySuboption, DhcpRelayVendorSpecific, DhcpVssInfo,
+    };
+    use super::{decode_relay_agent_information, typed_option_value, DhcpOptionValue};
+    use crate::error::CrafterError;
+    use core::net::Ipv4Addr;
+
+    const RELAY_AGENT_INFORMATION: u8 = super::super::DHCP_OPTION_RELAY_AGENT_INFORMATION; // 82
+
+    fn ip(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
+        Ipv4Addr::new(a, b, c, d)
+    }
+
+    fn build_and_decode(options: Vec<DhcpOption>) -> Dhcp {
+        let dhcp = Dhcp::new()
+            .op(super::super::BOOTP_REPLY)
+            .message_type(DhcpMessageType::Ack)
+            .options(options);
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        Dhcp::decode(&bytes).unwrap()
+    }
+
+    fn recompile_is_stable(parsed: &Dhcp) {
+        let bytes = crate::Packet::from_layer(parsed.clone())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let recompiled = crate::Packet::from_layer(Dhcp::decode(&bytes).unwrap())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn dhcp_relay_agent_option82_roundtrips_suboptions() {
+        // RFC 3046 option 82 is a container for relay-agent sub-options, each a
+        // code/length/value triple with no pad and no end marker. Every
+        // registered sub-option whose wire format is specified by the IANA
+        // "DHCP Relay Agent Sub-Option Codes" registry is exercised here, plus an
+        // unknown sub-option that must be preserved verbatim.
+        let info = DhcpRelayAgentInfo::new(vec![
+            // Sub-option 1 / 2 (RFC 3046): opaque relay-defined bytes.
+            DhcpRelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
+            DhcpRelaySuboption::remote_id(vec![0x00, 0x0c, 0x29, 0xab, 0xcd, 0xef]),
+            // Sub-option 4 (RFC 3256): 32-bit DOCSIS device class bitfield.
+            DhcpRelaySuboption::DocsisDeviceClass(0x0000_0001),
+            // Sub-option 5 (RFC 3527): subnet IPv4 link selection address.
+            DhcpRelaySuboption::LinkSelection(ip(192, 0, 2, 0)),
+            // Sub-option 6 (RFC 3993): opaque NVT ASCII subscriber id.
+            DhcpRelaySuboption::subscriber_id(b"sub-42".to_vec()),
+            // Sub-option 7 (RFC 4014): opaque RADIUS attributes.
+            DhcpRelaySuboption::RadiusAttributes(vec![0x01, 0x06, 0x00, 0x00, 0x00, 0x2a]),
+            // Sub-option 8 (RFC 4030): opaque authentication payload.
+            DhcpRelaySuboption::Authentication(vec![0x01, 0x00, 0x00, 0x00]),
+            // Sub-option 9 (RFC 4243): enterprise-number plus opaque-data tuples.
+            DhcpRelaySuboption::VendorSpecific(vec![
+                DhcpRelayVendorSpecific::new(3561, vec![0xde, 0xad]),
+                DhcpRelayVendorSpecific::new(311, b"v".to_vec()),
+            ]),
+            // Sub-option 10 (RFC 5010): one-octet flags (Unicast bit set).
+            DhcpRelaySuboption::RelayFlags(super::super::DHCP_RELAY_FLAG_UNICAST),
+            // Sub-option 11 (RFC 5107): 4-octet server-id override address.
+            DhcpRelaySuboption::ServerIdOverride(ip(192, 0, 2, 1)),
+            // Sub-option 12 (RFC 6925): opaque relay agent identifier.
+            DhcpRelaySuboption::relay_agent_id(vec![0xab, 0xcd]),
+            // Sub-option 19 (RFC 8357): zero-length relay source port flag.
+            DhcpRelaySuboption::RelaySourcePort,
+            // Sub-option 151 (RFC 6607): VSS type octet plus VSS information.
+            DhcpRelaySuboption::Vss(DhcpVssInfo::nvt_ascii(b"vpn-blue".to_vec())),
+            // Sub-option 152 (RFC 6607): zero-length VSS control.
+            DhcpRelaySuboption::VssControl,
+            // An unknown/reserved sub-option is preserved verbatim.
+            DhcpRelaySuboption::other(200, vec![0x01, 0x02, 0x03]),
+        ]);
+
+        // The typed value encodes to RFC 3046 sub-option layout and decodes back
+        // losslessly.
+        let value = DhcpOptionValue::RelayAgentInformation(info.clone());
+        let payload = value.encode_payload();
+        assert_eq!(
+            decode_relay_agent_information(&payload).unwrap(),
+            info,
+            "relay agent information must round-trip through the codec",
+        );
+        assert_eq!(
+            typed_option_value(RELAY_AGENT_INFORMATION, &payload)
+                .unwrap()
+                .unwrap(),
+            value,
+        );
+
+        // The relay source port and VSS control sub-options are zero-length.
+        let relay_port = info.suboption(19).unwrap().encode_value();
+        assert!(relay_port.is_empty(), "relay source port carries no value");
+
+        // Full packet round-trip through the typed builder and accessor.
+        let parsed = build_and_decode(vec![
+            DhcpOption::relay_agent_information(info.clone()),
+            DhcpOption::End,
+        ]);
+        let decoded = parsed.relay_agent_information().unwrap().unwrap();
+        assert_eq!(decoded, info);
+        // The unknown sub-option is preserved with its exact code and data.
+        assert_eq!(
+            decoded.suboption(200),
+            Some(&DhcpRelaySuboption::other(200, vec![0x01, 0x02, 0x03])),
+        );
+        recompile_is_stable(&parsed);
+    }
+
+    #[test]
+    fn dhcp_relay_agent_option82_rejects_truncated_suboption() {
+        // A sub-option length that runs past the end of the option is a
+        // structured error, never a panic. Code 1 (circuit id), declared length
+        // 5, but only two value octets present.
+        let truncated = [1u8, 5, 0xaa, 0xbb];
+        assert!(matches!(
+            decode_relay_agent_information(&truncated),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+        // The same surfaces through typed_option_value without panicking.
+        assert!(typed_option_value(RELAY_AGENT_INFORMATION, &truncated).is_err());
+
+        // A sub-option header missing its length octet is also rejected.
+        let no_len = [1u8];
+        assert!(matches!(
+            decode_relay_agent_information(&no_len),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+
+        // Fixed-width sub-options reject wrong lengths: link selection (code 5)
+        // must be exactly four octets, and relay source port (code 19) must be
+        // zero-length.
+        assert!(matches!(
+            decode_relay_agent_information(&[5, 3, 192, 0, 2]),
+            Err(CrafterError::InvalidFieldValue { .. }),
+        ));
+        assert!(matches!(
+            decode_relay_agent_information(&[19, 2, 0x00, 0x43]),
+            Err(CrafterError::InvalidFieldValue { .. }),
+        ));
+    }
+
+    #[test]
+    fn dhcp_relay_agent_option82_unknown_suboptions_preserved() {
+        // Unknown and reserved relay sub-option codes (here code 3, which RFC
+        // 3046 reserves, and code 99, unassigned) are preserved as raw code and
+        // data so no bytes are lost and the option re-encodes byte-exactly.
+        let info = DhcpRelayAgentInfo::new(vec![
+            DhcpRelaySuboption::other(3, vec![0xca, 0xfe]),
+            DhcpRelaySuboption::other(99, b"private".to_vec()),
+        ]);
+        let payload = DhcpOptionValue::RelayAgentInformation(info.clone()).encode_payload();
+        // Wire layout: code, len, data per sub-option.
+        assert_eq!(
+            payload,
+            vec![3, 2, 0xca, 0xfe, 99, 7, b'p', b'r', b'i', b'v', b'a', b't', b'e'],
+        );
+        assert_eq!(decode_relay_agent_information(&payload).unwrap(), info);
+
+        let parsed = build_and_decode(vec![
+            DhcpOption::relay_agent_information(info.clone()),
+            DhcpOption::End,
+        ]);
+        assert_eq!(parsed.relay_agent_information().unwrap().unwrap(), info);
+        recompile_is_stable(&parsed);
+    }
+
+    #[test]
+    fn dhcp_relay_agent_option82_overload_and_long_options() {
+        // Option 52 overload: option 82 carried in the overloaded `file` field
+        // must surface through the cross-area accessor and re-encode consistently.
+        let info = DhcpRelayAgentInfo::new(vec![
+            DhcpRelaySuboption::circuit_id(b"port-7".to_vec()),
+            DhcpRelaySuboption::ServerIdOverride(ip(198, 51, 100, 1)),
+        ]);
+        let dhcp = Dhcp::new()
+            .op(super::super::BOOTP_REPLY)
+            .message_type(DhcpMessageType::Ack)
+            .file_options(vec![DhcpOption::relay_agent_information(info.clone())]);
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let parsed = Dhcp::decode(&bytes).unwrap();
+        assert_eq!(parsed.relay_agent_information().unwrap().unwrap(), info);
+        recompile_is_stable(&parsed);
+
+        // RFC 3396 long-option splitting: a relay option whose payload exceeds
+        // 255 octets is split across repeated option-82 segments and reassembled
+        // into one logical value. The option-82 length is the single octet that
+        // overflows, so several sub-options (each <=255 octets) are combined to
+        // push the total option payload past one segment.
+        let big_info = DhcpRelayAgentInfo::new(vec![
+            DhcpRelaySuboption::circuit_id(vec![0x5au8; 200]),
+            DhcpRelaySuboption::remote_id(vec![0xa5u8; 200]),
+        ]);
+        let payload = DhcpOptionValue::RelayAgentInformation(big_info.clone()).encode_payload();
+        assert!(payload.len() > 255, "payload must exceed one segment");
+        let parsed = build_and_decode(vec![
+            DhcpOption::relay_agent_information(big_info.clone()),
+            DhcpOption::End,
+        ]);
+        // The raw wire form is split into more than one option-82 segment, while
+        // decode (RFC 3396) concatenates them into one logical option.
+        let encoded = parsed.encoded_options().unwrap();
+        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &encoded)
+            .unwrap()
+            .into_iter()
+            .filter(|seg| seg.code_value() == RELAY_AGENT_INFORMATION)
+            .count();
+        assert!(
+            segments >= 2,
+            "an over-long relay option must split into multiple wire segments",
+        );
+        // The cross-area accessor reassembles the segments into one logical value.
+        assert_eq!(parsed.relay_agent_information().unwrap().unwrap(), big_info);
+        recompile_is_stable(&parsed);
+
+        // The codepoint is pinned to its IANA value for clarity.
+        assert_eq!(RELAY_AGENT_INFORMATION, 82);
     }
 }

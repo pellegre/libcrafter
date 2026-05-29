@@ -30,15 +30,26 @@ pub use constants::{
     DHCP_OPTION_NAME_SERVICE_SEARCH, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
     DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PCODE, DHCP_OPTION_PXELINUX_CONFIGFILE,
     DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX, DHCP_OPTION_PXELINUX_REBOOTTIME,
-    DHCP_OPTION_RDNSS_SELECTION, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RENEWAL_TIME,
-    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER,
-    DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_SIP_UA_CONFIG_DOMAINS, DHCP_OPTION_STATIC_ROUTE,
-    DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_TCODE, DHCP_OPTION_TFTP_SERVER_ADDRESS,
-    DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_USER_CLASS, DHCP_OPTION_V4_DNR,
-    DHCP_OPTION_V4_DOTS_ADDRESS, DHCP_OPTION_V4_DOTS_RI, DHCP_OPTION_V4_PCP_SERVER,
-    DHCP_OPTION_VENDOR_CLASS_IDENTIFIER, DHCP_OPTION_VENDOR_SPECIFIC, DHCP_OPTION_VI_VENDOR_CLASS,
-    DHCP_OPTION_VI_VENDOR_SPECIFIC, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME,
-    DHCP_RELEASE, DHCP_REQUEST, DHCP_SERVER_PORT,
+    DHCP_OPTION_RDNSS_SELECTION, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RELAY_AGENT_INFORMATION,
+    DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER,
+    DHCP_OPTION_SERVER_IDENTIFIER, DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_SIP_UA_CONFIG_DOMAINS,
+    DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_TCODE,
+    DHCP_OPTION_TFTP_SERVER_ADDRESS, DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_USER_CLASS,
+    DHCP_OPTION_V4_DNR, DHCP_OPTION_V4_DOTS_ADDRESS, DHCP_OPTION_V4_DOTS_RI,
+    DHCP_OPTION_V4_PCP_SERVER, DHCP_OPTION_VENDOR_CLASS_IDENTIFIER, DHCP_OPTION_VENDOR_SPECIFIC,
+    DHCP_OPTION_VI_VENDOR_CLASS, DHCP_OPTION_VI_VENDOR_SPECIFIC, DHCP_OVERLOAD_BOTH,
+    DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME, DHCP_RELAY_FLAG_UNICAST,
+    DHCP_RELAY_SUBOPTION_ACCESS_NETWORK_NAME, DHCP_RELAY_SUBOPTION_ACCESS_POINT_BSSID,
+    DHCP_RELAY_SUBOPTION_ACCESS_POINT_NAME, DHCP_RELAY_SUBOPTION_ACCESS_TECHNOLOGY_TYPE,
+    DHCP_RELAY_SUBOPTION_AUTHENTICATION, DHCP_RELAY_SUBOPTION_CIRCUIT_ID,
+    DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS, DHCP_RELAY_SUBOPTION_LINK_SELECTION,
+    DHCP_RELAY_SUBOPTION_OPERATOR_IDENTIFIER, DHCP_RELAY_SUBOPTION_OPERATOR_REALM,
+    DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES, DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID,
+    DHCP_RELAY_SUBOPTION_RELAY_FLAGS, DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
+    DHCP_RELAY_SUBOPTION_REMOTE_ID, DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
+    DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID, DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC,
+    DHCP_RELAY_SUBOPTION_VSS, DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_RELEASE, DHCP_REQUEST,
+    DHCP_SERVER_PORT, DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
 };
 pub use malformed::DhcpMalformed;
 pub use message::DhcpMessageType;
@@ -46,8 +57,9 @@ pub use option::{
     decode_tftp_server_addresses, scan_dhcp_option_segments, typed_option_value,
     ClientNetworkDeviceInterface, ClientSystemArchitecture, DhcpClasslessRoute, DhcpClientUuid,
     DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionFormat, DhcpOptionKind,
-    DhcpOptionSegment, DhcpOptionValue, DhcpStaticRoute, DhcpUserClass, DhcpVendorClassData,
-    DhcpVendorIdentifyingOption, DhcpVendorSuboption, OptionOverload, SipServers,
+    DhcpOptionSegment, DhcpOptionValue, DhcpRelayAgentInfo, DhcpRelaySuboption,
+    DhcpRelayVendorSpecific, DhcpStaticRoute, DhcpUserClass, DhcpVendorClassData,
+    DhcpVendorIdentifyingOption, DhcpVendorSuboption, DhcpVssInfo, OptionOverload, SipServers,
 };
 pub use registry::{
     option_meta, option_name, option_status, DhcpOptionMeta, DhcpOptionStatus,
@@ -915,6 +927,24 @@ impl Dhcp {
                 result.map(|value| match value {
                     DhcpOptionValue::ViVendorSpecific(instances) => instances,
                     _ => Vec::new(),
+                })
+            })
+    }
+
+    /// RFC 3046 Relay Agent Information (option 82), concatenated across areas.
+    ///
+    /// Source: RFC 3046 section 2 and the IANA "DHCP Relay Agent Sub-Option
+    /// Codes" registry. Reassembles the logical payload (RFC 3396) and decodes
+    /// the relay-agent sub-options; registered sub-options decode into typed
+    /// variants where their wire format is specified and unknown sub-options are
+    /// preserved as raw code and data. Returns `None` when no area carries the
+    /// option; a truncated sub-option surfaces as a structured error.
+    pub fn relay_agent_information(&self) -> Option<Result<DhcpRelayAgentInfo>> {
+        self.typed_value_in_areas(DHCP_OPTION_RELAY_AGENT_INFORMATION)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::RelayAgentInformation(info) => info,
+                    _ => DhcpRelayAgentInfo::default(),
                 })
             })
     }
