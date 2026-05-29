@@ -74,8 +74,8 @@ pub use dns::{
     DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, DNS_TYPE_TLSA, DNS_TYPE_TXT,
 };
 pub use icmp::{
-    Icmp, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpKind, IcmpLayer,
-    IcmpQuotedIpv4, IcmpTimestamp, Icmpv6,
+    Icmp, IcmpAddressMask, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpKind,
+    IcmpLayer, IcmpQuotedIpv4, IcmpTimestamp, Icmpv6,
     ICMPV6_DESTINATION_UNREACHABLE, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMPV6_PACKET_TOO_BIG,
     ICMPV6_PARAMETER_PROBLEM, ICMPV6_TIME_EXCEEDED, ICMP_ADDRESS_MASK_REPLY,
     ICMP_ADDRESS_MASK_REQUEST, ICMP_ALTERNATE_HOST_ADDRESS, ICMP_CODE_DU_COMM_ADMIN_PROHIBITED,
