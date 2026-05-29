@@ -216,6 +216,8 @@ pub const DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER: u8 = 97;
 pub const DHCP_OPTION_VI_VENDOR_CLASS: u8 = 124;
 /// DHCP V-I Vendor-Specific Information option code (RFC 3925).
 pub const DHCP_OPTION_VI_VENDOR_SPECIFIC: u8 = 125;
+/// DHCP Relay Agent Information option code (RFC 3046).
+pub const DHCP_OPTION_RELAY_AGENT_INFORMATION: u8 = 82;
 /// DHCP TFTP server address option code (RFC 5859).
 pub const DHCP_OPTION_TFTP_SERVER_ADDRESS: u8 = 150;
 /// DHCP PXELINUX magic option code (RFC 5071 / RFC 5494).
@@ -226,6 +228,60 @@ pub const DHCP_OPTION_PXELINUX_CONFIGFILE: u8 = 209;
 pub const DHCP_OPTION_PXELINUX_PATHPREFIX: u8 = 210;
 /// DHCP PXELINUX reboot time option code (RFC 5071).
 pub const DHCP_OPTION_PXELINUX_REBOOTTIME: u8 = 211;
+
+// Relay Agent Information sub-option codes (option 82). Codepoints come from the
+// IANA "DHCP Relay Agent Sub-Option Codes" registry (last updated 2026-05-29);
+// each wire format is defined by the RFC cited inline.
+
+/// Relay agent Agent Circuit ID sub-option code (RFC 3046).
+pub const DHCP_RELAY_SUBOPTION_CIRCUIT_ID: u8 = 1;
+/// Relay agent Agent Remote ID sub-option code (RFC 3046).
+pub const DHCP_RELAY_SUBOPTION_REMOTE_ID: u8 = 2;
+/// Relay agent DOCSIS Device Class sub-option code (RFC 3256).
+pub const DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS: u8 = 4;
+/// Relay agent Link Selection sub-option code (RFC 3527).
+pub const DHCP_RELAY_SUBOPTION_LINK_SELECTION: u8 = 5;
+/// Relay agent Subscriber-ID sub-option code (RFC 3993).
+pub const DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID: u8 = 6;
+/// Relay agent RADIUS Attributes sub-option code (RFC 4014).
+pub const DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES: u8 = 7;
+/// Relay agent Authentication sub-option code (RFC 4030).
+pub const DHCP_RELAY_SUBOPTION_AUTHENTICATION: u8 = 8;
+/// Relay agent Vendor-Specific Information sub-option code (RFC 4243).
+pub const DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC: u8 = 9;
+/// Relay agent Relay Agent Flags sub-option code (RFC 5010).
+pub const DHCP_RELAY_SUBOPTION_RELAY_FLAGS: u8 = 10;
+/// Relay agent Server Identifier Override sub-option code (RFC 5107).
+pub const DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE: u8 = 11;
+/// Relay agent Relay Agent Identifier sub-option code (RFC 6925).
+pub const DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID: u8 = 12;
+/// Relay agent Access-Technology-Type sub-option code (RFC 7839).
+pub const DHCP_RELAY_SUBOPTION_ACCESS_TECHNOLOGY_TYPE: u8 = 13;
+/// Relay agent Access-Network-Name sub-option code (RFC 7839).
+pub const DHCP_RELAY_SUBOPTION_ACCESS_NETWORK_NAME: u8 = 14;
+/// Relay agent Access-Point-Name sub-option code (RFC 7839).
+pub const DHCP_RELAY_SUBOPTION_ACCESS_POINT_NAME: u8 = 15;
+/// Relay agent Access-Point-BSSID sub-option code (RFC 7839).
+pub const DHCP_RELAY_SUBOPTION_ACCESS_POINT_BSSID: u8 = 16;
+/// Relay agent Operator-Identifier sub-option code (RFC 7839).
+pub const DHCP_RELAY_SUBOPTION_OPERATOR_IDENTIFIER: u8 = 17;
+/// Relay agent Operator-Realm sub-option code (RFC 7839).
+pub const DHCP_RELAY_SUBOPTION_OPERATOR_REALM: u8 = 18;
+/// Relay agent DHCPv4 Relay Source Port sub-option code (RFC 8357).
+pub const DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT: u8 = 19;
+/// Relay agent DHCPv4 Virtual Subnet Selection (VSS) sub-option code (RFC 6607).
+pub const DHCP_RELAY_SUBOPTION_VSS: u8 = 151;
+/// Relay agent DHCPv4 Virtual Subnet Selection Control sub-option code (RFC 6607).
+pub const DHCP_RELAY_SUBOPTION_VSS_CONTROL: u8 = 152;
+
+/// RFC 5010 Relay Agent Flags sub-option Unicast flag bit (`U`, bit 0 / `0x80`).
+pub const DHCP_RELAY_FLAG_UNICAST: u8 = 0x80;
+/// RFC 6607 VSS Type octet for an NVT ASCII VPN identifier.
+pub const DHCP_VSS_TYPE_NVT_ASCII: u8 = 0;
+/// RFC 6607 VSS Type octet for an RFC 2685 VPN-ID (7 octets).
+pub const DHCP_VSS_TYPE_VPN_ID: u8 = 1;
+/// RFC 6607 VSS Type octet selecting the global, default VPN (no VSS info).
+pub const DHCP_VSS_TYPE_GLOBAL_DEFAULT: u8 = 255;
 
 /// RFC 5071 PXELINUX magic option payload `0xF1 0x00 0x74 0x7E` (option 208).
 pub const DHCP_PXELINUX_MAGIC_VALUE: [u8; 4] = [0xF1, 0x00, 0x74, 0x7E];
