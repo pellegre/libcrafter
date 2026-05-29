@@ -196,6 +196,31 @@ impl ProtocolRegistry {
         registry
     }
 
+    /// Create a registry that types transport headers but stops before any
+    /// application-layer dispatch.
+    ///
+    /// Quoted original datagrams inside ICMPv4 error messages are usually only
+    /// the IP header plus the first eight bytes of payload (RFC 792), so a full
+    /// recursive decode would fail or drop the typed transport header the moment
+    /// an application decoder (DNS, DHCP) sees a truncated prefix. This shallow
+    /// registry keeps the IPv4 and transport (UDP/TCP/ICMP) headers typed while
+    /// leaving their payloads raw-compatible.
+    pub(crate) fn transport_only() -> Self {
+        let mut registry = Self::empty();
+
+        registry.bind_ipv4_protocol_with_registry(IPPROTO_ICMP, |_registry, packet, payload| {
+            append_icmp_packet(packet, payload)
+        });
+        registry.bind_ipv4_protocol_with_registry(IPPROTO_TCP, |registry, packet, payload| {
+            append_tcp_packet_with_registry(registry, packet, payload)
+        });
+        registry.bind_ipv4_protocol_with_registry(IPPROTO_UDP, |registry, packet, payload| {
+            append_udp_packet_with_registry(registry, packet, payload)
+        });
+
+        registry
+    }
+
     /// Decode bytes from a link-layer entrypoint.
     pub fn decode_from_link(&self, link_type: LinkType, bytes: impl AsRef<[u8]>) -> Result<Packet> {
         let bytes = bytes.as_ref();
