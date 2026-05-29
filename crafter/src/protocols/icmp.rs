@@ -232,6 +232,9 @@ const ICMP_HEADER_LEN: usize = 8;
 /// RFC 792 timestamp body: originate, receive, and transmit timestamps, each a
 /// 32-bit value (12 bytes total) following the fixed ICMP header.
 const ICMP_TIMESTAMP_BODY_LEN: usize = 12;
+/// RFC 950 address mask body: a single 32-bit address mask (4 bytes) following
+/// the fixed ICMP header.
+const ICMP_ADDRESS_MASK_BODY_LEN: usize = 4;
 const ICMP_EXTENSION_HEADER_LEN: usize = 4;
 const ICMP_EXTENSION_OBJECT_LEN: usize = 4;
 const ICMP_EXTENSION_MPLS_LEN: usize = 4;
@@ -422,6 +425,24 @@ impl Icmp {
     /// Deprecated by RFC 6918, but still constructible.
     pub fn information_reply() -> Self {
         Self::new().icmp_type(ICMP_INFORMATION_REPLY)
+    }
+
+    /// Create an address mask request (RFC 950, type 17).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. The fixed header carries
+    /// the identifier and sequence number; the 32-bit address mask lives in a
+    /// separate [`IcmpAddressMask`] body layer (RFC 950 sets it to zero in a
+    /// request).
+    pub fn address_mask_request() -> Self {
+        Self::new().icmp_type(ICMP_ADDRESS_MASK_REQUEST)
+    }
+
+    /// Create an address mask reply (RFC 950, type 18).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. The replying gateway
+    /// sets the [`IcmpAddressMask`] body to the subnet/network mask.
+    pub fn address_mask_reply() -> Self {
+        Self::new().icmp_type(ICMP_ADDRESS_MASK_REPLY)
     }
 
     /// Set the ICMP type from a common kind.
@@ -624,11 +645,12 @@ impl Icmp {
 
         match self.icmp_type_value() {
             ICMP_ECHO_REQUEST | ICMP_ECHO_REPLY | ICMP_TIMESTAMP | ICMP_TIMESTAMP_REPLY
-            | ICMP_INFORMATION_REQUEST | ICMP_INFORMATION_REPLY => {
-                // RFC 792 query families: identifier (2) + sequence (2). When the
-                // raw rest is user-set, only a user-set id/seq overrides those
-                // bytes; otherwise the typed defaults seed them from the raw
-                // value.
+            | ICMP_INFORMATION_REQUEST | ICMP_INFORMATION_REPLY | ICMP_ADDRESS_MASK_REQUEST
+            | ICMP_ADDRESS_MASK_REPLY => {
+                // RFC 792 / RFC 950 query families: identifier (2) + sequence
+                // (2). When the raw rest is user-set, only a user-set id/seq
+                // overrides those bytes; otherwise the typed defaults seed them
+                // from the raw value.
                 if self.identifier.is_user_set() || !raw_is_user {
                     let identifier =
                         value_or_u16_from_rest(&self.identifier, &self.rest_of_header, 0);
@@ -1048,6 +1070,98 @@ impl Layer for IcmpTimestamp {
 }
 
 impl_layer_div!(IcmpTimestamp);
+
+/// RFC 950 address mask message body.
+///
+/// Address mask request (type 17) and address mask reply (type 18) append a
+/// single 32-bit address mask after the fixed ICMP header. RFC 950 has the
+/// requesting host set the mask to zero and the responding gateway return the
+/// 32-bit subnet/network mask. The identifier and sequence number live in the
+/// fixed header's rest-of-header, like an echo.
+///
+/// Both messages are deprecated by RFC 6918 but remain constructible and
+/// decodable. The mask is modeled as an [`Ipv4Addr`] for convenience while the
+/// raw four bytes stay inspectable through [`IcmpAddressMask::mask_octets`].
+///
+/// This layer always encodes exactly four bytes. A trailing region that is not
+/// exactly four bytes is not forced into this layer on decode; it stays a
+/// [`Raw`] payload so the bytes are never lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IcmpAddressMask {
+    mask: Field<Ipv4Addr>,
+}
+
+impl IcmpAddressMask {
+    /// Create an address mask body defaulting to the all-zero mask RFC 950
+    /// specifies for a request.
+    pub fn new() -> Self {
+        Self {
+            mask: Field::defaulted(Ipv4Addr::UNSPECIFIED),
+        }
+    }
+
+    /// Set the 32-bit address mask.
+    pub fn mask(mut self, mask: Ipv4Addr) -> Self {
+        self.mask.set_user(mask);
+        self
+    }
+
+    /// Set the address mask from dotted-quad text.
+    pub fn mask_str(self, mask: &str) -> Result<Self> {
+        Ok(self.mask(parse_ipv4(mask)?))
+    }
+
+    /// Set the address mask from a raw 32-bit value.
+    pub fn mask_bits(self, mask: u32) -> Self {
+        self.mask(Ipv4Addr::from(mask))
+    }
+
+    /// Address mask value as an [`Ipv4Addr`].
+    pub fn mask_value(&self) -> Ipv4Addr {
+        value_or_copy(&self.mask, Ipv4Addr::UNSPECIFIED)
+    }
+
+    /// Address mask as its raw four bytes.
+    pub fn mask_octets(&self) -> [u8; 4] {
+        self.mask_value().octets()
+    }
+}
+
+impl Default for IcmpAddressMask {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for IcmpAddressMask {
+    fn name(&self) -> &'static str {
+        "IcmpAddressMask"
+    }
+
+    fn summary(&self) -> String {
+        format!("IcmpAddressMask(mask={})", self.mask_value())
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("mask", self.mask_value().to_string()),
+            ("mask_bytes", hex_bytes(&self.mask_octets())),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        ICMP_ADDRESS_MASK_BODY_LEN
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.mask_octets());
+        Ok(())
+    }
+
+    impl_layer_object!(IcmpAddressMask);
+}
+
+impl_layer_div!(IcmpAddressMask);
 
 /// Internet Control Message Protocol for IPv6.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1918,6 +2032,20 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
         return Ok(packet);
     }
 
+    // RFC 950 address mask messages carry exactly one 32-bit mask after the
+    // fixed header. Type the body only when its length is exactly right; any
+    // other length is malformed and stays raw so the bytes survive and decoding
+    // never panics.
+    if matches!(icmp_type, ICMP_ADDRESS_MASK_REQUEST | ICMP_ADDRESS_MASK_REPLY)
+        && payload.len() == ICMP_ADDRESS_MASK_BODY_LEN
+    {
+        let mask = Ipv4Addr::from(copy_array_4(&payload[0..4]));
+        packet = packet.push(IcmpAddressMask {
+            mask: Field::user(mask),
+        });
+        return Ok(packet);
+    }
+
     packet = packet.push(Raw::from_bytes(payload));
     Ok(packet)
 }
@@ -2081,12 +2209,14 @@ fn is_echo_v4(icmp_type: u8) -> bool {
     matches!(icmp_type, ICMP_ECHO_REQUEST | ICMP_ECHO_REPLY)
 }
 
-/// True for the RFC 792 query families that carry an identifier and sequence
-/// number in the rest-of-header: echo, timestamp, and information messages.
+/// True for the RFC 792 / RFC 950 query families that carry an identifier and
+/// sequence number in the rest-of-header: echo, timestamp, information, and
+/// address mask messages.
 ///
 /// This is broader than [`is_echo_v4`] on purpose: echo-only matching used by
-/// ping-style tools still flows through [`IcmpKind`], so timestamp and
-/// information messages surface id/seq without being mistaken for echoes.
+/// ping-style tools still flows through [`IcmpKind`], so timestamp,
+/// information, and address mask messages surface id/seq without being mistaken
+/// for echoes.
 fn is_query_v4(icmp_type: u8) -> bool {
     is_echo_v4(icmp_type)
         || matches!(
@@ -2095,6 +2225,8 @@ fn is_query_v4(icmp_type: u8) -> bool {
                 | ICMP_TIMESTAMP_REPLY
                 | ICMP_INFORMATION_REQUEST
                 | ICMP_INFORMATION_REPLY
+                | ICMP_ADDRESS_MASK_REQUEST
+                | ICMP_ADDRESS_MASK_REPLY
         )
 }
 
@@ -3418,5 +3550,207 @@ mod icmpv4_rfc792_queries {
             .compile()
             .unwrap();
         assert!(Packet::decode_from_l3(NetworkLayer::Ipv4, short.as_bytes()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_address_mask {
+    use super::{
+        icmpv4_type_is_deprecated, icmpv4_type_summary, Icmp, IcmpAddressMask,
+        ICMP_ADDRESS_MASK_REPLY, ICMP_ADDRESS_MASK_REQUEST,
+    };
+    use crate::checksum::internet_checksum;
+    use crate::packet::Layer;
+    use crate::{Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // An address mask request (RFC 950) compiles its fixed header (with
+    // identifier and sequence) plus the 32-bit mask, with the mask defaulting to
+    // all zeros per RFC 950, and round-trips through decode with its fields
+    // intact.
+    #[test]
+    fn icmpv4_address_mask_request_compile_decode_roundtrip() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_request().id(0x1234).seq(7)
+            / IcmpAddressMask::new();
+        let compiled = packet.compile().unwrap();
+
+        // ICMP header begins at byte 20 (20-byte IPv4 header, no options).
+        assert_eq!(compiled.as_bytes()[20], ICMP_ADDRESS_MASK_REQUEST);
+        assert_eq!(compiled.as_bytes()[21], 0); // code
+        // Identifier (bytes 24..26) and sequence (bytes 26..28).
+        assert_eq!(&compiled.as_bytes()[24..26], &0x1234u16.to_be_bytes());
+        assert_eq!(&compiled.as_bytes()[26..28], &7u16.to_be_bytes());
+        // RFC 950 request: the address mask body (bytes 28..32) is all zeros.
+        assert_eq!(&compiled.as_bytes()[28..32], &[0, 0, 0, 0]);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.icmp_type_value(), ICMP_ADDRESS_MASK_REQUEST);
+        // Identifier and sequence are inspectable for the address mask family.
+        assert_eq!(icmp.identifier_value(), Some(0x1234));
+        assert_eq!(icmp.sequence_number_value(), Some(7));
+        // Address mask is not an echo, so it maps to no common ping kind.
+        assert_eq!(icmp.kind_value(), None);
+
+        let mask = decoded.layer::<IcmpAddressMask>().unwrap();
+        assert_eq!(mask.mask_value(), Ipv4Addr::UNSPECIFIED);
+        // No leftover raw bytes when the body length is exactly 4.
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // An address mask reply carries the gateway's subnet/network mask, exposed
+    // through both the typed Ipv4Addr accessor and the raw octets, and survives
+    // a full decode round-trip.
+    #[test]
+    fn icmpv4_address_mask_reply_compile_decode_roundtrip_and_accessors() {
+        let mask = Ipv4Addr::new(255, 255, 255, 0);
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_reply().id(0xabcd).seq(9)
+            / IcmpAddressMask::new().mask(mask);
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(compiled.as_bytes()[20], ICMP_ADDRESS_MASK_REPLY);
+        // The 32-bit mask body holds the subnet mask verbatim.
+        assert_eq!(&compiled.as_bytes()[28..32], &mask.octets());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let body = decoded.layer::<IcmpAddressMask>().unwrap();
+        assert_eq!(body.mask_value(), mask);
+        assert_eq!(body.mask_octets(), [255, 255, 255, 0]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+
+        // The mask escape hatches agree with the typed accessor.
+        assert_eq!(
+            IcmpAddressMask::new().mask_bits(0xffff_ff00).mask_value(),
+            mask
+        );
+        assert_eq!(
+            IcmpAddressMask::new()
+                .mask_str("255.255.255.0")
+                .unwrap()
+                .mask_value(),
+            mask
+        );
+    }
+
+    // The address mask constructors set the right types and default the body to
+    // the all-zero mask.
+    #[test]
+    fn icmpv4_address_mask_constructors_set_types() {
+        assert_eq!(
+            Icmp::address_mask_request().icmp_type_value(),
+            ICMP_ADDRESS_MASK_REQUEST
+        );
+        assert_eq!(
+            Icmp::address_mask_reply().icmp_type_value(),
+            ICMP_ADDRESS_MASK_REPLY
+        );
+        assert_eq!(IcmpAddressMask::new().mask_value(), Ipv4Addr::UNSPECIFIED);
+    }
+
+    // The ICMP checksum is auto-filled over the header plus the address mask
+    // body when the caller leaves it unset.
+    #[test]
+    fn icmpv4_address_mask_checksum_autofill() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_reply().id(0x4242).seq(3)
+            / IcmpAddressMask::new().mask(Ipv4Addr::new(255, 255, 0, 0));
+        let compiled = packet.compile().unwrap();
+
+        // Recompute the expected checksum over the full ICMP message (header +
+        // 4-byte mask body) with the checksum field zeroed.
+        let icmp_message = &compiled.as_bytes()[20..];
+        let mut zeroed = icmp_message.to_vec();
+        zeroed[2] = 0;
+        zeroed[3] = 0;
+        let expected = internet_checksum(&zeroed);
+        assert_ne!(expected, 0);
+        assert_eq!(
+            &compiled.as_bytes()[22..24],
+            &expected.to_be_bytes(),
+            "auto-filled checksum must cover the address mask body"
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmp>().unwrap().checksum_value(),
+            Some(expected)
+        );
+    }
+
+    // An explicit (deliberately wrong) checksum on an address mask message is
+    // emitted verbatim instead of being recomputed over the body.
+    #[test]
+    fn icmpv4_address_mask_explicit_checksum_override() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_request().id(1).seq(1).checksum(0xbeef)
+            / IcmpAddressMask::new();
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(&compiled.as_bytes()[22..24], &0xbeefu16.to_be_bytes());
+    }
+
+    // Both address mask types are deprecated by RFC 6918 but keep their registry
+    // identity in summaries and are flagged as deprecated. Naming them never
+    // doubles as refusing them (construction above succeeds).
+    #[test]
+    fn icmpv4_address_mask_deprecated_summaries() {
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ADDRESS_MASK_REQUEST),
+            "address-mask-request(17)"
+        );
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ADDRESS_MASK_REPLY),
+            "address-mask-reply(18)"
+        );
+        assert!(icmpv4_type_is_deprecated(ICMP_ADDRESS_MASK_REQUEST));
+        assert!(icmpv4_type_is_deprecated(ICMP_ADDRESS_MASK_REPLY));
+
+        // The body summary exposes the typed mask.
+        assert_eq!(
+            IcmpAddressMask::new()
+                .mask(Ipv4Addr::new(255, 255, 255, 0))
+                .summary(),
+            "IcmpAddressMask(mask=255.255.255.0)"
+        );
+    }
+
+    // An address mask message whose trailing region is the wrong length (not
+    // exactly 4 bytes) is malformed: the typed body parser declines it, the
+    // bytes remain a Raw payload, decoding does not panic, and the message still
+    // round-trips byte-for-byte.
+    #[test]
+    fn icmpv4_address_mask_malformed_body_stays_raw() {
+        // Short body: only 3 of the 4 mask bytes are present.
+        let short = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_request().id(1).seq(1)
+            / Raw::from_bytes([0xaa; 3]);
+        let compiled = short.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpAddressMask>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[0xaa; 3]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+
+        // Oversized body: 4 mask bytes plus trailing unknown data.
+        let mut body = vec![0xffu8; 4];
+        body.extend_from_slice(b"trailing");
+        let long = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_reply().id(2).seq(2)
+            / Raw::from_bytes(&body);
+        let compiled = long.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpAddressMask>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &body[..]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
     }
 }
