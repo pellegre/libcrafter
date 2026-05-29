@@ -20,26 +20,34 @@ pub use constants::{
     BOOTP_REPLY, BOOTP_REQUEST, DHCP_ACK, DHCP_CLIENT_PORT, DHCP_DECLINE, DHCP_DISCOVER,
     DHCP_FIXED_HEADER_LEN, DHCP_HTYPE_ETHERNET, DHCP_INFORM, DHCP_MAGIC_COOKIE,
     DHCP_MAGIC_COOKIE_LEN, DHCP_MIN_LEN, DHCP_NAK, DHCP_OFFER, DHCP_OPTION_6RD,
-    DHCP_OPTION_BCMCS_DOMAIN_LIST, DHCP_OPTION_BCMCS_IPV4_LIST, DHCP_OPTION_BROADCAST_ADDRESS,
-    DHCP_OPTION_CLASSLESS_STATIC_ROUTE, DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_DOMAIN_NAME,
+    DHCP_OPTION_BCMCS_DOMAIN_LIST, DHCP_OPTION_BCMCS_IPV4_LIST, DHCP_OPTION_BOOTFILE_NAME,
+    DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
+    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
+    DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_DOMAIN_NAME,
     DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH, DHCP_OPTION_END,
     DHCP_OPTION_GEOCONF, DHCP_OPTION_GEOCONF_CIVIC, DHCP_OPTION_GEOLOC, DHCP_OPTION_HOST_NAME,
     DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_MUD_URL_V4,
     DHCP_OPTION_NAME_SERVICE_SEARCH, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
-    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PCODE, DHCP_OPTION_RDNSS_SELECTION,
-    DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS,
-    DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER, DHCP_OPTION_SIP_SERVERS,
-    DHCP_OPTION_SIP_UA_CONFIG_DOMAINS, DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_SUBNET_MASK,
-    DHCP_OPTION_TCODE, DHCP_OPTION_V4_DNR, DHCP_OPTION_V4_DOTS_ADDRESS, DHCP_OPTION_V4_DOTS_RI,
-    DHCP_OPTION_V4_PCP_SERVER, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME,
+    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PCODE, DHCP_OPTION_PXELINUX_CONFIGFILE,
+    DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX, DHCP_OPTION_PXELINUX_REBOOTTIME,
+    DHCP_OPTION_RDNSS_SELECTION, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RENEWAL_TIME,
+    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER,
+    DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_SIP_UA_CONFIG_DOMAINS, DHCP_OPTION_STATIC_ROUTE,
+    DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_TCODE, DHCP_OPTION_TFTP_SERVER_ADDRESS,
+    DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_USER_CLASS, DHCP_OPTION_V4_DNR,
+    DHCP_OPTION_V4_DOTS_ADDRESS, DHCP_OPTION_V4_DOTS_RI, DHCP_OPTION_V4_PCP_SERVER,
+    DHCP_OPTION_VENDOR_CLASS_IDENTIFIER, DHCP_OPTION_VENDOR_SPECIFIC, DHCP_OPTION_VI_VENDOR_CLASS,
+    DHCP_OPTION_VI_VENDOR_SPECIFIC, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME,
     DHCP_RELEASE, DHCP_REQUEST, DHCP_SERVER_PORT,
 };
 pub use malformed::DhcpMalformed;
 pub use message::DhcpMessageType;
 pub use option::{
-    scan_dhcp_option_segments, typed_option_value, DhcpClasslessRoute, DhcpOption, DhcpOptionArea,
-    DhcpOptionCode, DhcpOptionFormat, DhcpOptionKind, DhcpOptionSegment, DhcpOptionValue,
-    DhcpStaticRoute, OptionOverload, SipServers,
+    decode_tftp_server_addresses, scan_dhcp_option_segments, typed_option_value,
+    ClientNetworkDeviceInterface, ClientSystemArchitecture, DhcpClasslessRoute, DhcpClientUuid,
+    DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionFormat, DhcpOptionKind,
+    DhcpOptionSegment, DhcpOptionValue, DhcpStaticRoute, DhcpUserClass, DhcpVendorClassData,
+    DhcpVendorIdentifyingOption, DhcpVendorSuboption, OptionOverload, SipServers,
 };
 pub use registry::{
     option_meta, option_name, option_status, DhcpOptionMeta, DhcpOptionStatus,
@@ -776,6 +784,207 @@ impl Dhcp {
                     _ => SipServers::Addresses(Vec::new()),
                 })
             })
+    }
+
+    /// RFC 2132 vendor-specific information (option 43), concatenated across
+    /// areas.
+    ///
+    /// Source: RFC 2132 section 8.4. The payload is opaque vendor data whose
+    /// internal format is defined by the vendor (option 60); it is returned
+    /// verbatim. Returns `None` when no area carries the option.
+    pub fn vendor_specific_information(&self) -> Option<Vec<u8>> {
+        self.concatenated_payload(DHCP_OPTION_VENDOR_SPECIFIC)
+    }
+
+    /// RFC 2132 vendor class identifier (option 60), concatenated across areas.
+    ///
+    /// Source: RFC 2132 section 9.13. The payload is an opaque string of octets
+    /// interpreted by servers; it is returned verbatim. Returns `None` when no
+    /// area carries the option.
+    pub fn vendor_class_identifier(&self) -> Option<Vec<u8>> {
+        self.concatenated_payload(DHCP_OPTION_VENDOR_CLASS_IDENTIFIER)
+    }
+
+    /// RFC 2132 TFTP server name (option 66), concatenated across areas.
+    ///
+    /// Source: RFC 2132 section 9.4. The payload is an NVT ASCII string. The raw
+    /// bytes are returned because the value is not guaranteed UTF-8. Returns
+    /// `None` when no area carries the option.
+    pub fn tftp_server_name(&self) -> Option<Vec<u8>> {
+        self.concatenated_payload(DHCP_OPTION_TFTP_SERVER_NAME)
+    }
+
+    /// RFC 2132 bootfile name (option 67), concatenated across areas.
+    ///
+    /// Source: RFC 2132 section 9.5. The payload is an NVT ASCII string returned
+    /// as raw bytes. Returns `None` when no area carries the option.
+    pub fn bootfile_name(&self) -> Option<Vec<u8>> {
+        self.concatenated_payload(DHCP_OPTION_BOOTFILE_NAME)
+    }
+
+    /// RFC 3004 user class (option 77), concatenated across areas.
+    ///
+    /// Source: RFC 3004. Reassembles the logical payload (RFC 3396) and decodes
+    /// the length-prefixed opaque class instances. Returns `None` when no area
+    /// carries the option; a malformed instance length surfaces as a structured
+    /// error.
+    pub fn user_class(&self) -> Option<Result<DhcpUserClass>> {
+        self.typed_value_in_areas(DHCP_OPTION_USER_CLASS)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::UserClass(user_class) => user_class,
+                    _ => DhcpUserClass::new(Vec::new()),
+                })
+            })
+    }
+
+    /// RFC 4578 client system architecture types (option 93), concatenated
+    /// across areas.
+    ///
+    /// Source: RFC 4578 section 2.1. Reassembles the logical payload (RFC 3396)
+    /// and decodes the 16-bit architecture type list. Returns `None` when no
+    /// area carries the option; a length that is not a non-zero multiple of two
+    /// surfaces as a structured error.
+    pub fn client_system_architecture(&self) -> Option<Result<ClientSystemArchitecture>> {
+        self.typed_value_in_areas(DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::ClientSystemArchitecture(arch) => arch,
+                    _ => ClientSystemArchitecture::new(Vec::new()),
+                })
+            })
+    }
+
+    /// RFC 4578 client network device interface (option 94), concatenated across
+    /// areas.
+    ///
+    /// Source: RFC 4578 section 2.2. Decodes the type/major/minor triple.
+    /// Returns `None` when no area carries the option; a length other than three
+    /// surfaces as a structured error.
+    pub fn client_network_device_interface(&self) -> Option<Result<ClientNetworkDeviceInterface>> {
+        self.typed_value_in_areas(DHCP_OPTION_CLIENT_NDI)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::ClientNetworkDeviceInterface(ndi) => ndi,
+                    _ => ClientNetworkDeviceInterface::new(0, 0, 0),
+                })
+            })
+    }
+
+    /// RFC 4578 UUID/GUID client machine identifier (option 97), concatenated
+    /// across areas.
+    ///
+    /// Source: RFC 4578 section 2.3. Decodes the type octet plus identifier
+    /// (a 16-octet GUID for type `0`). Returns `None` when no area carries the
+    /// option; an empty payload surfaces as a structured error.
+    pub fn client_uuid(&self) -> Option<Result<DhcpClientUuid>> {
+        self.typed_value_in_areas(DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::ClientUuid(uuid) => uuid,
+                    _ => DhcpClientUuid::new(0, Vec::new()),
+                })
+            })
+    }
+
+    /// RFC 3925 V-I Vendor Class instances (option 124), concatenated across
+    /// areas.
+    ///
+    /// Source: RFC 3925 section 3. Decodes the enterprise-number plus opaque
+    /// vendor-class-data instances. Returns `None` when no area carries the
+    /// option; a truncated instance surfaces as a structured error.
+    pub fn vi_vendor_class(&self) -> Option<Result<Vec<DhcpVendorClassData>>> {
+        self.typed_value_in_areas(DHCP_OPTION_VI_VENDOR_CLASS)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::ViVendorClass(instances) => instances,
+                    _ => Vec::new(),
+                })
+            })
+    }
+
+    /// RFC 3925 V-I Vendor-Specific Information instances (option 125),
+    /// concatenated across areas.
+    ///
+    /// Source: RFC 3925 section 4. Decodes the enterprise-number instances and
+    /// their nested suboptions. Returns `None` when no area carries the option;
+    /// a truncated instance or suboption surfaces as a structured error.
+    pub fn vi_vendor_specific(&self) -> Option<Result<Vec<DhcpVendorIdentifyingOption>>> {
+        self.typed_value_in_areas(DHCP_OPTION_VI_VENDOR_SPECIFIC)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::ViVendorSpecific(instances) => instances,
+                    _ => Vec::new(),
+                })
+            })
+    }
+
+    /// RFC 5859 TFTP server addresses (option 150), concatenated across areas.
+    ///
+    /// Source: RFC 5859. Code 150 is marked ambiguous by the IANA registry
+    /// (TFTP server / Etherboot / GRUB), so it is preserved as raw bytes by the
+    /// default option decoder. This accessor is an explicit opt-in to the RFC
+    /// 5859 IPv4-address-list interpretation: it reassembles the logical payload
+    /// (RFC 3396) and decodes the address list. Returns `None` when no area
+    /// carries the option; a length that is not a non-zero multiple of four
+    /// surfaces as a structured error.
+    pub fn tftp_server_addresses(&self) -> Option<Result<Vec<Ipv4Addr>>> {
+        let payload = self.concatenated_payload(DHCP_OPTION_TFTP_SERVER_ADDRESS)?;
+        Some(decode_tftp_server_addresses(&payload))
+    }
+
+    /// RFC 5071 PXELINUX magic value (option 208), concatenated across areas.
+    ///
+    /// Source: RFC 5071. The payload is the fixed 4-octet magic value; it is
+    /// returned verbatim. Returns `None` when no area carries the option.
+    pub fn pxelinux_magic(&self) -> Option<Vec<u8>> {
+        self.concatenated_payload(DHCP_OPTION_PXELINUX_MAGIC)
+    }
+
+    /// RFC 5071 PXELINUX configuration file path (option 209), concatenated
+    /// across areas.
+    ///
+    /// Source: RFC 5071. The payload is an NVT ASCII string returned as raw
+    /// bytes. Returns `None` when no area carries the option.
+    pub fn pxelinux_config_file(&self) -> Option<Vec<u8>> {
+        self.concatenated_payload(DHCP_OPTION_PXELINUX_CONFIGFILE)
+    }
+
+    /// RFC 5071 PXELINUX path prefix (option 210), concatenated across areas.
+    ///
+    /// Source: RFC 5071. The payload is an NVT ASCII string returned as raw
+    /// bytes. Returns `None` when no area carries the option.
+    pub fn pxelinux_path_prefix(&self) -> Option<Vec<u8>> {
+        self.concatenated_payload(DHCP_OPTION_PXELINUX_PATHPREFIX)
+    }
+
+    /// RFC 5071 PXELINUX reboot time in seconds (option 211), concatenated
+    /// across areas.
+    ///
+    /// Source: RFC 5071. The payload is a 32-bit big-endian seconds value.
+    /// Returns `None` when no area carries the option; a length other than four
+    /// surfaces as a structured error.
+    pub fn pxelinux_reboot_time(&self) -> Option<Result<u32>> {
+        self.typed_value_in_areas(DHCP_OPTION_PXELINUX_REBOOTTIME)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::U32(seconds) => seconds,
+                    _ => 0,
+                })
+            })
+    }
+
+    /// Reassemble the raw logical payload bytes of an option across all areas.
+    ///
+    /// Joins the option payload across the normal, `file`, and `sname` areas in
+    /// RFC 3396 aggregate order and returns the raw bytes. Returns `None` when
+    /// no area carries the code. Used for options whose payloads stay opaque
+    /// (vendor data, NVT ASCII strings, the PXELINUX magic).
+    fn concatenated_payload(&self, code: u8) -> Option<Vec<u8>> {
+        match self.concatenated_option(code)? {
+            Ok(option) => option.payload().ok(),
+            Err(_) => None,
+        }
     }
 
     /// Decode the typed value of an option, reassembled across all areas.

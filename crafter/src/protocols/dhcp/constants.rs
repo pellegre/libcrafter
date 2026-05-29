@@ -196,6 +196,44 @@ pub const DHCP_OPTION_V4_DNR: u8 = 162;
 /// DHCP OPTION_6RD (IPv6 Rapid Deployment) option code (RFC 5969).
 pub const DHCP_OPTION_6RD: u8 = 212;
 
+// Vendor, user-class, PXE, and vendor-identifying option codes. Codepoints come
+// from the IANA "BOOTP Vendor Extensions and DHCP Options" registry (updated
+// 2026-02-02); each wire format is defined by the RFC cited inline.
+
+/// DHCP TFTP server name option code (RFC 2132 section 9.4).
+pub const DHCP_OPTION_TFTP_SERVER_NAME: u8 = 66;
+/// DHCP bootfile name option code (RFC 2132 section 9.5).
+pub const DHCP_OPTION_BOOTFILE_NAME: u8 = 67;
+/// DHCP user class option code (RFC 3004).
+pub const DHCP_OPTION_USER_CLASS: u8 = 77;
+/// DHCP client system architecture type option code (RFC 4578).
+pub const DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE: u8 = 93;
+/// DHCP client network device interface option code (RFC 4578).
+pub const DHCP_OPTION_CLIENT_NDI: u8 = 94;
+/// DHCP UUID/GUID-based client identifier option code (RFC 4578).
+pub const DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER: u8 = 97;
+/// DHCP V-I Vendor Class option code (RFC 3925).
+pub const DHCP_OPTION_VI_VENDOR_CLASS: u8 = 124;
+/// DHCP V-I Vendor-Specific Information option code (RFC 3925).
+pub const DHCP_OPTION_VI_VENDOR_SPECIFIC: u8 = 125;
+/// DHCP TFTP server address option code (RFC 5859).
+pub const DHCP_OPTION_TFTP_SERVER_ADDRESS: u8 = 150;
+/// DHCP PXELINUX magic option code (RFC 5071 / RFC 5494).
+pub const DHCP_OPTION_PXELINUX_MAGIC: u8 = 208;
+/// DHCP PXELINUX configuration file option code (RFC 5071).
+pub const DHCP_OPTION_PXELINUX_CONFIGFILE: u8 = 209;
+/// DHCP PXELINUX path prefix option code (RFC 5071).
+pub const DHCP_OPTION_PXELINUX_PATHPREFIX: u8 = 210;
+/// DHCP PXELINUX reboot time option code (RFC 5071).
+pub const DHCP_OPTION_PXELINUX_REBOOTTIME: u8 = 211;
+
+/// RFC 5071 PXELINUX magic option payload `0xF1 0x00 0x74 0x7E` (option 208).
+pub const DHCP_PXELINUX_MAGIC_VALUE: [u8; 4] = [0xF1, 0x00, 0x74, 0x7E];
+/// RFC 4578 client machine identifier type octet for a 16-octet GUID (option 97).
+pub const DHCP_CLIENT_MACHINE_UUID_TYPE: u8 = 0;
+/// RFC 4578 client network device interface type octet for UNDI (option 94).
+pub const DHCP_CLIENT_NDI_TYPE_UNDI: u8 = 1;
+
 /// Option overload value: the `file` field holds options (RFC 2132 section 9.3).
 pub const DHCP_OVERLOAD_FILE: u8 = 1;
 /// Option overload value: the `sname` field holds options (RFC 2132 section 9.3).
