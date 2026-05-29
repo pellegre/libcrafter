@@ -69,6 +69,26 @@ pub const DHCP_NAK: u8 = 6;
 pub const DHCP_RELEASE: u8 = 7;
 /// DHCP Inform message type value.
 pub const DHCP_INFORM: u8 = 8;
+/// DHCP FORCERENEW message type value (RFC 3203).
+pub const DHCP_FORCE_RENEW: u8 = 9;
+/// DHCP LEASEQUERY message type value (RFC 4388).
+pub const DHCP_LEASE_QUERY: u8 = 10;
+/// DHCP LEASEUNASSIGNED message type value (RFC 4388).
+pub const DHCP_LEASE_UNASSIGNED: u8 = 11;
+/// DHCP LEASEUNKNOWN message type value (RFC 4388).
+pub const DHCP_LEASE_UNKNOWN: u8 = 12;
+/// DHCP LEASEACTIVE message type value (RFC 4388).
+pub const DHCP_LEASE_ACTIVE: u8 = 13;
+/// DHCP BULKLEASEQUERY message type value (RFC 6926).
+pub const DHCP_BULK_LEASE_QUERY: u8 = 14;
+/// DHCP LEASEQUERYDONE message type value (RFC 6926).
+pub const DHCP_LEASE_QUERY_DONE: u8 = 15;
+/// DHCP ACTIVELEASEQUERY message type value (RFC 7724).
+pub const DHCP_ACTIVE_LEASE_QUERY: u8 = 16;
+/// DHCP LEASEQUERYSTATUS message type value (RFC 7724).
+pub const DHCP_LEASE_QUERY_STATUS: u8 = 17;
+/// DHCP TLS message type value (RFC 7724).
+pub const DHCP_TLS: u8 = 18;
 
 /// BOOTP fixed client hardware address field length in bytes.
 pub(crate) const DHCP_CHADDR_LEN: usize = 16;
