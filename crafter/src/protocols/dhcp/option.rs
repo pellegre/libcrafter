@@ -9,10 +9,11 @@ use crate::error::{CrafterError, Result};
 use super::constants::{
     DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_DOMAIN_NAME,
     DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_END, DHCP_OPTION_HOST_NAME,
-    DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_PAD,
-    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RENEWAL_TIME,
-    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER,
-    DHCP_OPTION_SUBNET_MASK,
+    DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_OVERLOAD,
+    DHCP_OPTION_PAD, DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_REBINDING_TIME,
+    DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER,
+    DHCP_OPTION_SERVER_IDENTIFIER, DHCP_OPTION_SUBNET_MASK, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE,
+    DHCP_OVERLOAD_SNAME,
 };
 use super::message::DhcpMessageType;
 use super::registry::{option_name, option_status, DhcpOptionStatus};
@@ -40,6 +41,67 @@ impl DhcpOptionArea {
             Self::Options => "options",
             Self::File => "file",
             Self::Sname => "sname",
+        }
+    }
+}
+
+/// Typed value of the DHCPv4 "Option Overload" option (option 52).
+///
+/// Source: RFC 2132 section 9.3. Option 52 is a single octet whose value tells a
+/// parser to interpret the BOOTP `file` field, the `sname` field, or both as
+/// additional option areas: value `1` overloads `file`, value `2` overloads
+/// `sname`, and value `3` overloads both. Any other value is unspecified by the
+/// registry, so it is preserved verbatim as [`OptionOverload::Unknown`] rather
+/// than silently dropped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OptionOverload {
+    /// Value 1: the `file` field is overloaded with options.
+    File,
+    /// Value 2: the `sname` field is overloaded with options.
+    Sname,
+    /// Value 3: both the `file` and `sname` fields are overloaded with options.
+    Both,
+    /// An unspecified overload value, preserved verbatim.
+    Unknown(u8),
+}
+
+impl OptionOverload {
+    /// Classify a raw overload octet (RFC 2132 section 9.3).
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            DHCP_OVERLOAD_FILE => Self::File,
+            DHCP_OVERLOAD_SNAME => Self::Sname,
+            DHCP_OVERLOAD_BOTH => Self::Both,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Wire octet value for this overload.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::File => DHCP_OVERLOAD_FILE,
+            Self::Sname => DHCP_OVERLOAD_SNAME,
+            Self::Both => DHCP_OVERLOAD_BOTH,
+            Self::Unknown(code) => code,
+        }
+    }
+
+    /// True when the `file` field is overloaded with options.
+    pub const fn overloads_file(self) -> bool {
+        matches!(self, Self::File | Self::Both)
+    }
+
+    /// True when the `sname` field is overloaded with options.
+    pub const fn overloads_sname(self) -> bool {
+        matches!(self, Self::Sname | Self::Both)
+    }
+
+    /// True when the given area is overloaded with options.
+    pub const fn overloads(self, area: DhcpOptionArea) -> bool {
+        match area {
+            DhcpOptionArea::Options => true,
+            DhcpOptionArea::File => self.overloads_file(),
+            DhcpOptionArea::Sname => self.overloads_sname(),
         }
     }
 }
@@ -142,6 +204,8 @@ pub enum DhcpOptionValue {
     Text(Vec<u8>),
     /// A DHCP message type (option 53).
     MessageType(DhcpMessageType),
+    /// An option overload value (option 52).
+    OptionOverload(OptionOverload),
     /// A parameter request list (option 55): a sequence of option codes.
     ParameterRequestList(Vec<u8>),
     /// Opaque bytes preserved verbatim for options without a richer decode yet.
@@ -152,9 +216,9 @@ impl DhcpOptionValue {
     /// View the value as raw payload bytes when it is byte-like.
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
-            Self::Text(bytes)
-            | Self::ParameterRequestList(bytes)
-            | Self::Opaque(bytes) => Some(bytes),
+            Self::Text(bytes) | Self::ParameterRequestList(bytes) | Self::Opaque(bytes) => {
+                Some(bytes)
+            }
             _ => None,
         }
     }
@@ -281,6 +345,8 @@ pub enum DhcpOption {
     End,
     /// DHCP message type.
     MessageType(DhcpMessageType),
+    /// Option overload (option 52): which fixed fields carry options.
+    OptionOverload(OptionOverload),
     /// Subnet mask.
     SubnetMask(Ipv4Addr),
     /// Router list.
@@ -320,6 +386,11 @@ impl DhcpOption {
     /// Create a DHCP message type option.
     pub const fn message_type(message_type: DhcpMessageType) -> Self {
         Self::MessageType(message_type)
+    }
+
+    /// Create an option overload option (option 52).
+    pub const fn option_overload(overload: OptionOverload) -> Self {
+        Self::OptionOverload(overload)
     }
 
     /// Create a subnet mask option.
@@ -386,6 +457,7 @@ impl DhcpOption {
             Self::Pad => DHCP_OPTION_PAD,
             Self::End => DHCP_OPTION_END,
             Self::MessageType(_) => DHCP_OPTION_MESSAGE_TYPE,
+            Self::OptionOverload(_) => DHCP_OPTION_OVERLOAD,
             Self::SubnetMask(_) => DHCP_OPTION_SUBNET_MASK,
             Self::Router(_) => DHCP_OPTION_ROUTER,
             Self::DomainNameServer(_) => DHCP_OPTION_DOMAIN_NAME_SERVER,
@@ -422,6 +494,7 @@ impl DhcpOption {
         let value = match self {
             Self::Pad | Self::End => return None,
             Self::MessageType(message_type) => DhcpOptionValue::MessageType(*message_type),
+            Self::OptionOverload(overload) => DhcpOptionValue::OptionOverload(*overload),
             Self::SubnetMask(address)
             | Self::BroadcastAddress(address)
             | Self::RequestedIpAddress(address)
@@ -453,7 +526,7 @@ impl DhcpOption {
     pub fn encoded_len(&self) -> usize {
         match self {
             Self::Pad | Self::End => 1,
-            Self::MessageType(_) => 3,
+            Self::MessageType(_) | Self::OptionOverload(_) => 3,
             Self::SubnetMask(_)
             | Self::BroadcastAddress(_)
             | Self::RequestedIpAddress(_)
@@ -515,6 +588,7 @@ impl DhcpOption {
         let bytes = match self {
             Self::Pad | Self::End => Vec::new(),
             Self::MessageType(message_type) => vec![message_type.code()],
+            Self::OptionOverload(overload) => vec![overload.code()],
             Self::SubnetMask(address)
             | Self::BroadcastAddress(address)
             | Self::RequestedIpAddress(address)
@@ -547,6 +621,105 @@ impl DhcpOption {
 
 pub(super) fn decode_dhcp_options(bytes: &[u8]) -> Result<Vec<DhcpOption>> {
     decode_segments_to_options(&scan_dhcp_option_segments(DhcpOptionArea::Options, bytes)?)
+}
+
+/// Find the option-overload value (option 52) carried in a normal-area option
+/// list, when present (RFC 2132 section 9.3).
+pub(super) fn find_option_overload(options: &[DhcpOption]) -> Option<OptionOverload> {
+    options.iter().find_map(|option| match option {
+        DhcpOption::OptionOverload(overload) => Some(*overload),
+        _ => None,
+    })
+}
+
+/// Decode the options carried in an overloaded `file` or `sname` field.
+///
+/// Source: RFC 2131 section 4.1. An overloaded field begins at its first octet,
+/// terminates with an `end` option, and is followed by padding to fill the
+/// remainder of the fixed-width field. This decoder applies that layout: it
+/// scans typed options until the `end` marker, after which only padding (zero
+/// bytes / pad options) may appear. A missing end marker or non-padding data
+/// after the end marker is reported as a structured error with a field name
+/// scoped to the source area; truncation never panics.
+pub(super) fn decode_overload_area_options(
+    area: DhcpOptionArea,
+    bytes: &[u8],
+) -> Result<Vec<DhcpOption>> {
+    let segments = scan_dhcp_option_segments(area, bytes)?;
+    let mut options = Vec::with_capacity(segments.len());
+    let mut saw_end = false;
+
+    for segment in &segments {
+        match segment.code {
+            DhcpOptionCode::Pad => {
+                // Pad both before and after the end marker is allowed; the
+                // remainder of the fixed-width field is zero-padded.
+                if !saw_end {
+                    options.push(DhcpOption::Pad);
+                }
+            }
+            DhcpOptionCode::End if !saw_end => {
+                options.push(DhcpOption::End);
+                saw_end = true;
+            }
+            _ => {
+                if saw_end {
+                    return Err(CrafterError::invalid_field_value(
+                        overload_end_field(area),
+                        "non-padding data follows the DHCP end option in an overloaded field",
+                    ));
+                }
+                options.push(decode_dhcp_option(segment.code_value(), &segment.data)?);
+            }
+        }
+    }
+
+    if !saw_end {
+        return Err(CrafterError::invalid_field_value(
+            overload_field(area),
+            "overloaded DHCP field is missing an end marker",
+        ));
+    }
+
+    Ok(options)
+}
+
+const fn overload_field(area: DhcpOptionArea) -> &'static str {
+    match area {
+        DhcpOptionArea::Options => "dhcp.options",
+        DhcpOptionArea::File => "dhcp.file.options",
+        DhcpOptionArea::Sname => "dhcp.sname.options",
+    }
+}
+
+const fn overload_end_field(area: DhcpOptionArea) -> &'static str {
+    match area {
+        DhcpOptionArea::Options => "dhcp.option.end",
+        DhcpOptionArea::File => "dhcp.file.option.end",
+        DhcpOptionArea::Sname => "dhcp.sname.option.end",
+    }
+}
+
+/// Encode an option list into a fixed-width overloaded field area.
+///
+/// Source: RFC 2131 section 4.1. The options are encoded starting at the first
+/// octet, an `end` marker is appended when the caller did not supply one, and
+/// the field is zero-padded to its fixed width. Returns an error when the
+/// encoded options do not fit within the field.
+pub(super) fn encode_overload_area_options(
+    field: &'static str,
+    options: &[DhcpOption],
+    width: usize,
+) -> Result<Vec<u8>> {
+    let mut bytes = encode_dhcp_options(options)?;
+    if bytes.len() > width {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "overloaded DHCP field options exceed the fixed field width",
+        ));
+    }
+    bytes.resize(width, 0);
+    Ok(bytes)
 }
 
 /// Decode raw option segments into logical typed options.
@@ -595,6 +768,11 @@ fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<DhcpOption> {
         DHCP_OPTION_MESSAGE_TYPE => {
             validate_fixed_len("dhcp.option.message_type", data.len(), 1)?;
             Ok(DhcpOption::MessageType(DhcpMessageType::from_code(data[0])))
+        }
+        DHCP_OPTION_OVERLOAD => {
+            validate_fixed_len("dhcp.option.overload", data.len(), 1)?;
+            let overload = OptionOverload::from_code(data[0]);
+            Ok(DhcpOption::OptionOverload(overload))
         }
         DHCP_OPTION_SUBNET_MASK => Ok(DhcpOption::SubnetMask(decode_ipv4_option(
             "dhcp.option.subnet_mask",
@@ -809,9 +987,7 @@ mod dhcp_options {
         assert_eq!(codes, vec![53, 54, 1, 3, 6, 51, 255]);
 
         // Every segment reports the area it came from.
-        assert!(segments
-            .iter()
-            .all(|s| s.area == DhcpOptionArea::Options));
+        assert!(segments.iter().all(|s| s.area == DhcpOptionArea::Options));
 
         // Declared length and offsets are inspectable for non-single-octet
         // options; pad/end carry no declared length.
@@ -874,17 +1050,17 @@ mod dhcp_options {
             DhcpOption::End,
         ];
 
-        let encoded = Dhcp::new().options(options.clone()).encoded_options().unwrap();
+        let encoded = Dhcp::new()
+            .options(options.clone())
+            .encoded_options()
+            .unwrap();
 
         // Round-trip through the typed decoder preserves the unknown bytes.
         let decoded = DhcpOption::decode_all(&encoded).unwrap();
         assert_eq!(decoded, options);
 
         // Codepoint classification is source-backed.
-        assert_eq!(
-            decoded[1].option_code(),
-            DhcpOptionCode::PrivateUse(224)
-        );
+        assert_eq!(decoded[1].option_code(), DhcpOptionCode::PrivateUse(224));
         assert_eq!(
             decoded[2].option_code(),
             DhcpOptionCode::RemovedOrUnassigned(84)
@@ -986,7 +1162,12 @@ mod dhcp_options {
     fn dhcp_option_codec_rejects_non_padding_after_end() {
         // An end marker immediately followed by non-padding data is a structured
         // decode error, not a panic or a silently truncated decode.
-        let bytes = [super::DHCP_OPTION_END, super::DHCP_OPTION_MESSAGE_TYPE, 1, 1];
+        let bytes = [
+            super::DHCP_OPTION_END,
+            super::DHCP_OPTION_MESSAGE_TYPE,
+            1,
+            1,
+        ];
 
         let error = DhcpOption::decode_all(&bytes).unwrap_err();
         assert!(matches!(
