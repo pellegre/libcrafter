@@ -1,6 +1,7 @@
 //! Dynamic Host Configuration Protocol implementation.
 
 mod constants;
+mod malformed;
 mod message;
 mod option;
 mod registry;
@@ -26,6 +27,7 @@ pub use constants::{
     DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER, DHCP_OPTION_SUBNET_MASK, DHCP_RELEASE,
     DHCP_REQUEST, DHCP_SERVER_PORT,
 };
+pub use malformed::DhcpMalformed;
 pub use message::DhcpMessageType;
 pub use option::{
     scan_dhcp_option_segments, DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionSegment,
@@ -36,9 +38,7 @@ pub use registry::{
     DHCP_OPTION_PRIVATE_USE_END, DHCP_OPTION_PRIVATE_USE_START,
 };
 
-use constants::{
-    DHCP_CHADDR_LEN, DHCP_DEFAULT_PARAMETER_REQUESTS, DHCP_FILE_LEN, DHCP_SNAME_LEN,
-};
+use constants::{DHCP_CHADDR_LEN, DHCP_DEFAULT_PARAMETER_REQUESTS, DHCP_FILE_LEN, DHCP_SNAME_LEN};
 use message::message_type_summary;
 use option::{encode_dhcp_options, encoded_options_len_lossy};
 
@@ -156,6 +156,17 @@ impl Dhcp {
     /// Decode a DHCP packet payload.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         decode_dhcp(bytes)
+    }
+
+    /// Begin building an intentionally malformed DHCP packet from this one.
+    ///
+    /// The returned [`DhcpMalformed`] builder emits raw bytes and skips the
+    /// structural validation [`Dhcp::compile`] enforces, so it can craft
+    /// invalid packets (bad magic cookie, oversized fields, malformed option
+    /// lengths, missing end markers) on purpose. The typed `Dhcp` builder stays
+    /// valid by default; malformation is opt-in only through this surface.
+    pub fn malformed(self) -> DhcpMalformed {
+        DhcpMalformed::from_valid(self)
     }
 
     /// Set the BOOTP opcode.
@@ -440,17 +451,48 @@ impl Dhcp {
         ))
     }
 
-    /// Raw fixed client hardware address field bytes.
+    /// Full stored client hardware address fixed-field bytes.
+    ///
+    /// This is the raw `chaddr` field as stored: on decode it is the full
+    /// 16-octet BOOTP field (RFC 2131 section 2); on a builder it is whatever
+    /// the caller supplied. Use [`Dhcp::client_hardware_address_value`] for the
+    /// `hlen`-bounded logical address.
     pub fn chaddr_bytes(&self) -> &[u8] {
         &self.client_hardware_address
     }
 
-    /// Raw server name field bytes.
+    /// Full stored server name fixed-field bytes, before any trimming.
+    ///
+    /// On decode this is the complete 64-octet `sname` field (RFC 2131 section
+    /// 2), including trailing NUL padding; on a builder it is the bytes the
+    /// caller supplied. Use [`Dhcp::sname_bytes`] for the trimmed string-like
+    /// view.
+    pub fn sname_raw(&self) -> &[u8] {
+        &self.server_name
+    }
+
+    /// Full stored boot file name fixed-field bytes, before any trimming.
+    ///
+    /// On decode this is the complete 128-octet `file` field (RFC 2131 section
+    /// 2), including trailing NUL padding; on a builder it is the bytes the
+    /// caller supplied. Use [`Dhcp::file_bytes`] for the trimmed string-like
+    /// view.
+    pub fn file_raw(&self) -> &[u8] {
+        &self.boot_file_name
+    }
+
+    /// Server name field as a trimmed string-like view (bytes up to the first
+    /// NUL).
+    ///
+    /// Use [`Dhcp::sname_raw`] for the untrimmed fixed-field bytes.
     pub fn sname_bytes(&self) -> &[u8] {
         trim_fixed_bytes(&self.server_name)
     }
 
-    /// Raw boot file name field bytes.
+    /// Boot file name field as a trimmed string-like view (bytes up to the
+    /// first NUL).
+    ///
+    /// Use [`Dhcp::file_raw`] for the untrimmed fixed-field bytes.
     pub fn file_bytes(&self) -> &[u8] {
         trim_fixed_bytes(&self.boot_file_name)
     }
@@ -909,5 +951,244 @@ mod dhcp_malformed {
         assert!(DhcpOption::generic(super::DHCP_OPTION_PAD, [])
             .encode()
             .is_err());
+    }
+}
+
+#[cfg(test)]
+mod dhcp_fixed_header {
+    use super::{
+        Dhcp, DhcpMalformed, DhcpMessageType, BOOTP_REPLY, DHCP_FIXED_HEADER_LEN,
+        DHCP_MAGIC_COOKIE, DHCP_MIN_LEN, DHCP_OPTION_MESSAGE_TYPE,
+    };
+    use crate::error::CrafterError;
+    use crate::{MacAddr, Packet};
+    use core::net::Ipv4Addr;
+
+    fn mac() -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02])
+    }
+
+    #[test]
+    fn dhcp_fixed_header_roundtrips_exact_bytes() {
+        // Build a packet that exercises every fixed BOOTP field (RFC 2131
+        // section 2) with deliberately odd-but-valid values, then prove the
+        // exact wire bytes survive compile -> decode -> compile unchanged and
+        // that each typed accessor reports the value that was set.
+        let chaddr = [0x02u8, 0x00, 0x5e, 0x10, 0x00, 0x02];
+        let dhcp = Dhcp::new()
+            .op(BOOTP_REPLY)
+            .htype(6)
+            .hlen(6)
+            .hops(3)
+            .xid(0x1234_5678)
+            .secs(0x0102)
+            .flags(0x8000)
+            .ciaddr(Ipv4Addr::new(192, 0, 2, 10))
+            .yiaddr(Ipv4Addr::new(192, 0, 2, 20))
+            .siaddr(Ipv4Addr::new(192, 0, 2, 30))
+            .giaddr(Ipv4Addr::new(192, 0, 2, 40))
+            .chaddr(chaddr)
+            .sname("boot-server")
+            .file("pxelinux.0")
+            .message_type(DhcpMessageType::Ack);
+
+        let compiled = Packet::from_layer(dhcp.clone()).compile().unwrap();
+        let bytes = compiled.as_bytes();
+
+        // The fixed header occupies the first 236 bytes; the magic cookie
+        // immediately follows it.
+        assert_eq!(bytes[0], BOOTP_REPLY);
+        assert_eq!(bytes[1], 6);
+        assert_eq!(bytes[2], 6);
+        assert_eq!(bytes[3], 3);
+        assert_eq!(&bytes[4..8], &0x1234_5678u32.to_be_bytes());
+        assert_eq!(&bytes[8..10], &0x0102u16.to_be_bytes());
+        assert_eq!(&bytes[10..12], &0x8000u16.to_be_bytes());
+        assert_eq!(&bytes[12..16], &Ipv4Addr::new(192, 0, 2, 10).octets());
+        assert_eq!(&bytes[16..20], &Ipv4Addr::new(192, 0, 2, 20).octets());
+        assert_eq!(&bytes[20..24], &Ipv4Addr::new(192, 0, 2, 30).octets());
+        assert_eq!(&bytes[24..28], &Ipv4Addr::new(192, 0, 2, 40).octets());
+        assert_eq!(&bytes[28..34], &chaddr);
+        // chaddr is zero-padded to its 16-octet fixed width.
+        assert_eq!(&bytes[34..44], &[0u8; 10]);
+        assert_eq!(&bytes[44..55], b"boot-server");
+        assert_eq!(&bytes[108..118], b"pxelinux.0");
+        assert_eq!(
+            &bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN],
+            &DHCP_MAGIC_COOKIE.to_be_bytes()
+        );
+
+        // Decode and re-compile: the wire bytes must be reproduced exactly.
+        let parsed = Dhcp::decode(bytes).unwrap();
+        assert_eq!(parsed.op_value(), BOOTP_REPLY);
+        assert_eq!(parsed.hardware_type_value(), 6);
+        assert_eq!(parsed.hardware_len_value(), 6);
+        assert_eq!(parsed.hops_value(), 3);
+        assert_eq!(parsed.transaction_id_value(), 0x1234_5678);
+        assert_eq!(parsed.seconds_value(), 0x0102);
+        assert_eq!(parsed.flags_value(), 0x8000);
+        assert_eq!(
+            parsed.client_ip_address_value(),
+            Ipv4Addr::new(192, 0, 2, 10)
+        );
+        assert_eq!(parsed.your_ip_address_value(), Ipv4Addr::new(192, 0, 2, 20));
+        assert_eq!(
+            parsed.server_ip_address_value(),
+            Ipv4Addr::new(192, 0, 2, 30)
+        );
+        assert_eq!(
+            parsed.gateway_ip_address_value(),
+            Ipv4Addr::new(192, 0, 2, 40)
+        );
+
+        // Raw fixed-field accessors expose the full padded field bytes; the
+        // trimmed string-like views stop at the first NUL.
+        assert_eq!(parsed.sname_raw().len(), 64);
+        assert_eq!(parsed.file_raw().len(), 128);
+        assert_eq!(parsed.sname_bytes(), b"boot-server");
+        assert_eq!(parsed.file_bytes(), b"pxelinux.0");
+        assert_eq!(parsed.client_mac_value(), Some(mac()));
+
+        let recompiled = Packet::from_layer(parsed).compile().unwrap();
+        assert_eq!(recompiled.as_bytes(), bytes);
+    }
+
+    #[test]
+    fn explicit_fixed_field_overrides_survive_compile() {
+        // Values the caller set explicitly must survive compile untouched, even
+        // when they are unusual: a BOOTP reply opcode on a request-style packet,
+        // a non-Ethernet hardware type, and a zero hlen with a populated chaddr.
+        let dhcp = Dhcp::new()
+            .op(0x42)
+            .htype(0xfe)
+            .hlen(0)
+            .chaddr([0xaa, 0xbb, 0xcc])
+            .message_type(DhcpMessageType::Discover);
+
+        let bytes = Packet::from_layer(dhcp).compile().unwrap();
+        let parsed = Dhcp::decode(bytes.as_bytes()).unwrap();
+
+        assert_eq!(parsed.op_value(), 0x42);
+        assert_eq!(parsed.hardware_type_value(), 0xfe);
+        assert_eq!(parsed.hardware_len_value(), 0);
+        // The full chaddr field is preserved even though hlen is zero.
+        assert_eq!(&parsed.chaddr_bytes()[..3], &[0xaa, 0xbb, 0xcc]);
+        // The hlen-bounded logical address is empty when hlen is zero.
+        assert_eq!(parsed.client_hardware_address_value(), &[] as &[u8]);
+    }
+
+    #[test]
+    fn hardware_length_validation_stays_structured() {
+        // An hlen beyond the 16-octet chaddr field is a structured field error,
+        // not a panic, on both compile and decode.
+        let error = Packet::from_layer(Dhcp::new().hlen(17))
+            .compile()
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.hlen"
+        ));
+
+        let mut bytes = vec![0u8; DHCP_MIN_LEN];
+        bytes[2] = 17;
+        bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN]
+            .copy_from_slice(&DHCP_MAGIC_COOKIE.to_be_bytes());
+        let decode_error = Dhcp::decode(&bytes).unwrap_err();
+        assert!(matches!(
+            decode_error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.hlen"
+        ));
+    }
+
+    #[test]
+    fn dhcp_malformed_builder_can_emit_invalid_magic_cookie() {
+        // The normal builder is valid by default and decodes cleanly.
+        let valid = Dhcp::new()
+            .client_mac(mac())
+            .message_type(DhcpMessageType::Discover);
+        let valid_bytes = Packet::from_layer(valid.clone()).compile().unwrap();
+        assert!(Dhcp::decode(valid_bytes.as_bytes()).is_ok());
+
+        // The visibly-named malformed builder overrides the magic cookie with a
+        // value RFC 2131 forbids. Construction is opt-in and emits the bad
+        // bytes verbatim.
+        let bogus_cookie = 0xdead_beef;
+        let malformed = valid.clone().malformed().invalid_magic_cookie(bogus_cookie);
+        let bytes = malformed.to_bytes();
+
+        // The cookie is written at the documented offset and is the bad value.
+        assert_eq!(
+            &bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN],
+            &bogus_cookie.to_be_bytes()
+        );
+
+        // The normal decoder rejects it as a structured magic-cookie error and
+        // never panics.
+        let error = Dhcp::decode(&bytes).unwrap_err();
+        assert!(matches!(
+            error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.magic_cookie"
+        ));
+
+        // The malformed builder also composes as a layer through `/`.
+        let layered = DhcpMalformed::from_valid(valid)
+            .invalid_magic_cookie(bogus_cookie)
+            .to_bytes();
+        assert_eq!(layered, bytes);
+    }
+
+    #[test]
+    fn dhcp_malformed_builder_emits_structural_violations() {
+        let base = Dhcp::new().message_type(DhcpMessageType::Discover);
+
+        // Oversized option payload: the length byte cannot describe more than
+        // 255 octets, so the segment is unrecoverable and decode fails.
+        let oversized = base
+            .clone()
+            .malformed()
+            .oversized_option_payload(DHCP_OPTION_MESSAGE_TYPE, vec![0u8; 300])
+            .to_bytes();
+        assert!(Dhcp::decode(&oversized).is_err());
+
+        // Malformed option length: a declared length that overruns the data.
+        let bad_len = base
+            .clone()
+            .malformed()
+            .option_with_declared_len(DHCP_OPTION_MESSAGE_TYPE, 5, [0x01])
+            .to_bytes();
+        assert!(Dhcp::decode(&bad_len).is_err());
+
+        // Missing end marker.
+        let no_end = base
+            .clone()
+            .malformed()
+            .raw_options([DHCP_OPTION_MESSAGE_TYPE, 1, 1])
+            .to_bytes();
+        let no_end_error = Dhcp::decode(&no_end).unwrap_err();
+        assert!(matches!(
+            no_end_error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.options"
+        ));
+
+        // Non-padding bytes after the end marker.
+        let trailing = base
+            .clone()
+            .malformed()
+            .trailing_after_end([DHCP_OPTION_MESSAGE_TYPE, 1, 1])
+            .to_bytes();
+        let trailing_error = Dhcp::decode(&trailing).unwrap_err();
+        assert!(matches!(
+            trailing_error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.option.end"
+        ));
+
+        // Oversized fixed field: a chaddr longer than the 16-octet field is
+        // only reachable through the raw malformed hook, never the typed
+        // builder.
+        let oversized_chaddr = base.malformed().raw_chaddr(vec![0xffu8; 20]).to_bytes();
+        // The packet is longer than a minimal DHCP packet because the field
+        // overflowed, and the raw bytes are preserved verbatim.
+        assert!(oversized_chaddr.len() > DHCP_MIN_LEN);
+        assert_eq!(&oversized_chaddr[28..48], &[0xffu8; 20]);
     }
 }

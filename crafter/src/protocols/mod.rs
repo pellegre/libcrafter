@@ -10,8 +10,8 @@ pub mod transport;
 
 pub use crate::packet::Raw;
 pub use dhcp::{
-    option_meta, option_name, option_status, scan_dhcp_option_segments, Dhcp, DhcpMessageType,
-    DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionMeta, DhcpOptionSegment,
+    option_meta, option_name, option_status, scan_dhcp_option_segments, Dhcp, DhcpMalformed,
+    DhcpMessageType, DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionMeta, DhcpOptionSegment,
     DhcpOptionStatus, DhcpOptionValue, BOOTP_REPLY, BOOTP_REQUEST, DHCP_ACK, DHCP_CLIENT_PORT,
     DHCP_DECLINE, DHCP_DISCOVER, DHCP_HTYPE_ETHERNET, DHCP_INFORM, DHCP_MAGIC_COOKIE,
     DHCP_MAGIC_COOKIE_LEN, DHCP_MIN_LEN, DHCP_NAK, DHCP_OFFER, DHCP_OPTION_BROADCAST_ADDRESS,
