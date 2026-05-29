@@ -16,8 +16,16 @@ pub const DNS_HEADER_LEN: usize = 12;
 /// DNS port.
 pub const DNS_PORT: u16 = 53;
 
-/// Standard Internet class.
+/// Standard Internet class (IN), IANA DNS CLASSes.
 pub const DNS_CLASS_IN: u16 = 1;
+/// Chaos class (CH), IANA DNS CLASSes.
+pub const DNS_CLASS_CH: u16 = 3;
+/// Hesiod class (HS), IANA DNS CLASSes.
+pub const DNS_CLASS_HS: u16 = 4;
+/// QCLASS NONE, IANA DNS CLASSes (RFC 2136).
+pub const DNS_CLASS_NONE: u16 = 254;
+/// QCLASS ANY (`*`), IANA DNS CLASSes.
+pub const DNS_CLASS_ANY: u16 = 255;
 
 /// DNS A record type.
 pub const DNS_TYPE_A: u16 = 1;
@@ -25,6 +33,8 @@ pub const DNS_TYPE_A: u16 = 1;
 pub const DNS_TYPE_NS: u16 = 2;
 /// DNS CNAME record type.
 pub const DNS_TYPE_CNAME: u16 = 5;
+/// DNS SOA record type.
+pub const DNS_TYPE_SOA: u16 = 6;
 /// DNS PTR record type.
 pub const DNS_TYPE_PTR: u16 = 12;
 /// DNS MX record type.
@@ -33,6 +43,67 @@ pub const DNS_TYPE_MX: u16 = 15;
 pub const DNS_TYPE_TXT: u16 = 16;
 /// DNS AAAA record type.
 pub const DNS_TYPE_AAAA: u16 = 28;
+/// DNS SRV record type (RFC 2782).
+pub const DNS_TYPE_SRV: u16 = 33;
+/// DNS OPT pseudo-record type for EDNS(0) (RFC 6891).
+pub const DNS_TYPE_OPT: u16 = 41;
+/// DNS DS record type (RFC 4034).
+pub const DNS_TYPE_DS: u16 = 43;
+/// DNS RRSIG record type (RFC 4034).
+pub const DNS_TYPE_RRSIG: u16 = 46;
+/// DNS NSEC record type (RFC 4034).
+pub const DNS_TYPE_NSEC: u16 = 47;
+/// DNS DNSKEY record type (RFC 4034).
+pub const DNS_TYPE_DNSKEY: u16 = 48;
+/// DNS NSEC3 record type (RFC 5155).
+pub const DNS_TYPE_NSEC3: u16 = 50;
+/// DNS NSEC3PARAM record type (RFC 5155).
+pub const DNS_TYPE_NSEC3PARAM: u16 = 51;
+/// DNS TLSA record type (RFC 6698).
+pub const DNS_TYPE_TLSA: u16 = 52;
+/// DNS SVCB service-binding record type (RFC 9460).
+pub const DNS_TYPE_SVCB: u16 = 64;
+/// DNS HTTPS service-binding record type (RFC 9460).
+pub const DNS_TYPE_HTTPS: u16 = 65;
+
+/// DNS QUERY opcode, IANA DNS OpCodes.
+pub const DNS_OPCODE_QUERY: u8 = 0;
+/// DNS IQUERY (inverse query) opcode, obsolete, IANA DNS OpCodes.
+pub const DNS_OPCODE_IQUERY: u8 = 1;
+/// DNS STATUS opcode, IANA DNS OpCodes.
+pub const DNS_OPCODE_STATUS: u8 = 2;
+/// DNS NOTIFY opcode, IANA DNS OpCodes (RFC 1996).
+pub const DNS_OPCODE_NOTIFY: u8 = 4;
+/// DNS UPDATE opcode, IANA DNS OpCodes (RFC 2136).
+pub const DNS_OPCODE_UPDATE: u8 = 5;
+/// DNS Stateful Operations (DSO) opcode, IANA DNS OpCodes (RFC 8490).
+pub const DNS_OPCODE_DSO: u8 = 6;
+
+/// DNS NOERROR response code, IANA DNS RCODEs.
+pub const DNS_RCODE_NOERROR: u8 = 0;
+/// DNS FORMERR (format error) response code, IANA DNS RCODEs.
+pub const DNS_RCODE_FORMERR: u8 = 1;
+/// DNS SERVFAIL (server failure) response code, IANA DNS RCODEs.
+pub const DNS_RCODE_SERVFAIL: u8 = 2;
+/// DNS NXDOMAIN (non-existent domain) response code, IANA DNS RCODEs.
+pub const DNS_RCODE_NXDOMAIN: u8 = 3;
+/// DNS NOTIMP (not implemented) response code, IANA DNS RCODEs.
+pub const DNS_RCODE_NOTIMP: u8 = 4;
+/// DNS REFUSED response code, IANA DNS RCODEs.
+pub const DNS_RCODE_REFUSED: u8 = 5;
+/// DNS YXDOMAIN (name exists when it should not) response code (RFC 2136).
+pub const DNS_RCODE_YXDOMAIN: u8 = 6;
+/// DNS YXRRSET (RR set exists when it should not) response code (RFC 2136).
+pub const DNS_RCODE_YXRRSET: u8 = 7;
+/// DNS NXRRSET (RR set that should exist does not) response code (RFC 2136).
+pub const DNS_RCODE_NXRRSET: u8 = 8;
+/// DNS NOTAUTH (server not authoritative / not authorized) response code
+/// (RFC 2136, RFC 8945).
+pub const DNS_RCODE_NOTAUTH: u8 = 9;
+/// DNS NOTZONE (name not contained in zone) response code (RFC 2136).
+pub const DNS_RCODE_NOTZONE: u8 = 10;
+/// DNS DSOTYPENI (DSO-TYPE not implemented) response code (RFC 8490).
+pub const DNS_RCODE_DSOTYPENI: u8 = 11;
 
 /// DNS response flag bit.
 pub const DNS_FLAG_QR_RESPONSE: u16 = 0x8000;
@@ -53,6 +124,13 @@ const DNS_NAME_POINTER_MASK: u8 = 0xc0;
 const DNS_NAME_POINTER_TAG: u8 = 0xc0;
 const DNS_MAX_LABEL_LEN: usize = 63;
 const DNS_MAX_NAME_WIRE_LEN: usize = 255;
+
+/// Mask for the four-bit OPCODE field within the DNS flags word (bits 11-14).
+const DNS_OPCODE_MASK: u16 = 0x7800;
+/// Bit shift for the OPCODE field within the DNS flags word.
+const DNS_OPCODE_SHIFT: u16 = 11;
+/// Mask for the four-bit RCODE field within the DNS flags word (bits 0-3).
+const DNS_RCODE_MASK: u16 = 0x000f;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -438,9 +516,23 @@ impl Dns {
         self.set_flag(DNS_FLAG_RECURSION_AVAILABLE, enabled)
     }
 
-    /// Set the four-bit response code.
+    /// Set the four-bit OPCODE field, preserving every other flag bit.
+    ///
+    /// Only the low four bits of `opcode` are used; the field cannot represent
+    /// values above 15. Unrelated header bits are left untouched.
+    pub fn opcode(mut self, opcode: u8) -> Self {
+        let field = ((opcode as u16) << DNS_OPCODE_SHIFT) & DNS_OPCODE_MASK;
+        let flags = (self.flags_value() & !DNS_OPCODE_MASK) | field;
+        self.flags.set_user(flags);
+        self
+    }
+
+    /// Set the four-bit RCODE field, preserving every other flag bit.
+    ///
+    /// Only the low four bits of `rcode` are used. Extended RCODE bits carried
+    /// in an EDNS(0) OPT record are out of scope here.
     pub fn rcode(mut self, rcode: u8) -> Self {
-        let flags = (self.flags_value() & !0x000f) | ((rcode as u16) & 0x000f);
+        let flags = (self.flags_value() & !DNS_RCODE_MASK) | ((rcode as u16) & DNS_RCODE_MASK);
         self.flags.set_user(flags);
         self
     }
@@ -482,6 +574,22 @@ impl Dns {
     /// Return true when this message is a response.
     pub fn is_response(&self) -> bool {
         self.flags_value() & DNS_FLAG_QR_RESPONSE != 0
+    }
+
+    /// Four-bit OPCODE field extracted from the raw flags word.
+    ///
+    /// The value is the registry codepoint (for example [`DNS_OPCODE_QUERY`]).
+    /// Unknown opcodes are returned verbatim rather than rejected.
+    pub fn opcode_value(&self) -> u8 {
+        ((self.flags_value() & DNS_OPCODE_MASK) >> DNS_OPCODE_SHIFT) as u8
+    }
+
+    /// Four-bit RCODE field extracted from the raw flags word.
+    ///
+    /// The value is the registry codepoint (for example [`DNS_RCODE_NOERROR`]).
+    /// Extended RCODE bits from an EDNS(0) OPT record are not folded in here.
+    pub fn rcode_value(&self) -> u8 {
+        (self.flags_value() & DNS_RCODE_MASK) as u8
     }
 
     /// DNS questions.
@@ -1009,16 +1117,38 @@ fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
 }
 
 fn record_type_summary(record_type: u16) -> String {
-    match record_type {
-        DNS_TYPE_A => "A".to_string(),
-        DNS_TYPE_NS => "NS".to_string(),
-        DNS_TYPE_CNAME => "CNAME".to_string(),
-        DNS_TYPE_PTR => "PTR".to_string(),
-        DNS_TYPE_MX => "MX".to_string(),
-        DNS_TYPE_TXT => "TXT".to_string(),
-        DNS_TYPE_AAAA => "AAAA".to_string(),
-        value => format!("TYPE{value}"),
+    match dns_type_name(record_type) {
+        Some(name) => name.to_string(),
+        None => format!("TYPE{record_type}"),
     }
+}
+
+/// Return the IANA registry mnemonic for a source-backed DNS RR TYPE, or
+/// `None` when the value is unknown to this crate so callers can fall back to
+/// a numeric `TYPE<n>` form.
+pub fn dns_type_name(record_type: u16) -> Option<&'static str> {
+    Some(match record_type {
+        DNS_TYPE_A => "A",
+        DNS_TYPE_NS => "NS",
+        DNS_TYPE_CNAME => "CNAME",
+        DNS_TYPE_SOA => "SOA",
+        DNS_TYPE_PTR => "PTR",
+        DNS_TYPE_MX => "MX",
+        DNS_TYPE_TXT => "TXT",
+        DNS_TYPE_AAAA => "AAAA",
+        DNS_TYPE_SRV => "SRV",
+        DNS_TYPE_OPT => "OPT",
+        DNS_TYPE_DS => "DS",
+        DNS_TYPE_RRSIG => "RRSIG",
+        DNS_TYPE_NSEC => "NSEC",
+        DNS_TYPE_DNSKEY => "DNSKEY",
+        DNS_TYPE_NSEC3 => "NSEC3",
+        DNS_TYPE_NSEC3PARAM => "NSEC3PARAM",
+        DNS_TYPE_TLSA => "TLSA",
+        DNS_TYPE_SVCB => "SVCB",
+        DNS_TYPE_HTTPS => "HTTPS",
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -1148,6 +1278,103 @@ mod dns_tests {
         assert!(Packet::from_layer(Dns::new().answer(record))
             .compile()
             .is_err());
+    }
+}
+
+#[cfg(test)]
+mod dns_header_codepoints {
+    use super::{
+        dns_type_name, Dns, DnsQuestion, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE,
+        DNS_FLAG_RECURSION_DESIRED, DNS_OPCODE_QUERY, DNS_OPCODE_STATUS, DNS_OPCODE_UPDATE,
+        DNS_RCODE_NOERROR, DNS_RCODE_NXDOMAIN, DNS_RCODE_REFUSED, DNS_TYPE_A, DNS_TYPE_HTTPS,
+        DNS_TYPE_SOA, DNS_TYPE_SRV,
+    };
+    use crate::Udp;
+
+    #[test]
+    fn existing_flag_helpers_compile_identically() {
+        // A response with AA set built through the existing helpers must produce
+        // the same flags word it did before opcode/rcode helpers existed.
+        let dns = Dns::new()
+            .id(0xbeef)
+            .response(true)
+            .authoritative(true)
+            .question(DnsQuestion::a("example.com."));
+        let compiled = (Udp::new().sport(53001).dport(53) / dns).compile().unwrap();
+
+        let expected_flags =
+            DNS_FLAG_QR_RESPONSE | DNS_FLAG_AUTHORITATIVE | DNS_FLAG_RECURSION_DESIRED;
+        assert_eq!(&compiled.as_bytes()[10..12], &expected_flags.to_be_bytes());
+    }
+
+    #[test]
+    fn opcode_setter_preserves_unrelated_bits() {
+        let dns = Dns::new()
+            .response(true)
+            .authoritative(true)
+            .rcode(DNS_RCODE_NXDOMAIN)
+            .opcode(DNS_OPCODE_UPDATE);
+
+        // OPCODE is set without disturbing QR, AA, RD, or the RCODE nibble.
+        assert_eq!(dns.opcode_value(), DNS_OPCODE_UPDATE);
+        assert!(dns.is_response());
+        assert_ne!(dns.flags_value() & DNS_FLAG_AUTHORITATIVE, 0);
+        assert_ne!(dns.flags_value() & DNS_FLAG_RECURSION_DESIRED, 0);
+        assert_eq!(dns.rcode_value(), DNS_RCODE_NXDOMAIN);
+    }
+
+    #[test]
+    fn rcode_setter_preserves_unrelated_bits() {
+        let dns = Dns::new()
+            .opcode(DNS_OPCODE_STATUS)
+            .response(true)
+            .rcode(DNS_RCODE_REFUSED);
+
+        assert_eq!(dns.rcode_value(), DNS_RCODE_REFUSED);
+        assert_eq!(dns.opcode_value(), DNS_OPCODE_STATUS);
+        assert!(dns.is_response());
+    }
+
+    #[test]
+    fn opcode_and_rcode_defaults_are_query_noerror() {
+        let dns = Dns::new();
+        assert_eq!(dns.opcode_value(), DNS_OPCODE_QUERY);
+        assert_eq!(dns.rcode_value(), DNS_RCODE_NOERROR);
+    }
+
+    #[test]
+    fn unknown_opcode_and_rcode_values_round_trip() {
+        // Values outside the named registry entries must remain representable.
+        let dns = Dns::new().opcode(0xf).rcode(0xf);
+        assert_eq!(dns.opcode_value(), 0xf);
+        assert_eq!(dns.rcode_value(), 0xf);
+
+        // Only the low four bits of each field are honored; higher bits are
+        // masked off rather than corrupting neighbouring fields.
+        let truncated = Dns::new().opcode(0xff).rcode(0xff);
+        assert_eq!(truncated.opcode_value(), 0xf);
+        assert_eq!(truncated.rcode_value(), 0xf);
+    }
+
+    #[test]
+    fn raw_flags_remain_the_escape_hatch() {
+        // flags() sets the whole word verbatim, including unusual combinations,
+        // and flags_value() reflects it untouched.
+        let dns = Dns::new().flags(0xabcd);
+        assert_eq!(dns.flags_value(), 0xabcd);
+        // Extracted fields reflect the raw word without rejecting it.
+        assert_eq!(dns.opcode_value(), ((0xabcd & 0x7800) >> 11) as u8);
+        assert_eq!(dns.rcode_value(), (0xabcd & 0x000f) as u8);
+    }
+
+    #[test]
+    fn type_names_cover_source_backed_codepoints() {
+        assert_eq!(dns_type_name(DNS_TYPE_A), Some("A"));
+        assert_eq!(dns_type_name(DNS_TYPE_SOA), Some("SOA"));
+        assert_eq!(dns_type_name(DNS_TYPE_SRV), Some("SRV"));
+        assert_eq!(dns_type_name(DNS_TYPE_HTTPS), Some("HTTPS"));
+        // Unknown values stay numeric for callers to format.
+        assert_eq!(dns_type_name(60000), None);
     }
 }
 

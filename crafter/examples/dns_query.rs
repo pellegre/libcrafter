@@ -100,10 +100,9 @@ fn main() -> ExampleResult<()> {
     Ok(())
 }
 
-fn dns_type_label(record_type: u16) -> &'static str {
-    match record_type {
-        DNS_TYPE_A => "A",
-        DNS_TYPE_AAAA => "AAAA",
-        _ => "other",
+fn dns_type_label(record_type: u16) -> String {
+    match dns_type_name(record_type) {
+        Some(name) => name.to_string(),
+        None => format!("TYPE{record_type}"),
     }
 }
