@@ -19,20 +19,27 @@ use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 pub use constants::{
     BOOTP_REPLY, BOOTP_REQUEST, DHCP_ACK, DHCP_CLIENT_PORT, DHCP_DECLINE, DHCP_DISCOVER,
     DHCP_FIXED_HEADER_LEN, DHCP_HTYPE_ETHERNET, DHCP_INFORM, DHCP_MAGIC_COOKIE,
-    DHCP_MAGIC_COOKIE_LEN, DHCP_MIN_LEN, DHCP_NAK, DHCP_OFFER, DHCP_OPTION_BROADCAST_ADDRESS,
-    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER,
-    DHCP_OPTION_END, DHCP_OPTION_HOST_NAME, DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
-    DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
-    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RENEWAL_TIME,
-    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER,
-    DHCP_OPTION_SUBNET_MASK, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME,
+    DHCP_MAGIC_COOKIE_LEN, DHCP_MIN_LEN, DHCP_NAK, DHCP_OFFER, DHCP_OPTION_6RD,
+    DHCP_OPTION_BCMCS_DOMAIN_LIST, DHCP_OPTION_BCMCS_IPV4_LIST, DHCP_OPTION_BROADCAST_ADDRESS,
+    DHCP_OPTION_CLASSLESS_STATIC_ROUTE, DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_DOMAIN_NAME,
+    DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH, DHCP_OPTION_END,
+    DHCP_OPTION_GEOCONF, DHCP_OPTION_GEOCONF_CIVIC, DHCP_OPTION_GEOLOC, DHCP_OPTION_HOST_NAME,
+    DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_MUD_URL_V4,
+    DHCP_OPTION_NAME_SERVICE_SEARCH, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
+    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PCODE, DHCP_OPTION_RDNSS_SELECTION,
+    DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS,
+    DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER, DHCP_OPTION_SIP_SERVERS,
+    DHCP_OPTION_SIP_UA_CONFIG_DOMAINS, DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_SUBNET_MASK,
+    DHCP_OPTION_TCODE, DHCP_OPTION_V4_DNR, DHCP_OPTION_V4_DOTS_ADDRESS, DHCP_OPTION_V4_DOTS_RI,
+    DHCP_OPTION_V4_PCP_SERVER, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME,
     DHCP_RELEASE, DHCP_REQUEST, DHCP_SERVER_PORT,
 };
 pub use malformed::DhcpMalformed;
 pub use message::DhcpMessageType;
 pub use option::{
-    scan_dhcp_option_segments, typed_option_value, DhcpOption, DhcpOptionArea, DhcpOptionCode,
-    DhcpOptionFormat, DhcpOptionKind, DhcpOptionSegment, DhcpOptionValue, OptionOverload,
+    scan_dhcp_option_segments, typed_option_value, DhcpClasslessRoute, DhcpOption, DhcpOptionArea,
+    DhcpOptionCode, DhcpOptionFormat, DhcpOptionKind, DhcpOptionSegment, DhcpOptionValue,
+    DhcpStaticRoute, OptionOverload, SipServers,
 };
 pub use registry::{
     option_meta, option_name, option_status, DhcpOptionMeta, DhcpOptionStatus,
@@ -705,6 +712,86 @@ impl Dhcp {
         })
     }
 
+    /// RFC 2132 static routes (option 33), concatenated across areas.
+    ///
+    /// Source: RFC 2132 section 5.8. Reassembles the logical option payload from
+    /// the normal, `file`, and `sname` areas (RFC 3396), then decodes it into
+    /// typed destination/router pairs. Returns `None` when no area carries the
+    /// option; a malformed payload surfaces as a structured error.
+    pub fn static_routes(&self) -> Option<Result<Vec<DhcpStaticRoute>>> {
+        self.typed_value_in_areas(DHCP_OPTION_STATIC_ROUTE)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::StaticRoutes(routes) => routes,
+                    _ => Vec::new(),
+                })
+            })
+    }
+
+    /// RFC 3442 classless static routes (option 121), concatenated across areas.
+    ///
+    /// Source: RFC 3442. Reassembles the logical option payload (RFC 3396) and
+    /// decodes it into typed prefix/destination/router routes. Returns `None`
+    /// when no area carries the option; an invalid prefix length or truncated
+    /// route surfaces as a structured error.
+    pub fn classless_static_routes(&self) -> Option<Result<Vec<DhcpClasslessRoute>>> {
+        self.typed_value_in_areas(DHCP_OPTION_CLASSLESS_STATIC_ROUTE)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::ClasslessRoutes(routes) => routes,
+                    _ => Vec::new(),
+                })
+            })
+    }
+
+    /// RFC 3397 domain-search list (option 119), concatenated across areas.
+    ///
+    /// Source: RFC 3397 / RFC 1035. Reassembles the logical option payload
+    /// (RFC 3396) and decodes the RFC 1035 label encoding, resolving compression
+    /// pointers within the aggregate data, into fully-qualified domain names.
+    /// Returns `None` when no area carries the option; a malformed encoding
+    /// surfaces as a structured error.
+    pub fn domain_search(&self) -> Option<Result<Vec<String>>> {
+        self.typed_value_in_areas(DHCP_OPTION_DOMAIN_SEARCH)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::DomainSearch(names) => names,
+                    _ => Vec::new(),
+                })
+            })
+    }
+
+    /// RFC 3361 SIP servers (option 120), concatenated across areas.
+    ///
+    /// Source: RFC 3361. Reassembles the logical option payload (RFC 3396) and
+    /// decodes the `enc` selector into either a domain-name list or an IPv4
+    /// address list, preserving any unspecified encoding verbatim. Returns
+    /// `None` when no area carries the option; a malformed payload surfaces as a
+    /// structured error.
+    pub fn sip_servers(&self) -> Option<Result<SipServers>> {
+        self.typed_value_in_areas(DHCP_OPTION_SIP_SERVERS)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::SipServers(servers) => servers,
+                    _ => SipServers::Addresses(Vec::new()),
+                })
+            })
+    }
+
+    /// Decode the typed value of an option, reassembled across all areas.
+    ///
+    /// Joins the option payload across the normal, `file`, and `sname` areas in
+    /// RFC 3396 aggregate order and runs the source-backed format decoder.
+    /// Returns `None` when no area carries the code.
+    fn typed_value_in_areas(&self, code: u8) -> Option<Result<DhcpOptionValue>> {
+        let joined = self.concatenated_option(code)?;
+        Some(joined.and_then(|option| {
+            option
+                .typed_value()
+                .and_then(|value| value.ok_or_else(|| missing_typed_value(code)))
+        }))
+    }
+
     /// Encode the normal-area DHCP options, appending an end marker when needed.
     ///
     /// When the `file` or `sname` areas carry options and the caller did not
@@ -1010,6 +1097,25 @@ fn trim_fixed_bytes(bytes: &[u8]) -> &[u8] {
 
 fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
     field.value().copied().unwrap_or(default)
+}
+
+/// Structured error for the unexpected case where a registered route/domain/
+/// service option code yields no typed value. The route, domain, and SIP
+/// formats always produce a typed value when their code decodes, so this only
+/// guards against an internal mapping regression rather than wire data.
+fn missing_typed_value(code: u8) -> CrafterError {
+    CrafterError::invalid_field_value(
+        "dhcp.option.value",
+        match code {
+            DHCP_OPTION_STATIC_ROUTE => "static route option has no typed value",
+            DHCP_OPTION_CLASSLESS_STATIC_ROUTE => {
+                "classless static route option has no typed value"
+            }
+            DHCP_OPTION_DOMAIN_SEARCH => "domain search option has no typed value",
+            DHCP_OPTION_SIP_SERVERS => "SIP servers option has no typed value",
+            _ => "DHCP option has no typed value",
+        },
+    )
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {

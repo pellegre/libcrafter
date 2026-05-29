@@ -151,6 +151,51 @@ pub const DHCP_OPTION_CLIENT_IDENTIFIER: u8 = 61;
 /// DHCP end option code (RFC 2132 section 3.2).
 pub const DHCP_OPTION_END: u8 = 255;
 
+// Route, domain, and service-discovery option codes beyond the RFC 2132 base
+// subset. Codepoints come from the IANA "BOOTP Vendor Extensions and DHCP
+// Options" registry (updated 2026-02-02); each wire format is defined by the
+// RFC cited inline.
+
+/// DHCP BCMCS Controller Domain Name list option code (RFC 4280).
+pub const DHCP_OPTION_BCMCS_DOMAIN_LIST: u8 = 88;
+/// DHCP BCMCS Controller IPv4 address option code (RFC 4280).
+pub const DHCP_OPTION_BCMCS_IPV4_LIST: u8 = 89;
+/// DHCP GEOCONF_CIVIC civic location option code (RFC 4776).
+pub const DHCP_OPTION_GEOCONF_CIVIC: u8 = 99;
+/// DHCP PCode (POSIX timezone string) option code (RFC 4833).
+pub const DHCP_OPTION_PCODE: u8 = 100;
+/// DHCP TCode (timezone database name) option code (RFC 4833).
+pub const DHCP_OPTION_TCODE: u8 = 101;
+/// DHCP Name Service Search option code (RFC 2937).
+pub const DHCP_OPTION_NAME_SERVICE_SEARCH: u8 = 117;
+/// DHCP Domain Search option code (RFC 3397).
+pub const DHCP_OPTION_DOMAIN_SEARCH: u8 = 119;
+/// DHCP SIP Servers option code (RFC 3361).
+pub const DHCP_OPTION_SIP_SERVERS: u8 = 120;
+/// DHCP Classless Static Route option code (RFC 3442).
+pub const DHCP_OPTION_CLASSLESS_STATIC_ROUTE: u8 = 121;
+/// DHCP GeoConf (GeoLoc binary) option code (RFC 6225).
+pub const DHCP_OPTION_GEOCONF: u8 = 123;
+/// DHCP SIP UA Configuration Service Domains option code (RFC 6011).
+pub const DHCP_OPTION_SIP_UA_CONFIG_DOMAINS: u8 = 141;
+/// DHCP GeoLoc option code (RFC 6225).
+pub const DHCP_OPTION_GEOLOC: u8 = 144;
+/// DHCP RDNSS Selection option code (RFC 6731).
+pub const DHCP_OPTION_RDNSS_SELECTION: u8 = 146;
+/// DHCP OPTION_V4_DOTS_RI (DOTS reference identifier) option code (RFC 8973).
+pub const DHCP_OPTION_V4_DOTS_RI: u8 = 147;
+/// DHCP OPTION_V4_DOTS_ADDRESS option code (RFC 8973).
+pub const DHCP_OPTION_V4_DOTS_ADDRESS: u8 = 148;
+/// DHCP OPTION_V4_PCP_SERVER option code (RFC 7291).
+pub const DHCP_OPTION_V4_PCP_SERVER: u8 = 158;
+/// DHCP OPTION_MUD_URL_V4 option code (RFC 8520).
+pub const DHCP_OPTION_MUD_URL_V4: u8 = 161;
+/// DHCP OPTION_V4_DNR (Discovery of Network-designated Resolvers) option code
+/// (RFC 9463).
+pub const DHCP_OPTION_V4_DNR: u8 = 162;
+/// DHCP OPTION_6RD (IPv6 Rapid Deployment) option code (RFC 5969).
+pub const DHCP_OPTION_6RD: u8 = 212;
+
 /// Option overload value: the `file` field holds options (RFC 2132 section 9.3).
 pub const DHCP_OVERLOAD_FILE: u8 = 1;
 /// Option overload value: the `sname` field holds options (RFC 2132 section 9.3).
