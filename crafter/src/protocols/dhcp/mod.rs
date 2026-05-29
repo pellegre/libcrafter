@@ -3,6 +3,7 @@
 mod constants;
 mod message;
 mod option;
+mod registry;
 
 use core::any::Any;
 use core::net::Ipv4Addr;
@@ -26,7 +27,14 @@ pub use constants::{
     DHCP_REQUEST, DHCP_SERVER_PORT,
 };
 pub use message::DhcpMessageType;
-pub use option::DhcpOption;
+pub use option::{
+    scan_dhcp_option_segments, DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionSegment,
+    DhcpOptionValue,
+};
+pub use registry::{
+    option_meta, option_name, option_status, DhcpOptionMeta, DhcpOptionStatus,
+    DHCP_OPTION_PRIVATE_USE_END, DHCP_OPTION_PRIVATE_USE_START,
+};
 
 use constants::{
     DHCP_CHADDR_LEN, DHCP_DEFAULT_PARAMETER_REQUESTS, DHCP_FILE_LEN, DHCP_SNAME_LEN,
