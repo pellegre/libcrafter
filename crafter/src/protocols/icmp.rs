@@ -544,6 +544,21 @@ impl Icmp {
         self.length.value().copied()
     }
 
+    /// Parameter-problem pointer byte when explicit or decoded.
+    pub fn pointer_value(&self) -> Option<u8> {
+        self.pointer.value().copied()
+    }
+
+    /// Redirect gateway address when explicit or decoded.
+    pub fn gateway_value(&self) -> Option<Ipv4Addr> {
+        self.gateway.value().copied()
+    }
+
+    /// Next-hop MTU field when explicit or decoded.
+    pub fn mtu_next_hop_value(&self) -> Option<u16> {
+        self.mtu_next_hop.value().copied()
+    }
+
     /// Common ICMP kind, when the type is version-independent.
     pub fn kind_value(&self) -> Option<IcmpKind> {
         match self.icmp_type_value() {
@@ -561,39 +576,70 @@ impl Icmp {
         ctx: Option<LayerContext<'_>>,
         extension_unit: usize,
     ) -> Result<[u8; 4]> {
+        // The four bytes after the checksum (RFC 792) carry a type-specific
+        // interpretation. An explicit raw `rest_of_header` is the base and must
+        // survive compilation untouched unless a *user-set* typed field
+        // deliberately overrides part of it. Auto-filled (unset/defaulted)
+        // typed values never clobber raw bytes the caller supplied on purpose.
+        let raw_is_user = self.rest_of_header.is_user_set();
         let mut rest = value_or_copy(&self.rest_of_header, [0; 4]);
 
         match self.icmp_type_value() {
             ICMP_ECHO_REQUEST | ICMP_ECHO_REPLY => {
-                let identifier = value_or_u16_from_rest(&self.identifier, &self.rest_of_header, 0);
-                let sequence =
-                    value_or_u16_from_rest(&self.sequence_number, &self.rest_of_header, 2);
-                rest[..2].copy_from_slice(&identifier.to_be_bytes());
-                rest[2..4].copy_from_slice(&sequence.to_be_bytes());
+                // Echo/echo-reply: identifier (2) + sequence (2). When the raw
+                // rest is user-set, only a user-set id/seq overrides those bytes;
+                // otherwise the typed defaults seed them from the raw value.
+                if self.identifier.is_user_set() || !raw_is_user {
+                    let identifier =
+                        value_or_u16_from_rest(&self.identifier, &self.rest_of_header, 0);
+                    rest[..2].copy_from_slice(&identifier.to_be_bytes());
+                }
+                if self.sequence_number.is_user_set() || !raw_is_user {
+                    let sequence =
+                        value_or_u16_from_rest(&self.sequence_number, &self.rest_of_header, 2);
+                    rest[2..4].copy_from_slice(&sequence.to_be_bytes());
+                }
             }
             ICMP_DESTINATION_UNREACHABLE => {
-                if let Some(length) = self.effective_extension_length(ctx, extension_unit)? {
+                // Bytes 0 unused, byte 1 RFC 4884 length, bytes 2-3 RFC 1191
+                // next-hop MTU (destination-unreachable code 4).
+                if let Some(length) =
+                    self.overriding_extension_length(ctx, extension_unit, raw_is_user)?
+                {
                     rest[1] = length;
                 }
-                if let Some(mtu) = self.mtu_next_hop.value().copied() {
-                    rest[2..4].copy_from_slice(&mtu.to_be_bytes());
+                if self.mtu_next_hop.is_user_set() || !raw_is_user {
+                    if let Some(mtu) = self.mtu_next_hop.value().copied() {
+                        rest[2..4].copy_from_slice(&mtu.to_be_bytes());
+                    }
                 }
             }
             ICMP_REDIRECT => {
-                if let Some(gateway) = self.gateway.value().copied() {
-                    rest = gateway.octets();
+                // The whole rest is the gateway address.
+                if self.gateway.is_user_set() || !raw_is_user {
+                    if let Some(gateway) = self.gateway.value().copied() {
+                        rest = gateway.octets();
+                    }
                 }
             }
             ICMP_TIME_EXCEEDED => {
-                if let Some(length) = self.effective_extension_length(ctx, extension_unit)? {
+                // Byte 1 carries the RFC 4884 length.
+                if let Some(length) =
+                    self.overriding_extension_length(ctx, extension_unit, raw_is_user)?
+                {
                     rest[1] = length;
                 }
             }
             ICMP_PARAMETER_PROBLEM => {
-                if let Some(pointer) = self.pointer.value().copied() {
-                    rest[0] = pointer;
+                // Byte 0 is the pointer, byte 1 the RFC 4884 length.
+                if self.pointer.is_user_set() || !raw_is_user {
+                    if let Some(pointer) = self.pointer.value().copied() {
+                        rest[0] = pointer;
+                    }
                 }
-                if let Some(length) = self.effective_extension_length(ctx, extension_unit)? {
+                if let Some(length) =
+                    self.overriding_extension_length(ctx, extension_unit, raw_is_user)?
+                {
                     rest[1] = length;
                 }
             }
@@ -601,6 +647,26 @@ impl Icmp {
         }
 
         Ok(rest)
+    }
+
+    /// RFC 4884 length byte that should override the raw rest-of-header.
+    ///
+    /// A user-set length always wins. An auto-computed length only applies when
+    /// the caller did not pin the raw rest-of-header, so deliberate raw bytes
+    /// survive compilation.
+    fn overriding_extension_length(
+        &self,
+        ctx: Option<LayerContext<'_>>,
+        extension_unit: usize,
+        raw_is_user: bool,
+    ) -> Result<Option<u8>> {
+        if self.length.is_user_set() {
+            return Ok(self.length.value().copied());
+        }
+        if raw_is_user {
+            return Ok(None);
+        }
+        self.effective_extension_length(ctx, extension_unit)
     }
 
     fn effective_extension_length(
@@ -956,35 +1022,65 @@ impl Icmpv6 {
         ctx: Option<LayerContext<'_>>,
         extension_unit: usize,
     ) -> Result<[u8; 4]> {
+        // Same precedence rule as ICMPv4: an explicit raw rest-of-header is the
+        // base, and auto-filled typed values never overwrite it.
+        let raw_is_user = self.rest_of_header.is_user_set();
         let mut rest = value_or_copy(&self.rest_of_header, [0; 4]);
 
         match self.icmp_type_value() {
             ICMPV6_ECHO_REQUEST | ICMPV6_ECHO_REPLY => {
-                let identifier = value_or_u16_from_rest(&self.identifier, &self.rest_of_header, 0);
-                let sequence =
-                    value_or_u16_from_rest(&self.sequence_number, &self.rest_of_header, 2);
-                rest[..2].copy_from_slice(&identifier.to_be_bytes());
-                rest[2..4].copy_from_slice(&sequence.to_be_bytes());
+                if self.identifier.is_user_set() || !raw_is_user {
+                    let identifier =
+                        value_or_u16_from_rest(&self.identifier, &self.rest_of_header, 0);
+                    rest[..2].copy_from_slice(&identifier.to_be_bytes());
+                }
+                if self.sequence_number.is_user_set() || !raw_is_user {
+                    let sequence =
+                        value_or_u16_from_rest(&self.sequence_number, &self.rest_of_header, 2);
+                    rest[2..4].copy_from_slice(&sequence.to_be_bytes());
+                }
             }
             ICMPV6_DESTINATION_UNREACHABLE | ICMPV6_TIME_EXCEEDED => {
-                if let Some(length) = self.effective_extension_length(ctx, extension_unit)? {
+                if let Some(length) =
+                    self.overriding_extension_length(ctx, extension_unit, raw_is_user)?
+                {
                     rest[0] = length;
                 }
             }
             ICMPV6_PACKET_TOO_BIG => {
-                if let Some(mtu) = self.mtu.value().copied() {
-                    rest.copy_from_slice(&mtu.to_be_bytes());
+                if self.mtu.is_user_set() || !raw_is_user {
+                    if let Some(mtu) = self.mtu.value().copied() {
+                        rest.copy_from_slice(&mtu.to_be_bytes());
+                    }
                 }
             }
             ICMPV6_PARAMETER_PROBLEM => {
-                if let Some(pointer) = self.pointer.value().copied() {
-                    rest.copy_from_slice(&pointer.to_be_bytes());
+                if self.pointer.is_user_set() || !raw_is_user {
+                    if let Some(pointer) = self.pointer.value().copied() {
+                        rest.copy_from_slice(&pointer.to_be_bytes());
+                    }
                 }
             }
             _ => {}
         }
 
         Ok(rest)
+    }
+
+    /// RFC 4884 length byte that should override the raw rest-of-header.
+    fn overriding_extension_length(
+        &self,
+        ctx: Option<LayerContext<'_>>,
+        extension_unit: usize,
+        raw_is_user: bool,
+    ) -> Result<Option<u8>> {
+        if self.length.is_user_set() {
+            return Ok(self.length.value().copied());
+        }
+        if raw_is_user {
+            return Ok(None);
+        }
+        self.effective_extension_length(ctx, extension_unit)
     }
 
     fn effective_extension_length(
@@ -2346,5 +2442,169 @@ mod icmpv4_codepoints {
         // Echo request carries no code registry, so any code is numeric.
         assert_eq!(icmpv4_code_summary(ICMP_ECHO_REQUEST, 0), "0");
         assert_eq!(icmpv4_code_summary(ICMP_ECHO_REQUEST, 5), "5");
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_header_model {
+    use super::{
+        Icmp, IcmpKind, ICMP_ECHO_REQUEST, ICMP_REDIRECT, ICMP_TIME_EXCEEDED,
+    };
+    use crate::packet::Layer;
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // The header model exposes the raw rest-of-header escape hatch unchanged.
+    // An explicit four-byte rest-of-header on a non-typed body survives
+    // compilation byte-for-byte.
+    #[test]
+    fn icmpv4_header_model_raw_rest_of_header_is_preserved() {
+        let raw = [0xde, 0xad, 0xbe, 0xef];
+        let bytes = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::new().icmp_type(99).code(7).rest_of_header(raw)
+            / Raw::from("body"))
+        .compile()
+        .unwrap();
+
+        // Type/code at the start of the ICMP header (after the 20-byte IPv4 hdr).
+        assert_eq!(&bytes.as_bytes()[20..22], &[99, 7]);
+        // Bytes 4..8 of the ICMP header are the untouched rest-of-header.
+        assert_eq!(&bytes.as_bytes()[24..28], &raw);
+    }
+
+    // An explicit raw rest-of-header survives even when it is inconsistent with
+    // the typed message constructor: a time-exceeded message that would
+    // normally auto-fill the RFC 4884 length byte keeps the caller's raw bytes
+    // when they pinned the whole rest-of-header on purpose.
+    #[test]
+    fn icmpv4_header_model_raw_rest_survives_typed_constructor() {
+        let raw = [0xaa, 0xbb, 0xcc, 0xdd];
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded().rest_of_header(raw)
+            / (Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 1))
+                .dst(Ipv4Addr::new(198, 51, 100, 1))
+                .proto(IpProtocol::Udp)
+                / Udp::new().sport(53).dport(1111)
+                / Raw::from("quoted"));
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes.as_bytes()[20], ICMP_TIME_EXCEEDED);
+        // The whole rest-of-header is exactly what the caller pinned; the RFC
+        // 4884 length auto-fill must not clobber byte index 25.
+        assert_eq!(&bytes.as_bytes()[24..28], &raw);
+    }
+
+    // A user-set typed field still overrides the matching slice of an explicit
+    // raw rest-of-header, because it is a more specific caller intent.
+    #[test]
+    fn icmpv4_header_model_user_typed_field_overrides_raw_rest() {
+        let raw = [0x00, 0x00, 0x00, 0x00];
+        let bytes = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::echo_request().rest_of_header(raw).id(0x1234).seq(0x5678)
+            / Raw::from("x"))
+        .compile()
+        .unwrap();
+
+        // id/seq the caller set explicitly win over the zeroed raw rest.
+        assert_eq!(&bytes.as_bytes()[24..26], &0x1234u16.to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[26..28], &0x5678u16.to_be_bytes());
+    }
+
+    // The explicit checksum escape hatch is honored verbatim, even when it is
+    // an intentionally wrong value.
+    #[test]
+    fn icmpv4_header_model_explicit_checksum_is_preserved() {
+        let bytes = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::echo_request().id(7).seq(8).checksum(0xbeef)
+            / Raw::from("abc"))
+        .compile()
+        .unwrap();
+
+        assert_eq!(&bytes.as_bytes()[22..24], &0xbeefu16.to_be_bytes());
+    }
+
+    // An unknown/unassigned ICMPv4 type with raw rest-of-header bytes round-trips
+    // through compile and decode: the header is inspectable as typed fields and
+    // the trailing bytes remain a Raw payload.
+    #[test]
+    fn icmpv4_header_model_unknown_type_roundtrip() {
+        let raw = [0x01, 0x02, 0x03, 0x04];
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::new().icmp_type(200).code(13).rest_of_header(raw)
+            / Raw::from("payload");
+        let compiled = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.icmp_type_value(), 200);
+        assert_eq!(icmp.code_value(), 13);
+        assert_eq!(icmp.rest_of_header_value(), raw);
+        // An unknown type maps to no common kind and carries no echo fields.
+        assert_eq!(icmp.kind_value(), None);
+        assert_eq!(icmp.identifier_value(), None);
+        assert_eq!(icmp.sequence_number_value(), None);
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"payload");
+        // Recompiling reproduces the original bytes exactly.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // Summaries stay stable across the typed bodies: known types report their
+    // registry name with the numeric value kept visible, and echo bodies surface
+    // their identifier and sequence number.
+    #[test]
+    fn icmpv4_header_model_summary_is_stable() {
+        assert_eq!(
+            Icmp::echo_request().id(0x4242).seq(1).summary(),
+            "Icmp(type=echo-request(8), code=0, id=16962, seq=1)"
+        );
+        assert_eq!(
+            Icmp::new().icmp_type(ICMP_REDIRECT).code(1).summary(),
+            "Icmp(type=redirect(5), code=redirect-host(1), id=-, seq=-)"
+        );
+        // Unknown type falls back to the bare number and reports no echo fields.
+        assert_eq!(
+            Icmp::new().icmp_type(200).code(13).summary(),
+            "Icmp(type=200, code=13, id=-, seq=-)"
+        );
+    }
+
+    // Echo construction still matches the documented golden behavior: the typed
+    // id/seq accessors and common kind are intact after the model refactor.
+    #[test]
+    fn icmpv4_header_model_echo_compatibility_is_intact() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::echo_request().id(0x4242).seq(1)
+            / Raw::from("libcrafter-icmp");
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(&compiled.as_bytes()[20..22], &[ICMP_ECHO_REQUEST, 0]);
+        assert_eq!(&compiled.as_bytes()[24..26], &0x4242u16.to_be_bytes());
+        assert_eq!(&compiled.as_bytes()[26..28], &1u16.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.kind_value(), Some(IcmpKind::EchoRequest));
+        assert_eq!(icmp.identifier_value(), Some(0x4242));
+        assert_eq!(icmp.sequence_number_value(), Some(1));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // The redirect gateway escape hatch fills the whole rest-of-header when the
+    // caller sets a gateway and did not pin raw bytes.
+    #[test]
+    fn icmpv4_header_model_redirect_gateway_fills_rest() {
+        let gateway = Ipv4Addr::new(192, 0, 2, 254);
+        let icmp = Icmp::new().icmp_type(ICMP_REDIRECT).gateway(gateway);
+        assert_eq!(icmp.gateway_value(), Some(gateway));
+        assert_eq!(icmp.rest_of_header_value(), gateway.octets());
     }
 }
