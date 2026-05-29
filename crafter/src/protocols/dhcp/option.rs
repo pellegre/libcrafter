@@ -3,17 +3,34 @@
 use core::net::Ipv4Addr;
 use core::str;
 
-use crate::endian::read_u32_be;
+use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 
 use super::constants::{
-    DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_DOMAIN_NAME,
-    DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_END, DHCP_OPTION_HOST_NAME,
-    DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_OVERLOAD,
-    DHCP_OPTION_PAD, DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_REBINDING_TIME,
-    DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER,
-    DHCP_OPTION_SERVER_IDENTIFIER, DHCP_OPTION_SUBNET_MASK, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE,
-    DHCP_OVERLOAD_SNAME,
+    DHCP_OPTION_ALL_SUBNETS_LOCAL, DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_BOOT_FILE_SIZE,
+    DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_COOKIE_SERVER,
+    DHCP_OPTION_DEFAULT_IP_TTL, DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER,
+    DHCP_OPTION_END, DHCP_OPTION_ETHERNET_ENCAPSULATION, DHCP_OPTION_EXTENSIONS_PATH,
+    DHCP_OPTION_HOST_NAME, DHCP_OPTION_IMPRESS_SERVER, DHCP_OPTION_INTERFACE_MTU,
+    DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_IP_FORWARDING, DHCP_OPTION_LOG_SERVER,
+    DHCP_OPTION_LPR_SERVER, DHCP_OPTION_MASK_SUPPLIER, DHCP_OPTION_MAX_DATAGRAM_REASSEMBLY,
+    DHCP_OPTION_MAX_MESSAGE_SIZE, DHCP_OPTION_MERIT_DUMP_FILE, DHCP_OPTION_MESSAGE,
+    DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_NAME_SERVER, DHCP_OPTION_NETBIOS_DATAGRAM_SERVER,
+    DHCP_OPTION_NETBIOS_NAME_SERVER, DHCP_OPTION_NETBIOS_NODE_TYPE, DHCP_OPTION_NETBIOS_SCOPE,
+    DHCP_OPTION_NIS_DOMAIN, DHCP_OPTION_NIS_SERVERS, DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING,
+    DHCP_OPTION_NTP_SERVERS, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
+    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PATH_MTU_AGING_TIMEOUT,
+    DHCP_OPTION_PATH_MTU_PLATEAU_TABLE, DHCP_OPTION_PERFORM_MASK_DISCOVERY,
+    DHCP_OPTION_PERFORM_ROUTER_DISCOVERY, DHCP_OPTION_POLICY_FILTER, DHCP_OPTION_REBINDING_TIME,
+    DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS,
+    DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH, DHCP_OPTION_ROUTER,
+    DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
+    DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_SWAP_SERVER,
+    DHCP_OPTION_TCP_DEFAULT_TTL, DHCP_OPTION_TCP_KEEPALIVE_GARBAGE,
+    DHCP_OPTION_TCP_KEEPALIVE_INTERVAL, DHCP_OPTION_TIME_OFFSET, DHCP_OPTION_TIME_SERVER,
+    DHCP_OPTION_TRAILER_ENCAPSULATION, DHCP_OPTION_VENDOR_CLASS_IDENTIFIER,
+    DHCP_OPTION_VENDOR_SPECIFIC, DHCP_OPTION_X_WINDOW_DISPLAY_MANAGER,
+    DHCP_OPTION_X_WINDOW_FONT_SERVER, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME,
 };
 use super::message::DhcpMessageType;
 use super::registry::{option_name, option_status, DhcpOptionStatus};
@@ -196,10 +213,21 @@ pub enum DhcpOptionValue {
     U16(u16),
     /// A 32-bit big-endian unsigned integer.
     U32(u32),
+    /// A 32-bit big-endian signed integer (for example option 2, time offset).
+    I32(i32),
+    /// A boolean flag carried in a single octet (`0` or `1`). Out-of-range
+    /// values are preserved through the raw bytes rather than coerced.
+    Bool(bool),
     /// A single IPv4 address.
     Ipv4(Ipv4Addr),
     /// A list of IPv4 addresses.
     Ipv4List(Vec<Ipv4Addr>),
+    /// A list of IPv4 address pairs (for example option 21 policy filters and
+    /// option 33 static routes), each pair being two 4-octet addresses.
+    Ipv4Pairs(Vec<(Ipv4Addr, Ipv4Addr)>),
+    /// A list of 16-bit big-endian unsigned integers (for example option 25,
+    /// the path MTU plateau table).
+    U16List(Vec<u16>),
     /// Text-like bytes. Not guaranteed to be UTF-8; raw bytes are preserved.
     Text(Vec<u8>),
     /// A DHCP message type (option 53).
@@ -230,6 +258,422 @@ impl DhcpOptionValue {
             _ => None,
         }
     }
+
+    /// Encode this logical value to its option payload bytes (without the
+    /// option code or length byte). The byte layout follows the RFC 2132
+    /// option formats: integers are big-endian, booleans are a single `0`/`1`
+    /// octet, and address pairs concatenate two 4-octet addresses each.
+    pub fn encode_payload(&self) -> Vec<u8> {
+        match self {
+            Self::Empty => Vec::new(),
+            Self::U8(value) => vec![*value],
+            Self::U16(value) => value.to_be_bytes().to_vec(),
+            Self::U32(value) => value.to_be_bytes().to_vec(),
+            Self::I32(value) => value.to_be_bytes().to_vec(),
+            Self::Bool(value) => vec![u8::from(*value)],
+            Self::Ipv4(address) => address.octets().to_vec(),
+            Self::Ipv4List(addresses) => encode_ipv4_list(addresses),
+            Self::Ipv4Pairs(pairs) => {
+                let mut bytes = Vec::with_capacity(pairs.len() * 8);
+                for (first, second) in pairs {
+                    bytes.extend_from_slice(&first.octets());
+                    bytes.extend_from_slice(&second.octets());
+                }
+                bytes
+            }
+            Self::U16List(values) => {
+                let mut bytes = Vec::with_capacity(values.len() * 2);
+                for value in values {
+                    bytes.extend_from_slice(&value.to_be_bytes());
+                }
+                bytes
+            }
+            Self::MessageType(message_type) => vec![message_type.code()],
+            Self::OptionOverload(overload) => vec![overload.code()],
+            Self::Text(bytes) | Self::ParameterRequestList(bytes) | Self::Opaque(bytes) => {
+                bytes.clone()
+            }
+        }
+    }
+}
+
+/// Wire-format family of a registered DHCPv4 option.
+///
+/// Source: RFC 2132 option formats and the IANA registry length column. This
+/// names the reusable byte layout each base option uses so a single typed codec
+/// can serve every option that shares a shape, instead of one bespoke decoder
+/// per code. Options whose contents are only opaque bytes, vendor data, or text
+/// keep the corresponding raw-preserving format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DhcpOptionFormat {
+    /// A single IPv4 address (4 octets).
+    Ipv4,
+    /// One or more IPv4 addresses (length a non-zero multiple of 4).
+    Ipv4List,
+    /// One or more IPv4 address pairs (length a non-zero multiple of 8), used by
+    /// the policy filter and static route options.
+    Ipv4Pairs,
+    /// A single octet interpreted as a boolean flag (`0`/`1`).
+    Bool,
+    /// A single unsigned octet.
+    U8,
+    /// A 16-bit big-endian unsigned integer (2 octets).
+    U16,
+    /// One or more 16-bit big-endian unsigned integers (length a non-zero
+    /// multiple of 2), used by the path MTU plateau table.
+    U16List,
+    /// A 32-bit big-endian signed integer (4 octets).
+    I32,
+    /// A 32-bit big-endian unsigned integer (4 octets).
+    U32,
+    /// NVT ASCII / text-like bytes; not guaranteed UTF-8, raw bytes preserved.
+    Text,
+    /// A list of option codes (parameter request list, option 55).
+    ParameterRequestList,
+    /// The DHCP message type single octet (option 53).
+    MessageType,
+    /// The option overload single octet (option 52).
+    OptionOverload,
+    /// Opaque bytes preserved verbatim (vendor-specific, client/vendor id).
+    Opaque,
+}
+
+/// A registered RFC 2132 base DHCPv4 option (codes 1-61).
+///
+/// Source: RFC 2132 and the IANA "BOOTP Vendor Extensions and DHCP Options"
+/// registry (updated 2026-02-02). Each kind maps to its wire codepoint and its
+/// [`DhcpOptionFormat`], giving callers a source-backed, format-aware view of
+/// the base options without forcing a bespoke decoder per code. Codepoints
+/// outside this set are still preserved as raw segments and classified by the
+/// option-code registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(missing_docs)]
+pub enum DhcpOptionKind {
+    SubnetMask,
+    TimeOffset,
+    Router,
+    TimeServer,
+    NameServer,
+    DomainNameServer,
+    LogServer,
+    CookieServer,
+    LprServer,
+    ImpressServer,
+    ResourceLocationServer,
+    HostName,
+    BootFileSize,
+    MeritDumpFile,
+    DomainName,
+    SwapServer,
+    RootPath,
+    ExtensionsPath,
+    IpForwarding,
+    NonLocalSourceRouting,
+    PolicyFilter,
+    MaxDatagramReassembly,
+    DefaultIpTtl,
+    PathMtuAgingTimeout,
+    PathMtuPlateauTable,
+    InterfaceMtu,
+    AllSubnetsLocal,
+    BroadcastAddress,
+    PerformMaskDiscovery,
+    MaskSupplier,
+    PerformRouterDiscovery,
+    RouterSolicitationAddress,
+    StaticRoute,
+    TrailerEncapsulation,
+    ArpCacheTimeout,
+    EthernetEncapsulation,
+    TcpDefaultTtl,
+    TcpKeepaliveInterval,
+    TcpKeepaliveGarbage,
+    NisDomain,
+    NisServers,
+    NtpServers,
+    VendorSpecificInformation,
+    NetbiosNameServer,
+    NetbiosDatagramServer,
+    NetbiosNodeType,
+    NetbiosScope,
+    XWindowFontServer,
+    XWindowDisplayManager,
+    RequestedIpAddress,
+    IpAddressLeaseTime,
+    OptionOverload,
+    DhcpMessageType,
+    ServerIdentifier,
+    ParameterRequestList,
+    DhcpMessage,
+    MaximumDhcpMessageSize,
+    RenewalTime,
+    RebindingTime,
+    VendorClassIdentifier,
+    ClientIdentifier,
+}
+
+impl DhcpOptionKind {
+    /// Registered RFC 2132 base option for a wire codepoint, when one exists.
+    pub const fn from_code(code: u8) -> Option<Self> {
+        let kind = match code {
+            DHCP_OPTION_SUBNET_MASK => Self::SubnetMask,
+            DHCP_OPTION_TIME_OFFSET => Self::TimeOffset,
+            DHCP_OPTION_ROUTER => Self::Router,
+            DHCP_OPTION_TIME_SERVER => Self::TimeServer,
+            DHCP_OPTION_NAME_SERVER => Self::NameServer,
+            DHCP_OPTION_DOMAIN_NAME_SERVER => Self::DomainNameServer,
+            DHCP_OPTION_LOG_SERVER => Self::LogServer,
+            DHCP_OPTION_COOKIE_SERVER => Self::CookieServer,
+            DHCP_OPTION_LPR_SERVER => Self::LprServer,
+            DHCP_OPTION_IMPRESS_SERVER => Self::ImpressServer,
+            DHCP_OPTION_RESOURCE_LOCATION_SERVER => Self::ResourceLocationServer,
+            DHCP_OPTION_HOST_NAME => Self::HostName,
+            DHCP_OPTION_BOOT_FILE_SIZE => Self::BootFileSize,
+            DHCP_OPTION_MERIT_DUMP_FILE => Self::MeritDumpFile,
+            DHCP_OPTION_DOMAIN_NAME => Self::DomainName,
+            DHCP_OPTION_SWAP_SERVER => Self::SwapServer,
+            DHCP_OPTION_ROOT_PATH => Self::RootPath,
+            DHCP_OPTION_EXTENSIONS_PATH => Self::ExtensionsPath,
+            DHCP_OPTION_IP_FORWARDING => Self::IpForwarding,
+            DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING => Self::NonLocalSourceRouting,
+            DHCP_OPTION_POLICY_FILTER => Self::PolicyFilter,
+            DHCP_OPTION_MAX_DATAGRAM_REASSEMBLY => Self::MaxDatagramReassembly,
+            DHCP_OPTION_DEFAULT_IP_TTL => Self::DefaultIpTtl,
+            DHCP_OPTION_PATH_MTU_AGING_TIMEOUT => Self::PathMtuAgingTimeout,
+            DHCP_OPTION_PATH_MTU_PLATEAU_TABLE => Self::PathMtuPlateauTable,
+            DHCP_OPTION_INTERFACE_MTU => Self::InterfaceMtu,
+            DHCP_OPTION_ALL_SUBNETS_LOCAL => Self::AllSubnetsLocal,
+            DHCP_OPTION_BROADCAST_ADDRESS => Self::BroadcastAddress,
+            DHCP_OPTION_PERFORM_MASK_DISCOVERY => Self::PerformMaskDiscovery,
+            DHCP_OPTION_MASK_SUPPLIER => Self::MaskSupplier,
+            DHCP_OPTION_PERFORM_ROUTER_DISCOVERY => Self::PerformRouterDiscovery,
+            DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS => Self::RouterSolicitationAddress,
+            DHCP_OPTION_STATIC_ROUTE => Self::StaticRoute,
+            DHCP_OPTION_TRAILER_ENCAPSULATION => Self::TrailerEncapsulation,
+            DHCP_OPTION_ARP_CACHE_TIMEOUT => Self::ArpCacheTimeout,
+            DHCP_OPTION_ETHERNET_ENCAPSULATION => Self::EthernetEncapsulation,
+            DHCP_OPTION_TCP_DEFAULT_TTL => Self::TcpDefaultTtl,
+            DHCP_OPTION_TCP_KEEPALIVE_INTERVAL => Self::TcpKeepaliveInterval,
+            DHCP_OPTION_TCP_KEEPALIVE_GARBAGE => Self::TcpKeepaliveGarbage,
+            DHCP_OPTION_NIS_DOMAIN => Self::NisDomain,
+            DHCP_OPTION_NIS_SERVERS => Self::NisServers,
+            DHCP_OPTION_NTP_SERVERS => Self::NtpServers,
+            DHCP_OPTION_VENDOR_SPECIFIC => Self::VendorSpecificInformation,
+            DHCP_OPTION_NETBIOS_NAME_SERVER => Self::NetbiosNameServer,
+            DHCP_OPTION_NETBIOS_DATAGRAM_SERVER => Self::NetbiosDatagramServer,
+            DHCP_OPTION_NETBIOS_NODE_TYPE => Self::NetbiosNodeType,
+            DHCP_OPTION_NETBIOS_SCOPE => Self::NetbiosScope,
+            DHCP_OPTION_X_WINDOW_FONT_SERVER => Self::XWindowFontServer,
+            DHCP_OPTION_X_WINDOW_DISPLAY_MANAGER => Self::XWindowDisplayManager,
+            DHCP_OPTION_REQUESTED_IP_ADDRESS => Self::RequestedIpAddress,
+            DHCP_OPTION_IP_ADDRESS_LEASE_TIME => Self::IpAddressLeaseTime,
+            DHCP_OPTION_OVERLOAD => Self::OptionOverload,
+            DHCP_OPTION_MESSAGE_TYPE => Self::DhcpMessageType,
+            DHCP_OPTION_SERVER_IDENTIFIER => Self::ServerIdentifier,
+            DHCP_OPTION_PARAMETER_REQUEST_LIST => Self::ParameterRequestList,
+            DHCP_OPTION_MESSAGE => Self::DhcpMessage,
+            DHCP_OPTION_MAX_MESSAGE_SIZE => Self::MaximumDhcpMessageSize,
+            DHCP_OPTION_RENEWAL_TIME => Self::RenewalTime,
+            DHCP_OPTION_REBINDING_TIME => Self::RebindingTime,
+            DHCP_OPTION_VENDOR_CLASS_IDENTIFIER => Self::VendorClassIdentifier,
+            DHCP_OPTION_CLIENT_IDENTIFIER => Self::ClientIdentifier,
+            _ => return None,
+        };
+        Some(kind)
+    }
+
+    /// Wire codepoint for this option.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::SubnetMask => DHCP_OPTION_SUBNET_MASK,
+            Self::TimeOffset => DHCP_OPTION_TIME_OFFSET,
+            Self::Router => DHCP_OPTION_ROUTER,
+            Self::TimeServer => DHCP_OPTION_TIME_SERVER,
+            Self::NameServer => DHCP_OPTION_NAME_SERVER,
+            Self::DomainNameServer => DHCP_OPTION_DOMAIN_NAME_SERVER,
+            Self::LogServer => DHCP_OPTION_LOG_SERVER,
+            Self::CookieServer => DHCP_OPTION_COOKIE_SERVER,
+            Self::LprServer => DHCP_OPTION_LPR_SERVER,
+            Self::ImpressServer => DHCP_OPTION_IMPRESS_SERVER,
+            Self::ResourceLocationServer => DHCP_OPTION_RESOURCE_LOCATION_SERVER,
+            Self::HostName => DHCP_OPTION_HOST_NAME,
+            Self::BootFileSize => DHCP_OPTION_BOOT_FILE_SIZE,
+            Self::MeritDumpFile => DHCP_OPTION_MERIT_DUMP_FILE,
+            Self::DomainName => DHCP_OPTION_DOMAIN_NAME,
+            Self::SwapServer => DHCP_OPTION_SWAP_SERVER,
+            Self::RootPath => DHCP_OPTION_ROOT_PATH,
+            Self::ExtensionsPath => DHCP_OPTION_EXTENSIONS_PATH,
+            Self::IpForwarding => DHCP_OPTION_IP_FORWARDING,
+            Self::NonLocalSourceRouting => DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING,
+            Self::PolicyFilter => DHCP_OPTION_POLICY_FILTER,
+            Self::MaxDatagramReassembly => DHCP_OPTION_MAX_DATAGRAM_REASSEMBLY,
+            Self::DefaultIpTtl => DHCP_OPTION_DEFAULT_IP_TTL,
+            Self::PathMtuAgingTimeout => DHCP_OPTION_PATH_MTU_AGING_TIMEOUT,
+            Self::PathMtuPlateauTable => DHCP_OPTION_PATH_MTU_PLATEAU_TABLE,
+            Self::InterfaceMtu => DHCP_OPTION_INTERFACE_MTU,
+            Self::AllSubnetsLocal => DHCP_OPTION_ALL_SUBNETS_LOCAL,
+            Self::BroadcastAddress => DHCP_OPTION_BROADCAST_ADDRESS,
+            Self::PerformMaskDiscovery => DHCP_OPTION_PERFORM_MASK_DISCOVERY,
+            Self::MaskSupplier => DHCP_OPTION_MASK_SUPPLIER,
+            Self::PerformRouterDiscovery => DHCP_OPTION_PERFORM_ROUTER_DISCOVERY,
+            Self::RouterSolicitationAddress => DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS,
+            Self::StaticRoute => DHCP_OPTION_STATIC_ROUTE,
+            Self::TrailerEncapsulation => DHCP_OPTION_TRAILER_ENCAPSULATION,
+            Self::ArpCacheTimeout => DHCP_OPTION_ARP_CACHE_TIMEOUT,
+            Self::EthernetEncapsulation => DHCP_OPTION_ETHERNET_ENCAPSULATION,
+            Self::TcpDefaultTtl => DHCP_OPTION_TCP_DEFAULT_TTL,
+            Self::TcpKeepaliveInterval => DHCP_OPTION_TCP_KEEPALIVE_INTERVAL,
+            Self::TcpKeepaliveGarbage => DHCP_OPTION_TCP_KEEPALIVE_GARBAGE,
+            Self::NisDomain => DHCP_OPTION_NIS_DOMAIN,
+            Self::NisServers => DHCP_OPTION_NIS_SERVERS,
+            Self::NtpServers => DHCP_OPTION_NTP_SERVERS,
+            Self::VendorSpecificInformation => DHCP_OPTION_VENDOR_SPECIFIC,
+            Self::NetbiosNameServer => DHCP_OPTION_NETBIOS_NAME_SERVER,
+            Self::NetbiosDatagramServer => DHCP_OPTION_NETBIOS_DATAGRAM_SERVER,
+            Self::NetbiosNodeType => DHCP_OPTION_NETBIOS_NODE_TYPE,
+            Self::NetbiosScope => DHCP_OPTION_NETBIOS_SCOPE,
+            Self::XWindowFontServer => DHCP_OPTION_X_WINDOW_FONT_SERVER,
+            Self::XWindowDisplayManager => DHCP_OPTION_X_WINDOW_DISPLAY_MANAGER,
+            Self::RequestedIpAddress => DHCP_OPTION_REQUESTED_IP_ADDRESS,
+            Self::IpAddressLeaseTime => DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
+            Self::OptionOverload => DHCP_OPTION_OVERLOAD,
+            Self::DhcpMessageType => DHCP_OPTION_MESSAGE_TYPE,
+            Self::ServerIdentifier => DHCP_OPTION_SERVER_IDENTIFIER,
+            Self::ParameterRequestList => DHCP_OPTION_PARAMETER_REQUEST_LIST,
+            Self::DhcpMessage => DHCP_OPTION_MESSAGE,
+            Self::MaximumDhcpMessageSize => DHCP_OPTION_MAX_MESSAGE_SIZE,
+            Self::RenewalTime => DHCP_OPTION_RENEWAL_TIME,
+            Self::RebindingTime => DHCP_OPTION_REBINDING_TIME,
+            Self::VendorClassIdentifier => DHCP_OPTION_VENDOR_CLASS_IDENTIFIER,
+            Self::ClientIdentifier => DHCP_OPTION_CLIENT_IDENTIFIER,
+        }
+    }
+
+    /// Wire-format family for this option (RFC 2132 option formats).
+    pub const fn format(self) -> DhcpOptionFormat {
+        use DhcpOptionFormat as F;
+        match self {
+            // Single IPv4 address.
+            Self::SubnetMask
+            | Self::SwapServer
+            | Self::BroadcastAddress
+            | Self::RouterSolicitationAddress
+            | Self::RequestedIpAddress
+            | Self::ServerIdentifier => F::Ipv4,
+            // IPv4 address lists.
+            Self::Router
+            | Self::TimeServer
+            | Self::NameServer
+            | Self::DomainNameServer
+            | Self::LogServer
+            | Self::CookieServer
+            | Self::LprServer
+            | Self::ImpressServer
+            | Self::ResourceLocationServer
+            | Self::NisServers
+            | Self::NtpServers
+            | Self::NetbiosNameServer
+            | Self::NetbiosDatagramServer
+            | Self::XWindowFontServer
+            | Self::XWindowDisplayManager => F::Ipv4List,
+            // IPv4 address pairs.
+            Self::PolicyFilter | Self::StaticRoute => F::Ipv4Pairs,
+            // Boolean flag byte.
+            Self::IpForwarding
+            | Self::NonLocalSourceRouting
+            | Self::AllSubnetsLocal
+            | Self::PerformMaskDiscovery
+            | Self::MaskSupplier
+            | Self::PerformRouterDiscovery
+            | Self::TrailerEncapsulation
+            | Self::EthernetEncapsulation
+            | Self::TcpKeepaliveGarbage => F::Bool,
+            // Single octet unsigned.
+            Self::DefaultIpTtl | Self::TcpDefaultTtl | Self::NetbiosNodeType => F::U8,
+            // 16-bit unsigned.
+            Self::BootFileSize
+            | Self::MaxDatagramReassembly
+            | Self::InterfaceMtu
+            | Self::MaximumDhcpMessageSize => F::U16,
+            // 16-bit unsigned list.
+            Self::PathMtuPlateauTable => F::U16List,
+            // 32-bit signed.
+            Self::TimeOffset => F::I32,
+            // 32-bit unsigned.
+            Self::PathMtuAgingTimeout
+            | Self::ArpCacheTimeout
+            | Self::TcpKeepaliveInterval
+            | Self::IpAddressLeaseTime
+            | Self::RenewalTime
+            | Self::RebindingTime => F::U32,
+            // NVT ASCII / text-like.
+            Self::HostName
+            | Self::MeritDumpFile
+            | Self::DomainName
+            | Self::RootPath
+            | Self::ExtensionsPath
+            | Self::NisDomain
+            | Self::NetbiosScope
+            | Self::DhcpMessage => F::Text,
+            // Special single-octet codecs and lists.
+            Self::ParameterRequestList => F::ParameterRequestList,
+            Self::DhcpMessageType => F::MessageType,
+            Self::OptionOverload => F::OptionOverload,
+            // Opaque/vendor data preserved verbatim.
+            Self::VendorSpecificInformation
+            | Self::VendorClassIdentifier
+            | Self::ClientIdentifier => F::Opaque,
+        }
+    }
+}
+
+/// Decode an option payload into its logical [`DhcpOptionValue`] using the
+/// source-backed format table, when the code is a registered RFC 2132 base
+/// option. Returns `Ok(None)` for codes outside that set so callers fall back
+/// to preserving raw bytes. Length and format violations surface as structured
+/// [`CrafterError`] values rather than panics.
+pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValue>> {
+    let Some(kind) = DhcpOptionKind::from_code(code) else {
+        return Ok(None);
+    };
+    let field = "dhcp.option.value";
+    let value = match kind.format() {
+        DhcpOptionFormat::Ipv4 => DhcpOptionValue::Ipv4(decode_ipv4_option(field, data)?),
+        DhcpOptionFormat::Ipv4List => DhcpOptionValue::Ipv4List(decode_ipv4_list(field, data)?),
+        DhcpOptionFormat::Ipv4Pairs => DhcpOptionValue::Ipv4Pairs(decode_ipv4_pairs(field, data)?),
+        DhcpOptionFormat::Bool => DhcpOptionValue::Bool(decode_bool_option(field, data)?),
+        DhcpOptionFormat::U8 => {
+            validate_fixed_len(field, data.len(), 1)?;
+            DhcpOptionValue::U8(data[0])
+        }
+        DhcpOptionFormat::U16 => DhcpOptionValue::U16(decode_u16_option(field, data)?),
+        DhcpOptionFormat::U16List => DhcpOptionValue::U16List(decode_u16_list(field, data)?),
+        DhcpOptionFormat::I32 => {
+            validate_fixed_len(field, data.len(), 4)?;
+            DhcpOptionValue::I32(i32::from_be_bytes([data[0], data[1], data[2], data[3]]))
+        }
+        DhcpOptionFormat::U32 => DhcpOptionValue::U32(decode_u32_option(field, data)?),
+        DhcpOptionFormat::Text => DhcpOptionValue::Text(data.to_vec()),
+        DhcpOptionFormat::ParameterRequestList => {
+            DhcpOptionValue::ParameterRequestList(data.to_vec())
+        }
+        DhcpOptionFormat::MessageType => {
+            validate_fixed_len(field, data.len(), 1)?;
+            DhcpOptionValue::MessageType(DhcpMessageType::from_code(data[0]))
+        }
+        DhcpOptionFormat::OptionOverload => {
+            validate_fixed_len(field, data.len(), 1)?;
+            DhcpOptionValue::OptionOverload(OptionOverload::from_code(data[0]))
+        }
+        DhcpOptionFormat::Opaque => {
+            if data.is_empty() {
+                DhcpOptionValue::Empty
+            } else {
+                DhcpOptionValue::Opaque(data.to_vec())
+            }
+        }
+    };
+    Ok(Some(value))
 }
 
 /// A raw decoded DHCPv4 option segment with full inspection metadata.
@@ -451,6 +895,22 @@ impl DhcpOption {
         }
     }
 
+    /// Create a registered RFC 2132 base option from a typed value.
+    ///
+    /// The value is serialized to its RFC 2132 wire layout (big-endian integers,
+    /// single-octet booleans, concatenated address pairs) and carried under the
+    /// option's codepoint. The result re-decodes through [`DhcpOption::kind`] and
+    /// [`DhcpOption::typed_value`], and round-trips byte-for-byte through the
+    /// codec. Constructing a value family that does not match the option's
+    /// registered format still encodes the bytes the caller supplied, leaving
+    /// intentional malformation to the explicit malformed surface.
+    pub fn typed(kind: DhcpOptionKind, value: DhcpOptionValue) -> Self {
+        Self::Generic {
+            code: kind.code(),
+            data: value.encode_payload(),
+        }
+    }
+
     /// Raw DHCP option code.
     pub const fn code(&self) -> u8 {
         match self {
@@ -520,6 +980,30 @@ impl DhcpOption {
             }
         };
         Some(value)
+    }
+
+    /// Registered RFC 2132 base option kind for this option, when its codepoint
+    /// is one (codes 1-61).
+    pub fn kind(&self) -> Option<DhcpOptionKind> {
+        DhcpOptionKind::from_code(self.code())
+    }
+
+    /// Format-aware decode of this option's logical payload, driven by the
+    /// source-backed RFC 2132 format table.
+    ///
+    /// Unlike [`DhcpOption::logical_value`], which mirrors the legacy typed enum
+    /// shape, this reinterprets the reassembled payload bytes through the wire
+    /// format registered for the option code. For example option 2 (time
+    /// offset) decodes to [`DhcpOptionValue::I32`], boolean flag options decode
+    /// to [`DhcpOptionValue::Bool`], and the path MTU plateau table decodes to
+    /// [`DhcpOptionValue::U16List`]. Codes outside the RFC 2132 base set return
+    /// `Ok(None)`, and length or format violations surface as structured
+    /// errors. Pad and end options have no payload and return `Ok(None)`.
+    pub fn typed_value(&self) -> Result<Option<DhcpOptionValue>> {
+        if matches!(self, Self::Pad | Self::End) {
+            return Ok(None);
+        }
+        typed_option_value(self.code(), &self.payload_bytes()?)
     }
 
     /// Encoded option length in bytes.
@@ -870,14 +1354,25 @@ pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<DhcpOption> {
             "dhcp.option.domain_name_server",
             data,
         )?)),
-        DHCP_OPTION_HOST_NAME => Ok(DhcpOption::HostName(decode_text_option(
-            "dhcp.option.host_name",
-            data,
-        )?)),
-        DHCP_OPTION_DOMAIN_NAME => Ok(DhcpOption::DomainName(decode_text_option(
-            "dhcp.option.domain_name",
-            data,
-        )?)),
+        // RFC 2132 host/domain names are NVT ASCII, not guaranteed UTF-8. When
+        // the bytes decode as UTF-8 the convenience String variant is used;
+        // otherwise the raw bytes are preserved verbatim through the generic
+        // variant so no data is lost. The format-aware `typed_value()` view
+        // still surfaces these as `DhcpOptionValue::Text` in both cases.
+        DHCP_OPTION_HOST_NAME => Ok(match decode_optional_text(data) {
+            Some(text) => DhcpOption::HostName(text),
+            None => DhcpOption::Generic {
+                code,
+                data: data.to_vec(),
+            },
+        }),
+        DHCP_OPTION_DOMAIN_NAME => Ok(match decode_optional_text(data) {
+            Some(text) => DhcpOption::DomainName(text),
+            None => DhcpOption::Generic {
+                code,
+                data: data.to_vec(),
+            },
+        }),
         DHCP_OPTION_BROADCAST_ADDRESS => Ok(DhcpOption::BroadcastAddress(decode_ipv4_option(
             "dhcp.option.broadcast_address",
             data,
@@ -956,10 +1451,12 @@ fn validate_fixed_len(field: &'static str, actual: usize, expected: usize) -> Re
     Ok(())
 }
 
-fn decode_text_option(field: &'static str, data: &[u8]) -> Result<String> {
-    str::from_utf8(data)
-        .map(str::to_string)
-        .map_err(|_| CrafterError::invalid_field_value(field, "option text is not valid UTF-8"))
+/// Decode an NVT ASCII / text-like option payload into a convenience `String`
+/// when, and only when, the bytes are valid UTF-8. RFC 2132 text options are
+/// not guaranteed UTF-8, so a non-UTF-8 payload yields `None`, leaving the
+/// caller to preserve the raw bytes rather than forcing a lossy conversion.
+fn decode_optional_text(data: &[u8]) -> Option<String> {
+    str::from_utf8(data).map(str::to_string).ok()
 }
 
 fn decode_ipv4_option(field: &'static str, data: &[u8]) -> Result<Ipv4Addr> {
@@ -983,6 +1480,54 @@ fn decode_ipv4_list(field: &'static str, data: &[u8]) -> Result<Vec<Ipv4Addr>> {
 fn decode_u32_option(field: &'static str, data: &[u8]) -> Result<u32> {
     validate_fixed_len(field, data.len(), 4)?;
     read_u32_be(data)
+}
+
+fn decode_u16_option(field: &'static str, data: &[u8]) -> Result<u16> {
+    validate_fixed_len(field, data.len(), 2)?;
+    read_u16_be(data)
+}
+
+fn decode_u16_list(field: &'static str, data: &[u8]) -> Result<Vec<u16>> {
+    if data.is_empty() || data.len() % 2 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "16-bit list option length must be a non-zero multiple of two",
+        ));
+    }
+    data.chunks_exact(2).map(read_u16_be).collect()
+}
+
+fn decode_bool_option(field: &'static str, data: &[u8]) -> Result<bool> {
+    validate_fixed_len(field, data.len(), 1)?;
+    // RFC 2132 defines these flags as a single octet whose value is 0 or 1.
+    // Any other value is malformed for the typed view; the raw segment bytes
+    // remain inspectable for callers that need the verbatim octet.
+    match data[0] {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(CrafterError::invalid_field_value(
+            field,
+            "boolean option octet must be 0 or 1",
+        )),
+    }
+}
+
+fn decode_ipv4_pairs(field: &'static str, data: &[u8]) -> Result<Vec<(Ipv4Addr, Ipv4Addr)>> {
+    if data.is_empty() || data.len() % 8 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "IPv4 address pair option length must be a non-zero multiple of eight",
+        ));
+    }
+    Ok(data
+        .chunks_exact(8)
+        .map(|chunk| {
+            (
+                Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]),
+                Ipv4Addr::new(chunk[4], chunk[5], chunk[6], chunk[7]),
+            )
+        })
+        .collect())
 }
 
 fn encode_ipv4_list(addresses: &[Ipv4Addr]) -> Vec<u8> {
@@ -1569,5 +2114,272 @@ mod dhcp_rfc3396 {
 
         // A code that appears in no area yields None.
         assert!(parsed.concatenated_option(200).is_none());
+    }
+}
+
+#[cfg(test)]
+mod dhcp_rfc2132_base_options {
+    use super::super::{
+        Dhcp, DhcpMessageType, DhcpOption, DhcpOptionCode, DhcpOptionFormat, DhcpOptionKind,
+        DhcpOptionValue, OptionOverload,
+    };
+    use super::typed_option_value;
+    use crate::error::CrafterError;
+    use core::net::Ipv4Addr;
+
+    fn ip(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
+        Ipv4Addr::new(a, b, c, d)
+    }
+
+    // One representative option per RFC 2132 base format family, chosen to cover
+    // both the historical typed subset and codes that were previously decoded
+    // only as Generic opaque bytes. Each tuple is (code, logical value).
+    fn family_samples() -> Vec<(u8, DhcpOptionValue)> {
+        vec![
+            // IPv4 single address (option 1, subnet mask).
+            (1, DhcpOptionValue::Ipv4(ip(255, 255, 255, 0))),
+            // IPv4 single address that was NOT in the old typed subset
+            // (option 16, swap server; option 32, router solicitation).
+            (16, DhcpOptionValue::Ipv4(ip(192, 0, 2, 9))),
+            (32, DhcpOptionValue::Ipv4(ip(192, 0, 2, 7))),
+            // IPv4 list (option 6, DNS) and a previously-Generic list
+            // (option 42, NTP servers; option 44, NetBIOS name server).
+            (
+                6,
+                DhcpOptionValue::Ipv4List(vec![ip(192, 0, 2, 53), ip(198, 51, 100, 53)]),
+            ),
+            (42, DhcpOptionValue::Ipv4List(vec![ip(192, 0, 2, 123)])),
+            (
+                44,
+                DhcpOptionValue::Ipv4List(vec![ip(192, 0, 2, 200), ip(192, 0, 2, 201)]),
+            ),
+            // IPv4 address pairs (option 21 policy filter, option 33 static
+            // route) - a brand new format family.
+            (
+                21,
+                DhcpOptionValue::Ipv4Pairs(vec![(ip(192, 0, 2, 0), ip(255, 255, 255, 0))]),
+            ),
+            (
+                33,
+                DhcpOptionValue::Ipv4Pairs(vec![
+                    (ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
+                    (ip(203, 0, 113, 0), ip(192, 0, 2, 2)),
+                ]),
+            ),
+            // Boolean flag bytes (option 19 IP forwarding, option 27 all subnets
+            // local, option 39 TCP keepalive garbage) - a new format family.
+            (19, DhcpOptionValue::Bool(true)),
+            (27, DhcpOptionValue::Bool(false)),
+            (39, DhcpOptionValue::Bool(true)),
+            // Single unsigned octet (option 23 default IP TTL, option 46 NetBIOS
+            // node type).
+            (23, DhcpOptionValue::U8(64)),
+            (46, DhcpOptionValue::U8(8)),
+            // 16-bit unsigned (option 13 boot file size, option 22 max datagram
+            // reassembly, option 26 interface MTU, option 57 max message size).
+            (13, DhcpOptionValue::U16(1024)),
+            (22, DhcpOptionValue::U16(576)),
+            (26, DhcpOptionValue::U16(1500)),
+            (57, DhcpOptionValue::U16(1400)),
+            // 16-bit unsigned list (option 25 path MTU plateau table) - a new
+            // format family.
+            (25, DhcpOptionValue::U16List(vec![68, 296, 1500])),
+            // 32-bit signed (option 2 time offset) - a new format family.
+            (2, DhcpOptionValue::I32(-18_000)),
+            // 32-bit unsigned (option 24 MTU aging, option 35 ARP timeout,
+            // option 51 lease time).
+            (24, DhcpOptionValue::U32(1_200)),
+            (35, DhcpOptionValue::U32(60)),
+            (51, DhcpOptionValue::U32(86_400)),
+            // Text / NVT ASCII (option 12 host name, option 40 NIS domain,
+            // option 56 message) - bytes preserved, never lossy.
+            (12, DhcpOptionValue::Text(b"agent-host".to_vec())),
+            (40, DhcpOptionValue::Text(b"corp.example".to_vec())),
+            (56, DhcpOptionValue::Text(b"lease denied".to_vec())),
+            // Parameter request list (option 55).
+            (
+                55,
+                DhcpOptionValue::ParameterRequestList(vec![1, 3, 6, 15, 51, 54]),
+            ),
+            // Message type (option 53) and option overload (option 52).
+            (53, DhcpOptionValue::MessageType(DhcpMessageType::Discover)),
+            (52, DhcpOptionValue::OptionOverload(OptionOverload::Both)),
+            // Opaque (option 60 vendor class id, option 61 client id, option 43
+            // vendor specific) - raw bytes preserved.
+            (60, DhcpOptionValue::Opaque(b"MSFT 5.0".to_vec())),
+            (
+                61,
+                DhcpOptionValue::Opaque(vec![0x01, 0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]),
+            ),
+            (43, DhcpOptionValue::Opaque(vec![0xde, 0xad, 0xbe, 0xef])),
+        ]
+    }
+
+    #[test]
+    fn dhcp_rfc2132_base_options_cover_format_families() {
+        // Every RFC 2132 base format family is represented, and every sample
+        // decodes back to the exact logical value through the source-backed
+        // format table - including options that were previously only opaque
+        // Generic bytes.
+        let samples = family_samples();
+
+        // Prove the sample set spans every DhcpOptionFormat variant so no
+        // family is left untested.
+        use std::collections::HashSet;
+        let covered: HashSet<DhcpOptionFormat> = samples
+            .iter()
+            .map(|(code, _)| {
+                DhcpOptionKind::from_code(*code)
+                    .expect("sample code is a registered base option")
+                    .format()
+            })
+            .collect();
+        let all_families = [
+            DhcpOptionFormat::Ipv4,
+            DhcpOptionFormat::Ipv4List,
+            DhcpOptionFormat::Ipv4Pairs,
+            DhcpOptionFormat::Bool,
+            DhcpOptionFormat::U8,
+            DhcpOptionFormat::U16,
+            DhcpOptionFormat::U16List,
+            DhcpOptionFormat::I32,
+            DhcpOptionFormat::U32,
+            DhcpOptionFormat::Text,
+            DhcpOptionFormat::ParameterRequestList,
+            DhcpOptionFormat::MessageType,
+            DhcpOptionFormat::OptionOverload,
+            DhcpOptionFormat::Opaque,
+        ];
+        for family in all_families {
+            assert!(
+                covered.contains(&family),
+                "format family {family:?} is not exercised by the sample set",
+            );
+        }
+
+        for (code, value) in samples {
+            // The free typed-decode function and the option accessor agree.
+            let payload = value.encode_payload();
+            let decoded = typed_option_value(code, &payload)
+                .unwrap()
+                .unwrap_or_else(|| panic!("code {code} has no typed value"));
+            assert_eq!(decoded, value, "typed decode mismatch for code {code}");
+
+            // Constructed through the kind+value builder, the option re-decodes
+            // to the same logical value and reports its registered kind.
+            let kind = DhcpOptionKind::from_code(code).unwrap();
+            assert_eq!(kind.code(), code);
+            let option = DhcpOption::typed(kind, value.clone());
+            assert_eq!(option.code(), code);
+            assert_eq!(option.kind(), Some(kind));
+            assert_eq!(option.typed_value().unwrap(), Some(value.clone()));
+
+            // The codepoint is registry-classified, never RemovedOrUnassigned
+            // for a base option.
+            assert!(matches!(
+                DhcpOptionCode::from_code(code),
+                DhcpOptionCode::Assigned(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn dhcp_rfc2132_base_options_roundtrip() {
+        // Every sample option survives a full compile -> decode -> compile cycle
+        // inside a real DHCP packet without data loss, and the typed value is
+        // recoverable from the decoded option in each area position.
+        let samples = family_samples();
+        let mut options: Vec<DhcpOption> = samples
+            .iter()
+            // Skip the overload sample here: option 52 changes how the sname/file
+            // fields are interpreted, which is exercised by the overload tests.
+            .filter(|(code, _)| *code != 52)
+            .map(|(code, value)| {
+                DhcpOption::typed(DhcpOptionKind::from_code(*code).unwrap(), value.clone())
+            })
+            .collect();
+        options.push(DhcpOption::End);
+
+        let dhcp = Dhcp::new()
+            .op(super::super::BOOTP_REPLY)
+            .options(options.clone());
+
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let parsed = Dhcp::decode(&bytes).unwrap();
+
+        // Exact byte round-trip: re-compiling the decoded packet reproduces the
+        // wire bytes.
+        let recompiled = crate::Packet::from_layer(parsed.clone())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(recompiled, bytes);
+
+        // Each sample's typed value is recoverable from the decoded options.
+        for (code, value) in samples.iter().filter(|(code, _)| *code != 52) {
+            let option = parsed
+                .options_value()
+                .iter()
+                .find(|o| o.code() == *code)
+                .unwrap_or_else(|| panic!("option {code} present after decode"));
+            assert_eq!(
+                option.typed_value().unwrap(),
+                Some(value.clone()),
+                "typed value lost for code {code} after round-trip",
+            );
+        }
+
+        // Text options preserve raw bytes and never force lossy UTF-8: a non-UTF-8
+        // host name survives byte-for-byte.
+        let raw_text = DhcpOption::typed(
+            DhcpOptionKind::HostName,
+            DhcpOptionValue::Text(vec![0xff, 0xfe, b'x']),
+        );
+        let dhcp = Dhcp::new().options([raw_text, DhcpOption::End]);
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let parsed = Dhcp::decode(&bytes).unwrap();
+        let host = parsed
+            .options_value()
+            .iter()
+            .find(|o| o.code() == 12)
+            .unwrap();
+        assert_eq!(
+            host.typed_value().unwrap(),
+            Some(DhcpOptionValue::Text(vec![0xff, 0xfe, b'x'])),
+        );
+    }
+
+    #[test]
+    fn dhcp_rfc2132_base_options_reject_malformed_lengths() {
+        // Format violations are structured errors, not panics: a boolean with a
+        // bad octet, a too-short u32, an odd-length address list, and a non-pair
+        // route length all surface as InvalidFieldValue.
+        for (code, bad) in [
+            (19u8, vec![2u8]),        // boolean octet must be 0/1
+            (51, vec![0, 0, 1]),      // lease time must be 4 octets
+            (6, vec![192, 0, 2]),     // address list must be a multiple of 4
+            (33, vec![192, 0, 2, 1]), // static route must be a multiple of 8
+            (25, vec![0]),            // u16 list must be a multiple of 2
+        ] {
+            let error = typed_option_value(code, &bad).unwrap_err();
+            assert!(
+                matches!(error, CrafterError::InvalidFieldValue { .. }),
+                "code {code} should yield a structured field error",
+            );
+        }
+
+        // Codes outside the RFC 2132 base set return Ok(None) so callers fall
+        // back to raw-byte preservation.
+        assert!(typed_option_value(224, &[0xde, 0xad]).unwrap().is_none());
+        assert!(typed_option_value(82, &[0x01, 0x00]).unwrap().is_none());
     }
 }

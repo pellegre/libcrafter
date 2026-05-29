@@ -250,7 +250,6 @@ fn required_malformed_families() -> &'static [&'static str] {
         "missing dhcp magic cookie",
         "truncated dhcp option",
         "invalid dhcp fixed option length",
-        "invalid dhcp text option",
     ]
 }
 
@@ -290,7 +289,6 @@ fn malformed_family(name: &str) -> Option<&'static str> {
         "dhcp-missing-magic-cookie" => Some("missing dhcp magic cookie"),
         "dhcp-truncated-option" => Some("truncated dhcp option"),
         "dhcp-invalid-fixed-option-length" => Some("invalid dhcp fixed option length"),
-        "dhcp-invalid-utf8-text-option" => Some("invalid dhcp text option"),
         _ => None,
     }
 }
