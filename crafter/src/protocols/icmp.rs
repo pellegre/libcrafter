@@ -6,7 +6,7 @@ use core::ops::Div;
 use core::str::FromStr;
 
 use crate::checksum::internet_checksum;
-use crate::endian::read_u16_be;
+use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
@@ -229,6 +229,9 @@ pub const ICMP_EXTENSION_CLASS_MPLS: u8 = 1;
 pub const ICMP_EXTENSION_CTYPE_MPLS_INCOMING: u8 = 1;
 
 const ICMP_HEADER_LEN: usize = 8;
+/// RFC 792 timestamp body: originate, receive, and transmit timestamps, each a
+/// 32-bit value (12 bytes total) following the fixed ICMP header.
+const ICMP_TIMESTAMP_BODY_LEN: usize = 12;
 const ICMP_EXTENSION_HEADER_LEN: usize = 4;
 const ICMP_EXTENSION_OBJECT_LEN: usize = 4;
 const ICMP_EXTENSION_MPLS_LEN: usize = 4;
@@ -392,6 +395,35 @@ impl Icmp {
         Self::new().kind(IcmpKind::DestinationUnreachable)
     }
 
+    /// Create a timestamp request (RFC 792, type 13).
+    ///
+    /// The fixed header carries the identifier and sequence number; the three
+    /// 32-bit timestamps live in a separate [`IcmpTimestamp`] body layer.
+    pub fn timestamp_request() -> Self {
+        Self::new().icmp_type(ICMP_TIMESTAMP)
+    }
+
+    /// Create a timestamp reply (RFC 792, type 14).
+    pub fn timestamp_reply() -> Self {
+        Self::new().icmp_type(ICMP_TIMESTAMP_REPLY)
+    }
+
+    /// Create an information request (RFC 792, type 15).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. Information messages
+    /// carry only the identifier and sequence number with no body beyond the
+    /// fixed header.
+    pub fn information_request() -> Self {
+        Self::new().icmp_type(ICMP_INFORMATION_REQUEST)
+    }
+
+    /// Create an information reply (RFC 792, type 16).
+    ///
+    /// Deprecated by RFC 6918, but still constructible.
+    pub fn information_reply() -> Self {
+        Self::new().icmp_type(ICMP_INFORMATION_REPLY)
+    }
+
     /// Set the ICMP type from a common kind.
     pub fn kind(mut self, kind: IcmpKind) -> Self {
         self.icmp_type.set_user(kind.ipv4_type());
@@ -508,9 +540,13 @@ impl Icmp {
         self.checksum.value().copied()
     }
 
-    /// Echo identifier value when meaningful for the current type.
+    /// Identifier value when meaningful for the current type.
+    ///
+    /// Echo, timestamp, and information messages (RFC 792) all carry an
+    /// identifier in the first half of the rest-of-header; this accessor
+    /// surfaces it for each of those query families.
     pub fn identifier_value(&self) -> Option<u16> {
-        if is_echo_v4(self.icmp_type_value()) {
+        if is_query_v4(self.icmp_type_value()) {
             Some(value_or_u16_from_rest(
                 &self.identifier,
                 &self.rest_of_header,
@@ -521,9 +557,11 @@ impl Icmp {
         }
     }
 
-    /// Echo sequence number when meaningful for the current type.
+    /// Sequence number when meaningful for the current type.
+    ///
+    /// Surfaced for echo, timestamp, and information messages (RFC 792).
     pub fn sequence_number_value(&self) -> Option<u16> {
-        if is_echo_v4(self.icmp_type_value()) {
+        if is_query_v4(self.icmp_type_value()) {
             Some(value_or_u16_from_rest(
                 &self.sequence_number,
                 &self.rest_of_header,
@@ -585,10 +623,12 @@ impl Icmp {
         let mut rest = value_or_copy(&self.rest_of_header, [0; 4]);
 
         match self.icmp_type_value() {
-            ICMP_ECHO_REQUEST | ICMP_ECHO_REPLY => {
-                // Echo/echo-reply: identifier (2) + sequence (2). When the raw
-                // rest is user-set, only a user-set id/seq overrides those bytes;
-                // otherwise the typed defaults seed them from the raw value.
+            ICMP_ECHO_REQUEST | ICMP_ECHO_REPLY | ICMP_TIMESTAMP | ICMP_TIMESTAMP_REPLY
+            | ICMP_INFORMATION_REQUEST | ICMP_INFORMATION_REPLY => {
+                // RFC 792 query families: identifier (2) + sequence (2). When the
+                // raw rest is user-set, only a user-set id/seq overrides those
+                // bytes; otherwise the typed defaults seed them from the raw
+                // value.
                 if self.identifier.is_user_set() || !raw_is_user {
                     let identifier =
                         value_or_u16_from_rest(&self.identifier, &self.rest_of_header, 0);
@@ -900,6 +940,114 @@ impl Layer for IcmpQuotedIpv4 {
 }
 
 impl_layer_div!(IcmpQuotedIpv4);
+
+/// RFC 792 timestamp message body.
+///
+/// Timestamp request (type 13) and timestamp reply (type 14) append three
+/// 32-bit timestamps after the fixed ICMP header: the originate timestamp set
+/// by the requester, the receive timestamp set when the responder received the
+/// request, and the transmit timestamp set when the responder sent the reply.
+/// RFC 792 defines each as milliseconds since midnight UT; a sender that cannot
+/// supply a standard value may set the high-order bit, so the raw 32-bit values
+/// are exposed verbatim rather than reinterpreted.
+///
+/// This layer always encodes exactly 12 bytes. Malformed timestamp lengths
+/// (a short or oversized trailing region) are not forced into this layer on
+/// decode; they remain a [`Raw`] payload so the bytes are never lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IcmpTimestamp {
+    originate: Field<u32>,
+    receive: Field<u32>,
+    transmit: Field<u32>,
+}
+
+impl IcmpTimestamp {
+    /// Create a timestamp body with all three timestamps defaulted to zero.
+    pub fn new() -> Self {
+        Self {
+            originate: Field::defaulted(0),
+            receive: Field::defaulted(0),
+            transmit: Field::defaulted(0),
+        }
+    }
+
+    /// Set the originate timestamp.
+    pub fn originate(mut self, originate: u32) -> Self {
+        self.originate.set_user(originate);
+        self
+    }
+
+    /// Set the receive timestamp.
+    pub fn receive(mut self, receive: u32) -> Self {
+        self.receive.set_user(receive);
+        self
+    }
+
+    /// Set the transmit timestamp.
+    pub fn transmit(mut self, transmit: u32) -> Self {
+        self.transmit.set_user(transmit);
+        self
+    }
+
+    /// Originate timestamp value.
+    pub fn originate_value(&self) -> u32 {
+        value_or_copy(&self.originate, 0)
+    }
+
+    /// Receive timestamp value.
+    pub fn receive_value(&self) -> u32 {
+        value_or_copy(&self.receive, 0)
+    }
+
+    /// Transmit timestamp value.
+    pub fn transmit_value(&self) -> u32 {
+        value_or_copy(&self.transmit, 0)
+    }
+}
+
+impl Default for IcmpTimestamp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for IcmpTimestamp {
+    fn name(&self) -> &'static str {
+        "IcmpTimestamp"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "IcmpTimestamp(originate={}, receive={}, transmit={})",
+            self.originate_value(),
+            self.receive_value(),
+            self.transmit_value()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("originate", self.originate_value().to_string()),
+            ("receive", self.receive_value().to_string()),
+            ("transmit", self.transmit_value().to_string()),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        ICMP_TIMESTAMP_BODY_LEN
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.originate_value().to_be_bytes());
+        out.extend_from_slice(&self.receive_value().to_be_bytes());
+        out.extend_from_slice(&self.transmit_value().to_be_bytes());
+        Ok(())
+    }
+
+    impl_layer_object!(IcmpTimestamp);
+}
+
+impl_layer_div!(IcmpTimestamp);
 
 /// Internet Control Message Protocol for IPv6.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1752,6 +1900,24 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
         }
     }
 
+    // RFC 792 timestamp messages carry exactly three 32-bit timestamps after
+    // the fixed header. Type the body only when its length is exactly right;
+    // a short or oversized region is a malformed timestamp and stays raw so the
+    // bytes survive and decoding never panics.
+    if matches!(icmp_type, ICMP_TIMESTAMP | ICMP_TIMESTAMP_REPLY)
+        && payload.len() == ICMP_TIMESTAMP_BODY_LEN
+    {
+        let originate = read_u32_be(&payload[0..4])?;
+        let receive = read_u32_be(&payload[4..8])?;
+        let transmit = read_u32_be(&payload[8..12])?;
+        packet = packet.push(IcmpTimestamp {
+            originate: Field::user(originate),
+            receive: Field::user(receive),
+            transmit: Field::user(transmit),
+        });
+        return Ok(packet);
+    }
+
     packet = packet.push(Raw::from_bytes(payload));
     Ok(packet)
 }
@@ -1782,8 +1948,8 @@ fn decode_icmp_parts(bytes: &[u8]) -> Result<(Icmp, &[u8])> {
         code: Field::user(bytes[1]),
         checksum: Field::user(read_u16_be(&bytes[2..4])?),
         rest_of_header: Field::user(rest),
-        identifier: field_from_echo(icmp_type, &rest, 0, is_echo_v4),
-        sequence_number: field_from_echo(icmp_type, &rest, 2, is_echo_v4),
+        identifier: field_from_echo(icmp_type, &rest, 0, is_query_v4),
+        sequence_number: field_from_echo(icmp_type, &rest, 2, is_query_v4),
         pointer: if icmp_type == ICMP_PARAMETER_PROBLEM {
             Field::user(rest[0])
         } else {
@@ -1913,6 +2079,23 @@ fn field_from_echo(
 
 fn is_echo_v4(icmp_type: u8) -> bool {
     matches!(icmp_type, ICMP_ECHO_REQUEST | ICMP_ECHO_REPLY)
+}
+
+/// True for the RFC 792 query families that carry an identifier and sequence
+/// number in the rest-of-header: echo, timestamp, and information messages.
+///
+/// This is broader than [`is_echo_v4`] on purpose: echo-only matching used by
+/// ping-style tools still flows through [`IcmpKind`], so timestamp and
+/// information messages surface id/seq without being mistaken for echoes.
+fn is_query_v4(icmp_type: u8) -> bool {
+    is_echo_v4(icmp_type)
+        || matches!(
+            icmp_type,
+            ICMP_TIMESTAMP
+                | ICMP_TIMESTAMP_REPLY
+                | ICMP_INFORMATION_REQUEST
+                | ICMP_INFORMATION_REPLY
+        )
 }
 
 fn is_echo_v6(icmp_type: u8) -> bool {
@@ -3001,5 +3184,239 @@ mod icmpv4_rfc792_errors {
         let summary = quoted.summary();
         assert!(summary.starts_with("IcmpQuotedIpv4("));
         assert!(summary.contains("Ipv4"));
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_rfc792_queries {
+    use super::{
+        icmpv4_type_is_deprecated, icmpv4_type_summary, Icmp, IcmpTimestamp, ICMP_INFORMATION_REPLY,
+        ICMP_INFORMATION_REQUEST, ICMP_TIMESTAMP, ICMP_TIMESTAMP_REPLY,
+    };
+    use crate::checksum::internet_checksum;
+    use crate::packet::Layer;
+    use crate::{Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // A timestamp request compiles its fixed header (with identifier and
+    // sequence) plus the three 32-bit timestamps, and the typed body survives a
+    // full decode round-trip with its values intact.
+    #[test]
+    fn icmpv4_rfc792_queries_timestamp_compile_decode_roundtrip() {
+        for icmp_type in [ICMP_TIMESTAMP, ICMP_TIMESTAMP_REPLY] {
+            let packet = Ipv4::new().src(src()).dst(dst())
+                / Icmp::new().icmp_type(icmp_type).id(0x1234).seq(7)
+                / IcmpTimestamp::new()
+                    .originate(0x0a0b_0c0d)
+                    .receive(0x11223344)
+                    .transmit(0x55667788);
+            let compiled = packet.compile().unwrap();
+
+            // ICMP header begins at byte 20 (20-byte IPv4 header, no options).
+            assert_eq!(compiled.as_bytes()[20], icmp_type);
+            assert_eq!(compiled.as_bytes()[21], 0); // code
+            // Identifier (bytes 24..26) and sequence (bytes 26..28).
+            assert_eq!(&compiled.as_bytes()[24..26], &0x1234u16.to_be_bytes());
+            assert_eq!(&compiled.as_bytes()[26..28], &7u16.to_be_bytes());
+            // Timestamp body (bytes 28..40): originate, receive, transmit.
+            assert_eq!(&compiled.as_bytes()[28..32], &0x0a0b_0c0du32.to_be_bytes());
+            assert_eq!(&compiled.as_bytes()[32..36], &0x11223344u32.to_be_bytes());
+            assert_eq!(&compiled.as_bytes()[36..40], &0x55667788u32.to_be_bytes());
+
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+            let icmp = decoded.layer::<Icmp>().unwrap();
+            assert_eq!(icmp.icmp_type_value(), icmp_type);
+            // Identifier and sequence are inspectable for the timestamp family.
+            assert_eq!(icmp.identifier_value(), Some(0x1234));
+            assert_eq!(icmp.sequence_number_value(), Some(7));
+            // Timestamp is not an echo, so it maps to no common ping kind.
+            assert_eq!(icmp.kind_value(), None);
+
+            let ts = decoded.layer::<IcmpTimestamp>().unwrap();
+            assert_eq!(ts.originate_value(), 0x0a0b_0c0d);
+            assert_eq!(ts.receive_value(), 0x11223344);
+            assert_eq!(ts.transmit_value(), 0x55667788);
+            // No leftover raw bytes when the body length is exactly 12.
+            assert!(decoded.layer::<Raw>().is_none());
+            assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+        }
+    }
+
+    // The timestamp constructors set the right types and default the body to
+    // zero timestamps.
+    #[test]
+    fn icmpv4_rfc792_queries_timestamp_constructors_set_types() {
+        assert_eq!(Icmp::timestamp_request().icmp_type_value(), ICMP_TIMESTAMP);
+        assert_eq!(
+            Icmp::timestamp_reply().icmp_type_value(),
+            ICMP_TIMESTAMP_REPLY
+        );
+        let ts = IcmpTimestamp::new();
+        assert_eq!(ts.originate_value(), 0);
+        assert_eq!(ts.receive_value(), 0);
+        assert_eq!(ts.transmit_value(), 0);
+    }
+
+    // The ICMP checksum is auto-filled over the header plus the timestamp body
+    // when the caller leaves it unset.
+    #[test]
+    fn icmpv4_rfc792_queries_timestamp_checksum_autofill() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::timestamp_request().id(0x4242).seq(3)
+            / IcmpTimestamp::new().originate(1).receive(2).transmit(3);
+        let compiled = packet.compile().unwrap();
+
+        // Recompute the expected checksum over the full ICMP message (header +
+        // 12-byte timestamp body) with the checksum field zeroed.
+        let icmp_message = &compiled.as_bytes()[20..];
+        let mut zeroed = icmp_message.to_vec();
+        zeroed[2] = 0;
+        zeroed[3] = 0;
+        let expected = internet_checksum(&zeroed);
+        assert_ne!(expected, 0);
+        assert_eq!(
+            &compiled.as_bytes()[22..24],
+            &expected.to_be_bytes(),
+            "auto-filled checksum must cover the timestamp body"
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmp>().unwrap().checksum_value(),
+            Some(expected)
+        );
+    }
+
+    // An explicit (deliberately wrong) checksum on a timestamp message is
+    // emitted verbatim instead of being recomputed over the body.
+    #[test]
+    fn icmpv4_rfc792_queries_timestamp_explicit_checksum_override() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::timestamp_request().id(1).seq(1).checksum(0xbeef)
+            / IcmpTimestamp::new().originate(9).receive(9).transmit(9);
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(&compiled.as_bytes()[22..24], &0xbeefu16.to_be_bytes());
+    }
+
+    // Information request and reply are constructible (RFC 792) and carry only
+    // the identifier and sequence number with no body beyond the fixed header.
+    #[test]
+    fn icmpv4_rfc792_queries_information_request_reply_construction() {
+        for icmp_type in [ICMP_INFORMATION_REQUEST, ICMP_INFORMATION_REPLY] {
+            let packet = Ipv4::new().src(src()).dst(dst())
+                / Icmp::new().icmp_type(icmp_type).id(0x0a0b).seq(0x0c0d);
+            let compiled = packet.compile().unwrap();
+
+            assert_eq!(compiled.as_bytes()[20], icmp_type);
+            assert_eq!(compiled.as_bytes()[21], 0);
+            assert_eq!(&compiled.as_bytes()[24..26], &0x0a0bu16.to_be_bytes());
+            assert_eq!(&compiled.as_bytes()[26..28], &0x0c0du16.to_be_bytes());
+            // No body bytes follow the fixed 8-byte ICMP header.
+            assert_eq!(compiled.as_bytes().len(), 20 + 8);
+
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+            let icmp = decoded.layer::<Icmp>().unwrap();
+            assert_eq!(icmp.icmp_type_value(), icmp_type);
+            assert_eq!(icmp.identifier_value(), Some(0x0a0b));
+            assert_eq!(icmp.sequence_number_value(), Some(0x0c0d));
+            // Information messages are not echoes, so they carry no ping kind.
+            assert_eq!(icmp.kind_value(), None);
+            assert!(decoded.layer::<Raw>().is_none());
+            assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+        }
+
+        // The dedicated constructors set the same types.
+        assert_eq!(
+            Icmp::information_request().icmp_type_value(),
+            ICMP_INFORMATION_REQUEST
+        );
+        assert_eq!(
+            Icmp::information_reply().icmp_type_value(),
+            ICMP_INFORMATION_REPLY
+        );
+    }
+
+    // Information messages are deprecated by RFC 6918 but keep their registry
+    // identity in summaries and are flagged as deprecated. Naming them never
+    // doubles as refusing them (construction above succeeds).
+    #[test]
+    fn icmpv4_rfc792_queries_deprecated_information_summaries() {
+        assert_eq!(
+            icmpv4_type_summary(ICMP_INFORMATION_REQUEST),
+            "information-request(15)"
+        );
+        assert_eq!(
+            icmpv4_type_summary(ICMP_INFORMATION_REPLY),
+            "information-reply(16)"
+        );
+        assert!(icmpv4_type_is_deprecated(ICMP_INFORMATION_REQUEST));
+        assert!(icmpv4_type_is_deprecated(ICMP_INFORMATION_REPLY));
+
+        // Timestamp messages are active (not deprecated) and keep their names.
+        assert_eq!(icmpv4_type_summary(ICMP_TIMESTAMP), "timestamp(13)");
+        assert_eq!(
+            icmpv4_type_summary(ICMP_TIMESTAMP_REPLY),
+            "timestamp-reply(14)"
+        );
+        assert!(!icmpv4_type_is_deprecated(ICMP_TIMESTAMP));
+
+        // The body summary exposes the three typed timestamps.
+        let summary = IcmpTimestamp::new()
+            .originate(1)
+            .receive(2)
+            .transmit(3)
+            .summary();
+        assert_eq!(
+            summary,
+            "IcmpTimestamp(originate=1, receive=2, transmit=3)"
+        );
+    }
+
+    // A timestamp message whose trailing region is the wrong length (not exactly
+    // 12 bytes) is malformed: the typed body parser declines it, the bytes
+    // remain a Raw payload, decoding does not panic, and the message still
+    // round-trips byte-for-byte.
+    #[test]
+    fn icmpv4_rfc792_queries_malformed_timestamp_stays_raw() {
+        // Short body: only 8 of the 12 timestamp bytes are present.
+        let short = Ipv4::new().src(src()).dst(dst())
+            / Icmp::timestamp_request().id(1).seq(1)
+            / Raw::from_bytes([0xaa; 8]);
+        let compiled = short.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpTimestamp>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[0xaa; 8]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+
+        // Oversized body: 12 timestamp bytes plus trailing unknown data.
+        let mut body = vec![0u8; 12];
+        body.extend_from_slice(b"trailing");
+        let long = Ipv4::new().src(src()).dst(dst())
+            / Icmp::timestamp_reply().id(2).seq(2)
+            / Raw::from_bytes(&body);
+        let compiled = long.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpTimestamp>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &body[..]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // True buffer truncation (fewer than 8 bytes of ICMP header) returns a
+    // structured buffer error rather than panicking.
+    #[test]
+    fn icmpv4_rfc792_queries_truncated_header_is_structured_error() {
+        let short = (Ipv4::new().proto(crate::IpProtocol::Icmp) / Raw::from_bytes([ICMP_TIMESTAMP; 5]))
+            .compile()
+            .unwrap();
+        assert!(Packet::decode_from_l3(NetworkLayer::Ipv4, short.as_bytes()).is_err());
     }
 }
