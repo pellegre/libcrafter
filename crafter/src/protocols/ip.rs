@@ -998,6 +998,113 @@ fn append_ipv4_payload_with_registry(
     Ok(packet)
 }
 
+/// Leniently decode a quoted original IPv4 datagram carried inside an ICMPv4
+/// error message (RFC 792 "Internet Header + 64 bits of Original Data
+/// Datagram").
+///
+/// Quoted datagrams are usually truncated: routers copy the IPv4 header plus a
+/// small prefix of the payload, so the IPv4 `total_length` typically exceeds the
+/// bytes actually present. This decoder therefore validates and types the IPv4
+/// header but never requires the full `total_length` to be present:
+///
+/// - The IPv4 header is parsed as typed [`Ipv4`] fields when the version is 4,
+///   the IHL is at least five words, and all header bytes (including options)
+///   are present.
+/// - When the post-header bytes form a complete, self-consistent transport
+///   datagram (so a strict decode succeeds), they are typed (UDP/TCP/ICMP/...);
+///   otherwise — including the common truncated-quote case — they remain a
+///   [`Raw`] tail rather than panicking or being dropped.
+/// - Returns the decoded layers plus the number of leading bytes consumed by the
+///   quoted datagram, so the caller can preserve any trailing bytes as `Raw`.
+///
+/// Returns `None` when `bytes` does not begin with a parseable IPv4 header, so
+/// the caller can keep the whole ICMP payload as raw bytes.
+pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
+    if bytes.len() < IPV4_MIN_HEADER_LEN {
+        return None;
+    }
+
+    let version = bytes[0] >> 4;
+    let ihl = bytes[0] & 0x0f;
+    if version != 4 || ihl < 5 {
+        return None;
+    }
+
+    let header_len = (ihl as usize) * 4;
+    if bytes.len() < header_len {
+        return None;
+    }
+
+    let total_length = read_u16_be(&bytes[2..4]).ok()? as usize;
+    // Trust `total_length` only when it is internally consistent and fully
+    // present; otherwise treat every available byte as part of the quote so a
+    // truncated datagram still round-trips.
+    let consumed = if total_length >= header_len && total_length <= bytes.len() {
+        total_length
+    } else {
+        bytes.len()
+    };
+    let datagram = &bytes[..consumed];
+
+    let flags_fragment = read_u16_be(&datagram[6..8]).ok()?;
+    let options = if header_len > IPV4_MIN_HEADER_LEN {
+        datagram[IPV4_MIN_HEADER_LEN..header_len].to_vec()
+    } else {
+        Vec::new()
+    };
+    if validate_ipv4_options(&options).is_err() {
+        return None;
+    }
+
+    let ipv4 = Ipv4 {
+        version: Field::user(version),
+        ihl: Field::user(ihl),
+        tos: Field::user(datagram[1]),
+        total_length: Field::user(total_length as u16),
+        identification: Field::user(read_u16_be(&datagram[4..6]).ok()?),
+        flags: Field::user((flags_fragment >> 13) as u8),
+        fragment_offset: Field::user(flags_fragment & IPV4_MAX_FRAGMENT_OFFSET),
+        ttl: Field::user(datagram[8]),
+        protocol: Field::user(datagram[9]),
+        checksum: Field::user(read_u16_be(&datagram[10..12]).ok()?),
+        source: Field::user(Ipv4Addr::new(
+            datagram[12],
+            datagram[13],
+            datagram[14],
+            datagram[15],
+        )),
+        destination: Field::user(Ipv4Addr::new(
+            datagram[16],
+            datagram[17],
+            datagram[18],
+            datagram[19],
+        )),
+        options,
+    };
+
+    let protocol = ipv4.protocol_value();
+    let payload = &datagram[header_len..];
+    let mut packet = Packet::new().push(ipv4);
+
+    // Best-effort typed transport decode. A strict failure (truncated quote or
+    // unknown next protocol) keeps the remaining bytes raw-compatible. A
+    // transport-only registry is used so a short quoted prefix never trips an
+    // application-layer decoder (DNS, DHCP) and discards the typed L4 header.
+    let registry = ProtocolRegistry::transport_only();
+    packet = match registry.decode_ipv4_protocol(packet.clone(), protocol, payload) {
+        Ok(typed) => typed,
+        Err(_) => {
+            if payload.is_empty() {
+                packet
+            } else {
+                packet.push(Raw::from_bytes(payload))
+            }
+        }
+    };
+
+    Some((packet, consumed))
+}
+
 fn payload_len_after(ctx: LayerContext<'_>) -> usize {
     ctx.packet()
         .iter()

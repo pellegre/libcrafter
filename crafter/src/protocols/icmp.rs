@@ -10,7 +10,7 @@ use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
-use crate::protocols::ip::IPPROTO_ICMPV6;
+use crate::protocols::ip::{decode_quoted_ipv4, IPPROTO_ICMPV6};
 
 // ICMPv4 type numbers from the IANA ICMP Parameters registry
 // (<https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml>).
@@ -813,6 +813,93 @@ impl Layer for Icmp {
 }
 
 impl_layer_div!(Icmp);
+
+/// Quoted original IPv4 datagram carried by an ICMPv4 error message.
+///
+/// RFC 792 error messages (destination unreachable, source quench, redirect,
+/// time exceeded, parameter problem) append the IPv4 header plus at least the
+/// first 64 bits of the offending datagram so the originator can match the
+/// error to the packet it sent. This layer holds that quoted datagram as a
+/// nested [`Packet`] of typed layers, keeping the packet abstraction intact:
+/// the quoted IPv4 header, transport header, and payload are inspectable just
+/// like any other layer stack.
+///
+/// On decode the quote is parsed leniently: a valid IPv4 prefix is typed,
+/// unknown quoted next protocols and truncated quotes remain raw-compatible,
+/// and a non-IPv4 quote leaves the bytes as a plain `Raw` payload instead of
+/// producing this layer.
+#[derive(Debug, Clone)]
+pub struct IcmpQuotedIpv4 {
+    datagram: Packet,
+}
+
+impl IcmpQuotedIpv4 {
+    /// Wrap a quoted original datagram built from typed packet layers.
+    pub fn new(datagram: impl IntoPacket) -> Self {
+        Self {
+            datagram: datagram.into_packet(),
+        }
+    }
+
+    /// Borrow the quoted datagram as a typed packet stack.
+    pub fn datagram(&self) -> &Packet {
+        &self.datagram
+    }
+
+    /// Mutably borrow the quoted datagram.
+    pub fn datagram_mut(&mut self) -> &mut Packet {
+        &mut self.datagram
+    }
+
+    /// First quoted layer of type `T`, when the quote was typed on decode.
+    pub fn quoted_layer<T>(&self) -> Option<&T>
+    where
+        T: Layer,
+    {
+        self.datagram.layer::<T>()
+    }
+}
+
+impl PartialEq for IcmpQuotedIpv4 {
+    fn eq(&self, other: &Self) -> bool {
+        // Layers are not directly comparable through trait objects, so compare
+        // the compiled byte image. Quoted datagrams decode every field as
+        // user-set, so this is a faithful structural comparison.
+        match (self.datagram.compile(), other.datagram.compile()) {
+            (Ok(left), Ok(right)) => left.as_bytes() == right.as_bytes(),
+            _ => false,
+        }
+    }
+}
+
+impl Layer for IcmpQuotedIpv4 {
+    fn name(&self) -> &'static str {
+        "IcmpQuotedIpv4"
+    }
+
+    fn summary(&self) -> String {
+        format!("IcmpQuotedIpv4({})", self.datagram.summary())
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("quoted_len", self.datagram.encoded_len().to_string()),
+            ("quoted", self.datagram.summary()),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        self.datagram.encoded_len()
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.datagram.compile_into(out)
+    }
+
+    impl_layer_object!(IcmpQuotedIpv4);
+}
+
+impl_layer_div!(IcmpQuotedIpv4);
 
 /// Internet Control Message Protocol for IPv6.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1643,10 +1730,29 @@ impl_layer_div!(IcmpExtensionMpls);
 /// Append a decoded ICMP packet to an existing packet stack.
 pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (icmp, payload) = decode_icmp_parts(bytes)?;
+    let icmp_type = icmp.icmp_type_value();
     packet = packet.push(icmp);
-    if !payload.is_empty() {
-        packet = packet.push(Raw::from_bytes(payload));
+
+    if payload.is_empty() {
+        return Ok(packet);
     }
+
+    // RFC 792 error messages quote the original datagram after the fixed
+    // header. Type it as an `IcmpQuotedIpv4` layer when the quote begins with a
+    // parseable IPv4 header; anything left over (or an unparseable quote)
+    // stays raw-compatible so the bytes are never dropped.
+    if icmpv4_type_is_error(icmp_type) {
+        if let Some((quoted, consumed)) = decode_quoted_ipv4(payload) {
+            packet = packet.push(IcmpQuotedIpv4 { datagram: quoted });
+            let trailing = &payload[consumed..];
+            if !trailing.is_empty() {
+                packet = packet.push(Raw::from_bytes(trailing));
+            }
+            return Ok(packet);
+        }
+    }
+
+    packet = packet.push(Raw::from_bytes(payload));
     Ok(packet)
 }
 
@@ -1817,6 +1923,23 @@ fn icmpv4_type_allows_extensions(icmp_type: u8) -> bool {
     matches!(
         icmp_type,
         ICMP_DESTINATION_UNREACHABLE | ICMP_TIME_EXCEEDED | ICMP_PARAMETER_PROBLEM
+    )
+}
+
+/// True for the RFC 792 error-family ICMPv4 types that quote the original
+/// datagram after the fixed header: destination unreachable, source quench,
+/// redirect, time exceeded, and parameter problem.
+///
+/// Source quench (RFC 6633) is deprecated but still follows the error shape, so
+/// it is decoded with a quoted datagram like the others.
+fn icmpv4_type_is_error(icmp_type: u8) -> bool {
+    matches!(
+        icmp_type,
+        ICMP_DESTINATION_UNREACHABLE
+            | ICMP_SOURCE_QUENCH
+            | ICMP_REDIRECT
+            | ICMP_TIME_EXCEEDED
+            | ICMP_PARAMETER_PROBLEM
     )
 }
 
@@ -2606,5 +2729,277 @@ mod icmpv4_header_model {
         let icmp = Icmp::new().icmp_type(ICMP_REDIRECT).gateway(gateway);
         assert_eq!(icmp.gateway_value(), Some(gateway));
         assert_eq!(icmp.rest_of_header_value(), gateway.octets());
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_rfc792_errors {
+    use super::{
+        icmpv4_code_summary, icmpv4_type_is_deprecated, Icmp, IcmpQuotedIpv4,
+        ICMP_CODE_DU_FRAGMENTATION_NEEDED, ICMP_CODE_DU_PORT_UNREACHABLE,
+        ICMP_CODE_PARAMETER_PROBLEM_POINTER, ICMP_CODE_REDIRECT_HOST,
+        ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY, ICMP_DESTINATION_UNREACHABLE,
+        ICMP_PARAMETER_PROBLEM, ICMP_REDIRECT, ICMP_SOURCE_QUENCH, ICMP_TIME_EXCEEDED,
+    };
+    use crate::packet::Layer;
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // A complete quoted original datagram (IPv4 + UDP + payload) that an agent
+    // would construct for an error message.
+    fn quoted_udp() -> Packet {
+        Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 1))
+            .proto(IpProtocol::Udp)
+            / Udp::new().sport(40000).dport(53)
+            / Raw::from("query")
+    }
+
+    // Each RFC 792 error type compiles with the type/code the caller chose and
+    // carries its quoted datagram. The quoted IPv4 source/destination survive a
+    // full decode round-trip as typed layers.
+    #[test]
+    fn icmpv4_rfc792_errors_each_type_quotes_original_datagram() {
+        for (icmp_type, code) in [
+            (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_PORT_UNREACHABLE),
+            (ICMP_SOURCE_QUENCH, 0),
+            (ICMP_TIME_EXCEEDED, ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY),
+            (ICMP_PARAMETER_PROBLEM, ICMP_CODE_PARAMETER_PROBLEM_POINTER),
+        ] {
+            let packet = Ipv4::new().src(src()).dst(dst())
+                / Icmp::new().icmp_type(icmp_type).code(code)
+                / IcmpQuotedIpv4::new(quoted_udp());
+            let compiled = packet.compile().unwrap();
+            assert_eq!(compiled.as_bytes()[20], icmp_type);
+            assert_eq!(compiled.as_bytes()[21], code);
+
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+            let icmp = decoded.layer::<Icmp>().unwrap();
+            assert_eq!(icmp.icmp_type_value(), icmp_type);
+            assert_eq!(icmp.code_value(), code);
+
+            let quoted = decoded.layer::<IcmpQuotedIpv4>().unwrap();
+            let inner = quoted.quoted_layer::<Ipv4>().unwrap();
+            assert_eq!(inner.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(inner.destination(), Ipv4Addr::new(198, 51, 100, 1));
+            let inner_udp = quoted.quoted_layer::<Udp>().unwrap();
+            assert_eq!(inner_udp.destination_port_value(), 53);
+            assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+        }
+    }
+
+    // Representative codes for the error types that carry an IANA code registry
+    // render their stable names while keeping the numeric value visible.
+    #[test]
+    fn icmpv4_rfc792_errors_representative_codes_summarize() {
+        assert_eq!(
+            icmpv4_code_summary(ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_PORT_UNREACHABLE),
+            "port-unreachable(3)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(ICMP_TIME_EXCEEDED, ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY),
+            "fragment-reassembly-time-exceeded(1)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(ICMP_PARAMETER_PROBLEM, ICMP_CODE_PARAMETER_PROBLEM_POINTER),
+            "pointer(0)"
+        );
+    }
+
+    // Redirect carries the gateway address in the rest-of-header; the typed
+    // gateway accessor survives a decode round-trip and the quoted datagram is
+    // typed alongside it.
+    #[test]
+    fn icmpv4_rfc792_errors_redirect_gateway_and_quote_roundtrip() {
+        let gateway = Ipv4Addr::new(192, 0, 2, 254);
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::new()
+                .icmp_type(ICMP_REDIRECT)
+                .code(ICMP_CODE_REDIRECT_HOST)
+                .gateway(gateway)
+            / IcmpQuotedIpv4::new(quoted_udp());
+        let compiled = packet.compile().unwrap();
+        // Rest-of-header (ICMP bytes 4..8) holds the gateway address.
+        assert_eq!(&compiled.as_bytes()[24..28], &gateway.octets());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.gateway_value(), Some(gateway));
+        assert_eq!(icmp.code_value(), ICMP_CODE_REDIRECT_HOST);
+        assert!(decoded.layer::<IcmpQuotedIpv4>().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // Parameter problem carries the pointer byte at rest-of-header[0]; it
+    // survives a decode round-trip.
+    #[test]
+    fn icmpv4_rfc792_errors_parameter_problem_pointer_roundtrip() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::new().icmp_type(ICMP_PARAMETER_PROBLEM).pointer(12)
+            / IcmpQuotedIpv4::new(quoted_udp());
+        let compiled = packet.compile().unwrap();
+        assert_eq!(compiled.as_bytes()[24], 12);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert_eq!(decoded.layer::<Icmp>().unwrap().pointer_value(), Some(12));
+    }
+
+    // Source quench (type 4) is deprecated by RFC 6633 but still constructible
+    // and decodable as an error message with a quoted datagram.
+    #[test]
+    fn icmpv4_rfc792_errors_source_quench_is_deprecated_but_usable() {
+        assert!(icmpv4_type_is_deprecated(ICMP_SOURCE_QUENCH));
+
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::new().icmp_type(ICMP_SOURCE_QUENCH)
+            / IcmpQuotedIpv4::new(quoted_udp());
+        let compiled = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmp>().unwrap().icmp_type_value(),
+            ICMP_SOURCE_QUENCH
+        );
+        assert!(decoded.layer::<IcmpQuotedIpv4>().is_some());
+    }
+
+    // RFC 1191: destination unreachable code 4 (fragmentation needed) carries an
+    // unused high-order 16 bits and a 16-bit next-hop MTU in the second word.
+    #[test]
+    fn icmpv4_rfc792_errors_rfc1191_next_hop_mtu_roundtrips() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::new()
+                .icmp_type(ICMP_DESTINATION_UNREACHABLE)
+                .code(ICMP_CODE_DU_FRAGMENTATION_NEEDED)
+                .mtu_next_hop(1492)
+            / IcmpQuotedIpv4::new(quoted_udp());
+        let compiled = packet.compile().unwrap();
+        // ICMP rest-of-header: bytes 4..6 unused (RFC 4884 length byte aside),
+        // bytes 6..8 are the next-hop MTU. Byte index 24 is rest-of-header[0].
+        assert_eq!(&compiled.as_bytes()[26..28], &1492u16.to_be_bytes());
+        // The high-order unused word must stay zero.
+        assert_eq!(compiled.as_bytes()[24], 0);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmp>().unwrap().mtu_next_hop_value(),
+            Some(1492)
+        );
+    }
+
+    // A quoted datagram that is only the IPv4 header plus the first 8 bytes of
+    // the original payload (the RFC 792 minimum) is the common truncated case:
+    // the IPv4 header is typed, the truncated payload stays raw-compatible, and
+    // nothing panics.
+    #[test]
+    fn icmpv4_rfc792_errors_truncated_quote_does_not_panic() {
+        // Build a full datagram, then keep only header + 8 payload bytes so the
+        // quoted IPv4 total_length deliberately overshoots the present bytes.
+        let original = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 1))
+            .proto(IpProtocol::Udp)
+            / Udp::new().sport(40000).dport(53)
+            / Raw::from("a-long-original-payload"))
+        .compile()
+        .unwrap();
+        let mut quote = original.as_bytes().to_vec();
+        quote.truncate(20 + 8); // IPv4 header (20) + 64 bits of original data.
+
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::new().icmp_type(ICMP_TIME_EXCEEDED)
+            / Raw::from_bytes(&quote);
+        let compiled = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let quoted = decoded.layer::<IcmpQuotedIpv4>().unwrap();
+        let inner = quoted.quoted_layer::<Ipv4>().unwrap();
+        assert_eq!(inner.source(), Ipv4Addr::new(192, 0, 2, 1));
+        // The truncated UDP header could not be fully decoded, so it stays raw.
+        assert!(quoted.quoted_layer::<Udp>().is_none());
+        assert!(quoted.datagram().layer::<Raw>().is_some());
+        // The whole message still round-trips byte-for-byte.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // A quoted next protocol crafter does not decode (here protocol 254) keeps
+    // the quoted IPv4 header typed and the rest of the quote raw-compatible.
+    #[test]
+    fn icmpv4_rfc792_errors_unknown_quoted_protocol_falls_back_to_raw() {
+        let quoted = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 1))
+            .protocol(254)
+            / Raw::from("opaque-upper-layer");
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::new().icmp_type(ICMP_DESTINATION_UNREACHABLE)
+            / IcmpQuotedIpv4::new(quoted);
+        let compiled = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let quoted = decoded.layer::<IcmpQuotedIpv4>().unwrap();
+        let inner = quoted.quoted_layer::<Ipv4>().unwrap();
+        assert_eq!(inner.protocol_value(), 254);
+        assert_eq!(
+            quoted.datagram().layer::<Raw>().unwrap().as_bytes(),
+            b"opaque-upper-layer"
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // A non-IPv4 quote (the bytes do not start with a valid IPv4 header) is not
+    // forced into the typed quoted layer; it remains a plain Raw payload so no
+    // bytes are lost.
+    #[test]
+    fn icmpv4_rfc792_errors_non_ipv4_quote_stays_raw() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::new().icmp_type(ICMP_DESTINATION_UNREACHABLE)
+            / Raw::from_bytes([0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+        let compiled = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpQuotedIpv4>().is_none());
+        assert_eq!(
+            decoded.layer::<Raw>().unwrap().as_bytes(),
+            &[0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66]
+        );
+    }
+
+    // Explicit malformed overrides on an error message survive compilation: a
+    // deliberately wrong checksum and a pinned raw rest-of-header are emitted
+    // verbatim even though the type would otherwise auto-fill them.
+    #[test]
+    fn icmpv4_rfc792_errors_explicit_malformed_overrides_are_preserved() {
+        let raw_rest = [0xde, 0xad, 0xbe, 0xef];
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::new()
+                .icmp_type(ICMP_TIME_EXCEEDED)
+                .code(0)
+                .checksum(0xbeef)
+                .rest_of_header(raw_rest)
+            / IcmpQuotedIpv4::new(quoted_udp());
+        let compiled = packet.compile().unwrap();
+
+        // The intentionally wrong checksum is honored verbatim.
+        assert_eq!(&compiled.as_bytes()[22..24], &0xbeefu16.to_be_bytes());
+        // The pinned rest-of-header survives the RFC 4884 length auto-fill.
+        assert_eq!(&compiled.as_bytes()[24..28], &raw_rest);
+    }
+
+    // The quoted layer summary keeps the nested datagram inspectable.
+    #[test]
+    fn icmpv4_rfc792_errors_quoted_layer_summary_is_inspectable() {
+        let quoted = IcmpQuotedIpv4::new(quoted_udp());
+        let summary = quoted.summary();
+        assert!(summary.starts_with("IcmpQuotedIpv4("));
+        assert!(summary.contains("Ipv4"));
     }
 }
