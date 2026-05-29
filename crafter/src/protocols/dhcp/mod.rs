@@ -42,8 +42,8 @@ pub use registry::{
 use constants::{DHCP_CHADDR_LEN, DHCP_DEFAULT_PARAMETER_REQUESTS, DHCP_FILE_LEN, DHCP_SNAME_LEN};
 use message::message_type_summary;
 use option::{
-    decode_overload_area_options, encode_dhcp_options, encode_overload_area_options,
-    encoded_options_len_lossy, find_option_overload,
+    decode_dhcp_option, decode_overload_area_options, encode_dhcp_options,
+    encode_overload_area_options, encoded_options_len_lossy, find_option_overload,
 };
 
 macro_rules! impl_layer_object {
@@ -563,6 +563,37 @@ impl Dhcp {
     /// section 9.3).
     pub fn sname_options_value(&self) -> &[DhcpOption] {
         &self.sname_options
+    }
+
+    /// Reassemble the logical value of an option that may be split across areas.
+    ///
+    /// RFC 3396 section 5 defines the aggregate option buffer as the normal
+    /// options field, then the overloaded `file` field, then the overloaded
+    /// `sname` field, in that order. Within each area the per-area decoder has
+    /// already concatenated repeated instances of a code; this accessor joins
+    /// those per-area payloads across the three areas in aggregate order and
+    /// decodes the result once, so an option split across area boundaries is
+    /// surfaced as a single logical option. Returns `None` when no area carries
+    /// the code. The per-area raw options remain inspectable through
+    /// [`Dhcp::options_value`], [`Dhcp::file_options_value`], and
+    /// [`Dhcp::sname_options_value`].
+    pub fn concatenated_option(&self, code: u8) -> Option<Result<DhcpOption>> {
+        let mut payload: Option<Vec<u8>> = None;
+        // Aggregate order: options field, then file field, then sname field.
+        for area in [&self.options, &self.file_options, &self.sname_options] {
+            for option in area {
+                if option.code() != code {
+                    continue;
+                }
+                match option.payload() {
+                    Ok(bytes) => payload
+                        .get_or_insert_with(Vec::new)
+                        .extend_from_slice(&bytes),
+                    Err(error) => return Some(Err(error)),
+                }
+            }
+        }
+        payload.map(|bytes| decode_dhcp_option(code, &bytes))
     }
 
     /// Resolve which fixed fields are overloaded with options (RFC 2132 section

@@ -523,6 +523,10 @@ impl DhcpOption {
     }
 
     /// Encoded option length in bytes.
+    ///
+    /// Accounts for RFC 3396 splitting: a logical payload longer than 255 bytes
+    /// is emitted as several same-code segments, each carrying its own code and
+    /// length byte, so the encoded length includes per-segment overhead.
     pub fn encoded_len(&self) -> usize {
         match self {
             Self::Pad | Self::End => 1,
@@ -531,12 +535,14 @@ impl DhcpOption {
             | Self::BroadcastAddress(_)
             | Self::RequestedIpAddress(_)
             | Self::ServerIdentifier(_) => 6,
-            Self::Router(addresses) | Self::DomainNameServer(addresses) => 2 + addresses.len() * 4,
-            Self::HostName(name) | Self::DomainName(name) => 2 + name.len(),
+            Self::Router(addresses) | Self::DomainNameServer(addresses) => {
+                split_option_encoded_len(addresses.len() * 4)
+            }
+            Self::HostName(name) | Self::DomainName(name) => split_option_encoded_len(name.len()),
             Self::IpAddressLeaseTime(_) | Self::RenewalTime(_) | Self::RebindingTime(_) => 6,
             Self::ParameterRequestList(requests)
             | Self::ClientIdentifier(requests)
-            | Self::Generic { data: requests, .. } => 2 + requests.len(),
+            | Self::Generic { data: requests, .. } => split_option_encoded_len(requests.len()),
         }
     }
 
@@ -545,6 +551,15 @@ impl DhcpOption {
         let mut bytes = Vec::with_capacity(self.encoded_len());
         self.encode_into(&mut bytes)?;
         Ok(bytes)
+    }
+
+    /// Logical option payload bytes, without the option code or length byte(s).
+    ///
+    /// This is the full reassembled value (RFC 3396): for a long option that the
+    /// codec concatenated across several wire segments, this returns the joined
+    /// payload. Pad and end options have no payload and return an empty vector.
+    pub fn payload(&self) -> Result<Vec<u8>> {
+        self.payload_bytes()
     }
 
     /// Decode all DHCP options from a byte slice.
@@ -563,22 +578,18 @@ impl DhcpOption {
                 Ok(())
             }
             _ => {
-                let data = self.payload_bytes()?;
-                if data.len() > u8::MAX as usize {
-                    return Err(CrafterError::invalid_field_value(
-                        "dhcp.option.length",
-                        "DHCP option payload must fit in one byte",
-                    ));
-                }
                 if matches!(self.code(), DHCP_OPTION_PAD | DHCP_OPTION_END) {
                     return Err(CrafterError::invalid_field_value(
                         "dhcp.option.code",
                         "pad and end options do not carry a length byte",
                     ));
                 }
-                out.push(self.code());
-                out.push(data.len() as u8);
-                out.extend_from_slice(&data);
+                let data = self.payload_bytes()?;
+                // RFC 3396: the option length field is a single octet, so a
+                // logical value longer than 255 bytes is encoded as repeated
+                // instances of the same option code, split into <=255-byte
+                // segments in order. Empty payloads still emit one segment.
+                encode_split_option(self.code(), &data, out);
                 Ok(())
             }
         }
@@ -646,7 +657,7 @@ pub(super) fn decode_overload_area_options(
     bytes: &[u8],
 ) -> Result<Vec<DhcpOption>> {
     let segments = scan_dhcp_option_segments(area, bytes)?;
-    let mut options = Vec::with_capacity(segments.len());
+    let mut order = SegmentOrder::new();
     let mut saw_end = false;
 
     for segment in &segments {
@@ -655,11 +666,11 @@ pub(super) fn decode_overload_area_options(
                 // Pad both before and after the end marker is allowed; the
                 // remainder of the fixed-width field is zero-padded.
                 if !saw_end {
-                    options.push(DhcpOption::Pad);
+                    order.push_pad();
                 }
             }
             DhcpOptionCode::End if !saw_end => {
-                options.push(DhcpOption::End);
+                order.push_end();
                 saw_end = true;
             }
             _ => {
@@ -669,10 +680,15 @@ pub(super) fn decode_overload_area_options(
                         "non-padding data follows the DHCP end option in an overloaded field",
                     ));
                 }
-                options.push(decode_dhcp_option(segment.code_value(), &segment.data)?);
+                order.push_content(segment.code_value(), &segment.data);
             }
         }
     }
+
+    // Decode (and RFC 3396 reassemble) the collected options first so a per-option
+    // structural error surfaces ahead of the missing-end-marker check, matching the
+    // ordering callers and the malformed corpus expect.
+    let options = order.into_options()?;
 
     if !saw_end {
         return Err(CrafterError::invalid_field_value(
@@ -727,18 +743,19 @@ pub(super) fn encode_overload_area_options(
 /// This is the logical decoder layered on top of the raw segment scanner. It
 /// enforces the structural policy for the normal options area: options must be
 /// terminated by an end marker, and only padding may follow it. RFC 3396 long
-/// option concatenation and option overload are layered on in later steps; for
-/// now each segment maps directly onto one typed option, matching the prior
-/// behavior while routing through the new raw model.
+/// option concatenation is applied here: repeated instances of the same option
+/// code are reassembled, in declaration order, into one logical option whose
+/// payload is the concatenation of every instance's data. The raw per-instance
+/// segments stay inspectable through [`scan_dhcp_option_segments`].
 fn decode_segments_to_options(segments: &[DhcpOptionSegment]) -> Result<Vec<DhcpOption>> {
-    let mut options = Vec::with_capacity(segments.len());
+    let mut order = SegmentOrder::new();
     let mut saw_end = false;
 
     for segment in segments {
         match segment.code {
-            DhcpOptionCode::Pad => options.push(DhcpOption::Pad),
+            DhcpOptionCode::Pad => order.push_pad(),
             DhcpOptionCode::End if !saw_end => {
-                options.push(DhcpOption::End);
+                order.push_end();
                 saw_end = true;
             }
             _ => {
@@ -748,10 +765,15 @@ fn decode_segments_to_options(segments: &[DhcpOptionSegment]) -> Result<Vec<Dhcp
                         "non-padding data follows DHCP end option",
                     ));
                 }
-                options.push(decode_dhcp_option(segment.code_value(), &segment.data)?);
+                order.push_content(segment.code_value(), &segment.data);
             }
         }
     }
+
+    // Decode (and RFC 3396 reassemble) the collected options first so a per-option
+    // structural error surfaces ahead of the missing-end-marker check, matching the
+    // prior decode ordering and the malformed corpus expectations.
+    let options = order.into_options()?;
 
     if !saw_end {
         return Err(CrafterError::invalid_field_value(
@@ -763,7 +785,69 @@ fn decode_segments_to_options(segments: &[DhcpOptionSegment]) -> Result<Vec<Dhcp
     Ok(options)
 }
 
-fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<DhcpOption> {
+/// Ordered accumulator that applies RFC 3396 concatenation while preserving the
+/// declaration order of pad, end, and content options within one area.
+///
+/// Content segments sharing an option code are reassembled into a single logical
+/// option positioned where the first portion appeared (RFC 3396 section 7), with
+/// later portions' data appended in order. Pad and end markers are never
+/// concatenated and keep their relative position.
+struct SegmentOrder {
+    slots: Vec<Slot>,
+    content_index: std::collections::HashMap<u8, usize>,
+}
+
+enum Slot {
+    Pad,
+    End,
+    Content { code: u8, data: Vec<u8> },
+}
+
+impl SegmentOrder {
+    fn new() -> Self {
+        Self {
+            slots: Vec::new(),
+            content_index: std::collections::HashMap::new(),
+        }
+    }
+
+    fn push_pad(&mut self) {
+        self.slots.push(Slot::Pad);
+    }
+
+    fn push_end(&mut self) {
+        self.slots.push(Slot::End);
+    }
+
+    fn push_content(&mut self, code: u8, data: &[u8]) {
+        if let Some(&index) = self.content_index.get(&code) {
+            if let Slot::Content { data: existing, .. } = &mut self.slots[index] {
+                existing.extend_from_slice(data);
+                return;
+            }
+        }
+        let index = self.slots.len();
+        self.content_index.insert(code, index);
+        self.slots.push(Slot::Content {
+            code,
+            data: data.to_vec(),
+        });
+    }
+
+    fn into_options(self) -> Result<Vec<DhcpOption>> {
+        let mut options = Vec::with_capacity(self.slots.len());
+        for slot in self.slots {
+            match slot {
+                Slot::Pad => options.push(DhcpOption::Pad),
+                Slot::End => options.push(DhcpOption::End),
+                Slot::Content { code, data } => options.push(decode_dhcp_option(code, &data)?),
+            }
+        }
+        Ok(options)
+    }
+}
+
+pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<DhcpOption> {
     match code {
         DHCP_OPTION_MESSAGE_TYPE => {
             validate_fixed_len("dhcp.option.message_type", data.len(), 1)?;
@@ -907,6 +991,39 @@ fn encode_ipv4_list(addresses: &[Ipv4Addr]) -> Vec<u8> {
         bytes.extend_from_slice(&address.octets());
     }
     bytes
+}
+
+/// Maximum payload an option length byte can describe (RFC 2132 section 2).
+pub(super) const DHCP_MAX_OPTION_DATA_LEN: usize = u8::MAX as usize;
+
+/// Encode a logical option payload as one or more on-the-wire segments.
+///
+/// RFC 3396: because the DHCP option length is a single octet, a logical value
+/// longer than 255 octets is split into repeated instances of the same option
+/// code. The split portions are emitted in sequential order, each at most 255
+/// bytes; the first portion comes first. Payloads of 255 bytes or fewer emit a
+/// single segment, and an empty payload emits one zero-length segment.
+pub(super) fn encode_split_option(code: u8, data: &[u8], out: &mut Vec<u8>) {
+    if data.is_empty() {
+        out.push(code);
+        out.push(0);
+        return;
+    }
+    for chunk in data.chunks(DHCP_MAX_OPTION_DATA_LEN) {
+        out.push(code);
+        out.push(chunk.len() as u8);
+        out.extend_from_slice(chunk);
+    }
+}
+
+/// Encoded byte length of a payload after RFC 3396 splitting, including the
+/// per-segment code and length overhead.
+pub(super) fn split_option_encoded_len(data_len: usize) -> usize {
+    if data_len == 0 {
+        return 2;
+    }
+    let segments = data_len.div_ceil(DHCP_MAX_OPTION_DATA_LEN);
+    segments * 2 + data_len
 }
 
 #[cfg(test)]
@@ -1247,5 +1364,210 @@ mod dhcp_options {
             .split_whitespace()
             .map(|byte| u8::from_str_radix(byte, 16).unwrap())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod dhcp_rfc3396 {
+    use super::super::{
+        scan_dhcp_option_segments, Dhcp, DhcpMessageType, DhcpOption, DhcpOptionArea,
+    };
+    use super::{encode_split_option, split_option_encoded_len, DHCP_MAX_OPTION_DATA_LEN};
+    use core::net::Ipv4Addr;
+
+    // Codes used by the long-payload style options exercised below.
+    const HOST_NAME: u8 = super::super::DHCP_OPTION_HOST_NAME;
+    const DOMAIN_SEARCH: u8 = 119; // RFC 3397, decoded as opaque/generic here.
+    const VENDOR_CLASS: u8 = 60; // Vendor class identifier, generic opaque.
+
+    fn build_options(payload_options: Vec<DhcpOption>) -> Vec<u8> {
+        Dhcp::new()
+            .options(payload_options)
+            .encoded_options()
+            .unwrap()
+    }
+
+    #[test]
+    fn dhcp_rfc3396_concatenates_repeated_option_segments() {
+        // Build a wire stream by hand with one logical option (a long host name)
+        // split into two same-code segments, exactly as RFC 3396 prescribes. The
+        // logical decoder must reassemble them into one option whose value is the
+        // concatenation, while the raw segment scanner still exposes both
+        // on-the-wire portions for inspection.
+        let part_one = vec![b'a'; DHCP_MAX_OPTION_DATA_LEN]; // 255 bytes
+        let part_two = vec![b'b'; 40];
+        let mut full = part_one.clone();
+        full.extend_from_slice(&part_two);
+
+        let mut wire = Vec::new();
+        wire.push(HOST_NAME);
+        wire.push(part_one.len() as u8);
+        wire.extend_from_slice(&part_one);
+        wire.push(HOST_NAME);
+        wire.push(part_two.len() as u8);
+        wire.extend_from_slice(&part_two);
+        wire.push(super::super::DHCP_OPTION_END);
+
+        // Raw segments: two separate host-name instances remain inspectable.
+        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &wire).unwrap();
+        let host_segments: Vec<&super::DhcpOptionSegment> = segments
+            .iter()
+            .filter(|s| s.code_value() == HOST_NAME)
+            .collect();
+        assert_eq!(host_segments.len(), 2);
+        assert_eq!(host_segments[0].data, part_one);
+        assert_eq!(host_segments[1].data, part_two);
+
+        // Logical decode: exactly one host-name option, value concatenated.
+        let decoded = DhcpOption::decode_all(&wire).unwrap();
+        let host_options: Vec<&DhcpOption> =
+            decoded.iter().filter(|o| o.code() == HOST_NAME).collect();
+        assert_eq!(host_options.len(), 1);
+        match host_options[0] {
+            DhcpOption::HostName(name) => {
+                assert_eq!(name.as_bytes(), full.as_slice());
+                assert_eq!(name.len(), DHCP_MAX_OPTION_DATA_LEN + 40);
+            }
+            other => panic!("expected concatenated host name, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dhcp_rfc3396_encoder_splits_long_payloads() {
+        // A typed option with a payload longer than 255 bytes must be encoded as
+        // multiple same-code segments, each at most 255 bytes, in order.
+        let long_name = "x".repeat(600);
+        let encoded = build_options(vec![
+            DhcpOption::host_name(long_name.clone()),
+            DhcpOption::End,
+        ]);
+
+        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &encoded).unwrap();
+        let host_segments: Vec<&super::DhcpOptionSegment> = segments
+            .iter()
+            .filter(|s| s.code_value() == HOST_NAME)
+            .collect();
+        // 600 bytes -> 255 + 255 + 90 -> three segments.
+        assert_eq!(host_segments.len(), 3);
+        assert_eq!(host_segments[0].data.len(), DHCP_MAX_OPTION_DATA_LEN);
+        assert_eq!(host_segments[1].data.len(), DHCP_MAX_OPTION_DATA_LEN);
+        assert_eq!(host_segments[2].data.len(), 90);
+        // Every emitted segment respects the one-byte length limit.
+        assert!(host_segments
+            .iter()
+            .all(|s| s.declared_len.unwrap() as usize <= DHCP_MAX_OPTION_DATA_LEN));
+
+        // Decoding the split bytes reassembles the original logical value, and a
+        // re-encode reproduces the same wire bytes (the splits are canonical).
+        let decoded = DhcpOption::decode_all(&encoded).unwrap();
+        let host = decoded
+            .iter()
+            .find(|o| o.code() == HOST_NAME)
+            .expect("host name present");
+        assert_eq!(host, &DhcpOption::host_name(long_name));
+        let re_encoded = Dhcp::new().options(decoded).encoded_options().unwrap();
+        assert_eq!(re_encoded, encoded);
+    }
+
+    #[test]
+    fn dhcp_rfc3396_exact_255_boundary_is_a_single_segment() {
+        // A payload of exactly 255 bytes fits one segment; 256 needs two.
+        let exactly_255 = vec![0xABu8; DHCP_MAX_OPTION_DATA_LEN];
+        let mut out = Vec::new();
+        encode_split_option(VENDOR_CLASS, &exactly_255, &mut out);
+        // One segment: code + len(255) + 255 data bytes.
+        assert_eq!(out.len(), 2 + DHCP_MAX_OPTION_DATA_LEN);
+        assert_eq!(out[0], VENDOR_CLASS);
+        assert_eq!(out[1], 255);
+
+        let just_over = vec![0xCDu8; DHCP_MAX_OPTION_DATA_LEN + 1];
+        let mut out = Vec::new();
+        encode_split_option(VENDOR_CLASS, &just_over, &mut out);
+        // Two segments: 255 + 1.
+        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &out).unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].data.len(), DHCP_MAX_OPTION_DATA_LEN);
+        assert_eq!(segments[1].data.len(), 1);
+
+        // Reported encoded length matches the encoder for both boundaries.
+        assert_eq!(
+            split_option_encoded_len(DHCP_MAX_OPTION_DATA_LEN),
+            2 + DHCP_MAX_OPTION_DATA_LEN
+        );
+        assert_eq!(
+            split_option_encoded_len(DHCP_MAX_OPTION_DATA_LEN + 1),
+            2 + DHCP_MAX_OPTION_DATA_LEN + 2 + 1
+        );
+        assert_eq!(split_option_encoded_len(0), 2);
+    }
+
+    #[test]
+    fn dhcp_rfc3396_multi_segment_roundtrip_for_long_vendor_and_message_payloads() {
+        // A generic (vendor/message style) option with a 700-byte opaque payload
+        // round-trips through encode -> decode -> encode. The encoded length the
+        // option reports must match the actual encoded bytes so the layer length
+        // accounting stays correct.
+        let payload = (0u16..700).map(|n| n as u8).collect::<Vec<u8>>();
+        let option = DhcpOption::generic(VENDOR_CLASS, payload.clone());
+        assert_eq!(option.encode().unwrap().len(), option.encoded_len());
+
+        let encoded = build_options(vec![option.clone(), DhcpOption::End]);
+        let decoded = DhcpOption::decode_all(&encoded).unwrap();
+        let vendor = decoded
+            .iter()
+            .find(|o| o.code() == VENDOR_CLASS)
+            .expect("vendor option present");
+        // Concatenated payload survives without data loss.
+        assert_eq!(vendor.payload().unwrap(), payload);
+        // Exact wire round-trip for canonical 255-byte splits.
+        let re_encoded = Dhcp::new().options(decoded).encoded_options().unwrap();
+        assert_eq!(re_encoded, encoded);
+    }
+
+    #[test]
+    fn dhcp_rfc3396_concatenates_across_overloaded_areas() {
+        // RFC 3396 section 5: the aggregate buffer is options, then file, then
+        // sname. A domain-search style option split across all three areas must
+        // reassemble into one logical value in aggregate order, while each area's
+        // raw options stay separately inspectable.
+        let dhcp = Dhcp::new()
+            .message_type(DhcpMessageType::Ack)
+            .server_identifier(Ipv4Addr::new(192, 0, 2, 1))
+            .option(DhcpOption::generic(DOMAIN_SEARCH, b"aaa".to_vec()))
+            .file_option(DhcpOption::generic(DOMAIN_SEARCH, b"bbb".to_vec()))
+            .file_option(DhcpOption::End)
+            .sname_option(DhcpOption::generic(DOMAIN_SEARCH, b"ccc".to_vec()))
+            .sname_option(DhcpOption::End);
+
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let parsed = Dhcp::decode(&bytes).unwrap();
+
+        // Per-area raw options remain inspectable.
+        assert!(parsed
+            .options_value()
+            .iter()
+            .any(|o| o.code() == DOMAIN_SEARCH));
+        assert!(parsed
+            .file_options_value()
+            .iter()
+            .any(|o| o.code() == DOMAIN_SEARCH));
+        assert!(parsed
+            .sname_options_value()
+            .iter()
+            .any(|o| o.code() == DOMAIN_SEARCH));
+
+        // The cross-area reassembly joins options, then file, then sname.
+        let joined = parsed
+            .concatenated_option(DOMAIN_SEARCH)
+            .expect("option present in some area")
+            .expect("decodes cleanly");
+        assert_eq!(joined.payload().unwrap(), b"aaabbbccc".to_vec());
+
+        // A code that appears in no area yields None.
+        assert!(parsed.concatenated_option(200).is_none());
     }
 }
