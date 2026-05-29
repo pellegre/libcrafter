@@ -12,20 +12,118 @@ use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
 use crate::protocols::ip::IPPROTO_ICMPV6;
 
-/// ICMPv4 echo reply type.
+// ICMPv4 type numbers from the IANA ICMP Parameters registry
+// (<https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml>).
+// Status annotations follow the registry: Deprecated values are marked in their
+// doc comments per RFC 6633 (Source Quench) and RFC 6918 (the bulk legacy
+// deprecations). Deprecated and reserved values remain constructible and
+// decodable; this step only names them and never refuses them.
+
+/// ICMPv4 echo reply type (RFC 792).
 pub const ICMP_ECHO_REPLY: u8 = 0;
-/// ICMPv4 destination unreachable type.
+/// ICMPv4 destination unreachable type (RFC 792).
 pub const ICMP_DESTINATION_UNREACHABLE: u8 = 3;
-/// ICMPv4 source quench type.
+/// ICMPv4 source quench type (RFC 792).
+///
+/// Deprecated by RFC 6633: hosts and routers must not generate or react to it.
+/// `crafter` still constructs and decodes it on request.
 pub const ICMP_SOURCE_QUENCH: u8 = 4;
-/// ICMPv4 redirect type.
+/// ICMPv4 redirect type (RFC 792).
 pub const ICMP_REDIRECT: u8 = 5;
-/// ICMPv4 echo request type.
+/// ICMPv4 alternate host address type (RFC 6918).
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_ALTERNATE_HOST_ADDRESS: u8 = 6;
+/// ICMPv4 echo request type (RFC 792).
 pub const ICMP_ECHO_REQUEST: u8 = 8;
-/// ICMPv4 time exceeded type.
+/// ICMPv4 router advertisement type (RFC 1256).
+pub const ICMP_ROUTER_ADVERTISEMENT: u8 = 9;
+/// ICMPv4 router solicitation type (RFC 1256).
+pub const ICMP_ROUTER_SOLICITATION: u8 = 10;
+/// ICMPv4 time exceeded type (RFC 792).
 pub const ICMP_TIME_EXCEEDED: u8 = 11;
-/// ICMPv4 parameter problem type.
+/// ICMPv4 parameter problem type (RFC 792).
 pub const ICMP_PARAMETER_PROBLEM: u8 = 12;
+/// ICMPv4 timestamp request type (RFC 792).
+pub const ICMP_TIMESTAMP: u8 = 13;
+/// ICMPv4 timestamp reply type (RFC 792).
+pub const ICMP_TIMESTAMP_REPLY: u8 = 14;
+/// ICMPv4 information request type (RFC 792).
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_INFORMATION_REQUEST: u8 = 15;
+/// ICMPv4 information reply type (RFC 792).
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_INFORMATION_REPLY: u8 = 16;
+/// ICMPv4 address mask request type (RFC 950).
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_ADDRESS_MASK_REQUEST: u8 = 17;
+/// ICMPv4 address mask reply type (RFC 950).
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_ADDRESS_MASK_REPLY: u8 = 18;
+/// ICMPv4 type 19, reserved (for Security) in the IANA registry.
+pub const ICMP_RESERVED_SECURITY: u8 = 19;
+/// First ICMPv4 type reserved for the Robustness Experiment (types 20-29).
+pub const ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_FIRST: u8 = 20;
+/// Last ICMPv4 type reserved for the Robustness Experiment (types 20-29).
+pub const ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_LAST: u8 = 29;
+/// ICMPv4 traceroute type (RFC 1393).
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_TRACEROUTE: u8 = 30;
+/// ICMPv4 datagram conversion error type (RFC 1475).
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_DATAGRAM_CONVERSION_ERROR: u8 = 31;
+/// ICMPv4 mobile host redirect type.
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_MOBILE_HOST_REDIRECT: u8 = 32;
+/// ICMPv4 IPv6 where-are-you type.
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_IPV6_WHERE_ARE_YOU: u8 = 33;
+/// ICMPv4 IPv6 I-am-here type.
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_IPV6_I_AM_HERE: u8 = 34;
+/// ICMPv4 mobile registration request type.
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_MOBILE_REGISTRATION_REQUEST: u8 = 35;
+/// ICMPv4 mobile registration reply type.
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_MOBILE_REGISTRATION_REPLY: u8 = 36;
+/// ICMPv4 domain name request type (RFC 1788).
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_DOMAIN_NAME_REQUEST: u8 = 37;
+/// ICMPv4 domain name reply type (RFC 1788).
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_DOMAIN_NAME_REPLY: u8 = 38;
+/// ICMPv4 SKIP type.
+///
+/// Deprecated by RFC 6918.
+pub const ICMP_SKIP: u8 = 39;
+/// ICMPv4 Photuris security failures type (RFC 2521).
+pub const ICMP_PHOTURIS: u8 = 40;
+/// ICMPv4 Seamoby experimental mobility type (RFC 4065).
+pub const ICMP_SEAMOBY_EXPERIMENTAL: u8 = 41;
+/// ICMPv4 extended echo request type (RFC 8335).
+pub const ICMP_EXTENDED_ECHO_REQUEST: u8 = 42;
+/// ICMPv4 extended echo reply type (RFC 8335).
+pub const ICMP_EXTENDED_ECHO_REPLY: u8 = 43;
+/// ICMPv4 type 253, RFC 3692-style experiment 1 (RFC 4727).
+pub const ICMP_EXPERIMENTAL_253: u8 = 253;
+/// ICMPv4 type 254, RFC 3692-style experiment 2 (RFC 4727).
+pub const ICMP_EXPERIMENTAL_254: u8 = 254;
+/// ICMPv4 type 255, reserved in the IANA registry.
+pub const ICMP_RESERVED_255: u8 = 255;
 
 /// ICMPv6 destination unreachable type.
 pub const ICMPV6_DESTINATION_UNREACHABLE: u8 = 1;
@@ -39,6 +137,91 @@ pub const ICMPV6_PARAMETER_PROBLEM: u8 = 4;
 pub const ICMPV6_ECHO_REQUEST: u8 = 128;
 /// ICMPv6 echo reply type.
 pub const ICMPV6_ECHO_REPLY: u8 = 129;
+
+// ICMPv4 code-field registries from the IANA ICMP Parameters registry.
+
+/// Destination unreachable code: net unreachable (RFC 792).
+pub const ICMP_CODE_DU_NET_UNREACHABLE: u8 = 0;
+/// Destination unreachable code: host unreachable (RFC 792).
+pub const ICMP_CODE_DU_HOST_UNREACHABLE: u8 = 1;
+/// Destination unreachable code: protocol unreachable (RFC 792).
+pub const ICMP_CODE_DU_PROTOCOL_UNREACHABLE: u8 = 2;
+/// Destination unreachable code: port unreachable (RFC 792).
+pub const ICMP_CODE_DU_PORT_UNREACHABLE: u8 = 3;
+/// Destination unreachable code: fragmentation needed and DF set (RFC 792).
+pub const ICMP_CODE_DU_FRAGMENTATION_NEEDED: u8 = 4;
+/// Destination unreachable code: source route failed (RFC 792).
+pub const ICMP_CODE_DU_SOURCE_ROUTE_FAILED: u8 = 5;
+/// Destination unreachable code: destination network unknown (RFC 1122).
+pub const ICMP_CODE_DU_DEST_NETWORK_UNKNOWN: u8 = 6;
+/// Destination unreachable code: destination host unknown (RFC 1122).
+pub const ICMP_CODE_DU_DEST_HOST_UNKNOWN: u8 = 7;
+/// Destination unreachable code: source host isolated (RFC 1122).
+pub const ICMP_CODE_DU_SOURCE_HOST_ISOLATED: u8 = 8;
+/// Destination unreachable code: network administratively prohibited (RFC 1122).
+pub const ICMP_CODE_DU_NETWORK_ADMIN_PROHIBITED: u8 = 9;
+/// Destination unreachable code: host administratively prohibited (RFC 1122).
+pub const ICMP_CODE_DU_HOST_ADMIN_PROHIBITED: u8 = 10;
+/// Destination unreachable code: network unreachable for ToS (RFC 1122).
+pub const ICMP_CODE_DU_NETWORK_UNREACHABLE_TOS: u8 = 11;
+/// Destination unreachable code: host unreachable for ToS (RFC 1122).
+pub const ICMP_CODE_DU_HOST_UNREACHABLE_TOS: u8 = 12;
+/// Destination unreachable code: communication administratively prohibited (RFC 1812).
+pub const ICMP_CODE_DU_COMM_ADMIN_PROHIBITED: u8 = 13;
+/// Destination unreachable code: host precedence violation (RFC 1812).
+pub const ICMP_CODE_DU_HOST_PRECEDENCE_VIOLATION: u8 = 14;
+/// Destination unreachable code: precedence cutoff in effect (RFC 1812).
+pub const ICMP_CODE_DU_PRECEDENCE_CUTOFF: u8 = 15;
+
+/// Redirect code: redirect datagram for the network or subnet (RFC 792).
+pub const ICMP_CODE_REDIRECT_NETWORK: u8 = 0;
+/// Redirect code: redirect datagram for the host (RFC 792).
+pub const ICMP_CODE_REDIRECT_HOST: u8 = 1;
+/// Redirect code: redirect datagram for the ToS and network (RFC 792).
+pub const ICMP_CODE_REDIRECT_TOS_NETWORK: u8 = 2;
+/// Redirect code: redirect datagram for the ToS and host (RFC 792).
+pub const ICMP_CODE_REDIRECT_TOS_HOST: u8 = 3;
+
+/// Router advertisement code: normal router advertisement (RFC 3344).
+pub const ICMP_CODE_ROUTER_ADVERTISEMENT_NORMAL: u8 = 0;
+/// Router advertisement code: does not route common traffic (RFC 3344).
+pub const ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC: u8 = 16;
+
+/// Time exceeded code: TTL exceeded in transit (RFC 792).
+pub const ICMP_CODE_TIME_EXCEEDED_TTL: u8 = 0;
+/// Time exceeded code: fragment reassembly time exceeded (RFC 792).
+pub const ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY: u8 = 1;
+
+/// Parameter problem code: pointer indicates the error (RFC 792).
+pub const ICMP_CODE_PARAMETER_PROBLEM_POINTER: u8 = 0;
+/// Parameter problem code: missing a required option (RFC 1108).
+pub const ICMP_CODE_PARAMETER_PROBLEM_MISSING_OPTION: u8 = 1;
+/// Parameter problem code: bad length (RFC 792).
+pub const ICMP_CODE_PARAMETER_PROBLEM_BAD_LENGTH: u8 = 2;
+
+/// Photuris code: bad SPI (RFC 2521).
+pub const ICMP_CODE_PHOTURIS_BAD_SPI: u8 = 0;
+/// Photuris code: authentication failed (RFC 2521).
+pub const ICMP_CODE_PHOTURIS_AUTHENTICATION_FAILED: u8 = 1;
+/// Photuris code: decompression failed (RFC 2521).
+pub const ICMP_CODE_PHOTURIS_DECOMPRESSION_FAILED: u8 = 2;
+/// Photuris code: decryption failed (RFC 2521).
+pub const ICMP_CODE_PHOTURIS_DECRYPTION_FAILED: u8 = 3;
+/// Photuris code: need authentication (RFC 2521).
+pub const ICMP_CODE_PHOTURIS_NEED_AUTHENTICATION: u8 = 4;
+/// Photuris code: need authorization (RFC 2521).
+pub const ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION: u8 = 5;
+
+/// Extended echo reply code: no error (RFC 8335).
+pub const ICMP_CODE_EXTENDED_ECHO_REPLY_NO_ERROR: u8 = 0;
+/// Extended echo reply code: malformed query (RFC 8335).
+pub const ICMP_CODE_EXTENDED_ECHO_REPLY_MALFORMED_QUERY: u8 = 1;
+/// Extended echo reply code: no such interface (RFC 8335).
+pub const ICMP_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_INTERFACE: u8 = 2;
+/// Extended echo reply code: no such table entry (RFC 8335).
+pub const ICMP_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_TABLE_ENTRY: u8 = 3;
+/// Extended echo reply code: multiple interfaces satisfy query (RFC 8335).
+pub const ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES: u8 = 4;
 
 /// ICMP extension object class for MPLS labels.
 pub const ICMP_EXTENSION_CLASS_MPLS: u8 = 1;
@@ -497,7 +680,7 @@ impl Layer for Icmp {
         format!(
             "Icmp(type={}, code={}, id={}, seq={})",
             icmpv4_type_summary(self.icmp_type_value()),
-            self.code_value(),
+            icmpv4_code_summary(self.icmp_type_value(), self.code_value()),
             self.identifier_value()
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "-".to_string()),
@@ -510,7 +693,10 @@ impl Layer for Icmp {
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         vec![
             ("type", icmpv4_type_summary(self.icmp_type_value())),
-            ("code", self.code_value().to_string()),
+            (
+                "code",
+                icmpv4_code_summary(self.icmp_type_value(), self.code_value()),
+            ),
             (
                 "checksum",
                 self.checksum_value()
@@ -1552,15 +1738,166 @@ fn parse_ipv4(input: &str) -> Result<Ipv4Addr> {
 }
 
 fn icmpv4_type_summary(icmp_type: u8) -> String {
-    match icmp_type {
-        ICMP_ECHO_REPLY => "echo-reply(0)".to_string(),
-        ICMP_DESTINATION_UNREACHABLE => "destination-unreachable(3)".to_string(),
-        ICMP_SOURCE_QUENCH => "source-quench(4)".to_string(),
-        ICMP_REDIRECT => "redirect(5)".to_string(),
-        ICMP_ECHO_REQUEST => "echo-request(8)".to_string(),
-        ICMP_TIME_EXCEEDED => "time-exceeded(11)".to_string(),
-        ICMP_PARAMETER_PROBLEM => "parameter-problem(12)".to_string(),
-        value => value.to_string(),
+    match icmpv4_type_name(icmp_type) {
+        Some(name) => format!("{name}({icmp_type})"),
+        None => icmp_type.to_string(),
+    }
+}
+
+/// Stable IANA-registry name for a known ICMPv4 type, or `None` when the value
+/// is unassigned and should remain numeric.
+///
+/// Names are sourced from the IANA ICMP Parameters registry. Deprecated and
+/// reserved values still return a name so summaries report their assigned
+/// identity rather than hiding it.
+fn icmpv4_type_name(icmp_type: u8) -> Option<&'static str> {
+    let name = match icmp_type {
+        ICMP_ECHO_REPLY => "echo-reply",
+        ICMP_DESTINATION_UNREACHABLE => "destination-unreachable",
+        ICMP_SOURCE_QUENCH => "source-quench",
+        ICMP_REDIRECT => "redirect",
+        ICMP_ALTERNATE_HOST_ADDRESS => "alternate-host-address",
+        ICMP_ECHO_REQUEST => "echo-request",
+        ICMP_ROUTER_ADVERTISEMENT => "router-advertisement",
+        ICMP_ROUTER_SOLICITATION => "router-solicitation",
+        ICMP_TIME_EXCEEDED => "time-exceeded",
+        ICMP_PARAMETER_PROBLEM => "parameter-problem",
+        ICMP_TIMESTAMP => "timestamp",
+        ICMP_TIMESTAMP_REPLY => "timestamp-reply",
+        ICMP_INFORMATION_REQUEST => "information-request",
+        ICMP_INFORMATION_REPLY => "information-reply",
+        ICMP_ADDRESS_MASK_REQUEST => "address-mask-request",
+        ICMP_ADDRESS_MASK_REPLY => "address-mask-reply",
+        ICMP_RESERVED_SECURITY => "reserved-security",
+        ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_FIRST..=ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_LAST => {
+            "reserved-robustness-experiment"
+        }
+        ICMP_TRACEROUTE => "traceroute",
+        ICMP_DATAGRAM_CONVERSION_ERROR => "datagram-conversion-error",
+        ICMP_MOBILE_HOST_REDIRECT => "mobile-host-redirect",
+        ICMP_IPV6_WHERE_ARE_YOU => "ipv6-where-are-you",
+        ICMP_IPV6_I_AM_HERE => "ipv6-i-am-here",
+        ICMP_MOBILE_REGISTRATION_REQUEST => "mobile-registration-request",
+        ICMP_MOBILE_REGISTRATION_REPLY => "mobile-registration-reply",
+        ICMP_DOMAIN_NAME_REQUEST => "domain-name-request",
+        ICMP_DOMAIN_NAME_REPLY => "domain-name-reply",
+        ICMP_SKIP => "skip",
+        ICMP_PHOTURIS => "photuris",
+        ICMP_SEAMOBY_EXPERIMENTAL => "seamoby-experimental",
+        ICMP_EXTENDED_ECHO_REQUEST => "extended-echo-request",
+        ICMP_EXTENDED_ECHO_REPLY => "extended-echo-reply",
+        ICMP_EXPERIMENTAL_253 => "experiment-1",
+        ICMP_EXPERIMENTAL_254 => "experiment-2",
+        ICMP_RESERVED_255 => "reserved",
+        _ => return None,
+    };
+    Some(name)
+}
+
+/// True when the ICMPv4 type is marked deprecated or obsolete in the IANA
+/// registry (RFC 6633 source quench, plus the RFC 6918 legacy deprecations).
+///
+/// Deprecated values are still constructible and decodable; this only reports
+/// their registry status.
+#[cfg_attr(not(test), allow(dead_code))]
+fn icmpv4_type_is_deprecated(icmp_type: u8) -> bool {
+    matches!(
+        icmp_type,
+        ICMP_SOURCE_QUENCH
+            | ICMP_ALTERNATE_HOST_ADDRESS
+            | ICMP_INFORMATION_REQUEST
+            | ICMP_INFORMATION_REPLY
+            | ICMP_ADDRESS_MASK_REQUEST
+            | ICMP_ADDRESS_MASK_REPLY
+            | ICMP_TRACEROUTE
+            | ICMP_DATAGRAM_CONVERSION_ERROR
+            | ICMP_MOBILE_HOST_REDIRECT
+            | ICMP_IPV6_WHERE_ARE_YOU
+            | ICMP_IPV6_I_AM_HERE
+            | ICMP_MOBILE_REGISTRATION_REQUEST
+            | ICMP_MOBILE_REGISTRATION_REPLY
+            | ICMP_DOMAIN_NAME_REQUEST
+            | ICMP_DOMAIN_NAME_REPLY
+            | ICMP_SKIP
+    )
+}
+
+/// Stable IANA-registry name for a known ICMPv4 (type, code) pair, or `None`
+/// when the code has no registered meaning for that type and should remain
+/// numeric. Only types with IANA code registries are covered.
+fn icmpv4_code_name(icmp_type: u8, code: u8) -> Option<&'static str> {
+    let name = match (icmp_type, code) {
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_NET_UNREACHABLE) => "net-unreachable",
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_HOST_UNREACHABLE) => "host-unreachable",
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_PROTOCOL_UNREACHABLE) => "protocol-unreachable",
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_PORT_UNREACHABLE) => "port-unreachable",
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_FRAGMENTATION_NEEDED) => "fragmentation-needed",
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_SOURCE_ROUTE_FAILED) => "source-route-failed",
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_DEST_NETWORK_UNKNOWN) => "dest-network-unknown",
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_DEST_HOST_UNKNOWN) => "dest-host-unknown",
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_SOURCE_HOST_ISOLATED) => "source-host-isolated",
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_NETWORK_ADMIN_PROHIBITED) => {
+            "network-admin-prohibited"
+        }
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_HOST_ADMIN_PROHIBITED) => {
+            "host-admin-prohibited"
+        }
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_NETWORK_UNREACHABLE_TOS) => {
+            "network-unreachable-tos"
+        }
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_HOST_UNREACHABLE_TOS) => "host-unreachable-tos",
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_COMM_ADMIN_PROHIBITED) => {
+            "comm-admin-prohibited"
+        }
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_HOST_PRECEDENCE_VIOLATION) => {
+            "host-precedence-violation"
+        }
+        (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_PRECEDENCE_CUTOFF) => "precedence-cutoff",
+        (ICMP_REDIRECT, ICMP_CODE_REDIRECT_NETWORK) => "redirect-network",
+        (ICMP_REDIRECT, ICMP_CODE_REDIRECT_HOST) => "redirect-host",
+        (ICMP_REDIRECT, ICMP_CODE_REDIRECT_TOS_NETWORK) => "redirect-tos-network",
+        (ICMP_REDIRECT, ICMP_CODE_REDIRECT_TOS_HOST) => "redirect-tos-host",
+        (ICMP_ROUTER_ADVERTISEMENT, ICMP_CODE_ROUTER_ADVERTISEMENT_NORMAL) => "normal",
+        (ICMP_ROUTER_ADVERTISEMENT, ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC) => {
+            "no-common-traffic"
+        }
+        (ICMP_TIME_EXCEEDED, ICMP_CODE_TIME_EXCEEDED_TTL) => "ttl-exceeded",
+        (ICMP_TIME_EXCEEDED, ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY) => {
+            "fragment-reassembly-time-exceeded"
+        }
+        (ICMP_PARAMETER_PROBLEM, ICMP_CODE_PARAMETER_PROBLEM_POINTER) => "pointer",
+        (ICMP_PARAMETER_PROBLEM, ICMP_CODE_PARAMETER_PROBLEM_MISSING_OPTION) => "missing-option",
+        (ICMP_PARAMETER_PROBLEM, ICMP_CODE_PARAMETER_PROBLEM_BAD_LENGTH) => "bad-length",
+        (ICMP_PHOTURIS, ICMP_CODE_PHOTURIS_BAD_SPI) => "bad-spi",
+        (ICMP_PHOTURIS, ICMP_CODE_PHOTURIS_AUTHENTICATION_FAILED) => "authentication-failed",
+        (ICMP_PHOTURIS, ICMP_CODE_PHOTURIS_DECOMPRESSION_FAILED) => "decompression-failed",
+        (ICMP_PHOTURIS, ICMP_CODE_PHOTURIS_DECRYPTION_FAILED) => "decryption-failed",
+        (ICMP_PHOTURIS, ICMP_CODE_PHOTURIS_NEED_AUTHENTICATION) => "need-authentication",
+        (ICMP_PHOTURIS, ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION) => "need-authorization",
+        (ICMP_EXTENDED_ECHO_REPLY, ICMP_CODE_EXTENDED_ECHO_REPLY_NO_ERROR) => "no-error",
+        (ICMP_EXTENDED_ECHO_REPLY, ICMP_CODE_EXTENDED_ECHO_REPLY_MALFORMED_QUERY) => {
+            "malformed-query"
+        }
+        (ICMP_EXTENDED_ECHO_REPLY, ICMP_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_INTERFACE) => {
+            "no-such-interface"
+        }
+        (ICMP_EXTENDED_ECHO_REPLY, ICMP_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_TABLE_ENTRY) => {
+            "no-such-table-entry"
+        }
+        (ICMP_EXTENDED_ECHO_REPLY, ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES) => {
+            "multiple-interfaces"
+        }
+        _ => return None,
+    };
+    Some(name)
+}
+
+/// Summary string for an ICMPv4 (type, code) pair: a stable name with its
+/// numeric value when known, otherwise the bare number.
+fn icmpv4_code_summary(icmp_type: u8, code: u8) -> String {
+    match icmpv4_code_name(icmp_type, code) {
+        Some(name) => format!("{name}({code})"),
+        None => code.to_string(),
     }
 }
 
@@ -1814,5 +2151,200 @@ mod ping_roundtrip {
             decoded_request.layer::<Icmpv6>().unwrap(),
             decoded_reply.layer::<Icmpv6>().unwrap()
         ));
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_codepoints {
+    use super::{
+        icmpv4_code_summary, icmpv4_type_is_deprecated, icmpv4_type_name, icmpv4_type_summary,
+        ICMP_ADDRESS_MASK_REPLY, ICMP_ADDRESS_MASK_REQUEST, ICMP_ALTERNATE_HOST_ADDRESS,
+        ICMP_CODE_DU_FRAGMENTATION_NEEDED, ICMP_CODE_DU_NET_UNREACHABLE,
+        ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES, ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION,
+        ICMP_CODE_REDIRECT_HOST, ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC,
+        ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST, ICMP_EXPERIMENTAL_253,
+        ICMP_EXPERIMENTAL_254, ICMP_EXTENDED_ECHO_REPLY, ICMP_EXTENDED_ECHO_REQUEST,
+        ICMP_INFORMATION_REPLY, ICMP_PHOTURIS, ICMP_REDIRECT, ICMP_RESERVED_255,
+        ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_FIRST, ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_LAST,
+        ICMP_RESERVED_SECURITY, ICMP_ROUTER_ADVERTISEMENT, ICMP_ROUTER_SOLICITATION,
+        ICMP_SEAMOBY_EXPERIMENTAL, ICMP_SOURCE_QUENCH, ICMP_TIMESTAMP, ICMP_TIMESTAMP_REPLY,
+    };
+
+    // Representative type numbers from the IANA ICMP Parameters registry. These
+    // pin the assigned values rather than the source order, so a later edit that
+    // renumbers a constant fails loudly.
+    #[test]
+    fn icmpv4_codepoints_representative_type_constants_have_iana_values() {
+        assert_eq!(ICMP_ECHO_REPLY, 0);
+        assert_eq!(ICMP_DESTINATION_UNREACHABLE, 3);
+        assert_eq!(ICMP_SOURCE_QUENCH, 4);
+        assert_eq!(ICMP_REDIRECT, 5);
+        assert_eq!(ICMP_ECHO_REQUEST, 8);
+        assert_eq!(ICMP_ROUTER_ADVERTISEMENT, 9);
+        assert_eq!(ICMP_ROUTER_SOLICITATION, 10);
+        assert_eq!(ICMP_TIMESTAMP, 13);
+        assert_eq!(ICMP_TIMESTAMP_REPLY, 14);
+        assert_eq!(ICMP_PHOTURIS, 40);
+        assert_eq!(ICMP_SEAMOBY_EXPERIMENTAL, 41);
+        assert_eq!(ICMP_EXTENDED_ECHO_REQUEST, 42);
+        assert_eq!(ICMP_EXTENDED_ECHO_REPLY, 43);
+        assert_eq!(ICMP_EXPERIMENTAL_253, 253);
+        assert_eq!(ICMP_EXPERIMENTAL_254, 254);
+        assert_eq!(ICMP_RESERVED_255, 255);
+        assert_eq!(ICMP_RESERVED_SECURITY, 19);
+        assert_eq!(ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_FIRST, 20);
+        assert_eq!(ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_LAST, 29);
+    }
+
+    // Representative code-field values for the types that carry IANA code
+    // registries.
+    #[test]
+    fn icmpv4_codepoints_representative_code_constants_have_iana_values() {
+        assert_eq!(ICMP_CODE_DU_NET_UNREACHABLE, 0);
+        assert_eq!(ICMP_CODE_DU_FRAGMENTATION_NEEDED, 4);
+        assert_eq!(ICMP_CODE_REDIRECT_HOST, 1);
+        assert_eq!(ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC, 16);
+        assert_eq!(ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION, 5);
+        assert_eq!(ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES, 4);
+    }
+
+    // The constants and summary helpers must be reachable from the crate root so
+    // generated tools can name codepoints without reaching into the module.
+    #[test]
+    fn icmpv4_codepoints_constants_are_publicly_exported() {
+        assert_eq!(crate::ICMP_TIMESTAMP, ICMP_TIMESTAMP);
+        assert_eq!(crate::ICMP_ROUTER_ADVERTISEMENT, ICMP_ROUTER_ADVERTISEMENT);
+        assert_eq!(
+            crate::ICMP_EXTENDED_ECHO_REQUEST,
+            ICMP_EXTENDED_ECHO_REQUEST
+        );
+        assert_eq!(crate::ICMP_EXPERIMENTAL_253, ICMP_EXPERIMENTAL_253);
+        assert_eq!(
+            crate::ICMP_ALTERNATE_HOST_ADDRESS,
+            ICMP_ALTERNATE_HOST_ADDRESS
+        );
+        assert_eq!(crate::ICMP_ADDRESS_MASK_REQUEST, ICMP_ADDRESS_MASK_REQUEST);
+        // The same names must also surface through the `core` prelude re-export.
+        assert_eq!(crate::core::ICMP_PHOTURIS, ICMP_PHOTURIS);
+        assert_eq!(
+            crate::core::ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC,
+            ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC
+        );
+    }
+
+    // Known types render their stable registry name with the numeric value kept
+    // visible.
+    #[test]
+    fn icmpv4_codepoints_known_type_summaries_use_stable_names() {
+        assert_eq!(icmpv4_type_summary(ICMP_ECHO_REPLY), "echo-reply(0)");
+        assert_eq!(
+            icmpv4_type_summary(ICMP_DESTINATION_UNREACHABLE),
+            "destination-unreachable(3)"
+        );
+        assert_eq!(icmpv4_type_summary(ICMP_TIMESTAMP), "timestamp(13)");
+        assert_eq!(
+            icmpv4_type_summary(ICMP_EXTENDED_ECHO_REQUEST),
+            "extended-echo-request(42)"
+        );
+        assert_eq!(
+            icmpv4_type_summary(ICMP_EXPERIMENTAL_253),
+            "experiment-1(253)"
+        );
+        // Every value across the robustness-experiment reserved range names the
+        // shared registry meaning rather than only the endpoints.
+        assert_eq!(
+            icmpv4_type_summary(25),
+            "reserved-robustness-experiment(25)"
+        );
+        assert_eq!(icmpv4_type_name(ICMP_RESERVED_255), Some("reserved"));
+    }
+
+    // Known (type, code) pairs render their stable registry name; the numeric
+    // code stays visible.
+    #[test]
+    fn icmpv4_codepoints_known_code_summaries_use_stable_names() {
+        assert_eq!(
+            icmpv4_code_summary(
+                ICMP_DESTINATION_UNREACHABLE,
+                ICMP_CODE_DU_FRAGMENTATION_NEEDED
+            ),
+            "fragmentation-needed(4)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(ICMP_REDIRECT, ICMP_CODE_REDIRECT_HOST),
+            "redirect-host(1)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(
+                ICMP_ROUTER_ADVERTISEMENT,
+                ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC
+            ),
+            "no-common-traffic(16)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(ICMP_PHOTURIS, ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION),
+            "need-authorization(5)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(
+                ICMP_EXTENDED_ECHO_REPLY,
+                ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES
+            ),
+            "multiple-interfaces(4)"
+        );
+    }
+
+    // Deprecated and obsolete types keep their registry identity in both the
+    // name lookup and the deprecation predicate. Naming a value never doubles as
+    // refusing it.
+    #[test]
+    fn icmpv4_codepoints_deprecated_types_retain_names_and_report_status() {
+        assert_eq!(icmpv4_type_summary(ICMP_SOURCE_QUENCH), "source-quench(4)");
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ALTERNATE_HOST_ADDRESS),
+            "alternate-host-address(6)"
+        );
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ADDRESS_MASK_REPLY),
+            "address-mask-reply(18)"
+        );
+
+        // RFC 6633 (source quench) and the RFC 6918 bulk deprecations are
+        // reported as deprecated.
+        assert!(icmpv4_type_is_deprecated(ICMP_SOURCE_QUENCH));
+        assert!(icmpv4_type_is_deprecated(ICMP_ALTERNATE_HOST_ADDRESS));
+        assert!(icmpv4_type_is_deprecated(ICMP_INFORMATION_REPLY));
+        assert!(icmpv4_type_is_deprecated(ICMP_ADDRESS_MASK_REQUEST));
+
+        // Active and reserved-but-not-deprecated types are not flagged.
+        assert!(!icmpv4_type_is_deprecated(ICMP_ECHO_REQUEST));
+        assert!(!icmpv4_type_is_deprecated(ICMP_SEAMOBY_EXPERIMENTAL));
+        assert!(!icmpv4_type_is_deprecated(ICMP_EXTENDED_ECHO_REQUEST));
+        assert!(!icmpv4_type_is_deprecated(ICMP_RESERVED_255));
+    }
+
+    // Unassigned type numbers have no registry name and fall back to the bare
+    // number in summaries.
+    #[test]
+    fn icmpv4_codepoints_unknown_type_falls_back_to_number() {
+        // Types 1, 2, 7 are Unassigned in the IANA registry.
+        assert_eq!(icmpv4_type_name(1), None);
+        assert_eq!(icmpv4_type_name(2), None);
+        assert_eq!(icmpv4_type_name(7), None);
+        assert_eq!(icmpv4_type_summary(1), "1");
+        assert_eq!(icmpv4_type_summary(7), "7");
+    }
+
+    // Codes with no registered meaning for their type fall back to the bare
+    // number, including codes on a type that has no code registry at all.
+    #[test]
+    fn icmpv4_codepoints_unknown_code_falls_back_to_number() {
+        // Type 3 has a code registry, but code 99 is not assigned.
+        assert_eq!(icmpv4_code_summary(ICMP_DESTINATION_UNREACHABLE, 99), "99");
+        // Type 11 (time exceeded) has only codes 0 and 1.
+        assert_eq!(icmpv4_code_summary(super::ICMP_TIME_EXCEEDED, 200), "200");
+        // Echo request carries no code registry, so any code is numeric.
+        assert_eq!(icmpv4_code_summary(ICMP_ECHO_REQUEST, 0), "0");
+        assert_eq!(icmpv4_code_summary(ICMP_ECHO_REQUEST, 5), "5");
     }
 }
