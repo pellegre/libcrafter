@@ -59,10 +59,12 @@ pub use packet::{
     TransportChecksumContext,
 };
 pub use protocols::{
-    decode_dns_name, option_meta, option_name, option_status, scan_dhcp_option_segments,
-    typed_option_value, Arp, ArpOperation, Dhcp, DhcpClasslessRoute, DhcpMalformed,
+    decode_dns_name, decode_tftp_server_addresses, option_meta, option_name, option_status,
+    scan_dhcp_option_segments, typed_option_value, Arp, ArpOperation, ClientNetworkDeviceInterface,
+    ClientSystemArchitecture, Dhcp, DhcpClasslessRoute, DhcpClientUuid, DhcpMalformed,
     DhcpMessageType, DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionFormat, DhcpOptionKind,
-    DhcpOptionMeta, DhcpOptionSegment, DhcpOptionStatus, DhcpOptionValue, DhcpStaticRoute, Dns,
+    DhcpOptionMeta, DhcpOptionSegment, DhcpOptionStatus, DhcpOptionValue, DhcpStaticRoute,
+    DhcpUserClass, DhcpVendorClassData, DhcpVendorIdentifyingOption, DhcpVendorSuboption, Dns,
     DnsQuestion, DnsRecord, DnsRecordData, Dot1Q, Ethernet, Icmp, IcmpExtension, IcmpExtensionMpls,
     IcmpExtensionObject, IcmpKind, IcmpLayer, Icmpv6, IpProtocol, Ipv4, Ipv4Option, Ipv4OptionIter,
     Ipv4RouteOptionKind, Ipv6, Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6RoutingHeader,
@@ -131,11 +133,13 @@ pub mod core {
     pub use crate::protocols;
     pub use crate::registry;
     pub use crate::{
-        decode_dns_name, hexdump, option_meta, option_name, option_status,
-        scan_dhcp_option_segments, typed_option_value, Arp, ArpOperation, CompiledPacket,
-        CrafterError, Dhcp, DhcpClasslessRoute, DhcpMalformed, DhcpMessageType, DhcpOption,
+        decode_dns_name, decode_tftp_server_addresses, hexdump, option_meta, option_name,
+        option_status, scan_dhcp_option_segments, typed_option_value, Arp, ArpOperation,
+        ClientNetworkDeviceInterface, ClientSystemArchitecture, CompiledPacket, CrafterError, Dhcp,
+        DhcpClasslessRoute, DhcpClientUuid, DhcpMalformed, DhcpMessageType, DhcpOption,
         DhcpOptionArea, DhcpOptionCode, DhcpOptionFormat, DhcpOptionKind, DhcpOptionMeta,
-        DhcpOptionSegment, DhcpOptionStatus, DhcpOptionValue, DhcpStaticRoute, Dns, DnsQuestion,
+        DhcpOptionSegment, DhcpOptionStatus, DhcpOptionValue, DhcpStaticRoute, DhcpUserClass,
+        DhcpVendorClassData, DhcpVendorIdentifyingOption, DhcpVendorSuboption, Dns, DnsQuestion,
         DnsRecord, DnsRecordData, Dot1Q, Ethernet, EthertypeBindingContext, Field, FieldState,
         Icmp, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpKind, IcmpLayer, Icmpv6,
         IntoPacket, IpProtocol, Ipv4, Ipv4Option, Ipv4OptionIter, Ipv4ProtocolBindingContext,

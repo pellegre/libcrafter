@@ -7,9 +7,11 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 
 use super::constants::{
-    DHCP_OPTION_ALL_SUBNETS_LOCAL, DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_BOOT_FILE_SIZE,
+    DHCP_CLIENT_MACHINE_UUID_TYPE, DHCP_CLIENT_NDI_TYPE_UNDI, DHCP_OPTION_ALL_SUBNETS_LOCAL,
+    DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_BOOTFILE_NAME, DHCP_OPTION_BOOT_FILE_SIZE,
     DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
-    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_COOKIE_SERVER, DHCP_OPTION_DEFAULT_IP_TTL,
+    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
+    DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_COOKIE_SERVER, DHCP_OPTION_DEFAULT_IP_TTL,
     DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH,
     DHCP_OPTION_END, DHCP_OPTION_ETHERNET_ENCAPSULATION, DHCP_OPTION_EXTENSIONS_PATH,
     DHCP_OPTION_HOST_NAME, DHCP_OPTION_IMPRESS_SERVER, DHCP_OPTION_INTERFACE_MTU,
@@ -22,16 +24,19 @@ use super::constants::{
     DHCP_OPTION_NTP_SERVERS, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
     DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PATH_MTU_AGING_TIMEOUT,
     DHCP_OPTION_PATH_MTU_PLATEAU_TABLE, DHCP_OPTION_PERFORM_MASK_DISCOVERY,
-    DHCP_OPTION_PERFORM_ROUTER_DISCOVERY, DHCP_OPTION_POLICY_FILTER, DHCP_OPTION_REBINDING_TIME,
-    DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS,
-    DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH, DHCP_OPTION_ROUTER,
-    DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
+    DHCP_OPTION_PERFORM_ROUTER_DISCOVERY, DHCP_OPTION_POLICY_FILTER,
+    DHCP_OPTION_PXELINUX_CONFIGFILE, DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX,
+    DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RENEWAL_TIME,
+    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH,
+    DHCP_OPTION_ROUTER, DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
     DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_SUBNET_MASK,
     DHCP_OPTION_SWAP_SERVER, DHCP_OPTION_TCP_DEFAULT_TTL, DHCP_OPTION_TCP_KEEPALIVE_GARBAGE,
-    DHCP_OPTION_TCP_KEEPALIVE_INTERVAL, DHCP_OPTION_TIME_OFFSET, DHCP_OPTION_TIME_SERVER,
-    DHCP_OPTION_TRAILER_ENCAPSULATION, DHCP_OPTION_VENDOR_CLASS_IDENTIFIER,
-    DHCP_OPTION_VENDOR_SPECIFIC, DHCP_OPTION_X_WINDOW_DISPLAY_MANAGER,
-    DHCP_OPTION_X_WINDOW_FONT_SERVER, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME,
+    DHCP_OPTION_TCP_KEEPALIVE_INTERVAL, DHCP_OPTION_TFTP_SERVER_ADDRESS,
+    DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_TIME_OFFSET, DHCP_OPTION_TIME_SERVER,
+    DHCP_OPTION_TRAILER_ENCAPSULATION, DHCP_OPTION_USER_CLASS, DHCP_OPTION_VENDOR_CLASS_IDENTIFIER,
+    DHCP_OPTION_VENDOR_SPECIFIC, DHCP_OPTION_VI_VENDOR_CLASS, DHCP_OPTION_VI_VENDOR_SPECIFIC,
+    DHCP_OPTION_X_WINDOW_DISPLAY_MANAGER, DHCP_OPTION_X_WINDOW_FONT_SERVER, DHCP_OVERLOAD_BOTH,
+    DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME, DHCP_PXELINUX_MAGIC_VALUE,
 };
 use super::message::DhcpMessageType;
 use super::registry::{option_name, option_status, DhcpOptionStatus};
@@ -211,6 +216,191 @@ pub enum SipServers {
     },
 }
 
+/// An RFC 3004 User Class Data instance (option 77).
+///
+/// Source: RFC 3004 (errata-corrected). Option 77 carries one or more
+/// length-prefixed opaque class values: each instance is a single `UC_Len`
+/// octet (the number of data octets, which MUST be non-zero) followed by that
+/// many opaque data octets. The data bytes are not interpreted by the codec, so
+/// any vendor-defined contents are preserved verbatim. This type holds the raw
+/// opaque class values; the length-prefix framing is applied on encode.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DhcpUserClass {
+    /// The opaque user-class data instances, in wire order. Each is preserved
+    /// verbatim; the codec adds and removes the per-instance length octet.
+    pub classes: Vec<Vec<u8>>,
+}
+
+impl DhcpUserClass {
+    /// Create a user-class value from a list of opaque class instances.
+    pub fn new(classes: impl Into<Vec<Vec<u8>>>) -> Self {
+        Self {
+            classes: classes.into(),
+        }
+    }
+}
+
+/// One RFC 4578 client system architecture type identifier (option 93).
+///
+/// Source: RFC 4578 section 2.1. Option 93 carries one or more 16-bit
+/// big-endian architecture type values from the IANA "Processor Architecture
+/// Types" registry (for example `0` Intel x86PC, `6` EFI IA32, `7` EFI BC,
+/// `9` EFI x86-64). Unknown values are preserved verbatim as the raw `u16`, so
+/// architectures not in the crate's snapshot still round-trip.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClientSystemArchitecture {
+    /// The 16-bit architecture type values in wire order.
+    pub architectures: Vec<u16>,
+}
+
+impl ClientSystemArchitecture {
+    /// Create a client-system-architecture value from a list of type values.
+    pub fn new(architectures: impl Into<Vec<u16>>) -> Self {
+        Self {
+            architectures: architectures.into(),
+        }
+    }
+}
+
+/// An RFC 4578 client network device interface value (option 94).
+///
+/// Source: RFC 4578 section 2.2. Option 94 is exactly three octets: a `type`
+/// octet (only value `1`, UNDI, is defined) followed by the interface's major
+/// and minor revision octets. Unknown `type` values are preserved verbatim
+/// rather than rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ClientNetworkDeviceInterface {
+    /// Interface type octet (`1` = UNDI per RFC 4578).
+    pub interface_type: u8,
+    /// Major revision octet of the interface.
+    pub major: u8,
+    /// Minor revision octet of the interface.
+    pub minor: u8,
+}
+
+impl ClientNetworkDeviceInterface {
+    /// Create a client network device interface value.
+    pub const fn new(interface_type: u8, major: u8, minor: u8) -> Self {
+        Self {
+            interface_type,
+            major,
+            minor,
+        }
+    }
+
+    /// Create a UNDI (type `1`) interface value from major/minor revisions
+    /// (RFC 4578 section 2.2).
+    pub const fn undi(major: u8, minor: u8) -> Self {
+        Self::new(DHCP_CLIENT_NDI_TYPE_UNDI, major, minor)
+    }
+}
+
+/// An RFC 4578 UUID/GUID-based client machine identifier (option 97).
+///
+/// Source: RFC 4578 section 2.3. Option 97 is a `type` octet followed by the
+/// machine identifier. The only defined type is `0`, which introduces a
+/// 16-octet GUID (total option length 17). The `type` octet and identifier
+/// bytes are preserved verbatim so non-zero types and non-16-octet identifiers
+/// still round-trip.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DhcpClientUuid {
+    /// Identifier type octet (`0` = GUID per RFC 4578).
+    pub identifier_type: u8,
+    /// The machine identifier bytes (a 16-octet GUID for type `0`).
+    pub identifier: Vec<u8>,
+}
+
+impl DhcpClientUuid {
+    /// Create a client machine identifier value from a type and identifier.
+    pub fn new(identifier_type: u8, identifier: impl Into<Vec<u8>>) -> Self {
+        Self {
+            identifier_type,
+            identifier: identifier.into(),
+        }
+    }
+
+    /// Create a type-`0` GUID client identifier from a 16-octet GUID.
+    pub fn guid(guid: impl Into<Vec<u8>>) -> Self {
+        Self::new(DHCP_CLIENT_MACHINE_UUID_TYPE, guid)
+    }
+}
+
+/// One RFC 3925 V-I Vendor Class data instance (option 124).
+///
+/// Source: RFC 3925 section 3. Option 124 carries one or more vendor instances,
+/// each a 4-octet IANA Enterprise Number, a one-octet `data-len`, and that many
+/// opaque vendor-class-data octets. The data bytes are vendor-defined and are
+/// preserved verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DhcpVendorClassData {
+    /// The vendor's 32-bit IANA Enterprise Number.
+    pub enterprise_number: u32,
+    /// Opaque vendor-class data, preserved verbatim.
+    pub data: Vec<u8>,
+}
+
+impl DhcpVendorClassData {
+    /// Create a V-I vendor-class instance from an enterprise number and data.
+    pub fn new(enterprise_number: u32, data: impl Into<Vec<u8>>) -> Self {
+        Self {
+            enterprise_number,
+            data: data.into(),
+        }
+    }
+}
+
+/// One RFC 3925 V-I Vendor-Specific suboption inside option 125's option-data.
+///
+/// Source: RFC 3925 section 4. Within a vendor instance's `option-data`, the
+/// vendor-specific information is a sequence of suboptions, each a one-octet
+/// `subopt-code`, a one-octet `subopt-len`, and that many opaque data octets.
+/// The suboption code space is vendor-defined, so the data is opaque to the
+/// codec and preserved verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DhcpVendorSuboption {
+    /// Vendor-defined suboption code.
+    pub code: u8,
+    /// Opaque suboption data, preserved verbatim.
+    pub data: Vec<u8>,
+}
+
+impl DhcpVendorSuboption {
+    /// Create a vendor suboption from a code and opaque data.
+    pub fn new(code: u8, data: impl Into<Vec<u8>>) -> Self {
+        Self {
+            code,
+            data: data.into(),
+        }
+    }
+}
+
+/// One RFC 3925 V-I Vendor-Specific Information instance (option 125).
+///
+/// Source: RFC 3925 section 4. Option 125 carries one or more vendor instances,
+/// each a 4-octet IANA Enterprise Number, a one-octet `data-len`, and that many
+/// octets of `option-data`. The option-data is itself a sequence of
+/// [`DhcpVendorSuboption`] code/length/value triples (nested TLVs). Because the
+/// suboption code space is vendor-defined and known only by the vendor class,
+/// the suboption payloads stay opaque.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DhcpVendorIdentifyingOption {
+    /// The vendor's 32-bit IANA Enterprise Number.
+    pub enterprise_number: u32,
+    /// The vendor-defined nested suboptions carried in this instance.
+    pub suboptions: Vec<DhcpVendorSuboption>,
+}
+
+impl DhcpVendorIdentifyingOption {
+    /// Create a V-I vendor-specific instance from an enterprise number and
+    /// nested suboptions.
+    pub fn new(enterprise_number: u32, suboptions: impl Into<Vec<DhcpVendorSuboption>>) -> Self {
+        Self {
+            enterprise_number,
+            suboptions: suboptions.into(),
+        }
+    }
+}
+
 /// A DHCPv4 option codepoint with source-backed registry awareness.
 ///
 /// Source: IANA "BOOTP Vendor Extensions and DHCP Options" registry (updated
@@ -335,6 +525,22 @@ pub enum DhcpOptionValue {
     /// An RFC 3361 SIP Servers value (option 120): a domain-name list, an IPv4
     /// address list, or an unspecified encoding preserved verbatim.
     SipServers(SipServers),
+    /// An RFC 3004 user-class value (option 77): one or more length-prefixed
+    /// opaque class instances.
+    UserClass(DhcpUserClass),
+    /// An RFC 4578 client system architecture list (option 93): 16-bit type
+    /// values.
+    ClientSystemArchitecture(ClientSystemArchitecture),
+    /// An RFC 4578 client network device interface value (option 94).
+    ClientNetworkDeviceInterface(ClientNetworkDeviceInterface),
+    /// An RFC 4578 UUID/GUID-based client machine identifier (option 97).
+    ClientUuid(DhcpClientUuid),
+    /// An RFC 3925 V-I Vendor Class value (option 124): one or more
+    /// enterprise-number plus opaque vendor-class-data instances.
+    ViVendorClass(Vec<DhcpVendorClassData>),
+    /// An RFC 3925 V-I Vendor-Specific Information value (option 125): one or
+    /// more enterprise-number instances each carrying nested suboptions.
+    ViVendorSpecific(Vec<DhcpVendorIdentifyingOption>),
     /// Opaque bytes preserved verbatim for options without a richer decode yet.
     Opaque(Vec<u8>),
 }
@@ -393,6 +599,14 @@ impl DhcpOptionValue {
             Self::ClasslessRoutes(routes) => encode_classless_routes(routes),
             Self::DomainSearch(names) => encode_domain_name_list(names),
             Self::SipServers(servers) => encode_sip_servers(servers),
+            Self::UserClass(user_class) => encode_user_class(user_class),
+            Self::ClientSystemArchitecture(arch) => encode_client_system_architecture(arch),
+            Self::ClientNetworkDeviceInterface(ndi) => {
+                vec![ndi.interface_type, ndi.major, ndi.minor]
+            }
+            Self::ClientUuid(uuid) => encode_client_uuid(uuid),
+            Self::ViVendorClass(instances) => encode_vi_vendor_class(instances),
+            Self::ViVendorSpecific(instances) => encode_vi_vendor_specific(instances),
             Self::Text(bytes) | Self::ParameterRequestList(bytes) | Self::Opaque(bytes) => {
                 bytes.clone()
             }
@@ -445,6 +659,19 @@ pub enum DhcpOptionFormat {
     DomainSearch,
     /// RFC 3361 SIP servers (option 120): enc byte plus domain or address list.
     SipServers,
+    /// RFC 3004 user class (option 77): length-prefixed opaque class instances.
+    UserClass,
+    /// RFC 4578 client system architecture (option 93): 16-bit type list.
+    ClientSystemArchitecture,
+    /// RFC 4578 client network device interface (option 94): type/major/minor.
+    ClientNetworkDeviceInterface,
+    /// RFC 4578 UUID/GUID client identifier (option 97): type octet plus GUID.
+    ClientUuid,
+    /// RFC 3925 V-I Vendor Class (option 124): enterprise-number instances.
+    ViVendorClass,
+    /// RFC 3925 V-I Vendor-Specific Information (option 125): enterprise-number
+    /// instances carrying nested suboptions.
+    ViVendorSpecific,
     /// Opaque bytes preserved verbatim (vendor-specific, client/vendor id).
     Opaque,
 }
@@ -527,6 +754,18 @@ pub enum DhcpOptionKind {
     DomainSearch,
     SipServers,
     ClasslessStaticRoute,
+    TftpServerName,
+    BootfileName,
+    UserClass,
+    ClientSystemArchitecture,
+    ClientNetworkDeviceInterface,
+    ClientMachineIdentifier,
+    ViVendorClass,
+    ViVendorSpecificInformation,
+    PxelinuxMagic,
+    PxelinuxConfigFile,
+    PxelinuxPathPrefix,
+    PxelinuxRebootTime,
 }
 
 impl DhcpOptionKind {
@@ -597,6 +836,18 @@ impl DhcpOptionKind {
             DHCP_OPTION_DOMAIN_SEARCH => Self::DomainSearch,
             DHCP_OPTION_SIP_SERVERS => Self::SipServers,
             DHCP_OPTION_CLASSLESS_STATIC_ROUTE => Self::ClasslessStaticRoute,
+            DHCP_OPTION_TFTP_SERVER_NAME => Self::TftpServerName,
+            DHCP_OPTION_BOOTFILE_NAME => Self::BootfileName,
+            DHCP_OPTION_USER_CLASS => Self::UserClass,
+            DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE => Self::ClientSystemArchitecture,
+            DHCP_OPTION_CLIENT_NDI => Self::ClientNetworkDeviceInterface,
+            DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER => Self::ClientMachineIdentifier,
+            DHCP_OPTION_VI_VENDOR_CLASS => Self::ViVendorClass,
+            DHCP_OPTION_VI_VENDOR_SPECIFIC => Self::ViVendorSpecificInformation,
+            DHCP_OPTION_PXELINUX_MAGIC => Self::PxelinuxMagic,
+            DHCP_OPTION_PXELINUX_CONFIGFILE => Self::PxelinuxConfigFile,
+            DHCP_OPTION_PXELINUX_PATHPREFIX => Self::PxelinuxPathPrefix,
+            DHCP_OPTION_PXELINUX_REBOOTTIME => Self::PxelinuxRebootTime,
             _ => return None,
         };
         Some(kind)
@@ -669,6 +920,18 @@ impl DhcpOptionKind {
             Self::DomainSearch => DHCP_OPTION_DOMAIN_SEARCH,
             Self::SipServers => DHCP_OPTION_SIP_SERVERS,
             Self::ClasslessStaticRoute => DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
+            Self::TftpServerName => DHCP_OPTION_TFTP_SERVER_NAME,
+            Self::BootfileName => DHCP_OPTION_BOOTFILE_NAME,
+            Self::UserClass => DHCP_OPTION_USER_CLASS,
+            Self::ClientSystemArchitecture => DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE,
+            Self::ClientNetworkDeviceInterface => DHCP_OPTION_CLIENT_NDI,
+            Self::ClientMachineIdentifier => DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER,
+            Self::ViVendorClass => DHCP_OPTION_VI_VENDOR_CLASS,
+            Self::ViVendorSpecificInformation => DHCP_OPTION_VI_VENDOR_SPECIFIC,
+            Self::PxelinuxMagic => DHCP_OPTION_PXELINUX_MAGIC,
+            Self::PxelinuxConfigFile => DHCP_OPTION_PXELINUX_CONFIGFILE,
+            Self::PxelinuxPathPrefix => DHCP_OPTION_PXELINUX_PATHPREFIX,
+            Self::PxelinuxRebootTime => DHCP_OPTION_PXELINUX_REBOOTTIME,
         }
     }
 
@@ -746,15 +1009,31 @@ impl DhcpOptionKind {
             | Self::ExtensionsPath
             | Self::NisDomain
             | Self::NetbiosScope
-            | Self::DhcpMessage => F::Text,
+            | Self::DhcpMessage
+            | Self::TftpServerName
+            | Self::BootfileName
+            | Self::PxelinuxConfigFile
+            | Self::PxelinuxPathPrefix => F::Text,
+            // RFC 5071 PXELINUX reboot time is a 32-bit seconds value.
+            Self::PxelinuxRebootTime => F::U32,
             // Special single-octet codecs and lists.
             Self::ParameterRequestList => F::ParameterRequestList,
             Self::DhcpMessageType => F::MessageType,
             Self::OptionOverload => F::OptionOverload,
-            // Opaque/vendor data preserved verbatim.
+            // Vendor/user-class/PXE structured formats.
+            Self::UserClass => F::UserClass,
+            Self::ClientSystemArchitecture => F::ClientSystemArchitecture,
+            Self::ClientNetworkDeviceInterface => F::ClientNetworkDeviceInterface,
+            Self::ClientMachineIdentifier => F::ClientUuid,
+            Self::ViVendorClass => F::ViVendorClass,
+            Self::ViVendorSpecificInformation => F::ViVendorSpecific,
+            // Opaque/vendor data preserved verbatim. The PXELINUX magic is a
+            // fixed 4-octet value whose meaning is positional, so it is kept
+            // opaque rather than reinterpreted.
             Self::VendorSpecificInformation
             | Self::VendorClassIdentifier
-            | Self::ClientIdentifier => F::Opaque,
+            | Self::ClientIdentifier
+            | Self::PxelinuxMagic => F::Opaque,
         }
     }
 }
@@ -808,6 +1087,20 @@ pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValu
             data,
         )?),
         DhcpOptionFormat::SipServers => DhcpOptionValue::SipServers(decode_sip_servers(data)?),
+        DhcpOptionFormat::UserClass => DhcpOptionValue::UserClass(decode_user_class(data)?),
+        DhcpOptionFormat::ClientSystemArchitecture => {
+            DhcpOptionValue::ClientSystemArchitecture(decode_client_system_architecture(data)?)
+        }
+        DhcpOptionFormat::ClientNetworkDeviceInterface => {
+            DhcpOptionValue::ClientNetworkDeviceInterface(decode_client_ndi(data)?)
+        }
+        DhcpOptionFormat::ClientUuid => DhcpOptionValue::ClientUuid(decode_client_uuid(data)?),
+        DhcpOptionFormat::ViVendorClass => {
+            DhcpOptionValue::ViVendorClass(decode_vi_vendor_class(data)?)
+        }
+        DhcpOptionFormat::ViVendorSpecific => {
+            DhcpOptionValue::ViVendorSpecific(decode_vi_vendor_specific(data)?)
+        }
         DhcpOptionFormat::Opaque => {
             if data.is_empty() {
                 DhcpOptionValue::Empty
@@ -817,6 +1110,26 @@ pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValu
         }
     };
     Ok(Some(value))
+}
+
+/// Decode the RFC 5859 TFTP Server Address option (option 150) into its IPv4
+/// address list.
+///
+/// Source: RFC 5859. The payload is one or more IPv4 addresses (length a
+/// non-zero multiple of four). Code 150 is marked ambiguous by the IANA
+/// registry (it is also used by Etherboot and GRUB), so the default option
+/// decoder preserves code 150 as raw bytes; this is an explicit opt-in to the
+/// RFC 5859 interpretation. A length that is not a non-zero multiple of four
+/// surfaces as a structured error rather than a panic.
+pub fn decode_tftp_server_addresses(data: &[u8]) -> Result<Vec<Ipv4Addr>> {
+    let field = "dhcp.option.tftp_server_address";
+    if data.is_empty() || data.len() % 4 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "TFTP server address option length must be a non-zero multiple of four",
+        ));
+    }
+    decode_ipv4_list(field, data)
 }
 
 /// A raw decoded DHCPv4 option segment with full inspection metadata.
@@ -1052,6 +1365,119 @@ impl DhcpOption {
             code: kind.code(),
             data: value.encode_payload(),
         }
+    }
+
+    /// Create a vendor-specific information option (option 43, RFC 2132).
+    ///
+    /// The payload is opaque vendor data whose internal format is defined by the
+    /// vendor (option 60); it is carried verbatim.
+    pub fn vendor_specific(data: impl Into<Vec<u8>>) -> Self {
+        Self::generic(DHCP_OPTION_VENDOR_SPECIFIC, data)
+    }
+
+    /// Create a vendor class identifier option (option 60, RFC 2132).
+    pub fn vendor_class_identifier(data: impl Into<Vec<u8>>) -> Self {
+        Self::generic(DHCP_OPTION_VENDOR_CLASS_IDENTIFIER, data)
+    }
+
+    /// Create a TFTP server name option (option 66, RFC 2132 section 9.4).
+    pub fn tftp_server_name(name: impl Into<Vec<u8>>) -> Self {
+        Self::generic(DHCP_OPTION_TFTP_SERVER_NAME, name)
+    }
+
+    /// Create a bootfile name option (option 67, RFC 2132 section 9.5).
+    pub fn bootfile_name(name: impl Into<Vec<u8>>) -> Self {
+        Self::generic(DHCP_OPTION_BOOTFILE_NAME, name)
+    }
+
+    /// Create an RFC 3004 user-class option (option 77).
+    pub fn user_class(user_class: DhcpUserClass) -> Self {
+        Self::typed(
+            DhcpOptionKind::UserClass,
+            DhcpOptionValue::UserClass(user_class),
+        )
+    }
+
+    /// Create an RFC 4578 client system architecture option (option 93).
+    pub fn client_system_architecture(arch: ClientSystemArchitecture) -> Self {
+        Self::typed(
+            DhcpOptionKind::ClientSystemArchitecture,
+            DhcpOptionValue::ClientSystemArchitecture(arch),
+        )
+    }
+
+    /// Create an RFC 4578 client network device interface option (option 94).
+    pub fn client_network_device_interface(ndi: ClientNetworkDeviceInterface) -> Self {
+        Self::typed(
+            DhcpOptionKind::ClientNetworkDeviceInterface,
+            DhcpOptionValue::ClientNetworkDeviceInterface(ndi),
+        )
+    }
+
+    /// Create an RFC 4578 UUID/GUID client machine identifier option (option 97).
+    pub fn client_uuid(uuid: DhcpClientUuid) -> Self {
+        Self::typed(
+            DhcpOptionKind::ClientMachineIdentifier,
+            DhcpOptionValue::ClientUuid(uuid),
+        )
+    }
+
+    /// Create an RFC 3925 V-I Vendor Class option (option 124).
+    pub fn vi_vendor_class(instances: impl Into<Vec<DhcpVendorClassData>>) -> Self {
+        Self::typed(
+            DhcpOptionKind::ViVendorClass,
+            DhcpOptionValue::ViVendorClass(instances.into()),
+        )
+    }
+
+    /// Create an RFC 3925 V-I Vendor-Specific Information option (option 125).
+    pub fn vi_vendor_specific(instances: impl Into<Vec<DhcpVendorIdentifyingOption>>) -> Self {
+        Self::typed(
+            DhcpOptionKind::ViVendorSpecificInformation,
+            DhcpOptionValue::ViVendorSpecific(instances.into()),
+        )
+    }
+
+    /// Create an RFC 5859 TFTP server address option (option 150).
+    ///
+    /// The payload is a list of IPv4 addresses (length a multiple of four). Note
+    /// that the IANA registry marks code 150 as ambiguous (TFTP server /
+    /// Etherboot / GRUB); this constructor encodes the RFC 5859 interpretation,
+    /// while decoding leaves code 150 as raw bytes by default. Use
+    /// [`super::Dhcp::tftp_server_addresses`] to apply the RFC 5859 decode.
+    pub fn tftp_server_addresses(addresses: impl Into<Vec<Ipv4Addr>>) -> Self {
+        Self::generic(
+            DHCP_OPTION_TFTP_SERVER_ADDRESS,
+            encode_ipv4_list(&addresses.into()),
+        )
+    }
+
+    /// Create an RFC 5071 PXELINUX magic option (option 208).
+    ///
+    /// The payload is the fixed magic value `F1:00:74:7E`.
+    pub fn pxelinux_magic() -> Self {
+        Self::generic(
+            DHCP_OPTION_PXELINUX_MAGIC,
+            DHCP_PXELINUX_MAGIC_VALUE.to_vec(),
+        )
+    }
+
+    /// Create an RFC 5071 PXELINUX configuration file option (option 209).
+    pub fn pxelinux_config_file(path: impl Into<Vec<u8>>) -> Self {
+        Self::generic(DHCP_OPTION_PXELINUX_CONFIGFILE, path)
+    }
+
+    /// Create an RFC 5071 PXELINUX path prefix option (option 210).
+    pub fn pxelinux_path_prefix(path: impl Into<Vec<u8>>) -> Self {
+        Self::generic(DHCP_OPTION_PXELINUX_PATHPREFIX, path)
+    }
+
+    /// Create an RFC 5071 PXELINUX reboot time option (option 211), in seconds.
+    pub fn pxelinux_reboot_time(seconds: u32) -> Self {
+        Self::typed(
+            DhcpOptionKind::PxelinuxRebootTime,
+            DhcpOptionValue::U32(seconds),
+        )
     }
 
     /// Raw DHCP option code.
@@ -1976,6 +2402,259 @@ fn encode_sip_servers(servers: &SipServers) -> Vec<u8> {
             bytes
         }
     }
+}
+
+/// Octet length of an RFC 3925 IANA Enterprise Number (options 124 and 125).
+const DHCP_ENTERPRISE_NUMBER_LEN: usize = 4;
+
+/// Decode an RFC 3004 user-class option (option 77).
+///
+/// Source: RFC 3004 (errata-corrected). The payload is one or more instances,
+/// each a one-octet length followed by that many opaque data octets. A
+/// zero-length instance is malformed per the RFC, and a length that runs past
+/// the end of the data is a structured error rather than a panic.
+fn decode_user_class(data: &[u8]) -> Result<DhcpUserClass> {
+    let field = "dhcp.option.user_class";
+    let mut classes = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < data.len() {
+        let len = data[offset] as usize;
+        offset += 1;
+        if len == 0 {
+            return Err(CrafterError::invalid_field_value(
+                field,
+                "user class data instance length must be non-zero",
+            ));
+        }
+        let end = offset + len;
+        if end > data.len() {
+            return Err(CrafterError::buffer_too_short(field, end, data.len()));
+        }
+        classes.push(data[offset..end].to_vec());
+        offset = end;
+    }
+
+    Ok(DhcpUserClass::new(classes))
+}
+
+/// Encode an RFC 3004 user-class option (option 77).
+///
+/// Each opaque class instance is emitted as a one-octet length prefix followed
+/// by its data bytes, in order. Instance lengths are bounded to the 255-octet
+/// length field; longer instances are truncated to the field width.
+fn encode_user_class(user_class: &DhcpUserClass) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for class in &user_class.classes {
+        let len = class.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        bytes.push(len as u8);
+        bytes.extend_from_slice(&class[..len]);
+    }
+    bytes
+}
+
+/// Decode an RFC 4578 client system architecture option (option 93).
+///
+/// Source: RFC 4578 section 2.1. The payload is one or more 16-bit big-endian
+/// architecture type values, so the length must be a non-zero multiple of two.
+fn decode_client_system_architecture(data: &[u8]) -> Result<ClientSystemArchitecture> {
+    let field = "dhcp.option.client_system_architecture";
+    Ok(ClientSystemArchitecture::new(decode_u16_list(field, data)?))
+}
+
+/// Encode an RFC 4578 client system architecture option (option 93).
+fn encode_client_system_architecture(arch: &ClientSystemArchitecture) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(arch.architectures.len() * 2);
+    for value in &arch.architectures {
+        bytes.extend_from_slice(&value.to_be_bytes());
+    }
+    bytes
+}
+
+/// Decode an RFC 4578 client network device interface option (option 94).
+///
+/// Source: RFC 4578 section 2.2. The payload is exactly three octets: an
+/// interface type octet followed by major and minor revision octets. Any other
+/// length is a structured error.
+fn decode_client_ndi(data: &[u8]) -> Result<ClientNetworkDeviceInterface> {
+    let field = "dhcp.option.client_ndi";
+    validate_fixed_len(field, data.len(), 3)?;
+    Ok(ClientNetworkDeviceInterface::new(data[0], data[1], data[2]))
+}
+
+/// Decode an RFC 4578 UUID/GUID client machine identifier (option 97).
+///
+/// Source: RFC 4578 section 2.3. The payload is a type octet followed by the
+/// machine identifier. At least the type octet must be present; the identifier
+/// bytes (a 16-octet GUID for type `0`) are preserved verbatim, so non-standard
+/// type values and identifier lengths still round-trip.
+fn decode_client_uuid(data: &[u8]) -> Result<DhcpClientUuid> {
+    let field = "dhcp.option.client_uuid";
+    let Some((&identifier_type, rest)) = data.split_first() else {
+        return Err(CrafterError::buffer_too_short(field, 1, 0));
+    };
+    Ok(DhcpClientUuid::new(identifier_type, rest.to_vec()))
+}
+
+/// Encode an RFC 4578 UUID/GUID client machine identifier (option 97).
+fn encode_client_uuid(uuid: &DhcpClientUuid) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(1 + uuid.identifier.len());
+    bytes.push(uuid.identifier_type);
+    bytes.extend_from_slice(&uuid.identifier);
+    bytes
+}
+
+/// Decode an RFC 3925 V-I Vendor Class option (option 124).
+///
+/// Source: RFC 3925 section 3. The payload is one or more instances, each a
+/// 4-octet enterprise number, a one-octet `data-len`, and that many opaque
+/// vendor-class-data octets. A truncated enterprise number, missing data-len,
+/// or a data-len that runs past the end of the option surfaces as a structured
+/// error rather than a panic.
+fn decode_vi_vendor_class(data: &[u8]) -> Result<Vec<DhcpVendorClassData>> {
+    let field = "dhcp.option.vi_vendor_class";
+    let mut instances = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < data.len() {
+        let enterprise_number = read_enterprise_number(field, data, offset)?;
+        offset += DHCP_ENTERPRISE_NUMBER_LEN;
+        if offset >= data.len() {
+            return Err(CrafterError::buffer_too_short(
+                field,
+                offset + 1,
+                data.len(),
+            ));
+        }
+        let len = data[offset] as usize;
+        offset += 1;
+        let end = offset + len;
+        if end > data.len() {
+            return Err(CrafterError::buffer_too_short(field, end, data.len()));
+        }
+        instances.push(DhcpVendorClassData::new(
+            enterprise_number,
+            data[offset..end].to_vec(),
+        ));
+        offset = end;
+    }
+
+    Ok(instances)
+}
+
+/// Encode an RFC 3925 V-I Vendor Class option (option 124).
+fn encode_vi_vendor_class(instances: &[DhcpVendorClassData]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for instance in instances {
+        bytes.extend_from_slice(&instance.enterprise_number.to_be_bytes());
+        let len = instance.data.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        bytes.push(len as u8);
+        bytes.extend_from_slice(&instance.data[..len]);
+    }
+    bytes
+}
+
+/// Decode an RFC 3925 V-I Vendor-Specific Information option (option 125).
+///
+/// Source: RFC 3925 section 4. The payload is one or more instances, each a
+/// 4-octet enterprise number, a one-octet `data-len`, and that many octets of
+/// option-data; the option-data is itself a sequence of `subopt-code` /
+/// `subopt-len` / value triples. Truncated headers, suboption lengths that run
+/// past the instance, and truncated suboption data all surface as structured
+/// errors. The suboption data stays opaque because its code space is
+/// vendor-defined.
+fn decode_vi_vendor_specific(data: &[u8]) -> Result<Vec<DhcpVendorIdentifyingOption>> {
+    let field = "dhcp.option.vi_vendor_specific";
+    let mut instances = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < data.len() {
+        let enterprise_number = read_enterprise_number(field, data, offset)?;
+        offset += DHCP_ENTERPRISE_NUMBER_LEN;
+        if offset >= data.len() {
+            return Err(CrafterError::buffer_too_short(
+                field,
+                offset + 1,
+                data.len(),
+            ));
+        }
+        let len = data[offset] as usize;
+        offset += 1;
+        let end = offset + len;
+        if end > data.len() {
+            return Err(CrafterError::buffer_too_short(field, end, data.len()));
+        }
+        let suboptions = decode_vendor_suboptions(field, &data[offset..end])?;
+        instances.push(DhcpVendorIdentifyingOption::new(
+            enterprise_number,
+            suboptions,
+        ));
+        offset = end;
+    }
+
+    Ok(instances)
+}
+
+/// Decode the nested RFC 3925 suboptions inside one option-125 instance.
+fn decode_vendor_suboptions(field: &'static str, data: &[u8]) -> Result<Vec<DhcpVendorSuboption>> {
+    let mut suboptions = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < data.len() {
+        let code = data[offset];
+        offset += 1;
+        if offset >= data.len() {
+            return Err(CrafterError::buffer_too_short(
+                field,
+                offset + 1,
+                data.len(),
+            ));
+        }
+        let len = data[offset] as usize;
+        offset += 1;
+        let end = offset + len;
+        if end > data.len() {
+            return Err(CrafterError::buffer_too_short(field, end, data.len()));
+        }
+        suboptions.push(DhcpVendorSuboption::new(code, data[offset..end].to_vec()));
+        offset = end;
+    }
+
+    Ok(suboptions)
+}
+
+/// Encode an RFC 3925 V-I Vendor-Specific Information option (option 125).
+fn encode_vi_vendor_specific(instances: &[DhcpVendorIdentifyingOption]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for instance in instances {
+        bytes.extend_from_slice(&instance.enterprise_number.to_be_bytes());
+        let option_data = encode_vendor_suboptions(&instance.suboptions);
+        let len = option_data.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        bytes.push(len as u8);
+        bytes.extend_from_slice(&option_data[..len]);
+    }
+    bytes
+}
+
+/// Encode the nested RFC 3925 suboptions of one option-125 instance.
+fn encode_vendor_suboptions(suboptions: &[DhcpVendorSuboption]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for suboption in suboptions {
+        bytes.push(suboption.code);
+        let len = suboption.data.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        bytes.push(len as u8);
+        bytes.extend_from_slice(&suboption.data[..len]);
+    }
+    bytes
+}
+
+/// Read a 4-octet big-endian IANA Enterprise Number at `offset` (RFC 3925).
+fn read_enterprise_number(field: &'static str, data: &[u8], offset: usize) -> Result<u32> {
+    let end = offset + DHCP_ENTERPRISE_NUMBER_LEN;
+    if end > data.len() {
+        return Err(CrafterError::buffer_too_short(field, end, data.len()));
+    }
+    read_u32_be(&data[offset..end])
 }
 
 /// Maximum payload an option length byte can describe (RFC 2132 section 2).
@@ -3109,5 +3788,353 @@ mod dhcp_route_domain_service {
             typed_option_value(SIP_SERVERS, &[1, 192, 0, 2]),
             Err(CrafterError::InvalidFieldValue { .. }),
         ));
+    }
+}
+
+#[cfg(test)]
+mod dhcp_vendor_user_pxe {
+    use super::super::{
+        decode_tftp_server_addresses, ClientNetworkDeviceInterface, ClientSystemArchitecture, Dhcp,
+        DhcpClientUuid, DhcpMessageType, DhcpOption, DhcpUserClass, DhcpVendorClassData,
+        DhcpVendorIdentifyingOption, DhcpVendorSuboption,
+    };
+    use super::{
+        decode_client_ndi, decode_client_system_architecture, decode_client_uuid,
+        decode_user_class, decode_vi_vendor_class, decode_vi_vendor_specific, typed_option_value,
+        DhcpOptionValue,
+    };
+    use crate::error::CrafterError;
+    use core::net::Ipv4Addr;
+
+    const VENDOR_SPECIFIC: u8 = super::super::DHCP_OPTION_VENDOR_SPECIFIC; // 43
+    const VENDOR_CLASS_ID: u8 = super::super::DHCP_OPTION_VENDOR_CLASS_IDENTIFIER; // 60
+    const TFTP_SERVER_NAME: u8 = super::super::DHCP_OPTION_TFTP_SERVER_NAME; // 66
+    const BOOTFILE_NAME: u8 = super::super::DHCP_OPTION_BOOTFILE_NAME; // 67
+    const USER_CLASS: u8 = super::super::DHCP_OPTION_USER_CLASS; // 77
+    const CLIENT_ARCH: u8 = super::super::DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE; // 93
+    const CLIENT_NDI: u8 = super::super::DHCP_OPTION_CLIENT_NDI; // 94
+    const CLIENT_UUID: u8 = super::super::DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER; // 97
+    const VI_VENDOR_CLASS: u8 = super::super::DHCP_OPTION_VI_VENDOR_CLASS; // 124
+    const VI_VENDOR_SPECIFIC: u8 = super::super::DHCP_OPTION_VI_VENDOR_SPECIFIC; // 125
+    const TFTP_SERVER_ADDRESS: u8 = super::super::DHCP_OPTION_TFTP_SERVER_ADDRESS; // 150
+
+    fn ip(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
+        Ipv4Addr::new(a, b, c, d)
+    }
+
+    fn build_and_decode(options: Vec<DhcpOption>) -> Dhcp {
+        let dhcp = Dhcp::new()
+            .op(super::super::BOOTP_REQUEST)
+            .message_type(DhcpMessageType::Discover)
+            .options(options);
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        Dhcp::decode(&bytes).unwrap()
+    }
+
+    fn recompile_is_stable(parsed: &Dhcp) {
+        let bytes = crate::Packet::from_layer(parsed.clone())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let recompiled = crate::Packet::from_layer(Dhcp::decode(&bytes).unwrap())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn dhcp_vendor_identifying_options_roundtrip() {
+        // RFC 3925 option 124 (V-I Vendor Class): one or more instances of a
+        // 4-octet enterprise number, a data-len octet, and opaque
+        // vendor-class-data.
+        let vivco = vec![
+            DhcpVendorClassData::new(3561, b"PXEClient:Arch:00009".to_vec()),
+            DhcpVendorClassData::new(311, vec![0xde, 0xad, 0xbe, 0xef]),
+        ];
+        let vivco_value = DhcpOptionValue::ViVendorClass(vivco.clone());
+        let payload = vivco_value.encode_payload();
+        // Wire layout: enterprise(4) + data-len(1) + data, repeated.
+        let mut expected: Vec<u8> = Vec::new();
+        expected.extend_from_slice(&3561u32.to_be_bytes());
+        expected.push(20);
+        expected.extend_from_slice(b"PXEClient:Arch:00009");
+        expected.extend_from_slice(&311u32.to_be_bytes());
+        expected.push(4);
+        expected.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(payload, expected);
+        assert_eq!(
+            typed_option_value(VI_VENDOR_CLASS, &payload)
+                .unwrap()
+                .unwrap(),
+            vivco_value,
+        );
+        assert_eq!(decode_vi_vendor_class(&payload).unwrap(), vivco);
+
+        // RFC 3925 option 125 (V-I Vendor-Specific Information): enterprise
+        // number, data-len, then nested code/length/value suboptions.
+        let vivso = vec![DhcpVendorIdentifyingOption::new(
+            3561,
+            vec![
+                DhcpVendorSuboption::new(1, vec![0x01, 0x02, 0x03]),
+                DhcpVendorSuboption::new(2, b"opaque".to_vec()),
+            ],
+        )];
+        let vivso_value = DhcpOptionValue::ViVendorSpecific(vivso.clone());
+        let payload = vivso_value.encode_payload();
+        let mut expected: Vec<u8> = Vec::new();
+        expected.extend_from_slice(&3561u32.to_be_bytes());
+        // option-data: subopt1 (code 1, len 3, data) + subopt2 (code 2, len 6,
+        // "opaque") = 5 + 8 = 13 octets.
+        expected.push(13);
+        expected.extend_from_slice(&[1, 3, 0x01, 0x02, 0x03]);
+        expected.push(2);
+        expected.push(6);
+        expected.extend_from_slice(b"opaque");
+        assert_eq!(payload, expected);
+        assert_eq!(
+            typed_option_value(VI_VENDOR_SPECIFIC, &payload)
+                .unwrap()
+                .unwrap(),
+            vivso_value,
+        );
+        assert_eq!(decode_vi_vendor_specific(&payload).unwrap(), vivso);
+
+        // Full packet round-trip through the typed builders and accessors.
+        let parsed = build_and_decode(vec![
+            DhcpOption::vi_vendor_class(vivco.clone()),
+            DhcpOption::vi_vendor_specific(vivso.clone()),
+            DhcpOption::End,
+        ]);
+        assert_eq!(parsed.vi_vendor_class().unwrap().unwrap(), vivco);
+        assert_eq!(parsed.vi_vendor_specific().unwrap().unwrap(), vivso);
+        recompile_is_stable(&parsed);
+
+        // Vendor-specific (43) and vendor class id (60) stay opaque, preserving
+        // the exact bytes the caller supplied.
+        let opaque = vec![0x01, 0xff, 0x00, 0xab];
+        let parsed = build_and_decode(vec![
+            DhcpOption::vendor_specific(opaque.clone()),
+            DhcpOption::vendor_class_identifier(b"MSFT 5.0".to_vec()),
+            DhcpOption::End,
+        ]);
+        assert_eq!(parsed.vendor_specific_information().unwrap(), opaque);
+        assert_eq!(
+            parsed.vendor_class_identifier().unwrap(),
+            b"MSFT 5.0".to_vec(),
+        );
+
+        // Truncated and malformed V-I payloads are structured errors, not
+        // panics.
+        // Enterprise number present but no data-len octet.
+        assert!(matches!(
+            typed_option_value(VI_VENDOR_CLASS, &3561u32.to_be_bytes()),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+        // data-len claims more bytes than remain.
+        let bad = {
+            let mut bytes = 3561u32.to_be_bytes().to_vec();
+            bytes.push(5);
+            bytes.extend_from_slice(&[1, 2]);
+            bytes
+        };
+        assert!(matches!(
+            decode_vi_vendor_class(&bad),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+        // Nested suboption length runs past the instance.
+        let bad_subopt = {
+            let mut bytes = 3561u32.to_be_bytes().to_vec();
+            bytes.push(3); // option-data len
+            bytes.extend_from_slice(&[7, 9, 0xaa]); // subopt code 7, len 9, only 1 byte
+            bytes
+        };
+        assert!(matches!(
+            decode_vi_vendor_specific(&bad_subopt),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+    }
+
+    #[test]
+    fn dhcp_pxe_architecture_options_roundtrip() {
+        // RFC 4578 option 93 (Client System Architecture): a list of 16-bit
+        // architecture type values. 0 = Intel x86PC, 7 = EFI BC, 9 = EFI x86-64.
+        let arch = ClientSystemArchitecture::new(vec![0u16, 7, 9]);
+        let arch_value = DhcpOptionValue::ClientSystemArchitecture(arch.clone());
+        let payload = arch_value.encode_payload();
+        assert_eq!(payload, vec![0, 0, 0, 7, 0, 9]);
+        assert_eq!(
+            typed_option_value(CLIENT_ARCH, &payload).unwrap().unwrap(),
+            arch_value,
+        );
+        assert_eq!(decode_client_system_architecture(&payload).unwrap(), arch);
+        // Odd length is rejected as a structured error (must be a multiple of 2).
+        assert!(matches!(
+            typed_option_value(CLIENT_ARCH, &[0, 7, 9]),
+            Err(CrafterError::InvalidFieldValue { .. }),
+        ));
+
+        // RFC 4578 option 94 (Client Network Device Interface): type/major/minor.
+        let ndi = ClientNetworkDeviceInterface::undi(2, 1);
+        let ndi_value = DhcpOptionValue::ClientNetworkDeviceInterface(ndi);
+        let payload = ndi_value.encode_payload();
+        assert_eq!(payload, vec![1, 2, 1]);
+        assert_eq!(
+            typed_option_value(CLIENT_NDI, &payload).unwrap().unwrap(),
+            ndi_value,
+        );
+        assert_eq!(decode_client_ndi(&payload).unwrap(), ndi);
+        // Any length other than three is a structured error.
+        assert!(matches!(
+            typed_option_value(CLIENT_NDI, &[1, 2]),
+            Err(CrafterError::InvalidFieldValue { .. }),
+        ));
+
+        // RFC 4578 option 97 (UUID/GUID client identifier): type 0 + 16-octet
+        // GUID.
+        let guid: Vec<u8> = (0u8..16).collect();
+        let uuid = DhcpClientUuid::guid(guid.clone());
+        let uuid_value = DhcpOptionValue::ClientUuid(uuid.clone());
+        let payload = uuid_value.encode_payload();
+        assert_eq!(payload.len(), 17);
+        assert_eq!(payload[0], 0);
+        assert_eq!(&payload[1..], guid.as_slice());
+        assert_eq!(
+            typed_option_value(CLIENT_UUID, &payload).unwrap().unwrap(),
+            uuid_value,
+        );
+        assert_eq!(decode_client_uuid(&payload).unwrap(), uuid);
+        // Empty payload (no type octet) is a structured error.
+        assert!(matches!(
+            typed_option_value(CLIENT_UUID, &[]),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+
+        // Full packet round-trip through builders and accessors.
+        let parsed = build_and_decode(vec![
+            DhcpOption::client_system_architecture(arch.clone()),
+            DhcpOption::client_network_device_interface(ndi),
+            DhcpOption::client_uuid(uuid.clone()),
+            DhcpOption::pxelinux_magic(),
+            DhcpOption::pxelinux_config_file(b"pxelinux.cfg/default".to_vec()),
+            DhcpOption::pxelinux_path_prefix(b"tftp://192.0.2.1/".to_vec()),
+            DhcpOption::pxelinux_reboot_time(30),
+            DhcpOption::End,
+        ]);
+        assert_eq!(parsed.client_system_architecture().unwrap().unwrap(), arch,);
+        assert_eq!(
+            parsed.client_network_device_interface().unwrap().unwrap(),
+            ndi,
+        );
+        assert_eq!(parsed.client_uuid().unwrap().unwrap(), uuid);
+
+        // RFC 5071 PXELINUX options 208-211.
+        assert_eq!(
+            parsed.pxelinux_magic().unwrap(),
+            vec![0xF1, 0x00, 0x74, 0x7E]
+        );
+        assert_eq!(
+            parsed.pxelinux_config_file().unwrap(),
+            b"pxelinux.cfg/default".to_vec(),
+        );
+        assert_eq!(
+            parsed.pxelinux_path_prefix().unwrap(),
+            b"tftp://192.0.2.1/".to_vec(),
+        );
+        assert_eq!(parsed.pxelinux_reboot_time().unwrap().unwrap(), 30);
+        recompile_is_stable(&parsed);
+    }
+
+    #[test]
+    fn dhcp_user_class_roundtrip() {
+        // RFC 3004 option 77: one or more length-prefixed opaque class
+        // instances.
+        let user_class = DhcpUserClass::new(vec![b"iPXE".to_vec(), b"linux-install".to_vec()]);
+        let value = DhcpOptionValue::UserClass(user_class.clone());
+        let payload = value.encode_payload();
+        let mut expected = vec![4u8];
+        expected.extend_from_slice(b"iPXE");
+        expected.push(13);
+        expected.extend_from_slice(b"linux-install");
+        assert_eq!(payload, expected);
+        assert_eq!(
+            typed_option_value(USER_CLASS, &payload).unwrap().unwrap(),
+            value,
+        );
+        assert_eq!(decode_user_class(&payload).unwrap(), user_class);
+
+        // Full packet round-trip and accessor.
+        let parsed = build_and_decode(vec![
+            DhcpOption::user_class(user_class.clone()),
+            DhcpOption::End,
+        ]);
+        assert_eq!(parsed.user_class().unwrap().unwrap(), user_class);
+        recompile_is_stable(&parsed);
+
+        // A zero-length instance is malformed per RFC 3004 (errata) and surfaces
+        // as a structured error rather than a panic.
+        assert!(matches!(
+            decode_user_class(&[0]),
+            Err(CrafterError::InvalidFieldValue { .. }),
+        ));
+        // An instance length that runs past the data is a structured error.
+        assert!(matches!(
+            decode_user_class(&[5, b'a', b'b']),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+    }
+
+    #[test]
+    fn dhcp_tftp_and_bootfile_options_roundtrip() {
+        // RFC 2132 options 66/67 are NVT ASCII strings carried as raw bytes.
+        let parsed = build_and_decode(vec![
+            DhcpOption::tftp_server_name(b"tftp.example.com".to_vec()),
+            DhcpOption::bootfile_name(b"undionly.kpxe".to_vec()),
+            DhcpOption::End,
+        ]);
+        assert_eq!(
+            parsed.tftp_server_name().unwrap(),
+            b"tftp.example.com".to_vec(),
+        );
+        assert_eq!(parsed.bootfile_name().unwrap(), b"undionly.kpxe".to_vec());
+        recompile_is_stable(&parsed);
+
+        // RFC 5859 option 150 (TFTP server address) is an IPv4 address list.
+        // Code 150 is ambiguous in the registry, so the default decode leaves it
+        // raw; the explicit accessor applies the RFC 5859 interpretation.
+        let addresses = vec![ip(192, 0, 2, 10), ip(198, 51, 100, 10)];
+        let parsed = build_and_decode(vec![
+            DhcpOption::tftp_server_addresses(addresses.clone()),
+            DhcpOption::End,
+        ]);
+        assert_eq!(parsed.tftp_server_addresses().unwrap().unwrap(), addresses);
+        // The same option stays opaque to the default typed decoder.
+        assert!(typed_option_value(TFTP_SERVER_ADDRESS, &[192, 0, 2, 10])
+            .unwrap()
+            .is_none());
+        recompile_is_stable(&parsed);
+
+        // A length not a multiple of four is a structured error, never a panic.
+        assert!(matches!(
+            decode_tftp_server_addresses(&[192, 0, 2]),
+            Err(CrafterError::InvalidFieldValue { .. }),
+        ));
+        assert!(matches!(
+            decode_tftp_server_addresses(&[]),
+            Err(CrafterError::InvalidFieldValue { .. }),
+        ));
+
+        // Options 43 and 60 codepoints are referenced in this module's tests; the
+        // constants are pinned to their IANA values here for clarity.
+        assert_eq!(VENDOR_SPECIFIC, 43);
+        assert_eq!(VENDOR_CLASS_ID, 60);
+        assert_eq!(TFTP_SERVER_NAME, 66);
+        assert_eq!(BOOTFILE_NAME, 67);
     }
 }
