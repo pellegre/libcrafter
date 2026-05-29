@@ -38,9 +38,9 @@ probe boundary modules.
 
 For provider changes, run focused tests first, then the matrix:
 
-- `python3 -m unittest tools.lab.engine.tests.test_provider_registry`
-- `python3 -m unittest tools.lab.engine.tests.test_provider_matrix`
-- provider-specific tests under `tools/lab/engine/tests/`
+- `python3 -m unittest tools.lab.tests.test_provider_registry`
+- `python3 -m unittest tools.lab.tests.test_provider_matrix`
+- provider-specific tests under `tools/lab/tests/`
 - oracle/probe dry-run matrix tests when the provider contract changes
 
 Dry-run behavior must be deterministic and must not create infrastructure.
