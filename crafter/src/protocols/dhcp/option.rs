@@ -204,8 +204,14 @@ impl DhcpOptionSegment {
 ///
 /// This is the low-level segment scanner described by the plan: it understands
 /// pad and end single-octet options and surfaces declared lengths, offsets, and
-/// data bytes without applying option overload or RFC 3396 concatenation.
-/// Truncation is reported as a structured [`CrafterError`] rather than a panic.
+/// data bytes without applying option overload or RFC 3396 concatenation. It is
+/// purely structural and does not enforce option-stream policy such as
+/// requiring an end marker; the logical decoder layered on top owns that. The
+/// scanner records every option instance in declaration order, including pad
+/// and end markers and any bytes that follow an end marker, so callers can
+/// inspect and re-encode the exact wire bytes even for malformed streams.
+/// Truncated code/length/data are reported as structured [`CrafterError`]
+/// values rather than panics.
 pub fn scan_dhcp_option_segments(
     area: DhcpOptionArea,
     bytes: &[u8],
@@ -226,16 +232,13 @@ pub fn scan_dhcp_option_segments(
                 offset: code_offset,
                 data: Vec::new(),
             }),
-            DHCP_OPTION_END => {
-                segments.push(DhcpOptionSegment {
-                    area,
-                    code: DhcpOptionCode::End,
-                    declared_len: None,
-                    offset: code_offset,
-                    data: Vec::new(),
-                });
-                return Ok(segments);
-            }
+            DHCP_OPTION_END => segments.push(DhcpOptionSegment {
+                area,
+                code: DhcpOptionCode::End,
+                declared_len: None,
+                offset: code_offset,
+                data: Vec::new(),
+            }),
             _ => {
                 if offset >= bytes.len() {
                     return Err(CrafterError::buffer_too_short(
@@ -543,57 +546,48 @@ impl DhcpOption {
 }
 
 pub(super) fn decode_dhcp_options(bytes: &[u8]) -> Result<Vec<DhcpOption>> {
-    let mut options = Vec::new();
-    let mut offset = 0usize;
+    decode_segments_to_options(&scan_dhcp_option_segments(DhcpOptionArea::Options, bytes)?)
+}
 
-    while offset < bytes.len() {
-        let code = bytes[offset];
-        offset += 1;
+/// Decode raw option segments into logical typed options.
+///
+/// This is the logical decoder layered on top of the raw segment scanner. It
+/// enforces the structural policy for the normal options area: options must be
+/// terminated by an end marker, and only padding may follow it. RFC 3396 long
+/// option concatenation and option overload are layered on in later steps; for
+/// now each segment maps directly onto one typed option, matching the prior
+/// behavior while routing through the new raw model.
+fn decode_segments_to_options(segments: &[DhcpOptionSegment]) -> Result<Vec<DhcpOption>> {
+    let mut options = Vec::with_capacity(segments.len());
+    let mut saw_end = false;
 
-        match code {
-            DHCP_OPTION_PAD => options.push(DhcpOption::Pad),
-            DHCP_OPTION_END => {
+    for segment in segments {
+        match segment.code {
+            DhcpOptionCode::Pad => options.push(DhcpOption::Pad),
+            DhcpOptionCode::End if !saw_end => {
                 options.push(DhcpOption::End);
-                while offset < bytes.len() {
-                    if bytes[offset] != DHCP_OPTION_PAD {
-                        return Err(CrafterError::invalid_field_value(
-                            "dhcp.option.end",
-                            "non-padding data follows DHCP end option",
-                        ));
-                    }
-                    options.push(DhcpOption::Pad);
-                    offset += 1;
-                }
-                return Ok(options);
+                saw_end = true;
             }
             _ => {
-                if offset >= bytes.len() {
-                    return Err(CrafterError::buffer_too_short(
-                        "dhcp option length",
-                        offset + 1,
-                        bytes.len(),
+                if saw_end {
+                    return Err(CrafterError::invalid_field_value(
+                        "dhcp.option.end",
+                        "non-padding data follows DHCP end option",
                     ));
                 }
-                let len = bytes[offset] as usize;
-                offset += 1;
-                let end = offset + len;
-                if end > bytes.len() {
-                    return Err(CrafterError::buffer_too_short(
-                        "dhcp option data",
-                        end,
-                        bytes.len(),
-                    ));
-                }
-                options.push(decode_dhcp_option(code, &bytes[offset..end])?);
-                offset = end;
+                options.push(decode_dhcp_option(segment.code_value(), &segment.data)?);
             }
         }
     }
 
-    Err(CrafterError::invalid_field_value(
-        "dhcp.options",
-        "DHCP options are missing an end marker",
-    ))
+    if !saw_end {
+        return Err(CrafterError::invalid_field_value(
+            "dhcp.options",
+            "DHCP options are missing an end marker",
+        ));
+    }
+
+    Ok(options)
 }
 
 fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<DhcpOption> {
@@ -741,8 +735,9 @@ fn encode_ipv4_list(addresses: &[Ipv4Addr]) -> Vec<u8> {
 mod dhcp_options {
     use super::super::{
         scan_dhcp_option_segments, Dhcp, DhcpMessageType, DhcpOption, DhcpOptionArea,
-        DhcpOptionCode, DhcpOptionStatus, DhcpOptionValue,
+        DhcpOptionCode, DhcpOptionSegment, DhcpOptionStatus, DhcpOptionValue,
     };
+    use crate::error::CrafterError;
     use core::net::Ipv4Addr;
 
     const OFFER_OPTIONS: &str = fixture_str!("bytes/dhcp-offer-options.hex");
@@ -935,6 +930,134 @@ mod dhcp_options {
         assert_eq!(
             super::option_status(84),
             DhcpOptionStatus::RemovedOrUnassigned
+        );
+    }
+
+    #[test]
+    fn dhcp_option_codec_preserves_raw_segments() {
+        // A mixed stream with leading pad, several typed options, an unknown
+        // private-use option, an end marker, and a trailing pad. The logical
+        // decoder routes through the raw scanner, so the segment view and the
+        // typed view must agree, and an exact byte round-trip must hold.
+        let options = vec![
+            DhcpOption::Pad,
+            DhcpOption::message_type(DhcpMessageType::Ack),
+            DhcpOption::subnet_mask(Ipv4Addr::new(255, 255, 255, 0)),
+            DhcpOption::generic(224, [0xde, 0xad, 0xbe, 0xef]),
+            DhcpOption::End,
+            DhcpOption::Pad,
+        ];
+
+        let encoded = Dhcp::new()
+            .options(options.clone())
+            .encoded_options()
+            .unwrap();
+
+        // Raw scanner records every on-the-wire instance in order, including
+        // the leading and trailing pad and the end marker.
+        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &encoded).unwrap();
+        let codes: Vec<u8> = segments.iter().map(DhcpOptionSegment::code_value).collect();
+        assert_eq!(codes, vec![0, 53, 1, 224, 255, 0]);
+        assert!(segments.iter().all(|s| s.area == DhcpOptionArea::Options));
+
+        // The unknown private-use option keeps its declared length and bytes.
+        let private = &segments[3];
+        assert_eq!(private.code, DhcpOptionCode::PrivateUse(224));
+        assert_eq!(private.declared_len, Some(4));
+        assert_eq!(private.data, vec![0xde, 0xad, 0xbe, 0xef]);
+
+        // The end marker is a single-octet option with no declared length, and
+        // a pad segment may legally follow it.
+        let end = &segments[4];
+        assert_eq!(end.code, DhcpOptionCode::End);
+        assert!(end.is_single_octet());
+        assert_eq!(end.declared_len, None);
+        assert_eq!(segments[5].code, DhcpOptionCode::Pad);
+
+        // The logical decode matches the original options exactly, and a second
+        // encode reproduces the original bytes (exact round-trip).
+        let decoded = DhcpOption::decode_all(&encoded).unwrap();
+        assert_eq!(decoded, options);
+        let re_encoded = Dhcp::new().options(decoded).encoded_options().unwrap();
+        assert_eq!(re_encoded, encoded);
+    }
+
+    #[test]
+    fn dhcp_option_codec_rejects_non_padding_after_end() {
+        // An end marker immediately followed by non-padding data is a structured
+        // decode error, not a panic or a silently truncated decode.
+        let bytes = [super::DHCP_OPTION_END, super::DHCP_OPTION_MESSAGE_TYPE, 1, 1];
+
+        let error = DhcpOption::decode_all(&bytes).unwrap_err();
+        assert!(matches!(
+            error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.option.end"
+        ));
+
+        // The raw scanner itself stays permissive and records the trailing
+        // option as a segment so callers can still inspect the malformed bytes.
+        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &bytes).unwrap();
+        let codes: Vec<u8> = segments.iter().map(DhcpOptionSegment::code_value).collect();
+        assert_eq!(codes, vec![255, 53]);
+    }
+
+    #[test]
+    fn dhcp_option_codec_rejects_missing_end_marker() {
+        // A well-formed option with no terminating end marker is rejected by the
+        // logical decoder with a stable field name.
+        let bytes = [super::DHCP_OPTION_MESSAGE_TYPE, 1, 1];
+
+        let error = DhcpOption::decode_all(&bytes).unwrap_err();
+        assert!(matches!(
+            error,
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.options"
+        ));
+    }
+
+    #[test]
+    fn dhcp_option_codec_reports_truncated_segments() {
+        // Truncated length and truncated data surface as buffer-too-short
+        // errors from the raw scanner rather than panicking.
+        let truncated_length = [super::DHCP_OPTION_MESSAGE_TYPE];
+        let truncated_data = [super::DHCP_OPTION_MESSAGE_TYPE, 4, 0x01];
+
+        for bytes in [truncated_length.as_slice(), truncated_data.as_slice()] {
+            let error = scan_dhcp_option_segments(DhcpOptionArea::Options, bytes).unwrap_err();
+            assert!(matches!(error, CrafterError::BufferTooShort { .. }));
+            // The logical decoder propagates the same structured error.
+            assert!(matches!(
+                DhcpOption::decode_all(bytes),
+                Err(CrafterError::BufferTooShort { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn dhcp_option_codec_preserves_pad_and_unknown_options() {
+        // Padding before and after content, plus an unknown removed/unassigned
+        // codepoint, round-trip exactly and stay classified by the registry.
+        let options = vec![
+            DhcpOption::Pad,
+            DhcpOption::Pad,
+            DhcpOption::message_type(DhcpMessageType::Discover),
+            DhcpOption::generic(84, [0x01, 0x02]),
+            DhcpOption::End,
+        ];
+
+        let encoded = Dhcp::new()
+            .options(options.clone())
+            .encoded_options()
+            .unwrap();
+        let decoded = DhcpOption::decode_all(&encoded).unwrap();
+        assert_eq!(decoded, options);
+
+        assert_eq!(
+            decoded[3].option_code(),
+            DhcpOptionCode::RemovedOrUnassigned(84)
+        );
+        assert_eq!(
+            decoded[3].logical_value(),
+            Some(DhcpOptionValue::Opaque(vec![0x01, 0x02]))
         );
     }
 
