@@ -51,23 +51,63 @@ class DnsRawNameBytesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             dns_raw.dns_compression_pointer_bytes(0x4000)
 
+    def test_rdata_with_pointer_prefix_pointers_suffix(self) -> None:
+        # MX-shaped RDATA: 2-octet preference prefix, one compressed exchange
+        # name, no suffix.
+        self.assertEqual(
+            dns_raw.dns_rdata_with_pointer_bytes(
+                {"prefix_hex": "000a", "pointers": [{"prefix": "mail", "pointer_offset": 12}]}
+            ),
+            b"\x00\x0a\x04mail\xc0\x0c",
+        )
+        # SOA-shaped RDATA: two compressed names (MNAME, RNAME) then a 20-octet
+        # fixed suffix.
+        self.assertEqual(
+            dns_raw.dns_rdata_with_pointer_bytes(
+                {
+                    "pointers": [
+                        {"prefix": "ns1", "pointer_offset": 12},
+                        {"prefix": None, "pointer_offset": 12},
+                    ],
+                    "suffix_hex": "00" * 20,
+                }
+            ),
+            b"\x03ns1\xc0\x0c" + b"\xc0\x0c" + b"\x00" * 20,
+        )
+
 
 class DnsRawCompressedMessageTest(unittest.TestCase):
     def test_generator_compressed_names_spec_emits_pointers(self) -> None:
         spec = _dns_compressed_names_raw_spec()
         message = dns_raw.build_raw_dns_bytes(spec)
 
-        # 12-octet header: id 0x1234, flags QR+RD+RA, qd=1, an=1, ns=0, ar=0.
+        # 12-octet header: id 0x1234, flags QR+RD+RA, qd=1, an=10, ns=0, ar=0.
+        # The case carries one record per byte-preserving record type so every
+        # compressed RDATA <domain-name> position is exercised in one message.
         self.assertEqual(message[:2], b"\x12\x34")
-        self.assertEqual(message[4:12], b"\x00\x01\x00\x01\x00\x00\x00\x00")
+        self.assertEqual(message[4:12], b"\x00\x01\x00\x0a\x00\x00\x00\x00")
 
-        # Question name example.com. lands at the fixed offset 12.
+        # Question name example.com. lands at the fixed offset 12, so every
+        # compression pointer in the message targets offset 12 (0xC0 0x0C).
         self.assertEqual(message[12:25], b"\x07example\x03com\x00")
 
-        # The answer owner name is a bare pointer to offset 12, and the CNAME
-        # RDATA target is the label "alias" followed by a pointer to offset 12.
+        # CNAME owner is a bare pointer to offset 12, and the CNAME RDATA target
+        # is the label "alias" followed by a pointer to offset 12.
         self.assertIn(b"\xc0\x0c", message[29:])
         self.assertIn(b"\x05alias\xc0\x0c", message)
+        # The embedded RDATA <domain-name> of each structured record type is a
+        # compression pointer after its fixed prefix: NS/PTR target label + ptr,
+        # MX exchange after the 2-octet preference, SOA MNAME+RNAME pointers,
+        # SRV target after priority/weight/port, RRSIG signer (bare pointer after
+        # the 18 fixed octets), NSEC next-domain, and SVCB/HTTPS target after the
+        # 2-octet priority.
+        self.assertIn(b"\x03ns1\xc0\x0c", message)  # NS target and SOA MNAME.
+        self.assertIn(b"\x04host\xc0\x0c", message)  # PTR target.
+        self.assertIn(b"\x00\x0a\x04mail\xc0\x0c", message)  # MX pref + exchange.
+        self.assertIn(b"\x0ahostmaster\xc0\x0c", message)  # SOA RNAME.
+        self.assertIn(b"\x03sip\xc0\x0c", message)  # SRV target.
+        self.assertIn(b"\x04next\xc0\x0c", message)  # NSEC next-domain.
+        self.assertIn(b"\x03svc\xc0\x0c", message)  # SVCB target.
 
     @unittest.skipUnless(_SCAPY_AVAILABLE, "scapy not importable")
     def test_scapy_round_trips_compressed_message(self) -> None:
@@ -78,7 +118,7 @@ class DnsRawCompressedMessageTest(unittest.TestCase):
 
         self.assertEqual(decoded.id, 0x1234)
         self.assertEqual(decoded.qr, 1)
-        self.assertEqual(decoded.ancount, 1)
+        self.assertEqual(decoded.ancount, 10)
         # Scapy expands the compression pointers back to the full names.
         self.assertEqual(decoded.qd[0].qname, b"example.com.")
         self.assertEqual(decoded.an[0].rrname, b"example.com.")

@@ -1978,33 +1978,148 @@ def _dns_compressed_names_raw_spec() -> JSONObject:
     """Raw DNS spec with explicit compression pointers for the raw helper.
 
     The question name ``example.com.`` lands at the fixed offset 12 (right after
-    the 12-octet header). The answer owner name is a bare pointer back to that
-    name, and the answer RDATA target is the label ``alias`` followed by a
-    pointer to the same name. Scapy's high-level fields will not emit these
-    pointers in a single-record message, so the bytes must be built by hand while
-    staying under the Scapy reference backend.
+    the 12-octet header), so every compressed name in the message points back to
+    offset 12. The case exercises a compressed question owner name (re-used as the
+    first answer owner via a bare pointer) and a compression pointer in the
+    embedded <domain-name> of each byte-preserving record type libcrafter
+    decodes: CNAME/NS/PTR (name at RDATA start), MX (after the 2-octet
+    preference), SOA (compressed MNAME and RNAME before the 20 fixed octets), SRV
+    (after priority/weight/port), RRSIG signer (after the 18 fixed octets), NSEC
+    next-domain (before the type bitmap), and SVCB/HTTPS target (after the 2-octet
+    priority). Scapy's high-level fields will not emit these pointers, so the
+    bytes are built by hand while staying under the Scapy reference backend.
+    libcrafter re-encodes every name uncompressed, so this case is normalized: the
+    decoded DNS name model agrees while the recompiled bytes differ from the
+    pointer input (see specs/features/dns-behavior.yaml byte_policy).
     """
 
-    question_name_offset = 12  # DNS header is a fixed 12 octets.
+    ptr = 12  # The question name example.com. is at the fixed 12-octet offset.
+    # The 20 fixed SOA octets after MNAME/RNAME: serial, refresh, retry, expire,
+    # minimum (all 32-bit). The 18 fixed RRSIG octets: type covered (A=0x0001),
+    # algorithm, labels, original TTL, expiration, inception, key tag. The NSEC
+    # type bitmap is window 0, a 6-octet bitmap, with the A (1), RRSIG (46), and
+    # NSEC (47) bits set.
+    soa_fixed = "0000000100000e1000000708001baf8000000384"
+    rrsig_fixed = "0001050200000e10655f5d00655e0b800539"
+    nsec_bitmap = "0006400000000003"
     return {
         "transaction_id": 0x1234,
         "is_response": True,
         "flags": ["recursion_desired", "recursion_available"],
         "response_code": "no_error",
         "questions": [
-            {"name": "example.com.", "type": "CNAME", "class": "IN"},
+            {"name": "example.com.", "type": "A", "class": "IN"},
         ],
         "answers": [
+            # CNAME owner is a bare pointer to the question name; the RDATA target
+            # is the label "alias" plus a pointer back to example.com.
             {
-                "name_with_pointer": {"prefix": None, "pointer_offset": question_name_offset},
+                "name_with_pointer": {"prefix": None, "pointer_offset": ptr},
                 "type": "CNAME",
                 "class": "IN",
                 "ttl": 300,
-                "target_with_pointer": {
-                    "prefix": "alias",
-                    "pointer_offset": question_name_offset,
+                "target_with_pointer": {"prefix": "alias", "pointer_offset": ptr},
+            },
+            # NS RDATA is a bare pointer to the question name.
+            {
+                "name": "example.com.",
+                "type": "NS",
+                "class": "IN",
+                "ttl": 300,
+                "target_with_pointer": {"prefix": "ns1", "pointer_offset": ptr},
+            },
+            # PTR RDATA is a compressed name.
+            {
+                "name": "1.2.0.192.in-addr.arpa.",
+                "type": "PTR",
+                "class": "IN",
+                "ttl": 300,
+                "target_with_pointer": {"prefix": "host", "pointer_offset": ptr},
+            },
+            # MX exchange is a compressed name after the 2-octet preference (10).
+            {
+                "name": "example.com.",
+                "type": "MX",
+                "class": "IN",
+                "ttl": 300,
+                "rdata_with_pointer": {
+                    "prefix_hex": "000a",
+                    "pointers": [{"prefix": "mail", "pointer_offset": ptr}],
                 },
-            }
+            },
+            # SOA MNAME and RNAME are both compression pointers before 20 fixed
+            # octets.
+            {
+                "name": "example.com.",
+                "type": "SOA",
+                "class": "IN",
+                "ttl": 300,
+                "rdata_with_pointer": {
+                    "pointers": [
+                        {"prefix": "ns1", "pointer_offset": ptr},
+                        {"prefix": "hostmaster", "pointer_offset": ptr},
+                    ],
+                    "suffix_hex": soa_fixed,
+                },
+            },
+            # SRV target is a compressed name after priority/weight/port.
+            {
+                "name": "_sip._tcp.example.com.",
+                "type": "SRV",
+                "class": "IN",
+                "ttl": 300,
+                "rdata_with_pointer": {
+                    "prefix_hex": "000a0005162c",
+                    "pointers": [{"prefix": "sip", "pointer_offset": ptr}],
+                },
+            },
+            # RRSIG signer name is a compression pointer after the 18 fixed
+            # octets; the remaining bytes are an opaque signature blob.
+            {
+                "name": "example.com.",
+                "type": "RRSIG",
+                "class": "IN",
+                "ttl": 300,
+                "rdata_with_pointer": {
+                    "prefix_hex": rrsig_fixed,
+                    "pointers": [{"prefix": None, "pointer_offset": ptr}],
+                    "suffix_hex": "abcdef0123456789",
+                },
+            },
+            # NSEC next-domain name is a compression pointer before the type
+            # bitmap window.
+            {
+                "name": "example.com.",
+                "type": "NSEC",
+                "class": "IN",
+                "ttl": 300,
+                "rdata_with_pointer": {
+                    "pointers": [{"prefix": "next", "pointer_offset": ptr}],
+                    "suffix_hex": nsec_bitmap,
+                },
+            },
+            # SVCB target is a compression pointer after the 2-octet priority.
+            {
+                "name": "_dns.example.com.",
+                "type": "SVCB",
+                "class": "IN",
+                "ttl": 300,
+                "rdata_with_pointer": {
+                    "prefix_hex": "0001",
+                    "pointers": [{"prefix": "svc", "pointer_offset": ptr}],
+                },
+            },
+            # HTTPS target is a compression pointer after the 2-octet priority.
+            {
+                "name": "example.com.",
+                "type": "HTTPS",
+                "class": "IN",
+                "ttl": 300,
+                "rdata_with_pointer": {
+                    "prefix_hex": "0001",
+                    "pointers": [{"prefix": None, "pointer_offset": ptr}],
+                },
+            },
         ],
     }
 

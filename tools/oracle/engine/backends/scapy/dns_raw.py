@@ -263,8 +263,10 @@ def dns_rdata_bytes(record: Mapping[str, object], *, base_offset: int) -> bytes:
     """Build RDATA octets from the record spec.
 
     The raw helpers default to opaque ``rdata``/``data`` blobs. A small number of
-    convenience encoders cover the common low-level cases (A address, a
-    name target with an embedded compression pointer) so the spec stays readable.
+    convenience encoders cover the common low-level cases (A address, a name
+    target with an embedded compression pointer, and a fixed-prefix RDATA whose
+    embedded <domain-name> is a compression pointer for MX/SOA/SRV/RRSIG/NSEC and
+    SVCB/HTTPS) so the spec stays readable.
     """
 
     if "rdata" in record or "data" in record:
@@ -278,10 +280,42 @@ def dns_rdata_bytes(record: Mapping[str, object], *, base_offset: int) -> bytes:
             target.get("prefix"),
             _int(target.get("pointer_offset"), DNS_HEADER_LENGTH),
         )
+    structured = record.get("rdata_with_pointer")
+    if isinstance(structured, Mapping):
+        return dns_rdata_with_pointer_bytes(structured)
     target_name = record.get("target", record.get("name_target"))
     if target_name is not None:
         return dns_name_bytes(target_name)
     return b""
+
+
+def dns_rdata_with_pointer_bytes(spec: Mapping[str, object]) -> bytes:
+    """Build RDATA that embeds a compressed <domain-name> at a fixed position.
+
+    Many DNS RDATA shapes place a <domain-name> after a fixed-width prefix and,
+    in the byte-preserving record types libcrafter decodes, the embedded name may
+    use a compression pointer: MX exchange (after a 2-octet preference), SOA
+    MNAME/RNAME, SRV target (after priority/weight/port), RRSIG signer (after the
+    18 fixed octets), NSEC next-domain, and SVCB/HTTPS target (after the 2-octet
+    priority). The spec is ``prefix_hex`` (raw fixed octets), one or more
+    ``pointers`` (each a leading-label prefix plus a pointer offset, encoded with
+    :func:`dns_partial_name_with_pointer`), and an optional ``suffix_hex`` for
+    trailing wire data such as an RRSIG signature or an NSEC type bitmap.
+    """
+
+    output = bytearray()
+    prefix = spec.get("prefix_hex", spec.get("prefix"))
+    if prefix is not None:
+        output += _blob(prefix)
+    for pointer in _as_list(spec.get("pointers")):
+        output += dns_partial_name_with_pointer(
+            pointer.get("prefix"),
+            _int(pointer.get("pointer_offset"), DNS_HEADER_LENGTH),
+        )
+    suffix = spec.get("suffix_hex", spec.get("suffix"))
+    if suffix is not None:
+        output += _blob(suffix)
+    return bytes(output)
 
 
 # --- internal helpers -------------------------------------------------------
