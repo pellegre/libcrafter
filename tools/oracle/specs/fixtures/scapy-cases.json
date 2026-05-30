@@ -905,6 +905,20 @@
       "notes": "Oracle fixture case. Authoritative response carrying three SVCB/HTTPS (type 64/65) service-binding answers per RFC 9460 / RFC 9461: an SVCB AliasMode answer (SvcPriority 0, non-root target, empty SvcParams); an HTTPS ServiceMode answer (non-zero SvcPriority, root target) carrying the mandatory/alpn/no-default-alpn/port/ipv4hint/ipv6hint/dohpath params supplied out of key order; and an SVCB ServiceMode answer carrying an unknown SvcParamKey (65280) alongside a named key. Each SvcParamValue is opaque wire data carried verbatim, and both libcrafter SvcParams and the reference RDATA builder sort the params into strictly increasing SvcParamKey order. Scapy's high-level SvcParam field re-interprets known keys and rejects raw port/ipvNhint bytes, so the backend builds the exact RDATA octets and hands them to a generic DNSRR; libcrafter materializes the same bytes through DnsRecord::svcb / ::https and SvcParams, so strict bytes hold in both directions."
     },
     {
+      "name": "dns-section-placement",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. A single authoritative response that places one record in each DNS section per RFC 1035 Section 4.1.1: one question (QDCOUNT), one A answer (ANCOUNT, example.com. -> 192.0.2.10), one NS authority record (NSCOUNT, example.com. -> ns1.example.com.), and two additional records (ARCOUNT) - a non-OPT A glue record (ns1.example.com. -> 192.0.2.53) followed by an EDNS(0) OPT pseudo-record (RFC 6891, root owner, UDP payload size 1232, empty options). Both backends materialize the answer (an=), authority (ns=), and additional (ar=) sections from independent plan keys; the case proves placement and counts survive decode and recompile and that no record migrates between sections. Every name is uncompressed and every value is stable, so Scapy DNS(an=...,ns=...,ar=...) and libcrafter agree byte-for-byte in both directions."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",
