@@ -390,11 +390,11 @@ def _arp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
     arp_fields = _layer_fields(fields, "arp")
     kwargs: dict[str, Any] = {
         "op": _arp_op(_required_field(arp_fields, "arp", "opcode", "op", "operation")),
-        "hwsrc": _text(
+        "hwsrc": _arp_address(
             _required_field(arp_fields, "arp", "sender_hardware_address", "hwsrc"),
-            "",
+            kind="hardware",
         ),
-        "psrc": _text(
+        "psrc": _arp_address(
             _required_field(
                 arp_fields,
                 "arp",
@@ -402,13 +402,13 @@ def _arp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
                 "sender_ip",
                 "psrc",
             ),
-            "",
+            kind="protocol",
         ),
-        "hwdst": _text(
+        "hwdst": _arp_address(
             _required_field(arp_fields, "arp", "target_hardware_address", "hwdst"),
-            "",
+            kind="hardware",
         ),
-        "pdst": _text(
+        "pdst": _arp_address(
             _required_field(
                 arp_fields,
                 "arp",
@@ -416,7 +416,7 @@ def _arp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
                 "target_ip",
                 "pdst",
             ),
-            "",
+            kind="protocol",
         ),
         "hwtype": _hardware_type_value(
             _required_field(arp_fields, "arp", "hardware_type", "hwtype")
@@ -428,6 +428,99 @@ def _arp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
     if "protocol_length" in arp_fields or "plen" in arp_fields:
         kwargs["plen"] = _int(_optional_field(arp_fields, "protocol_length", "plen"), 0)
     return scapy_all.ARP(**kwargs)
+
+
+# Hardware/protocol address octet counts for the standard Ethernet/IPv4 ARP
+# form. Scapy's ARP layer accepts a colon-MAC or dotted-IPv4 *string* for these
+# standard widths and emits exact wire bytes, so the existing string path is
+# preserved for them (and for the hwsrc/psrc/hwdst/pdst aliases). Any other
+# address form — a raw ``bytes`` value, a ``{"hex": ...}`` object, or a hex
+# string whose decoded width is not the standard one — is materialized as raw
+# octets so variable-length and unknown-family ARP addresses round-trip without
+# Scapy re-interpreting them as a MAC or IP string.
+_ARP_STANDARD_HARDWARE_OCTETS = 6
+_ARP_STANDARD_PROTOCOL_OCTETS = 4
+
+
+def _arp_address(value: object, *, kind: str) -> object:
+    """Coerce one ARP sender/target address into a Scapy-materializable value.
+
+    Standard Ethernet/IPv4 forms (a colon-separated MAC for a hardware address,
+    a dotted-quad IPv4 for a protocol address) pass through unchanged as the
+    string Scapy expects, keeping the golden Ethernet/IPv4 ARP bytes stable.
+    Raw byte forms — ``bytes``, ``{"hex": ...}``, or a non-standard-width hex
+    string — are decoded to raw octets so nonstandard hardware/protocol address
+    lengths and unknown address families materialize byte-for-byte.
+    """
+
+    standard_octets = (
+        _ARP_STANDARD_HARDWARE_OCTETS
+        if kind == "hardware"
+        else _ARP_STANDARD_PROTOCOL_OCTETS
+    )
+
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, Mapping):
+        return _bytes_field(value)
+    if isinstance(value, str):
+        if kind == "hardware" and _is_standard_mac(value):
+            return value
+        if kind == "protocol" and _is_standard_ipv4(value):
+            return value
+        raw = _arp_address_hex_bytes(value)
+        if raw is None:
+            # Unrecognized string form (e.g. a non-standard IPv4/MAC textual
+            # form). Leave it to Scapy unchanged rather than silently rewriting
+            # the address; an encode failure here surfaces as a backend
+            # limitation in the oracle report.
+            return value
+        if len(raw) == standard_octets:
+            # Standard-width hex with no separators: hand Scapy the native
+            # string form so the standard golden bytes path is unchanged.
+            if kind == "hardware":
+                return ":".join(f"{octet:02x}" for octet in raw)
+            return ".".join(str(octet) for octet in raw)
+        return raw
+    return _text(value, "")
+
+
+def _is_standard_mac(value: str) -> bool:
+    parts = value.split(":")
+    if len(parts) != _ARP_STANDARD_HARDWARE_OCTETS:
+        return False
+    for part in parts:
+        if len(part) != 2:
+            return False
+        try:
+            int(part, 16)
+        except ValueError:
+            return False
+    return True
+
+
+def _is_standard_ipv4(value: str) -> bool:
+    parts = value.split(".")
+    if len(parts) != _ARP_STANDARD_PROTOCOL_OCTETS:
+        return False
+    for part in parts:
+        if not part.isdigit():
+            return False
+        if not 0 <= int(part) <= 255:
+            return False
+    return True
+
+
+def _arp_address_hex_bytes(value: str) -> bytes | None:
+    cleaned = value.replace(":", "").replace("-", "").replace(" ", "")
+    if cleaned == "":
+        return b""
+    if len(cleaned) % 2 != 0:
+        return None
+    try:
+        return bytes.fromhex(cleaned)
+    except ValueError:
+        return None
 
 
 def _ipv4(fields: Mapping[str, JSONObject], stack: list[str], index: int, scapy_all: Any) -> Any:
