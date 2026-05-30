@@ -877,6 +877,20 @@
       "notes": "Oracle fixture case. Authoritative response carrying two NSEC (type 47) answers whose Type Bit Maps (RFC 4034 Section 4.1.2) exercise the full encoder: the first answer is the RFC 4034 Section 4.3 example (owner alfa.example.com., next name host.example.com., present types A/MX/RRSIG/NSEC plus the unknown codepoint TYPE1234, spanning window block 0 and window block 4); the second answer feeds an unsorted list with a duplicate A entry spanning window blocks 0, 1, and 255. libcrafter DnsTypeBitmaps and the Scapy DNSRRNSEC reference (RRlist2bitmap) both sort, de-duplicate, and emit minimal window-ordered bitmaps, so the decoded type set agrees and the minimal encoding is deterministic in both directions; the byte policy is documented as normalized because libcrafter normalizes the input set on construction."
     },
     {
+      "name": "dnssec-nsec3",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Authoritative response carrying three NSEC3 (type 50) answers per RFC 5155 Section 3.2: answer one has a non-empty salt, a non-empty next hashed owner name, and multiple type bitmap entries (A/NS/SOA/RRSIG/DNSKEY) in a single window block; answer two has an empty salt (Salt Length 0 omits the Salt field); answer three uses an unknown hash algorithm value (0xfe) and an unknown high type bitmap codepoint (TYPE65280) spanning a later window block. The hash algorithm, flags, iterations, salt, and next hashed owner material is wire data only with no cryptographic validation, and salt and hash fields are carried and normalized as bytes rather than text. Scapy DNSRRNSEC3 and libcrafter DnsRecord::nsec3 pack the same uncompressed wire fields, so strict bytes hold in both directions."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",

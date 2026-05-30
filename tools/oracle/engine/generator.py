@@ -1965,6 +1965,86 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
             },
         ]
         return
+    if "dnssec-nsec3" in key:
+        # An authoritative response carrying three NSEC3 (type 50) answers whose
+        # RDATA exercises the full RFC 5155 Section 3.2 wire layout: Hash
+        # Algorithm, Flags, Iterations, Salt Length + Salt, Hash Length + next
+        # hashed owner name, then Type Bit Maps. NSEC3 hash, salt, and next
+        # hashed owner material is wire data only; libcrafter preserves the bytes
+        # and never validates DNSSEC cryptography.
+        #
+        #   * answer 1 uses a NON-EMPTY salt, a non-empty next hashed owner name,
+        #     and MULTIPLE type bitmap entries (A, NS, SOA, RRSIG, DNSKEY) in a
+        #     single window block;
+        #   * answer 2 uses an EMPTY salt (Salt Length 0 omits the Salt field)
+        #     with a different next hashed owner name and a small bitmap;
+        #   * answer 3 uses an UNKNOWN hash algorithm value (0xfe) and an UNKNOWN
+        #     high type bitmap codepoint (TYPE65280) spanning a later window block,
+        #     proving the numeric fields and minimal window encoding survive.
+        #
+        # Salt and next hashed owner are carried as hex blobs so both backends
+        # preserve the exact octets as bytes, not text. The Scapy DNSRRNSEC3
+        # reference and the libcrafter DnsRecord::nsec3 materializer produce the
+        # same uncompressed bytes, so the case is strict-byte in both directions.
+        # (dnssec-nsec3 is dispatched here, after dnssec-nsec-bitmaps and before
+        # any shorter dnssec-nsec substring branch, so resolution is
+        # deterministic.)
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "NSEC3"}]
+        fields["answers"] = [
+            {
+                # Non-empty salt, non-empty next hashed owner name, and multiple
+                # type bitmap entries in a single window block.
+                "name": "0p9mhaveqvm6t7vbl5lop2u3t2rp3tom.example.com.",
+                "type": "NSEC3",
+                "class": "IN",
+                "ttl": 86400,
+                "hash_algorithm": 1,  # SHA-1
+                "flags": 1,  # Opt-Out
+                "iterations": 12,
+                "salt": {"hex": "aabbccdd"},
+                "next_hashed_owner": {
+                    "hex": "1112131415161718191a1b1c1d1e1f2021222324"
+                },
+                "type_bitmaps": ["A", "NS", "SOA", "RRSIG", "DNSKEY"],
+            },
+            {
+                # Empty salt: Salt Length 0 omits the Salt field entirely.
+                "name": "2vptu5timamqttgl4luu9kg21e0aor3s.example.com.",
+                "type": "NSEC3",
+                "class": "IN",
+                "ttl": 86400,
+                "hash_algorithm": 1,
+                "flags": 0,
+                "iterations": 0,
+                "salt": {"hex": ""},
+                "next_hashed_owner": {
+                    "hex": "25262728292a2b2c2d2e2f30313233343536373839"
+                },
+                "type_bitmaps": ["A", "RRSIG"],
+            },
+            {
+                # Unknown hash algorithm value and an unknown high type bitmap
+                # codepoint spanning a later window block; both stay raw numeric
+                # wire data.
+                "name": "th1q5pl8ku5b8c98er8gj7p9hf2d8jcm.example.com.",
+                "type": "NSEC3",
+                "class": "IN",
+                "ttl": 86400,
+                "hash_algorithm": 0xFE,  # unassigned hash algorithm
+                "flags": 0,
+                "iterations": 2500,
+                "salt": {"hex": "deadbeef"},
+                "next_hashed_owner": {
+                    "hex": "393a3b3c3d3e3f404142434445464748494a4b4c"
+                },
+                "type_bitmaps": ["A", "RRSIG", 65280],
+            },
+        ]
+        return
     if "header-flags-opcodes" in key:
         fields["is_response"] = True
         fields["opcode"] = "status"

@@ -430,6 +430,48 @@ mod dns_dnssec {
     }
 
     #[test]
+    fn dnssec_nsec3_unknown_algorithm_and_bitmap_codepoints_round_trip() {
+        // Hash Algorithm is a raw numeric field, so an unassigned value must
+        // survive verbatim. The Type Bit Maps carry multiple entries spanning
+        // several window blocks including an unknown high codepoint, and a
+        // non-empty Salt and next hashed owner name (RFC 5155 Section 3.2). None
+        // of this is cryptographically validated; it is wire data only.
+        let salt = vec![0xde, 0xad, 0xbe, 0xef];
+        let next_hash = vec![0x33; 20];
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::nsec3(
+            "example.com.",
+            3600,
+            0xfe, // unassigned hash algorithm
+            0x00,
+            2500,
+            salt.clone(),
+            next_hash.clone(),
+            // Unsorted input with a duplicate plus a high unknown codepoint
+            // spanning multiple window blocks; construction sorts/dedups.
+            [DNS_TYPE_RRSIG, DNS_TYPE_A, 1234u16, DNS_TYPE_A, 0xff10],
+        ));
+        match data {
+            DnsRecordData::Nsec3 {
+                hash_algorithm,
+                flags,
+                iterations,
+                salt: decoded_salt,
+                next_hashed_owner_name,
+                type_bitmaps,
+            } => {
+                assert_eq!(hash_algorithm, 0xfe);
+                assert_eq!(flags, 0x00);
+                assert_eq!(iterations, 2500);
+                assert_eq!(decoded_salt, salt);
+                assert_eq!(next_hashed_owner_name, next_hash);
+                assert_eq!(type_bitmaps.types(), &[1, 46, 1234, 0xff10]);
+            }
+            other => panic!("expected NSEC3 data, got {other:?}"),
+        }
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
     fn dnssec_unknown_algorithm_and_digest_values_are_preserved() {
         // Algorithm and digest-type values stay raw numeric fields, so values
         // outside the named registry entries must round trip verbatim.

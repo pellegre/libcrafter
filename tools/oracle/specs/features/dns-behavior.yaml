@@ -167,6 +167,21 @@ behaviors:
     summary: An authoritative response carrying NSEC answers whose Type Bit Maps span a single window, multiple windows, an unknown codepoint, and unsorted/duplicate inputs; libcrafter sorts/dedups and emits minimal sorted windows that match the Scapy reference.
     record_kinds:
       - generic
+  # dnssec_nsec3 is the combined NSEC3 case carrying three NSEC3 answers that
+  # exercise the full RFC 5155 Section 3.2 wire layout: a non-empty salt with a
+  # non-empty next hashed owner name and multiple type bitmap entries, an empty
+  # salt, and an unknown hash algorithm value with an unknown high type bitmap
+  # codepoint. NSEC3 hash, salt, and next hashed owner material is wire data
+  # only; libcrafter preserves the bytes (treated as bytes, not text) and never
+  # validates DNSSEC cryptography. Both the Scapy DNSRRNSEC3 reference and the
+  # libcrafter DnsRecord::nsec3 materializer emit the same uncompressed bytes,
+  # so the case is strict-byte in both directions. Its identifier dnssec-nsec3
+  # is dispatched after dnssec-nsec-bitmaps and before any shorter dnssec-nsec
+  # substring branch, keeping resolution deterministic.
+  - name: dnssec_nsec3
+    summary: An authoritative response carrying NSEC3 answers whose hash algorithm, flags, iterations, salt, next hashed owner name, and type bitmaps are wire data only, including a non-empty salt, an empty salt, multiple bitmap entries, an unknown algorithm value, and an unknown bitmap codepoint.
+    record_kinds:
+      - generic
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -421,9 +436,10 @@ case_groups:
     cases:
       - dns-dnssec-nsec-bitmap
   - name: dnssec-nsec3
-    summary: NSEC3 hash/salt/next-hash/bitmap material, including empty salt.
+    summary: NSEC3 hash/salt/next-hash/bitmap material, including a non-empty salt, an empty salt, multiple bitmap entries, an unknown algorithm value, and an unknown bitmap codepoint.
     byte_policy: strict_bytes
     cases:
+      - dnssec-nsec3
       - dns-dnssec-nsec3
       - dns-dnssec-nsec3-empty-salt
   - name: dns-svcb-https
@@ -536,6 +552,7 @@ coverage_cases:
   - dnssec-nsec-bitmaps
   - dns-dnssec-nsec
   - dns-dnssec-nsec-bitmap
+  - dnssec-nsec3
   - dns-dnssec-nsec3
   - dns-dnssec-nsec3-empty-salt
   - dns-dnssec-unknown-algorithm
@@ -834,6 +851,11 @@ supported_cases:
       - reference_to_libcrafter
       - libcrafter_to_reference
     byte_policy: normalized
+  - name: dnssec-nsec3
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
   - name: dns-dnssec-nsec3
     directions:
       - reference_to_libcrafter
