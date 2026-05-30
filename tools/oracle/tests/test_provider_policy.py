@@ -166,6 +166,34 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
             provider="virtualbox",
         )
 
+    def test_ethernet_root_dhcp_skipped_on_routed_only_provider_without_l2(
+        self,
+    ) -> None:
+        # Adding IPv4-root DHCP must not make ethernet / ipv4 / udp / dhcp look
+        # safe for live validation on a routed-only provider. Build a provider
+        # that explicitly lacks L2 send/capture, broadcast, and provider MAC
+        # discovery, then prove the Ethernet-root DHCP plan stays gated with
+        # link-layer reasons rather than becoming wire-eligible.
+        capabilities = {
+            "provider": "routed-only",
+            "live_packet_exchange": True,
+            "ipv4_unicast": True,
+            "ipv6_unicast": True,
+            "link_layer_send": False,
+            "link_layer_capture": False,
+            "broadcast": False,
+            "provider_mac_known": False,
+            "controlled_services": False,
+            "controlled_router": False,
+        }
+        self.assertFalse(capabilities["link_layer_send"])
+        self.assertFalse(capabilities["link_layer_capture"])
+
+        self._assert_ethernet_root_dhcp_skipped(
+            capabilities,
+            provider="routed-only",
+        )
+
     def _assert_ipv4_root_dhcp_eligible(
         self,
         capabilities: dict[str, object],
