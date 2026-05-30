@@ -7,7 +7,8 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 
 use super::constants::{
-    DHCP_CLIENT_MACHINE_UUID_TYPE, DHCP_CLIENT_NDI_TYPE_UNDI, DHCP_OPTION_ALL_SUBNETS_LOCAL,
+    DHCP_CLIENT_ID_TYPE_NONE, DHCP_CLIENT_ID_TYPE_RFC4361, DHCP_CLIENT_MACHINE_UUID_TYPE,
+    DHCP_CLIENT_NDI_TYPE_UNDI, DHCP_HTYPE_ETHERNET, DHCP_IAID_LEN, DHCP_OPTION_ALL_SUBNETS_LOCAL,
     DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_BOOTFILE_NAME, DHCP_OPTION_BOOT_FILE_SIZE,
     DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
     DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
@@ -301,6 +302,120 @@ impl ClientNetworkDeviceInterface {
     /// (RFC 4578 section 2.2).
     pub const fn undi(major: u8, minor: u8) -> Self {
         Self::new(DHCP_CLIENT_NDI_TYPE_UNDI, major, minor)
+    }
+}
+
+/// A DHCPv4 Client-identifier option value (option 61).
+///
+/// Source: RFC 2132 section 9.14, RFC 4361 section 6.1, and RFC 6842. The
+/// option is a one-octet `type` field followed by the client identifier. This
+/// type models the three forms that appear on the wire without ever losing the
+/// raw bytes:
+///
+/// - [`DhcpClientIdentifier::LegacyHardware`]: the RFC 2132 form, a hardware
+///   type (an ARP hardware type per STD 2, for example `1` for Ethernet)
+///   followed by a hardware address. With type `1` and a 6-octet address this
+///   is the common Ethernet MAC client identifier.
+/// - [`DhcpClientIdentifier::NodeSpecific`]: the RFC 4361 form, type `255`
+///   followed by a 4-octet IAID and a variable-length DUID, giving a node a
+///   stable identity across interfaces and across DHCPv4/DHCPv6.
+/// - [`DhcpClientIdentifier::Raw`]: any other form (including type `0`
+///   non-hardware identifiers such as a fully-qualified domain name, or
+///   identifiers whose internal structure the codec does not interpret),
+///   preserved verbatim including the type octet.
+///
+/// RFC 6842 requires a server to echo the option unaltered in its replies; the
+/// crate models the option as packet data so a reply can carry exactly what the
+/// client sent. This is a packet-field model, not lease policy.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DhcpClientIdentifier {
+    /// RFC 2132 hardware-type identifier: an ARP hardware type octet followed by
+    /// a hardware address (for example type `1` plus a 6-octet Ethernet MAC).
+    LegacyHardware {
+        /// ARP hardware type (STD 2), for example `1` for Ethernet.
+        hardware_type: u8,
+        /// The hardware address bytes, preserved verbatim.
+        address: Vec<u8>,
+    },
+    /// RFC 4361 node-specific identifier: type `255`, a 4-octet IAID, and a DUID.
+    NodeSpecific {
+        /// The opaque 32-bit Identity Association Identifier (IAID).
+        iaid: u32,
+        /// The DHCP Unique Identifier (DUID) bytes, preserved verbatim.
+        duid: Vec<u8>,
+    },
+    /// Any other identifier form, preserved verbatim including the type octet.
+    Raw(Vec<u8>),
+}
+
+impl DhcpClientIdentifier {
+    /// Create an RFC 2132 hardware-type identifier from a hardware type octet and
+    /// hardware address bytes.
+    pub fn legacy_hardware(hardware_type: u8, address: impl Into<Vec<u8>>) -> Self {
+        Self::LegacyHardware {
+            hardware_type,
+            address: address.into(),
+        }
+    }
+
+    /// Create an Ethernet (hardware type `1`) MAC client identifier from six
+    /// address octets (RFC 2132 section 9.14).
+    pub fn ethernet_mac(mac: [u8; 6]) -> Self {
+        Self::LegacyHardware {
+            hardware_type: DHCP_HTYPE_ETHERNET,
+            address: mac.to_vec(),
+        }
+    }
+
+    /// Create an RFC 4361 node-specific identifier from an IAID and DUID.
+    ///
+    /// Source: RFC 4361 section 6.1. The encoded option is the type octet `255`,
+    /// the 4-octet IAID, then the DUID.
+    pub fn node_specific(iaid: u32, duid: impl Into<Vec<u8>>) -> Self {
+        Self::NodeSpecific {
+            iaid,
+            duid: duid.into(),
+        }
+    }
+
+    /// Create a raw identifier preserved verbatim (including its type octet).
+    pub fn raw(bytes: impl Into<Vec<u8>>) -> Self {
+        Self::Raw(bytes.into())
+    }
+
+    /// The option `type` octet this identifier encodes with (RFC 2132 / RFC
+    /// 4361). Returns `None` for an empty [`DhcpClientIdentifier::Raw`], which
+    /// carries no type octet.
+    pub fn type_octet(&self) -> Option<u8> {
+        match self {
+            Self::LegacyHardware { hardware_type, .. } => Some(*hardware_type),
+            Self::NodeSpecific { .. } => Some(DHCP_CLIENT_ID_TYPE_RFC4361),
+            Self::Raw(bytes) => bytes.first().copied(),
+        }
+    }
+
+    /// Encode this identifier to its option 61 payload bytes (the `type` octet
+    /// and identifier, without the option code or length).
+    pub fn encode(&self) -> Vec<u8> {
+        match self {
+            Self::LegacyHardware {
+                hardware_type,
+                address,
+            } => {
+                let mut bytes = Vec::with_capacity(1 + address.len());
+                bytes.push(*hardware_type);
+                bytes.extend_from_slice(address);
+                bytes
+            }
+            Self::NodeSpecific { iaid, duid } => {
+                let mut bytes = Vec::with_capacity(1 + DHCP_IAID_LEN + duid.len());
+                bytes.push(DHCP_CLIENT_ID_TYPE_RFC4361);
+                bytes.extend_from_slice(&iaid.to_be_bytes());
+                bytes.extend_from_slice(duid);
+                bytes
+            }
+            Self::Raw(bytes) => bytes.clone(),
+        }
     }
 }
 
@@ -786,6 +901,9 @@ pub enum DhcpOptionValue {
     /// An RFC 3046 Relay Agent Information value (option 82): a sequence of
     /// relay-agent sub-options.
     RelayAgentInformation(DhcpRelayAgentInfo),
+    /// A DHCPv4 Client-identifier value (option 61): an RFC 2132 hardware-type
+    /// identifier, an RFC 4361 IAID+DUID identifier, or a raw identifier.
+    ClientIdentifier(DhcpClientIdentifier),
     /// Opaque bytes preserved verbatim for options without a richer decode yet.
     Opaque(Vec<u8>),
 }
@@ -853,6 +971,7 @@ impl DhcpOptionValue {
             Self::ViVendorClass(instances) => encode_vi_vendor_class(instances),
             Self::ViVendorSpecific(instances) => encode_vi_vendor_specific(instances),
             Self::RelayAgentInformation(info) => encode_relay_agent_information(info),
+            Self::ClientIdentifier(identifier) => identifier.encode(),
             Self::Text(bytes) | Self::ParameterRequestList(bytes) | Self::Opaque(bytes) => {
                 bytes.clone()
             }
@@ -921,6 +1040,9 @@ pub enum DhcpOptionFormat {
     /// RFC 3046 Relay Agent Information (option 82): a sequence of relay-agent
     /// sub-options.
     RelayAgentInformation,
+    /// DHCPv4 Client-identifier (option 61): a type octet plus an RFC 2132
+    /// hardware identifier, RFC 4361 IAID+DUID identifier, or raw identifier.
+    ClientIdentifier,
     /// Opaque bytes preserved verbatim (vendor-specific, client/vendor id).
     Opaque,
 }
@@ -1281,13 +1403,15 @@ impl DhcpOptionKind {
             Self::ViVendorSpecificInformation => F::ViVendorSpecific,
             // RFC 3046 relay agent information (option 82): nested sub-options.
             Self::RelayAgentInformation => F::RelayAgentInformation,
+            // RFC 2132 / RFC 4361 client identifier (option 61): a type octet
+            // plus a hardware identifier, an IAID+DUID, or a raw identifier.
+            Self::ClientIdentifier => F::ClientIdentifier,
             // Opaque/vendor data preserved verbatim. The PXELINUX magic is a
             // fixed 4-octet value whose meaning is positional, so it is kept
             // opaque rather than reinterpreted.
-            Self::VendorSpecificInformation
-            | Self::VendorClassIdentifier
-            | Self::ClientIdentifier
-            | Self::PxelinuxMagic => F::Opaque,
+            Self::VendorSpecificInformation | Self::VendorClassIdentifier | Self::PxelinuxMagic => {
+                F::Opaque
+            }
         }
     }
 }
@@ -1357,6 +1481,9 @@ pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValu
         }
         DhcpOptionFormat::RelayAgentInformation => {
             DhcpOptionValue::RelayAgentInformation(decode_relay_agent_information(data)?)
+        }
+        DhcpOptionFormat::ClientIdentifier => {
+            DhcpOptionValue::ClientIdentifier(decode_client_identifier(data)?)
         }
         DhcpOptionFormat::Opaque => {
             if data.is_empty() {
@@ -1595,9 +1722,23 @@ impl DhcpOption {
         Self::ParameterRequestList(requests.into())
     }
 
-    /// Create a client identifier option.
+    /// Create a client identifier option from raw payload bytes (the `type`
+    /// octet plus identifier).
     pub fn client_identifier(identifier: impl Into<Vec<u8>>) -> Self {
         Self::ClientIdentifier(identifier.into())
+    }
+
+    /// Create a typed client identifier option (option 61) from a
+    /// [`DhcpClientIdentifier`].
+    ///
+    /// Source: RFC 2132 section 9.14 and RFC 4361 section 6.1. The value is
+    /// serialized to its option 61 wire layout and re-decodes through
+    /// [`DhcpOption::typed_value`] into a [`DhcpOptionValue::ClientIdentifier`].
+    /// Use [`DhcpClientIdentifier::ethernet_mac`] for a legacy Ethernet MAC
+    /// identifier or [`DhcpClientIdentifier::node_specific`] for an RFC 4361
+    /// IAID+DUID identifier.
+    pub fn client_identifier_value(identifier: DhcpClientIdentifier) -> Self {
+        Self::ClientIdentifier(identifier.encode())
     }
 
     /// Create a caller-defined option.
@@ -2766,6 +2907,46 @@ fn decode_client_uuid(data: &[u8]) -> Result<DhcpClientUuid> {
     Ok(DhcpClientUuid::new(identifier_type, rest.to_vec()))
 }
 
+/// Decode a DHCPv4 Client-identifier option (option 61).
+///
+/// Source: RFC 2132 section 9.14 and RFC 4361 section 6.1. The payload is a
+/// one-octet `type` field followed by the identifier. A type of `255` (RFC
+/// 4361) introduces a 4-octet IAID and a variable-length DUID; any other
+/// non-empty type is the RFC 2132 hardware-type form (hardware type plus
+/// hardware address). An empty payload carries no type octet and is preserved
+/// as an empty raw identifier rather than treated as a panic-worthy buffer. A
+/// type-`255` identifier with fewer than four IAID octets surfaces as a
+/// structured error rather than a panic.
+fn decode_client_identifier(data: &[u8]) -> Result<DhcpClientIdentifier> {
+    let field = "dhcp.option.client_identifier";
+    let Some((&type_octet, rest)) = data.split_first() else {
+        // No type octet present: preserve the empty payload verbatim.
+        return Ok(DhcpClientIdentifier::Raw(Vec::new()));
+    };
+    if type_octet == DHCP_CLIENT_ID_TYPE_RFC4361 {
+        if rest.len() < DHCP_IAID_LEN {
+            return Err(CrafterError::buffer_too_short(
+                field,
+                1 + DHCP_IAID_LEN,
+                data.len(),
+            ));
+        }
+        let iaid = read_u32_be(&rest[..DHCP_IAID_LEN])?;
+        let duid = rest[DHCP_IAID_LEN..].to_vec();
+        return Ok(DhcpClientIdentifier::NodeSpecific { iaid, duid });
+    }
+    if type_octet == DHCP_CLIENT_ID_TYPE_NONE {
+        // RFC 2132: a type of 0 is a non-hardware identifier (for example a
+        // fully-qualified domain name). The structure beyond the type octet is
+        // not specified, so the whole payload is preserved verbatim.
+        return Ok(DhcpClientIdentifier::Raw(data.to_vec()));
+    }
+    Ok(DhcpClientIdentifier::LegacyHardware {
+        hardware_type: type_octet,
+        address: rest.to_vec(),
+    })
+}
+
 /// Encode an RFC 4578 UUID/GUID client machine identifier (option 97).
 fn encode_client_uuid(uuid: &DhcpClientUuid) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(1 + uuid.identifier.len());
@@ -3672,8 +3853,8 @@ mod dhcp_rfc3396 {
 #[cfg(test)]
 mod dhcp_rfc2132_base_options {
     use super::super::{
-        Dhcp, DhcpMessageType, DhcpOption, DhcpOptionCode, DhcpOptionFormat, DhcpOptionKind,
-        DhcpOptionValue, OptionOverload,
+        Dhcp, DhcpClientIdentifier, DhcpMessageType, DhcpOption, DhcpOptionCode, DhcpOptionFormat,
+        DhcpOptionKind, DhcpOptionValue, OptionOverload,
     };
     use super::typed_option_value;
     use crate::error::CrafterError;
@@ -3757,12 +3938,16 @@ mod dhcp_rfc2132_base_options {
             // Message type (option 53) and option overload (option 52).
             (53, DhcpOptionValue::MessageType(DhcpMessageType::Discover)),
             (52, DhcpOptionValue::OptionOverload(OptionOverload::Both)),
-            // Opaque (option 60 vendor class id, option 61 client id, option 43
-            // vendor specific) - raw bytes preserved.
+            // Opaque (option 60 vendor class id, option 43 vendor specific) -
+            // raw bytes preserved.
             (60, DhcpOptionValue::Opaque(b"MSFT 5.0".to_vec())),
+            // Client identifier (option 61): the legacy RFC 2132 Ethernet
+            // hardware-type form (type 1 plus a 6-octet MAC).
             (
                 61,
-                DhcpOptionValue::Opaque(vec![0x01, 0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]),
+                DhcpOptionValue::ClientIdentifier(DhcpClientIdentifier::ethernet_mac([
+                    0x02, 0x00, 0x5e, 0x10, 0x00, 0x01,
+                ])),
             ),
             (43, DhcpOptionValue::Opaque(vec![0xde, 0xad, 0xbe, 0xef])),
         ]
@@ -3801,6 +3986,7 @@ mod dhcp_rfc2132_base_options {
             DhcpOptionFormat::ParameterRequestList,
             DhcpOptionFormat::MessageType,
             DhcpOptionFormat::OptionOverload,
+            DhcpOptionFormat::ClientIdentifier,
             DhcpOptionFormat::Opaque,
         ];
         for family in all_families {
@@ -4805,5 +4991,187 @@ mod dhcp_relay_agent {
 
         // The codepoint is pinned to its IANA value for clarity.
         assert_eq!(RELAY_AGENT_INFORMATION, 82);
+    }
+}
+
+#[cfg(test)]
+mod dhcp_client_identifier {
+    use super::super::{Dhcp, DhcpClientIdentifier, DhcpMessageType, DhcpOption, DhcpOptionValue};
+    use super::{decode_client_identifier, typed_option_value};
+    use crate::error::CrafterError;
+
+    const CLIENT_IDENTIFIER: u8 = super::super::DHCP_OPTION_CLIENT_IDENTIFIER; // 61
+
+    fn build_and_decode(option: DhcpOption) -> Dhcp {
+        let dhcp = Dhcp::new()
+            .op(super::super::BOOTP_REQUEST)
+            .message_type(DhcpMessageType::Request)
+            .options(vec![option, DhcpOption::End]);
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        Dhcp::decode(&bytes).unwrap()
+    }
+
+    fn recompile_is_stable(parsed: &Dhcp) {
+        let bytes = crate::Packet::from_layer(parsed.clone())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let recompiled = crate::Packet::from_layer(Dhcp::decode(&bytes).unwrap())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn dhcp_client_identifier_legacy_mac_roundtrip() {
+        // RFC 2132 section 9.14: the common client identifier is a hardware type
+        // (1 = Ethernet) followed by a 6-octet MAC address.
+        let mac = [0x02, 0x00, 0x5e, 0x10, 0x00, 0x01];
+        let identifier = DhcpClientIdentifier::ethernet_mac(mac);
+        assert_eq!(identifier.type_octet(), Some(1));
+
+        // The typed value encodes to the option-61 wire layout (type octet plus
+        // address) and decodes back losslessly.
+        let value = DhcpOptionValue::ClientIdentifier(identifier.clone());
+        let payload = value.encode_payload();
+        assert_eq!(payload, vec![0x01, 0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]);
+        assert_eq!(decode_client_identifier(&payload).unwrap(), identifier);
+        assert_eq!(
+            typed_option_value(CLIENT_IDENTIFIER, &payload)
+                .unwrap()
+                .unwrap(),
+            value,
+        );
+
+        // Full packet round-trip through the typed builder and the accessor,
+        // which surfaces the identifier independently from chaddr.
+        let parsed = build_and_decode(DhcpOption::client_identifier_value(identifier.clone()));
+        assert_eq!(
+            parsed.client_identifier_value().unwrap().unwrap(),
+            identifier,
+        );
+        recompile_is_stable(&parsed);
+
+        // The legacy raw-byte constructor produces the same wire bytes.
+        let raw = build_and_decode(DhcpOption::client_identifier(payload.clone()));
+        assert_eq!(raw.client_identifier_value().unwrap().unwrap(), identifier);
+    }
+
+    #[test]
+    fn dhcp_client_identifier_rfc4361_roundtrip() {
+        // RFC 4361 section 6.1: type 255, a 4-octet IAID, then a DUID. The DUID
+        // here is a DUID-LLT (type 1) carrying a hardware type, a 4-octet time,
+        // and a 6-octet link-layer address, but the codec preserves it verbatim.
+        let iaid = 0x0102_0304u32;
+        let duid = vec![
+            0x00, 0x01, // DUID type 1 (DUID-LLT)
+            0x00, 0x01, // hardware type 1 (Ethernet)
+            0x12, 0x34, 0x56, 0x78, // DUID time
+            0x02, 0x00, 0x5e, 0x10, 0x00, 0x01, // link-layer address
+        ];
+        let identifier = DhcpClientIdentifier::node_specific(iaid, duid.clone());
+        assert_eq!(identifier.type_octet(), Some(255));
+
+        // The encoded payload is type 255 + IAID + DUID.
+        let value = DhcpOptionValue::ClientIdentifier(identifier.clone());
+        let payload = value.encode_payload();
+        assert_eq!(payload[0], 255, "RFC 4361 identifier uses type 255");
+        assert_eq!(&payload[1..5], &iaid.to_be_bytes(), "IAID is 4 octets");
+        assert_eq!(&payload[5..], duid.as_slice(), "DUID follows the IAID");
+
+        assert_eq!(decode_client_identifier(&payload).unwrap(), identifier);
+        assert_eq!(
+            typed_option_value(CLIENT_IDENTIFIER, &payload)
+                .unwrap()
+                .unwrap(),
+            value,
+        );
+
+        // Full packet round-trip through the typed builder and accessor.
+        let parsed = build_and_decode(DhcpOption::client_identifier_value(identifier.clone()));
+        assert_eq!(
+            parsed.client_identifier_value().unwrap().unwrap(),
+            identifier,
+        );
+        recompile_is_stable(&parsed);
+    }
+
+    #[test]
+    fn dhcp_client_identifier_raw_unknown_forms_preserved() {
+        // A type-0 (non-hardware) identifier per RFC 2132 (for example a
+        // fully-qualified domain name) has no specified internal structure, so
+        // the whole payload is preserved verbatim including the type octet.
+        let fqdn_payload = {
+            let mut bytes = vec![0u8];
+            bytes.extend_from_slice(b"host.example.com");
+            bytes
+        };
+        let decoded = decode_client_identifier(&fqdn_payload).unwrap();
+        assert_eq!(decoded, DhcpClientIdentifier::Raw(fqdn_payload.clone()));
+        let parsed = build_and_decode(DhcpOption::client_identifier(fqdn_payload.clone()));
+        assert_eq!(
+            parsed.client_identifier_value().unwrap().unwrap(),
+            DhcpClientIdentifier::Raw(fqdn_payload),
+        );
+
+        // An empty payload carries no type octet and round-trips as empty raw.
+        assert_eq!(
+            decode_client_identifier(&[]).unwrap(),
+            DhcpClientIdentifier::Raw(Vec::new()),
+        );
+
+        // The Raw constructor encodes its bytes verbatim (no synthesized type).
+        let raw = DhcpClientIdentifier::raw(vec![0x07, 0xaa, 0xbb]);
+        assert_eq!(raw.encode(), vec![0x07, 0xaa, 0xbb]);
+        assert_eq!(raw.type_octet(), Some(0x07));
+
+        // A type-255 RFC 4361 identifier with fewer than four IAID octets is a
+        // structured error, never a panic.
+        let truncated = [255u8, 0x01, 0x02, 0x03];
+        assert!(matches!(
+            decode_client_identifier(&truncated),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+    }
+
+    #[test]
+    fn dhcp_client_identifier_server_reply_echo() {
+        // RFC 6842: a server MUST return the client identifier option, unaltered,
+        // in its reply. The crate models this as packet data, so a reply (op =
+        // BOOTREPLY, message type ACK) can carry exactly what the client sent.
+        let identifier =
+            DhcpClientIdentifier::node_specific(0xdead_beef, vec![0x00, 0x03, 0x00, 0x01, 0x11]);
+        let request_payload =
+            DhcpOptionValue::ClientIdentifier(identifier.clone()).encode_payload();
+
+        let reply = Dhcp::new()
+            .op(super::super::BOOTP_REPLY)
+            .message_type(DhcpMessageType::Ack)
+            .options(vec![
+                DhcpOption::client_identifier_value(identifier.clone()),
+                DhcpOption::End,
+            ]);
+        let bytes = crate::Packet::from_layer(reply)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let parsed = Dhcp::decode(&bytes).unwrap();
+
+        // The server reply echoes the identifier unaltered.
+        let echoed = parsed.client_identifier_value().unwrap().unwrap();
+        assert_eq!(echoed, identifier);
+        assert_eq!(echoed.encode(), request_payload);
+        recompile_is_stable(&parsed);
+
+        // The codepoint is pinned to its IANA value for clarity.
+        assert_eq!(CLIENT_IDENTIFIER, 61);
     }
 }

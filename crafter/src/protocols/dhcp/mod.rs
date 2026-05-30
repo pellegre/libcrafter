@@ -55,11 +55,12 @@ pub use malformed::DhcpMalformed;
 pub use message::DhcpMessageType;
 pub use option::{
     decode_tftp_server_addresses, scan_dhcp_option_segments, typed_option_value,
-    ClientNetworkDeviceInterface, ClientSystemArchitecture, DhcpClasslessRoute, DhcpClientUuid,
-    DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionFormat, DhcpOptionKind,
-    DhcpOptionSegment, DhcpOptionValue, DhcpRelayAgentInfo, DhcpRelaySuboption,
-    DhcpRelayVendorSpecific, DhcpStaticRoute, DhcpUserClass, DhcpVendorClassData,
-    DhcpVendorIdentifyingOption, DhcpVendorSuboption, DhcpVssInfo, OptionOverload, SipServers,
+    ClientNetworkDeviceInterface, ClientSystemArchitecture, DhcpClasslessRoute,
+    DhcpClientIdentifier, DhcpClientUuid, DhcpOption, DhcpOptionArea, DhcpOptionCode,
+    DhcpOptionFormat, DhcpOptionKind, DhcpOptionSegment, DhcpOptionValue, DhcpRelayAgentInfo,
+    DhcpRelaySuboption, DhcpRelayVendorSpecific, DhcpStaticRoute, DhcpUserClass,
+    DhcpVendorClassData, DhcpVendorIdentifyingOption, DhcpVendorSuboption, DhcpVssInfo,
+    OptionOverload, SipServers,
 };
 pub use registry::{
     option_meta, option_name, option_status, DhcpOptionMeta, DhcpOptionStatus,
@@ -895,6 +896,26 @@ impl Dhcp {
                 result.map(|value| match value {
                     DhcpOptionValue::ClientUuid(uuid) => uuid,
                     _ => DhcpClientUuid::new(0, Vec::new()),
+                })
+            })
+    }
+
+    /// DHCPv4 Client identifier (option 61), concatenated across areas.
+    ///
+    /// Source: RFC 2132 section 9.14 and RFC 4361 section 6.1. This is the
+    /// client identifier carried in the option, retrieved independently from the
+    /// BOOTP `chaddr` fixed field. It decodes to a typed
+    /// [`DhcpClientIdentifier`]: a legacy hardware-type identifier (for example
+    /// an Ethernet MAC), an RFC 4361 IAID+DUID identifier (type `255`), or a raw
+    /// identifier preserved verbatim. The same accessor surfaces the identifier
+    /// a server echoes back per RFC 6842. Returns `None` when no area carries the
+    /// option; a malformed RFC 4361 identifier surfaces as a structured error.
+    pub fn client_identifier_value(&self) -> Option<Result<DhcpClientIdentifier>> {
+        self.typed_value_in_areas(DHCP_OPTION_CLIENT_IDENTIFIER)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::ClientIdentifier(identifier) => identifier,
+                    _ => DhcpClientIdentifier::Raw(Vec::new()),
                 })
             })
     }
