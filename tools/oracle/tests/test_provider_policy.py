@@ -6,6 +6,10 @@ import unittest
 
 from tools.oracle.engine.corpus import (
     CorpusPacket,
+    SKIP_REQUIRES_BROADCAST,
+    SKIP_REQUIRES_CONTROLLED_SERVICE,
+    SKIP_REQUIRES_L2,
+    SKIP_REQUIRES_PROVIDER_MAC,
     populate_corpus_eligibility,
     wire_comparison_policy,
 )
@@ -135,6 +139,88 @@ class LiveProviderPolicyTest(unittest.TestCase):
         self.assertFalse(policy["transit_mutations"])
 
 
+class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
+    """Prove IPv4-root DHCP is wire-eligible while Ethernet-root DHCP is gated."""
+
+    def test_qemu_marks_ipv4_root_dhcp_wire_eligible(self) -> None:
+        self._assert_ipv4_root_dhcp_eligible(
+            qemu_default_provider_capabilities(dry_run=True),
+            provider="qemu",
+        )
+
+    def test_virtualbox_marks_ipv4_root_dhcp_wire_eligible(self) -> None:
+        self._assert_ipv4_root_dhcp_eligible(
+            virtualbox_default_provider_capabilities(dry_run=True),
+            provider="virtualbox",
+        )
+
+    def test_qemu_skips_ethernet_root_dhcp_for_link_layer_reasons(self) -> None:
+        self._assert_ethernet_root_dhcp_skipped(
+            qemu_default_provider_capabilities(dry_run=True),
+            provider="qemu",
+        )
+
+    def test_virtualbox_skips_ethernet_root_dhcp_for_link_layer_reasons(self) -> None:
+        self._assert_ethernet_root_dhcp_skipped(
+            virtualbox_default_provider_capabilities(dry_run=True),
+            provider="virtualbox",
+        )
+
+    def _assert_ipv4_root_dhcp_eligible(
+        self,
+        capabilities: dict[str, object],
+        *,
+        provider: str,
+    ) -> None:
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(_ipv4_dhcp_plan())],
+            provider_capabilities=capabilities,
+            wire_provider=provider,
+        )
+
+        self.assertEqual(packet.wire.metadata["provider"], provider)
+        self.assertTrue(packet.wire.eligible)
+        self.assertEqual(packet.wire.skip_reasons, [])
+        self.assertEqual(packet.wire.compare_root, "l3:ipv4")
+        # IPv4-root DHCP is a one-way application payload, not a service or
+        # lease workflow, so it must not demand a controlled DHCP service nor
+        # any other link-layer substrate capability.
+        self.assertNotIn(SKIP_REQUIRES_CONTROLLED_SERVICE, packet.wire.skip_reasons)
+        self.assertNotIn(SKIP_REQUIRES_L2, packet.wire.skip_reasons)
+        self.assertNotIn(SKIP_REQUIRES_BROADCAST, packet.wire.skip_reasons)
+        self.assertNotIn(SKIP_REQUIRES_PROVIDER_MAC, packet.wire.skip_reasons)
+        requirements = packet.wire.metadata["provider_profiles"][provider]["metadata"][
+            "requirements"
+        ]
+        self.assertTrue(requirements["ipv4_unicast"])
+        self.assertFalse(requirements["link_layer_send"])
+        self.assertFalse(requirements["link_layer_capture"])
+        self.assertFalse(requirements["broadcast"])
+        self.assertFalse(requirements["provider_mac_known"])
+        self.assertFalse(requirements["controlled_services"])
+
+    def _assert_ethernet_root_dhcp_skipped(
+        self,
+        capabilities: dict[str, object],
+        *,
+        provider: str,
+    ) -> None:
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(_ethernet_dhcp_plan())],
+            provider_capabilities=capabilities,
+            wire_provider=provider,
+        )
+
+        self.assertEqual(packet.wire.metadata["provider"], provider)
+        self.assertFalse(packet.wire.eligible)
+        self.assertEqual(packet.wire.compare_root, "link:ethernet")
+        self.assertIn(SKIP_REQUIRES_L2, packet.wire.skip_reasons)
+        self.assertIn(SKIP_REQUIRES_PROVIDER_MAC, packet.wire.skip_reasons)
+        self.assertIn(SKIP_REQUIRES_BROADCAST, packet.wire.skip_reasons)
+
+
 def _ipv4_plan() -> PacketPlan:
     return PacketPlan(
         stack=["ipv4"],
@@ -145,6 +231,46 @@ def _ipv4_plan() -> PacketPlan:
         direction="reference_to_libcrafter",
         family="ipv4",
         metadata={"root": "l3:ipv4"},
+    )
+
+
+def _ipv4_dhcp_plan() -> PacketPlan:
+    return PacketPlan(
+        stack=["ipv4", "udp", "dhcp"],
+        fields={
+            "ipv4": {"src": "192.0.2.1", "dst": "192.0.2.2"},
+            "udp": {"sport": 68, "dport": 67},
+            "dhcp": {"op": 1, "message_type": "discover"},
+        },
+        profile="smoke",
+        seed=1,
+        index=0,
+        direction="libcrafter_to_reference",
+        family="ipv4",
+        case="dhcp-discover",
+        metadata={"root": "l3:ipv4"},
+    )
+
+
+def _ethernet_dhcp_plan() -> PacketPlan:
+    return PacketPlan(
+        stack=["ethernet", "ipv4", "udp", "dhcp"],
+        fields={
+            "ethernet": {
+                "src": "02:00:00:00:00:01",
+                "dst": "ff:ff:ff:ff:ff:ff",
+            },
+            "ipv4": {"src": "0.0.0.0", "dst": "255.255.255.255"},
+            "udp": {"sport": 68, "dport": 67},
+            "dhcp": {"op": 1, "message_type": "discover", "flags": "broadcast"},
+        },
+        profile="smoke",
+        seed=1,
+        index=1,
+        direction="libcrafter_to_reference",
+        family="ipv4",
+        case="dhcp-discover",
+        metadata={"root": "link:ethernet"},
     )
 
 
