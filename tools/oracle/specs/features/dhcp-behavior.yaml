@@ -27,16 +27,31 @@ behaviors:
     message_types:
       - inform
       - release
+  - name: decline_nak
+    message_types:
+      - decline
+      - nak
+  - name: force_renew
+    message_types:
+      - force_renew
+  - name: lease_query
+    message_types:
+      - lease_query
   - name: option_matrix
     option_kinds:
       - message_type
       - hostname
+      - domain_name
       - requested_ip
       - server_id
       - parameter_request_list
       - lease_time
       - router
       - dns_server
+      - vendor_class
+      - client_identifier
+      - classless_static_route
+      - relay_agent
       - generic
       - end
 
@@ -53,7 +68,19 @@ backend_support:
     native_layers:
       - BOOTP
       - DHCP
-  libcrafter:
-    status: partial
     notes:
-      - Full message matrix and generic options are planned coverage.
+      - Strict-byte reference coverage spans the IANA DHCP message-type matrix
+        (discover, offer, request, decline, ack, nak, release, inform,
+        force_renew, lease_query) plus the Scapy-representable option domains.
+      - Scapy does not byte-encode option_overload, rfc3396 long options, typed
+        relay_agent sub-option registries, RFC 4361 client identifiers,
+        authentication, or leasequery time/status/state options; those are
+        covered by native libcrafter fixtures, not this reference backend.
+  libcrafter:
+    status: supported
+    notes:
+      - Decodes and re-encodes the full DHCPv4 message-type matrix and the
+        registered option formats from steps 01-17, including option_overload,
+        rfc3396 long-option concatenation, classless_static_route (121),
+        relay_agent option 82 sub-options, client_identifier (61), and
+        leasequery (91/92/151-157).

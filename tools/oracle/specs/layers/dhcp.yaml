@@ -15,6 +15,28 @@ fields:
     domains:
       - bootrequest
       - bootreply
+  - name: hops
+    type: uint8
+    required: false
+    domains:
+      - zero
+  - name: seconds
+    type: uint16
+    required: false
+    domains:
+      - zero
+  - name: server_ip
+    type: ipv4
+    required: false
+    domains:
+      - zero
+      - documentation_ipv4
+  - name: relay_ip
+    type: ipv4
+    required: false
+    domains:
+      - zero
+      - documentation_ipv4
   - name: hardware_type
     type: uint8
     required: true
@@ -59,12 +81,17 @@ fields:
     domains:
       - message_type
       - hostname
+      - domain_name
       - requested_ip
       - server_id
       - parameter_request_list
       - lease_time
       - router
       - dns_server
+      - vendor_class
+      - client_identifier
+      - classless_static_route
+      - relay_agent
       - generic
       - end
 
@@ -73,6 +100,24 @@ coverage_cases:
   - dhcp-request-offer-ack
   - dhcp-inform-release-generic-options
   - crafter-dhcp-message-matrix
+
+notes:
+  - The fixed BOOTP fields hops, seconds, server_ip (siaddr), and relay_ip
+    (giaddr) are part of the decoded/normalized DHCPv4 surface. The seeded
+    Scapy/libcrafter offline path keeps them at their protocol-correct defaults
+    so cross-backend bytes stay identical; native Rust fixtures in
+    tools/oracle/adapters exercise non-default values.
+  - Scapy-byte-safe option domains (message_type, hostname, domain_name,
+    requested_ip, server_id, parameter_request_list, lease_time, router,
+    dns_server, vendor_class, client_identifier, classless_static_route, and
+    raw relay_agent option 82) round-trip strict-bytes through both backends.
+  - Scapy cannot represent option overload (52 across file/sname), RFC 3396
+    long-option concatenation, typed relay sub-option registries, RFC 4361
+    node-specific client identifiers, RFC 3118 authentication (90), or the
+    leasequery time/status/state options (91/92/151-157) byte-for-byte. Those
+    DHCPv4 cases are covered offline by native libcrafter round-trip fixtures
+    under tools/oracle/adapters/src/bin/materialize_plans.rs instead of the
+    Scapy reference backend. See features/dhcp-behavior.yaml notes.
 
 backend_support:
   scapy:

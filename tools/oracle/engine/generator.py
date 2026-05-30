@@ -1577,13 +1577,32 @@ def _sample_dhcp_field(ctx: _SamplingContext, field_name: str, domain: object) -
 
 
 def _dhcp_option_domains(ctx: _SamplingContext, domain: object) -> list[object]:
-    options = ["message-type=discover"]
+    options: list[object] = ["message-type=discover"]
+    boundary = ctx.profile in {"boundary", "fuzz"}
     if domain == "hostname" and ctx.profile != "smoke":
         options.append("hostname=libcrafter-oracle")
-    elif domain == "requested_ip" and ctx.profile in {"boundary", "fuzz"}:
+    elif domain == "domain_name" and boundary:
+        options.append("domain=example.com")
+    elif domain == "requested_ip" and boundary:
         options.append(f"requested_addr={ctx.dst_ipv4}")
-    elif domain == "parameter_request_list" and ctx.profile in {"boundary", "fuzz"}:
-        options.append(("param_req_list", [1, 3, 6]))
+    elif domain == "server_id" and boundary:
+        options.append(f"server_id={ctx.src_ipv4}")
+    elif domain == "lease_time" and boundary:
+        options.append(("lease_time", 3600))
+    elif domain == "router" and boundary:
+        options.append(f"router={ctx.src_ipv4}")
+    elif domain == "dns_server" and boundary:
+        options.append(f"name_server={ctx.dst_ipv4}")
+    elif domain == "vendor_class" and boundary:
+        options.append(["vendor_class_id", "6c6962637261667465722d6f7261636c65"])
+    elif domain == "client_identifier" and boundary:
+        options.append(["client_id", "01" + ctx.src_mac.replace(":", "")])
+    elif domain == "classless_static_route" and boundary:
+        options.append(["classless_static_routes", [f"192.0.2.0/24:{ctx.src_ipv4}"]])
+    elif domain == "relay_agent" and boundary:
+        options.append(["relay_agent_information", "0103616263"])
+    elif domain == "parameter_request_list" and boundary:
+        options.append(["param_req_list", [1, 3, 6]])
     options.append("end")
     return options
 
@@ -1653,13 +1672,24 @@ def _apply_dhcp_behavior(fields: JSONObject, *, case: str, behavior: str) -> Non
     if "offer" in key or "ack" in key:
         fields["op"] = "bootreply"
         fields["your_ip"] = "192.0.2.100"
-        fields["options"] = ["message-type=offer", "server_id=192.0.2.1", "end"]
+        message = "ack" if "ack" in key else "offer"
+        fields["options"] = [f"message-type={message}", "server_id=192.0.2.1", "end"]
+    elif "nak" in key:
+        fields["op"] = "bootreply"
+        fields["options"] = ["message-type=nak", "server_id=192.0.2.1", "end"]
     elif "request" in key:
         fields["options"] = ["message-type=request", "requested_addr=192.0.2.100", "end"]
+    elif "decline" in key:
+        fields["options"] = ["message-type=decline", "requested_addr=192.0.2.100", "end"]
     elif "inform" in key:
         fields["options"] = ["message-type=inform", "hostname=libcrafter-oracle", "end"]
     elif "release" in key:
         fields["options"] = ["message-type=release", "server_id=192.0.2.1", "end"]
+    elif "force-renew" in key:
+        fields["op"] = "bootreply"
+        fields["options"] = ["message-type=force_renew", "server_id=192.0.2.1", "end"]
+    elif "lease-query" in key:
+        fields["options"] = ["message-type=lease_query", "end"]
 
 
 def _is_malformed_case_name(case: str) -> bool:
