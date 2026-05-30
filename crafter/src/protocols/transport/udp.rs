@@ -1,5 +1,7 @@
 //! UDP protocol implementation.
 
+use core::fmt;
+
 use crate::checksum::{crc32c, internet_checksum_chunks};
 use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
@@ -71,6 +73,8 @@ const UDP_OPTION_EXTENDED_LENGTH_CONTEXT: &str = "udp option extended length";
 const UDP_OPTION_EXTENDED_PAYLOAD_CONTEXT: &str = "udp option extended payload";
 const UDP_OPTION_CHECKSUM_LEN: usize = 2;
 const UDP_OPTION_APC_LEN: usize = 6;
+const UDP_OPTION_MDS_LEN: usize = 4;
+const UDP_OPTION_MRDS_LEN: usize = 5;
 
 /// Inspection status for UDP checksum handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -120,6 +124,16 @@ pub enum UdpOption {
         /// CRC32c bytes in network byte order.
         checksum: [u8; 4],
     },
+    /// Maximum Datagram Size option.
+    MaximumDatagramSize {
+        /// 16-bit size hint bytes in network byte order.
+        size: [u8; 2],
+    },
+    /// Maximum Reassembled Datagram Size option.
+    MaximumReassembledDatagramSize {
+        /// 16-bit size followed by 8-bit segment count.
+        size_and_segment_count: [u8; 3],
+    },
     /// Unknown or caller-defined option with the standard one-byte length field.
     Generic {
         /// Raw option kind byte.
@@ -159,6 +173,31 @@ impl UdpOption {
         Self::additional_payload_checksum(checksum)
     }
 
+    /// Create a Maximum Datagram Size option.
+    pub const fn maximum_datagram_size(size: u16) -> Self {
+        Self::MaximumDatagramSize {
+            size: size.to_be_bytes(),
+        }
+    }
+
+    /// Compatibility-style short alias for [`Self::maximum_datagram_size`].
+    pub const fn mds(size: u16) -> Self {
+        Self::maximum_datagram_size(size)
+    }
+
+    /// Create a Maximum Reassembled Datagram Size option.
+    pub const fn maximum_reassembled_datagram_size(size: u16, segment_count: u8) -> Self {
+        let size = size.to_be_bytes();
+        Self::MaximumReassembledDatagramSize {
+            size_and_segment_count: [size[0], size[1], segment_count],
+        }
+    }
+
+    /// Compatibility-style short alias for [`Self::maximum_reassembled_datagram_size`].
+    pub const fn mrds(size: u16, segment_count: u8) -> Self {
+        Self::maximum_reassembled_datagram_size(size, segment_count)
+    }
+
     /// Create a caller-defined option.
     pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
         let data = data.into();
@@ -183,6 +222,8 @@ impl UdpOption {
             Self::EndOfList => UDP_OPTION_EOL,
             Self::NoOperation => UDP_OPTION_NOP,
             Self::AdditionalPayloadChecksum { .. } => UDP_OPTION_APC,
+            Self::MaximumDatagramSize { .. } => UDP_OPTION_MDS,
+            Self::MaximumReassembledDatagramSize { .. } => UDP_OPTION_MRDS,
             Self::Generic { kind, .. } | Self::ExtendedGeneric { kind, .. } => *kind,
         }
     }
@@ -192,6 +233,10 @@ impl UdpOption {
         match self {
             Self::EndOfList | Self::NoOperation => &[],
             Self::AdditionalPayloadChecksum { checksum } => checksum,
+            Self::MaximumDatagramSize { size } => size,
+            Self::MaximumReassembledDatagramSize {
+                size_and_segment_count,
+            } => size_and_segment_count,
             Self::Generic { data, .. } | Self::ExtendedGeneric { data, .. } => data,
         }
     }
@@ -200,6 +245,27 @@ impl UdpOption {
     pub fn additional_payload_checksum_value(&self) -> Option<u32> {
         match self {
             Self::AdditionalPayloadChecksum { checksum } => Some(u32::from_be_bytes(*checksum)),
+            _ => None,
+        }
+    }
+
+    /// Return the MDS size hint, if this option is MDS.
+    pub fn maximum_datagram_size_value(&self) -> Option<u16> {
+        match self {
+            Self::MaximumDatagramSize { size } => Some(u16::from_be_bytes(*size)),
+            _ => None,
+        }
+    }
+
+    /// Return the MRDS size hint and segment count, if this option is MRDS.
+    pub fn maximum_reassembled_datagram_size_values(&self) -> Option<(u16, u8)> {
+        match self {
+            Self::MaximumReassembledDatagramSize {
+                size_and_segment_count,
+            } => Some((
+                u16::from_be_bytes([size_and_segment_count[0], size_and_segment_count[1]]),
+                size_and_segment_count[2],
+            )),
             _ => None,
         }
     }
@@ -214,6 +280,8 @@ impl UdpOption {
         match self {
             Self::EndOfList | Self::NoOperation => 1,
             Self::AdditionalPayloadChecksum { .. } => UDP_OPTION_APC_LEN,
+            Self::MaximumDatagramSize { .. } => UDP_OPTION_MDS_LEN,
+            Self::MaximumReassembledDatagramSize { .. } => UDP_OPTION_MRDS_LEN,
             Self::Generic { data, .. } => UDP_OPTION_SHORT_HEADER_LEN + data.len(),
             Self::ExtendedGeneric { data, .. } => UDP_OPTION_EXTENDED_HEADER_LEN + data.len(),
         }
@@ -229,6 +297,16 @@ impl UdpOption {
             Self::AdditionalPayloadChecksum { checksum } => {
                 bytes.extend_from_slice(&[UDP_OPTION_APC, UDP_OPTION_APC_LEN as u8]);
                 bytes.extend_from_slice(checksum);
+            }
+            Self::MaximumDatagramSize { size } => {
+                bytes.extend_from_slice(&[UDP_OPTION_MDS, UDP_OPTION_MDS_LEN as u8]);
+                bytes.extend_from_slice(size);
+            }
+            Self::MaximumReassembledDatagramSize {
+                size_and_segment_count,
+            } => {
+                bytes.extend_from_slice(&[UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN as u8]);
+                bytes.extend_from_slice(size_and_segment_count);
             }
             Self::Generic { kind, data } => {
                 validate_udp_generic_option_kind(*kind)?;
@@ -261,6 +339,12 @@ impl UdpOption {
     /// Decode all options from a raw UDP option byte slice.
     pub fn decode_all(bytes: &[u8]) -> Result<Vec<Self>> {
         UdpOptionIter::new(bytes).collect()
+    }
+}
+
+impl fmt::Display for UdpOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&udp_option_inspection_summary(self))
     }
 }
 
@@ -387,6 +471,34 @@ impl UdpOptionIter<'_> {
                 ],
             }));
         }
+        if kind == UDP_OPTION_MDS {
+            if let Err(err) =
+                validate_udp_option_len("udp.option.mds.length", len, UDP_OPTION_MDS_LEN)
+            {
+                self.done = true;
+                return Some(Err(err));
+            }
+            let data_start = start + UDP_OPTION_SHORT_HEADER_LEN;
+            return Some(Ok(UdpOption::MaximumDatagramSize {
+                size: [self.bytes[data_start], self.bytes[data_start + 1]],
+            }));
+        }
+        if kind == UDP_OPTION_MRDS {
+            if let Err(err) =
+                validate_udp_option_len("udp.option.mrds.length", len, UDP_OPTION_MRDS_LEN)
+            {
+                self.done = true;
+                return Some(Err(err));
+            }
+            let data_start = start + UDP_OPTION_SHORT_HEADER_LEN;
+            return Some(Ok(UdpOption::MaximumReassembledDatagramSize {
+                size_and_segment_count: [
+                    self.bytes[data_start],
+                    self.bytes[data_start + 1],
+                    self.bytes[data_start + 2],
+                ],
+            }));
+        }
 
         Some(Ok(UdpOption::Generic {
             kind,
@@ -426,6 +538,20 @@ impl UdpOptionIter<'_> {
                 UDP_OPTION_EXTENDED_PAYLOAD_CONTEXT,
                 end,
                 self.bytes.len(),
+            )));
+        }
+        if kind == UDP_OPTION_MDS {
+            self.done = true;
+            return Some(Err(CrafterError::invalid_field_value(
+                "udp.option.mds.length",
+                "fixed-length UDP option must use the short length format",
+            )));
+        }
+        if kind == UDP_OPTION_MRDS {
+            self.done = true;
+            return Some(Err(CrafterError::invalid_field_value(
+                "udp.option.mrds.length",
+                "fixed-length UDP option must use the short length format",
             )));
         }
 
@@ -849,6 +975,16 @@ fn udp_option_inspection_summary(option: &UdpOption) -> String {
         UdpOption::AdditionalPayloadChecksum { checksum } => {
             format!("APC(crc32c=0x{:08x})", u32::from_be_bytes(*checksum))
         }
+        UdpOption::MaximumDatagramSize { size } => {
+            format!("MDS(size={})", u16::from_be_bytes(*size))
+        }
+        UdpOption::MaximumReassembledDatagramSize {
+            size_and_segment_count,
+        } => format!(
+            "MRDS(size={},segments={})",
+            u16::from_be_bytes([size_and_segment_count[0], size_and_segment_count[1]]),
+            size_and_segment_count[2]
+        ),
         UdpOption::Generic { kind, data } => {
             format!(
                 "Generic(kind={kind},len={})",
@@ -879,6 +1015,16 @@ fn validate_udp_generic_option_kind(kind: u8) -> Result<()> {
         return Err(CrafterError::invalid_field_value(
             "udp.option.kind",
             "EOL and NOP options do not carry a length field",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_udp_option_len(field: &'static str, actual: usize, expected: usize) -> Result<()> {
+    if actual != expected {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "UDP option has an invalid fixed length",
         ));
     }
     Ok(())
@@ -1335,8 +1481,8 @@ mod tests {
     use super::{
         Udp, UdpChecksumStatus, UdpOption, UdpOptionIter, UdpOptionStatus, UdpOptions,
         UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_APC_LEN, UDP_OPTION_CHECKSUM_LEN,
-        UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MRDS,
-        UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_RES,
+        UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MDS_LEN,
+        UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_RES,
     };
     use crate::checksum::{crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum};
     use crate::{
@@ -1657,6 +1803,98 @@ mod tests {
     }
 
     #[test]
+    fn udp_option_mds_encode_decode_fixed_length_and_display() {
+        let mds = UdpOption::maximum_datagram_size(1500);
+        assert_eq!(mds, UdpOption::mds(1500));
+        assert_eq!(mds.kind(), UDP_OPTION_MDS);
+        assert_eq!(mds.data(), &1500u16.to_be_bytes());
+        assert_eq!(mds.maximum_datagram_size_value(), Some(1500));
+        assert_eq!(mds.maximum_reassembled_datagram_size_values(), None);
+        assert!(!mds.uses_extended_length());
+        assert_eq!(mds.encoded_len(), UDP_OPTION_MDS_LEN);
+        assert_eq!(
+            mds.encode().unwrap(),
+            vec![UDP_OPTION_MDS, UDP_OPTION_MDS_LEN as u8, 0x05, 0xdc]
+        );
+        assert_eq!(mds.to_string(), "MDS(size=1500)");
+
+        let decoded =
+            UdpOption::decode_all(&[UDP_OPTION_MDS, UDP_OPTION_MDS_LEN as u8, 0x05, 0xdc]).unwrap();
+        assert_eq!(decoded, vec![mds.clone()]);
+
+        let udp_options = UdpOptions::from_bytes([UDP_OPTION_MDS, 4, 0x05, 0xdc]);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.options(), &[mds.clone()]);
+        assert!(udp_options
+            .inspection_fields()
+            .iter()
+            .any(|(name, value)| *name == "options" && value == "MDS(size=1500)"));
+
+        let typed = UdpOptions::from_options(vec![mds]).unwrap();
+        assert_eq!(typed.as_bytes(), &[UDP_OPTION_MDS, 4, 0x05, 0xdc]);
+        assert_eq!(typed.status(), UdpOptionStatus::Valid);
+    }
+
+    #[test]
+    fn udp_option_mds_malformed_lengths_are_rejected() {
+        for bytes in [
+            [UDP_OPTION_MDS, 3, 0x05].as_slice(),
+            [UDP_OPTION_MDS, 5, 0x05, 0xdc, 0x00].as_slice(),
+            [UDP_OPTION_MDS, 255, 0, 4].as_slice(),
+        ] {
+            assert_udp_option_length_field_error(bytes, "udp.option.mds.length");
+        }
+    }
+
+    #[test]
+    fn udp_option_mrds_encode_decode_fixed_length_and_display() {
+        let mrds = UdpOption::maximum_reassembled_datagram_size(9000, 32);
+        assert_eq!(mrds, UdpOption::mrds(9000, 32));
+        assert_eq!(mrds.kind(), UDP_OPTION_MRDS);
+        assert_eq!(mrds.data(), &[0x23, 0x28, 0x20]);
+        assert_eq!(
+            mrds.maximum_reassembled_datagram_size_values(),
+            Some((9000, 32))
+        );
+        assert_eq!(mrds.maximum_datagram_size_value(), None);
+        assert!(!mrds.uses_extended_length());
+        assert_eq!(mrds.encoded_len(), UDP_OPTION_MRDS_LEN);
+        assert_eq!(
+            mrds.encode().unwrap(),
+            vec![UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN as u8, 0x23, 0x28, 0x20]
+        );
+        assert_eq!(mrds.to_string(), "MRDS(size=9000,segments=32)");
+
+        let decoded =
+            UdpOption::decode_all(&[UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN as u8, 0x23, 0x28, 0x20])
+                .unwrap();
+        assert_eq!(decoded, vec![mrds.clone()]);
+
+        let udp_options = UdpOptions::from_bytes([UDP_OPTION_MRDS, 5, 0x23, 0x28, 0x20]);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.options(), &[mrds.clone()]);
+        assert!(udp_options
+            .inspection_fields()
+            .iter()
+            .any(|(name, value)| { *name == "options" && value == "MRDS(size=9000,segments=32)" }));
+
+        let typed = UdpOptions::from_options(vec![mrds]).unwrap();
+        assert_eq!(typed.as_bytes(), &[UDP_OPTION_MRDS, 5, 0x23, 0x28, 0x20]);
+        assert_eq!(typed.status(), UdpOptionStatus::Valid);
+    }
+
+    #[test]
+    fn udp_option_mrds_malformed_lengths_are_rejected() {
+        for bytes in [
+            [UDP_OPTION_MRDS, 4, 0x23, 0x28].as_slice(),
+            [UDP_OPTION_MRDS, 6, 0x23, 0x28, 0x20, 0x00].as_slice(),
+            [UDP_OPTION_MRDS, 255, 0, 5, 0x20].as_slice(),
+        ] {
+            assert_udp_option_length_field_error(bytes, "udp.option.mrds.length");
+        }
+    }
+
+    #[test]
     fn udp_option_apc_valid_auto_fill_decodes_valid_status() {
         let payload = [0xde, 0xad, 0xbe, 0xef];
         let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2240)
@@ -1800,13 +2038,7 @@ mod tests {
         assert_eq!(decoded, vec![UdpOption::NoOperation, UdpOption::EndOfList]);
 
         let decoded = UdpOption::decode_all(&[UDP_OPTION_MDS, 4, 0x05, 0xb4]).unwrap();
-        assert_eq!(
-            decoded,
-            vec![UdpOption::Generic {
-                kind: UDP_OPTION_MDS,
-                data: vec![0x05, 0xb4]
-            }]
-        );
+        assert_eq!(decoded, vec![UdpOption::maximum_datagram_size(0x05b4)]);
 
         let decoded = UdpOption::decode_all(&[UDP_OPTION_EXP, 255, 0, 6, 0x12, 0x34]).unwrap();
         assert_eq!(
