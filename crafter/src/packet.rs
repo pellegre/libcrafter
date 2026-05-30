@@ -72,6 +72,11 @@ pub trait Layer: fmt::Debug + Send + Sync + 'static {
     /// Encoded length for this layer before dependent auto-fill.
     fn encoded_len(&self) -> usize;
 
+    /// Encoded length for this layer when neighboring layers affect it.
+    fn encoded_len_with_context(&self, _ctx: &LayerContext<'_>) -> usize {
+        self.encoded_len()
+    }
+
     /// Encode this layer into `out`.
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()>;
 
@@ -398,7 +403,14 @@ impl Packet {
 
     /// Return the encoded byte length implied by the current layers.
     pub fn encoded_len(&self) -> usize {
-        self.layers.iter().map(|layer| layer.encoded_len()).sum()
+        self.layers
+            .iter()
+            .enumerate()
+            .map(|(index, layer)| {
+                let ctx = LayerContext::new(self, index);
+                layer.encoded_len_with_context(&ctx)
+            })
+            .sum()
     }
 
     /// Positional layer access.
