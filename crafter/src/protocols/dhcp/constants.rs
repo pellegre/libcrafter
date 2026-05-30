@@ -156,6 +156,10 @@ pub const DHCP_OPTION_END: u8 = 255;
 // Options" registry (updated 2026-02-02); each wire format is defined by the
 // RFC cited inline.
 
+/// DHCP IPv6-Only Preferred option code (RFC 8925).
+pub const DHCP_OPTION_IPV6_ONLY_PREFERRED: u8 = 108;
+/// DHCP Captive-Portal option code (RFC 8910).
+pub const DHCP_OPTION_CAPTIVE_PORTAL: u8 = 114;
 /// DHCP BCMCS Controller Domain Name list option code (RFC 4280).
 pub const DHCP_OPTION_BCMCS_DOMAIN_LIST: u8 = 88;
 /// DHCP BCMCS Controller IPv4 address option code (RFC 4280).
@@ -195,6 +199,12 @@ pub const DHCP_OPTION_MUD_URL_V4: u8 = 161;
 pub const DHCP_OPTION_V4_DNR: u8 = 162;
 /// DHCP OPTION_6RD (IPv6 Rapid Deployment) option code (RFC 5969).
 pub const DHCP_OPTION_6RD: u8 = 212;
+
+/// Length in octets of the RFC 8925 IPv6-Only Preferred option value: a single
+/// 32-bit V6ONLY_WAIT seconds value.
+///
+/// Source: RFC 8925 section 3.1 (the option length "MUST be 4").
+pub const DHCP_IPV6_ONLY_PREFERRED_LEN: usize = 4;
 
 // Authentication and FORCERENEW option codes and field constants. Codepoints
 // come from the IANA "BOOTP Vendor Extensions and DHCP Options" registry

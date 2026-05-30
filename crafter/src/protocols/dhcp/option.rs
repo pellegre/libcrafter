@@ -14,30 +14,30 @@ use super::constants::{
     DHCP_DATA_SOURCE_FLAG_REMOTE, DHCP_HTYPE_ETHERNET, DHCP_IAID_LEN,
     DHCP_OPTION_ALL_SUBNETS_LOCAL, DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_ASSOCIATED_IP,
     DHCP_OPTION_AUTHENTICATION, DHCP_OPTION_BASE_TIME, DHCP_OPTION_BOOTFILE_NAME,
-    DHCP_OPTION_BOOT_FILE_SIZE, DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
-    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME,
-    DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
-    DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_COOKIE_SERVER, DHCP_OPTION_DATA_SOURCE,
-    DHCP_OPTION_DEFAULT_IP_TTL, DHCP_OPTION_DHCP_STATE, DHCP_OPTION_DOMAIN_NAME,
-    DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH, DHCP_OPTION_END,
-    DHCP_OPTION_ETHERNET_ENCAPSULATION, DHCP_OPTION_EXTENSIONS_PATH,
+    DHCP_OPTION_BOOT_FILE_SIZE, DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CAPTIVE_PORTAL,
+    DHCP_OPTION_CLASSLESS_STATIC_ROUTE, DHCP_OPTION_CLIENT_IDENTIFIER,
+    DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME, DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER,
+    DHCP_OPTION_CLIENT_NDI, DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_COOKIE_SERVER,
+    DHCP_OPTION_DATA_SOURCE, DHCP_OPTION_DEFAULT_IP_TTL, DHCP_OPTION_DHCP_STATE,
+    DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH,
+    DHCP_OPTION_END, DHCP_OPTION_ETHERNET_ENCAPSULATION, DHCP_OPTION_EXTENSIONS_PATH,
     DHCP_OPTION_FORCERENEW_NONCE_CAPABLE, DHCP_OPTION_HOST_NAME, DHCP_OPTION_IMPRESS_SERVER,
-    DHCP_OPTION_INTERFACE_MTU, DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_IP_FORWARDING,
-    DHCP_OPTION_LOG_SERVER, DHCP_OPTION_LPR_SERVER, DHCP_OPTION_MASK_SUPPLIER,
-    DHCP_OPTION_MAX_DATAGRAM_REASSEMBLY, DHCP_OPTION_MAX_MESSAGE_SIZE, DHCP_OPTION_MERIT_DUMP_FILE,
-    DHCP_OPTION_MESSAGE, DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_NAME_SERVER,
-    DHCP_OPTION_NETBIOS_DATAGRAM_SERVER, DHCP_OPTION_NETBIOS_NAME_SERVER,
-    DHCP_OPTION_NETBIOS_NODE_TYPE, DHCP_OPTION_NETBIOS_SCOPE, DHCP_OPTION_NIS_DOMAIN,
-    DHCP_OPTION_NIS_SERVERS, DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING, DHCP_OPTION_NTP_SERVERS,
-    DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD, DHCP_OPTION_PARAMETER_REQUEST_LIST,
-    DHCP_OPTION_PATH_MTU_AGING_TIMEOUT, DHCP_OPTION_PATH_MTU_PLATEAU_TABLE,
-    DHCP_OPTION_PERFORM_MASK_DISCOVERY, DHCP_OPTION_PERFORM_ROUTER_DISCOVERY,
-    DHCP_OPTION_POLICY_FILTER, DHCP_OPTION_PXELINUX_CONFIGFILE, DHCP_OPTION_PXELINUX_MAGIC,
-    DHCP_OPTION_PXELINUX_PATHPREFIX, DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_QUERY_END_TIME,
-    DHCP_OPTION_QUERY_START_TIME, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RELAY_AGENT_INFORMATION,
-    DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS,
-    DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH, DHCP_OPTION_ROUTER,
-    DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
+    DHCP_OPTION_INTERFACE_MTU, DHCP_OPTION_IPV6_ONLY_PREFERRED, DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
+    DHCP_OPTION_IP_FORWARDING, DHCP_OPTION_LOG_SERVER, DHCP_OPTION_LPR_SERVER,
+    DHCP_OPTION_MASK_SUPPLIER, DHCP_OPTION_MAX_DATAGRAM_REASSEMBLY, DHCP_OPTION_MAX_MESSAGE_SIZE,
+    DHCP_OPTION_MERIT_DUMP_FILE, DHCP_OPTION_MESSAGE, DHCP_OPTION_MESSAGE_TYPE,
+    DHCP_OPTION_MUD_URL_V4, DHCP_OPTION_NAME_SERVER, DHCP_OPTION_NETBIOS_DATAGRAM_SERVER,
+    DHCP_OPTION_NETBIOS_NAME_SERVER, DHCP_OPTION_NETBIOS_NODE_TYPE, DHCP_OPTION_NETBIOS_SCOPE,
+    DHCP_OPTION_NIS_DOMAIN, DHCP_OPTION_NIS_SERVERS, DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING,
+    DHCP_OPTION_NTP_SERVERS, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
+    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PATH_MTU_AGING_TIMEOUT,
+    DHCP_OPTION_PATH_MTU_PLATEAU_TABLE, DHCP_OPTION_PERFORM_MASK_DISCOVERY,
+    DHCP_OPTION_PERFORM_ROUTER_DISCOVERY, DHCP_OPTION_POLICY_FILTER,
+    DHCP_OPTION_PXELINUX_CONFIGFILE, DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX,
+    DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_QUERY_END_TIME, DHCP_OPTION_QUERY_START_TIME,
+    DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RELAY_AGENT_INFORMATION, DHCP_OPTION_RENEWAL_TIME,
+    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH,
+    DHCP_OPTION_ROUTER, DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
     DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_START_TIME_OF_STATE, DHCP_OPTION_STATIC_ROUTE,
     DHCP_OPTION_STATUS_CODE, DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_SWAP_SERVER,
     DHCP_OPTION_TCP_DEFAULT_TTL, DHCP_OPTION_TCP_KEEPALIVE_GARBAGE,
@@ -1636,6 +1636,9 @@ pub enum DhcpOptionKind {
     PxelinuxConfigFile,
     PxelinuxPathPrefix,
     PxelinuxRebootTime,
+    Ipv6OnlyPreferred,
+    CaptivePortal,
+    MudUrl,
 }
 
 impl DhcpOptionKind {
@@ -1730,6 +1733,9 @@ impl DhcpOptionKind {
             DHCP_OPTION_PXELINUX_CONFIGFILE => Self::PxelinuxConfigFile,
             DHCP_OPTION_PXELINUX_PATHPREFIX => Self::PxelinuxPathPrefix,
             DHCP_OPTION_PXELINUX_REBOOTTIME => Self::PxelinuxRebootTime,
+            DHCP_OPTION_IPV6_ONLY_PREFERRED => Self::Ipv6OnlyPreferred,
+            DHCP_OPTION_CAPTIVE_PORTAL => Self::CaptivePortal,
+            DHCP_OPTION_MUD_URL_V4 => Self::MudUrl,
             _ => return None,
         };
         Some(kind)
@@ -1826,6 +1832,9 @@ impl DhcpOptionKind {
             Self::PxelinuxConfigFile => DHCP_OPTION_PXELINUX_CONFIGFILE,
             Self::PxelinuxPathPrefix => DHCP_OPTION_PXELINUX_PATHPREFIX,
             Self::PxelinuxRebootTime => DHCP_OPTION_PXELINUX_REBOOTTIME,
+            Self::Ipv6OnlyPreferred => DHCP_OPTION_IPV6_ONLY_PREFERRED,
+            Self::CaptivePortal => DHCP_OPTION_CAPTIVE_PORTAL,
+            Self::MudUrl => DHCP_OPTION_MUD_URL_V4,
         }
     }
 
@@ -1905,7 +1914,10 @@ impl DhcpOptionKind {
             | Self::BaseTime
             | Self::StartTimeOfState
             | Self::QueryStartTime
-            | Self::QueryEndTime => F::U32,
+            | Self::QueryEndTime
+            // RFC 8925 IPv6-Only Preferred (option 108) is a 4-octet V6ONLY_WAIT
+            // seconds value.
+            | Self::Ipv6OnlyPreferred => F::U32,
             // NVT ASCII / text-like.
             Self::HostName
             | Self::MeritDumpFile
@@ -1918,7 +1930,12 @@ impl DhcpOptionKind {
             | Self::TftpServerName
             | Self::BootfileName
             | Self::PxelinuxConfigFile
-            | Self::PxelinuxPathPrefix => F::Text,
+            | Self::PxelinuxPathPrefix
+            // RFC 8910 Captive-Portal (option 114) carries a URI and RFC 8520
+            // MUD URL (option 161) carries an HTTPS URL, both as text-like bytes
+            // with no terminator.
+            | Self::CaptivePortal
+            | Self::MudUrl => F::Text,
             // RFC 5071 PXELINUX reboot time is a 32-bit seconds value.
             Self::PxelinuxRebootTime => F::U32,
             // Special single-octet codecs and lists.
@@ -6362,6 +6379,208 @@ mod dhcp_leasequery {
                 DhcpStatusCode::MalformedQuery,
                 Vec::new(),
             )),
+        );
+    }
+}
+
+#[cfg(test)]
+mod dhcp_remaining_registry {
+    use super::super::{
+        Dhcp, DhcpMessageType, DhcpOption, DhcpOptionCode, DhcpOptionKind, DhcpOptionStatus,
+        DhcpOptionValue,
+    };
+    use super::typed_option_value;
+    use crate::protocols::dhcp::constants::DHCP_IPV6_ONLY_PREFERRED_LEN;
+
+    // Modern registered options with a clear, safely supported wire format.
+    const IPV6_ONLY_PREFERRED: u8 = super::super::DHCP_OPTION_IPV6_ONLY_PREFERRED; // 108
+    const CAPTIVE_PORTAL: u8 = super::super::DHCP_OPTION_CAPTIVE_PORTAL; // 114
+    const MUD_URL: u8 = super::super::DHCP_OPTION_MUD_URL_V4; // 161
+
+    // Modern registered options whose formats are nested/complex and are
+    // intentionally preserved as raw bytes for now (PcpServer is a list of
+    // length-prefixed address lists, Dnr and SixRd are nested TLV/prefix
+    // structures). Their codepoints are still known to the library.
+    const PCP_SERVER: u8 = super::super::DHCP_OPTION_V4_PCP_SERVER; // 158 (PcpServer)
+    const DNR: u8 = super::super::DHCP_OPTION_V4_DNR; // 162 (Dnr)
+    const SIX_RD: u8 = super::super::DHCP_OPTION_6RD; // 212 (SixRd)
+
+    fn build_and_decode(options: Vec<DhcpOption>) -> Dhcp {
+        let dhcp = Dhcp::new()
+            .op(super::super::BOOTP_REPLY)
+            .message_type(DhcpMessageType::Ack)
+            .options(options);
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        Dhcp::decode(&bytes).unwrap()
+    }
+
+    /// Reassembled payload bytes for an option code in a decoded packet.
+    fn option_payload(parsed: &Dhcp, code: u8) -> Vec<u8> {
+        parsed
+            .concatenated_option(code)
+            .expect("option present")
+            .expect("option decodes")
+            .payload()
+            .expect("payload bytes")
+            .to_vec()
+    }
+
+    #[test]
+    fn dhcp_modern_registry_options_decode_typed() {
+        // RFC 8925 IPv6-Only Preferred (108): a 4-octet V6ONLY_WAIT seconds
+        // value decodes to U32 and re-encodes to the exact wire bytes.
+        let wait = 1800u32;
+        let payload = wait.to_be_bytes().to_vec();
+        assert_eq!(payload.len(), DHCP_IPV6_ONLY_PREFERRED_LEN);
+        let value = typed_option_value(IPV6_ONLY_PREFERRED, &payload)
+            .unwrap()
+            .expect("option 108 has a typed value");
+        assert_eq!(value, DhcpOptionValue::U32(wait));
+        assert_eq!(value.encode_payload(), payload);
+        assert_eq!(
+            DhcpOptionKind::from_code(IPV6_ONLY_PREFERRED),
+            Some(DhcpOptionKind::Ipv6OnlyPreferred),
+        );
+        // A length other than 4 octets is a structured error, never a panic.
+        assert!(typed_option_value(IPV6_ONLY_PREFERRED, &[0u8; 3]).is_err());
+
+        // RFC 8910 Captive-Portal (114) and RFC 8520 MUD URL (161): URI/URL
+        // text-like bytes preserved verbatim (not coerced to UTF-8).
+        let portal = b"https://portal.example.com/captive".to_vec();
+        let captive = typed_option_value(CAPTIVE_PORTAL, &portal)
+            .unwrap()
+            .expect("option 114 has a typed value");
+        assert_eq!(captive, DhcpOptionValue::Text(portal.clone()));
+        assert_eq!(captive.encode_payload(), portal);
+        assert_eq!(
+            DhcpOptionKind::from_code(CAPTIVE_PORTAL),
+            Some(DhcpOptionKind::CaptivePortal),
+        );
+
+        let mud = b"https://mud.example.com/device.json".to_vec();
+        let mud_url = typed_option_value(MUD_URL, &mud)
+            .unwrap()
+            .expect("option 161 has a typed value");
+        assert_eq!(mud_url, DhcpOptionValue::Text(mud.clone()));
+        assert_eq!(
+            DhcpOptionKind::from_code(MUD_URL),
+            Some(DhcpOptionKind::MudUrl),
+        );
+
+        // Non-UTF-8 bytes in a text-like modern option are still preserved.
+        let raw_text = vec![0xff, 0x00, 0x80, 0x41];
+        let preserved = typed_option_value(CAPTIVE_PORTAL, &raw_text)
+            .unwrap()
+            .unwrap();
+        assert_eq!(preserved, DhcpOptionValue::Text(raw_text));
+
+        // Each newly typed option round-trips inside a full DHCP packet.
+        let parsed = build_and_decode(vec![
+            DhcpOption::message_type(DhcpMessageType::Ack),
+            DhcpOption::generic(IPV6_ONLY_PREFERRED, payload.clone()),
+            DhcpOption::generic(CAPTIVE_PORTAL, portal.clone()),
+            DhcpOption::generic(MUD_URL, mud.clone()),
+            DhcpOption::End,
+        ]);
+        assert_eq!(option_payload(&parsed, IPV6_ONLY_PREFERRED), payload);
+        assert_eq!(option_payload(&parsed, CAPTIVE_PORTAL), portal);
+        assert_eq!(option_payload(&parsed, MUD_URL), mud);
+    }
+
+    #[test]
+    fn dhcp_remaining_registry_options_preserve_raw_payloads() {
+        // The remaining registry codepoints fall into two raw-preserving groups:
+        // modern assigned options with nested/complex formats (PcpServer 158,
+        // Dnr 162, SixRd 212), and unknown/private/removed/ambiguous codes. For
+        // all of them the option code and payload bytes must survive a full
+        // compile -> decode cycle, and the typed-format dispatch must decline to
+        // reinterpret them (returning Ok(None)) so the raw bytes are preserved.
+        //
+        // Documentation-style opaque payloads only; no live traffic.
+        let raw_cases: &[(u8, Vec<u8>)] = &[
+            // OPTION_V4_PCP_SERVER (158): a list-length octet plus a PCP server
+            // IPv4 address; kept opaque rather than mistyped as a flat list.
+            (PCP_SERVER, vec![0x04, 192, 0, 2, 1]),
+            // OPTION_V4_DNR (162): a nested Service Priority / ADN / addrs / svc
+            // params structure, preserved verbatim.
+            (DNR, vec![0x00, 0x01, 0x03, b'd', b'n', b's']),
+            // OPTION_6RD (212): IPv4MaskLen, 6rdPrefixLen, 6rd prefix, BR addrs.
+            (
+                SIX_RD,
+                vec![
+                    0x10, 0x20, 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 192, 0,
+                    2, 1,
+                ],
+            ),
+            // Unassigned/removed code (RFC 3679 range).
+            (110, vec![0xde, 0xad]),
+            // Ambiguous historical PXE code (128-135).
+            (130, vec![0x01, 0x02, 0x03]),
+            // Private-use code (224-254).
+            (240, vec![0xbe, 0xef]),
+        ];
+
+        for (code, payload) in raw_cases {
+            let code = *code;
+            // The typed-format dispatch declines to reinterpret these codes, so
+            // the raw bytes are preserved instead of being parsed.
+            assert!(
+                typed_option_value(code, payload).unwrap().is_none(),
+                "code {code} must stay raw (Ok(None) from the typed dispatch)",
+            );
+
+            // Built as a raw option and round-tripped through a full packet, the
+            // codepoint and payload bytes survive without loss.
+            let parsed = build_and_decode(vec![
+                DhcpOption::message_type(DhcpMessageType::Ack),
+                DhcpOption::generic(code, payload.clone()),
+                DhcpOption::End,
+            ]);
+            assert_eq!(
+                option_payload(&parsed, code),
+                *payload,
+                "code {code} payload must round-trip through a full packet",
+            );
+
+            // The decoded raw option preserves the bytes and the codepoint
+            // classification, and its logical value is opaque bytes.
+            let option = DhcpOption::generic(code, payload.clone());
+            assert_eq!(option.code(), code);
+            assert_eq!(
+                option.logical_value(),
+                Some(DhcpOptionValue::Opaque(payload.clone())),
+            );
+            assert_eq!(option.typed_value().unwrap(), None);
+        }
+
+        // The modern assigned codes are still classified as Assigned by the
+        // source-backed registry even though they decode raw, while the
+        // unknown/private/removed codes carry their range classifications.
+        for code in [PCP_SERVER, DNR, SIX_RD] {
+            assert_eq!(
+                super::super::option_status(code),
+                DhcpOptionStatus::Assigned
+            );
+            assert!(matches!(
+                DhcpOptionCode::from_code(code),
+                DhcpOptionCode::Assigned(_)
+            ));
+        }
+        assert_eq!(
+            super::super::option_status(130),
+            DhcpOptionStatus::Ambiguous
+        );
+        assert_eq!(
+            DhcpOptionCode::from_code(110),
+            DhcpOptionCode::RemovedOrUnassigned(110),
+        );
+        assert_eq!(
+            DhcpOptionCode::from_code(240),
+            DhcpOptionCode::PrivateUse(240)
         );
     }
 }

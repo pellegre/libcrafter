@@ -326,4 +326,96 @@ mod registry_tests {
             }
         }
     }
+
+    /// Checked-in snapshot of every individually assigned DHCPv4 option code in
+    /// the IANA "BOOTP Vendor Extensions and DHCP Options" registry.
+    ///
+    /// Source: IANA "Dynamic Host Configuration Protocol (DHCP) and Bootstrap
+    /// Protocol (BOOTP) Parameters", sub-registry "BOOTP Vendor Extensions and
+    /// DHCP Options" (DHCP Option Codes table), retrieved 2026-05-29. This is the
+    /// list of codepoints whose registry row names a specific option (status
+    /// Assigned) or names several historical/vendor meanings for one code
+    /// (status Ambiguous, e.g. PXE codes 128-135, code 150, and the tentatively
+    /// assigned codes 175-177). Codes covered only by the registry's range rules
+    /// ("REMOVED/Unassigned", "Unassigned", "Reserved (Private Use)") are
+    /// intentionally absent: they have no single registered name and the codec
+    /// preserves them as raw bytes.
+    ///
+    /// The snapshot is deliberately checked in so the completeness test runs
+    /// fully offline; refresh it from the IANA registry when extending coverage.
+    const IANA_ASSIGNED_OPTION_CODES: &[u8] = &[
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+        48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
+        71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
+        95, 97, 98, 99, 100, 101, 108, 109, 112, 113, 114, 116, 117, 118, 119, 120, 121, 122, 123,
+        124, 125, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143,
+        144, 145, 146, 147, 148, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 161, 162, 175,
+        176, 177, 208, 209, 210, 211, 212, 213, 220, 221, 255,
+    ];
+
+    #[test]
+    fn dhcp_iana_option_registry_snapshot_is_covered() {
+        // Every individually assigned IANA option code must be known to the
+        // local metadata table: it must carry a registered name and an Assigned
+        // or Ambiguous status, never a generated "Unassigned"/"Private Use"
+        // fallback. This is the registry-completeness guard the plan asks for;
+        // it fails loudly if a future IANA assignment is added to the snapshot
+        // but not reflected in `assigned_meta`.
+        for &code in IANA_ASSIGNED_OPTION_CODES {
+            let meta = option_meta(code);
+            assert_eq!(meta.code, code);
+            assert!(
+                matches!(
+                    meta.status,
+                    DhcpOptionStatus::Assigned | DhcpOptionStatus::Ambiguous
+                ),
+                "IANA-assigned option code {code} is missing from local metadata \
+                 (got status {:?}, name {:?})",
+                meta.status,
+                meta.name,
+            );
+            assert_eq!(
+                option_name(code),
+                Some(meta.name),
+                "assigned option code {code} must expose its registered name",
+            );
+            assert!(
+                !meta.name.is_empty(),
+                "assigned option code {code} must have a non-empty name",
+            );
+            // The named, registry-classified codepoint must also surface a
+            // typed codepoint classification rather than the raw fallback. Pad
+            // (0) and End (255) are the two single-octet framing codes carried
+            // as their own classified variants.
+            assert!(
+                matches!(
+                    super::super::DhcpOptionCode::from_code(code),
+                    super::super::DhcpOptionCode::Assigned(_)
+                        | super::super::DhcpOptionCode::Ambiguous(_)
+                        | super::super::DhcpOptionCode::Pad
+                        | super::super::DhcpOptionCode::End
+                ),
+                "assigned option code {code} must classify as Assigned/Ambiguous",
+            );
+        }
+
+        // Codes outside the snapshot that fall in the private-use or
+        // removed/unassigned ranges are still classified (and preserved raw),
+        // never silently mislabeled as assigned.
+        use std::collections::HashSet;
+        let assigned: HashSet<u8> = IANA_ASSIGNED_OPTION_CODES.iter().copied().collect();
+        for code in 0u8..=255 {
+            if assigned.contains(&code) {
+                continue;
+            }
+            assert!(
+                matches!(
+                    option_status(code),
+                    DhcpOptionStatus::PrivateUse | DhcpOptionStatus::RemovedOrUnassigned
+                ),
+                "unassigned/private code {code} must not be reported as assigned",
+            );
+        }
+    }
 }
