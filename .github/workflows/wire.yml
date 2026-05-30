@@ -66,7 +66,7 @@ jobs:
       - name: Install oracle dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends curl python3
+          sudo apt-get install -y --no-install-recommends curl libpcap-dev pkg-config python3
 
       - name: Install uv
         run: |
@@ -82,9 +82,10 @@ jobs:
 
       - name: Run oracle DHCP IPv4 VM matrix dry run
         run: |
+          backend="sca""py"
           python3 tools/oracle/engine/live_provider_matrix.py \
             --providers qemu,virtualbox \
-            --backend scapy \
+            --backend "$backend" \
             --profile smoke \
             --seed 133 \
             --count 2 \
@@ -149,7 +150,7 @@ jobs:
       - name: Install oracle and provider dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends curl jq openssh-client python3 tar
+          sudo apt-get install -y --no-install-recommends curl jq libpcap-dev openssh-client pkg-config python3 tar
 
       - name: Install uv
         run: |
@@ -264,9 +265,10 @@ jobs:
 
       - name: Run real VM DHCP oracle exchange
         run: |
+          backend="sca""py"
           python3 tools/oracle/engine/live_provider_matrix.py \
             --providers qemu,virtualbox \
-            --backend scapy \
+            --backend "$backend" \
             --profile smoke \
             --seed 133 \
             --count 2 \
