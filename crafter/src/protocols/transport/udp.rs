@@ -4,14 +4,12 @@ use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext, Packet, Raw};
-use crate::protocols::dhcp::{DHCP_CLIENT_PORT, DHCP_SERVER_PORT};
+use crate::protocols::dhcp::{Dhcp, DHCP_CLIENT_PORT, DHCP_SERVER_PORT};
+use crate::protocols::dns::Dns;
 use crate::protocols::ip::IPPROTO_UDP;
 use crate::registry::ProtocolRegistry;
 
-use super::common::{
-    impl_layer_div, impl_layer_object, payload_bytes_after, transport_checksum_context,
-    value_or_copy,
-};
+use super::common::{impl_layer_div, impl_layer_object, transport_checksum_context, value_or_copy};
 
 /// UDP header length in bytes.
 pub const UDP_HEADER_LEN: usize = 8;
@@ -283,7 +281,7 @@ impl Layer for Udp {
     }
 
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        let payload = payload_bytes_after(*ctx)?;
+        let payload = udp_user_payload_bytes_after(*ctx)?;
         self.validate(payload.len())?;
 
         let mut header = Vec::with_capacity(UDP_HEADER_LEN);
@@ -309,20 +307,31 @@ pub(crate) fn append_udp_packet_with_registry(
     mut packet: Packet,
     bytes: &[u8],
 ) -> Result<Packet> {
-    let (udp, payload, rest) = decode_udp_parts(bytes)?;
-    let source_port = udp.source_port_value();
-    let destination_port = udp.destination_port_value();
-    packet = packet.push(udp);
-    if !payload.is_empty() {
-        packet = registry.decode_udp_application(packet, source_port, destination_port, payload)?;
+    let decoded = decode_udp_parts(bytes)?;
+    let source_port = decoded.udp.source_port_value();
+    let destination_port = decoded.udp.destination_port_value();
+    packet = packet.push(decoded.udp);
+    if !decoded.user_payload.is_empty() {
+        packet = registry.decode_udp_application(
+            packet,
+            source_port,
+            destination_port,
+            decoded.user_payload,
+        )?;
     }
-    if !rest.is_empty() {
-        packet = packet.push(Raw::from_bytes(rest));
+    if !decoded.surplus.is_empty() {
+        packet = packet.push(Raw::from_bytes(decoded.surplus));
     }
     Ok(packet)
 }
 
-fn decode_udp_parts(bytes: &[u8]) -> Result<(Udp, &[u8], &[u8])> {
+struct DecodedUdpDatagram<'a> {
+    udp: Udp,
+    user_payload: &'a [u8],
+    surplus: &'a [u8],
+}
+
+fn decode_udp_parts(bytes: &[u8]) -> Result<DecodedUdpDatagram<'_>> {
     if bytes.len() < UDP_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "udp header",
@@ -353,17 +362,55 @@ fn decode_udp_parts(bytes: &[u8]) -> Result<(Udp, &[u8], &[u8])> {
         checksum: Field::user(read_u16_be(&bytes[6..8])?),
     };
 
-    Ok((udp, &bytes[UDP_HEADER_LEN..length], &bytes[length..]))
+    Ok(DecodedUdpDatagram {
+        udp,
+        user_payload: &bytes[UDP_HEADER_LEN..length],
+        surplus: &bytes[length..],
+    })
+}
+
+fn udp_user_payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
+    let mut payload = Vec::new();
+    let mut seen_application_layer = false;
+
+    for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
+        if seen_application_layer && is_current_udp_surplus_layer(layer) {
+            break;
+        }
+
+        let layer_ctx = LayerContext::new(ctx.packet(), index);
+        layer.compile(&layer_ctx, &mut payload)?;
+
+        if is_udp_application_layer(layer) {
+            seen_application_layer = true;
+        }
+    }
+
+    Ok(payload)
+}
+
+fn is_udp_application_layer(layer: &dyn Layer) -> bool {
+    layer.as_any().is::<Dns>() || layer.as_any().is::<Dhcp>()
+}
+
+fn is_current_udp_surplus_layer(layer: &dyn Layer) -> bool {
+    // Until the typed UdpOptions layer exists, decoded or constructed surplus
+    // remains inspectable as a Raw layer immediately after UDP application data.
+    layer.as_any().is::<Raw>()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Udp, UdpChecksumStatus, UdpOptionStatus, UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_FRAG,
-        UDP_OPTION_MDS, UDP_OPTION_MRDS, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_RES,
+        Udp, UdpChecksumStatus, UdpOptionStatus, UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_EOL,
+        UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MRDS, UDP_OPTION_NOP, UDP_OPTION_REQ,
+        UDP_OPTION_RES,
     };
     use crate::checksum::ipv4_pseudo_header_checksum;
-    use crate::{IpProtocol, Ipv4, LinkType, Packet, Raw, IPPROTO_UDP};
+    use crate::{
+        Dhcp, DhcpMessageType, Dns, IpProtocol, Ipv4, Layer, LinkType, MacAddr, Packet, Raw,
+        DNS_PORT, DNS_TYPE_A, IPPROTO_UDP,
+    };
     use core::net::Ipv4Addr;
 
     const VLAN_FIXTURE: &[u8] = fixture_bytes!("bytes/ethernet-vlan-ipv4-udp-raw.bin");
@@ -473,6 +520,86 @@ mod tests {
 
             assert_eq!(&bytes.as_bytes()[26..28], &checksum.to_be_bytes());
         }
+    }
+
+    #[test]
+    fn dns_decode_uses_udp_user_payload_and_preserves_raw_surplus() {
+        let dns = Dns::a_query("example.com").id(0xbeef);
+        let dns_len = dns.encoded_len();
+        let surplus = [UDP_OPTION_NOP, UDP_OPTION_EOL, 0, 0];
+
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2226)
+            / Udp::new().sport(53_001).dport(DNS_PORT)
+            / dns
+            / Raw::from_bytes(surplus))
+        .compile()
+        .unwrap();
+
+        assert_eq!(
+            &bytes.as_bytes()[2..4],
+            &((20 + UDP_HEADER_LEN + dns_len + surplus.len()) as u16).to_be_bytes()
+        );
+        assert_eq!(
+            &bytes.as_bytes()[24..26],
+            &((UDP_HEADER_LEN + dns_len) as u16).to_be_bytes()
+        );
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let dns = decoded.layer::<Dns>().unwrap();
+        let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+
+        assert_eq!(udp.length_value(), Some((UDP_HEADER_LEN + dns_len) as u16));
+        assert_eq!(dns.id_value(), 0xbeef);
+        assert_eq!(dns.questions().len(), 1);
+        assert_eq!(dns.questions()[0].name(), "example.com.");
+        assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_A);
+        assert_eq!(raw_layers.len(), 1);
+        assert_eq!(raw_layers[0].as_bytes(), &surplus);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn dhcp_decode_uses_udp_user_payload_and_preserves_raw_surplus() {
+        let client_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+        let dhcp = Dhcp::discover(client_mac)
+            .transaction_id(0x3903_f326)
+            .flags(0x8000)
+            .host_name("agent");
+        let dhcp_len = dhcp.encoded_len();
+        let surplus = [UDP_OPTION_NOP, UDP_OPTION_EOL, 0];
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::UNSPECIFIED)
+            .dst(Ipv4Addr::BROADCAST)
+            .id(0x2227)
+            / Udp::dhcp_client()
+            / dhcp
+            / Raw::from_bytes(surplus))
+        .compile()
+        .unwrap();
+
+        assert_eq!(
+            &bytes.as_bytes()[2..4],
+            &((20 + UDP_HEADER_LEN + dhcp_len + surplus.len()) as u16).to_be_bytes()
+        );
+        assert_eq!(
+            &bytes.as_bytes()[24..26],
+            &((UDP_HEADER_LEN + dhcp_len) as u16).to_be_bytes()
+        );
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+
+        assert_eq!(udp.length_value(), Some((UDP_HEADER_LEN + dhcp_len) as u16));
+        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(dhcp.host_name_value(), Some("agent"));
+        assert_eq!(raw_layers.len(), 1);
+        assert_eq!(raw_layers[0].as_bytes(), &surplus);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
     #[test]
