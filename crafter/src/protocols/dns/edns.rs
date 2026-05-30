@@ -270,6 +270,26 @@ mod dns_edns {
     }
 
     #[test]
+    fn dns_edns_oversized_option_data_returns_structured_error_on_encode() {
+        // OPTION-LENGTH is a u16 field (RFC 6891 Section 6.1.2), so option data
+        // longer than 65535 bytes must surface a structured CrafterError carrying
+        // the dns.opt.option.length field rather than panic or silently truncate.
+        use crate::error::CrafterError;
+
+        let oversized = EdnsOption::new(DNS_EDNS_OPTION_NSID, vec![0u8; 65_536]);
+        let opt = DnsRecord::opt(4096, 0, 0, false, vec![oversized]);
+        let error = Packet::from_layer(Dns::new().additional(opt))
+            .compile()
+            .expect_err("oversized EDNS option data must be rejected on encode");
+        match error {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "dns.opt.option.length")
+            }
+            other => panic!("expected dns.opt.option.length invalid-field-value, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn dns_edns_opt_basic_fields_round_trip_through_typed_getters() {
         // The basic OPT field matrix from the dns-edns-opt-basic oracle case:
         // the UDP payload size lives in the OPT CLASS while the extended RCODE,

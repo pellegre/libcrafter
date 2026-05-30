@@ -582,6 +582,28 @@ mod dns_service_rdata {
     }
 
     #[test]
+    fn svcb_oversized_param_value_returns_structured_error_on_encode() {
+        // Each SvcParam length is a u16 field (RFC 9460 Section 2.2), so a
+        // SvcParamValue longer than 65535 bytes cannot encode its length and must
+        // surface a structured CrafterError carrying the dns.svcb.param.length
+        // field rather than panic or silently truncate.
+        use crate::error::CrafterError;
+
+        let oversized = SvcParam::new(0xff00u16, vec![0u8; 65_536]);
+        let params = SvcParams::new([oversized]).unwrap();
+        let record = DnsRecord::svcb("example.com.", 3600, 1, "svc.example.com.", params);
+        let error = Packet::from_layer(Dns::new().response(true).answer(record))
+            .compile()
+            .expect_err("oversized SvcParamValue must be rejected on encode");
+        match error {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "dns.svcb.param.length")
+            }
+            other => panic!("expected dns.svcb.param.length invalid-field-value, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn svcb_record_data_type_mismatch_is_rejected_on_compile() {
         // An SVCB payload under an HTTPS type must be refused at compile time.
         let record = DnsRecord::new(

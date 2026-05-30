@@ -720,6 +720,7 @@ mod dns_base_rdata {
         decode_record_data, DnsName, DnsRecordData, DNS_TYPE_MX, DNS_TYPE_SOA, DNS_TYPE_SRV,
         DNS_TYPE_TXT,
     };
+    use crate::error::CrafterError;
     use crate::{Ipv4, NetworkLayer, Packet, Udp};
     use core::net::Ipv4Addr;
 
@@ -952,5 +953,73 @@ mod dns_base_rdata {
         assert!(Packet::from_layer(Dns::new().answer(record))
             .compile()
             .is_err());
+    }
+
+    #[test]
+    fn oversized_txt_character_string_is_rejected_on_encode() {
+        // A TXT character-string carries a single u8 length octet, so a string
+        // longer than 255 bytes cannot encode its length prefix and must return
+        // a structured error rather than truncate (RFC 1035 Section 3.3.14).
+        let record = DnsRecord::new(
+            "example.com.",
+            DNS_TYPE_TXT,
+            DNS_CLASS_IN,
+            300,
+            DnsRecordData::Txt(vec![vec![b'x'; 256]]),
+        );
+        let error = Packet::from_layer(Dns::new().response(true).answer(record))
+            .compile()
+            .expect_err("oversized TXT character-string must be rejected on encode");
+        match error {
+            CrafterError::InvalidFieldValue { field, .. } => assert_eq!(field, "dns.txt"),
+            other => panic!("expected dns.txt invalid-field-value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversized_nsec3_salt_is_rejected_on_encode() {
+        // The NSEC3 Salt Length is a single u8 octet (RFC 5155 Section 3.2), so
+        // a salt longer than 255 bytes must return a structured error.
+        let record = DnsRecord::nsec3(
+            "example.com.",
+            300,
+            1,
+            0,
+            10,
+            vec![0xaau8; 256],
+            vec![0x11u8; 20],
+            [super::DNS_TYPE_A],
+        );
+        let error = Packet::from_layer(Dns::new().response(true).answer(record))
+            .compile()
+            .expect_err("oversized NSEC3 salt must be rejected on encode");
+        match error {
+            CrafterError::InvalidFieldValue { field, .. } => assert_eq!(field, "dns.nsec3.salt"),
+            other => panic!("expected dns.nsec3.salt invalid-field-value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversized_nsec3_hash_is_rejected_on_encode() {
+        // The NSEC3 Hash Length is a single u8 octet (RFC 5155 Section 3.2), so
+        // a next-hashed-owner-name longer than 255 bytes must return a structured
+        // error.
+        let record = DnsRecord::nsec3(
+            "example.com.",
+            300,
+            1,
+            0,
+            10,
+            vec![0xaau8; 4],
+            vec![0x11u8; 256],
+            [super::DNS_TYPE_A],
+        );
+        let error = Packet::from_layer(Dns::new().response(true).answer(record))
+            .compile()
+            .expect_err("oversized NSEC3 next hashed owner name must be rejected on encode");
+        match error {
+            CrafterError::InvalidFieldValue { field, .. } => assert_eq!(field, "dns.nsec3.hash"),
+            other => panic!("expected dns.nsec3.hash invalid-field-value, got {other:?}"),
+        }
     }
 }
