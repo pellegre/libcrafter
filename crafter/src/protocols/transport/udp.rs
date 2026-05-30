@@ -415,6 +415,40 @@ mod tests {
     }
 
     #[test]
+    fn udp_length_eight_and_zero_ports_are_preserved() {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2223)
+            / Udp::new().sport(0).dport(0).checksum(0))
+        .compile()
+        .unwrap();
+
+        assert_eq!(&bytes.as_bytes()[20..22], &0u16.to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[22..24], &0u16.to_be_bytes());
+        assert_eq!(
+            &bytes.as_bytes()[24..26],
+            &(UDP_HEADER_LEN as u16).to_be_bytes()
+        );
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        assert_eq!(udp.source_port_value(), 0);
+        assert_eq!(udp.destination_port_value(), 0);
+        assert_eq!(udp.length_value(), Some(UDP_HEADER_LEN as u16));
+        assert!(decoded.layers::<Raw>().next().is_none());
+    }
+
+    #[test]
+    fn explicit_udp_length_is_preserved() {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2224)
+            / Udp::new().sport(0x1234).dport(0x5678).len(42)
+            / Raw::from("abc"))
+        .compile()
+        .unwrap();
+
+        assert_eq!(&bytes.as_bytes()[2..4], &(31u16).to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[24..26], &(42u16).to_be_bytes());
+    }
+
+    #[test]
     fn udp_decode_from_ipv4_exposes_ports_and_payload() {
         let decoded = Packet::decode_from_link(LinkType::Ethernet, VLAN_FIXTURE).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
@@ -430,11 +464,66 @@ mod tests {
 
     #[test]
     fn explicit_udp_checksum_is_preserved() {
-        let bytes = (Ipv4::new().src(src()).dst(dst()) / Udp::new().checksum(0) / Raw::from("abc"))
+        for checksum in [0, 0x1badu16] {
+            let bytes = (Ipv4::new().src(src()).dst(dst())
+                / Udp::new().checksum(checksum)
+                / Raw::from("abc"))
             .compile()
             .unwrap();
 
-        assert_eq!(&bytes.as_bytes()[26..28], &[0, 0]);
+            assert_eq!(&bytes.as_bytes()[26..28], &checksum.to_be_bytes());
+        }
+    }
+
+    #[test]
+    fn udp_length_shorter_than_ip_payload_preserves_surplus_tail() {
+        let udp_payload = [0xaa, 0xbb, 0xcc];
+        let surplus = [0xde, 0xad, 0xbe, 0xef];
+        let mut datagram = Vec::new();
+        datagram.extend_from_slice(&0x1111u16.to_be_bytes());
+        datagram.extend_from_slice(&0x2222u16.to_be_bytes());
+        datagram.extend_from_slice(&((UDP_HEADER_LEN + udp_payload.len()) as u16).to_be_bytes());
+        datagram.extend_from_slice(&0u16.to_be_bytes());
+        datagram.extend_from_slice(&udp_payload);
+        datagram.extend_from_slice(&surplus);
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Udp)
+            / Raw::from_bytes(datagram))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+        assert_eq!(decoded.layer::<Udp>().unwrap().length_value(), Some(11));
+        assert_eq!(raw_layers.len(), 2);
+        assert_eq!(raw_layers[0].as_bytes(), udp_payload);
+        assert_eq!(raw_layers[1].as_bytes(), surplus);
+    }
+
+    #[test]
+    fn udp_length_longer_than_ip_payload_reports_structured_error() {
+        let mut datagram = Vec::new();
+        datagram.extend_from_slice(&0x1111u16.to_be_bytes());
+        datagram.extend_from_slice(&0x2222u16.to_be_bytes());
+        datagram.extend_from_slice(&16u16.to_be_bytes());
+        datagram.extend_from_slice(&0u16.to_be_bytes());
+        datagram.extend_from_slice(&[0xaa, 0xbb, 0xcc]);
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Udp)
+            / Raw::from_bytes(datagram))
+        .compile()
+        .unwrap();
+
+        match Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()) {
+            Err(crate::CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            }) => {
+                assert_eq!(context, "udp datagram");
+                assert_eq!(required, 16);
+                assert_eq!(available, 11);
+            }
+            other => panic!("expected structured UDP length overrun error, got {other:?}"),
+        }
     }
 
     #[test]
