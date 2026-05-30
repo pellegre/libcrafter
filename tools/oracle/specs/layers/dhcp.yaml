@@ -128,8 +128,10 @@ backend_support:
     encode: true
     decode: true
   libcrafter:
-    status: partial
+    status: supported
     encode: true
     decode: true
     notes:
-      - Full message matrix and generic options are planned coverage.
+      - Encodes and decodes the full DHCPv4 message-type matrix, the registered
+        option formats, and generic/unknown options preserved as raw bytes. See
+        features/dhcp-behavior.yaml for the per-behavior coverage detail.
