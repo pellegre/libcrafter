@@ -6812,11 +6812,21 @@ def _pcap_cases_for_direction(
     direction: str,
     dry_plan: bool,
 ) -> list[JSONObject]:
+    # `--case` carries a packet-generation case (e.g. dhcp-discover) that selects
+    # which packets the corpus generator emits. It is a different namespace from
+    # the pcap contract case names declared in features/pcap.yaml (e.g.
+    # raw-link-type, scapy-writes-pcap-libcrafter-reads). Only filter the pcap
+    # contract cases by name when `--case` actually names a contract case; a
+    # packet-generation case has already been applied during corpus generation,
+    # so it must not eliminate every link-type contract here.
+    contract_case_name = (
+        args.case_name if _pcap_case_name_is_contract(args.case_name) else None
+    )
     all_cases = [
         pcap_case
         for pcap_case in _pcap_spec_cases()
         if _pcap_case_supports_direction(pcap_case, direction)
-        and _pcap_case_matches_filter(pcap_case, args.case_name, args.feature)
+        and _pcap_case_matches_filter(pcap_case, contract_case_name, args.feature)
     ]
     if dry_plan:
         selected = all_cases
@@ -6828,7 +6838,7 @@ def _pcap_cases_for_direction(
         ]
         if (
             not selected
-            and args.case_name is None
+            and contract_case_name is None
             and (direction == "libcrafter_to_reference" or args.feature == "pcap_link_types")
         ):
             selected = [
@@ -6839,7 +6849,7 @@ def _pcap_cases_for_direction(
                 and _pcap_case_has_link_or_format(pcap_case)
                 and _pcap_file_format_for_case(pcap_case) == "pcap"
             ]
-        if not selected and args.case_name is not None:
+        if not selected and contract_case_name is not None:
             selected = [
                 _pcap_case_with_roles(pcap_case, direction, args.backend)
                 for pcap_case in all_cases
@@ -6855,6 +6865,12 @@ def _pcap_cases_for_direction(
         raise ValueError(f"no pcap spec cases match{detail}")
 
     return [dict(pcap_case) for pcap_case in selected]
+
+
+def _pcap_case_name_is_contract(case_name: str | None) -> bool:
+    if case_name is None:
+        return False
+    return any(pcap_case.get("name") == case_name for pcap_case in _pcap_spec_cases())
 
 
 def _pcap_spec_cases() -> list[JSONObject]:
