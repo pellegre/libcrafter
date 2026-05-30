@@ -2,16 +2,18 @@
 
 mod common;
 
-use core::any::Any;
-use core::ops::Div;
-
 use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
-use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw};
+use crate::packet::{Layer, LayerContext, Packet, Raw};
 use crate::protocols::dhcp::{DHCP_CLIENT_PORT, DHCP_SERVER_PORT};
 use crate::protocols::ip::{IPPROTO_TCP, IPPROTO_UDP};
 use crate::registry::ProtocolRegistry;
+
+use self::common::{
+    hex_bytes, impl_layer_div, impl_layer_object, payload_bytes_after, transport_checksum_context,
+    value_or_copy,
+};
 
 /// TCP FIN flag.
 pub const TCP_FLAG_FIN: u16 = 0x001;
@@ -66,41 +68,6 @@ const TCP_MAX_HEADER_LEN: usize = 60;
 const TCP_MAX_DATA_OFFSET: u8 = 15;
 const TCP_MAX_RESERVED: u8 = 0x07;
 const TCP_MAX_FLAGS: u16 = 0x01ff;
-
-macro_rules! impl_layer_object {
-    ($type:ty) => {
-        fn clone_layer(&self) -> Box<dyn Layer> {
-            Box::new(self.clone())
-        }
-
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
-        fn as_any_mut(&mut self) -> &mut dyn Any {
-            self
-        }
-
-        fn into_any(self: Box<Self>) -> Box<dyn Any> {
-            self
-        }
-    };
-}
-
-macro_rules! impl_layer_div {
-    ($type:ty) => {
-        impl<R> Div<R> for $type
-        where
-            R: IntoPacket,
-        {
-            type Output = Packet;
-
-            fn div(self, rhs: R) -> Self::Output {
-                Packet::from_layer(self).concat(rhs)
-            }
-        }
-    };
-}
 
 /// One SACK block carried by a TCP SACK option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1247,26 +1214,6 @@ fn decode_tcp_parts(bytes: &[u8]) -> Result<(Tcp, &[u8])> {
     Ok((tcp, &bytes[header_len..]))
 }
 
-fn payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
-    let mut payload = Vec::new();
-    for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
-        let layer_ctx = LayerContext::new(ctx.packet(), index);
-        layer.compile(&layer_ctx, &mut payload)?;
-    }
-    Ok(payload)
-}
-
-fn transport_checksum_context(
-    ctx: LayerContext<'_>,
-    transport_protocol: u8,
-) -> Option<crate::packet::TransportChecksumContext> {
-    (0..ctx.index()).rev().find_map(|index| {
-        ctx.packet()
-            .get(index)
-            .and_then(|layer| layer.transport_checksum_context(transport_protocol))
-    })
-}
-
 fn validate_tcp_options(options: &[u8]) -> Result<()> {
     for option in TcpOptionIter::new(options) {
         option?;
@@ -1371,10 +1318,6 @@ fn padded_options_len(len: usize) -> usize {
     (len + 3) & !3
 }
 
-fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
-    field.value().copied().unwrap_or(default)
-}
-
 fn flags_summary(flags: u16) -> String {
     let mut names = Vec::new();
     if flags & TCP_FLAG_NS != 0 {
@@ -1410,19 +1353,6 @@ fn flags_summary(flags: u16) -> String {
     } else {
         names.join("|")
     }
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    let mut output = String::new();
-
-    for (index, byte) in bytes.iter().enumerate() {
-        if index > 0 {
-            output.push(' ');
-        }
-        output.push_str(&format!("{byte:02x}"));
-    }
-
-    output
 }
 
 #[cfg(test)]
