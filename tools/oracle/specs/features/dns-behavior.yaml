@@ -1,7 +1,7 @@
 version: 1
 kind: feature
 name: dns_behavior
-summary: DNS query, response, record, truncation, rcode, and compression behavior.
+summary: DNS header, names, questions, all four sections, typed records, EDNS, DNSSEC, SVCB/HTTPS, and malformed-decode behavior.
 
 layers:
   - udp
@@ -38,6 +38,278 @@ behaviors:
       - strict_bytes
       - normalized_names
 
+# Normalized comparison contract for the DNS oracle.
+#
+# These are the backend-neutral field names the oracle uses when it compares a
+# decoded DNS message. They are the public contract for both the Scapy and the
+# libcrafter materializers: neither side may compare against Scapy-native field
+# spellings (DNS.id, DNSQR.qname, DNSRR.rdata, and so on). Each materializer
+# maps its own representation onto these names before the oracle compares them.
+normalized_model:
+  message:
+    header:
+      - transaction_id
+      - is_response
+      - opcode
+      - authoritative
+      - truncated
+      - recursion_desired
+      - recursion_available
+      - authentic_data
+      - checking_disabled
+      - reserved_z
+      - response_code
+      - question_count
+      - answer_count
+      - authority_count
+      - additional_count
+    sections:
+      - questions
+      - answers
+      - authority
+      - additional
+  question:
+    - name
+    - record_type
+    - record_class
+  record:
+    - name
+    - record_type
+    - record_class
+    - ttl
+    - rdata
+  name:
+    - labels
+    - presentation
+    - is_root
+  rdata:
+    address:
+      - address
+    name_target:
+      - target
+    mail_exchange:
+      - preference
+      - exchange
+    text:
+      - strings
+    start_of_authority:
+      - primary_name
+      - responsible_name
+      - serial
+      - refresh
+      - retry
+      - expire
+      - minimum
+    service:
+      - priority
+      - weight
+      - port
+      - target
+    opt:
+      - udp_payload_size
+      - extended_rcode
+      - version
+      - dnssec_ok
+      - z_bits
+      - options
+    edns_option:
+      - option_code
+      - option_data
+    delegation_signer:
+      - key_tag
+      - algorithm
+      - digest_type
+      - digest
+    dnskey:
+      - flags
+      - protocol
+      - algorithm
+      - public_key
+    rrsig:
+      - type_covered
+      - algorithm
+      - labels
+      - original_ttl
+      - signature_expiration
+      - signature_inception
+      - key_tag
+      - signer_name
+      - signature
+    next_secure:
+      - next_name
+      - type_bitmaps
+    next_secure3:
+      - hash_algorithm
+      - flags
+      - iterations
+      - salt
+      - next_hashed_owner
+      - type_bitmaps
+    type_bitmaps:
+      - record_types
+    service_binding:
+      - priority
+      - target
+      - params
+    service_param:
+      - key
+      - value
+    raw:
+      - record_type
+      - data
+
+# Per-group byte-comparison policy. strict_bytes groups must match Scapy
+# octet-for-octet on the deterministic uncompressed encode. normalized groups
+# document a specific encode rewrite where only the normalized decoded DNS
+# model must agree. structured_error groups assert a typed decode/encode error
+# with no panic. Group names are stable coordinates for the rest of the plan.
+case_groups:
+  - name: dns-header-flags-opcodes
+    summary: Header, flag bits, user-specified opcode, rcode, raw-flags escape hatch, and section counts.
+    byte_policy: strict_bytes
+    cases:
+      - dns-header-id
+      - dns-header-qr
+      - dns-header-flags
+      - dns-header-opcode
+      - dns-header-rcode
+      - dns-header-raw-flags
+      - dns-header-counts
+      - dns-header-empty-sections
+  - name: dns-names
+    summary: Root, trailing-dot, label-boundary, escaped, and non-text names plus uncompressed encode.
+    byte_policy: strict_bytes
+    cases:
+      - dns-name-root
+      - dns-name-trailing-dot
+      - dns-name-label-boundary
+      - dns-name-escaped
+      - dns-name-non-text
+      - crafter-dns-name-uncompressed
+  - name: dns-name-compression
+    summary: Compressed-name decode; libcrafter re-encodes uncompressed.
+    byte_policy: normalized
+    normalized_note: libcrafter emits the uncompressed name on re-encode, so the decoded name model agrees while bytes differ from the compressed Scapy input.
+    cases:
+      - dns-name-compressed
+  - name: dns-questions
+    summary: Single and multi-question messages, class variants, and unknown numeric codes.
+    byte_policy: strict_bytes
+    cases:
+      - dns-query
+      - dns-multiple-questions
+      - dns-question-class
+      - dns-question-unknown-codes
+  - name: dns-base-records
+    summary: A, AAAA, NS, CNAME, PTR, MX, TXT, and the combined response.
+    byte_policy: strict_bytes
+    cases:
+      - dns-record-a
+      - dns-record-aaaa
+      - dns-record-ns
+      - dns-record-cname
+      - dns-record-ptr
+      - dns-record-mx
+      - dns-record-txt
+      - dns-response-records
+  - name: dns-soa-srv
+    summary: SOA and SRV records.
+    byte_policy: strict_bytes
+    cases:
+      - dns-record-soa
+      - dns-record-srv
+  - name: dns-raw-records
+    summary: Unknown, deferred, and empty RDATA stay DnsRecordData::Raw.
+    byte_policy: strict_bytes
+    cases:
+      - dns-record-raw-unknown
+      - dns-record-raw-deferred
+      - dns-record-raw-empty
+  - name: dns-edns-options
+    summary: OPT pseudo-record fields and EDNS option TLVs (known and unknown).
+    byte_policy: strict_bytes
+    cases:
+      - dns-edns-opt-basic
+      - dns-edns-opt-ttl-fields
+      - dns-edns-options-known
+      - dns-edns-options-unknown
+  - name: dnssec-ds-dnskey-rrsig
+    summary: DS, DNSKEY, and RRSIG fixed fields with raw key/signature material.
+    byte_policy: strict_bytes
+    cases:
+      - dns-dnssec-ds
+      - dns-dnssec-dnskey
+      - dns-dnssec-rrsig
+      - dns-dnssec-unknown-algorithm
+  - name: dnssec-nsec
+    summary: NSEC next name plus type bitmaps.
+    byte_policy: strict_bytes
+    cases:
+      - dns-dnssec-nsec
+  - name: dnssec-nsec-bitmap
+    summary: NSEC multi-window bitmap with unknown codepoint; libcrafter emits minimal sorted windows.
+    byte_policy: normalized
+    normalized_note: libcrafter sorts/dedups and emits minimal windows, so the decoded type set agrees even if the source byte order differs.
+    cases:
+      - dns-dnssec-nsec-bitmap
+  - name: dnssec-nsec3
+    summary: NSEC3 hash/salt/next-hash/bitmap material, including empty salt.
+    byte_policy: strict_bytes
+    cases:
+      - dns-dnssec-nsec3
+      - dns-dnssec-nsec3-empty-salt
+  - name: dns-svcb-https
+    summary: SVCB and HTTPS AliasMode/ServiceMode, root targets, and unknown params.
+    byte_policy: strict_bytes
+    cases:
+      - dns-svcb-alias
+      - dns-svcb-root-target
+      - dns-https-service
+      - dns-svcb-unknown-param
+  - name: dns-svcb-service-sorted
+    summary: SVCB ServiceMode with out-of-order source params; libcrafter sorts SvcParamKeys.
+    byte_policy: normalized
+    normalized_note: libcrafter sorts SvcParamKeys into strictly increasing order on encode, so an out-of-order source compares by the normalized decoded params.
+    cases:
+      - dns-svcb-service
+  - name: dns-section-placement
+    summary: Authority, additional, and multi-section record placement.
+    byte_policy: strict_bytes
+    cases:
+      - dns-section-authority
+      - dns-section-additional
+      - dns-section-multi
+  - name: malformed-dns-names
+    summary: Compressed-name and message-boundary decode failures.
+    byte_policy: structured_error
+    cases:
+      - malformed-dns-pointer-cycle
+      - malformed-dns-pointer-range
+      - malformed-dns-truncated-name
+      - malformed-dns-reserved-marker
+      - malformed-dns-name-overrun
+      - malformed-dns-trailing-bytes
+      - malformed-dns-compression
+  - name: malformed-dns-rdata
+    summary: RDATA boundary decode failures and encode rejections.
+    byte_policy: structured_error
+    cases:
+      - malformed-dns-address-rdlength
+      - malformed-dns-soa-rdlength
+      - malformed-dns-srv-boundary
+      - malformed-dns-edns-option
+      - malformed-dns-dnssec-truncation
+      - malformed-dns-nsec3-overrun
+      - malformed-dns-bitmap
+      - malformed-dns-svcb-params
+      - malformed-dns-encode-reject
+  - name: dns-legacy
+    summary: Pre-existing DNS cases retained for reproduction compatibility.
+    byte_policy: strict_bytes
+    cases:
+      - dns-generic-record-truncated-rcode
+      - crafter-dns-query-response-compression
+
 coverage_cases:
   - dns-query
   - dns-response-records
@@ -45,6 +317,394 @@ coverage_cases:
   - dns-generic-record-truncated-rcode
   - malformed-dns-compression
   - crafter-dns-query-response-compression
+  - dns-header-id
+  - dns-header-qr
+  - dns-header-flags
+  - dns-header-opcode
+  - dns-header-rcode
+  - dns-header-raw-flags
+  - dns-header-counts
+  - dns-header-empty-sections
+  - dns-name-root
+  - dns-name-trailing-dot
+  - dns-name-label-boundary
+  - dns-name-escaped
+  - dns-name-non-text
+  - dns-name-compressed
+  - crafter-dns-name-uncompressed
+  - dns-question-class
+  - dns-question-unknown-codes
+  - dns-record-a
+  - dns-record-aaaa
+  - dns-record-ns
+  - dns-record-cname
+  - dns-record-ptr
+  - dns-record-mx
+  - dns-record-txt
+  - dns-record-soa
+  - dns-record-srv
+  - dns-record-raw-unknown
+  - dns-record-raw-deferred
+  - dns-record-raw-empty
+  - dns-edns-opt-basic
+  - dns-edns-opt-ttl-fields
+  - dns-edns-options-known
+  - dns-edns-options-unknown
+  - dns-dnssec-ds
+  - dns-dnssec-dnskey
+  - dns-dnssec-rrsig
+  - dns-dnssec-nsec
+  - dns-dnssec-nsec-bitmap
+  - dns-dnssec-nsec3
+  - dns-dnssec-nsec3-empty-salt
+  - dns-dnssec-unknown-algorithm
+  - dns-svcb-alias
+  - dns-svcb-service
+  - dns-svcb-root-target
+  - dns-https-service
+  - dns-svcb-unknown-param
+  - dns-section-authority
+  - dns-section-additional
+  - dns-section-multi
+  - malformed-dns-pointer-cycle
+  - malformed-dns-pointer-range
+  - malformed-dns-truncated-name
+  - malformed-dns-reserved-marker
+  - malformed-dns-name-overrun
+  - malformed-dns-trailing-bytes
+  - malformed-dns-address-rdlength
+  - malformed-dns-soa-rdlength
+  - malformed-dns-srv-boundary
+  - malformed-dns-edns-option
+  - malformed-dns-dnssec-truncation
+  - malformed-dns-nsec3-overrun
+  - malformed-dns-bitmap
+  - malformed-dns-svcb-params
+  - malformed-dns-encode-reject
+
+# supported_cases records the oracle directions and byte policy each case runs
+# under. Cases without a writer/reader/file_format entry run as offline
+# materialize-and-compare cases; pcap and live coverage is layered in later
+# plan steps.
+supported_cases:
+  - name: dns-query
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-header-id
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-header-qr
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-header-flags
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-header-opcode
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-header-rcode
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-header-raw-flags
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-header-counts
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-header-empty-sections
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-name-root
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-name-trailing-dot
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-name-label-boundary
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-name-escaped
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-name-non-text
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-name-compressed
+    directions:
+      - reference_to_libcrafter
+    byte_policy: normalized
+  - name: crafter-dns-name-uncompressed
+    directions:
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-multiple-questions
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-question-class
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-question-unknown-codes
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-a
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-aaaa
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-ns
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-cname
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-ptr
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-mx
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-txt
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-response-records
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-soa
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-srv
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-raw-unknown
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-raw-deferred
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-record-raw-empty
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-edns-opt-basic
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-edns-opt-ttl-fields
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-edns-options-known
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-edns-options-unknown
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-dnssec-ds
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-dnssec-dnskey
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-dnssec-rrsig
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-dnssec-unknown-algorithm
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-dnssec-nsec
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-dnssec-nsec-bitmap
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: normalized
+  - name: dns-dnssec-nsec3
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-dnssec-nsec3-empty-salt
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-svcb-alias
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-svcb-service
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: normalized
+  - name: dns-svcb-root-target
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-https-service
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-svcb-unknown-param
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-section-authority
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-section-additional
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-section-multi
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: malformed-dns-pointer-cycle
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-pointer-range
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-truncated-name
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-reserved-marker
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-name-overrun
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-trailing-bytes
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-address-rdlength
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-soa-rdlength
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-srv-boundary
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-edns-option
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-dnssec-truncation
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-nsec3-overrun
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-bitmap
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-svcb-params
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-dns-encode-reject
+    directions:
+      - libcrafter_to_reference
+    byte_policy: structured_error
 
 backend_support:
   scapy:
@@ -57,3 +717,4 @@ backend_support:
     status: partial
     notes:
       - Compression and generic records are planned coverage.
+      - Typed records, EDNS, DNSSEC, and SVCB/HTTPS cases are normalized through the backend-neutral DNS model.

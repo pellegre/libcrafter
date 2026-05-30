@@ -212,6 +212,54 @@ stacks:
       - dns
     coverage_cases:
       - dns-query
+      - dns-response-records
+      - dns-multiple-questions
+      - dns-header-flags
+      - dns-header-opcode
+      - dns-header-rcode
+      - dns-header-counts
+      - dns-header-empty-sections
+      - dns-name-root
+      - dns-name-trailing-dot
+      - dns-name-label-boundary
+      - dns-name-escaped
+      - dns-name-non-text
+      - dns-name-compressed
+      - crafter-dns-name-uncompressed
+      - dns-question-class
+      - dns-question-unknown-codes
+      - dns-record-a
+      - dns-record-aaaa
+      - dns-record-ns
+      - dns-record-cname
+      - dns-record-ptr
+      - dns-record-mx
+      - dns-record-txt
+      - dns-record-soa
+      - dns-record-srv
+      - dns-record-raw-unknown
+      - dns-record-raw-deferred
+      - dns-record-raw-empty
+      - dns-edns-opt-basic
+      - dns-edns-opt-ttl-fields
+      - dns-edns-options-known
+      - dns-edns-options-unknown
+      - dns-dnssec-ds
+      - dns-dnssec-dnskey
+      - dns-dnssec-rrsig
+      - dns-dnssec-nsec
+      - dns-dnssec-nsec-bitmap
+      - dns-dnssec-nsec3
+      - dns-dnssec-nsec3-empty-salt
+      - dns-dnssec-unknown-algorithm
+      - dns-svcb-alias
+      - dns-svcb-service
+      - dns-svcb-root-target
+      - dns-https-service
+      - dns-svcb-unknown-param
+      - dns-section-authority
+      - dns-section-additional
+      - dns-section-multi
       - udp-options-known-dns-surplus
   # ethernet / ipv4 / udp / dhcp: link-layer DHCP for offline byte
   # equivalence, pcap, link-type, and decode-root coverage. It stays

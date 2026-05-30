@@ -1,7 +1,7 @@
 version: 1
 kind: layer
 name: dns
-summary: DNS over UDP query and response records with compression-aware normalization.
+summary: DNS over UDP header, names, four sections, typed records, EDNS, DNSSEC, and SVCB/HTTPS with compression-aware normalization.
 
 roots: []
 parents:
@@ -26,13 +26,21 @@ fields:
     required: true
     domains:
       - query
+      - status
+      - notify
+      - update
+      - unknown
   - name: flags
     type: flags
     required: true
     domains:
       - recursion_desired
+      - recursion_available
       - truncated
       - authoritative
+      - authentic_data
+      - checking_disabled
+      - reserved_z
   - name: response_code
     type: uint4
     required: true
@@ -40,20 +48,166 @@ fields:
       - no_error
       - name_error
       - server_failure
+      - refused
+      - unknown
   - name: questions
     type: dns_question_list
     required: true
     domains:
       - a_in
       - multiple_questions
+      - class_variants
+      - unknown_codes
   - name: answers
     type: dns_record_list
     required: false
     domains:
       - a
       - aaaa
+      - ns
       - cname
-      - generic
+      - ptr
+      - mx
+      - txt
+      - soa
+      - srv
+      - raw
+      - opt
+      - dnssec
+      - svcb
+      - https
+  - name: authority
+    type: dns_record_list
+    required: false
+    domains:
+      - soa
+      - ns
+  - name: additional
+    type: dns_record_list
+    required: false
+    domains:
+      - opt
+      - a
+      - aaaa
+      - svcb
+      - https
+
+# Backend-neutral normalized field names used by the oracle when it compares a
+# decoded DNS message. These names are the public contract; neither backend may
+# compare against Scapy-native field spellings. The feature spec
+# (features/dns-behavior.yaml) carries the authoritative normalized_model; this
+# block mirrors the per-section and per-record shape at the layer boundary.
+normalized_fields:
+  header:
+    - transaction_id
+    - is_response
+    - opcode
+    - authoritative
+    - truncated
+    - recursion_desired
+    - recursion_available
+    - authentic_data
+    - checking_disabled
+    - reserved_z
+    - response_code
+    - question_count
+    - answer_count
+    - authority_count
+    - additional_count
+  sections:
+    - questions
+    - answers
+    - authority
+    - additional
+  question:
+    - name
+    - record_type
+    - record_class
+  record:
+    - name
+    - record_type
+    - record_class
+    - ttl
+    - rdata
+  name:
+    - labels
+    - presentation
+    - is_root
+  rdata:
+    address:
+      - address
+    name_target:
+      - target
+    mail_exchange:
+      - preference
+      - exchange
+    text:
+      - strings
+    start_of_authority:
+      - primary_name
+      - responsible_name
+      - serial
+      - refresh
+      - retry
+      - expire
+      - minimum
+    service:
+      - priority
+      - weight
+      - port
+      - target
+    opt:
+      - udp_payload_size
+      - extended_rcode
+      - version
+      - dnssec_ok
+      - z_bits
+      - options
+    edns_option:
+      - option_code
+      - option_data
+    delegation_signer:
+      - key_tag
+      - algorithm
+      - digest_type
+      - digest
+    dnskey:
+      - flags
+      - protocol
+      - algorithm
+      - public_key
+    rrsig:
+      - type_covered
+      - algorithm
+      - labels
+      - original_ttl
+      - signature_expiration
+      - signature_inception
+      - key_tag
+      - signer_name
+      - signature
+    next_secure:
+      - next_name
+      - type_bitmaps
+    next_secure3:
+      - hash_algorithm
+      - flags
+      - iterations
+      - salt
+      - next_hashed_owner
+      - type_bitmaps
+    type_bitmaps:
+      - record_types
+    service_binding:
+      - priority
+      - target
+      - params
+    service_param:
+      - key
+      - value
+    raw:
+      - record_type
+      - data
 
 coverage_cases:
   - dns-query
@@ -61,6 +215,38 @@ coverage_cases:
   - dns-multiple-questions
   - dns-generic-record-truncated-rcode
   - crafter-dns-query-response-compression
+  - dns-header-flags
+  - dns-header-opcode
+  - dns-header-rcode
+  - dns-header-empty-sections
+  - dns-name-root
+  - dns-name-escaped
+  - dns-name-compressed
+  - crafter-dns-name-uncompressed
+  - dns-question-class
+  - dns-record-a
+  - dns-record-aaaa
+  - dns-record-ns
+  - dns-record-cname
+  - dns-record-ptr
+  - dns-record-mx
+  - dns-record-txt
+  - dns-record-soa
+  - dns-record-srv
+  - dns-record-raw-unknown
+  - dns-edns-opt-basic
+  - dns-edns-options-known
+  - dns-dnssec-ds
+  - dns-dnssec-dnskey
+  - dns-dnssec-rrsig
+  - dns-dnssec-nsec
+  - dns-dnssec-nsec3
+  - dns-svcb-alias
+  - dns-svcb-service
+  - dns-https-service
+  - dns-section-authority
+  - dns-section-additional
+  - dns-section-multi
 
 backend_support:
   scapy:
@@ -77,3 +263,4 @@ backend_support:
     decode: true
     notes:
       - Compression and generic records are planned feature coverage.
+      - Typed records, EDNS, DNSSEC, and SVCB/HTTPS compare through the backend-neutral DNS model.
