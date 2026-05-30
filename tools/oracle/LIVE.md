@@ -66,7 +66,7 @@ Run guarded real VM smoke to verify the local VM prerequisites and matrix
 reporting path:
 
 ```sh
-python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 2 --real --skip-unavailable --out target/oracle/provider-matrix-vm-real
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 12345 --count 2 --real --skip-unavailable --confirm-live-run --out target/oracle/provider-matrix-vm-real
 ```
 
 The real VM matrix runs provider doctors first, skips unavailable VM providers
@@ -77,6 +77,41 @@ metadata, artifact roots, endpoint IDs, and cleanup status in
 `matrix-summary.json`. Use `--strict-vm-smoke` or
 `LIBCRAFTER_ORACLE_VM_SMOKE_STRICT=1` for lab qualification where skips should
 fail the command.
+
+`--real` is a protected confirmation gate: it refuses to run and creates no
+infrastructure unless `--confirm-live-run` is also passed. `--dry-run` never
+sends packets and never requires `--confirm-live-run`. This keeps real live
+exchange opt-in while leaving dry-run planning unconditionally safe.
+
+### Guarded DHCP VM Live Exchange
+
+DHCP live exchange (the `ipv4 / udp / dhcp` packet, selected with
+`--case dhcp-discover`) runs through the same guarded VM matrix. Keep it opt-in
+behind an explicit environment gate so unattended CI never sends real DHCP
+packets or creates VMs:
+
+```sh
+if [ "${LIBCRAFTER_RUN_DHCP_VM_LIVE:-0}" = "1" ]; then
+  python3 tools/oracle/engine/live_provider_matrix.py \
+    --providers qemu,virtualbox --backend scapy --profile smoke \
+    --seed 132 --count 2 --case dhcp-discover \
+    --real --skip-unavailable --allow-vm-create --confirm-live-run \
+    --out target/oracle/dhcp-vm-live
+else
+  echo "skipping protected VM DHCP live run; set LIBCRAFTER_RUN_DHCP_VM_LIVE=1 to execute"
+fi
+```
+
+With `LIBCRAFTER_RUN_DHCP_VM_LIVE` unset (the default), the gate takes the
+echo-skip branch and nothing runs. When it is `1`, the matrix runs provider
+doctors first, skips any unavailable VM provider cleanly, refuses to send
+packets without `--confirm-live-run`, creates VMs only because
+`--allow-vm-create` is present, collects artifacts under `--out`, and tears the
+endpoints down. Always validate the focused DHCP path with `--dry-run` first:
+
+```sh
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 132 --count 2 --case dhcp-discover --dry-run --out target/oracle/dhcp-vm-dry-run
+```
 
 ## Exchange Directions
 
