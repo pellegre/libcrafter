@@ -245,13 +245,14 @@ def remove_private_group_allocation(
     """Remove one endpoint allocation from an internal private group record."""
 
     record = read_private_group_record(provider, group, config)
+    endpoint_was_allocated = endpoint_id in record.allocated_endpoint_ids
     endpoint_ids = [
         allocated_endpoint_id
         for allocated_endpoint_id in record.allocated_endpoint_ids
         if allocated_endpoint_id != endpoint_id
     ]
     private_ipv4s = [*record.allocated_private_ipv4s]
-    if private_ipv4 is not None:
+    if endpoint_was_allocated and private_ipv4 is not None:
         private_ipv4s = [
             allocated_private_ipv4
             for allocated_private_ipv4 in private_ipv4s

@@ -38,6 +38,7 @@ from tools.wire.engine.registry import ProviderExposureError
 from tools.wire.engine.state import (
     read_endpoint_manifest,
     read_private_group_record,
+    remove_private_group_allocation,
     update_private_group_allocation,
     write_endpoint_manifest,
 )
@@ -469,6 +470,27 @@ class QemuCreateEndpointTest(unittest.TestCase):
                     command_runner=_fail_runner,
                     download_runner=_fake_download,
                 )
+
+    def test_private_group_remove_preserves_ip_for_untracked_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            update_private_group_allocation(
+                provider="qemu",
+                group="pair-a",
+                endpoint_id="qemu-private-active",
+                private_ipv4="10.77.0.9",
+                private_cidr=QEMU_DEFAULT_PRIVATE_CIDR,
+                network_resource={"network_id": "qemu-private-group-pair-a"},
+            )
+
+            record = remove_private_group_allocation(
+                provider="qemu",
+                group="pair-a",
+                endpoint_id="qemu-private-failed",
+                private_ipv4="10.77.0.9",
+            )
+
+        self.assertEqual(record.allocated_endpoint_ids, ["qemu-private-active"])
+        self.assertEqual(record.allocated_private_ipv4s, ["10.77.0.9"])
 
     def test_live_wan_create_writes_failed_manifest_after_ssh_timeout(self) -> None:
         endpoint_id = "qemu-wan-probe-20260526230600-abcdef"
