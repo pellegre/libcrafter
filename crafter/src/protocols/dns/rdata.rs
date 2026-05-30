@@ -64,8 +64,8 @@ pub enum DnsRecordData {
     /// EDNS(0) OPT pseudo-record RDATA: a list of {code, length, data} options
     /// (RFC 6891 Section 6.1.2). The OPT CLASS and TTL fields carry the UDP
     /// payload size and the extended RCODE/version/flags rather than ordinary
-    /// class and TTL meaning; build with [`DnsRecord::opt`] and inspect with the
-    /// `edns_*` accessors on [`DnsRecord`].
+    /// class and TTL meaning; build with [`DnsRecord::opt`](super::DnsRecord::opt)
+    /// and inspect with the `edns_*` accessors on [`DnsRecord`](super::DnsRecord).
     Opt(Vec<EdnsOption>),
     /// Delegation Signer (DS) data (RFC 4034 Section 5.1). Algorithm and digest
     /// type stay raw numeric fields; the digest is opaque wire bytes and is not
