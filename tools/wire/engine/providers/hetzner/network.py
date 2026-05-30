@@ -85,6 +85,8 @@ def _ensure_private_network(
         private_cidr=private_cidr,
         network_zone=network_zone,
     ):
+        # `hcloud network add-subnet` is an action command and rejects
+        # `-o/--output`; `_hcloud_ok` only checks success, so emit no output flag.
         _hcloud_ok(
             [
                 HCLOUD_COMMAND,
@@ -130,6 +132,9 @@ def _attach_server_to_private_network(
     network_id = _network_resource_id(network_resource)
     if network_id is None:
         raise RuntimeError("private network resource did not include a network id")
+    # `hcloud server attach-to-network` is an action command and rejects
+    # `-o/--output`; it emits human-readable text, not JSON. `_hcloud_ok` raises
+    # on failure, and callers do not consume the return payload.
     _hcloud_ok(
         [
             HCLOUD_COMMAND,

@@ -14,6 +14,8 @@ PLANNED_CREATED_AT = "planned"
 CONFIRMATION_ERROR = (
     "protected provider execution requires --confirm-live-run; no Hetzner resources were created"
 )
+# cx22 was retired by Hetzner; cx23 is the current-generation 2 vCPU / 4 GB
+# x86 shared instance. Overridable via HETZNER_SERVER_TYPE.
 DEFAULT_SERVER_TYPE = "cx23"
 DEFAULT_IMAGE = "ubuntu-24.04"
 DEFAULT_LOCATION = "hel1"
