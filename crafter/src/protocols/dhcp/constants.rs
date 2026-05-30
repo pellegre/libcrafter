@@ -290,6 +290,20 @@ pub const DHCP_CLIENT_MACHINE_UUID_TYPE: u8 = 0;
 /// RFC 4578 client network device interface type octet for UNDI (option 94).
 pub const DHCP_CLIENT_NDI_TYPE_UNDI: u8 = 1;
 
+/// RFC 2132 section 9.14 client identifier type octet for an identifier that is
+/// not a hardware address (for example a DUID-bearing or domain-name based id).
+pub const DHCP_CLIENT_ID_TYPE_NONE: u8 = 0;
+/// RFC 4361 client identifier type octet (`255`) introducing an IAID and DUID.
+///
+/// Source: RFC 4361 section 6.1. When the option 61 type field is `255`, the
+/// next four octets are an IAID and the remaining octets are a DUID.
+pub const DHCP_CLIENT_ID_TYPE_RFC4361: u8 = 255;
+/// RFC 4361 Identity Association Identifier (IAID) length in octets.
+///
+/// Source: RFC 4361 section 6.1. The IAID is an opaque 32-bit (4-octet) quantity
+/// following the type-`255` octet.
+pub const DHCP_IAID_LEN: usize = 4;
+
 /// Option overload value: the `file` field holds options (RFC 2132 section 9.3).
 pub const DHCP_OVERLOAD_FILE: u8 = 1;
 /// Option overload value: the `sname` field holds options (RFC 2132 section 9.3).
