@@ -235,6 +235,29 @@ pub const ICMP_EXTENSION_CLASS_MPLS: u8 = 1;
 /// ICMP extension object C-Type for an incoming MPLS label stack.
 pub const ICMP_EXTENSION_CTYPE_MPLS_INCOMING: u8 = 1;
 
+/// RFC 5837 ICMP extension object class for interface information.
+pub const ICMP_EXTENSION_CLASS_INTERFACE_INFO: u8 = 2;
+/// RFC 5837 interface role: incoming IP interface.
+pub const ICMP_INTERFACE_ROLE_INCOMING: u8 = 0;
+/// RFC 5837 interface role: sub-IP component of the incoming IP interface.
+pub const ICMP_INTERFACE_ROLE_SUB_IP_INCOMING: u8 = 1;
+/// RFC 5837 interface role: outgoing IP interface.
+pub const ICMP_INTERFACE_ROLE_OUTGOING: u8 = 2;
+/// RFC 5837 interface role: IP next hop.
+pub const ICMP_INTERFACE_ROLE_NEXT_HOP: u8 = 3;
+/// RFC 5837 C-Type bit 4 (ifIndex sub-object present).
+pub const ICMP_INTERFACE_CTYPE_IFINDEX: u8 = 0x08;
+/// RFC 5837 C-Type bit 5 (IP Address sub-object present).
+pub const ICMP_INTERFACE_CTYPE_IP_ADDRESS: u8 = 0x04;
+/// RFC 5837 C-Type bit 6 (Interface Name sub-object present).
+pub const ICMP_INTERFACE_CTYPE_NAME: u8 = 0x02;
+/// RFC 5837 C-Type bit 7 (MTU sub-object present).
+pub const ICMP_INTERFACE_CTYPE_MTU: u8 = 0x01;
+/// RFC 5837 IP Address sub-object Address Family Identifier for IPv4.
+pub const ICMP_INTERFACE_AFI_IPV4: u16 = 1;
+/// RFC 5837 IP Address sub-object Address Family Identifier for IPv6.
+pub const ICMP_INTERFACE_AFI_IPV6: u16 = 2;
+
 const ICMP_HEADER_LEN: usize = 8;
 /// RFC 792 timestamp body: originate, receive, and transmit timestamps, each a
 /// 32-bit value (12 bytes total) following the fixed ICMP header.
@@ -248,6 +271,15 @@ const ICMP_ROUTER_ADVERTISEMENT_ENTRY_LEN: usize = 8;
 const ICMP_EXTENSION_HEADER_LEN: usize = 4;
 const ICMP_EXTENSION_OBJECT_LEN: usize = 4;
 const ICMP_EXTENSION_MPLS_LEN: usize = 4;
+/// RFC 5837 ifIndex sub-object: a single 32-bit interface index.
+const ICMP_INTERFACE_IFINDEX_LEN: usize = 4;
+/// RFC 5837 IP Address sub-object fixed prefix: 16-bit AFI plus 16-bit reserved.
+const ICMP_INTERFACE_IP_ADDRESS_PREFIX_LEN: usize = 4;
+/// RFC 5837 MTU sub-object: a single 32-bit MTU value.
+const ICMP_INTERFACE_MTU_LEN: usize = 4;
+/// RFC 5837 maximum interface-name octets (the length octet plus up to 63 name
+/// octets, capped at 64 total).
+const ICMP_INTERFACE_NAME_MAX: usize = 63;
 /// RFC 4884 expected extension header version for ICMP multi-part messages.
 const ICMP_EXTENSION_VERSION: u8 = 2;
 /// RFC 4884 minimum "original datagram" size, in octets, when an ICMPv4 message
@@ -2049,6 +2081,11 @@ impl IcmpExtensionObject {
             .unwrap_or(false)
         {
             ICMP_EXTENSION_CLASS_MPLS
+        } else if next
+            .map(|layer| layer.as_any().is::<IcmpExtensionInterfaceInfo>())
+            .unwrap_or(false)
+        {
+            ICMP_EXTENSION_CLASS_INTERFACE_INFO
         } else {
             self.class_num_value()
         }
@@ -2063,6 +2100,10 @@ impl IcmpExtensionObject {
             .unwrap_or(false)
         {
             ICMP_EXTENSION_CTYPE_MPLS_INCOMING
+        } else if let Some(info) =
+            next.and_then(|layer| layer.as_any().downcast_ref::<IcmpExtensionInterfaceInfo>())
+        {
+            info.c_type_byte()
         } else {
             self.c_type_value()
         }
@@ -2264,6 +2305,386 @@ impl Layer for IcmpExtensionMpls {
 
 impl_layer_div!(IcmpExtensionMpls);
 
+/// RFC 5837 IP Address sub-object carried inside an interface information
+/// object: a 16-bit Address Family Identifier, a 16-bit reserved field, and the
+/// address bytes (4 for IPv4, 16 for IPv6). The address is kept as raw bytes so
+/// unknown AFIs and non-canonical reserved values round-trip byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IcmpInterfaceIpAddress {
+    afi: Field<u16>,
+    reserved: Field<u16>,
+    address: Vec<u8>,
+}
+
+impl IcmpInterfaceIpAddress {
+    /// Build an IPv4 IP Address sub-object.
+    pub fn ipv4(address: Ipv4Addr) -> Self {
+        Self {
+            afi: Field::user(ICMP_INTERFACE_AFI_IPV4),
+            reserved: Field::defaulted(0),
+            address: address.octets().to_vec(),
+        }
+    }
+
+    /// Build an IPv6 IP Address sub-object.
+    pub fn ipv6(address: core::net::Ipv6Addr) -> Self {
+        Self {
+            afi: Field::user(ICMP_INTERFACE_AFI_IPV6),
+            reserved: Field::defaulted(0),
+            address: address.octets().to_vec(),
+        }
+    }
+
+    /// Build an IP Address sub-object from a raw AFI and address bytes, the
+    /// escape hatch for unknown or malformed address families.
+    pub fn raw(afi: u16, address: impl Into<Vec<u8>>) -> Self {
+        Self {
+            afi: Field::user(afi),
+            reserved: Field::defaulted(0),
+            address: address.into(),
+        }
+    }
+
+    /// Set the 16-bit reserved field explicitly.
+    pub fn reserved(mut self, reserved: u16) -> Self {
+        self.reserved.set_user(reserved);
+        self
+    }
+
+    /// Address Family Identifier value.
+    pub fn afi_value(&self) -> u16 {
+        value_or_copy(&self.afi, 0)
+    }
+
+    /// Reserved field value.
+    pub fn reserved_value(&self) -> u16 {
+        value_or_copy(&self.reserved, 0)
+    }
+
+    /// Raw address bytes.
+    pub fn address_bytes(&self) -> &[u8] {
+        &self.address
+    }
+
+    /// Address as an [`Ipv4Addr`] when the AFI is IPv4 and four bytes follow.
+    pub fn ipv4_value(&self) -> Option<Ipv4Addr> {
+        if self.afi_value() == ICMP_INTERFACE_AFI_IPV4 && self.address.len() == 4 {
+            Some(Ipv4Addr::new(
+                self.address[0],
+                self.address[1],
+                self.address[2],
+                self.address[3],
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Address as an [`Ipv6Addr`](core::net::Ipv6Addr) when the AFI is IPv6 and
+    /// sixteen bytes follow.
+    pub fn ipv6_value(&self) -> Option<core::net::Ipv6Addr> {
+        if self.afi_value() == ICMP_INTERFACE_AFI_IPV6 && self.address.len() == 16 {
+            let mut octets = [0u8; 16];
+            octets.copy_from_slice(&self.address);
+            Some(core::net::Ipv6Addr::from(octets))
+        } else {
+            None
+        }
+    }
+
+    fn encoded_len(&self) -> usize {
+        ICMP_INTERFACE_IP_ADDRESS_PREFIX_LEN + self.address.len()
+    }
+
+    fn compile(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.afi_value().to_be_bytes());
+        out.extend_from_slice(&self.reserved_value().to_be_bytes());
+        out.extend_from_slice(&self.address);
+    }
+}
+
+/// RFC 5837 ICMP extension object carrying interface information.
+///
+/// The single object holds an interface role (RFC 5837 figure 1, C-Type bits
+/// 0-1), a two-bit reserved field (bits 2-3), and up to four optional
+/// sub-objects in their mandatory order: a 32-bit `ifIndex`, an
+/// [`IcmpInterfaceIpAddress`], an interface name, and a 32-bit MTU. The C-Type
+/// presence bits (4-7) are derived from which sub-objects are present, so the
+/// preceding [`IcmpExtensionObject`] auto-fills class 2 and the matching C-Type
+/// byte. Unknown or malformed bodies stay raw through the generic object path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IcmpExtensionInterfaceInfo {
+    role: Field<u8>,
+    reserved: Field<u8>,
+    if_index: Option<u32>,
+    ip_address: Option<IcmpInterfaceIpAddress>,
+    name: Option<Vec<u8>>,
+    mtu: Option<u32>,
+}
+
+impl IcmpExtensionInterfaceInfo {
+    /// Create an interface information object with the incoming-interface role
+    /// and no sub-objects.
+    pub fn new() -> Self {
+        Self {
+            role: Field::defaulted(ICMP_INTERFACE_ROLE_INCOMING),
+            reserved: Field::defaulted(0),
+            if_index: None,
+            ip_address: None,
+            name: None,
+            mtu: None,
+        }
+    }
+
+    /// Set the two-bit interface role (RFC 5837 C-Type bits 0-1).
+    pub fn role(mut self, role: u8) -> Self {
+        self.role.set_user(role);
+        self
+    }
+
+    /// Set the two-bit reserved field (RFC 5837 C-Type bits 2-3).
+    pub fn reserved(mut self, reserved: u8) -> Self {
+        self.reserved.set_user(reserved);
+        self
+    }
+
+    /// Include the 32-bit ifIndex sub-object.
+    pub fn if_index(mut self, if_index: u32) -> Self {
+        self.if_index = Some(if_index);
+        self
+    }
+
+    /// Include the IP Address sub-object.
+    pub fn ip_address(mut self, ip_address: IcmpInterfaceIpAddress) -> Self {
+        self.ip_address = Some(ip_address);
+        self
+    }
+
+    /// Include the Interface Name sub-object from raw name octets (UTF-8 per
+    /// RFC 5837, but bytes are preserved verbatim and zero padded on the wire).
+    pub fn name_bytes(mut self, name: impl Into<Vec<u8>>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Include the Interface Name sub-object from a string.
+    pub fn name(self, name: &str) -> Self {
+        self.name_bytes(name.as_bytes().to_vec())
+    }
+
+    /// Include the 32-bit MTU sub-object.
+    pub fn mtu(mut self, mtu: u32) -> Self {
+        self.mtu = Some(mtu);
+        self
+    }
+
+    /// Interface role value (C-Type bits 0-1).
+    pub fn role_value(&self) -> u8 {
+        value_or_copy(&self.role, ICMP_INTERFACE_ROLE_INCOMING)
+    }
+
+    /// Reserved field value (C-Type bits 2-3).
+    pub fn reserved_value(&self) -> u8 {
+        value_or_copy(&self.reserved, 0)
+    }
+
+    /// ifIndex sub-object value, if present.
+    pub fn if_index_value(&self) -> Option<u32> {
+        self.if_index
+    }
+
+    /// IP Address sub-object, if present.
+    pub fn ip_address_value(&self) -> Option<&IcmpInterfaceIpAddress> {
+        self.ip_address.as_ref()
+    }
+
+    /// Interface name octets, if present.
+    pub fn name_value(&self) -> Option<&[u8]> {
+        self.name.as_deref()
+    }
+
+    /// MTU sub-object value, if present.
+    pub fn mtu_value(&self) -> Option<u32> {
+        self.mtu
+    }
+
+    /// RFC 5837 C-Type byte: role in bits 0-1, reserved in bits 2-3, and one
+    /// presence bit per included sub-object in bits 4-7.
+    pub fn c_type_byte(&self) -> u8 {
+        let mut byte = ((self.role_value() & 0x03) << 6) | ((self.reserved_value() & 0x03) << 4);
+        if self.if_index.is_some() {
+            byte |= ICMP_INTERFACE_CTYPE_IFINDEX;
+        }
+        if self.ip_address.is_some() {
+            byte |= ICMP_INTERFACE_CTYPE_IP_ADDRESS;
+        }
+        if self.name.is_some() {
+            byte |= ICMP_INTERFACE_CTYPE_NAME;
+        }
+        if self.mtu.is_some() {
+            byte |= ICMP_INTERFACE_CTYPE_MTU;
+        }
+        byte
+    }
+
+    /// On-wire length of the interface name sub-object (length octet plus name
+    /// octets, zero padded to a 4-octet boundary), when a name is present.
+    fn name_encoded_len(&self) -> usize {
+        self.name
+            .as_ref()
+            .map(|name| {
+                let raw = 1 + name.len();
+                raw.div_ceil(4) * 4
+            })
+            .unwrap_or(0)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.role_value() > 0x03 {
+            return Err(CrafterError::invalid_field_value(
+                "icmp_interface_info.role",
+                "interface role must fit in two bits",
+            ));
+        }
+        if self.reserved_value() > 0x03 {
+            return Err(CrafterError::invalid_field_value(
+                "icmp_interface_info.reserved",
+                "interface reserved field must fit in two bits",
+            ));
+        }
+        if let Some(name) = &self.name {
+            if name.len() > ICMP_INTERFACE_NAME_MAX {
+                return Err(CrafterError::invalid_field_value(
+                    "icmp_interface_info.name",
+                    "interface name must not exceed 63 octets",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for IcmpExtensionInterfaceInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for IcmpExtensionInterfaceInfo {
+    fn name(&self) -> &'static str {
+        "IcmpExtensionInterfaceInfo"
+    }
+
+    fn summary(&self) -> String {
+        let mut parts = vec![format!(
+            "role={}",
+            interface_role_summary(self.role_value())
+        )];
+        if let Some(if_index) = self.if_index {
+            parts.push(format!("ifindex={if_index}"));
+        }
+        if let Some(ip) = &self.ip_address {
+            let rendered = ip
+                .ipv4_value()
+                .map(|addr| addr.to_string())
+                .or_else(|| ip.ipv6_value().map(|addr| addr.to_string()))
+                .unwrap_or_else(|| {
+                    format!("afi={} {}", ip.afi_value(), hex_bytes(ip.address_bytes()))
+                });
+            parts.push(format!("ip={rendered}"));
+        }
+        if let Some(name) = &self.name {
+            parts.push(format!("name={}", String::from_utf8_lossy(name)));
+        }
+        if let Some(mtu) = self.mtu {
+            parts.push(format!("mtu={mtu}"));
+        }
+        format!("IcmpExtensionInterfaceInfo({})", parts.join(", "))
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("role", interface_role_summary(self.role_value())),
+            ("reserved", self.reserved_value().to_string()),
+            ("c_type", format!("0x{:02x}", self.c_type_byte())),
+            (
+                "if_index",
+                self.if_index
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "ip_address",
+                self.ip_address
+                    .as_ref()
+                    .map(|ip| {
+                        ip.ipv4_value()
+                            .map(|addr| addr.to_string())
+                            .or_else(|| ip.ipv6_value().map(|addr| addr.to_string()))
+                            .unwrap_or_else(|| {
+                                format!("afi={} {}", ip.afi_value(), hex_bytes(ip.address_bytes()))
+                            })
+                    })
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "name",
+                self.name
+                    .as_ref()
+                    .map(|name| String::from_utf8_lossy(name).into_owned())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "mtu",
+                self.mtu
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        let mut len = 0;
+        if self.if_index.is_some() {
+            len += ICMP_INTERFACE_IFINDEX_LEN;
+        }
+        if let Some(ip) = &self.ip_address {
+            len += ip.encoded_len();
+        }
+        len += self.name_encoded_len();
+        if self.mtu.is_some() {
+            len += ICMP_INTERFACE_MTU_LEN;
+        }
+        len
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.validate()?;
+        if let Some(if_index) = self.if_index {
+            out.extend_from_slice(&if_index.to_be_bytes());
+        }
+        if let Some(ip) = &self.ip_address {
+            ip.compile(out);
+        }
+        if let Some(name) = &self.name {
+            // RFC 5837: a one-octet length (covering itself plus the name) leads
+            // the name, which is then zero padded to a 4-octet boundary.
+            let padded = self.name_encoded_len();
+            out.push((1 + name.len()) as u8);
+            out.extend_from_slice(name);
+            out.resize(out.len() + (padded - 1 - name.len()), 0);
+        }
+        if let Some(mtu) = self.mtu {
+            out.extend_from_slice(&mtu.to_be_bytes());
+        }
+        Ok(())
+    }
+
+    impl_layer_object!(IcmpExtensionInterfaceInfo);
+}
+
+impl_layer_div!(IcmpExtensionInterfaceInfo);
+
 /// Append a decoded ICMP packet to an existing packet stack.
 pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (icmp, payload) = decode_icmp_parts(bytes)?;
@@ -2448,9 +2869,12 @@ fn decode_icmp_extensions(
 /// RFC 4950 MPLS label stack objects (class 1, C-Type 1) whose body is a whole
 /// number of 4-octet entries decode into typed [`IcmpExtensionMpls`] layers,
 /// preserving the label, experimental/traffic-class bits, bottom-of-stack bit,
-/// and TTL of each entry. Every other object — and any MPLS object whose body
-/// is not entry-aligned — keeps its body as a single `Raw` payload so unknown
-/// classes/sub-types and malformed MPLS bodies round-trip byte-for-byte.
+/// and TTL of each entry. RFC 5837 interface information objects (class 2)
+/// whose body parses cleanly per the C-Type presence bits decode into a typed
+/// [`IcmpExtensionInterfaceInfo`] layer. Every other object — and any object
+/// whose body does not parse defensibly — keeps its body as a single `Raw`
+/// payload so unknown classes/sub-types and malformed bodies round-trip
+/// byte-for-byte.
 ///
 /// Returns `None` when an object header is truncated or claims a length that
 /// does not fit the remaining bytes, so the caller can keep the whole region
@@ -2489,6 +2913,14 @@ fn decode_icmp_extension_objects(mut bytes: &[u8]) -> Option<Vec<Box<dyn Layer>>
                 for chunk in body.chunks_exact(ICMP_EXTENSION_MPLS_LEN) {
                     objects.push(Box::new(decode_mpls_entry(chunk)));
                 }
+            } else if class_num == ICMP_EXTENSION_CLASS_INTERFACE_INFO {
+                // RFC 5837: type the body per the C-Type presence bits, but only
+                // when the sub-objects consume the whole body exactly (so a
+                // re-compile reproduces the bytes). Anything else stays raw.
+                match decode_interface_info(c_type, body) {
+                    Some(info) => objects.push(Box::new(info)),
+                    None => objects.push(Box::new(Raw::from_bytes(body))),
+                }
             } else {
                 objects.push(Box::new(Raw::from_bytes(body)));
             }
@@ -2519,6 +2951,107 @@ fn decode_mpls_entry(chunk: &[u8]) -> IcmpExtensionMpls {
         bottom_of_stack: Field::user(bottom_of_stack),
         ttl: Field::user(ttl),
     }
+}
+
+/// Decode an RFC 5837 interface information object body into a typed
+/// [`IcmpExtensionInterfaceInfo`] layer.
+///
+/// The C-Type byte drives which sub-objects are present (bits 0-1 role, bits
+/// 2-3 reserved, bits 4-7 ifIndex/IP-address/name/MTU). Sub-objects are parsed
+/// in their mandatory order and must consume the body exactly, with canonical
+/// (zero) name padding, so a re-compile reproduces the bytes. Any short,
+/// trailing, or non-canonical body returns `None` so the caller keeps the
+/// region as raw bytes and decoding never panics.
+fn decode_interface_info(c_type: u8, mut body: &[u8]) -> Option<IcmpExtensionInterfaceInfo> {
+    let role = (c_type >> 6) & 0x03;
+    let reserved = (c_type >> 4) & 0x03;
+    let mut info = IcmpExtensionInterfaceInfo {
+        role: Field::user(role),
+        reserved: Field::user(reserved),
+        if_index: None,
+        ip_address: None,
+        name: None,
+        mtu: None,
+    };
+
+    if c_type & ICMP_INTERFACE_CTYPE_IFINDEX != 0 {
+        if body.len() < ICMP_INTERFACE_IFINDEX_LEN {
+            return None;
+        }
+        info.if_index = Some(u32::from_be_bytes(copy_array_4(
+            &body[..ICMP_INTERFACE_IFINDEX_LEN],
+        )));
+        body = &body[ICMP_INTERFACE_IFINDEX_LEN..];
+    }
+
+    if c_type & ICMP_INTERFACE_CTYPE_IP_ADDRESS != 0 {
+        if body.len() < ICMP_INTERFACE_IP_ADDRESS_PREFIX_LEN {
+            return None;
+        }
+        let afi = u16::from_be_bytes([body[0], body[1]]);
+        let reserved16 = u16::from_be_bytes([body[2], body[3]]);
+        // Only AFIs with a fixed address width can be split unambiguously from
+        // any following name/MTU sub-objects; unknown AFIs stay raw.
+        let addr_len = match afi {
+            ICMP_INTERFACE_AFI_IPV4 => 4,
+            ICMP_INTERFACE_AFI_IPV6 => 16,
+            _ => return None,
+        };
+        let total = ICMP_INTERFACE_IP_ADDRESS_PREFIX_LEN + addr_len;
+        if body.len() < total {
+            return None;
+        }
+        info.ip_address = Some(IcmpInterfaceIpAddress {
+            afi: Field::user(afi),
+            reserved: Field::user(reserved16),
+            address: body[ICMP_INTERFACE_IP_ADDRESS_PREFIX_LEN..total].to_vec(),
+        });
+        body = &body[total..];
+    }
+
+    if c_type & ICMP_INTERFACE_CTYPE_NAME != 0 {
+        if body.is_empty() {
+            return None;
+        }
+        let length = body[0] as usize;
+        // The length octet covers itself plus the name; the name is then padded
+        // to a 4-octet boundary. Reject lengths that do not fit or exceed the
+        // 64-octet ceiling.
+        if length < 1 || length > body.len() {
+            return None;
+        }
+        let name_len = length - 1;
+        if name_len > ICMP_INTERFACE_NAME_MAX {
+            return None;
+        }
+        let padded = length.div_ceil(4) * 4;
+        if padded > body.len() {
+            return None;
+        }
+        // Only canonical zero padding round-trips through compile.
+        if body[length..padded].iter().any(|&byte| byte != 0) {
+            return None;
+        }
+        info.name = Some(body[1..length].to_vec());
+        body = &body[padded..];
+    }
+
+    if c_type & ICMP_INTERFACE_CTYPE_MTU != 0 {
+        if body.len() < ICMP_INTERFACE_MTU_LEN {
+            return None;
+        }
+        info.mtu = Some(u32::from_be_bytes(copy_array_4(
+            &body[..ICMP_INTERFACE_MTU_LEN],
+        )));
+        body = &body[ICMP_INTERFACE_MTU_LEN..];
+    }
+
+    // Sub-objects must consume the body exactly so the typed layer round-trips.
+    if !body.is_empty() {
+        return None;
+    }
+
+    Some(info)
 }
 
 /// Append a decoded ICMPv6 packet to an existing packet stack.
@@ -2816,6 +3349,19 @@ fn icmpv4_type_allows_extensions(icmp_type: u8) -> bool {
         icmp_type,
         ICMP_DESTINATION_UNREACHABLE | ICMP_TIME_EXCEEDED | ICMP_PARAMETER_PROBLEM
     )
+}
+
+/// Human-readable RFC 5837 interface role, keeping the raw numeric value visible
+/// for unknown role codes (the field is only two bits, so all values are
+/// assigned, but the formatting is kept defensive).
+fn interface_role_summary(role: u8) -> String {
+    match role {
+        ICMP_INTERFACE_ROLE_INCOMING => "incoming".to_string(),
+        ICMP_INTERFACE_ROLE_SUB_IP_INCOMING => "sub-ip-incoming".to_string(),
+        ICMP_INTERFACE_ROLE_OUTGOING => "outgoing".to_string(),
+        ICMP_INTERFACE_ROLE_NEXT_HOP => "next-hop".to_string(),
+        other => format!("role({other})"),
+    }
 }
 
 /// True for the RFC 792 error-family ICMPv4 types that quote the original
@@ -4947,7 +5493,10 @@ mod icmpv4_rfc4950_mpls {
         // Object length covers the 4-byte header plus three 4-byte entries.
         let object = {
             let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-            decoded.layer::<IcmpExtensionObject>().unwrap().length_value()
+            decoded
+                .layer::<IcmpExtensionObject>()
+                .unwrap()
+                .length_value()
         };
         assert_eq!(object, Some(16));
 
@@ -4997,8 +5546,14 @@ mod icmpv4_rfc4950_mpls {
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
-            / IcmpExtensionMpls::new().label(1).ttl(1).bottom_of_stack(true)
-            / IcmpExtensionMpls::new().label(2).ttl(2).bottom_of_stack(false))
+            / IcmpExtensionMpls::new()
+                .label(1)
+                .ttl(1)
+                .bottom_of_stack(true)
+            / IcmpExtensionMpls::new()
+                .label(2)
+                .ttl(2)
+                .bottom_of_stack(false))
         .compile()
         .unwrap();
 
@@ -5105,5 +5660,312 @@ mod icmpv4_rfc4950_mpls {
         // It survives as a raw body and the buffer round-trips unchanged.
         assert!(decoded.layer::<Raw>().is_some());
         assert_eq!(decoded.compile().unwrap().as_bytes(), &bytes[..]);
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_rfc5837_interface_info {
+    use super::{
+        Icmp, IcmpExtension, IcmpExtensionInterfaceInfo, IcmpExtensionObject,
+        IcmpInterfaceIpAddress, IcmpQuotedIpv4, ICMP_EXTENSION_CLASS_INTERFACE_INFO,
+        ICMP_INTERFACE_CTYPE_IFINDEX, ICMP_INTERFACE_CTYPE_IP_ADDRESS, ICMP_INTERFACE_CTYPE_MTU,
+        ICMP_INTERFACE_CTYPE_NAME, ICMP_INTERFACE_ROLE_NEXT_HOP, ICMP_INTERFACE_ROLE_OUTGOING,
+        ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM,
+    };
+    use crate::checksum::verify_internet_checksum;
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use core::net::{Ipv4Addr, Ipv6Addr};
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    fn quoted_udp() -> Packet {
+        Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 1))
+            .proto(IpProtocol::Udp)
+            / Udp::new().sport(40000).dport(53)
+            / Raw::from("query")
+    }
+
+    // The ICMP body begins at offset 28; the quote is padded up to the 128-octet
+    // RFC 4884 minimum, so the extension header sits at offset 28 + 128 and the
+    // first object header four bytes later.
+    const EXT_HEADER_START: usize = 28 + ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM;
+    const OBJECT_HEADER_START: usize = EXT_HEADER_START + 4;
+    const OBJECT_BODY_START: usize = OBJECT_HEADER_START + 4;
+
+    // A full interface information object carrying every RFC 5837 sub-object
+    // (ifIndex, IPv4 address, name, MTU) encodes its C-Type presence bits and
+    // decodes back into a typed layer that exposes each field.
+    #[test]
+    fn icmpv4_rfc5837_interface_info_all_subobjects_encode_decode() {
+        let info = IcmpExtensionInterfaceInfo::new()
+            .role(ICMP_INTERFACE_ROLE_OUTGOING)
+            .if_index(7)
+            .ip_address(IcmpInterfaceIpAddress::ipv4(Ipv4Addr::new(192, 0, 2, 99)))
+            .name("eth0")
+            .mtu(1500);
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / info)
+            .compile()
+            .unwrap();
+
+        // The object header auto-fills class 2 and a C-Type with role=2 and all
+        // four presence bits set.
+        let expected_ctype = (ICMP_INTERFACE_ROLE_OUTGOING << 6)
+            | ICMP_INTERFACE_CTYPE_IFINDEX
+            | ICMP_INTERFACE_CTYPE_IP_ADDRESS
+            | ICMP_INTERFACE_CTYPE_NAME
+            | ICMP_INTERFACE_CTYPE_MTU;
+        assert_eq!(
+            compiled.as_bytes()[OBJECT_HEADER_START + 2],
+            ICMP_EXTENSION_CLASS_INTERFACE_INFO
+        );
+        assert_eq!(compiled.as_bytes()[OBJECT_HEADER_START + 3], expected_ctype);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let info = decoded.layer::<IcmpExtensionInterfaceInfo>().unwrap();
+        assert_eq!(info.role_value(), ICMP_INTERFACE_ROLE_OUTGOING);
+        assert_eq!(info.if_index_value(), Some(7));
+        assert_eq!(
+            info.ip_address_value().unwrap().ipv4_value(),
+            Some(Ipv4Addr::new(192, 0, 2, 99))
+        );
+        assert_eq!(info.name_value(), Some(&b"eth0"[..]));
+        assert_eq!(info.mtu_value(), Some(1500));
+        // The whole packet reproduces its bytes exactly.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // Each sub-object can stand alone; an ifIndex-only object sets just the
+    // ifIndex presence bit and round-trips.
+    #[test]
+    fn icmpv4_rfc5837_interface_info_ifindex_only() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceInfo::new().if_index(0xdead_beef))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let info = decoded.layer::<IcmpExtensionInterfaceInfo>().unwrap();
+        assert_eq!(info.if_index_value(), Some(0xdead_beef));
+        assert_eq!(info.ip_address_value(), None);
+        assert_eq!(info.name_value(), None);
+        assert_eq!(info.mtu_value(), None);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // An IPv6 IP Address sub-object carries a 16-byte address and is recognized
+    // on decode by its AFI.
+    #[test]
+    fn icmpv4_rfc5837_interface_info_ipv6_address_subobject() {
+        let addr = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x1234);
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceInfo::new()
+                .role(ICMP_INTERFACE_ROLE_NEXT_HOP)
+                .ip_address(IcmpInterfaceIpAddress::ipv6(addr)))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let info = decoded.layer::<IcmpExtensionInterfaceInfo>().unwrap();
+        assert_eq!(info.role_value(), ICMP_INTERFACE_ROLE_NEXT_HOP);
+        assert_eq!(info.ip_address_value().unwrap().ipv6_value(), Some(addr));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // The interface name sub-object emits a leading length octet covering itself
+    // plus the name, then zero pads to a 4-octet boundary; decode strips both.
+    #[test]
+    fn icmpv4_rfc5837_interface_info_name_padding() {
+        // "eth0" is 4 octets; with the length octet the sub-object is 5 octets,
+        // padded up to 8.
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceInfo::new().name("eth0"))
+        .compile()
+        .unwrap();
+
+        // Length octet: 1 (itself) + 4 (name) = 5.
+        assert_eq!(compiled.as_bytes()[OBJECT_BODY_START], 5);
+        assert_eq!(
+            &compiled.as_bytes()[OBJECT_BODY_START + 1..OBJECT_BODY_START + 5],
+            b"eth0"
+        );
+        // Three zero pad octets bring the sub-object to an 8-octet boundary.
+        assert_eq!(
+            &compiled.as_bytes()[OBJECT_BODY_START + 5..OBJECT_BODY_START + 8],
+            &[0, 0, 0]
+        );
+        // Object length covers the 4-byte header plus the 8-byte name sub-object.
+        let object = compiled.as_bytes()[OBJECT_HEADER_START + 1];
+        assert_eq!(object, 12);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let info = decoded.layer::<IcmpExtensionInterfaceInfo>().unwrap();
+        assert_eq!(info.name_value(), Some(&b"eth0"[..]));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // The object length field auto-fills to the 4-byte object header plus the
+    // sub-object body length when left unset.
+    #[test]
+    fn icmpv4_rfc5837_interface_info_length_autofill() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceInfo::new().if_index(1).mtu(9000))
+        .compile()
+        .unwrap();
+
+        // Body: 4-byte ifIndex + 4-byte MTU = 8; object length = 4 + 8 = 12.
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let object = decoded.layer::<IcmpExtensionObject>().unwrap();
+        assert_eq!(object.length_value(), Some(12));
+        assert_eq!(
+            object.class_num_value(),
+            ICMP_EXTENSION_CLASS_INTERFACE_INFO
+        );
+    }
+
+    // An explicit object length override is honored verbatim even when it does
+    // not match the auto-computed body length.
+    #[test]
+    fn icmpv4_rfc5837_interface_info_explicit_length_override() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new().length(99)
+            / IcmpExtensionInterfaceInfo::new().if_index(1))
+        .compile()
+        .unwrap();
+
+        // The big-endian length field carries the override, not the computed 8.
+        assert_eq!(
+            u16::from_be_bytes([
+                compiled.as_bytes()[OBJECT_HEADER_START],
+                compiled.as_bytes()[OBJECT_HEADER_START + 1],
+            ]),
+            99
+        );
+    }
+
+    // The RFC 4884 extension checksum is computed over the whole extension
+    // structure including the interface information object and verifies on
+    // decode.
+    #[test]
+    fn icmpv4_rfc5837_interface_info_extension_checksum() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceInfo::new()
+                .if_index(5)
+                .name("wlan0")
+                .mtu(1280))
+        .compile()
+        .unwrap();
+
+        // The extension structure (from the version/reserved/checksum header to
+        // the end) carries a one's-complement checksum that verifies.
+        assert!(verify_internet_checksum(
+            &compiled.as_bytes()[EXT_HEADER_START..]
+        ));
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        // The decoded extension header preserves the transmitted checksum.
+        let extension = decoded.layer::<IcmpExtension>().unwrap();
+        assert!(extension.checksum_value().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // An unknown extension object class is not an interface information object;
+    // it falls back to the generic IcmpExtensionObject + Raw body and is not
+    // mistakenly typed as RFC 5837.
+    #[test]
+    fn icmpv4_rfc5837_interface_info_unknown_class_stays_raw() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new().class_num(200).c_type(0x0f)
+            / Raw::from_bytes([1, 2, 3, 4]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpExtensionInterfaceInfo>().is_none());
+        let object = decoded.layer::<IcmpExtensionObject>().unwrap();
+        assert_eq!(object.class_num_value(), 200);
+        assert!(decoded.layer::<Raw>().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // An interface information object whose body is too short for the sub-objects
+    // its C-Type claims cannot be parsed defensibly; decode keeps the body raw
+    // and never panics, and the buffer round-trips unchanged.
+    #[test]
+    fn icmpv4_rfc5837_interface_info_truncated_subobject_stays_raw() {
+        // Class 2, C-Type with the MTU presence bit set, but only two body octets
+        // (an MTU needs four). The object is otherwise well-formed.
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+                .class_num(ICMP_EXTENSION_CLASS_INTERFACE_INFO)
+                .c_type(ICMP_INTERFACE_CTYPE_MTU)
+            / Raw::from_bytes([0xaa, 0xbb]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        // The under-length body is not typed as an interface information object.
+        assert!(decoded.layer::<IcmpExtensionInterfaceInfo>().is_none());
+        assert!(decoded.layer::<Raw>().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // The summary names the interface role and surfaces each present sub-object's
+    // value without hiding the raw numbers.
+    #[test]
+    fn icmpv4_rfc5837_interface_info_summary() {
+        let info = IcmpExtensionInterfaceInfo::new()
+            .role(ICMP_INTERFACE_ROLE_OUTGOING)
+            .if_index(42)
+            .ip_address(IcmpInterfaceIpAddress::ipv4(Ipv4Addr::new(192, 0, 2, 1)))
+            .name("eth1")
+            .mtu(1500);
+        let summary = crate::packet::Layer::summary(&info);
+        assert!(summary.contains("outgoing"), "summary was {summary}");
+        assert!(summary.contains("ifindex=42"), "summary was {summary}");
+        assert!(summary.contains("192.0.2.1"), "summary was {summary}");
+        assert!(summary.contains("name=eth1"), "summary was {summary}");
+        assert!(summary.contains("mtu=1500"), "summary was {summary}");
     }
 }
