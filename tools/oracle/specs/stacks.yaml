@@ -226,6 +226,7 @@ stacks:
       - dns-name-escaped
       - dns-name-non-text
       - dns-name-compressed
+      - dns-compressed-names
       - crafter-dns-name-uncompressed
       - dns-question-class
       - dns-question-unknown-codes

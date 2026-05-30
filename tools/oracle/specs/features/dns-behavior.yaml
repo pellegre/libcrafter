@@ -37,6 +37,10 @@ behaviors:
     comparison:
       - strict_bytes
       - normalized_names
+  - name: compressed_names
+    comparison:
+      - normalized_names
+    raw_dns: true
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -192,6 +196,7 @@ case_groups:
     normalized_note: libcrafter emits the uncompressed name on re-encode, so the decoded name model agrees while bytes differ from the compressed Scapy input.
     cases:
       - dns-name-compressed
+      - dns-compressed-names
   - name: dns-questions
     summary: Single and multi-question messages, class variants, and unknown numeric codes.
     byte_policy: strict_bytes
@@ -332,6 +337,7 @@ coverage_cases:
   - dns-name-escaped
   - dns-name-non-text
   - dns-name-compressed
+  - dns-compressed-names
   - crafter-dns-name-uncompressed
   - dns-question-class
   - dns-question-unknown-codes
@@ -459,6 +465,10 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-name-compressed
+    directions:
+      - reference_to_libcrafter
+    byte_policy: normalized
+  - name: dns-compressed-names
     directions:
       - reference_to_libcrafter
     byte_policy: normalized

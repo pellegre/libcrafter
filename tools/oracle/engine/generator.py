@@ -1779,6 +1779,10 @@ def _icmp_error_type_for_case(case: str, behavior: str, *, ipv6: bool) -> str:
 
 def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None:
     key = f"{case} {behavior}".replace("_", "-")
+    if "compressed-names" in key:
+        fields.clear()
+        fields["dns_raw"] = _dns_compressed_names_raw_spec()
+        return
     if "header-flags-opcodes" in key:
         fields["is_response"] = True
         fields["opcode"] = "status"
@@ -1803,6 +1807,41 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
     if "truncated" in key:
         fields["flags"] = ["recursion_desired", "truncated"]
         fields["response_code"] = "server_failure"
+
+
+def _dns_compressed_names_raw_spec() -> JSONObject:
+    """Raw DNS spec with explicit compression pointers for the raw helper.
+
+    The question name ``example.com.`` lands at the fixed offset 12 (right after
+    the 12-octet header). The answer owner name is a bare pointer back to that
+    name, and the answer RDATA target is the label ``alias`` followed by a
+    pointer to the same name. Scapy's high-level fields will not emit these
+    pointers in a single-record message, so the bytes must be built by hand while
+    staying under the Scapy reference backend.
+    """
+
+    question_name_offset = 12  # DNS header is a fixed 12 octets.
+    return {
+        "transaction_id": 0x1234,
+        "is_response": True,
+        "flags": ["recursion_desired", "recursion_available"],
+        "response_code": "no_error",
+        "questions": [
+            {"name": "example.com.", "type": "CNAME", "class": "IN"},
+        ],
+        "answers": [
+            {
+                "name_with_pointer": {"prefix": None, "pointer_offset": question_name_offset},
+                "type": "CNAME",
+                "class": "IN",
+                "ttl": 300,
+                "target_with_pointer": {
+                    "prefix": "alias",
+                    "pointer_offset": question_name_offset,
+                },
+            }
+        ],
+    }
 
 
 def _dns_answers_for_domain(ctx: _SamplingContext, domain: object) -> list[JSONObject]:

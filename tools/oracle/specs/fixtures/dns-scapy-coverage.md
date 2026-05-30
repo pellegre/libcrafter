@@ -89,6 +89,7 @@ Source read for this matrix:
 | Escaped presentation name (`\DDD`) | `dns-name-escaped` | both | strict_bytes | partial (raw qname bytes) | yes |
 | Non-text label (non-UTF-8 octets, `\000`, `\255`) | `dns-name-non-text` | both | strict_bytes | no | yes |
 | Compressed-name decode (pointer to earlier name) | `dns-name-compressed` | reference_to_libcrafter | normalized: libcrafter emits the uncompressed name on re-encode, so the decoded `DnsName` model must agree while bytes differ from the compressed Scapy input | partial (Scapy compresses; raw bytes pin the pointer) | yes |
+| Explicit compression pointer (owner-name and RDATA-target pointers built by the Scapy raw helper) | `dns-compressed-names` | reference_to_libcrafter | normalized: libcrafter re-encodes the names uncompressed, so the decoded `DnsName` model agrees while bytes differ from the raw pointer input | no (Scapy raw DNS helper pins the `0xC0` pointer; high-level fields will not emit it) | yes |
 | Uncompressed deterministic encode (no compression by default) | `crafter-dns-name-uncompressed` | libcrafter_to_reference | strict_bytes | yes | no |
 
 ## 3. Questions
@@ -232,8 +233,8 @@ semantic comparison.
   fields, and uncompressed names.
 - **normalized** is required only where libcrafter deterministically rewrites
   the wire shape on encode and the rewrite is documented in the case row:
-  compressed-name input (`dns-name-compressed`), sorted SvcParams
-  (`dns-svcb-service`), and minimal/sorted type bitmaps
+  compressed-name input (`dns-name-compressed`, `dns-compressed-names`), sorted
+  SvcParams (`dns-svcb-service`), and minimal/sorted type bitmaps
   (`dns-dnssec-nsec-bitmap`).
 - **structured error** rows assert a typed `CrafterError` context with no
   panic, in line with the malformed-input requirement.

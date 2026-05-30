@@ -7,6 +7,7 @@ from typing import Any
 
 from ...model import EncodedVector, JSONObject, PacketPlan
 from ..registry import BackendCapabilities, BackendRegistration, get_backend
+from . import dns_raw
 from .bootstrap import import_scapy
 
 
@@ -132,6 +133,7 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "additional",
         "answers",
         "authority",
+        "dns_raw",
         "flags",
         "id",
         "is_response",
@@ -701,6 +703,9 @@ def _tcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
 
 def _dns(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
     dns_fields = _layer_fields(fields, "dns")
+    raw_spec = dns_fields.get("dns_raw")
+    if dns_raw.is_raw_dns_spec(raw_spec):
+        return dns_raw.materialize_raw_dns(raw_spec, scapy_all)
     questions_value = dns_fields.get("questions")
     flags = _dns_flags(_optional_field(dns_fields, "flags"))
     questions = _dns_questions(dns_fields, scapy_all)
