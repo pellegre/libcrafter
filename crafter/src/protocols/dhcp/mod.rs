@@ -2391,6 +2391,68 @@ mod dhcp_option_overload {
     }
 
     #[test]
+    fn dhcp_option_overload_is_visible_in_show_for_each_area() {
+        // Inspection output (`show()`) must surface the resolved option-overload
+        // value so an agent never has to guess which fixed fields carry options.
+        // None: no overload row value other than `none`.
+        let plain = Packet::from_layer(
+            Dhcp::new()
+                .message_type(DhcpMessageType::Discover)
+                .sname("boot-server")
+                .file("pxelinux.0"),
+        );
+        assert!(
+            plain.show().contains("overload: none"),
+            "non-overloaded DHCP show output must report overload: none\n{}",
+            plain.show()
+        );
+
+        // File only.
+        let file = Packet::from_layer(
+            Dhcp::new()
+                .message_type(DhcpMessageType::Ack)
+                .file_option(DhcpOption::host_name("from-file"))
+                .file_option(DhcpOption::End),
+        );
+        assert!(
+            file.show().contains("overload: file"),
+            "file-overloaded DHCP show output must report overload: file\n{}",
+            file.show()
+        );
+
+        // Sname only.
+        let sname = Packet::from_layer(
+            Dhcp::new()
+                .message_type(DhcpMessageType::Ack)
+                .sname_option(DhcpOption::host_name("from-sname"))
+                .sname_option(DhcpOption::End),
+        );
+        assert!(
+            sname.show().contains("overload: sname"),
+            "sname-overloaded DHCP show output must report overload: sname\n{}",
+            sname.show()
+        );
+
+        // Both file and sname: decode from compiled bytes so the visibility is
+        // checked on a fully round-tripped packet, not just the builder.
+        let both = Dhcp::new()
+            .message_type(DhcpMessageType::Ack)
+            .file_option(DhcpOption::subnet_mask(Ipv4Addr::new(255, 255, 255, 0)))
+            .file_option(DhcpOption::End)
+            .sname_option(DhcpOption::router([Ipv4Addr::new(192, 0, 2, 254)]))
+            .sname_option(DhcpOption::End);
+        let bytes = compiled_bytes(both);
+        let decoded = Packet::from_layer(Dhcp::decode(&bytes).unwrap());
+        let show = decoded.show();
+        assert!(
+            show.contains("overload: file+sname"),
+            "both-overloaded DHCP show output must report overload: file+sname\n{show}"
+        );
+        // The one-line summary stays stable and non-empty alongside show().
+        assert!(decoded.summary().starts_with("Dhcp(type="));
+    }
+
+    #[test]
     fn dhcp_option_overload_honors_explicit_option_52() {
         // When the caller sets option 52 explicitly, it is honored untouched and
         // not duplicated by the auto-insert path.
