@@ -450,24 +450,36 @@ fn dns_layer(plan: &Value) -> ExampleResult<Dns> {
 
 fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcp> {
     let fields = layer_fields(plan, "dhcp")?;
-    let mut layer = Dhcp::new()
-        .op(dhcp_op(required(fields, &["op"])?)?)
-        .hardware_type(hardware_type_value(required(fields, &["hardware_type", "htype"])?)? as u8)
-        .hardware_len(u8_value(required(fields, &["hardware_length", "hlen"])?)?)
-        .xid(u32_value(required(fields, &["transaction_id", "xid"])?)?)
-        .flags(dhcp_flags(required(fields, &["flags"])?)?)
-        .ciaddr(Ipv4Addr::from_str(text_required(
-            fields,
-            &["client_ip", "ciaddr"],
-        )?)?)
-        .yiaddr(Ipv4Addr::from_str(text_required(
-            fields,
-            &["your_ip", "yiaddr"],
-        )?)?)
-        .chaddr(mac_bytes(text_required(
-            fields,
-            &["client_hardware_address", "chaddr"],
-        )?)?);
+    // The fixed BOOTP header fields are optional: a minimal live-friendly DHCP
+    // plan emits only op/flags/options and relies on `Dhcp::new()` defaults
+    // (BOOTP_REQUEST op, Ethernet htype, hlen 6, xid 0, zero MAC, unspecified
+    // addresses) for anything it does not set. Honor every field the plan does
+    // provide and leave the rest at their protocol-correct defaults.
+    let mut layer = Dhcp::new();
+    if let Some(value) = optional(fields, &["op"]) {
+        layer = layer.op(dhcp_op(value)?);
+    }
+    if let Some(value) = optional(fields, &["hardware_type", "htype"]) {
+        layer = layer.hardware_type(hardware_type_value(value)? as u8);
+    }
+    if let Some(value) = optional(fields, &["hardware_length", "hlen"]) {
+        layer = layer.hardware_len(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["transaction_id", "xid"]) {
+        layer = layer.xid(u32_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["flags"]) {
+        layer = layer.flags(dhcp_flags(value)?);
+    }
+    if let Some(value) = optional(fields, &["client_ip", "ciaddr"]) {
+        layer = layer.ciaddr(Ipv4Addr::from_str(text_value(value)?)?);
+    }
+    if let Some(value) = optional(fields, &["your_ip", "yiaddr"]) {
+        layer = layer.yiaddr(Ipv4Addr::from_str(text_value(value)?)?);
+    }
+    if let Some(value) = optional(fields, &["client_hardware_address", "chaddr"]) {
+        layer = layer.chaddr(mac_bytes(text_value(value)?)?);
+    }
     if let Some(options) = optional(fields, &["options"]) {
         layer = layer.options(dhcp_options(options)?);
     }
@@ -1225,5 +1237,135 @@ mod dhcp_oracle_fixtures {
             decoded.message_type_value(),
             Some(DhcpMessageType::LeaseQuery)
         );
+    }
+}
+
+/// Materializer coverage for IPv4-root DHCP plans.
+///
+/// These tests drive the live offline `libcrafter_to_reference` materialization
+/// path directly: they feed an `ipv4 / udp / dhcp` plan (the shape the seeded
+/// generator emits for `--case dhcp-discover` rooted at `l3:ipv4`) to
+/// [`materialize_plan`], then assert the emitted vector roots at `l3:ipv4`,
+/// carries the BOOTP port pair (68 -> 67), and re-decodes through the public
+/// `decode_from_l3` entrypoint with a recoverable DHCP message type. Addresses
+/// are RFC 5737 documentation space; nothing touches a network.
+#[cfg(test)]
+mod ipv4_dhcp_materialization {
+    use super::{decode_hex, materialize_plan};
+    use crafter::prelude::*;
+    use serde_json::{json, Value};
+
+    /// A minimal live-friendly `ipv4 / udp / dhcp` plan, matching the seeded
+    /// generator output: only the DHCP op/flags/options are set, so the fixed
+    /// BOOTP header fields must fall back to `Dhcp::new()` defaults.
+    fn ipv4_dhcp_discover_plan() -> Value {
+        json!({
+            "stack": ["ipv4", "udp", "dhcp"],
+            "metadata": {
+                "root_decoder": "l3:ipv4",
+                "root": "l3:ipv4"
+            },
+            "feature_tags": ["ipv4", "udp", "dhcp", "dhcp_behavior"],
+            "strict_bytes": true,
+            "fields": {
+                "ipv4": {
+                    "src": "192.0.2.1",
+                    "dst": "198.51.100.10",
+                    "identification": 4242,
+                    "ttl": 64,
+                    "flags": "none",
+                    "protocol": "udp"
+                },
+                "udp": {
+                    "src_port": 68,
+                    "dst_port": 67
+                },
+                "dhcp": {
+                    "op": "bootrequest",
+                    "flags": "none",
+                    "options": ["message-type=discover", "end"]
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn ipv4_dhcp_plan_materializes_through_public_surface() {
+        let plan = ipv4_dhcp_discover_plan();
+        let vector = materialize_plan(&plan).expect("ipv4/udp/dhcp plan must materialize");
+
+        // The vector must root at the IPv4 network layer.
+        assert_eq!(
+            vector.get("root").and_then(Value::as_str),
+            Some("l3:ipv4"),
+            "materialized vector must root at l3:ipv4"
+        );
+        assert_eq!(
+            vector.get("decoder").and_then(Value::as_str),
+            Some("l3:ipv4"),
+            "materialized vector decoder must be l3:ipv4"
+        );
+        let stack: Vec<&str> = vector
+            .get("stack")
+            .and_then(Value::as_array)
+            .expect("vector must carry a stack array")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(stack, ["ipv4", "udp", "dhcp"]);
+
+        let raw_hex = vector
+            .get("raw_hex")
+            .and_then(Value::as_str)
+            .expect("vector must carry raw_hex bytes");
+        assert!(!raw_hex.is_empty(), "materialized vector must not be empty");
+        let bytes = decode_hex(raw_hex).expect("raw_hex must decode to bytes");
+
+        // Re-decode the produced bytes through the public IPv4 entrypoint.
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
+            .expect("materialized IPv4 DHCP vector must re-decode from l3");
+
+        decoded
+            .layer::<Ipv4>()
+            .expect("re-decoded packet must expose an IPv4 layer");
+
+        let udp = decoded
+            .layer::<Udp>()
+            .expect("re-decoded packet must expose a UDP layer");
+        assert_eq!(udp.source_port_value(), 68, "BOOTP client port");
+        assert_eq!(udp.destination_port_value(), 67, "BOOTP server port");
+
+        let dhcp = decoded
+            .layer::<Dhcp>()
+            .expect("re-decoded packet must expose a DHCP layer over UDP");
+        assert_eq!(
+            dhcp.message_type_value(),
+            Some(DhcpMessageType::Discover),
+            "DHCP message type must be present and decode to discover"
+        );
+    }
+
+    #[test]
+    fn ipv4_dhcp_plan_defaults_fixed_bootp_fields() {
+        // A plan that omits xid/ciaddr/yiaddr/chaddr (as the smoke generator
+        // does) must still materialize via Dhcp::new() defaults rather than
+        // failing with a missing-required-field error.
+        let plan = ipv4_dhcp_discover_plan();
+        let vector = materialize_plan(&plan)
+            .expect("ipv4/udp/dhcp plan without fixed BOOTP fields must materialize");
+        let raw_hex = vector
+            .get("raw_hex")
+            .and_then(Value::as_str)
+            .expect("vector must carry raw_hex bytes");
+        let bytes = decode_hex(raw_hex).expect("raw_hex must decode to bytes");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
+            .expect("default-filled IPv4 DHCP vector must re-decode");
+        let dhcp = decoded
+            .layer::<Dhcp>()
+            .expect("re-decoded packet must expose a DHCP layer");
+        // Defaults: BOOTP request op and Ethernet hardware type/len.
+        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcp.hardware_type_value(), DHCP_HTYPE_ETHERNET);
+        assert_eq!(dhcp.hardware_len_value(), 6);
     }
 }
