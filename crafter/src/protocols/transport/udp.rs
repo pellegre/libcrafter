@@ -120,6 +120,27 @@ pub enum UdpOptionStatus {
     AdditionalPayloadChecksumInvalid,
 }
 
+/// Registry classification for a UDP option kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UdpOptionKindClass {
+    /// Assigned SAFE option with behavior implemented by `crafter`.
+    KnownSafe,
+    /// Assigned UNSAFE option with behavior implemented by `crafter`.
+    KnownUnsafe,
+    /// Currently unassigned SAFE option kind.
+    UnassignedSafe,
+    /// Currently unassigned UNSAFE option kind.
+    UnassignedUnsafe,
+    /// SAFE experimental option kind.
+    ExperimentalSafe,
+    /// UNSAFE experimental option kind.
+    ExperimentalUnsafe,
+    /// Reserved SAFE option kind.
+    ReservedSafe,
+    /// Reserved UNSAFE option kind.
+    ReservedUnsafe,
+}
+
 /// Parsed or constructible UDP surplus option.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UdpOption {
@@ -450,6 +471,16 @@ impl UdpOption {
     /// Return true when this option kind is in the UDP UNSAFE range.
     pub const fn is_unsafe(&self) -> bool {
         udp_option_kind_is_unsafe(self.kind())
+    }
+
+    /// Return the registry classification for this option kind.
+    pub const fn kind_class(&self) -> UdpOptionKindClass {
+        udp_option_kind_class(self.kind())
+    }
+
+    /// Return true when `crafter` preserves this option but does not process it.
+    pub const fn is_unsupported(&self) -> bool {
+        udp_option_kind_is_unsupported(self.kind())
     }
 
     /// Return true if this option uses the extended length format.
@@ -1221,8 +1252,42 @@ const fn udp_option_needs_extended_length(data_len: usize) -> bool {
     UDP_OPTION_SHORT_HEADER_LEN + data_len >= UDP_OPTION_EXTENDED_LEN_SENTINEL as usize
 }
 
-const fn udp_option_kind_is_unsafe(kind: u8) -> bool {
+/// Return the registry classification for a UDP option kind.
+pub const fn udp_option_kind_class(kind: u8) -> UdpOptionKindClass {
+    match kind {
+        UDP_OPTION_EOL | UDP_OPTION_NOP | UDP_OPTION_APC | UDP_OPTION_FRAG | UDP_OPTION_MDS
+        | UDP_OPTION_MRDS | UDP_OPTION_REQ | UDP_OPTION_RES | UDP_OPTION_TIME => {
+            UdpOptionKindClass::KnownSafe
+        }
+        UDP_OPTION_AUTH | UDP_OPTION_RESERVED_SAFE_START..=UDP_OPTION_RESERVED_SAFE_END => {
+            UdpOptionKindClass::ReservedSafe
+        }
+        UDP_OPTION_UNASSIGNED_SAFE_START..=UDP_OPTION_UNASSIGNED_SAFE_END => {
+            UdpOptionKindClass::UnassignedSafe
+        }
+        UDP_OPTION_EXP => UdpOptionKindClass::ExperimentalSafe,
+        UDP_OPTION_UCMP | UDP_OPTION_UENC | UDP_OPTION_RESERVED_UNSAFE => {
+            UdpOptionKindClass::ReservedUnsafe
+        }
+        UDP_OPTION_UNASSIGNED_UNSAFE_START..=UDP_OPTION_UNASSIGNED_UNSAFE_END => {
+            UdpOptionKindClass::UnassignedUnsafe
+        }
+        UDP_OPTION_UEXP => UdpOptionKindClass::ExperimentalUnsafe,
+    }
+}
+
+/// Return true when a UDP option kind is in the UNSAFE registry range.
+pub const fn udp_option_kind_is_unsafe(kind: u8) -> bool {
     kind >= UDP_OPTION_UCMP
+}
+
+/// Return true when `crafter` preserves but does not process this option kind.
+pub const fn udp_option_kind_is_unsupported(kind: u8) -> bool {
+    matches!(
+        kind,
+        UDP_OPTION_FRAG | UDP_OPTION_UCMP | UDP_OPTION_UENC | UDP_OPTION_UNASSIGNED_UNSAFE_START
+            ..=UDP_OPTION_UNASSIGNED_UNSAFE_END | UDP_OPTION_RESERVED_UNSAFE
+    )
 }
 
 fn udp_experiment_parts(option: &UdpOption) -> Option<(u16, &[u8])> {
@@ -1293,14 +1358,27 @@ fn parse_udp_options_for_status(bytes: &[u8]) -> (Vec<UdpOption>, UdpOptionStatu
     }
 
     let mut options = Vec::new();
+    let mut has_malformed_apc = false;
     for option in UdpOptionIter::new(bytes) {
         match option {
-            Ok(option) => options.push(option),
+            Ok(option) => {
+                has_malformed_apc |= udp_option_is_malformed_apc(&option);
+                let is_unsupported = option.is_unsupported();
+                options.push(option);
+                if is_unsupported {
+                    let status = if has_malformed_apc {
+                        UdpOptionStatus::AdditionalPayloadChecksumInvalid
+                    } else {
+                        UdpOptionStatus::Unsupported
+                    };
+                    return (options, status);
+                }
+            }
             Err(_) => return (options, UdpOptionStatus::Malformed),
         }
     }
 
-    let status = if options.iter().any(udp_option_is_malformed_apc) {
+    let status = if has_malformed_apc {
         UdpOptionStatus::AdditionalPayloadChecksumInvalid
     } else {
         UdpOptionStatus::Valid
@@ -1460,16 +1538,37 @@ fn udp_option_inspection_summary(option: &UdpOption) -> String {
         | UdpOption::ExtendedUnsafeExperimental { exid_and_data } => {
             udp_experiment_inspection_summary("UEXP", exid_and_data, "UNSAFE")
         }
-        UdpOption::Generic { kind, data } => {
-            format!(
-                "Generic(kind={kind},len={})",
-                UDP_OPTION_SHORT_HEADER_LEN + data.len()
-            )
-        }
-        UdpOption::ExtendedGeneric { kind, data } => format!(
-            "ExtendedGeneric(kind={kind},len={})",
-            UDP_OPTION_EXTENDED_HEADER_LEN + data.len()
+        UdpOption::Generic { kind, data } => udp_generic_inspection_summary(
+            "Generic",
+            *kind,
+            UDP_OPTION_SHORT_HEADER_LEN + data.len(),
         ),
+        UdpOption::ExtendedGeneric { kind, data } => udp_generic_inspection_summary(
+            "ExtendedGeneric",
+            *kind,
+            UDP_OPTION_EXTENDED_HEADER_LEN + data.len(),
+        ),
+    }
+}
+
+fn udp_generic_inspection_summary(label: &str, kind: u8, len: usize) -> String {
+    let support = if udp_option_kind_is_unsupported(kind) {
+        ",support=unsupported"
+    } else {
+        ""
+    };
+    format!(
+        "{label}(kind={kind},len={len},class={:?},safety={}{support})",
+        udp_option_kind_class(kind),
+        udp_option_safety_label(kind)
+    )
+}
+
+const fn udp_option_safety_label(kind: u8) -> &'static str {
+    if udp_option_kind_is_unsafe(kind) {
+        "UNSAFE"
+    } else {
+        "SAFE"
     }
 }
 
@@ -1537,9 +1636,10 @@ impl Layer for UdpOptions {
 
     fn summary(&self) -> String {
         format!(
-            "UdpOptions(len={}, status={:?})",
+            "UdpOptions(len={}, status={:?}, options={})",
             self.bytes.len(),
-            self.status
+            self.status,
+            udp_options_inspection_summary(&self.options)
         )
     }
 
@@ -1979,11 +2079,15 @@ fn is_current_udp_surplus_layer(layer: &dyn Layer, seen_application_layer: bool)
 #[cfg(test)]
 mod tests {
     use super::{
-        Udp, UdpChecksumStatus, UdpOption, UdpOptionIter, UdpOptionStatus, UdpOptions,
-        UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_APC_LEN, UDP_OPTION_CHECKSUM_LEN,
-        UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MDS_LEN,
-        UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_REQ_LEN,
-        UDP_OPTION_RES, UDP_OPTION_RES_LEN, UDP_OPTION_TIME, UDP_OPTION_TIME_LEN, UDP_OPTION_UEXP,
+        udp_option_kind_class, udp_option_kind_is_unsafe, udp_option_kind_is_unsupported, Udp,
+        UdpChecksumStatus, UdpOption, UdpOptionIter, UdpOptionKindClass, UdpOptionStatus,
+        UdpOptions, UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_APC_LEN, UDP_OPTION_AUTH,
+        UDP_OPTION_CHECKSUM_LEN, UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG, UDP_OPTION_MDS,
+        UDP_OPTION_MDS_LEN, UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN, UDP_OPTION_NOP, UDP_OPTION_REQ,
+        UDP_OPTION_REQ_LEN, UDP_OPTION_RES, UDP_OPTION_RESERVED_SAFE_START,
+        UDP_OPTION_RESERVED_UNSAFE, UDP_OPTION_RES_LEN, UDP_OPTION_TIME, UDP_OPTION_TIME_LEN,
+        UDP_OPTION_UCMP, UDP_OPTION_UEXP, UDP_OPTION_UNASSIGNED_SAFE_START,
+        UDP_OPTION_UNASSIGNED_UNSAFE_START,
     };
     use crate::checksum::{crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum};
     use crate::{
@@ -2818,6 +2922,148 @@ mod tests {
             exid_and_data: vec![0x56],
         };
         assert_udp_option_encode_field_error(malformed, "udp.option.uexp.length");
+    }
+
+    #[test]
+    fn udp_option_unknown_safe_roundtrips_and_reports_metadata() {
+        let option = UdpOption::generic(UDP_OPTION_UNASSIGNED_SAFE_START, [0xaa, 0xbb]);
+        let encoded = [
+            UDP_OPTION_UNASSIGNED_SAFE_START,
+            4,
+            0xaa,
+            0xbb,
+            UDP_OPTION_EOL,
+        ];
+
+        assert_eq!(option.kind_class(), UdpOptionKindClass::UnassignedSafe);
+        assert!(!option.is_unsafe());
+        assert!(!option.is_unsupported());
+        assert_eq!(
+            option.to_string(),
+            "Generic(kind=10,len=4,class=UnassignedSafe,safety=SAFE)"
+        );
+
+        let udp_options = UdpOptions::from_bytes(encoded);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(
+            udp_options.options(),
+            &[option.clone(), UdpOption::EndOfList]
+        );
+        assert_eq!(udp_options.as_bytes(), &encoded);
+        assert!(udp_options.summary().contains("UnassignedSafe"));
+        assert!(udp_options.summary().contains("safety=SAFE"));
+
+        let typed = UdpOptions::from_options(vec![option, UdpOption::EndOfList]).unwrap();
+        assert_eq!(typed.as_bytes(), &encoded);
+        assert_eq!(typed.status(), UdpOptionStatus::Valid);
+    }
+
+    #[test]
+    fn udp_option_unknown_unsafe_roundtrips_and_reports_unsupported_metadata() {
+        let option = UdpOption::generic(UDP_OPTION_UNASSIGNED_UNSAFE_START, [0xde, 0xad]);
+        let encoded = [
+            UDP_OPTION_UNASSIGNED_UNSAFE_START,
+            4,
+            0xde,
+            0xad,
+            UDP_OPTION_MDS,
+            4,
+            0x05,
+            0xdc,
+        ];
+
+        assert_eq!(option.kind_class(), UdpOptionKindClass::UnassignedUnsafe);
+        assert!(option.is_unsafe());
+        assert!(option.is_unsupported());
+        assert_eq!(
+            option.to_string(),
+            "Generic(kind=194,len=4,class=UnassignedUnsafe,safety=UNSAFE,support=unsupported)"
+        );
+
+        let udp_options = UdpOptions::from_bytes(encoded);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Unsupported);
+        assert_eq!(udp_options.options(), &[option.clone()]);
+        assert_eq!(udp_options.as_bytes(), &encoded);
+        assert!(udp_options.summary().contains("status=Unsupported"));
+        assert!(udp_options.summary().contains("UnassignedUnsafe"));
+        assert!(udp_options.summary().contains("safety=UNSAFE"));
+
+        let packet = Ipv4::new().src(src()).dst(dst()).id(0x2246)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0x55])
+            / UdpOptions::from_options(vec![option]).unwrap();
+        let compiled = packet.compile().unwrap();
+        let decoded =
+            Packet::decode_from_l3(crate::NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let decoded_options = decoded.layer::<UdpOptions>().unwrap();
+        assert_eq!(decoded_options.status(), UdpOptionStatus::Unsupported);
+        assert_eq!(
+            decoded_options.options(),
+            &[UdpOption::generic(
+                UDP_OPTION_UNASSIGNED_UNSAFE_START,
+                [0xde, 0xad],
+            )]
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    #[test]
+    fn udp_option_metadata_classifies_registry_ranges() {
+        assert_eq!(
+            udp_option_kind_class(UDP_OPTION_MDS),
+            UdpOptionKindClass::KnownSafe
+        );
+        assert_eq!(
+            udp_option_kind_class(UDP_OPTION_FRAG),
+            UdpOptionKindClass::KnownSafe
+        );
+        assert!(udp_option_kind_is_unsupported(UDP_OPTION_FRAG));
+
+        assert_eq!(
+            udp_option_kind_class(UDP_OPTION_AUTH),
+            UdpOptionKindClass::ReservedSafe
+        );
+        assert!(!udp_option_kind_is_unsafe(UDP_OPTION_AUTH));
+        assert!(!udp_option_kind_is_unsupported(UDP_OPTION_AUTH));
+
+        assert_eq!(
+            udp_option_kind_class(UDP_OPTION_RESERVED_SAFE_START),
+            UdpOptionKindClass::ReservedSafe
+        );
+        assert_eq!(
+            udp_option_kind_class(UDP_OPTION_UCMP),
+            UdpOptionKindClass::ReservedUnsafe
+        );
+        assert!(udp_option_kind_is_unsafe(UDP_OPTION_UCMP));
+        assert!(udp_option_kind_is_unsupported(UDP_OPTION_UCMP));
+
+        assert_eq!(
+            udp_option_kind_class(UDP_OPTION_UNASSIGNED_SAFE_START),
+            UdpOptionKindClass::UnassignedSafe
+        );
+        assert_eq!(
+            udp_option_kind_class(UDP_OPTION_UNASSIGNED_UNSAFE_START),
+            UdpOptionKindClass::UnassignedUnsafe
+        );
+        assert!(udp_option_kind_is_unsupported(
+            UDP_OPTION_UNASSIGNED_UNSAFE_START
+        ));
+
+        assert_eq!(
+            udp_option_kind_class(UDP_OPTION_EXP),
+            UdpOptionKindClass::ExperimentalSafe
+        );
+        assert_eq!(
+            udp_option_kind_class(UDP_OPTION_UEXP),
+            UdpOptionKindClass::ExperimentalUnsafe
+        );
+        assert!(!udp_option_kind_is_unsupported(UDP_OPTION_UEXP));
+
+        assert_eq!(
+            udp_option_kind_class(UDP_OPTION_RESERVED_UNSAFE),
+            UdpOptionKindClass::ReservedUnsafe
+        );
+        assert!(udp_option_kind_is_unsupported(UDP_OPTION_RESERVED_UNSAFE));
     }
 
     #[test]
