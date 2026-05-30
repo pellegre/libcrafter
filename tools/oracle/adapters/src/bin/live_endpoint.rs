@@ -2178,10 +2178,7 @@ mod ipv4_dhcp_live_endpoint {
             let dhcp = decoded
                 .layer::<Dhcp>()
                 .expect("re-decoded packet must expose a DHCP layer over UDP");
-            assert_eq!(
-                dhcp.message_type_value(),
-                Some(DhcpMessageType::Discover)
-            );
+            assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
         }
     }
 
@@ -2253,9 +2250,8 @@ mod ipv4_dhcp_live_endpoint {
             .map(ToOwned::to_owned)
             .expect("artifact paths must declare a response path");
         assert!(
-            expected_response_path.ends_with(
-                "artifacts/libcrafter_to_reference/libcrafter/response.json"
-            ),
+            expected_response_path
+                .ends_with("artifacts/libcrafter_to_reference/libcrafter/response.json"),
             "unexpected response artifact path: {expected_response_path}"
         );
         assert_eq!(

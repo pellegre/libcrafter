@@ -2509,7 +2509,10 @@ mod dhcp_option_overload {
         // host-name + end are preserved as decoded options; message_type lives in
         // the option list too, so the count reflects all three.
         let dhcp_layer = decoded.layer::<Dhcp>().expect("dhcp layer present");
-        assert_eq!(dhcp_layer.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(
+            dhcp_layer.message_type_value(),
+            Some(DhcpMessageType::Discover)
+        );
         assert_eq!(dhcp_layer.transaction_id_value(), xid);
         assert_eq!(
             dhcp_layer.client_hardware_address_value(),
