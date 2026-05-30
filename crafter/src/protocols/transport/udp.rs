@@ -114,8 +114,20 @@ pub enum UdpOptionStatus {
     Ignored,
     /// UDP surplus option bytes are malformed.
     Malformed,
+    /// UDP surplus option length or fixed-format envelope is malformed.
+    MalformedEnvelope,
+    /// Bytes after EOL contain nonzero data.
+    NonzeroAfterEndOfList,
+    /// More than seven consecutive NOP options were present.
+    TooManyNoOperations,
     /// UDP surplus options include unsupported behavior.
     Unsupported,
+    /// UDP FRAG is present and preserved, but fragmentation is unsupported.
+    UnsupportedFragmentation,
+    /// Unknown SAFE option bytes were preserved and skipped.
+    UnknownSafe,
+    /// Unknown UNSAFE option bytes were preserved and stopped option processing.
+    UnknownUnsafe,
     /// UDP Option Checksum validation failed.
     OptionChecksumInvalid,
     /// UDP Additional Payload Checksum validation failed.
@@ -1047,7 +1059,7 @@ impl UdpOptions {
             return Self {
                 bytes: Vec::new(),
                 options: Vec::new(),
-                status: UdpOptionStatus::Malformed,
+                status: UdpOptionStatus::MalformedEnvelope,
                 option_checksum: None,
                 alignment: Some(surplus[..surplus.len().min(alignment_len)].to_vec()),
                 raw_surplus: Some(surplus.to_vec()),
@@ -1064,8 +1076,11 @@ impl UdpOptions {
             UdpOptionStatus::Ignored
         } else if !udp_options_ocs_valid(surplus, alignment_len, option_checksum, udp_checksum) {
             UdpOptionStatus::OptionChecksumInvalid
-        } else if parsed_status == UdpOptionStatus::Valid {
-            udp_options_apc_status(&options, user_payload)
+        } else if udp_option_status_allows_apc_validation(parsed_status) {
+            match udp_options_apc_status(&options, user_payload) {
+                UdpOptionStatus::Valid => parsed_status,
+                status => status,
+            }
         } else {
             parsed_status
         };
@@ -1360,37 +1375,84 @@ fn parse_udp_options_for_status(bytes: &[u8]) -> (Vec<UdpOption>, UdpOptionStatu
     }
 
     let mut options = Vec::new();
+    let mut status = UdpOptionStatus::Valid;
     let mut has_malformed_apc = false;
     for option in UdpOptionIter::new(bytes) {
         match option {
             Ok(option) => {
                 has_malformed_apc |= udp_option_is_malformed_apc(&option);
-                let is_malformed_frag = udp_option_is_malformed_frag(&option);
-                let is_unsupported = option.is_unsupported();
+                let option_status = udp_option_status_for_option(&option);
                 options.push(option);
-                if is_malformed_frag {
-                    return (options, UdpOptionStatus::Malformed);
-                }
-                if is_unsupported {
-                    let status = if has_malformed_apc {
-                        UdpOptionStatus::AdditionalPayloadChecksumInvalid
-                    } else {
-                        UdpOptionStatus::Unsupported
-                    };
-                    return (options, status);
+                match option_status {
+                    Some(UdpOptionStatus::MalformedEnvelope) => {
+                        return (options, UdpOptionStatus::MalformedEnvelope);
+                    }
+                    Some(
+                        status @ (UdpOptionStatus::UnsupportedFragmentation
+                        | UdpOptionStatus::UnknownUnsafe),
+                    ) => {
+                        let status = if has_malformed_apc {
+                            UdpOptionStatus::AdditionalPayloadChecksumInvalid
+                        } else {
+                            status
+                        };
+                        return (options, status);
+                    }
+                    Some(UdpOptionStatus::UnknownSafe) if status == UdpOptionStatus::Valid => {
+                        status = UdpOptionStatus::UnknownSafe;
+                    }
+                    Some(_) | None => {}
                 }
             }
-            Err(_) => return (options, UdpOptionStatus::Malformed),
+            Err(err) => return (options, udp_option_status_for_parse_error(&err)),
         }
     }
 
     let status = if has_malformed_apc {
         UdpOptionStatus::AdditionalPayloadChecksumInvalid
     } else {
-        UdpOptionStatus::Valid
+        status
     };
 
     (options, status)
+}
+
+const fn udp_option_status_allows_apc_validation(status: UdpOptionStatus) -> bool {
+    matches!(
+        status,
+        UdpOptionStatus::Valid | UdpOptionStatus::UnknownSafe
+    )
+}
+
+fn udp_option_status_for_parse_error(err: &CrafterError) -> UdpOptionStatus {
+    match err {
+        CrafterError::InvalidFieldValue { field, .. } if *field == "udp.option.eol_padding" => {
+            UdpOptionStatus::NonzeroAfterEndOfList
+        }
+        CrafterError::InvalidFieldValue { field, .. } if *field == "udp.option.nop" => {
+            UdpOptionStatus::TooManyNoOperations
+        }
+        _ => UdpOptionStatus::MalformedEnvelope,
+    }
+}
+
+fn udp_option_status_for_option(option: &UdpOption) -> Option<UdpOptionStatus> {
+    if udp_option_is_malformed_frag(option) {
+        return Some(UdpOptionStatus::MalformedEnvelope);
+    }
+    if option.kind() == UDP_OPTION_FRAG {
+        return Some(UdpOptionStatus::UnsupportedFragmentation);
+    }
+
+    match option.kind_class() {
+        UdpOptionKindClass::UnassignedSafe | UdpOptionKindClass::ReservedSafe => {
+            Some(UdpOptionStatus::UnknownSafe)
+        }
+        UdpOptionKindClass::UnassignedUnsafe | UdpOptionKindClass::ReservedUnsafe => {
+            Some(UdpOptionStatus::UnknownUnsafe)
+        }
+        _ => None,
+    }
 }
 
 fn udp_option_is_malformed_apc(option: &UdpOption) -> bool {
@@ -2168,7 +2230,7 @@ mod tests {
         expected_available: usize,
     ) {
         let udp_options = UdpOptions::from_bytes(bytes);
-        assert_eq!(udp_options.status(), UdpOptionStatus::Malformed);
+        assert_eq!(udp_options.status(), UdpOptionStatus::MalformedEnvelope);
         assert_eq!(udp_options.as_bytes(), bytes);
 
         match UdpOption::decode_all(bytes).unwrap_err() {
@@ -2187,7 +2249,7 @@ mod tests {
 
     fn assert_udp_option_length_field_error(bytes: &[u8], expected_field: &'static str) {
         let udp_options = UdpOptions::from_bytes(bytes);
-        assert_eq!(udp_options.status(), UdpOptionStatus::Malformed);
+        assert_eq!(udp_options.status(), UdpOptionStatus::MalformedEnvelope);
         assert_eq!(udp_options.as_bytes(), bytes);
 
         match UdpOption::decode_all(bytes).unwrap_err() {
@@ -2205,6 +2267,48 @@ mod tests {
             }
             other => panic!("expected UDP option encode field error, got {other:?}"),
         }
+    }
+
+    fn assert_udp_options_status_surface(
+        udp_options: &UdpOptions,
+        expected_status: UdpOptionStatus,
+    ) {
+        let status = format!("{expected_status:?}");
+        assert_eq!(udp_options.status(), expected_status);
+        assert!(
+            udp_options.summary().contains(&format!("status={status}")),
+            "summary did not expose status {status}: {}",
+            udp_options.summary()
+        );
+        assert!(
+            udp_options
+                .inspection_fields()
+                .iter()
+                .any(|(name, value)| *name == "status" && value == &status),
+            "inspection fields did not expose status {status}: {:?}",
+            udp_options.inspection_fields()
+        );
+    }
+
+    fn assert_decoded_udp_options_status_roundtrip(
+        option_bytes: &[u8],
+        expected_status: UdpOptionStatus,
+    ) {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2250)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0x55])
+            / UdpOptions::from_bytes(option_bytes))
+        .compile()
+        .unwrap();
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
+
+        assert_udp_options_status_surface(udp_options, expected_status);
+        assert_eq!(udp_options.as_bytes(), option_bytes);
+        assert!(decoded
+            .show()
+            .contains(&format!("status: {expected_status:?}")));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
     #[test]
@@ -2226,7 +2330,7 @@ mod tests {
 
         let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let udp_options = decoded.layer::<UdpOptions>().unwrap();
-        assert_eq!(udp_options.status(), UdpOptionStatus::Malformed);
+        assert_eq!(udp_options.status(), UdpOptionStatus::MalformedEnvelope);
         assert_eq!(udp_options.option_checksum_value(), None);
         assert_eq!(udp_options.as_bytes(), &[]);
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
@@ -2967,18 +3071,19 @@ mod tests {
         );
 
         let udp_options = UdpOptions::from_bytes(encoded);
-        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.status(), UdpOptionStatus::UnknownSafe);
         assert_eq!(
             udp_options.options(),
             &[option.clone(), UdpOption::EndOfList]
         );
         assert_eq!(udp_options.as_bytes(), &encoded);
+        assert!(udp_options.summary().contains("status=UnknownSafe"));
         assert!(udp_options.summary().contains("UnassignedSafe"));
         assert!(udp_options.summary().contains("safety=SAFE"));
 
         let typed = UdpOptions::from_options(vec![option, UdpOption::EndOfList]).unwrap();
         assert_eq!(typed.as_bytes(), &encoded);
-        assert_eq!(typed.status(), UdpOptionStatus::Valid);
+        assert_eq!(typed.status(), UdpOptionStatus::UnknownSafe);
     }
 
     #[test]
@@ -3004,10 +3109,10 @@ mod tests {
         );
 
         let udp_options = UdpOptions::from_bytes(encoded);
-        assert_eq!(udp_options.status(), UdpOptionStatus::Unsupported);
+        assert_eq!(udp_options.status(), UdpOptionStatus::UnknownUnsafe);
         assert_eq!(udp_options.options(), &[option.clone()]);
         assert_eq!(udp_options.as_bytes(), &encoded);
-        assert!(udp_options.summary().contains("status=Unsupported"));
+        assert!(udp_options.summary().contains("status=UnknownUnsafe"));
         assert!(udp_options.summary().contains("UnassignedUnsafe"));
         assert!(udp_options.summary().contains("safety=UNSAFE"));
 
@@ -3019,7 +3124,7 @@ mod tests {
         let decoded =
             Packet::decode_from_l3(crate::NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
         let decoded_options = decoded.layer::<UdpOptions>().unwrap();
-        assert_eq!(decoded_options.status(), UdpOptionStatus::Unsupported);
+        assert_eq!(decoded_options.status(), UdpOptionStatus::UnknownUnsafe);
         assert_eq!(
             decoded_options.options(),
             &[UdpOption::generic(
@@ -3052,7 +3157,7 @@ mod tests {
         );
 
         let valid10 = UdpOptions::from_options(vec![frag10.clone()]).unwrap();
-        assert_eq!(valid10.status(), UdpOptionStatus::Unsupported);
+        assert_eq!(valid10.status(), UdpOptionStatus::UnsupportedFragmentation);
         assert_eq!(valid10.options(), &[frag10.clone()]);
         assert_eq!(
             valid10.as_bytes(),
@@ -3071,12 +3176,12 @@ mod tests {
         );
 
         let valid12 = UdpOptions::from_options(vec![frag12.clone()]).unwrap();
-        assert_eq!(valid12.status(), UdpOptionStatus::Unsupported);
+        assert_eq!(valid12.status(), UdpOptionStatus::UnsupportedFragmentation);
         assert_eq!(valid12.options(), &[frag12.clone()]);
 
         let malformed_short = [UDP_OPTION_FRAG, 9, 0x00, 0x01, 0x00, 0x03, 0xaa, 0xbb, 0xcc];
         let malformed = UdpOptions::from_bytes(malformed_short);
-        assert_eq!(malformed.status(), UdpOptionStatus::Malformed);
+        assert_eq!(malformed.status(), UdpOptionStatus::MalformedEnvelope);
         assert_eq!(malformed.as_bytes(), &malformed_short);
         assert_eq!(
             malformed.options(),
@@ -3099,7 +3204,7 @@ mod tests {
             0xbb,
         ];
         let malformed = UdpOptions::from_bytes(malformed_extended);
-        assert_eq!(malformed.status(), UdpOptionStatus::Malformed);
+        assert_eq!(malformed.status(), UdpOptionStatus::MalformedEnvelope);
         assert_eq!(malformed.as_bytes(), &malformed_extended);
         assert_eq!(
             malformed.options(),
@@ -3122,7 +3227,10 @@ mod tests {
 
         assert_eq!(raw_layers.len(), 1);
         assert_eq!(raw_layers[0].as_bytes(), user_payload);
-        assert_eq!(decoded_options.status(), UdpOptionStatus::Unsupported);
+        assert_eq!(
+            decoded_options.status(),
+            UdpOptionStatus::UnsupportedFragmentation
+        );
         assert_eq!(decoded_options.options(), &[frag12]);
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
@@ -3184,6 +3292,111 @@ mod tests {
             UdpOptionKindClass::ReservedUnsafe
         );
         assert!(udp_option_kind_is_unsupported(UDP_OPTION_RESERVED_UNSAFE));
+    }
+
+    #[test]
+    fn udp_option_status_values_appear_in_inspection_fields_and_roundtrip() {
+        let frag = [
+            UDP_OPTION_FRAG,
+            UDP_OPTION_FRAG_SHORT_LEN as u8,
+            0x00,
+            0x01,
+            0x00,
+            0x03,
+            0xaa,
+            0xbb,
+            0xcc,
+            0xdd,
+        ];
+        let cases: [(&[u8], UdpOptionStatus); 8] = [
+            (&[UDP_OPTION_NOP, UDP_OPTION_EOL], UdpOptionStatus::Valid),
+            (&[UDP_OPTION_MDS, 1], UdpOptionStatus::MalformedEnvelope),
+            (
+                &[UDP_OPTION_EOL, 0, 0x5a],
+                UdpOptionStatus::NonzeroAfterEndOfList,
+            ),
+            (&[UDP_OPTION_NOP; 8], UdpOptionStatus::TooManyNoOperations),
+            (&frag, UdpOptionStatus::UnsupportedFragmentation),
+            (
+                &[UDP_OPTION_UNASSIGNED_SAFE_START, 2, UDP_OPTION_EOL],
+                UdpOptionStatus::UnknownSafe,
+            ),
+            (
+                &[
+                    UDP_OPTION_UNASSIGNED_UNSAFE_START,
+                    2,
+                    UDP_OPTION_MDS,
+                    4,
+                    0x05,
+                    0xdc,
+                ],
+                UdpOptionStatus::UnknownUnsafe,
+            ),
+            (
+                &[UDP_OPTION_APC, UDP_OPTION_APC_LEN as u8, 0, 0, 0, 0],
+                UdpOptionStatus::AdditionalPayloadChecksumInvalid,
+            ),
+        ];
+
+        for (option_bytes, expected_status) in cases {
+            assert_decoded_udp_options_status_roundtrip(option_bytes, expected_status);
+        }
+
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2251)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0x55])
+            / UdpOptions::from_bytes([UDP_OPTION_NOP, UDP_OPTION_EOL]))
+        .compile()
+        .unwrap();
+        let mut invalid_ocs = bytes.as_bytes().to_vec();
+        let surplus_start = udp_surplus_start(&invalid_ocs);
+        let ocs_start = surplus_start + (surplus_start & 1);
+        invalid_ocs[ocs_start] ^= 0x01;
+
+        let decoded =
+            Packet::decode_from_l3(crate::NetworkLayer::Ipv4, invalid_ocs.as_slice()).unwrap();
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
+        assert_udp_options_status_surface(udp_options, UdpOptionStatus::OptionChecksumInvalid);
+        assert!(decoded.show().contains("status: OptionChecksumInvalid"));
+        assert_eq!(
+            decoded.compile().unwrap().as_bytes(),
+            invalid_ocs.as_slice()
+        );
+    }
+
+    #[test]
+    fn udp_options_summary_exposes_processing_policy_statuses() {
+        let known = UdpOptions::from_bytes([UDP_OPTION_TIME, 10, 1, 2, 3, 4, 5, 6, 7, 8]);
+        let unknown_safe = UdpOptions::from_bytes([UDP_OPTION_UNASSIGNED_SAFE_START, 2]);
+        let unknown_unsafe = UdpOptions::from_bytes([UDP_OPTION_UNASSIGNED_UNSAFE_START, 2]);
+        let frag = UdpOptions::from_bytes([
+            UDP_OPTION_FRAG,
+            UDP_OPTION_FRAG_LONG_LEN as u8,
+            0x00,
+            0x02,
+            0x00,
+            0x04,
+            0xaa,
+            0xbb,
+            0xcc,
+            0xdd,
+            0xee,
+            0xff,
+        ]);
+
+        assert_udp_options_status_surface(&known, UdpOptionStatus::Valid);
+        assert_udp_options_status_surface(&unknown_safe, UdpOptionStatus::UnknownSafe);
+        assert_udp_options_status_surface(&unknown_unsafe, UdpOptionStatus::UnknownUnsafe);
+        assert_udp_options_status_surface(&frag, UdpOptionStatus::UnsupportedFragmentation);
+        assert!(known.summary().contains("TIME(tsval=0x01020304"));
+        assert!(unknown_safe.summary().contains("class=UnassignedSafe"));
+        assert!(unknown_unsafe.summary().contains("safety=UNSAFE"));
+        assert!(frag.summary().contains("support=unsupported"));
+
+        let packet = Ipv4::new().src(src()).dst(dst()).id(0x2252)
+            / Udp::new().sport(1234).dport(4321)
+            / unknown_safe.clone();
+        assert!(packet.summary().contains("status=UnknownSafe"));
     }
 
     #[test]
@@ -3405,7 +3618,7 @@ mod tests {
         let bytes = [UDP_OPTION_NOP, UDP_OPTION_MDS, 4, 0xaa];
         let udp_options = UdpOptions::from_bytes(bytes);
 
-        assert_eq!(udp_options.status(), UdpOptionStatus::Malformed);
+        assert_eq!(udp_options.status(), UdpOptionStatus::MalformedEnvelope);
         assert_eq!(udp_options.as_bytes(), &bytes);
         assert_eq!(udp_options.options(), &[UdpOption::NoOperation]);
     }
@@ -3453,7 +3666,7 @@ mod tests {
         let eight_nops = [UDP_OPTION_NOP; 8];
         assert_eq!(
             UdpOptions::from_bytes(eight_nops).status(),
-            UdpOptionStatus::Malformed
+            UdpOptionStatus::TooManyNoOperations
         );
         match UdpOption::decode_all(&eight_nops).unwrap_err() {
             crate::CrafterError::InvalidFieldValue { field, .. } => {
@@ -3507,7 +3720,10 @@ mod tests {
         );
 
         let nonzero_fill = UdpOptions::from_bytes([UDP_OPTION_EOL, 0, 0x5a]);
-        assert_eq!(nonzero_fill.status(), UdpOptionStatus::Malformed);
+        assert_eq!(
+            nonzero_fill.status(),
+            UdpOptionStatus::NonzeroAfterEndOfList
+        );
         assert_eq!(nonzero_fill.options(), &[UdpOption::EndOfList]);
         assert_eq!(nonzero_fill.as_bytes(), &[UDP_OPTION_EOL, 0, 0x5a]);
 
@@ -3548,7 +3764,7 @@ mod tests {
         );
 
         let malformed = UdpOptions::from_bytes([UDP_OPTION_MDS, 1]);
-        assert_eq!(malformed.status(), UdpOptionStatus::Malformed);
+        assert_eq!(malformed.status(), UdpOptionStatus::MalformedEnvelope);
         assert_eq!(malformed.as_bytes(), &[UDP_OPTION_MDS, 1]);
     }
 
