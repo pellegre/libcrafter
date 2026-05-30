@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ...model import EncodedVector, JSONObject, PacketPlan
@@ -82,6 +82,7 @@ _SUPPORTED_FEATURES = {
     "dhcp_behavior",
     "dns_behavior",
     "icmpv4_errors",
+    "icmpv4_live",
     "icmpv6_errors",
     "ipv4_options",
     "ipv6_fragment_routing",
@@ -148,7 +149,33 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "transaction_id",
     },
     "ethernet": {"dst", "ethertype", "src", "type"},
-    "icmp": {"checksum", "chksum", "code", "id", "identifier", "seq", "sequence", "type"},
+    "icmp": {
+        "checksum",
+        "chksum",
+        "code",
+        "id",
+        "identifier",
+        "seq",
+        "sequence",
+        "type",
+        # ICMPv4 live-matrix rest-of-header and type-specific body fields. These
+        # carry the oracle-normalized names the generator emits; the Scapy
+        # materializer translates them to Scapy-native ICMP fields where the
+        # reference layer types them, or to deterministic raw rest-of-header /
+        # payload bytes for the raw-compatible cases.
+        "rest_of_header",
+        "gateway",
+        "pointer",
+        "next_hop_mtu",
+        "originate_timestamp",
+        "receive_timestamp",
+        "transmit_timestamp",
+        "address_mask",
+        "router_addresses",
+        "router_address_entry_size",
+        "router_lifetime",
+        "extension_bytes",
+    },
     "icmpv6": {"checksum", "cksum", "code", "id", "identifier", "seq", "sequence", "type"},
     "ipv4": {
         "dst",
@@ -629,19 +656,156 @@ def _ipv6_routing(
     return scapy_all.IPv6ExtHdrRouting(**kwargs)
 
 
+# ICMPv4 types whose rest-of-header Scapy's ICMP layer exposes via the id/seq
+# pair (echo, timestamp, information, address-mask, and the deprecated query
+# families that reuse the identifier/sequence layout).
+_ICMP_ID_SEQ_TYPES = frozenset(
+    {
+        "echo-reply",
+        "echo-request",
+        "timestamp-request",
+        "timestamp-reply",
+        "information-request",
+        "information-response",
+        "address-mask-request",
+        "address-mask-reply",
+    }
+)
+
+
 def _icmp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
     icmp_fields = _layer_fields(fields, "icmp")
-    kwargs: dict[str, Any] = {
-        "type": _icmp_type(_required_field(icmp_fields, "icmp", "type")),
-        "code": _int(_required_field(icmp_fields, "icmp", "code"), 0),
-    }
-    if "id" in icmp_fields or "identifier" in icmp_fields:
-        kwargs["id"] = _int(_optional_field(icmp_fields, "id", "identifier"), 0)
-    if "seq" in icmp_fields or "sequence" in icmp_fields:
-        kwargs["seq"] = _int(_optional_field(icmp_fields, "seq", "sequence"), 0)
+    scapy_type = _icmp_type(_required_field(icmp_fields, "icmp", "type"))
+    icmp_type_int = _icmp_type_number(scapy_type, scapy_all)
+    code = _int(_required_field(icmp_fields, "icmp", "code"), 0)
+    type_name = scapy_type if isinstance(scapy_type, str) else None
+
+    body = _icmp_body_bytes(icmp_fields)
+    explicit_rest = icmp_fields.get("rest_of_header")
+
+    # Types whose four-byte rest-of-header the reference ICMP layer cannot type
+    # (router solicitation, legacy/deprecated families, extended echo) carry an
+    # explicit rest_of_header. Build the ICMP header from raw bytes so those four
+    # bytes land in the real rest-of-header rather than as trailing payload, then
+    # let Scapy recompute the checksum.
+    if explicit_rest is not None:
+        rest_bytes = _icmp_rest_of_header_bytes(explicit_rest)
+        header = bytes([icmp_type_int & 0xFF, code & 0xFF, 0, 0]) + rest_bytes
+        icmp = scapy_all.ICMP(header + body)
+        if "checksum" in icmp_fields or "chksum" in icmp_fields:
+            icmp.chksum = _int(_optional_field(icmp_fields, "checksum", "chksum"), 0)
+        else:
+            icmp.chksum = None
+        return icmp
+
+    kwargs: dict[str, Any] = {"type": scapy_type, "code": code}
+
+    # id/seq map to the Scapy ICMP rest-of-header only for the query families that
+    # the reference layer types with the identifier/sequence pair.
+    if type_name in _ICMP_ID_SEQ_TYPES:
+        if "id" in icmp_fields or "identifier" in icmp_fields:
+            kwargs["id"] = _int(_optional_field(icmp_fields, "id", "identifier"), 0)
+        if "seq" in icmp_fields or "sequence" in icmp_fields:
+            kwargs["seq"] = _int(_optional_field(icmp_fields, "seq", "sequence"), 0)
+
+    # Scapy-native typed rest-of-header fields.
+    if "gateway" in icmp_fields:
+        kwargs["gw"] = _text(icmp_fields.get("gateway"), "0.0.0.0")
+    if "pointer" in icmp_fields:
+        kwargs["ptr"] = _int(icmp_fields.get("pointer"), 0)
+    if "next_hop_mtu" in icmp_fields:
+        kwargs["nexthopmtu"] = _int(icmp_fields.get("next_hop_mtu"), 0)
+    if "address_mask" in icmp_fields:
+        kwargs["addr_mask"] = _text(icmp_fields.get("address_mask"), "0.0.0.0")
+    if "originate_timestamp" in icmp_fields:
+        kwargs["ts_ori"] = _int(icmp_fields.get("originate_timestamp"), 0)
+    if "receive_timestamp" in icmp_fields:
+        kwargs["ts_rx"] = _int(icmp_fields.get("receive_timestamp"), 0)
+    if "transmit_timestamp" in icmp_fields:
+        kwargs["ts_tx"] = _int(icmp_fields.get("transmit_timestamp"), 0)
+
     if "checksum" in icmp_fields or "chksum" in icmp_fields:
         kwargs["chksum"] = _int(_optional_field(icmp_fields, "checksum", "chksum"), 0)
-    return scapy_all.ICMP(**kwargs)
+
+    icmp = scapy_all.ICMP(**kwargs)
+    if body:
+        return icmp / scapy_all.Raw(load=body)
+    return icmp
+
+
+def _icmp_type_number(scapy_type: object, scapy_all: Any) -> int:
+    """Resolve an ICMP type to its numeric value for raw-header construction."""
+
+    if isinstance(scapy_type, int):
+        return scapy_type
+    if isinstance(scapy_type, str):
+        type_field = next(
+            field for field in scapy_all.ICMP.fields_desc if field.name == "type"
+        )
+        for number, name in getattr(type_field, "i2s", {}).items():
+            if name == scapy_type:
+                return number
+        return int(scapy_type, 0)
+    raise ValueError(f"unsupported ICMP type for materialization: {scapy_type!r}")
+
+
+def _icmp_rest_of_header_bytes(value: object) -> bytes:
+    rest = _icmp_hex_bytes(value)
+    if len(rest) != 4:
+        raise ValueError(
+            f"ICMP rest_of_header must be exactly four bytes, got {len(rest)}"
+        )
+    return rest
+
+
+def _icmp_body_bytes(icmp_fields: Mapping[str, JSONObject]) -> bytes:
+    """Deterministic raw bytes that follow the ICMP four-byte rest-of-header.
+
+    Covers ICMP shapes the reference ICMP layer does not type natively: the RFC
+    1256 router-advertisement address list and the RFC 4884/4950 extension
+    framing blobs. Both backends emit and parse these bytes identically.
+    """
+
+    body = b""
+
+    routers = icmp_fields.get("router_addresses")
+    if isinstance(routers, list) and routers:
+        body += _icmp_router_address_bytes(routers)
+
+    extension = icmp_fields.get("extension_bytes")
+    extension_bytes = _icmp_hex_bytes(extension)
+    if extension_bytes:
+        body += extension_bytes
+
+    return body
+
+
+def _icmp_router_address_bytes(routers: Sequence[object]) -> bytes:
+    raw = b""
+    for entry in routers:
+        if not isinstance(entry, Mapping):
+            continue
+        address = _text(entry.get("address"), "0.0.0.0")
+        preference = _int(entry.get("preference"), 0)
+        raw += _ipv4_address_bytes(address)
+        raw += preference.to_bytes(4, "big")
+    return raw
+
+
+def _ipv4_address_bytes(address: str) -> bytes:
+    parts = address.split(".")
+    if len(parts) != 4:
+        raise ValueError(f"invalid IPv4 address for ICMP router entry: {address!r}")
+    return bytes(int(part) for part in parts)
+
+
+def _icmp_hex_bytes(value: object) -> bytes:
+    if value is None:
+        return b""
+    raw = _option_bytes(value)
+    if raw is None:
+        raise ValueError(f"ICMP rest-of-header/extension bytes must be hex, got {value!r}")
+    return raw
 
 
 def _icmpv6(fields: Mapping[str, JSONObject], stack: list[str], scapy_all: Any) -> Any:
@@ -1395,17 +1559,47 @@ def _ipv4_flags(value: object) -> object:
     return value
 
 
+# ICMPv4 type names the generator emits, mapped to the Scapy ICMP type-field
+# name (or numeric type for shapes the reference ICMP layer does not enumerate).
+# The reference enum names some types differently (information-response,
+# timestamp-request) and does not list extended-echo (42/43), so these are mapped
+# explicitly to keep materialization byte-correct.
+_ICMP_TYPE_ALIASES: dict[str, object] = {
+    "echo-reply": "echo-reply",
+    "echo-request": "echo-request",
+    "destination-unreachable": "dest-unreach",
+    "dest-unreach": "dest-unreach",
+    "source-quench": "source-quench",
+    "redirect": "redirect",
+    "router-advertisement": "router-advertisement",
+    "router-solicitation": "router-solicitation",
+    "time-exceeded": "time-exceeded",
+    "parameter-problem": "parameter-problem",
+    "timestamp": "timestamp-request",
+    "timestamp-request": "timestamp-request",
+    "timestamp-reply": "timestamp-reply",
+    "information-request": "information-request",
+    "information-reply": "information-response",
+    "information-response": "information-response",
+    "address-mask-request": "address-mask-request",
+    "address-mask-reply": "address-mask-reply",
+    "traceroute": "traceroute",
+    "datagram-conversion-error": "datagram-conversion-error",
+    "mobile-host-redirect": "mobile-host-redirect",
+    "domain-name-request": "domain-name-request",
+    "domain-name-reply": "domain-name-reply",
+    "photuris": "photuris",
+    # ICMPv4 types the reference ICMP type field does not enumerate; emit the
+    # numeric type so the byte stays correct (raw-compatible).
+    "extended-echo-request": 42,
+    "extended-echo-reply": 43,
+}
+
+
 def _icmp_type(value: object) -> object:
     if isinstance(value, str):
         lowered = value.lower().replace("_", "-")
-        aliases = {
-            "destination-unreachable": "dest-unreach",
-            "echo-reply": "echo-reply",
-            "echo-request": "echo-request",
-            "parameter-problem": "parameter-problem",
-            "time-exceeded": "time-exceeded",
-        }
-        return aliases.get(lowered, lowered)
+        return _ICMP_TYPE_ALIASES.get(lowered, lowered)
     return value
 
 
