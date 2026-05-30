@@ -78,7 +78,7 @@ class ProbeRstGuardsTest(unittest.TestCase):
         cases = (
             ("hetzner", "private"),
             ("qemu", "private"),
-            ("virtualbox", "lan"),
+            ("virtualbox", "wirepriv0"),
         )
         for provider, expected_interface in cases:
             with self.subTest(provider=provider):

@@ -46,10 +46,11 @@ class WireRegistryTest(unittest.TestCase):
             with self.subTest(exposure=exposure):
                 self.assertFalse(is_supported_request("qemu", exposure))
 
-    def test_virtualbox_supports_only_lan(self) -> None:
-        self.assertEqual(supported_exposures("virtualbox"), ("lan",))
+    def test_virtualbox_supports_lan_and_private(self) -> None:
+        self.assertEqual(supported_exposures("virtualbox"), ("lan", "private"))
         self.assertTrue(is_supported_request("virtualbox", "lan"))
-        for exposure in ("wan", "private", "wifi"):
+        self.assertTrue(is_supported_request("virtualbox", "private"))
+        for exposure in ("wan", "wifi"):
             with self.subTest(exposure=exposure):
                 self.assertFalse(is_supported_request("virtualbox", exposure))
 
@@ -73,6 +74,7 @@ class WireRegistryTest(unittest.TestCase):
         self.assertIs(resolve_provider("qemu", "wan"), qemu)
         self.assertIs(resolve_provider("qemu", "private"), qemu)
         self.assertIs(resolve_provider("virtualbox", "lan"), virtualbox)
+        self.assertIs(resolve_provider("virtualbox", "private"), virtualbox)
         with self.assertRaisesRegex(ProviderExposureError, "supported exposures"):
             resolve_provider("qemu", "lan")
         with self.assertRaisesRegex(ProviderExposureError, "supported exposures"):

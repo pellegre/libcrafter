@@ -379,6 +379,7 @@ def virtualbox_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
                     "private_group": private_group,
                     "private_network": True,
                     "bridged_lan": False,
+                    "private_ip": role.planned_ipv4,
                     "planned_private_address": role.planned_ipv4,
                     "network": private_network,
                     "creates_infrastructure": not request.dry_run,

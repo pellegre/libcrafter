@@ -33,7 +33,7 @@ class LabCliProviderListTest(unittest.TestCase):
         self.assertEqual(providers["qemu"]["wire_provider"], "qemu")
         self.assertEqual(providers["qemu"]["wire_exposure"], "private")
         self.assertEqual(providers["virtualbox"]["wire_provider"], "virtualbox")
-        self.assertEqual(providers["virtualbox"]["wire_exposure"], "lan")
+        self.assertEqual(providers["virtualbox"]["wire_exposure"], "private")
         for provider in providers.values():
             self.assertIn("credentials_available", provider)
             self.assertEqual(provider["capabilities"]["provider"], provider["name"])
@@ -57,11 +57,11 @@ class LabCliDoctorTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["provider"], "virtualbox")
         self.assertEqual(payload["wire_provider"], "virtualbox")
-        self.assertEqual(payload["wire_exposure"], "lan")
+        self.assertEqual(payload["wire_exposure"], "private")
         self.assertTrue(payload["dry_run"])
         self.assertEqual(
             fake.doctor_calls,
-            [{"provider": "virtualbox", "exposure": "lan", "dry_run": True}],
+            [{"provider": "virtualbox", "exposure": "private", "dry_run": True}],
         )
         self.assertEqual(payload["wire_doctor"]["provider"], "virtualbox")
         self.assertEqual(payload["command_records"][0]["operation"], "wire.doctor")
@@ -74,7 +74,7 @@ class LabCliPlanTest(unittest.TestCase):
         cases = [
             ("hetzner", "hetzner", "private"),
             ("qemu", "qemu", "private"),
-            ("virtualbox", "virtualbox", "lan"),
+            ("virtualbox", "virtualbox", "private"),
         ]
 
         for provider, wire_provider, exposure in cases:
@@ -118,12 +118,12 @@ class LabCliPlanTest(unittest.TestCase):
                 self.assertTrue(all(call["dry_run"] for call in fake.create_calls))
                 self.assertTrue(all(call["write_manifest"] is False for call in fake.create_calls))
                 self.assertTrue(all(call["confirm_live_run"] is False for call in fake.create_calls))
-                if provider == "virtualbox":
-                    self.assertEqual([call["private_group"] for call in fake.create_calls], [None, None])
-                    self.assertEqual([call["private_ip"] for call in fake.create_calls], [None, None])
-                else:
+                if exposure == "private":
                     self.assertTrue(all(call["private_group"] for call in fake.create_calls))
                     self.assertTrue(all(call["private_ip"] for call in fake.create_calls))
+                else:
+                    self.assertEqual([call["private_group"] for call in fake.create_calls], [None, None])
+                    self.assertEqual([call["private_ip"] for call in fake.create_calls], [None, None])
                 self.assertEqual(fake.doctor_calls, [])
 
     def test_plan_accepts_workload_label_and_role_address_overrides(self) -> None:

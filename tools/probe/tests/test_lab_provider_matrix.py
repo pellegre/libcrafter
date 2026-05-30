@@ -15,7 +15,13 @@ from tools.probe.engine.model import ProbeReport, ProbeRunRequest
 EXPECTED_EXPOSURES = {
     "hetzner": "private",
     "qemu": "private",
-    "virtualbox": "lan",
+    "virtualbox": "private",
+}
+
+EXPECTED_INTERFACES = {
+    "hetzner": "private",
+    "qemu": "private",
+    "virtualbox": "wirepriv0",
 }
 
 
@@ -41,12 +47,14 @@ class ProbeLabProviderDryRunMatrixTest(unittest.TestCase):
                         report,
                         provider=provider,
                         expected_exposure=expected_exposure,
+                        expected_interface=EXPECTED_INTERFACES[provider],
                     )
                     self._assert_stimulus_request_artifact(
                         report,
                         report_path=report_path,
                         provider=provider,
                         expected_exposure=expected_exposure,
+                        expected_interface=EXPECTED_INTERFACES[provider],
                     )
 
     def _assert_report_contract(
@@ -55,6 +63,7 @@ class ProbeLabProviderDryRunMatrixTest(unittest.TestCase):
         *,
         provider: str,
         expected_exposure: str,
+        expected_interface: str,
     ) -> None:
         metadata = report.metadata
         lab_session = _object(metadata["lab_session"])
@@ -89,8 +98,8 @@ class ProbeLabProviderDryRunMatrixTest(unittest.TestCase):
         target = _object(endpoints["target"])
         self.assertEqual(stimulus["role"], "stimulus")
         self.assertEqual(target["role"], "target")
-        self.assertEqual(stimulus["interface"], expected_exposure)
-        self.assertEqual(target["interface"], expected_exposure)
+        self.assertEqual(stimulus["interface"], expected_interface)
+        self.assertEqual(target["interface"], expected_interface)
         self.assertEqual(stimulus["metadata"]["peer_role"], "target")
         self.assertEqual(target["metadata"]["peer_role"], "stimulus")
         self.assertEqual(stimulus["metadata"]["lab_session_id"], session_id)
@@ -171,6 +180,7 @@ class ProbeLabProviderDryRunMatrixTest(unittest.TestCase):
         report_path: Path,
         provider: str,
         expected_exposure: str,
+        expected_interface: str,
     ) -> None:
         request_path = (
             report_path.parent
@@ -188,10 +198,10 @@ class ProbeLabProviderDryRunMatrixTest(unittest.TestCase):
         stimulus_metadata = _object(artifact_metadata["stimulus_endpoint"])
 
         self.assertEqual(artifact["provider"], provider)
-        self.assertEqual(artifact["interface"], expected_exposure)
+        self.assertEqual(artifact["interface"], expected_interface)
         self.assertEqual([plan["case"] for plan in artifact_plans], ["ttl-expired"])
         self.assertEqual(stimulus_metadata["provider"], provider)
-        self.assertEqual(stimulus_metadata["interface"], expected_exposure)
+        self.assertEqual(stimulus_metadata["interface"], expected_interface)
         self.assertEqual(stimulus_metadata["interface_source"], "lab_endpoint")
 
 

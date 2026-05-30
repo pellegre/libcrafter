@@ -46,10 +46,10 @@ PROVIDER_CASES = (
     _ProviderCase(
         name="virtualbox",
         wire_provider="virtualbox",
-        wire_exposure="lan",
-        uses_private_wire_flags=False,
-        alpha_ipv4="192.0.2.101",
-        beta_ipv4="192.0.2.102",
+        wire_exposure="private",
+        uses_private_wire_flags=True,
+        alpha_ipv4="10.78.0.101",
+        beta_ipv4="10.78.0.102",
     ),
 )
 
@@ -201,12 +201,7 @@ class LabProviderMatrixTest(unittest.TestCase):
 
 
 def _request(case: _ProviderCase, *, requested_addresses: bool) -> LabRequest:
-    if case.name == "virtualbox":
-        roles = [
-            LabRole(name="alpha", planned_ipv4=case.alpha_ipv4),
-            LabRole(name="beta", planned_ipv4=case.beta_ipv4),
-        ]
-    elif requested_addresses:
+    if requested_addresses:
         roles = [
             LabRole(name="alpha", requested_private_ipv4=case.alpha_ipv4),
             LabRole(name="beta", requested_private_ipv4=case.beta_ipv4),
