@@ -1,7 +1,9 @@
+use std::net::Ipv4Addr;
+
 use crate::{
-    Arp, ArpOperation, Dhcp, Dns, Icmp, Icmpv6, Ipv4, Ipv6, Packet, Tcp, Udp, BOOTP_REPLY,
-    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST,
-    ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
+    Arp, ArpOperation, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, Icmp, Icmpv6, Ipv4, Ipv6,
+    Packet, Tcp, Udp, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, ICMPV6_ECHO_REPLY,
+    ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
 };
 
 pub struct ReplyMatcher {
@@ -269,11 +271,146 @@ fn dhcp_reply_matches(request: &Packet, candidate: &Packet) -> bool {
         return false;
     };
 
-    candidate_dhcp.op_value() == BOOTP_REPLY
-        && request_dhcp.transaction_id_value() == candidate_dhcp.transaction_id_value()
-        && request_dhcp.client_hardware_address_value()
-            == candidate_dhcp.client_hardware_address_value()
-        && dhcp_transport_reply_matches(request, candidate)
+    // RFC 2131 section 4.1: a server reply is a BOOTREPLY carrying the same
+    // transaction id the client chose. That pairing is the spine of every
+    // DHCPv4 exchange (DISCOVER/OFFER, REQUEST/ACK|NAK, and the RFC 4388
+    // leasequery families), so it is always required.
+    if candidate_dhcp.op_value() != BOOTP_REPLY
+        || request_dhcp.transaction_id_value() != candidate_dhcp.transaction_id_value()
+    {
+        return false;
+    }
+
+    if !dhcp_transport_reply_matches(request, candidate) {
+        return false;
+    }
+
+    // Beyond xid, match on whatever identifiers the request shape actually
+    // carries. Each identifier is only enforced when both sides expose it, so a
+    // leasequery-by-IP request (which has no chaddr) still matches its reply
+    // while a normal DISCOVER/OFFER also pins the client hardware address.
+    dhcp_client_hardware_address_matches(request_dhcp, candidate_dhcp)
+        && dhcp_client_identifier_matches(request_dhcp, candidate_dhcp)
+        && dhcp_server_identifier_matches(request_dhcp, candidate_dhcp)
+        && dhcp_relay_giaddr_matches(request_dhcp, candidate_dhcp)
+        && dhcp_message_type_matches(request_dhcp, candidate_dhcp)
+}
+
+/// Match the BOOTP `chaddr` fixed field when both messages carry one.
+///
+/// RFC 2131 section 2: the client hardware address ties a reply to a client.
+/// Leasequery-by-IP requests (RFC 4388 section 6.1) leave `chaddr` empty, so the
+/// check is skipped when either side has no hardware address rather than
+/// rejecting an otherwise-matching reply.
+fn dhcp_client_hardware_address_matches(request: &Dhcp, candidate: &Dhcp) -> bool {
+    let request_chaddr = request.client_hardware_address_value();
+    let candidate_chaddr = candidate.client_hardware_address_value();
+    if request_chaddr.is_empty() || candidate_chaddr.is_empty() {
+        return true;
+    }
+    request_chaddr == candidate_chaddr
+}
+
+/// Match the client identifier (option 61) when both messages carry one.
+///
+/// RFC 6842: a server echoes the client identifier unaltered, so when the
+/// request supplied one and the reply carries one they must be equal. A
+/// malformed identifier on either side surfaces as `None`/error here and is
+/// treated as "not comparable", leaving the other identifiers to decide.
+fn dhcp_client_identifier_matches(request: &Dhcp, candidate: &Dhcp) -> bool {
+    match (
+        dhcp_client_identifier(request),
+        dhcp_client_identifier(candidate),
+    ) {
+        (Some(request_id), Some(candidate_id)) => request_id == candidate_id,
+        _ => true,
+    }
+}
+
+fn dhcp_client_identifier(dhcp: &Dhcp) -> Option<DhcpClientIdentifier> {
+    dhcp.client_identifier_value().and_then(Result::ok)
+}
+
+/// Match the server identifier (option 53's companion option 54) when relevant.
+///
+/// RFC 2131 section 4.3.2: a client unicasts a REQUEST/RELEASE to the server it
+/// selected by carrying that server's identifier. When the request names a
+/// server identifier and the reply also carries one they must agree; replies
+/// that omit it (or requests that never selected a server) are not constrained.
+fn dhcp_server_identifier_matches(request: &Dhcp, candidate: &Dhcp) -> bool {
+    match (
+        request.server_identifier_value(),
+        candidate.server_identifier_value(),
+    ) {
+        (Some(request_server), Some(candidate_server)) => request_server == candidate_server,
+        _ => true,
+    }
+}
+
+/// Match the relay agent address (`giaddr`) when both messages set one.
+///
+/// RFC 2131 section 4.1: when a relay agent is involved it stamps `giaddr` and
+/// the server returns the reply through the same relay, so a non-zero `giaddr`
+/// on both sides must match. Directly broadcast/unicast exchanges leave it zero
+/// and are not constrained.
+fn dhcp_relay_giaddr_matches(request: &Dhcp, candidate: &Dhcp) -> bool {
+    let request_giaddr = request.gateway_ip_address_value();
+    let candidate_giaddr = candidate.gateway_ip_address_value();
+    if request_giaddr == Ipv4Addr::UNSPECIFIED || candidate_giaddr == Ipv4Addr::UNSPECIFIED {
+        return true;
+    }
+    request_giaddr == candidate_giaddr
+}
+
+/// Match leasequery request/reply message-type families (RFC 4388/6926/7724).
+///
+/// A leasequery exchange does not flip op the way address-allocation does; the
+/// reply is identified by its message type. When the request is a leasequery
+/// family message the candidate must answer with a leasequery reply family
+/// message. Non-leasequery requests (DISCOVER, REQUEST, INFORM, ...) impose no
+/// message-type constraint here so OFFER/ACK/NAK replies still match.
+fn dhcp_message_type_matches(request: &Dhcp, candidate: &Dhcp) -> bool {
+    let Some(request_type) = request.message_type_value() else {
+        return true;
+    };
+    if !is_leasequery_request_type(request_type) {
+        return true;
+    }
+    candidate
+        .message_type_value()
+        .is_some_and(is_leasequery_reply_type)
+}
+
+/// True for the leasequery request message types.
+///
+/// Source: RFC 4388 (DHCPLEASEQUERY), RFC 6926 (DHCPBULKLEASEQUERY), and
+/// RFC 7724 (DHCPACTIVELEASEQUERY).
+fn is_leasequery_request_type(message_type: DhcpMessageType) -> bool {
+    matches!(
+        message_type,
+        DhcpMessageType::LeaseQuery
+            | DhcpMessageType::BulkLeaseQuery
+            | DhcpMessageType::ActiveLeaseQuery
+    )
+}
+
+/// True for the leasequery reply message types.
+///
+/// Source: RFC 4388 (DHCPLEASEUNASSIGNED/UNKNOWN/ACTIVE), RFC 6926
+/// (DHCPLEASEQUERYDONE), and RFC 7724 (DHCPLEASEQUERYSTATUS). A reply may also
+/// echo the query type itself, so those are accepted as well.
+fn is_leasequery_reply_type(message_type: DhcpMessageType) -> bool {
+    matches!(
+        message_type,
+        DhcpMessageType::LeaseUnassigned
+            | DhcpMessageType::LeaseUnknown
+            | DhcpMessageType::LeaseActive
+            | DhcpMessageType::LeaseQueryDone
+            | DhcpMessageType::LeaseQueryStatus
+            | DhcpMessageType::LeaseQuery
+            | DhcpMessageType::BulkLeaseQuery
+            | DhcpMessageType::ActiveLeaseQuery
+    )
 }
 
 fn dhcp_transport_reply_matches(request: &Packet, candidate: &Packet) -> bool {

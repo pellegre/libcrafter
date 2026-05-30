@@ -439,8 +439,9 @@ mod reply_matching {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use crate::{
-        Arp, Dhcp, DhcpMessageType, Dns, DnsRecord, Icmp, Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr,
-        Packet, Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK, TCP_FLAG_RST, TCP_FLAG_SYN,
+        Arp, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, DnsRecord, Icmp, Icmpv6, IntoPacket,
+        Ipv4, Ipv6, MacAddr, Packet, Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK, TCP_FLAG_RST,
+        TCP_FLAG_SYN,
     };
 
     use crate::net::{reply_matches, ReplyMatcher};
@@ -624,6 +625,201 @@ mod reply_matching {
 
         assert!(reply_matches(&request, &reply));
         assert!(!reply_matches(&request, &wrong_xid));
+    }
+
+    #[test]
+    fn matches_dhcp_reply_by_client_identifier() {
+        // RFC 6842: a server echoes the client identifier (option 61) unaltered
+        // in its reply. A reply that carries the same xid, hardware address, and
+        // client identifier matches; one that echoes a different client
+        // identifier does not, even with a matching xid and hardware address.
+        let mac_bytes = [0x02, 0, 0, 0, 0, 1];
+        let mac = MacAddr::new(mac_bytes);
+        let client_id = DhcpClientIdentifier::ethernet_mac(mac_bytes);
+        let other_id = DhcpClientIdentifier::ethernet_mac([0x02, 0, 0, 0, 0, 9]);
+
+        let request = Ipv4::new()
+            .src(Ipv4Addr::UNSPECIFIED)
+            .dst(Ipv4Addr::BROADCAST)
+            / Udp::dhcp_client()
+            / Dhcp::discover(mac)
+                .xid(0xfeed_beef)
+                .client_id_value(client_id.clone());
+        let reply = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::BROADCAST)
+            / Udp::dhcp_server()
+            / Dhcp::offer(
+                mac,
+                Ipv4Addr::new(192, 0, 2, 100),
+                Ipv4Addr::new(192, 0, 2, 1),
+            )
+            .xid(0xfeed_beef)
+            .client_id_value(client_id);
+        let echoes_other_id = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::BROADCAST)
+            / Udp::dhcp_server()
+            / Dhcp::offer(
+                mac,
+                Ipv4Addr::new(192, 0, 2, 100),
+                Ipv4Addr::new(192, 0, 2, 1),
+            )
+            .xid(0xfeed_beef)
+            .client_id_value(other_id);
+
+        assert!(reply_matches(&request, &reply));
+        assert!(!reply_matches(&request, &echoes_other_id));
+    }
+
+    #[test]
+    fn matches_dhcp_leasequery_reply_without_client_hardware_address() {
+        // RFC 4388 section 6.1: a DHCPLEASEQUERY by IP leaves chaddr empty and
+        // carries the queried address in ciaddr. The reply is identified by the
+        // shared xid plus a leasequery reply message type (here
+        // DHCPLEASEACTIVE), not by the client hardware address.
+        let request = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 9))
+            .dst(Ipv4Addr::new(192, 0, 2, 1))
+            / Udp::dhcp_client()
+            / Dhcp::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 100)).xid(0x0c0f_fee0);
+        let reply = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(192, 0, 2, 9))
+            / Udp::dhcp_server()
+            / Dhcp::new()
+                .op(crate::BOOTP_REPLY)
+                .message_type(DhcpMessageType::LeaseActive)
+                .xid(0x0c0f_fee0);
+        let non_leasequery_reply = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(192, 0, 2, 9))
+            / Udp::dhcp_server()
+            / Dhcp::new()
+                .op(crate::BOOTP_REPLY)
+                .message_type(DhcpMessageType::Ack)
+                .xid(0x0c0f_fee0);
+
+        assert!(reply_matches(&request, &reply));
+        // A non-leasequery reply message type does not satisfy a leasequery
+        // request even though the xid matches.
+        assert!(!reply_matches(&request, &non_leasequery_reply));
+    }
+
+    #[test]
+    fn rejects_dhcp_reply_with_mismatched_relay_giaddr() {
+        // RFC 2131 section 4.1: a relayed exchange stamps giaddr and the reply
+        // returns through the same relay, so a non-zero giaddr must match.
+        let mac = MacAddr::new([0x02, 0, 0, 0, 0, 1]);
+        let request = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 9))
+            .dst(Ipv4Addr::new(192, 0, 2, 1))
+            / Udp::dhcp_client()
+            / Dhcp::discover(mac)
+                .xid(0xfeed_beef)
+                .giaddr(Ipv4Addr::new(192, 0, 2, 9));
+        let same_relay = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(192, 0, 2, 9))
+            / Udp::dhcp_server()
+            / Dhcp::offer(
+                mac,
+                Ipv4Addr::new(192, 0, 2, 100),
+                Ipv4Addr::new(192, 0, 2, 1),
+            )
+            .xid(0xfeed_beef)
+            .giaddr(Ipv4Addr::new(192, 0, 2, 9));
+        let other_relay = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 9))
+            / Udp::dhcp_server()
+            / Dhcp::offer(
+                mac,
+                Ipv4Addr::new(192, 0, 2, 100),
+                Ipv4Addr::new(192, 0, 2, 1),
+            )
+            .xid(0xfeed_beef)
+            .giaddr(Ipv4Addr::new(198, 51, 100, 9));
+
+        assert!(reply_matches(&request, &same_relay));
+        assert!(!reply_matches(&request, &other_relay));
+    }
+}
+
+#[cfg(test)]
+mod dhcp_udp_binding {
+    use std::net::Ipv4Addr;
+
+    use crate::{Dhcp, Ipv4, MacAddr, NetworkLayer, Packet, Raw, Udp};
+
+    #[test]
+    fn dhcp_decode_binding_rejects_non_dhcp_payloads_on_dhcp_ports() {
+        // The DHCP UDP binding stays conservative: the standard 67/68 port pair
+        // alone is not enough; the payload must also carry the BOOTP structure
+        // and the valid magic cookie. These cases all sit on a DHCP port pair
+        // but are not DHCP, so they must fall through to Raw rather than
+        // misdecode as `Dhcp`.
+
+        // 1. A payload long enough for the fixed header plus cookie region but
+        //    with the wrong four magic-cookie octets (here a
+        //    plausible-but-not-DHCP application record) must not bind to DHCP.
+        //    `DHCP_MIN_LEN` is the fixed header (236) plus the 4 cookie octets;
+        //    overwriting those last four with non-cookie bytes is enough to fail
+        //    the magic-cookie gate.
+        let mut not_dhcp = vec![0u8; crate::DHCP_MIN_LEN];
+        let cookie_offset = crate::DHCP_MIN_LEN - 4;
+        not_dhcp[cookie_offset..].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        let wrong_cookie = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 9))
+            .dst(Ipv4Addr::new(192, 0, 2, 1))
+            / Udp::new()
+                .sport(crate::DHCP_CLIENT_PORT)
+                .dport(crate::DHCP_SERVER_PORT)
+            / Raw::from_bytes(not_dhcp);
+        let decoded = Packet::decode_from_l3(
+            NetworkLayer::Ipv4,
+            wrong_cookie.compile().unwrap().as_bytes(),
+        )
+        .unwrap();
+        assert!(
+            decoded.layer::<Dhcp>().is_none(),
+            "wrong magic cookie on DHCP ports must not decode as DHCP",
+        );
+        assert!(decoded.layer::<Raw>().is_some());
+
+        // 2. A short payload on the DHCP port pair (too small to even contain the
+        //    BOOTP fixed header and cookie) must not bind to DHCP.
+        let short = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(192, 0, 2, 9))
+            / Udp::new()
+                .sport(crate::DHCP_SERVER_PORT)
+                .dport(crate::DHCP_CLIENT_PORT)
+            / Raw::from("not-dhcp");
+        let decoded_short =
+            Packet::decode_from_l3(NetworkLayer::Ipv4, short.compile().unwrap().as_bytes())
+                .unwrap();
+        assert!(
+            decoded_short.layer::<Dhcp>().is_none(),
+            "short payload on DHCP ports must not decode as DHCP",
+        );
+        assert!(decoded_short.layer::<Raw>().is_some());
+
+        // 3. Sanity: a genuine DHCP payload on the standard 68->67 port pair
+        //    still decodes as DHCP, proving the rejection above is the magic
+        //    cookie / structure gate and not a blanket refusal.
+        let mac = MacAddr::new([0x02, 0, 0, 0, 0, 1]);
+        let dhcp = Ipv4::new()
+            .src(Ipv4Addr::UNSPECIFIED)
+            .dst(Ipv4Addr::BROADCAST)
+            / Udp::dhcp_client()
+            / Dhcp::discover(mac).xid(0xfeed_beef);
+        let decoded_dhcp =
+            Packet::decode_from_l3(NetworkLayer::Ipv4, dhcp.compile().unwrap().as_bytes()).unwrap();
+        assert!(
+            decoded_dhcp.layer::<Dhcp>().is_some(),
+            "valid DHCP on the standard port pair must still decode as DHCP",
+        );
     }
 }
 
