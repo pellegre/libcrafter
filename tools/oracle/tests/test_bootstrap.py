@@ -49,11 +49,10 @@ class OracleBootstrapTest(unittest.TestCase):
             with self.subTest(provider=provider):
                 plans = _endpoint_bootstrap_plan(provider)
                 for command in plans:
+                    self.assertTrue(command.metadata["private_network"])
                     if provider == "virtualbox":
-                        self.assertFalse(command.metadata["private_network"])
-                        self.assertTrue(command.metadata["bridged_lan"])
+                        self.assertFalse(command.metadata["bridged_lan"])
                     else:
-                        self.assertTrue(command.metadata["private_network"])
                         self.assertEqual(
                             command.metadata["private_group"],
                             "oracle-live-private",

@@ -45,7 +45,7 @@ class LiveProviderMatrixTest(unittest.TestCase):
         )
 
         self.assertEqual(summary["provider"], "virtualbox")
-        self.assertEqual(summary["wire_exposure"], "lan")
+        self.assertEqual(summary["wire_exposure"], "private")
         self.assertEqual(summary["endpoint_roles"], ["libcrafter", "reference_backend"])
         self.assertTrue(summary["no_live_packets_sent"])
         self.assertEqual(summary["lifecycle"]["endpoint_bootstrap_count"], 2)
@@ -239,7 +239,7 @@ class LiveProviderMatrixTest(unittest.TestCase):
 
         self.assertEqual(command[:2], ["tools/wire/run", "doctor"])
         self.assertIn("virtualbox", command)
-        self.assertIn("lan", command)
+        self.assertIn("private", command)
         self.assertIn("--json", command)
 
     def test_doctor_skip_reason_includes_failed_checks(self) -> None:
