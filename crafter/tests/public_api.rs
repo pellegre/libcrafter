@@ -140,6 +140,42 @@ fn udp_option_constants_and_statuses_are_public() {
 }
 
 #[test]
+fn udp_option_enum_and_iterator_public_paths_are_usable() -> crafter::Result<()> {
+    let prelude_option: UdpOption = UdpOption::no_operation();
+    let core_option = crafter::core::UdpOption::generic(crafter::UDP_OPTION_MDS, [0x05, 0xb4]);
+    let root_option = crafter::UdpOption::extended_generic(crafter::UDP_OPTION_EXP, [0x12, 0x34]);
+    let iter = crafter::protocols::UdpOptionIter::new(&[
+        crafter::UDP_OPTION_NOP,
+        crafter::UDP_OPTION_MDS,
+        4,
+        0x05,
+        0xb4,
+    ]);
+    let transport_options = crafter::protocols::transport::UdpOptions::from_options(vec![
+        prelude_option.clone(),
+        core_option.clone(),
+        root_option.clone(),
+    ])?;
+
+    assert_eq!(prelude_option.kind(), crafter::UDP_OPTION_NOP);
+    assert_eq!(
+        core_option.encode()?,
+        vec![crafter::UDP_OPTION_MDS, 4, 0x05, 0xb4]
+    );
+    assert_eq!(
+        root_option.encode()?,
+        vec![crafter::UDP_OPTION_EXP, 255, 0, 6, 0x12, 0x34]
+    );
+    assert_eq!(
+        iter.collect::<crafter::Result<Vec<_>>>()?,
+        vec![prelude_option, core_option]
+    );
+    assert_eq!(transport_options.status(), UdpOptionStatus::Valid);
+
+    Ok(())
+}
+
+#[test]
 fn tcp_public_api_paths_are_usable() -> crafter::Result<()> {
     let prelude_tcp: Tcp = Tcp::new().sport(1111).dport(2222);
     let core_tcp = crafter::core::Tcp::new().sport(3333).dport(4444);
