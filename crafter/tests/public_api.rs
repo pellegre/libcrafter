@@ -137,6 +137,25 @@ fn udp_option_constants_and_statuses_are_public() {
         transport_option_status,
         crafter::protocols::transport::UdpOptionStatus::OptionChecksumInvalid
     );
+    assert_eq!(
+        udp_option_kind_class(UDP_OPTION_TIME),
+        UdpOptionKindClass::KnownSafe
+    );
+    assert_eq!(
+        crafter::core::udp_option_kind_class(crafter::core::UDP_OPTION_UEXP),
+        crafter::core::UdpOptionKindClass::ExperimentalUnsafe
+    );
+    assert_eq!(
+        crafter::protocols::udp_option_kind_class(crafter::protocols::UDP_OPTION_AUTH),
+        crafter::protocols::UdpOptionKindClass::ReservedSafe
+    );
+    assert!(crafter::udp_option_kind_is_unsafe(crafter::UDP_OPTION_UEXP));
+    assert!(crafter::protocols::udp_option_kind_is_unsupported(
+        crafter::protocols::UDP_OPTION_FRAG
+    ));
+    assert!(crafter::protocols::transport::udp_option_kind_is_unsafe(
+        crafter::protocols::transport::UDP_OPTION_RESERVED_UNSAFE
+    ));
 }
 
 #[test]
@@ -172,6 +191,80 @@ fn udp_option_enum_and_iterator_public_paths_are_usable() -> crafter::Result<()>
     );
     assert_eq!(transport_options.status(), UdpOptionStatus::Valid);
     assert_eq!(core_option.maximum_datagram_size_value(), Some(0x05b4));
+
+    Ok(())
+}
+
+#[test]
+fn udp_options_prelude_typed_packet_builds_and_inspects() -> crafter::Result<()> {
+    let options = UdpOptions::new()
+        .udp_option(UdpOption::maximum_datagram_size(1200))?
+        .udp_option(UdpOption::maximum_reassembled_datagram_size(9000, 8))?
+        .udp_option(UdpOption::echo_request(0x0102_0304))?
+        .udp_option(UdpOption::echo_response(0x0506_0708))?
+        .udp_option(UdpOption::timestamp(0x1122_3344, 0x5566_7788))?
+        .udp_option(UdpOption::experimental(0x1234, [0xaa, 0xbb]))?
+        .udp_option(UdpOption::unsafe_experimental(0x5678, [0xcc]))?;
+    let parsed = options.options();
+    let checksum_status: UdpChecksumStatus = UdpChecksumStatus::Valid;
+
+    assert_eq!(options.status(), UdpOptionStatus::Valid);
+    assert_eq!(options.option_checksum_value(), None);
+    assert_eq!(options.alignment_bytes(), None);
+    assert_eq!(
+        options.option_iter().collect::<crafter::Result<Vec<_>>>()?,
+        parsed
+    );
+    assert_eq!(checksum_status, UdpChecksumStatus::Valid);
+    assert_eq!(parsed[0].maximum_datagram_size_value(), Some(1200));
+    assert_eq!(
+        parsed[1].maximum_reassembled_datagram_size_values(),
+        Some((9000, 8))
+    );
+    assert_eq!(parsed[2].echo_request_token(), Some(0x0102_0304));
+    assert_eq!(parsed[3].echo_response_token(), Some(0x0506_0708));
+    assert_eq!(
+        parsed[4].timestamp_values(),
+        Some((0x1122_3344, 0x5566_7788))
+    );
+    assert_eq!(parsed[5].experiment_id(), Some(0x1234));
+    assert_eq!(parsed[5].experiment_data(), Some(&[0xaa, 0xbb][..]));
+    assert_eq!(parsed[6].experiment_id(), Some(0x5678));
+    assert_eq!(parsed[6].experiment_data(), Some(&[0xcc][..]));
+    assert_eq!(
+        parsed[6].kind_class(),
+        UdpOptionKindClass::ExperimentalUnsafe
+    );
+    assert!(parsed[6].is_unsafe());
+    assert!(!parsed[6].is_unsupported());
+
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 30))
+        .dst(Ipv4Addr::new(198, 51, 100, 40))
+        / Udp::new().sport(53003).dport(9998)
+        / Raw::from("data")
+        / options;
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let udp = decoded.layer::<Udp>().unwrap();
+    let raw = decoded.layer::<Raw>().unwrap();
+    let decoded_options = decoded.layer::<UdpOptions>().unwrap();
+
+    assert_eq!(udp.source_port_value(), 53003);
+    assert_eq!(udp.destination_port_value(), 9998);
+    assert_eq!(udp.length_value(), Some((UDP_HEADER_LEN + 4) as u16));
+    assert_eq!(raw.as_bytes(), b"data");
+    assert_eq!(decoded_options.status(), UdpOptionStatus::Valid);
+    assert!(decoded_options.option_checksum_value().is_some());
+    assert_eq!(
+        decoded_options.options()[2].echo_request_token(),
+        Some(0x0102_0304)
+    );
+    assert_eq!(
+        decoded_options.options()[4].timestamp_values(),
+        Some((0x1122_3344, 0x5566_7788))
+    );
 
     Ok(())
 }
