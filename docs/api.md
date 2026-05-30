@@ -383,6 +383,86 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | Null/loopback | `NullLoopback` |
 | Linux cooked capture | `LinuxSll` |
 
+## ICMPv4 Messages
+
+`Icmp` is the fixed ICMPv4 header and the front of an ICMPv4 packet. Data that
+follows the fixed header is composed as its own typed body or extension layer
+with `/`, so the same `compile`, `decode_from_l3`, `summary`, and `show` surface
+applies to ICMPv4 as to every other protocol.
+
+Typed constructors track the IANA ICMP Parameters registry:
+
+| Message family | Constructors |
+| --- | --- |
+| Echo (RFC 792) | `Icmp::echo_request()`, `Icmp::echo_reply()` |
+| Errors (RFC 792) | `Icmp::destination_unreachable()`, `Icmp::time_exceeded()`, plus `Icmp::new().type_(...)` for source quench, redirect, and parameter problem |
+| Timestamp / information (RFC 792) | `Icmp::timestamp_request()`, `Icmp::timestamp_reply()`, `Icmp::information_request()`, `Icmp::information_reply()` |
+| Address mask (RFC 950) | `Icmp::address_mask_request()`, `Icmp::address_mask_reply()` |
+| Router discovery (RFC 1256) | `Icmp::router_advertisement()`, `Icmp::router_solicitation()` |
+| Extended echo (RFC 8335) | `Icmp::extended_echo_request()`, `Icmp::extended_echo_reply()` |
+| Deprecated / experimental | By-name constructors such as `Icmp::traceroute()`, `Icmp::photuris()`, `Icmp::experiment_1()` |
+
+The bytes after the fixed header are typed body and extension layers:
+
+| Layer | Carries |
+| --- | --- |
+| `IcmpQuotedIpv4` | The quoted original datagram in an ICMPv4 error message. |
+| `IcmpTimestamp` | RFC 792 originate, receive, and transmit timestamps. |
+| `IcmpAddressMask` | The RFC 950 address mask. |
+| `IcmpRouterAdvertisementEntry` | One RFC 1256 advertised router address and preference. |
+| `IcmpExtension` / `IcmpExtensionObject` | RFC 4884 multi-part framing and a generic extension object. |
+| `IcmpExtensionMpls` | RFC 4950 MPLS label stack object body. |
+| `IcmpExtensionInterfaceInfo` | RFC 5837 interface information object body. |
+| `IcmpExtensionInterfaceId` | RFC 8335 interface identification object body. |
+
+Build a port-unreachable error that quotes the offending datagram:
+
+```rust
+let offending =
+    Ipv4::new().src("198.51.100.20")?.dst("192.0.2.10")?
+    / Udp::new().sport(40000).dport(53)
+    / Raw::from_bytes(b"query");
+
+let packet =
+    Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?
+    / Icmp::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
+    / IcmpQuotedIpv4::new(offending);
+
+let bytes = packet.compile()?;
+```
+
+`compile` fills the fields the caller left unset — the ICMP checksum, the
+RFC 4884 length and zero padding, extension checksums, router advertisement
+counts and entry size, and type-specific default codes. Any value set
+explicitly survives untouched, including intentionally invalid ones. The raw
+escape hatches keep malformed or not-yet-typed messages reachable:
+
+```rust
+let icmp = Icmp::new()
+    .type_(8)               // raw ICMP type
+    .code(0)                // raw code
+    .checksum(0xdead)       // explicit (here deliberately wrong) checksum
+    .rest_of_header([0x11, 0x22, 0x33, 0x44]); // raw rest-of-header bytes
+```
+
+`decode_from_l3` types the header and any body it can parse defensibly. Unknown
+types, codes, object classes, and trailing bytes stay inspectable through raw
+values and `Raw` payloads; genuine header truncation returns a structured buffer
+error instead of panicking.
+
+```rust
+let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+let icmp = decoded.layer::<Icmp>().ok_or("missing Icmp")?;
+let quote = decoded.layer::<IcmpQuotedIpv4>();
+```
+
+`summary` names the known type and code while keeping the raw numbers visible,
+for example `Icmp(type=destination-unreachable(3), code=port-unreachable(3),
+id=-, seq=-)`. Unassigned types print numerically, such as `Icmp(type=200,
+code=7, ...)`. `show` lists every typed field — checksum, rest-of-header,
+identifier, sequence number, RFC 4884 length, router fields, and extended-echo
+flags — for field-level inspection workflows.
+
 ## Example Map
 
 | Example | API surface exercised |
@@ -410,6 +490,7 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | `dhcp_discover` | DHCP discover construction with an explicit client MAC and link-layer send options. |
 | `dhcp_option82` | Offline DHCP relay agent information (option 82), classless static routes, and option overload construction and decode. |
 | `dhcp_leasequery` | Offline DHCP leasequery, typed client identifier, authentication, and status/state packet-field construction and decode. |
+| `icmpv4_error` | ICMPv4 time-exceeded error with a quoted datagram and an RFC 4884/4950 MPLS extension object, compiled and decoded offline. |
 | `icmpv6_echo` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. |
 | `vlan` | 802.1Q VLAN frame construction, compile, and decode. |
 | `linux_sll` | Linux cooked capture packet construction, compile, and decode. |

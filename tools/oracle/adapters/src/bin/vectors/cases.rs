@@ -1721,8 +1721,8 @@ fn crafter_icmpv4_router_advertisement() -> ExampleResult<Vector> {
 }
 
 fn crafter_icmpv4_router_solicitation() -> ExampleResult<Vector> {
-    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1309).ttl(1)
-        / Icmp::router_solicitation();
+    let packet =
+        Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1309).ttl(1) / Icmp::router_solicitation();
 
     vector(
         "crafter-icmpv4-router-solicitation",
