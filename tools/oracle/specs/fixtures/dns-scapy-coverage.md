@@ -154,6 +154,7 @@ Source read for this matrix:
 | DS (type 43) key tag / algorithm / digest type / digest | `dns-dnssec-ds` | both | strict_bytes | partial (raw digest bytes) | yes |
 | DNSKEY (type 48) flags / protocol / algorithm / key | `dns-dnssec-dnskey` | both | strict_bytes | partial (raw key bytes) | yes |
 | RRSIG (type 46) fixed fields + uncompressed signer name + signature | `dns-dnssec-rrsig` | both | strict_bytes | partial (raw signature bytes) | yes |
+| Combined NSEC (type 47) Type Bit Maps: single window + multiple windows + unknown codepoint (TYPE1234) + unsorted/duplicate input that libcrafter sorts/dedups into minimal windows | `dnssec-nsec-bitmaps` | both | normalized: libcrafter `DnsTypeBitmaps` and the Scapy `DNSRRNSEC` `RRlist2bitmap` both sort, de-duplicate, and emit minimal window-ordered bitmaps, so the decoded type set agrees even when the source input order differs | yes (`DNSRRNSEC`, same minimal encoding) | no |
 | NSEC (type 47) next name + type bitmaps (RFC 4034 4.3 example) | `dns-dnssec-nsec` | both | strict_bytes (matches the RFC example bytes) | partial (raw bitmap or `DNSRRNSEC`) | yes |
 | NSEC type bitmap multi-window + unknown codepoint (TYPE1234) | `dns-dnssec-nsec-bitmap` | both | normalized: libcrafter sorts/dedups and emits minimal windows, so the decoded type set must agree even if the source byte order differs | partial (raw bitmap bytes) | yes |
 | NSEC3 (type 50) hash alg / flags / iterations / salt / next hash / bitmaps | `dns-dnssec-nsec3` | both | strict_bytes | partial (raw salt/hash/bitmap bytes) | yes |

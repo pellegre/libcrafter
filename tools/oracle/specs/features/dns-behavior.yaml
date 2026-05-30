@@ -154,6 +154,19 @@ behaviors:
     summary: An authoritative response carrying DS, DNSKEY, and RRSIG answers whose numeric fields and opaque digest/key/signature material are wire data only; uncompressed and byte-exact in both directions.
     record_kinds:
       - generic
+  # dnssec_nsec_bitmaps is the combined NSEC type-bitmap case carrying two NSEC
+  # answers whose Type Bit Maps exercise a single window block, multiple window
+  # blocks, an unknown codepoint, and unsorted/duplicate input values. Both the
+  # Scapy DNSRRNSEC reference (RRlist2bitmap) and libcrafter DnsTypeBitmaps sort,
+  # de-duplicate, and emit minimal windows, so the normalized type set agrees in
+  # both directions. Its identifier dnssec-nsec-bitmaps matches only the combined
+  # case id (the shorter dnssec-nsec / dnssec-nsec-bitmap tokens are substrings of
+  # it, so this branch is dispatched before any of them), keeping resolution
+  # deterministic.
+  - name: dnssec_nsec_bitmaps
+    summary: An authoritative response carrying NSEC answers whose Type Bit Maps span a single window, multiple windows, an unknown codepoint, and unsorted/duplicate inputs; libcrafter sorts/dedups and emits minimal sorted windows that match the Scapy reference.
+    record_kinds:
+      - generic
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -390,6 +403,12 @@ case_groups:
       - dns-dnssec-dnskey
       - dns-dnssec-rrsig
       - dns-dnssec-unknown-algorithm
+  - name: dnssec-nsec-bitmaps
+    summary: NSEC Type Bit Maps spanning a single window, multiple windows, an unknown codepoint, and unsorted/duplicate inputs that libcrafter sorts and minimizes.
+    byte_policy: normalized
+    normalized_note: libcrafter DnsTypeBitmaps and the Scapy DNSRRNSEC reference both sort, de-duplicate, and emit minimal windows, so the decoded type set agrees even when the source input order differs.
+    cases:
+      - dnssec-nsec-bitmaps
   - name: dnssec-nsec
     summary: NSEC next name plus type bitmaps.
     byte_policy: strict_bytes
@@ -514,6 +533,7 @@ coverage_cases:
   - dns-dnssec-ds
   - dns-dnssec-dnskey
   - dns-dnssec-rrsig
+  - dnssec-nsec-bitmaps
   - dns-dnssec-nsec
   - dns-dnssec-nsec-bitmap
   - dns-dnssec-nsec3
@@ -779,6 +799,11 @@ supported_cases:
       - reference_to_libcrafter
       - libcrafter_to_reference
     byte_policy: strict_bytes
+  - name: dnssec-nsec-bitmaps
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: normalized
   - name: dns-dnssec-ds
     directions:
       - reference_to_libcrafter

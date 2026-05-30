@@ -863,6 +863,20 @@
       "notes": "Oracle fixture case. Authoritative response carrying one DS (Key Tag, Algorithm, Digest Type, opaque Digest), one DNSKEY (Flags, Protocol, Algorithm, opaque Public Key), and one RRSIG (Type Covered, Algorithm, Labels, Original TTL, Signature Expiration, Signature Inception, Key Tag, uncompressed Signer's Name, opaque Signature) answer per RFC 4034. The numeric fields and digest/key/signature material are wire data only with no cryptographic validation; Scapy DNSRRDS/DNSRRDNSKEY/DNSRRRSIG and libcrafter DnsRecord::ds/dnskey/rrsig pack the same wire fields and the Signer's Name is uncompressed, so strict bytes hold in both directions."
     },
     {
+      "name": "dnssec-nsec-bitmaps",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Authoritative response carrying two NSEC (type 47) answers whose Type Bit Maps (RFC 4034 Section 4.1.2) exercise the full encoder: the first answer is the RFC 4034 Section 4.3 example (owner alfa.example.com., next name host.example.com., present types A/MX/RRSIG/NSEC plus the unknown codepoint TYPE1234, spanning window block 0 and window block 4); the second answer feeds an unsorted list with a duplicate A entry spanning window blocks 0, 1, and 255. libcrafter DnsTypeBitmaps and the Scapy DNSRRNSEC reference (RRlist2bitmap) both sort, de-duplicate, and emit minimal window-ordered bitmaps, so the decoded type set agrees and the minimal encoding is deterministic in both directions; the byte policy is documented as normalized because libcrafter normalizes the input set on construction."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",

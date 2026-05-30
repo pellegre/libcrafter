@@ -262,6 +262,7 @@ stacks:
       - dns-dnssec-ds
       - dns-dnssec-dnskey
       - dns-dnssec-rrsig
+      - dnssec-nsec-bitmaps
       - dns-dnssec-nsec
       - dns-dnssec-nsec-bitmap
       - dns-dnssec-nsec3
