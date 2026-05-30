@@ -2816,6 +2816,7 @@ def _live_provider_execute(
                 artifact_paths=receiver_request.artifact_paths,
                 output_dir=local_direction_dir,
                 response_path=receiver_local_response_path,
+                include_endpoint_artifacts=True,
             )
             sender_downloads = _download_wire_endpoint_artifacts(
                 wire=wire,
@@ -2824,6 +2825,7 @@ def _live_provider_execute(
                 artifact_paths=sender_request.artifact_paths,
                 output_dir=local_direction_dir,
                 response_path=sender_local_response_path,
+                include_endpoint_artifacts=False,
             )
             failed_downloads = [
                 command
@@ -3609,14 +3611,20 @@ def _download_wire_endpoint_artifacts(
     artifact_paths: Mapping[str, object],
     output_dir: Path,
     response_path: Path,
+    include_endpoint_artifacts: bool = True,
 ) -> list[JSONObject]:
     local_root = output_dir / "downloads" / role
     downloads: list[JSONObject] = []
     local_by_key = {
         "response": response_path,
-        "decoded_models": local_root / "decoded-models.json",
-        "captures": local_root / "captures",
     }
+    if include_endpoint_artifacts:
+        local_by_key.update(
+            {
+                "decoded_models": local_root / "decoded-models.json",
+                "captures": local_root / "captures",
+            }
+        )
     for key, local_path in local_by_key.items():
         remote_path = artifact_paths.get(key)
         if not isinstance(remote_path, str) or not remote_path.startswith("/"):
