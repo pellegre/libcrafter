@@ -207,7 +207,7 @@ fn vlan_layer(plan: &Value) -> ExampleResult<Vlan> {
 
 fn arp_layer(plan: &Value) -> ExampleResult<Arp> {
     let fields = layer_fields(plan, "arp")?;
-    let layer = Arp::new()
+    let mut layer = Arp::new()
         .hardware_type(hardware_type_value(required(
             fields,
             &["hardware_type", "hwtype"],
@@ -219,24 +219,162 @@ fn arp_layer(plan: &Value) -> ExampleResult<Arp> {
         .opcode(arp_opcode(required(
             fields,
             &["opcode", "op", "operation"],
-        )?)?)
-        .hwsrc_str(text_required(
-            fields,
-            &["sender_hardware_address", "hwsrc"],
-        )?)?
-        .psrc_str(text_required(
-            fields,
-            &["sender_protocol_address", "sender_ip", "psrc"],
-        )?)?
-        .hwdst_str(text_required(
-            fields,
-            &["target_hardware_address", "hwdst"],
-        )?)?
-        .pdst_str(text_required(
-            fields,
-            &["target_protocol_address", "target_ip", "pdst"],
-        )?)?;
+        )?)?);
+
+    // Honor explicit ARP length fields when present. The standard
+    // Ethernet/IPv4 generator omits them and lets the standard MAC/IPv4 address
+    // setters default them to 6/4; when a plan carries explicit lengths
+    // (variable-length or unknown-family ARP), set them through the public
+    // `hardware_len`/`protocol_len` setters before the address bytes so the
+    // compiled header matches the plan and the Scapy reference exactly.
+    if let Some(value) = optional(fields, &["hardware_length", "hwlen"]) {
+        layer = layer.hardware_len(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["protocol_length", "plen"]) {
+        layer = layer.protocol_len(u8_value(value)?);
+    }
+
+    layer = apply_arp_hardware_address(
+        layer,
+        ArpAddressField::SenderHardware,
+        required(fields, &["sender_hardware_address", "hwsrc"])?,
+    )?;
+    layer = apply_arp_protocol_address(
+        layer,
+        ArpAddressField::SenderProtocol,
+        required(fields, &["sender_protocol_address", "sender_ip", "psrc"])?,
+    )?;
+    layer = apply_arp_hardware_address(
+        layer,
+        ArpAddressField::TargetHardware,
+        required(fields, &["target_hardware_address", "hwdst"])?,
+    )?;
+    layer = apply_arp_protocol_address(
+        layer,
+        ArpAddressField::TargetProtocol,
+        required(fields, &["target_protocol_address", "target_ip", "pdst"])?,
+    )?;
     Ok(layer)
+}
+
+/// Which ARP sender/target address field is being materialized.
+#[derive(Debug, Clone, Copy)]
+enum ArpAddressField {
+    SenderHardware,
+    TargetHardware,
+    SenderProtocol,
+    TargetProtocol,
+}
+
+/// Standard Ethernet hardware address width in octets.
+const ARP_STANDARD_HARDWARE_OCTETS: usize = 6;
+/// Standard IPv4 protocol address width in octets.
+const ARP_STANDARD_PROTOCOL_OCTETS: usize = 4;
+
+/// Apply one ARP hardware (sender/target) address to the layer.
+///
+/// A standard colon-separated MAC string flows through the `hwsrc_str`/
+/// `hwdst_str` helpers so the golden Ethernet/IPv4 ARP bytes stay stable. Any
+/// raw byte form — a `{"hex": ...}` object, a hex string whose decoded width is
+/// not the standard six octets, or an empty string — is set through the raw
+/// `sender_hardware_bytes`/`target_hardware_bytes` setters so variable-length
+/// and unknown-family hardware addresses materialize byte-for-byte.
+fn apply_arp_hardware_address(
+    layer: Arp,
+    field: ArpAddressField,
+    value: &Value,
+) -> ExampleResult<Arp> {
+    if let Some(text) = value.as_str() {
+        if is_standard_mac(text) {
+            return Ok(match field {
+                ArpAddressField::SenderHardware => layer.hwsrc_str(text)?,
+                ArpAddressField::TargetHardware => layer.hwdst_str(text)?,
+                _ => unreachable!("hardware address field expected"),
+            });
+        }
+    }
+    let raw = arp_address_bytes(value)?;
+    Ok(match field {
+        ArpAddressField::SenderHardware => layer.sender_hardware_bytes(raw),
+        ArpAddressField::TargetHardware => layer.target_hardware_bytes(raw),
+        _ => unreachable!("hardware address field expected"),
+    })
+}
+
+/// Apply one ARP protocol (sender/target) address to the layer.
+///
+/// A standard dotted-quad IPv4 string flows through the `psrc_str`/`pdst_str`
+/// helpers so the golden Ethernet/IPv4 ARP bytes stay stable. Any raw byte
+/// form materializes through the raw `sender_protocol_bytes`/
+/// `target_protocol_bytes` setters so variable-length and unknown-family
+/// protocol addresses materialize byte-for-byte.
+fn apply_arp_protocol_address(
+    layer: Arp,
+    field: ArpAddressField,
+    value: &Value,
+) -> ExampleResult<Arp> {
+    if let Some(text) = value.as_str() {
+        if is_standard_ipv4(text) {
+            return Ok(match field {
+                ArpAddressField::SenderProtocol => layer.psrc_str(text)?,
+                ArpAddressField::TargetProtocol => layer.pdst_str(text)?,
+                _ => unreachable!("protocol address field expected"),
+            });
+        }
+    }
+    let raw = arp_address_bytes(value)?;
+    Ok(match field {
+        ArpAddressField::SenderProtocol => layer.sender_protocol_bytes(raw),
+        ArpAddressField::TargetProtocol => layer.target_protocol_bytes(raw),
+        _ => unreachable!("protocol address field expected"),
+    })
+}
+
+/// Decode an ARP address value into raw octets for the raw byte setters.
+///
+/// Accepts a `{"hex": ...}` object (the form `decode_vectors` emits for
+/// nonstandard addresses), a colon/dash/space-separated or bare hex string, or
+/// an empty string (a zero-length HLN/PLN address). This mirrors the Scapy
+/// backend's `_arp_address` raw path so both backends materialize the same
+/// bytes from the same plan.
+fn arp_address_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
+    if let Some(object) = value.as_object() {
+        if let Some(hex) = object.get("hex").and_then(Value::as_str) {
+            return decode_hex(&strip_address_separators(hex));
+        }
+        return Err(format!("unsupported ARP address object: {value:?}").into());
+    }
+    if let Some(text) = value.as_str() {
+        return decode_hex(&strip_address_separators(text));
+    }
+    Err(format!("unsupported ARP address value: {value:?}").into())
+}
+
+fn strip_address_separators(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| !matches!(ch, ':' | '-' | ' '))
+        .collect()
+}
+
+fn is_standard_mac(value: &str) -> bool {
+    let parts: Vec<&str> = value.split(':').collect();
+    if parts.len() != ARP_STANDARD_HARDWARE_OCTETS {
+        return false;
+    }
+    parts
+        .iter()
+        .all(|part| part.len() == 2 && u8::from_str_radix(part, 16).is_ok())
+}
+
+fn is_standard_ipv4(value: &str) -> bool {
+    let parts: Vec<&str> = value.split('.').collect();
+    if parts.len() != ARP_STANDARD_PROTOCOL_OCTETS {
+        return false;
+    }
+    parts
+        .iter()
+        .all(|part| !part.is_empty() && part.parse::<u8>().is_ok())
 }
 
 fn ipv4_layer(plan: &Value) -> ExampleResult<Ipv4> {
