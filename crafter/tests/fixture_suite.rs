@@ -7,13 +7,15 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use crafter::core::{
-    Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
-    DnsRecordData, Ethernet, Icmp, IcmpKind, Icmpv6, Ipv4, Ipv4Option, Ipv6, Ipv6FragmentHeader,
-    Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
-    Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus,
-    UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
-    DNS_CLASS_IN, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED,
-    DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME, ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN,
+    Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsRecord,
+    DnsRecordData, EdnsOption, Ethernet, Icmp, IcmpKind, Icmpv6, Ipv4, Ipv4Option, Ipv6,
+    Ipv6FragmentHeader, Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder,
+    NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp,
+    UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND,
+    BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
+    DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
+    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_TYPE_A,
+    DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_OPT, ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN,
     ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST,
     IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, TCP_FLAG_ACK,
     TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
@@ -2419,6 +2421,93 @@ fn malformed_pcap_fixtures_report_structured_errors() {
             "malformed pcap corpus is missing required case {required}"
         );
     }
+}
+
+/// Build a deterministic IPv4/UDP/DNS query carrying one EDNS(0) OPT additional
+/// record, compile it, decode it back, and return the decoded DNS layer plus the
+/// original and recompiled bytes for byte-stable round-trip assertions. Uses
+/// documentation address space and no live traffic.
+fn dns_edns_round_trip(opt: DnsRecord) -> (Dns, Vec<u8>, Vec<u8>) {
+    let original = Dns::a_query("example.com.").id(0xbeef).additional(opt);
+    let bytes = (Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 53))
+        / Udp::new().sport(53001).dport(53)
+        / original)
+        .compile()
+        .expect("EDNS query should compile");
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+        .expect("EDNS query should decode");
+    let dns = decoded
+        .layer::<Dns>()
+        .expect("decoded packet has a Dns layer")
+        .clone();
+    let recompiled = decoded
+        .compile()
+        .expect("decoded EDNS query should compile");
+    (
+        dns,
+        bytes.as_bytes().to_vec(),
+        recompiled.as_bytes().to_vec(),
+    )
+}
+
+#[test]
+fn dns_edns_opt_with_typed_and_unknown_options_round_trips() {
+    // A query with an OPT additional record carrying NSID (typed, source-backed)
+    // and an unknown option code that must round trip as raw bytes.
+    let unknown_code = 0xfffeu16;
+    let opt = DnsRecord::opt(
+        DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE,
+        0,
+        0,
+        true,
+        vec![
+            EdnsOption::cookie(b"clientcookie".to_vec()),
+            EdnsOption::nsid(b"ns1".to_vec()),
+            EdnsOption::new(unknown_code, vec![0xde, 0xad]),
+        ],
+    );
+    let (dns, original, recompiled) = dns_edns_round_trip(opt);
+
+    let record = &dns.additionals()[0];
+    assert!(record.is_opt());
+    assert_eq!(record.record_type(), DNS_TYPE_OPT);
+    assert_eq!(
+        record.edns_udp_payload_size(),
+        DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE
+    );
+    assert!(record.edns_dnssec_ok());
+
+    let options = record
+        .edns_options()
+        .expect("OPT record exposes its options");
+    assert_eq!(options.len(), 3);
+    assert_eq!(options[0].code(), DNS_EDNS_OPTION_COOKIE);
+    assert_eq!(options[1].code(), DNS_EDNS_OPTION_NSID);
+    assert_eq!(options[1].data(), b"ns1");
+    assert_eq!(options[2].code(), unknown_code);
+    assert_eq!(options[2].option_code_name(), None);
+    assert_eq!(options[2].data(), &[0xde, 0xad]);
+
+    // The original question survives alongside the OPT additional record, and
+    // the stable wire bytes round trip unchanged.
+    assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_A);
+    assert_eq!(recompiled, original);
+}
+
+#[test]
+fn dns_edns_opt_with_no_options_round_trips() {
+    let opt = DnsRecord::opt(1232, 0, 0, false, Vec::new());
+    let (dns, original, recompiled) = dns_edns_round_trip(opt);
+
+    let record = &dns.additionals()[0];
+    assert!(record.is_opt());
+    assert_eq!(record.edns_udp_payload_size(), 1232);
+    assert!(!record.edns_dnssec_ok());
+    assert_eq!(record.data(), &DnsRecordData::Opt(Vec::new()));
+    assert_eq!(recompiled, original);
 }
 
 #[test]
