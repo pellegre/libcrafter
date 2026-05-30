@@ -222,6 +222,7 @@ coverage_cases:
   - dns-name-root
   - dns-name-escaped
   - dns-name-compressed
+  - dns-compressed-names
   - crafter-dns-name-uncompressed
   - dns-question-class
   - dns-record-a
