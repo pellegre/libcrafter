@@ -630,3 +630,198 @@ pub(crate) fn icmpv6_type_summary(icmp_type: u8) -> String {
         value => value.to_string(),
     }
 }
+
+#[cfg(test)]
+mod icmpv4_codepoints {
+    use super::{
+        icmpv4_code_summary, icmpv4_type_is_deprecated, icmpv4_type_name, icmpv4_type_summary,
+        ICMP_ADDRESS_MASK_REPLY, ICMP_ADDRESS_MASK_REQUEST, ICMP_ALTERNATE_HOST_ADDRESS,
+        ICMP_CODE_DU_FRAGMENTATION_NEEDED, ICMP_CODE_DU_NET_UNREACHABLE,
+        ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES, ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION,
+        ICMP_CODE_REDIRECT_HOST, ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC,
+        ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST, ICMP_EXPERIMENTAL_253,
+        ICMP_EXPERIMENTAL_254, ICMP_EXTENDED_ECHO_REPLY, ICMP_EXTENDED_ECHO_REQUEST,
+        ICMP_INFORMATION_REPLY, ICMP_PHOTURIS, ICMP_REDIRECT, ICMP_RESERVED_255,
+        ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_FIRST, ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_LAST,
+        ICMP_RESERVED_SECURITY, ICMP_ROUTER_ADVERTISEMENT, ICMP_ROUTER_SOLICITATION,
+        ICMP_SEAMOBY_EXPERIMENTAL, ICMP_SOURCE_QUENCH, ICMP_TIMESTAMP, ICMP_TIMESTAMP_REPLY,
+    };
+
+    // Representative type numbers from the IANA ICMP Parameters registry. These
+    // pin the assigned values rather than the source order, so a later edit that
+    // renumbers a constant fails loudly.
+    #[test]
+    fn icmpv4_codepoints_representative_type_constants_have_iana_values() {
+        assert_eq!(ICMP_ECHO_REPLY, 0);
+        assert_eq!(ICMP_DESTINATION_UNREACHABLE, 3);
+        assert_eq!(ICMP_SOURCE_QUENCH, 4);
+        assert_eq!(ICMP_REDIRECT, 5);
+        assert_eq!(ICMP_ECHO_REQUEST, 8);
+        assert_eq!(ICMP_ROUTER_ADVERTISEMENT, 9);
+        assert_eq!(ICMP_ROUTER_SOLICITATION, 10);
+        assert_eq!(ICMP_TIMESTAMP, 13);
+        assert_eq!(ICMP_TIMESTAMP_REPLY, 14);
+        assert_eq!(ICMP_PHOTURIS, 40);
+        assert_eq!(ICMP_SEAMOBY_EXPERIMENTAL, 41);
+        assert_eq!(ICMP_EXTENDED_ECHO_REQUEST, 42);
+        assert_eq!(ICMP_EXTENDED_ECHO_REPLY, 43);
+        assert_eq!(ICMP_EXPERIMENTAL_253, 253);
+        assert_eq!(ICMP_EXPERIMENTAL_254, 254);
+        assert_eq!(ICMP_RESERVED_255, 255);
+        assert_eq!(ICMP_RESERVED_SECURITY, 19);
+        assert_eq!(ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_FIRST, 20);
+        assert_eq!(ICMP_RESERVED_ROBUSTNESS_EXPERIMENT_LAST, 29);
+    }
+
+    // Representative code-field values for the types that carry IANA code
+    // registries.
+    #[test]
+    fn icmpv4_codepoints_representative_code_constants_have_iana_values() {
+        assert_eq!(ICMP_CODE_DU_NET_UNREACHABLE, 0);
+        assert_eq!(ICMP_CODE_DU_FRAGMENTATION_NEEDED, 4);
+        assert_eq!(ICMP_CODE_REDIRECT_HOST, 1);
+        assert_eq!(ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC, 16);
+        assert_eq!(ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION, 5);
+        assert_eq!(ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES, 4);
+    }
+
+    // The constants and summary helpers must be reachable from the crate root so
+    // generated tools can name codepoints without reaching into the module.
+    #[test]
+    fn icmpv4_codepoints_constants_are_publicly_exported() {
+        assert_eq!(crate::ICMP_TIMESTAMP, ICMP_TIMESTAMP);
+        assert_eq!(crate::ICMP_ROUTER_ADVERTISEMENT, ICMP_ROUTER_ADVERTISEMENT);
+        assert_eq!(
+            crate::ICMP_EXTENDED_ECHO_REQUEST,
+            ICMP_EXTENDED_ECHO_REQUEST
+        );
+        assert_eq!(crate::ICMP_EXPERIMENTAL_253, ICMP_EXPERIMENTAL_253);
+        assert_eq!(
+            crate::ICMP_ALTERNATE_HOST_ADDRESS,
+            ICMP_ALTERNATE_HOST_ADDRESS
+        );
+        assert_eq!(crate::ICMP_ADDRESS_MASK_REQUEST, ICMP_ADDRESS_MASK_REQUEST);
+        // The same names must also surface through the `core` prelude re-export.
+        assert_eq!(crate::core::ICMP_PHOTURIS, ICMP_PHOTURIS);
+        assert_eq!(
+            crate::core::ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC,
+            ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC
+        );
+    }
+
+    // Known types render their stable registry name with the numeric value kept
+    // visible.
+    #[test]
+    fn icmpv4_codepoints_known_type_summaries_use_stable_names() {
+        assert_eq!(icmpv4_type_summary(ICMP_ECHO_REPLY), "echo-reply(0)");
+        assert_eq!(
+            icmpv4_type_summary(ICMP_DESTINATION_UNREACHABLE),
+            "destination-unreachable(3)"
+        );
+        assert_eq!(icmpv4_type_summary(ICMP_TIMESTAMP), "timestamp(13)");
+        assert_eq!(
+            icmpv4_type_summary(ICMP_EXTENDED_ECHO_REQUEST),
+            "extended-echo-request(42)"
+        );
+        assert_eq!(
+            icmpv4_type_summary(ICMP_EXPERIMENTAL_253),
+            "experiment-1(253)"
+        );
+        // Every value across the robustness-experiment reserved range names the
+        // shared registry meaning rather than only the endpoints.
+        assert_eq!(
+            icmpv4_type_summary(25),
+            "reserved-robustness-experiment(25)"
+        );
+        assert_eq!(icmpv4_type_name(ICMP_RESERVED_255), Some("reserved"));
+    }
+
+    // Known (type, code) pairs render their stable registry name; the numeric
+    // code stays visible.
+    #[test]
+    fn icmpv4_codepoints_known_code_summaries_use_stable_names() {
+        assert_eq!(
+            icmpv4_code_summary(
+                ICMP_DESTINATION_UNREACHABLE,
+                ICMP_CODE_DU_FRAGMENTATION_NEEDED
+            ),
+            "fragmentation-needed(4)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(ICMP_REDIRECT, ICMP_CODE_REDIRECT_HOST),
+            "redirect-host(1)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(
+                ICMP_ROUTER_ADVERTISEMENT,
+                ICMP_CODE_ROUTER_ADVERTISEMENT_NO_COMMON_TRAFFIC
+            ),
+            "no-common-traffic(16)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(ICMP_PHOTURIS, ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION),
+            "need-authorization(5)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(
+                ICMP_EXTENDED_ECHO_REPLY,
+                ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES
+            ),
+            "multiple-interfaces(4)"
+        );
+    }
+
+    // Deprecated and obsolete types keep their registry identity in both the
+    // name lookup and the deprecation predicate. Naming a value never doubles as
+    // refusing it.
+    #[test]
+    fn icmpv4_codepoints_deprecated_types_retain_names_and_report_status() {
+        assert_eq!(icmpv4_type_summary(ICMP_SOURCE_QUENCH), "source-quench(4)");
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ALTERNATE_HOST_ADDRESS),
+            "alternate-host-address(6)"
+        );
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ADDRESS_MASK_REPLY),
+            "address-mask-reply(18)"
+        );
+
+        // RFC 6633 (source quench) and the RFC 6918 bulk deprecations are
+        // reported as deprecated.
+        assert!(icmpv4_type_is_deprecated(ICMP_SOURCE_QUENCH));
+        assert!(icmpv4_type_is_deprecated(ICMP_ALTERNATE_HOST_ADDRESS));
+        assert!(icmpv4_type_is_deprecated(ICMP_INFORMATION_REPLY));
+        assert!(icmpv4_type_is_deprecated(ICMP_ADDRESS_MASK_REQUEST));
+
+        // Active and reserved-but-not-deprecated types are not flagged.
+        assert!(!icmpv4_type_is_deprecated(ICMP_ECHO_REQUEST));
+        assert!(!icmpv4_type_is_deprecated(ICMP_SEAMOBY_EXPERIMENTAL));
+        assert!(!icmpv4_type_is_deprecated(ICMP_EXTENDED_ECHO_REQUEST));
+        assert!(!icmpv4_type_is_deprecated(ICMP_RESERVED_255));
+    }
+
+    // Unassigned type numbers have no registry name and fall back to the bare
+    // number in summaries.
+    #[test]
+    fn icmpv4_codepoints_unknown_type_falls_back_to_number() {
+        // Types 1, 2, 7 are Unassigned in the IANA registry.
+        assert_eq!(icmpv4_type_name(1), None);
+        assert_eq!(icmpv4_type_name(2), None);
+        assert_eq!(icmpv4_type_name(7), None);
+        assert_eq!(icmpv4_type_summary(1), "1");
+        assert_eq!(icmpv4_type_summary(7), "7");
+    }
+
+    // Codes with no registered meaning for their type fall back to the bare
+    // number, including codes on a type that has no code registry at all.
+    #[test]
+    fn icmpv4_codepoints_unknown_code_falls_back_to_number() {
+        // Type 3 has a code registry, but code 99 is not assigned.
+        assert_eq!(icmpv4_code_summary(ICMP_DESTINATION_UNREACHABLE, 99), "99");
+        // Type 11 (time exceeded) has only codes 0 and 1.
+        assert_eq!(icmpv4_code_summary(super::ICMP_TIME_EXCEEDED, 200), "200");
+        // Echo request carries no code registry, so any code is numeric.
+        assert_eq!(icmpv4_code_summary(ICMP_ECHO_REQUEST, 0), "0");
+        assert_eq!(icmpv4_code_summary(ICMP_ECHO_REQUEST, 5), "5");
+    }
+}

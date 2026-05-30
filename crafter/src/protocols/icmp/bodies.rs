@@ -403,3 +403,680 @@ impl Layer for IcmpRouterAdvertisementEntry {
 }
 
 impl_layer_div!(IcmpRouterAdvertisementEntry);
+
+#[cfg(test)]
+mod icmpv4_rfc792_queries {
+    use super::{
+        icmpv4_type_is_deprecated, icmpv4_type_summary, Icmp, IcmpTimestamp,
+        ICMP_INFORMATION_REPLY, ICMP_INFORMATION_REQUEST, ICMP_TIMESTAMP, ICMP_TIMESTAMP_REPLY,
+    };
+    use crate::checksum::internet_checksum;
+    use crate::packet::Layer;
+    use crate::{Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // A timestamp request compiles its fixed header (with identifier and
+    // sequence) plus the three 32-bit timestamps, and the typed body survives a
+    // full decode round-trip with its values intact.
+    #[test]
+    fn icmpv4_rfc792_queries_timestamp_compile_decode_roundtrip() {
+        for icmp_type in [ICMP_TIMESTAMP, ICMP_TIMESTAMP_REPLY] {
+            let packet = Ipv4::new().src(src()).dst(dst())
+                / Icmp::new().icmp_type(icmp_type).id(0x1234).seq(7)
+                / IcmpTimestamp::new()
+                    .originate(0x0a0b_0c0d)
+                    .receive(0x11223344)
+                    .transmit(0x55667788);
+            let compiled = packet.compile().unwrap();
+
+            // ICMP header begins at byte 20 (20-byte IPv4 header, no options).
+            assert_eq!(compiled.as_bytes()[20], icmp_type);
+            assert_eq!(compiled.as_bytes()[21], 0); // code
+                                                    // Identifier (bytes 24..26) and sequence (bytes 26..28).
+            assert_eq!(&compiled.as_bytes()[24..26], &0x1234u16.to_be_bytes());
+            assert_eq!(&compiled.as_bytes()[26..28], &7u16.to_be_bytes());
+            // Timestamp body (bytes 28..40): originate, receive, transmit.
+            assert_eq!(&compiled.as_bytes()[28..32], &0x0a0b_0c0du32.to_be_bytes());
+            assert_eq!(&compiled.as_bytes()[32..36], &0x11223344u32.to_be_bytes());
+            assert_eq!(&compiled.as_bytes()[36..40], &0x55667788u32.to_be_bytes());
+
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+            let icmp = decoded.layer::<Icmp>().unwrap();
+            assert_eq!(icmp.icmp_type_value(), icmp_type);
+            // Identifier and sequence are inspectable for the timestamp family.
+            assert_eq!(icmp.identifier_value(), Some(0x1234));
+            assert_eq!(icmp.sequence_number_value(), Some(7));
+            // Timestamp is not an echo, so it maps to no common ping kind.
+            assert_eq!(icmp.kind_value(), None);
+
+            let ts = decoded.layer::<IcmpTimestamp>().unwrap();
+            assert_eq!(ts.originate_value(), 0x0a0b_0c0d);
+            assert_eq!(ts.receive_value(), 0x11223344);
+            assert_eq!(ts.transmit_value(), 0x55667788);
+            // No leftover raw bytes when the body length is exactly 12.
+            assert!(decoded.layer::<Raw>().is_none());
+            assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+        }
+    }
+
+    // The timestamp constructors set the right types and default the body to
+    // zero timestamps.
+    #[test]
+    fn icmpv4_rfc792_queries_timestamp_constructors_set_types() {
+        assert_eq!(Icmp::timestamp_request().icmp_type_value(), ICMP_TIMESTAMP);
+        assert_eq!(
+            Icmp::timestamp_reply().icmp_type_value(),
+            ICMP_TIMESTAMP_REPLY
+        );
+        let ts = IcmpTimestamp::new();
+        assert_eq!(ts.originate_value(), 0);
+        assert_eq!(ts.receive_value(), 0);
+        assert_eq!(ts.transmit_value(), 0);
+    }
+
+    // The ICMP checksum is auto-filled over the header plus the timestamp body
+    // when the caller leaves it unset.
+    #[test]
+    fn icmpv4_rfc792_queries_timestamp_checksum_autofill() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::timestamp_request().id(0x4242).seq(3)
+            / IcmpTimestamp::new().originate(1).receive(2).transmit(3);
+        let compiled = packet.compile().unwrap();
+
+        // Recompute the expected checksum over the full ICMP message (header +
+        // 12-byte timestamp body) with the checksum field zeroed.
+        let icmp_message = &compiled.as_bytes()[20..];
+        let mut zeroed = icmp_message.to_vec();
+        zeroed[2] = 0;
+        zeroed[3] = 0;
+        let expected = internet_checksum(&zeroed);
+        assert_ne!(expected, 0);
+        assert_eq!(
+            &compiled.as_bytes()[22..24],
+            &expected.to_be_bytes(),
+            "auto-filled checksum must cover the timestamp body"
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmp>().unwrap().checksum_value(),
+            Some(expected)
+        );
+    }
+
+    // An explicit (deliberately wrong) checksum on a timestamp message is
+    // emitted verbatim instead of being recomputed over the body.
+    #[test]
+    fn icmpv4_rfc792_queries_timestamp_explicit_checksum_override() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::timestamp_request().id(1).seq(1).checksum(0xbeef)
+            / IcmpTimestamp::new().originate(9).receive(9).transmit(9);
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(&compiled.as_bytes()[22..24], &0xbeefu16.to_be_bytes());
+    }
+
+    // Information request and reply are constructible (RFC 792) and carry only
+    // the identifier and sequence number with no body beyond the fixed header.
+    #[test]
+    fn icmpv4_rfc792_queries_information_request_reply_construction() {
+        for icmp_type in [ICMP_INFORMATION_REQUEST, ICMP_INFORMATION_REPLY] {
+            let packet = Ipv4::new().src(src()).dst(dst())
+                / Icmp::new().icmp_type(icmp_type).id(0x0a0b).seq(0x0c0d);
+            let compiled = packet.compile().unwrap();
+
+            assert_eq!(compiled.as_bytes()[20], icmp_type);
+            assert_eq!(compiled.as_bytes()[21], 0);
+            assert_eq!(&compiled.as_bytes()[24..26], &0x0a0bu16.to_be_bytes());
+            assert_eq!(&compiled.as_bytes()[26..28], &0x0c0du16.to_be_bytes());
+            // No body bytes follow the fixed 8-byte ICMP header.
+            assert_eq!(compiled.as_bytes().len(), 20 + 8);
+
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+            let icmp = decoded.layer::<Icmp>().unwrap();
+            assert_eq!(icmp.icmp_type_value(), icmp_type);
+            assert_eq!(icmp.identifier_value(), Some(0x0a0b));
+            assert_eq!(icmp.sequence_number_value(), Some(0x0c0d));
+            // Information messages are not echoes, so they carry no ping kind.
+            assert_eq!(icmp.kind_value(), None);
+            assert!(decoded.layer::<Raw>().is_none());
+            assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+        }
+
+        // The dedicated constructors set the same types.
+        assert_eq!(
+            Icmp::information_request().icmp_type_value(),
+            ICMP_INFORMATION_REQUEST
+        );
+        assert_eq!(
+            Icmp::information_reply().icmp_type_value(),
+            ICMP_INFORMATION_REPLY
+        );
+    }
+
+    // Information messages are deprecated by RFC 6918 but keep their registry
+    // identity in summaries and are flagged as deprecated. Naming them never
+    // doubles as refusing them (construction above succeeds).
+    #[test]
+    fn icmpv4_rfc792_queries_deprecated_information_summaries() {
+        assert_eq!(
+            icmpv4_type_summary(ICMP_INFORMATION_REQUEST),
+            "information-request(15)"
+        );
+        assert_eq!(
+            icmpv4_type_summary(ICMP_INFORMATION_REPLY),
+            "information-reply(16)"
+        );
+        assert!(icmpv4_type_is_deprecated(ICMP_INFORMATION_REQUEST));
+        assert!(icmpv4_type_is_deprecated(ICMP_INFORMATION_REPLY));
+
+        // Timestamp messages are active (not deprecated) and keep their names.
+        assert_eq!(icmpv4_type_summary(ICMP_TIMESTAMP), "timestamp(13)");
+        assert_eq!(
+            icmpv4_type_summary(ICMP_TIMESTAMP_REPLY),
+            "timestamp-reply(14)"
+        );
+        assert!(!icmpv4_type_is_deprecated(ICMP_TIMESTAMP));
+
+        // The body summary exposes the three typed timestamps.
+        let summary = IcmpTimestamp::new()
+            .originate(1)
+            .receive(2)
+            .transmit(3)
+            .summary();
+        assert_eq!(summary, "IcmpTimestamp(originate=1, receive=2, transmit=3)");
+    }
+
+    // A timestamp message whose trailing region is the wrong length (not exactly
+    // 12 bytes) is malformed: the typed body parser declines it, the bytes
+    // remain a Raw payload, decoding does not panic, and the message still
+    // round-trips byte-for-byte.
+    #[test]
+    fn icmpv4_rfc792_queries_malformed_timestamp_stays_raw() {
+        // Short body: only 8 of the 12 timestamp bytes are present.
+        let short = Ipv4::new().src(src()).dst(dst())
+            / Icmp::timestamp_request().id(1).seq(1)
+            / Raw::from_bytes([0xaa; 8]);
+        let compiled = short.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpTimestamp>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[0xaa; 8]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+
+        // Oversized body: 12 timestamp bytes plus trailing unknown data.
+        let mut body = vec![0u8; 12];
+        body.extend_from_slice(b"trailing");
+        let long = Ipv4::new().src(src()).dst(dst())
+            / Icmp::timestamp_reply().id(2).seq(2)
+            / Raw::from_bytes(&body);
+        let compiled = long.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpTimestamp>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &body[..]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // True buffer truncation (fewer than 8 bytes of ICMP header) returns a
+    // structured buffer error rather than panicking.
+    #[test]
+    fn icmpv4_rfc792_queries_truncated_header_is_structured_error() {
+        let short = (Ipv4::new().proto(crate::IpProtocol::Icmp)
+            / Raw::from_bytes([ICMP_TIMESTAMP; 5]))
+        .compile()
+        .unwrap();
+        assert!(Packet::decode_from_l3(NetworkLayer::Ipv4, short.as_bytes()).is_err());
+    }
+}
+
+
+#[cfg(test)]
+mod icmpv4_address_mask {
+    use super::{
+        icmpv4_type_is_deprecated, icmpv4_type_summary, Icmp, IcmpAddressMask,
+        ICMP_ADDRESS_MASK_REPLY, ICMP_ADDRESS_MASK_REQUEST,
+    };
+    use crate::checksum::internet_checksum;
+    use crate::packet::Layer;
+    use crate::{Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // An address mask request (RFC 950) compiles its fixed header (with
+    // identifier and sequence) plus the 32-bit mask, with the mask defaulting to
+    // all zeros per RFC 950, and round-trips through decode with its fields
+    // intact.
+    #[test]
+    fn icmpv4_address_mask_request_compile_decode_roundtrip() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_request().id(0x1234).seq(7)
+            / IcmpAddressMask::new();
+        let compiled = packet.compile().unwrap();
+
+        // ICMP header begins at byte 20 (20-byte IPv4 header, no options).
+        assert_eq!(compiled.as_bytes()[20], ICMP_ADDRESS_MASK_REQUEST);
+        assert_eq!(compiled.as_bytes()[21], 0); // code
+                                                // Identifier (bytes 24..26) and sequence (bytes 26..28).
+        assert_eq!(&compiled.as_bytes()[24..26], &0x1234u16.to_be_bytes());
+        assert_eq!(&compiled.as_bytes()[26..28], &7u16.to_be_bytes());
+        // RFC 950 request: the address mask body (bytes 28..32) is all zeros.
+        assert_eq!(&compiled.as_bytes()[28..32], &[0, 0, 0, 0]);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.icmp_type_value(), ICMP_ADDRESS_MASK_REQUEST);
+        // Identifier and sequence are inspectable for the address mask family.
+        assert_eq!(icmp.identifier_value(), Some(0x1234));
+        assert_eq!(icmp.sequence_number_value(), Some(7));
+        // Address mask is not an echo, so it maps to no common ping kind.
+        assert_eq!(icmp.kind_value(), None);
+
+        let mask = decoded.layer::<IcmpAddressMask>().unwrap();
+        assert_eq!(mask.mask_value(), Ipv4Addr::UNSPECIFIED);
+        // No leftover raw bytes when the body length is exactly 4.
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // An address mask reply carries the gateway's subnet/network mask, exposed
+    // through both the typed Ipv4Addr accessor and the raw octets, and survives
+    // a full decode round-trip.
+    #[test]
+    fn icmpv4_address_mask_reply_compile_decode_roundtrip_and_accessors() {
+        let mask = Ipv4Addr::new(255, 255, 255, 0);
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_reply().id(0xabcd).seq(9)
+            / IcmpAddressMask::new().mask(mask);
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(compiled.as_bytes()[20], ICMP_ADDRESS_MASK_REPLY);
+        // The 32-bit mask body holds the subnet mask verbatim.
+        assert_eq!(&compiled.as_bytes()[28..32], &mask.octets());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let body = decoded.layer::<IcmpAddressMask>().unwrap();
+        assert_eq!(body.mask_value(), mask);
+        assert_eq!(body.mask_octets(), [255, 255, 255, 0]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+
+        // The mask escape hatches agree with the typed accessor.
+        assert_eq!(
+            IcmpAddressMask::new().mask_bits(0xffff_ff00).mask_value(),
+            mask
+        );
+        assert_eq!(
+            IcmpAddressMask::new()
+                .mask_str("255.255.255.0")
+                .unwrap()
+                .mask_value(),
+            mask
+        );
+    }
+
+    // The address mask constructors set the right types and default the body to
+    // the all-zero mask.
+    #[test]
+    fn icmpv4_address_mask_constructors_set_types() {
+        assert_eq!(
+            Icmp::address_mask_request().icmp_type_value(),
+            ICMP_ADDRESS_MASK_REQUEST
+        );
+        assert_eq!(
+            Icmp::address_mask_reply().icmp_type_value(),
+            ICMP_ADDRESS_MASK_REPLY
+        );
+        assert_eq!(IcmpAddressMask::new().mask_value(), Ipv4Addr::UNSPECIFIED);
+    }
+
+    // The ICMP checksum is auto-filled over the header plus the address mask
+    // body when the caller leaves it unset.
+    #[test]
+    fn icmpv4_address_mask_checksum_autofill() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_reply().id(0x4242).seq(3)
+            / IcmpAddressMask::new().mask(Ipv4Addr::new(255, 255, 0, 0));
+        let compiled = packet.compile().unwrap();
+
+        // Recompute the expected checksum over the full ICMP message (header +
+        // 4-byte mask body) with the checksum field zeroed.
+        let icmp_message = &compiled.as_bytes()[20..];
+        let mut zeroed = icmp_message.to_vec();
+        zeroed[2] = 0;
+        zeroed[3] = 0;
+        let expected = internet_checksum(&zeroed);
+        assert_ne!(expected, 0);
+        assert_eq!(
+            &compiled.as_bytes()[22..24],
+            &expected.to_be_bytes(),
+            "auto-filled checksum must cover the address mask body"
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmp>().unwrap().checksum_value(),
+            Some(expected)
+        );
+    }
+
+    // An explicit (deliberately wrong) checksum on an address mask message is
+    // emitted verbatim instead of being recomputed over the body.
+    #[test]
+    fn icmpv4_address_mask_explicit_checksum_override() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_request().id(1).seq(1).checksum(0xbeef)
+            / IcmpAddressMask::new();
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(&compiled.as_bytes()[22..24], &0xbeefu16.to_be_bytes());
+    }
+
+    // Both address mask types are deprecated by RFC 6918 but keep their registry
+    // identity in summaries and are flagged as deprecated. Naming them never
+    // doubles as refusing them (construction above succeeds).
+    #[test]
+    fn icmpv4_address_mask_deprecated_summaries() {
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ADDRESS_MASK_REQUEST),
+            "address-mask-request(17)"
+        );
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ADDRESS_MASK_REPLY),
+            "address-mask-reply(18)"
+        );
+        assert!(icmpv4_type_is_deprecated(ICMP_ADDRESS_MASK_REQUEST));
+        assert!(icmpv4_type_is_deprecated(ICMP_ADDRESS_MASK_REPLY));
+
+        // The body summary exposes the typed mask.
+        assert_eq!(
+            IcmpAddressMask::new()
+                .mask(Ipv4Addr::new(255, 255, 255, 0))
+                .summary(),
+            "IcmpAddressMask(mask=255.255.255.0)"
+        );
+    }
+
+    // An address mask message whose trailing region is the wrong length (not
+    // exactly 4 bytes) is malformed: the typed body parser declines it, the
+    // bytes remain a Raw payload, decoding does not panic, and the message still
+    // round-trips byte-for-byte.
+    #[test]
+    fn icmpv4_address_mask_malformed_body_stays_raw() {
+        // Short body: only 3 of the 4 mask bytes are present.
+        let short = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_request().id(1).seq(1)
+            / Raw::from_bytes([0xaa; 3]);
+        let compiled = short.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpAddressMask>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[0xaa; 3]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+
+        // Oversized body: 4 mask bytes plus trailing unknown data.
+        let mut body = vec![0xffu8; 4];
+        body.extend_from_slice(b"trailing");
+        let long = Ipv4::new().src(src()).dst(dst())
+            / Icmp::address_mask_reply().id(2).seq(2)
+            / Raw::from_bytes(&body);
+        let compiled = long.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpAddressMask>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &body[..]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+}
+
+
+#[cfg(test)]
+mod icmpv4_router_discovery {
+    use super::{
+        icmpv4_type_summary, Icmp, IcmpRouterAdvertisementEntry,
+        ICMP_CODE_ROUTER_ADVERTISEMENT_NORMAL, ICMP_ROUTER_ADVERTISEMENT,
+        ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS, ICMP_ROUTER_SOLICITATION,
+    };
+    use crate::checksum::internet_checksum;
+    use crate::packet::Layer;
+    use crate::{Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // A router solicitation (RFC 1256, type 10) is the fixed 8-byte header with a
+    // 32-bit reserved field that is sent as zero. It carries no body and round-
+    // trips through decode with the reserved word intact.
+    #[test]
+    fn icmpv4_router_discovery_solicitation_compile_decode_roundtrip() {
+        let packet = Ipv4::new().src(src()).dst(dst()) / Icmp::router_solicitation();
+        let compiled = packet.compile().unwrap();
+
+        // ICMP header begins at byte 20 (20-byte IPv4 header, no options).
+        assert_eq!(compiled.as_bytes()[20], ICMP_ROUTER_SOLICITATION);
+        assert_eq!(compiled.as_bytes()[21], 0); // code
+                                                // The reserved 32-bit field (bytes 24..28) is sent as zero.
+        assert_eq!(&compiled.as_bytes()[24..28], &[0, 0, 0, 0]);
+        // No body follows the fixed 8-byte ICMP header.
+        assert_eq!(compiled.as_bytes().len(), 20 + 8);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.icmp_type_value(), ICMP_ROUTER_SOLICITATION);
+        assert_eq!(icmp.rest_of_header_value(), [0, 0, 0, 0]);
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(
+            Icmp::router_solicitation().icmp_type_value(),
+            ICMP_ROUTER_SOLICITATION
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // A one-entry router advertisement compiles its fixed header (Num Addrs,
+    // Addr Entry Size, Lifetime) plus a single router-address/preference entry,
+    // and round-trips through decode with the typed entry intact.
+    #[test]
+    fn icmpv4_router_discovery_advertisement_one_entry_roundtrip() {
+        let router = Ipv4Addr::new(192, 0, 2, 1);
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::router_advertisement().lifetime(1800)
+            / IcmpRouterAdvertisementEntry::new()
+                .router_address(router)
+                .preference_level(5);
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(compiled.as_bytes()[20], ICMP_ROUTER_ADVERTISEMENT);
+        assert_eq!(compiled.as_bytes()[21], 0); // code
+                                                // Rest-of-header: Num Addrs (byte 24), Addr Entry Size (byte 25),
+                                                // Lifetime (bytes 26..28).
+        assert_eq!(compiled.as_bytes()[24], 1);
+        assert_eq!(
+            compiled.as_bytes()[25],
+            ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS
+        );
+        assert_eq!(&compiled.as_bytes()[26..28], &1800u16.to_be_bytes());
+        // Entry: router address (bytes 28..32) then signed preference (32..36).
+        assert_eq!(&compiled.as_bytes()[28..32], &router.octets());
+        assert_eq!(&compiled.as_bytes()[32..36], &5i32.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.num_addrs_value(), Some(1));
+        assert_eq!(
+            icmp.addr_entry_size_value(),
+            Some(ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS)
+        );
+        assert_eq!(icmp.lifetime_value(), Some(1800));
+
+        let entry = decoded.layer::<IcmpRouterAdvertisementEntry>().unwrap();
+        assert_eq!(entry.router_address_value(), router);
+        assert_eq!(entry.preference_level_value(), 5);
+        // No leftover raw bytes when the body length matches Num Addrs entries.
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // A multi-entry advertisement preserves every entry in order, including a
+    // negative (signed) preference level, and round-trips through decode.
+    #[test]
+    fn icmpv4_router_discovery_advertisement_multi_entry_roundtrip() {
+        let entries = [
+            (Ipv4Addr::new(192, 0, 2, 1), 100i32),
+            (Ipv4Addr::new(192, 0, 2, 2), -50i32),
+            (Ipv4Addr::new(192, 0, 2, 3), 0i32),
+        ];
+        let mut packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::router_advertisement()
+                .code(ICMP_CODE_ROUTER_ADVERTISEMENT_NORMAL)
+                .lifetime(600);
+        for (router, preference) in entries {
+            packet = packet
+                / IcmpRouterAdvertisementEntry::new()
+                    .router_address(router)
+                    .preference_level(preference);
+        }
+        let compiled = packet.compile().unwrap();
+
+        // Num Addrs is auto-filled to the entry count.
+        assert_eq!(compiled.as_bytes()[24], entries.len() as u8);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let decoded_entries: Vec<&IcmpRouterAdvertisementEntry> =
+            decoded.layers::<IcmpRouterAdvertisementEntry>().collect();
+        assert_eq!(decoded_entries.len(), entries.len());
+        for (decoded_entry, (router, preference)) in decoded_entries.iter().zip(entries) {
+            assert_eq!(decoded_entry.router_address_value(), router);
+            assert_eq!(decoded_entry.preference_level_value(), preference);
+        }
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // Compilation auto-fills Num Addrs from the following entry layers and
+    // defaults Addr Entry Size to the standard format when the caller leaves
+    // them unset, and the auto-filled ICMP checksum covers the whole message.
+    #[test]
+    fn icmpv4_router_discovery_advertisement_autofills_counts_and_checksum() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::router_advertisement().lifetime(900)
+            / IcmpRouterAdvertisementEntry::new().router_address(Ipv4Addr::new(192, 0, 2, 1))
+            / IcmpRouterAdvertisementEntry::new().router_address(Ipv4Addr::new(192, 0, 2, 2));
+        let compiled = packet.compile().unwrap();
+
+        // Num Addrs counts the two entries; Addr Entry Size defaults to 2 words.
+        assert_eq!(compiled.as_bytes()[24], 2);
+        assert_eq!(
+            compiled.as_bytes()[25],
+            ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS
+        );
+
+        // The auto-filled checksum covers the header plus both entries.
+        let icmp_message = &compiled.as_bytes()[20..];
+        let mut zeroed = icmp_message.to_vec();
+        zeroed[2] = 0;
+        zeroed[3] = 0;
+        let expected = internet_checksum(&zeroed);
+        assert_ne!(expected, 0);
+        assert_eq!(&compiled.as_bytes()[22..24], &expected.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmp>().unwrap().checksum_value(),
+            Some(expected)
+        );
+    }
+
+    // Explicit Num Addrs, Addr Entry Size, Lifetime, and checksum overrides are
+    // preserved verbatim even when they are deliberately inconsistent with the
+    // following entries. A mismatched Num Addrs / non-standard Addr Entry Size
+    // means decode cannot defensibly type the entries, so the body stays Raw and
+    // the message still round-trips byte-for-byte.
+    #[test]
+    fn icmpv4_router_discovery_advertisement_explicit_malformed_overrides() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::router_advertisement()
+                .num_addrs(7) // deliberately wrong: only one entry follows
+                .addr_entry_size(3) // non-standard entry size
+                .lifetime(0xbeef)
+                .checksum(0xdead)
+            / IcmpRouterAdvertisementEntry::new().router_address(Ipv4Addr::new(192, 0, 2, 9));
+        let compiled = packet.compile().unwrap();
+
+        // Every pinned field is emitted verbatim.
+        assert_eq!(compiled.as_bytes()[24], 7);
+        assert_eq!(compiled.as_bytes()[25], 3);
+        assert_eq!(&compiled.as_bytes()[26..28], &0xbeefu16.to_be_bytes());
+        assert_eq!(&compiled.as_bytes()[22..24], &0xdeadu16.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.num_addrs_value(), Some(7));
+        assert_eq!(icmp.addr_entry_size_value(), Some(3));
+        assert_eq!(icmp.lifetime_value(), Some(0xbeef));
+        // The inconsistent header means the body cannot be typed as entries; the
+        // bytes survive as Raw and nothing panics.
+        assert!(decoded.layer::<IcmpRouterAdvertisementEntry>().is_none());
+        assert!(decoded.layer::<Raw>().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // A router advertisement whose body length does not match Num Addrs * entry
+    // size is malformed: the entry parser declines it, the bytes remain Raw,
+    // decoding does not panic, and the message still round-trips byte-for-byte.
+    #[test]
+    fn icmpv4_router_discovery_advertisement_length_mismatch_stays_raw() {
+        // Standard entry size and Num Addrs of 1, but only 5 trailing bytes.
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::router_advertisement()
+                .num_addrs(1)
+                .addr_entry_size(ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS)
+            / Raw::from_bytes([0xaa; 5]);
+        let compiled = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpRouterAdvertisementEntry>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[0xaa; 5]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // Summaries identify the router discovery types and the typed entry fields
+    // while keeping numeric values visible.
+    #[test]
+    fn icmpv4_router_discovery_summary_output() {
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ROUTER_ADVERTISEMENT),
+            "router-advertisement(9)"
+        );
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ROUTER_SOLICITATION),
+            "router-solicitation(10)"
+        );
+        assert_eq!(
+            Icmp::router_advertisement().code(0).summary(),
+            "Icmp(type=router-advertisement(9), code=normal(0), id=-, seq=-)"
+        );
+        assert_eq!(
+            IcmpRouterAdvertisementEntry::new()
+                .router_address(Ipv4Addr::new(192, 0, 2, 1))
+                .preference_level(-7)
+                .summary(),
+            "IcmpRouterAdvertisementEntry(router=192.0.2.1, preference=-7)"
+        );
+    }
+}
+
