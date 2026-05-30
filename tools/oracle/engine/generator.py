@@ -1389,10 +1389,26 @@ def _mac_for_domain(ctx: _SamplingContext, domain: object, default: str) -> str:
     return default
 
 
+def _is_ipv4_root_dhcp_stack(stack: Sequence[str]) -> bool:
+    """Return True for the IPv4-root, unicast live DHCP stack.
+
+    The ``ipv4 / udp / dhcp`` stack carries DHCP as a one-way unicast oracle
+    packet between provider endpoints. It has no Ethernet frame, so link-layer
+    broadcast delivery, the IPv4 limited-broadcast destination, and the DHCP
+    broadcast flag have no meaning and would make the packet ineligible for
+    provider-backed live exchange. The Ethernet-root DHCP stack keeps those
+    domains for offline link-layer coverage.
+    """
+
+    return "dhcp" in stack and "ethernet" not in stack
+
+
 def _ipv4_for_domain(ctx: _SamplingContext, domain: object, default: str, *, dst: bool) -> str:
     if domain == "zero":
         return "0.0.0.0"
     if domain == "broadcast" and dst:
+        if _is_ipv4_root_dhcp_stack(ctx.stack):
+            return default
         return "255.255.255.255"
     return default
 
@@ -1564,6 +1580,8 @@ def _sample_dhcp_field(ctx: _SamplingContext, field_name: str, domain: object) -
     if field_name == "transaction_id":
         return bounded_int(ctx.rng, 0, (1 << 32) - 1)
     if field_name == "flags":
+        if domain == "broadcast" and _is_ipv4_root_dhcp_stack(ctx.stack):
+            return "none"
         return domain
     if field_name == "client_ip":
         return "0.0.0.0" if domain == "zero" else ctx.src_ipv4
