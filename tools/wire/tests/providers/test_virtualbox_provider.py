@@ -29,7 +29,12 @@ from tools.wire.engine.providers.vm import (
     QEMU_IMG_COMMAND,
 )
 from tools.wire.engine.registry import ProviderExposureError
-from tools.wire.engine.state import read_endpoint_manifest, write_endpoint_manifest
+from tools.wire.engine.state import (
+    read_endpoint_manifest,
+    read_private_group_record,
+    update_private_group_allocation,
+    write_endpoint_manifest,
+)
 
 
 class VirtualBoxRegistryTest(unittest.TestCase):
@@ -561,6 +566,58 @@ class VirtualBoxDestroyEndpointTest(unittest.TestCase):
         self.assertTrue(output["already_destroyed"])
         self.assertFalse(output["destroyed"])
 
+    def test_destroy_private_endpoint_removes_group_allocation(self) -> None:
+        fake = _VirtualBoxDestroyFakeRunner(
+            state="poweroff",
+            vm_name="wire-virtualbox-private-test",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _virtualbox_private_manifest(root)
+
+            with _wire_env(root):
+                write_endpoint_manifest(manifest)
+                update_private_group_allocation(
+                    provider="virtualbox",
+                    group="pair-a",
+                    endpoint_id=manifest.endpoint_id,
+                    private_ipv4="10.78.0.10",
+                    private_cidr="10.78.0.0/24",
+                    network_resource={
+                        "network_id": "virtualbox-private-group-pair-a",
+                    },
+                )
+                update_private_group_allocation(
+                    provider="virtualbox",
+                    group="pair-a",
+                    endpoint_id="virtualbox-private-peer",
+                    private_ipv4="10.78.0.20",
+                    private_cidr="10.78.0.0/24",
+                    network_resource={
+                        "network_id": "virtualbox-private-group-pair-a",
+                    },
+                )
+
+                output = virtualbox.destroy_endpoint(
+                    read_endpoint_manifest(manifest.endpoint_id),
+                    command_runner=fake,
+                )
+                stored = read_endpoint_manifest(manifest.endpoint_id)
+                record = read_private_group_record("virtualbox", "pair-a")
+
+        self.assertEqual(stored.status, "destroyed")
+        self.assertEqual(record.allocated_endpoint_ids, ["virtualbox-private-peer"])
+        self.assertEqual(record.allocated_private_ipv4s, ["10.78.0.20"])
+        self.assertEqual(
+            [action["action"] for action in output["actions"]],
+            ["inspect", "unregister", "remove-private-allocation"],
+        )
+        self.assertEqual(stored.metadata["private_group_destroy"]["record_found"], True)
+        self.assertEqual(
+            stored.metadata["private_group_destroy"]["remaining_endpoints"],
+            ["virtualbox-private-peer"],
+        )
+
 
 @contextmanager
 def _wire_env(root: Path, extra: Mapping[str, str] | None = None) -> Iterator[None]:
@@ -662,6 +719,110 @@ def _virtualbox_manifest(root: Path, *, status: str = "active") -> EndpointManif
     )
 
 
+def _virtualbox_private_manifest(
+    root: Path,
+    *,
+    status: str = "active",
+) -> EndpointManifest:
+    endpoint_id = "virtualbox-private-test"
+    state_dir = root / "wire-state" / "endpoints" / endpoint_id
+    artifact_dir = root / "wire-artifacts" / endpoint_id
+    vm_name = "wire-virtualbox-private-test"
+    private_network = {
+        "type": "network",
+        "provider": "virtualbox",
+        "network_id": "virtualbox-private-group-pair-a",
+        "network_name": "wire-vbox-pair-a",
+        "private_group": "pair-a",
+        "ip_range": "10.78.0.0/24",
+        "backend": "internal-network",
+    }
+    return EndpointManifest(
+        endpoint_id=endpoint_id,
+        provider="virtualbox",
+        exposure="private",
+        status=status,
+        role="test",
+        created_at="2026-05-26T22:46:00Z",
+        ssh=EndpointSSHInfo(
+            host="127.0.0.1",
+            user="root",
+            port=25223,
+            identity_file=str(state_dir / "id_ed25519"),
+            known_hosts_file=str(state_dir / "known_hosts"),
+            metadata={
+                "transport": "virtualbox-nat-port-forward",
+                "vm_name": vm_name,
+                "control_interface": "enp0s3",
+            },
+        ),
+        interfaces=[
+            NetworkInterface(
+                name="enp0s3",
+                exposure="control",
+                ipv4="10.0.2.15",
+                metadata={"type": "nat-control", "host_port": 25223},
+            ),
+            NetworkInterface(
+                name="wirepriv0",
+                exposure="private",
+                ipv4="10.78.0.10",
+                provider_network_id="virtualbox-private-group-pair-a",
+                metadata={
+                    "type": "virtualbox-internal-network",
+                    "private_group": "pair-a",
+                    "private_ip": "10.78.0.10",
+                    "network_resource": private_network,
+                },
+            ),
+        ],
+        provider_resources=ProviderResources(
+            resources=[
+                ProviderResource(
+                    kind="virtualbox-vm",
+                    provider_id=vm_name,
+                    name=vm_name,
+                    metadata={
+                        "type": "virtualbox-vm",
+                        "vm_name": vm_name,
+                        "registered": True,
+                    },
+                ),
+                ProviderResource(
+                    kind="local-file",
+                    provider_id=str(state_dir),
+                    name="endpoint-state",
+                    metadata={"type": "local-file", "path": str(state_dir)},
+                ),
+            ],
+            cleanup_order=["virtualbox-vm", "local-file"],
+            metadata={
+                "provider": "virtualbox",
+                "exposure": "private",
+                "vm_registered": True,
+            },
+        ),
+        artifact_dir=str(artifact_dir),
+        metadata={
+            "created": True,
+            "dry_run": False,
+            "state_dir": str(state_dir),
+            "manifest_path": str(state_dir / "endpoint.json"),
+            "private_group": "pair-a",
+            "private_ip": "10.78.0.10",
+            "private_network": private_network,
+            "virtualbox": {
+                "command": "VBoxManage",
+                "vm_name": vm_name,
+                "vm_registered": True,
+                "basefolder": str(state_dir / "virtualbox"),
+                "private_network": private_network,
+                "private_ip": "10.78.0.10",
+            },
+        },
+    )
+
+
 class _VirtualBoxLiveFakeRunner:
     def __init__(self, *, fail_memory_modify: bool = False) -> None:
         self.calls: list[tuple[str, ...]] = []
@@ -704,9 +865,16 @@ class _VirtualBoxLiveFakeRunner:
 
 
 class _VirtualBoxDestroyFakeRunner:
-    def __init__(self, *, state: str = "poweroff", missing: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        state: str = "poweroff",
+        missing: bool = False,
+        vm_name: str = "wire-virtualbox-lan-test",
+    ) -> None:
         self.state = state
         self.missing = missing
+        self.vm_name = vm_name
         self.calls: list[tuple[str, ...]] = []
 
     @property
@@ -716,23 +884,23 @@ class _VirtualBoxDestroyFakeRunner:
     def __call__(self, argv: Sequence[object], **_: object) -> CommandResult:
         parts = tuple(str(part) for part in argv)
         self.calls.append(parts)
-        if parts == ("VBoxManage", "showvminfo", "wire-virtualbox-lan-test", "--machinereadable"):
+        if parts == ("VBoxManage", "showvminfo", self.vm_name, "--machinereadable"):
             if self.missing:
                 return _result(
                     parts,
                     exit_code=1,
-                    stderr="Could not find a registered machine named 'wire-virtualbox-lan-test'",
+                    stderr=f"Could not find a registered machine named '{self.vm_name}'",
                 )
             return _result(
                 parts,
-                stdout=f'name="wire-virtualbox-lan-test"\nVMState="{self.state}"\n',
+                stdout=f'name="{self.vm_name}"\nVMState="{self.state}"\n',
             )
-        if parts == ("VBoxManage", "controlvm", "wire-virtualbox-lan-test", "acpipowerbutton"):
+        if parts == ("VBoxManage", "controlvm", self.vm_name, "acpipowerbutton"):
             return _result(parts)
-        if parts == ("VBoxManage", "controlvm", "wire-virtualbox-lan-test", "poweroff"):
+        if parts == ("VBoxManage", "controlvm", self.vm_name, "poweroff"):
             self.state = "poweroff"
             return _result(parts)
-        if parts == ("VBoxManage", "unregistervm", "wire-virtualbox-lan-test", "--delete"):
+        if parts == ("VBoxManage", "unregistervm", self.vm_name, "--delete"):
             self.missing = True
             return _result(parts)
         raise AssertionError(f"unexpected command: {parts}")
