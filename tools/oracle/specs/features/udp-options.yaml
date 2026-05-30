@@ -1,0 +1,71 @@
+version: 1
+kind: feature
+name: udp_options
+summary: UDP surplus-area options, option checksums, application payload boundary, and checksum status edge cases.
+
+layers:
+  - udp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: known
+    option_kinds:
+      - nop
+      - mds
+      - mrds
+      - req
+      - res
+      - time
+  - name: ocs
+    checks:
+      - option_checksum
+  - name: apc
+    option_kinds:
+      - apc
+    checks:
+      - additional_payload_checksum
+  - name: unknown_safe
+    option_kinds:
+      - unassigned_safe
+  - name: unknown_unsafe
+    option_kinds:
+      - unassigned_unsafe
+  - name: unsupported_frag
+    option_kinds:
+      - frag
+  - name: ipv4_zero_checksum
+    checksum_status:
+      - ipv4_no_checksum
+  - name: ipv6_zero_checksum
+    checksum_status:
+      - ipv6_zero_checksum_exception_required
+  - name: surplus_application_boundary
+    checks:
+      - udp_length_excludes_surplus
+      - application_payload_excludes_options
+
+coverage_cases:
+  - udp-options-known
+  - udp-options-ocs
+  - udp-options-apc
+  - udp-options-unknown-safe
+  - udp-options-unknown-unsafe
+  - udp-options-unsupported-frag
+  - udp-ipv4-zero-checksum
+  - udp-ipv6-zero-checksum
+  - udp-options-surplus-application-boundary
+
+backend_support:
+  scapy:
+    status: partial
+    notes:
+      - Step 33 generates corpus intent only; Scapy byte materialization follows in backend steps.
+  libcrafter:
+    status: partial
+    notes:
+      - Step 33 generates corpus intent only; libcrafter materialization follows in adapter steps.
