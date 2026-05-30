@@ -33,6 +33,8 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
     "arp": {
         "hardware_type",
         "protocol_type",
+        "hardware_length",
+        "protocol_length",
         "opcode",
         "sender_hardware_address",
         "sender_protocol_address",
@@ -1423,17 +1425,27 @@ def _sample_arp_field(ctx: _SamplingContext, field_name: str, domain: object) ->
         return "ethernet"
     if field_name == "protocol_type":
         return "ipv4"
+    if field_name == "hardware_length":
+        return _integer_domain_value(ctx, domain, field_name, bits=8)
+    if field_name == "protocol_length":
+        return _integer_domain_value(ctx, domain, field_name, bits=8)
     if field_name == "opcode":
         return domain
     if field_name == "sender_hardware_address":
-        return ctx.src_mac
+        return _mac_for_domain(ctx, domain, ctx.src_mac)
     if field_name == "target_hardware_address":
         return _mac_for_domain(ctx, domain, ctx.dst_mac)
     if field_name == "sender_protocol_address":
-        return ctx.arp_sender_ip
+        return _arp_protocol_address_for_domain(ctx, domain, ctx.arp_sender_ip)
     if field_name == "target_protocol_address":
-        return ctx.arp_target_ip
+        return _arp_protocol_address_for_domain(ctx, domain, ctx.arp_target_ip)
     raise ValueError(f"spec error: unsupported arp field sampler: {field_name}")
+
+
+def _arp_protocol_address_for_domain(ctx: _SamplingContext, domain: object, default: str) -> str:
+    if domain == "zero":
+        return "0.0.0.0"
+    return default
 
 
 def _sample_ipv4_field(
@@ -1763,7 +1775,7 @@ def _sample_linux_cooked_field(ctx: _SamplingContext, field_name: str, domain: o
     if field_name == "source_address":
         return {"hex": f"{ctx.src_mac.replace(':', '')}0000"}
     if field_name == "protocol":
-        return "ipv4"
+        return _declared_ethertype_for_stack(ctx.stack, "linux_cooked")
     raise ValueError(f"spec error: unsupported linux_cooked field sampler: {field_name}")
 
 
