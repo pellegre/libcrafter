@@ -196,14 +196,75 @@ impl Layer for Ethernet {
 
 impl_layer_div!(Ethernet);
 
+/// ARP operation codepoint: Reserved (RFC 5494, IANA arp-parameters-1 value 0).
+pub const ARP_OP_RESERVED: u16 = 0;
+/// ARP operation codepoint: REQUEST (RFC 826, IANA arp-parameters-1 value 1).
+pub const ARP_OP_REQUEST: u16 = 1;
+/// ARP operation codepoint: REPLY (RFC 826, IANA arp-parameters-1 value 2).
+pub const ARP_OP_REPLY: u16 = 2;
+/// ARP operation codepoint: request Reverse / RARP request
+/// (RFC 903, IANA arp-parameters-1 value 3). Codepoint-only: rides the base
+/// ARP wire format with no extension-specific behavior.
+pub const ARP_OP_RARP_REQUEST: u16 = 3;
+/// ARP operation codepoint: reply Reverse / RARP reply
+/// (RFC 903, IANA arp-parameters-1 value 4). Codepoint-only.
+pub const ARP_OP_RARP_REPLY: u16 = 4;
+/// ARP operation codepoint: DRARP-Request
+/// (RFC 1931, IANA arp-parameters-1 value 5). Codepoint-only.
+pub const ARP_OP_DRARP_REQUEST: u16 = 5;
+/// ARP operation codepoint: DRARP-Reply
+/// (RFC 1931, IANA arp-parameters-1 value 6). Codepoint-only.
+pub const ARP_OP_DRARP_REPLY: u16 = 6;
+/// ARP operation codepoint: DRARP-Error
+/// (RFC 1931, IANA arp-parameters-1 value 7). Codepoint-only.
+pub const ARP_OP_DRARP_ERROR: u16 = 7;
+/// ARP operation codepoint: InARP-Request
+/// (RFC 2390, IANA arp-parameters-1 value 8). Codepoint-only.
+pub const ARP_OP_INARP_REQUEST: u16 = 8;
+/// ARP operation codepoint: InARP-Reply
+/// (RFC 2390, IANA arp-parameters-1 value 9). Codepoint-only.
+pub const ARP_OP_INARP_REPLY: u16 = 9;
+/// ARP operation codepoint: ARP-NAK
+/// (RFC 1577, IANA arp-parameters-1 value 10). Codepoint-only.
+pub const ARP_OP_ARP_NAK: u16 = 10;
+/// ARP operation codepoint: MAPOS-UNARP
+/// (RFC 2176, IANA arp-parameters-1 value 23). Codepoint-only.
+pub const ARP_OP_MAPOS_UNARP: u16 = 23;
+/// ARP operation codepoint: experimental OP_EXP1
+/// (RFC 5494, IANA arp-parameters-1 value 24).
+pub const ARP_OP_EXP1: u16 = 24;
+/// ARP operation codepoint: experimental OP_EXP2
+/// (RFC 5494, IANA arp-parameters-1 value 25).
+pub const ARP_OP_EXP2: u16 = 25;
+/// ARP operation codepoint: Reserved (RFC 5494, IANA arp-parameters-1 value 65535).
+pub const ARP_OP_RESERVED_MAX: u16 = 65535;
+
+/// ARP hardware type: Ethernet (10Mb) (IANA arp-parameters-2 value 1). Default HRD.
+pub const ARP_HRD_ETHERNET: u16 = 1;
+/// ARP hardware type: IEEE 802 Networks (IANA arp-parameters-2 value 6).
+pub const ARP_HRD_IEEE_802: u16 = 6;
+/// ARP hardware type: Fibre Channel (RFC 4338, IANA arp-parameters-2 value 18).
+pub const ARP_HRD_FIBRE_CHANNEL: u16 = 18;
+/// ARP hardware type: ATM (RFC 2225, IANA arp-parameters-2 value 19).
+pub const ARP_HRD_ATM: u16 = 19;
+/// ARP hardware type: MAPOS (RFC 2176, IANA arp-parameters-2 value 25).
+pub const ARP_HRD_MAPOS: u16 = 25;
+/// ARP hardware type: InfiniBand (RFC 4391, IANA arp-parameters-2 value 32).
+pub const ARP_HRD_INFINIBAND: u16 = 32;
+
+/// ARP protocol type: IPv4. The protocol-type field shares the EtherType space
+/// (IANA arp-parameters-3, administered per RFC 5342), so this equals
+/// [`ETHERTYPE_IPV4`]. Default PRO.
+pub const ARP_PRO_IPV4: u16 = ETHERTYPE_IPV4;
+
 /// ARP operation value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub enum ArpOperation {
     /// ARP who-has request.
-    Request = 1,
+    Request = ARP_OP_REQUEST,
     /// ARP is-at reply.
-    Reply = 2,
+    Reply = ARP_OP_REPLY,
 }
 
 impl From<ArpOperation> for u16 {
@@ -1414,6 +1475,75 @@ mod arp {
 
         assert_eq!(arp.opcode_value(), ArpOperation::Reply as u16);
         assert_eq!(arp.sender_mac(), Some(src_mac()));
+    }
+
+    #[test]
+    fn arp_constants_match_source_backed_codepoints() {
+        use super::{
+            ARP_HRD_ATM, ARP_HRD_ETHERNET, ARP_HRD_FIBRE_CHANNEL, ARP_HRD_IEEE_802,
+            ARP_HRD_INFINIBAND, ARP_HRD_MAPOS, ARP_OP_ARP_NAK, ARP_OP_DRARP_ERROR,
+            ARP_OP_DRARP_REPLY, ARP_OP_DRARP_REQUEST, ARP_OP_EXP1, ARP_OP_EXP2, ARP_OP_INARP_REPLY,
+            ARP_OP_INARP_REQUEST, ARP_OP_MAPOS_UNARP, ARP_OP_RARP_REPLY, ARP_OP_RARP_REQUEST,
+            ARP_OP_REPLY, ARP_OP_REQUEST, ARP_OP_RESERVED, ARP_OP_RESERVED_MAX, ARP_PRO_IPV4,
+            ETHERTYPE_IPV4,
+        };
+
+        // Operation codepoints (IANA arp-parameters-1).
+        assert_eq!(ARP_OP_RESERVED, 0);
+        assert_eq!(ARP_OP_REQUEST, 1);
+        assert_eq!(ARP_OP_REPLY, 2);
+        assert_eq!(ARP_OP_RARP_REQUEST, 3);
+        assert_eq!(ARP_OP_RARP_REPLY, 4);
+        assert_eq!(ARP_OP_DRARP_REQUEST, 5);
+        assert_eq!(ARP_OP_DRARP_REPLY, 6);
+        assert_eq!(ARP_OP_DRARP_ERROR, 7);
+        assert_eq!(ARP_OP_INARP_REQUEST, 8);
+        assert_eq!(ARP_OP_INARP_REPLY, 9);
+        assert_eq!(ARP_OP_ARP_NAK, 10);
+        assert_eq!(ARP_OP_MAPOS_UNARP, 23);
+        assert_eq!(ARP_OP_EXP1, 24);
+        assert_eq!(ARP_OP_EXP2, 25);
+        assert_eq!(ARP_OP_RESERVED_MAX, 65535);
+
+        // Named operations agree with the existing ArpOperation enum.
+        assert_eq!(ARP_OP_REQUEST, ArpOperation::Request as u16);
+        assert_eq!(ARP_OP_REPLY, ArpOperation::Reply as u16);
+
+        // Hardware-type codepoints (IANA arp-parameters-2).
+        assert_eq!(ARP_HRD_ETHERNET, 1);
+        assert_eq!(ARP_HRD_IEEE_802, 6);
+        assert_eq!(ARP_HRD_FIBRE_CHANNEL, 18);
+        assert_eq!(ARP_HRD_ATM, 19);
+        assert_eq!(ARP_HRD_MAPOS, 25);
+        assert_eq!(ARP_HRD_INFINIBAND, 32);
+
+        // Protocol type shares the EtherType space (IANA arp-parameters-3 / RFC 5342).
+        assert_eq!(ARP_PRO_IPV4, ETHERTYPE_IPV4);
+    }
+
+    #[test]
+    fn arp_constants_drive_builder_and_preserve_unknown_values() {
+        use super::{ARP_HRD_INFINIBAND, ARP_OP_INARP_REQUEST};
+
+        // Known codepoint constant works through the raw opcode escape hatch.
+        let arp = Arp::new()
+            .hardware_type(ARP_HRD_INFINIBAND)
+            .opcode(ARP_OP_INARP_REQUEST);
+        assert_eq!(arp.hardware_type_value(), ARP_HRD_INFINIBAND);
+        assert_eq!(arp.opcode_value(), ARP_OP_INARP_REQUEST);
+
+        // An unknown numeric value the constants do not name stays usable and intact.
+        let unknown_op: u16 = 0x0fa0;
+        let unknown = Arp::new().opcode(unknown_op);
+        assert_eq!(unknown.opcode_value(), unknown_op);
+    }
+
+    #[test]
+    fn arp_constants_reexported_through_prelude() {
+        use crate::prelude::{ARP_OP_REPLY, ARP_OP_REQUEST};
+
+        assert_eq!(ARP_OP_REQUEST, 1);
+        assert_eq!(ARP_OP_REPLY, 2);
     }
 }
 
