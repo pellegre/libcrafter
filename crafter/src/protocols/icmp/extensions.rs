@@ -1148,7 +1148,6 @@ impl Layer for IcmpExtensionInterfaceId {
 
 impl_layer_div!(IcmpExtensionInterfaceId);
 
-
 /// Decode a single RFC 4950 MPLS label stack entry (4 octets) into a typed
 /// [`IcmpExtensionMpls`] layer.
 ///
@@ -1180,7 +1179,10 @@ pub(crate) fn decode_mpls_entry(chunk: &[u8]) -> IcmpExtensionMpls {
 /// (zero) name padding, so a re-compile reproduces the bytes. Any short,
 /// trailing, or non-canonical body returns `None` so the caller keeps the
 /// region as raw bytes and decoding never panics.
-pub(crate) fn decode_interface_info(c_type: u8, mut body: &[u8]) -> Option<IcmpExtensionInterfaceInfo> {
+pub(crate) fn decode_interface_info(
+    c_type: u8,
+    mut body: &[u8],
+) -> Option<IcmpExtensionInterfaceInfo> {
     let role = (c_type >> 6) & 0x03;
     let reserved = (c_type >> 4) & 0x03;
     let mut info = IcmpExtensionInterfaceInfo {
