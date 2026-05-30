@@ -998,3 +998,232 @@ fn hex_bytes(bytes: &[u8]) -> String {
     }
     output
 }
+
+/// Native DHCPv4 oracle fixtures.
+///
+/// The seeded Scapy reference backend covers the DHCPv4 cases Scapy can encode
+/// byte-for-byte (the message-type matrix plus simple option domains; see
+/// `tools/oracle/specs/layers/dhcp.yaml`). Scapy cannot represent option
+/// overload (52 across `file`/`sname`), RFC 3396 long-option concatenation,
+/// typed relay-agent option 82 sub-options, RFC 4361 node-specific client
+/// identifiers, RFC 3118 authentication (90), classless static routes (121),
+/// or leasequery status/state options (91/92/151-157) exactly. Those cases are
+/// covered here by native libcrafter round-trip fixtures: each builds a packet,
+/// compiles it, decodes it back through the registry over UDP, and asserts the
+/// recompiled bytes are byte-identical and that the typed accessors recover the
+/// constructed value. All addresses are RFC 5737 documentation space and all
+/// MACs are RFC 7042 documentation EUI-48 values; nothing here touches a
+/// network.
+#[cfg(test)]
+mod dhcp_oracle_fixtures {
+    use crafter::prelude::*;
+    use std::net::Ipv4Addr;
+
+    const CLIENT_MAC: [u8; 6] = [0x00, 0x00, 0x5e, 0x00, 0x53, 0x01];
+    const RELAY_MAC: [u8; 6] = [0x00, 0x00, 0x5e, 0x00, 0x53, 0x02];
+
+    fn client_mac() -> MacAddr {
+        MacAddr::from(CLIENT_MAC)
+    }
+
+    fn relay_mac() -> MacAddr {
+        MacAddr::from(RELAY_MAC)
+    }
+
+    /// Wrap a built `Dhcp` layer in an Ethernet/IPv4/UDP frame on the BOOTP
+    /// port pair so the registry decodes it as DHCP, then return the compiled
+    /// frame bytes.
+    fn frame_bytes(dhcp: Dhcp) -> Vec<u8> {
+        let packet = Ethernet::new()
+            .src(relay_mac())
+            .dst(MacAddr::BROADCAST)
+            .ethertype(ETHERTYPE_IPV4)
+            / Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 1))
+                .dst(Ipv4Addr::new(192, 0, 2, 2))
+                .protocol(IPPROTO_UDP)
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp;
+        packet
+            .compile()
+            .expect("documentation DHCP frame must compile")
+            .as_bytes()
+            .to_vec()
+    }
+
+    /// Decode a compiled frame and return the recompiled bytes plus the decoded
+    /// DHCP layer, asserting the registry surfaced a DHCP layer over UDP.
+    fn decode_roundtrip(bytes: &[u8]) -> (Vec<u8>, Dhcp) {
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, bytes)
+            .expect("documentation DHCP frame must decode without panic");
+        let dhcp = decoded
+            .layer::<Dhcp>()
+            .expect("decoded frame must expose a DHCP layer over UDP")
+            .clone();
+        let recompiled = decoded
+            .compile()
+            .expect("decoded DHCP frame must recompile")
+            .as_bytes()
+            .to_vec();
+        (recompiled, dhcp)
+    }
+
+    /// Build, compile, decode, and recompile, asserting a byte-exact round-trip.
+    fn assert_byte_roundtrip(dhcp: Dhcp) -> Dhcp {
+        let original = frame_bytes(dhcp);
+        let (recompiled, decoded) = decode_roundtrip(&original);
+        assert_eq!(
+            recompiled, original,
+            "DHCPv4 fixture must round-trip byte-for-byte through decode and recompile"
+        );
+        decoded
+    }
+
+    #[test]
+    fn dhcp_option_overload_file_and_sname() {
+        // Option 52 marks both file and sname as overloaded option areas
+        // (RFC 2131 section 4.1). Scapy does not model overloaded BOOTP fields.
+        let dhcp = Dhcp::discover(client_mac())
+            .xid(0x0102_0304)
+            .file_option(DhcpOption::bootfile_name(b"boot/pxelinux.0".to_vec()))
+            .sname_option(DhcpOption::host_name("oracle-server"));
+        let decoded = assert_byte_roundtrip(dhcp);
+        assert_eq!(decoded.option_overload(), Some(OptionOverload::Both));
+    }
+
+    #[test]
+    fn dhcp_rfc3396_long_option_concatenation() {
+        // RFC 3396: a value longer than 255 octets is split across repeated
+        // instances of the same option code and read back as one logical value.
+        let long_domain = format!("{}.example", "a".repeat(300));
+        let dhcp = Dhcp::discover(client_mac())
+            .xid(0x1111_2222)
+            .option(DhcpOption::domain_name(long_domain.clone()));
+        let decoded = assert_byte_roundtrip(dhcp);
+        let concatenated = decoded
+            .concatenated_option(15)
+            .expect("rfc3396 domain-name option must be present")
+            .expect("rfc3396 concatenation must decode");
+        let payload = concatenated
+            .payload()
+            .expect("concatenated option payload must encode");
+        assert_eq!(payload, long_domain.as_bytes());
+        assert!(
+            payload.len() > 255,
+            "rfc3396 fixture must exceed a single 255-octet option instance"
+        );
+    }
+
+    #[test]
+    fn dhcp_relay_agent_option82_suboptions() {
+        // RFC 3046 relay-agent option 82 with typed circuit-id and remote-id
+        // sub-options. Scapy treats option 82 as opaque bytes.
+        let info = DhcpRelayAgentInfo::new(vec![
+            DhcpRelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
+            DhcpRelaySuboption::remote_id(RELAY_MAC.to_vec()),
+        ]);
+        let dhcp = Dhcp::discover(client_mac())
+            .xid(0x3333_4444)
+            .relay_agent_info(info.clone());
+        let decoded = assert_byte_roundtrip(dhcp);
+        let recovered = decoded
+            .relay_agent_information()
+            .expect("relay-agent option 82 must be present")
+            .expect("relay-agent option 82 must decode");
+        assert_eq!(recovered, info);
+    }
+
+    #[test]
+    fn dhcp_rfc4361_node_specific_client_identifier() {
+        // RFC 4361 type-255 client identifier (IAID + DUID). Scapy carries
+        // option 61 only as an opaque string.
+        let identifier =
+            DhcpClientIdentifier::node_specific(0x0a0b_0c0d, vec![0x00, 0x01, 0x02, 0x03]);
+        let dhcp = Dhcp::discover(client_mac())
+            .xid(0x5555_6666)
+            .option(DhcpOption::client_identifier_value(identifier.clone()));
+        let decoded = assert_byte_roundtrip(dhcp);
+        let recovered = decoded
+            .client_identifier_value()
+            .expect("client identifier option 61 must be present")
+            .expect("client identifier option 61 must decode");
+        assert_eq!(recovered, identifier);
+    }
+
+    #[test]
+    fn dhcp_rfc3118_authentication_option() {
+        // RFC 3118 option 90 delayed authentication with HMAC-MD5. Scapy has no
+        // typed authentication option.
+        let auth = DhcpAuthentication::new(
+            DhcpAuthProtocol::Delayed,
+            DhcpAuthAlgorithm::HmacMd5,
+            DhcpReplayDetectionMethod::MonotonicCounter,
+            0x0000_0001_0000_0002,
+            vec![0xab; 16],
+        );
+        let dhcp = Dhcp::request(
+            client_mac(),
+            Ipv4Addr::new(192, 0, 2, 100),
+            Ipv4Addr::new(192, 0, 2, 1),
+        )
+        .xid(0x7777_8888)
+        .option(DhcpOption::authentication(auth.clone()));
+        let decoded = assert_byte_roundtrip(dhcp);
+        let recovered = decoded
+            .authentication()
+            .expect("authentication option 90 must be present")
+            .expect("authentication option 90 must decode");
+        assert_eq!(recovered, auth);
+    }
+
+    #[test]
+    fn dhcp_classless_static_routes_option121() {
+        // RFC 3442 classless static routes (option 121) with the canonical
+        // significant-octet widths.
+        let routes = vec![
+            DhcpClasslessRoute::new(
+                24,
+                Ipv4Addr::new(192, 0, 2, 0),
+                Ipv4Addr::new(198, 51, 100, 1),
+            ),
+            DhcpClasslessRoute::new(0, Ipv4Addr::UNSPECIFIED, Ipv4Addr::new(198, 51, 100, 254)),
+        ];
+        let dhcp = Dhcp::ack(
+            client_mac(),
+            Ipv4Addr::new(192, 0, 2, 100),
+            Ipv4Addr::new(192, 0, 2, 1),
+        )
+        .xid(0x9999_aaaa)
+        .option(DhcpOption::typed(
+            DhcpOptionKind::ClasslessStaticRoute,
+            DhcpOptionValue::ClasslessRoutes(routes.clone()),
+        ));
+        let decoded = assert_byte_roundtrip(dhcp);
+        let recovered = decoded
+            .classless_static_routes()
+            .expect("classless static route option 121 must be present")
+            .expect("classless static route option 121 must decode");
+        assert_eq!(recovered, routes);
+    }
+
+    #[test]
+    fn dhcp_leasequery_status_and_state() {
+        // RFC 4388 leasequery reply carrying a status-code option (151) and a
+        // dhcp-state option (153). Scapy has no leasequery option support.
+        let status = DhcpStatusCodeOption::new(DhcpStatusCode::Success, b"ok".to_vec());
+        let dhcp = Dhcp::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 100))
+            .xid(0xbbbb_cccc)
+            .option(DhcpOption::status_code(status.clone()))
+            .option(DhcpOption::dhcp_state(DhcpState::Active));
+        let decoded = assert_byte_roundtrip(dhcp);
+        let recovered = decoded
+            .status_code()
+            .expect("leasequery status-code option 151 must be present")
+            .expect("leasequery status-code option 151 must decode");
+        assert_eq!(recovered, status);
+        assert_eq!(
+            decoded.message_type_value(),
+            Some(DhcpMessageType::LeaseQuery)
+        );
+    }
+}

@@ -1033,17 +1033,36 @@ def _dhcp_options(value: object) -> list[object]:
     options: list[object] = []
     for item in value:
         if isinstance(item, str):
-            if item == "end":
-                options.append("end")
+            if item in {"end", "pad"}:
+                options.append(item)
                 continue
             if "=" in item:
                 name, raw_value = item.split("=", 1)
                 options.append((name, raw_value))
                 continue
+        if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], str):
+            options.append((item[0], _dhcp_option_value(item[1])))
+            continue
         options.append(item)
     if not options or options[-1] != "end":
         options.append("end")
     return options
+
+
+def _dhcp_option_value(value: object) -> object:
+    """Translate a JSON-safe option value into a Scapy option payload.
+
+    A string value is interpreted as raw option bytes encoded as hex so byte
+    payloads (client identifiers, raw relay-agent option 82, vendor class data)
+    survive JSON transport. List values pass through for Scapy fields that take
+    lists, such as the parameter request list and classless static routes.
+    """
+
+    if isinstance(value, str):
+        return bytes.fromhex(value)
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return value
 
 
 def _bool_int(value: object, default: int) -> int:
