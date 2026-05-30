@@ -582,6 +582,140 @@ impl Icmp {
         Self::new().icmp_type(ICMP_EXTENDED_ECHO_REPLY)
     }
 
+    /// Create a traceroute message (RFC 1393, type 30).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. RFC 1393 defines a
+    /// rest-of-header layout (ID Number, plus outbound/return hop counts and
+    /// link speed/MTU words in the body); `crafter` does not type that body, so
+    /// set the rest-of-header and any body bytes with [`rest_of_header`] and a
+    /// trailing [`Raw`] layer.
+    ///
+    /// [`rest_of_header`]: Self::rest_of_header
+    /// [`Raw`]: crate::Raw
+    pub fn traceroute() -> Self {
+        Self::new().icmp_type(ICMP_TRACEROUTE)
+    }
+
+    /// Create a datagram conversion error message (RFC 1475, type 31).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. RFC 1475 places a
+    /// 32-bit pointer in the rest-of-header and quotes the offending datagram in
+    /// the body; `crafter` keeps both raw-compatible (set the rest-of-header and
+    /// append the quoted bytes as a trailing layer).
+    pub fn datagram_conversion_error() -> Self {
+        Self::new().icmp_type(ICMP_DATAGRAM_CONVERSION_ERROR)
+    }
+
+    /// Create a mobile host redirect message (type 32).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. The message body is not
+    /// typed; use [`rest_of_header`] and a trailing [`Raw`] layer for any
+    /// payload.
+    ///
+    /// [`rest_of_header`]: Self::rest_of_header
+    /// [`Raw`]: crate::Raw
+    pub fn mobile_host_redirect() -> Self {
+        Self::new().icmp_type(ICMP_MOBILE_HOST_REDIRECT)
+    }
+
+    /// Create an "IPv6 Where-Are-You" message (type 33).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. The message body is not
+    /// typed and stays raw-compatible.
+    pub fn ipv6_where_are_you() -> Self {
+        Self::new().icmp_type(ICMP_IPV6_WHERE_ARE_YOU)
+    }
+
+    /// Create an "IPv6 I-Am-Here" message (type 34).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. The message body is not
+    /// typed and stays raw-compatible.
+    pub fn ipv6_i_am_here() -> Self {
+        Self::new().icmp_type(ICMP_IPV6_I_AM_HERE)
+    }
+
+    /// Create a mobile registration request message (type 35).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. The message body is not
+    /// typed and stays raw-compatible.
+    pub fn mobile_registration_request() -> Self {
+        Self::new().icmp_type(ICMP_MOBILE_REGISTRATION_REQUEST)
+    }
+
+    /// Create a mobile registration reply message (type 36).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. The message body is not
+    /// typed and stays raw-compatible.
+    pub fn mobile_registration_reply() -> Self {
+        Self::new().icmp_type(ICMP_MOBILE_REGISTRATION_REPLY)
+    }
+
+    /// Create a domain name request message (RFC 1788, type 37).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. RFC 1788 carries the
+    /// identifier and sequence number in the rest-of-header (like the RFC 792
+    /// query families) and an optional name body; `crafter` does not type the
+    /// body, so append it with a trailing [`Raw`] layer.
+    ///
+    /// [`Raw`]: crate::Raw
+    pub fn domain_name_request() -> Self {
+        Self::new().icmp_type(ICMP_DOMAIN_NAME_REQUEST)
+    }
+
+    /// Create a domain name reply message (RFC 1788, type 38).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. The TTL and name list
+    /// body is not typed; append it with a trailing [`Raw`] layer.
+    ///
+    /// [`Raw`]: crate::Raw
+    pub fn domain_name_reply() -> Self {
+        Self::new().icmp_type(ICMP_DOMAIN_NAME_REPLY)
+    }
+
+    /// Create a SKIP message (type 39).
+    ///
+    /// Deprecated by RFC 6918, but still constructible. The message body is not
+    /// typed and stays raw-compatible.
+    pub fn skip() -> Self {
+        Self::new().icmp_type(ICMP_SKIP)
+    }
+
+    /// Create a Photuris security-failures message (RFC 2521, type 40).
+    ///
+    /// The `Code` carries the security failure (0 bad-SPI through 5
+    /// need-authorization); the rest-of-header and quoted datagram body are not
+    /// typed, so set them with [`rest_of_header`] and a trailing layer.
+    ///
+    /// [`rest_of_header`]: Self::rest_of_header
+    pub fn photuris() -> Self {
+        Self::new().icmp_type(ICMP_PHOTURIS)
+    }
+
+    /// Create an experimental mobility message (RFC 4065, type 41).
+    ///
+    /// Experimental: assigned to messages utilized by experimental mobility
+    /// protocols such as Seamoby. The body is not typed and stays
+    /// raw-compatible.
+    pub fn seamoby_experimental() -> Self {
+        Self::new().icmp_type(ICMP_SEAMOBY_EXPERIMENTAL)
+    }
+
+    /// Create an RFC 3692-style experiment 1 message (RFC 4727, type 253).
+    ///
+    /// Experimental: reserved for protocol experiments. The body is not typed
+    /// and stays raw-compatible.
+    pub fn experiment_1() -> Self {
+        Self::new().icmp_type(ICMP_EXPERIMENTAL_253)
+    }
+
+    /// Create an RFC 3692-style experiment 2 message (RFC 4727, type 254).
+    ///
+    /// Experimental: reserved for protocol experiments. The body is not typed
+    /// and stays raw-compatible.
+    pub fn experiment_2() -> Self {
+        Self::new().icmp_type(ICMP_EXPERIMENTAL_254)
+    }
+
     /// Set the ICMP type from a common kind.
     pub fn kind(mut self, kind: IcmpKind) -> Self {
         self.icmp_type.set_user(kind.ipv4_type());
@@ -7174,6 +7308,212 @@ mod icmpv4_rfc8335_extended_echo {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
         let icmp = decoded.layer::<Icmp>().unwrap();
         assert_eq!(icmp.extended_flags_value(), Some(0xfe));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_legacy_assigned_types {
+    use super::{
+        icmpv4_code_summary, icmpv4_type_is_deprecated, icmpv4_type_summary, Icmp,
+        ICMP_CODE_PHOTURIS_BAD_SPI, ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION,
+        ICMP_DATAGRAM_CONVERSION_ERROR, ICMP_DOMAIN_NAME_REPLY, ICMP_DOMAIN_NAME_REQUEST,
+        ICMP_EXPERIMENTAL_253, ICMP_EXPERIMENTAL_254, ICMP_IPV6_I_AM_HERE, ICMP_IPV6_WHERE_ARE_YOU,
+        ICMP_MOBILE_HOST_REDIRECT, ICMP_MOBILE_REGISTRATION_REPLY, ICMP_MOBILE_REGISTRATION_REQUEST,
+        ICMP_PHOTURIS, ICMP_RESERVED_255, ICMP_SEAMOBY_EXPERIMENTAL, ICMP_SKIP, ICMP_TRACEROUTE,
+    };
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // Representative legacy constructors set the assigned IANA type without
+    // refusing it merely because it is deprecated or experimental, and a
+    // trailing raw body survives compilation untouched.
+    #[test]
+    fn icmpv4_legacy_assigned_types_constructors_set_assigned_types() {
+        let cases: &[(Icmp, u8)] = &[
+            (Icmp::traceroute(), ICMP_TRACEROUTE),
+            (
+                Icmp::datagram_conversion_error(),
+                ICMP_DATAGRAM_CONVERSION_ERROR,
+            ),
+            (Icmp::mobile_host_redirect(), ICMP_MOBILE_HOST_REDIRECT),
+            (Icmp::ipv6_where_are_you(), ICMP_IPV6_WHERE_ARE_YOU),
+            (Icmp::ipv6_i_am_here(), ICMP_IPV6_I_AM_HERE),
+            (
+                Icmp::mobile_registration_request(),
+                ICMP_MOBILE_REGISTRATION_REQUEST,
+            ),
+            (
+                Icmp::mobile_registration_reply(),
+                ICMP_MOBILE_REGISTRATION_REPLY,
+            ),
+            (Icmp::domain_name_request(), ICMP_DOMAIN_NAME_REQUEST),
+            (Icmp::domain_name_reply(), ICMP_DOMAIN_NAME_REPLY),
+            (Icmp::skip(), ICMP_SKIP),
+            (Icmp::photuris(), ICMP_PHOTURIS),
+            (Icmp::seamoby_experimental(), ICMP_SEAMOBY_EXPERIMENTAL),
+            (Icmp::experiment_1(), ICMP_EXPERIMENTAL_253),
+            (Icmp::experiment_2(), ICMP_EXPERIMENTAL_254),
+        ];
+
+        for (icmp, expected_type) in cases {
+            assert_eq!(
+                icmp.icmp_type_value(),
+                *expected_type,
+                "constructor for type {expected_type} set the wrong type"
+            );
+            let bytes = (Ipv4::new().src(src()).dst(dst())
+                / icmp.clone().rest_of_header([0xde, 0xad, 0xbe, 0xef])
+                / Raw::from("legacy-body"))
+            .compile()
+            .unwrap();
+            assert_eq!(bytes.as_bytes()[20], *expected_type);
+            // The user-set rest-of-header survives compilation untouched.
+            assert_eq!(&bytes.as_bytes()[24..28], &[0xde, 0xad, 0xbe, 0xef]);
+            // The trailing raw body is emitted verbatim after the 8-byte header.
+            assert_eq!(&bytes.as_bytes()[28..], b"legacy-body");
+        }
+    }
+
+    // RFC 2521 Photuris defines codes 0-5; the constructor honors an explicit
+    // code and the summary names it without hiding the numeric value.
+    #[test]
+    fn icmpv4_legacy_assigned_types_photuris_codes_summarize() {
+        assert_eq!(ICMP_CODE_PHOTURIS_BAD_SPI, 0);
+        assert_eq!(ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION, 5);
+
+        let icmp = Icmp::photuris().code(ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION);
+        assert_eq!(icmp.icmp_type_value(), ICMP_PHOTURIS);
+        assert_eq!(icmp.code_value(), ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION);
+        assert_eq!(icmpv4_type_summary(ICMP_PHOTURIS), "photuris(40)");
+        assert_eq!(
+            icmpv4_code_summary(ICMP_PHOTURIS, ICMP_CODE_PHOTURIS_BAD_SPI),
+            "bad-spi(0)"
+        );
+        assert_eq!(
+            icmpv4_code_summary(ICMP_PHOTURIS, ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION),
+            "need-authorization(5)"
+        );
+    }
+
+    // RFC 4727 experiment types 253/254 and the reserved type 255 must construct,
+    // decode, and recompile byte-for-byte while reporting their assigned identity.
+    #[test]
+    fn icmpv4_legacy_assigned_types_experiment_and_reserved_roundtrip() {
+        for (icmp, expected_type, name) in [
+            (
+                Icmp::experiment_1(),
+                ICMP_EXPERIMENTAL_253,
+                "experiment-1(253)",
+            ),
+            (
+                Icmp::experiment_2(),
+                ICMP_EXPERIMENTAL_254,
+                "experiment-2(254)",
+            ),
+            (
+                Icmp::new().icmp_type(ICMP_RESERVED_255),
+                ICMP_RESERVED_255,
+                "reserved(255)",
+            ),
+        ] {
+            assert_eq!(icmp.icmp_type_value(), expected_type);
+            assert_eq!(icmpv4_type_summary(expected_type), name);
+            let compiled = (Ipv4::new().src(src()).dst(dst()) / icmp / Raw::from("xprmnt"))
+                .compile()
+                .unwrap();
+            let decoded =
+                Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+            let icmp = decoded.layer::<Icmp>().unwrap();
+            assert_eq!(icmp.icmp_type_value(), expected_type);
+            let raw = decoded.layer::<Raw>().unwrap();
+            assert_eq!(raw.as_bytes(), b"xprmnt");
+            assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+        }
+    }
+
+    // An unknown, unassigned type with an unknown code still decodes through the
+    // generic header path and recompiles byte-for-byte, with both values left
+    // numeric in the summary.
+    #[test]
+    fn icmpv4_legacy_assigned_types_unknown_type_falls_back_and_roundtrips() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::new()
+                .icmp_type(200)
+                .code(77)
+                .rest_of_header([0x11, 0x22, 0x33, 0x44])
+            / Raw::from("unknown"))
+        .compile()
+        .unwrap();
+
+        assert_eq!(compiled.as_bytes()[20], 200);
+        assert_eq!(compiled.as_bytes()[21], 77);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.icmp_type_value(), 200);
+        assert_eq!(icmp.code_value(), 77);
+        assert_eq!(icmp.rest_of_header_value(), [0x11, 0x22, 0x33, 0x44]);
+        let raw = decoded.layer::<Raw>().unwrap();
+        assert_eq!(raw.as_bytes(), b"unknown");
+
+        // Unknown type and code remain bare numbers in the summary.
+        assert_eq!(icmpv4_type_summary(200), "200");
+        assert_eq!(icmpv4_code_summary(200, 77), "77");
+
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // Deprecated legacy types keep their registry status reported while remaining
+    // fully constructible and named in summaries.
+    #[test]
+    fn icmpv4_legacy_assigned_types_deprecated_status_is_visible() {
+        assert!(icmpv4_type_is_deprecated(ICMP_TRACEROUTE));
+        assert!(icmpv4_type_is_deprecated(ICMP_SKIP));
+        assert!(icmpv4_type_is_deprecated(ICMP_MOBILE_HOST_REDIRECT));
+        // Photuris and the experiment types are assigned but not flagged
+        // deprecated; they still construct and decode.
+        assert!(!icmpv4_type_is_deprecated(ICMP_PHOTURIS));
+        assert!(!icmpv4_type_is_deprecated(ICMP_EXPERIMENTAL_253));
+
+        assert_eq!(icmpv4_type_summary(ICMP_TRACEROUTE), "traceroute(30)");
+        assert_eq!(
+            icmpv4_type_summary(ICMP_DOMAIN_NAME_REQUEST),
+            "domain-name-request(37)"
+        );
+        assert_eq!(icmpv4_type_summary(ICMP_SKIP), "skip(39)");
+    }
+
+    // A deprecated legacy type with a quoted body decodes and recompiles
+    // byte-for-byte; the body stays raw-compatible because these types are not
+    // typed beyond the fixed header.
+    #[test]
+    fn icmpv4_legacy_assigned_types_byte_for_byte_decode_compile_preservation() {
+        let compiled = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Icmp)
+            / Icmp::datagram_conversion_error()
+                .code(1)
+                .rest_of_header([0x00, 0x00, 0x00, 0x18])
+            / Raw::from_bytes([0xca, 0xfe, 0xba, 0xbe, 0x01, 0x02, 0x03, 0x04]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.icmp_type_value(), ICMP_DATAGRAM_CONVERSION_ERROR);
+        assert_eq!(icmp.code_value(), 1);
+        let raw = decoded.layer::<Raw>().unwrap();
+        assert_eq!(
+            raw.as_bytes(),
+            &[0xca, 0xfe, 0xba, 0xbe, 0x01, 0x02, 0x03, 0x04]
+        );
         assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
     }
 }
