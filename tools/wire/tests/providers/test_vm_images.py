@@ -11,8 +11,10 @@ from tools.wire.engine.config import WireConfig
 from tools.wire.engine.process import CommandResult
 from tools.wire.engine.providers.vm import (
     CLOUD_LOCALDS_COMMAND,
+    DEFAULT_VM_DISK_SIZE,
     QEMU_IMG_COMMAND,
     UBUNTU_CLOUD_IMAGE_URL_ENV,
+    VM_DISK_SIZE_ENV,
     build_endpoint_guest_artifacts,
     build_guest_disk,
     build_nocloud_seed_iso,
@@ -60,6 +62,7 @@ class VMImagePlanTest(unittest.TestCase):
 
             metadata = artifacts.to_manifest_metadata()["vm_guest_artifacts"]
             self.assertEqual(metadata["disk_format"], "vdi")
+            self.assertEqual(metadata["disk_size"], DEFAULT_VM_DISK_SIZE)
             self.assertTrue(Path(str(metadata["disk_path"])).is_absolute())
             self.assertIn("openssh-server", metadata["packages"])
             self.assertEqual(
@@ -89,6 +92,28 @@ class VMImagePlanTest(unittest.TestCase):
                     layout=layout,
                     disk_format="raw",
                 )
+
+    def test_plan_guest_artifacts_accepts_disk_size_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = WireConfig(
+                state_root=Path(temp_dir) / "state",
+                artifact_root=Path(temp_dir) / "artifacts",
+            )
+            layout = ensure_endpoint_dirs("endpoint-a", config)
+
+            artifacts = plan_guest_artifacts(
+                endpoint_id="endpoint-a",
+                provider="qemu",
+                layout=layout,
+                disk_format="qcow2",
+                env={VM_DISK_SIZE_ENV: "24G"},
+            )
+
+            self.assertEqual(artifacts.disk_size, "24G")
+            self.assertEqual(
+                artifacts.to_manifest_metadata()["vm_guest_artifacts"]["disk_size"],
+                "24G",
+            )
 
 
 class VMImageBuildTest(unittest.TestCase):
@@ -201,6 +226,7 @@ class VMImageBuildTest(unittest.TestCase):
                         "-b",
                         str(artifacts.base_image_path),
                         str(artifacts.disk_path),
+                        DEFAULT_VM_DISK_SIZE,
                     )
                 ],
             )

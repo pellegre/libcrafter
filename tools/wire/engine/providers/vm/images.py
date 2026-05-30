@@ -9,6 +9,7 @@ import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from urllib.parse import urlsplit
 
 from ...config import absolute_path
@@ -23,6 +24,8 @@ UBUNTU_CLOUD_IMAGE_URL_ENV = "LIBCRAFTER_WIRE_UBUNTU_CLOUD_IMAGE_URL"
 DEFAULT_UBUNTU_CLOUD_IMAGE_URL = (
     "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
 )
+VM_DISK_SIZE_ENV = "LIBCRAFTER_WIRE_VM_DISK_SIZE"
+DEFAULT_VM_DISK_SIZE = "16G"
 DEFAULT_PACKET_TOOL_PACKAGES = (
     "openssh-server",
     "ca-certificates",
@@ -47,6 +50,7 @@ class VMGuestArtifacts:
     endpoint_id: str
     provider: str
     disk_format: str
+    disk_size: str
     cloud_image_url: str
     base_image_path: Path
     disk_path: Path
@@ -60,6 +64,7 @@ class VMGuestArtifacts:
         _non_empty_string(self.endpoint_id, "endpoint_id")
         _non_empty_string(self.provider, "provider")
         _non_empty_string(self.cloud_image_url, "cloud_image_url")
+        object.__setattr__(self, "disk_size", vm_disk_size(size=self.disk_size))
         if self.disk_format not in _SUPPORTED_DISK_FORMATS:
             raise ValueError(f"unsupported disk format: {self.disk_format!r}")
         object.__setattr__(self, "base_image_path", absolute_path(self.base_image_path))
@@ -135,6 +140,7 @@ class VMGuestArtifacts:
             "vm_guest_artifacts": {
                 "cloud_image_url": self.cloud_image_url,
                 "disk_format": self.disk_format,
+                "disk_size": self.disk_size,
                 "base_image_path": str(self.base_image_path),
                 "disk_path": str(self.disk_path),
                 "seed_iso_path": str(self.seed_iso_path),
@@ -161,6 +167,44 @@ def ubuntu_cloud_image_url(
     return source.get(UBUNTU_CLOUD_IMAGE_URL_ENV) or DEFAULT_UBUNTU_CLOUD_IMAGE_URL
 
 
+def vm_disk_size(
+    *,
+    size: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """Return the requested guest disk virtual size."""
+
+    source = os.environ if env is None else env
+    raw_value = size if size is not None else source.get(VM_DISK_SIZE_ENV)
+    value = (raw_value or DEFAULT_VM_DISK_SIZE).strip()
+    if not _DISK_SIZE_RE.fullmatch(value):
+        raise ValueError(
+            f"{VM_DISK_SIZE_ENV}={value!r} must be an integer size with optional K/M/G/T suffix"
+        )
+    return value
+
+
+def vm_disk_size_mib(size: str) -> int:
+    """Return a VM disk size string as whole MiB for VirtualBox."""
+
+    normalized = vm_disk_size(size=size)
+    match = _DISK_SIZE_RE.fullmatch(normalized)
+    if match is None:
+        raise ValueError(f"invalid VM disk size: {size!r}")
+    amount = int(match.group("amount"), 10)
+    suffix = (match.group("suffix") or "M").upper()
+    multipliers = {
+        "K": 1 / 1024,
+        "M": 1,
+        "G": 1024,
+        "T": 1024 * 1024,
+    }
+    mib = amount * multipliers[suffix]
+    if mib != int(mib) or int(mib) <= 0:
+        raise ValueError(f"{VM_DISK_SIZE_ENV}={size!r} must resolve to whole MiB")
+    return int(mib)
+
+
 def plan_guest_artifacts(
     *,
     endpoint_id: str,
@@ -183,6 +227,7 @@ def plan_guest_artifacts(
         raise ValueError(f"unsupported disk format: {disk_format!r}")
 
     image_source = ubuntu_cloud_image_url(image_url=image_url, env=env)
+    disk_size = vm_disk_size(env=env)
     cache_dir = (
         absolute_path(image_cache_dir)
         if image_cache_dir is not None
@@ -196,6 +241,7 @@ def plan_guest_artifacts(
         endpoint_id=endpoint_id,
         provider=provider,
         disk_format=disk_format,
+        disk_size=disk_size,
         cloud_image_url=image_source,
         base_image_path=cache_dir / _cloud_image_filename(image_source),
         disk_path=vm_dir / f"disk.{disk_format}",
@@ -356,6 +402,7 @@ def build_qemu_overlay(
             "-b",
             str(artifacts.base_image_path),
             str(artifacts.disk_path),
+            artifacts.disk_size,
         ],
         timeout=timeout,
     )
@@ -409,6 +456,9 @@ def _cloud_image_filename(image_url: str) -> str:
     path = urlsplit(image_url).path
     name = Path(path).name
     return name or "noble-server-cloudimg-amd64.img"
+
+
+_DISK_SIZE_RE = re.compile(r"(?P<amount>[1-9][0-9]*)(?P<suffix>[KMGTkmgt]?)")
 
 
 def _user_data(public_key: str, packages: Sequence[str]) -> dict[str, object]:
