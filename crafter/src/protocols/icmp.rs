@@ -223,6 +223,13 @@ pub const ICMP_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_TABLE_ENTRY: u8 = 3;
 /// Extended echo reply code: multiple interfaces satisfy query (RFC 8335).
 pub const ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES: u8 = 4;
 
+/// RFC 1256 standard router advertisement entry size, measured in 32-bit words.
+///
+/// The entry size counts 32-bit words per advertised router; the standard
+/// format is a 4-byte router address plus a 4-byte preference level, so the
+/// value is two words (8 bytes per entry).
+pub const ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS: u8 = 2;
+
 /// ICMP extension object class for MPLS labels.
 pub const ICMP_EXTENSION_CLASS_MPLS: u8 = 1;
 /// ICMP extension object C-Type for an incoming MPLS label stack.
@@ -235,6 +242,9 @@ const ICMP_TIMESTAMP_BODY_LEN: usize = 12;
 /// RFC 950 address mask body: a single 32-bit address mask (4 bytes) following
 /// the fixed ICMP header.
 const ICMP_ADDRESS_MASK_BODY_LEN: usize = 4;
+/// RFC 1256 router advertisement entry: a 32-bit router address plus a 32-bit
+/// preference level (8 bytes total).
+const ICMP_ROUTER_ADVERTISEMENT_ENTRY_LEN: usize = 8;
 const ICMP_EXTENSION_HEADER_LEN: usize = 4;
 const ICMP_EXTENSION_OBJECT_LEN: usize = 4;
 const ICMP_EXTENSION_MPLS_LEN: usize = 4;
@@ -359,6 +369,9 @@ pub struct Icmp {
     gateway: Field<Ipv4Addr>,
     length: Field<u8>,
     mtu_next_hop: Field<u16>,
+    num_addrs: Field<u8>,
+    addr_entry_size: Field<u8>,
+    lifetime: Field<u16>,
 }
 
 impl Icmp {
@@ -375,6 +388,9 @@ impl Icmp {
             gateway: Field::unset(),
             length: Field::unset(),
             mtu_next_hop: Field::unset(),
+            num_addrs: Field::unset(),
+            addr_entry_size: Field::unset(),
+            lifetime: Field::unset(),
         }
     }
 
@@ -443,6 +459,25 @@ impl Icmp {
     /// sets the [`IcmpAddressMask`] body to the subnet/network mask.
     pub fn address_mask_reply() -> Self {
         Self::new().icmp_type(ICMP_ADDRESS_MASK_REPLY)
+    }
+
+    /// Create a router advertisement (RFC 1256, type 9).
+    ///
+    /// The fixed header's rest-of-header carries Num Addrs (byte 0), Addr Entry
+    /// Size (byte 1), and Lifetime (bytes 2-3); the advertised router addresses
+    /// and preference levels live in following [`IcmpRouterAdvertisementEntry`]
+    /// layers. Num Addrs and Addr Entry Size are auto-filled from those entries
+    /// at compile time unless the caller pins them.
+    pub fn router_advertisement() -> Self {
+        Self::new().icmp_type(ICMP_ROUTER_ADVERTISEMENT)
+    }
+
+    /// Create a router solicitation (RFC 1256, type 10).
+    ///
+    /// The rest-of-header is a single 32-bit reserved field that RFC 1256 sends
+    /// as zero and receivers ignore; it has no body beyond the fixed header.
+    pub fn router_solicitation() -> Self {
+        Self::new().icmp_type(ICMP_ROUTER_SOLICITATION)
     }
 
     /// Set the ICMP type from a common kind.
@@ -546,6 +581,31 @@ impl Icmp {
         self.mtu_next_hop(mtu_next_hop)
     }
 
+    /// Set the RFC 1256 router advertisement Num Addrs field explicitly.
+    ///
+    /// When unset, compilation counts the following
+    /// [`IcmpRouterAdvertisementEntry`] layers.
+    pub fn num_addrs(mut self, num_addrs: u8) -> Self {
+        self.num_addrs.set_user(num_addrs);
+        self
+    }
+
+    /// Set the RFC 1256 router advertisement Addr Entry Size field explicitly,
+    /// measured in 32-bit words.
+    ///
+    /// When unset, compilation defaults it to
+    /// [`ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS`] for the standard entry format.
+    pub fn addr_entry_size(mut self, addr_entry_size: u8) -> Self {
+        self.addr_entry_size.set_user(addr_entry_size);
+        self
+    }
+
+    /// Set the RFC 1256 router advertisement Lifetime field (seconds).
+    pub fn lifetime(mut self, lifetime: u16) -> Self {
+        self.lifetime.set_user(lifetime);
+        self
+    }
+
     /// Raw ICMP type value.
     pub fn icmp_type_value(&self) -> u8 {
         value_or_copy(&self.icmp_type, ICMP_ECHO_REQUEST)
@@ -618,6 +678,22 @@ impl Icmp {
         self.mtu_next_hop.value().copied()
     }
 
+    /// RFC 1256 router advertisement Num Addrs field when explicit or decoded.
+    pub fn num_addrs_value(&self) -> Option<u8> {
+        self.num_addrs.value().copied()
+    }
+
+    /// RFC 1256 router advertisement Addr Entry Size field (32-bit words) when
+    /// explicit or decoded.
+    pub fn addr_entry_size_value(&self) -> Option<u8> {
+        self.addr_entry_size.value().copied()
+    }
+
+    /// RFC 1256 router advertisement Lifetime field when explicit or decoded.
+    pub fn lifetime_value(&self) -> Option<u16> {
+        self.lifetime.value().copied()
+    }
+
     /// Common ICMP kind, when the type is version-independent.
     pub fn kind_value(&self) -> Option<IcmpKind> {
         match self.icmp_type_value() {
@@ -644,8 +720,13 @@ impl Icmp {
         let mut rest = value_or_copy(&self.rest_of_header, [0; 4]);
 
         match self.icmp_type_value() {
-            ICMP_ECHO_REQUEST | ICMP_ECHO_REPLY | ICMP_TIMESTAMP | ICMP_TIMESTAMP_REPLY
-            | ICMP_INFORMATION_REQUEST | ICMP_INFORMATION_REPLY | ICMP_ADDRESS_MASK_REQUEST
+            ICMP_ECHO_REQUEST
+            | ICMP_ECHO_REPLY
+            | ICMP_TIMESTAMP
+            | ICMP_TIMESTAMP_REPLY
+            | ICMP_INFORMATION_REQUEST
+            | ICMP_INFORMATION_REPLY
+            | ICMP_ADDRESS_MASK_REQUEST
             | ICMP_ADDRESS_MASK_REPLY => {
                 // RFC 792 / RFC 950 query families: identifier (2) + sequence
                 // (2). When the raw rest is user-set, only a user-set id/seq
@@ -705,10 +786,47 @@ impl Icmp {
                     rest[1] = length;
                 }
             }
+            ICMP_ROUTER_ADVERTISEMENT => {
+                // RFC 1256: byte 0 Num Addrs, byte 1 Addr Entry Size (32-bit
+                // words), bytes 2-3 Lifetime. Num Addrs is auto-filled from the
+                // following entry layers and Addr Entry Size defaults to the
+                // standard format unless the caller pinned the raw rest or the
+                // typed field. A user-set typed field always wins over the raw
+                // base.
+                if let Some(num_addrs) = self.overriding_num_addrs(ctx, raw_is_user) {
+                    rest[0] = num_addrs;
+                }
+                if self.addr_entry_size.is_user_set() {
+                    rest[1] = self.addr_entry_size_value().unwrap_or(0);
+                } else if !raw_is_user {
+                    rest[1] = ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS;
+                }
+                if self.lifetime.is_user_set() || !raw_is_user {
+                    if let Some(lifetime) = self.lifetime.value().copied() {
+                        rest[2..4].copy_from_slice(&lifetime.to_be_bytes());
+                    }
+                }
+            }
             _ => {}
         }
 
         Ok(rest)
+    }
+
+    /// RFC 1256 Num Addrs byte that should override the raw rest-of-header.
+    ///
+    /// A user-set Num Addrs always wins. An auto-counted value (from the
+    /// following entry layers) only applies when the caller did not pin the raw
+    /// rest-of-header, so a deliberate raw count survives compilation.
+    fn overriding_num_addrs(&self, ctx: Option<LayerContext<'_>>, raw_is_user: bool) -> Option<u8> {
+        if let Some(num_addrs) = self.num_addrs.value().copied() {
+            return Some(num_addrs);
+        }
+        if raw_is_user {
+            return None;
+        }
+        let ctx = ctx?;
+        u8::try_from(router_advertisement_entry_count(ctx)).ok()
     }
 
     /// RFC 4884 length byte that should override the raw rest-of-header.
@@ -849,6 +967,24 @@ impl Layer for Icmp {
                 self.length_value()
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "auto".to_string()),
+            ),
+            (
+                "num_addrs",
+                self.num_addrs_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            (
+                "addr_entry_size",
+                self.addr_entry_size_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            (
+                "lifetime",
+                self.lifetime_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
             ),
         ]
     }
@@ -1162,6 +1298,116 @@ impl Layer for IcmpAddressMask {
 }
 
 impl_layer_div!(IcmpAddressMask);
+
+/// RFC 1256 router advertisement entry.
+///
+/// A router advertisement (type 9) lists one entry per advertised router after
+/// the fixed ICMP header. The standard entry format (Addr Entry Size of two
+/// 32-bit words) is a 4-byte router address followed by a 4-byte signed
+/// preference level: higher preference levels are preferred, and the reserved
+/// value 0x8000_0000 means the address must not be used as a default router.
+///
+/// This layer always encodes exactly eight bytes. The router address is modeled
+/// as an [`Ipv4Addr`] for convenience while the raw four address bytes stay
+/// inspectable through [`IcmpRouterAdvertisementEntry::router_address_octets`].
+/// The preference level is exposed as a raw `i32` so the full signed range,
+/// including the reserved "do not use" value, survives untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IcmpRouterAdvertisementEntry {
+    router_address: Field<Ipv4Addr>,
+    preference_level: Field<i32>,
+}
+
+impl IcmpRouterAdvertisementEntry {
+    /// Create a router advertisement entry defaulting to the unspecified
+    /// address and a zero preference level.
+    pub fn new() -> Self {
+        Self {
+            router_address: Field::defaulted(Ipv4Addr::UNSPECIFIED),
+            preference_level: Field::defaulted(0),
+        }
+    }
+
+    /// Set the advertised router address.
+    pub fn router_address(mut self, router_address: Ipv4Addr) -> Self {
+        self.router_address.set_user(router_address);
+        self
+    }
+
+    /// Set the advertised router address from dotted-quad text.
+    pub fn router_address_str(self, router_address: &str) -> Result<Self> {
+        Ok(self.router_address(parse_ipv4(router_address)?))
+    }
+
+    /// Set the signed preference level.
+    pub fn preference_level(mut self, preference_level: i32) -> Self {
+        self.preference_level.set_user(preference_level);
+        self
+    }
+
+    /// Router address value as an [`Ipv4Addr`].
+    pub fn router_address_value(&self) -> Ipv4Addr {
+        value_or_copy(&self.router_address, Ipv4Addr::UNSPECIFIED)
+    }
+
+    /// Router address as its raw four bytes.
+    pub fn router_address_octets(&self) -> [u8; 4] {
+        self.router_address_value().octets()
+    }
+
+    /// Signed preference level value.
+    pub fn preference_level_value(&self) -> i32 {
+        value_or_copy(&self.preference_level, 0)
+    }
+}
+
+impl Default for IcmpRouterAdvertisementEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for IcmpRouterAdvertisementEntry {
+    fn name(&self) -> &'static str {
+        "IcmpRouterAdvertisementEntry"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "IcmpRouterAdvertisementEntry(router={}, preference={})",
+            self.router_address_value(),
+            self.preference_level_value()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("router_address", self.router_address_value().to_string()),
+            (
+                "router_address_bytes",
+                hex_bytes(&self.router_address_octets()),
+            ),
+            (
+                "preference_level",
+                self.preference_level_value().to_string(),
+            ),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        ICMP_ROUTER_ADVERTISEMENT_ENTRY_LEN
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.router_address_octets());
+        out.extend_from_slice(&self.preference_level_value().to_be_bytes());
+        Ok(())
+    }
+
+    impl_layer_object!(IcmpRouterAdvertisementEntry);
+}
+
+impl_layer_div!(IcmpRouterAdvertisementEntry);
 
 /// Internet Control Message Protocol for IPv6.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1993,6 +2239,10 @@ impl_layer_div!(IcmpExtensionMpls);
 pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (icmp, payload) = decode_icmp_parts(bytes)?;
     let icmp_type = icmp.icmp_type_value();
+    // RFC 1256 router advertisement fields are read from the fixed header before
+    // it is pushed (and moved) so the entry parser below can use them.
+    let ra_num_addrs = icmp.num_addrs_value().unwrap_or(0) as usize;
+    let ra_entry_words = icmp.addr_entry_size_value().unwrap_or(0) as usize;
     packet = packet.push(icmp);
 
     if payload.is_empty() {
@@ -2036,13 +2286,37 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
     // fixed header. Type the body only when its length is exactly right; any
     // other length is malformed and stays raw so the bytes survive and decoding
     // never panics.
-    if matches!(icmp_type, ICMP_ADDRESS_MASK_REQUEST | ICMP_ADDRESS_MASK_REPLY)
-        && payload.len() == ICMP_ADDRESS_MASK_BODY_LEN
+    if matches!(
+        icmp_type,
+        ICMP_ADDRESS_MASK_REQUEST | ICMP_ADDRESS_MASK_REPLY
+    ) && payload.len() == ICMP_ADDRESS_MASK_BODY_LEN
     {
         let mask = Ipv4Addr::from(copy_array_4(&payload[0..4]));
         packet = packet.push(IcmpAddressMask {
             mask: Field::user(mask),
         });
+        return Ok(packet);
+    }
+
+    // RFC 1256 router advertisement entries follow the fixed header. Type them
+    // only when the message uses the standard entry size (two 32-bit words) and
+    // the body length is exactly Num Addrs entries; any other shape (a
+    // non-standard Addr Entry Size, a count/length mismatch, or trailing data)
+    // is left raw so unusual or malformed bodies survive and decoding never
+    // panics.
+    if icmp_type == ICMP_ROUTER_ADVERTISEMENT
+        && ra_entry_words == ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS as usize
+        && payload.len() == ra_num_addrs * ICMP_ROUTER_ADVERTISEMENT_ENTRY_LEN
+        && ra_num_addrs > 0
+    {
+        for chunk in payload.chunks_exact(ICMP_ROUTER_ADVERTISEMENT_ENTRY_LEN) {
+            let router_address = Ipv4Addr::from(copy_array_4(&chunk[0..4]));
+            let preference_level = read_u32_be(&chunk[4..8])? as i32;
+            packet = packet.push(IcmpRouterAdvertisementEntry {
+                router_address: Field::user(router_address),
+                preference_level: Field::user(preference_level),
+            });
+        }
         return Ok(packet);
     }
 
@@ -2098,6 +2372,21 @@ fn decode_icmp_parts(bytes: &[u8]) -> Result<(Icmp, &[u8])> {
         } else {
             Field::unset()
         },
+        num_addrs: if icmp_type == ICMP_ROUTER_ADVERTISEMENT {
+            Field::user(rest[0])
+        } else {
+            Field::unset()
+        },
+        addr_entry_size: if icmp_type == ICMP_ROUTER_ADVERTISEMENT {
+            Field::user(rest[1])
+        } else {
+            Field::unset()
+        },
+        lifetime: if icmp_type == ICMP_ROUTER_ADVERTISEMENT {
+            Field::user(u16::from_be_bytes([rest[2], rest[3]]))
+        } else {
+            Field::unset()
+        },
     };
 
     Ok((icmp, &bytes[ICMP_HEADER_LEN..]))
@@ -2148,6 +2437,14 @@ fn payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
         layer.compile(&layer_ctx, &mut payload)?;
     }
     Ok(payload)
+}
+
+fn router_advertisement_entry_count(ctx: LayerContext<'_>) -> usize {
+    ctx.packet()
+        .iter()
+        .skip(ctx.index() + 1)
+        .take_while(|layer| layer.as_any().is::<IcmpRouterAdvertisementEntry>())
+        .count()
 }
 
 fn encoded_len_until_extension(ctx: LayerContext<'_>) -> usize {
@@ -2885,9 +3182,7 @@ mod icmpv4_codepoints {
 
 #[cfg(test)]
 mod icmpv4_header_model {
-    use super::{
-        Icmp, IcmpKind, ICMP_ECHO_REQUEST, ICMP_REDIRECT, ICMP_TIME_EXCEEDED,
-    };
+    use super::{Icmp, IcmpKind, ICMP_ECHO_REQUEST, ICMP_REDIRECT, ICMP_TIME_EXCEEDED};
     use crate::packet::Layer;
     use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
     use core::net::Ipv4Addr;
@@ -2947,7 +3242,10 @@ mod icmpv4_header_model {
     fn icmpv4_header_model_user_typed_field_overrides_raw_rest() {
         let raw = [0x00, 0x00, 0x00, 0x00];
         let bytes = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::echo_request().rest_of_header(raw).id(0x1234).seq(0x5678)
+            / Icmp::echo_request()
+                .rest_of_header(raw)
+                .id(0x1234)
+                .seq(0x5678)
             / Raw::from("x"))
         .compile()
         .unwrap();
@@ -3087,7 +3385,10 @@ mod icmpv4_rfc792_errors {
         for (icmp_type, code) in [
             (ICMP_DESTINATION_UNREACHABLE, ICMP_CODE_DU_PORT_UNREACHABLE),
             (ICMP_SOURCE_QUENCH, 0),
-            (ICMP_TIME_EXCEEDED, ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY),
+            (
+                ICMP_TIME_EXCEEDED,
+                ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY,
+            ),
             (ICMP_PARAMETER_PROBLEM, ICMP_CODE_PARAMETER_PROBLEM_POINTER),
         ] {
             let packet = Ipv4::new().src(src()).dst(dst())
@@ -3121,7 +3422,10 @@ mod icmpv4_rfc792_errors {
             "port-unreachable(3)"
         );
         assert_eq!(
-            icmpv4_code_summary(ICMP_TIME_EXCEEDED, ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY),
+            icmpv4_code_summary(
+                ICMP_TIME_EXCEEDED,
+                ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY
+            ),
             "fragment-reassembly-time-exceeded(1)"
         );
         assert_eq!(
@@ -3322,8 +3626,8 @@ mod icmpv4_rfc792_errors {
 #[cfg(test)]
 mod icmpv4_rfc792_queries {
     use super::{
-        icmpv4_type_is_deprecated, icmpv4_type_summary, Icmp, IcmpTimestamp, ICMP_INFORMATION_REPLY,
-        ICMP_INFORMATION_REQUEST, ICMP_TIMESTAMP, ICMP_TIMESTAMP_REPLY,
+        icmpv4_type_is_deprecated, icmpv4_type_summary, Icmp, IcmpTimestamp,
+        ICMP_INFORMATION_REPLY, ICMP_INFORMATION_REQUEST, ICMP_TIMESTAMP, ICMP_TIMESTAMP_REPLY,
     };
     use crate::checksum::internet_checksum;
     use crate::packet::Layer;
@@ -3355,7 +3659,7 @@ mod icmpv4_rfc792_queries {
             // ICMP header begins at byte 20 (20-byte IPv4 header, no options).
             assert_eq!(compiled.as_bytes()[20], icmp_type);
             assert_eq!(compiled.as_bytes()[21], 0); // code
-            // Identifier (bytes 24..26) and sequence (bytes 26..28).
+                                                    // Identifier (bytes 24..26) and sequence (bytes 26..28).
             assert_eq!(&compiled.as_bytes()[24..26], &0x1234u16.to_be_bytes());
             assert_eq!(&compiled.as_bytes()[26..28], &7u16.to_be_bytes());
             // Timestamp body (bytes 28..40): originate, receive, transmit.
@@ -3507,10 +3811,7 @@ mod icmpv4_rfc792_queries {
             .receive(2)
             .transmit(3)
             .summary();
-        assert_eq!(
-            summary,
-            "IcmpTimestamp(originate=1, receive=2, transmit=3)"
-        );
+        assert_eq!(summary, "IcmpTimestamp(originate=1, receive=2, transmit=3)");
     }
 
     // A timestamp message whose trailing region is the wrong length (not exactly
@@ -3546,9 +3847,10 @@ mod icmpv4_rfc792_queries {
     // structured buffer error rather than panicking.
     #[test]
     fn icmpv4_rfc792_queries_truncated_header_is_structured_error() {
-        let short = (Ipv4::new().proto(crate::IpProtocol::Icmp) / Raw::from_bytes([ICMP_TIMESTAMP; 5]))
-            .compile()
-            .unwrap();
+        let short = (Ipv4::new().proto(crate::IpProtocol::Icmp)
+            / Raw::from_bytes([ICMP_TIMESTAMP; 5]))
+        .compile()
+        .unwrap();
         assert!(Packet::decode_from_l3(NetworkLayer::Ipv4, short.as_bytes()).is_err());
     }
 }
@@ -3586,7 +3888,7 @@ mod icmpv4_address_mask {
         // ICMP header begins at byte 20 (20-byte IPv4 header, no options).
         assert_eq!(compiled.as_bytes()[20], ICMP_ADDRESS_MASK_REQUEST);
         assert_eq!(compiled.as_bytes()[21], 0); // code
-        // Identifier (bytes 24..26) and sequence (bytes 26..28).
+                                                // Identifier (bytes 24..26) and sequence (bytes 26..28).
         assert_eq!(&compiled.as_bytes()[24..26], &0x1234u16.to_be_bytes());
         assert_eq!(&compiled.as_bytes()[26..28], &7u16.to_be_bytes());
         // RFC 950 request: the address mask body (bytes 28..32) is all zeros.
@@ -3752,5 +4054,245 @@ mod icmpv4_address_mask {
         assert!(decoded.layer::<IcmpAddressMask>().is_none());
         assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &body[..]);
         assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_router_discovery {
+    use super::{
+        icmpv4_type_summary, Icmp, IcmpRouterAdvertisementEntry,
+        ICMP_CODE_ROUTER_ADVERTISEMENT_NORMAL, ICMP_ROUTER_ADVERTISEMENT,
+        ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS, ICMP_ROUTER_SOLICITATION,
+    };
+    use crate::checksum::internet_checksum;
+    use crate::packet::Layer;
+    use crate::{Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // A router solicitation (RFC 1256, type 10) is the fixed 8-byte header with a
+    // 32-bit reserved field that is sent as zero. It carries no body and round-
+    // trips through decode with the reserved word intact.
+    #[test]
+    fn icmpv4_router_discovery_solicitation_compile_decode_roundtrip() {
+        let packet = Ipv4::new().src(src()).dst(dst()) / Icmp::router_solicitation();
+        let compiled = packet.compile().unwrap();
+
+        // ICMP header begins at byte 20 (20-byte IPv4 header, no options).
+        assert_eq!(compiled.as_bytes()[20], ICMP_ROUTER_SOLICITATION);
+        assert_eq!(compiled.as_bytes()[21], 0); // code
+                                                // The reserved 32-bit field (bytes 24..28) is sent as zero.
+        assert_eq!(&compiled.as_bytes()[24..28], &[0, 0, 0, 0]);
+        // No body follows the fixed 8-byte ICMP header.
+        assert_eq!(compiled.as_bytes().len(), 20 + 8);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.icmp_type_value(), ICMP_ROUTER_SOLICITATION);
+        assert_eq!(icmp.rest_of_header_value(), [0, 0, 0, 0]);
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(
+            Icmp::router_solicitation().icmp_type_value(),
+            ICMP_ROUTER_SOLICITATION
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // A one-entry router advertisement compiles its fixed header (Num Addrs,
+    // Addr Entry Size, Lifetime) plus a single router-address/preference entry,
+    // and round-trips through decode with the typed entry intact.
+    #[test]
+    fn icmpv4_router_discovery_advertisement_one_entry_roundtrip() {
+        let router = Ipv4Addr::new(192, 0, 2, 1);
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::router_advertisement().lifetime(1800)
+            / IcmpRouterAdvertisementEntry::new()
+                .router_address(router)
+                .preference_level(5);
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(compiled.as_bytes()[20], ICMP_ROUTER_ADVERTISEMENT);
+        assert_eq!(compiled.as_bytes()[21], 0); // code
+                                                // Rest-of-header: Num Addrs (byte 24), Addr Entry Size (byte 25),
+                                                // Lifetime (bytes 26..28).
+        assert_eq!(compiled.as_bytes()[24], 1);
+        assert_eq!(
+            compiled.as_bytes()[25],
+            ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS
+        );
+        assert_eq!(&compiled.as_bytes()[26..28], &1800u16.to_be_bytes());
+        // Entry: router address (bytes 28..32) then signed preference (32..36).
+        assert_eq!(&compiled.as_bytes()[28..32], &router.octets());
+        assert_eq!(&compiled.as_bytes()[32..36], &5i32.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.num_addrs_value(), Some(1));
+        assert_eq!(
+            icmp.addr_entry_size_value(),
+            Some(ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS)
+        );
+        assert_eq!(icmp.lifetime_value(), Some(1800));
+
+        let entry = decoded.layer::<IcmpRouterAdvertisementEntry>().unwrap();
+        assert_eq!(entry.router_address_value(), router);
+        assert_eq!(entry.preference_level_value(), 5);
+        // No leftover raw bytes when the body length matches Num Addrs entries.
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // A multi-entry advertisement preserves every entry in order, including a
+    // negative (signed) preference level, and round-trips through decode.
+    #[test]
+    fn icmpv4_router_discovery_advertisement_multi_entry_roundtrip() {
+        let entries = [
+            (Ipv4Addr::new(192, 0, 2, 1), 100i32),
+            (Ipv4Addr::new(192, 0, 2, 2), -50i32),
+            (Ipv4Addr::new(192, 0, 2, 3), 0i32),
+        ];
+        let mut packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::router_advertisement()
+                .code(ICMP_CODE_ROUTER_ADVERTISEMENT_NORMAL)
+                .lifetime(600);
+        for (router, preference) in entries {
+            packet = packet
+                / IcmpRouterAdvertisementEntry::new()
+                    .router_address(router)
+                    .preference_level(preference);
+        }
+        let compiled = packet.compile().unwrap();
+
+        // Num Addrs is auto-filled to the entry count.
+        assert_eq!(compiled.as_bytes()[24], entries.len() as u8);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let decoded_entries: Vec<&IcmpRouterAdvertisementEntry> =
+            decoded.layers::<IcmpRouterAdvertisementEntry>().collect();
+        assert_eq!(decoded_entries.len(), entries.len());
+        for (decoded_entry, (router, preference)) in decoded_entries.iter().zip(entries) {
+            assert_eq!(decoded_entry.router_address_value(), router);
+            assert_eq!(decoded_entry.preference_level_value(), preference);
+        }
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // Compilation auto-fills Num Addrs from the following entry layers and
+    // defaults Addr Entry Size to the standard format when the caller leaves
+    // them unset, and the auto-filled ICMP checksum covers the whole message.
+    #[test]
+    fn icmpv4_router_discovery_advertisement_autofills_counts_and_checksum() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::router_advertisement().lifetime(900)
+            / IcmpRouterAdvertisementEntry::new().router_address(Ipv4Addr::new(192, 0, 2, 1))
+            / IcmpRouterAdvertisementEntry::new().router_address(Ipv4Addr::new(192, 0, 2, 2));
+        let compiled = packet.compile().unwrap();
+
+        // Num Addrs counts the two entries; Addr Entry Size defaults to 2 words.
+        assert_eq!(compiled.as_bytes()[24], 2);
+        assert_eq!(
+            compiled.as_bytes()[25],
+            ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS
+        );
+
+        // The auto-filled checksum covers the header plus both entries.
+        let icmp_message = &compiled.as_bytes()[20..];
+        let mut zeroed = icmp_message.to_vec();
+        zeroed[2] = 0;
+        zeroed[3] = 0;
+        let expected = internet_checksum(&zeroed);
+        assert_ne!(expected, 0);
+        assert_eq!(&compiled.as_bytes()[22..24], &expected.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmp>().unwrap().checksum_value(),
+            Some(expected)
+        );
+    }
+
+    // Explicit Num Addrs, Addr Entry Size, Lifetime, and checksum overrides are
+    // preserved verbatim even when they are deliberately inconsistent with the
+    // following entries. A mismatched Num Addrs / non-standard Addr Entry Size
+    // means decode cannot defensibly type the entries, so the body stays Raw and
+    // the message still round-trips byte-for-byte.
+    #[test]
+    fn icmpv4_router_discovery_advertisement_explicit_malformed_overrides() {
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::router_advertisement()
+                .num_addrs(7) // deliberately wrong: only one entry follows
+                .addr_entry_size(3) // non-standard entry size
+                .lifetime(0xbeef)
+                .checksum(0xdead)
+            / IcmpRouterAdvertisementEntry::new().router_address(Ipv4Addr::new(192, 0, 2, 9));
+        let compiled = packet.compile().unwrap();
+
+        // Every pinned field is emitted verbatim.
+        assert_eq!(compiled.as_bytes()[24], 7);
+        assert_eq!(compiled.as_bytes()[25], 3);
+        assert_eq!(&compiled.as_bytes()[26..28], &0xbeefu16.to_be_bytes());
+        assert_eq!(&compiled.as_bytes()[22..24], &0xdeadu16.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.num_addrs_value(), Some(7));
+        assert_eq!(icmp.addr_entry_size_value(), Some(3));
+        assert_eq!(icmp.lifetime_value(), Some(0xbeef));
+        // The inconsistent header means the body cannot be typed as entries; the
+        // bytes survive as Raw and nothing panics.
+        assert!(decoded.layer::<IcmpRouterAdvertisementEntry>().is_none());
+        assert!(decoded.layer::<Raw>().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // A router advertisement whose body length does not match Num Addrs * entry
+    // size is malformed: the entry parser declines it, the bytes remain Raw,
+    // decoding does not panic, and the message still round-trips byte-for-byte.
+    #[test]
+    fn icmpv4_router_discovery_advertisement_length_mismatch_stays_raw() {
+        // Standard entry size and Num Addrs of 1, but only 5 trailing bytes.
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::router_advertisement()
+                .num_addrs(1)
+                .addr_entry_size(ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS)
+            / Raw::from_bytes([0xaa; 5]);
+        let compiled = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpRouterAdvertisementEntry>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[0xaa; 5]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // Summaries identify the router discovery types and the typed entry fields
+    // while keeping numeric values visible.
+    #[test]
+    fn icmpv4_router_discovery_summary_output() {
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ROUTER_ADVERTISEMENT),
+            "router-advertisement(9)"
+        );
+        assert_eq!(
+            icmpv4_type_summary(ICMP_ROUTER_SOLICITATION),
+            "router-solicitation(10)"
+        );
+        assert_eq!(
+            Icmp::router_advertisement().code(0).summary(),
+            "Icmp(type=router-advertisement(9), code=normal(0), id=-, seq=-)"
+        );
+        assert_eq!(
+            IcmpRouterAdvertisementEntry::new()
+                .router_address(Ipv4Addr::new(192, 0, 2, 1))
+                .preference_level(-7)
+                .summary(),
+            "IcmpRouterAdvertisementEntry(router=192.0.2.1, preference=-7)"
+        );
     }
 }
