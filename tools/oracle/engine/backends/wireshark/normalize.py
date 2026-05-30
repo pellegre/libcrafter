@@ -319,7 +319,32 @@ def _normalize_ethernet(layer: JSONObject) -> JSONObject:
     return output
 
 
+_ARP_HARDWARE_ADDRESS_FIELDS = (
+    "sender_hardware_address",
+    "target_hardware_address",
+)
+_ARP_PROTOCOL_ADDRESS_FIELDS = (
+    "sender_protocol_address",
+    "target_protocol_address",
+)
+
+
 def _normalize_arp(layer: JSONObject) -> JSONObject:
+    """Normalize a tshark ARP layer to the shared canonical field names.
+
+    The normalized names and comparable forms match the Scapy reference backend
+    (``tools/oracle/engine/backends/scapy/normalize.py``) and the libcrafter
+    decoder (``tools/oracle/adapters/src/bin/decode_vectors.rs``). The fixed
+    header (``hardware_type``, ``protocol_type``, ``hardware_length``,
+    ``protocol_length``, ``opcode``) is kept numeric so known and unknown
+    codepoints stay raw-preserving. The four variable sender/target address
+    fields keep their colon-formatted MAC / dotted IPv4 string form for standard
+    Ethernet/IPv4 ARP, and reduce to a bare ``{"hex": ...}`` value carrying the
+    raw octets for nonstandard hardware/protocol lengths or unknown address
+    families. tshark exposes typed ``*.hw_mac`` / ``*.proto_ipv4`` fields for the
+    standard forms and the generic ``*.hw`` / ``*.proto`` fields otherwise.
+    """
+
     output = _fields_from_aliases(
         layer,
         {
@@ -342,7 +367,60 @@ def _normalize_arp(layer: JSONObject) -> JSONObject:
         "protocol_length",
         "opcode",
     )
+    for name in _ARP_HARDWARE_ADDRESS_FIELDS:
+        if name in output:
+            output[name] = _normalize_arp_address(output[name], kind="hardware")
+    for name in _ARP_PROTOCOL_ADDRESS_FIELDS:
+        if name in output:
+            output[name] = _normalize_arp_address(output[name], kind="protocol")
     return output
+
+
+def _normalize_arp_address(value: object, *, kind: str) -> object:
+    """Reduce one tshark ARP address to the shared comparable form.
+
+    Standard Ethernet hardware addresses (a colon-separated MAC) and standard
+    IPv4 protocol addresses (a dotted quad) keep their string form, matching the
+    Scapy reference backend and libcrafter's decoded view. Any other form — a
+    nonstandard-width hardware/protocol address or an unknown address family,
+    which tshark renders as a colon-separated hex string — is reduced to a bare
+    ``{"hex": ...}`` value carrying the raw octets, so the comparison stays
+    byte-identical across backends regardless of tshark's textual rendering.
+    """
+
+    if not isinstance(value, str):
+        return value
+    if kind == "hardware" and _is_standard_mac(value):
+        return value
+    if kind == "protocol" and _is_standard_ipv4(value):
+        return value
+    return {"hex": _hex_bytes(value)}
+
+
+def _is_standard_mac(value: str) -> bool:
+    parts = value.split(":")
+    if len(parts) != 6:
+        return False
+    for part in parts:
+        if len(part) != 2:
+            return False
+        try:
+            int(part, 16)
+        except ValueError:
+            return False
+    return True
+
+
+def _is_standard_ipv4(value: str) -> bool:
+    parts = value.split(".")
+    if len(parts) != 4:
+        return False
+    for part in parts:
+        if not part.isdigit():
+            return False
+        if not 0 <= int(part) <= 255:
+            return False
+    return True
 
 
 def _normalize_ipv4(layer: JSONObject) -> JSONObject:
