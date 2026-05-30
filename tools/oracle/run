@@ -1,26 +1,57 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+"""Run oracle Python tooling through the repository's pinned runner."""
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd -- "${script_dir}/../.." && pwd)"
+from __future__ import annotations
 
-export ORACLE_REPO_ROOT="${repo_root}"
-export PYTHONPATH="${script_dir}${PYTHONPATH:+:${PYTHONPATH}}"
+import os
+import shutil
+import sys
+from pathlib import Path
 
-pyyaml_requirement="PyYAML>=6.0,<7"
-uv_bin="${ORACLE_UV:-uv}"
-python_bin="${ORACLE_PYTHON:-python3}"
 
-if ! uv_path="$(command -v "${uv_bin}")"; then
-    echo "error: uv is required to run oracle Python tooling" >&2
-    echo "hint: install uv from https://docs.astral.sh/uv/ or set ORACLE_UV" >&2
-    exit 69
-fi
+PYTHONPATH_REQUIREMENT = "PyYAML>=6.0,<7"
 
-cd "${repo_root}"
-exec "${uv_path}" run \
-    --quiet \
-    --no-project \
-    --with "${pyyaml_requirement}" \
-    -- \
-    "${python_bin}" -m engine.cli "$@"
+
+def main(argv: list[str]) -> int:
+    script_dir = Path(__file__).resolve().parent
+    repo_root = script_dir.parent.parent
+
+    os.environ["ORACLE_REPO_ROOT"] = str(repo_root)
+    existing_pythonpath = os.environ.get("PYTHONPATH")
+    os.environ["PYTHONPATH"] = (
+        str(script_dir)
+        if not existing_pythonpath
+        else f"{script_dir}:{existing_pythonpath}"
+    )
+
+    uv_bin = os.environ.get("ORACLE_UV", "uv")
+    python_bin = os.environ.get("ORACLE_PYTHON", "python3")
+    uv_path = shutil.which(uv_bin)
+    if uv_path is None:
+        print("error: uv is required to run oracle Python tooling", file=sys.stderr)
+        print(
+            "hint: install uv from https://docs.astral.sh/uv/ or set ORACLE_UV",
+            file=sys.stderr,
+        )
+        return 69
+
+    os.chdir(repo_root)
+    command = [
+        uv_path,
+        "run",
+        "--quiet",
+        "--no-project",
+        "--with",
+        PYTHONPATH_REQUIREMENT,
+        "--",
+        python_bin,
+        "-m",
+        "engine.cli",
+        *argv,
+    ]
+    os.execv(uv_path, command)
+    raise RuntimeError("os.execv returned unexpectedly")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

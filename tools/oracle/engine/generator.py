@@ -408,7 +408,12 @@ class PacketGenerator:
             f"stacks.{stack_name}.families",
         )
         selected_family = self._selected_family(stack_families, family, stack)
-        selected_case = case or self._choose_case(rng, selected_stack, feature)
+        selected_case = case or self._choose_case(
+            rng,
+            selected_stack,
+            feature,
+            family=selected_family,
+        )
         selected_feature = self._choose_feature(
             rng,
             stack=stack,
@@ -442,6 +447,19 @@ class PacketGenerator:
                 case=selected_case,
                 behavior=behavior,
             )
+        feature_tags = self._augment_feature_tags(
+            feature_tags,
+            feature=selected_feature,
+            case=selected_case,
+            behavior=behavior,
+        )
+        feature_metadata = self._feature_metadata(
+            fields,
+            stack=stack,
+            feature=selected_feature,
+            case=selected_case,
+            behavior=behavior,
+        )
         malformed = self._is_malformed_case(selected_feature, selected_case)
         if malformed:
             strict_bytes = False
@@ -499,6 +517,7 @@ class PacketGenerator:
                 "feature": selected_feature,
                 "feature_behavior": behavior,
                 "malformed": malformed,
+                **feature_metadata,
                 "selected_specs": selected_specs,
                 "strict_bytes": strict_bytes,
                 "comparison_policy": "non_strict_reencode" if malformed else "strict_reencode",
@@ -701,11 +720,46 @@ class PacketGenerator:
             tags.extend(self._feature_categories(feature))
         return list(dict.fromkeys(tags))
 
+    def _augment_feature_tags(
+        self,
+        tags: Sequence[str],
+        *,
+        feature: str | None,
+        case: str,
+        behavior: str | None,
+    ) -> list[str]:
+        output = list(tags)
+        if feature == "udp_options":
+            output.extend(_udp_option_feature_tags(case, behavior))
+        return list(dict.fromkeys(output))
+
+    def _feature_metadata(
+        self,
+        fields: Mapping[str, JSONObject],
+        *,
+        stack: Sequence[str],
+        feature: str | None,
+        case: str,
+        behavior: str | None,
+    ) -> JSONObject:
+        if feature == "udp_options":
+            return {
+                "udp_options": _udp_options_metadata(
+                    fields,
+                    stack=stack,
+                    case=case,
+                    behavior=behavior,
+                )
+            }
+        return {}
+
     def _choose_case(
         self,
         rng: random.Random,
         stack: JSONObject,
         feature: str | None,
+        *,
+        family: str | None,
     ) -> str:
         coverage_cases = _string_list(stack.get("coverage_cases", []), "stack.coverage_cases")
         if feature is not None:
@@ -734,10 +788,13 @@ class PacketGenerator:
             stack=stack_layers,
             direction="reference_to_libcrafter",
         ):
+            if family == "udp" and feature_name != "udp_options":
+                continue
             categories = _string_list(feature_spec.get("categories", []), "feature.categories")
-            for feature_case in _string_list(
-                feature_spec.get("coverage_cases", []),
-                "feature.coverage_cases",
+            for feature_case in self._compatible_feature_cases(
+                stack=stack_layers,
+                feature=feature_name,
+                direction="reference_to_libcrafter",
             ):
                 if feature_case in coverage_cases:
                     continue
@@ -834,6 +891,8 @@ class PacketGenerator:
         cases = _string_list(feature_spec.get("coverage_cases", []), "feature.coverage_cases")
         if feature == "ipv6_fragment_routing":
             return _ipv6_extension_cases_for_stack(stack, cases)
+        if feature == "udp_options":
+            return _udp_option_cases_for_stack(stack, cases)
         return cases
 
     def _case_weight(self, case: str, *, categories: Sequence[str]) -> int:
@@ -1004,6 +1063,8 @@ class PacketGenerator:
             _apply_dns_behavior(fields["dns"], case=case, behavior=behavior)
         elif feature == "dhcp_behavior" and "dhcp" in fields:
             _apply_dhcp_behavior(fields["dhcp"], case=case, behavior=behavior)
+        elif feature == "udp_options" and "udp" in fields:
+            _apply_udp_options_behavior(fields, case=case, behavior=behavior)
 
     def _is_malformed_case(self, feature: str | None, case: str) -> bool:
         if _is_malformed_case_name(case):
@@ -1757,6 +1818,157 @@ def _apply_dhcp_behavior(fields: JSONObject, *, case: str, behavior: str) -> Non
         fields["options"] = ["message-type=lease_query", "end"]
 
 
+def _apply_udp_options_behavior(
+    fields: dict[str, JSONObject],
+    *,
+    case: str,
+    behavior: str,
+) -> None:
+    key = f"{case} {behavior}".replace("_", "-")
+    udp_fields = fields.setdefault("udp", {})
+    if "ipv4-zero-checksum" in key or "ipv6-zero-checksum" in key:
+        udp_fields["checksum"] = 0
+
+
+def _udp_option_feature_tags(case: str, behavior: str | None) -> list[str]:
+    key = f"{case} {behavior or ''}".replace("_", "-")
+    tags = ["udp_options"]
+    if "udp-options" in key:
+        tags.append("udp_surplus")
+    if "ocs" in key:
+        tags.extend(["udp_ocs", "udp_option_checksum"])
+    if "apc" in key:
+        tags.extend(["udp_apc", "udp_additional_payload_checksum"])
+    if "unknown-safe" in key:
+        tags.append("udp_unknown_safe")
+    if "unknown-unsafe" in key:
+        tags.append("udp_unknown_unsafe")
+    if "unsupported-frag" in key:
+        tags.extend(["udp_frag", "udp_unsupported_frag"])
+    if "ipv4-zero-checksum" in key:
+        tags.extend(["udp_checksum_status", "udp_ipv4_zero_checksum"])
+    if "ipv6-zero-checksum" in key:
+        tags.extend(["udp_checksum_status", "udp_ipv6_zero_checksum"])
+    if "surplus-application-boundary" in key:
+        tags.extend(["udp_application_boundary", "udp_surplus_application_boundary"])
+    return list(dict.fromkeys(tags))
+
+
+def _udp_options_metadata(
+    fields: Mapping[str, JSONObject],
+    *,
+    stack: Sequence[str],
+    case: str,
+    behavior: str | None,
+) -> JSONObject:
+    key = f"{case} {behavior or ''}".replace("_", "-")
+    payload = fields.get("payload", {})
+    payload_hex = payload.get("hex", "")
+    if not isinstance(payload_hex, str):
+        payload_hex = ""
+    checksum_status = "generated"
+    if "ipv4-zero-checksum" in key:
+        checksum_status = "ipv4_no_checksum"
+    elif "ipv6-zero-checksum" in key:
+        checksum_status = "ipv6_zero_checksum_exception_required"
+
+    options = _udp_option_intent(key)
+    surplus = bool(options)
+    return {
+        "intent": "metadata_only",
+        "requires_backend_materialization": True,
+        "stack": list(stack),
+        "case": case,
+        "behavior": behavior,
+        "checksum_status": checksum_status,
+        "udp_length_scope": "header_and_application_payload",
+        "application_payload_hex": payload_hex,
+        "surplus_area": {
+            "present": surplus,
+            "placement": "after_udp_length",
+            "option_checksum": _udp_option_checksum_intent(key, surplus),
+            "options": options,
+        },
+        "application_boundary": {
+            "payload_excludes_surplus": surplus,
+            "surplus_excluded_from_udp_checksum": surplus,
+        },
+    }
+
+
+def _udp_option_checksum_intent(key: str, surplus: bool) -> JSONObject:
+    if not surplus:
+        return {"mode": "absent"}
+    if "ipv4-zero-checksum" in key:
+        return {"mode": "zero_allowed_when_udp_checksum_zero"}
+    return {"mode": "auto_internet_checksum"}
+
+
+def _udp_option_intent(key: str) -> list[JSONObject]:
+    if "ipv4-zero-checksum" in key or "ipv6-zero-checksum" in key:
+        return []
+    if "apc" in key:
+        return [
+            {
+                "kind": 2,
+                "name": "apc",
+                "length": 6,
+                "checksum": "auto_crc32c_application_payload",
+            }
+        ]
+    if "unknown-safe" in key:
+        return [
+            {
+                "kind": 10,
+                "name": "unassigned_safe",
+                "length": 4,
+                "data_hex": "aabb",
+                "safety": "safe",
+                "expected_status": "unknown_safe",
+            }
+        ]
+    if "unknown-unsafe" in key:
+        return [
+            {
+                "kind": 194,
+                "name": "unassigned_unsafe",
+                "length": 4,
+                "data_hex": "dead",
+                "safety": "unsafe",
+                "expected_status": "unknown_unsafe",
+            }
+        ]
+    if "unsupported-frag" in key:
+        return [
+            {
+                "kind": 3,
+                "name": "frag",
+                "length": 10,
+                "data_hex": "00010003aabbccdd",
+                "expected_status": "unsupported_fragmentation",
+            }
+        ]
+    if "surplus-application-boundary" in key:
+        return [
+            {"kind": 1, "name": "nop", "length": 1},
+            {"kind": 0, "name": "eol", "length": 1},
+        ]
+    return [
+        {"kind": 1, "name": "nop", "length": 1},
+        {"kind": 4, "name": "mds", "length": 4, "max_datagram_size": 1440},
+        {
+            "kind": 5,
+            "name": "mrds",
+            "length": 5,
+            "max_reassembled_size": 1500,
+            "segment_count": 2,
+        },
+        {"kind": 6, "name": "req", "length": 6, "token": 16909060},
+        {"kind": 7, "name": "res", "length": 6, "token": 168496141},
+        {"kind": 8, "name": "time", "length": 10, "tsval": 16909060, "tsecr": 168496141},
+    ]
+
+
 def _is_malformed_case_name(case: str) -> bool:
     return "malformed" in case.replace("_", "-")
 
@@ -2017,6 +2229,22 @@ def _ipv6_extension_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) 
             and "ipv6_routing" in stack_set
         ):
             output.append(case)
+    return output
+
+
+def _udp_option_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) -> list[str]:
+    stack_set = set(stack)
+    if "udp" not in stack_set or "payload" not in stack_set:
+        return []
+
+    output: list[str] = []
+    for case in cases:
+        normalized = case.replace("_", "-")
+        if "ipv4-zero-checksum" in normalized and "ipv4" not in stack_set:
+            continue
+        if "ipv6-zero-checksum" in normalized and "ipv6" not in stack_set:
+            continue
+        output.append(case)
     return output
 
 

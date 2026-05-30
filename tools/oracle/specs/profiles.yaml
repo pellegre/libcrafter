@@ -12,6 +12,8 @@ profiles:
         weight: 4
       - name: ipv6
         weight: 1
+      - name: udp
+        weight: 1
     payload_length:
       min: 0
       max: 32
@@ -28,6 +30,8 @@ profiles:
       - name: ipv4
         weight: 3
       - name: ipv6
+        weight: 2
+      - name: udp
         weight: 2
     payload_length:
       min: 0
@@ -46,6 +50,8 @@ profiles:
         weight: 3
       - name: ipv6
         weight: 2
+      - name: udp
+        weight: 2
     payload_length:
       min: 0
       max: 512
@@ -63,6 +69,8 @@ profiles:
         weight: 1
       - name: ipv6
         weight: 1
+      - name: udp
+        weight: 2
     payload_length:
       min: 0
       max: 1500
@@ -80,6 +88,8 @@ profiles:
         weight: 1
       - name: ipv6
         weight: 1
+      - name: udp
+        weight: 2
     payload_length:
       min: 0
       max: 128

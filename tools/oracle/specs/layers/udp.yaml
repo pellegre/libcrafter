@@ -39,12 +39,32 @@ fields:
     domains:
       - derived
       - zero_ipv4
+      - zero_ipv6
       - boundary
+  - name: options
+    type: option_list
+    required: false
+    domains:
+      - known
+      - ocs
+      - apc
+      - unknown_safe
+      - unknown_unsafe
+      - unsupported_frag
+      - surplus_application_boundary
 
 coverage_cases:
   - ipv4-udp
   - udp-ipv4-zero-checksum
+  - udp-ipv6-zero-checksum
   - udp-ipv6-checksum-length
+  - udp-options-known
+  - udp-options-ocs
+  - udp-options-apc
+  - udp-options-unknown-safe
+  - udp-options-unknown-unsafe
+  - udp-options-unsupported-frag
+  - udp-options-surplus-application-boundary
   - crafter-udp-ipv4-ipv6-checksums
 
 backend_support:

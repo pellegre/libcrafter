@@ -17,6 +17,7 @@ roots:
       - arp
       - ipv4
       - ipv6
+      - udp
       - dns
       - dhcp
   - name: "link:linux-cooked"
@@ -26,6 +27,7 @@ roots:
       - link
       - arp
       - ipv4
+      - udp
   - name: "link:null-loopback"
     layers:
       - null_loopback
@@ -33,11 +35,13 @@ roots:
       - link
       - ipv4
       - ipv6
+      - udp
   - name: "l3:ipv4"
     layers:
       - ipv4
     families:
       - ipv4
+      - udp
       - transport
       - icmp
       - dns
@@ -46,6 +50,7 @@ roots:
       - ipv6
     families:
       - ipv6
+      - udp
       - transport
       - icmp
 
@@ -70,6 +75,14 @@ families:
     feature_tags:
       - ethernet
       - ipv6
+      - udp
+      - payload
+  - name: udp
+    default_stack:
+      - ipv4
+      - udp
+      - payload
+    feature_tags:
       - udp
       - payload
 
@@ -163,6 +176,13 @@ stacks:
     coverage_cases:
       - ipv4-udp
       - udp-ipv4-zero-checksum
+      - udp-options-known
+      - udp-options-ocs
+      - udp-options-apc
+      - udp-options-unknown-safe
+      - udp-options-unknown-unsafe
+      - udp-options-unsupported-frag
+      - udp-options-surplus-application-boundary
   - name: ipv4_tcp_payload
     root: "l3:ipv4"
     layers:
@@ -240,6 +260,14 @@ stacks:
       - payload
     coverage_cases:
       - udp-ipv6-checksum-length
+      - udp-ipv6-zero-checksum
+      - udp-options-known
+      - udp-options-ocs
+      - udp-options-apc
+      - udp-options-unknown-safe
+      - udp-options-unknown-unsafe
+      - udp-options-unsupported-frag
+      - udp-options-surplus-application-boundary
   - name: ipv6_icmpv6
     root: "l3:ipv6"
     layers:
