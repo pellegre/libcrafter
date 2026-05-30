@@ -9,7 +9,9 @@ use crate::protocols::dns::Dns;
 use crate::protocols::ip::IPPROTO_UDP;
 use crate::registry::ProtocolRegistry;
 
-use super::common::{impl_layer_div, impl_layer_object, transport_checksum_context, value_or_copy};
+use super::common::{
+    hex_bytes, impl_layer_div, impl_layer_object, transport_checksum_context, value_or_copy,
+};
 
 /// UDP header length in bytes.
 pub const UDP_HEADER_LEN: usize = 8;
@@ -92,6 +94,91 @@ pub enum UdpOptionStatus {
     /// UDP Additional Payload Checksum validation failed.
     AdditionalPayloadChecksumInvalid,
 }
+
+/// UDP surplus option bytes.
+///
+/// This layer preserves the area after UDP Length in packets that carry RFC
+/// 9868 UDP options. Individual option parsing is added in later steps.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct UdpOptions {
+    bytes: Vec<u8>,
+}
+
+impl UdpOptions {
+    /// Create an empty UDP options layer.
+    pub const fn new() -> Self {
+        Self { bytes: Vec::new() }
+    }
+
+    /// Create a UDP options layer by copying bytes.
+    pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Self {
+        Self {
+            bytes: bytes.as_ref().to_vec(),
+        }
+    }
+
+    /// Borrow the encoded UDP option bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Mutably borrow the encoded UDP option bytes.
+    pub fn as_bytes_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.bytes
+    }
+
+    /// Append encoded UDP option bytes.
+    pub fn extend_from_slice(&mut self, bytes: &[u8]) -> &mut Self {
+        self.bytes.extend_from_slice(bytes);
+        self
+    }
+
+    /// Consume the layer and return its encoded UDP option bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// Number of encoded UDP option bytes.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Return true when no UDP option bytes are present.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+}
+
+impl Layer for UdpOptions {
+    fn name(&self) -> &'static str {
+        "UdpOptions"
+    }
+
+    fn summary(&self) -> String {
+        format!("UdpOptions(len={})", self.bytes.len())
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("len", self.bytes.len().to_string()),
+            ("status", format!("{:?}", UdpOptionStatus::NotParsed)),
+            ("bytes", hex_bytes(&self.bytes)),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.bytes);
+        Ok(())
+    }
+
+    impl_layer_object!(UdpOptions);
+}
+
+impl_layer_div!(UdpOptions);
 
 /// User Datagram Protocol header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,7 +407,7 @@ pub(crate) fn append_udp_packet_with_registry(
         )?;
     }
     if !decoded.surplus.is_empty() {
-        packet = packet.push(Raw::from_bytes(decoded.surplus));
+        packet = packet.push(UdpOptions::from_bytes(decoded.surplus));
     }
     Ok(packet)
 }
@@ -374,7 +461,7 @@ fn udp_user_payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
     let mut seen_application_layer = false;
 
     for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
-        if seen_application_layer && is_current_udp_surplus_layer(layer) {
+        if is_current_udp_surplus_layer(layer, seen_application_layer) {
             break;
         }
 
@@ -393,18 +480,16 @@ fn is_udp_application_layer(layer: &dyn Layer) -> bool {
     layer.as_any().is::<Dns>() || layer.as_any().is::<Dhcp>()
 }
 
-fn is_current_udp_surplus_layer(layer: &dyn Layer) -> bool {
-    // Until the typed UdpOptions layer exists, decoded or constructed surplus
-    // remains inspectable as a Raw layer immediately after UDP application data.
-    layer.as_any().is::<Raw>()
+fn is_current_udp_surplus_layer(layer: &dyn Layer, seen_application_layer: bool) -> bool {
+    layer.as_any().is::<UdpOptions>() || (seen_application_layer && layer.as_any().is::<Raw>())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Udp, UdpChecksumStatus, UdpOptionStatus, UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_EOL,
-        UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MRDS, UDP_OPTION_NOP, UDP_OPTION_REQ,
-        UDP_OPTION_RES,
+        Udp, UdpChecksumStatus, UdpOptionStatus, UdpOptions, UDP_HEADER_LEN, UDP_OPTION_APC,
+        UDP_OPTION_EOL, UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MRDS, UDP_OPTION_NOP,
+        UDP_OPTION_REQ, UDP_OPTION_RES,
     };
     use crate::checksum::ipv4_pseudo_header_checksum;
     use crate::{
@@ -481,6 +566,7 @@ mod tests {
         assert_eq!(udp.destination_port_value(), 0);
         assert_eq!(udp.length_value(), Some(UDP_HEADER_LEN as u16));
         assert!(decoded.layers::<Raw>().next().is_none());
+        assert!(decoded.layers::<UdpOptions>().next().is_none());
     }
 
     #[test]
@@ -523,7 +609,7 @@ mod tests {
     }
 
     #[test]
-    fn dns_decode_uses_udp_user_payload_and_preserves_raw_surplus() {
+    fn dns_decode_uses_udp_user_payload_and_preserves_udp_options() {
         let dns = Dns::a_query("example.com").id(0xbeef);
         let dns_len = dns.encoded_len();
         let surplus = [UDP_OPTION_NOP, UDP_OPTION_EOL, 0, 0];
@@ -531,7 +617,7 @@ mod tests {
         let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2226)
             / Udp::new().sport(53_001).dport(DNS_PORT)
             / dns
-            / Raw::from_bytes(surplus))
+            / UdpOptions::from_bytes(surplus))
         .compile()
         .unwrap();
 
@@ -547,20 +633,20 @@ mod tests {
         let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
         let dns = decoded.layer::<Dns>().unwrap();
-        let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
 
         assert_eq!(udp.length_value(), Some((UDP_HEADER_LEN + dns_len) as u16));
         assert_eq!(dns.id_value(), 0xbeef);
         assert_eq!(dns.questions().len(), 1);
         assert_eq!(dns.questions()[0].name(), "example.com.");
         assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_A);
-        assert_eq!(raw_layers.len(), 1);
-        assert_eq!(raw_layers[0].as_bytes(), &surplus);
+        assert!(decoded.layers::<Raw>().next().is_none());
+        assert_eq!(udp_options.as_bytes(), &surplus);
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
     #[test]
-    fn dhcp_decode_uses_udp_user_payload_and_preserves_raw_surplus() {
+    fn dhcp_decode_uses_udp_user_payload_and_preserves_udp_options() {
         let client_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
         let dhcp = Dhcp::discover(client_mac)
             .transaction_id(0x3903_f326)
@@ -575,7 +661,7 @@ mod tests {
             .id(0x2227)
             / Udp::dhcp_client()
             / dhcp
-            / Raw::from_bytes(surplus))
+            / UdpOptions::from_bytes(surplus))
         .compile()
         .unwrap();
 
@@ -591,14 +677,40 @@ mod tests {
         let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
         let dhcp = decoded.layer::<Dhcp>().unwrap();
-        let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
 
         assert_eq!(udp.length_value(), Some((UDP_HEADER_LEN + dhcp_len) as u16));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
         assert_eq!(dhcp.host_name_value(), Some("agent"));
-        assert_eq!(raw_layers.len(), 1);
-        assert_eq!(raw_layers[0].as_bytes(), &surplus);
+        assert!(decoded.layers::<Raw>().next().is_none());
+        assert_eq!(udp_options.as_bytes(), &surplus);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn udp_options_compile_outside_udp_length_for_raw_payload() {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2228)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0xaa, 0xbb, 0xcc])
+            / UdpOptions::from_bytes([UDP_OPTION_NOP, UDP_OPTION_EOL]))
+        .compile()
+        .unwrap();
+
+        assert_eq!(
+            &bytes.as_bytes()[2..4],
+            &((20 + UDP_HEADER_LEN + 3 + 2) as u16).to_be_bytes()
+        );
+        assert_eq!(
+            &bytes.as_bytes()[24..26],
+            &((UDP_HEADER_LEN + 3) as u16).to_be_bytes()
+        );
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.layer::<UdpOptions>().unwrap().as_bytes(),
+            &[UDP_OPTION_NOP, UDP_OPTION_EOL]
+        );
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
@@ -620,10 +732,11 @@ mod tests {
 
         let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
         assert_eq!(decoded.layer::<Udp>().unwrap().length_value(), Some(11));
-        assert_eq!(raw_layers.len(), 2);
+        assert_eq!(raw_layers.len(), 1);
         assert_eq!(raw_layers[0].as_bytes(), udp_payload);
-        assert_eq!(raw_layers[1].as_bytes(), surplus);
+        assert_eq!(udp_options.as_bytes(), surplus);
     }
 
     #[test]
