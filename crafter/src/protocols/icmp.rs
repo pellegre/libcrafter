@@ -258,6 +258,43 @@ pub const ICMP_INTERFACE_AFI_IPV4: u16 = 1;
 /// RFC 5837 IP Address sub-object Address Family Identifier for IPv6.
 pub const ICMP_INTERFACE_AFI_IPV6: u16 = 2;
 
+/// RFC 8335 ICMP extension object class for the Interface Identification Object.
+pub const ICMP_EXTENSION_CLASS_INTERFACE_ID: u8 = 3;
+/// RFC 8335 Interface Identification Object C-Type: identifies the interface by
+/// name (RFC 7223 name padded with zeros to a 32-bit boundary).
+pub const ICMP_INTERFACE_ID_CTYPE_NAME: u8 = 1;
+/// RFC 8335 Interface Identification Object C-Type: identifies the interface by
+/// a 32-bit ifIndex.
+pub const ICMP_INTERFACE_ID_CTYPE_INDEX: u8 = 2;
+/// RFC 8335 Interface Identification Object C-Type: identifies the interface by
+/// address (AFI, address length, reserved, then the address padded to a 32-bit
+/// boundary).
+pub const ICMP_INTERFACE_ID_CTYPE_ADDRESS: u8 = 3;
+
+/// RFC 8335 extended echo request L-bit mask (local bit, the rightmost bit of
+/// the request flag byte).
+pub const ICMP_EXTENDED_ECHO_REQUEST_L_BIT: u8 = 0x01;
+/// RFC 8335 extended echo reply Active (A) flag mask in the reply flag byte.
+pub const ICMP_EXTENDED_ECHO_REPLY_ACTIVE: u8 = 0x04;
+/// RFC 8335 extended echo reply IPv4 (4) flag mask in the reply flag byte.
+pub const ICMP_EXTENDED_ECHO_REPLY_IPV4: u8 = 0x02;
+/// RFC 8335 extended echo reply IPv6 (6) flag mask in the reply flag byte.
+pub const ICMP_EXTENDED_ECHO_REPLY_IPV6: u8 = 0x01;
+/// RFC 8335 extended echo reply state value: reserved (0).
+pub const ICMP_EXTENDED_ECHO_REPLY_STATE_RESERVED: u8 = 0;
+/// RFC 8335 extended echo reply state value: incomplete (1).
+pub const ICMP_EXTENDED_ECHO_REPLY_STATE_INCOMPLETE: u8 = 1;
+/// RFC 8335 extended echo reply state value: reachable (2).
+pub const ICMP_EXTENDED_ECHO_REPLY_STATE_REACHABLE: u8 = 2;
+/// RFC 8335 extended echo reply state value: stale (3).
+pub const ICMP_EXTENDED_ECHO_REPLY_STATE_STALE: u8 = 3;
+/// RFC 8335 extended echo reply state value: delay (4).
+pub const ICMP_EXTENDED_ECHO_REPLY_STATE_DELAY: u8 = 4;
+/// RFC 8335 extended echo reply state value: probe (5).
+pub const ICMP_EXTENDED_ECHO_REPLY_STATE_PROBE: u8 = 5;
+/// RFC 8335 extended echo reply state value: failed (6).
+pub const ICMP_EXTENDED_ECHO_REPLY_STATE_FAILED: u8 = 6;
+
 const ICMP_HEADER_LEN: usize = 8;
 /// RFC 792 timestamp body: originate, receive, and transmit timestamps, each a
 /// 32-bit value (12 bytes total) following the fixed ICMP header.
@@ -280,6 +317,11 @@ const ICMP_INTERFACE_MTU_LEN: usize = 4;
 /// RFC 5837 maximum interface-name octets (the length octet plus up to 63 name
 /// octets, capped at 64 total).
 const ICMP_INTERFACE_NAME_MAX: usize = 63;
+/// RFC 8335 Interface Identification Object ifIndex body: a single 32-bit index.
+const ICMP_INTERFACE_ID_INDEX_LEN: usize = 4;
+/// RFC 8335 Interface Identification Object address body fixed prefix: 16-bit
+/// AFI, 8-bit address length, and 8-bit reserved.
+const ICMP_INTERFACE_ID_ADDRESS_PREFIX_LEN: usize = 4;
 /// RFC 4884 expected extension header version for ICMP multi-part messages.
 const ICMP_EXTENSION_VERSION: u8 = 2;
 /// RFC 4884 minimum "original datagram" size, in octets, when an ICMPv4 message
@@ -410,6 +452,7 @@ pub struct Icmp {
     num_addrs: Field<u8>,
     addr_entry_size: Field<u8>,
     lifetime: Field<u16>,
+    extended_flags: Field<u8>,
 }
 
 impl Icmp {
@@ -429,6 +472,7 @@ impl Icmp {
             num_addrs: Field::unset(),
             addr_entry_size: Field::unset(),
             lifetime: Field::unset(),
+            extended_flags: Field::unset(),
         }
     }
 
@@ -516,6 +560,26 @@ impl Icmp {
     /// as zero and receivers ignore; it has no body beyond the fixed header.
     pub fn router_solicitation() -> Self {
         Self::new().icmp_type(ICMP_ROUTER_SOLICITATION)
+    }
+
+    /// Create an extended echo request (RFC 8335, type 42).
+    ///
+    /// The fixed header carries a 16-bit identifier, an 8-bit sequence number,
+    /// and a flag byte whose rightmost bit is the L-bit (the probed interface
+    /// resides on a proxy node). An RFC 4884 extension structure carrying a
+    /// single [`IcmpExtensionInterfaceId`] object follows the header directly
+    /// (no quoted datagram, no RFC 4884 original-datagram padding).
+    pub fn extended_echo_request() -> Self {
+        Self::new().icmp_type(ICMP_EXTENDED_ECHO_REQUEST)
+    }
+
+    /// Create an extended echo reply (RFC 8335, type 43).
+    ///
+    /// The reply echoes the identifier and sequence number; its `Code` reports
+    /// the query result (0-4) and the flag byte carries the State, Active, IPv4,
+    /// and IPv6 flags. The reply has no body of its own.
+    pub fn extended_echo_reply() -> Self {
+        Self::new().icmp_type(ICMP_EXTENDED_ECHO_REPLY)
     }
 
     /// Set the ICMP type from a common kind.
@@ -644,6 +708,79 @@ impl Icmp {
         self
     }
 
+    /// Set the raw RFC 8335 extended echo flag byte (the fourth byte of the
+    /// rest-of-header) explicitly.
+    ///
+    /// This is the escape hatch for crafting reserved bits and flag combinations
+    /// the typed builders do not expose; an explicit byte survives compilation
+    /// untouched.
+    pub fn extended_flags(mut self, extended_flags: u8) -> Self {
+        self.extended_flags.set_user(extended_flags);
+        self
+    }
+
+    /// Set the RFC 8335 extended echo request L-bit (the probed interface is on
+    /// a proxy node).
+    ///
+    /// The L-bit is the rightmost bit of the request flag byte; the other seven
+    /// reserved bits are left untouched (use [`Icmp::extended_flags`] to set
+    /// reserved bits deliberately).
+    pub fn extended_l_bit(mut self, set: bool) -> Self {
+        let base = self.extended_flags.value().copied().unwrap_or(0);
+        let value = if set {
+            base | ICMP_EXTENDED_ECHO_REQUEST_L_BIT
+        } else {
+            base & !ICMP_EXTENDED_ECHO_REQUEST_L_BIT
+        };
+        self.extended_flags.set_user(value);
+        self
+    }
+
+    /// Set the RFC 8335 extended echo reply State field (3 bits, occupying the
+    /// top of the reply flag byte).
+    pub fn extended_state(mut self, state: u8) -> Self {
+        let base = self.extended_flags.value().copied().unwrap_or(0);
+        let value = (base & 0x1f) | ((state & 0x07) << 5);
+        self.extended_flags.set_user(value);
+        self
+    }
+
+    /// Set the RFC 8335 extended echo reply Active (A) flag.
+    pub fn extended_active(mut self, set: bool) -> Self {
+        let base = self.extended_flags.value().copied().unwrap_or(0);
+        let value = if set {
+            base | ICMP_EXTENDED_ECHO_REPLY_ACTIVE
+        } else {
+            base & !ICMP_EXTENDED_ECHO_REPLY_ACTIVE
+        };
+        self.extended_flags.set_user(value);
+        self
+    }
+
+    /// Set the RFC 8335 extended echo reply IPv4 (4) flag.
+    pub fn extended_ipv4(mut self, set: bool) -> Self {
+        let base = self.extended_flags.value().copied().unwrap_or(0);
+        let value = if set {
+            base | ICMP_EXTENDED_ECHO_REPLY_IPV4
+        } else {
+            base & !ICMP_EXTENDED_ECHO_REPLY_IPV4
+        };
+        self.extended_flags.set_user(value);
+        self
+    }
+
+    /// Set the RFC 8335 extended echo reply IPv6 (6) flag.
+    pub fn extended_ipv6(mut self, set: bool) -> Self {
+        let base = self.extended_flags.value().copied().unwrap_or(0);
+        let value = if set {
+            base | ICMP_EXTENDED_ECHO_REPLY_IPV6
+        } else {
+            base & !ICMP_EXTENDED_ECHO_REPLY_IPV6
+        };
+        self.extended_flags.set_user(value);
+        self
+    }
+
     /// Raw ICMP type value.
     pub fn icmp_type_value(&self) -> u8 {
         value_or_copy(&self.icmp_type, ICMP_ECHO_REQUEST)
@@ -661,11 +798,12 @@ impl Icmp {
 
     /// Identifier value when meaningful for the current type.
     ///
-    /// Echo, timestamp, and information messages (RFC 792) all carry an
-    /// identifier in the first half of the rest-of-header; this accessor
-    /// surfaces it for each of those query families.
+    /// Echo, timestamp, and information messages (RFC 792) and the RFC 8335
+    /// extended echo messages all carry a 16-bit identifier in the first half of
+    /// the rest-of-header; this accessor surfaces it for each of those families.
     pub fn identifier_value(&self) -> Option<u16> {
-        if is_query_v4(self.icmp_type_value()) {
+        let icmp_type = self.icmp_type_value();
+        if is_query_v4(icmp_type) || is_extended_echo_v4(icmp_type) {
             Some(value_or_u16_from_rest(
                 &self.identifier,
                 &self.rest_of_header,
@@ -678,9 +816,20 @@ impl Icmp {
 
     /// Sequence number when meaningful for the current type.
     ///
-    /// Surfaced for echo, timestamp, and information messages (RFC 792).
+    /// Surfaced for echo, timestamp, and information messages (RFC 792) as a
+    /// 16-bit value, and for the RFC 8335 extended echo messages as an 8-bit
+    /// value (the third byte of the rest-of-header), zero-extended here.
     pub fn sequence_number_value(&self) -> Option<u16> {
-        if is_query_v4(self.icmp_type_value()) {
+        let icmp_type = self.icmp_type_value();
+        if is_extended_echo_v4(icmp_type) {
+            // RFC 8335 narrows the sequence number to a single octet (byte 2);
+            // the fourth byte is the flag byte, not part of the sequence.
+            Some(u16::from(value_or_u8_from_rest(
+                &self.sequence_number_byte(),
+                &self.rest_of_header,
+                2,
+            )))
+        } else if is_query_v4(icmp_type) {
             Some(value_or_u16_from_rest(
                 &self.sequence_number,
                 &self.rest_of_header,
@@ -688,6 +837,17 @@ impl Icmp {
             ))
         } else {
             None
+        }
+    }
+
+    /// The RFC 8335 8-bit sequence number as a `Field<u8>` derived from the
+    /// 16-bit `sequence_number` field: a user-set sequence number contributes its
+    /// low octet, otherwise the field stays unset so the rest-of-header supplies
+    /// the byte.
+    fn sequence_number_byte(&self) -> Field<u8> {
+        match self.sequence_number.value().copied() {
+            Some(value) => Field::user(value as u8),
+            None => Field::unset(),
         }
     }
 
@@ -730,6 +890,77 @@ impl Icmp {
     /// RFC 1256 router advertisement Lifetime field when explicit or decoded.
     pub fn lifetime_value(&self) -> Option<u16> {
         self.lifetime.value().copied()
+    }
+
+    /// RFC 8335 extended echo flag byte (the fourth byte of the rest-of-header)
+    /// when the type is an extended echo request or reply.
+    ///
+    /// The byte is surfaced verbatim so reserved bits stay inspectable; the
+    /// typed accessors below interpret the individual flags.
+    pub fn extended_flags_value(&self) -> Option<u8> {
+        if is_extended_echo_v4(self.icmp_type_value()) {
+            Some(value_or_u8_from_rest(
+                &self.extended_flags,
+                &self.rest_of_header,
+                3,
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// RFC 8335 extended echo request L-bit when the type is an extended echo
+    /// request.
+    pub fn extended_l_bit_value(&self) -> Option<bool> {
+        if self.icmp_type_value() == ICMP_EXTENDED_ECHO_REQUEST {
+            self.extended_flags_value()
+                .map(|flags| flags & ICMP_EXTENDED_ECHO_REQUEST_L_BIT != 0)
+        } else {
+            None
+        }
+    }
+
+    /// RFC 8335 extended echo reply State field (3 bits) when the type is an
+    /// extended echo reply.
+    pub fn extended_state_value(&self) -> Option<u8> {
+        if self.icmp_type_value() == ICMP_EXTENDED_ECHO_REPLY {
+            self.extended_flags_value().map(|flags| (flags >> 5) & 0x07)
+        } else {
+            None
+        }
+    }
+
+    /// RFC 8335 extended echo reply Active (A) flag when the type is an extended
+    /// echo reply.
+    pub fn extended_active_value(&self) -> Option<bool> {
+        if self.icmp_type_value() == ICMP_EXTENDED_ECHO_REPLY {
+            self.extended_flags_value()
+                .map(|flags| flags & ICMP_EXTENDED_ECHO_REPLY_ACTIVE != 0)
+        } else {
+            None
+        }
+    }
+
+    /// RFC 8335 extended echo reply IPv4 (4) flag when the type is an extended
+    /// echo reply.
+    pub fn extended_ipv4_value(&self) -> Option<bool> {
+        if self.icmp_type_value() == ICMP_EXTENDED_ECHO_REPLY {
+            self.extended_flags_value()
+                .map(|flags| flags & ICMP_EXTENDED_ECHO_REPLY_IPV4 != 0)
+        } else {
+            None
+        }
+    }
+
+    /// RFC 8335 extended echo reply IPv6 (6) flag when the type is an extended
+    /// echo reply.
+    pub fn extended_ipv6_value(&self) -> Option<bool> {
+        if self.icmp_type_value() == ICMP_EXTENDED_ECHO_REPLY {
+            self.extended_flags_value()
+                .map(|flags| flags & ICMP_EXTENDED_ECHO_REPLY_IPV6 != 0)
+        } else {
+            None
+        }
     }
 
     /// Common ICMP kind, when the type is version-independent.
@@ -842,6 +1073,30 @@ impl Icmp {
                 if self.lifetime.is_user_set() || !raw_is_user {
                     if let Some(lifetime) = self.lifetime.value().copied() {
                         rest[2..4].copy_from_slice(&lifetime.to_be_bytes());
+                    }
+                }
+            }
+            ICMP_EXTENDED_ECHO_REQUEST | ICMP_EXTENDED_ECHO_REPLY => {
+                // RFC 8335: identifier (bytes 0-1), an 8-bit sequence number
+                // (byte 2), and a flag byte (byte 3). The flag byte holds the
+                // L-bit for requests and State/A/4/6 for replies; the typed
+                // builders pre-pack it into `extended_flags`.
+                if self.identifier.is_user_set() || !raw_is_user {
+                    let identifier =
+                        value_or_u16_from_rest(&self.identifier, &self.rest_of_header, 0);
+                    rest[..2].copy_from_slice(&identifier.to_be_bytes());
+                }
+                if self.sequence_number.is_user_set() || !raw_is_user {
+                    let sequence = value_or_u8_from_rest(
+                        &self.sequence_number_byte(),
+                        &self.rest_of_header,
+                        2,
+                    );
+                    rest[2] = sequence;
+                }
+                if self.extended_flags.is_user_set() || !raw_is_user {
+                    if let Some(flags) = self.extended_flags.value().copied() {
+                        rest[3] = flags;
                     }
                 }
             }
@@ -1030,6 +1285,42 @@ impl Layer for Icmp {
             (
                 "lifetime",
                 self.lifetime_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "extended_flags",
+                self.extended_flags_value()
+                    .map(|value| format!("0x{value:02x}"))
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "extended_l_bit",
+                self.extended_l_bit_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "extended_state",
+                self.extended_state_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "extended_active",
+                self.extended_active_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "extended_ipv4",
+                self.extended_ipv4_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "extended_ipv6",
+                self.extended_ipv6_value()
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "-".to_string()),
             ),
@@ -2086,6 +2377,11 @@ impl IcmpExtensionObject {
             .unwrap_or(false)
         {
             ICMP_EXTENSION_CLASS_INTERFACE_INFO
+        } else if next
+            .map(|layer| layer.as_any().is::<IcmpExtensionInterfaceId>())
+            .unwrap_or(false)
+        {
+            ICMP_EXTENSION_CLASS_INTERFACE_ID
         } else {
             self.class_num_value()
         }
@@ -2104,6 +2400,10 @@ impl IcmpExtensionObject {
             next.and_then(|layer| layer.as_any().downcast_ref::<IcmpExtensionInterfaceInfo>())
         {
             info.c_type_byte()
+        } else if let Some(id) =
+            next.and_then(|layer| layer.as_any().downcast_ref::<IcmpExtensionInterfaceId>())
+        {
+            id.c_type()
         } else {
             self.c_type_value()
         }
@@ -2685,6 +2985,319 @@ impl Layer for IcmpExtensionInterfaceInfo {
 
 impl_layer_div!(IcmpExtensionInterfaceInfo);
 
+/// RFC 8335 Interface Identification Object body (extension object class 3).
+///
+/// The object identifies the probed interface in exactly one of three ways,
+/// selected by the C-Type of the preceding [`IcmpExtensionObject`]:
+///
+/// - C-Type 1 (by name): the interface name (RFC 7223) zero padded to a 32-bit
+///   boundary.
+/// - C-Type 2 (by index): a 32-bit ifIndex.
+/// - C-Type 3 (by address): a 16-bit AFI, an 8-bit address length, an 8-bit
+///   reserved field, and the address bytes zero padded to a 32-bit boundary.
+///
+/// The form is kept as a typed body so the object's C-Type auto-fills from which
+/// constructor was used, and so decode can surface each form's fields. A `raw`
+/// escape hatch carries an explicit C-Type and arbitrary body bytes for crafting
+/// objects the typed forms do not cover.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IcmpExtensionInterfaceId {
+    body: InterfaceIdBody,
+}
+
+/// The selected RFC 8335 Interface Identification Object form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InterfaceIdBody {
+    /// C-Type 1: interface name, zero padded to a 32-bit boundary on the wire.
+    Name(Vec<u8>),
+    /// C-Type 2: a 32-bit ifIndex.
+    Index(u32),
+    /// C-Type 3: AFI, an explicit address length, reserved byte, and address.
+    Address {
+        afi: u16,
+        address_length: u8,
+        reserved: u8,
+        address: Vec<u8>,
+    },
+    /// An explicit C-Type plus raw body bytes (escape hatch). The bytes are
+    /// emitted verbatim without padding so deliberately malformed objects survive.
+    Raw { c_type: u8, bytes: Vec<u8> },
+}
+
+impl IcmpExtensionInterfaceId {
+    /// Identify the interface by name (RFC 8335 C-Type 1).
+    pub fn by_name(name: &str) -> Self {
+        Self::by_name_bytes(name.as_bytes().to_vec())
+    }
+
+    /// Identify the interface by raw name octets (RFC 8335 C-Type 1). The octets
+    /// are zero padded to a 32-bit boundary on the wire.
+    pub fn by_name_bytes(name: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: InterfaceIdBody::Name(name.into()),
+        }
+    }
+
+    /// Identify the interface by a 32-bit ifIndex (RFC 8335 C-Type 2).
+    pub fn by_index(if_index: u32) -> Self {
+        Self {
+            body: InterfaceIdBody::Index(if_index),
+        }
+    }
+
+    /// Identify the interface by IPv4 address (RFC 8335 C-Type 3).
+    pub fn by_ipv4(address: Ipv4Addr) -> Self {
+        Self::by_address(ICMP_INTERFACE_AFI_IPV4, address.octets())
+    }
+
+    /// Identify the interface by IPv6 address (RFC 8335 C-Type 3).
+    pub fn by_ipv6(address: core::net::Ipv6Addr) -> Self {
+        Self::by_address(ICMP_INTERFACE_AFI_IPV6, address.octets())
+    }
+
+    /// Identify the interface by a raw AFI and address bytes (RFC 8335 C-Type 3).
+    ///
+    /// The address length defaults to the number of address bytes; the address
+    /// is zero padded to a 32-bit boundary on the wire.
+    pub fn by_address(afi: u16, address: impl Into<Vec<u8>>) -> Self {
+        let address = address.into();
+        let address_length = address.len() as u8;
+        Self {
+            body: InterfaceIdBody::Address {
+                afi,
+                address_length,
+                reserved: 0,
+                address,
+            },
+        }
+    }
+
+    /// Build an object with an explicit C-Type and raw body bytes, the escape
+    /// hatch for crafting objects the typed forms do not cover. The bytes are
+    /// emitted verbatim (no padding).
+    pub fn raw(c_type: u8, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: InterfaceIdBody::Raw {
+                c_type,
+                bytes: bytes.into(),
+            },
+        }
+    }
+
+    /// Override the C-Type 3 address length field (the count of significant
+    /// address bytes) explicitly, the escape hatch for deliberately mismatched
+    /// lengths. Has no effect on the other forms.
+    pub fn address_length(mut self, address_length: u8) -> Self {
+        if let InterfaceIdBody::Address {
+            address_length: slot,
+            ..
+        } = &mut self.body
+        {
+            *slot = address_length;
+        }
+        self
+    }
+
+    /// Override the C-Type 3 reserved byte explicitly. Has no effect on the other
+    /// forms.
+    pub fn reserved(mut self, reserved: u8) -> Self {
+        if let InterfaceIdBody::Address { reserved: slot, .. } = &mut self.body {
+            *slot = reserved;
+        }
+        self
+    }
+
+    /// RFC 8335 C-Type for the selected form.
+    pub fn c_type(&self) -> u8 {
+        match &self.body {
+            InterfaceIdBody::Name(_) => ICMP_INTERFACE_ID_CTYPE_NAME,
+            InterfaceIdBody::Index(_) => ICMP_INTERFACE_ID_CTYPE_INDEX,
+            InterfaceIdBody::Address { .. } => ICMP_INTERFACE_ID_CTYPE_ADDRESS,
+            InterfaceIdBody::Raw { c_type, .. } => *c_type,
+        }
+    }
+
+    /// Interface name octets (C-Type 1), if this is a name object.
+    pub fn name_value(&self) -> Option<&[u8]> {
+        match &self.body {
+            InterfaceIdBody::Name(name) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// ifIndex (C-Type 2), if this is an index object.
+    pub fn index_value(&self) -> Option<u32> {
+        match &self.body {
+            InterfaceIdBody::Index(index) => Some(*index),
+            _ => None,
+        }
+    }
+
+    /// Address Family Identifier (C-Type 3), if this is an address object.
+    pub fn afi_value(&self) -> Option<u16> {
+        match &self.body {
+            InterfaceIdBody::Address { afi, .. } => Some(*afi),
+            _ => None,
+        }
+    }
+
+    /// Address bytes (C-Type 3), if this is an address object.
+    pub fn address_bytes(&self) -> Option<&[u8]> {
+        match &self.body {
+            InterfaceIdBody::Address { address, .. } => Some(address),
+            _ => None,
+        }
+    }
+
+    /// Address length field (C-Type 3), if this is an address object.
+    pub fn address_length_value(&self) -> Option<u8> {
+        match &self.body {
+            InterfaceIdBody::Address { address_length, .. } => Some(*address_length),
+            _ => None,
+        }
+    }
+
+    /// Address as an [`Ipv4Addr`] when this is an IPv4 address object.
+    pub fn ipv4_value(&self) -> Option<Ipv4Addr> {
+        match &self.body {
+            InterfaceIdBody::Address { afi, address, .. }
+                if *afi == ICMP_INTERFACE_AFI_IPV4 && address.len() == 4 =>
+            {
+                Some(Ipv4Addr::new(
+                    address[0], address[1], address[2], address[3],
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Address as an [`Ipv6Addr`](core::net::Ipv6Addr) when this is an IPv6
+    /// address object.
+    pub fn ipv6_value(&self) -> Option<core::net::Ipv6Addr> {
+        match &self.body {
+            InterfaceIdBody::Address { afi, address, .. }
+                if *afi == ICMP_INTERFACE_AFI_IPV6 && address.len() == 16 =>
+            {
+                let mut octets = [0u8; 16];
+                octets.copy_from_slice(address);
+                Some(core::net::Ipv6Addr::from(octets))
+            }
+            _ => None,
+        }
+    }
+
+    /// Raw escape-hatch body bytes, if this object was built with [`Self::raw`].
+    pub fn raw_bytes(&self) -> Option<&[u8]> {
+        match &self.body {
+            InterfaceIdBody::Raw { bytes, .. } => Some(bytes),
+            _ => None,
+        }
+    }
+}
+
+impl Layer for IcmpExtensionInterfaceId {
+    fn name(&self) -> &'static str {
+        "IcmpExtensionInterfaceId"
+    }
+
+    fn summary(&self) -> String {
+        let detail = match &self.body {
+            InterfaceIdBody::Name(name) => {
+                format!("name={}", String::from_utf8_lossy(name))
+            }
+            InterfaceIdBody::Index(index) => format!("ifindex={index}"),
+            InterfaceIdBody::Address { afi, address, .. } => {
+                if let Some(addr) = self.ipv4_value() {
+                    format!("address={addr}")
+                } else if let Some(addr) = self.ipv6_value() {
+                    format!("address={addr}")
+                } else {
+                    format!("address=afi={afi} {}", hex_bytes(address))
+                }
+            }
+            InterfaceIdBody::Raw { c_type, bytes } => {
+                format!("ctype={c_type} raw={}", hex_bytes(bytes))
+            }
+        };
+        format!("IcmpExtensionInterfaceId({detail})")
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("c_type", self.c_type().to_string()),
+            (
+                "name",
+                self.name_value()
+                    .map(|name| String::from_utf8_lossy(name).into_owned())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "index",
+                self.index_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "afi",
+                self.afi_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+            (
+                "address",
+                self.address_bytes()
+                    .map(hex_bytes)
+                    .unwrap_or_else(|| "-".to_string()),
+            ),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        match &self.body {
+            InterfaceIdBody::Name(name) => name.len().div_ceil(4) * 4,
+            InterfaceIdBody::Index(_) => ICMP_INTERFACE_ID_INDEX_LEN,
+            InterfaceIdBody::Address { address, .. } => {
+                ICMP_INTERFACE_ID_ADDRESS_PREFIX_LEN + address.len().div_ceil(4) * 4
+            }
+            InterfaceIdBody::Raw { bytes, .. } => bytes.len(),
+        }
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        match &self.body {
+            InterfaceIdBody::Name(name) => {
+                let padded = name.len().div_ceil(4) * 4;
+                out.extend_from_slice(name);
+                out.resize(out.len() + (padded - name.len()), 0);
+            }
+            InterfaceIdBody::Index(index) => {
+                out.extend_from_slice(&index.to_be_bytes());
+            }
+            InterfaceIdBody::Address {
+                afi,
+                address_length,
+                reserved,
+                address,
+            } => {
+                out.extend_from_slice(&afi.to_be_bytes());
+                out.push(*address_length);
+                out.push(*reserved);
+                let padded = address.len().div_ceil(4) * 4;
+                out.extend_from_slice(address);
+                out.resize(out.len() + (padded - address.len()), 0);
+            }
+            InterfaceIdBody::Raw { bytes, .. } => {
+                out.extend_from_slice(bytes);
+            }
+        }
+        Ok(())
+    }
+
+    impl_layer_object!(IcmpExtensionInterfaceId);
+}
+
+impl_layer_div!(IcmpExtensionInterfaceId);
+
 /// Append a decoded ICMP packet to an existing packet stack.
 pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (icmp, payload) = decode_icmp_parts(bytes)?;
@@ -2731,6 +3344,22 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
                 None => {
                     packet = packet.push(Raw::from_bytes(trailing));
                 }
+            }
+            return Ok(packet);
+        }
+    }
+
+    // RFC 8335 extended echo request carries an RFC 4884 extension structure
+    // (extension header plus a single Interface Identification Object) directly
+    // after the fixed header — no quoted datagram and no original-datagram
+    // padding. Type it when the structure parses defensibly; anything else
+    // (bad version, bad checksum, impossible object lengths) stays raw so the
+    // bytes survive and decoding never panics. The reply has no body, so any
+    // trailing bytes on a reply fall through to the raw tail below.
+    if icmp_type == ICMP_EXTENDED_ECHO_REQUEST {
+        if let Some(layers) = decode_extended_echo_extension(payload) {
+            for layer in layers {
+                packet = packet.push_box(layer);
             }
             return Ok(packet);
         }
@@ -2863,6 +3492,47 @@ fn decode_icmp_extensions(
     Some(layers)
 }
 
+/// Decode the RFC 4884 extension structure carried by an RFC 8335 extended echo
+/// request, which begins immediately after the fixed ICMP header (no quoted
+/// original datagram and no original-datagram padding).
+///
+/// Returns the typed [`IcmpExtension`] header and its objects (an
+/// [`IcmpExtensionInterfaceId`] for the standard single Interface Identification
+/// Object, or generic objects otherwise) when the structure parses defensibly.
+/// Returns `None` — so the caller keeps the payload as a single `Raw` body —
+/// when the payload is too short for the extension header, the version is not 2,
+/// the extension checksum does not verify, or an object length is impossible.
+fn decode_extended_echo_extension(payload: &[u8]) -> Option<Vec<Box<dyn Layer>>> {
+    if payload.len() < ICMP_EXTENSION_HEADER_LEN {
+        return None;
+    }
+
+    let version = payload[0] >> 4;
+    if version != ICMP_EXTENSION_VERSION {
+        return None;
+    }
+    let reserved = u16::from_be_bytes([payload[0], payload[1]]) & 0x0fff;
+    let stored_checksum = u16::from_be_bytes([payload[2], payload[3]]);
+
+    // RFC 4884: a zero checksum means none was transmitted; otherwise the one's
+    // complement sum over the whole extension structure must verify.
+    if stored_checksum != 0 && internet_checksum(payload) != 0 {
+        return None;
+    }
+
+    let objects = decode_icmp_extension_objects(&payload[ICMP_EXTENSION_HEADER_LEN..])?;
+
+    let mut layers: Vec<Box<dyn Layer>> = Vec::with_capacity(1 + objects.len());
+    layers.push(Box::new(
+        IcmpExtension::new()
+            .version(version)
+            .reserved(reserved)
+            .checksum(stored_checksum),
+    ));
+    layers.extend(objects);
+    Some(layers)
+}
+
 /// Decode the object stream that follows an RFC 4884 extension header into
 /// [`IcmpExtensionObject`] layers, each followed by the object body.
 ///
@@ -2919,6 +3589,15 @@ fn decode_icmp_extension_objects(mut bytes: &[u8]) -> Option<Vec<Box<dyn Layer>>
                 // re-compile reproduces the bytes). Anything else stays raw.
                 match decode_interface_info(c_type, body) {
                     Some(info) => objects.push(Box::new(info)),
+                    None => objects.push(Box::new(Raw::from_bytes(body))),
+                }
+            } else if class_num == ICMP_EXTENSION_CLASS_INTERFACE_ID {
+                // RFC 8335: type the Interface Identification Object body per its
+                // C-Type (name/index/address) when it parses defensibly with
+                // canonical zero padding; anything else stays raw so the bytes
+                // round-trip unchanged.
+                match decode_interface_id(c_type, body) {
+                    Some(id) => objects.push(Box::new(id)),
                     None => objects.push(Box::new(Raw::from_bytes(body))),
                 }
             } else {
@@ -3054,6 +3733,78 @@ fn decode_interface_info(c_type: u8, mut body: &[u8]) -> Option<IcmpExtensionInt
     Some(info)
 }
 
+/// Decode an RFC 8335 Interface Identification Object body into a typed
+/// [`IcmpExtensionInterfaceId`] layer.
+///
+/// The object's C-Type selects the form: name (1), index (2), or address (3).
+/// Each form must consume the whole body exactly with canonical (zero) padding
+/// so a re-compile reproduces the bytes; anything else — an unknown C-Type, a
+/// mismatched length, non-canonical padding, or an unknown-width address AFI —
+/// returns `None` so the caller keeps the body as raw bytes and decoding never
+/// panics.
+fn decode_interface_id(c_type: u8, body: &[u8]) -> Option<IcmpExtensionInterfaceId> {
+    match c_type {
+        ICMP_INTERFACE_ID_CTYPE_NAME => {
+            // The name is zero padded to a 32-bit boundary; reject a body whose
+            // length is not a whole number of words or whose padding is not zero.
+            if body.is_empty() || body.len() % 4 != 0 {
+                return None;
+            }
+            // RFC 7223 names are NUL-padded; the name is the leading non-NUL run,
+            // and every trailing byte after the first NUL must be NUL so the
+            // padded form round-trips through compile.
+            let name_len = body
+                .iter()
+                .position(|&byte| byte == 0)
+                .unwrap_or(body.len());
+            if body[name_len..].iter().any(|&byte| byte != 0) {
+                return None;
+            }
+            // Reject names whose unpadded length would re-pad to a different size
+            // (only canonical minimal padding round-trips).
+            if name_len.div_ceil(4) * 4 != body.len() {
+                return None;
+            }
+            Some(IcmpExtensionInterfaceId::by_name_bytes(
+                body[..name_len].to_vec(),
+            ))
+        }
+        ICMP_INTERFACE_ID_CTYPE_INDEX => {
+            if body.len() != ICMP_INTERFACE_ID_INDEX_LEN {
+                return None;
+            }
+            Some(IcmpExtensionInterfaceId::by_index(u32::from_be_bytes(
+                copy_array_4(body),
+            )))
+        }
+        ICMP_INTERFACE_ID_CTYPE_ADDRESS => {
+            if body.len() < ICMP_INTERFACE_ID_ADDRESS_PREFIX_LEN {
+                return None;
+            }
+            let afi = u16::from_be_bytes([body[0], body[1]]);
+            let address_length = body[2];
+            let reserved = body[3];
+            let address = &body[ICMP_INTERFACE_ID_ADDRESS_PREFIX_LEN..];
+            // The significant address length must fit the padded address region
+            // and re-pad to exactly the body length so a re-compile reproduces it.
+            let significant = address_length as usize;
+            if significant > address.len() || significant.div_ceil(4) * 4 != address.len() {
+                return None;
+            }
+            // Only canonical zero padding past the significant address bytes
+            // round-trips through compile.
+            if address[significant..].iter().any(|&byte| byte != 0) {
+                return None;
+            }
+            Some(
+                IcmpExtensionInterfaceId::by_address(afi, address[..significant].to_vec())
+                    .reserved(reserved),
+            )
+        }
+        _ => None,
+    }
+}
+
 /// Append a decoded ICMPv6 packet to an existing packet stack.
 pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (icmpv6, payload) = decode_icmpv6_parts(bytes)?;
@@ -3075,13 +3826,27 @@ fn decode_icmp_parts(bytes: &[u8]) -> Result<(Icmp, &[u8])> {
 
     let rest = copy_array_4(&bytes[4..8]);
     let icmp_type = bytes[0];
+    // RFC 8335 extended echo: identifier (bytes 0-1), an 8-bit sequence number
+    // (byte 2, zero-extended into the u16 sequence field), and a flag byte
+    // (byte 3). RFC 792/RFC 950 query families keep their 16-bit sequence.
+    let extended = is_extended_echo_v4(icmp_type);
+    let identifier = if extended {
+        Field::user(u16::from_be_bytes([rest[0], rest[1]]))
+    } else {
+        field_from_echo(icmp_type, &rest, 0, is_query_v4)
+    };
+    let sequence_number = if extended {
+        Field::user(u16::from(rest[2]))
+    } else {
+        field_from_echo(icmp_type, &rest, 2, is_query_v4)
+    };
     let icmp = Icmp {
         icmp_type: Field::user(icmp_type),
         code: Field::user(bytes[1]),
         checksum: Field::user(read_u16_be(&bytes[2..4])?),
         rest_of_header: Field::user(rest),
-        identifier: field_from_echo(icmp_type, &rest, 0, is_query_v4),
-        sequence_number: field_from_echo(icmp_type, &rest, 2, is_query_v4),
+        identifier,
+        sequence_number,
         pointer: if icmp_type == ICMP_PARAMETER_PROBLEM {
             Field::user(rest[0])
         } else {
@@ -3114,6 +3879,11 @@ fn decode_icmp_parts(bytes: &[u8]) -> Result<(Icmp, &[u8])> {
         },
         lifetime: if icmp_type == ICMP_ROUTER_ADVERTISEMENT {
             Field::user(u16::from_be_bytes([rest[2], rest[3]]))
+        } else {
+            Field::unset()
+        },
+        extended_flags: if extended {
+            Field::user(rest[3])
         } else {
             Field::unset()
         },
@@ -3302,6 +4072,13 @@ fn value_or_u16_from_rest(field: &Field<u16>, rest: &Field<[u8; 4]>, offset: usi
     })
 }
 
+fn value_or_u8_from_rest(field: &Field<u8>, rest: &Field<[u8; 4]>, offset: usize) -> u8 {
+    field.value().copied().unwrap_or_else(|| {
+        let rest = rest.value().copied().unwrap_or([0; 4]);
+        rest[offset]
+    })
+}
+
 fn field_from_echo(
     icmp_type: u8,
     rest: &[u8; 4],
@@ -3342,6 +4119,15 @@ fn is_query_v4(icmp_type: u8) -> bool {
 
 fn is_echo_v6(icmp_type: u8) -> bool {
     matches!(icmp_type, ICMPV6_ECHO_REQUEST | ICMPV6_ECHO_REPLY)
+}
+
+/// True for the RFC 8335 extended echo request/reply types, which carry a 16-bit
+/// identifier, an 8-bit sequence number, and a flag byte in the rest-of-header.
+fn is_extended_echo_v4(icmp_type: u8) -> bool {
+    matches!(
+        icmp_type,
+        ICMP_EXTENDED_ECHO_REQUEST | ICMP_EXTENDED_ECHO_REPLY
+    )
 }
 
 fn icmpv4_type_allows_extensions(icmp_type: u8) -> bool {
@@ -5967,5 +6753,427 @@ mod icmpv4_rfc5837_interface_info {
         assert!(summary.contains("192.0.2.1"), "summary was {summary}");
         assert!(summary.contains("name=eth1"), "summary was {summary}");
         assert!(summary.contains("mtu=1500"), "summary was {summary}");
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_rfc8335_extended_echo {
+    use super::{
+        Icmp, IcmpExtension, IcmpExtensionInterfaceId, IcmpExtensionObject,
+        ICMP_CODE_EXTENDED_ECHO_REPLY_MALFORMED_QUERY,
+        ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES, ICMP_CODE_EXTENDED_ECHO_REPLY_NO_ERROR,
+        ICMP_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_INTERFACE,
+        ICMP_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_TABLE_ENTRY, ICMP_EXTENDED_ECHO_REPLY,
+        ICMP_EXTENDED_ECHO_REQUEST, ICMP_EXTENSION_CLASS_INTERFACE_ID,
+        ICMP_INTERFACE_ID_CTYPE_ADDRESS, ICMP_INTERFACE_ID_CTYPE_INDEX,
+        ICMP_INTERFACE_ID_CTYPE_NAME,
+    };
+    use crate::checksum::verify_internet_checksum;
+    use crate::{Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::{Ipv4Addr, Ipv6Addr};
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // An extended echo request carries its 16-bit identifier, 8-bit sequence
+    // number, and flag byte in the fixed header, then an RFC 4884 extension
+    // structure with a single Interface Identification Object directly after the
+    // header (no quoted datagram, no original-datagram padding). The whole packet
+    // round-trips and the typed object surfaces the ifIndex.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_request_compile_decode() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request().id(0x1234).seq(7)
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_index(42))
+        .compile()
+        .unwrap();
+
+        let bytes = compiled.as_bytes();
+        // Fixed ICMP header at offset 20: type 42, code 0.
+        assert_eq!(bytes[20], ICMP_EXTENDED_ECHO_REQUEST);
+        assert_eq!(bytes[21], 0);
+        // Identifier (bytes 24-25), 8-bit sequence (byte 26), flag byte (byte 27).
+        assert_eq!(&bytes[24..26], &0x1234u16.to_be_bytes());
+        assert_eq!(bytes[26], 7);
+        assert_eq!(bytes[27], 0);
+        // The extension header begins immediately after the fixed header (no
+        // quote, no padding): version 2.
+        assert_eq!(bytes[28] >> 4, 2);
+        // The object header auto-fills class 3 and C-Type 2 (by index).
+        assert_eq!(bytes[34], ICMP_EXTENSION_CLASS_INTERFACE_ID);
+        assert_eq!(bytes[35], ICMP_INTERFACE_ID_CTYPE_INDEX);
+        // Object length: 4-byte header + 4-byte ifIndex = 8.
+        assert_eq!(u16::from_be_bytes([bytes[32], bytes[33]]), 8);
+        // ifIndex value.
+        assert_eq!(
+            u32::from_be_bytes([bytes[36], bytes[37], bytes[38], bytes[39]]),
+            42
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.icmp_type_value(), ICMP_EXTENDED_ECHO_REQUEST);
+        assert_eq!(icmp.identifier_value(), Some(0x1234));
+        assert_eq!(icmp.sequence_number_value(), Some(7));
+        assert_eq!(icmp.extended_l_bit_value(), Some(false));
+        assert!(decoded.layer::<IcmpExtension>().is_some());
+        let id = decoded.layer::<IcmpExtensionInterfaceId>().unwrap();
+        assert_eq!(id.index_value(), Some(42));
+        assert_eq!(id.c_type(), ICMP_INTERFACE_ID_CTYPE_INDEX);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // The Interface Identification Object can identify by name (C-Type 1), with
+    // the name zero padded to a 32-bit boundary.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_request_by_name() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request().id(1).seq(1)
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_name("eth0"))
+        .compile()
+        .unwrap();
+
+        let bytes = compiled.as_bytes();
+        assert_eq!(bytes[35], ICMP_INTERFACE_ID_CTYPE_NAME);
+        // "eth0" is 4 octets, already on a 32-bit boundary; object length 4 + 4.
+        assert_eq!(u16::from_be_bytes([bytes[32], bytes[33]]), 8);
+        assert_eq!(&bytes[36..40], b"eth0");
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
+        let id = decoded.layer::<IcmpExtensionInterfaceId>().unwrap();
+        assert_eq!(id.name_value(), Some(&b"eth0"[..]));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // A short name is zero padded to a 32-bit boundary on the wire and the
+    // padding is stripped on decode.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_request_by_name_padding() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request()
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_name("e0"))
+        .compile()
+        .unwrap();
+
+        let bytes = compiled.as_bytes();
+        // "e0" (2 octets) pads to 4; object length 4 + 4 = 8.
+        assert_eq!(u16::from_be_bytes([bytes[32], bytes[33]]), 8);
+        assert_eq!(&bytes[36..38], b"e0");
+        assert_eq!(&bytes[38..40], &[0, 0]);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
+        let id = decoded.layer::<IcmpExtensionInterfaceId>().unwrap();
+        assert_eq!(id.name_value(), Some(&b"e0"[..]));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // The Interface Identification Object can identify by IPv4 address (C-Type 3):
+    // AFI, address length, reserved, then the address padded to a 32-bit boundary.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_request_by_ipv4_address() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request()
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_ipv4(Ipv4Addr::new(192, 0, 2, 99)))
+        .compile()
+        .unwrap();
+
+        let bytes = compiled.as_bytes();
+        assert_eq!(bytes[35], ICMP_INTERFACE_ID_CTYPE_ADDRESS);
+        // AFI 1 (IPv4), address length 4, reserved 0, then the 4 address octets.
+        assert_eq!(u16::from_be_bytes([bytes[36], bytes[37]]), 1);
+        assert_eq!(bytes[38], 4);
+        assert_eq!(bytes[39], 0);
+        assert_eq!(&bytes[40..44], &[192, 0, 2, 99]);
+        // Object length: 4-byte header + 4-byte prefix + 4-byte address = 12.
+        assert_eq!(u16::from_be_bytes([bytes[32], bytes[33]]), 12);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
+        let id = decoded.layer::<IcmpExtensionInterfaceId>().unwrap();
+        assert_eq!(id.ipv4_value(), Some(Ipv4Addr::new(192, 0, 2, 99)));
+        assert_eq!(id.address_length_value(), Some(4));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // An IPv6 address object carries a 16-byte address (already 32-bit aligned).
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_request_by_ipv6_address() {
+        let addr = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x99);
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request()
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_ipv6(addr))
+        .compile()
+        .unwrap();
+
+        let bytes = compiled.as_bytes();
+        // AFI 2 (IPv6), address length 16. Object length 4 + 4 + 16 = 24.
+        assert_eq!(u16::from_be_bytes([bytes[36], bytes[37]]), 2);
+        assert_eq!(bytes[38], 16);
+        assert_eq!(u16::from_be_bytes([bytes[32], bytes[33]]), 24);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
+        let id = decoded.layer::<IcmpExtensionInterfaceId>().unwrap();
+        assert_eq!(id.ipv6_value(), Some(addr));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // The request L-bit is the rightmost bit of the flag byte and round-trips.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_request_l_bit() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request()
+                .id(9)
+                .seq(3)
+                .extended_l_bit(true)
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_index(1))
+        .compile()
+        .unwrap();
+
+        let bytes = compiled.as_bytes();
+        // Flag byte (offset 27): only the rightmost (L) bit set.
+        assert_eq!(bytes[27], 0x01);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.extended_l_bit_value(), Some(true));
+        // Reply-only accessors are not meaningful on a request.
+        assert_eq!(icmp.extended_state_value(), None);
+        assert_eq!(icmp.extended_active_value(), None);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // Every reply code (0-4) compiles and decodes, keeping its numeric code and a
+    // stable summary name; replies carry no body of their own.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_reply_all_codes() {
+        let codes = [
+            (ICMP_CODE_EXTENDED_ECHO_REPLY_NO_ERROR, "no-error"),
+            (
+                ICMP_CODE_EXTENDED_ECHO_REPLY_MALFORMED_QUERY,
+                "malformed-query",
+            ),
+            (
+                ICMP_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_INTERFACE,
+                "no-such-interface",
+            ),
+            (
+                ICMP_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_TABLE_ENTRY,
+                "no-such-table-entry",
+            ),
+            (
+                ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES,
+                "multiple-interfaces",
+            ),
+        ];
+        for (code, name) in codes {
+            let compiled = (Ipv4::new().src(src()).dst(dst())
+                / Icmp::extended_echo_reply().id(0xabcd).seq(5).code(code))
+            .compile()
+            .unwrap();
+
+            let bytes = compiled.as_bytes();
+            assert_eq!(bytes[20], ICMP_EXTENDED_ECHO_REPLY);
+            assert_eq!(bytes[21], code);
+
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
+            let icmp = decoded.layer::<Icmp>().unwrap();
+            assert_eq!(icmp.code_value(), code);
+            assert_eq!(icmp.identifier_value(), Some(0xabcd));
+            assert_eq!(icmp.sequence_number_value(), Some(5));
+            assert!(
+                crate::packet::Layer::summary(icmp).contains(name),
+                "summary missing {name}"
+            );
+            assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+        }
+    }
+
+    // The reply flag byte packs State (3 bits), reserved (2 bits), and the A/4/6
+    // flags; each typed accessor surfaces its field and the byte round-trips.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_reply_flags() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_reply()
+                .code(ICMP_CODE_EXTENDED_ECHO_REPLY_NO_ERROR)
+                .extended_state(super::ICMP_EXTENDED_ECHO_REPLY_STATE_REACHABLE)
+                .extended_active(true)
+                .extended_ipv4(true)
+                .extended_ipv6(false))
+        .compile()
+        .unwrap();
+
+        let bytes = compiled.as_bytes();
+        // State 2 in bits 5-7 (0b010 << 5 = 0x40), A bit (0x04), 4 bit (0x02).
+        assert_eq!(bytes[27], 0x40 | 0x04 | 0x02);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(
+            icmp.extended_state_value(),
+            Some(super::ICMP_EXTENDED_ECHO_REPLY_STATE_REACHABLE)
+        );
+        assert_eq!(icmp.extended_active_value(), Some(true));
+        assert_eq!(icmp.extended_ipv4_value(), Some(true));
+        assert_eq!(icmp.extended_ipv6_value(), Some(false));
+        // The L-bit accessor is request-only and not meaningful on a reply.
+        assert_eq!(icmp.extended_l_bit_value(), None);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // A reply with an unexpected trailing payload keeps it as a Raw layer rather
+    // than typing it; the buffer round-trips unchanged.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_reply_trailing_payload_stays_raw() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_reply().code(ICMP_CODE_EXTENDED_ECHO_REPLY_NO_ERROR)
+            / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+        assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert!(decoded.layer::<IcmpExtension>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // The default request carries exactly one Interface Identification Object and
+    // its object length covers just that object.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_exactly_one_object_default() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request()
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_index(3))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let object_count = decoded
+            .iter()
+            .filter(|layer| layer.as_any().is::<IcmpExtensionObject>())
+            .count();
+        assert_eq!(object_count, 1);
+        let id_count = decoded
+            .iter()
+            .filter(|layer| layer.as_any().is::<IcmpExtensionInterfaceId>())
+            .count();
+        assert_eq!(id_count, 1);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // A deliberately malformed object count (two objects in a single request) is
+    // preserved on compile and decode; the crate does not refuse to emit it.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_malformed_object_count_preserved() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request()
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_index(1)
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_index(2))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        // Both Interface Identification Objects survive (RFC 8335 expects exactly
+        // one, but malformed multi-object requests must still round-trip).
+        let ids: Vec<_> = decoded
+            .iter()
+            .filter_map(|layer| layer.as_any().downcast_ref::<IcmpExtensionInterfaceId>())
+            .map(|id| id.index_value())
+            .collect();
+        assert_eq!(ids, vec![Some(1), Some(2)]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // An unknown Interface Identification Object C-Type is not typed; it falls
+    // back to the generic IcmpExtensionObject + Raw body and round-trips.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_unknown_object_falls_back_to_raw() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request()
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+                .class_num(ICMP_EXTENSION_CLASS_INTERFACE_ID)
+                .c_type(0x7f)
+            / Raw::from_bytes([1, 2, 3, 4]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpExtensionInterfaceId>().is_none());
+        let object = decoded.layer::<IcmpExtensionObject>().unwrap();
+        assert_eq!(object.class_num_value(), ICMP_EXTENSION_CLASS_INTERFACE_ID);
+        assert_eq!(object.c_type_value(), 0x7f);
+        assert!(decoded.layer::<Raw>().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // The RFC 4884 extension checksum covers the whole extension structure and
+    // verifies on decode; an extended echo request round-trips byte-for-byte.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_checksum_roundtrip() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request().id(0x55aa).seq(2)
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_name("wlan0"))
+        .compile()
+        .unwrap();
+
+        let bytes = compiled.as_bytes();
+        // The extension structure starts at offset 28 (right after the 8-byte
+        // ICMP header, no quote or padding) and carries a verifying checksum.
+        assert!(verify_internet_checksum(&bytes[28..]));
+        // The outer ICMP checksum also verifies (covers the ICMP header + body).
+        assert!(verify_internet_checksum(&bytes[20..]));
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
+        let extension = decoded.layer::<IcmpExtension>().unwrap();
+        assert!(extension.checksum_value().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // An explicit raw flag byte survives compilation untouched, the escape hatch
+    // for crafting reserved bits the typed builders do not expose.
+    #[test]
+    fn icmpv4_rfc8335_extended_echo_explicit_flag_byte_preserved() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::extended_echo_request()
+                .id(1)
+                .seq(1)
+                .extended_flags(0xfe)
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionInterfaceId::by_index(1))
+        .compile()
+        .unwrap();
+
+        // The raw flag byte (including the reserved bits) is emitted verbatim.
+        assert_eq!(compiled.as_bytes()[27], 0xfe);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.extended_flags_value(), Some(0xfe));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
     }
 }
