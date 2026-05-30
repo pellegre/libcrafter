@@ -1,5 +1,7 @@
 //! UDP and TCP protocol implementations.
 
+mod common;
+
 use core::any::Any;
 use core::ops::Div;
 
