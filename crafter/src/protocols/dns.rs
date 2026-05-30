@@ -4188,6 +4188,174 @@ mod dns_name_decode {
 }
 
 #[cfg(test)]
+mod dns_malformed {
+    //! Table-driven boundary coverage for the record-data and name parsers.
+    //!
+    //! These cases live as unit tests (rather than full packet fixtures in the
+    //! resilience corpus) because they exercise a single RDATA or name decoder
+    //! directly and assert the exact structured error field, which is clearer
+    //! than reconstructing an entire DNS message. The resilience corpus carries
+    //! the matching end-to-end packet rows.
+
+    use super::{
+        decode_dns_name_typed, decode_record_data, DnsRecordData, DNS_MAX_LABEL_LEN, DNS_TYPE_A,
+        DNS_TYPE_AAAA, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_RRSIG,
+        DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
+    };
+    use crate::error::CrafterError;
+
+    /// Assert that decoding `rdata` for `record_type` fails with a
+    /// `buffer-too-short` error whose context is exactly `field`.
+    fn assert_too_short(record_type: u16, rdata: &[u8], field: &str) {
+        match decode_record_data(record_type, rdata, 0, rdata.len()) {
+            Err(CrafterError::BufferTooShort { context, .. }) => assert_eq!(
+                context, field,
+                "type {record_type:#x} expected buffer-too-short context {field}"
+            ),
+            other => {
+                panic!("type {record_type:#x} expected buffer-too-short {field}, got {other:?}")
+            }
+        }
+    }
+
+    /// Assert that decoding `rdata` for `record_type` fails with an
+    /// `invalid-field-value` error whose field is exactly `field`.
+    fn assert_invalid(record_type: u16, rdata: &[u8], field: &str) {
+        match decode_record_data(record_type, rdata, 0, rdata.len()) {
+            Err(CrafterError::InvalidFieldValue { field: got, .. }) => assert_eq!(
+                got, field,
+                "type {record_type:#x} expected invalid-field-value {field}"
+            ),
+            other => {
+                panic!("type {record_type:#x} expected invalid-field-value {field}, got {other:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_length_records_reject_wrong_rdlength() {
+        // A and AAAA carry an exact fixed-length address; any other length is
+        // structurally invalid rather than silently truncated.
+        assert_invalid(DNS_TYPE_A, &[192, 0, 2], "dns.a.rdlength");
+        assert_invalid(DNS_TYPE_A, &[192, 0, 2, 1, 9], "dns.a.rdlength");
+        assert_invalid(DNS_TYPE_AAAA, &[0u8; 15], "dns.aaaa.rdlength");
+        assert_invalid(DNS_TYPE_AAAA, &[0u8; 17], "dns.aaaa.rdlength");
+    }
+
+    #[test]
+    fn dnssec_fixed_headers_reject_truncation() {
+        // Each DNSSEC record has a fixed minimum header; fewer bytes must error
+        // on the documented field rather than panic on a slice.
+        assert_too_short(DNS_TYPE_DS, &[0u8; 3], "dns.ds");
+        assert_too_short(DNS_TYPE_DNSKEY, &[0u8; 3], "dns.dnskey");
+        assert_too_short(DNS_TYPE_RRSIG, &[0u8; 17], "dns.rrsig");
+    }
+
+    #[test]
+    fn soa_rejects_wrong_fixed_tail_length() {
+        // MNAME "a." + RNAME root, then a fixed tail that is one byte short and
+        // one byte long: both are rejected on dns.soa.rdlength.
+        let mut short = vec![1u8, b'a', 0, 0];
+        short.extend_from_slice(&[0u8; 19]);
+        assert_invalid(DNS_TYPE_SOA, &short, "dns.soa.rdlength");
+
+        let mut long = vec![1u8, b'a', 0, 0];
+        long.extend_from_slice(&[0u8; 21]);
+        assert_invalid(DNS_TYPE_SOA, &long, "dns.soa.rdlength");
+    }
+
+    #[test]
+    fn srv_rejects_short_header_and_trailing_bytes() {
+        // Fewer than the six fixed octets plus a name.
+        assert_too_short(DNS_TYPE_SRV, &[0u8; 5], "dns.srv");
+        // priority/weight/port + root target + one stray trailing byte.
+        assert_invalid(
+            DNS_TYPE_SRV,
+            &[0, 1, 0, 2, 0x13, 0x88, 0, 0xff],
+            "dns.srv.target",
+        );
+    }
+
+    #[test]
+    fn nsec3_rejects_hash_length_overrun() {
+        // Salt length 0, then Hash Length 20 with only two bytes present.
+        assert_too_short(
+            DNS_TYPE_NSEC3,
+            &[1, 0, 0, 10, 0, 20, 0x11, 0x22],
+            "dns.nsec3.hash",
+        );
+    }
+
+    #[test]
+    fn nsec_rejects_non_minimal_trailing_zero_bitmap() {
+        // Next name root, then a window whose bitmap ends in a trailing zero
+        // octet (a non-minimal encoding) is rejected on dns.nsec.bitmap.
+        let rdata = [0u8, 0x00, 2, 0x40, 0x00];
+        assert_invalid(DNS_TYPE_NSEC, &rdata, "dns.nsec.bitmap");
+    }
+
+    #[test]
+    fn svcb_rejects_out_of_order_and_overrun_params() {
+        // priority + root target + port(3) then alpn(1): a decreasing key pair.
+        let out_of_order = [0u8, 1, 0, 0, 3, 0, 0, 0, 1, 0, 0];
+        assert_invalid(DNS_TYPE_SVCB, &out_of_order, "dns.svcb.params");
+
+        // priority + root target + a SvcParam whose declared length runs past
+        // the RDATA.
+        let overrun = [0u8, 1, 0, 0, 3, 0, 8, 0, 0];
+        assert_too_short(DNS_TYPE_SVCB, &overrun, "dns.svcb.params");
+    }
+
+    #[test]
+    fn unknown_record_type_decodes_as_raw_not_rejected() {
+        // A structurally valid record with a TYPE this crate does not model must
+        // surface its RDATA verbatim rather than being rejected for being
+        // unknown.
+        let rdata = [0xde, 0xad, 0xbe, 0xef];
+        let data = decode_record_data(0xfff0, &rdata, 0, rdata.len()).unwrap();
+        assert_eq!(data, DnsRecordData::Raw(rdata.to_vec()));
+
+        // Even a zero-length RDATA under an unknown type stays raw and empty.
+        let empty = decode_record_data(0xfff0, &[], 0, 0).unwrap();
+        assert_eq!(empty, DnsRecordData::Raw(Vec::new()));
+    }
+
+    #[test]
+    fn name_decoder_rejects_reserved_marker_and_length_overrun() {
+        // A reserved label-length marker (top two bits 0b10) is malformed.
+        match decode_dns_name_typed(&[0x40], 0) {
+            Err(CrafterError::InvalidFieldValue { field, .. }) => assert_eq!(field, "dns.name"),
+            other => panic!("expected reserved-marker rejection, got {other:?}"),
+        }
+
+        // Four 63-octet labels exceed the 255-octet full-name limit.
+        let mut overrun = Vec::new();
+        for _ in 0..4 {
+            overrun.push(DNS_MAX_LABEL_LEN as u8);
+            overrun.extend_from_slice(&[b'a'; DNS_MAX_LABEL_LEN]);
+        }
+        overrun.push(0);
+        match decode_dns_name_typed(&overrun, 0) {
+            Err(CrafterError::InvalidFieldValue { field, .. }) => assert_eq!(field, "dns.name"),
+            other => panic!("expected full-name overrun rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn label_at_63_octet_boundary_is_accepted() {
+        // The 63-octet label boundary is the largest valid label and must decode
+        // successfully (the boundary itself is not an error).
+        let mut wire = Vec::new();
+        wire.push(DNS_MAX_LABEL_LEN as u8);
+        wire.extend_from_slice(&[b'a'; DNS_MAX_LABEL_LEN]);
+        wire.push(0);
+        let (name, used) = decode_dns_name_typed(&wire, 0).unwrap();
+        assert_eq!(used, wire.len());
+        assert_eq!(name.labels(), &[vec![b'a'; DNS_MAX_LABEL_LEN]]);
+    }
+}
+
+#[cfg(test)]
 mod dns_golden_bytes {
     use super::{Dns, DnsQuestion, DNS_TYPE_A};
     use crate::{Ipv4, LinkType, Packet, Udp};
