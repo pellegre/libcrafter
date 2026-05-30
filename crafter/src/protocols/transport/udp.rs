@@ -59,6 +59,10 @@ pub const UDP_OPTION_UEXP: u8 = 254;
 /// Reserved UNSAFE UDP option kind.
 pub const UDP_OPTION_RESERVED_UNSAFE: u8 = 255;
 
+const UDP_OPTION_SHORT_HEADER_LEN: usize = 2;
+const UDP_OPTION_EXTENDED_HEADER_LEN: usize = 4;
+const UDP_OPTION_EXTENDED_LEN_SENTINEL: u8 = 255;
+
 /// Inspection status for UDP checksum handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UdpChecksumStatus {
@@ -95,26 +99,295 @@ pub enum UdpOptionStatus {
     AdditionalPayloadChecksumInvalid,
 }
 
+/// Parsed or constructible UDP surplus option.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum UdpOption {
+    /// End of option list.
+    EndOfList,
+    /// One-byte no-operation padding.
+    NoOperation,
+    /// Unknown or caller-defined option with the standard one-byte length field.
+    Generic {
+        /// Raw option kind byte.
+        kind: u8,
+        /// Option payload bytes after kind and length.
+        data: Vec<u8>,
+    },
+    /// Unknown or caller-defined option with the extended two-byte length field.
+    ExtendedGeneric {
+        /// Raw option kind byte.
+        kind: u8,
+        /// Option payload bytes after kind, sentinel length, and extended length.
+        data: Vec<u8>,
+    },
+}
+
+impl UdpOption {
+    /// Create an end-of-option-list marker.
+    pub const fn end_of_list() -> Self {
+        Self::EndOfList
+    }
+
+    /// Create a no-operation padding option.
+    pub const fn no_operation() -> Self {
+        Self::NoOperation
+    }
+
+    /// Create a caller-defined option.
+    pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
+        let data = data.into();
+        if UDP_OPTION_SHORT_HEADER_LEN + data.len() >= UDP_OPTION_EXTENDED_LEN_SENTINEL as usize {
+            Self::ExtendedGeneric { kind, data }
+        } else {
+            Self::Generic { kind, data }
+        }
+    }
+
+    /// Create a caller-defined option using the extended length encoding.
+    pub fn extended_generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
+        Self::ExtendedGeneric {
+            kind,
+            data: data.into(),
+        }
+    }
+
+    /// Raw option kind byte.
+    pub const fn kind(&self) -> u8 {
+        match self {
+            Self::EndOfList => UDP_OPTION_EOL,
+            Self::NoOperation => UDP_OPTION_NOP,
+            Self::Generic { kind, .. } | Self::ExtendedGeneric { kind, .. } => *kind,
+        }
+    }
+
+    /// Option payload bytes after the option length fields.
+    pub fn data(&self) -> &[u8] {
+        match self {
+            Self::EndOfList | Self::NoOperation => &[],
+            Self::Generic { data, .. } | Self::ExtendedGeneric { data, .. } => data,
+        }
+    }
+
+    /// Return true if this option uses the extended length format.
+    pub const fn uses_extended_length(&self) -> bool {
+        matches!(self, Self::ExtendedGeneric { .. })
+    }
+
+    /// Encoded option length in bytes.
+    pub fn encoded_len(&self) -> usize {
+        match self {
+            Self::EndOfList | Self::NoOperation => 1,
+            Self::Generic { data, .. } => UDP_OPTION_SHORT_HEADER_LEN + data.len(),
+            Self::ExtendedGeneric { data, .. } => UDP_OPTION_EXTENDED_HEADER_LEN + data.len(),
+        }
+    }
+
+    /// Encode this option to bytes.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let len = self.encoded_len();
+        let mut bytes = Vec::with_capacity(len);
+        match self {
+            Self::EndOfList => bytes.push(UDP_OPTION_EOL),
+            Self::NoOperation => bytes.push(UDP_OPTION_NOP),
+            Self::Generic { kind, data } => {
+                validate_udp_generic_option_kind(*kind)?;
+                if len >= UDP_OPTION_EXTENDED_LEN_SENTINEL as usize {
+                    return Err(CrafterError::invalid_field_value(
+                        "udp.option.length",
+                        "UDP option short length must be less than 255 bytes",
+                    ));
+                }
+                bytes.extend_from_slice(&[*kind, len as u8]);
+                bytes.extend_from_slice(data);
+            }
+            Self::ExtendedGeneric { kind, data } => {
+                validate_udp_generic_option_kind(*kind)?;
+                let len = u16::try_from(len).map_err(|_| {
+                    CrafterError::invalid_field_value(
+                        "udp.option.length",
+                        "UDP option extended length must fit in two bytes",
+                    )
+                })?;
+                bytes.extend_from_slice(&[*kind, UDP_OPTION_EXTENDED_LEN_SENTINEL]);
+                bytes.extend_from_slice(&len.to_be_bytes());
+                bytes.extend_from_slice(data);
+            }
+        }
+
+        Ok(bytes)
+    }
+
+    /// Decode all options from a raw UDP option byte slice.
+    pub fn decode_all(bytes: &[u8]) -> Result<Vec<Self>> {
+        UdpOptionIter::new(bytes).collect()
+    }
+}
+
+/// Iterator over encoded UDP surplus options.
+#[derive(Debug, Clone)]
+pub struct UdpOptionIter<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+    done: bool,
+}
+
+impl<'a> UdpOptionIter<'a> {
+    /// Create an iterator over raw UDP option bytes.
+    pub const fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            offset: 0,
+            done: false,
+        }
+    }
+}
+
+impl Iterator for UdpOptionIter<'_> {
+    type Item = Result<UdpOption>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done || self.offset >= self.bytes.len() {
+            return None;
+        }
+
+        let start = self.offset;
+        let kind = self.bytes[start];
+        match kind {
+            UDP_OPTION_EOL => {
+                self.done = true;
+                self.offset = self.bytes.len();
+                Some(Ok(UdpOption::EndOfList))
+            }
+            UDP_OPTION_NOP => {
+                self.offset += 1;
+                Some(Ok(UdpOption::NoOperation))
+            }
+            _ => {
+                if start + UDP_OPTION_SHORT_HEADER_LEN > self.bytes.len() {
+                    self.done = true;
+                    return Some(Err(CrafterError::buffer_too_short(
+                        "udp option",
+                        start + UDP_OPTION_SHORT_HEADER_LEN,
+                        self.bytes.len(),
+                    )));
+                }
+
+                let len = self.bytes[start + 1];
+                if len == UDP_OPTION_EXTENDED_LEN_SENTINEL {
+                    self.decode_extended(start, kind)
+                } else {
+                    self.decode_short(start, kind, len as usize)
+                }
+            }
+        }
+    }
+}
+
+impl UdpOptionIter<'_> {
+    fn decode_short(&mut self, start: usize, kind: u8, len: usize) -> Option<Result<UdpOption>> {
+        if len < UDP_OPTION_SHORT_HEADER_LEN {
+            self.done = true;
+            return Some(Err(CrafterError::invalid_field_value(
+                "udp.option.length",
+                "option length must be at least 2 bytes",
+            )));
+        }
+
+        let end = start + len;
+        if end > self.bytes.len() {
+            self.done = true;
+            return Some(Err(CrafterError::buffer_too_short(
+                "udp option",
+                end,
+                self.bytes.len(),
+            )));
+        }
+
+        self.offset = end;
+        Some(Ok(UdpOption::Generic {
+            kind,
+            data: self.bytes[start + UDP_OPTION_SHORT_HEADER_LEN..end].to_vec(),
+        }))
+    }
+
+    fn decode_extended(&mut self, start: usize, kind: u8) -> Option<Result<UdpOption>> {
+        if start + UDP_OPTION_EXTENDED_HEADER_LEN > self.bytes.len() {
+            self.done = true;
+            return Some(Err(CrafterError::buffer_too_short(
+                "udp option extended length",
+                start + UDP_OPTION_EXTENDED_HEADER_LEN,
+                self.bytes.len(),
+            )));
+        }
+
+        let len = u16::from_be_bytes([self.bytes[start + 2], self.bytes[start + 3]]) as usize;
+        if len < UDP_OPTION_EXTENDED_HEADER_LEN {
+            self.done = true;
+            return Some(Err(CrafterError::invalid_field_value(
+                "udp.option.length",
+                "extended option length must be at least 4 bytes",
+            )));
+        }
+
+        let end = start + len;
+        if end > self.bytes.len() {
+            self.done = true;
+            return Some(Err(CrafterError::buffer_too_short(
+                "udp option",
+                end,
+                self.bytes.len(),
+            )));
+        }
+
+        self.offset = end;
+        Some(Ok(UdpOption::ExtendedGeneric {
+            kind,
+            data: self.bytes[start + UDP_OPTION_EXTENDED_HEADER_LEN..end].to_vec(),
+        }))
+    }
+}
+
 /// UDP surplus option bytes.
 ///
 /// This layer preserves the area after UDP Length in packets that carry RFC
-/// 9868 UDP options. Individual option parsing is added in later steps.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+/// 9868 UDP options and caches generic option parsing status for inspection.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UdpOptions {
     bytes: Vec<u8>,
+    options: Vec<UdpOption>,
+    status: UdpOptionStatus,
 }
 
 impl UdpOptions {
     /// Create an empty UDP options layer.
     pub const fn new() -> Self {
-        Self { bytes: Vec::new() }
+        Self {
+            bytes: Vec::new(),
+            options: Vec::new(),
+            status: UdpOptionStatus::NoSurplus,
+        }
     }
 
     /// Create a UDP options layer by copying bytes.
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Self {
+        let bytes = bytes.as_ref().to_vec();
+        let (options, status) = parse_udp_options_for_status(&bytes);
         Self {
-            bytes: bytes.as_ref().to_vec(),
+            bytes,
+            options,
+            status,
         }
+    }
+
+    /// Create a UDP options layer from typed options.
+    pub fn from_options(options: impl Into<Vec<UdpOption>>) -> Result<Self> {
+        let bytes = encode_udp_options(&options.into())?;
+        let (options, status) = parse_udp_options_for_status(&bytes);
+        Ok(Self {
+            bytes,
+            options,
+            status,
+        })
     }
 
     /// Borrow the encoded UDP option bytes.
@@ -124,13 +397,23 @@ impl UdpOptions {
 
     /// Mutably borrow the encoded UDP option bytes.
     pub fn as_bytes_mut(&mut self) -> &mut Vec<u8> {
+        self.options.clear();
+        self.status = UdpOptionStatus::NotParsed;
         &mut self.bytes
     }
 
     /// Append encoded UDP option bytes.
     pub fn extend_from_slice(&mut self, bytes: &[u8]) -> &mut Self {
         self.bytes.extend_from_slice(bytes);
+        self.refresh_parse();
         self
+    }
+
+    /// Append a typed UDP option.
+    pub fn udp_option(mut self, option: UdpOption) -> Result<Self> {
+        self.bytes.extend_from_slice(&option.encode()?);
+        self.refresh_parse();
+        Ok(self)
     }
 
     /// Consume the layer and return its encoded UDP option bytes.
@@ -147,6 +430,70 @@ impl UdpOptions {
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
+
+    /// Inspection status from generic option parsing.
+    pub const fn status(&self) -> UdpOptionStatus {
+        self.status
+    }
+
+    /// Parsed options cached when the layer was created or last extended.
+    pub fn options(&self) -> &[UdpOption] {
+        &self.options
+    }
+
+    /// Iterate over the current encoded UDP option bytes.
+    pub fn option_iter(&self) -> UdpOptionIter<'_> {
+        UdpOptionIter::new(&self.bytes)
+    }
+
+    /// Decode the current encoded UDP option bytes into typed values.
+    pub fn parsed_options(&self) -> Result<Vec<UdpOption>> {
+        UdpOption::decode_all(&self.bytes)
+    }
+
+    fn refresh_parse(&mut self) {
+        (self.options, self.status) = parse_udp_options_for_status(&self.bytes);
+    }
+}
+
+impl Default for UdpOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn encode_udp_options(options: &[UdpOption]) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    for option in options {
+        bytes.extend_from_slice(&option.encode()?);
+    }
+    Ok(bytes)
+}
+
+fn parse_udp_options_for_status(bytes: &[u8]) -> (Vec<UdpOption>, UdpOptionStatus) {
+    if bytes.is_empty() {
+        return (Vec::new(), UdpOptionStatus::NoSurplus);
+    }
+
+    let mut options = Vec::new();
+    for option in UdpOptionIter::new(bytes) {
+        match option {
+            Ok(option) => options.push(option),
+            Err(_) => return (options, UdpOptionStatus::Malformed),
+        }
+    }
+
+    (options, UdpOptionStatus::Valid)
+}
+
+fn validate_udp_generic_option_kind(kind: u8) -> Result<()> {
+    if kind == UDP_OPTION_EOL || kind == UDP_OPTION_NOP {
+        return Err(CrafterError::invalid_field_value(
+            "udp.option.kind",
+            "EOL and NOP options do not carry a length field",
+        ));
+    }
+    Ok(())
 }
 
 impl Layer for UdpOptions {
@@ -155,13 +502,18 @@ impl Layer for UdpOptions {
     }
 
     fn summary(&self) -> String {
-        format!("UdpOptions(len={})", self.bytes.len())
+        format!(
+            "UdpOptions(len={}, status={:?})",
+            self.bytes.len(),
+            self.status
+        )
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         vec![
             ("len", self.bytes.len().to_string()),
-            ("status", format!("{:?}", UdpOptionStatus::NotParsed)),
+            ("status", format!("{:?}", self.status)),
+            ("option_count", self.options.len().to_string()),
             ("bytes", hex_bytes(&self.bytes)),
         ]
     }
@@ -487,9 +839,9 @@ fn is_current_udp_surplus_layer(layer: &dyn Layer, seen_application_layer: bool)
 #[cfg(test)]
 mod tests {
     use super::{
-        Udp, UdpChecksumStatus, UdpOptionStatus, UdpOptions, UDP_HEADER_LEN, UDP_OPTION_APC,
-        UDP_OPTION_EOL, UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MRDS, UDP_OPTION_NOP,
-        UDP_OPTION_REQ, UDP_OPTION_RES,
+        Udp, UdpChecksumStatus, UdpOption, UdpOptionIter, UdpOptionStatus, UdpOptions,
+        UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG,
+        UDP_OPTION_MDS, UDP_OPTION_MRDS, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_RES,
     };
     use crate::checksum::ipv4_pseudo_header_checksum;
     use crate::{
@@ -523,6 +875,101 @@ mod tests {
         let option_status = UdpOptionStatus::NotParsed;
         assert_eq!(checksum_status, UdpChecksumStatus::NotChecked);
         assert_eq!(option_status, UdpOptionStatus::NotParsed);
+    }
+
+    #[test]
+    fn udp_option_encode_decode_generic_forms() {
+        let short = UdpOption::generic(UDP_OPTION_MDS, [0x05, 0xb4]);
+        assert_eq!(short.kind(), UDP_OPTION_MDS);
+        assert_eq!(short.data(), &[0x05, 0xb4]);
+        assert!(!short.uses_extended_length());
+        assert_eq!(short.encoded_len(), 4);
+        assert_eq!(short.encode().unwrap(), vec![UDP_OPTION_MDS, 4, 0x05, 0xb4]);
+
+        let extended = UdpOption::extended_generic(UDP_OPTION_EXP, [0x12, 0x34]);
+        assert!(extended.uses_extended_length());
+        assert_eq!(extended.encoded_len(), 6);
+        assert_eq!(
+            extended.encode().unwrap(),
+            vec![UDP_OPTION_EXP, 255, 0, 6, 0x12, 0x34]
+        );
+
+        let decoded =
+            UdpOption::decode_all(&[UDP_OPTION_NOP, UDP_OPTION_EXP, 255, 0, 6, 0x12, 0x34])
+                .unwrap();
+        assert_eq!(
+            decoded,
+            vec![
+                UdpOption::NoOperation,
+                UdpOption::ExtendedGeneric {
+                    kind: UDP_OPTION_EXP,
+                    data: vec![0x12, 0x34]
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn udp_option_iterator_stops_at_eol_and_reports_malformed_lengths() {
+        let decoded =
+            UdpOption::decode_all(&[UDP_OPTION_NOP, UDP_OPTION_EOL, UDP_OPTION_MDS, 2]).unwrap();
+        assert_eq!(decoded, vec![UdpOption::NoOperation, UdpOption::EndOfList]);
+
+        let mut iter = UdpOptionIter::new(&[UDP_OPTION_MDS, 1]);
+        match iter.next().unwrap() {
+            Err(crate::CrafterError::InvalidFieldValue { field, .. }) => {
+                assert_eq!(field, "udp.option.length");
+            }
+            other => panic!("expected malformed short length, got {other:?}"),
+        }
+        assert!(iter.next().is_none());
+
+        match UdpOption::decode_all(&[UDP_OPTION_EXP, 255, 0, 8, 0xaa]).unwrap_err() {
+            crate::CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "udp option");
+                assert_eq!(required, 8);
+                assert_eq!(available, 5);
+            }
+            other => panic!("expected malformed extended length, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn udp_options_layer_preserves_bytes_and_caches_parse_status() {
+        let bytes = [UDP_OPTION_NOP, UDP_OPTION_EXP, 255, 0, 6, 0x12, 0x34];
+        let udp_options = UdpOptions::from_bytes(bytes);
+
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.as_bytes(), &bytes);
+        assert_eq!(
+            udp_options.options(),
+            &[
+                UdpOption::NoOperation,
+                UdpOption::ExtendedGeneric {
+                    kind: UDP_OPTION_EXP,
+                    data: vec![0x12, 0x34]
+                }
+            ]
+        );
+        assert_eq!(udp_options.parsed_options().unwrap(), udp_options.options());
+
+        let typed = UdpOptions::from_options(vec![
+            UdpOption::NoOperation,
+            UdpOption::generic(UDP_OPTION_MDS, [0x05, 0xb4]),
+        ])
+        .unwrap();
+        assert_eq!(
+            typed.as_bytes(),
+            &[UDP_OPTION_NOP, UDP_OPTION_MDS, 4, 0x05, 0xb4]
+        );
+
+        let malformed = UdpOptions::from_bytes([UDP_OPTION_MDS, 1]);
+        assert_eq!(malformed.status(), UdpOptionStatus::Malformed);
+        assert_eq!(malformed.as_bytes(), &[UDP_OPTION_MDS, 1]);
     }
 
     #[test]
