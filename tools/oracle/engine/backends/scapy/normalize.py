@@ -261,6 +261,8 @@ def normalize_packet(
         normalized_fields[key] = layer_fields
         normalized_layers.append(normalized_layer)
 
+    _canonicalize_icmpv4(packet, normalized_layers, normalized_fields)
+
     metadata: JSONObject = {
         "native": {
             "summary": _text(packet.summary()),
@@ -1044,6 +1046,108 @@ def _bool_flag(value: JSONValue) -> bool:
     if isinstance(value, str):
         return value not in {"", "0", "false", "False"}
     return bool(value)
+
+
+# ICMPv4 query types (RFC 792/950) that carry a 16-bit identifier/sequence in
+# the rest-of-header, plus the RFC 8335 extended echo types. These mirror
+# libcrafter's is_query_v4 / is_extended_echo_v4 decode rules so the normalized
+# Scapy model surfaces identifier/sequence on exactly the same types.
+_ICMPV4_ID_SEQ_TYPES = frozenset({0, 8, 13, 14, 15, 16, 17, 18})
+_ICMPV4_EXTENDED_ECHO_TYPES = frozenset({42, 43})
+# ICMPv4 types that carry the RFC 4884 length byte (rest-of-header byte 1).
+_ICMPV4_EXTENSION_LENGTH_TYPES = frozenset({3, 11, 12})
+
+
+def _canonicalize_icmpv4(
+    packet: Any,
+    layers: list[str],
+    fields: dict[str, JSONObject],
+) -> None:
+    """Collapse Scapy's typed ICMPv4 decode into libcrafter's flat model.
+
+    Scapy types the ICMPv4 rest-of-header (gateway, pointer, next-hop MTU,
+    address mask, timestamps, router-discovery words) and sub-dissects ICMP
+    error bodies into ``IPerror``/``Padding`` layers. libcrafter keeps a flat
+    model: ``type``/``code``/``rest_of_header`` plus the query identifier and
+    sequence, the RFC 4884 length byte for error types, and a single ``payload``
+    layer for everything after the four-byte rest-of-header. This rebuilds the
+    normalized ICMPv4 layer/fields directly from the raw ICMP bytes so both
+    backends agree.
+    """
+
+    if "icmp" not in layers:
+        return
+    icmp_layer = _scapy_layer(packet, "ICMP")
+    if icmp_layer is None:
+        return
+    try:
+        icmp_raw = bytes(import_scapy()["all"].raw(icmp_layer))
+    except Exception:  # pragma: no cover - Scapy exception types vary.
+        return
+    if len(icmp_raw) < 8:
+        return
+
+    icmp_type = icmp_raw[0]
+    rest = icmp_raw[4:8]
+    icmp_fields: JSONObject = {
+        "type": icmp_type,
+        "code": icmp_raw[1],
+        "checksum": int.from_bytes(icmp_raw[2:4], "big"),
+        "rest_of_header": rest.hex(),
+    }
+    if icmp_type in _ICMPV4_EXTENDED_ECHO_TYPES:
+        icmp_fields["identifier"] = int.from_bytes(rest[0:2], "big")
+        icmp_fields["sequence"] = rest[2]
+    elif icmp_type in _ICMPV4_ID_SEQ_TYPES:
+        icmp_fields["identifier"] = int.from_bytes(rest[0:2], "big")
+        icmp_fields["sequence"] = int.from_bytes(rest[2:4], "big")
+    if icmp_type in _ICMPV4_EXTENSION_LENGTH_TYPES:
+        icmp_fields["length"] = rest[1]
+
+    # Find the icmp position in the normalized layer list and drop everything
+    # Scapy parsed after it; libcrafter keeps a single trailing payload.
+    icmp_index = layers.index("icmp")
+    icmp_key = _layer_key_at(layers, icmp_index)
+    for offset in range(icmp_index + 1, len(layers)):
+        fields.pop(_layer_key_at(layers, offset), None)
+    del layers[icmp_index + 1 :]
+
+    fields[icmp_key] = icmp_fields
+
+    body = icmp_raw[8:]
+    if body:
+        payload_key = _field_key(fields, "payload")
+        fields[payload_key] = _payload_fields_from_bytes(body)
+        layers.append("payload")
+
+
+def _scapy_layer(packet: Any, class_name: str) -> Any:
+    current = packet
+    while current is not None and current.__class__.__name__ != "NoPayload":
+        if current.__class__.__name__ == class_name:
+            return current
+        current = current.payload
+    return None
+
+
+def _layer_key_at(layers: Sequence[str], index: int) -> str:
+    """Recompute the normalized_fields key for the layer at ``index``.
+
+    Mirrors ``_field_key``: the first occurrence of a layer name uses the bare
+    name, later occurrences use ``name#N`` where N is the 1-based occurrence.
+    """
+
+    layer_name = layers[index]
+    occurrence = sum(1 for position in range(index + 1) if layers[position] == layer_name)
+    return layer_name if occurrence == 1 else f"{layer_name}#{occurrence}"
+
+
+def _payload_fields_from_bytes(body: bytes) -> JSONObject:
+    return {
+        "hex": body.hex(),
+        "length": len(body),
+        "ascii": body.decode("utf-8", "replace"),
+    }
 
 
 def _fill_icmp_rest_of_header(fields: JSONObject) -> None:

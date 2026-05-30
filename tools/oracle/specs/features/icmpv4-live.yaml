@@ -20,8 +20,16 @@ comparison_root: l3:ipv4
 layers:
   - ipv4
   - icmp
+# The intended live transport direction is live_exchange (see the per-entry
+# directions in live_matrix below). The offline byte/decode parity gate runs the
+# same materialized plans through the reference encode/decode and the libcrafter
+# decode bridge, so the top-level feature also advertises the two offline
+# comparison directions. This keeps the live coverage matrix selectable from the
+# offline runner without weakening any comparison.
 directions:
   - live_exchange
+  - reference_to_libcrafter
+  - libcrafter_to_reference
 strict_bytes: true
 malformed: false
 

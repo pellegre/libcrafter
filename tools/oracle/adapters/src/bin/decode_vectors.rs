@@ -199,7 +199,7 @@ fn decode_for_root(root: &str, bytes: &[u8]) -> ExampleResult<Packet> {
             Packet::decode_from_link(LinkType::NullLoopback, bytes)
         }
         "Raw" | "link:raw" => Packet::decode_from_link(LinkType::Raw, bytes),
-        "IP" | "l3:ipv4" => Packet::decode_from_l3(NetworkLayer::Ipv4, bytes),
+        "IP" | "l3:ipv4" | "l2:ipv4" => Packet::decode_from_l3(NetworkLayer::Ipv4, bytes),
         "IPv6" | "l3:ipv6" => Packet::decode_from_l3(NetworkLayer::Ipv6, bytes),
         "l3:raw" => Packet::decode_from_l3(NetworkLayer::Raw, bytes),
         _ => return Err(format!("unsupported root decoder: {root}").into()),
@@ -330,7 +330,7 @@ fn normalize_root_name(root: &str) -> &str {
     match root {
         "CookedLinux" | "link:linux-sll" => "link:linux-cooked",
         "Ether" => "link:ethernet",
-        "IP" => "l3:ipv4",
+        "IP" | "l2:ipv4" => "l3:ipv4",
         "IPv6" => "l3:ipv6",
         "Loopback" => "link:null-loopback",
         "Raw" => "link:raw",
