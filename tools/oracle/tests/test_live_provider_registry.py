@@ -21,7 +21,14 @@ from tools.lab.engine.model import (
 from tools.lab.engine.repo import RepoArchiveResult
 from tools.oracle.engine import bootstrap as oracle_bootstrap
 from tools.oracle.engine import cli
-from tools.oracle.engine.live import LiveCommandPlan, LiveEndpoint
+from tools.oracle.engine.live import (
+    LiveCommandPlan,
+    LiveEndpoint,
+    build_live_endpoint_batch_request,
+    dry_run_live_endpoint_batch_response,
+    live_endpoint_artifact_paths,
+    validate_live_endpoint_batch_contract,
+)
 from tools.oracle.engine.model import DecodedModel, PacketPlan, read_json
 from tools.oracle.engine.providers.hetzner import ORACLE_PRIVATE_GROUP
 from tools.oracle.engine.providers.qemu import (
@@ -667,6 +674,241 @@ class LiveProviderRegistryTest(unittest.TestCase):
                 and command.get("exit_code") != 0
             ]
             self.assertTrue(artifact_failures)
+
+
+_DHCP_DIRECTIONS = ("libcrafter_to_reference", "reference_to_libcrafter")
+_DHCP_SENDER_ROLE = {
+    "libcrafter_to_reference": "libcrafter",
+    "reference_to_libcrafter": "reference_backend",
+}
+
+
+def _ipv4_dhcp_plan(index: int) -> PacketPlan:
+    """An IPv4-root ``ipv4 / udp / dhcp`` plan carrying corpus/wire metadata.
+
+    DHCP flows through the same generic endpoint batch contract as every other
+    protocol: the live packet under test is an IPv4 packet carrying UDP 68->67
+    with a DHCP payload, rooted at ``l3:ipv4`` with no Ethernet frame.
+    """
+
+    return PacketPlan(
+        stack=["ipv4", "udp", "dhcp"],
+        fields={
+            "ipv4": {
+                "src": "192.0.2.10",
+                "dst": "198.51.100.10",
+                "identification": 4242,
+                "ttl": 64,
+                "flags": "none",
+                "protocol": "udp",
+            },
+            "udp": {"src_port": 68, "dst_port": 67},
+            "dhcp": {
+                "op": "bootrequest",
+                "flags": "none",
+                "options": ["message-type=discover", "end"],
+            },
+        },
+        profile="smoke",
+        seed=110,
+        index=index,
+        direction="live_exchange",
+        family="ipv4",
+        feature_tags=["ipv4", "udp", "dhcp", "dhcp_behavior"],
+        case="dhcp-discover",
+        strict_bytes=True,
+        metadata={
+            "plan_id": f"dhcp-discover-{index}",
+            "root": "l3:ipv4",
+            "root_decoder": "l3:ipv4",
+            "wire": {
+                "provider": "local-dry-run",
+                "compare_root": "l3:ipv4",
+                "mutable_fields": [],
+                "strict_bytes": True,
+            },
+            "corpus": {
+                "corpus_id": "dhcp-discover-corpus",
+                "packet_id": f"dhcp-packet-{index}",
+                "corpus_index": 0,
+                "packet_index": index,
+                "corpus_source": "generated",
+                "corpus_path": None,
+            },
+        },
+    )
+
+
+class DhcpLiveEndpointContractTest(unittest.TestCase):
+    """Cover live endpoint batch construction for IPv4-root DHCP.
+
+    The IPv4-root ``ipv4 / udp / dhcp`` stack must ride the existing generic
+    endpoint batch contract in both oracle directions; there is no DHCP-specific
+    live endpoint protocol. Live runs stay dry-run and never send packets.
+    """
+
+    _ENDPOINTS = {
+        "libcrafter": LiveEndpoint(
+            endpoint_id="local-dry-run-libcrafter",
+            role="libcrafter",
+            interface="dry-run0",
+            address="192.0.2.10",
+            ipv6_address="2001:db8:1::10",
+            metadata={"provider": "local-dry-run"},
+        ),
+        "reference_backend": LiveEndpoint(
+            endpoint_id="local-dry-run-reference",
+            role="reference_backend",
+            interface="dry-run1",
+            address="192.0.2.20",
+            ipv6_address="2001:db8:1::20",
+            metadata={"provider": "local-dry-run"},
+        ),
+    }
+
+    def _build_request(self, direction: str, endpoint_role: str = "libcrafter"):
+        plans = [_ipv4_dhcp_plan(11), _ipv4_dhcp_plan(12)]
+        peer_role = (
+            "reference_backend" if endpoint_role == "libcrafter" else "libcrafter"
+        )
+        endpoint = self._ENDPOINTS[endpoint_role]
+        peer = self._ENDPOINTS[peer_role]
+        artifact_paths = live_endpoint_artifact_paths(
+            output_dir="target/oracle/test-dhcp-live-endpoint",
+            direction=direction,
+            endpoint_role=endpoint.role,
+        )
+        request = build_live_endpoint_batch_request(
+            provider="local-dry-run",
+            backend="scapy",
+            seed=110,
+            profile="smoke",
+            packet_plans=plans,
+            direction=direction,
+            endpoint=endpoint,
+            peer=peer,
+            artifact_paths=artifact_paths,
+        )
+        return request, plans, artifact_paths
+
+    def test_request_carries_dhcp_packet_ids_and_ipv4_compare_root(self) -> None:
+        for direction in _DHCP_DIRECTIONS:
+            with self.subTest(direction=direction):
+                request, plans, _ = self._build_request(direction)
+
+                self.assertEqual(list(request.packet_plans), plans)
+                self.assertEqual(
+                    request.metadata["packet_ids"],
+                    ["dhcp-packet-11", "dhcp-packet-12"],
+                )
+                self.assertEqual(request.metadata["corpus_id"], "dhcp-discover-corpus")
+                packets = request.metadata["packets"]
+                self.assertEqual([packet["index"] for packet in packets], [11, 12])
+                self.assertEqual(
+                    [packet["packet_id"] for packet in packets],
+                    ["dhcp-packet-11", "dhcp-packet-12"],
+                )
+                self.assertTrue(
+                    all(
+                        packet["compare_root"] == "l3:ipv4" for packet in packets
+                    ),
+                    msg=f"DHCP live packets must compare at l3:ipv4 for {direction}",
+                )
+                # The packet is DHCP over UDP over IPv4: the capture match
+                # records the stack and an IPv4 + UDP BPF filter.
+                self.assertTrue(
+                    all(
+                        packet["capture_match"]["layers"] == ["ipv4", "udp", "dhcp"]
+                        for packet in packets
+                    )
+                )
+                self.assertTrue(
+                    all(
+                        packet["capture_match"]["family"] == "ipv4"
+                        for packet in packets
+                    )
+                )
+                self.assertTrue(
+                    all(
+                        packet["capture_match"]["protocol"] == "udp"
+                        for packet in packets
+                    )
+                )
+
+    def test_request_assigns_sender_receiver_roles_and_artifacts(self) -> None:
+        # Build the request from libcrafter's perspective in each direction so
+        # the sender (libcrafter_to_reference) and receiver
+        # (reference_to_libcrafter) role assignments are both covered.
+        for direction in _DHCP_DIRECTIONS:
+            with self.subTest(direction=direction):
+                request, _, artifact_paths = self._build_request(
+                    direction, endpoint_role="libcrafter"
+                )
+                expected_sender = _DHCP_SENDER_ROLE[direction]
+
+                self.assertEqual(request.endpoint_role, "libcrafter")
+                self.assertEqual(request.peer_role, "reference_backend")
+                self.assertEqual(request.direction, direction)
+                # The expected sender role is recorded per packet so each side
+                # knows whether it sends or captures.
+                self.assertTrue(
+                    all(
+                        packet["expected_sender_role"] == expected_sender
+                        for packet in request.metadata["packets"]
+                    )
+                )
+                self.assertEqual(request.artifact_paths, artifact_paths)
+                self.assertIn(
+                    f"artifacts/{direction}/libcrafter",
+                    artifact_paths["root"],
+                )
+                self.assertTrue(artifact_paths["response"].endswith("response.json"))
+                self.assertTrue(
+                    artifact_paths["decoded_models"].endswith("decoded-models.json")
+                )
+
+    def test_dry_run_response_validates_against_batch_contract(self) -> None:
+        # Cover libcrafter as the sending endpoint (libcrafter_to_reference) and
+        # as the receiving endpoint (reference_to_libcrafter); the dry-run
+        # response must satisfy the decoded-model batch contract in both phases.
+        phases = {
+            "libcrafter_to_reference": "send_root",
+            "reference_to_libcrafter": "capture_root",
+        }
+        for direction, phase_root_key in phases.items():
+            with self.subTest(direction=direction):
+                request, plans, _ = self._build_request(
+                    direction, endpoint_role="libcrafter"
+                )
+
+                response = dry_run_live_endpoint_batch_response(request)
+
+                self.assertEqual(
+                    [status.index for status in response.per_index_status],
+                    [plan.index for plan in plans],
+                )
+                self.assertEqual(response.sent_count, 0)
+                self.assertEqual(response.received_count, 0)
+                self.assertEqual(response.decoded_models, [])
+                self.assertTrue(response.metadata["no_live_packets_sent"])
+                self.assertFalse(response.metadata["live_packet_exchange"])
+
+                check = validate_live_endpoint_batch_contract(
+                    request, response, dry_run=True
+                )
+                self.assertTrue(
+                    check.passed,
+                    msg=f"DHCP dry-run batch contract failed: {check.errors}",
+                )
+                # Each per-index status reports the IPv4 compare root for the
+                # phase libcrafter plays in this direction.
+                for status in response.per_index_status:
+                    self.assertEqual(getattr(status, phase_root_key), "l3:ipv4")
+                    self.assertEqual(status.metadata["compare_root"], "l3:ipv4")
+                    self.assertEqual(
+                        status.metadata["expected_sender_role"],
+                        _DHCP_SENDER_ROLE[direction],
+                    )
 
 
 class _FakeRecord:
