@@ -621,8 +621,27 @@ coverage_cases:
 
 # supported_cases records the oracle directions and byte policy each case runs
 # under. Cases without a writer/reader/file_format entry run as offline
-# materialize-and-compare cases; pcap and live coverage is layered in later
-# plan steps.
+# materialize-and-compare cases.
+#
+# Live and pcap eligibility are derived from the byte_policy below, never from a
+# hardcoded case list. Live exchange is the two-machine packet writer/capture
+# comparison (one endpoint writes the packet, the other captures and decodes
+# it), so it can only validate cases whose declared wire bytes are the bytes
+# that travel:
+#   - strict_bytes cases are live-eligible in both libcrafter_to_reference and
+#     reference_to_libcrafter directions (the endpoint adapters send and decode
+#     the deterministic uncompressed encode);
+#   - normalized cases (compressed names, sorted SvcParams, minimal bitmaps) are
+#     live-INELIGIBLE -- libcrafter re-encodes the bytes, so only the decoded
+#     model agrees, which a live byte comparison cannot assert. They are skipped
+#     with wire_normalized_only;
+#   - structured_error (malformed) cases are live-INELIGIBLE and kept out of live
+#     exchange entirely, skipped with wire_structured_error.
+# The live/wire eligibility gate lives in tools/oracle/engine/corpus.py
+# (_WIRE_INELIGIBLE_BYTE_POLICIES), mirroring the pcap byte-policy gate, and is
+# driven by case_byte_policy_index() over this block. Real packet exchange stays
+# opt-in behind --confirm-live-run and the protected provider workflow; ordinary
+# acceptance is dry-run only.
 supported_cases:
   - name: dns-query
     directions:

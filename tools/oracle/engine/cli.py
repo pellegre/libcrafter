@@ -591,6 +591,26 @@ def _offline_corpus_plans(
     return plans, selected_specs, metadata
 
 
+def _live_case_byte_policies() -> dict[str, str]:
+    """Resolve spec-declared case byte policies for live/wire eligibility.
+
+    Live exchange is a two-machine packet writer/capture comparison: a
+    ``normalized`` case only agrees on the decoded model (not the declared wire
+    bytes) and a ``structured_error`` case is malformed input, so both are
+    marked live-ineligible with an explicit skip reason. Loaded from the same
+    spec ``supported_cases`` block the corpus already reads, so live selection
+    stays data-driven; returns an empty map if specs fail to load, leaving prior
+    (capability-only) wire eligibility behavior intact.
+    """
+
+    try:
+        from .generator import case_byte_policy_index
+
+        return case_byte_policy_index()
+    except Exception:
+        return {}
+
+
 def _live_corpus_plans(
     args: argparse.Namespace,
     *,
@@ -638,6 +658,7 @@ def _live_corpus_plans(
             packets=packets,
             provider_capabilities=provider_capabilities_object,
             wire_provider=wire_provider,
+            case_byte_policies=_live_case_byte_policies(),
         )
     if args.index is not None:
         packets = [packet for packet in packets if packet.plan.index == args.index]
