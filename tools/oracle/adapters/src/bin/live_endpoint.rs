@@ -247,20 +247,35 @@ fn run_sender(
     mode: RunMode,
     prepared: &[PreparedPacket],
 ) -> ExampleResult<Value> {
-    let mut packets = prepared
-        .iter()
-        .map(|prepared| prepared.packet.clone())
-        .collect::<Vec<_>>();
     let ethernet_addresses = live_ethernet_addresses(request)?;
-    let wraps_l3_with_ethernet = ethernet_addresses.is_some();
-    let send_mode = if let Some((source, destination)) = ethernet_addresses {
-        packets = packets
-            .into_iter()
-            .map(|packet| ethernet_wrap_packet(packet, source, destination))
-            .collect();
-        SendMode::LinkLayer
-    } else {
-        common_send_mode(prepared)?
+    let (packets, packet_wrapped_with_ethernet, send_mode) = match ethernet_addresses {
+        Some((source, destination)) => {
+            let mut wrapped = Vec::with_capacity(prepared.len());
+            let mut packets = Vec::with_capacity(prepared.len());
+            for prepared_packet in prepared {
+                let packet_send_mode = send_mode_for_root(&prepared_packet.root)?;
+                if packet_send_mode == SendMode::NetworkLayer {
+                    packets.push(ethernet_wrap_packet(
+                        prepared_packet.packet.clone(),
+                        source,
+                        destination,
+                    ));
+                    wrapped.push(true);
+                } else {
+                    packets.push(prepared_packet.packet.clone());
+                    wrapped.push(false);
+                }
+            }
+            (packets, wrapped, SendMode::LinkLayer)
+        }
+        None => (
+            prepared
+                .iter()
+                .map(|prepared| prepared.packet.clone())
+                .collect::<Vec<_>>(),
+            vec![false; prepared.len()],
+            common_send_mode(prepared)?,
+        ),
     };
     let mut send_options = SendOptions::new().iface(request.interface.clone());
     send_options = match send_mode {
@@ -293,11 +308,12 @@ fn run_sender(
         let send_mode_label = send_mode_label(attempts[0].plan().requested_mode());
         let byte_length = attempts[0].plan().len();
         let plan_send_mode = send_mode_for_root(&prepared_packet.root)?;
-        let send_root = if wraps_l3_with_ethernet && plan_send_mode == SendMode::NetworkLayer {
-            "link:ethernet"
-        } else {
-            prepared_packet.root.as_str()
-        };
+        let send_root =
+            if packet_wrapped_with_ethernet[offset] && plan_send_mode == SendMode::NetworkLayer {
+                "link:ethernet"
+            } else {
+                prepared_packet.root.as_str()
+            };
         send_reports.push(json!({
             "index": prepared_packet.index,
             "attempts": attempts.len(),
@@ -990,6 +1006,10 @@ fn normalize_layer_name(name: &str) -> &str {
 
 fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value>> {
     match name {
+        "ethernet" => layer
+            .as_any()
+            .downcast_ref::<Ethernet>()
+            .map(ethernet_fields),
         "ipv6" => layer.as_any().downcast_ref::<Ipv6>().map(ipv6_fields),
         "tcp" => layer.as_any().downcast_ref::<Tcp>().map(tcp_fields),
         "icmp" => layer.as_any().downcast_ref::<Icmp>().map(icmp_fields),
@@ -997,6 +1017,20 @@ fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value
         "dns" => layer.as_any().downcast_ref::<Dns>().map(dns_fields),
         _ => None,
     }
+}
+
+fn ethernet_fields(layer: &Ethernet) -> Map<String, Value> {
+    let mut fields = Map::new();
+    if let Some(value) = layer.destination() {
+        fields.insert("dst".to_string(), json!(value.to_string()));
+    }
+    if let Some(value) = layer.source() {
+        fields.insert("src".to_string(), json!(value.to_string()));
+    }
+    if let Some(value) = layer.ethertype_value() {
+        fields.insert("ethertype".to_string(), json!(value));
+    }
+    fields
 }
 
 fn ipv6_fields(layer: &Ipv6) -> Map<String, Value> {
@@ -1252,6 +1286,7 @@ fn build_packet(plan: &Value) -> ExampleResult<Packet> {
 fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
     match layer {
         "payload" | "raw" => Ok(Box::new(Raw::from_bytes(payload_bytes(plan)?))),
+        "ethernet" => Ok(Box::new(ethernet_layer(plan)?)),
         "ipv4" => Ok(Box::new(ipv4_layer(plan)?)),
         "ipv6" => Ok(Box::new(ipv6_layer(plan)?)),
         "udp" => Ok(Box::new(udp_layer(plan)?)),
@@ -1262,6 +1297,14 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "dhcp" => Ok(Box::new(dhcp_layer(plan)?)),
         _ => Err(format!("unsupported libcrafter live materialization layer: {layer}").into()),
     }
+}
+
+fn ethernet_layer(plan: &Value) -> ExampleResult<Ethernet> {
+    let fields = layer_fields(plan, "ethernet")?;
+    Ok(Ethernet::new()
+        .src_str(text_required(fields, &["src"])?)?
+        .dst_str(text_required(fields, &["dst"])?)?
+        .ethertype(ethertype_value(required(fields, &["ethertype", "type"])?)?))
 }
 
 fn ipv4_layer(plan: &Value) -> ExampleResult<Ipv4> {
@@ -1671,6 +1714,7 @@ fn string_array(value: Option<&Value>) -> Option<Vec<String>> {
 
 fn canonical_layer(layer: &str) -> String {
     match layer.to_ascii_lowercase().as_str() {
+        "ether" => "ethernet".to_string(),
         "ip" => "ipv4".to_string(),
         "raw" => "payload".to_string(),
         value => value.to_string(),
@@ -1705,6 +1749,20 @@ fn ip_protocol(value: &Value) -> ExampleResult<u8> {
         };
     }
     u8_value(value)
+}
+
+fn ethertype_value(value: &Value) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().as_str() {
+            "arp" => Ok(ETHERTYPE_ARP),
+            "experimental" | "unknown" => Ok(0x9000),
+            "ipv4" | "ip" => Ok(ETHERTYPE_IPV4),
+            "ipv6" => Ok(ETHERTYPE_IPV6),
+            "vlan" => Ok(ETHERTYPE_VLAN),
+            _ => u16_text(text),
+        };
+    }
+    u16_value(value)
 }
 
 fn ipv6_next_header(value: &Value) -> ExampleResult<u8> {
