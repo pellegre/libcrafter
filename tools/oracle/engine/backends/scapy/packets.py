@@ -92,6 +92,10 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "hwtype",
         "protocol_type",
         "ptype",
+        "hardware_length",
+        "hwlen",
+        "protocol_length",
+        "plen",
         "opcode",
         "op",
         "operation",
@@ -419,6 +423,10 @@ def _arp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
         ),
         "ptype": _ethertype_value(_required_field(arp_fields, "arp", "protocol_type", "ptype")),
     }
+    if "hardware_length" in arp_fields or "hwlen" in arp_fields:
+        kwargs["hwlen"] = _int(_optional_field(arp_fields, "hardware_length", "hwlen"), 0)
+    if "protocol_length" in arp_fields or "plen" in arp_fields:
+        kwargs["plen"] = _int(_optional_field(arp_fields, "protocol_length", "plen"), 0)
     return scapy_all.ARP(**kwargs)
 
 

@@ -228,6 +228,48 @@ fields:
       (ci/wild/boundary/fuzz) additionally sample the registry-backed known
       operation codepoints and unknown raw numeric values, all of which
       round-trip as raw u16 opcodes through both backends.
+  - name: sender_hardware_address
+    type: mac
+    required: true
+    domains:
+      - documentation_mac
+      - zero
+    note: >-
+      Sampled sender hardware address. The smoke profile keeps the standard
+      6-octet documentation MAC (RFC 7042 00:00:5e:00:53:xx); richer profiles
+      additionally sample the all-zero hardware address (RFC 5227 probe form).
+      Variable-length and broadcast byte vectors are catalogued under
+      address_fields and wired into materialization by later plan steps.
+  - name: sender_protocol_address
+    type: ipv4
+    required: true
+    domains:
+      - documentation_ipv4
+      - zero
+    note: >-
+      Sampled sender protocol address. The smoke profile keeps a 4-octet
+      documentation IPv4 (RFC 5737); richer profiles additionally sample the
+      all-zero protocol address (RFC 5227 probe form).
+  - name: target_hardware_address
+    type: mac
+    required: true
+    domains:
+      - documentation_mac
+      - zero
+      - broadcast
+    note: >-
+      Sampled target hardware address. The smoke profile keeps the standard
+      6-octet documentation MAC; richer profiles additionally sample the
+      all-zero target (request convention) and all-ones broadcast hardware
+      address.
+  - name: target_protocol_address
+    type: ipv4
+    required: true
+    domains:
+      - documentation_ipv4
+    note: >-
+      Sampled target protocol address as a 4-octet documentation IPv4
+      (RFC 5737).
 
 address_fields:
   source: RFC 826 generic format and target/arp-rfc/scope.md
@@ -241,12 +283,15 @@ address_fields:
     broadcast/zero, and nonstandard zero-/short-/long-length vectors — so
     oracle coverage describes variable address lengths and unknown address
     families beyond the MAC and IPv4 helpers. All byte vectors use only
-    documentation address space and carry no real network identifiers. These
-    cases are described here as data; the smoke generator keeps the standard
-    6-octet MAC / 4-octet IPv4 default so the ethernet_arp golden cases stay
-    byte-stable, and the variable-length byte vectors are wired into
-    materialization by later plan steps while staying raw-preserving (no value
-    is rejected or remapped).
+    documentation address space and carry no real network identifiers. The
+    standard 6-octet MAC / 4-octet IPv4 forms and the materializer-safe
+    broadcast/all-zero MAC and all-zero IPv4 forms are sampled directly through
+    the four address fields above (standard only under smoke so the
+    ethernet_arp golden cases stay byte-stable; broadcast/zero added for the
+    richer ci/wild/boundary/fuzz profiles). The remaining nonstandard
+    short-/empty-/long-length byte vectors below are catalogued here as data
+    and are wired into materialization by later plan steps, staying
+    raw-preserving (no value is rejected or remapped).
   fields:
     - name: sender_hardware_address
       kind: hardware
