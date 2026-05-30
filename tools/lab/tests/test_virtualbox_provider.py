@@ -100,7 +100,11 @@ class VirtualBoxProviderCapabilityTest(unittest.TestCase):
         self.assertFalse(capabilities["ipv6_unicast"])
         self.assertTrue(capabilities["ipv4"])
         self.assertFalse(capabilities["ipv6"])
-        self.assertFalse(capabilities["l2"])
+        self.assertTrue(capabilities["l2"])
+        self.assertTrue(capabilities["link_layer_send"])
+        self.assertTrue(capabilities["link_layer_capture"])
+        self.assertTrue(capabilities["broadcast"])
+        self.assertTrue(capabilities["provider_mac_known"])
         self.assertTrue(capabilities["controlled_service"])
         self.assertEqual(capabilities["wire_policy"], VIRTUALBOX_WIRE_POLICY)
 

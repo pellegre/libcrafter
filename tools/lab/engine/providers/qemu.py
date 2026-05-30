@@ -123,16 +123,16 @@ def qemu_default_provider_capabilities(
     dry_run: bool,
     source: str = "planned-defaults",
 ) -> JSONObject:
-    """Return conservative QEMU private-network capability defaults."""
+    """Return QEMU private-network capability defaults for same-segment VMs."""
 
     defaults: JSONObject = {
         "live_packet_exchange": True,
         "ipv4_unicast": True,
         "ipv6_unicast": False,
-        "link_layer_send": False,
-        "link_layer_capture": False,
-        "broadcast": False,
-        "provider_mac_known": False,
+        "link_layer_send": True,
+        "link_layer_capture": True,
+        "broadcast": True,
+        "provider_mac_known": True,
         "controlled_services": True,
         "controlled_router": False,
         "capability_report_artifact": CAPABILITY_REPORT_ARTIFACT,
@@ -149,24 +149,24 @@ def qemu_default_provider_capabilities(
                 "reason": "QEMU private endpoints are currently IPv4-only",
             },
             "link_layer_send": {
-                "status": "not_proven",
-                "value": False,
-                "reason": "link-layer frame preservation is not assumed by default",
+                "status": "planned" if dry_run else "default",
+                "value": True,
+                "reason": "QEMU private endpoints send raw Ethernet frames on the VM segment",
             },
             "link_layer_capture": {
-                "status": "not_proven",
-                "value": False,
-                "reason": "link-layer capture preservation is not assumed by default",
+                "status": "planned" if dry_run else "default",
+                "value": True,
+                "reason": "QEMU private endpoints capture Ethernet frames on the VM segment",
             },
             "broadcast": {
-                "status": "not_proven",
-                "value": False,
-                "reason": "broadcast delivery is not part of the QEMU smoke profile",
+                "status": "planned" if dry_run else "default",
+                "value": True,
+                "reason": "QEMU socket-mcast private networking carries same-segment broadcast traffic",
             },
             "provider_mac_known": {
-                "status": "manifest_required",
-                "value": False,
-                "reason": "real endpoint discovery records private interface MACs",
+                "status": "planned" if dry_run else "manifest_required",
+                "value": True,
+                "reason": "wire endpoint manifests record private interface MACs before packet exchange",
             },
             "controlled_services": {
                 "status": "planned" if dry_run else "default",
@@ -916,4 +916,3 @@ def _command_models(endpoint_plan: JSONObject) -> list[LabCommandPlan]:
 
 
 QEMU_LAB_PROVIDER_ADAPTER: LabProviderAdapter = QemuLabProviderAdapter()
-
