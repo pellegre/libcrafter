@@ -91,6 +91,7 @@ Source read for this matrix:
 | Combined root + escaped + non-UTF-8 names in one message (root question owner, trailing-dot answer, literal dot/backslash CNAME target, `\000`/`\255` PTR target) | `dns-name-root-escaped` | both | strict_bytes (header + section counts compared) | no (Scapy high-level flattens `\DDD`/`\.`/`\\` to literal text on encode, so the reference encode is not byte-faithful; libcrafter re-encodes the exact octets, so the `libcrafter_to_reference` bytes are faithful and the `crafter` name tests carry the lossless byte-preserving assertions) | partial (faithful only via libcrafter encode) |
 | Compressed-name decode (pointer to earlier name) | `dns-name-compressed` | reference_to_libcrafter | normalized: libcrafter emits the uncompressed name on re-encode, so the decoded `DnsName` model must agree while bytes differ from the compressed Scapy input | partial (Scapy compresses; raw bytes pin the pointer) | yes |
 | Explicit compression pointers across owner names and embedded RDATA <domain-name> fields (compressed question/answer owner names plus pointers in CNAME, NS, PTR, MX exchange, SOA MNAME/RNAME, SRV target, RRSIG signer, NSEC next-domain, and SVCB/HTTPS target RDATA, all built by the Scapy raw helper) | `dns-compressed-names` | reference_to_libcrafter | normalized: libcrafter re-encodes every name uncompressed, so the decoded `DnsName` model agrees while bytes differ from the raw pointer input | no (Scapy raw DNS helper pins the `0xC0` pointers; high-level fields will not emit them) | yes |
+| Compressed NS/CNAME/PTR name records (owner and embedded RDATA names are `0xC0` pointers in the Scapy raw bytes) | `dns-name-records-compressed` | reference_to_libcrafter | normalized: libcrafter re-encodes every name uncompressed, so the decoded `DnsRecordData::Name` model agrees with `dns-name-records` while bytes differ from the raw pointer input | no (Scapy raw DNS helper pins the pointers) | yes |
 | Uncompressed deterministic encode (no compression by default) | `crafter-dns-name-uncompressed` | libcrafter_to_reference | strict_bytes | yes | no |
 
 ## 3. Questions
@@ -115,6 +116,7 @@ Source read for this matrix:
 | MX (type 15) preference + exchange | `dns-record-mx` | both | strict_bytes | yes | no |
 | TXT (type 16) char-strings (single, multiple, empty, 255-byte) | `dns-record-txt` | both | strict_bytes | yes | no |
 | Existing combined response (A/AAAA/CNAME) | `dns-response-records` (existing) | both | strict_bytes | yes | no |
+| Combined NS/CNAME/PTR name records (`DnsRecordData::Name`, root-adjacent CNAME target, reverse-DNS PTR owner) | `dns-name-records` | both | strict_bytes | yes | no |
 
 ## 5. SOA / SRV
 

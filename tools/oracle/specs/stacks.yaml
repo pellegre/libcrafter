@@ -238,6 +238,8 @@ stacks:
       - dns-record-a
       - dns-record-aaaa
       - dns-a-aaaa-records
+      - dns-name-records
+      - dns-name-records-compressed
       - dns-record-ns
       - dns-record-cname
       - dns-record-ptr
