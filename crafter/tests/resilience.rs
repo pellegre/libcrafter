@@ -342,6 +342,8 @@ fn required_malformed_families() -> &'static [&'static str] {
         "dns label length overrun",
         "dns edns option length overrun",
         "dns edns truncated option header",
+        "dns nsec bitmap window length",
+        "dns nsec3 salt length overrun",
         "short dhcp packet",
         "missing dhcp magic cookie",
         "truncated dhcp option",
@@ -395,6 +397,8 @@ fn malformed_family(name: &str) -> Option<&'static str> {
         "dns-label-length-overrun" => Some("dns label length overrun"),
         "dns-edns-opt-option-length-overrun" => Some("dns edns option length overrun"),
         "dns-edns-opt-truncated-option-header" => Some("dns edns truncated option header"),
+        "dns-nsec-bitmap-window-zero-length" => Some("dns nsec bitmap window length"),
+        "dns-nsec3-salt-length-overrun" => Some("dns nsec3 salt length overrun"),
         "dhcp-short-fixed-header" => Some("short dhcp packet"),
         "dhcp-missing-magic-cookie" => Some("missing dhcp magic cookie"),
         "dhcp-truncated-option" | "dhcp-overload-file-truncated-option" => {

@@ -530,6 +530,193 @@ pub fn edns_option_code_name(code: u16) -> Option<&'static str> {
     })
 }
 
+/// A DNSSEC "Type Bit Maps" field: the set of RR types present at an owner
+/// name, as carried by NSEC (RFC 4034 Section 4.1.2) and NSEC3 (RFC 5155
+/// Section 3.2.1).
+///
+/// On the wire the field is a sequence of `(Window Block #, Bitmap Length,
+/// Bitmap)` triples in increasing window order. Each window covers 256 RR
+/// types (the low 8 bits of the type for that window block); a set bit means
+/// the corresponding type is present.
+///
+/// This is a pure wire structure: it preserves the exact set of present type
+/// values, including unknown or unassigned codepoints, and re-encodes them
+/// deterministically. It performs no resolver, validation, or trust logic.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct DnsTypeBitmaps {
+    /// Present RR type values, kept sorted and de-duplicated so encoding is
+    /// deterministic regardless of construction order.
+    types: Vec<u16>,
+}
+
+impl DnsTypeBitmaps {
+    /// Build a type-bitmaps field from an explicit set of RR type values.
+    ///
+    /// Duplicate values are collapsed and the set is sorted so the encoded
+    /// windows are deterministic. Unknown or unassigned type values are
+    /// preserved verbatim; nothing is rejected here.
+    pub fn from_types<I>(types: I) -> Self
+    where
+        I: IntoIterator<Item = u16>,
+    {
+        let mut types: Vec<u16> = types.into_iter().collect();
+        types.sort_unstable();
+        types.dedup();
+        Self { types }
+    }
+
+    /// The present RR type values, sorted ascending.
+    pub fn types(&self) -> &[u16] {
+        &self.types
+    }
+
+    /// True when the given RR type value is marked present.
+    pub fn contains(&self, record_type: u16) -> bool {
+        self.types.binary_search(&record_type).is_ok()
+    }
+
+    fn encoded_len(&self) -> usize {
+        let mut len = 0usize;
+        let mut window = None;
+        let mut max_low = 0u16;
+        for &record_type in &self.types {
+            let block = (record_type >> 8) as u8;
+            let low = record_type & 0xff;
+            match window {
+                Some(current) if current == block => {
+                    max_low = max_low.max(low);
+                }
+                _ => {
+                    if window.is_some() {
+                        len += 2 + (max_low as usize / 8) + 1;
+                    }
+                    window = Some(block);
+                    max_low = low;
+                }
+            }
+        }
+        if window.is_some() {
+            len += 2 + (max_low as usize / 8) + 1;
+        }
+        len
+    }
+
+    /// Serialize the type-bitmaps field to wire form: windows in increasing
+    /// order, each with the minimal bitmap length (no trailing zero octets),
+    /// per RFC 4034 Section 4.1.2.
+    fn encode(&self, out: &mut Vec<u8>) {
+        // Group present types by their high octet (window block), tracking the
+        // highest low octet per window so the bitmap length is minimal.
+        let mut window: Option<u8> = None;
+        let mut bitmap = [0u8; 32];
+        let mut max_low = 0u16;
+
+        let flush = |window: u8, bitmap: &[u8; 32], max_low: u16, out: &mut Vec<u8>| {
+            let length = (max_low as usize / 8) + 1;
+            out.push(window);
+            out.push(length as u8);
+            out.extend_from_slice(&bitmap[..length]);
+        };
+
+        for &record_type in &self.types {
+            let block = (record_type >> 8) as u8;
+            let low = record_type & 0xff;
+            match window {
+                Some(current) if current == block => {}
+                _ => {
+                    if let Some(current) = window {
+                        flush(current, &bitmap, max_low, out);
+                    }
+                    window = Some(block);
+                    bitmap = [0u8; 32];
+                    max_low = 0;
+                }
+            }
+            bitmap[(low / 8) as usize] |= 0x80 >> (low % 8);
+            max_low = max_low.max(low);
+        }
+        if let Some(current) = window {
+            flush(current, &bitmap, max_low, out);
+        }
+    }
+
+    /// Parse a type-bitmaps field from wire bytes (`rdata`), rejecting malformed
+    /// window numbers, bitmap lengths, and truncated bitmaps with structured
+    /// errors (RFC 4034 Section 4.1.2; RFC 5155 Section 3.2.1).
+    fn decode(field: &'static str, rdata: &[u8]) -> Result<Self> {
+        let mut types: Vec<u16> = Vec::new();
+        let mut offset = 0usize;
+        let mut last_window: Option<u8> = None;
+
+        while offset < rdata.len() {
+            if offset + 2 > rdata.len() {
+                // A window number with no bitmap-length octet is truncated.
+                return Err(CrafterError::buffer_too_short(
+                    field,
+                    offset + 2,
+                    rdata.len(),
+                ));
+            }
+            let window = rdata[offset];
+            let length = rdata[offset + 1] as usize;
+            // Bitmap Length is "from 1 to 32" (RFC 4034 Section 4.1.2): a
+            // zero-length or over-long window block is malformed.
+            if length == 0 || length > 32 {
+                return Err(CrafterError::invalid_field_value(
+                    field,
+                    "DNSSEC type bitmap window length must be 1..=32",
+                ));
+            }
+            // Blocks are present in increasing numerical order; an out-of-order
+            // or repeated window is malformed.
+            if let Some(previous) = last_window {
+                if window <= previous {
+                    return Err(CrafterError::invalid_field_value(
+                        field,
+                        "DNSSEC type bitmap windows must be strictly increasing",
+                    ));
+                }
+            }
+            last_window = Some(window);
+
+            let bitmap_start = offset + 2;
+            let bitmap_end = bitmap_start + length;
+            if bitmap_end > rdata.len() {
+                return Err(CrafterError::buffer_too_short(
+                    field,
+                    bitmap_end,
+                    rdata.len(),
+                ));
+            }
+            let bitmap = &rdata[bitmap_start..bitmap_end];
+            // A minimal encoding never carries a trailing all-zero octet; treat
+            // a zero high octet as malformed so re-encoding stays deterministic.
+            if let Some(&last) = bitmap.last() {
+                if last == 0 {
+                    return Err(CrafterError::invalid_field_value(
+                        field,
+                        "DNSSEC type bitmap has a trailing zero octet",
+                    ));
+                }
+            }
+            for (byte_index, &byte) in bitmap.iter().enumerate() {
+                let mut bits = byte;
+                while bits != 0 {
+                    let bit = bits.leading_zeros() as u16;
+                    let low = (byte_index as u16) * 8 + bit;
+                    let record_type = ((window as u16) << 8) | low;
+                    types.push(record_type);
+                    bits &= !(0x80u8 >> bit);
+                }
+            }
+            offset = bitmap_end;
+        }
+
+        // Types are produced in ascending order already; keep the invariant.
+        Ok(Self { types })
+    }
+}
+
 /// DNS resource record data for common record types.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DnsRecordData {
@@ -582,6 +769,80 @@ pub enum DnsRecordData {
     /// class and TTL meaning; build with [`DnsRecord::opt`] and inspect with the
     /// `edns_*` accessors on [`DnsRecord`].
     Opt(Vec<EdnsOption>),
+    /// Delegation Signer (DS) data (RFC 4034 Section 5.1). Algorithm and digest
+    /// type stay raw numeric fields; the digest is opaque wire bytes and is not
+    /// cryptographically validated.
+    Ds {
+        /// Key Tag of the referenced DNSKEY (network byte order).
+        key_tag: u16,
+        /// DNSSEC algorithm number of the referenced DNSKEY.
+        algorithm: u8,
+        /// Digest Type identifying the digest algorithm.
+        digest_type: u8,
+        /// Digest bytes, carried verbatim.
+        digest: Vec<u8>,
+    },
+    /// DNSKEY public-key data (RFC 4034 Section 2.1). Flags and algorithm stay
+    /// raw numeric fields; the public key is opaque wire bytes and is not
+    /// cryptographically validated.
+    Dnskey {
+        /// 16-bit Flags field (for example the Zone Key and SEP bits).
+        flags: u16,
+        /// Protocol field (MUST be 3 per RFC 4034, but carried verbatim).
+        protocol: u8,
+        /// DNSSEC algorithm number.
+        algorithm: u8,
+        /// Public key bytes, carried verbatim.
+        public_key: Vec<u8>,
+    },
+    /// Resource Record Signature (RRSIG) data (RFC 4034 Section 3.1). The
+    /// signature bytes are opaque and are not cryptographically validated; the
+    /// signer's name is emitted uncompressed (Section 3.1.7).
+    Rrsig {
+        /// RR type covered by this signature.
+        type_covered: u16,
+        /// DNSSEC algorithm number.
+        algorithm: u8,
+        /// Number of labels in the original owner name.
+        labels: u8,
+        /// Original TTL of the covered RRset, in seconds.
+        original_ttl: u32,
+        /// Signature expiration time (seconds since the Unix epoch).
+        signature_expiration: u32,
+        /// Signature inception time (seconds since the Unix epoch).
+        signature_inception: u32,
+        /// Key Tag of the DNSKEY that made the signature.
+        key_tag: u16,
+        /// Signer's Name (emitted uncompressed per RFC 4034 Section 3.1.7).
+        signer_name: DnsName,
+        /// Signature bytes, carried verbatim.
+        signature: Vec<u8>,
+    },
+    /// Next Secure (NSEC) data (RFC 4034 Section 4.1). The next domain name is
+    /// emitted uncompressed (Section 6.2).
+    Nsec {
+        /// Next owner name in canonical ordering (emitted uncompressed).
+        next_domain_name: DnsName,
+        /// Type Bit Maps: the RR types present at the owner name.
+        type_bitmaps: DnsTypeBitmaps,
+    },
+    /// Next Secure v3 (NSEC3) data (RFC 5155 Section 3.2). Hash algorithm and
+    /// flags stay raw numeric fields; the salt and next hashed owner name are
+    /// opaque wire bytes.
+    Nsec3 {
+        /// Hash Algorithm number.
+        hash_algorithm: u8,
+        /// Flags field (the Opt-Out flag is the least significant bit).
+        flags: u8,
+        /// Iterations: additional hash rounds.
+        iterations: u16,
+        /// Salt bytes, carried verbatim (may be empty).
+        salt: Vec<u8>,
+        /// Next Hashed Owner Name: the unmodified binary hash value.
+        next_hashed_owner_name: Vec<u8>,
+        /// Type Bit Maps: the RR types present at the original owner name.
+        type_bitmaps: DnsTypeBitmaps,
+    },
     /// Unknown or caller-defined record payload bytes.
     Raw(Vec<u8>),
 }
@@ -606,6 +867,11 @@ impl DnsRecordData {
             Self::Srv { .. } => Some(DNS_TYPE_SRV),
             Self::Txt(_) => Some(DNS_TYPE_TXT),
             Self::Opt(_) => Some(DNS_TYPE_OPT),
+            Self::Ds { .. } => Some(DNS_TYPE_DS),
+            Self::Dnskey { .. } => Some(DNS_TYPE_DNSKEY),
+            Self::Rrsig { .. } => Some(DNS_TYPE_RRSIG),
+            Self::Nsec { .. } => Some(DNS_TYPE_NSEC),
+            Self::Nsec3 { .. } => Some(DNS_TYPE_NSEC3),
             Self::Name(_) | Self::Raw(_) => None,
         }
     }
@@ -620,6 +886,23 @@ impl DnsRecordData {
             Self::Srv { target, .. } => 6 + target.encoded_len(),
             Self::Txt(strings) => strings.iter().map(|value| 1 + value.len()).sum(),
             Self::Opt(options) => options.iter().map(EdnsOption::encoded_len).sum(),
+            Self::Ds { digest, .. } => 4 + digest.len(),
+            Self::Dnskey { public_key, .. } => 4 + public_key.len(),
+            Self::Rrsig {
+                signer_name,
+                signature,
+                ..
+            } => 18 + signer_name.encoded_len() + signature.len(),
+            Self::Nsec {
+                next_domain_name,
+                type_bitmaps,
+            } => next_domain_name.encoded_len() + type_bitmaps.encoded_len(),
+            Self::Nsec3 {
+                salt,
+                next_hashed_owner_name,
+                type_bitmaps,
+                ..
+            } => 5 + salt.len() + 1 + next_hashed_owner_name.len() + type_bitmaps.encoded_len(),
             Self::Raw(bytes) => bytes.len(),
         }
     }
@@ -689,6 +972,89 @@ impl DnsRecordData {
                 for option in options {
                     option.encode(out)?;
                 }
+            }
+            Self::Ds {
+                key_tag,
+                algorithm,
+                digest_type,
+                digest,
+            } => {
+                out.extend_from_slice(&key_tag.to_be_bytes());
+                out.push(*algorithm);
+                out.push(*digest_type);
+                out.extend_from_slice(digest);
+            }
+            Self::Dnskey {
+                flags,
+                protocol,
+                algorithm,
+                public_key,
+            } => {
+                out.extend_from_slice(&flags.to_be_bytes());
+                out.push(*protocol);
+                out.push(*algorithm);
+                out.extend_from_slice(public_key);
+            }
+            Self::Rrsig {
+                type_covered,
+                algorithm,
+                labels,
+                original_ttl,
+                signature_expiration,
+                signature_inception,
+                key_tag,
+                signer_name,
+                signature,
+            } => {
+                out.extend_from_slice(&type_covered.to_be_bytes());
+                out.push(*algorithm);
+                out.push(*labels);
+                out.extend_from_slice(&original_ttl.to_be_bytes());
+                out.extend_from_slice(&signature_expiration.to_be_bytes());
+                out.extend_from_slice(&signature_inception.to_be_bytes());
+                out.extend_from_slice(&key_tag.to_be_bytes());
+                // RFC 4034 Section 3.1.7: the Signer's Name MUST NOT be
+                // compressed, so the deterministic uncompressed encoder is used.
+                signer_name.encode(out)?;
+                out.extend_from_slice(signature);
+            }
+            Self::Nsec {
+                next_domain_name,
+                type_bitmaps,
+            } => {
+                // RFC 4034 Section 6.2: the Next Domain Name MUST NOT be
+                // compressed.
+                next_domain_name.encode(out)?;
+                type_bitmaps.encode(out);
+            }
+            Self::Nsec3 {
+                hash_algorithm,
+                flags,
+                iterations,
+                salt,
+                next_hashed_owner_name,
+                type_bitmaps,
+            } => {
+                let salt_len = u8::try_from(salt.len()).map_err(|_| {
+                    CrafterError::invalid_field_value(
+                        "dns.nsec3.salt",
+                        "NSEC3 salt exceeds 255 bytes",
+                    )
+                })?;
+                let hash_len = u8::try_from(next_hashed_owner_name.len()).map_err(|_| {
+                    CrafterError::invalid_field_value(
+                        "dns.nsec3.hash",
+                        "NSEC3 next hashed owner name exceeds 255 bytes",
+                    )
+                })?;
+                out.push(*hash_algorithm);
+                out.push(*flags);
+                out.extend_from_slice(&iterations.to_be_bytes());
+                out.push(salt_len);
+                out.extend_from_slice(salt);
+                out.push(hash_len);
+                out.extend_from_slice(next_hashed_owner_name);
+                type_bitmaps.encode(out);
             }
             Self::Raw(bytes) => out.extend_from_slice(bytes),
         }
@@ -806,6 +1172,148 @@ impl DnsRecord {
                 weight,
                 port,
                 target: target.into(),
+            },
+        )
+    }
+
+    /// Create a DS (Delegation Signer) record (RFC 4034 Section 5.1).
+    ///
+    /// The algorithm and digest type stay raw numeric fields and the digest is
+    /// carried verbatim; no cryptographic validation is performed.
+    pub fn ds(
+        name: impl Into<DnsName>,
+        ttl: u32,
+        key_tag: u16,
+        algorithm: u8,
+        digest_type: u8,
+        digest: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::new(
+            name,
+            DNS_TYPE_DS,
+            DNS_CLASS_IN,
+            ttl,
+            DnsRecordData::Ds {
+                key_tag,
+                algorithm,
+                digest_type,
+                digest: digest.into(),
+            },
+        )
+    }
+
+    /// Create a DNSKEY record (RFC 4034 Section 2.1).
+    ///
+    /// The flags and algorithm stay raw numeric fields and the public key is
+    /// carried verbatim; no cryptographic validation is performed.
+    pub fn dnskey(
+        name: impl Into<DnsName>,
+        ttl: u32,
+        flags: u16,
+        protocol: u8,
+        algorithm: u8,
+        public_key: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::new(
+            name,
+            DNS_TYPE_DNSKEY,
+            DNS_CLASS_IN,
+            ttl,
+            DnsRecordData::Dnskey {
+                flags,
+                protocol,
+                algorithm,
+                public_key: public_key.into(),
+            },
+        )
+    }
+
+    /// Create an RRSIG record (RFC 4034 Section 3.1).
+    ///
+    /// The signer's name is emitted uncompressed and the signature is carried
+    /// verbatim; no cryptographic validation is performed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rrsig(
+        name: impl Into<DnsName>,
+        ttl: u32,
+        type_covered: u16,
+        algorithm: u8,
+        labels: u8,
+        original_ttl: u32,
+        signature_expiration: u32,
+        signature_inception: u32,
+        key_tag: u16,
+        signer_name: impl Into<DnsName>,
+        signature: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::new(
+            name,
+            DNS_TYPE_RRSIG,
+            DNS_CLASS_IN,
+            ttl,
+            DnsRecordData::Rrsig {
+                type_covered,
+                algorithm,
+                labels,
+                original_ttl,
+                signature_expiration,
+                signature_inception,
+                key_tag,
+                signer_name: signer_name.into(),
+                signature: signature.into(),
+            },
+        )
+    }
+
+    /// Create an NSEC record (RFC 4034 Section 4.1).
+    ///
+    /// The next domain name is emitted uncompressed and the type bitmaps carry
+    /// the present RR type values verbatim.
+    pub fn nsec(
+        name: impl Into<DnsName>,
+        ttl: u32,
+        next_domain_name: impl Into<DnsName>,
+        present_types: impl IntoIterator<Item = u16>,
+    ) -> Self {
+        Self::new(
+            name,
+            DNS_TYPE_NSEC,
+            DNS_CLASS_IN,
+            ttl,
+            DnsRecordData::Nsec {
+                next_domain_name: next_domain_name.into(),
+                type_bitmaps: DnsTypeBitmaps::from_types(present_types),
+            },
+        )
+    }
+
+    /// Create an NSEC3 record (RFC 5155 Section 3.2).
+    ///
+    /// The hash algorithm and flags stay raw numeric fields; the salt, next
+    /// hashed owner name, and type bitmaps carry their wire bytes verbatim.
+    #[allow(clippy::too_many_arguments)]
+    pub fn nsec3(
+        name: impl Into<DnsName>,
+        ttl: u32,
+        hash_algorithm: u8,
+        flags: u8,
+        iterations: u16,
+        salt: impl Into<Vec<u8>>,
+        next_hashed_owner_name: impl Into<Vec<u8>>,
+        present_types: impl IntoIterator<Item = u16>,
+    ) -> Self {
+        Self::new(
+            name,
+            DNS_TYPE_NSEC3,
+            DNS_CLASS_IN,
+            ttl,
+            DnsRecordData::Nsec3 {
+                hash_algorithm,
+                flags,
+                iterations,
+                salt: salt.into(),
+                next_hashed_owner_name: next_hashed_owner_name.into(),
+                type_bitmaps: DnsTypeBitmaps::from_types(present_types),
             },
         )
     }
@@ -1630,6 +2138,135 @@ fn decode_record_data(
             }
             Ok(DnsRecordData::Opt(options))
         }
+        DNS_TYPE_DS => {
+            // Key Tag (2), Algorithm (1), Digest Type (1), Digest (rest)
+            // (RFC 4034 Section 5.1).
+            if rdata.len() < 4 {
+                return Err(CrafterError::buffer_too_short("dns.ds", 4, rdata.len()));
+            }
+            Ok(DnsRecordData::Ds {
+                key_tag: read_u16_be(&rdata[0..2])?,
+                algorithm: rdata[2],
+                digest_type: rdata[3],
+                digest: rdata[4..].to_vec(),
+            })
+        }
+        DNS_TYPE_DNSKEY => {
+            // Flags (2), Protocol (1), Algorithm (1), Public Key (rest)
+            // (RFC 4034 Section 2.1).
+            if rdata.len() < 4 {
+                return Err(CrafterError::buffer_too_short("dns.dnskey", 4, rdata.len()));
+            }
+            Ok(DnsRecordData::Dnskey {
+                flags: read_u16_be(&rdata[0..2])?,
+                protocol: rdata[2],
+                algorithm: rdata[3],
+                public_key: rdata[4..].to_vec(),
+            })
+        }
+        DNS_TYPE_RRSIG => {
+            // Eighteen fixed octets, then the uncompressed Signer's Name, then
+            // the Signature (RFC 4034 Section 3.1).
+            if rdata.len() < 18 {
+                return Err(CrafterError::buffer_too_short("dns.rrsig", 18, rdata.len()));
+            }
+            let type_covered = read_u16_be(&rdata[0..2])?;
+            let algorithm = rdata[2];
+            let labels = rdata[3];
+            let original_ttl = read_u32_be(&rdata[4..8])?;
+            let signature_expiration = read_u32_be(&rdata[8..12])?;
+            let signature_inception = read_u32_be(&rdata[12..16])?;
+            let key_tag = read_u16_be(&rdata[16..18])?;
+            // The Signer's Name MUST NOT be compressed (RFC 4034 Section
+            // 3.1.7); decode it relative to the RDATA so any stray pointer is
+            // still bounds-checked, and require it to stay within the RDATA.
+            let (signer_name, name_used) = decode_dns_name_typed(message, rdata_start + 18)?;
+            let signature_start = 18 + name_used;
+            if signature_start > rdata.len() {
+                return Err(CrafterError::buffer_too_short(
+                    "dns.rrsig.signer",
+                    signature_start,
+                    rdata.len(),
+                ));
+            }
+            Ok(DnsRecordData::Rrsig {
+                type_covered,
+                algorithm,
+                labels,
+                original_ttl,
+                signature_expiration,
+                signature_inception,
+                key_tag,
+                signer_name,
+                signature: rdata[signature_start..].to_vec(),
+            })
+        }
+        DNS_TYPE_NSEC => {
+            // Next Domain Name (uncompressed), then Type Bit Maps (RFC 4034
+            // Section 4.1).
+            let (next_domain_name, name_used) = decode_dns_name_typed(message, rdata_start)?;
+            if name_used > rdata.len() {
+                return Err(CrafterError::buffer_too_short(
+                    "dns.nsec.name",
+                    name_used,
+                    rdata.len(),
+                ));
+            }
+            let type_bitmaps = DnsTypeBitmaps::decode("dns.nsec.bitmap", &rdata[name_used..])?;
+            Ok(DnsRecordData::Nsec {
+                next_domain_name,
+                type_bitmaps,
+            })
+        }
+        DNS_TYPE_NSEC3 => {
+            // Hash Alg (1), Flags (1), Iterations (2), Salt Length (1), Salt,
+            // Hash Length (1), Next Hashed Owner Name, Type Bit Maps (RFC 5155
+            // Section 3.2).
+            if rdata.len() < 5 {
+                return Err(CrafterError::buffer_too_short("dns.nsec3", 5, rdata.len()));
+            }
+            let hash_algorithm = rdata[0];
+            let flags = rdata[1];
+            let iterations = read_u16_be(&rdata[2..4])?;
+            let salt_len = rdata[4] as usize;
+            let salt_start = 5;
+            let salt_end = salt_start + salt_len;
+            if salt_end > rdata.len() {
+                return Err(CrafterError::buffer_too_short(
+                    "dns.nsec3.salt",
+                    salt_end,
+                    rdata.len(),
+                ));
+            }
+            let salt = rdata[salt_start..salt_end].to_vec();
+            if salt_end + 1 > rdata.len() {
+                return Err(CrafterError::buffer_too_short(
+                    "dns.nsec3.hash.length",
+                    salt_end + 1,
+                    rdata.len(),
+                ));
+            }
+            let hash_len = rdata[salt_end] as usize;
+            let hash_start = salt_end + 1;
+            let hash_end = hash_start + hash_len;
+            if hash_end > rdata.len() {
+                return Err(CrafterError::buffer_too_short(
+                    "dns.nsec3.hash",
+                    hash_end,
+                    rdata.len(),
+                ));
+            }
+            let next_hashed_owner_name = rdata[hash_start..hash_end].to_vec();
+            let type_bitmaps = DnsTypeBitmaps::decode("dns.nsec3.bitmap", &rdata[hash_end..])?;
+            Ok(DnsRecordData::Nsec3 {
+                hash_algorithm,
+                flags,
+                iterations,
+                salt,
+                next_hashed_owner_name,
+                type_bitmaps,
+            })
+        }
         _ => Ok(DnsRecordData::Raw(rdata.to_vec())),
     }
 }
@@ -2420,6 +3057,385 @@ mod dns_edns {
         assert!(Packet::from_layer(Dns::new().additional(opt))
             .compile()
             .is_err());
+    }
+}
+
+#[cfg(test)]
+mod dns_dnssec {
+    use super::{
+        decode_record_data, Dns, DnsName, DnsRecord, DnsRecordData, DnsTypeBitmaps, DNS_CLASS_IN,
+        DNS_TYPE_A, DNS_TYPE_DS, DNS_TYPE_MX, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_NSEC3PARAM,
+        DNS_TYPE_RRSIG,
+    };
+    use crate::{Ipv4, NetworkLayer, Packet, Udp};
+    use core::net::Ipv4Addr;
+
+    /// Build a DNS response carrying one answer, compile it through the packet
+    /// stack, decode it back, and return the decoded answer's record data along
+    /// with the original compiled bytes and the recompiled bytes for byte-stable
+    /// round-trip assertions.
+    fn round_trip_answer(answer: DnsRecord) -> (DnsRecordData, Vec<u8>, Vec<u8>) {
+        let original = Dns::new().id(0x4242).response(true).answer(answer);
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(198, 51, 100, 53))
+            .dst(Ipv4Addr::new(192, 0, 2, 10))
+            / Udp::new().sport(53).dport(53001)
+            / original)
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let data = decoded.layer::<Dns>().unwrap().answers()[0].data().clone();
+        let recompiled = decoded.compile().unwrap();
+        (
+            data,
+            bytes.as_bytes().to_vec(),
+            recompiled.as_bytes().to_vec(),
+        )
+    }
+
+    #[test]
+    fn dnssec_ds_record_round_trips_through_packet_stack() {
+        // DS RDATA wire format: Key Tag (2), Algorithm (1), Digest Type (1),
+        // Digest (rest) (RFC 4034 Section 5.1). Algorithm and digest type stay
+        // raw numeric fields; the digest is opaque bytes.
+        let digest = vec![0xab; 20]; // SHA-1-length digest, not validated.
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::ds(
+            "example.com.",
+            300,
+            12345,
+            8,
+            2,
+            digest.clone(),
+        ));
+        assert_eq!(
+            data,
+            DnsRecordData::Ds {
+                key_tag: 12345,
+                algorithm: 8,
+                digest_type: 2,
+                digest,
+            }
+        );
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dnssec_dnskey_record_round_trips_through_packet_stack() {
+        // DNSKEY RDATA wire format: Flags (2), Protocol (1), Algorithm (1),
+        // Public Key (rest) (RFC 4034 Section 2.1).
+        let public_key = vec![0x03, 0x01, 0x00, 0x01, 0xde, 0xad, 0xbe, 0xef];
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::dnskey(
+            "example.com.",
+            3600,
+            257, // Zone Key + SEP, carried verbatim.
+            3,
+            8,
+            public_key.clone(),
+        ));
+        assert_eq!(
+            data,
+            DnsRecordData::Dnskey {
+                flags: 257,
+                protocol: 3,
+                algorithm: 8,
+                public_key,
+            }
+        );
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dnssec_rrsig_record_round_trips_through_packet_stack() {
+        // RRSIG RDATA: 18 fixed octets, uncompressed Signer's Name, Signature
+        // (RFC 4034 Section 3.1). The signature is opaque bytes.
+        let signature = vec![0x5a; 32];
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::rrsig(
+            "example.com.",
+            3600,
+            DNS_TYPE_A,
+            8,
+            2,
+            3600,
+            0x6500_0000,
+            0x6400_0000,
+            12345,
+            "example.com.",
+            signature.clone(),
+        ));
+        assert_eq!(
+            data,
+            DnsRecordData::Rrsig {
+                type_covered: DNS_TYPE_A,
+                algorithm: 8,
+                labels: 2,
+                original_ttl: 3600,
+                signature_expiration: 0x6500_0000,
+                signature_inception: 0x6400_0000,
+                key_tag: 12345,
+                signer_name: DnsName::parse("example.com.").unwrap(),
+                signature,
+            }
+        );
+        // Signer's Name is emitted uncompressed, so bytes round trip exactly.
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dnssec_nsec_record_matches_rfc4034_example_bitmap() {
+        // RFC 4034 Section 4.3 NSEC example: next name host.example.com. with
+        // the A, MX, RRSIG, NSEC, and TYPE1234 types present. Build the same
+        // record and assert the exact RDATA wire bytes from the RFC.
+        let record = DnsRecord::nsec(
+            "alfa.example.com.",
+            86400,
+            "host.example.com.",
+            [DNS_TYPE_A, DNS_TYPE_MX, DNS_TYPE_RRSIG, DNS_TYPE_NSEC, 1234],
+        );
+
+        // Encode just the RDATA by compiling the record into a buffer and
+        // skipping the name/type/class/ttl/rdlength header.
+        let mut wire = Vec::new();
+        super::DnsRecord::encode(&record, &mut wire).unwrap();
+        // The RDATA portion as printed in RFC 4034 Section 4.3: the next domain
+        // name host.example.com., window 0 (A, MX, RRSIG, NSEC), and window 4
+        // (TYPE1234) with a 27-octet bitmap.
+        let expected_rdata: &[u8] = &[
+            0x04, b'h', b'o', b's', b't', 0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03,
+            b'c', b'o', b'm', 0x00, 0x00, 0x06, 0x40, 0x01, 0x00, 0x00, 0x00, 0x03, 0x04, 0x1b,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20,
+        ];
+        assert!(
+            wire.ends_with(expected_rdata),
+            "NSEC RDATA must match the RFC 4034 Section 4.3 example bytes"
+        );
+    }
+
+    #[test]
+    fn dnssec_nsec_record_round_trips_through_packet_stack() {
+        let present = [DNS_TYPE_A, DNS_TYPE_MX, DNS_TYPE_RRSIG, DNS_TYPE_NSEC, 1234];
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::nsec(
+            "alfa.example.com.",
+            86400,
+            "host.example.com.",
+            present,
+        ));
+        match data {
+            DnsRecordData::Nsec {
+                next_domain_name,
+                type_bitmaps,
+            } => {
+                assert_eq!(
+                    next_domain_name,
+                    DnsName::parse("host.example.com.").unwrap()
+                );
+                // Present types are recovered, sorted, including the unknown
+                // TYPE1234 codepoint.
+                assert_eq!(type_bitmaps.types(), &[1, 15, 46, 47, 1234]);
+                assert!(type_bitmaps.contains(1234));
+                assert!(!type_bitmaps.contains(2));
+            }
+            other => panic!("expected NSEC data, got {other:?}"),
+        }
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dnssec_nsec3_record_round_trips_through_packet_stack() {
+        // NSEC3 RDATA: Hash Alg, Flags, Iterations, Salt Length+Salt, Hash
+        // Length+Hash, Type Bit Maps (RFC 5155 Section 3.2).
+        let salt = vec![0xaa, 0xbb, 0xcc, 0xdd];
+        let next_hash = vec![0x11; 20];
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::nsec3(
+            "example.com.",
+            3600,
+            1, // SHA-1
+            1, // Opt-Out
+            10,
+            salt.clone(),
+            next_hash.clone(),
+            [DNS_TYPE_A, DNS_TYPE_RRSIG],
+        ));
+        match data {
+            DnsRecordData::Nsec3 {
+                hash_algorithm,
+                flags,
+                iterations,
+                salt: decoded_salt,
+                next_hashed_owner_name,
+                type_bitmaps,
+            } => {
+                assert_eq!(hash_algorithm, 1);
+                assert_eq!(flags, 1);
+                assert_eq!(iterations, 10);
+                assert_eq!(decoded_salt, salt);
+                assert_eq!(next_hashed_owner_name, next_hash);
+                assert_eq!(type_bitmaps.types(), &[1, 46]);
+            }
+            other => panic!("expected NSEC3 data, got {other:?}"),
+        }
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dnssec_nsec3_empty_salt_round_trips() {
+        // Salt Length zero omits the Salt field (RFC 5155 Section 3.2).
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::nsec3(
+            "example.com.",
+            3600,
+            1,
+            0,
+            5,
+            Vec::new(),
+            vec![0x22; 20],
+            [DNS_TYPE_A],
+        ));
+        if let DnsRecordData::Nsec3 { salt, .. } = &data {
+            assert!(salt.is_empty());
+        } else {
+            panic!("expected NSEC3 data, got {data:?}");
+        }
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dnssec_unknown_algorithm_and_digest_values_are_preserved() {
+        // Algorithm and digest-type values stay raw numeric fields, so values
+        // outside the named registry entries must round trip verbatim.
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::ds(
+            "example.com.",
+            300,
+            0xffff,
+            0xfe, // unassigned algorithm
+            0xfd, // unassigned digest type
+            vec![0x00, 0x01, 0x02],
+        ));
+        if let DnsRecordData::Ds {
+            algorithm,
+            digest_type,
+            ..
+        } = &data
+        {
+            assert_eq!(*algorithm, 0xfe);
+            assert_eq!(*digest_type, 0xfd);
+        } else {
+            panic!("expected DS data, got {data:?}");
+        }
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dnssec_type_bitmaps_dedup_and_sort_deterministically() {
+        // Construction order and duplicates must not change the encoded windows.
+        let a = DnsTypeBitmaps::from_types([47u16, 1, 15, 1, 46]);
+        let b = DnsTypeBitmaps::from_types([1u16, 15, 46, 47]);
+        assert_eq!(a.types(), &[1, 15, 46, 47]);
+
+        let mut encoded_a = Vec::new();
+        let mut encoded_b = Vec::new();
+        super::DnsTypeBitmaps::encode(&a, &mut encoded_a);
+        super::DnsTypeBitmaps::encode(&b, &mut encoded_b);
+        assert_eq!(encoded_a, encoded_b);
+    }
+
+    #[test]
+    fn dnssec_type_bitmaps_multiple_windows_round_trip() {
+        // Types spanning several window blocks must encode in increasing window
+        // order and decode back to the same set.
+        let original = DnsTypeBitmaps::from_types([1u16, 300, 600, 0xff01]);
+        let mut encoded = Vec::new();
+        super::DnsTypeBitmaps::encode(&original, &mut encoded);
+        let decoded = super::DnsTypeBitmaps::decode("test", &encoded).unwrap();
+        assert_eq!(decoded.types(), original.types());
+    }
+
+    #[test]
+    fn dnssec_ds_too_short_is_rejected() {
+        // Fewer than the four fixed octets of a DS record.
+        let rdata = [0u8; 3];
+        assert!(decode_record_data(DNS_TYPE_DS, &rdata, 0, rdata.len()).is_err());
+    }
+
+    #[test]
+    fn dnssec_rrsig_too_short_fixed_header_is_rejected() {
+        // Fewer than the eighteen fixed octets before the signer's name.
+        let rdata = [0u8; 17];
+        assert!(decode_record_data(DNS_TYPE_RRSIG, &rdata, 0, rdata.len()).is_err());
+    }
+
+    #[test]
+    fn dnssec_nsec3_salt_length_overrun_is_rejected() {
+        // Salt Length claims more salt than the RDATA actually carries.
+        let rdata = [1u8, 0, 0, 10, 8, 0xaa, 0xbb]; // salt length 8, only 2 present
+        assert!(decode_record_data(DNS_TYPE_NSEC3, &rdata, 0, rdata.len()).is_err());
+    }
+
+    #[test]
+    fn dnssec_nsec3_hash_length_overrun_is_rejected() {
+        // Hash Length claims more hash bytes than remain after the salt.
+        let rdata = [1u8, 0, 0, 10, 0, 20, 0x11, 0x22]; // hash length 20, only 2 present
+        assert!(decode_record_data(DNS_TYPE_NSEC3, &rdata, 0, rdata.len()).is_err());
+    }
+
+    #[test]
+    fn dnssec_type_bitmap_zero_window_length_is_rejected() {
+        // A window with a zero bitmap length is malformed (length is 1..=32).
+        let rdata = [0u8, 0]; // window 0, length 0
+        assert!(super::DnsTypeBitmaps::decode("test", &rdata).is_err());
+    }
+
+    #[test]
+    fn dnssec_type_bitmap_truncated_bitmap_is_rejected() {
+        // Bitmap Length declares more bytes than are present.
+        let rdata = [0u8, 4, 0x40]; // window 0, length 4, only one bitmap byte
+        assert!(super::DnsTypeBitmaps::decode("test", &rdata).is_err());
+    }
+
+    #[test]
+    fn dnssec_type_bitmap_out_of_order_window_is_rejected() {
+        // Windows must be strictly increasing; a repeated/decreasing window is
+        // malformed.
+        let rdata = [1u8, 1, 0x40, 0u8, 1, 0x40]; // window 1 then window 0
+        assert!(super::DnsTypeBitmaps::decode("test", &rdata).is_err());
+    }
+
+    #[test]
+    fn dnssec_type_bitmap_trailing_zero_octet_is_rejected() {
+        // A minimal encoding never carries a trailing all-zero octet.
+        let rdata = [0u8, 2, 0x40, 0x00]; // window 0, length 2, trailing zero
+        assert!(super::DnsTypeBitmaps::decode("test", &rdata).is_err());
+    }
+
+    #[test]
+    fn dnssec_nsec3param_stays_raw_by_design() {
+        // NSEC3PARAM is intentionally left as Raw in the coverage map; it must
+        // not be silently lost and must round trip its exact bytes.
+        let rdata = vec![1u8, 0, 0, 10, 4, 0xaa, 0xbb, 0xcc, 0xdd];
+        let data = decode_record_data(DNS_TYPE_NSEC3PARAM, &rdata, 0, rdata.len()).unwrap();
+        assert_eq!(data, DnsRecordData::Raw(rdata.clone()));
+
+        // And it round trips byte-for-byte through the packet stack as Raw.
+        let record = DnsRecord::new(
+            "example.com.",
+            DNS_TYPE_NSEC3PARAM,
+            DNS_CLASS_IN,
+            3600,
+            DnsRecordData::Raw(rdata),
+        );
+        let (round_tripped, original, recompiled) = round_trip_answer(record);
+        assert!(matches!(round_tripped, DnsRecordData::Raw(_)));
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dnssec_related_key_type_stays_raw_by_design() {
+        // KEY (type 25) is a cryptographic-key transport type kept as Raw in
+        // the coverage map even though it neighbours the DNSSEC records.
+        const DNS_TYPE_KEY: u16 = 25;
+        let rdata = vec![0x01u8, 0x00, 0x03, 0x08, 0xde, 0xad];
+        let data = decode_record_data(DNS_TYPE_KEY, &rdata, 0, rdata.len()).unwrap();
+        assert_eq!(data, DnsRecordData::Raw(rdata));
     }
 }
 
