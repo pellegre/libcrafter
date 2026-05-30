@@ -61,7 +61,25 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "questions",
     },
     "ethernet": {"dst", "src", "ethertype"},
-    "icmp": {"type", "code", "identifier", "sequence"},
+    "icmp": {
+        "type",
+        "code",
+        "checksum",
+        "identifier",
+        "sequence",
+        "rest_of_header",
+        "gateway",
+        "pointer",
+        "next_hop_mtu",
+        "originate_timestamp",
+        "receive_timestamp",
+        "transmit_timestamp",
+        "address_mask",
+        "router_addresses",
+        "router_address_entry_size",
+        "router_lifetime",
+        "extension_bytes",
+    },
     "icmpv6": {"type", "code", "identifier", "sequence"},
     "ipv4": {
         "src",
@@ -127,6 +145,24 @@ _SUPPORTED_FIELD_DOMAINS: dict[tuple[str, str], set[object]] = {
         "unsupported_frag",
         "surplus_application_boundary",
     },
+}
+# ICMP rest-of-header and type-specific body fields. The base layer sampler
+# leaves these unset (echo query default); the live-matrix sampler fills exactly
+# the fields a given ICMP behavior needs.
+_ICMP_BODY_FIELDS = {
+    "checksum",
+    "rest_of_header",
+    "gateway",
+    "pointer",
+    "next_hop_mtu",
+    "originate_timestamp",
+    "receive_timestamp",
+    "transmit_timestamp",
+    "address_mask",
+    "router_addresses",
+    "router_address_entry_size",
+    "router_lifetime",
+    "extension_bytes",
 }
 _SCAPY_MATERIALIZED_LAYERS = {
     "arp",
@@ -323,6 +359,7 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
                 "supported_cases": list(
                     _object_list(feature.raw.get("supported_cases", []), "feature.supported_cases")
                 ),
+                "live_matrix": list(_object_list(feature.raw.get("live_matrix", []), "feature.live_matrix")),
                 "categories": _feature_categories(
                     feature.name,
                     feature.directions,
@@ -491,6 +528,14 @@ class PacketGenerator:
                 case=selected_case,
                 behavior=behavior,
             )
+        live_behavior = self._apply_icmp_live_fields(
+            rng,
+            fields,
+            feature=selected_feature,
+            case=selected_case,
+        )
+        if live_behavior is not None:
+            behavior = live_behavior
         feature_tags = self._augment_feature_tags(
             feature_tags,
             feature=selected_feature,
@@ -1192,6 +1237,39 @@ class PacketGenerator:
         elif feature == "udp_options" and "udp" in fields:
             _apply_udp_options_behavior(fields, case=case, behavior=behavior)
 
+    def _apply_icmp_live_fields(
+        self,
+        rng: random.Random,
+        fields: dict[str, JSONObject],
+        *,
+        feature: str | None,
+        case: str,
+    ) -> str | None:
+        """Fill ICMP rest-of-header and type-specific body fields per behavior.
+
+        Driven by the live coverage matrix in the feature spec rather than by
+        backend-specific special cases: each matrix entry names a coverage case,
+        its ICMP type, the representative code or pair, and (via the behavior
+        name) which rest-of-header body the live exchange exercises. Only the
+        fields a given behavior needs are added, and only deterministic, well
+        formed bytes both backends can emit and parse are sampled.
+        """
+
+        if feature is None or "icmp" not in fields:
+            return None
+        feature_spec = self._feature_spec(feature)
+        matrix = _object_list(
+            feature_spec.get("live_matrix", []),
+            f"features.{feature}.live_matrix",
+        )
+        if not matrix:
+            return None
+        entry = _icmp_live_matrix_entry(matrix, case)
+        if entry is None:
+            return None
+        icmp = fields["icmp"]
+        return _apply_icmp_live_entry(rng, icmp, case=case, entry=entry)
+
     def _is_malformed_case(self, feature: str | None, case: str) -> bool:
         if _is_malformed_case_name(case):
             return True
@@ -1763,6 +1841,12 @@ def _sample_icmp_field(ctx: _SamplingContext, field_name: str, domain: object) -
         return 0
     if field_name in {"identifier", "sequence"}:
         return bounded_int(ctx.rng, 0, 65535)
+    # Rest-of-header, gateway, pointer, MTU, timestamp, address-mask, router
+    # discovery, and extension-byte fields are populated per ICMP behavior by the
+    # live-matrix sampler so the base path stays an echo query. Emitting them
+    # unconditionally here would attach body bytes to plain echo cases.
+    if field_name in _ICMP_BODY_FIELDS:
+        return _SKIP_FIELD
     raise ValueError(f"spec error: unsupported icmp field sampler: {field_name}")
 
 
@@ -1896,6 +1980,160 @@ def _dns_behavior_emits_raw(case: str, behavior: str) -> bool:
 
     key = f"{case} {behavior}".replace("_", "-")
     return "compressed-names" in key or "name-records-compressed" in key
+
+
+# Stable per-code mapping for the representative ICMP destination-unreachable
+# codes named by the live matrix. Each behavior names at most one code so the
+# generated plan exercises a deterministic code byte rather than a random one.
+_ICMP_DEST_UNREACHABLE_CODES: dict[str, int] = {
+    "net_unreachable": 0,
+    "host_unreachable": 1,
+    "protocol_unreachable": 2,
+    "port_unreachable": 3,
+    "fragmentation_needed": 4,
+}
+# Raw rest-of-header bytes for legacy/raw-compatible types whose four reserved
+# bytes both backends emit and parse identically. Deterministic and well formed.
+_ICMP_LEGACY_REST_OF_HEADER = "00000000"
+# Deterministic RFC 4884 extension blob (extension header version 2 plus one
+# generic object) shared by the extension-framing live behaviors as
+# raw-compatible bytes.
+_ICMP_EXTENSION_BYTES = "20000000000800010102030405060708"
+# Deterministic RFC 4950 MPLS extension blob (extension header plus one MPLS
+# object carrying a single label stack entry).
+_ICMP_MPLS_EXTENSION_BYTES = "2000000000080100000010ff"
+
+
+def _icmp_live_matrix_entry(
+    matrix: Sequence[object],
+    case: str,
+) -> JSONObject | None:
+    """Return the live-matrix entry whose coverage case matches ``case``."""
+
+    for raw_entry in matrix:
+        if not isinstance(raw_entry, Mapping):
+            continue
+        entry = _json_object(raw_entry)
+        coverage_case = entry.get("coverage_case")
+        if isinstance(coverage_case, str) and coverage_case == case:
+            return entry
+    return None
+
+
+def _icmp_live_pick(rng: random.Random, values: Sequence[object]) -> object | None:
+    """Deterministically pick one value from a non-empty matrix list."""
+
+    options = [value for value in values if isinstance(value, str)]
+    if not options:
+        return None
+    return weighted_choice(rng, tuple((value, 1) for value in options))
+
+
+def _apply_icmp_live_entry(
+    rng: random.Random,
+    icmp: JSONObject,
+    *,
+    case: str,
+    entry: JSONObject,
+) -> str:
+    """Apply one ICMP live-matrix entry's type, code, and body fields in place.
+
+    Returns the resolved behavior name recorded in plan metadata.
+    """
+
+    behavior = _string_or_none(entry.get("behavior")) or case
+    icmp_type = _string_or_none(entry.get("icmp_type"))
+
+    # Request/reply pairs alternate deterministically by plan rng so both members
+    # of the pair appear across a seeded run.
+    pairs = entry.get("pairs")
+    if isinstance(pairs, Sequence) and not isinstance(pairs, (str, bytes)):
+        picked = _icmp_live_pick(rng, pairs)
+        if picked is not None:
+            icmp_type = str(picked)
+
+    # Representative legacy/raw-compatible types likewise rotate over the named
+    # representative set.
+    representative = entry.get("representative_types")
+    if isinstance(representative, Sequence) and not isinstance(representative, (str, bytes)):
+        picked = _icmp_live_pick(rng, representative)
+        if picked is not None:
+            icmp_type = str(picked)
+
+    if icmp_type is None:
+        # An entry without a concrete ICMP type (e.g. a pure pair/representative
+        # listing handled above) leaves the base echo type untouched.
+        return behavior
+
+    icmp["type"] = icmp_type
+
+    # Representative code for the destination-unreachable family.
+    codes = entry.get("codes")
+    if isinstance(codes, Sequence) and not isinstance(codes, (str, bytes)):
+        picked_code = _icmp_live_pick(rng, codes)
+        if isinstance(picked_code, str) and picked_code in _ICMP_DEST_UNREACHABLE_CODES:
+            icmp["code"] = _ICMP_DEST_UNREACHABLE_CODES[picked_code]
+
+    _apply_icmp_live_body(rng, icmp, behavior=behavior, icmp_type=icmp_type, entry=entry)
+    return behavior
+
+
+def _apply_icmp_live_body(
+    rng: random.Random,
+    icmp: JSONObject,
+    *,
+    behavior: str,
+    icmp_type: str,
+    entry: JSONObject,
+) -> None:
+    """Populate the type-specific rest-of-header body for one ICMP behavior."""
+
+    # RFC 4884/4950 extension framing: append deterministic, raw-compatible
+    # extension bytes that both backends emit and parse the same way.
+    embeds = entry.get("embeds")
+    if isinstance(embeds, Sequence) and not isinstance(embeds, (str, bytes)):
+        embed_names = {value for value in embeds if isinstance(value, str)}
+        if "icmp_extension_mpls" in embed_names:
+            icmp["extension_bytes"] = {"hex": _ICMP_MPLS_EXTENSION_BYTES}
+        elif embed_names.intersection(
+            {"icmp_extension_header", "icmp_extension_object"}
+        ):
+            icmp["extension_bytes"] = {"hex": _ICMP_EXTENSION_BYTES}
+
+    if behavior == "redirect" or icmp_type == "redirect":
+        icmp["gateway"] = "192.0.2.1"
+    elif behavior == "parameter_problem" or icmp_type == "parameter_problem":
+        icmp["pointer"] = 20
+    elif behavior == "frag_needed_next_hop_mtu":
+        icmp["next_hop_mtu"] = 1280
+    elif icmp_type in {"timestamp", "timestamp_reply"}:
+        icmp["originate_timestamp"] = bounded_int(rng, 0, (1 << 31) - 1)
+        icmp["receive_timestamp"] = bounded_int(rng, 0, (1 << 31) - 1)
+        icmp["transmit_timestamp"] = bounded_int(rng, 0, (1 << 31) - 1)
+    elif icmp_type in {"address_mask_request", "address_mask_reply"}:
+        icmp["address_mask"] = "255.255.255.0"
+    elif icmp_type == "router_advertisement":
+        icmp["router_address_entry_size"] = 2
+        icmp["router_lifetime"] = 1800
+        icmp["router_addresses"] = [
+            {"address": "192.0.2.1", "preference": 0},
+            {"address": "192.0.2.2", "preference": 0},
+        ]
+    elif icmp_type == "router_solicitation":
+        icmp["rest_of_header"] = {"hex": _ICMP_LEGACY_REST_OF_HEADER}
+    elif icmp_type in {"extended_echo_request", "extended_echo_reply"}:
+        # Scapy has no typed extended-echo class; emit a deterministic rest of
+        # header plus a generic extension object both sides parse identically.
+        icmp["rest_of_header"] = {"hex": "00000100"}
+        icmp.setdefault("extension_bytes", {"hex": _ICMP_EXTENSION_BYTES})
+    elif behavior == "legacy_raw_compatible_types" or icmp_type in {
+        "source_quench",
+        "traceroute",
+        "mobile_host_redirect",
+        "domain_name_request",
+        "photuris",
+    }:
+        icmp["rest_of_header"] = {"hex": _ICMP_LEGACY_REST_OF_HEADER}
 
 
 def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None:

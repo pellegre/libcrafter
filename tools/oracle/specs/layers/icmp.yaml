@@ -18,14 +18,22 @@ fields:
       - echo_reply
       - echo_request
       - destination_unreachable
+      - source_quench
       - redirect
       - time_exceeded
       - parameter_problem
       - timestamp
+      - timestamp_reply
       - information_request
+      - information_reply
+      - address_mask_request
       - address_mask_reply
       - router_advertisement
       - router_solicitation
+      - traceroute
+      - mobile_host_redirect
+      - domain_name_request
+      - photuris
       - extended_echo_request
       - extended_echo_reply
   - name: code
@@ -39,6 +47,7 @@ fields:
     required: true
     domains:
       - derived
+      - override
   - name: identifier
     type: uint16
     required: false
@@ -49,6 +58,66 @@ fields:
     required: false
     domains:
       - deterministic
+  - name: rest_of_header
+    type: bytes
+    required: false
+    domains:
+      - raw
+  - name: gateway
+    type: ipv4
+    required: false
+    domains:
+      - deterministic
+  - name: pointer
+    type: uint8
+    required: false
+    domains:
+      - deterministic
+  - name: next_hop_mtu
+    type: uint16
+    required: false
+    domains:
+      - deterministic
+  - name: originate_timestamp
+    type: uint32
+    required: false
+    domains:
+      - deterministic
+  - name: receive_timestamp
+    type: uint32
+    required: false
+    domains:
+      - deterministic
+  - name: transmit_timestamp
+    type: uint32
+    required: false
+    domains:
+      - deterministic
+  - name: address_mask
+    type: ipv4
+    required: false
+    domains:
+      - deterministic
+  - name: router_addresses
+    type: list
+    required: false
+    domains:
+      - deterministic
+  - name: router_address_entry_size
+    type: uint8
+    required: false
+    domains:
+      - deterministic
+  - name: router_lifetime
+    type: uint16
+    required: false
+    domains:
+      - deterministic
+  - name: extension_bytes
+    type: bytes
+    required: false
+    domains:
+      - raw
   - name: embedded_header
     type: packet_prefix
     required: false
