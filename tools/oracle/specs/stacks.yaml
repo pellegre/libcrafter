@@ -175,6 +175,11 @@ stacks:
       - dhcp
     coverage_cases:
       - dhcp-discover
+      - dhcp-request-offer-ack
+      - dhcp-inform-release-generic-options
+      - dhcp-decline-nak
+      - dhcp-force-renew
+      - dhcp-lease-query
   - name: ipv4_udp_dhcp
     root: "l3:ipv4"
     layers:
@@ -183,6 +188,11 @@ stacks:
       - dhcp
     coverage_cases:
       - dhcp-discover
+      - dhcp-request-offer-ack
+      - dhcp-inform-release-generic-options
+      - dhcp-decline-nak
+      - dhcp-force-renew
+      - dhcp-lease-query
   - name: ipv6_udp_payload
     root: "l3:ipv6"
     layers:

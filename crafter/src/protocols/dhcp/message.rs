@@ -288,4 +288,50 @@ mod message_type_tests {
             assert_eq!(recompiled, bytes, "code {code} must re-compile identically");
         }
     }
+
+    #[test]
+    fn dhcp_message_type_matrix_full_packet_roundtrip() {
+        use super::super::Dhcp;
+
+        // Every implemented DhcpMessageType (the full IANA option-53 matrix,
+        // codes 1..=18: RFC 2132 1-8, RFC 3203 9, RFC 4388 10-13, RFC 6926
+        // 14-15, RFC 7724 16-18) must encode, decode, and re-encode through a
+        // full DHCP packet without loss. This test is named so the
+        // `dhcp_message` filter covers the complete matrix, not just the
+        // RFC 2132 base types.
+        for message_type in REGISTERED_MESSAGE_TYPES {
+            // The opcode does not affect the option-53 round-trip; BOOTREPLY is
+            // a valid carrier for both request- and reply-side message types.
+            let dhcp = Dhcp::new()
+                .op(super::super::BOOTP_REPLY)
+                .message_type(message_type);
+            let bytes = crate::Packet::from_layer(dhcp)
+                .compile()
+                .unwrap()
+                .as_bytes()
+                .to_vec();
+
+            let parsed = Dhcp::decode(&bytes).unwrap();
+            assert_eq!(
+                parsed.message_type_value(),
+                Some(message_type),
+                "{message_type:?} must survive option-53 decode in a full packet",
+            );
+            // A registered type must never normalize into Unknown.
+            assert!(
+                !matches!(parsed.message_type_value(), Some(DhcpMessageType::Unknown(_))),
+                "{message_type:?} must decode to a registered type, not Unknown",
+            );
+
+            let recompiled = crate::Packet::from_layer(parsed)
+                .compile()
+                .unwrap()
+                .as_bytes()
+                .to_vec();
+            assert_eq!(
+                recompiled, bytes,
+                "{message_type:?} must re-encode to identical bytes",
+            );
+        }
+    }
 }
