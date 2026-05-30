@@ -69,6 +69,8 @@ behaviors:
     summary: Section counts auto-filled across answer/authority/additional.
   - name: header_empty_sections
     summary: Empty answer/authority/additional sections yield zero counts.
+  - name: name_root_escaped
+    summary: Root name, trailing-dot names, literal dot/backslash labels, and \DDD decimal escapes including a non-UTF-8 label.
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -230,7 +232,7 @@ case_groups:
       - dns-header-counts
       - dns-header-empty-sections
   - name: dns-names
-    summary: Root, trailing-dot, label-boundary, escaped, and non-text names plus uncompressed encode.
+    summary: Root, trailing-dot, label-boundary, escaped, non-text, and combined root/escaped names plus uncompressed encode.
     byte_policy: strict_bytes
     cases:
       - dns-name-root
@@ -238,6 +240,7 @@ case_groups:
       - dns-name-label-boundary
       - dns-name-escaped
       - dns-name-non-text
+      - dns-name-root-escaped
       - crafter-dns-name-uncompressed
   - name: dns-name-compression
     summary: Compressed-name decode; libcrafter re-encodes uncompressed.
@@ -386,6 +389,7 @@ coverage_cases:
   - dns-name-label-boundary
   - dns-name-escaped
   - dns-name-non-text
+  - dns-name-root-escaped
   - dns-name-compressed
   - dns-compressed-names
   - crafter-dns-name-uncompressed
@@ -511,6 +515,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-name-non-text
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-name-root-escaped
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference

@@ -225,6 +225,7 @@ coverage_cases:
   - dns-header-empty-sections
   - dns-name-root
   - dns-name-escaped
+  - dns-name-root-escaped
   - dns-name-compressed
   - dns-compressed-names
   - crafter-dns-name-uncompressed
