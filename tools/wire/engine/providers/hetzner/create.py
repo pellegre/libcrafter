@@ -72,6 +72,7 @@ def create_endpoint(
     role: str,
     private_group: str | None = None,
     private_ip: str | None = None,
+    private_cidr: str | None = None,
     dry_run: bool = False,
     confirm_live_run: bool = False,
     env: Mapping[str, str] | None = None,
@@ -80,7 +81,7 @@ def create_endpoint(
     """Create or plan one Hetzner endpoint."""
 
     validate_request(provider, exposure)
-    _validate_create_request(exposure, role, private_group, private_ip)
+    _validate_create_request(exposure, role, private_group, private_ip, private_cidr)
 
     if dry_run:
         return _planned_endpoint_manifest(
@@ -109,6 +110,7 @@ def create_endpoint(
             role=role,
             private_group=private_group,
             private_ip=private_ip,
+            private_cidr=private_cidr,
             env=env,
             command_runner=command_runner,
         )
@@ -384,6 +386,7 @@ def _create_private_endpoint(
     role: str,
     private_group: str | None,
     private_ip: str | None,
+    private_cidr: str | None = None,
     env: Mapping[str, str] | None,
     command_runner: HcloudRunner = run_command,
 ) -> dict[str, object]:
@@ -404,11 +407,13 @@ def _create_private_endpoint(
     _ensure_endpoint_key(layout.private_key_path, endpoint_id)
 
     hcloud_env = {HCLOUD_TOKEN_ENV: token}
-    private_cidr = _env_or_default(environ, "HETZNER_PRIVATE_CIDR", DEFAULT_PRIVATE_CIDR)
+    explicit_private_cidr = private_cidr is not None or bool(environ.get("HETZNER_PRIVATE_CIDR"))
+    if private_cidr is None:
+        private_cidr = _env_or_default(environ, "HETZNER_PRIVATE_CIDR", DEFAULT_PRIVATE_CIDR)
     private_cidr = _resolve_requested_private_cidr(
         private_cidr,
         requested_private_ip=private_ip,
-        explicit=bool(environ.get("HETZNER_PRIVATE_CIDR")),
+        explicit=explicit_private_cidr,
     )
     network_zone = _env_or_default(
         environ,

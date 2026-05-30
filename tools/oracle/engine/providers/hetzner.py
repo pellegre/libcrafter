@@ -259,6 +259,8 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                 ORACLE_PRIVATE_GROUP,
                 "--private-ip",
                 LIBCRAFTER_PRIVATE_ADDRESS,
+                "--private-cidr",
+                PRIVATE_NETWORK_CIDR,
                 *dry_run_flag,
                 *create_guard,
                 "--json",
@@ -281,6 +283,8 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                 ORACLE_PRIVATE_GROUP,
                 "--private-ip",
                 REFERENCE_PRIVATE_ADDRESS,
+                "--private-cidr",
+                PRIVATE_NETWORK_CIDR,
                 *dry_run_flag,
                 *create_guard,
                 "--json",
@@ -1085,6 +1089,7 @@ def _wire_create_argv(
         argv.extend(["--private-group", private_group])
     if private_ip is not None:
         argv.extend(["--private-ip", private_ip])
+        argv.extend(["--private-cidr", PRIVATE_NETWORK_CIDR])
     if dry_run:
         argv.append("--dry-run")
     return argv

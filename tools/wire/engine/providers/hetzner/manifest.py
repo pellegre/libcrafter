@@ -15,6 +15,7 @@ from ...state import endpoint_layout, planned_private_group_record, write_endpoi
 from .constants import PLANNED_CREATED_AT
 from .resources import _private_endpoint_provider_resources, _wan_provider_resources
 from .utils import (
+    _ipv4_network,
     _network_resource_id,
     _path_component,
     _server_name,
@@ -115,6 +116,7 @@ def _validate_create_request(
     role: str,
     private_group: str | None,
     private_ip: str | None,
+    private_cidr: str | None = None,
 ) -> None:
     if role == "":
         raise ValueError("role must be a non-empty string")
@@ -122,10 +124,16 @@ def _validate_create_request(
         raise ValueError("private_group must be a non-empty string when supplied")
     if private_ip == "":
         raise ValueError("private_ip must be a non-empty string when supplied")
+    if private_cidr == "":
+        raise ValueError("private_cidr must be a non-empty string when supplied")
     if exposure != "private" and private_group is not None:
         raise ValueError("--private-group is only valid with --exposure private")
     if exposure != "private" and private_ip is not None:
         raise ValueError("--private-ip is only valid with --exposure private")
+    if exposure != "private" and private_cidr is not None:
+        raise ValueError("--private-cidr is only valid with --exposure private")
+    if private_cidr is not None:
+        _ipv4_network(private_cidr)
 
 
 def _planned_endpoint_id(
