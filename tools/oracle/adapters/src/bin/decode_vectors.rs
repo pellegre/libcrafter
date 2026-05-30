@@ -667,7 +667,7 @@ fn dns_fields(layer: &Dns) -> BTreeMap<String, Value> {
 }
 
 fn dhcp_fields(layer: &Dhcp) -> BTreeMap<String, Value> {
-    map([
+    let mut fields = map([
         ("opcode", json!(layer.op_value())),
         ("hardware_type", json!(layer.hardware_type_value())),
         ("hardware_length", json!(layer.hardware_len_value())),
@@ -694,7 +694,29 @@ fn dhcp_fields(layer: &Dhcp) -> BTreeMap<String, Value> {
         ),
         ("magic_cookie", json!(layer.magic_cookie_value())),
         ("option_count", json!(layer.options_value().len())),
-    ])
+        ("options", json!(dhcp_options(layer))),
+    ]);
+    if let Some(message_type) = layer.message_type_value() {
+        fields.insert("message_type".to_string(), json!(message_type.code()));
+    }
+    fields
+}
+
+/// Normalize DHCP options to backend-neutral `{code, payload_hex}` entries in
+/// wire order, carrying the raw reassembled option payload (no typed
+/// reinterpretation) so they compare cleanly against the Scapy reference view.
+fn dhcp_options(layer: &Dhcp) -> Vec<Value> {
+    layer
+        .options_value()
+        .iter()
+        .map(|option| {
+            let payload = option.payload().unwrap_or_default();
+            json!({
+                "code": option.code(),
+                "payload_hex": hex_bytes(&payload),
+            })
+        })
+        .collect()
 }
 
 fn payload_fields(layer: &Raw) -> BTreeMap<String, Value> {
