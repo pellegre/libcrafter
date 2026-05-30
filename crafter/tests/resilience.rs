@@ -390,6 +390,130 @@ fn malformed_dhcp_typed_option_views_report_structured_errors() {
     }
 }
 
+/// Malformed leasequery option payloads, carried on a DHCPLEASEQUERY frame as
+/// raw `Generic` segments, must surface as structured `CrafterError`s through
+/// the public leasequery accessors rather than panicking, and the raw option
+/// bytes must remain inspectable on the decoded layer.
+///
+/// The structural `Dhcp::decode` preserves the unknown/short payloads verbatim;
+/// the typed views (`client_last_transaction_time`, `associated_ip`,
+/// `status_code`, `base_time`, `dhcp_state`, `data_source`) run the
+/// source-backed format decoders, which reject the wrong lengths. This exercises
+/// the same dimension the relay/route/domain views cover above, but for the RFC
+/// 4388 / RFC 6926 leasequery option family.
+#[test]
+fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
+    use crafter::core::{DhcpDataSource, DhcpState, DhcpStatusCode};
+
+    // Codepoints from the IANA BOOTP/DHCP options registry: RFC 4388
+    // client-last-transaction-time (91) and associated-ip (92); RFC 6926
+    // status-code (151), base-time (152), dhcp-state (156), and data-source
+    // (157). Building from a real DHCPLEASEQUERY frame keeps this on the public
+    // packet surface.
+    const CLIENT_LAST_TRANSACTION_TIME: u8 = 91;
+    const ASSOCIATED_IP: u8 = 92;
+    const STATUS_CODE: u8 = 151;
+    const BASE_TIME: u8 = 152;
+    const DHCP_STATE: u8 = 156;
+    const DATA_SOURCE: u8 = 157;
+
+    fn decode_lease_query_with(code: u8, payload: Vec<u8>) -> Dhcp {
+        let frame = Dhcp::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 50))
+            .transaction_id(0x0102_0304)
+            .option(DhcpOption::generic(code, payload));
+        let bytes = frame.malformed().to_bytes();
+        Dhcp::decode(&bytes).expect("leasequery frame must decode structurally")
+    }
+
+    // client-last-transaction-time (91): a 4-octet seconds value; three octets
+    // is a fixed-length underrun.
+    let decoded = decode_lease_query_with(CLIENT_LAST_TRANSACTION_TIME, vec![0x00, 0x00, 0x0e]);
+    match decoded.client_last_transaction_time() {
+        Some(Err(CrafterError::InvalidFieldValue { .. })) => {}
+        other => panic!(
+            "malformed client-last-transaction-time expected a structured error, got {other:?}"
+        ),
+    }
+    // The raw option-91 bytes survive on the decoded layer for inspection.
+    assert!(decoded
+        .options_value()
+        .iter()
+        .any(|o| matches!(o, DhcpOption::Generic { code: 91, .. })));
+
+    // associated-ip (92): one or more IPv4 addresses; seven octets is not a
+    // non-zero multiple of four.
+    let decoded = decode_lease_query_with(ASSOCIATED_IP, vec![192, 0, 2, 10, 198, 51, 100]);
+    match decoded.associated_ip() {
+        Some(Err(CrafterError::InvalidFieldValue { .. })) => {}
+        other => panic!("malformed associated-ip expected a structured error, got {other:?}"),
+    }
+
+    // status-code (151): at least the one status octet must be present; an
+    // empty payload is a buffer underrun.
+    let decoded = decode_lease_query_with(STATUS_CODE, Vec::new());
+    match decoded.status_code() {
+        Some(Err(CrafterError::BufferTooShort { context, .. })) => {
+            assert_eq!(context, "dhcp.option.value");
+        }
+        other => panic!("malformed status-code expected a structured error, got {other:?}"),
+    }
+
+    // base-time (152): a 4-octet absolute time; five octets is a fixed-length
+    // overrun.
+    let decoded = decode_lease_query_with(BASE_TIME, vec![0x00; 5]);
+    match decoded.base_time() {
+        Some(Err(CrafterError::InvalidFieldValue { .. })) => {}
+        other => panic!("malformed base-time expected a structured error, got {other:?}"),
+    }
+
+    // dhcp-state (156): a single State octet; two octets is malformed.
+    let decoded = decode_lease_query_with(DHCP_STATE, vec![0x01, 0x02]);
+    match decoded.dhcp_state() {
+        Some(Err(CrafterError::InvalidFieldValue { .. })) => {}
+        other => panic!("malformed dhcp-state expected a structured error, got {other:?}"),
+    }
+
+    // data-source (157): a single Flags octet; an empty payload is malformed.
+    let decoded = decode_lease_query_with(DATA_SOURCE, Vec::new());
+    match decoded.data_source() {
+        Some(Err(CrafterError::InvalidFieldValue { .. })) => {}
+        other => panic!("malformed data-source expected a structured error, got {other:?}"),
+    }
+
+    // A well-formed frame with unassigned (unknown) status and state octets
+    // still decodes cleanly through the same accessors, preserving the unknown
+    // values verbatim (RFC 6926 leaves most code points Unassigned).
+    let good = Dhcp::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 50))
+        .transaction_id(0x0102_0304)
+        .option(DhcpOption::generic(STATUS_CODE, vec![0x40, 0xff, 0x00]))
+        .option(DhcpOption::generic(DHCP_STATE, vec![0x55]))
+        .option(DhcpOption::generic(DATA_SOURCE, vec![0xFE]));
+    let bytes = good.malformed().to_bytes();
+    let decoded = Dhcp::decode(&bytes).expect("leasequery frame must decode structurally");
+    let status = decoded
+        .status_code()
+        .expect("status present")
+        .expect("status decodes");
+    assert_eq!(status.status, DhcpStatusCode::Unknown(0x40));
+    assert_eq!(status.message, vec![0xff, 0x00]);
+    assert_eq!(
+        decoded
+            .dhcp_state()
+            .expect("state present")
+            .expect("state decodes"),
+        DhcpState::Unknown(0x55),
+    );
+    let source = decoded
+        .data_source()
+        .expect("source present")
+        .expect("source decodes");
+    assert!(
+        !source.is_remote(),
+        "REMOTE bit clear when only UNA bits set"
+    );
+    assert_eq!(source, DhcpDataSource::new(0xFE));
+}
+
 #[test]
 fn malformed_corpus_decoder_paths_do_not_panic() {
     let cases = malformed_cases();
