@@ -111,10 +111,28 @@ pub fn ipv6_pseudo_header_checksum(
     internet_checksum_chunks(pseudo.into_iter().chain([transport]))
 }
 
+/// Compute CRC-32C/Castagnoli over `data`.
+#[allow(dead_code)]
+pub(crate) fn crc32c(data: &[u8]) -> u32 {
+    const POLY_REFLECTED: u32 = 0x82f6_3b78;
+
+    let mut crc = !0u32;
+
+    for &byte in data {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (POLY_REFLECTED & mask);
+        }
+    }
+
+    !crc
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        finalize_checksum, fold_sum, internet_checksum, internet_checksum_chunks,
+        crc32c, finalize_checksum, fold_sum, internet_checksum, internet_checksum_chunks,
         ipv4_header_checksum, ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum,
         ones_complement_sum, verify_internet_checksum,
     };
@@ -199,5 +217,13 @@ mod tests {
         );
 
         assert_eq!(checksum, 0x9200);
+    }
+
+    #[test]
+    fn crc32c_matches_standard_vectors() {
+        assert_eq!(crc32c(b""), 0x0000_0000);
+        assert_eq!(crc32c(b"123456789"), 0xe306_9283);
+        assert_eq!(crc32c(b"abc"), 0x364b_3fb7);
+        assert_eq!(crc32c(b"hello world"), 0xc994_65aa);
     }
 }
