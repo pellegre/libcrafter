@@ -59,8 +59,9 @@ pub use packet::{
     TransportChecksumContext,
 };
 pub use protocols::{
-    decode_dns_name, decode_tftp_server_addresses, option_meta, option_name, option_status,
-    scan_dhcp_option_segments, typed_option_value, Arp, ArpOperation, ClientNetworkDeviceInterface,
+    arp_hardware_type_label, decode_dns_name, decode_tftp_server_addresses, option_meta,
+    option_name, option_status, scan_dhcp_option_segments, typed_option_value, Arp, ArpOperation,
+    ClientNetworkDeviceInterface,
     ClientSystemArchitecture, Dhcp, DhcpAuthAlgorithm, DhcpAuthProtocol, DhcpAuthentication,
     DhcpClasslessRoute, DhcpClientIdentifier, DhcpClientUuid, DhcpDataSource,
     DhcpForcerenewNonceCapable, DhcpMalformed, DhcpMessageType, DhcpOption, DhcpOptionArea,
@@ -158,8 +159,9 @@ pub mod core {
     pub use crate::protocols;
     pub use crate::registry;
     pub use crate::{
-        decode_dns_name, decode_tftp_server_addresses, hexdump, option_meta, option_name,
-        option_status, scan_dhcp_option_segments, typed_option_value, Arp, ArpOperation,
+        arp_hardware_type_label, decode_dns_name, decode_tftp_server_addresses, hexdump,
+        option_meta, option_name, option_status, scan_dhcp_option_segments, typed_option_value,
+        Arp, ArpOperation,
         ClientNetworkDeviceInterface, ClientSystemArchitecture, CompiledPacket, CrafterError, Dhcp,
         DhcpAuthAlgorithm, DhcpAuthProtocol, DhcpAuthentication, DhcpClasslessRoute,
         DhcpClientIdentifier, DhcpClientUuid, DhcpDataSource, DhcpForcerenewNonceCapable,
