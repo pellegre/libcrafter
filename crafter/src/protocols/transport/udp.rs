@@ -62,6 +62,7 @@ pub const UDP_OPTION_RESERVED_UNSAFE: u8 = 255;
 const UDP_OPTION_SHORT_HEADER_LEN: usize = 2;
 const UDP_OPTION_EXTENDED_HEADER_LEN: usize = 4;
 const UDP_OPTION_EXTENDED_LEN_SENTINEL: u8 = 255;
+const UDP_OPTION_MAX_CONSECUTIVE_NOPS: usize = 7;
 
 /// Inspection status for UDP checksum handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -228,6 +229,8 @@ impl UdpOption {
 pub struct UdpOptionIter<'a> {
     bytes: &'a [u8],
     offset: usize,
+    consecutive_nops: usize,
+    eol_padding_offset: Option<usize>,
     done: bool,
 }
 
@@ -237,6 +240,8 @@ impl<'a> UdpOptionIter<'a> {
         Self {
             bytes,
             offset: 0,
+            consecutive_nops: 0,
+            eol_padding_offset: None,
             done: false,
         }
     }
@@ -246,6 +251,17 @@ impl Iterator for UdpOptionIter<'_> {
     type Item = Result<UdpOption>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Some(offset) = self.eol_padding_offset.take() {
+            self.done = true;
+            if self.bytes[offset..].iter().any(|byte| *byte != 0) {
+                return Some(Err(CrafterError::invalid_field_value(
+                    "udp.option.eol_padding",
+                    "bytes after EOL must be zero-fill",
+                )));
+            }
+            return None;
+        }
+
         if self.done || self.offset >= self.bytes.len() {
             return None;
         }
@@ -254,15 +270,25 @@ impl Iterator for UdpOptionIter<'_> {
         let kind = self.bytes[start];
         match kind {
             UDP_OPTION_EOL => {
-                self.done = true;
-                self.offset = self.bytes.len();
+                self.consecutive_nops = 0;
+                self.offset = start + 1;
+                self.eol_padding_offset = Some(start + 1);
                 Some(Ok(UdpOption::EndOfList))
             }
             UDP_OPTION_NOP => {
                 self.offset += 1;
+                self.consecutive_nops += 1;
+                if self.consecutive_nops > UDP_OPTION_MAX_CONSECUTIVE_NOPS {
+                    self.done = true;
+                    return Some(Err(CrafterError::invalid_field_value(
+                        "udp.option.nop",
+                        "more than seven consecutive NOP options",
+                    )));
+                }
                 Some(Ok(UdpOption::NoOperation))
             }
             _ => {
+                self.consecutive_nops = 0;
                 if start + UDP_OPTION_SHORT_HEADER_LEN > self.bytes.len() {
                     self.done = true;
                     return Some(Err(CrafterError::buffer_too_short(
@@ -486,6 +512,35 @@ fn parse_udp_options_for_status(bytes: &[u8]) -> (Vec<UdpOption>, UdpOptionStatu
     (options, UdpOptionStatus::Valid)
 }
 
+fn udp_option_inspection_summary(option: &UdpOption) -> String {
+    match option {
+        UdpOption::EndOfList => "EOL".to_string(),
+        UdpOption::NoOperation => "NOP".to_string(),
+        UdpOption::Generic { kind, data } => {
+            format!(
+                "Generic(kind={kind},len={})",
+                UDP_OPTION_SHORT_HEADER_LEN + data.len()
+            )
+        }
+        UdpOption::ExtendedGeneric { kind, data } => format!(
+            "ExtendedGeneric(kind={kind},len={})",
+            UDP_OPTION_EXTENDED_HEADER_LEN + data.len()
+        ),
+    }
+}
+
+fn udp_options_inspection_summary(options: &[UdpOption]) -> String {
+    if options.is_empty() {
+        return "none".to_string();
+    }
+
+    options
+        .iter()
+        .map(udp_option_inspection_summary)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 fn validate_udp_generic_option_kind(kind: u8) -> Result<()> {
     if kind == UDP_OPTION_EOL || kind == UDP_OPTION_NOP {
         return Err(CrafterError::invalid_field_value(
@@ -514,6 +569,7 @@ impl Layer for UdpOptions {
             ("len", self.bytes.len().to_string()),
             ("status", format!("{:?}", self.status)),
             ("option_count", self.options.len().to_string()),
+            ("options", udp_options_inspection_summary(&self.options)),
             ("bytes", hex_bytes(&self.bytes)),
         ]
     }
@@ -910,11 +966,60 @@ mod tests {
     }
 
     #[test]
-    fn udp_option_iterator_stops_at_eol_and_reports_malformed_lengths() {
-        let decoded =
-            UdpOption::decode_all(&[UDP_OPTION_NOP, UDP_OPTION_EOL, UDP_OPTION_MDS, 2]).unwrap();
+    fn udp_option_eol_encode_decode_and_inspection_output() {
+        let eol = UdpOption::end_of_list();
+        assert_eq!(eol, UdpOption::EndOfList);
+        assert_eq!(eol.kind(), UDP_OPTION_EOL);
+        assert_eq!(eol.data(), &[]);
+        assert_eq!(eol.encoded_len(), 1);
+        assert_eq!(eol.encode().unwrap(), vec![UDP_OPTION_EOL]);
+
+        let decoded = UdpOption::decode_all(&[UDP_OPTION_NOP, UDP_OPTION_EOL, 0, 0, 0]).unwrap();
         assert_eq!(decoded, vec![UdpOption::NoOperation, UdpOption::EndOfList]);
 
+        let udp_options = UdpOptions::from_bytes([UDP_OPTION_EOL, 0, 0]);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.options(), &[UdpOption::EndOfList]);
+        assert_eq!(udp_options.as_bytes(), &[UDP_OPTION_EOL, 0, 0]);
+        assert!(udp_options.summary().contains("status=Valid"));
+        assert!(udp_options
+            .inspection_fields()
+            .iter()
+            .any(|(name, value)| *name == "options" && value == "EOL"));
+    }
+
+    #[test]
+    fn udp_option_nop_encode_decode_padding_and_limit() {
+        let nop = UdpOption::no_operation();
+        assert_eq!(nop, UdpOption::NoOperation);
+        assert_eq!(nop.kind(), UDP_OPTION_NOP);
+        assert_eq!(nop.data(), &[]);
+        assert_eq!(nop.encoded_len(), 1);
+        assert_eq!(nop.encode().unwrap(), vec![UDP_OPTION_NOP]);
+
+        let seven_nops = [UDP_OPTION_NOP; 7];
+        let decoded = UdpOption::decode_all(&seven_nops).unwrap();
+        assert_eq!(decoded, vec![UdpOption::NoOperation; 7]);
+        assert_eq!(
+            UdpOptions::from_bytes(seven_nops).status(),
+            UdpOptionStatus::Valid
+        );
+
+        let eight_nops = [UDP_OPTION_NOP; 8];
+        assert_eq!(
+            UdpOptions::from_bytes(eight_nops).status(),
+            UdpOptionStatus::Malformed
+        );
+        match UdpOption::decode_all(&eight_nops).unwrap_err() {
+            crate::CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "udp.option.nop");
+            }
+            other => panic!("expected excessive NOP validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn udp_option_iterator_reports_malformed_lengths() {
         let mut iter = UdpOptionIter::new(&[UDP_OPTION_MDS, 1]);
         match iter.next().unwrap() {
             Err(crate::CrafterError::InvalidFieldValue { field, .. }) => {
@@ -935,6 +1040,37 @@ mod tests {
                 assert_eq!(available, 5);
             }
             other => panic!("expected malformed extended length, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn udp_options_padding_empty_zero_fill_and_nonzero_after_eol() {
+        let empty = UdpOptions::new();
+        assert!(empty.is_empty());
+        assert_eq!(empty.status(), UdpOptionStatus::NoSurplus);
+        assert_eq!(empty.options(), &[]);
+
+        let zero_fill = UdpOptions::from_bytes([UDP_OPTION_NOP, UDP_OPTION_EOL, 0, 0, 0]);
+        assert_eq!(zero_fill.status(), UdpOptionStatus::Valid);
+        assert_eq!(
+            zero_fill.options(),
+            &[UdpOption::NoOperation, UdpOption::EndOfList]
+        );
+        assert_eq!(
+            zero_fill.as_bytes(),
+            &[UDP_OPTION_NOP, UDP_OPTION_EOL, 0, 0, 0]
+        );
+
+        let nonzero_fill = UdpOptions::from_bytes([UDP_OPTION_EOL, 0, 0x5a]);
+        assert_eq!(nonzero_fill.status(), UdpOptionStatus::Malformed);
+        assert_eq!(nonzero_fill.options(), &[UdpOption::EndOfList]);
+        assert_eq!(nonzero_fill.as_bytes(), &[UDP_OPTION_EOL, 0, 0x5a]);
+
+        match UdpOption::decode_all(nonzero_fill.as_bytes()).unwrap_err() {
+            crate::CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "udp.option.eol_padding");
+            }
+            other => panic!("expected EOL padding validation error, got {other:?}"),
         }
     }
 
