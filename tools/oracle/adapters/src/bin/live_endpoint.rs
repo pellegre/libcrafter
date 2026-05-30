@@ -985,6 +985,7 @@ fn canonical_compare_root(root: &str) -> ExampleResult<&'static str> {
 fn normalize_layer_name(name: &str) -> &str {
     match name {
         "Dns" => "dns",
+        "Dhcp" => "dhcp",
         "Ethernet" => "ethernet",
         "ICMP" => "icmp",
         "Icmp" => "icmp",
@@ -1015,6 +1016,7 @@ fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value
         "icmp" => layer.as_any().downcast_ref::<Icmp>().map(icmp_fields),
         "icmpv6" => layer.as_any().downcast_ref::<Icmpv6>().map(icmpv6_fields),
         "dns" => layer.as_any().downcast_ref::<Dns>().map(dns_fields),
+        "dhcp" => layer.as_any().downcast_ref::<Dhcp>().map(dhcp_fields),
         _ => None,
     }
 }
@@ -1181,6 +1183,73 @@ fn dns_fields(layer: &Dns) -> Map<String, Value> {
         json!(layer.additionals().len()),
     );
     fields
+}
+
+fn dhcp_fields(layer: &Dhcp) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("opcode".to_string(), json!(layer.op_value()));
+    fields.insert(
+        "hardware_type".to_string(),
+        json!(layer.hardware_type_value()),
+    );
+    fields.insert(
+        "hardware_length".to_string(),
+        json!(layer.hardware_len_value()),
+    );
+    fields.insert("hops".to_string(), json!(layer.hops_value()));
+    fields.insert(
+        "transaction_id".to_string(),
+        json!(layer.transaction_id_value()),
+    );
+    fields.insert("seconds".to_string(), json!(layer.seconds_value()));
+    fields.insert("flags".to_string(), json!(layer.flags_value()));
+    fields.insert(
+        "client_ip".to_string(),
+        json!(layer.client_ip_address_value().to_string()),
+    );
+    fields.insert(
+        "your_ip".to_string(),
+        json!(layer.your_ip_address_value().to_string()),
+    );
+    fields.insert(
+        "server_ip".to_string(),
+        json!(layer.server_ip_address_value().to_string()),
+    );
+    fields.insert(
+        "relay_ip".to_string(),
+        json!(layer.gateway_ip_address_value().to_string()),
+    );
+    fields.insert(
+        "client_hardware_address".to_string(),
+        json!({"hex": hex_bytes(layer.client_hardware_address_value())}),
+    );
+    fields.insert(
+        "magic_cookie".to_string(),
+        json!(layer.magic_cookie_value()),
+    );
+    fields.insert(
+        "option_count".to_string(),
+        json!(layer.options_value().len()),
+    );
+    fields.insert("options".to_string(), json!(decoded_dhcp_options(layer)));
+    if let Some(message_type) = layer.message_type_value() {
+        fields.insert("message_type".to_string(), json!(message_type.code()));
+    }
+    fields
+}
+
+fn decoded_dhcp_options(layer: &Dhcp) -> Vec<Value> {
+    layer
+        .options_value()
+        .iter()
+        .map(|option| {
+            let payload = option.payload().unwrap_or_default();
+            json!({
+                "code": option.code(),
+                "payload_hex": hex_bytes(&payload),
+            })
+        })
+        .collect()
 }
 
 fn dns_flag_enabled(dns: &Dns, flag: u16) -> bool {
