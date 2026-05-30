@@ -1,7 +1,7 @@
 version: 1
 kind: layer
 name: arp
-summary: ARP fixed header and variable sender/target address fields (RFC 826), defaulting to Ethernet/IPv4 requests and replies.
+summary: ARP fixed header and variable sender/target address fields (RFC 826), defaulting to Ethernet/IPv4 requests and replies, with registry-backed hardware, protocol, and operation codepoints that stay raw-preserving for unknown numeric values.
 
 roots: []
 parents:
@@ -14,11 +14,65 @@ fields:
     required: true
     domains:
       - ethernet
+    codepoints:
+      - value: 1
+        name: ethernet
+        registry: arp-parameters-2
+        source: RFC 826
+        note: default HRD; Ethernet (10Mb)
+      - value: 6
+        name: ieee_802
+        registry: arp-parameters-2
+        note: recognized as data, not behavior
+      - value: 18
+        name: fibre_channel
+        registry: arp-parameters-2
+        source: RFC 4338
+        note: recognized as data, not behavior
+      - value: 19
+        name: atm
+        registry: arp-parameters-2
+        source: RFC 2225
+        note: recognized as data, not behavior
+      - value: 25
+        name: mapos
+        registry: arp-parameters-2
+        source: RFC 2176
+        note: recognized as data, not behavior
+      - value: 32
+        name: infiniband
+        registry: arp-parameters-2
+        source: RFC 4391
+        note: recognized as data, not behavior
+      - value: 0
+        name: reserved
+        registry: arp-parameters-2
+        source: RFC 5494
+        note: reserved; raw-preserved
+      - value: 65535
+        name: reserved
+        registry: arp-parameters-2
+        source: RFC 5494
+        note: reserved; raw-preserved
+    note: >-
+      The seeded generator keeps HRD at the Ethernet default; the codepoints
+      list documents registry-backed known values that are recognized as data,
+      and any unknown numeric HRD stays raw-preserving (no value is rejected).
   - name: protocol_type
     type: uint16
     required: true
     domains:
       - ipv4
+    codepoints:
+      - value: ipv4
+        name: ipv4
+        registry: arp-parameters-3
+        source: RFC 826
+        note: default PRO; shares the Ethertype space (RFC 5342)
+    note: >-
+      PRO shares the Ethertype space (arp-parameters-3 administered per
+      RFC 5342). The default is the IPv4 Ethertype; unknown numeric protocol
+      types stay raw-preserving.
   - name: hardware_length
     type: uint8
     required: true
@@ -35,32 +89,160 @@ fields:
     domains:
       - request
       - reply
-  - name: sender_hardware_address
-    type: mac
-    required: true
-    domains:
-      - documentation_mac
-  - name: sender_protocol_address
-    type: ipv4
-    required: true
-    domains:
-      - documentation_ipv4
-  - name: target_hardware_address
-    type: mac
-    required: true
-    domains:
-      - documentation_mac
-      - zero
-  - name: target_protocol_address
-    type: ipv4
-    required: true
-    domains:
-      - documentation_ipv4
+    profile_domains:
+      ci:
+        - request
+        - reply
+        - 3
+        - 4
+        - 8
+        - 9
+        - 10
+        - 23
+        - 1024
+      wild:
+        - request
+        - reply
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 23
+        - 24
+        - 25
+        - 1024
+        - 4660
+      boundary:
+        - request
+        - reply
+        - 0
+        - 24
+        - 25
+        - 65535
+      fuzz:
+        - request
+        - reply
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 23
+        - 1024
+        - 4660
+        - 65279
+    codepoints:
+      - value: 0
+        name: reserved
+        registry: arp-parameters-1
+        source: RFC 5494
+        note: reserved; raw-preserved, no behavior
+      - value: 1
+        name: request
+        registry: arp-parameters-1
+        source: RFC 826, RFC 5227
+        note: default request; drives reply matching
+      - value: 2
+        name: reply
+        registry: arp-parameters-1
+        source: RFC 826, RFC 5227
+        note: default reply; drives reply matching
+      - value: 3
+        name: rarp_request
+        registry: arp-parameters-1
+        source: RFC 903
+        note: codepoint only; rides the RFC 826 wire format
+      - value: 4
+        name: rarp_reply
+        registry: arp-parameters-1
+        source: RFC 903
+        note: codepoint only; rides the RFC 826 wire format
+      - value: 5
+        name: drarp_request
+        registry: arp-parameters-1
+        source: RFC 1931
+        note: codepoint only
+      - value: 6
+        name: drarp_reply
+        registry: arp-parameters-1
+        source: RFC 1931
+        note: codepoint only
+      - value: 7
+        name: drarp_error
+        registry: arp-parameters-1
+        source: RFC 1931
+        note: codepoint only
+      - value: 8
+        name: inarp_request
+        registry: arp-parameters-1
+        source: RFC 2390
+        note: codepoint only
+      - value: 9
+        name: inarp_reply
+        registry: arp-parameters-1
+        source: RFC 2390
+        note: codepoint only
+      - value: 10
+        name: arp_nak
+        registry: arp-parameters-1
+        source: RFC 1577
+        note: codepoint only
+      - value: 23
+        name: mapos_unarp
+        registry: arp-parameters-1
+        source: RFC 2176
+        note: codepoint only
+      - value: 24
+        name: op_exp1
+        registry: arp-parameters-1
+        source: RFC 5494
+        note: experimental codepoint; raw-preserved
+      - value: 25
+        name: op_exp2
+        registry: arp-parameters-1
+        source: RFC 5494
+        note: experimental codepoint; raw-preserved
+      - value: 65535
+        name: reserved
+        registry: arp-parameters-1
+        source: RFC 5494
+        note: reserved; raw-preserved
+    unknown:
+      raw: true
+      note: >-
+        Unknown numeric operation codepoints (for example the unassigned
+        sample values 1024 / 4660 / 65279 used by the richer profiles) stay
+        round-trippable and visible. They are emitted as raw u16 opcodes and
+        are neither rejected nor remapped to request/reply.
+    note: >-
+      The smoke profile keeps the protocol-correct request/reply domains so
+      the ethernet_arp golden cases stay byte-stable. Richer profiles
+      (ci/wild/boundary/fuzz) additionally sample the registry-backed known
+      operation codepoints and unknown raw numeric values, all of which
+      round-trip as raw u16 opcodes through both backends.
 
 coverage_cases:
   - arp-request
   - arp-reply
   - crafter-arp-reply
+
+codepoints:
+  source: target/arp-rfc/manifest.json (arp-parameters-1/-2/-3) and target/arp-rfc/scope.md
+  note: >-
+    Known operation, hardware-type, and protocol-type codepoints come from the
+    source-backed ARP manifest. They are exposed as named known values without
+    preventing callers from using unknown numeric values. Operations 3-10 and
+    23 are codepoint-only (no extension message bodies); operations 0, 24, 25,
+    and 65535 are reserved/experimental per RFC 5494. Any unknown numeric
+    hardware type, protocol type, or operation is preserved as raw bytes/u16
+    rather than rejected or remapped.
 
 backend_support:
   scapy:
@@ -69,7 +251,14 @@ backend_support:
       - ARP
     encode: true
     decode: true
+    notes:
+      - Known string operations (request/reply) and any numeric opcode encode
+        and decode unchanged; unknown numeric opcodes round-trip as raw u16.
   libcrafter:
     status: supported
     encode: true
     decode: true
+    notes:
+      - Encodes and decodes the registry-backed operation, hardware-type, and
+        protocol-type known values and preserves unknown numeric codepoints as
+        raw values via the opcode(u16)/hardware_type/protocol_type setters.
