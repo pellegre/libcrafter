@@ -2265,27 +2265,68 @@ mod tests {
         u16::from_be_bytes([bytes[46], bytes[47]])
     }
 
-    fn assert_ipv4_udp_checksum_excludes_surplus(bytes: &[u8], payload_len: usize) {
+    fn zeroed_ipv4_udp_checksum_input(bytes: &[u8], payload_len: usize) -> Vec<u8> {
         let udp_end = 20 + UDP_HEADER_LEN + payload_len;
         let mut udp = bytes[20..udp_end].to_vec();
         udp[6] = 0;
         udp[7] = 0;
-        let expected = wire_checksum(ipv4_pseudo_header_checksum(src(), dst(), IPPROTO_UDP, &udp));
-        assert_eq!(udp_checksum(bytes), expected);
+        udp
     }
 
-    fn assert_ipv6_udp_checksum_excludes_surplus(bytes: &[u8], payload_len: usize) {
+    fn zeroed_ipv6_udp_checksum_input(bytes: &[u8], payload_len: usize) -> Vec<u8> {
         let udp_end = 40 + UDP_HEADER_LEN + payload_len;
         let mut udp = bytes[40..udp_end].to_vec();
         udp[6] = 0;
         udp[7] = 0;
-        let expected = wire_checksum(ipv6_pseudo_header_checksum(
+        udp
+    }
+
+    fn expected_ipv4_udp_checksum(bytes: &[u8], payload_len: usize) -> u16 {
+        let udp = zeroed_ipv4_udp_checksum_input(bytes, payload_len);
+        wire_checksum(ipv4_pseudo_header_checksum(src(), dst(), IPPROTO_UDP, &udp))
+    }
+
+    fn expected_ipv6_udp_checksum(bytes: &[u8], payload_len: usize) -> u16 {
+        let udp = zeroed_ipv6_udp_checksum_input(bytes, payload_len);
+        wire_checksum(ipv6_pseudo_header_checksum(
             ipv6_src(),
             ipv6_dst(),
             IPPROTO_UDP,
             &udp,
-        ));
-        assert_eq!(ipv6_udp_checksum(bytes), expected);
+        ))
+    }
+
+    fn expected_ipv4_checksum_if_surplus_were_included(bytes: &[u8]) -> u16 {
+        let mut udp = bytes[20..ipv4_total_len(bytes)].to_vec();
+        udp[6] = 0;
+        udp[7] = 0;
+        wire_checksum(ipv4_pseudo_header_checksum(src(), dst(), IPPROTO_UDP, &udp))
+    }
+
+    fn expected_ipv6_checksum_if_surplus_were_included(bytes: &[u8]) -> u16 {
+        let mut udp = bytes[40..40 + ipv6_payload_len(bytes)].to_vec();
+        udp[6] = 0;
+        udp[7] = 0;
+        wire_checksum(ipv6_pseudo_header_checksum(
+            ipv6_src(),
+            ipv6_dst(),
+            IPPROTO_UDP,
+            &udp,
+        ))
+    }
+
+    fn assert_ipv4_udp_checksum_excludes_surplus(bytes: &[u8], payload_len: usize) {
+        assert_eq!(
+            udp_checksum(bytes),
+            expected_ipv4_udp_checksum(bytes, payload_len)
+        );
+    }
+
+    fn assert_ipv6_udp_checksum_excludes_surplus(bytes: &[u8], payload_len: usize) {
+        assert_eq!(
+            ipv6_udp_checksum(bytes),
+            expected_ipv6_udp_checksum(bytes, payload_len)
+        );
     }
 
     fn apc_checksum_value(udp_options: &UdpOptions) -> u32 {
@@ -3922,6 +3963,134 @@ mod tests {
 
             assert_eq!(&bytes.as_bytes()[26..28], &checksum.to_be_bytes());
         }
+    }
+
+    #[test]
+    fn udp_checksum_generation_ipv4_matches_hand_computed_without_options() {
+        let payload = [0xde, 0xad, 0xbe];
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2270)
+            / Udp::new().sport(0x1234).dport(0x5678)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+
+        assert_eq!(udp_length(bytes.as_bytes()), UDP_HEADER_LEN + payload.len());
+        assert_eq!(
+            udp_checksum(bytes.as_bytes()),
+            expected_ipv4_udp_checksum(bytes.as_bytes(), payload.len())
+        );
+    }
+
+    #[test]
+    fn udp_checksum_generation_ipv4_excludes_surplus_options() {
+        let payload = [0xaa, 0xbb, 0xcc];
+        let option_bytes = [UDP_OPTION_NOP, UDP_OPTION_EOL];
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2271)
+            / Udp::new().sport(0x1234).dport(0x5678)
+            / Raw::from_bytes(payload)
+            / UdpOptions::from_bytes(option_bytes).option_checksum(0x1234))
+        .compile()
+        .unwrap();
+
+        assert_eq!(udp_length(bytes.as_bytes()), UDP_HEADER_LEN + payload.len());
+        assert_eq!(
+            udp_checksum(bytes.as_bytes()),
+            expected_ipv4_udp_checksum(bytes.as_bytes(), payload.len())
+        );
+        assert_ne!(
+            udp_checksum(bytes.as_bytes()),
+            expected_ipv4_checksum_if_surplus_were_included(bytes.as_bytes())
+        );
+    }
+
+    #[test]
+    fn udp_checksum_generation_ipv6_matches_hand_computed_without_options() {
+        let payload = [0xde, 0xad, 0xbe];
+        let bytes = (Ipv6::new().src(ipv6_src()).dst(ipv6_dst())
+            / Udp::new().sport(0x1234).dport(0x5678)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+
+        assert_eq!(
+            ipv6_udp_length(bytes.as_bytes()),
+            UDP_HEADER_LEN + payload.len()
+        );
+        assert_eq!(
+            ipv6_udp_checksum(bytes.as_bytes()),
+            expected_ipv6_udp_checksum(bytes.as_bytes(), payload.len())
+        );
+    }
+
+    #[test]
+    fn udp_checksum_generation_ipv6_excludes_surplus_options() {
+        let payload = [0xaa, 0xbb, 0xcc];
+        let option_bytes = [UDP_OPTION_NOP, UDP_OPTION_EOL];
+        let bytes = (Ipv6::new().src(ipv6_src()).dst(ipv6_dst())
+            / Udp::new().sport(0x1234).dport(0x5678)
+            / Raw::from_bytes(payload)
+            / UdpOptions::from_bytes(option_bytes).option_checksum(0x1234))
+        .compile()
+        .unwrap();
+
+        assert_eq!(
+            ipv6_udp_length(bytes.as_bytes()),
+            UDP_HEADER_LEN + payload.len()
+        );
+        assert_eq!(
+            ipv6_udp_checksum(bytes.as_bytes()),
+            expected_ipv6_udp_checksum(bytes.as_bytes(), payload.len())
+        );
+        assert_ne!(
+            ipv6_udp_checksum(bytes.as_bytes()),
+            expected_ipv6_checksum_if_surplus_were_included(bytes.as_bytes())
+        );
+    }
+
+    #[test]
+    fn udp_checksum_generation_auto_zero_is_transmitted_as_ffff_ipv4() {
+        let payload = [0xaa, 0xf6];
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2272)
+            / Udp::new().sport(0x1234).dport(0x5678)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+
+        let udp = zeroed_ipv4_udp_checksum_input(bytes.as_bytes(), payload.len());
+        assert_eq!(
+            ipv4_pseudo_header_checksum(src(), dst(), IPPROTO_UDP, &udp),
+            0
+        );
+        assert_eq!(udp_checksum(bytes.as_bytes()), 0xffff);
+    }
+
+    #[test]
+    fn udp_checksum_generation_auto_zero_is_transmitted_as_ffff_ipv6() {
+        let payload = [0x3b, 0xb9];
+        let bytes = (Ipv6::new().src(ipv6_src()).dst(ipv6_dst())
+            / Udp::new().sport(0x1234).dport(0x5678)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+
+        let udp = zeroed_ipv6_udp_checksum_input(bytes.as_bytes(), payload.len());
+        assert_eq!(
+            ipv6_pseudo_header_checksum(ipv6_src(), ipv6_dst(), IPPROTO_UDP, &udp),
+            0
+        );
+        assert_eq!(ipv6_udp_checksum(bytes.as_bytes()), 0xffff);
+    }
+
+    #[test]
+    fn udp_checksum_generation_explicit_ipv4_zero_survives_with_surplus() {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2273)
+            / Udp::new().sport(0x1234).dport(0x5678).checksum(0)
+            / Raw::from_bytes([0xde, 0xad, 0xbe])
+            / UdpOptions::from_bytes([UDP_OPTION_NOP, UDP_OPTION_EOL]))
+        .compile()
+        .unwrap();
+
+        assert_eq!(udp_checksum(bytes.as_bytes()), 0);
     }
 
     #[test]
