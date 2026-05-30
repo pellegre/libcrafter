@@ -85,6 +85,35 @@ It also skips actual VM creation unless `--allow-vm-create` or
 qualification run should fail instead of skip if QEMU or VirtualBox
 prerequisites are missing or VM creation is disabled.
 
+## DHCP Coverage
+
+DHCP is validated as a normal `Packet` stack carried by UDP and IPv4, not as a
+DHCP client, server, lease negotiation, or reply workflow. Two stacks split the
+coverage:
+
+- `ipv4 / udp / dhcp` (root `l3:ipv4`) is the live DHCP packet under test. Live
+  validation is a one-way packet-equivalence exchange run in both directions
+  (`libcrafter_to_reference` and `reference_to_libcrafter`); each direction
+  sends one DHCP packet and checks the receiver's decoded observation, and no
+  DHCP reply is expected. Rooted at IPv4 unicast, it is wire-eligible without
+  Ethernet framing, link-layer broadcast, or provider MAC discovery.
+- `ethernet / ipv4 / udp / dhcp` (root `link:ethernet`) stays for offline byte
+  equivalence, pcap, link-type, and decode-root coverage where Ethernet framing
+  is the behavior under test. It remains link-layer-gated for live runs
+  (`requires_l2`, `requires_provider_mac`, `requires_broadcast`).
+
+Scapy is the live reference backend for DHCP exchanges. Wireshark/tshark is
+parser-only: it decodes DHCP packets and pcaps for comparison but never sends,
+encodes, or acts as a live endpoint. Plan the focused DHCP live path in dry-run
+mode with `--case dhcp-discover`:
+
+```sh
+tools/oracle/run live --backend scapy --provider local-dry-run --dry-run --profile smoke --seed 134 --count 2 --case dhcp-discover --out target/oracle/dhcp-dry-run
+```
+
+See `tools/oracle/LIVE.md` for the guarded real DHCP live paths (QEMU,
+VirtualBox, Hetzner).
+
 Expanded wire protocol smoke checks force corpus selection for DNS, TCP, ICMP,
 and IPv6 packets while keeping provider execution in dry-run mode:
 

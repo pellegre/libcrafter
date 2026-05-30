@@ -166,6 +166,10 @@ stacks:
       - dns
     coverage_cases:
       - dns-query
+  # ethernet / ipv4 / udp / dhcp: link-layer DHCP for offline byte
+  # equivalence, pcap, link-type, and decode-root coverage. It stays
+  # link-layer-gated for live (requires_l2 / requires_provider_mac /
+  # requires_broadcast) and is not used for provider-backed live exchanges.
   - name: ethernet_dhcp
     root: "link:ethernet"
     layers:
@@ -181,6 +185,13 @@ stacks:
       - dhcp-force-renew
       - dhcp-lease-query
       - dhcp-option-matrix
+  # ipv4 / udp / dhcp (root l3:ipv4): the live DHCP packet under test. Live
+  # validation is a one-way packet-equivalence exchange run in both directions
+  # (libcrafter_to_reference and reference_to_libcrafter) with NO expected DHCP
+  # reply. It is not a DHCP client, server, lease, or relay emulation. Rooted at
+  # IPv4 unicast it is wire-eligible without L2 framing, broadcast, or provider
+  # MAC discovery. Scapy is the live reference backend; Wireshark/tshark is
+  # parser-only and never acts as a live endpoint.
   - name: ipv4_udp_dhcp
     root: "l3:ipv4"
     layers:

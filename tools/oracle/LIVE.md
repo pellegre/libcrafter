@@ -83,6 +83,29 @@ infrastructure unless `--confirm-live-run` is also passed. `--dry-run` never
 sends packets and never requires `--confirm-live-run`. This keeps real live
 exchange opt-in while leaving dry-run planning unconditionally safe.
 
+## DHCP Live Exchange Shape
+
+Live DHCP validation is a one-way packet-equivalence exchange, not a DHCP
+client, server, lease negotiation, or reply workflow. The packet under test is
+the `ipv4 / udp / dhcp` stack (root `l3:ipv4`, UDP ports 68 to 67), selected
+with `--case dhcp-discover`. It runs in both standard directions:
+
+- `libcrafter_to_reference`: libcrafter sends the DHCP packet, the reference
+  backend captures and decodes it.
+- `reference_to_libcrafter`: the reference backend sends the DHCP packet,
+  libcrafter captures and decodes it.
+
+Each direction sends one DHCP packet and compares the receiver's normalized
+decoded model. No DHCP reply is expected and no lease state is established.
+Because the packet is rooted at IPv4 unicast, it is wire-eligible without
+Ethernet framing, link-layer broadcast, or provider MAC discovery. The
+`ethernet / ipv4 / udp / dhcp` stack (root `link:ethernet`) is reserved for
+offline/link-layer/pcap coverage and stays link-layer-gated for live runs
+(`requires_l2`, `requires_provider_mac`, `requires_broadcast`).
+
+Scapy is the live reference backend. Wireshark/tshark is parser-only and never
+acts as a live endpoint for DHCP.
+
 ### Guarded DHCP VM Live Exchange
 
 DHCP live exchange (the `ipv4 / udp / dhcp` packet, selected with
