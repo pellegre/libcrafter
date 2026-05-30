@@ -44,6 +44,51 @@ class LiveProviderPolicyTest(unittest.TestCase):
         )
         self.assertFalse(policy["strict_bytes"])
 
+    def test_hetzner_policy_canonicalizes_l2_ipv4_icmp_to_l3_ipv4(self) -> None:
+        plan = _l2_ipv4_icmp_plan()
+
+        policy = wire_comparison_policy(plan, provider="hetzner")
+
+        self.assertEqual(policy["provider"], "hetzner")
+        self.assertEqual(policy["compare_root"], "l3:ipv4")
+        self.assertIn("ipv4.ttl", policy["mutable_fields"])
+        self.assertIn("ipv4.checksum", policy["mutable_fields"])
+        self.assertIn("ipv4.ttl", policy["byte_mutable_fields"])
+        self.assertIn("ipv4.checksum", policy["byte_mutable_fields"])
+        self.assertFalse(policy["strict_bytes"])
+        transit_fields = {
+            mutation["field"] for mutation in policy["transit_mutations"]
+        }
+        self.assertIn("ipv4.ttl", transit_fields)
+        self.assertIn("ipv4.checksum", transit_fields)
+
+    def test_l2_ipv4_icmp_does_not_force_link_root_byte_comparison(self) -> None:
+        plan = _l2_ipv4_icmp_plan()
+
+        policy = wire_comparison_policy(plan, provider="hetzner")
+
+        self.assertEqual(policy["compare_root"], "l3:ipv4")
+        # Ethernet metadata is mutable but never a byte-comparison field at the
+        # IPv4 comparison root; it must not make the ICMP verdict link-rooted.
+        for field in policy["byte_mutable_fields"]:
+            self.assertFalse(field.startswith("ethernet."))
+
+    def test_l2_ipv4_icmp_is_wire_eligible_on_hetzner(self) -> None:
+        plan = _l2_ipv4_icmp_plan()
+
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(plan)],
+            wire_provider="hetzner",
+        )
+
+        self.assertTrue(packet.wire.eligible)
+        self.assertEqual(packet.wire.compare_root, "l3:ipv4")
+        self.assertNotIn(
+            "wire_compare_root_unavailable",
+            packet.wire.skip_reasons,
+        )
+
     def test_supplied_fake_provider_policy_does_not_inherit_hetzner_mutables(
         self,
     ) -> None:
@@ -352,6 +397,24 @@ def _ethernet_dhcp_plan() -> PacketPlan:
         family="ipv4",
         case="dhcp-discover",
         metadata={"root": "link:ethernet"},
+    )
+
+
+def _l2_ipv4_icmp_plan() -> PacketPlan:
+    return PacketPlan(
+        stack=["ipv4", "icmp", "payload"],
+        fields={
+            "ipv4": {"ttl": 64, "src": "192.0.2.1", "dst": "192.0.2.2"},
+            "icmp": {"type": 8, "code": 0},
+            "payload": {"data": "00010203"},
+        },
+        profile="smoke",
+        seed=13,
+        index=0,
+        direction="live_exchange",
+        family="icmp",
+        case="ipv4-icmp",
+        metadata={"root": "l2:ipv4"},
     )
 
 
