@@ -26,10 +26,10 @@ sections.
 | Byte-preserving names (non-UTF-8 labels) | Supported | Trailing-dot string API for text labels; exact wire bytes retained for non-text labels via `\DDD` escapes. |
 | A, AAAA, NS, CNAME, PTR, MX, TXT | Supported | Typed `DnsRecordData` variants. |
 | Unknown / unsupported record types | Supported (Raw) | Preserved as `DnsRecordData::Raw` when the message is structurally valid. |
-| Opcodes, rcodes, types, classes as named constants | Planned | Inspectable, constructible helpers from the IANA registries. |
-| SOA, SRV, additional base RDATA | Planned | Typed where the wire format is unambiguous. |
-| EDNS(0) OPT pseudo-record and options | Planned | Wire encode/decode only. |
-| DNSSEC RDATA (DNSKEY, RRSIG, DS, NSEC, NSEC3) | Planned | Wire structures only; no cryptographic validation. |
+| Opcodes, rcodes, types, classes as named constants | Supported | Inspectable, constructible helpers from the IANA registries; arbitrary numeric values still build. |
+| SOA, SRV base RDATA | Supported | Typed `DnsRecordData::Soa` and `DnsRecordData::Srv`. |
+| EDNS(0) OPT pseudo-record and options | Supported | Wire encode/decode only; option values stay opaque. |
+| DNSSEC RDATA (DNSKEY, RRSIG, DS, NSEC, NSEC3) | Supported | Wire structures only; no cryptographic validation. |
 | SVCB / HTTPS service binding | Supported | Typed SvcPriority, uncompressed target, and ordered SvcParams; values stay opaque. |
 | Obsolete, cryptographic-only, or rarely used RDATA | Raw | Left as `DnsRecordData::Raw` unless evidence and fit justify a typed primitive. |
 | DNS over TCP (length-prefixed stream) | Deferred | Out of scope unless a narrow length-prefixed primitive is approved. |
@@ -53,7 +53,16 @@ The shipped `Dns` layer covers the base DNS message shape from RFC 1035:
   - `A` (type 1) and `AAAA` (type 28) address records.
   - `Name` for NS (2), CNAME (5), and PTR (12).
   - `Mx` (15) preference plus exchange name.
+  - `Soa` (6): MNAME, RNAME, SERIAL, REFRESH, RETRY, EXPIRE, and MINIMUM.
+  - `Srv` (33): priority, weight, port, and an uncompressed target name.
   - `Txt` (16) as a list of DNS character-strings.
+  - `Opt` (41): the EDNS(0) pseudo-record, a list of {code, length, data}
+    options with the UDP payload size and extended RCODE/version/flags carried
+    in the reused CLASS and TTL fields. See
+    [EDNS(0) OPT pseudo-record](#edns0-opt-pseudo-record).
+  - `Ds` (43), `Dnskey` (48), `Rrsig` (46), `Nsec` (47), and `Nsec3` (50):
+    DNSSEC wire structures parsed without cryptographic validation. See
+    [DNSSEC wire records](#dnssec-wire-records).
   - `Svcb` (64) and `Https` (65) service-binding records: a SvcPriority, an
     uncompressed target name, and an ordered list of SvcParams. SvcParam values
     stay opaque wire bytes; unknown SvcParamKeys are preserved verbatim. See
@@ -62,8 +71,13 @@ The shipped `Dns` layer covers the base DNS message shape from RFC 1035:
 - Dispatch: UDP port 53 decodes payloads into the `Dns` layer through the
   packet registry.
 
-Header flag constants currently exported include QR, AA, TC, RD, RA, AD, and
-CD, plus the common record type and class constants.
+Header flag constants exported include QR, AA, TC, RD, RA, AD, and CD. Named
+constants and accessors back the IANA opcodes (`DNS_OPCODE_*`), response codes
+(`DNS_RCODE_*`), classes (`DNS_CLASS_*`), and resource record types
+(`DNS_TYPE_*`), with `dns_type_name`, `edns_option_code_name`, and
+`svcb_param_key_name` returning registry mnemonics. Opcode and rcode accessors
+(`Dns::opcode_value`, `Dns::rcode_value`) read the packed flag bits while the
+raw flags word stays available for intentionally unusual values.
 
 ## Name presentation form
 
@@ -141,46 +155,81 @@ The following service/application material is deliberately deferred and left as
   certificate-association records, and SSHFP (44). These stay `Raw` and may
   become typed later if evidence and project fit justify it.
 
-## Source-backed gaps
+## EDNS(0) OPT pseudo-record
 
-The base layer is intentionally compact. Comparing it against the IANA DNS
-registries and the core RFC wire formats surfaces these source-backed gaps:
+The OPT pseudo-record (type 41, RFC 6891 Section 6.1) is an additional-section
+record whose ordinary resource-record fields carry EDNS meanings: the owner name
+is root, the CLASS field is the requestor's UDP payload size, and the TTL field
+packs the extended RCODE, EDNS version, the DO flag, and the Z bits. `crafter`
+types OPT RDATA as `DnsRecordData::Opt`, a list of `EdnsOption` values, and keeps
+the EDNS fields in the underlying class and TTL so the record still encodes
+through the normal name/type/class/ttl/rdlength/RDATA path.
 
-- Named codepoints are incomplete. The IANA DNS Parameters registry defines
-  opcodes (QUERY, IQUERY, STATUS, NOTIFY, UPDATE, DSO), response codes
-  (NOERROR through the extended BADxxx range), classes (IN, CH, HS, NONE, ANY),
-  and a large RR type table. Only a handful are exposed as constants today.
-- Several base RDATA formats with unambiguous wire layouts are still raw,
-  including SOA (type 6) and SRV (type 33).
-- There is no typed support for the EDNS(0) OPT pseudo-record (type 41), whose
-  CLASS and TTL fields carry UDP payload size, extended RCODE, version, and
-  flags rather than ordinary class and TTL meaning.
-- DNSSEC wire records (DNSKEY 48, RRSIG 46, DS 43, NSEC 47, NSEC3 50) are raw.
-  Their RDATA has well-defined wire structures that can be parsed without any
-  cryptographic validation.
+- Build with `DnsRecord::opt(udp_payload_size, extended_rcode, version,
+  dnssec_ok, options)`; inspect with `DnsRecord::is_opt`,
+  `edns_udp_payload_size`, `edns_extended_rcode`, `edns_version`,
+  `edns_dnssec_ok`, `edns_flags`, and `edns_options`.
+- Each `EdnsOption` is a {OPTION-CODE, OPTION-LENGTH, OPTION-DATA} tuple
+  (RFC 6891 Section 6.1.2). The OPTION-DATA is treated as opaque wire bytes; the
+  source-backed option codes (`DNS_EDNS_OPTION_*`) have a registry mnemonic
+  through `edns_option_code_name`, and `EdnsOption::nsid`, `cookie`, and
+  `padding` build common options. Unknown option codes round trip verbatim.
+- Decoding rejects truncated options and OPTION-LENGTH values that overrun the
+  RDATA with structured errors rather than panicking.
 
-## Planned coverage
+## DNSSEC wire records
 
-These features are selected for typed support because their wire formats are
-unambiguous in the cited sources and they fit the existing `DnsRecordData`,
-builder, decode, and summary shape:
+DS (43), DNSKEY (48), RRSIG (46), NSEC (47), and NSEC3 (50) are parsed as wire
+structures only; no key, digest, or signature material is cryptographically
+validated. Algorithm, digest-type, flags, protocol, key, digest, salt, and
+signature values stay raw numeric fields or opaque bytes. Build with
+`DnsRecord::ds`, `dnskey`, `rrsig`, `nsec`, and `nsec3`.
 
-- Header, opcode, rcode, type, and class helpers: named constants and small
-  accessors backed by the IANA DNS Parameters registry. Building remains free
-  to use arbitrary numeric values.
-- Base RDATA: typed `SOA` (MNAME, RNAME, SERIAL, REFRESH, RETRY, EXPIRE,
-  MINIMUM) and `SRV` (priority, weight, port, target).
-- EDNS(0): an OPT pseudo-record representation that exposes UDP payload size,
-  extended RCODE, version, and flags from the reused CLASS and TTL fields, plus
-  a TLV list of EDNS options (OPTION-CODE, OPTION-LENGTH, OPTION-DATA).
-- DNSSEC wire RDATA: typed `DNSKEY`, `RRSIG`, `DS`, `NSEC`, and `NSEC3` parsed
-  as wire structures only. Algorithm, digest, key, bitmap, and signature bytes
-  are carried verbatim and never cryptographically validated. The Signer's Name
-  in RRSIG and the Next Domain Name in NSEC are emitted uncompressed, as the
-  source requires.
+- DS (RFC 4034 Section 5.1): key tag, algorithm, digest type, and verbatim
+  digest bytes.
+- DNSKEY (RFC 4034 Section 2.1): flags, protocol, algorithm, and verbatim public
+  key bytes.
+- RRSIG (RFC 4034 Section 3.1): the covered type, algorithm, label count, TTLs,
+  signature validity window, key tag, an uncompressed Signer's Name
+  (Section 3.1.7), and verbatim signature bytes.
+- NSEC (RFC 4034 Section 4.1): an uncompressed Next Domain Name (Section 6.2)
+  and a Type Bit Maps field.
+- NSEC3 (RFC 5155 Section 3.2): hash algorithm, flags, iterations, a verbatim
+  salt, the binary Next Hashed Owner Name, and a Type Bit Maps field.
 
-Each planned slice keeps section counts auto-filled, keeps explicit values
-honored, and keeps unknown record data as `Raw`.
+The NSEC and NSEC3 Type Bit Maps are modeled as a `DnsTypeBitmaps` type-set that
+sorts and deduplicates present RR types for deterministic minimal-window
+encoding while preserving unknown or unassigned codepoints. NSEC3PARAM (51) and
+KEY (25) stay `Raw`.
+
+Decoding returns structured errors, never a panic, for RDATA that is too short
+for the fixed fields, declares a length that overruns the record, or carries a
+malformed type-bitmap window.
+
+## Source-backed gaps closed in this pass
+
+Earlier releases shipped a compact base layer. This pass closed the
+source-backed gaps that the IANA DNS registries and the core RFC wire formats
+surfaced, keeping section counts auto-filled, explicit values honored, and
+unknown record data as `Raw`:
+
+- Named codepoints are now exported. The IANA DNS Parameters registry opcodes
+  (QUERY, IQUERY, STATUS, NOTIFY, UPDATE, DSO), response codes (NOERROR through
+  the dynamic-update and extended BADxxx ranges), classes (IN, CH, HS, NONE,
+  ANY), and the supported RR type table are available as `DNS_OPCODE_*`,
+  `DNS_RCODE_*`, `DNS_CLASS_*`, and `DNS_TYPE_*` constants, with `opcode_value`
+  and `rcode_value` accessors and `dns_type_name` mnemonics.
+- The base RDATA formats with unambiguous wire layouts are typed: SOA (type 6)
+  and SRV (type 33).
+- The EDNS(0) OPT pseudo-record (type 41) is typed, exposing the UDP payload
+  size and the extended RCODE/version/DO/Z fields from the reused CLASS and TTL
+  plus a TLV list of options. See
+  [EDNS(0) OPT pseudo-record](#edns0-opt-pseudo-record).
+- The DNSSEC wire records (DS 43, DNSKEY 48, RRSIG 46, NSEC 47, NSEC3 50) are
+  typed as wire structures, with no cryptographic validation. See
+  [DNSSEC wire records](#dnssec-wire-records).
+- The SVCB (64) and HTTPS (65) service-binding records are typed. See
+  [Service binding records](#service-binding-records).
 
 ## Records and features kept as Raw
 
@@ -261,5 +310,3 @@ RFC wire formats:
   increasing SvcParamKey order with no duplicates), and Section 2.5 special
   handling of the root `.` TargetName. SvcParamKey numbers and presentation names
   are defined in Section 7 and the IANA SvcParamKeys registry.
-</content>
-</invoke>

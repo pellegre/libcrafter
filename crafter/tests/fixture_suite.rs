@@ -7,18 +7,21 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use crafter::core::{
-    Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsRecord,
-    DnsRecordData, EdnsOption, Ethernet, Icmp, IcmpKind, Icmpv6, Ipv4, Ipv4Option, Ipv6,
+    Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsName,
+    DnsRecord, DnsRecordData, EdnsOption, Ethernet, Icmp, IcmpKind, Icmpv6, Ipv4, Ipv4Option, Ipv6,
     Ipv6FragmentHeader, Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder,
     NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp,
     UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND,
     BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
     DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
-    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_TYPE_A,
-    DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_OPT, ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN,
-    ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST,
-    IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, TCP_FLAG_ACK,
-    TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
+    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
+    DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
+    DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3,
+    DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, ETHERTYPE_ARP,
+    ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
+    ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6,
+    IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
+    UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::{PcapError, PcapLinkType, PcapReader, PcapTimestamp, TimestampPrecision};
 use support::fixture_path;
@@ -79,6 +82,10 @@ enum CoverageFamily {
     Ipv4TcpOptions,
     Ipv4UdpDnsQuery,
     Ipv4UdpDnsResponse,
+    Ipv4UdpDnsSoaSrv,
+    Ipv4UdpDnsDnssec,
+    Ipv4UdpDnsSvcbHttps,
+    Ipv4UdpDnsEdnsOpt,
     Ipv4UdpDhcp,
     Ipv4UdpOptions,
     Ipv6IcmpEcho,
@@ -488,6 +495,42 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: Some("summaries/ipv4-udp-dns-response-example-com.summary.txt"),
     },
     ValidFixtureCase {
+        name: "ipv4-udp-dns-soa-srv-response",
+        path: "bytes/ipv4-udp-dns-soa-srv-response.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dns-soa-srv-response.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-dns-soa-srv-response.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-dns-dnssec-response",
+        path: "bytes/ipv4-udp-dns-dnssec-response.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dns-dnssec-response.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-dns-dnssec-response.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-dns-svcb-https-response",
+        path: "bytes/ipv4-udp-dns-svcb-https-response.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dns-svcb-https-response.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-dns-svcb-https-response.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-dns-edns-opt-query",
+        path: "bytes/ipv4-udp-dns-edns-opt-query.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dns-edns-opt-query.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-dns-edns-opt-query.summary.txt"),
+    },
+    ValidFixtureCase {
         name: "ipv4-udp-dhcp-discover",
         path: "bytes/ipv4-udp-dhcp-discover.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dhcp-discover.hex")),
@@ -740,6 +783,22 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     (CoverageFamily::Ipv4TcpOptions, "IPv4 TCP SYN options"),
     (CoverageFamily::Ipv4UdpDnsQuery, "IPv4 UDP DNS query"),
     (CoverageFamily::Ipv4UdpDnsResponse, "IPv4 UDP DNS response"),
+    (
+        CoverageFamily::Ipv4UdpDnsSoaSrv,
+        "IPv4 UDP DNS SOA and SRV records",
+    ),
+    (
+        CoverageFamily::Ipv4UdpDnsDnssec,
+        "IPv4 UDP DNS DNSSEC wire records",
+    ),
+    (
+        CoverageFamily::Ipv4UdpDnsSvcbHttps,
+        "IPv4 UDP DNS SVCB and HTTPS records",
+    ),
+    (
+        CoverageFamily::Ipv4UdpDnsEdnsOpt,
+        "IPv4 UDP DNS EDNS(0) OPT pseudo-record",
+    ),
     (CoverageFamily::Ipv4UdpDhcp, "IPv4 UDP DHCP message"),
     (
         CoverageFamily::Ipv4UdpOptions,
@@ -853,6 +912,10 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-tcp-syn-options" => &[CoverageFamily::Ipv4TcpOptions],
         "ipv4-udp-dns-query-example-com" => &[CoverageFamily::Ipv4UdpDnsQuery],
         "ipv4-udp-dns-response-example-com" => &[CoverageFamily::Ipv4UdpDnsResponse],
+        "ipv4-udp-dns-soa-srv-response" => &[CoverageFamily::Ipv4UdpDnsSoaSrv],
+        "ipv4-udp-dns-dnssec-response" => &[CoverageFamily::Ipv4UdpDnsDnssec],
+        "ipv4-udp-dns-svcb-https-response" => &[CoverageFamily::Ipv4UdpDnsSvcbHttps],
+        "ipv4-udp-dns-edns-opt-query" => &[CoverageFamily::Ipv4UdpDnsEdnsOpt],
         "ipv4-udp-dhcp-discover" => &[CoverageFamily::Ipv4UdpDhcp],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
             &[CoverageFamily::Ipv4UdpOptions]
@@ -1387,6 +1450,201 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 dns.answers()[2].data(),
                 &DnsRecordData::name("example.com.")
             );
+        }
+        "ipv4-udp-dns-soa-srv-response" => {
+            let dns = expect_layer::<Dns>(case, packet);
+            assert_eq!(dns.id_value(), 0x2a01);
+            assert!(dns.is_response());
+
+            assert_eq!(dns.answers().len(), 1);
+            let srv = &dns.answers()[0];
+            assert_eq!(srv.record_type(), DNS_TYPE_SRV);
+            assert_eq!(srv.name(), "_sip._tcp.example.com.");
+            assert_eq!(
+                srv.data(),
+                &DnsRecordData::Srv {
+                    priority: 10,
+                    weight: 60,
+                    port: 5060,
+                    target: DnsName::parse("sipserver.example.com.").unwrap(),
+                }
+            );
+
+            assert_eq!(dns.authorities().len(), 1);
+            let soa = &dns.authorities()[0];
+            assert_eq!(soa.record_type(), DNS_TYPE_SOA);
+            assert_eq!(
+                soa.data(),
+                &DnsRecordData::Soa {
+                    mname: DnsName::parse("ns1.example.com.").unwrap(),
+                    rname: DnsName::parse("hostmaster.example.com.").unwrap(),
+                    serial: 2_024_010_101,
+                    refresh: 7200,
+                    retry: 3600,
+                    expire: 1_209_600,
+                    minimum: 3600,
+                }
+            );
+        }
+        "ipv4-udp-dns-dnssec-response" => {
+            let dns = expect_layer::<Dns>(case, packet);
+            assert_eq!(dns.id_value(), 0x2a02);
+            assert!(dns.is_response());
+
+            assert_eq!(dns.answers().len(), 2);
+            let dnskey = &dns.answers()[0];
+            assert_eq!(dnskey.record_type(), DNS_TYPE_DNSKEY);
+            assert_eq!(
+                dnskey.data(),
+                &DnsRecordData::Dnskey {
+                    flags: 256,
+                    protocol: 3,
+                    algorithm: 8,
+                    public_key: vec![0x03, 0x01, 0x00, 0x01, 0xde, 0xad, 0xbe, 0xef],
+                }
+            );
+            let rrsig = &dns.answers()[1];
+            assert_eq!(rrsig.record_type(), DNS_TYPE_RRSIG);
+            assert_eq!(
+                rrsig.data(),
+                &DnsRecordData::Rrsig {
+                    type_covered: DNS_TYPE_DNSKEY,
+                    algorithm: 8,
+                    labels: 2,
+                    original_ttl: 3600,
+                    signature_expiration: 1_735_689_600,
+                    signature_inception: 1_733_011_200,
+                    key_tag: 12345,
+                    signer_name: DnsName::parse("example.com.").unwrap(),
+                    signature: vec![0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89],
+                }
+            );
+
+            assert_eq!(dns.authorities().len(), 3);
+            let ds = &dns.authorities()[0];
+            assert_eq!(ds.record_type(), DNS_TYPE_DS);
+            match ds.data() {
+                DnsRecordData::Ds {
+                    key_tag,
+                    algorithm,
+                    digest_type,
+                    digest,
+                } => {
+                    assert_eq!(*key_tag, 12345);
+                    assert_eq!(*algorithm, 8);
+                    assert_eq!(*digest_type, 2);
+                    assert_eq!(digest.len(), 32);
+                }
+                other => panic!("expected DS RDATA, got {other:?}"),
+            }
+
+            let nsec = &dns.authorities()[1];
+            assert_eq!(nsec.record_type(), DNS_TYPE_NSEC);
+            match nsec.data() {
+                DnsRecordData::Nsec {
+                    next_domain_name,
+                    type_bitmaps,
+                } => {
+                    assert_eq!(next_domain_name.presentation(), "mail.example.com.");
+                    assert!(type_bitmaps.contains(DNS_TYPE_A));
+                    assert!(type_bitmaps.contains(DNS_TYPE_RRSIG));
+                    assert!(type_bitmaps.contains(DNS_TYPE_AAAA));
+                    assert!(!type_bitmaps.contains(DNS_TYPE_DNSKEY));
+                }
+                other => panic!("expected NSEC RDATA, got {other:?}"),
+            }
+
+            let nsec3 = &dns.authorities()[2];
+            assert_eq!(nsec3.record_type(), DNS_TYPE_NSEC3);
+            match nsec3.data() {
+                DnsRecordData::Nsec3 {
+                    hash_algorithm,
+                    flags,
+                    iterations,
+                    salt,
+                    next_hashed_owner_name,
+                    type_bitmaps,
+                } => {
+                    assert_eq!(*hash_algorithm, 1);
+                    assert_eq!(*flags, 0);
+                    assert_eq!(*iterations, 10);
+                    assert_eq!(salt, &vec![0xaa, 0xbb, 0xcc, 0xdd]);
+                    assert_eq!(next_hashed_owner_name.len(), 20);
+                    assert!(type_bitmaps.contains(DNS_TYPE_A));
+                    assert!(type_bitmaps.contains(DNS_TYPE_RRSIG));
+                }
+                other => panic!("expected NSEC3 RDATA, got {other:?}"),
+            }
+        }
+        "ipv4-udp-dns-svcb-https-response" => {
+            let dns = expect_layer::<Dns>(case, packet);
+            assert_eq!(dns.id_value(), 0x2a03);
+            assert!(dns.is_response());
+            assert_eq!(dns.answers().len(), 2);
+
+            let https = &dns.answers()[0];
+            assert_eq!(https.record_type(), DNS_TYPE_HTTPS);
+            match https.data() {
+                DnsRecordData::Https {
+                    priority,
+                    target,
+                    params,
+                } => {
+                    assert_eq!(*priority, 1);
+                    assert_eq!(target.presentation(), "svc.example.com.");
+                    // SvcParams are stored in strictly increasing key order.
+                    let keys: Vec<u16> = params.params().iter().map(|p| p.key()).collect();
+                    assert_eq!(
+                        keys,
+                        vec![
+                            DNS_SVCB_KEY_ALPN,
+                            DNS_SVCB_KEY_PORT,
+                            DNS_SVCB_KEY_IPV4HINT,
+                            DNS_SVCB_KEY_IPV6HINT,
+                        ]
+                    );
+                    assert_eq!(params.get(DNS_SVCB_KEY_PORT), Some([0x01, 0xbb].as_slice()));
+                }
+                other => panic!("expected HTTPS RDATA, got {other:?}"),
+            }
+
+            let svcb = &dns.answers()[1];
+            assert_eq!(svcb.record_type(), DNS_TYPE_SVCB);
+            match svcb.data() {
+                DnsRecordData::Svcb {
+                    priority,
+                    target,
+                    params,
+                } => {
+                    assert_eq!(*priority, 2);
+                    assert_eq!(target.presentation(), "svc.example.com.");
+                    assert_eq!(params.get(DNS_SVCB_KEY_PORT), Some([0x20, 0xfb].as_slice()));
+                }
+                other => panic!("expected SVCB RDATA, got {other:?}"),
+            }
+        }
+        "ipv4-udp-dns-edns-opt-query" => {
+            let dns = expect_layer::<Dns>(case, packet);
+            assert_eq!(dns.id_value(), 0x2a04);
+            assert!(!dns.is_response());
+            assert_eq!(dns.questions().len(), 1);
+            assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_A);
+
+            assert_eq!(dns.additionals().len(), 1);
+            let opt = &dns.additionals()[0];
+            assert_eq!(opt.record_type(), DNS_TYPE_OPT);
+            assert!(opt.is_opt());
+            assert_eq!(
+                opt.edns_udp_payload_size(),
+                DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE
+            );
+            assert!(opt.edns_dnssec_ok());
+            let options = opt.edns_options().expect("OPT record exposes EDNS options");
+            assert_eq!(options.len(), 3);
+            assert_eq!(options[0].code(), DNS_EDNS_OPTION_COOKIE);
+            assert_eq!(options[1].code(), DNS_EDNS_OPTION_NSID);
+            assert_eq!(options[2].code(), 0xfffe);
+            assert_eq!(options[2].data(), &[0xde, 0xad]);
         }
         "ipv4-udp-dhcp-discover" => {
             let ipv4 = expect_layer::<Ipv4>(case, packet);
