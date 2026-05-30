@@ -6593,4 +6593,83 @@ mod dhcp_remaining_registry {
             DhcpOptionCode::PrivateUse(240)
         );
     }
+
+    #[test]
+    fn dhcp_remaining_registry_option_metadata_is_inspectable() {
+        use super::super::{option_meta, option_name, DhcpOptionMeta};
+
+        // The source-backed registry names every modern codepoint the crate
+        // implements, regardless of whether the payload is decoded into a typed
+        // value or preserved as raw bytes. These names must stay inspectable so
+        // generated tools can label options without re-deriving the registry.
+        let assigned_names: &[(u8, &str)] = &[
+            // Typed modern options.
+            (IPV6_ONLY_PREFERRED, "IPv6-Only Preferred"),
+            (CAPTIVE_PORTAL, "DHCP Captive-Portal"),
+            (MUD_URL, "OPTION_MUD_URL_V4"),
+            // Raw-preserving modern options with nested/complex formats.
+            (PCP_SERVER, "OPTION_V4_PCP_SERVER"),
+            (DNR, "OPTION_V4_DNR"),
+            (SIX_RD, "OPTION_6RD"),
+        ];
+
+        for &(code, name) in assigned_names {
+            // The free-function and metadata-struct views agree on the name and
+            // the Assigned status.
+            assert_eq!(
+                option_name(code),
+                Some(name),
+                "option {code} must expose its registered name",
+            );
+            let meta: DhcpOptionMeta = option_meta(code);
+            assert_eq!(meta.code, code);
+            assert_eq!(meta.name, name);
+            assert_eq!(meta.status, DhcpOptionStatus::Assigned);
+
+            // The registry-classified codepoint and the option-instance accessor
+            // surface the same name through the public DhcpOptionCode/DhcpOption
+            // inspection surface.
+            let classified = DhcpOptionCode::from_code(code);
+            assert_eq!(classified.code(), code);
+            assert_eq!(classified.name(), Some(name));
+            assert!(
+                !classified.is_single_octet(),
+                "option {code} is a length-prefixed option, not pad/end",
+            );
+            let option = DhcpOption::generic(code, vec![0u8; 4]);
+            assert_eq!(option.registry_name(), Some(name));
+            assert_eq!(option.option_code(), classified);
+        }
+
+        // Non-assigned modern-range codepoints stay inspectable too: they carry
+        // their range label and status while declining to claim a registered
+        // name, so callers can preserve the raw bytes and still report status.
+        // Ambiguous historical codepoint (PXE / vendor range 128-135).
+        let ambiguous = option_meta(130);
+        assert_eq!(ambiguous.status, DhcpOptionStatus::Ambiguous);
+        assert!(!ambiguous.name.is_empty());
+        assert_eq!(option_name(130), Some(ambiguous.name));
+
+        // Removed/unassigned codepoint (RFC 3679 range): the registry row carries
+        // an explicit range label rather than a single registered option name, so
+        // option_name surfaces that label (it is not a generated fallback) while
+        // the status stays RemovedOrUnassigned and no typed decode is implied.
+        let removed = option_meta(110);
+        assert_eq!(removed.status, DhcpOptionStatus::RemovedOrUnassigned);
+        assert_eq!(removed.name, "REMOVED/Unassigned");
+        assert_eq!(option_name(110), Some("REMOVED/Unassigned"));
+        assert_eq!(
+            DhcpOptionCode::from_code(110).name(),
+            Some("REMOVED/Unassigned"),
+        );
+
+        // Private-use codepoint (224-254): labelled and statused via the range
+        // fallback, but never carries a single registered option name, so
+        // option_name declines while option_meta still describes it.
+        let private = option_meta(240);
+        assert_eq!(private.status, DhcpOptionStatus::PrivateUse);
+        assert_eq!(private.name, "Reserved (Private Use)");
+        assert_eq!(option_name(240), None);
+        assert_eq!(DhcpOptionCode::from_code(240).name(), None);
+    }
 }
