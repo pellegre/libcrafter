@@ -33,8 +33,10 @@ from tools.wire.engine.state import read_endpoint_manifest, write_endpoint_manif
 
 
 class VirtualBoxRegistryTest(unittest.TestCase):
-    def test_virtualbox_rejects_non_lan_exposures_before_provider_work(self) -> None:
-        for exposure in ("wan", "private", "wifi"):
+    def test_virtualbox_supports_lan_and_private_exposures(self) -> None:
+        self.assertIs(resolve_provider("virtualbox", "lan"), virtualbox)
+        self.assertIs(resolve_provider("virtualbox", "private"), virtualbox)
+        for exposure in ("wan", "wifi"):
             with self.subTest(exposure=exposure):
                 with self.assertRaisesRegex(ProviderExposureError, "supported exposures"):
                     resolve_provider("virtualbox", exposure)
@@ -91,6 +93,30 @@ class VirtualBoxDoctorTest(unittest.TestCase):
         self.assertIn("was not found", bridge_check["message"])
         self.assertIsNone(report["bridge"]["selected_name"])  # type: ignore[index]
 
+    def test_doctor_private_skips_bridge_discovery(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        def fake_runner(argv: Sequence[object], **_: object) -> CommandResult:
+            parts = tuple(str(part) for part in argv)
+            calls.append(parts)
+            return _result(parts, stdout=_bridgedifs())
+
+        with mock.patch(
+            "tools.wire.engine.providers.virtualbox.doctor.shutil.which",
+            side_effect=lambda command: f"/usr/bin/{command}",
+        ):
+            report = virtualbox.doctor(
+                provider="virtualbox",
+                exposure="private",
+                dry_run=True,
+                command_runner=fake_runner,
+            )
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(calls, [])
+        self.assertTrue(report["bridge"]["skipped"])  # type: ignore[index]
+        self.assertTrue(report["private_network"]["isolated"])  # type: ignore[index]
+
 
 class VirtualBoxCreateEndpointTest(unittest.TestCase):
     def test_dry_run_manifest_has_absolute_paths_and_planned_lan_interfaces(self) -> None:
@@ -127,6 +153,34 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
         self.assertEqual(output["metadata"]["virtualbox"]["ssh_port"], 25222)  # type: ignore[index]
         self.assertIn("vm_guest_artifacts", output["metadata"])  # type: ignore[operator]
         self.assertIn("artifact_paths", output["metadata"])  # type: ignore[operator]
+
+    def test_dry_run_manifest_has_private_internal_network(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with mock.patch(
+                "tools.wire.engine.providers.virtualbox.create.free_localhost_tcp_port",
+                return_value=25223,
+            ):
+                output = virtualbox.create_endpoint(
+                    provider="virtualbox",
+                    exposure="private",
+                    role="probe",
+                    private_group="pair-a",
+                    private_ip="10.78.0.10",
+                    dry_run=True,
+                    env={},
+                )
+
+        self.assertFalse(output["created"])
+        self.assertEqual(output["endpoint_id"], "planned-virtualbox-private-probe-pair-a")
+        interfaces = {interface["name"]: interface for interface in output["interfaces"]}  # type: ignore[index]
+        self.assertEqual(interfaces["wirepriv0"]["exposure"], "private")
+        self.assertEqual(interfaces["wirepriv0"]["ipv4"], "10.78.0.10")
+        self.assertEqual(
+            interfaces["wirepriv0"]["metadata"]["type"],
+            "virtualbox-internal-network",
+        )
+        self.assertTrue(output["metadata"]["virtualbox"]["private_network"]["isolated"])  # type: ignore[index]
+        self.assertIsNone(output["metadata"]["virtualbox"]["bridge_interface"])  # type: ignore[index]
 
     def test_dry_run_rejects_private_group_and_ip(self) -> None:
         with self.assertRaisesRegex(ValueError, "--private-group"):

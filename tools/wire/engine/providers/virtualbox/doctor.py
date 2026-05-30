@@ -45,12 +45,16 @@ def doctor(
     ]
     checks.extend(_command_checks(command_paths))
 
-    bridge_report = _bridge_report(
-        command_paths[VBOXMANAGE_COMMAND],
-        env=environ,
-        command_runner=command_runner,
-    )
-    checks.append(bridge_report["check"])
+    if exposure == "lan":
+        bridge_report = _bridge_report(
+            command_paths[VBOXMANAGE_COMMAND],
+            env=environ,
+            command_runner=command_runner,
+        )
+        checks.append(bridge_report["check"])
+    else:
+        bridge_report = _private_network_report()
+        checks.append(bridge_report["check"])
 
     return {
         "provider": provider,
@@ -63,6 +67,7 @@ def doctor(
             for command, path in command_paths.items()
         },
         "bridge": bridge_report["bridge"],
+        "private_network": bridge_report.get("private_network"),
     }
 
 
@@ -164,4 +169,27 @@ def _bridge_report(
             ),
         },
         "bridge": bridge,
+    }
+
+
+def _private_network_report() -> dict[str, object]:
+    return {
+        "check": {
+            "name": "private_network",
+            "ok": True,
+            "message": "VirtualBox private internal network does not require bridged discovery",
+        },
+        "bridge": {
+            "env": VBOX_BRIDGE_IFACE_ENV,
+            "requested_name": None,
+            "selected_name": None,
+            "interfaces": [],
+            "discovered": False,
+            "skipped": True,
+            "reason": "private exposure uses VirtualBox internal networking",
+        },
+        "private_network": {
+            "type": "internal-network",
+            "isolated": True,
+        },
     }

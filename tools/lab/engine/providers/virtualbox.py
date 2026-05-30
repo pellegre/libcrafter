@@ -10,10 +10,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 from tools.wire.engine.model import EndpointManifest
-from tools.wire.engine.providers.virtualbox.bridge import planned_bridge_interface
 from tools.wire.engine.providers.virtualbox.constants import (
     VBOXMANAGE_COMMAND,
-    VBOX_BRIDGE_IFACE_ENV,
+    VBOX_DEFAULT_PRIVATE_CIDR,
 )
 
 from .. import paths, wire_client
@@ -40,9 +39,10 @@ from .common import (
 
 PROVIDER_NAME = "virtualbox"
 WIRE_PROVIDER = "virtualbox"
-WIRE_EXPOSURE = "lan"
+WIRE_EXPOSURE = "private"
 WIRE_ENTRYPOINT = "tools/wire/run"
-DEFAULT_LAN_IPV4_PREFIXES = ("192.0.2", "198.51.100", "203.0.113")
+PRIVATE_NETWORK_CIDR = VBOX_DEFAULT_PRIVATE_CIDR
+DEFAULT_PRIVATE_IPV4_PREFIX = "10.78.0"
 CAPABILITY_REPORT_ARTIFACT = "artifacts/lab/capabilities.json"
 PROVIDER_CAPABILITY_NAMES = (
     "ipv4_unicast",
@@ -76,36 +76,34 @@ def virtualbox_session_id(request: LabRequest) -> str:
     return request_session_label(request, prefix="lab-virtualbox", max_length=127)
 
 
-def virtualbox_bridge_metadata() -> JSONObject:
-    """Return dry-run-safe VirtualBox bridge selection metadata."""
+def virtualbox_private_group(request: LabRequest) -> str:
+    """Return the deterministic private internal network group for a request."""
 
-    bridge = planned_bridge_interface()
-    return json_object(
-        {
-            "name": bridge["name"],
-            "selection": bridge["selection"],
-            "env": bridge["env"],
-            "validated": bridge["validated"],
-        },
-        "virtualbox.bridge",
+    override = _metadata_string(request.metadata, "private_group")
+    if override is not None:
+        return slug_label(override, fallback="virtualbox-private", max_length=63)
+    return slug_label(
+        f"{virtualbox_session_id(request)}-private",
+        fallback="virtualbox-private",
+        max_length=63,
     )
 
 
-def virtualbox_lan_metadata() -> JSONObject:
-    """Return VirtualBox bridged LAN metadata for planning output."""
+def virtualbox_private_network_metadata(private_group: str) -> JSONObject:
+    """Return VirtualBox internal-network metadata for planning output."""
 
-    bridge = virtualbox_bridge_metadata()
     return {
         "planned": True,
         "provider": PROVIDER_NAME,
-        "resource_type": "virtualbox-bridged-lan",
+        "resource_type": "virtualbox-internal-network",
         "wire_exposure": WIRE_EXPOSURE,
-        "bridge_interface": bridge["name"],
-        "bridge_selection": bridge["selection"],
-        "bridge_env": bridge["env"],
-        "bridge_validated": bridge["validated"],
-        "address_source": "guest-lan-interface-discovery-with-planned-fallback",
-        "isolated": False,
+        "network_id": f"virtualbox-private-group-{slug_label(private_group, fallback='private')}",
+        "network_name": f"wire-vbox-{slug_label(private_group, fallback='private')}",
+        "private_group": private_group,
+        "ip_range": PRIVATE_NETWORK_CIDR,
+        "backend": "internal-network",
+        "address_source": "static-private-ipv4",
+        "isolated": True,
     }
 
 
@@ -114,7 +112,7 @@ def virtualbox_default_provider_capabilities(
     dry_run: bool,
     source: str = "planned-defaults",
 ) -> JSONObject:
-    """Return conservative VirtualBox bridged-LAN capability defaults."""
+    """Return conservative VirtualBox private-network capability defaults."""
 
     defaults: JSONObject = {
         "live_packet_exchange": True,
@@ -132,12 +130,12 @@ def virtualbox_default_provider_capabilities(
             "ipv4_unicast": {
                 "status": "planned" if dry_run else "manifest_required",
                 "value": True,
-                "reason": "VirtualBox LAN endpoint IPv4 addresses come from guest discovery",
+                "reason": "VirtualBox private endpoint IPv4 addresses are planned",
             },
             "ipv6_unicast": {
                 "status": "not_planned",
                 "value": False,
-                "reason": "VirtualBox LAN endpoints are currently planned as IPv4-only",
+                "reason": "VirtualBox private endpoints are currently IPv4-only",
             },
             "link_layer_send": {
                 "status": "not_proven",
@@ -157,7 +155,7 @@ def virtualbox_default_provider_capabilities(
             "provider_mac_known": {
                 "status": "manifest_required",
                 "value": False,
-                "reason": "real endpoint discovery records LAN interface MACs",
+                "reason": "real endpoint discovery records private interface MACs",
             },
             "controlled_services": {
                 "status": "planned" if dry_run else "default",
@@ -167,7 +165,7 @@ def virtualbox_default_provider_capabilities(
             "controlled_router": {
                 "status": "not_available",
                 "value": False,
-                "reason": "the VirtualBox bridged LAN lab is same-segment, not routed transit",
+                "reason": "the VirtualBox private lab is same-segment, not routed transit",
             },
         },
     }
@@ -202,23 +200,24 @@ def normalize_virtualbox_provider_capabilities(
 
 
 def plan_virtualbox_roles(request: LabRequest) -> list[LabRole]:
-    """Return roles with deterministic LAN IPv4 fallback metadata."""
+    """Return roles with deterministic private IPv4 metadata."""
 
     roles: list[LabRole] = []
-    role_lan_ipv4s = _role_lan_ipv4_metadata(request.metadata)
+    role_private_ipv4s = _role_private_ipv4_metadata(request.metadata)
     all_role_names = [role.name for role in request.roles]
+    private_group = virtualbox_private_group(request)
 
     for index, role in enumerate(request.roles):
-        metadata_lan_ipv4 = role_lan_ipv4s.get(role.name)
+        metadata_private_ipv4 = role_private_ipv4s.get(role.name)
+        requested_private_ipv4 = role.requested_private_ipv4 or metadata_private_ipv4
         planned_ipv4 = (
-            metadata_lan_ipv4
+            requested_private_ipv4
             or role.planned_ipv4
-            or role.requested_private_ipv4
-            or _default_lan_ipv4(index)
+            or _default_private_ipv4(index)
         )
         address_source = _role_address_source(
             role=role,
-            metadata_lan_ipv4=metadata_lan_ipv4,
+            metadata_private_ipv4=metadata_private_ipv4,
         )
         peer_roles = (
             list(role.peer_roles)
@@ -228,7 +227,7 @@ def plan_virtualbox_roles(request: LabRequest) -> list[LabRole]:
         roles.append(
             LabRole(
                 name=role.name,
-                requested_private_ipv4=role.requested_private_ipv4,
+                requested_private_ipv4=requested_private_ipv4,
                 planned_ipv4=planned_ipv4,
                 peer_roles=peer_roles,
                 capabilities=list(role.capabilities),
@@ -239,15 +238,15 @@ def plan_virtualbox_roles(request: LabRequest) -> list[LabRole]:
                     "provider": PROVIDER_NAME,
                     "wire_provider": WIRE_PROVIDER,
                     "wire_exposure": WIRE_EXPOSURE,
-                    "private_group": None,
-                    "private_network": False,
-                    "bridged_lan": True,
+                    "private_group": private_group,
+                    "private_network": True,
+                    "private_network_cidr": PRIVATE_NETWORK_CIDR,
+                    "bridged_lan": False,
                     "packet_exchange_network": WIRE_EXPOSURE,
-                    "planned_lan_address": planned_ipv4,
-                    "planned_lan_address_source": address_source,
-                    "bridge_interface_env": VBOX_BRIDGE_IFACE_ENV,
+                    "planned_private_address": planned_ipv4,
+                    "planned_private_address_source": address_source,
                     "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
-                    "requested_private_ip_used_for_wire": False,
+                    "requested_private_ip_used_for_wire": requested_private_ipv4 is not None,
                 },
             )
         )
@@ -258,7 +257,8 @@ def virtualbox_planned_infrastructure(request: LabRequest) -> JSONObject:
     """Return dry-run-safe VirtualBox infrastructure metadata."""
 
     roles = plan_virtualbox_roles(request)
-    lan = virtualbox_lan_metadata()
+    private_group = virtualbox_private_group(request)
+    private_network = virtualbox_private_network_metadata(private_group)
     return {
         "provider": PROVIDER_NAME,
         "wire_provider": WIRE_PROVIDER,
@@ -266,32 +266,32 @@ def virtualbox_planned_infrastructure(request: LabRequest) -> JSONObject:
         "dry_run": request.dry_run,
         "creates_infrastructure": not request.dry_run,
         "would_create_infrastructure": request.dry_run,
-        "network": lan,
+        "network": private_network,
         "servers": [
             {
                 "role": role.name,
                 "name_suffix": slug_label(role.name, fallback="role"),
-                "planned_lan_address": role.planned_ipv4,
+                "planned_private_address": role.planned_ipv4,
                 "resource_type": "virtualbox-vm",
             }
             for role in roles
         ],
         "resource_counts": {
             "vms": len(roles),
-            "bridged_lan_adapters": len(roles),
+            "private_network_adapters": len(roles),
             "nat_control_adapters": len(roles),
             "ssh_keys": len(roles),
         },
         "vm_defaults": {
             "command": VBOXMANAGE_COMMAND,
-            "bridge_interface_env": VBOX_BRIDGE_IFACE_ENV,
             "nat_adapter": 1,
-            "lan_adapter": 2,
+            "private_adapter": 2,
         },
-        "public_network_policy": "bridged_lan_packet_exchange",
+        "public_network_policy": "not_used_private_packet_exchange",
         "packet_exchange_network": WIRE_EXPOSURE,
-        "private_network": False,
-        "bridged_lan": True,
+        "private_group": private_group,
+        "private_network": True,
+        "bridged_lan": False,
         "provider_capabilities": virtualbox_default_provider_capabilities(
             dry_run=request.dry_run,
         ),
@@ -309,7 +309,8 @@ def virtualbox_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
     """Return planned VirtualBox provider lifecycle command records."""
 
     roles = plan_virtualbox_roles(request)
-    bridge = virtualbox_bridge_metadata()
+    private_group = virtualbox_private_group(request)
+    private_network = virtualbox_private_network_metadata(private_group)
     remote_dir = validate_remote_dir(request.remote_dir)
     remote_artifacts = paths.remote_artifact_root(
         virtualbox_session_id(request),
@@ -319,7 +320,7 @@ def virtualbox_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
     live_create_flags = [] if request.dry_run else ["--confirm-live-run", "--write-manifest"]
     commands = [
         build_command_plan(
-            purpose="check-virtualbox-lan-wire",
+            purpose="check-virtualbox-private-wire",
             role=None,
             argv=[
                 WIRE_ENTRYPOINT,
@@ -337,10 +338,10 @@ def virtualbox_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
             exposure=WIRE_EXPOSURE,
             metadata={
                 "wire_command": True,
-                "private_group": None,
-                "private_network": False,
-                "bridged_lan": True,
-                "bridge": bridge,
+                "private_group": private_group,
+                "private_network": True,
+                "bridged_lan": False,
+                "network": private_network,
                 "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
             },
         )
@@ -349,7 +350,7 @@ def virtualbox_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
     for role in roles:
         commands.append(
             build_command_plan(
-                purpose=f"create-{slug_label(role.name, fallback='role')}-lan-wire-endpoint",
+                purpose=f"create-{slug_label(role.name, fallback='role')}-private-wire-endpoint",
                 role=role.name,
                 argv=[
                     WIRE_ENTRYPOINT,
@@ -360,6 +361,10 @@ def virtualbox_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
                     WIRE_EXPOSURE,
                     "--role",
                     role.name,
+                    "--private-group",
+                    private_group,
+                    "--private-ip",
+                    role.planned_ipv4 or "",
                     *dry_run_flag,
                     *live_create_flags,
                     "--json",
@@ -371,11 +376,11 @@ def virtualbox_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
                 exposure=WIRE_EXPOSURE,
                 metadata={
                     "wire_command": True,
-                    "private_group": None,
-                    "private_network": False,
-                    "bridged_lan": True,
-                    "planned_lan_address": role.planned_ipv4,
-                    "bridge": bridge,
+                    "private_group": private_group,
+                    "private_network": True,
+                    "bridged_lan": False,
+                    "planned_private_address": role.planned_ipv4,
+                    "network": private_network,
                     "creates_infrastructure": not request.dry_run,
                     "would_create_infrastructure": request.dry_run,
                     "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
@@ -402,9 +407,9 @@ def virtualbox_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
                 metadata={
                     "wire_command": True,
                     "always_attempt": True,
-                    "private_group": None,
-                    "private_network": False,
-                    "bridged_lan": True,
+                    "private_group": private_group,
+                    "private_network": True,
+                    "bridged_lan": False,
                     "remote_artifact_root": remote_artifacts,
                 },
             ),
@@ -420,9 +425,9 @@ def virtualbox_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
                 metadata={
                     "wire_command": True,
                     "always_attempt": True,
-                    "private_group": None,
-                    "private_network": False,
-                    "bridged_lan": True,
+                    "private_group": private_group,
+                    "private_network": True,
+                    "bridged_lan": False,
                 },
             ),
         ]
@@ -434,28 +439,29 @@ def _request_with_planned_roles(request: LabRequest) -> LabRequest:
     return replace(request, roles=plan_virtualbox_roles(request))
 
 
-def _default_lan_ipv4(index: int) -> str:
-    prefix_index = min(index // 20, len(DEFAULT_LAN_IPV4_PREFIXES) - 1)
-    host_octet = 10 + ((index % 20) * 10)
-    return f"{DEFAULT_LAN_IPV4_PREFIXES[prefix_index]}.{host_octet}"
+def _default_private_ipv4(index: int) -> str:
+    host_octet = 10 + (index * 10)
+    return f"{DEFAULT_PRIVATE_IPV4_PREFIX}.{host_octet}"
 
 
 def _role_address_source(
     *,
     role: LabRole,
-    metadata_lan_ipv4: str | None,
+    metadata_private_ipv4: str | None,
 ) -> str:
-    if metadata_lan_ipv4 is not None:
-        return "metadata.role_lan_ipv4s"
+    if metadata_private_ipv4 is not None:
+        return "metadata.role_private_ipv4s"
+    if role.requested_private_ipv4 is not None:
+        return "requested_private_ipv4"
     if role.planned_ipv4 is not None:
         return "planned_ipv4"
-    if role.requested_private_ipv4 is not None:
-        return "requested_private_ipv4-lan-fallback"
-    return "deterministic-documentation-default"
+    return "deterministic-private-default"
 
 
-def _role_lan_ipv4_metadata(metadata: JSONObject) -> dict[str, str]:
-    value = metadata.get("role_lan_ipv4s")
+def _role_private_ipv4_metadata(metadata: JSONObject) -> dict[str, str]:
+    value = metadata.get("role_private_ipv4s")
+    if not isinstance(value, Mapping):
+        value = metadata.get("role_lan_ipv4s")
     if not isinstance(value, Mapping):
         return {}
     return {
@@ -479,7 +485,7 @@ def _peer_roles_for(role: LabRole, roles: Sequence[LabRole]) -> list[LabRole]:
 
 @dataclass(frozen=True, slots=True)
 class VirtualBoxLabProviderAdapter:
-    """Lab adapter for VirtualBox bridged LAN multi-endpoint sessions."""
+    """Lab adapter for VirtualBox private multi-endpoint sessions."""
 
     name: str = PROVIDER_NAME
     wire_provider: str = WIRE_PROVIDER
@@ -518,19 +524,19 @@ class VirtualBoxLabProviderAdapter:
         )
 
     def plan_roles(self, request: LabRequest) -> list[LabRole]:
-        """Return provider-normalized roles and LAN address fallbacks."""
+        """Return provider-normalized roles and private address assignments."""
 
         return plan_virtualbox_roles(request)
 
     def private_group(self, request: LabRequest) -> str | None:
-        """Return the private group name, which VirtualBox LAN does not use."""
+        """Return the VirtualBox internal network group name."""
 
-        return None
+        return virtualbox_private_group(request)
 
     def requested_private_ip(self, role: LabRole, request: LabRequest) -> str | None:
-        """Return the private IPv4 to request from wire, unused for VirtualBox LAN."""
+        """Return the private IPv4 to request from wire."""
 
-        return None
+        return role.planned_ipv4
 
     def planned_infrastructure(self, request: LabRequest) -> JSONObject:
         """Return dry-run-safe VirtualBox infrastructure metadata."""
@@ -567,8 +573,8 @@ class VirtualBoxLabProviderAdapter:
                 provider=self.wire_provider,
                 exposure=self.wire_exposure,
                 role=role.name,
-                private_group=None,
-                private_ip=None,
+                private_group=virtualbox_private_group(planned_request),
+                private_ip=role.planned_ipv4,
                 dry_run=planned_request.dry_run,
                 write_manifest=not planned_request.dry_run,
                 confirm_live_run=planned_request.confirm_live_run,
@@ -585,7 +591,7 @@ class VirtualBoxLabProviderAdapter:
             endpoints[role.name] = endpoint.to_dict()
             command_records.append(
                 response.command_plan(
-                    purpose=f"create {role.name} VirtualBox LAN endpoint",
+                    purpose=f"create {role.name} VirtualBox private endpoint",
                     role=role.name,
                 ).to_dict()
             )
@@ -599,9 +605,9 @@ class VirtualBoxLabProviderAdapter:
             "wire_provider": self.wire_provider,
             "exposure": self.wire_exposure,
             "dry_run": planned_request.dry_run,
-            "private_group": None,
-            "private_network": False,
-            "bridged_lan": True,
+            "private_group": virtualbox_private_group(planned_request),
+            "private_network": True,
+            "bridged_lan": False,
             "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
             "endpoint_count": len(endpoint_plans),
             "endpoint_plans": endpoint_plans,
@@ -630,17 +636,17 @@ class VirtualBoxLabProviderAdapter:
                 "provider": self.name,
                 "wire_provider": self.wire_provider,
                 "wire_exposure": self.wire_exposure,
-                "private_group": None,
-                "private_network": False,
-                "bridged_lan": True,
+                "private_group": virtualbox_private_group(request),
+                "private_network": True,
+                "private_network_cidr": PRIVATE_NETWORK_CIDR,
+                "bridged_lan": False,
                 "packet_exchange_network": self.wire_exposure,
-                "isolated_network": False,
-                "planned_lan_address": role.planned_ipv4,
-                "planned_lan_address_source": role.metadata.get(
-                    "planned_lan_address_source",
-                    "deterministic-documentation-default",
+                "isolated_network": True,
+                "planned_private_address": role.planned_ipv4,
+                "planned_private_address_source": role.metadata.get(
+                    "planned_private_address_source",
+                    "deterministic-private-default",
                 ),
-                "bridge_interface_env": VBOX_BRIDGE_IFACE_ENV,
                 "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
             },
         )
@@ -697,9 +703,9 @@ class VirtualBoxLabProviderAdapter:
             validation_checks=[request_check, workflow_check],
             metadata={
                 "provider": self.name,
-                "private_group": None,
-                "private_network": False,
-                "bridged_lan": True,
+                "private_group": virtualbox_private_group(planned_request),
+                "private_network": True,
+                "bridged_lan": False,
                 "credential_label": self.credential_label,
                 "credentials_available": self.credentials_available(),
                 "missing_credential_reason": self.missing_credential_reason,
@@ -732,7 +738,7 @@ class VirtualBoxLabProviderAdapter:
             if ip is not None and planned_ips.count(ip) > 1
         )
         if duplicates:
-            errors.append(f"duplicate planned LAN IPv4 addresses: {', '.join(duplicates)}")
+            errors.append(f"duplicate planned private IPv4 addresses: {', '.join(duplicates)}")
 
         return LabValidationCheck(
             name="virtualbox-request",
@@ -744,9 +750,9 @@ class VirtualBoxLabProviderAdapter:
                 "dry_run": request.dry_run,
                 "confirm_live_run": request.confirm_live_run,
                 "credentials_available": self.credentials_available(),
-                "private_group": None,
-                "private_network": False,
-                "bridged_lan": True,
+                "private_group": virtualbox_private_group(request),
+                "private_network": True,
+                "bridged_lan": False,
                 "role_count": len(request.roles),
             },
         )
@@ -762,7 +768,7 @@ class VirtualBoxLabProviderAdapter:
         errors: list[str] = []
         purposes = {command.purpose for command in commands}
         required = {
-            "check-virtualbox-lan-wire",
+            "check-virtualbox-private-wire",
             "collect-lab-artifacts",
             "teardown-disposable-virtualbox-wire-endpoints",
         }
@@ -775,18 +781,19 @@ class VirtualBoxLabProviderAdapter:
         for command in commands:
             if len(command.argv) < 2 or command.argv[0] != WIRE_ENTRYPOINT:
                 errors.append(f"provider command must route through {WIRE_ENTRYPOINT}")
-            if "--private-group" in command.argv:
-                errors.append("VirtualBox provider command must not include --private-group")
-            if "--private-ip" in command.argv:
-                errors.append("VirtualBox provider command must not include --private-ip")
             if command.metadata.get("wire_command") is not True:
                 errors.append("provider command must be marked as wire_command")
             if command.metadata.get("provider") != self.name:
                 errors.append("provider command must target VirtualBox")
             if command.metadata.get("exposure") != self.wire_exposure:
-                errors.append("provider command must target LAN exposure")
-            if command.metadata.get("private_group") is not None:
-                errors.append("VirtualBox provider command must not carry private_group metadata")
+                errors.append("provider command must target private exposure")
+            if command.metadata.get("private_network") is not True:
+                errors.append("VirtualBox provider command must carry private network metadata")
+            if command.operation == "wire.create":
+                if "--private-group" not in command.argv:
+                    errors.append("VirtualBox private create command lacks --private-group")
+                if "--private-ip" not in command.argv:
+                    errors.append("VirtualBox private create command lacks --private-ip")
             if dry_run and command.operation in {"wire.doctor", "wire.create"}:
                 if "--dry-run" not in command.argv:
                     errors.append(f"dry-run provider command lacks --dry-run: {command.shell()}")
@@ -811,8 +818,8 @@ class VirtualBoxLabProviderAdapter:
                 "dry_run": dry_run,
                 "always_collect_artifacts": True,
                 "always_teardown": True,
-                "private_network": False,
-                "bridged_lan": True,
+                "private_network": True,
+                "bridged_lan": False,
             },
         )
 
@@ -828,17 +835,17 @@ class VirtualBoxLabProviderAdapter:
             errors.append(f"unexpected wire exposure: {session.wire_exposure}")
         if len(session.endpoints) != len(session.roles):
             errors.append("endpoint count must match role count")
-        if session.infrastructure_metadata.get("private_network") is not False:
-            errors.append("infrastructure metadata must describe a non-private LAN")
-        if session.infrastructure_metadata.get("bridged_lan") is not True:
-            errors.append("infrastructure metadata must describe bridged LAN")
+        if session.infrastructure_metadata.get("private_network") is not True:
+            errors.append("infrastructure metadata must describe a private network")
+        if session.infrastructure_metadata.get("bridged_lan") is not False:
+            errors.append("infrastructure metadata must not describe bridged LAN")
         if session.infrastructure_metadata.get("wire_policy") != VIRTUALBOX_WIRE_POLICY:
             errors.append("infrastructure metadata must preserve VirtualBox wire policy")
         for endpoint in session.endpoints:
-            if endpoint.metadata.get("private_network") is not False:
-                errors.append(f"endpoint must not be marked private: {endpoint.role}")
-            if endpoint.metadata.get("bridged_lan") is not True:
-                errors.append(f"endpoint lacks bridged LAN metadata: {endpoint.role}")
+            if endpoint.metadata.get("private_network") is not True:
+                errors.append(f"endpoint must be marked private: {endpoint.role}")
+            if endpoint.metadata.get("bridged_lan") is not False:
+                errors.append(f"endpoint should not carry bridged LAN metadata: {endpoint.role}")
             if endpoint.metadata.get("wire_policy") != VIRTUALBOX_WIRE_POLICY:
                 errors.append(f"endpoint lacks VirtualBox wire policy metadata: {endpoint.role}")
 
@@ -853,8 +860,8 @@ class VirtualBoxLabProviderAdapter:
                     "endpoint_count": len(session.endpoints),
                     "role_count": len(session.roles),
                     "dry_run": session.dry_run,
-                    "private_group": None,
-                    "bridged_lan": True,
+                    "private_group": session.metadata.get("private_group"),
+                    "bridged_lan": False,
                 },
             )
         ]
