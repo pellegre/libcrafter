@@ -1081,7 +1081,16 @@ def _udp_layout(root: str | None, raw: bytes) -> dict[str, int]:
 
 
 def _l3_start_offset(root: str | None, raw: bytes) -> int:
-    if root in {None, "l3:ipv4", "l3:ipv6", "IP", "IPv6"}:
+    if root in {
+        None,
+        "l3:ipv4",
+        "l3:ipv6",
+        "l3:raw",
+        "link:raw",
+        "IP",
+        "IPv6",
+        "Raw",
+    }:
         return 0
     if root in {"link:linux-cooked", "link:linux-sll", "CookedLinux"}:
         return 16
