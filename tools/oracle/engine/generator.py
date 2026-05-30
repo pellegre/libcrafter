@@ -1940,6 +1940,57 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
             },
         ]
         return
+    if "record-soa" in key:
+        # Focused single-SOA response so a SOA decode failure reproduces without
+        # the SRV answer in the message. Every fixed SOA field carries a distinct
+        # nonzero value (SERIAL, REFRESH, RETRY, EXPIRE, MINIMUM) and both nested
+        # names (MNAME, RNAME) are documentation names, so the strict byte encode
+        # pins each field against the Scapy reference. Checked before the combined
+        # soa-srv-records branch; the focused id never contains that token.
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "SOA"}]
+        fields["answers"] = [
+            {
+                "name": "example.com.",
+                "type": "SOA",
+                "ttl": 300,
+                "primary_name": "ns1.example.com.",
+                "responsible_name": "hostmaster.example.com.",
+                "serial": 2024010101,
+                "refresh": 7200,
+                "retry": 3600,
+                "expire": 1209600,
+                "minimum": 300,
+            }
+        ]
+        return
+    if "record-srv" in key:
+        # Focused single-SRV response so an SRV decode failure reproduces without
+        # the SOA answer. The three fixed 16-bit fields (priority, weight, port)
+        # are distinct nonzero values and the target is a documentation name, so
+        # the strict byte encode pins every SRV field against the Scapy reference.
+        # Checked before the combined soa-srv-records branch; the focused id never
+        # contains that token.
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative"]
+        fields["questions"] = [{"qname": "_sip._tcp.example.com.", "qtype": "SRV"}]
+        fields["answers"] = [
+            {
+                "name": "_sip._tcp.example.com.",
+                "type": "SRV",
+                "ttl": 60,
+                "priority": 10,
+                "weight": 60,
+                "port": 5060,
+                "target": "sip.example.com.",
+            }
+        ]
+        return
     if "soa-srv-records" in key:
         # A response carrying one SOA authority-style answer and one SRV answer
         # so the libcrafter materializer exercises both typed record builders in

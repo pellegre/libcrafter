@@ -45,6 +45,19 @@ behaviors:
     record_kinds:
       - soa
       - srv
+  # record_soa and record_srv are the focused single-record variants of the
+  # combined soa_srv_records case. Their identifiers (record-soa / record-srv)
+  # are substrings only of dns-record-soa / dns-record-srv, never of the
+  # combined dns-soa-srv-records id (which matches soa-srv-records), so the
+  # behavior matcher keeps all three cases deterministic.
+  - name: record_soa
+    summary: Focused SOA-only response exercising MNAME, RNAME, SERIAL, REFRESH, RETRY, EXPIRE, and MINIMUM in one record.
+    record_kinds:
+      - soa
+  - name: record_srv
+    summary: Focused SRV-only response exercising priority, weight, port, and the nested target name in one record.
+    record_kinds:
+      - srv
   - name: header_id
     summary: Nonzero transaction ID on an otherwise plain query.
   - name: header_qr
@@ -660,6 +673,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-record-srv
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-soa-srv-records
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference

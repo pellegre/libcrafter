@@ -765,6 +765,48 @@
       "notes": "Oracle fixture case. Authoritative DNS response with one MX answer (preference + nested exchange name) and TXT answers covering a single string, multiple strings, an empty string, a non-UTF-8 binary string, and a 255-octet character-string; uncompressed and strict bytes in both directions."
     },
     {
+      "name": "dns-record-soa",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Focused authoritative response carrying one SOA answer exercising MNAME, RNAME, SERIAL, REFRESH, RETRY, EXPIRE, and MINIMUM; uncompressed nested names and strict bytes in both directions."
+    },
+    {
+      "name": "dns-record-srv",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Focused authoritative response carrying one SRV answer exercising priority, weight, port, and the nested target name; uncompressed target and strict bytes in both directions."
+    },
+    {
+      "name": "dns-soa-srv-records",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Authoritative response carrying one SOA answer (MNAME, RNAME, SERIAL, REFRESH, RETRY, EXPIRE, MINIMUM) and one SRV answer (priority, weight, port, nested target) in a single message; uncompressed and strict bytes in both directions."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",
