@@ -76,6 +76,12 @@ LIVE_ROOT_ALIASES = {
     "link:ethernet": "link:ethernet",
     "l3:ipv4": "l3:ipv4",
     "l3:ipv6": "l3:ipv6",
+    # l2:ipv4 sends IPv4 over the link path; for network-layer send the raw
+    # bytes are the IPv4 datagram, so they canonicalize to l3 for comparison.
+    # (Ethernet-wrapped link-layer sends record raw_root as link:ethernet and
+    # are sliced to l3 by the ethernet branch in _live_comparable_wire_hex.)
+    "l2:ipv4": "l3:ipv4",
+    "l2:ipv6": "l3:ipv6",
 }
 LIVE_RECEIVER_STARTUP_GRACE_SECONDS = 2.0
 LIVE_VM_RECEIVER_STARTUP_GRACE_SECONDS = 12.0
@@ -3137,7 +3143,7 @@ def _live_provider_execute(
             failed_downloads = [
                 command
                 for command in receiver_downloads + sender_downloads
-                if command.get("exit_code") != 0
+                if command.get("exit_code") != 0 and command.get("required")
             ]
             if failed_downloads:
                 execution_errors.append(f"{direction}: failed to download endpoint artifacts")
@@ -3956,6 +3962,12 @@ def _download_wire_endpoint_artifacts(
                 "artifact_key": key,
                 "remote_path": remote_path,
                 "local_path": str(local_path),
+                # Only the response is a required transfer. decoded_models and
+                # captures are supplementary: a sender legitimately produces
+                # neither (it only transmits), and the receiver's decoded data
+                # is also carried in its JSON response, so a missing/failed
+                # decode/capture download must not fail an otherwise-valid run.
+                "required": key == "response",
             }
         )
         downloads.append(record)
