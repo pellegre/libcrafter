@@ -606,7 +606,7 @@ fn send_mode_for_root(root: &str) -> ExampleResult<SendMode> {
     match root {
         "Ether" | "CookedLinux" | "Loopback" | "link:ethernet" | "link:linux-cooked"
         | "link:linux-sll" | "link:null-loopback" => Ok(SendMode::LinkLayer),
-        "IP" | "IPv6" | "Raw" | "l3:ipv4" | "l3:ipv6" | "l3:raw" | "link:raw" => {
+        "IP" | "IPv6" | "Raw" | "l2:ipv4" | "l3:ipv4" | "l3:ipv6" | "l3:raw" | "link:raw" => {
             Ok(SendMode::NetworkLayer)
         }
         _ => Err(format!("unsupported live send root: {root}").into()),
@@ -1038,7 +1038,7 @@ fn compare_root_for_index(
 fn canonical_compare_root(root: &str) -> ExampleResult<&'static str> {
     match root {
         "Ether" | "link:ethernet" => Ok("link:ethernet"),
-        "IP" | "IPv4" | "l3:ipv4" => Ok("l3:ipv4"),
+        "IP" | "IPv4" | "l2:ipv4" | "l3:ipv4" => Ok("l3:ipv4"),
         "IPv6" | "l3:ipv6" => Ok("l3:ipv6"),
         _ => Err(format!("wire compare root unavailable for live capture: {root}").into()),
     }
@@ -2454,5 +2454,82 @@ mod ipv4_dhcp_live_endpoint {
                 Some("l3:ipv4")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod l2_ipv4_root {
+    use super::*;
+
+    #[test]
+    fn l2_ipv4_send_root_is_accepted_as_network_layer() {
+        let mode = send_mode_for_root("l2:ipv4").expect("l2:ipv4 must be an accepted send root");
+        assert_eq!(mode, SendMode::NetworkLayer);
+        // l2:ipv4 transports IPv4 over the link path only when endpoint MACs are
+        // present; the bare send-root mode must mirror l3:ipv4.
+        assert_eq!(
+            mode,
+            send_mode_for_root("l3:ipv4").expect("l3:ipv4 is a network-layer send root"),
+        );
+    }
+
+    #[test]
+    fn l2_ipv4_compare_root_canonicalizes_to_ipv4() {
+        assert_eq!(
+            canonical_compare_root("l2:ipv4").expect("l2:ipv4 must canonicalize"),
+            "l3:ipv4",
+        );
+        assert_eq!(
+            canonical_compare_root("l2:ipv4").expect("l2:ipv4 must canonicalize"),
+            canonical_compare_root("l3:ipv4").expect("l3:ipv4 must canonicalize"),
+        );
+    }
+
+    #[test]
+    fn l2_ipv4_capture_slice_compares_from_ipv4_over_ethernet() {
+        // A captured l2:ipv4 packet arrives as an Ethernet frame on the wire; the
+        // comparison slice must canonicalize to the IPv4 header.
+        let ipv4 = Ipv4::new()
+            .src_str("192.0.2.10")
+            .expect("valid documentation source address")
+            .dst_str("192.0.2.20")
+            .expect("valid documentation destination address")
+            .id(0x1234)
+            .ttl(64)
+            .protocol(IPPROTO_ICMP);
+        let icmp = Icmp::new()
+            .type_(ICMP_ECHO_REQUEST)
+            .code(0)
+            .id(0x4242)
+            .seq(1);
+        let frame = Ethernet::new()
+            .src(MacAddr::from([0x00, 0x00, 0x5e, 0x00, 0x53, 0x01]))
+            .dst(MacAddr::from([0x00, 0x00, 0x5e, 0x00, 0x53, 0x02]))
+            .ethertype(ETHERTYPE_IPV4)
+            / ipv4
+            / icmp
+            / Raw::from_bytes(b"l2ipv4");
+        let wire = frame.compile().expect("frame compiles");
+        let wire_bytes = wire.as_bytes().to_vec();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &wire_bytes)
+            .expect("ethernet frame decodes");
+        let captured = PcapPacket::new(
+            PcapTimestamp::zero(),
+            wire_bytes.len() as u32,
+            wire_bytes,
+            PcapLinkType::Ethernet,
+            decoded,
+        );
+
+        let slice =
+            capture_slice_for_root(&captured, "l2:ipv4").expect("l2:ipv4 capture slice is sliced");
+        assert_eq!(slice.compare_root, "l3:ipv4");
+        // The full capture keeps the Ethernet frame, but the comparable slice
+        // starts at the IPv4 version nibble.
+        assert!(slice.full_raw.len() > slice.comparable_raw.len());
+        assert_eq!(slice.comparable_raw.first().map(|byte| byte >> 4), Some(4));
+        assert!(slice.packet.layer::<Ipv4>().is_some());
+        assert!(slice.packet.layer::<Icmp>().is_some());
+        assert!(slice.packet.layer::<Ethernet>().is_none());
     }
 }
