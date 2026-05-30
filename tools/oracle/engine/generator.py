@@ -1796,6 +1796,107 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
         ]
         fields.pop("answers", None)
         return
+    if "header-empty-sections" in key:
+        # Empty answer/authority/additional sections so the auto-filled counts
+        # stay zero while the single question keeps QDCOUNT at one.
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["recursion_available"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields.pop("answers", None)
+        fields.pop("authority", None)
+        fields.pop("authorities", None)
+        fields.pop("additional", None)
+        fields.pop("additionals", None)
+        return
+    if "header-counts" in key:
+        # One record in each of the three response sections so the encoder
+        # auto-fills ANCOUNT/NSCOUNT/ARCOUNT to nonzero values from the typed
+        # vectors rather than from any user-set count field.
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative", "recursion_available"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields["answers"] = [
+            {"name": "example.com.", "type": "A", "ttl": 60, "address": "192.0.2.10"}
+        ]
+        fields["authority"] = [
+            {"name": "example.com.", "type": "NS", "ttl": 300, "target": "ns1.example.com."}
+        ]
+        fields["additional"] = [
+            {"name": "ns1.example.com.", "type": "A", "ttl": 300, "address": "192.0.2.53"}
+        ]
+        return
+    if "header-raw-flags" in key:
+        # Reserved Z header bit set through the raw-flags escape hatch; the
+        # encoder must preserve a bit that has no named setter.
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["reserved_z"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields.pop("answers", None)
+        return
+    if "header-opcode" in key:
+        # A non-default named opcode on a plain query; STATUS keeps the message
+        # otherwise minimal so the four opcode bits are the load-bearing field.
+        fields["is_response"] = False
+        fields["opcode"] = "status"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["recursion_desired"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields.pop("answers", None)
+        return
+    if "header-rcode" in key:
+        # A named rcode on a response; REFUSED is representable in both
+        # materializers and exercises the low four flag-word bits.
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "refused"
+        fields["flags"] = ["recursion_available"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields.pop("answers", None)
+        return
+    if "header-flags" in key:
+        # Every named header flag bit set on a recursive query so each flag is
+        # exercised independently of opcode/rcode.
+        fields["is_response"] = False
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = [
+            "authoritative",
+            "truncated",
+            "recursion_desired",
+            "recursion_available",
+            "authentic_data",
+            "checking_disabled",
+        ]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields.pop("answers", None)
+        return
+    if "header-qr" in key:
+        # Response-bit set with recursion-available, the canonical server reply
+        # header shape, paired with the matching query via the QR bit.
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["recursion_available"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields.pop("answers", None)
+        return
+    if "header-id" in key:
+        # Nonzero transaction ID on an otherwise plain query so the 16-bit ID
+        # field is the load-bearing header value.
+        fields["is_response"] = False
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["recursion_desired"]
+        fields["transaction_id"] = 0x1A2B
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields.pop("answers", None)
+        return
     if "soa-srv-records" in key:
         # A response carrying one SOA authority-style answer and one SRV answer
         # so the libcrafter materializer exercises both typed record builders in

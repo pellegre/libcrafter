@@ -45,6 +45,30 @@ behaviors:
     record_kinds:
       - soa
       - srv
+  - name: header_id
+    summary: Nonzero transaction ID on an otherwise plain query.
+  - name: header_qr
+    summary: Response-bit query/response pair with recursion-available set.
+  - name: header_flags
+    summary: All header flag bits set on a recursive query.
+  - name: header_opcode
+    summary: Named and unknown opcode values.
+    opcodes:
+      - status
+      - unknown
+  - name: header_rcode
+    summary: Named and unknown rcode values.
+    response_codes:
+      - refused
+      - unknown
+  - name: header_raw_flags
+    summary: Reserved Z bit set through the raw-flags escape hatch.
+    flags:
+      - reserved_z
+  - name: header_counts
+    summary: Section counts auto-filled across answer/authority/additional.
+  - name: header_empty_sections
+    summary: Empty answer/authority/additional sections yield zero counts.
 
 # Normalized comparison contract for the DNS oracle.
 #

@@ -215,9 +215,13 @@ coverage_cases:
   - dns-multiple-questions
   - dns-generic-record-truncated-rcode
   - crafter-dns-query-response-compression
+  - dns-header-id
+  - dns-header-qr
   - dns-header-flags
   - dns-header-opcode
   - dns-header-rcode
+  - dns-header-raw-flags
+  - dns-header-counts
   - dns-header-empty-sections
   - dns-name-root
   - dns-name-escaped
