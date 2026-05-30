@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import posixpath
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -1387,6 +1389,21 @@ def _pcap(args: argparse.Namespace) -> int:
     return _pcap_execute(args)
 
 
+def _seed_live_private_group() -> None:
+    """Give each `run live` invocation a unique provider private group.
+
+    Concurrent live runs (e.g. an ICMP run and a DNS run, possibly in different
+    worktrees) must not reuse the same Hetzner network and collide on private IP
+    allocation. ``setdefault`` honours an operator-provided value (for
+    coordination/reproduction) and otherwise mints a fresh per-process group.
+    """
+
+    os.environ.setdefault(
+        "ORACLE_LIVE_PRIVATE_GROUP",
+        f"oracle-live-{secrets.token_hex(4)}",
+    )
+
+
 def _live(args: argparse.Namespace) -> int:
     unsupported = _require_backend_capabilities(
         args,
@@ -1414,6 +1431,11 @@ def _live(args: argparse.Namespace) -> int:
 
 
 def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
+    # Seed the per-run isolation group before any corpus, lab-request, or
+    # provider-workflow construction so concurrent live runs (dry-run and real)
+    # get isolated provider networks and IP allocations.
+    _seed_live_private_group()
+
     from .backends.scapy.live import (
         backend_bootstrap_command_plan,
         dry_run_command_plan as scapy_dry_run_command_plan,
@@ -1929,7 +1951,10 @@ def _live_provider_dry_run_lab_session(args: argparse.Namespace, provider_adapte
     }
     private_group = getattr(provider_adapter, "private_group", None)
     if isinstance(private_group, str) and private_group:
-        metadata["private_group"] = private_group
+        metadata["private_group"] = os.environ.get(
+            "ORACLE_LIVE_PRIVATE_GROUP",
+            private_group,
+        )
     if private_ips:
         metadata["role_private_ipv4s"] = dict(private_ips)
     planned_lan_ips = {
@@ -2025,7 +2050,14 @@ def _live_provider_lab_request(
     }
     private_group = getattr(provider_adapter, "private_group", None)
     if isinstance(private_group, str) and private_group:
-        metadata["private_group"] = private_group
+        # Honour the per-run isolation group so concurrent live runs land on
+        # distinct provider networks. ORACLE_LIVE_PRIVATE_GROUP is seeded once
+        # per `run live` invocation by _live; when unset, fall back to the
+        # adapter's static default so behaviour is unchanged.
+        metadata["private_group"] = os.environ.get(
+            "ORACLE_LIVE_PRIVATE_GROUP",
+            private_group,
+        )
     if private_ips:
         metadata["role_private_ipv4s"] = private_ips
     if role_lan_ipv4s:

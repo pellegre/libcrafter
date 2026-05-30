@@ -61,6 +61,17 @@ PROVIDER_CAPABILITY_NAMES = (
 )
 
 
+def _oracle_private_group() -> str:
+    """Per-run private group for live infra isolation.
+
+    Defaults to ORACLE_PRIVATE_GROUP so unit tests stay deterministic; the
+    live CLI sets ORACLE_LIVE_PRIVATE_GROUP to a unique value per invocation
+    so concurrent live runs get isolated networks/IP allocations.
+    """
+
+    return os.environ.get("ORACLE_LIVE_PRIVATE_GROUP", ORACLE_PRIVATE_GROUP)
+
+
 def hetzner_default_provider_capabilities(
     *,
     dry_run: bool,
@@ -124,7 +135,7 @@ def hetzner_wire_endpoint_plan(
     *,
     dry_run: bool,
     client: wire_client.WireClient | None = None,
-    private_group: str = ORACLE_PRIVATE_GROUP,
+    private_group: str | None = None,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
 ) -> dict[str, object]:
@@ -133,7 +144,7 @@ def hetzner_wire_endpoint_plan(
     return _oracle_wire_endpoint_plan(
         dry_run=dry_run,
         client=client,
-        private_group=private_group,
+        private_group=private_group or _oracle_private_group(),
         confirm_live_run=confirm_live_run,
         created_endpoint_ids=created_endpoint_ids,
     )
@@ -256,7 +267,7 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "--role",
                 "libcrafter",
                 "--private-group",
-                ORACLE_PRIVATE_GROUP,
+                _oracle_private_group(),
                 "--private-ip",
                 LIBCRAFTER_PRIVATE_ADDRESS,
                 "--private-cidr",
@@ -280,7 +291,7 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "--role",
                 "reference_backend",
                 "--private-group",
-                ORACLE_PRIVATE_GROUP,
+                _oracle_private_group(),
                 "--private-ip",
                 REFERENCE_PRIVATE_ADDRESS,
                 "--private-cidr",
@@ -334,7 +345,7 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                     "always_attempt": operation in {"download", "destroy"},
                     "oracle_two_endpoint": True,
                     "private_network": True,
-                    "private_group": ORACLE_PRIVATE_GROUP,
+                    "private_group": _oracle_private_group(),
                     "wire_command": True,
                     "operation": operation,
                 },
@@ -573,10 +584,10 @@ def hetzner_wire_comparison_policy(plan: PacketPlan) -> JSONObject:
 def _oracle_lab_request(
     *,
     dry_run: bool,
-    private_group: str | None = ORACLE_PRIVATE_GROUP,
+    private_group: str | None = None,
     confirm_live_run: bool = False,
 ) -> LabRequest:
-    group = private_group or ORACLE_PRIVATE_GROUP
+    group = private_group or _oracle_private_group()
     return LabRequest(
         provider=PROVIDER_NAME,
         profile=ORACLE_LIVE_SUITE,
@@ -657,7 +668,7 @@ def _oracle_wire_endpoint_plan(
     *,
     dry_run: bool,
     client: wire_client.WireClient | None = None,
-    private_group: str | None = ORACLE_PRIVATE_GROUP,
+    private_group: str | None = None,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
 ) -> dict[str, object]:
@@ -745,7 +756,7 @@ def _oracle_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "would_create_infrastructure": False,
                 "oracle_two_endpoint": True,
                 "private_network": True,
-                "private_group": ORACLE_PRIVATE_GROUP,
+                "private_group": _oracle_private_group(),
                 "wire_command": True,
                 "operation": "exec",
             },
@@ -1174,7 +1185,7 @@ class HetznerLiveProviderAdapter:
         return hetzner_wire_endpoint_plan(
             dry_run=dry_run,
             client=client,
-            private_group=private_group or self.private_group or ORACLE_PRIVATE_GROUP,
+            private_group=private_group or _oracle_private_group(),
             confirm_live_run=confirm_live_run,
             created_endpoint_ids=created_endpoint_ids,
         )
