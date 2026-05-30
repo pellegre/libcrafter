@@ -953,6 +953,54 @@ proptest! {
         }
     }
 
+    /// Arbitrary bytes carried through the real `ipv4 / udp / dhcp` decode
+    /// boundary must never panic. Unlike [`malformed_random_decode_inputs_never_panic`],
+    /// which feeds raw bytes into the L3 entrypoint (where they almost never
+    /// satisfy the conservative DHCP dispatch gate), this builds a well-formed
+    /// IPv4/UDP frame on the standard DHCP client/server port pair with a valid
+    /// BOOTP fixed header and magic cookie, then fuzzes only the option region.
+    /// That guarantees the UDP-port-pair + magic-cookie registry gate fires and
+    /// the full stack actually routes into the DHCP option decoder, so the
+    /// boundary the DHCP live oracle relies on (`decode_from_l3(Ipv4, ..)` ->
+    /// UDP 68->67 -> DHCP) is exercised over arbitrary option bytes. The decoder
+    /// must surface a structured error or preserve the bytes as raw `Generic`
+    /// segments, never panic; whenever it does decode, `summary`/`show`/`compile`
+    /// must also stay panic-free.
+    #[test]
+    fn ipv4_udp_dhcp_boundary_decode_never_panics(
+        option_bytes in prop::collection::vec(any::<u8>(), 0..200),
+    ) {
+        use crafter::core::DhcpMalformed;
+
+        // A valid BOOTP fixed header + magic cookie keeps the registry gate
+        // (`is_dhcp_port_pair` && `looks_like_dhcp_payload`) satisfied so the
+        // arbitrary option-region bytes reach the DHCP decoder through the real
+        // boundary rather than being dropped as non-DHCP UDP traffic.
+        let dhcp = DhcpMalformed::from_valid(
+            Dhcp::discover(dhcp_client_mac()).transaction_id(0x0102_0304),
+        )
+        .raw_options(option_bytes);
+
+        let frame = Ipv4::with_addresses(Ipv4Addr::UNSPECIFIED, Ipv4Addr::BROADCAST)
+            / Udp::new()
+                .source_port(DHCP_CLIENT_PORT)
+                .destination_port(DHCP_SERVER_PORT)
+            / dhcp;
+
+        // The fuzzed options never make the fixed header invalid, so the frame
+        // always compiles to wire bytes carrying a real DHCP magic cookie.
+        let bytes = frame
+            .compile()
+            .expect("ipv4/udp/dhcp boundary frame should compile");
+
+        // Decoding the whole frame from the IPv4 root must never panic. The DHCP
+        // option region may be malformed, so the result is either a structured
+        // error or a successful decode that preserves the bytes; both are
+        // acceptable as long as nothing panics and the decoded model stays
+        // inspectable.
+        exercise_packet_decode(PacketDecodeTarget::L3(NetworkLayer::Ipv4), bytes.as_bytes());
+    }
+
     #[test]
     fn roundtrip_raw_payload_property(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
         let decoded = Packet::decode_raw(&bytes).expect("raw decode should not fail");
