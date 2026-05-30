@@ -122,6 +122,16 @@ behaviors:
     summary: Authoritative response carrying an unknown numeric TYPE and the deferred NSEC3PARAM, TLSA, KEY, and NAPTR types as opaque RDATA; libcrafter decodes each to DnsRecordData::Raw and recompiles the same bytes.
     record_kinds:
       - generic
+  # edns_opt_basic is the focused OPT pseudo-record case exercising the EDNS(0)
+  # fields that reuse ordinary record fields: UDP payload size (CLASS) and the
+  # extended RCODE, version, and DO flag packed into the TTL. Its identifier
+  # edns-opt-basic is a substring only of dns-edns-opt-basic, never of the
+  # dns-edns-opt-ttl-fields / dns-edns-options-known / dns-edns-options-unknown
+  # case ids, so the behavior matcher resolves this case deterministically.
+  - name: edns_opt_basic
+    summary: Several OPT pseudo-records in the additional section spanning an empty option list, non-default UDP payload sizes, extended RCODE values, EDNS version values, and the DO flag set and clear; the OPT owner name stays root and every field reuses an ordinary record field.
+    record_kinds:
+      - generic
 
 # Normalized comparison contract for the DNS oracle.
 #
