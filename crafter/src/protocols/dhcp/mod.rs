@@ -2192,11 +2192,11 @@ mod dhcp_fixed_header {
 #[cfg(test)]
 mod dhcp_option_overload {
     use super::{
-        Dhcp, DhcpMessageType, DhcpOption, DhcpOptionArea, OptionOverload, DHCP_FILE_LEN,
-        DHCP_MIN_LEN, DHCP_OPTION_OVERLOAD, DHCP_SNAME_LEN,
+        Dhcp, DhcpMessageType, DhcpOption, DhcpOptionArea, OptionOverload, DHCP_CLIENT_PORT,
+        DHCP_FILE_LEN, DHCP_MIN_LEN, DHCP_OPTION_OVERLOAD, DHCP_SERVER_PORT, DHCP_SNAME_LEN,
     };
     use crate::error::CrafterError;
-    use crate::Packet;
+    use crate::{Ipv4, MacAddr, NetworkLayer, Packet, Udp};
     use core::net::Ipv4Addr;
 
     // Fixed-field byte ranges within the DHCP message (RFC 2131 section 2):
@@ -2450,6 +2450,87 @@ mod dhcp_option_overload {
         );
         // The one-line summary stays stable and non-empty alongside show().
         assert!(decoded.summary().starts_with("Dhcp(type="));
+    }
+
+    #[test]
+    fn ipv4_udp_dhcp_summary_and_show_surface_key_fields() {
+        // An agent inspecting a live-shaped `ipv4 / udp / dhcp` packet must be able
+        // to read the DHCP message type, transaction id, client hardware address,
+        // and representative options out of `summary()`/`show()` without decoding
+        // bytes by hand. Build the stack, then re-decode from the wire so the
+        // assertions hold on a fully round-tripped packet, not just the builder.
+        let chaddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+        let xid = 0x3903_f326u32;
+        let dhcp = Dhcp::new()
+            .message_type(DhcpMessageType::Discover)
+            .transaction_id(xid)
+            .client_mac(chaddr)
+            .your_ip_address(Ipv4Addr::new(0, 0, 0, 0))
+            .option(DhcpOption::host_name("agent"))
+            .option(DhcpOption::End);
+
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(0, 0, 0, 0))
+            .dst(Ipv4Addr::new(255, 255, 255, 255))
+            / Udp::new()
+                .source_port(DHCP_CLIENT_PORT)
+                .destination_port(DHCP_SERVER_PORT)
+            / dhcp;
+
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes).unwrap();
+
+        // One-line summary: full IPv4/UDP/DHCP chain with message type, xid, yiaddr.
+        let summary = decoded.summary();
+        assert!(
+            summary.contains("Ipv4(") && summary.contains("Udp(sport=68, dport=67"),
+            "summary must show the IPv4/UDP carrier: {summary}"
+        );
+        assert!(
+            summary.contains("Dhcp(type=discover, xid=0x3903f326, yiaddr=0.0.0.0)"),
+            "summary must surface DHCP message type, xid, and yiaddr: {summary}"
+        );
+
+        // Multi-line show: message type, transaction id, client hardware address,
+        // and the option count for the representative options carried above.
+        let show = decoded.show();
+        assert!(
+            show.contains("message_type: discover"),
+            "show must surface the DHCP message type: {show}"
+        );
+        assert!(
+            show.contains("xid: 0x3903f326"),
+            "show must surface the DHCP transaction id: {show}"
+        );
+        assert!(
+            show.contains("chaddr: 02 00 5e 00 53 01"),
+            "show must surface the DHCP client hardware address: {show}"
+        );
+        // host-name + end are preserved as decoded options; message_type lives in
+        // the option list too, so the count reflects all three.
+        let dhcp_layer = decoded.layer::<Dhcp>().expect("dhcp layer present");
+        assert_eq!(dhcp_layer.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(dhcp_layer.transaction_id_value(), xid);
+        assert_eq!(
+            dhcp_layer.client_hardware_address_value(),
+            &chaddr.octets()[..]
+        );
+        assert!(
+            dhcp_layer
+                .options_value()
+                .iter()
+                .any(|o| *o == DhcpOption::host_name("agent")),
+            "decoded options must preserve the representative host-name option"
+        );
+        assert!(
+            show.contains(&format!("options: {}", dhcp_layer.options_value().len())),
+            "show must report the decoded option count: {show}"
+        );
+        // No overload was requested, so it must read back as none.
+        assert!(
+            show.contains("overload: none"),
+            "show must report overload: none for a non-overloaded DHCP packet: {show}"
+        );
     }
 
     #[test]
