@@ -157,6 +157,16 @@ jobs:
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
 
+      - name: Run real Hetzner DHCP IPv4 oracle exchange
+        run: |
+          tools/oracle/run live --backend scapy --provider hetzner \
+            --confirm-live-run \
+            --profile smoke \
+            --seed 133 \
+            --count 2 \
+            --case dhcp-discover \
+            --out target/oracle/dhcp-hetzner-live
+
       - name: Run real Hetzner probe exchange
         run: |
           tools/probe/run --provider hetzner \
@@ -223,5 +233,6 @@ jobs:
           if-no-files-found: ignore
           path: |
             target/oracle/live
+            target/oracle/dhcp-hetzner-live
             target/probe
             target/wire-artifacts

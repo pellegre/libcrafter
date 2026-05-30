@@ -17,6 +17,7 @@ from tools.wire.engine.model import NetworkInterface
 from tools.wire.engine.process import CommandResult
 from tools.wire.engine.providers import hetzner
 from tools.wire.engine.providers.hetzner import create as hetzner_create
+from tools.wire.engine.providers.hetzner import network as hetzner_network
 from tools.wire.engine.state import read_endpoint_manifest, read_private_group_record
 
 
@@ -188,7 +189,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                         "--name",
                         f"wire-{endpoint_id}",
                         "--type",
-                        "cx22",
+                        "cx23",
                         "--image",
                         "ubuntu-24.04",
                         "--location",
@@ -219,7 +220,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                 calls.append(tuple(argv))
                 return _hcloud_result(argv, _private_hcloud_payload(argv))
 
-            with _patched_endpoint_helpers(), _wire_env(root):
+            with _patched_endpoint_helpers(_private_discovered_interfaces()), _wire_env(root):
                 output = hetzner.create_endpoint(
                     provider="hetzner",
                     exposure="private",
@@ -237,7 +238,11 @@ class HetznerCreateEndpointTest(unittest.TestCase):
             endpoint_id = str(output["endpoint_id"])
             self.assertTrue(output["created"])
             self.assertEqual(stored.exposure, "private")
+            self.assertEqual(stored.interfaces[0].name, "ens10")
             self.assertEqual(stored.interfaces[0].ipv4, "10.0.0.9")
+            self.assertEqual(stored.interfaces[0].mac, "86:00:00:00:00:09")
+            self.assertEqual(stored.metadata["discovery"]["private_interface"], "ens10")
+            self.assertTrue(stored.metadata["discovery"]["private_interface_matched"])
             self.assertEqual(record.allocated_endpoint_ids, [endpoint_id])
             self.assertEqual(record.allocated_private_ipv4s, ["10.0.0.9"])
             self.assertEqual(record.network_resource["network_id"], "network-303")
@@ -278,7 +283,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                         "--name",
                         f"wire-{endpoint_id}",
                         "--type",
-                        "cx22",
+                        "cx23",
                         "--image",
                         "ubuntu-24.04",
                         "--location",
@@ -307,23 +312,148 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                         "network-303",
                         "--ip",
                         "10.0.0.9",
-                        "-o",
-                        "json",
                     ),
                     ("hcloud", "server", "describe", "server-202", "-o", "json"),
                 ],
             )
 
+    def test_private_live_create_retries_until_private_interface_has_requested_ip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+
+            def fake_runner(argv: Sequence[str], **_: object) -> CommandResult:
+                return _hcloud_result(argv, _private_hcloud_payload(argv))
+
+            with (
+                mock.patch.object(hetzner_create, "_ensure_endpoint_key", return_value=None),
+                mock.patch.object(hetzner_create, "wait_for_ssh", return_value=None),
+                mock.patch.object(
+                    hetzner_create,
+                    "_configure_private_network_interface",
+                    return_value=None,
+                ),
+                mock.patch.object(
+                    hetzner_create,
+                    "discover_endpoint_interfaces",
+                    side_effect=[_discovered_interfaces(), _private_discovered_interfaces()],
+                ) as discovery,
+                mock.patch.object(hetzner_create.time, "sleep", return_value=None) as sleep,
+                _wire_env(root),
+            ):
+                output = hetzner.create_endpoint(
+                    provider="hetzner",
+                    exposure="private",
+                    role="oracle",
+                    private_group="pair-a",
+                    private_ip="10.0.0.9",
+                    dry_run=False,
+                    confirm_live_run=True,
+                    env={"HCLOUD_TOKEN": "token"},
+                    command_runner=fake_runner,
+                )
+                stored = read_endpoint_manifest(str(output["endpoint_id"]))
+
+            self.assertEqual(stored.interfaces[0].name, "ens10")
+            self.assertEqual(discovery.call_count, 2)
+            sleep.assert_called_once()
+            self.assertEqual(stored.metadata["discovery"]["private_interface"], "ens10")
+
+    def test_private_interface_configuration_uses_onlink_gateway_route(self) -> None:
+        script = hetzner_create._configure_private_network_interface_script(
+            public_ipv4="198.51.100.44",
+            private_ipv4="10.42.19.20",
+            private_cidr="10.42.19.0/24",
+        )
+
+        self.assertIn('ip addr replace "$private_ipv4/32" dev "$private_iface"', script)
+        self.assertIn('ip route replace "$private_gateway/32"', script)
+        self.assertIn('src "$private_ipv4" onlink', script)
+
+    def test_private_network_add_subnet_uses_non_json_hcloud_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            calls: list[tuple[str, ...]] = []
+
+            def fake_runner(argv: Sequence[str], **_: object) -> CommandResult:
+                parts = tuple(argv)
+                calls.append(parts)
+                if parts == ("hcloud", "network", "describe", "wire-pair-a", "-o", "json"):
+                    return _hcloud_result(
+                        argv,
+                        {
+                            "network": {
+                                "id": "network-303",
+                                "name": "wire-pair-a",
+                                "ip_range": "10.0.0.0/16",
+                                "subnets": [],
+                            }
+                        },
+                    )
+                if parts[:3] == ("hcloud", "network", "add-subnet"):
+                    return _hcloud_result(argv, {})
+                if parts == ("hcloud", "network", "describe", "network-303", "-o", "json"):
+                    return _hcloud_result(
+                        argv,
+                        {
+                            "network": {
+                                "id": "network-303",
+                                "name": "wire-pair-a",
+                                "ip_range": "10.0.0.0/16",
+                                "subnets": [
+                                    {
+                                        "type": "server",
+                                        "network_zone": "eu-central",
+                                        "ip_range": "10.0.0.0/16",
+                                    }
+                                ],
+                            }
+                        },
+                    )
+                raise AssertionError(f"unexpected hcloud argv: {parts}")
+
+            with _wire_env(Path(temp_dir)):
+                output = hetzner_network._ensure_private_network(
+                    provider="hetzner",
+                    private_group="pair-a",
+                    private_cidr="10.0.0.0/16",
+                    network_zone="eu-central",
+                    env={"HCLOUD_TOKEN": "token"},
+                    command_runner=fake_runner,
+                )
+
+            self.assertFalse(output["created"])
+            self.assertIn(
+                (
+                    "hcloud",
+                    "network",
+                    "add-subnet",
+                    "network-303",
+                    "--type",
+                    "server",
+                    "--network-zone",
+                    "eu-central",
+                    "--ip-range",
+                    "10.0.0.0/16",
+                ),
+                calls,
+            )
+
 
 @contextmanager
-def _patched_endpoint_helpers():
+def _patched_endpoint_helpers(
+    discovered_interfaces: list[NetworkInterface] | None = None,
+):
     with (
         mock.patch.object(hetzner_create, "_ensure_endpoint_key", return_value=None),
         mock.patch.object(hetzner_create, "wait_for_ssh", return_value=None),
         mock.patch.object(
             hetzner_create,
+            "_configure_private_network_interface",
+            return_value=None,
+        ),
+        mock.patch.object(
+            hetzner_create,
             "discover_endpoint_interfaces",
-            return_value=_discovered_interfaces(),
+            return_value=discovered_interfaces or _discovered_interfaces(),
         ),
     ):
         yield
@@ -403,6 +533,26 @@ def _discovered_interfaces() -> list[NetworkInterface]:
             ipv6="2001:db8::44",
             metadata={"source": "test"},
         )
+    ]
+
+
+def _private_discovered_interfaces() -> list[NetworkInterface]:
+    return [
+        NetworkInterface(
+            name="eth0",
+            exposure="private",
+            ipv4="198.51.100.44",
+            ipv6="2001:db8::44",
+            mac="86:00:00:00:00:01",
+            metadata={"source": "test", "default_route": True},
+        ),
+        NetworkInterface(
+            name="ens10",
+            exposure="private",
+            ipv4="10.0.0.9",
+            mac="86:00:00:00:00:09",
+            metadata={"source": "test", "default_route": False},
+        ),
     ]
 
 

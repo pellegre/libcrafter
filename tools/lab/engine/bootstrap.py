@@ -13,6 +13,7 @@ from .repo import RepoBootstrapContext
 
 CLOUD_INIT_WAIT_LINE = (
     "if command -v cloud-init >/dev/null 2>&1; then "
+    "timeout \"${LIBCRAFTER_CLOUD_INIT_WAIT_SECONDS:-180}\" "
     "cloud-init status --wait >/dev/null 2>&1 || true; fi"
 )
 DEBIAN_FRONTEND_LINE = "export DEBIAN_FRONTEND=noninteractive"

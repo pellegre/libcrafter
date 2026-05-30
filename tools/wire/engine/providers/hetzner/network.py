@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from ...model import NetworkInterface
 from ...state import read_private_group_record
 from .constants import HCLOUD_COMMAND, HcloudRunner
-from .hcloud import _hcloud_json, _hcloud_json_optional, _hcloud_ok, _parse_hcloud_json
+from .hcloud import _hcloud_json, _hcloud_json_optional, _hcloud_ok
 from .utils import (
     _ipv4_address,
     _ipv4_network,
@@ -97,8 +97,6 @@ def _ensure_private_network(
                 network_zone,
                 "--ip-range",
                 private_cidr,
-                "-o",
-                "json",
             ],
             env=env,
             command_runner=command_runner,
@@ -132,7 +130,7 @@ def _attach_server_to_private_network(
     network_id = _network_resource_id(network_resource)
     if network_id is None:
         raise RuntimeError("private network resource did not include a network id")
-    result = _hcloud_ok(
+    _hcloud_ok(
         [
             HCLOUD_COMMAND,
             "server",
@@ -142,14 +140,10 @@ def _attach_server_to_private_network(
             network_id,
             "--ip",
             private_ipv4,
-            "-o",
-            "json",
         ],
         env=env,
         command_runner=command_runner,
     )
-    if result.stdout.strip():
-        return _parse_hcloud_json(result)
     return {}
 
 

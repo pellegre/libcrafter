@@ -69,6 +69,7 @@ def discover_endpoint_interfaces(
     exposure: str,
     public_ipv4: str | None = None,
     public_ipv6: str | None = None,
+    prefer_public_or_default: bool = True,
 ) -> list[NetworkInterface]:
     """Discover endpoint interfaces with Linux ip commands over SSH."""
 
@@ -82,6 +83,7 @@ def discover_endpoint_interfaces(
         public_ipv6=public_ipv6,
         command=INTERFACE_DISCOVERY_COMMAND,
         metadata=_hcloud_public_metadata(public_ipv4=public_ipv4, public_ipv6=public_ipv6),
+        prefer_public_or_default=prefer_public_or_default,
     )
 
 
