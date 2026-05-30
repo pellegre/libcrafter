@@ -70,6 +70,37 @@ decode behavior that should survive file serialization.
 Packets that cannot be represented in the requested pcap mode are reported as
 skipped with a stable reason.
 
+## UDP Options Validation
+
+UDP options validation exercises the RFC 9868 surplus area after UDP Length,
+normal UDP checksum handling, OCS/APC handling, option status reporting, and
+unknown SAFE/UNSAFE preservation. Use a UDP-filtered corpus when changing
+`Udp`, `UdpOptions`, `UdpOption`, or oracle UDP option normalization:
+
+```sh
+tools/oracle/run offline --backend scapy --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-offline
+tools/oracle/run offline --backend scapy --direction reference_to_libcrafter --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-reference-to-libcrafter
+tools/oracle/run offline --backend scapy --direction libcrafter_to_reference --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-libcrafter-to-reference
+```
+
+Pcap mode checks that the same UDP surplus bytes survive classic pcap
+write/read and raw-link normalization:
+
+```sh
+tools/oracle/run pcap --backend scapy --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-pcap
+cargo test -p crafter --test fixture_suite udp_options
+```
+
+Provider-backed live planning stays dry-run by default. The local dry-run path
+filters the bounded UDP option live case set without sending packets, and the
+provider matrix records provider-specific skips for cases such as IPv6
+zero-checksum status or DHCP-style L2 broadcast requirements:
+
+```sh
+tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-local-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 9868 --count 20 --dry-run --out target/oracle/udp-options-live-dry-run-matrix
+```
+
 ## Live Validation
 
 Live validation routes provider-backed packet exchange through lab-backed

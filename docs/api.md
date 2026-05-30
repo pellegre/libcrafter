@@ -204,6 +204,65 @@ let report = send_recv_packets(
 Raw socket operations are exposed through typed wrappers rather than integer
 file descriptors in normal examples.
 
+## UDP Options
+
+UDP options (RFC 9868) are modeled as a typed surplus layer. A packet stack
+places `UdpOptions` after the UDP user payload:
+
+```rust
+let options = UdpOptions::new()
+    .udp_option(UdpOption::maximum_datagram_size(1200))?
+    .udp_option(UdpOption::echo_request(0x0102_0304))?
+    .additional_payload_checksum();
+
+let packet = Ipv4::new()
+    .src("192.0.2.10")?
+    .dst("198.51.100.20")?
+    / Udp::new().sport(53000).dport(33434)
+    / Raw::from("probe")
+    / options;
+
+let bytes = packet.compile()?;
+let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+let udp = decoded.layer::<Udp>().ok_or("missing UDP")?;
+let udp_options = decoded.layer::<UdpOptions>().ok_or("missing UDP options")?;
+
+assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+```
+
+`compile()` fills the normal UDP length and checksum over the UDP user payload,
+then materializes the UDP surplus area after that length. It also fills the UDP
+Option Checksum (OCS) and any auto `additional_payload_checksum()` APC option.
+Explicit UDP length, UDP checksum, OCS, and APC values are preserved, including
+intentionally wrong values.
+
+| Rust API | Purpose |
+| --- | --- |
+| `UdpOptions::new()` | Start an empty surplus option layer. |
+| `UdpOptions::from_options(...)` | Encode typed `UdpOption` values. |
+| `UdpOptions::from_bytes(...)` | Preserve already encoded option bytes. |
+| `UdpOptions::udp_option(...)` | Append one typed option. |
+| `UdpOptions::additional_payload_checksum()` | Append an APC whose CRC32c is filled from UDP user data at compile time. |
+| `UdpOptions::option_checksum(value)` | Set OCS explicitly for malformed or fixed-vector cases. |
+| `UdpOptions::status()` | Return decoded or parsed `UdpOptionStatus`. |
+| `UdpOptions::options()` | Borrow cached parsed `UdpOption` values. |
+| `UdpOptions::option_iter()` | Iterate over the encoded option bytes. |
+
+Typed options cover EOL, NOP, APC, MDS, MRDS, REQ, RES, TIME, SAFE/UNSAFE
+experimental options, and generic known or unknown option kinds. Unknown SAFE
+options are preserved with `UdpOptionStatus::UnknownSafe`; unknown UNSAFE
+options are preserved with `UdpOptionStatus::UnknownUnsafe` and should be
+treated as unsupported behavior by higher-level tools. UDP FRAG is preserved as
+raw option data and reported as `UdpOptionStatus::UnsupportedFragmentation`
+because full UDP fragmentation/reassembly is not in scope.
+
+`Udp::checksum_status()` reports checksum validation on decoded packets:
+`Valid`, `Invalid`, `Ipv4NoChecksum`, `Ipv6ZeroChecksum`, or `NotChecked`.
+`UdpChecksumStatus::Ipv6ZeroChecksum` is not accepted as ordinary IPv6 UDP; call
+`requires_ipv6_zero_checksum_exception()` when a tool explicitly supports the
+RFC 6935/RFC 6936 tunnel exception model.
+
 ## DHCP Packets
 
 `Dhcp` is the DHCPv4 layer. It is a packet primitive: it crafts and inspects
@@ -315,6 +374,7 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | IPv6 | `Ipv6` |
 | TCP | `Tcp` |
 | UDP | `Udp` |
+| UDP surplus options | `UdpOptions`, `UdpOption` |
 | ICMP | `Icmp` |
 | ICMPv6 | `Icmpv6` |
 | DNS | `Dns` |

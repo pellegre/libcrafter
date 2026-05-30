@@ -117,6 +117,62 @@ When authorization or VM prerequisites are absent, plan with `--dry-run` and
 record a skip artifact rather than faking a live run. The user-facing coverage
 boundary lives in [`docs/arp-rfc-coverage.md`](../../docs/arp-rfc-coverage.md).
 
+## Build UDP Options
+
+Generated tools should build UDP options as a separate `UdpOptions` layer after
+the UDP user payload. Do not append RFC 9868 surplus bytes to `Raw`; doing that
+hides the UDP Length boundary from `compile()`, checksum generation, decode,
+and oracle normalization.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let options = UdpOptions::new()
+        .udp_option(UdpOption::maximum_datagram_size(1200))?
+        .udp_option(UdpOption::echo_request(0x0102_0304))?
+        .udp_option(UdpOption::generic(10, [0xaa, 0xbb]))?
+        .additional_payload_checksum();
+
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Udp::new().sport(53000).dport(33434)
+        / Raw::from("agent-udp-options")
+        / options;
+
+    let bytes = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+
+    if let Some(udp) = decoded.layer::<Udp>() {
+        println!("udp_checksum_status={:?}", udp.checksum_status());
+    }
+    if let Some(options) = decoded.layer::<UdpOptions>() {
+        println!("udp_option_status={:?}", options.status());
+        for option in options.options() {
+            println!("udp_option={option}");
+        }
+    }
+
+    Ok(())
+}
+```
+
+Use `UdpOptions::from_options(...)` or `udp_option(...)` for typed cases, and
+`UdpOptions::from_bytes(...)` only when the generated tool intentionally needs
+already encoded, malformed, unknown, or unsupported bytes. Use
+`UdpOption::generic(...)` for unknown SAFE/UNSAFE options and return the
+resulting `UdpOptionStatus` to the caller. Treat `UnknownUnsafe`,
+`UnsupportedFragmentation`, `OptionChecksumInvalid`, and
+`AdditionalPayloadChecksumInvalid` as inspectable packet results, not panics.
+
+`UdpOptions::additional_payload_checksum()` lets `compile()` fill APC from UDP
+user data. Use `additional_payload_checksum_value(...)`,
+`UdpOption::additional_payload_checksum(...)`, `UdpOptions::option_checksum(...)`,
+or explicit `Udp::checksum(...)` only when a test or generated tool is
+deliberately emitting fixed or malformed bytes.
+
 ## Decode Bytes
 
 Pick the decode entrypoint from the context that produced the bytes. Link-layer
@@ -309,12 +365,34 @@ Pcap validation exercises pcap writer, reader, and roundtrip behavior:
 tools/oracle/run pcap --profile smoke --seed 1 --count 10
 ```
 
+For UDP options, keep generated-tool validation offline or dry-run unless a
+human has explicitly authorized a disposable provider endpoint:
+
+```sh
+tools/oracle/run offline --backend scapy --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-agent-offline
+tools/oracle/run pcap --backend scapy --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-agent-pcap
+tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-agent-live-local-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 9868 --count 20 --dry-run --out target/oracle/udp-options-agent-live-dry-run-matrix
+```
+
 Live validation routes through a provider. Use `local-dry-run` for agent and CI
 planning, and reserve real providers for explicit live-lab workflows:
 
 ```sh
 tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+```
+
+Guard real UDP option live validation with an environment opt-in and keep the
+provider disposable:
+
+```sh
+if [ "${LIBCRAFTER_RUN_LIVE_UDP_OPTIONS:-0}" = "1" ]; then
+  tools/oracle/run live --backend scapy --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction reference_to_libcrafter --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-scapy-to-libcrafter
+  tools/oracle/run live --backend scapy --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction libcrafter_to_reference --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-libcrafter-to-scapy
+else
+  echo "set LIBCRAFTER_RUN_LIVE_UDP_OPTIONS=1 to run guarded live UDP option validation"
+fi
 ```
 
 Artifacts default below `target/oracle/`, with mode-specific reports under
