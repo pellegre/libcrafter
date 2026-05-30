@@ -7,8 +7,8 @@ use crafter::core::{
     decode_dns_name, scan_dhcp_option_segments, Arp, CrafterError, Dhcp, DhcpOption,
     DhcpOptionArea, Dns, Ethernet, Icmp, Icmpv6, IpProtocol, Ipv4, Ipv4Option, Ipv6, LinkType,
     LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
-    Udp, Vlan,
-    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
+    Udp, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH,
+    TCP_FLAG_SYN,
 };
 use proptest::prelude::*;
 
@@ -521,10 +521,7 @@ fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
 /// lengths, missing end marker, non-padding after end, invalid hardware
 /// lengths, and malformed option overload).
 fn is_dhcp_malformed_case(case: &MalformedCase) -> bool {
-    matches!(
-        case.target,
-        DecodeTarget::Dhcp | DecodeTarget::DhcpOptions
-    )
+    matches!(case.target, DecodeTarget::Dhcp | DecodeTarget::DhcpOptions)
 }
 
 /// Every malformed DHCP vector must surface a fully structured `CrafterError`,
@@ -697,7 +694,9 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
             assert_eq!(field, "dhcp.option.message_type");
             assert!(!reason.is_empty());
         }
-        other => panic!("invalid fixed DHCP option length expected InvalidFieldValue, got {other:?}"),
+        other => {
+            panic!("invalid fixed DHCP option length expected InvalidFieldValue, got {other:?}")
+        }
     }
 
     // Missing end marker: a non-empty options area without the trailing end
@@ -751,11 +750,10 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
     let mut file_area = vec![0u8; 128];
     file_area[0] = 0x43; // option 67 (bootfile name)
     file_area[1] = 200; // declared length overruns the 128-byte file area
-    let bytes = DhcpMalformed::from_valid(
-        base().option(DhcpOption::option_overload(OptionOverload::File)),
-    )
-    .raw_file(file_area)
-    .to_bytes();
+    let bytes =
+        DhcpMalformed::from_valid(base().option(DhcpOption::option_overload(OptionOverload::File)))
+            .raw_file(file_area)
+            .to_bytes();
     let _ = Dhcp::decode(&bytes); // must not panic; structured error or raw preservation
 }
 

@@ -319,7 +319,10 @@ mod message_type_tests {
             );
             // A registered type must never normalize into Unknown.
             assert!(
-                !matches!(parsed.message_type_value(), Some(DhcpMessageType::Unknown(_))),
+                !matches!(
+                    parsed.message_type_value(),
+                    Some(DhcpMessageType::Unknown(_))
+                ),
                 "{message_type:?} must decode to a registered type, not Unknown",
             );
 
