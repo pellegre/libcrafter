@@ -1,7 +1,7 @@
 version: 1
 kind: layer
 name: arp
-summary: Ethernet and IPv4 ARP requests and replies.
+summary: ARP fixed header and variable sender/target address fields (RFC 826), defaulting to Ethernet/IPv4 requests and replies.
 
 roots: []
 parents:
@@ -19,6 +19,16 @@ fields:
     required: true
     domains:
       - ipv4
+  - name: hardware_length
+    type: uint8
+    required: true
+    domains:
+      - 6
+  - name: protocol_length
+    type: uint8
+    required: true
+    domains:
+      - 4
   - name: opcode
     type: uint16
     required: true
