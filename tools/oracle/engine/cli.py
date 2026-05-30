@@ -363,6 +363,152 @@ def _build_corpus_report_from_generation(
     )
 
 
+def _build_live_corpus_report_from_generation(
+    args: argparse.Namespace,
+    *,
+    direction: str = "reference_to_libcrafter",
+):
+    if not _should_use_udp_live_case_selection(args):
+        return _build_corpus_report_from_generation(args, direction=direction)
+    return _build_udp_live_case_corpus_report(args, direction=direction)
+
+
+def _should_use_udp_live_case_selection(args: argparse.Namespace) -> bool:
+    return (
+        args.profile == "smoke"
+        and args.family == "udp"
+        and args.root is None
+        and args.case_name is None
+        and args.feature is None
+        and args.index is None
+    )
+
+
+def _build_udp_live_case_corpus_report(
+    args: argparse.Namespace,
+    *,
+    direction: str,
+):
+    from .corpus import build_corpus_report
+    from .generator import generate_plans
+
+    live_cases = _udp_options_live_case_specs()
+    plans: list[PacketPlan] = []
+    for offset in range(args.count):
+        live_case = live_cases[offset % len(live_cases)]
+        feature = _optional_live_case_string(live_case, "feature")
+        generated = generate_plans(
+            seed=args.seed,
+            profile=args.profile,
+            backend=args.backend,
+            count=1,
+            root=_required_live_case_string(live_case, "root"),
+            family=_required_live_case_string(live_case, "family"),
+            case=_required_live_case_string(live_case, "case"),
+            feature=feature,
+            direction=direction,
+            index=offset,
+        )
+        plan = generated[0]
+        selector = {
+            "source": "tools/oracle/specs/features/udp-options.yaml:live_cases",
+            "sequence_index": offset % len(live_cases),
+            "name": _required_live_case_string(live_case, "name"),
+            "case": live_case["case"],
+            "root": live_case["root"],
+            "family": live_case["family"],
+            "feature": feature,
+            "expected_live": live_case.get("expected_live"),
+            "skip_reasons": live_case.get("skip_reasons", []),
+        }
+        plans.append(
+            replace(
+                plan,
+                feature_tags=list(
+                    dict.fromkeys([*plan.feature_tags, "live_udp_options"])
+                ),
+                metadata={
+                    **plan.metadata,
+                    "live_case_selection": selector,
+                },
+            )
+        )
+
+    backend_versions = _backend_versions(args.backend)
+    libcrafter_info = _libcrafter_info()
+    return build_corpus_report(
+        backend=args.backend,
+        profile=args.profile,
+        seed=args.seed,
+        count=args.count,
+        plans=plans,
+        selected_specs=GENERATOR_SELECTED_SPECS,
+        metadata={
+            "requested_count": args.count,
+            "generated_count": len(plans),
+            "filters": {
+                "root": args.root,
+                "family": args.family,
+                "case": args.case_name,
+                "feature": args.feature,
+                "index": args.index,
+            },
+            "live_case_selection": {
+                "feature": "udp_options",
+                "profile": args.profile,
+                "family": args.family,
+                "source": "tools/oracle/specs/features/udp-options.yaml:live_cases",
+                "case_count": len(live_cases),
+                "cases": live_cases,
+            },
+            "backend_metadata": backend_versions.get(args.backend, {}),
+            "backend_versions": backend_versions,
+            "libcrafter": libcrafter_info,
+        },
+    )
+
+
+def _udp_options_live_case_specs() -> list[JSONObject]:
+    from .spec_loader import load_oracle_specs
+
+    specs = load_oracle_specs()
+    feature = specs.features.get("udp_options")
+    if feature is None:
+        raise ValueError("udp_options feature spec is missing")
+    raw_cases = feature.raw.get("live_cases", [])
+    if not isinstance(raw_cases, list) or not raw_cases:
+        raise ValueError("features/udp-options.yaml live_cases must be a non-empty list")
+
+    cases: list[JSONObject] = []
+    for index, raw_case in enumerate(raw_cases):
+        case = _json_object(raw_case, f"udp_options.live_cases[{index}]")
+        for key in ("name", "case", "root", "family"):
+            _required_live_case_string(case, key)
+        feature_name = _optional_live_case_string(case, "feature")
+        if feature_name is not None and feature_name != "udp_options":
+            raise ValueError(
+                "udp_options.live_cases feature must be null or udp_options"
+            )
+        cases.append(case)
+    return cases
+
+
+def _required_live_case_string(case: Mapping[str, object], key: str) -> str:
+    value = case.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"udp_options.live_cases requires string field {key}")
+    return value
+
+
+def _optional_live_case_string(case: Mapping[str, object], key: str) -> str | None:
+    value = case.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"udp_options.live_cases field {key} must be null or string")
+    return value
+
+
 def _offline_required_capabilities(
     args: argparse.Namespace,
 ) -> tuple[BackendCapabilityName, ...]:
@@ -464,7 +610,10 @@ def _live_corpus_plans(
     corpus_path: Path | None = None
     corpus_source = "generated"
     if getattr(args, "corpus", None) is None:
-        corpus_report = _build_corpus_report_from_generation(args, direction=direction)
+        corpus_report = _build_live_corpus_report_from_generation(
+            args,
+            direction=direction,
+        )
     else:
         corpus_source = "provided"
         corpus_path = Path(args.corpus)
@@ -589,6 +738,12 @@ def _live_corpus_plans(
         "wire_eligibility": eligibility,
         "packet_indexes": [plan.index for plan in plans],
     }
+    live_case_selection = corpus_report.metadata.get("live_case_selection")
+    if isinstance(live_case_selection, Mapping):
+        metadata["live_case_selection"] = _json_object(
+            json.loads(dumps_json(live_case_selection)),
+            "corpus_report.metadata.live_case_selection",
+        )
     if provider_capabilities_object is not None:
         metadata["provider_capabilities"] = provider_capabilities_object
         metadata["provider_capability_source"] = provider_capabilities_object.get("source")

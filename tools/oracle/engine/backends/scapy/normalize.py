@@ -768,7 +768,7 @@ def _apply_udp_surplus_normalization(
     option_metadata = _udp_surplus_metadata(raw, layout, user_payload, surplus)
     key = _field_key(fields, "UdpOptions")
     if key not in fields:
-        _insert_layer_after(layers, "UdpOptions", after={"payload", "udp"})
+        _insert_layer_after(layers, "UdpOptions", after={"payload", "dns", "dhcp", "udp"})
         fields[key] = {}
     fields[key]["options"] = option_metadata
 
@@ -815,8 +815,15 @@ def _normalize_udp_user_payload(
         layers[:] = updated_layers
         return
 
+    if _has_udp_typed_application_layer(layers):
+        return
+
     _insert_layer_after(layers, "payload", after={"udp"})
     fields["payload"] = payload_fields
+
+
+def _has_udp_typed_application_layer(layers: Sequence[str]) -> bool:
+    return any(layer in {"dns", "dhcp"} for layer in layers)
 
 
 def _base_layer_name(layer_name: str) -> str:
@@ -1190,12 +1197,19 @@ def _expected_stack(plan: PacketPlan) -> list[str]:
     if payload_hex == "":
         output = [layer for layer in output if layer != "payload"]
     if _plan_has_udp_surplus_options(plan):
-        insert_after = "payload" if "payload" in output else "udp"
+        insert_after = _udp_options_expected_insert_after(output)
         try:
             output.insert(output.index(insert_after) + 1, "UdpOptions")
         except ValueError:
             output.append("UdpOptions")
     return output
+
+
+def _udp_options_expected_insert_after(layers: Sequence[str]) -> str:
+    for layer in ("payload", "dns", "dhcp", "udp"):
+        if layer in layers:
+            return layer
+    return "udp"
 
 
 def _expected_smoke_fields(plan: PacketPlan) -> dict[str, JSONObject]:
