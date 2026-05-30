@@ -235,4 +235,57 @@ mod message_type_tests {
             assert_eq!(u8::from(message_type), code);
         }
     }
+
+    #[test]
+    fn dhcp_leasequery_message_types_roundtrip() {
+        use super::super::Dhcp;
+
+        // The leasequery message-type family is defined by RFC 4388 (codes
+        // 10-13: DHCPLEASEQUERY, DHCPLEASEUNASSIGNED, DHCPLEASEUNKNOWN,
+        // DHCPLEASEACTIVE), RFC 6926 (codes 14-15: DHCPBULKLEASEQUERY,
+        // DHCPLEASEQUERYDONE), and RFC 7724 (codes 16-18: DHCPACTIVELEASEQUERY,
+        // DHCPLEASEQUERYSTATUS, DHCPTLS). Each value carries through option 53 in
+        // a full DHCP packet without loss, and pins to its IANA codepoint.
+        let leasequery_family = [
+            (DhcpMessageType::LeaseQuery, 10u8),
+            (DhcpMessageType::LeaseUnassigned, 11),
+            (DhcpMessageType::LeaseUnknown, 12),
+            (DhcpMessageType::LeaseActive, 13),
+            (DhcpMessageType::BulkLeaseQuery, 14),
+            (DhcpMessageType::LeaseQueryDone, 15),
+            (DhcpMessageType::ActiveLeaseQuery, 16),
+            (DhcpMessageType::LeaseQueryStatus, 17),
+            (DhcpMessageType::DhcpTls, 18),
+        ];
+
+        for (message_type, code) in leasequery_family {
+            // enum <-> codepoint mapping is exact and never Unknown.
+            assert_eq!(message_type.code(), code, "{message_type:?} codepoint");
+            assert_eq!(DhcpMessageType::from_code(code), message_type);
+            assert!(!matches!(message_type, DhcpMessageType::Unknown(_)));
+
+            // The message type survives a full DHCP packet compile -> decode
+            // cycle through option 53, and the bytes re-compile identically.
+            let dhcp = Dhcp::new()
+                .op(super::super::BOOTP_REPLY)
+                .message_type(message_type);
+            let bytes = crate::Packet::from_layer(dhcp)
+                .compile()
+                .unwrap()
+                .as_bytes()
+                .to_vec();
+            let parsed = Dhcp::decode(&bytes).unwrap();
+            assert_eq!(
+                parsed.message_type_value(),
+                Some(message_type),
+                "code {code} must decode from option 53 in a full packet",
+            );
+            let recompiled = crate::Packet::from_layer(parsed)
+                .compile()
+                .unwrap()
+                .as_bytes()
+                .to_vec();
+            assert_eq!(recompiled, bytes, "code {code} must re-compile identically");
+        }
+    }
 }

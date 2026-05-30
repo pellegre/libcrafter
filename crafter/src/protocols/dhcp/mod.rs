@@ -23,50 +23,52 @@ pub use constants::{
     DHCP_AUTH_REPLAY_DETECTION_LEN, DHCP_CLIENT_PORT, DHCP_DECLINE, DHCP_DISCOVER,
     DHCP_FIXED_HEADER_LEN, DHCP_FORCERENEW_NONCE_TYPE_HMAC_MD5, DHCP_FORCERENEW_NONCE_TYPE_NONCE,
     DHCP_HTYPE_ETHERNET, DHCP_INFORM, DHCP_MAGIC_COOKIE, DHCP_MAGIC_COOKIE_LEN, DHCP_MIN_LEN,
-    DHCP_NAK, DHCP_OFFER, DHCP_OPTION_6RD, DHCP_OPTION_AUTHENTICATION,
-    DHCP_OPTION_BCMCS_DOMAIN_LIST, DHCP_OPTION_BCMCS_IPV4_LIST, DHCP_OPTION_BOOTFILE_NAME,
-    DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
-    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
-    DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_DOMAIN_NAME,
-    DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH, DHCP_OPTION_END,
-    DHCP_OPTION_FORCERENEW_NONCE_CAPABLE, DHCP_OPTION_GEOCONF, DHCP_OPTION_GEOCONF_CIVIC,
-    DHCP_OPTION_GEOLOC, DHCP_OPTION_HOST_NAME, DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
-    DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_MUD_URL_V4, DHCP_OPTION_NAME_SERVICE_SEARCH,
-    DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD, DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PCODE,
-    DHCP_OPTION_PXELINUX_CONFIGFILE, DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX,
-    DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_RDNSS_SELECTION, DHCP_OPTION_REBINDING_TIME,
-    DHCP_OPTION_RELAY_AGENT_INFORMATION, DHCP_OPTION_RENEWAL_TIME,
+    DHCP_NAK, DHCP_OFFER, DHCP_OPTION_6RD, DHCP_OPTION_ASSOCIATED_IP, DHCP_OPTION_AUTHENTICATION,
+    DHCP_OPTION_BASE_TIME, DHCP_OPTION_BCMCS_DOMAIN_LIST, DHCP_OPTION_BCMCS_IPV4_LIST,
+    DHCP_OPTION_BOOTFILE_NAME, DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
+    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME,
+    DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
+    DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_DATA_SOURCE, DHCP_OPTION_DHCP_STATE,
+    DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH,
+    DHCP_OPTION_END, DHCP_OPTION_FORCERENEW_NONCE_CAPABLE, DHCP_OPTION_GEOCONF,
+    DHCP_OPTION_GEOCONF_CIVIC, DHCP_OPTION_GEOLOC, DHCP_OPTION_HOST_NAME,
+    DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_MUD_URL_V4,
+    DHCP_OPTION_NAME_SERVICE_SEARCH, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
+    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PCODE, DHCP_OPTION_PXELINUX_CONFIGFILE,
+    DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX, DHCP_OPTION_PXELINUX_REBOOTTIME,
+    DHCP_OPTION_QUERY_END_TIME, DHCP_OPTION_QUERY_START_TIME, DHCP_OPTION_RDNSS_SELECTION,
+    DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RELAY_AGENT_INFORMATION, DHCP_OPTION_RENEWAL_TIME,
     DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER,
-    DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_SIP_UA_CONFIG_DOMAINS, DHCP_OPTION_STATIC_ROUTE,
-    DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_TCODE, DHCP_OPTION_TFTP_SERVER_ADDRESS,
-    DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_USER_CLASS, DHCP_OPTION_V4_DNR,
-    DHCP_OPTION_V4_DOTS_ADDRESS, DHCP_OPTION_V4_DOTS_RI, DHCP_OPTION_V4_PCP_SERVER,
-    DHCP_OPTION_VENDOR_CLASS_IDENTIFIER, DHCP_OPTION_VENDOR_SPECIFIC, DHCP_OPTION_VI_VENDOR_CLASS,
-    DHCP_OPTION_VI_VENDOR_SPECIFIC, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME,
-    DHCP_RELAY_FLAG_UNICAST, DHCP_RELAY_SUBOPTION_ACCESS_NETWORK_NAME,
-    DHCP_RELAY_SUBOPTION_ACCESS_POINT_BSSID, DHCP_RELAY_SUBOPTION_ACCESS_POINT_NAME,
-    DHCP_RELAY_SUBOPTION_ACCESS_TECHNOLOGY_TYPE, DHCP_RELAY_SUBOPTION_AUTHENTICATION,
-    DHCP_RELAY_SUBOPTION_CIRCUIT_ID, DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS,
-    DHCP_RELAY_SUBOPTION_LINK_SELECTION, DHCP_RELAY_SUBOPTION_OPERATOR_IDENTIFIER,
-    DHCP_RELAY_SUBOPTION_OPERATOR_REALM, DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES,
-    DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID, DHCP_RELAY_SUBOPTION_RELAY_FLAGS,
-    DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT, DHCP_RELAY_SUBOPTION_REMOTE_ID,
-    DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE, DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID,
-    DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC, DHCP_RELAY_SUBOPTION_VSS,
-    DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_RELEASE, DHCP_REQUEST, DHCP_SERVER_PORT,
-    DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
+    DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_SIP_UA_CONFIG_DOMAINS, DHCP_OPTION_START_TIME_OF_STATE,
+    DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_STATUS_CODE, DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_TCODE,
+    DHCP_OPTION_TFTP_SERVER_ADDRESS, DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_USER_CLASS,
+    DHCP_OPTION_V4_DNR, DHCP_OPTION_V4_DOTS_ADDRESS, DHCP_OPTION_V4_DOTS_RI,
+    DHCP_OPTION_V4_PCP_SERVER, DHCP_OPTION_VENDOR_CLASS_IDENTIFIER, DHCP_OPTION_VENDOR_SPECIFIC,
+    DHCP_OPTION_VI_VENDOR_CLASS, DHCP_OPTION_VI_VENDOR_SPECIFIC, DHCP_OVERLOAD_BOTH,
+    DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME, DHCP_RELAY_FLAG_UNICAST,
+    DHCP_RELAY_SUBOPTION_ACCESS_NETWORK_NAME, DHCP_RELAY_SUBOPTION_ACCESS_POINT_BSSID,
+    DHCP_RELAY_SUBOPTION_ACCESS_POINT_NAME, DHCP_RELAY_SUBOPTION_ACCESS_TECHNOLOGY_TYPE,
+    DHCP_RELAY_SUBOPTION_AUTHENTICATION, DHCP_RELAY_SUBOPTION_CIRCUIT_ID,
+    DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS, DHCP_RELAY_SUBOPTION_LINK_SELECTION,
+    DHCP_RELAY_SUBOPTION_OPERATOR_IDENTIFIER, DHCP_RELAY_SUBOPTION_OPERATOR_REALM,
+    DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES, DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID,
+    DHCP_RELAY_SUBOPTION_RELAY_FLAGS, DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
+    DHCP_RELAY_SUBOPTION_REMOTE_ID, DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
+    DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID, DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC,
+    DHCP_RELAY_SUBOPTION_VSS, DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_RELEASE, DHCP_REQUEST,
+    DHCP_SERVER_PORT, DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
 };
 pub use malformed::DhcpMalformed;
 pub use message::DhcpMessageType;
 pub use option::{
     decode_tftp_server_addresses, scan_dhcp_option_segments, typed_option_value,
     ClientNetworkDeviceInterface, ClientSystemArchitecture, DhcpAuthAlgorithm, DhcpAuthProtocol,
-    DhcpAuthentication, DhcpClasslessRoute, DhcpClientIdentifier, DhcpClientUuid,
+    DhcpAuthentication, DhcpClasslessRoute, DhcpClientIdentifier, DhcpClientUuid, DhcpDataSource,
     DhcpForcerenewNonceCapable, DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionFormat,
     DhcpOptionKind, DhcpOptionSegment, DhcpOptionValue, DhcpRelayAgentInfo, DhcpRelaySuboption,
-    DhcpRelayVendorSpecific, DhcpReplayDetectionMethod, DhcpStaticRoute, DhcpUserClass,
-    DhcpVendorClassData, DhcpVendorIdentifyingOption, DhcpVendorSuboption, DhcpVssInfo,
-    OptionOverload, SipServers,
+    DhcpRelayVendorSpecific, DhcpReplayDetectionMethod, DhcpState, DhcpStaticRoute, DhcpStatusCode,
+    DhcpStatusCodeOption, DhcpUserClass, DhcpVendorClassData, DhcpVendorIdentifyingOption,
+    DhcpVendorSuboption, DhcpVssInfo, OptionOverload, SipServers,
 };
 pub use registry::{
     option_meta, option_name, option_status, DhcpOptionMeta, DhcpOptionStatus,
@@ -1016,6 +1018,120 @@ impl Dhcp {
             })
     }
 
+    /// RFC 4388 client-last-transaction-time (option 91), concatenated across
+    /// areas.
+    ///
+    /// Source: RFC 4388 section 6.1. The value is an unsigned number of seconds
+    /// in the past from when the DHCPLEASEACTIVE message is sent. Returns `None`
+    /// when no area carries the option; a length other than four surfaces as a
+    /// structured error.
+    pub fn client_last_transaction_time(&self) -> Option<Result<u32>> {
+        self.u32_value_in_areas(DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME)
+    }
+
+    /// RFC 4388 associated-ip (option 92), concatenated across areas.
+    ///
+    /// Source: RFC 4388 section 6.1. The payload is one or more IPv4 addresses.
+    /// Returns `None` when no area carries the option; a length that is not a
+    /// non-zero multiple of four surfaces as a structured error.
+    pub fn associated_ip(&self) -> Option<Result<Vec<Ipv4Addr>>> {
+        self.typed_value_in_areas(DHCP_OPTION_ASSOCIATED_IP)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::Ipv4List(addresses) => addresses,
+                    _ => Vec::new(),
+                })
+            })
+    }
+
+    /// RFC 6926 status-code (option 151), concatenated across areas.
+    ///
+    /// Source: RFC 6926 section 6.2.2. Decodes the one-octet status code into a
+    /// typed [`DhcpStatusCode`] (unknown values preserved) and keeps the
+    /// optional status message as raw bytes. Returns `None` when no area carries
+    /// the option; an empty payload surfaces as a structured error.
+    pub fn status_code(&self) -> Option<Result<DhcpStatusCodeOption>> {
+        self.typed_value_in_areas(DHCP_OPTION_STATUS_CODE)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::StatusCode(status) => status,
+                    _ => DhcpStatusCodeOption::new(DhcpStatusCode::Unknown(0), Vec::new()),
+                })
+            })
+    }
+
+    /// RFC 6926 base-time (option 152), concatenated across areas.
+    ///
+    /// Source: RFC 6926 section 6.2.3. The value is the absolute time (seconds
+    /// since Jan 1, 1970) the message was created. Returns `None` when no area
+    /// carries the option; a length other than four surfaces as a structured
+    /// error.
+    pub fn base_time(&self) -> Option<Result<u32>> {
+        self.u32_value_in_areas(DHCP_OPTION_BASE_TIME)
+    }
+
+    /// RFC 6926 start-time-of-state (option 153), concatenated across areas.
+    ///
+    /// Source: RFC 6926 section 6.2.4. The value is the number of seconds in the
+    /// past from base-time when the IP address entered its current state.
+    /// Returns `None` when no area carries the option; a length other than four
+    /// surfaces as a structured error.
+    pub fn start_time_of_state(&self) -> Option<Result<u32>> {
+        self.u32_value_in_areas(DHCP_OPTION_START_TIME_OF_STATE)
+    }
+
+    /// RFC 6926 query-start-time (option 154), concatenated across areas.
+    ///
+    /// Source: RFC 6926 section 6.2.5. The value is the absolute start time
+    /// (seconds since Jan 1, 1970) of the query. Returns `None` when no area
+    /// carries the option; a length other than four surfaces as a structured
+    /// error.
+    pub fn query_start_time(&self) -> Option<Result<u32>> {
+        self.u32_value_in_areas(DHCP_OPTION_QUERY_START_TIME)
+    }
+
+    /// RFC 6926 query-end-time (option 155), concatenated across areas.
+    ///
+    /// Source: RFC 6926 section 6.2.6. The value is the absolute end time
+    /// (seconds since Jan 1, 1970) of the query. Returns `None` when no area
+    /// carries the option; a length other than four surfaces as a structured
+    /// error.
+    pub fn query_end_time(&self) -> Option<Result<u32>> {
+        self.u32_value_in_areas(DHCP_OPTION_QUERY_END_TIME)
+    }
+
+    /// RFC 6926 dhcp-state (option 156), concatenated across areas.
+    ///
+    /// Source: RFC 6926 section 6.2.7. Decodes the single State octet into a
+    /// typed [`DhcpState`] (unknown values preserved). Returns `None` when no
+    /// area carries the option; a length other than one surfaces as a structured
+    /// error.
+    pub fn dhcp_state(&self) -> Option<Result<DhcpState>> {
+        self.typed_value_in_areas(DHCP_OPTION_DHCP_STATE)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::DhcpState(state) => state,
+                    _ => DhcpState::Unknown(0),
+                })
+            })
+    }
+
+    /// RFC 6926 data-source (option 157), concatenated across areas.
+    ///
+    /// Source: RFC 6926 section 6.2.8. Decodes the single Flags octet into a
+    /// typed [`DhcpDataSource`] (including the REMOTE flag; the unassigned bits
+    /// are preserved). Returns `None` when no area carries the option; a length
+    /// other than one surfaces as a structured error.
+    pub fn data_source(&self) -> Option<Result<DhcpDataSource>> {
+        self.typed_value_in_areas(DHCP_OPTION_DATA_SOURCE)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::DataSource(source) => source,
+                    _ => DhcpDataSource::default(),
+                })
+            })
+    }
+
     /// RFC 5859 TFTP server addresses (option 150), concatenated across areas.
     ///
     /// Source: RFC 5859. Code 150 is marked ambiguous by the IANA registry
@@ -1096,6 +1212,21 @@ impl Dhcp {
                 .typed_value()
                 .and_then(|value| value.ok_or_else(|| missing_typed_value(code)))
         }))
+    }
+
+    /// Decode a 32-bit unsigned option value, reassembled across all areas.
+    ///
+    /// A thin wrapper over [`Self::typed_value_in_areas`] for options whose
+    /// source-backed format is a single big-endian `u32` (for example the
+    /// leasequery time options). Returns `None` when no area carries the code;
+    /// a length other than four surfaces as a structured error.
+    fn u32_value_in_areas(&self, code: u8) -> Option<Result<u32>> {
+        self.typed_value_in_areas(code).map(|result| {
+            result.map(|value| match value {
+                DhcpOptionValue::U32(seconds) => seconds,
+                _ => 0,
+            })
+        })
     }
 
     /// Encode the normal-area DHCP options, appending an end marker when needed.
