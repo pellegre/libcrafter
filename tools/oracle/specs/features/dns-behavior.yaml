@@ -96,6 +96,10 @@ behaviors:
     record_kinds:
       - cname
       - generic
+  - name: mx_txt_records
+    summary: Authoritative response with one MX answer (preference + nested exchange name) and TXT answers covering single, multiple, empty, non-UTF-8 binary, and 255-octet character-strings; uncompressed and byte-exact in both directions.
+    record_kinds:
+      - generic
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -298,6 +302,7 @@ case_groups:
       - dns-response-records
       - dns-a-aaaa-records
       - dns-name-records
+      - dns-mx-txt-records
   - name: dns-soa-srv
     summary: SOA and SRV records.
     byte_policy: strict_bytes
@@ -435,6 +440,7 @@ coverage_cases:
   - dns-record-ptr
   - dns-record-mx
   - dns-record-txt
+  - dns-mx-txt-records
   - dns-record-soa
   - dns-record-srv
   - dns-soa-srv-records
@@ -634,6 +640,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-record-txt
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-mx-txt-records
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference

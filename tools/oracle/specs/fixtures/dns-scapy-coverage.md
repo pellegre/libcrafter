@@ -117,6 +117,7 @@ Source read for this matrix:
 | TXT (type 16) char-strings (single, multiple, empty, 255-byte) | `dns-record-txt` | both | strict_bytes | yes | no |
 | Existing combined response (A/AAAA/CNAME) | `dns-response-records` (existing) | both | strict_bytes | yes | no |
 | Combined NS/CNAME/PTR name records (`DnsRecordData::Name`, root-adjacent CNAME target, reverse-DNS PTR owner) | `dns-name-records` | both | strict_bytes | yes | no |
+| Combined MX + TXT records (`DnsRecordData::Mx` preference/exchange and `DnsRecordData::Txt` single, multiple, empty, non-UTF-8 binary, and 255-octet character-strings) | `dns-mx-txt-records` | both | strict_bytes | yes (MX via `DNSRRMX`; binary/boundary TXT via Scapy-owned raw `DNSRR` rdata bytes) | partial (binary/255-octet TXT strings supplied as Scapy-owned bytes) |
 
 ## 5. SOA / SRV
 

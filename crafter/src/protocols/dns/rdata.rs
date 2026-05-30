@@ -716,7 +716,10 @@ fn ensure_rdata_consumed(field: &'static str, consumed: usize, available: usize)
 #[cfg(test)]
 mod dns_base_rdata {
     use super::super::{Dns, DnsRecord, DNS_CLASS_IN};
-    use super::{decode_record_data, DnsName, DnsRecordData, DNS_TYPE_SOA, DNS_TYPE_SRV};
+    use super::{
+        decode_record_data, DnsName, DnsRecordData, DNS_TYPE_MX, DNS_TYPE_SOA, DNS_TYPE_SRV,
+        DNS_TYPE_TXT,
+    };
     use crate::{Ipv4, NetworkLayer, Packet, Udp};
     use core::net::Ipv4Addr;
 
@@ -793,6 +796,103 @@ mod dns_base_rdata {
             }
         );
         // Round-trip is byte-stable.
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn mx_record_round_trips_through_packet_stack() {
+        // MX carries a 16-bit preference followed by the exchange <domain-name>.
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::new(
+            "example.com.",
+            DNS_TYPE_MX,
+            DNS_CLASS_IN,
+            300,
+            DnsRecordData::Mx {
+                preference: 10,
+                exchange: DnsName::parse("mail.example.com.").unwrap(),
+            },
+        ));
+        assert_eq!(
+            data,
+            DnsRecordData::Mx {
+                preference: 10,
+                exchange: DnsName::parse("mail.example.com.").unwrap(),
+            }
+        );
+        // Uncompressed exchange name round trips byte-for-byte.
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn txt_record_single_string_round_trips_through_packet_stack() {
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::new(
+            "example.com.",
+            DNS_TYPE_TXT,
+            DNS_CLASS_IN,
+            300,
+            DnsRecordData::txt("v=spf1 -all"),
+        ));
+        assert_eq!(data, DnsRecordData::Txt(vec![b"v=spf1 -all".to_vec()]));
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn txt_record_multiple_strings_round_trip_through_packet_stack() {
+        // Several character-strings in one TXT RDATA, each length-prefixed.
+        let strings = vec![b"first chunk".to_vec(), b"second chunk".to_vec()];
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::new(
+            "example.com.",
+            DNS_TYPE_TXT,
+            DNS_CLASS_IN,
+            300,
+            DnsRecordData::Txt(strings.clone()),
+        ));
+        assert_eq!(data, DnsRecordData::Txt(strings));
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn txt_record_empty_string_round_trips_through_packet_stack() {
+        // A single zero-length character-string is a valid TXT RDATA of one
+        // length octet set to zero.
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::new(
+            "example.com.",
+            DNS_TYPE_TXT,
+            DNS_CLASS_IN,
+            300,
+            DnsRecordData::Txt(vec![Vec::new()]),
+        ));
+        assert_eq!(data, DnsRecordData::Txt(vec![Vec::new()]));
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn txt_record_binary_string_round_trips_through_packet_stack() {
+        // Non-UTF-8 octets, including NUL and 0xff, are preserved verbatim.
+        let blob = vec![0x00u8, 0x01, 0xfe, 0xff, b'a', 0x7f];
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::new(
+            "example.com.",
+            DNS_TYPE_TXT,
+            DNS_CLASS_IN,
+            300,
+            DnsRecordData::Txt(vec![blob.clone()]),
+        ));
+        assert_eq!(data, DnsRecordData::Txt(vec![blob]));
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn txt_record_max_length_string_round_trips_through_packet_stack() {
+        // A single character-string at the 255-octet length boundary.
+        let max = vec![b'x'; 255];
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::new(
+            "example.com.",
+            DNS_TYPE_TXT,
+            DNS_CLASS_IN,
+            300,
+            DnsRecordData::Txt(vec![max.clone()]),
+        ));
+        assert_eq!(data, DnsRecordData::Txt(vec![max]));
         assert_eq!(recompiled, original);
     }
 
