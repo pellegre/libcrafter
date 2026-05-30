@@ -142,7 +142,7 @@ fn udp_option_constants_and_statuses_are_public() {
 #[test]
 fn udp_option_enum_and_iterator_public_paths_are_usable() -> crafter::Result<()> {
     let prelude_option: UdpOption = UdpOption::no_operation();
-    let core_option = crafter::core::UdpOption::generic(crafter::UDP_OPTION_MDS, [0x05, 0xb4]);
+    let core_option = crafter::core::UdpOption::maximum_datagram_size(0x05b4);
     let root_option = crafter::UdpOption::extended_generic(crafter::UDP_OPTION_EXP, [0x12, 0x34]);
     let iter = crafter::protocols::UdpOptionIter::new(&[
         crafter::UDP_OPTION_NOP,
@@ -168,9 +168,10 @@ fn udp_option_enum_and_iterator_public_paths_are_usable() -> crafter::Result<()>
     );
     assert_eq!(
         iter.collect::<crafter::Result<Vec<_>>>()?,
-        vec![prelude_option, core_option]
+        vec![prelude_option, core_option.clone()]
     );
     assert_eq!(transport_options.status(), UdpOptionStatus::Valid);
+    assert_eq!(core_option.maximum_datagram_size_value(), Some(0x05b4));
 
     Ok(())
 }
