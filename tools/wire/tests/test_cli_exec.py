@@ -56,9 +56,12 @@ class WireExecEndpointTest(unittest.TestCase):
                         f"UserKnownHostsFile={root / 'state' / 'known_hosts'}",
                         "-o",
                         "ConnectTimeout=10",
+                        "-o",
+                        "ServerAliveInterval=5",
+                        "-o",
+                        "ServerAliveCountMax=2",
                         "ubuntu@198.51.100.20",
-                        "printf",
-                        "hello",
+                        "printf hello",
                     )
                 ],
             )
@@ -115,10 +118,12 @@ class WireExecEndpointTest(unittest.TestCase):
                         f"{root / 'wire-state' / 'endpoints' / 'vbox-lan-test' / 'known_hosts'}",
                         "-o",
                         "ConnectTimeout=10",
+                        "-o",
+                        "ServerAliveInterval=5",
+                        "-o",
+                        "ServerAliveCountMax=2",
                         "ubuntu@127.0.0.1",
-                        "ip",
-                        "-brief",
-                        "addr",
+                        "ip -brief addr",
                     )
                 ],
             )
@@ -128,6 +133,31 @@ class WireExecEndpointTest(unittest.TestCase):
                 ),
                 "virtualbox stdout\n",
             )
+
+    def test_exec_endpoint_preserves_bash_script_argument_grouping(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manifest = _manifest(root)
+            calls: list[tuple[str, ...]] = []
+
+            def fake_runner(argv: list[str], **_: object) -> CommandResult:
+                calls.append(tuple(argv))
+                return CommandResult(
+                    argv=tuple(argv),
+                    redacted_argv=tuple(argv),
+                    cwd=None,
+                    exit_code=0,
+                    stdout="",
+                    stderr="",
+                )
+
+            exec_endpoint(
+                manifest,
+                ["--", "bash", "-lc", "mkdir -p /root"],
+                runner=fake_runner,
+            )
+
+            self.assertEqual(calls[0][-1], "bash -lc 'mkdir -p /root'")
 
 def _manifest(root: Path) -> EndpointManifest:
     return EndpointManifest(

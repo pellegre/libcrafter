@@ -643,7 +643,9 @@ def _oracle_planned_endpoints(*, dry_run: bool) -> dict[str, LiveEndpoint]:
             peer_roles=_peer_roles_for(role, roles),
             request=request,
         )
-        endpoints[role.name] = live_endpoint_from_lab_endpoint(lab_endpoint)
+        endpoints[role.name] = _routed_private_live_endpoint(
+            live_endpoint_from_lab_endpoint(lab_endpoint)
+        )
     return endpoints
 
 
@@ -674,13 +676,27 @@ def _oracle_wire_plan_from_lab_plan(plan: JSONObject) -> dict[str, object]:
     if isinstance(raw_endpoints, Mapping):
         for role, endpoint in raw_endpoints.items():
             if isinstance(role, str) and isinstance(endpoint, Mapping):
-                endpoints[role] = live_endpoint_from_lab_endpoint(endpoint)
+                endpoints[role] = _routed_private_live_endpoint(
+                    live_endpoint_from_lab_endpoint(endpoint)
+                )
     return {
         **plan,
         "wire_exposure": plan.get("exposure", HETZNER_LAB_PROVIDER_ADAPTER.wire_exposure),
         "command_metadata": plan.get("command_records", []),
         "live_endpoints": endpoints,
     }
+
+
+def _routed_private_live_endpoint(endpoint: LiveEndpoint) -> LiveEndpoint:
+    metadata = dict(endpoint.metadata)
+    mac_address = metadata.pop("mac_address", None)
+    if isinstance(mac_address, str) and mac_address:
+        metadata.setdefault("observed_mac_address", mac_address)
+    metadata.setdefault("link_layer_send", False)
+    metadata.setdefault("link_layer_capture", False)
+    metadata.setdefault("provider_mac_known", False)
+    metadata["endpoint_protocol_mac"] = False
+    return replace(endpoint, metadata=metadata)
 
 
 def _oracle_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
@@ -1185,6 +1201,11 @@ class HetznerLiveProviderAdapter:
         """Return the remote repository directory for Hetzner wire endpoints."""
 
         return hetzner_wire_remote_dir()
+
+    def wire_environment(self) -> Mapping[str, str]:
+        """Return environment overrides for Hetzner wire subprocesses."""
+
+        return {"HETZNER_PRIVATE_CIDR": PRIVATE_NETWORK_CIDR}
 
     def endpoint_remote_command(
         self,

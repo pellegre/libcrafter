@@ -2357,6 +2357,18 @@ def _live_provider_skip_no_wire_eligible(
     return 0
 
 
+def _live_provider_wire_environment(provider_adapter) -> dict[str, str]:
+    """Return provider-specific environment for wire subprocesses."""
+
+    environment = getattr(provider_adapter, "wire_environment", None)
+    if not callable(environment):
+        return {}
+    value = environment()
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(key): str(item) for key, item in value.items()}
+
+
 def _live_provider_execute(
     *,
     args: argparse.Namespace,
@@ -2385,7 +2397,14 @@ def _live_provider_execute(
     output_dir = report_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    wire = lab_wire_client.WireClient()
+    wire_environment = _live_provider_wire_environment(provider_adapter)
+    if wire_environment:
+        def run_wire_command(argv, **kwargs):
+            return lab_wire_client.run_command(argv, env=wire_environment, **kwargs)
+
+        wire = lab_wire_client.WireClient(runner=run_wire_command)
+    else:
+        wire = lab_wire_client.WireClient()
     endpoints = {}
     lab_session = None
     provider_workflow = provider_adapter.provider_workflow(dry_run=False)

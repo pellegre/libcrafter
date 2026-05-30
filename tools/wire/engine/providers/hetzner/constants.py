@@ -14,7 +14,7 @@ PLANNED_CREATED_AT = "planned"
 CONFIRMATION_ERROR = (
     "protected provider execution requires --confirm-live-run; no Hetzner resources were created"
 )
-DEFAULT_SERVER_TYPE = "cx22"
+DEFAULT_SERVER_TYPE = "cx23"
 DEFAULT_IMAGE = "ubuntu-24.04"
 DEFAULT_LOCATION = "hel1"
 DEFAULT_PRIVATE_NETWORK_ZONE = "eu-central"

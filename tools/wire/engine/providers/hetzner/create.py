@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
-from collections.abc import Mapping
+import time
+from collections.abc import Mapping, Sequence
+from ipaddress import ip_network
+from pathlib import Path
 
 from ...model import EndpointManifest, EndpointSSHInfo, NetworkInterface
 from ...process import run_command
 from ...registry import validate_request
-from ...ssh import ensure_known_hosts_file, wait_for_ssh
+from ...ssh import ensure_known_hosts_file, run_ssh_command, wait_for_ssh
 from ...state import DEFAULT_PRIVATE_CIDR, ensure_endpoint_dirs, update_private_group_allocation, write_endpoint_manifest
 from .constants import (
     CONFIRMATION_ERROR,
@@ -55,6 +59,9 @@ from .utils import (
     _utc_now,
 )
 
+
+PRIVATE_INTERFACE_DISCOVERY_TIMEOUT = 120
+PRIVATE_INTERFACE_DISCOVERY_INTERVAL = 5
 
 
 def create_endpoint(
@@ -545,6 +552,27 @@ def _create_private_endpoint(
         except TimeoutError as exc:
             raise RuntimeError(str(exc)) from exc
 
+        _configure_private_network_interface(
+            host=ssh_host,
+            user="root",
+            identity_file=layout.private_key_path,
+            known_hosts=layout.known_hosts_path,
+            public_ipv4=public_ipv4,
+            private_ipv4=private_ipv4,
+            private_cidr=private_cidr,
+        )
+        live_private_interface, discovered_interfaces = _discover_private_network_interface(
+            host=ssh_host,
+            user="root",
+            identity_file=layout.private_key_path,
+            known_hosts=layout.known_hosts_path,
+            exposure=exposure,
+            public_ipv4=public_ipv4,
+            public_ipv6=public_ipv6,
+            fallback=private_interface,
+            private_ipv4=private_ipv4,
+        )
+
         private_group_record = update_private_group_allocation(
             provider=provider,
             group=private_group,
@@ -573,7 +601,7 @@ def _create_private_endpoint(
                     "control_plane": "public",
                 },
             ),
-            interfaces=[private_interface],
+            interfaces=[live_private_interface],
             provider_resources=_private_endpoint_provider_resources(
                 provider=provider,
                 server_id=server_id,
@@ -590,7 +618,9 @@ def _create_private_endpoint(
                 "discovery": {
                     "server_running": running_server.get("status") == "running",
                     "ssh_ready": True,
-                    "interfaces": True,
+                    "interfaces": bool(discovered_interfaces),
+                    "private_interface": live_private_interface.name,
+                    "private_interface_matched": live_private_interface.name != private_interface.name,
                 },
             },
         )
@@ -628,3 +658,141 @@ def _create_private_endpoint(
             if network_id is not None:
                 _hcloud_cleanup([HCLOUD_COMMAND, "network", "delete", network_id], env=hcloud_env)
         raise
+
+
+def _configure_private_network_interface(
+    *,
+    host: str,
+    user: str,
+    identity_file: str | Path,
+    known_hosts: str | Path,
+    public_ipv4: str | None,
+    private_ipv4: str,
+    private_cidr: str,
+) -> None:
+    result = run_ssh_command(
+        host=host,
+        user=user,
+        identity_file=identity_file,
+        known_hosts=known_hosts,
+        command=_configure_private_network_interface_script(
+            public_ipv4=public_ipv4,
+            private_ipv4=private_ipv4,
+            private_cidr=private_cidr,
+        ),
+        timeout=30,
+    )
+    if not result.ok:
+        raise RuntimeError(f"private interface configuration failed: {result.stderr.strip()}")
+
+
+def _configure_private_network_interface_script(
+    *,
+    public_ipv4: str | None,
+    private_ipv4: str,
+    private_cidr: str,
+) -> str:
+    gateway = _private_gateway(private_cidr)
+    public_value = public_ipv4 or ""
+    return "\n".join(
+        [
+            "set -eu",
+            f"public_ipv4={shlex.quote(public_value)}",
+            f"private_ipv4={shlex.quote(private_ipv4)}",
+            f"private_cidr={shlex.quote(private_cidr)}",
+            f"private_gateway={shlex.quote(gateway)}",
+            "private_iface=",
+            "for iface_path in /sys/class/net/*; do",
+            "  iface=${iface_path##*/}",
+            "  [ \"$iface\" = lo ] && continue",
+            "  if [ -n \"$public_ipv4\" ] && ip -4 -o addr show dev \"$iface\" "
+            "| grep -q \" $public_ipv4/\"; then",
+            "    continue",
+            "  fi",
+            "  private_iface=$iface",
+            "  break",
+            "done",
+            "if [ -z \"$private_iface\" ]; then",
+            "  echo 'no private interface candidate found' >&2",
+            "  exit 1",
+            "fi",
+            "ip link set dev \"$private_iface\" up",
+            "ip addr replace \"$private_ipv4/32\" dev \"$private_iface\"",
+            "ip route replace \"$private_gateway/32\" dev \"$private_iface\" "
+            "src \"$private_ipv4\"",
+            "ip route replace \"$private_cidr\" via \"$private_gateway\" "
+            "dev \"$private_iface\" src \"$private_ipv4\" onlink",
+        ]
+    )
+
+
+def _private_gateway(private_cidr: str) -> str:
+    network = ip_network(private_cidr)
+    return str(next(network.hosts()))
+
+
+def _discover_private_network_interface(
+    *,
+    host: str,
+    user: str,
+    identity_file: str | Path,
+    known_hosts: str | Path,
+    exposure: str,
+    public_ipv4: str | None,
+    public_ipv6: str | None,
+    fallback: NetworkInterface,
+    private_ipv4: str,
+    timeout: float = PRIVATE_INTERFACE_DISCOVERY_TIMEOUT,
+    interval: float = PRIVATE_INTERFACE_DISCOVERY_INTERVAL,
+) -> tuple[NetworkInterface, list[NetworkInterface]]:
+    deadline = time.monotonic() + timeout
+    last_interfaces: list[NetworkInterface] = []
+
+    while True:
+        last_interfaces = discover_endpoint_interfaces(
+            host=host,
+            user=user,
+            identity_file=identity_file,
+            known_hosts=known_hosts,
+            exposure=exposure,
+            public_ipv4=public_ipv4,
+            public_ipv6=public_ipv6,
+            prefer_public_or_default=False,
+        )
+        live_private_interface = _private_network_interface_from_discovery(
+            last_interfaces,
+            fallback=fallback,
+            private_ipv4=private_ipv4,
+        )
+        if live_private_interface.name != fallback.name:
+            return live_private_interface, last_interfaces
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return fallback, last_interfaces
+        time.sleep(min(interval, remaining))
+
+
+def _private_network_interface_from_discovery(
+    discovered_interfaces: Sequence[NetworkInterface],
+    *,
+    fallback: NetworkInterface,
+    private_ipv4: str,
+) -> NetworkInterface:
+    for interface in discovered_interfaces:
+        if interface.ipv4 == private_ipv4:
+            metadata = dict(interface.metadata)
+            fallback_metadata = dict(fallback.metadata)
+            fallback_source = fallback_metadata.pop("source", None)
+            metadata.update(fallback_metadata)
+            if fallback_source is not None:
+                metadata.setdefault("provider_source", fallback_source)
+            return NetworkInterface(
+                name=interface.name,
+                exposure=fallback.exposure,
+                ipv4=private_ipv4,
+                ipv6=interface.ipv6,
+                mac=interface.mac,
+                provider_network_id=fallback.provider_network_id,
+                metadata=metadata,
+            )
+    return fallback

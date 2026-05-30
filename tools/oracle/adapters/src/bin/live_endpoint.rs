@@ -405,6 +405,7 @@ fn run_receiver(
     let capture_filter = live_capture_filter(request);
     let mut sniffer = Sniffer::interface(request.interface.clone())
         .timeout(timeout)
+        .nonblock()
         .count(prepared.len().max(1));
     if let Some(filter) = capture_filter.clone() {
         sniffer = sniffer.filter(filter);

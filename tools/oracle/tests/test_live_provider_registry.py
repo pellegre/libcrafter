@@ -30,7 +30,9 @@ from tools.oracle.engine.live import (
     validate_live_endpoint_batch_contract,
 )
 from tools.oracle.engine.model import DecodedModel, PacketPlan, read_json
+from tools.oracle.engine.providers import hetzner as hetzner_provider
 from tools.oracle.engine.providers.hetzner import ORACLE_PRIVATE_GROUP
+from tools.oracle.engine.providers.hetzner import PRIVATE_NETWORK_CIDR as HETZNER_PRIVATE_NETWORK_CIDR
 from tools.oracle.engine.providers.qemu import (
     LIBCRAFTER_PRIVATE_ADDRESS as QEMU_LIBCRAFTER_PRIVATE_ADDRESS,
     ORACLE_PRIVATE_GROUP as QEMU_ORACLE_PRIVATE_GROUP,
@@ -60,6 +62,10 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(adapter.wire_exposure, "private")
         self.assertEqual(adapter.endpoint_roles, ("libcrafter", "reference_backend"))
         self.assertEqual(adapter.private_group, ORACLE_PRIVATE_GROUP)
+        self.assertEqual(
+            adapter.wire_environment(),
+            {"HETZNER_PRIVATE_CIDR": HETZNER_PRIVATE_NETWORK_CIDR},
+        )
 
     def test_qemu_provider_is_registered(self) -> None:
         adapter = resolve_live_provider("qemu")
@@ -268,6 +274,56 @@ class LiveProviderRegistryTest(unittest.TestCase):
         )
         self.assertTrue(all(call["dry_run"] for call in client.calls))
         self.assertTrue(all(call["private_group"] == ORACLE_PRIVATE_GROUP for call in client.calls))
+
+    def test_hetzner_endpoint_protocol_omits_routed_private_mac(self) -> None:
+        endpoint = hetzner_provider._routed_private_live_endpoint(
+            LiveEndpoint(
+                endpoint_id="hetzner-private-libcrafter",
+                role="libcrafter",
+                interface="enp7s0",
+                address="10.42.19.10",
+                metadata={
+                    "provider": "hetzner",
+                    "mac_address": "86:00:00:55:b4:dc",
+                },
+            )
+        )
+        peer = hetzner_provider._routed_private_live_endpoint(
+            LiveEndpoint(
+                endpoint_id="hetzner-private-reference",
+                role="reference_backend",
+                interface="enp7s0",
+                address="10.42.19.20",
+                metadata={
+                    "provider": "hetzner",
+                    "mac_address": "86:00:00:55:b4:d8",
+                },
+            )
+        )
+
+        request = build_live_endpoint_batch_request(
+            provider="hetzner",
+            backend="scapy",
+            seed=133,
+            profile="smoke",
+            packet_plans=[_ipv4_dhcp_plan(133)],
+            direction="libcrafter_to_reference",
+            endpoint=endpoint,
+            peer=peer,
+            artifact_paths=live_endpoint_artifact_paths(
+                output_dir="/tmp/oracle-live",
+                direction="libcrafter_to_reference",
+                endpoint_role="libcrafter",
+            ),
+        )
+
+        self.assertNotIn("mac", request.local_addresses)
+        self.assertNotIn("mac", request.peer_addresses)
+        self.assertEqual(
+            endpoint.metadata["observed_mac_address"],
+            "86:00:00:55:b4:dc",
+        )
+        self.assertFalse(endpoint.metadata["endpoint_protocol_mac"])
 
     def test_qemu_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
         adapter = resolve_live_provider("qemu")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -16,6 +17,9 @@ DEFAULT_STRICT_HOST_KEY_CHECKING = "accept-new"
 DEFAULT_KEY_TYPE = "ed25519"
 DEFAULT_SSH_WAIT_TIMEOUT = 300
 DEFAULT_SSH_WAIT_INTERVAL = 5
+DEFAULT_SERVER_ALIVE_INTERVAL = 5
+DEFAULT_SERVER_ALIVE_COUNT_MAX = 2
+DEFAULT_TRANSFER_TIMEOUT = 300
 
 CommandRunner = Callable[..., CommandResult]
 
@@ -27,7 +31,7 @@ def create_key_pair(
     key_type: str = DEFAULT_KEY_TYPE,
     force: bool = False,
     runner: CommandRunner = run_command,
-    timeout: float | None = None,
+    timeout: float | None = DEFAULT_TRANSFER_TIMEOUT,
 ) -> CommandResult:
     """Create an SSH key pair with ssh-keygen and return the command result."""
 
@@ -72,7 +76,7 @@ def remove_known_host(
     host: str,
     known_hosts: str | Path,
     runner: CommandRunner = run_command,
-    timeout: float | None = None,
+    timeout: float | None = DEFAULT_TRANSFER_TIMEOUT,
 ) -> CommandResult:
     """Remove one host from a known-hosts file with ssh-keygen."""
 
@@ -114,7 +118,7 @@ def ssh_argv(
     if isinstance(command, str):
         argv.append(command)
     else:
-        argv.extend(str(part) for part in command)
+        argv.append(" ".join(shlex.quote(str(part)) for part in command))
     return argv
 
 
@@ -300,6 +304,10 @@ def ssh_options_argv(
         f"UserKnownHostsFile={_absolute_local_path(known_hosts, 'known_hosts')}",
         "-o",
         f"ConnectTimeout={_positive_int(connect_timeout, 'connect_timeout')}",
+        "-o",
+        f"ServerAliveInterval={DEFAULT_SERVER_ALIVE_INTERVAL}",
+        "-o",
+        f"ServerAliveCountMax={DEFAULT_SERVER_ALIVE_COUNT_MAX}",
     ]
 
 
