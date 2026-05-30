@@ -142,7 +142,7 @@ class LiveProviderPolicyTest(unittest.TestCase):
 
 
 class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
-    """Prove IPv4-root DHCP is wire-eligible while Ethernet-root DHCP is gated."""
+    """Prove DHCP is wire-eligible only where provider capabilities allow it."""
 
     def test_qemu_marks_ipv4_root_dhcp_wire_eligible(self) -> None:
         self._assert_ipv4_root_dhcp_eligible(
@@ -174,14 +174,14 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
         self.assertNotIn(SKIP_REQUIRES_L2, packet.wire.skip_reasons)
         self.assertNotIn(SKIP_REQUIRES_PROVIDER_MAC, packet.wire.skip_reasons)
 
-    def test_qemu_skips_ethernet_root_dhcp_for_link_layer_reasons(self) -> None:
-        self._assert_ethernet_root_dhcp_skipped(
+    def test_qemu_marks_ethernet_root_dhcp_wire_eligible(self) -> None:
+        self._assert_ethernet_root_dhcp_eligible(
             qemu_default_provider_capabilities(dry_run=True),
             provider="qemu",
         )
 
-    def test_virtualbox_skips_ethernet_root_dhcp_for_link_layer_reasons(self) -> None:
-        self._assert_ethernet_root_dhcp_skipped(
+    def test_virtualbox_marks_ethernet_root_dhcp_wire_eligible(self) -> None:
+        self._assert_ethernet_root_dhcp_eligible(
             virtualbox_default_provider_capabilities(dry_run=True),
             provider="virtualbox",
         )
@@ -267,6 +267,31 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
         self.assertIn(SKIP_REQUIRES_L2, packet.wire.skip_reasons)
         self.assertIn(SKIP_REQUIRES_PROVIDER_MAC, packet.wire.skip_reasons)
         self.assertIn(SKIP_REQUIRES_BROADCAST, packet.wire.skip_reasons)
+
+    def _assert_ethernet_root_dhcp_eligible(
+        self,
+        capabilities: dict[str, object],
+        *,
+        provider: str,
+    ) -> None:
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(_ethernet_dhcp_plan())],
+            provider_capabilities=capabilities,
+            wire_provider=provider,
+        )
+
+        self.assertEqual(packet.wire.metadata["provider"], provider)
+        self.assertTrue(packet.wire.eligible)
+        self.assertEqual(packet.wire.skip_reasons, [])
+        self.assertEqual(packet.wire.compare_root, "link:ethernet")
+        requirements = packet.wire.metadata["provider_profiles"][provider]["metadata"][
+            "requirements"
+        ]
+        self.assertTrue(requirements["link_layer_send"])
+        self.assertTrue(requirements["link_layer_capture"])
+        self.assertTrue(requirements["broadcast"])
+        self.assertTrue(requirements["provider_mac_known"])
 
 
 def _ipv4_plan() -> PacketPlan:
