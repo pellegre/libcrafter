@@ -1912,6 +1912,59 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
             },
         ]
         return
+    if "dnssec-nsec-bitmaps" in key:
+        # An authoritative response carrying two NSEC (type 47) answers whose
+        # Type Bit Maps (RFC 4034 Section 4.1.2) exercise the full encoder:
+        #
+        #   * the first answer mirrors the RFC 4034 Section 4.3 example owner
+        #     alfa.example.com. with next name host.example.com. and the present
+        #     types A (1), MX (15), RRSIG (46), NSEC (47), and the unknown
+        #     codepoint TYPE1234, which spans window block 0 and window block 4;
+        #   * the second answer feeds an UNSORTED list with a DUPLICATE entry
+        #     spanning three window blocks so that the libcrafter
+        #     DnsTypeBitmaps::from_types sort/de-dup and the Scapy DNSRRNSEC
+        #     RRlist2bitmap normalization both collapse to the same minimal,
+        #     window-ordered encoding.
+        #
+        # Both backends sort, de-duplicate, and emit minimal windows, so the
+        # decoded type set agrees in both directions even though the second
+        # answer's source order is deliberately scrambled. The reference-built
+        # bytes therefore match the RFC-style minimal encoding, and the
+        # libcrafter-built bytes verify the sorted output. (dnssec-nsec-bitmaps
+        # is dispatched here before the shorter dnssec-nsec / dnssec-nsec-bitmap
+        # substrings, so resolution stays deterministic.)
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative"]
+        fields["questions"] = [{"qname": "alfa.example.com.", "qtype": "NSEC"}]
+        fields["answers"] = [
+            {
+                # RFC 4034 Section 4.3 NSEC example: window 0 (A, MX, RRSIG,
+                # NSEC) plus window 4 (the unknown codepoint TYPE1234). The
+                # neutral type names and the bare numeric codepoint map to the
+                # same RR-type values on both backends.
+                "name": "alfa.example.com.",
+                "type": "NSEC",
+                "class": "IN",
+                "ttl": 86400,
+                "next_name": "host.example.com.",
+                "type_bitmaps": ["A", "MX", "RRSIG", "NSEC", 1234],
+            },
+            {
+                # Unsorted input with a duplicate A (1) entry spanning window
+                # blocks 0, 1, and 255 (codepoints 0xff01). libcrafter sorts and
+                # de-duplicates on construction and Scapy normalizes identically,
+                # so the minimal, window-ordered encoding is deterministic.
+                "name": "host.example.com.",
+                "type": "NSEC",
+                "class": "IN",
+                "ttl": 86400,
+                "next_name": "alfa.example.com.",
+                "type_bitmaps": [47, 1, 300, 1, 0xFF01, 15],
+            },
+        ]
+        return
     if "header-flags-opcodes" in key:
         fields["is_response"] = True
         fields["opcode"] = "status"

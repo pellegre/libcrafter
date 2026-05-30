@@ -254,6 +254,7 @@ coverage_cases:
   - dns-dnssec-ds
   - dns-dnssec-dnskey
   - dns-dnssec-rrsig
+  - dnssec-nsec-bitmaps
   - dns-dnssec-nsec
   - dns-dnssec-nsec3
   - dns-svcb-alias
