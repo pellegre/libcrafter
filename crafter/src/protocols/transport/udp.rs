@@ -6,7 +6,7 @@ use crate::checksum::{crc32c, internet_checksum_chunks};
 use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
-use crate::packet::{Layer, LayerContext, Packet, Raw};
+use crate::packet::{Layer, LayerContext, Packet, Raw, TransportChecksumContext};
 use crate::protocols::dhcp::{Dhcp, DHCP_CLIENT_PORT, DHCP_SERVER_PORT};
 use crate::protocols::dns::Dns;
 use crate::protocols::ip::{Ipv4, IPPROTO_UDP};
@@ -1819,6 +1819,7 @@ pub struct Udp {
     destination_port: Field<u16>,
     length: Field<u16>,
     checksum: Field<u16>,
+    checksum_status: UdpChecksumStatus,
 }
 
 impl Udp {
@@ -1829,6 +1830,7 @@ impl Udp {
             destination_port: Field::defaulted(53),
             length: Field::unset(),
             checksum: Field::unset(),
+            checksum_status: UdpChecksumStatus::NotChecked,
         }
     }
 
@@ -1910,6 +1912,11 @@ impl Udp {
         self.checksum.value().copied()
     }
 
+    /// Inspection status from decoded UDP checksum validation.
+    pub fn checksum_status(&self) -> UdpChecksumStatus {
+        self.checksum_status
+    }
+
     fn effective_length(&self, payload_len: usize) -> Result<u16> {
         if let Some(length) = self.length.value().copied() {
             return Ok(length);
@@ -1967,12 +1974,13 @@ impl Layer for Udp {
 
     fn summary(&self) -> String {
         format!(
-            "Udp(sport={}, dport={}, len={})",
+            "Udp(sport={}, dport={}, len={}, checksum_status={:?})",
             self.source_port_value(),
             self.destination_port_value(),
             self.length_value()
                 .map(|value| value.to_string())
-                .unwrap_or_else(|| "auto".to_string())
+                .unwrap_or_else(|| "auto".to_string()),
+            self.checksum_status()
         )
     }
 
@@ -1992,6 +2000,7 @@ impl Layer for Udp {
                     .map(|value| format!("0x{value:04x}"))
                     .unwrap_or_else(|| "auto".to_string()),
             ),
+            ("checksum_status", format!("{:?}", self.checksum_status())),
         ]
     }
 
@@ -2027,24 +2036,26 @@ pub(crate) fn append_udp_packet_with_registry(
     bytes: &[u8],
 ) -> Result<Packet> {
     let decoded = decode_udp_parts(bytes)?;
-    let source_port = decoded.udp.source_port_value();
-    let destination_port = decoded.udp.destination_port_value();
-    let udp_length = decoded.udp.length_value().unwrap_or(UDP_HEADER_LEN as u16) as usize;
-    let udp_checksum = decoded.udp.checksum_value().unwrap_or(0);
+    let DecodedUdpDatagram {
+        mut udp,
+        user_payload,
+        surplus,
+    } = decoded;
+    let source_port = udp.source_port_value();
+    let destination_port = udp.destination_port_value();
+    let udp_length = udp.length_value().unwrap_or(UDP_HEADER_LEN as u16) as usize;
+    let udp_checksum = udp.checksum_value().unwrap_or(0);
+    udp.checksum_status = decoded_udp_checksum_status(&packet, bytes, udp_length, udp_checksum);
     let surplus_offset = udp_decoded_surplus_offset_in_ip_datagram(&packet, udp_length);
-    packet = packet.push(decoded.udp);
-    if !decoded.user_payload.is_empty() {
-        packet = registry.decode_udp_application(
-            packet,
-            source_port,
-            destination_port,
-            decoded.user_payload,
-        )?;
+    packet = packet.push(udp);
+    if !user_payload.is_empty() {
+        packet =
+            registry.decode_udp_application(packet, source_port, destination_port, user_payload)?;
     }
-    if !decoded.surplus.is_empty() {
+    if !surplus.is_empty() {
         packet = packet.push(UdpOptions::from_decoded_surplus(
-            decoded.surplus,
-            decoded.user_payload,
+            surplus,
+            user_payload,
             surplus_offset,
             udp_checksum,
         ));
@@ -2087,6 +2098,7 @@ fn decode_udp_parts(bytes: &[u8]) -> Result<DecodedUdpDatagram<'_>> {
         destination_port: Field::user(read_u16_be(&bytes[2..4])?),
         length: Field::user(length as u16),
         checksum: Field::user(read_u16_be(&bytes[6..8])?),
+        checksum_status: UdpChecksumStatus::NotChecked,
     };
 
     Ok(DecodedUdpDatagram {
@@ -2094,6 +2106,32 @@ fn decode_udp_parts(bytes: &[u8]) -> Result<DecodedUdpDatagram<'_>> {
         user_payload: &bytes[UDP_HEADER_LEN..length],
         surplus: &bytes[length..],
     })
+}
+
+fn decoded_udp_checksum_status(
+    packet_before_udp: &Packet,
+    bytes: &[u8],
+    udp_length: usize,
+    checksum: u16,
+) -> UdpChecksumStatus {
+    let ctx = LayerContext::new(packet_before_udp, packet_before_udp.len());
+    let Some(pseudo_header) = transport_checksum_context(ctx, IPPROTO_UDP) else {
+        return UdpChecksumStatus::NotChecked;
+    };
+
+    match pseudo_header {
+        TransportChecksumContext::Ipv4 { .. } if checksum == 0 => UdpChecksumStatus::Ipv4NoChecksum,
+        TransportChecksumContext::Ipv6 { .. } if checksum == 0 => {
+            UdpChecksumStatus::Ipv6ZeroChecksum
+        }
+        _ => {
+            if pseudo_header.checksum(&bytes[..udp_length]) == 0 {
+                UdpChecksumStatus::Valid
+            } else {
+                UdpChecksumStatus::Invalid
+            }
+        }
+    }
 }
 
 fn udp_user_payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
@@ -2164,6 +2202,7 @@ fn is_current_udp_surplus_layer(layer: &dyn Layer, seen_application_layer: bool)
 #[cfg(test)]
 mod tests {
     use super::{
+        decode_udp_parts, decoded_udp_checksum_status as checksum_status_with_context,
         udp_option_kind_class, udp_option_kind_is_unsafe, udp_option_kind_is_unsupported, Udp,
         UdpChecksumStatus, UdpOption, UdpOptionIter, UdpOptionKindClass, UdpOptionStatus,
         UdpOptions, UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_APC_LEN, UDP_OPTION_AUTH,
@@ -2263,6 +2302,32 @@ mod tests {
 
     fn ipv6_udp_checksum(bytes: &[u8]) -> u16 {
         u16::from_be_bytes([bytes[46], bytes[47]])
+    }
+
+    fn set_ipv4_udp_checksum(bytes: &mut [u8], checksum: u16) {
+        bytes[26..28].copy_from_slice(&checksum.to_be_bytes());
+    }
+
+    fn set_ipv6_udp_checksum(bytes: &mut [u8], checksum: u16) {
+        bytes[46..48].copy_from_slice(&checksum.to_be_bytes());
+    }
+
+    fn invalid_checksum(checksum: u16) -> u16 {
+        if checksum == 0x1234 {
+            0x5678
+        } else {
+            0x1234
+        }
+    }
+
+    fn assert_udp_checksum_status(
+        network_layer: crate::NetworkLayer,
+        bytes: &[u8],
+        expected: UdpChecksumStatus,
+    ) -> Packet {
+        let decoded = Packet::decode_from_l3(network_layer, bytes).unwrap();
+        assert_eq!(decoded.layer::<Udp>().unwrap().checksum_status(), expected);
+        decoded
     }
 
     fn zeroed_ipv4_udp_checksum_input(bytes: &[u8], payload_len: usize) -> Vec<u8> {
@@ -4091,6 +4156,134 @@ mod tests {
         .unwrap();
 
         assert_eq!(udp_checksum(bytes.as_bytes()), 0);
+    }
+
+    #[test]
+    fn udp_checksum_status_ipv4_valid() {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2280)
+            / Udp::new().sport(0x1234).dport(0x5678)
+            / Raw::from_bytes([0xde, 0xad, 0xbe]))
+        .compile()
+        .unwrap();
+
+        let decoded = assert_udp_checksum_status(
+            crate::NetworkLayer::Ipv4,
+            bytes.as_bytes(),
+            UdpChecksumStatus::Valid,
+        );
+        assert!(decoded.summary().contains("checksum_status=Valid"));
+        assert!(decoded.show().contains("checksum_status: Valid"));
+    }
+
+    #[test]
+    fn udp_checksum_status_ipv4_invalid() {
+        let mut bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2281)
+            / Udp::new().sport(0x1234).dport(0x5678)
+            / Raw::from_bytes([0xde, 0xad, 0xbe]))
+        .compile()
+        .unwrap()
+        .into_bytes();
+        let checksum = udp_checksum(&bytes);
+        set_ipv4_udp_checksum(&mut bytes, invalid_checksum(checksum));
+
+        let decoded = assert_udp_checksum_status(
+            crate::NetworkLayer::Ipv4,
+            &bytes,
+            UdpChecksumStatus::Invalid,
+        );
+        assert_eq!(
+            decoded.layer::<Raw>().unwrap().as_bytes(),
+            &[0xde, 0xad, 0xbe]
+        );
+    }
+
+    #[test]
+    fn udp_checksum_status_ipv4_zero_checksum_absent() {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2282)
+            / Udp::new().sport(0x1234).dport(0x5678).checksum(0)
+            / Raw::from_bytes([0xde, 0xad, 0xbe]))
+        .compile()
+        .unwrap();
+
+        assert_eq!(udp_checksum(bytes.as_bytes()), 0);
+        assert_udp_checksum_status(
+            crate::NetworkLayer::Ipv4,
+            bytes.as_bytes(),
+            UdpChecksumStatus::Ipv4NoChecksum,
+        );
+    }
+
+    #[test]
+    fn udp_checksum_status_ipv6_valid() {
+        let bytes = (Ipv6::new().src(ipv6_src()).dst(ipv6_dst())
+            / Udp::new().sport(0x1234).dport(0x5678)
+            / Raw::from_bytes([0xde, 0xad, 0xbe]))
+        .compile()
+        .unwrap();
+
+        assert_udp_checksum_status(
+            crate::NetworkLayer::Ipv6,
+            bytes.as_bytes(),
+            UdpChecksumStatus::Valid,
+        );
+    }
+
+    #[test]
+    fn udp_checksum_status_ipv6_invalid() {
+        let mut bytes = (Ipv6::new().src(ipv6_src()).dst(ipv6_dst())
+            / Udp::new().sport(0x1234).dport(0x5678)
+            / Raw::from_bytes([0xde, 0xad, 0xbe]))
+        .compile()
+        .unwrap()
+        .into_bytes();
+        let checksum = ipv6_udp_checksum(&bytes);
+        set_ipv6_udp_checksum(&mut bytes, invalid_checksum(checksum));
+
+        let decoded = assert_udp_checksum_status(
+            crate::NetworkLayer::Ipv6,
+            &bytes,
+            UdpChecksumStatus::Invalid,
+        );
+        assert_eq!(
+            decoded.layer::<Raw>().unwrap().as_bytes(),
+            &[0xde, 0xad, 0xbe]
+        );
+    }
+
+    #[test]
+    fn udp_checksum_status_ipv6_zero_checksum_forbidden() {
+        let bytes = (Ipv6::new().src(ipv6_src()).dst(ipv6_dst())
+            / Udp::new().sport(0x1234).dport(0x5678).checksum(0)
+            / Raw::from_bytes([0xde, 0xad, 0xbe]))
+        .compile()
+        .unwrap();
+
+        assert_eq!(ipv6_udp_checksum(bytes.as_bytes()), 0);
+        assert_udp_checksum_status(
+            crate::NetworkLayer::Ipv6,
+            bytes.as_bytes(),
+            UdpChecksumStatus::Ipv6ZeroChecksum,
+        );
+    }
+
+    #[test]
+    fn udp_checksum_status_unchecked_without_pseudo_header_context() {
+        let bytes = (Udp::new().sport(0x1234).dport(0x5678) / Raw::from_bytes([0xaa, 0xbb]))
+            .compile()
+            .unwrap();
+        let decoded = decode_udp_parts(bytes.as_bytes()).unwrap();
+        let udp_length = decoded.udp.length_value().unwrap() as usize;
+        let udp_checksum = decoded.udp.checksum_value().unwrap();
+
+        assert_eq!(
+            checksum_status_with_context(
+                &Packet::new(),
+                bytes.as_bytes(),
+                udp_length,
+                udp_checksum
+            ),
+            UdpChecksumStatus::NotChecked
+        );
     }
 
     #[test]
