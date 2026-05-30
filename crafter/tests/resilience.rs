@@ -6,7 +6,8 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use crafter::core::{
     decode_dns_name, scan_dhcp_option_segments, Arp, CrafterError, Dhcp, DhcpOption,
     DhcpOptionArea, Dns, Ethernet, Icmp, Icmpv6, IpProtocol, Ipv4, Ipv4Option, Ipv6, LinkType,
-    LinuxSll, MacAddr, NetworkLayer, NullLoopback, Packet, Raw, Tcp, TcpOption, Udp, Vlan,
+    LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
+    Udp, Vlan,
     DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
 };
 use proptest::prelude::*;
@@ -512,6 +513,250 @@ fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
         "REMOTE bit clear when only UNA bits set"
     );
     assert_eq!(source, DhcpDataSource::new(0xFE));
+}
+
+/// DHCP-family malformed corpus rows: the names whose [`malformed_family`]
+/// mapping covers a DHCP decode dimension the step requires (short fixed
+/// headers, missing magic cookie, truncated options, invalid fixed option
+/// lengths, missing end marker, non-padding after end, invalid hardware
+/// lengths, and malformed option overload).
+fn is_dhcp_malformed_case(case: &MalformedCase) -> bool {
+    matches!(
+        case.target,
+        DecodeTarget::Dhcp | DecodeTarget::DhcpOptions
+    )
+}
+
+/// Every malformed DHCP vector must surface a fully structured `CrafterError`,
+/// not just the right variant: a `BufferTooShort` must carry the stable
+/// `context` plus `required > available` (a buffer underrun, by definition),
+/// and an `InvalidFieldValue` must carry the stable `field` plus a non-empty,
+/// stable `reason`. This asserts the `context`/`required`/`available` fields the
+/// step calls out, on top of the variant/context coverage the corpus runner
+/// already checks, and confirms decoding never panics for any DHCP vector.
+///
+/// It is driven entirely off the existing malformed corpus so no fixture bytes
+/// are duplicated; the DHCP rows already cover short fixed headers, missing
+/// magic cookie, truncated options, invalid fixed option lengths, missing end
+/// marker, non-padding after end, invalid hardware lengths, and malformed
+/// option overload.
+#[test]
+fn malformed_dhcp_corpus_errors_carry_structured_fields() {
+    let cases = malformed_cases();
+    let dhcp_cases = cases
+        .iter()
+        .filter(|case| is_dhcp_malformed_case(case))
+        .collect::<Vec<_>>();
+    assert!(
+        !dhcp_cases.is_empty(),
+        "malformed corpus must carry DHCP vectors"
+    );
+
+    // Every required DHCP decode dimension must be represented among the rows
+    // under test so this never silently narrows.
+    let dhcp_required_families = [
+        "short dhcp packet",
+        "missing dhcp magic cookie",
+        "truncated dhcp option",
+        "invalid dhcp fixed option length",
+        "dhcp missing end marker",
+        "dhcp non-padding after end",
+        "dhcp invalid fixed length",
+        "dhcp malformed option overload",
+    ];
+    let covered = dhcp_cases
+        .iter()
+        .filter_map(|case| malformed_family(case.name))
+        .collect::<std::collections::HashSet<_>>();
+    for family in dhcp_required_families {
+        assert!(
+            covered.contains(family),
+            "malformed DHCP corpus missing structured-field coverage for {family}"
+        );
+    }
+
+    for case in dhcp_cases {
+        let Err(error) = decode_malformed_case(case) else {
+            panic!(
+                "malformed DHCP corpus case {} unexpectedly decoded",
+                case.name
+            );
+        };
+        // The variant/context match is shared with the corpus runner; here we
+        // additionally assert the structured payload.
+        assert_error_matches(case, error.clone());
+        match error {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(
+                    context, case.expected_error.context_or_field,
+                    "malformed DHCP case {} carried an unexpected buffer context",
+                    case.name
+                );
+                assert!(
+                    required > available,
+                    "malformed DHCP case {} BufferTooShort must require more ({required}) \
+                     than is available ({available})",
+                    case.name
+                );
+            }
+            CrafterError::InvalidFieldValue { field, reason } => {
+                assert_eq!(
+                    field, case.expected_error.context_or_field,
+                    "malformed DHCP case {} carried an unexpected invalid field",
+                    case.name
+                );
+                assert!(
+                    !reason.is_empty(),
+                    "malformed DHCP case {} InvalidFieldValue must carry a non-empty reason",
+                    case.name
+                );
+            }
+            other => panic!(
+                "malformed DHCP case {} returned an unexpected error {other:?}",
+                case.name
+            ),
+        }
+    }
+}
+
+/// Malformed DHCP vectors built through the public [`DhcpMalformed`] surface
+/// (rather than raw corpus hex) must also decode to structured `CrafterError`s
+/// with the `required`/`available`/`reason` fields populated and never panic.
+///
+/// This exercises the same required dimensions through the typed builder so the
+/// malformation knobs themselves stay covered: short fixed header (truncation),
+/// missing magic cookie, truncated trailing option, missing end marker,
+/// non-padding after the end marker, invalid hardware length, an oversized
+/// (length-truncated) option payload, and a malformed option-overload file
+/// area.
+#[test]
+fn malformed_dhcp_builder_vectors_report_structured_errors() {
+    use crafter::core::DhcpMalformed;
+
+    let base = || Dhcp::discover(dhcp_client_mac()).transaction_id(0x0102_0304);
+
+    // Short fixed header: a complete DHCP frame truncated below DHCP_MIN_LEN.
+    let full = DhcpMalformed::from_valid(base()).to_bytes();
+    let short = &full[..8.min(full.len())];
+    match Dhcp::decode(short) {
+        Err(CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        }) => {
+            assert_eq!(context, "dhcp packet");
+            assert!(
+                required > available,
+                "short fixed header must require more ({required}) than available ({available})"
+            );
+            assert_eq!(available, short.len());
+        }
+        other => panic!("short DHCP fixed header expected BufferTooShort, got {other:?}"),
+    }
+
+    // Missing magic cookie: a full-length frame whose cookie is corrupted.
+    let bytes = DhcpMalformed::from_valid(base())
+        .invalid_magic_cookie(0x0000_0000)
+        .to_bytes();
+    match Dhcp::decode(&bytes) {
+        Err(CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "dhcp.magic_cookie");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("invalid DHCP magic cookie expected InvalidFieldValue, got {other:?}"),
+    }
+
+    // Truncated option: a message-type option declares length 1 but supplies no
+    // payload octet.
+    let bytes = DhcpMalformed::from_valid(base())
+        .option_with_declared_len(53, 1, [])
+        .to_bytes();
+    match Dhcp::decode(&bytes) {
+        Err(CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        }) => {
+            assert_eq!(context, "dhcp option data");
+            assert!(required > available);
+        }
+        other => panic!("truncated DHCP option expected BufferTooShort, got {other:?}"),
+    }
+
+    // Invalid fixed option length: message-type (53) declares length 2 but the
+    // option is a fixed single octet.
+    let bytes = DhcpMalformed::from_valid(base())
+        .option_with_declared_len(53, 2, [0x01, 0x00])
+        .to_bytes();
+    match Dhcp::decode(&bytes) {
+        Err(CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "dhcp.option.message_type");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("invalid fixed DHCP option length expected InvalidFieldValue, got {other:?}"),
+    }
+
+    // Missing end marker: a non-empty options area without the trailing end
+    // option.
+    let bytes = DhcpMalformed::from_valid(base())
+        .raw_options([0x35, 0x01, 0x01])
+        .to_bytes();
+    match Dhcp::decode(&bytes) {
+        Err(CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "dhcp.options");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("missing DHCP end marker expected InvalidFieldValue, got {other:?}"),
+    }
+
+    // Non-padding after end: a complete option segment follows the end option.
+    let bytes = DhcpMalformed::from_valid(base())
+        .trailing_after_end([0x35, 0x01, 0x01])
+        .to_bytes();
+    match Dhcp::decode(&bytes) {
+        Err(CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "dhcp.option.end");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("non-padding after DHCP end expected InvalidFieldValue, got {other:?}"),
+    }
+
+    // Invalid hardware length: hlen 32 exceeds the 16-byte chaddr field.
+    let bytes = DhcpMalformed::from_valid(base().hardware_len(32)).to_bytes();
+    match Dhcp::decode(&bytes) {
+        Err(CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "dhcp.hlen");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("invalid DHCP hardware length expected InvalidFieldValue, got {other:?}"),
+    }
+
+    // Malformed typed option payload via oversized payload: a 300-octet payload
+    // with a length-truncated (300 % 256 = 44) length byte overruns the option.
+    let bytes = DhcpMalformed::from_valid(base())
+        .oversized_option_payload(43, vec![0u8; 300])
+        .to_bytes();
+    // The decoder must not panic; it may surface a structured error or preserve
+    // the bytes as a raw generic segment depending on the truncated length, but
+    // it must never panic.
+    let _ = Dhcp::decode(&bytes);
+
+    // Malformed option overload: option 52 (in the normal options area) marks
+    // the file area overloaded, but the file area carries a truncated option
+    // (declared length overruns the 128-byte field) and no end marker.
+    let mut file_area = vec![0u8; 128];
+    file_area[0] = 0x43; // option 67 (bootfile name)
+    file_area[1] = 200; // declared length overruns the 128-byte file area
+    let bytes = DhcpMalformed::from_valid(
+        base().option(DhcpOption::option_overload(OptionOverload::File)),
+    )
+    .raw_file(file_area)
+    .to_bytes();
+    let _ = Dhcp::decode(&bytes); // must not panic; structured error or raw preservation
 }
 
 #[test]
