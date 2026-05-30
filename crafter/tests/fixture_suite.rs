@@ -10,12 +10,13 @@ use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
     DnsRecordData, Ethernet, Icmp, IcmpKind, Icmpv6, Ipv4, Ipv4Option, Ipv6, Ipv6FragmentHeader,
     Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
-    Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST,
-    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE,
-    DNS_FLAG_RECURSION_DESIRED, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME, ETHERTYPE_ARP,
-    ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
-    ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6,
-    IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
+    Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp, UdpOptionStatus, UdpOptions, Vlan,
+    ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
+    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_TYPE_A,
+    DNS_TYPE_AAAA, DNS_TYPE_CNAME, ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN,
+    ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST,
+    IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, TCP_FLAG_ACK,
+    TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::{PcapError, PcapLinkType, PcapReader, PcapTimestamp, TimestampPrecision};
 use support::fixture_path;
@@ -1867,6 +1868,77 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
             FixtureDecodeTarget::DhcpOptions => assert_dhcp_option_fixture(case, &bytes),
         }
     }
+}
+
+#[test]
+fn ipv4_udp_dns_decode_keeps_surplus_options_out_of_application_payload() {
+    let dns = Dns::a_query("example.com").id(0xbeef);
+    let dns_len = dns.encoded_len();
+    let option_bytes = [UDP_OPTION_NOP, UDP_OPTION_EOL];
+    let bytes = (Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 53))
+        .id(0x3326)
+        / Udp::new().sport(53_001).dport(53)
+        / dns
+        / UdpOptions::from_bytes(option_bytes))
+    .compile()
+    .unwrap();
+
+    assert_eq!(
+        &bytes.as_bytes()[24..26],
+        &((UDP_HEADER_LEN + dns_len) as u16).to_be_bytes()
+    );
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+    let dns = decoded.layer::<Dns>().unwrap();
+    assert_eq!(dns.id_value(), 0xbeef);
+    assert_eq!(dns.questions().len(), 1);
+    assert_eq!(dns.questions()[0].name(), "example.com.");
+    assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_A);
+    assert!(decoded.layers::<Raw>().next().is_none());
+
+    let udp_options = decoded.layer::<UdpOptions>().unwrap();
+    assert_eq!(udp_options.as_bytes(), &option_bytes);
+    assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+    assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+}
+
+#[test]
+fn ipv4_udp_dhcp_decode_keeps_surplus_options_out_of_application_payload() {
+    let client_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+    let dhcp = Dhcp::discover(client_mac)
+        .transaction_id(0x3903_f326)
+        .flags(0x8000)
+        .host_name("agent");
+    let dhcp_len = dhcp.encoded_len();
+    let option_bytes = [UDP_OPTION_NOP, UDP_OPTION_EOL];
+    let bytes = (Ipv4::new()
+        .src(Ipv4Addr::UNSPECIFIED)
+        .dst(Ipv4Addr::BROADCAST)
+        .id(0x3327)
+        / Udp::dhcp_client()
+        / dhcp
+        / UdpOptions::from_bytes(option_bytes))
+    .compile()
+    .unwrap();
+
+    assert_eq!(
+        &bytes.as_bytes()[24..26],
+        &((UDP_HEADER_LEN + dhcp_len) as u16).to_be_bytes()
+    );
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+    let dhcp = decoded.layer::<Dhcp>().unwrap();
+    assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+    assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+    assert_eq!(dhcp.host_name_value(), Some("agent"));
+    assert!(decoded.layers::<Raw>().next().is_none());
+
+    let udp_options = decoded.layer::<UdpOptions>().unwrap();
+    assert_eq!(udp_options.as_bytes(), &option_bytes);
+    assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+    assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
 }
 
 #[test]
