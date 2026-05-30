@@ -605,6 +605,8 @@ def _wire_profile_decision(
         "controlled_service",
     ):
         reasons.append(SKIP_REQUIRES_CONTROLLED_SERVICE)
+    if _uses_provider_blocked_udp_port(plan, capabilities):
+        reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
     if _is_wire_provider_unsafe_feature(plan):
         reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
 
@@ -656,6 +658,7 @@ def _wire_profile_decision(
                 "provider_mac_known": _requires_provider_mac(plan),
                 "controlled_services": _requires_controlled_service(plan),
                 "controlled_router": False,
+                "blocked_udp_port": _uses_provider_blocked_udp_port(plan, capabilities),
             },
             "mutation_policy": policy,
         },
@@ -709,6 +712,7 @@ def _wire_capability_metadata(capabilities: Mapping[str, object]) -> JSONObject:
         "broadcast",
         "provider_mac",
         "controlled_service",
+        "blocked_udp_ports",
     )
     return {
         key: coerce_json_value(capabilities[key])
@@ -825,6 +829,55 @@ def _requires_controlled_service(plan: PacketPlan) -> bool:
     if "tcp" in plan.stack and ("open" in case or "service" in case):
         return True
     return False
+
+
+def _uses_provider_blocked_udp_port(
+    plan: PacketPlan,
+    capabilities: Mapping[str, object],
+) -> bool:
+    blocked_ports = _provider_blocked_udp_ports(capabilities)
+    if not blocked_ports or "udp" not in plan.stack:
+        return False
+    return bool(set(_udp_ports(plan)).intersection(blocked_ports))
+
+
+def _provider_blocked_udp_ports(capabilities: Mapping[str, object]) -> set[int]:
+    raw = capabilities.get("blocked_udp_ports")
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes, bytearray)):
+        return set()
+    blocked: set[int] = set()
+    for item in raw:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, int):
+            blocked.add(item)
+            continue
+        if isinstance(item, str):
+            try:
+                blocked.add(int(item, 10))
+            except ValueError:
+                continue
+    return blocked
+
+
+def _udp_ports(plan: PacketPlan) -> list[int]:
+    udp = plan.fields.get("udp")
+    if not isinstance(udp, Mapping):
+        return []
+    ports: list[int] = []
+    for key in ("src_port", "dst_port", "sport", "dport", "source", "destination"):
+        value = udp.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            ports.append(value)
+            continue
+        if isinstance(value, str):
+            try:
+                ports.append(int(value, 10))
+            except ValueError:
+                continue
+    return ports
 
 
 def _is_wire_provider_unsafe_feature(plan: PacketPlan) -> bool:

@@ -109,6 +109,7 @@ def hetzner_default_provider_capabilities(
         "provider_mac_known": False,
         "controlled_services": True,
         "controlled_router": False,
+        "blocked_udp_ports": [67, 68],
         "capability_report_artifact": CAPABILITY_REPORT_ARTIFACT,
         "checks": {
             "ipv4_unicast": {
@@ -150,6 +151,11 @@ def hetzner_default_provider_capabilities(
                 "status": "not_available",
                 "value": False,
                 "reason": "the lab has endpoints on a private network, not a controlled router",
+            },
+            "dhcp_udp_ports": {
+                "status": "provider_reserved",
+                "value": False,
+                "reason": "Hetzner private networks do not preserve DHCP/BOOTP UDP 67/68 exchanges between endpoints",
             },
         },
     }
@@ -859,4 +865,3 @@ def _command_models(endpoint_plan: JSONObject) -> list[LabCommandPlan]:
 
 
 HETZNER_LAB_PROVIDER_ADAPTER: LabProviderAdapter = HetznerLabProviderAdapter()
-
