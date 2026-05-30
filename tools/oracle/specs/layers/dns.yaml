@@ -213,6 +213,7 @@ coverage_cases:
   - dns-query
   - dns-response-records
   - dns-multiple-questions
+  - dns-multi-question-classes
   - dns-generic-record-truncated-rcode
   - crafter-dns-query-response-compression
   - dns-header-id

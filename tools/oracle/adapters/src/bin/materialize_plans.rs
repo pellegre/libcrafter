@@ -1811,6 +1811,10 @@ fn dns_record_type(value: &Value) -> ExampleResult<u16> {
             "NSEC3" => Ok(DNS_TYPE_NSEC3),
             "SVCB" => Ok(DNS_TYPE_SVCB),
             "HTTPS" => Ok(DNS_TYPE_HTTPS),
+            // QTYPE ANY (*) shares IANA codepoint 255 with QCLASS ANY; the crate
+            // has no named RR-type constant for it because it is a query-only
+            // meta-type, so map the name to its numeric codepoint here.
+            "ANY" => Ok(DNS_CLASS_ANY),
             _ => u16_text(text),
         };
     }

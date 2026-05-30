@@ -71,6 +71,11 @@ behaviors:
     summary: Empty answer/authority/additional sections yield zero counts.
   - name: name_root_escaped
     summary: Root name, trailing-dot names, literal dot/backslash labels, and \DDD decimal escapes including a non-UTF-8 label.
+  - name: multi_question_classes
+    summary: Multiple questions in deterministic order spanning named QTYPEs (A, AAAA, MX, TXT, ANY), a private unknown numeric QTYPE, every named QCLASS (IN, CH, HS, NONE, ANY), and a private unknown numeric QCLASS.
+    record_kinds:
+      - question_a
+      - question_aaaa
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -255,6 +260,7 @@ case_groups:
     cases:
       - dns-query
       - dns-multiple-questions
+      - dns-multi-question-classes
       - dns-question-class
       - dns-question-unknown-codes
   - name: dns-base-records
@@ -372,6 +378,7 @@ coverage_cases:
   - dns-query
   - dns-response-records
   - dns-multiple-questions
+  - dns-multi-question-classes
   - dns-generic-record-truncated-rcode
   - malformed-dns-compression
   - crafter-dns-query-response-compression
@@ -537,6 +544,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-multiple-questions
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-multi-question-classes
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference

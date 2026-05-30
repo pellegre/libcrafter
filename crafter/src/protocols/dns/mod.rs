@@ -851,12 +851,12 @@ mod dns_tests {
 #[cfg(test)]
 mod dns_header_codepoints {
     use super::{
-        dns_type_name, Dns, DnsQuestion, DnsRecord, DNS_FLAG_AUTHENTIC_DATA,
-        DNS_FLAG_AUTHORITATIVE, DNS_FLAG_CHECKING_DISABLED, DNS_FLAG_QR_RESPONSE,
-        DNS_FLAG_RECURSION_AVAILABLE, DNS_FLAG_RECURSION_DESIRED, DNS_FLAG_TRUNCATED,
-        DNS_OPCODE_QUERY, DNS_OPCODE_STATUS, DNS_OPCODE_UPDATE, DNS_RCODE_NOERROR,
-        DNS_RCODE_NXDOMAIN, DNS_RCODE_REFUSED, DNS_TYPE_A, DNS_TYPE_HTTPS, DNS_TYPE_SOA,
-        DNS_TYPE_SRV,
+        dns_type_name, Dns, DnsQuestion, DnsRecord, DNS_CLASS_ANY, DNS_CLASS_CH, DNS_CLASS_HS,
+        DNS_CLASS_IN, DNS_CLASS_NONE, DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE,
+        DNS_FLAG_CHECKING_DISABLED, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_AVAILABLE,
+        DNS_FLAG_RECURSION_DESIRED, DNS_FLAG_TRUNCATED, DNS_OPCODE_QUERY, DNS_OPCODE_STATUS,
+        DNS_OPCODE_UPDATE, DNS_RCODE_NOERROR, DNS_RCODE_NXDOMAIN, DNS_RCODE_REFUSED, DNS_TYPE_A,
+        DNS_TYPE_AAAA, DNS_TYPE_HTTPS, DNS_TYPE_MX, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_TXT,
     };
     use crate::{Ipv4, NetworkLayer, Packet, Udp};
     use std::net::Ipv4Addr;
@@ -1016,6 +1016,58 @@ mod dns_header_codepoints {
         assert_eq!(header.answers().len(), 1);
         assert_eq!(header.authorities().len(), 1);
         assert_eq!(header.additionals().len(), 1);
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn multi_question_class_and_type_values_round_trip() {
+        // A single query carrying several questions in a deterministic order that
+        // spans the QTYPE axis (A, AAAA, MX, TXT, the ANY meta-type, and a
+        // private-use unknown numeric QTYPE) and the QCLASS axis (IN, CH, HS,
+        // NONE, ANY, and a private-use unknown numeric QCLASS). QDCOUNT must
+        // auto-fill from the questions vector and every type/class value -
+        // including the unknown numeric codepoints - must survive compile,
+        // decode, and recompile unchanged. QTYPE/QCLASS ANY share IANA codepoint
+        // 255; the private-use codepoint 65280 has no named type or class.
+        const QTYPE_ANY: u16 = 255;
+        const PRIVATE_QTYPE: u16 = 65280;
+        const PRIVATE_QCLASS: u16 = 65280;
+        let questions = [
+            (DNS_TYPE_A, DNS_CLASS_IN),
+            (DNS_TYPE_AAAA, DNS_CLASS_CH),
+            (DNS_TYPE_MX, DNS_CLASS_HS),
+            (DNS_TYPE_TXT, DNS_CLASS_NONE),
+            (QTYPE_ANY, DNS_CLASS_ANY),
+            (PRIVATE_QTYPE, PRIVATE_QCLASS),
+        ];
+
+        let mut dns = Dns::new().rd(true);
+        for (index, (qtype, qclass)) in questions.iter().enumerate() {
+            let name = format!("q{index}.example.com.");
+            dns = dns.question(DnsQuestion::new(name, *qtype).qclass(*qclass));
+        }
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 53))
+            / Udp::new().sport(53001).dport(53)
+            / dns)
+            .compile()
+            .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let header = decoded.layer::<Dns>().unwrap();
+
+        // QDCOUNT auto-fills from the typed questions vector.
+        assert_eq!(header.questions().len(), questions.len());
+        for (index, (qtype, qclass)) in questions.iter().enumerate() {
+            let question = &header.questions()[index];
+            assert_eq!(question.name(), format!("q{index}.example.com."));
+            assert_eq!(question.question_type(), *qtype);
+            assert_eq!(question.question_class(), *qclass);
+        }
+        // The unknown numeric QTYPE/QCLASS are preserved verbatim, not remapped.
+        assert_eq!(header.questions()[5].question_type(), PRIVATE_QTYPE);
+        assert_eq!(header.questions()[5].question_class(), PRIVATE_QCLASS);
         assert_eq!(decoded.compile().unwrap(), bytes);
     }
 
