@@ -1961,6 +1961,30 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
             },
         ]
         return
+    if "multi-question-classes" in key:
+        # A single query carrying several questions in a deterministic order that
+        # exercise the QTYPE and QCLASS axes together: named QTYPEs (A, AAAA, MX,
+        # TXT, ANY) and a private unknown numeric QTYPE, paired with every named
+        # QCLASS (IN, CH, HS, NONE, ANY) and a private unknown numeric QCLASS.
+        # Section counts must auto-fill QDCOUNT from this questions vector, and
+        # both materializers must preserve the unknown numeric codepoints.
+        fields["is_response"] = False
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["recursion_desired"]
+        fields["questions"] = [
+            {"qname": "example.com.", "qtype": "A", "qclass": "IN"},
+            {"qname": "example.net.", "qtype": "AAAA", "qclass": "CH"},
+            {"qname": "mail.example.com.", "qtype": "MX", "qclass": "HS"},
+            {"qname": "txt.example.com.", "qtype": "TXT", "qclass": "NONE"},
+            {"qname": "any.example.com.", "qtype": "ANY", "qclass": "ANY"},
+            # Private-use QTYPE 65280 (RFC 6895 Section 3.1) and QCLASS 65280
+            # (RFC 6895 Section 3.2) as raw numeric codepoints neither backend
+            # maps to a named type or class.
+            {"qname": "unknown.example.com.", "qtype": 65280, "qclass": 65280},
+        ]
+        fields.pop("answers", None)
+        return
     if "response" in key:
         fields["is_response"] = True
         fields.pop("answers", None)

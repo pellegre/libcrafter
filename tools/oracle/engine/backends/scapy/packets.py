@@ -1680,6 +1680,19 @@ def _dns_normalized_name(value: object) -> str:
     return name
 
 
+# QTYPE/QCLASS codepoint maps used to feed Scapy unambiguous numeric values.
+#
+# Scapy's DNSQR qtype/qclass enums use their own spellings (for example CHAOS
+# rather than CH) and omit several IANA names (such as QCLASS NONE), so passing
+# a canonical IANA name string can raise a KeyError. Resolving the canonical
+# name to its numeric codepoint here keeps Scapy as the reference encoder while
+# accepting the same symbolic names libcrafter uses. The maps reuse the raw
+# helper's code tables; QTYPE ANY (the query-only meta-type) shares codepoint
+# 255 with QCLASS ANY and is added explicitly.
+_QTYPE_CODES: dict[str, int] = {**dns_raw._TYPE_CODES, "ANY": 255}
+_QCLASS_CODES: dict[str, int] = dict(dns_raw._CLASS_CODES)
+
+
 def _dns_qtype(value: object) -> object:
     if value is None:
         return "A"
@@ -1689,7 +1702,7 @@ def _dns_qtype(value: object) -> object:
         text = value.strip()
         if text.isdigit():
             return int(text)
-        return text.upper()
+        return _QTYPE_CODES.get(text.upper(), text.upper())
     return _text(value, "A")
 
 
@@ -1702,7 +1715,7 @@ def _dns_qclass(value: object) -> object:
         text = value.strip()
         if text.isdigit():
             return int(text)
-        return text.upper()
+        return _QCLASS_CODES.get(text.upper(), text.upper())
     return "IN"
 
 

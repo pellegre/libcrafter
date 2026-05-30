@@ -99,6 +99,7 @@ Source read for this matrix:
 | --- | --- | --- | --- | --- | --- |
 | Single A/IN question | `dns-query` (existing) | both | strict_bytes | yes | no |
 | Multiple questions, mixed QTYPE | `dns-multiple-questions` (existing) | both | strict_bytes | yes | no |
+| Multiple questions spanning the QTYPE and QCLASS axes (A/AAAA/MX/TXT/ANY + unknown numeric QTYPE; IN/CH/HS/NONE/ANY + unknown numeric QCLASS) in one deterministic ordered query | `dns-multi-question-classes` | both | strict_bytes | partial (named QTYPE/QCLASS via `DNSQR`; numeric for the private-use codepoints) | no |
 | QCLASS variants (IN, CH, HS, NONE, ANY) | `dns-question-class` | both | strict_bytes | yes (`DNSQR(qclass=...)`) | no |
 | Unknown numeric QTYPE / QCLASS | `dns-question-unknown-codes` | both | strict_bytes | partial (numeric qtype/qclass) | no |
 
