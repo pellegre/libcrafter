@@ -1,0 +1,376 @@
+version: 1
+kind: feature
+name: icmpv4_live
+summary: ICMPv4 live write/parse coverage matrix for provider-backed l2:ipv4 exchange against the Scapy reference backend.
+
+# This feature records the intended ICMPv4 live coverage matrix before any
+# generator or backend change. It is a packet write/parse matrix only: each
+# behavior compares the bytes libcrafter emits and the normalized decoded
+# model both backends report, canonicalized to the IPv4 header. It deliberately
+# does not validate kernel ICMP behavior, ping semantics, host-stack reactions,
+# router-generated errors, or service behavior.
+#
+# The intended live transport root is l2:ipv4 (link-layer send/capture, IPv4
+# comparison root). That root is introduced in a later step; until then this
+# matrix references the IPv4 comparison root l3:ipv4 for any cross-validated
+# field and keeps l2:ipv4 in the documentation-only metadata below.
+intended_root: l2:ipv4
+comparison_root: l3:ipv4
+
+layers:
+  - ipv4
+  - icmp
+directions:
+  - live_exchange
+strict_bytes: true
+malformed: false
+
+# Reference Scapy capability snapshot used to mark support in the matrix below.
+# Probed against the oracle's pinned requirement (scapy>=2.5,<3); the installed
+# development environment resolves scapy 2.7.0. ICMP extension framing classes
+# live in scapy.contrib.icmp_extensions, not scapy.all.
+reference_capability:
+  backend: scapy
+  requirement: "scapy>=2.5,<3"
+  observed_version: "2.7.0"
+  native_icmp_types:
+    - echo_reply
+    - echo_request
+    - destination_unreachable
+    - source_quench
+    - redirect
+    - router_advertisement
+    - router_solicitation
+    - time_exceeded
+    - parameter_problem
+    - timestamp
+    - timestamp_reply
+    - information_request
+    - information_reply
+    - address_mask_request
+    - address_mask_reply
+    - traceroute
+    - datagram_conversion_error
+    - mobile_host_redirect
+    - ipv6_where_are_you
+    - ipv6_i_am_here
+    - mobile_registration_request
+    - mobile_registration_reply
+    - domain_name_request
+    - domain_name_reply
+    - skip
+    - photuris
+  native_extension_classes:
+    - ICMPExtensionHeader
+    - ICMPExtensionObject
+    - ICMPExtensionMPLS
+  # Object classes libcrafter types that the reference backend has no native
+  # class for; these stay raw-compatible (generic extension object bytes) when
+  # eligible at all.
+  missing_native_extension_classes:
+    - rfc5837_interface_information_object
+    - rfc8335_interface_identification_object
+    - rfc8335_extended_echo
+  # ICMPv4 types the reference ICMP layer does not enumerate; they can still be
+  # emitted as ICMP plus raw rest-of-header/payload bytes (raw_compatible) but
+  # are not typed by the reference backend.
+  untyped_icmp_types:
+    - reserved_security
+    - reserved_robustness_experiment
+    - seamoby_experimental
+    - extended_echo_request
+    - extended_echo_reply
+    - experiment_1
+    - experiment_2
+    - reserved_255
+
+# The live coverage matrix. Each entry is one intended live behavior with its
+# coverage case, the oracle direction(s) it exercises, whether the packet is
+# typed by both sides or only raw-compatible, whether the Scapy reference
+# backend supports it, and a stable skip reason when it is not eligible.
+#
+# representation:
+#   typed           -> both libcrafter and Scapy have typed field support.
+#   raw_compatible  -> deterministic bytes both sides can emit and parse, but at
+#                      least one side carries part of the message as raw bytes.
+# scapy_support:
+#   supported   -> reference backend represents the shape (typed or via stable
+#                  raw bytes) and the case is live-eligible.
+#   unsupported -> reference backend cannot represent the shape; the case is
+#                  skipped with the recorded skip_reason and counts no live pass.
+live_matrix:
+  - behavior: echo_request
+    coverage_case: ipv4-icmp
+    icmp_type: echo_request
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: echo_reply
+    coverage_case: icmpv4-echo-reply
+    icmp_type: echo_reply
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: destination_unreachable
+    coverage_case: icmpv4-destination-unreachable
+    icmp_type: destination_unreachable
+    codes:
+      - net_unreachable
+      - host_unreachable
+      - protocol_unreachable
+      - port_unreachable
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: frag_needed_next_hop_mtu
+    coverage_case: icmpv4-frag-needed-next-hop-mtu
+    icmp_type: destination_unreachable
+    codes:
+      - fragmentation_needed
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: time_exceeded
+    coverage_case: icmpv4-time-exceeded
+    icmp_type: time_exceeded
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: parameter_problem
+    coverage_case: icmpv4-parameter-problem
+    icmp_type: parameter_problem
+    codes:
+      - pointer
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: redirect
+    coverage_case: icmpv4-redirect
+    icmp_type: redirect
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: source_quench
+    coverage_case: icmpv4-source-quench
+    icmp_type: source_quench
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: timestamp
+    coverage_case: icmpv4-timestamp
+    icmp_type: timestamp
+    pairs:
+      - timestamp
+      - timestamp_reply
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: information
+    coverage_case: icmpv4-information
+    icmp_type: information_request
+    pairs:
+      - information_request
+      - information_reply
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: address_mask
+    coverage_case: icmpv4-address-mask
+    icmp_type: address_mask_request
+    pairs:
+      - address_mask_request
+      - address_mask_reply
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: router_solicitation
+    coverage_case: icmpv4-router-solicitation
+    icmp_type: router_solicitation
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: router_advertisement
+    coverage_case: icmpv4-router-advertisement
+    icmp_type: router_advertisement
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: rfc4884_extension_mpls
+    coverage_case: icmpv4-extensions-mpls
+    icmp_type: destination_unreachable
+    embeds:
+      - icmp_extension_header
+      - icmp_extension_mpls
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: rfc4884_extension_framing
+    coverage_case: crafter-icmpv4-errors-extensions
+    icmp_type: destination_unreachable
+    embeds:
+      - quoted_ipv4
+      - icmp_extension_header
+      - icmp_extension_object
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+  - behavior: rfc5837_interface_info_extension
+    coverage_case: icmpv4-extensions-interface-info
+    icmp_type: destination_unreachable
+    embeds:
+      - icmp_extension_header
+      - icmp_extension_object
+    directions:
+      - live_exchange
+    representation: raw_compatible
+    scapy_support: supported
+    skip_reason: none
+    notes:
+      - libcrafter types the RFC 5837 interface information object; the Scapy
+        reference backend has no native class for it, so the object is compared
+        as a generic RFC 4884 extension object carrying the same deterministic
+        bytes (raw_compatible), not as a typed Scapy object.
+  - behavior: extended_echo_request
+    coverage_case: icmpv4-extended-echo-request
+    icmp_type: extended_echo_request
+    pairs:
+      - extended_echo_request
+      - extended_echo_reply
+    directions:
+      - live_exchange
+    representation: raw_compatible
+    scapy_support: supported
+    skip_reason: none
+    notes:
+      - Scapy 2.5-2.7 does not enumerate ICMPv4 types 42/43 in the ICMP type
+        field and has no typed extended-echo class; the packet is emitted as
+        generic ICMP plus deterministic raw rest-of-header and extension-object
+        bytes that both sides parse identically (raw_compatible).
+  - behavior: legacy_raw_compatible_types
+    coverage_case: crafter-icmpv4-legacy-types
+    representation: raw_compatible
+    directions:
+      - live_exchange
+    scapy_support: supported
+    representative_types:
+      - source_quench
+      - traceroute
+      - mobile_host_redirect
+      - domain_name_request
+      - photuris
+    skip_reason: none
+    notes:
+      - Representative legacy and deprecated ICMPv4 types that Scapy's ICMP type
+        field still enumerates (source quench, traceroute, mobile host redirect,
+        domain name request, photuris). They are emitted as ICMP plus raw
+        rest-of-header and payload bytes that round-trip byte-for-byte.
+
+# Intended live behaviors whose Scapy representation is not eligible. These stay
+# in the matrix with a stable skip reason so they do not silently vanish from
+# intended coverage. A later step may move one to live_matrix if a deterministic
+# raw-compatible byte form is added on both sides; until then they count no live
+# pass.
+unsupported_matrix:
+  - behavior: experimental_types
+    representative_types:
+      - reserved_security
+      - reserved_robustness_experiment
+      - seamoby_experimental
+      - experiment_1
+      - experiment_2
+      - reserved_255
+    representation: raw_compatible
+    scapy_support: unsupported
+    skip_reason: scapy-icmp-type-field-does-not-enumerate-experimental-or-reserved-types
+    notes:
+      - Scapy's ICMP type field does not name types 19, 20-29, 41, or 253-255,
+        and the reference normalization path has no deterministic raw form for
+        them yet. Kept as intended-but-skipped so the coverage gap stays visible.
+
+coverage_cases:
+  - ipv4-icmp
+  - icmpv4-echo-reply
+  - icmpv4-destination-unreachable
+  - icmpv4-frag-needed-next-hop-mtu
+  - icmpv4-time-exceeded
+  - icmpv4-parameter-problem
+  - icmpv4-redirect
+  - icmpv4-source-quench
+  - icmpv4-timestamp
+  - icmpv4-information
+  - icmpv4-address-mask
+  - icmpv4-router-solicitation
+  - icmpv4-router-advertisement
+  - icmpv4-extensions-mpls
+  - crafter-icmpv4-errors-extensions
+  - icmpv4-extensions-interface-info
+  - icmpv4-extended-echo-request
+  - crafter-icmpv4-legacy-types
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    live_endpoint: true
+    native_layers:
+      - ICMP
+      - ICMPExtensionHeader
+      - ICMPExtensionObject
+      - ICMPExtensionMPLS
+    notes:
+      - Reference ICMP type field enumerates the RFC 792/950/1256 query, error,
+        and router-discovery families plus the deprecated legacy types 30-40.
+      - RFC 4884/4950 extension framing and MPLS objects come from
+        scapy.contrib.icmp_extensions, not scapy.all.
+      - RFC 5837 interface information, RFC 8335 interface identification, and
+        RFC 8335 extended echo have no native reference class; eligible cases use
+        deterministic raw-compatible extension-object and rest-of-header bytes.
+      - ICMPv4 types 19, 20-29, 41, and 253-255 are not enumerated by the
+        reference ICMP type field; they stay in unsupported_matrix with a stable
+        skip reason and count no live pass.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    live_endpoint: true
+    notes:
+      - "Types the full IANA ICMPv4 registry covered by this matrix: RFC 792
+        echo, error, timestamp, and information families; RFC 950 address mask;
+        RFC 1256 router discovery; RFC 4884/4950 extension framing and MPLS;
+        RFC 5837 interface information; RFC 8335 extended echo and interface
+        identification; and by-name deprecated, experimental, and unknown types."
+      - Live comparison canonicalizes to the IPv4 header; Ethernet fields are not
+        part of ICMP pass/fail decisions.
+      - Raw-compatible cases (interface info, extended echo, legacy types) are
+        emitted as deterministic bytes the reference backend parses identically.
