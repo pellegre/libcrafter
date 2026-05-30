@@ -1,7 +1,7 @@
 version: 1
 kind: layer
 name: icmp
-summary: ICMPv4 echo and error messages embedded in IPv4.
+summary: ICMPv4 echo, query, error, router discovery, and RFC 4884 extension messages embedded in IPv4.
 
 roots: []
 parents:
@@ -21,6 +21,13 @@ fields:
       - redirect
       - time_exceeded
       - parameter_problem
+      - timestamp
+      - information_request
+      - address_mask_reply
+      - router_advertisement
+      - router_solicitation
+      - extended_echo_request
+      - extended_echo_reply
   - name: code
     type: uint8
     required: true
@@ -55,8 +62,20 @@ coverage_cases:
   - icmpv4-time-exceeded
   - icmpv4-parameter-problem
   - icmpv4-redirect
+  - icmpv4-frag-needed-next-hop-mtu
+  - icmpv4-timestamp
+  - icmpv4-information
+  - icmpv4-address-mask
+  - icmpv4-router-advertisement
+  - icmpv4-router-solicitation
   - icmpv4-extensions-mpls
+  - icmpv4-extensions-interface-info
+  - icmpv4-extended-echo-request
   - crafter-icmpv4-errors-extensions
+  - crafter-icmpv4-queries
+  - crafter-icmpv4-router-discovery
+  - crafter-icmpv4-extended-echo
+  - crafter-icmpv4-legacy-types
 
 backend_support:
   scapy:
@@ -68,8 +87,14 @@ backend_support:
     encode: true
     decode: true
   libcrafter:
-    status: partial
+    status: supported
     encode: true
     decode: true
     notes:
-      - ICMP extension support is feature-gated as planned coverage.
+      - Echo request/reply compare byte-for-byte against the reference backend (ipv4-icmp, icmpv4-echo-reply).
+      - RFC 792 errors (with typed quoted IPv4 datagrams), timestamp, and information messages are typed; the libcrafter_to_reference crafter-icmpv4-* vectors round-trip byte-for-byte.
+      - RFC 950 address mask, RFC 1191 next-hop MTU, and RFC 1256 router discovery are typed.
+      - RFC 4884 extension framing with RFC 4950 MPLS objects is typed and decoded.
+      - RFC 5837 interface information and RFC 8335 extended echo objects are typed by libcrafter; the reference backend has no native object class for them, so those vectors are validated libcrafter-side and stay raw-compatible against the reference.
+      - Deprecated, experimental, and unknown ICMPv4 types remain constructible and round-trip raw-compatibly.
+      - The reference_to_libcrafter generator path for structured ICMP errors remains feature-gated as partial under the icmpv4_errors feature; see that feature spec for the quoted-datagram sampler limitation.

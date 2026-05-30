@@ -70,6 +70,21 @@ pub(crate) fn build_cases() -> ExampleResult<Vec<Vector>> {
         crafter_tcp_all_flags_payload()?,
         crafter_tcp_common_options()?,
         crafter_tcp_advanced_options()?,
+        crafter_icmpv4_destination_unreachable()?,
+        crafter_icmpv4_time_exceeded()?,
+        crafter_icmpv4_parameter_problem()?,
+        crafter_icmpv4_redirect()?,
+        crafter_icmpv4_frag_needed_next_hop_mtu()?,
+        crafter_icmpv4_timestamp()?,
+        crafter_icmpv4_information()?,
+        crafter_icmpv4_address_mask()?,
+        crafter_icmpv4_router_advertisement()?,
+        crafter_icmpv4_router_solicitation()?,
+        crafter_icmpv4_extension_mpls()?,
+        crafter_icmpv4_extension_interface_info()?,
+        crafter_icmpv4_extended_echo_request()?,
+        crafter_icmpv4_extended_echo_reply()?,
+        crafter_icmpv4_legacy_traceroute()?,
     ])
 }
 
@@ -1473,6 +1488,405 @@ fn crafter_tcp_advanced_options() -> ExampleResult<Vector> {
             "Raw",
             json!({
                 "load": bytes_field(b"tcp-option-tail")
+            }),
+        )],
+    )
+}
+
+// Build the quoted original IPv4 datagram carried inside an ICMPv4 error
+// message: a documentation-address UDP/53 query, as RFC 792 prescribes.
+fn quoted_udp_datagram() -> Packet {
+    Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x4242).ttl(64)
+        / Udp::new().sport(40000).dport(53)
+        / Raw::from("quoted-query")
+}
+
+fn crafter_icmpv4_destination_unreachable() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(DST_IPV4).dst(SRC_IPV4).id(0x1300).ttl(64)
+        / Icmp::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
+        / IcmpQuotedIpv4::new(quoted_udp_datagram());
+
+    vector(
+        "crafter-icmpv4-destination-unreachable",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP", "IcmpQuotedIpv4"],
+        "IP / ICMP dest-unreach port-unreachable / IcmpQuotedIpv4",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_DESTINATION_UNREACHABLE,
+                "code": ICMP_CODE_DU_PORT_UNREACHABLE
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_time_exceeded() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(DST_IPV4).dst(SRC_IPV4).id(0x1301).ttl(64)
+        / Icmp::time_exceeded().code(ICMP_CODE_TIME_EXCEEDED_TTL)
+        / IcmpQuotedIpv4::new(quoted_udp_datagram());
+
+    vector(
+        "crafter-icmpv4-time-exceeded",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP", "IcmpQuotedIpv4"],
+        "IP / ICMP time-exceeded / IcmpQuotedIpv4",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_TIME_EXCEEDED,
+                "code": ICMP_CODE_TIME_EXCEEDED_TTL
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_parameter_problem() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(DST_IPV4).dst(SRC_IPV4).id(0x1302).ttl(64)
+        / Icmp::new()
+            .icmp_type(ICMP_PARAMETER_PROBLEM)
+            .code(ICMP_CODE_PARAMETER_PROBLEM_POINTER)
+            .pointer(20)
+        / IcmpQuotedIpv4::new(quoted_udp_datagram());
+
+    vector(
+        "crafter-icmpv4-parameter-problem",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP", "IcmpQuotedIpv4"],
+        "IP / ICMP parameter-problem pointer=20 / IcmpQuotedIpv4",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_PARAMETER_PROBLEM,
+                "code": ICMP_CODE_PARAMETER_PROBLEM_POINTER
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_redirect() -> ExampleResult<Vector> {
+    let gateway = Ipv4Addr::new(192, 0, 2, 254);
+    let packet = Ipv4::new().src(DST_IPV4).dst(SRC_IPV4).id(0x1303).ttl(64)
+        / Icmp::new()
+            .icmp_type(ICMP_REDIRECT)
+            .code(ICMP_CODE_REDIRECT_HOST)
+            .gateway(gateway)
+        / IcmpQuotedIpv4::new(quoted_udp_datagram());
+
+    vector(
+        "crafter-icmpv4-redirect",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP", "IcmpQuotedIpv4"],
+        "IP / ICMP redirect host gateway=192.0.2.254 / IcmpQuotedIpv4",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_REDIRECT,
+                "code": ICMP_CODE_REDIRECT_HOST
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_frag_needed_next_hop_mtu() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(DST_IPV4).dst(SRC_IPV4).id(0x1304).ttl(64)
+        / Icmp::destination_unreachable()
+            .code(ICMP_CODE_DU_FRAGMENTATION_NEEDED)
+            .mtu(1400)
+        / IcmpQuotedIpv4::new(quoted_udp_datagram());
+
+    vector(
+        "crafter-icmpv4-frag-needed-next-hop-mtu",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP", "IcmpQuotedIpv4"],
+        "IP / ICMP dest-unreach fragmentation-needed mtu=1400 / IcmpQuotedIpv4",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_DESTINATION_UNREACHABLE,
+                "code": ICMP_CODE_DU_FRAGMENTATION_NEEDED
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_timestamp() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1305).ttl(64)
+        / Icmp::timestamp_request().id(0x4711).seq(2)
+        / IcmpTimestamp::new()
+            .originate(0x0102_0304)
+            .receive(0x0506_0708)
+            .transmit(0x090a_0b0c);
+
+    vector(
+        "crafter-icmpv4-timestamp",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP", "IcmpTimestamp"],
+        "IP / ICMP timestamp-request / IcmpTimestamp",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_TIMESTAMP,
+                "code": 0
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_information() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1306).ttl(64)
+        / Icmp::information_request().id(0x4712).seq(3);
+
+    vector(
+        "crafter-icmpv4-information",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP"],
+        "IP / ICMP information-request",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_INFORMATION_REQUEST,
+                "code": 0
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_address_mask() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1307).ttl(64)
+        / Icmp::address_mask_reply().id(0x4713).seq(4)
+        / IcmpAddressMask::new().mask(Ipv4Addr::new(255, 255, 255, 0));
+
+    vector(
+        "crafter-icmpv4-address-mask",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP", "IcmpAddressMask"],
+        "IP / ICMP address-mask-reply / IcmpAddressMask",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_ADDRESS_MASK_REPLY,
+                "code": 0
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_router_advertisement() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(DST_IPV4).dst(SRC_IPV4).id(0x1308).ttl(1)
+        / Icmp::router_advertisement().lifetime(1800)
+        / IcmpRouterAdvertisementEntry::new()
+            .router_address(Ipv4Addr::new(192, 0, 2, 1))
+            .preference_level(0)
+        / IcmpRouterAdvertisementEntry::new()
+            .router_address(Ipv4Addr::new(192, 0, 2, 2))
+            .preference_level(-5);
+
+    vector(
+        "crafter-icmpv4-router-advertisement",
+        "icmp",
+        "l3:ipv4",
+        vec![
+            "IP",
+            "ICMP",
+            "IcmpRouterAdvertisementEntry",
+            "IcmpRouterAdvertisementEntry",
+        ],
+        "IP / ICMP router-advertisement / 2 entries",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_ROUTER_ADVERTISEMENT,
+                "code": 0
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_router_solicitation() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1309).ttl(1)
+        / Icmp::router_solicitation();
+
+    vector(
+        "crafter-icmpv4-router-solicitation",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP"],
+        "IP / ICMP router-solicitation",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_ROUTER_SOLICITATION,
+                "code": 0
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_extension_mpls() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(DST_IPV4).dst(SRC_IPV4).id(0x130a).ttl(64)
+        / Icmp::time_exceeded().code(ICMP_CODE_TIME_EXCEEDED_TTL)
+        / IcmpQuotedIpv4::new(quoted_udp_datagram())
+        / IcmpExtension::new()
+        / IcmpExtensionObject::new()
+        / IcmpExtensionMpls::new().label(0xabcde).exp(5).ttl(64);
+
+    vector(
+        "crafter-icmpv4-extension-mpls",
+        "icmp",
+        "l3:ipv4",
+        vec![
+            "IP",
+            "ICMP",
+            "IcmpQuotedIpv4",
+            "IcmpExtension",
+            "IcmpExtensionObject",
+            "IcmpExtensionMpls",
+        ],
+        "IP / ICMP time-exceeded / RFC 4884 MPLS extension",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_TIME_EXCEEDED,
+                "code": ICMP_CODE_TIME_EXCEEDED_TTL
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_extension_interface_info() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(DST_IPV4).dst(SRC_IPV4).id(0x130b).ttl(64)
+        / Icmp::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
+        / IcmpQuotedIpv4::new(quoted_udp_datagram())
+        / IcmpExtension::new()
+        / IcmpExtensionObject::new()
+        / IcmpExtensionInterfaceInfo::new()
+            .role(crafter::ICMP_INTERFACE_ROLE_OUTGOING)
+            .if_index(7)
+            .ip_address(IcmpInterfaceIpAddress::ipv4(Ipv4Addr::new(192, 0, 2, 99)))
+            .name("eth0")
+            .mtu(1500);
+
+    vector(
+        "crafter-icmpv4-extension-interface-info",
+        "icmp",
+        "l3:ipv4",
+        vec![
+            "IP",
+            "ICMP",
+            "IcmpQuotedIpv4",
+            "IcmpExtension",
+            "IcmpExtensionObject",
+            "IcmpExtensionInterfaceInfo",
+        ],
+        "IP / ICMP dest-unreach / RFC 5837 interface information extension",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_DESTINATION_UNREACHABLE,
+                "code": ICMP_CODE_DU_PORT_UNREACHABLE
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_extended_echo_request() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x130c).ttl(64)
+        / Icmp::extended_echo_request().id(0x1234).seq(7)
+        / IcmpExtension::new()
+        / IcmpExtensionObject::new()
+        / IcmpExtensionInterfaceId::by_name("eth0");
+
+    vector(
+        "crafter-icmpv4-extended-echo-request",
+        "icmp",
+        "l3:ipv4",
+        vec![
+            "IP",
+            "ICMP",
+            "IcmpExtension",
+            "IcmpExtensionObject",
+            "IcmpExtensionInterfaceId",
+        ],
+        "IP / ICMP extended-echo-request / RFC 8335 interface id",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_EXTENDED_ECHO_REQUEST,
+                "code": 0
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_extended_echo_reply() -> ExampleResult<Vector> {
+    let packet = Ipv4::new().src(DST_IPV4).dst(SRC_IPV4).id(0x130d).ttl(64)
+        / Icmp::extended_echo_reply()
+            .id(0x1234)
+            .seq(7)
+            .extended_state(1)
+            .extended_active(true)
+            .extended_ipv4(true);
+
+    vector(
+        "crafter-icmpv4-extended-echo-reply",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP"],
+        "IP / ICMP extended-echo-reply state=1 active ipv4",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_EXTENDED_ECHO_REPLY,
+                "code": 0
+            }),
+        )],
+    )
+}
+
+fn crafter_icmpv4_legacy_traceroute() -> ExampleResult<Vector> {
+    // RFC 1393 traceroute (type 30) is a deprecated/legacy assigned type that
+    // libcrafter constructs raw-compatibly and round-trips byte-for-byte; the
+    // reference backend has no typed body for it, so the oracle keeps it as a
+    // libcrafter-only emitter vector with a raw fallback body.
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x130e).ttl(64)
+        / Icmp::traceroute().id(0x55aa)
+        / Raw::from(&[0x00u8, 0x10, 0x00, 0x05, 0x00, 0x00, 0x00, 0x40][..]);
+
+    vector(
+        "crafter-icmpv4-legacy-traceroute",
+        "icmp",
+        "l3:ipv4",
+        vec!["IP", "ICMP", "Raw"],
+        "IP / ICMP traceroute (legacy type 30) / Raw",
+        packet,
+        vec![fields(
+            "ICMP",
+            json!({
+                "type": ICMP_TRACEROUTE,
+                "code": 0
             }),
         )],
     )

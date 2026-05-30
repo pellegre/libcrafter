@@ -616,8 +616,8 @@
         "Raw"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "IPv4 ICMP destination unreachable includes quoted packet fields and checksum."
+      "status": "implemented",
+      "notes": "Oracle fixture case. IPv4 ICMP destination unreachable includes quoted packet fields and checksum; libcrafter types the quoted datagram as IcmpQuotedIpv4."
     },
     {
       "name": "icmpv4-time-exceeded",
@@ -631,8 +631,8 @@
         "Raw"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "IPv4 ICMP time exceeded validates type/code and quoted header preservation."
+      "status": "implemented",
+      "notes": "Oracle fixture case. IPv4 ICMP time exceeded validates type/code and quoted header preservation."
     },
     {
       "name": "icmpv4-parameter-problem",
@@ -646,8 +646,8 @@
         "Raw"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "IPv4 ICMP parameter problem validates pointer field, type/code, and quoted payload."
+      "status": "implemented",
+      "notes": "Oracle fixture case. IPv4 ICMP parameter problem validates pointer field, type/code, and quoted payload."
     },
     {
       "name": "icmpv4-redirect",
@@ -661,8 +661,92 @@
         "Raw"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "IPv4 ICMP redirect validates gateway field and quoted original packet."
+      "status": "implemented",
+      "notes": "Oracle fixture case. IPv4 ICMP redirect validates gateway field and quoted original packet."
+    },
+    {
+      "name": "icmpv4-frag-needed-next-hop-mtu",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP",
+        "IP",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 1191 destination unreachable code 4 carries the next-hop MTU in the rest-of-header and quotes the original datagram."
+    },
+    {
+      "name": "icmpv4-timestamp",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP",
+        "IcmpTimestamp"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 792 timestamp request carries originate, receive, and transmit timestamps as a typed body."
+    },
+    {
+      "name": "icmpv4-information",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 792 information request/reply uses the identifier and sequence in the rest-of-header."
+    },
+    {
+      "name": "icmpv4-address-mask",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP",
+        "IcmpAddressMask"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 950 address mask reply carries the subnet mask as a typed body."
+    },
+    {
+      "name": "icmpv4-router-advertisement",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP",
+        "IcmpRouterAdvertisementEntry",
+        "IcmpRouterAdvertisementEntry"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 1256 router advertisement auto-fills address count and entry size and types each router entry."
+    },
+    {
+      "name": "icmpv4-router-solicitation",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 1256 router solicitation uses the reserved rest-of-header."
     },
     {
       "name": "icmpv4-extensions-mpls",
@@ -676,8 +760,40 @@
         "ICMPExtensionMPLS"
       ],
       "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4884/4950 extension header and MPLS object validate class/type, length, label, traffic class, S bit, and TTL."
+    },
+    {
+      "name": "icmpv4-extensions-interface-info",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP",
+        "ICMPExtensionHeader",
+        "ICMPExtensionObject"
+      ],
+      "strict_bytes": true,
       "status": "planned",
-      "notes": "ICMP extension header and MPLS object validate class/type, length, label, traffic class, S bit, and TTL."
+      "libcrafter_status": "implemented",
+      "notes": "RFC 5837 interface information extension. libcrafter types IcmpExtensionInterfaceInfo; the reference backend has no native RFC 5837 object class, so it stays a libcrafter-side typed/raw-compatible vector."
+    },
+    {
+      "name": "icmpv4-extended-echo-request",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP",
+        "ICMPExtensionHeader",
+        "ICMPExtensionObject"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "libcrafter_status": "implemented",
+      "notes": "RFC 8335 extended echo request with an interface identification object. libcrafter types IcmpExtensionInterfaceId; the reference backend lacks a native RFC 8335 layer, so this is a libcrafter-side typed/raw-compatible vector."
     },
     {
       "name": "icmpv6-errors",
@@ -1461,8 +1577,62 @@
         "ICMP"
       ],
       "strict_bytes": true,
-      "status": "planned",
-      "notes": "libcrafter ICMPv4 vectors cover echo request/reply, destination unreachable, time exceeded, parameter problem, redirect, extension header, and MPLS object."
+      "status": "implemented",
+      "notes": "Oracle fixture case. libcrafter ICMPv4 vectors cover echo request/reply, destination unreachable, time exceeded, parameter problem, redirect, RFC 1191 next-hop MTU, extension header, and MPLS object. Materialized by tools/oracle/adapters/src/bin/vectors as the crafter-icmpv4-* vectors."
+    },
+    {
+      "name": "crafter-icmpv4-queries",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. libcrafter ICMPv4 query vectors cover RFC 792 timestamp and information messages and RFC 950 address mask with typed bodies."
+    },
+    {
+      "name": "crafter-icmpv4-router-discovery",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. libcrafter RFC 1256 router advertisement and solicitation vectors validate auto-filled address counts and typed router entries."
+    },
+    {
+      "name": "crafter-icmpv4-extended-echo",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "libcrafter_status": "implemented",
+      "notes": "Oracle fixture case. libcrafter RFC 8335 extended echo request/reply vectors carry the interface identification object and reply state flags. The reference backend lacks native RFC 8335 typing, so comparison is byte-level on the libcrafter side."
+    },
+    {
+      "name": "crafter-icmpv4-legacy-types",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "ICMP",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. libcrafter constructs deprecated/legacy assigned types (for example RFC 1393 traceroute, type 30) raw-compatibly and round-trips them byte-for-byte without rejecting them."
     },
     {
       "name": "crafter-icmpv6-errors",
