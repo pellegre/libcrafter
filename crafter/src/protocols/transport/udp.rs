@@ -77,6 +77,7 @@ const UDP_OPTION_MDS_LEN: usize = 4;
 const UDP_OPTION_MRDS_LEN: usize = 5;
 const UDP_OPTION_REQ_LEN: usize = 6;
 const UDP_OPTION_RES_LEN: usize = 6;
+const UDP_OPTION_TIME_LEN: usize = 10;
 
 /// Inspection status for UDP checksum handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -145,6 +146,11 @@ pub enum UdpOption {
     EchoResponse {
         /// Opaque 32-bit token bytes in network byte order.
         token: [u8; 4],
+    },
+    /// Timestamp option.
+    Timestamp {
+        /// 32-bit TSval followed by 32-bit TSecr in network byte order.
+        timestamps: [u8; 8],
     },
     /// Unknown or caller-defined option with the standard one-byte length field.
     Generic {
@@ -234,6 +240,22 @@ impl UdpOption {
         Self::echo_response(token)
     }
 
+    /// Create a Timestamp option with explicit TSval and TSecr values.
+    pub fn timestamp(tsval: u32, tsecr: u32) -> Self {
+        let tsval = tsval.to_be_bytes();
+        let tsecr = tsecr.to_be_bytes();
+        Self::Timestamp {
+            timestamps: [
+                tsval[0], tsval[1], tsval[2], tsval[3], tsecr[0], tsecr[1], tsecr[2], tsecr[3],
+            ],
+        }
+    }
+
+    /// Compatibility-style short alias for [`Self::timestamp`].
+    pub fn time(tsval: u32, tsecr: u32) -> Self {
+        Self::timestamp(tsval, tsecr)
+    }
+
     /// Create a caller-defined option.
     pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
         let data = data.into();
@@ -262,6 +284,7 @@ impl UdpOption {
             Self::MaximumReassembledDatagramSize { .. } => UDP_OPTION_MRDS,
             Self::EchoRequest { .. } => UDP_OPTION_REQ,
             Self::EchoResponse { .. } => UDP_OPTION_RES,
+            Self::Timestamp { .. } => UDP_OPTION_TIME,
             Self::Generic { kind, .. } | Self::ExtendedGeneric { kind, .. } => *kind,
         }
     }
@@ -276,6 +299,7 @@ impl UdpOption {
                 size_and_segment_count,
             } => size_and_segment_count,
             Self::EchoRequest { token } | Self::EchoResponse { token } => token,
+            Self::Timestamp { timestamps } => timestamps,
             Self::Generic { data, .. } | Self::ExtendedGeneric { data, .. } => data,
         }
     }
@@ -284,6 +308,17 @@ impl UdpOption {
     pub fn additional_payload_checksum_value(&self) -> Option<u32> {
         match self {
             Self::AdditionalPayloadChecksum { checksum } => Some(u32::from_be_bytes(*checksum)),
+            _ => None,
+        }
+    }
+
+    /// Return the TIME TSval and TSecr values, if this option is TIME.
+    pub fn timestamp_values(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Timestamp { timestamps } => Some((
+                u32::from_be_bytes([timestamps[0], timestamps[1], timestamps[2], timestamps[3]]),
+                u32::from_be_bytes([timestamps[4], timestamps[5], timestamps[6], timestamps[7]]),
+            )),
             _ => None,
         }
     }
@@ -339,6 +374,7 @@ impl UdpOption {
             Self::MaximumReassembledDatagramSize { .. } => UDP_OPTION_MRDS_LEN,
             Self::EchoRequest { .. } => UDP_OPTION_REQ_LEN,
             Self::EchoResponse { .. } => UDP_OPTION_RES_LEN,
+            Self::Timestamp { .. } => UDP_OPTION_TIME_LEN,
             Self::Generic { data, .. } => UDP_OPTION_SHORT_HEADER_LEN + data.len(),
             Self::ExtendedGeneric { data, .. } => UDP_OPTION_EXTENDED_HEADER_LEN + data.len(),
         }
@@ -372,6 +408,10 @@ impl UdpOption {
             Self::EchoResponse { token } => {
                 bytes.extend_from_slice(&[UDP_OPTION_RES, UDP_OPTION_RES_LEN as u8]);
                 bytes.extend_from_slice(token);
+            }
+            Self::Timestamp { timestamps } => {
+                bytes.extend_from_slice(&[UDP_OPTION_TIME, UDP_OPTION_TIME_LEN as u8]);
+                bytes.extend_from_slice(timestamps);
             }
             Self::Generic { kind, data } => {
                 validate_udp_generic_option_kind(*kind)?;
@@ -598,6 +638,27 @@ impl UdpOptionIter<'_> {
                 ],
             }));
         }
+        if kind == UDP_OPTION_TIME {
+            if let Err(err) =
+                validate_udp_option_len("udp.option.time.length", len, UDP_OPTION_TIME_LEN)
+            {
+                self.done = true;
+                return Some(Err(err));
+            }
+            let data_start = start + UDP_OPTION_SHORT_HEADER_LEN;
+            return Some(Ok(UdpOption::Timestamp {
+                timestamps: [
+                    self.bytes[data_start],
+                    self.bytes[data_start + 1],
+                    self.bytes[data_start + 2],
+                    self.bytes[data_start + 3],
+                    self.bytes[data_start + 4],
+                    self.bytes[data_start + 5],
+                    self.bytes[data_start + 6],
+                    self.bytes[data_start + 7],
+                ],
+            }));
+        }
 
         Some(Ok(UdpOption::Generic {
             kind,
@@ -664,6 +725,13 @@ impl UdpOptionIter<'_> {
             self.done = true;
             return Some(Err(CrafterError::invalid_field_value(
                 "udp.option.res.length",
+                "fixed-length UDP option must use the short length format",
+            )));
+        }
+        if kind == UDP_OPTION_TIME {
+            self.done = true;
+            return Some(Err(CrafterError::invalid_field_value(
+                "udp.option.time.length",
                 "fixed-length UDP option must use the short length format",
             )));
         }
@@ -1103,6 +1171,13 @@ fn udp_option_inspection_summary(option: &UdpOption) -> String {
         }
         UdpOption::EchoResponse { token } => {
             format!("RES(token=0x{:08x})", u32::from_be_bytes(*token))
+        }
+        UdpOption::Timestamp { timestamps } => {
+            let tsval =
+                u32::from_be_bytes([timestamps[0], timestamps[1], timestamps[2], timestamps[3]]);
+            let tsecr =
+                u32::from_be_bytes([timestamps[4], timestamps[5], timestamps[6], timestamps[7]]);
+            format!("TIME(tsval=0x{tsval:08x},tsecr=0x{tsecr:08x})")
         }
         UdpOption::Generic { kind, data } => {
             format!(
@@ -1602,7 +1677,7 @@ mod tests {
         UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_APC_LEN, UDP_OPTION_CHECKSUM_LEN,
         UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MDS_LEN,
         UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_REQ_LEN,
-        UDP_OPTION_RES, UDP_OPTION_RES_LEN,
+        UDP_OPTION_RES, UDP_OPTION_RES_LEN, UDP_OPTION_TIME, UDP_OPTION_TIME_LEN,
     };
     use crate::checksum::{crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum};
     use crate::{
@@ -1853,6 +1928,7 @@ mod tests {
         assert_eq!(UDP_OPTION_MRDS, 5);
         assert_eq!(UDP_OPTION_REQ, 6);
         assert_eq!(UDP_OPTION_RES, 7);
+        assert_eq!(UDP_OPTION_TIME, 8);
 
         let checksum_status = UdpChecksumStatus::NotChecked;
         let option_status = UdpOptionStatus::NotParsed;
@@ -2121,6 +2197,162 @@ mod tests {
         ] {
             assert_udp_option_length_field_error(bytes, "udp.option.res.length");
         }
+    }
+
+    #[test]
+    fn udp_option_time_encode_decode_fixed_length_and_display() {
+        let time = UdpOption::timestamp(0x0102_0304, 0x0a0b_0c0d);
+        assert_eq!(time, UdpOption::time(0x0102_0304, 0x0a0b_0c0d));
+        assert_eq!(time.kind(), UDP_OPTION_TIME);
+        assert_eq!(
+            time.data(),
+            &[0x01, 0x02, 0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d]
+        );
+        assert_eq!(time.timestamp_values(), Some((0x0102_0304, 0x0a0b_0c0d)));
+        assert_eq!(time.echo_request_token(), None);
+        assert_eq!(time.echo_response_token(), None);
+        assert!(!time.uses_extended_length());
+        assert_eq!(time.encoded_len(), UDP_OPTION_TIME_LEN);
+        assert_eq!(
+            time.encode().unwrap(),
+            vec![
+                UDP_OPTION_TIME,
+                UDP_OPTION_TIME_LEN as u8,
+                0x01,
+                0x02,
+                0x03,
+                0x04,
+                0x0a,
+                0x0b,
+                0x0c,
+                0x0d
+            ]
+        );
+        assert_eq!(time.to_string(), "TIME(tsval=0x01020304,tsecr=0x0a0b0c0d)");
+
+        let decoded = UdpOption::decode_all(&[
+            UDP_OPTION_TIME,
+            UDP_OPTION_TIME_LEN as u8,
+            1,
+            2,
+            3,
+            4,
+            10,
+            11,
+            12,
+            13,
+        ])
+        .unwrap();
+        assert_eq!(decoded, vec![time.clone()]);
+
+        let udp_options = UdpOptions::from_bytes([
+            UDP_OPTION_TIME,
+            10,
+            0x01,
+            0x02,
+            0x03,
+            0x04,
+            0x0a,
+            0x0b,
+            0x0c,
+            0x0d,
+        ]);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.options(), &[time.clone()]);
+        assert!(udp_options.inspection_fields().iter().any(|(name, value)| {
+            *name == "options" && value == "TIME(tsval=0x01020304,tsecr=0x0a0b0c0d)"
+        }));
+
+        let typed = UdpOptions::from_options(vec![time]).unwrap();
+        assert_eq!(
+            typed.as_bytes(),
+            &[
+                UDP_OPTION_TIME,
+                10,
+                0x01,
+                0x02,
+                0x03,
+                0x04,
+                0x0a,
+                0x0b,
+                0x0c,
+                0x0d
+            ]
+        );
+        assert_eq!(typed.status(), UdpOptionStatus::Valid);
+    }
+
+    #[test]
+    fn udp_option_time_zero_values_are_explicitly_preserved() {
+        let request = UdpOption::timestamp(0, 0);
+        assert_eq!(request.timestamp_values(), Some((0, 0)));
+        assert_eq!(
+            request.encode().unwrap(),
+            vec![
+                UDP_OPTION_TIME,
+                UDP_OPTION_TIME_LEN as u8,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+            ]
+        );
+        assert_eq!(
+            request.to_string(),
+            "TIME(tsval=0x00000000,tsecr=0x00000000)"
+        );
+    }
+
+    #[test]
+    fn udp_option_time_malformed_lengths_are_rejected() {
+        for bytes in [
+            [UDP_OPTION_TIME, 9, 0x01, 0x02, 0x03, 0x04, 0x0a, 0x0b, 0x0c].as_slice(),
+            [
+                UDP_OPTION_TIME,
+                11,
+                0x01,
+                0x02,
+                0x03,
+                0x04,
+                0x0a,
+                0x0b,
+                0x0c,
+                0x0d,
+                0x00,
+            ]
+            .as_slice(),
+            [
+                UDP_OPTION_TIME,
+                255,
+                0,
+                10,
+                0x01,
+                0x02,
+                0x03,
+                0x04,
+                0x0a,
+                0x0b,
+            ]
+            .as_slice(),
+        ] {
+            assert_udp_option_length_field_error(bytes, "udp.option.time.length");
+        }
+    }
+
+    #[test]
+    fn udp_options_show_includes_time_option() {
+        let packet = Ipv4::new().src(src()).dst(dst()).id(0x2241)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0xde, 0xad])
+            / UdpOptions::from_options(vec![UdpOption::timestamp(0x0102_0304, 0)]).unwrap();
+
+        let show = packet.show();
+        assert!(show.contains("UdpOptions"));
+        assert!(show.contains("options: TIME(tsval=0x01020304,tsecr=0x00000000)"));
     }
 
     #[test]
