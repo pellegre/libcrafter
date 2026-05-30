@@ -567,4 +567,62 @@ mod dns_dnssec {
         let data = decode_record_data(DNS_TYPE_KEY, &rdata, 0, rdata.len()).unwrap();
         assert_eq!(data, DnsRecordData::Raw(rdata));
     }
+
+    #[test]
+    fn unknown_and_deferred_record_types_stay_raw_round_trip() {
+        // Mirrors the dns-raw-unknown-records oracle case: an unknown private-use
+        // numeric TYPE plus the deferred NSEC3PARAM (51), TLSA (52), KEY (25), and
+        // NAPTR (35) types must each decode to DnsRecordData::Raw (never a
+        // mis-typed record) and recompile their exact RDATA bytes through the
+        // packet stack. The numeric codepoints and opaque RDATA match the oracle
+        // fixture so the crate test and the Scapy comparison stay in lockstep.
+        const RAW_TYPE_CASES: &[(u16, &[u8])] = &[
+            // Private-use unknown TYPE 65280 (RFC 6895 Section 3.1).
+            (65280, &[0xde, 0xad, 0xbe, 0xef]),
+            // NSEC3PARAM (51): deferred to Raw (docs/dns.md).
+            (51, &[0x01, 0x00, 0x00, 0x0a, 0x04, 0xaa, 0xbb, 0xcc, 0xdd]),
+            // TLSA (52): deferred certificate-association record.
+            (52, &[0x03, 0x01, 0x01, 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]),
+            // KEY (25): cryptographic-key transport type.
+            (25, &[0x01, 0x00, 0x03, 0x08, 0x0a, 0x0b, 0x0c, 0x0d]),
+            // NAPTR (35): deferred naming-authority-pointer record.
+            (
+                35,
+                &[
+                    0x00, 0x64, 0x00, 0x0a, 0x01, 0x53, 0x00, 0x04, 0x55, 0x52, 0x4c, 0x00,
+                ],
+            ),
+        ];
+
+        for &(record_type, rdata) in RAW_TYPE_CASES {
+            // The decoder surfaces the RDATA verbatim rather than rejecting an
+            // unknown/deferred type.
+            let decoded =
+                decode_record_data(record_type, rdata, 0, rdata.len()).unwrap();
+            assert_eq!(
+                decoded,
+                DnsRecordData::Raw(rdata.to_vec()),
+                "type {record_type} should decode as Raw"
+            );
+
+            // And it round trips byte-for-byte through the full packet stack.
+            let record = DnsRecord::new(
+                "example.com.",
+                record_type,
+                DNS_CLASS_IN,
+                3600,
+                DnsRecordData::Raw(rdata.to_vec()),
+            );
+            let (round_tripped, original, recompiled) = round_trip_answer(record);
+            assert_eq!(
+                round_tripped,
+                DnsRecordData::Raw(rdata.to_vec()),
+                "type {record_type} should round trip as Raw"
+            );
+            assert_eq!(
+                recompiled, original,
+                "type {record_type} should recompile to identical bytes"
+            );
+        }
+    }
 }

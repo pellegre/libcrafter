@@ -1792,6 +1792,63 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
         fields.clear()
         fields["dns_raw"] = _dns_name_records_compressed_raw_spec()
         return
+    if "raw-unknown-records" in key:
+        # A response carrying record types this crate intentionally keeps as
+        # DnsRecordData::Raw: an unknown private-use numeric TYPE plus the
+        # deferred NSEC3PARAM (51), TLSA (52), KEY (25), and NAPTR (35) types
+        # from docs/dns.md. Each RDATA is a deterministic opaque blob carried as
+        # hex so neither backend reinterprets it, and the TYPE is given as a
+        # numeric IANA codepoint so both the Scapy DNSRR(type=N) reference and the
+        # libcrafter DnsRecordData::Raw materializer agree byte-for-byte. The
+        # owner names, TTLs, and IN class are stable. libcrafter must decode every
+        # answer to DnsRecordData::Raw (never a mis-typed record) and recompile the
+        # same RDATA bytes. (raw-unknown-records is not a substring of any other
+        # case id, so the matcher resolves this branch unambiguously.)
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": 65280}]
+        fields["answers"] = [
+            {
+                # Private-use unknown TYPE 65280 (RFC 6895 Section 3.1): no named
+                # mapping on either backend; preserved as a numeric codepoint.
+                "name": "unknown.example.com.",
+                "type": 65280,
+                "ttl": 3600,
+                "data": {"hex": "deadbeef"},
+            },
+            {
+                # NSEC3PARAM (51): deferred to Raw (docs/dns.md). Bytes look like a
+                # plausible NSEC3PARAM RDATA but are never parsed into typed fields.
+                "name": "example.com.",
+                "type": 51,
+                "ttl": 300,
+                "data": {"hex": "0100000a04aabbccdd"},
+            },
+            {
+                # TLSA (52): deferred certificate-association record, kept Raw.
+                "name": "_443._tcp.example.com.",
+                "type": 52,
+                "ttl": 300,
+                "data": {"hex": "030101a1b2c3d4e5f6"},
+            },
+            {
+                # KEY (25): cryptographic-key transport type, kept Raw.
+                "name": "example.com.",
+                "type": 25,
+                "ttl": 300,
+                "data": {"hex": "010003080a0b0c0d"},
+            },
+            {
+                # NAPTR (35): deferred naming-authority-pointer record, kept Raw.
+                "name": "example.com.",
+                "type": 35,
+                "ttl": 300,
+                "data": {"hex": "0064000a0153000455524c00"},
+            },
+        ]
+        return
     if "header-flags-opcodes" in key:
         fields["is_response"] = True
         fields["opcode"] = "status"

@@ -131,6 +131,7 @@ Source read for this matrix:
 
 | Feature | Case ID | Directions | Byte policy | Scapy high-level? | Raw bytes needed? |
 | --- | --- | --- | --- | --- | --- |
+| Unknown numeric TYPE (65280) plus deferred NSEC3PARAM (51), TLSA (52), KEY (25), and NAPTR (35) all stay `DnsRecordData::Raw` and recompile the same RDATA bytes | `dns-raw-unknown-records` | both | strict_bytes | partial (`DNSRR(type=N, rdata=...)` raw RDATA) | yes |
 | Unknown RR type decodes to `DnsRecordData::Raw` (not mis-typed) | `dns-record-raw-unknown` | both | strict_bytes | partial (`DNSRR(type=N, rdata=...)` raw RDATA) | yes |
 | Intentionally deferred typed RR stays `Raw` (NSEC3PARAM 51, KEY 25, NAPTR 35, TLSA 52) | `dns-record-raw-deferred` | both | strict_bytes | partial (raw RDATA) | yes |
 | Zero-length RDATA under unknown type stays `Raw` empty | `dns-record-raw-empty` | both | strict_bytes | partial (raw RDATA) | yes |
