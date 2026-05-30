@@ -64,8 +64,8 @@ backend_support:
   scapy:
     status: partial
     notes:
-      - Step 33 generates corpus intent only; Scapy byte materialization follows in backend steps.
+      - Step 34 generates fields.udp.options logical surplus intent; Scapy byte materialization follows in backend steps.
   libcrafter:
     status: partial
     notes:
-      - Step 33 generates corpus intent only; libcrafter materialization follows in adapter steps.
+      - Step 34 generates fields.udp.options logical surplus intent; libcrafter materialization follows in adapter steps.
