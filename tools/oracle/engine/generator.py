@@ -1779,6 +1779,19 @@ def _icmp_error_type_for_case(case: str, behavior: str, *, ipv6: bool) -> str:
 
 def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None:
     key = f"{case} {behavior}".replace("_", "-")
+    if "header-flags-opcodes" in key:
+        fields["is_response"] = True
+        fields["opcode"] = "status"
+        fields["response_code"] = "refused"
+        fields["flags"] = [
+            "authoritative",
+            "truncated",
+            "recursion_available",
+            "authentic_data",
+            "checking_disabled",
+        ]
+        fields.pop("answers", None)
+        return
     if "response" in key:
         fields["is_response"] = True
         fields.pop("answers", None)

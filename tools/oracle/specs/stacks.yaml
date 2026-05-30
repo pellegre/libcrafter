@@ -214,6 +214,7 @@ stacks:
       - dns-query
       - dns-response-records
       - dns-multiple-questions
+      - dns-header-flags-opcodes
       - dns-header-flags
       - dns-header-opcode
       - dns-header-rcode

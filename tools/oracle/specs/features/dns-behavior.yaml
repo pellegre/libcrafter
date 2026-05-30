@@ -317,6 +317,7 @@ coverage_cases:
   - dns-generic-record-truncated-rcode
   - malformed-dns-compression
   - crafter-dns-query-response-compression
+  - dns-header-flags-opcodes
   - dns-header-id
   - dns-header-qr
   - dns-header-flags
