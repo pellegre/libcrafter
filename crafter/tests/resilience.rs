@@ -4,10 +4,10 @@ mod support;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crafter::core::{
-    decode_dns_name, Arp, CrafterError, Dhcp, DhcpOption, Dns, Ethernet, Icmp, Icmpv6, IpProtocol,
-    Ipv4, Ipv4Option, Ipv6, LinkType, LinuxSll, MacAddr, NetworkLayer, NullLoopback, Packet, Raw,
-    Tcp, TcpOption, Udp, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, TCP_FLAG_ACK,
-    TCP_FLAG_PSH, TCP_FLAG_SYN,
+    decode_dns_name, scan_dhcp_option_segments, Arp, CrafterError, Dhcp, DhcpOption,
+    DhcpOptionArea, Dns, Ethernet, Icmp, Icmpv6, IpProtocol, Ipv4, Ipv4Option, Ipv6, LinkType,
+    LinuxSll, MacAddr, NetworkLayer, NullLoopback, Packet, Raw, Tcp, TcpOption, Udp, Vlan,
+    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
 };
 use proptest::prelude::*;
 
@@ -250,6 +250,10 @@ fn required_malformed_families() -> &'static [&'static str] {
         "missing dhcp magic cookie",
         "truncated dhcp option",
         "invalid dhcp fixed option length",
+        "dhcp missing end marker",
+        "dhcp non-padding after end",
+        "dhcp invalid fixed length",
+        "dhcp malformed option overload",
     ]
 }
 
@@ -287,8 +291,14 @@ fn malformed_family(name: &str) -> Option<&'static str> {
         "dns-label-length-overrun" => Some("dns label length overrun"),
         "dhcp-short-fixed-header" => Some("short dhcp packet"),
         "dhcp-missing-magic-cookie" => Some("missing dhcp magic cookie"),
-        "dhcp-truncated-option" => Some("truncated dhcp option"),
+        "dhcp-truncated-option" | "dhcp-overload-file-truncated-option" => {
+            Some("truncated dhcp option")
+        }
         "dhcp-invalid-fixed-option-length" => Some("invalid dhcp fixed option length"),
+        "dhcp-missing-end-marker" => Some("dhcp missing end marker"),
+        "dhcp-non-padding-after-end" => Some("dhcp non-padding after end"),
+        "dhcp-invalid-hardware-length" => Some("dhcp invalid fixed length"),
+        "dhcp-overload-file-missing-end" => Some("dhcp malformed option overload"),
         _ => None,
     }
 }
@@ -308,6 +318,76 @@ fn assert_roundtrip(target: PacketDecodeTarget, packet: Packet) {
 
 fn safe_udp_port(seed: u16) -> u16 {
     10_000 + (seed % 50_000)
+}
+
+fn dhcp_client_mac() -> MacAddr {
+    MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01])
+}
+
+/// Malformed DHCP option payloads whose typed views are only decoded lazily
+/// through the `Dhcp` accessors (the structural `Dhcp::decode` preserves them
+/// as raw `Generic` segments). Each accessor must surface a structured
+/// `CrafterError` with a stable `dhcp.option.*` context and never panic, and
+/// the raw bytes must remain inspectable on the decoded layer.
+#[test]
+fn malformed_dhcp_typed_option_views_report_structured_errors() {
+    // dhcp relay suboption: option 82 circuit-id suboption declares length 32
+    // but only one payload octet is present (RFC 3046 sub-option TLV overrun).
+    let relay = Dhcp::discover(dhcp_client_mac())
+        .transaction_id(0x0102_0304)
+        .option(DhcpOption::generic(82, vec![0x01, 0x20, 0x00]));
+    let bytes = relay.malformed().to_bytes();
+    let decoded = Dhcp::decode(&bytes).expect("relay frame must decode structurally");
+    match decoded.relay_agent_information() {
+        Some(Err(CrafterError::BufferTooShort { context, .. })) => {
+            assert_eq!(context, "dhcp.option.relay_agent_information");
+        }
+        other => {
+            panic!("malformed dhcp relay suboption expected a structured error, got {other:?}")
+        }
+    }
+    // Raw option 82 bytes remain inspectable on the decoded layer.
+    assert!(decoded
+        .options_value()
+        .iter()
+        .any(|o| matches!(o, DhcpOption::Generic { code: 82, .. })));
+
+    // dhcp classless route: option 121 prefix length 24 needs three subnet
+    // octets plus a four-octet router, but only a truncated payload is present
+    // (RFC 3442 destination-descriptor underrun).
+    let route = Dhcp::ack(
+        dhcp_client_mac(),
+        Ipv4Addr::new(192, 0, 2, 100),
+        Ipv4Addr::new(192, 0, 2, 1),
+    )
+    .option(DhcpOption::generic(121, vec![24, 192, 0]));
+    let bytes = route.malformed().to_bytes();
+    let decoded = Dhcp::decode(&bytes).expect("classless route frame must decode structurally");
+    match decoded.classless_static_routes() {
+        Some(Err(CrafterError::BufferTooShort { context, .. })) => {
+            assert_eq!(context, "dhcp.option.classless_static_route");
+        }
+        other => {
+            panic!("malformed dhcp classless route expected a structured error, got {other:?}")
+        }
+    }
+
+    // dhcp domain search: option 119 label length 7 with a truncated label
+    // (RFC 1035 label-length overrun read through RFC 3397 concatenation).
+    let domain = Dhcp::ack(
+        dhcp_client_mac(),
+        Ipv4Addr::new(192, 0, 2, 100),
+        Ipv4Addr::new(192, 0, 2, 1),
+    )
+    .option(DhcpOption::generic(119, vec![7, 101, 120]));
+    let bytes = domain.malformed().to_bytes();
+    let decoded = Dhcp::decode(&bytes).expect("domain search frame must decode structurally");
+    match decoded.domain_search() {
+        Some(Err(CrafterError::BufferTooShort { context, .. })) => {
+            assert_eq!(context, "dhcp.option.domain_search");
+        }
+        other => panic!("malformed dhcp domain search expected a structured error, got {other:?}"),
+    }
 }
 
 #[test]
@@ -483,6 +563,24 @@ proptest! {
         let _ = Dhcp::decode(&bytes);
         if !bytes.is_empty() {
             let _ = decode_dns_name(&bytes, 0);
+        }
+    }
+
+    #[test]
+    fn dhcp_option_scan_decode_encode_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
+        // The raw segment scanner must never panic on arbitrary input across
+        // every option area.
+        for area in [DhcpOptionArea::Options, DhcpOptionArea::File, DhcpOptionArea::Sname] {
+            let _ = scan_dhcp_option_segments(area, &bytes);
+        }
+
+        // The logical decoder must never panic, and any options it accepts must
+        // re-encode and expose their raw payload without panic.
+        if let Ok(options) = DhcpOption::decode_all(&bytes) {
+            for option in &options {
+                let _ = option.encode();
+                let _ = option.payload();
+            }
         }
     }
 
