@@ -63,6 +63,10 @@ const UDP_OPTION_SHORT_HEADER_LEN: usize = 2;
 const UDP_OPTION_EXTENDED_HEADER_LEN: usize = 4;
 const UDP_OPTION_EXTENDED_LEN_SENTINEL: u8 = 255;
 const UDP_OPTION_MAX_CONSECUTIVE_NOPS: usize = 7;
+const UDP_OPTION_LENGTH_CONTEXT: &str = "udp option length";
+const UDP_OPTION_PAYLOAD_CONTEXT: &str = "udp option payload";
+const UDP_OPTION_EXTENDED_LENGTH_CONTEXT: &str = "udp option extended length";
+const UDP_OPTION_EXTENDED_PAYLOAD_CONTEXT: &str = "udp option extended payload";
 
 /// Inspection status for UDP checksum handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -292,7 +296,7 @@ impl Iterator for UdpOptionIter<'_> {
                 if start + UDP_OPTION_SHORT_HEADER_LEN > self.bytes.len() {
                     self.done = true;
                     return Some(Err(CrafterError::buffer_too_short(
-                        "udp option",
+                        UDP_OPTION_LENGTH_CONTEXT,
                         start + UDP_OPTION_SHORT_HEADER_LEN,
                         self.bytes.len(),
                     )));
@@ -319,11 +323,17 @@ impl UdpOptionIter<'_> {
             )));
         }
 
-        let end = start + len;
+        let Some(end) = start.checked_add(len) else {
+            self.done = true;
+            return Some(Err(CrafterError::invalid_field_value(
+                "udp.option.length",
+                "option length overflows the option area",
+            )));
+        };
         if end > self.bytes.len() {
             self.done = true;
             return Some(Err(CrafterError::buffer_too_short(
-                "udp option",
+                UDP_OPTION_PAYLOAD_CONTEXT,
                 end,
                 self.bytes.len(),
             )));
@@ -340,7 +350,7 @@ impl UdpOptionIter<'_> {
         if start + UDP_OPTION_EXTENDED_HEADER_LEN > self.bytes.len() {
             self.done = true;
             return Some(Err(CrafterError::buffer_too_short(
-                "udp option extended length",
+                UDP_OPTION_EXTENDED_LENGTH_CONTEXT,
                 start + UDP_OPTION_EXTENDED_HEADER_LEN,
                 self.bytes.len(),
             )));
@@ -350,16 +360,22 @@ impl UdpOptionIter<'_> {
         if len < UDP_OPTION_EXTENDED_HEADER_LEN {
             self.done = true;
             return Some(Err(CrafterError::invalid_field_value(
-                "udp.option.length",
+                "udp.option.extended_length",
                 "extended option length must be at least 4 bytes",
             )));
         }
 
-        let end = start + len;
+        let Some(end) = start.checked_add(len) else {
+            self.done = true;
+            return Some(Err(CrafterError::invalid_field_value(
+                "udp.option.extended_length",
+                "extended option length overflows the option area",
+            )));
+        };
         if end > self.bytes.len() {
             self.done = true;
             return Some(Err(CrafterError::buffer_too_short(
-                "udp option",
+                UDP_OPTION_EXTENDED_PAYLOAD_CONTEXT,
                 end,
                 self.bytes.len(),
             )));
@@ -916,6 +932,43 @@ mod tests {
         Ipv4Addr::new(198, 51, 100, 2)
     }
 
+    fn assert_udp_option_length_buffer_error(
+        bytes: &[u8],
+        expected_context: &'static str,
+        expected_required: usize,
+        expected_available: usize,
+    ) {
+        let udp_options = UdpOptions::from_bytes(bytes);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Malformed);
+        assert_eq!(udp_options.as_bytes(), bytes);
+
+        match UdpOption::decode_all(bytes).unwrap_err() {
+            crate::CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, expected_context);
+                assert_eq!(required, expected_required);
+                assert_eq!(available, expected_available);
+            }
+            other => panic!("expected UDP option length buffer error, got {other:?}"),
+        }
+    }
+
+    fn assert_udp_option_length_field_error(bytes: &[u8], expected_field: &'static str) {
+        let udp_options = UdpOptions::from_bytes(bytes);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Malformed);
+        assert_eq!(udp_options.as_bytes(), bytes);
+
+        match UdpOption::decode_all(bytes).unwrap_err() {
+            crate::CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, expected_field);
+            }
+            other => panic!("expected UDP option length field error, got {other:?}"),
+        }
+    }
+
     #[test]
     fn udp_public_constants_and_statuses_are_stable() {
         assert_eq!(UDP_HEADER_LEN, 8);
@@ -963,6 +1016,87 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn udp_option_length_parses_one_byte_short_and_extended_envelopes() {
+        let decoded = UdpOption::decode_all(&[UDP_OPTION_NOP, UDP_OPTION_EOL, 0, 0]).unwrap();
+        assert_eq!(decoded, vec![UdpOption::NoOperation, UdpOption::EndOfList]);
+
+        let decoded = UdpOption::decode_all(&[UDP_OPTION_MDS, 4, 0x05, 0xb4]).unwrap();
+        assert_eq!(
+            decoded,
+            vec![UdpOption::Generic {
+                kind: UDP_OPTION_MDS,
+                data: vec![0x05, 0xb4]
+            }]
+        );
+
+        let decoded = UdpOption::decode_all(&[UDP_OPTION_EXP, 255, 0, 6, 0x12, 0x34]).unwrap();
+        assert_eq!(
+            decoded,
+            vec![UdpOption::ExtendedGeneric {
+                kind: UDP_OPTION_EXP,
+                data: vec![0x12, 0x34]
+            }]
+        );
+    }
+
+    #[test]
+    fn udp_option_length_reports_short_envelope_errors() {
+        assert_udp_option_length_buffer_error(&[UDP_OPTION_MDS], "udp option length", 2, 1);
+        assert_udp_option_length_field_error(&[UDP_OPTION_MDS, 0], "udp.option.length");
+        assert_udp_option_length_field_error(&[UDP_OPTION_MDS, 1], "udp.option.length");
+        assert_udp_option_length_buffer_error(
+            &[UDP_OPTION_MDS, 4, 0xaa],
+            "udp option payload",
+            4,
+            3,
+        );
+    }
+
+    #[test]
+    fn udp_option_length_reports_extended_envelope_errors() {
+        assert_udp_option_length_buffer_error(
+            &[UDP_OPTION_EXP, 255],
+            "udp option extended length",
+            4,
+            2,
+        );
+        assert_udp_option_length_buffer_error(
+            &[UDP_OPTION_EXP, 255, 0],
+            "udp option extended length",
+            4,
+            3,
+        );
+        assert_udp_option_length_field_error(
+            &[UDP_OPTION_EXP, 255, 0, 0],
+            "udp.option.extended_length",
+        );
+        assert_udp_option_length_field_error(
+            &[UDP_OPTION_EXP, 255, 0, 1],
+            "udp.option.extended_length",
+        );
+        assert_udp_option_length_field_error(
+            &[UDP_OPTION_EXP, 255, 0, 3],
+            "udp.option.extended_length",
+        );
+        assert_udp_option_length_buffer_error(
+            &[UDP_OPTION_EXP, 255, 0, 6, 0xaa],
+            "udp option extended payload",
+            6,
+            5,
+        );
+    }
+
+    #[test]
+    fn udp_option_length_preserves_valid_prefix_before_malformed_envelope() {
+        let bytes = [UDP_OPTION_NOP, UDP_OPTION_MDS, 4, 0xaa];
+        let udp_options = UdpOptions::from_bytes(bytes);
+
+        assert_eq!(udp_options.status(), UdpOptionStatus::Malformed);
+        assert_eq!(udp_options.as_bytes(), &bytes);
+        assert_eq!(udp_options.options(), &[UdpOption::NoOperation]);
     }
 
     #[test]
@@ -1035,7 +1169,7 @@ mod tests {
                 required,
                 available,
             } => {
-                assert_eq!(context, "udp option");
+                assert_eq!(context, "udp option extended payload");
                 assert_eq!(required, 8);
                 assert_eq!(available, 5);
             }
