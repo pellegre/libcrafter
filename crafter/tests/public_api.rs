@@ -54,6 +54,11 @@ fn udp_public_api_paths_are_usable() -> crafter::Result<()> {
     let transport_udp = crafter::protocols::transport::Udp::new()
         .sport(9999)
         .dport(10000);
+    let prelude_options: UdpOptions = UdpOptions::from_bytes([UDP_OPTION_NOP]);
+    let core_options = crafter::core::UdpOptions::from_bytes([UDP_OPTION_EOL]);
+    let root_options = crafter::UdpOptions::from_bytes([UDP_OPTION_REQ]);
+    let protocols_options = crafter::protocols::UdpOptions::from_bytes([UDP_OPTION_RES]);
+    let transport_options = crafter::protocols::transport::UdpOptions::from_bytes([UDP_OPTION_MDS]);
 
     let prelude_packet = (prelude_udp / Raw::from("prelude")).compile()?;
     let core_packet = (core_udp / crafter::core::Raw::from("core")).compile()?;
@@ -73,6 +78,11 @@ fn udp_public_api_paths_are_usable() -> crafter::Result<()> {
     assert_eq!(&protocols_packet.as_bytes()[2..4], &8888u16.to_be_bytes());
     assert_eq!(&transport_packet.as_bytes()[0..2], &9999u16.to_be_bytes());
     assert_eq!(&transport_packet.as_bytes()[2..4], &10000u16.to_be_bytes());
+    assert_eq!(prelude_options.as_bytes(), &[UDP_OPTION_NOP]);
+    assert_eq!(core_options.as_bytes(), &[UDP_OPTION_EOL]);
+    assert_eq!(root_options.as_bytes(), &[UDP_OPTION_REQ]);
+    assert_eq!(protocols_options.as_bytes(), &[UDP_OPTION_RES]);
+    assert_eq!(transport_options.as_bytes(), &[UDP_OPTION_MDS]);
 
     Ok(())
 }
