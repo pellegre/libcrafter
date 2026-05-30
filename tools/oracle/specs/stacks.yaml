@@ -265,6 +265,7 @@ stacks:
       - dnssec-nsec-bitmaps
       - dns-dnssec-nsec
       - dns-dnssec-nsec-bitmap
+      - dnssec-nsec3
       - dns-dnssec-nsec3
       - dns-dnssec-nsec3-empty-salt
       - dns-dnssec-unknown-algorithm

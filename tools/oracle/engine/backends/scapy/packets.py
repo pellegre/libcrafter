@@ -1917,14 +1917,22 @@ def _dns_record_nsec(record: Mapping[str, object], scapy_all: Any, *, name: str,
 
 
 def _dns_record_nsec3(record: Mapping[str, object], scapy_all: Any, *, name: str, ttl: int) -> Any:
+    # Scapy 2.7's DNSRRNSEC3 FieldLenField does not reliably auto-compute the
+    # Salt Length / Hash Length octets from a raw bytes salt or next hashed
+    # owner name, so the length prefixes are passed explicitly. Both fields stay
+    # raw bytes (RFC 5155 Section 3.2), never reinterpreted as text.
+    salt = _dns_blob(record.get("salt"))
+    next_hashed_owner = _dns_blob(
+        record.get("next_hashed_owner", record.get("nexthashedownername"))
+    )
     return scapy_all.DNSRRNSEC3(
         hashalg=_int(record.get("hash_algorithm", record.get("hashalg")), 1),
         flags=_int(record.get("flags"), 0),
         iterations=_int(record.get("iterations"), 0),
-        salt=_dns_blob(record.get("salt")),
-        nexthashedownername=_dns_blob(
-            record.get("next_hashed_owner", record.get("nexthashedownername"))
-        ),
+        saltlength=len(salt),
+        salt=salt,
+        hashlength=len(next_hashed_owner),
+        nexthashedownername=next_hashed_owner,
         typebitmaps=_dns_type_bitmaps(
             record.get("type_bitmaps", record.get("typebitmaps")), scapy_all
         ),
