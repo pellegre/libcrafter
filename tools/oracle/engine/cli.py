@@ -75,6 +75,8 @@ LIVE_ROOT_ALIASES = {
     "l3:ipv4": "l3:ipv4",
     "l3:ipv6": "l3:ipv6",
 }
+LIVE_RECEIVER_STARTUP_GRACE_SECONDS = 2.0
+LIVE_VM_RECEIVER_STARTUP_GRACE_SECONDS = 12.0
 FINAL_REPORT_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("formatting", ("cargo", "fmt", "--all", "--", "--check")),
     ("clippy", ("cargo", "clippy", "--workspace", "--all-targets")),
@@ -2785,7 +2787,7 @@ def _live_provider_execute(
                 output_dir=local_direction_dir,
                 label=f"receiver-{receiver.role}",
             )
-            time.sleep(2)
+            time.sleep(_live_receiver_startup_grace_seconds(args.provider))
             sender_execution = _run_wire_endpoint_batch(
                 wire=wire,
                 endpoint_id=sender.endpoint_id,
@@ -3645,6 +3647,12 @@ def _download_wire_endpoint_artifacts(
         )
         downloads.append(record)
     return downloads
+
+
+def _live_receiver_startup_grace_seconds(provider: str) -> float:
+    if provider in {"qemu", "virtualbox"}:
+        return LIVE_VM_RECEIVER_STARTUP_GRACE_SECONDS
+    return LIVE_RECEIVER_STARTUP_GRACE_SECONDS
 
 
 def _parse_endpoint_stdout(stdout: str, label: str) -> tuple[JSONObject | None, list[str]]:
