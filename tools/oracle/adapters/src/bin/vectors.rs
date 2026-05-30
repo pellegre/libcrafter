@@ -374,3 +374,140 @@ fn string_field<'a>(object: &'a Map<String, Value>, key: &str) -> ExampleResult<
 fn invalid_data(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
+
+#[cfg(test)]
+mod icmpv4_oracle {
+    //! Offline validation that the ICMPv4 oracle vectors materialize, decode,
+    //! and round-trip byte-for-byte through the same libcrafter surface the
+    //! oracle adapters use. These are static, documentation-address-only checks
+    //! with no live traffic.
+
+    use super::cases;
+    use crafter::prelude::*;
+
+    fn decode_hex(hex: &str) -> Vec<u8> {
+        assert!(hex.len() % 2 == 0, "raw_hex must be even length");
+        (0..hex.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).expect("valid hex"))
+            .collect()
+    }
+
+    fn icmpv4_vectors() -> Vec<cases::Vector> {
+        cases::build_cases()
+            .expect("oracle cases build")
+            .into_iter()
+            .filter(|vector| vector.name.starts_with("crafter-icmpv4-"))
+            .collect()
+    }
+
+    // Every ICMPv4 message group we emit is decodable from raw L3 bytes and
+    // recompiles to the exact same bytes, satisfying the oracle strict_bytes
+    // contract for the reference-backend comparison.
+    #[test]
+    fn icmpv4_oracle_vectors_roundtrip_strict_bytes() {
+        let vectors = icmpv4_vectors();
+        assert!(
+            vectors.len() >= 15,
+            "expected the full ICMPv4 message-group coverage, found {}",
+            vectors.len()
+        );
+        for vector in vectors {
+            assert_eq!(vector.root_decoder, "l3:ipv4", "{}", vector.name);
+            assert!(vector.strict_bytes, "{}", vector.name);
+            let bytes = decode_hex(&vector.raw_hex);
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
+                .unwrap_or_else(|error| panic!("decode {}: {error}", vector.name));
+            let recompiled = decoded
+                .compile()
+                .unwrap_or_else(|error| panic!("recompile {}: {error}", vector.name));
+            assert_eq!(
+                recompiled.as_bytes(),
+                bytes.as_slice(),
+                "byte-for-byte roundtrip failed for {}",
+                vector.name
+            );
+            // The ICMPv4 header is always typed.
+            assert!(
+                decoded.layer::<Icmp>().is_some(),
+                "missing typed Icmp layer for {}",
+                vector.name
+            );
+        }
+    }
+
+    // The error-family vectors expose a typed quoted IPv4 datagram, so a
+    // generated tool can inspect the original packet that triggered the error.
+    #[test]
+    fn icmpv4_oracle_error_vectors_expose_quoted_datagram() {
+        for name in [
+            "crafter-icmpv4-destination-unreachable",
+            "crafter-icmpv4-time-exceeded",
+            "crafter-icmpv4-parameter-problem",
+            "crafter-icmpv4-redirect",
+            "crafter-icmpv4-frag-needed-next-hop-mtu",
+        ] {
+            let vector = icmpv4_vectors()
+                .into_iter()
+                .find(|vector| vector.name == name)
+                .unwrap_or_else(|| panic!("missing oracle vector {name}"));
+            let bytes = decode_hex(&vector.raw_hex);
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes).expect("decode error");
+            let quoted = decoded
+                .layer::<IcmpQuotedIpv4>()
+                .unwrap_or_else(|| panic!("missing quoted datagram for {name}"));
+            let inner = quoted
+                .quoted_layer::<Ipv4>()
+                .unwrap_or_else(|| panic!("quoted datagram is not IPv4 for {name}"));
+            assert_eq!(inner.destination(), std::net::Ipv4Addr::new(198, 51, 100, 20));
+        }
+    }
+
+    // The RFC 4884 / 4950 / 5837 / 8335 extension vectors decode into their
+    // typed extension layers; unknown-object fallback is covered by the crate's
+    // own tests, so here we assert the typed split the oracle relies on.
+    #[test]
+    fn icmpv4_oracle_extension_vectors_expose_typed_objects() {
+        let vectors = icmpv4_vectors();
+        let find = |name: &str| {
+            vectors
+                .iter()
+                .find(|vector| vector.name == name)
+                .unwrap_or_else(|| panic!("missing oracle vector {name}"))
+        };
+
+        let mpls = find("crafter-icmpv4-extension-mpls");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &decode_hex(&mpls.raw_hex))
+            .expect("decode mpls");
+        assert!(decoded.layer::<IcmpExtension>().is_some());
+        assert!(decoded.layer::<IcmpExtensionMpls>().is_some());
+
+        let info = find("crafter-icmpv4-extension-interface-info");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &decode_hex(&info.raw_hex))
+            .expect("decode interface info");
+        assert!(decoded.layer::<IcmpExtensionInterfaceInfo>().is_some());
+
+        let extended = find("crafter-icmpv4-extended-echo-request");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &decode_hex(&extended.raw_hex))
+            .expect("decode extended echo");
+        assert!(decoded.layer::<IcmpExtensionInterfaceId>().is_some());
+    }
+
+    // The legacy/deprecated assigned types stay raw-compatible and round-trip
+    // without being rejected merely because they are deprecated.
+    #[test]
+    fn icmpv4_oracle_legacy_vector_is_raw_compatible() {
+        let vector = icmpv4_vectors()
+            .into_iter()
+            .find(|vector| vector.name == "crafter-icmpv4-legacy-traceroute")
+            .expect("missing legacy traceroute vector");
+        let bytes = decode_hex(&vector.raw_hex);
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes).expect("decode legacy");
+        let icmp = decoded.layer::<Icmp>().expect("typed icmp header");
+        assert_eq!(icmp.icmp_type_value(), ICMP_TRACEROUTE);
+        assert_eq!(
+            decoded.compile().expect("recompile").as_bytes(),
+            bytes.as_slice()
+        );
+    }
+}

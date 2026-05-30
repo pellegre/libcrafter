@@ -1,7 +1,7 @@
 version: 1
 kind: feature
 name: icmpv4_errors
-summary: ICMPv4 error variants with embedded IPv4 header prefixes and extensions.
+summary: ICMPv4 error variants with embedded IPv4 header prefixes and RFC 4884 extensions.
 
 layers:
   - ipv4
@@ -33,18 +33,30 @@ behaviors:
     embeds:
       - ipv4
       - payload_prefix
+  - name: frag_needed_next_hop_mtu
+    icmp_type: destination_unreachable
+    embeds:
+      - ipv4
+      - payload_prefix
   - name: mpls_extension
     icmp_type: destination_unreachable
     embeds:
       - icmp_extension_header
       - icmp_extension_mpls
+  - name: interface_info_extension
+    icmp_type: destination_unreachable
+    embeds:
+      - icmp_extension_header
+      - icmp_extension_object
 
 coverage_cases:
   - icmpv4-destination-unreachable
   - icmpv4-time-exceeded
   - icmpv4-parameter-problem
   - icmpv4-redirect
+  - icmpv4-frag-needed-next-hop-mtu
   - icmpv4-extensions-mpls
+  - icmpv4-extensions-interface-info
   - crafter-icmpv4-errors-extensions
 
 backend_support:
@@ -57,4 +69,6 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - ICMP extension objects are planned and may normalize as opaque extension bytes first.
+      - The libcrafter_to_reference vectors (crafter-icmpv4-errors-extensions) are typed and pass byte-for-byte; they quote the original IPv4 datagram as IcmpQuotedIpv4, type RFC 1191 next-hop MTU, and decode RFC 4884/4950 extension and MPLS objects.
+      - The reference_to_libcrafter generator path is still partial because the seeded ICMP error sampler emits a flat ipv4/icmp/payload stack rather than a structured quoted datagram; scapy and libcrafter normalize that opaque tail differently, so it is not yet a byte-equal generator case.
+      - RFC 5837 interface information objects are typed by libcrafter; the reference backend has no native object class, so they are validated libcrafter-side and remain raw-compatible against the reference.
