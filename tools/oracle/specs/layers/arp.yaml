@@ -228,6 +228,154 @@ fields:
       operation codepoints and unknown raw numeric values, all of which
       round-trip as raw u16 opcodes through both backends.
 
+address_fields:
+  source: RFC 826 generic format and target/arp-rfc/scope.md
+  note: >-
+    The four sender/target hardware and protocol address fields are
+    variable-length byte vectors whose lengths are governed by hardware_length
+    (HLN) and protocol_length (PLN), not fixed to the 6-octet MAC and 4-octet
+    IPv4 forms. The default Ethernet/IPv4 ARP form keeps 6/4 documentation
+    addresses (RFC 7042 MAC block, RFC 5737 IPv4 documentation networks). Each
+    field below enumerates deterministic byte-vector domain cases — standard,
+    broadcast/zero, and nonstandard zero-/short-/long-length vectors — so
+    oracle coverage describes variable address lengths and unknown address
+    families beyond the MAC and IPv4 helpers. All byte vectors use only
+    documentation address space and carry no real network identifiers. These
+    cases are described here as data; the smoke generator keeps the standard
+    6-octet MAC / 4-octet IPv4 default so the ethernet_arp golden cases stay
+    byte-stable, and the variable-length byte vectors are wired into
+    materialization by later plan steps while staying raw-preserving (no value
+    is rejected or remapped).
+  fields:
+    - name: sender_hardware_address
+      kind: hardware
+      type: bytes
+      length_field: hardware_length
+      standard_length: 6
+      standard_form: documentation EUI-48 MAC (RFC 7042 00:00:5e:00:53:xx)
+      variable: true
+      default_domain: documentation_mac
+      byte_vectors:
+        - name: standard_mac
+          length: 6
+          form: documentation_mac
+          note: default 6-octet MAC for Ethernet/IPv4 ARP
+        - name: broadcast_mac
+          length: 6
+          bytes: "ff:ff:ff:ff:ff:ff"
+          note: all-ones hardware address
+        - name: zero_mac
+          length: 6
+          bytes: "00:00:00:00:00:00"
+          note: all-zero hardware address (RFC 5227 probe sender form)
+        - name: short_hardware
+          length: 1
+          bytes: "00"
+          note: deterministic nonstandard 1-octet hardware address (HLN=1)
+        - name: empty_hardware
+          length: 0
+          bytes: ""
+          note: zero-length hardware address (HLN=0); must not overflow
+        - name: long_hardware
+          length: 8
+          bytes: "00:00:5e:00:53:00:00:01"
+          note: deterministic nonstandard 8-octet hardware address (HLN=8)
+    - name: sender_protocol_address
+      kind: protocol
+      type: bytes
+      length_field: protocol_length
+      standard_length: 4
+      standard_form: documentation IPv4 (RFC 5737 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)
+      variable: true
+      default_domain: documentation_ipv4
+      byte_vectors:
+        - name: standard_ipv4
+          length: 4
+          form: documentation_ipv4
+          note: default 4-octet IPv4 for Ethernet/IPv4 ARP
+        - name: zero_ipv4
+          length: 4
+          bytes: "00:00:00:00"
+          note: all-zero protocol address (RFC 5227 probe sender form)
+        - name: short_protocol
+          length: 1
+          bytes: "00"
+          note: deterministic nonstandard 1-octet protocol address (PLN=1)
+        - name: empty_protocol
+          length: 0
+          bytes: ""
+          note: zero-length protocol address (PLN=0); must not overflow
+        - name: long_protocol
+          length: 16
+          bytes: "20:01:0d:b8:00:00:00:00:00:00:00:00:00:00:00:01"
+          note: >-
+            deterministic nonstandard 16-octet protocol address (PLN=16,
+            documentation IPv6 2001:db8::1 bytes) to exercise non-IPv4 lengths
+    - name: target_hardware_address
+      kind: hardware
+      type: bytes
+      length_field: hardware_length
+      standard_length: 6
+      standard_form: documentation EUI-48 MAC (RFC 7042 00:00:5e:00:53:xx)
+      variable: true
+      default_domain: documentation_mac
+      byte_vectors:
+        - name: standard_mac
+          length: 6
+          form: documentation_mac
+          note: default 6-octet MAC for Ethernet/IPv4 ARP replies
+        - name: zero_mac
+          length: 6
+          bytes: "00:00:00:00:00:00"
+          note: all-zero target (request convention; unknown target hardware)
+        - name: broadcast_mac
+          length: 6
+          bytes: "ff:ff:ff:ff:ff:ff"
+          note: all-ones target hardware address
+        - name: short_hardware
+          length: 1
+          bytes: "00"
+          note: deterministic nonstandard 1-octet hardware address (HLN=1)
+        - name: empty_hardware
+          length: 0
+          bytes: ""
+          note: zero-length hardware address (HLN=0); must not overflow
+        - name: long_hardware
+          length: 8
+          bytes: "00:00:5e:00:53:00:00:02"
+          note: deterministic nonstandard 8-octet hardware address (HLN=8)
+    - name: target_protocol_address
+      kind: protocol
+      type: bytes
+      length_field: protocol_length
+      standard_length: 4
+      standard_form: documentation IPv4 (RFC 5737 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)
+      variable: true
+      default_domain: documentation_ipv4
+      byte_vectors:
+        - name: standard_ipv4
+          length: 4
+          form: documentation_ipv4
+          note: default 4-octet IPv4 for Ethernet/IPv4 ARP
+        - name: zero_ipv4
+          length: 4
+          bytes: "00:00:00:00"
+          note: all-zero protocol address
+        - name: short_protocol
+          length: 1
+          bytes: "00"
+          note: deterministic nonstandard 1-octet protocol address (PLN=1)
+        - name: empty_protocol
+          length: 0
+          bytes: ""
+          note: zero-length protocol address (PLN=0); must not overflow
+        - name: long_protocol
+          length: 16
+          bytes: "20:01:0d:b8:00:00:00:00:00:00:00:00:00:00:00:02"
+          note: >-
+            deterministic nonstandard 16-octet protocol address (PLN=16,
+            documentation IPv6 2001:db8::2 bytes) to exercise non-IPv4 lengths
+
 coverage_cases:
   - arp-request
   - arp-reply
