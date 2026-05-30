@@ -130,8 +130,10 @@ _ETHERTYPES: dict[str, int] = {
     "vlan": 0x8100,
 }
 _PROTOCOLS: dict[str, int] = {
+    "fragment": 44,
     "icmp": 1,
     "icmpv6": 58,
+    "routing": 43,
     "tcp": 6,
     "udp": 17,
 }
@@ -244,6 +246,8 @@ def normalize_packet(
     normalized_fields: dict[str, JSONObject] = {}
     for occurrence, layer in enumerate(layers):
         normalized_layer = _normalize_layer_name(_text(layer["name"]))
+        if normalized_layer == "padding":
+            continue
         layer_fields = _normalize_fields(
             normalized_layer,
             _object(layer["fields"], f"{layer['name']}.fields"),
@@ -261,6 +265,14 @@ def normalize_packet(
             "layers": layers,
         },
     }
+    if source_hex is not None:
+        _apply_udp_surplus_normalization(
+            normalized_layers,
+            normalized_fields,
+            root=_normalize_root_name(root),
+            source_hex=source_hex,
+            metadata=metadata,
+        )
     try:
         metadata["reencoded_hex"] = bytes(import_scapy()["all"].raw(packet)).hex()
     except Exception as exc:  # pragma: no cover - Scapy exception types vary.
@@ -731,6 +743,403 @@ def _normalize_linux_sll_source_address(value: JSONValue) -> JSONValue:
     return value
 
 
+def _apply_udp_surplus_normalization(
+    layers: list[str],
+    fields: dict[str, JSONObject],
+    *,
+    root: str | None,
+    source_hex: str,
+    metadata: JSONObject,
+) -> None:
+    try:
+        raw = bytes.fromhex(source_hex)
+        layout = _udp_layout(root, raw)
+    except ValueError as exc:
+        metadata.setdefault("udp_options", {"parse_error": str(exc)})
+        return
+
+    surplus = raw[layout["surplus_start"] : layout["ip_end"]]
+    if not surplus:
+        return
+
+    user_payload = raw[layout["udp_payload_start"] : layout["udp_payload_end"]]
+    _normalize_udp_user_payload(layers, fields, user_payload)
+
+    option_metadata = _udp_surplus_metadata(raw, layout, user_payload, surplus)
+    key = _field_key(fields, "UdpOptions")
+    if key not in fields:
+        _insert_layer_after(layers, "UdpOptions", after={"payload", "udp"})
+        fields[key] = {}
+    fields[key]["options"] = option_metadata
+
+    metadata["udp"] = {
+        "checksum_status": _udp_checksum_status(raw, layout),
+        "checksum_status_source": "byte_level_pseudo_header_validation",
+    }
+    metadata["udp_options"] = {
+        **option_metadata,
+        "native_scapy_support": False,
+        "normalization": "byte_level_udp_surplus_split",
+    }
+
+
+def _normalize_udp_user_payload(
+    layers: list[str],
+    fields: dict[str, JSONObject],
+    user_payload: bytes,
+) -> None:
+    payload_keys = [key for key in fields if _base_layer_name(key) == "payload"]
+    if not user_payload:
+        for key in payload_keys:
+            fields.pop(key, None)
+        layers[:] = [layer for layer in layers if layer != "payload"]
+        return
+
+    payload_fields: JSONObject = {
+        "hex": user_payload.hex(),
+        "length": len(user_payload),
+    }
+    if payload_keys:
+        fields[payload_keys[0]] = payload_fields
+        for key in payload_keys[1:]:
+            fields.pop(key, None)
+        seen_payload = False
+        updated_layers = []
+        for layer in layers:
+            if layer != "payload":
+                updated_layers.append(layer)
+                continue
+            if not seen_payload:
+                updated_layers.append(layer)
+                seen_payload = True
+        layers[:] = updated_layers
+        return
+
+    _insert_layer_after(layers, "payload", after={"udp"})
+    fields["payload"] = payload_fields
+
+
+def _base_layer_name(layer_name: str) -> str:
+    return layer_name.split("#", 1)[0]
+
+
+def _insert_layer_after(layers: list[str], layer: str, *, after: set[str]) -> None:
+    if layer in layers:
+        return
+    for index in range(len(layers) - 1, -1, -1):
+        if layers[index] in after:
+            layers.insert(index + 1, layer)
+            return
+    layers.append(layer)
+
+
+def _udp_surplus_metadata(
+    raw: bytes,
+    layout: Mapping[str, int],
+    user_payload: bytes,
+    surplus: bytes,
+) -> JSONObject:
+    l3_relative_surplus_start = layout["surplus_start"] - layout["l3_start"]
+    alignment_len = l3_relative_surplus_start & 1
+    alignment = surplus[:alignment_len]
+    ocs_start = alignment_len
+    option_checksum = None
+    option_bytes = b""
+    if len(surplus) >= ocs_start + 2:
+        option_checksum = int.from_bytes(surplus[ocs_start : ocs_start + 2], "big")
+        option_bytes = surplus[ocs_start + 2 :]
+
+    items, status = _udp_option_items(option_bytes, user_payload)
+    if any(byte != 0 for byte in alignment):
+        status = "ignored"
+    elif option_checksum is None:
+        status = "malformed_envelope"
+    elif not _udp_option_checksum_valid(
+        surplus,
+        alignment_len=alignment_len,
+        option_checksum=option_checksum,
+        udp_checksum=int.from_bytes(
+            raw[layout["udp_start"] + 6 : layout["udp_start"] + 8],
+            "big",
+        ),
+    ):
+        status = "option_checksum_invalid"
+
+    return {
+        "status": status,
+        "raw_surplus_hex": surplus.hex(),
+        "raw_surplus_length": len(surplus),
+        "alignment_hex": alignment.hex(),
+        "option_checksum": option_checksum,
+        "option_bytes_hex": option_bytes.hex(),
+        "option_count": len(items),
+        "items": items,
+        "application_payload_hex": user_payload.hex(),
+        "application_payload_length": len(user_payload),
+        "udp_length": layout["udp_length"],
+        "placement": "after_udp_length",
+        "surplus_excluded_from_udp_checksum": True,
+    }
+
+
+def _udp_option_items(option_bytes: bytes, user_payload: bytes) -> tuple[list[JSONObject], str]:
+    items: list[JSONObject] = []
+    status = "valid"
+    consecutive_nops = 0
+    index = 0
+    while index < len(option_bytes):
+        kind = option_bytes[index]
+        if kind == 0:
+            items.append({"kind": kind, "name": "eol", "length": 1})
+            if any(byte != 0 for byte in option_bytes[index + 1 :]):
+                status = "nonzero_after_end_of_list"
+            break
+        if kind == 1:
+            consecutive_nops += 1
+            items.append({"kind": kind, "name": "nop", "length": 1})
+            if consecutive_nops > 7 and status == "valid":
+                status = "too_many_no_operations"
+            index += 1
+            continue
+
+        consecutive_nops = 0
+        if index + 1 >= len(option_bytes):
+            items.append({"kind": kind, "name": _udp_option_name(kind), "length": None})
+            return items, "malformed_envelope"
+        length = option_bytes[index + 1]
+        if length < 2 or index + length > len(option_bytes):
+            items.append(
+                {
+                    "kind": kind,
+                    "name": _udp_option_name(kind),
+                    "length": length,
+                    "data_hex": option_bytes[index + 2 :].hex(),
+                }
+            )
+            return items, "malformed_envelope"
+
+        data = option_bytes[index + 2 : index + length]
+        item = _udp_option_item(kind, length, data)
+        items.append(item)
+        if status == "valid":
+            status = _udp_option_status_for_item(kind, data, user_payload)
+        if status == "unknown_unsafe":
+            break
+        index += length
+    return items, status
+
+
+def _udp_option_item(kind: int, length: int, data: bytes) -> JSONObject:
+    item: JSONObject = {
+        "kind": kind,
+        "name": _udp_option_name(kind),
+        "length": length,
+        "data_hex": data.hex(),
+    }
+    if kind == 2 and len(data) == 4:
+        item["checksum"] = int.from_bytes(data, "big")
+    elif kind == 4 and len(data) == 2:
+        item["max_datagram_size"] = int.from_bytes(data, "big")
+    elif kind == 5 and len(data) == 3:
+        item["max_reassembled_size"] = int.from_bytes(data[:2], "big")
+        item["segment_count"] = data[2]
+    elif kind in {6, 7} and len(data) == 4:
+        item["token"] = int.from_bytes(data, "big")
+    elif kind == 8 and len(data) == 8:
+        item["tsval"] = int.from_bytes(data[:4], "big")
+        item["tsecr"] = int.from_bytes(data[4:], "big")
+    return item
+
+
+def _udp_option_name(kind: int) -> str:
+    names = {
+        0: "eol",
+        1: "nop",
+        2: "apc",
+        3: "frag",
+        4: "mds",
+        5: "mrds",
+        6: "req",
+        7: "res",
+        8: "time",
+        9: "auth",
+        127: "exp",
+        254: "uexp",
+    }
+    if kind in names:
+        return names[kind]
+    if 10 <= kind <= 126:
+        return "unassigned_safe"
+    if 128 <= kind <= 191:
+        return "reserved_safe"
+    if 194 <= kind <= 253:
+        return "unassigned_unsafe"
+    return "reserved_unsafe"
+
+
+def _udp_option_status_for_item(kind: int, data: bytes, user_payload: bytes) -> str:
+    if kind == 2 and len(data) == 4:
+        return (
+            "valid"
+            if int.from_bytes(data, "big") == _crc32c(user_payload)
+            else "additional_payload_checksum_invalid"
+        )
+    if kind == 3:
+        return "unsupported_fragmentation"
+    if 10 <= kind <= 126:
+        return "unknown_safe"
+    if 194 <= kind <= 253:
+        return "unknown_unsafe"
+    return "valid"
+
+
+def _udp_option_checksum_valid(
+    surplus: bytes,
+    *,
+    alignment_len: int,
+    option_checksum: int,
+    udp_checksum: int,
+) -> bool:
+    if option_checksum == 0:
+        return udp_checksum == 0
+    if len(surplus) > 0xFFFF:
+        return False
+    return _internet_checksum(len(surplus).to_bytes(2, "big") + surplus[alignment_len:]) == 0
+
+
+def _udp_checksum_status(raw: bytes, layout: Mapping[str, int]) -> str:
+    checksum = int.from_bytes(raw[layout["udp_start"] + 6 : layout["udp_start"] + 8], "big")
+    if layout["ip_version"] == 4 and checksum == 0:
+        return "ipv4_no_checksum"
+    if layout["ip_version"] == 6 and checksum == 0:
+        return "ipv6_zero_checksum_exception_required"
+    return "valid" if _udp_checksum_valid(raw, layout) else "invalid"
+
+
+def _udp_checksum_valid(raw: bytes, layout: Mapping[str, int]) -> bool:
+    udp_start = layout["udp_start"]
+    udp_length = layout["udp_length"]
+    udp_segment = raw[udp_start : udp_start + udp_length]
+    l3_start = layout["l3_start"]
+    if layout["ip_version"] == 4:
+        pseudo = (
+            raw[l3_start + 12 : l3_start + 20]
+            + b"\x00"
+            + bytes([17])
+            + udp_length.to_bytes(2, "big")
+        )
+    else:
+        pseudo = (
+            raw[l3_start + 8 : l3_start + 40]
+            + udp_length.to_bytes(4, "big")
+            + b"\x00\x00\x00"
+            + bytes([17])
+        )
+    return _internet_checksum(pseudo + udp_segment) == 0
+
+
+def _udp_layout(root: str | None, raw: bytes) -> dict[str, int]:
+    l3_start = _l3_start_offset(root, raw)
+    if l3_start >= len(raw):
+        raise ValueError(f"packet is too short for root {root!r}")
+    version = raw[l3_start] >> 4
+    if version == 4:
+        ihl = (raw[l3_start] & 0x0F) * 4
+        if ihl < 20 or l3_start + ihl + 8 > len(raw):
+            raise ValueError("IPv4 packet is too short to locate UDP header")
+        if raw[l3_start + 9] != 17:
+            raise ValueError("IPv4 packet does not carry UDP")
+        ip_end = l3_start + int.from_bytes(raw[l3_start + 2 : l3_start + 4], "big")
+        udp_start = l3_start + ihl
+    elif version == 6:
+        if l3_start + 48 > len(raw):
+            raise ValueError("IPv6 packet is too short to locate UDP header")
+        ip_end = l3_start + 40 + int.from_bytes(raw[l3_start + 4 : l3_start + 6], "big")
+        udp_start = _ipv6_udp_start(raw, l3_start)
+    else:
+        raise ValueError(f"unsupported IP version for UDP surplus parsing: {version}")
+
+    if udp_start + 8 > len(raw):
+        raise ValueError("packet is too short for UDP header")
+    udp_length = int.from_bytes(raw[udp_start + 4 : udp_start + 6], "big")
+    if udp_length < 8:
+        raise ValueError(f"UDP length is too short: {udp_length}")
+    udp_payload_start = udp_start + 8
+    udp_payload_end = udp_start + udp_length
+    if udp_payload_end > ip_end or ip_end > len(raw):
+        raise ValueError("UDP/IP lengths exceed available packet bytes")
+    return {
+        "ip_version": version,
+        "l3_start": l3_start,
+        "ip_end": ip_end,
+        "udp_start": udp_start,
+        "udp_length": udp_length,
+        "udp_payload_start": udp_payload_start,
+        "udp_payload_end": udp_payload_end,
+        "surplus_start": udp_payload_end,
+    }
+
+
+def _l3_start_offset(root: str | None, raw: bytes) -> int:
+    if root in {None, "l3:ipv4", "l3:ipv6", "IP", "IPv6"}:
+        return 0
+    if root in {"link:linux-cooked", "link:linux-sll", "CookedLinux"}:
+        return 16
+    if root in {"link:null-loopback", "Loopback"}:
+        return 4
+    if root in {"link:ethernet", "Ether"}:
+        offset = 14
+        while len(raw) >= offset + 4:
+            ethertype = int.from_bytes(raw[offset - 2 : offset], "big")
+            if ethertype not in {0x8100, 0x88A8, 0x9100}:
+                return offset
+            offset += 4
+        return offset
+    raise ValueError(f"unsupported UDP surplus root: {root!r}")
+
+
+def _ipv6_udp_start(raw: bytes, l3_start: int) -> int:
+    next_header = raw[l3_start + 6]
+    cursor = l3_start + 40
+    while next_header != 17:
+        if cursor + 8 > len(raw):
+            raise ValueError("IPv6 extension header chain is truncated before UDP")
+        if next_header == 44:
+            next_header = raw[cursor]
+            cursor += 8
+            continue
+        if next_header in {0, 43, 60}:
+            header_len = (raw[cursor + 1] + 1) * 8
+            next_header = raw[cursor]
+            cursor += header_len
+            continue
+        raise ValueError(f"IPv6 packet does not carry UDP; next_header={next_header}")
+    return cursor
+
+
+def _internet_checksum(data: bytes) -> int:
+    if len(data) % 2:
+        data += b"\x00"
+    total = 0
+    for index in range(0, len(data), 2):
+        total += int.from_bytes(data[index : index + 2], "big")
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
+
+
+def _crc32c(data: bytes) -> int:
+    crc = 0xFFFF_FFFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ 0x82F6_3B78
+            else:
+                crc >>= 1
+    return (~crc) & 0xFFFF_FFFF
+
+
 def _field_key(existing: Mapping[str, JSONObject], layer_name: str) -> str:
     if layer_name not in existing:
         return layer_name
@@ -771,6 +1180,12 @@ def _expected_stack(plan: PacketPlan) -> list[str]:
     output = [aliases.get(layer.lower(), layer.lower()) for layer in plan.stack]
     if payload_hex == "":
         output = [layer for layer in output if layer != "payload"]
+    if _plan_has_udp_surplus_options(plan):
+        insert_after = "payload" if "payload" in output else "udp"
+        try:
+            output.insert(output.index(insert_after) + 1, "UdpOptions")
+        except ValueError:
+            output.append("UdpOptions")
     return output
 
 
@@ -847,6 +1262,12 @@ def _plan_layer_fields(plan: PacketPlan, layer: str) -> JSONObject:
     if not isinstance(value, Mapping):
         raise ValueError(f"{layer} plan fields must be an object")
     return dict(value)
+
+
+def _plan_has_udp_surplus_options(plan: PacketPlan) -> bool:
+    udp = _plan_layer_fields(plan, "udp")
+    options = udp.get("options")
+    return isinstance(options, Mapping) and options.get("format") == "udp_surplus_options"
 
 
 def _ethertype_value(value: object) -> int:

@@ -62,9 +62,9 @@ coverage_cases:
 
 backend_support:
   scapy:
-    status: partial
+    status: supported
     notes:
-      - Step 34 generates fields.udp.options logical surplus intent; Scapy byte materialization follows in backend steps.
+      - Scapy has no native RFC 9868 UDP option layer; the backend materializes exact surplus bytes and normalizes them as byte-level UDP option metadata.
   libcrafter:
     status: partial
     notes:
