@@ -35,6 +35,7 @@ CAPTURE_COMPARE_ROOTS = {
     "IPv4": "l3:ipv4",
     "IPv6": "l3:ipv6",
     "link:ethernet": "link:ethernet",
+    "l2:ipv4": "l3:ipv4",
     "l3:ipv4": "l3:ipv4",
     "l3:ipv6": "l3:ipv6",
 }

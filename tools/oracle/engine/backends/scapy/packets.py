@@ -63,6 +63,7 @@ _SCAPY_DECODER_BY_ROOT: dict[str, str] = {
     "link:linux-sll": "CookedLinux",
     "link:null-loopback": "Loopback",
     "link:raw": "Raw",
+    "l2:ipv4": "IP",
     "l3:ipv4": "IP",
     "l3:ipv6": "IPv6",
 }
@@ -72,6 +73,7 @@ _ROOT_FIRST_LAYERS: dict[str, set[str]] = {
     "link:linux-sll": {"linux_cooked"},
     "link:null-loopback": {"null_loopback"},
     "link:raw": {"payload"},
+    "l2:ipv4": {"ipv4"},
     "l3:ipv4": {"ipv4"},
     "l3:ipv6": {"ipv6"},
 }
