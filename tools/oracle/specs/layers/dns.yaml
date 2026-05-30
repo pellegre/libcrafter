@@ -248,6 +248,7 @@ coverage_cases:
   - dns-raw-unknown-records
   - dns-record-raw-unknown
   - dns-edns-opt-basic
+  - dns-edns-options
   - dns-edns-options-known
   - dns-dnssec-ds
   - dns-dnssec-dnskey

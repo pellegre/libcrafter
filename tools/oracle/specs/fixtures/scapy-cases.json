@@ -835,6 +835,20 @@
       "notes": "Oracle fixture case. Response carrying several EDNS(0) OPT pseudo-records in the additional section with a root owner name and empty option list, spanning the bare default, non-default UDP payload sizes (512, 1232, 65535) in the OPT CLASS, a non-zero extended RCODE, a non-default EDNS version, and the DO flag set and clear packed into the OPT TTL. Scapy DNSRROPT and libcrafter DnsRecord::opt pack the same wire fields, so strict bytes hold in both directions."
     },
     {
+      "name": "dns-edns-options",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Response carrying one EDNS(0) OPT pseudo-record whose RDATA holds an ordered EDNS option list: NSID (3), COOKIE (10), Padding (12), DAU (5, a mnemonic without a libcrafter constructor), and an unknown option code (65534). Each OPTION-DATA payload is raw hex carried verbatim as a generic EDNS0TLV(optcode=N, optdata=...) on the Scapy reference and as an EdnsOption on libcrafter, preserving the exact code and data bytes in a fixed order. Strict bytes in both directions."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",
