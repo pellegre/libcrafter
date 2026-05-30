@@ -6,6 +6,7 @@ summary: ARP fixed header and variable sender/target address fields (RFC 826), d
 roots: []
 parents:
   - ethernet
+  - linux_cooked
 children: []
 
 fields:
