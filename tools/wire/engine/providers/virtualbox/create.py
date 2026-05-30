@@ -27,6 +27,7 @@ from ..vm import (
     vm_resource,
     discover_linux_endpoint_interfaces,
     command_error,
+    vm_disk_size_mib,
 )
 from .bridge import (
     discover_bridge_interfaces,
@@ -301,6 +302,7 @@ def _create_live_endpoint(
             download_runner=download_runner or _default_download_runner(),
             network_config=_virtualbox_network_config(),
         )
+        _resize_virtualbox_disk(artifacts.disk_path, artifacts.disk_size, runner=recorder)
 
         resources = _virtualbox_provider_resources(
             vm_name=vm_name,
@@ -511,6 +513,24 @@ def _run_vbox(argv: Sequence[object], *, runner: VirtualBoxRunner) -> CommandRes
     if not result.ok:
         raise RuntimeError(command_error("VirtualBox command failed", result))
     return result
+
+
+def _resize_virtualbox_disk(
+    disk_path: Path,
+    disk_size: str,
+    *,
+    runner: VirtualBoxRunner,
+) -> None:
+    _run_vbox(
+        [
+            VBOXMANAGE_COMMAND,
+            "modifymedium",
+            str(disk_path),
+            "--resize",
+            str(vm_disk_size_mib(disk_size)),
+        ],
+        runner=runner,
+    )
 
 
 def _virtualbox_boot_commands(

@@ -720,7 +720,7 @@ class _QemuLiveFakeRunner:
             Path(parts[-3]).write_text("seed\n", encoding="utf-8")
             return _result(parts)
         if parts[:2] == (QEMU_IMG_COMMAND, "create"):
-            Path(parts[-1]).write_text("qcow2 overlay\n", encoding="utf-8")
+            Path(parts[-2]).write_text("qcow2 overlay\n", encoding="utf-8")
             return _result(parts)
         if parts[0] == QEMU_SYSTEM_COMMAND:
             self.control_mac = _device_mac(parts, "control0")

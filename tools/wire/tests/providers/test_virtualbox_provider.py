@@ -230,6 +230,13 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
                 ("VBoxManage", "list", "bridgedifs"),
                 (
                     "VBoxManage",
+                    "modifymedium",
+                    disk_path,
+                    "--resize",
+                    "16384",
+                ),
+                (
+                    "VBoxManage",
                     "createvm",
                     "--name",
                     vm_name,
