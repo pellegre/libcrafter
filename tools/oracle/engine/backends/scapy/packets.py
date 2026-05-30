@@ -618,12 +618,12 @@ def _dhcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
         op=_dhcp_op(_required_field(dhcp_fields, "dhcp", "op")),
         htype=_hardware_type_value(_required_field(dhcp_fields, "dhcp", "hardware_type", "htype")),
         hlen=_int(_required_field(dhcp_fields, "dhcp", "hardware_length", "hlen"), 0),
-        xid=_int(_required_field(dhcp_fields, "dhcp", "transaction_id", "xid"), 0),
+        xid=_int(_optional_field(dhcp_fields, "transaction_id", "xid"), 0),
         flags=_dhcp_flags(_required_field(dhcp_fields, "dhcp", "flags")),
-        ciaddr=_text(_required_field(dhcp_fields, "dhcp", "client_ip", "ciaddr"), ""),
-        yiaddr=_text(_required_field(dhcp_fields, "dhcp", "your_ip", "yiaddr"), ""),
+        ciaddr=_text(_optional_field(dhcp_fields, "client_ip", "ciaddr"), "0.0.0.0"),
+        yiaddr=_text(_optional_field(dhcp_fields, "your_ip", "yiaddr"), "0.0.0.0"),
         chaddr=_dhcp_chaddr(
-            _required_field(dhcp_fields, "dhcp", "client_hardware_address", "chaddr")
+            _optional_field(dhcp_fields, "client_hardware_address", "chaddr")
         ),
     )
     return bootp / scapy_all.DHCP(
