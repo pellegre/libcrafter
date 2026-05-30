@@ -167,31 +167,172 @@ macro_rules! impl_layer_div {
     };
 }
 
+/// A DNS owner or target name preserved as wire labels.
+///
+/// DNS labels are byte sequences, not text (RFC 1035 Section 3.1). Most names
+/// are text-compatible and round trip through the ergonomic trailing-dot string
+/// API, but the wire format permits arbitrary octets in a label. `DnsName`
+/// keeps the exact label bytes so non-text names are not silently lost, while
+/// still exposing a stable presentation string.
+///
+/// The presentation string uses the RFC 1035 Section 5.1 master-file escaping
+/// convention so non-text and special bytes survive a string round trip:
+///
+/// - bytes outside the printable ASCII range, and `.` or `\` inside a label,
+///   are written as `\DDD` (a backslash followed by exactly three decimal
+///   digits, the octet value), matching RFC 1035 Section 5.1 and RFC 4343
+///   Section 2.1.
+/// - printable ASCII bytes are written verbatim.
+/// - the trailing dot terminates the name; the root name is `"."`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DnsName {
+    labels: Vec<Vec<u8>>,
+    presentation: String,
+}
+
+impl DnsName {
+    /// Build a name from raw wire labels (each label is a byte slice, the root
+    /// label is the empty list).
+    ///
+    /// Returns an error when a label exceeds 63 bytes or the encoded name would
+    /// exceed the 255-octet wire limit (RFC 1035 Section 2.3.4).
+    pub fn from_labels<I, L>(labels: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = L>,
+        L: AsRef<[u8]>,
+    {
+        let labels: Vec<Vec<u8>> = labels
+            .into_iter()
+            .map(|label| label.as_ref().to_vec())
+            .collect();
+        validate_labels(&labels)?;
+        let presentation = labels_to_presentation(&labels);
+        Ok(Self {
+            labels,
+            presentation,
+        })
+    }
+
+    /// Parse a presentation-form name, honoring the RFC 1035 Section 5.1
+    /// `\DDD` and `\X` escapes so non-text labels can be expressed as text.
+    ///
+    /// A trailing dot is accepted and canonical; a bare relative name is
+    /// treated as fully qualified.
+    pub fn parse(name: &str) -> Result<Self> {
+        let labels = presentation_to_labels(name)?;
+        validate_labels(&labels)?;
+        let presentation = labels_to_presentation(&labels);
+        Ok(Self {
+            labels,
+            presentation,
+        })
+    }
+
+    /// The root name (`"."`).
+    pub fn root() -> Self {
+        Self {
+            labels: Vec::new(),
+            presentation: ".".to_string(),
+        }
+    }
+
+    /// Stable presentation string in canonical trailing-dot form.
+    ///
+    /// Text-compatible names match the historical string form exactly;
+    /// non-text labels use `\DDD` escapes.
+    pub fn presentation(&self) -> &str {
+        &self.presentation
+    }
+
+    /// Exact wire-label bytes, in order. The root name yields an empty slice.
+    pub fn labels(&self) -> &[Vec<u8>] {
+        &self.labels
+    }
+
+    /// True when every label is valid UTF-8 with no byte requiring an escape,
+    /// so the presentation string is a faithful text rendering.
+    pub fn is_text(&self) -> bool {
+        self.labels.iter().all(|label| label_is_text(label))
+    }
+
+    fn encoded_len(&self) -> usize {
+        self.labels
+            .iter()
+            .map(|label| 1 + label.len())
+            .sum::<usize>()
+            + 1
+    }
+
+    fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let mut wire_len = 1usize;
+        for label in &self.labels {
+            if label.is_empty() {
+                return Err(CrafterError::invalid_field_value(
+                    "dns.name",
+                    "empty label inside DNS name",
+                ));
+            }
+            if label.len() > DNS_MAX_LABEL_LEN {
+                return Err(CrafterError::invalid_field_value(
+                    "dns.name",
+                    "label exceeds 63 bytes",
+                ));
+            }
+            wire_len += 1 + label.len();
+            if wire_len > DNS_MAX_NAME_WIRE_LEN {
+                return Err(CrafterError::invalid_field_value(
+                    "dns.name",
+                    "encoded name exceeds 255 bytes",
+                ));
+            }
+            out.push(label.len() as u8);
+            out.extend_from_slice(label);
+        }
+        out.push(0);
+        Ok(())
+    }
+}
+
+impl From<&str> for DnsName {
+    /// Lossy convenience conversion used by builders. Falls back to the root
+    /// name when the input cannot be parsed so infallible builder call sites
+    /// keep compiling; use [`DnsName::parse`] when an error is meaningful.
+    fn from(name: &str) -> Self {
+        DnsName::parse(name).unwrap_or_else(|_| DnsName::root())
+    }
+}
+
+impl From<String> for DnsName {
+    fn from(name: String) -> Self {
+        DnsName::from(name.as_str())
+    }
+}
+
 /// Parsed or constructible DNS question.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DnsQuestion {
-    name: String,
+    name: DnsName,
     question_type: u16,
     question_class: u16,
 }
 
 impl DnsQuestion {
     /// Create a DNS question with an explicit type and IN class.
-    pub fn new(name: impl Into<String>, question_type: u16) -> Self {
+    pub fn new(name: impl Into<DnsName>, question_type: u16) -> Self {
         Self {
-            name: canonical_name(name),
+            name: name.into(),
             question_type,
             question_class: DNS_CLASS_IN,
         }
     }
 
     /// Create an A question.
-    pub fn a(name: impl Into<String>) -> Self {
+    pub fn a(name: impl Into<DnsName>) -> Self {
         Self::new(name, DNS_TYPE_A)
     }
 
     /// Create an AAAA question.
-    pub fn aaaa(name: impl Into<String>) -> Self {
+    pub fn aaaa(name: impl Into<DnsName>) -> Self {
         Self::new(name, DNS_TYPE_AAAA)
     }
 
@@ -213,9 +354,23 @@ impl DnsQuestion {
         self
     }
 
-    /// Question name in canonical trailing-dot form.
+    /// Question name in canonical trailing-dot presentation form.
+    ///
+    /// Non-text labels are rendered with `\DDD` escapes; use
+    /// [`DnsQuestion::dns_name`] or [`DnsQuestion::name_labels`] for the exact
+    /// wire bytes.
     pub fn name(&self) -> &str {
+        self.name.presentation()
+    }
+
+    /// Typed owner name preserving the exact wire labels.
+    pub fn dns_name(&self) -> &DnsName {
         &self.name
+    }
+
+    /// Exact wire-label bytes of the question name.
+    pub fn name_labels(&self) -> &[Vec<u8>] {
+        self.name.labels()
     }
 
     /// Question type value.
@@ -229,11 +384,11 @@ impl DnsQuestion {
     }
 
     fn encoded_len(&self) -> usize {
-        encoded_name_len(&self.name) + 4
+        self.name.encoded_len() + 4
     }
 
     fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
-        encode_dns_name(&self.name, out)?;
+        self.name.encode(out)?;
         out.extend_from_slice(&self.question_type.to_be_bytes());
         out.extend_from_slice(&self.question_class.to_be_bytes());
         Ok(())
@@ -248,13 +403,13 @@ pub enum DnsRecordData {
     /// IPv6 address data for AAAA records.
     Aaaa(Ipv6Addr),
     /// Domain name data for NS, CNAME, and PTR records.
-    Name(String),
+    Name(DnsName),
     /// Mail exchanger data.
     Mx {
         /// Preference value.
         preference: u16,
         /// Mail exchanger domain name.
-        exchange: String,
+        exchange: DnsName,
     },
     /// TXT strings, each encoded as one DNS character-string.
     Txt(Vec<Vec<u8>>),
@@ -264,8 +419,8 @@ pub enum DnsRecordData {
 
 impl DnsRecordData {
     /// Create name-like record data.
-    pub fn name(name: impl Into<String>) -> Self {
-        Self::Name(canonical_name(name))
+    pub fn name(name: impl Into<DnsName>) -> Self {
+        Self::Name(name.into())
     }
 
     /// Create TXT record data from one string.
@@ -287,8 +442,8 @@ impl DnsRecordData {
         match self {
             Self::A(_) => 4,
             Self::Aaaa(_) => 16,
-            Self::Name(name) => encoded_name_len(name),
-            Self::Mx { exchange, .. } => 2 + encoded_name_len(exchange),
+            Self::Name(name) => name.encoded_len(),
+            Self::Mx { exchange, .. } => 2 + exchange.encoded_len(),
             Self::Txt(strings) => strings.iter().map(|value| 1 + value.len()).sum(),
             Self::Raw(bytes) => bytes.len(),
         }
@@ -307,13 +462,13 @@ impl DnsRecordData {
         match self {
             Self::A(address) => out.extend_from_slice(&address.octets()),
             Self::Aaaa(address) => out.extend_from_slice(&address.octets()),
-            Self::Name(name) => encode_dns_name(name, out)?,
+            Self::Name(name) => name.encode(out)?,
             Self::Mx {
                 preference,
                 exchange,
             } => {
                 out.extend_from_slice(&preference.to_be_bytes());
-                encode_dns_name(exchange, out)?;
+                exchange.encode(out)?;
             }
             Self::Txt(strings) => {
                 for text in strings {
@@ -336,7 +491,7 @@ impl DnsRecordData {
 /// DNS resource record.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DnsRecord {
-    name: String,
+    name: DnsName,
     record_type: u16,
     class: u16,
     ttl: u32,
@@ -346,14 +501,14 @@ pub struct DnsRecord {
 impl DnsRecord {
     /// Create a DNS resource record.
     pub fn new(
-        name: impl Into<String>,
+        name: impl Into<DnsName>,
         record_type: u16,
         class: u16,
         ttl: u32,
         data: DnsRecordData,
     ) -> Self {
         Self {
-            name: canonical_name(name),
+            name: name.into(),
             record_type,
             class,
             ttl,
@@ -362,7 +517,7 @@ impl DnsRecord {
     }
 
     /// Create an A answer.
-    pub fn a(name: impl Into<String>, address: Ipv4Addr, ttl: u32) -> Self {
+    pub fn a(name: impl Into<DnsName>, address: Ipv4Addr, ttl: u32) -> Self {
         Self::new(
             name,
             DNS_TYPE_A,
@@ -373,7 +528,7 @@ impl DnsRecord {
     }
 
     /// Create an AAAA answer.
-    pub fn aaaa(name: impl Into<String>, address: Ipv6Addr, ttl: u32) -> Self {
+    pub fn aaaa(name: impl Into<DnsName>, address: Ipv6Addr, ttl: u32) -> Self {
         Self::new(
             name,
             DNS_TYPE_AAAA,
@@ -384,7 +539,7 @@ impl DnsRecord {
     }
 
     /// Create a CNAME answer.
-    pub fn cname(name: impl Into<String>, target: impl Into<String>, ttl: u32) -> Self {
+    pub fn cname(name: impl Into<DnsName>, target: impl Into<DnsName>, ttl: u32) -> Self {
         Self::new(
             name,
             DNS_TYPE_CNAME,
@@ -394,9 +549,23 @@ impl DnsRecord {
         )
     }
 
-    /// Record name in canonical trailing-dot form.
+    /// Record name in canonical trailing-dot presentation form.
+    ///
+    /// Non-text labels are rendered with `\DDD` escapes; use
+    /// [`DnsRecord::dns_name`] or [`DnsRecord::name_labels`] for the exact wire
+    /// bytes.
     pub fn name(&self) -> &str {
+        self.name.presentation()
+    }
+
+    /// Typed owner name preserving the exact wire labels.
+    pub fn dns_name(&self) -> &DnsName {
         &self.name
+    }
+
+    /// Exact wire-label bytes of the record name.
+    pub fn name_labels(&self) -> &[Vec<u8>] {
+        self.name.labels()
     }
 
     /// Record type value.
@@ -420,11 +589,11 @@ impl DnsRecord {
     }
 
     fn encoded_len(&self) -> usize {
-        encoded_name_len(&self.name) + 10 + self.data.encoded_len()
+        self.name.encoded_len() + 10 + self.data.encoded_len()
     }
 
     fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
-        encode_dns_name(&self.name, out)?;
+        self.name.encode(out)?;
         out.extend_from_slice(&self.record_type.to_be_bytes());
         out.extend_from_slice(&self.class.to_be_bytes());
         out.extend_from_slice(&self.ttl.to_be_bytes());
@@ -465,17 +634,17 @@ impl Dns {
     }
 
     /// Create a DNS query for a single name and type.
-    pub fn query(name: impl Into<String>, question_type: u16) -> Self {
+    pub fn query(name: impl Into<DnsName>, question_type: u16) -> Self {
         Self::new().question(DnsQuestion::new(name, question_type))
     }
 
     /// Create an A query.
-    pub fn a_query(name: impl Into<String>) -> Self {
+    pub fn a_query(name: impl Into<DnsName>) -> Self {
         Self::query(name, DNS_TYPE_A)
     }
 
     /// Create an AAAA query.
-    pub fn aaaa_query(name: impl Into<String>) -> Self {
+    pub fn aaaa_query(name: impl Into<DnsName>) -> Self {
         Self::query(name, DNS_TYPE_AAAA)
     }
 
@@ -744,8 +913,23 @@ pub(crate) fn append_dns_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> 
 /// Decode a DNS name from a full DNS message and byte offset.
 ///
 /// The returned offset is the number of bytes consumed at the original offset,
-/// so compressed names return the two-byte pointer length.
+/// so compressed names return the two-byte pointer length. The name is returned
+/// in canonical trailing-dot presentation form; non-text labels are rendered
+/// with `\DDD` escapes (RFC 1035 Section 5.1). Use [`decode_dns_name_typed`] to
+/// recover the exact wire-label bytes.
 pub fn decode_dns_name(message: &[u8], offset: usize) -> Result<(String, usize)> {
+    let (name, used) = decode_dns_name_typed(message, offset)?;
+    Ok((name.presentation().to_string(), used))
+}
+
+/// Decode a DNS name into a byte-preserving [`DnsName`].
+///
+/// Behaves like [`decode_dns_name`] but keeps the exact wire-label bytes, so
+/// labels that are not valid UTF-8 round trip without loss. Compression
+/// pointers are followed; cycles, reserved markers, out-of-range pointers,
+/// truncated pointers, label-length overrun, and full-name length overrun all
+/// return structured [`CrafterError`] values rather than panicking.
+pub fn decode_dns_name_typed(message: &[u8], offset: usize) -> Result<(DnsName, usize)> {
     if offset >= message.len() {
         return Err(CrafterError::buffer_too_short(
             "dns.name",
@@ -754,7 +938,8 @@ pub fn decode_dns_name(message: &[u8], offset: usize) -> Result<(String, usize)>
         ));
     }
 
-    let mut labels = Vec::new();
+    let mut labels: Vec<Vec<u8>> = Vec::new();
+    let mut wire_len = 1usize;
     let mut cursor = offset;
     let mut consumed = None;
     let mut visited = Vec::new();
@@ -791,12 +976,14 @@ pub fn decode_dns_name(message: &[u8], offset: usize) -> Result<(String, usize)>
                                 )
                             })?,
                     };
-                    let name = if labels.is_empty() {
-                        ".".to_string()
-                    } else {
-                        format!("{}.", labels.join("."))
-                    };
-                    return Ok((name, used));
+                    let presentation = labels_to_presentation(&labels);
+                    return Ok((
+                        DnsName {
+                            labels,
+                            presentation,
+                        },
+                        used,
+                    ));
                 }
 
                 let label_len = length as usize;
@@ -815,10 +1002,14 @@ pub fn decode_dns_name(message: &[u8], offset: usize) -> Result<(String, usize)>
                         message.len(),
                     ));
                 }
-                let label = str::from_utf8(&message[label_start..label_end]).map_err(|_| {
-                    CrafterError::invalid_field_value("dns.name", "label is not valid UTF-8")
-                })?;
-                labels.push(label.to_string());
+                wire_len += 1 + label_len;
+                if wire_len > DNS_MAX_NAME_WIRE_LEN {
+                    return Err(CrafterError::invalid_field_value(
+                        "dns.name",
+                        "decoded name exceeds 255 bytes",
+                    ));
+                }
+                labels.push(message[label_start..label_end].to_vec());
                 cursor = label_end;
             }
             DNS_NAME_POINTER_TAG => {
@@ -910,7 +1101,7 @@ fn decode_dns(bytes: &[u8]) -> Result<Dns> {
 }
 
 fn decode_question(bytes: &[u8], offset: usize) -> Result<(DnsQuestion, usize)> {
-    let (name, consumed) = decode_dns_name(bytes, offset)?;
+    let (name, consumed) = decode_dns_name_typed(bytes, offset)?;
     let fields_offset = offset + consumed;
     if fields_offset + 4 > bytes.len() {
         return Err(CrafterError::buffer_too_short(
@@ -931,7 +1122,7 @@ fn decode_question(bytes: &[u8], offset: usize) -> Result<(DnsQuestion, usize)> 
 }
 
 fn decode_record(bytes: &[u8], offset: usize) -> Result<(DnsRecord, usize)> {
-    let (name, consumed) = decode_dns_name(bytes, offset)?;
+    let (name, consumed) = decode_dns_name_typed(bytes, offset)?;
     let fields_offset = offset + consumed;
     if fields_offset + 10 > bytes.len() {
         return Err(CrafterError::buffer_too_short(
@@ -999,7 +1190,7 @@ fn decode_record_data(
             )))
         }
         DNS_TYPE_CNAME | DNS_TYPE_NS | DNS_TYPE_PTR => {
-            let (name, consumed) = decode_dns_name(message, rdata_start)?;
+            let (name, consumed) = decode_dns_name_typed(message, rdata_start)?;
             ensure_rdata_consumed("dns.name.rdata", consumed, rdata.len())?;
             Ok(DnsRecordData::Name(name))
         }
@@ -1008,7 +1199,7 @@ fn decode_record_data(
                 return Err(CrafterError::buffer_too_short("dns.mx", 3, rdata.len()));
             }
             let preference = read_u16_be(&rdata[0..2])?;
-            let (exchange, consumed) = decode_dns_name(message, rdata_start + 2)?;
+            let (exchange, consumed) = decode_dns_name_typed(message, rdata_start + 2)?;
             ensure_rdata_consumed("dns.mx.exchange", consumed + 2, rdata.len())?;
             Ok(DnsRecordData::Mx {
                 preference,
@@ -1044,62 +1235,156 @@ fn ensure_rdata_consumed(field: &'static str, consumed: usize, available: usize)
     Ok(())
 }
 
-fn encode_dns_name(name: &str, out: &mut Vec<u8>) -> Result<()> {
-    if name == "." || name.is_empty() {
-        out.push(0);
-        return Ok(());
-    }
-
+/// Validate decoded or constructed labels against the RFC 1035 length bounds:
+/// each label is at most 63 octets (Section 2.3.4) and the encoded name is at
+/// most 255 octets including the per-label length bytes and the root
+/// terminator.
+fn validate_labels(labels: &[Vec<u8>]) -> Result<()> {
     let mut wire_len = 1usize;
-    let stripped = name.strip_suffix('.').unwrap_or(name);
-    for label in stripped.split('.') {
+    for label in labels {
         if label.is_empty() {
             return Err(CrafterError::invalid_field_value(
                 "dns.name",
                 "empty label inside DNS name",
             ));
         }
-        let bytes = label.as_bytes();
-        if bytes.len() > DNS_MAX_LABEL_LEN {
+        if label.len() > DNS_MAX_LABEL_LEN {
             return Err(CrafterError::invalid_field_value(
                 "dns.name",
                 "label exceeds 63 bytes",
             ));
         }
-        wire_len += 1 + bytes.len();
+        wire_len += 1 + label.len();
         if wire_len > DNS_MAX_NAME_WIRE_LEN {
             return Err(CrafterError::invalid_field_value(
                 "dns.name",
                 "encoded name exceeds 255 bytes",
             ));
         }
-        out.push(bytes.len() as u8);
-        out.extend_from_slice(bytes);
     }
-    out.push(0);
     Ok(())
 }
 
-fn encoded_name_len(name: &str) -> usize {
-    if name == "." || name.is_empty() {
-        1
-    } else {
-        let stripped = name.strip_suffix('.').unwrap_or(name);
-        stripped
-            .split('.')
-            .map(|label| 1 + label.len())
-            .sum::<usize>()
-            + 1
-    }
+/// True when a label is valid UTF-8 and contains only bytes that render
+/// verbatim in presentation form (printable ASCII other than `.` and `\`).
+fn label_is_text(label: &[u8]) -> bool {
+    str::from_utf8(label).is_ok() && label.iter().all(|&byte| byte_renders_verbatim(byte))
 }
 
-fn canonical_name(name: impl Into<String>) -> String {
-    let name = name.into();
-    if name.is_empty() || name == "." || name.ends_with('.') {
-        name
-    } else {
-        format!("{name}.")
+/// True when a byte is printable ASCII and is neither `.` nor `\`, so it needs
+/// no RFC 1035 Section 5.1 escaping.
+fn byte_renders_verbatim(byte: u8) -> bool {
+    byte > 0x20 && byte < 0x7f && byte != b'.' && byte != b'\\'
+}
+
+/// Render wire labels into a canonical trailing-dot presentation string using
+/// the RFC 1035 Section 5.1 escaping convention (`\DDD` for octets that do not
+/// render verbatim, including `.` and `\` inside a label). The root name is
+/// `"."`.
+fn labels_to_presentation(labels: &[Vec<u8>]) -> String {
+    if labels.is_empty() {
+        return ".".to_string();
     }
+    let mut out = String::new();
+    for label in labels {
+        for &byte in label {
+            if byte_renders_verbatim(byte) {
+                out.push(byte as char);
+            } else {
+                out.push('\\');
+                out.push_str(&format!("{byte:03}"));
+            }
+        }
+        out.push('.');
+    }
+    out
+}
+
+/// Parse a presentation-form name into wire labels, honoring the RFC 1035
+/// Section 5.1 `\DDD` (decimal octet) and `\X` (literal character) escapes. An
+/// empty input or `"."` is the root name. A trailing dot is canonical and
+/// stripped before splitting; a bare relative name is accepted as fully
+/// qualified.
+fn presentation_to_labels(name: &str) -> Result<Vec<Vec<u8>>> {
+    if name.is_empty() || name == "." {
+        return Ok(Vec::new());
+    }
+
+    let bytes = name.as_bytes();
+    let mut labels: Vec<Vec<u8>> = Vec::new();
+    let mut current: Vec<u8> = Vec::new();
+    let mut index = 0;
+    let mut saw_label = false;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        match byte {
+            b'.' => {
+                if current.is_empty() {
+                    return Err(CrafterError::invalid_field_value(
+                        "dns.name",
+                        "empty label inside DNS name",
+                    ));
+                }
+                labels.push(core::mem::take(&mut current));
+                saw_label = true;
+                index += 1;
+            }
+            b'\\' => {
+                let next = *bytes.get(index + 1).ok_or_else(|| {
+                    CrafterError::invalid_field_value(
+                        "dns.name",
+                        "trailing backslash escape in DNS name",
+                    )
+                })?;
+                if next.is_ascii_digit() {
+                    if index + 3 >= bytes.len() {
+                        return Err(CrafterError::invalid_field_value(
+                            "dns.name",
+                            "incomplete \\DDD escape in DNS name",
+                        ));
+                    }
+                    let digits = &bytes[index + 1..index + 4];
+                    if !digits.iter().all(u8::is_ascii_digit) {
+                        return Err(CrafterError::invalid_field_value(
+                            "dns.name",
+                            "malformed \\DDD escape in DNS name",
+                        ));
+                    }
+                    let value = (digits[0] - b'0') as u16 * 100
+                        + (digits[1] - b'0') as u16 * 10
+                        + (digits[2] - b'0') as u16;
+                    let octet = u8::try_from(value).map_err(|_| {
+                        CrafterError::invalid_field_value(
+                            "dns.name",
+                            "\\DDD escape exceeds 255 in DNS name",
+                        )
+                    })?;
+                    current.push(octet);
+                    index += 4;
+                } else {
+                    current.push(next);
+                    index += 2;
+                }
+            }
+            other => {
+                current.push(other);
+                index += 1;
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        labels.push(current);
+    } else if !saw_label {
+        // Input was non-empty but produced no labels (e.g. only a stray dot).
+        return Err(CrafterError::invalid_field_value(
+            "dns.name",
+            "DNS name has no labels",
+        ));
+    }
+
+    Ok(labels)
 }
 
 fn validate_count(field: &'static str, count: usize) -> Result<()> {
@@ -1154,9 +1439,9 @@ pub fn dns_type_name(record_type: u16) -> Option<&'static str> {
 #[cfg(test)]
 mod dns_tests {
     use super::{
-        decode_dns_name, Dns, DnsQuestion, DnsRecord, DnsRecordData, DNS_CLASS_IN,
+        decode_dns_name, Dns, DnsName, DnsQuestion, DnsRecord, DnsRecordData, DNS_CLASS_IN,
         DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_TYPE_A,
-        DNS_TYPE_AAAA, DNS_TYPE_CNAME,
+        DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_TXT,
     };
     use crate::{Ipv4, NetworkLayer, Packet, Udp};
     use core::net::{Ipv4Addr, Ipv6Addr};
@@ -1264,6 +1549,45 @@ mod dns_tests {
             decode_dns_name(&message, 17).unwrap(),
             ("mail.example.com.".to_string(), 7)
         );
+    }
+
+    #[test]
+    fn non_text_owner_name_round_trips_through_a_compiled_packet() {
+        // An owner name with a non-UTF-8 label must survive build -> compile ->
+        // decode -> recompile with its exact wire bytes intact, exercising the
+        // byte-preserving name path end to end through the packet stack.
+        let owner = DnsName::from_labels([vec![0x00u8, 0xff], b"example".to_vec()]).unwrap();
+        assert!(!owner.is_text());
+
+        let record = DnsRecord::new(
+            owner.clone(),
+            DNS_TYPE_TXT,
+            DNS_CLASS_IN,
+            300,
+            DnsRecordData::txt(b"v"),
+        );
+        let original = Dns::new().id(0x4242).response(true).answer(record);
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(198, 51, 100, 53))
+            .dst(Ipv4Addr::new(192, 0, 2, 10))
+            / Udp::new().sport(53).dport(53001)
+            / original)
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let dns = decoded.layer::<Dns>().unwrap();
+        let answer = &dns.answers()[0];
+
+        // Exact wire-label bytes are preserved, and the presentation string uses
+        // the documented \DDD escaping for the non-text octets.
+        assert_eq!(answer.name_labels(), owner.labels());
+        assert_eq!(answer.dns_name(), &owner);
+        // Each label is escaped independently and dot-separated, so the
+        // non-text first label and the text second label render as one name.
+        assert_eq!(answer.name(), "\\000\\255.example.");
+        assert_eq!(decoded.compile().unwrap(), bytes);
     }
 
     #[test]
@@ -1380,7 +1704,7 @@ mod dns_header_codepoints {
 
 #[cfg(test)]
 mod dns_name_decode {
-    use super::decode_dns_name;
+    use super::{decode_dns_name, decode_dns_name_typed, DnsName, DNS_MAX_LABEL_LEN};
 
     #[test]
     fn rejects_truncated_names_and_pointers() {
@@ -1398,6 +1722,76 @@ mod dns_name_decode {
     #[test]
     fn decodes_root_name() {
         assert_eq!(decode_dns_name(&[0], 0).unwrap(), (".".to_string(), 1));
+    }
+
+    #[test]
+    fn non_text_label_decodes_and_preserves_wire_bytes() {
+        // A two-byte label that is not valid UTF-8 (0xff is never a UTF-8 lead
+        // byte) must decode into the byte-preserving DnsName instead of failing
+        // the way a UTF-8-only decoder would.
+        let message = [2u8, 0x00, 0xff, 0];
+        let (name, used) = decode_dns_name_typed(&message, 0).unwrap();
+
+        assert_eq!(used, 4);
+        assert_eq!(name.labels(), &[vec![0x00, 0xff]]);
+        assert!(!name.is_text());
+        // RFC 1035 Section 5.1 \DDD escaping renders the exact octet values.
+        assert_eq!(name.presentation(), "\\000\\255.");
+    }
+
+    #[test]
+    fn non_text_presentation_round_trips_through_parse() {
+        // Decoding a non-text name to its presentation string and parsing that
+        // string back must recover the identical wire labels.
+        let message = [3u8, 0x80, b'a', 0x2e, 0];
+        let (decoded, _) = decode_dns_name_typed(&message, 0).unwrap();
+        let reparsed = DnsName::parse(decoded.presentation()).unwrap();
+
+        assert_eq!(reparsed.labels(), decoded.labels());
+        assert_eq!(reparsed.presentation(), decoded.presentation());
+    }
+
+    #[test]
+    fn non_text_name_decode_and_encode_preserves_original_label_bytes() {
+        // The exact wire-label bytes survive a decode then re-encode cycle.
+        let original = [4u8, 0x00, 0x01, 0xfe, 0xff, 0];
+        let (name, _) = decode_dns_name_typed(&original, 0).unwrap();
+
+        let mut encoded = Vec::new();
+        name.encode(&mut encoded).unwrap();
+        assert_eq!(encoded, original);
+    }
+
+    #[test]
+    fn label_at_63_octet_boundary_round_trips() {
+        let label = vec![b'a'; DNS_MAX_LABEL_LEN];
+        let mut wire = Vec::new();
+        wire.push(DNS_MAX_LABEL_LEN as u8);
+        wire.extend_from_slice(&label);
+        wire.push(0);
+
+        let (name, used) = decode_dns_name_typed(&wire, 0).unwrap();
+        assert_eq!(used, wire.len());
+        assert_eq!(name.labels(), &[label]);
+
+        let mut encoded = Vec::new();
+        name.encode(&mut encoded).unwrap();
+        assert_eq!(encoded, wire);
+    }
+
+    #[test]
+    fn full_name_length_overrun_is_rejected() {
+        // Four 63-octet labels encode to 4 * 64 + 1 = 257 wire octets, past the
+        // 255-octet full-name limit, and must error rather than panic.
+        let label = vec![b'a'; DNS_MAX_LABEL_LEN];
+        let mut wire = Vec::new();
+        for _ in 0..4 {
+            wire.push(DNS_MAX_LABEL_LEN as u8);
+            wire.extend_from_slice(&label);
+        }
+        wire.push(0);
+
+        assert!(decode_dns_name_typed(&wire, 0).is_err());
     }
 }
 
