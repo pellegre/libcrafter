@@ -34,6 +34,15 @@ malformed-ipv6-segment-routing-header|ipv6|invalid-field-value|ipv6.segment.head
 udp-short-header|ipv4|buffer-too-short|udp header|4500001b0000000040110000c0000201c000020212340035000700
 udp-invalid-length|ipv4|invalid-field-value|udp.length|4500001c0000000040110000c0000201c00002021234003500070000
 udp-length-overrun|ipv4|buffer-too-short|udp datagram|4500001f0000000040110000c0000201c00002021111222200100000aabbcc
+udp-ipv6-length-overrun|ipv6|buffer-too-short|udp datagram|60000000000b114020010db800000000000000000000000120010db80000000000000000000000021111222200100000aabbcc
+# UDP option surplus malformations decode so the user payload remains inspectable.
+udp-option-envelope-too-short|ipv4|udp-option-status|malformed-envelope|4500001d0000000040110000c0000201c0000202123422220008000000
+udp-option-invalid-fixed-length|ipv4|udp-option-status|malformed-envelope|450000210000000040110000c0000201c0000202123422220008000000000403aa
+udp-option-extended-length-overrun|ipv4|udp-option-status|malformed-envelope|450000230000000040110000c0000201c0000202123422220008000000007fff0008aa
+udp-option-nonzero-after-eol|ipv4|udp-option-status|nonzero-after-eol|450000210000000040110000c0000201c00002021234222200080000000000005a
+udp-option-invalid-ocs|ipv4|udp-option-status|option-checksum-invalid|450000200000000040110000c0000201c0000202123422220008000012340100
+udp-option-invalid-apc|ipv4|udp-option-status|additional-payload-checksum-invalid|450000240000000040110000c0000201c000020212342222000800000000020600000001
+udp-option-malformed-frag|ipv4|udp-option-status|malformed-envelope|450000220000000040110000c0000201c0000202123422220008000000000304aabb
 tcp-short-header|ipv4|buffer-too-short|tcp header|450000270000000040060000c0000201c00002020035005000000000000000005002ffff000000
 tcp-data-offset-underflow|ipv4|invalid-field-value|tcp.data_offset|450000280000000040060000c0000201c00002020035005000000000000000004002ffff00000000
 tcp-data-offset-overrun|ipv4|buffer-too-short|tcp header|450000280000000040060000c0000201c0000202003500500000000000000000f002ffff00000000

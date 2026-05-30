@@ -2509,6 +2509,58 @@ mod tests {
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
+    fn ipv4_udp_with_raw_surplus(user_payload: &[u8], surplus: &[u8]) -> Vec<u8> {
+        let mut datagram = Vec::new();
+        datagram.extend_from_slice(&0x1234u16.to_be_bytes());
+        datagram.extend_from_slice(&0x2222u16.to_be_bytes());
+        datagram.extend_from_slice(&((UDP_HEADER_LEN + user_payload.len()) as u16).to_be_bytes());
+        datagram.extend_from_slice(&0u16.to_be_bytes());
+        datagram.extend_from_slice(user_payload);
+        datagram.extend_from_slice(surplus);
+
+        (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .proto(IpProtocol::Udp)
+            .id(0x2260)
+            / Raw::from_bytes(datagram))
+        .compile()
+        .unwrap()
+        .as_bytes()
+        .to_vec()
+    }
+
+    fn assert_udp_option_malformed_status(
+        label: &str,
+        surplus: &[u8],
+        expected_option_bytes: &[u8],
+        expected_status: UdpOptionStatus,
+    ) {
+        let user_payload = [0xaa, 0xbb];
+        let bytes = ipv4_udp_with_raw_surplus(&user_payload, surplus);
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, &bytes)
+            .unwrap_or_else(|err| panic!("{label} should decode for status inspection: {err}"));
+        assert_eq!(
+            decoded.layer::<Raw>().unwrap().as_bytes(),
+            &user_payload,
+            "{label} did not preserve UDP user payload"
+        );
+        let udp_options = decoded
+            .layer::<UdpOptions>()
+            .unwrap_or_else(|| panic!("{label} did not expose UDP options"));
+        assert_eq!(
+            udp_options.status(),
+            expected_status,
+            "{label} returned unexpected UDP option status"
+        );
+        assert_eq!(
+            udp_options.as_bytes(),
+            expected_option_bytes,
+            "{label} returned unexpected UDP option bytes"
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
+    }
+
     #[test]
     fn udp_options_ocs_absent_is_malformed_and_preserved() {
         let mut datagram = Vec::new();
@@ -3967,6 +4019,52 @@ mod tests {
     }
 
     #[test]
+    fn udp_option_malformed_status_boundary_preserves_udp_payload() {
+        assert_udp_option_malformed_status(
+            "short surplus envelope",
+            &[0],
+            &[],
+            UdpOptionStatus::MalformedEnvelope,
+        );
+        assert_udp_option_malformed_status(
+            "invalid fixed MDS length",
+            &[0, 0, UDP_OPTION_MDS, 3, 0xaa],
+            &[UDP_OPTION_MDS, 3, 0xaa],
+            UdpOptionStatus::MalformedEnvelope,
+        );
+        assert_udp_option_malformed_status(
+            "extended length overrun",
+            &[0, 0, UDP_OPTION_EXP, 255, 0, 8, 0xaa],
+            &[UDP_OPTION_EXP, 255, 0, 8, 0xaa],
+            UdpOptionStatus::MalformedEnvelope,
+        );
+        assert_udp_option_malformed_status(
+            "nonzero after EOL",
+            &[0, 0, UDP_OPTION_EOL, 0, 0x5a],
+            &[UDP_OPTION_EOL, 0, 0x5a],
+            UdpOptionStatus::NonzeroAfterEndOfList,
+        );
+        assert_udp_option_malformed_status(
+            "invalid OCS",
+            &[0x12, 0x34, UDP_OPTION_NOP, UDP_OPTION_EOL],
+            &[UDP_OPTION_NOP, UDP_OPTION_EOL],
+            UdpOptionStatus::OptionChecksumInvalid,
+        );
+        assert_udp_option_malformed_status(
+            "invalid APC",
+            &[0, 0, UDP_OPTION_APC, 6, 0, 0, 0, 1],
+            &[UDP_OPTION_APC, 6, 0, 0, 0, 1],
+            UdpOptionStatus::AdditionalPayloadChecksumInvalid,
+        );
+        assert_udp_option_malformed_status(
+            "malformed FRAG",
+            &[0, 0, UDP_OPTION_FRAG, 4, 0xaa, 0xbb],
+            &[UDP_OPTION_FRAG, 4, 0xaa, 0xbb],
+            UdpOptionStatus::MalformedEnvelope,
+        );
+    }
+
+    #[test]
     fn udp_autofills_length_and_ipv4_checksum_for_odd_payload() {
         let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2222)
             / Udp::new().sport(0x1234).dport(53)
@@ -4648,6 +4746,53 @@ mod tests {
                 assert_eq!(available, 11);
             }
             other => panic!("expected structured UDP length overrun error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn udp_option_malformed_udp_length_overrun_remains_structured_error() {
+        let mut datagram = Vec::new();
+        datagram.extend_from_slice(&0x1111u16.to_be_bytes());
+        datagram.extend_from_slice(&0x2222u16.to_be_bytes());
+        datagram.extend_from_slice(&16u16.to_be_bytes());
+        datagram.extend_from_slice(&0u16.to_be_bytes());
+        datagram.extend_from_slice(&[0xaa, 0xbb, 0xcc]);
+
+        let ipv4 = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Udp)
+            / Raw::from_bytes(datagram.clone()))
+        .compile()
+        .unwrap();
+        match Packet::decode_from_l3(crate::NetworkLayer::Ipv4, ipv4.as_bytes()) {
+            Err(crate::CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            }) => {
+                assert_eq!(context, "udp datagram");
+                assert_eq!(required, 16);
+                assert_eq!(available, 11);
+            }
+            other => panic!("expected structured IPv4 UDP length overrun error, got {other:?}"),
+        }
+
+        let ipv6 = (Ipv6::new()
+            .src(ipv6_src())
+            .dst(ipv6_dst())
+            .next_header(IPPROTO_UDP)
+            / Raw::from_bytes(datagram))
+        .compile()
+        .unwrap();
+        match Packet::decode_from_l3(crate::NetworkLayer::Ipv6, ipv6.as_bytes()) {
+            Err(crate::CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            }) => {
+                assert_eq!(context, "udp datagram");
+                assert_eq!(required, 16);
+                assert_eq!(available, 11);
+            }
+            other => panic!("expected structured IPv6 UDP length overrun error, got {other:?}"),
         }
     }
 

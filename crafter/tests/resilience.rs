@@ -7,8 +7,8 @@ use crafter::core::{
     decode_dns_name, scan_dhcp_option_segments, Arp, CrafterError, Dhcp, DhcpOption,
     DhcpOptionArea, Dns, Ethernet, Icmp, Icmpv6, IpProtocol, Ipv4, Ipv4Option, Ipv6, LinkType,
     LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
-    Udp, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH,
-    TCP_FLAG_SYN,
+    Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
+    TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
 };
 use proptest::prelude::*;
 
@@ -38,11 +38,17 @@ struct ExpectedError {
     context_or_field: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpectedOutcome {
+    Error(ExpectedError),
+    UdpOptionStatus(UdpOptionStatus),
+}
+
 #[derive(Debug)]
 struct MalformedCase {
     name: &'static str,
     target: DecodeTarget,
-    expected_error: ExpectedError,
+    expected_outcome: ExpectedOutcome,
     bytes: Vec<u8>,
 }
 
@@ -68,29 +74,48 @@ fn exercise_packet_decode(target: PacketDecodeTarget, bytes: &[u8]) {
 }
 
 fn decode_malformed_case(case: &MalformedCase) -> crafter::core::Result<()> {
+    if expects_decoded_udp_option_status(case) {
+        return decode_malformed_packet_case(case).map(drop);
+    }
+
     match case.target {
-        DecodeTarget::Ethernet => {
-            decode_packet(PacketDecodeTarget::Link(LinkType::Ethernet), &case.bytes).map(drop)
-        }
-        DecodeTarget::LinuxSll => {
-            decode_packet(PacketDecodeTarget::Link(LinkType::LinuxSll), &case.bytes).map(drop)
-        }
-        DecodeTarget::NullLoopback => decode_packet(
-            PacketDecodeTarget::Link(LinkType::NullLoopback),
-            &case.bytes,
-        )
-        .map(drop),
-        DecodeTarget::Ipv4 => {
-            decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4), &case.bytes).map(drop)
-        }
-        DecodeTarget::Ipv6 => {
-            decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6), &case.bytes).map(drop)
-        }
         DecodeTarget::Ipv4Options => Ipv4Option::decode_all(&case.bytes).map(drop),
         DecodeTarget::TcpOptions => TcpOption::decode_all(&case.bytes).map(drop),
         DecodeTarget::Dhcp => Dhcp::decode(&case.bytes).map(drop),
         DecodeTarget::DhcpOptions => DhcpOption::decode_all(&case.bytes).map(drop),
         DecodeTarget::DnsName => decode_dns_name(&case.bytes, 0).map(drop),
+        _ => decode_malformed_packet_case(case).map(drop),
+    }
+}
+
+fn decode_malformed_packet_case(case: &MalformedCase) -> crafter::core::Result<Packet> {
+    match case.target {
+        DecodeTarget::Ethernet => {
+            decode_packet(PacketDecodeTarget::Link(LinkType::Ethernet), &case.bytes)
+        }
+        DecodeTarget::LinuxSll => {
+            decode_packet(PacketDecodeTarget::Link(LinkType::LinuxSll), &case.bytes)
+        }
+        DecodeTarget::NullLoopback => decode_packet(
+            PacketDecodeTarget::Link(LinkType::NullLoopback),
+            &case.bytes,
+        ),
+        DecodeTarget::Ipv4 => {
+            decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4), &case.bytes)
+        }
+        DecodeTarget::Ipv6 => {
+            decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6), &case.bytes)
+        }
+        DecodeTarget::Ipv4Options
+        | DecodeTarget::TcpOptions
+        | DecodeTarget::Dhcp
+        | DecodeTarget::DhcpOptions
+        | DecodeTarget::DnsName => {
+            panic!(
+                "malformed corpus case {} cannot use UDP option status with target {:?}",
+                case.name, case.target
+            )
+        }
     }
 }
 
@@ -137,10 +162,11 @@ fn malformed_cases() -> Vec<MalformedCase> {
             Some(MalformedCase {
                 name,
                 target: parse_target(name, target),
-                expected_error: ExpectedError {
-                    kind: parse_expected_error_kind(name, expected_kind),
-                    context_or_field: expected_context_or_field,
-                },
+                expected_outcome: parse_expected_outcome(
+                    name,
+                    expected_kind,
+                    expected_context_or_field,
+                ),
                 bytes: parse_hex(name, hex),
             })
         })
@@ -171,6 +197,33 @@ fn parse_expected_error_kind(name: &str, expected_kind: &str) -> ExpectedErrorKi
     }
 }
 
+fn parse_expected_outcome(
+    name: &str,
+    expected_kind: &'static str,
+    expected_context_or_field: &'static str,
+) -> ExpectedOutcome {
+    match expected_kind {
+        "udp-option-status" => ExpectedOutcome::UdpOptionStatus(parse_udp_option_status(
+            name,
+            expected_context_or_field,
+        )),
+        _ => ExpectedOutcome::Error(ExpectedError {
+            kind: parse_expected_error_kind(name, expected_kind),
+            context_or_field: expected_context_or_field,
+        }),
+    }
+}
+
+fn parse_udp_option_status(name: &str, status: &str) -> UdpOptionStatus {
+    match status {
+        "additional-payload-checksum-invalid" => UdpOptionStatus::AdditionalPayloadChecksumInvalid,
+        "malformed-envelope" => UdpOptionStatus::MalformedEnvelope,
+        "nonzero-after-eol" => UdpOptionStatus::NonzeroAfterEndOfList,
+        "option-checksum-invalid" => UdpOptionStatus::OptionChecksumInvalid,
+        _ => panic!("malformed corpus case {name} has unknown UDP option status {status}"),
+    }
+}
+
 fn parse_hex(name: &str, hex: &str) -> Vec<u8> {
     let hex = hex
         .chars()
@@ -193,17 +246,24 @@ fn parse_hex(name: &str, hex: &str) -> Vec<u8> {
 }
 
 fn assert_error_matches(case: &MalformedCase, error: CrafterError) {
-    match (case.expected_error.kind, error) {
+    let ExpectedOutcome::Error(expected_error) = case.expected_outcome else {
+        panic!(
+            "malformed corpus case {} expected UDP option status, got structured error {error:?}",
+            case.name
+        );
+    };
+
+    match (expected_error.kind, error) {
         (ExpectedErrorKind::BufferTooShort, CrafterError::BufferTooShort { context, .. }) => {
             assert_eq!(
-                context, case.expected_error.context_or_field,
+                context, expected_error.context_or_field,
                 "malformed corpus case {} returned an unexpected buffer context",
                 case.name
             )
         }
         (ExpectedErrorKind::InvalidFieldValue, CrafterError::InvalidFieldValue { field, .. }) => {
             assert_eq!(
-                field, case.expected_error.context_or_field,
+                field, expected_error.context_or_field,
                 "malformed corpus case {} returned an unexpected invalid field",
                 case.name
             )
@@ -213,6 +273,31 @@ fn assert_error_matches(case: &MalformedCase, error: CrafterError) {
             case.name
         ),
     }
+}
+
+fn assert_udp_option_status_matches(case: &MalformedCase, packet: Packet) {
+    let ExpectedOutcome::UdpOptionStatus(expected_status) = case.expected_outcome else {
+        panic!(
+            "malformed corpus case {} unexpectedly decoded successfully",
+            case.name
+        );
+    };
+    let udp_options = packet.layer::<UdpOptions>().unwrap_or_else(|| {
+        panic!(
+            "malformed corpus case {} decoded without a UDP options layer",
+            case.name
+        )
+    });
+    assert_eq!(
+        udp_options.status(),
+        expected_status,
+        "malformed corpus case {} returned an unexpected UDP option status",
+        case.name
+    );
+}
+
+fn expects_decoded_udp_option_status(case: &MalformedCase) -> bool {
+    matches!(case.expected_outcome, ExpectedOutcome::UdpOptionStatus(_))
 }
 
 fn required_malformed_families() -> &'static [&'static str] {
@@ -236,6 +321,13 @@ fn required_malformed_families() -> &'static [&'static str] {
         "short udp header",
         "invalid udp length",
         "udp length overrun",
+        "malformed udp option envelope",
+        "invalid udp option fixed length",
+        "udp option extended length overrun",
+        "udp option nonzero after eol",
+        "udp option checksum invalid",
+        "udp additional payload checksum invalid",
+        "malformed udp frag option",
         "short tcp header",
         "tcp data offset underflow",
         "tcp data offset overrun",
@@ -279,7 +371,14 @@ fn malformed_family(name: &str) -> Option<&'static str> {
         "malformed-ipv6-segment-routing-header" => Some("malformed ipv6 segment routing header"),
         "udp-short-header" => Some("short udp header"),
         "udp-invalid-length" => Some("invalid udp length"),
-        "udp-length-overrun" => Some("udp length overrun"),
+        "udp-length-overrun" | "udp-ipv6-length-overrun" => Some("udp length overrun"),
+        "udp-option-envelope-too-short" => Some("malformed udp option envelope"),
+        "udp-option-invalid-fixed-length" => Some("invalid udp option fixed length"),
+        "udp-option-extended-length-overrun" => Some("udp option extended length overrun"),
+        "udp-option-nonzero-after-eol" => Some("udp option nonzero after eol"),
+        "udp-option-invalid-ocs" => Some("udp option checksum invalid"),
+        "udp-option-invalid-apc" => Some("udp additional payload checksum invalid"),
+        "udp-option-malformed-frag" => Some("malformed udp frag option"),
         "tcp-short-header" => Some("short tcp header"),
         "tcp-data-offset-underflow" => Some("tcp data offset underflow"),
         "tcp-data-offset-overrun" => Some("tcp data offset overrun"),
@@ -923,10 +1022,30 @@ fn malformed_corpus_reports_structured_errors() {
     }
 
     for case in &cases {
-        let Err(error) = decode_malformed_case(case) else {
-            panic!("malformed corpus case {} unexpectedly decoded", case.name);
-        };
-        assert_error_matches(case, error);
+        match (
+            decode_malformed_case(case),
+            expects_decoded_udp_option_status(case),
+        ) {
+            (Err(error), false) => assert_error_matches(case, error),
+            (Ok(()), true) => {
+                let packet = decode_malformed_packet_case(case).unwrap_or_else(|err| {
+                    panic!(
+                        "malformed corpus case {} should decode for status inspection: {err}",
+                        case.name
+                    )
+                });
+                assert_udp_option_status_matches(case, packet);
+            }
+            (Ok(()), false) => {
+                panic!("malformed corpus case {} unexpectedly decoded", case.name);
+            }
+            (Err(error), true) => {
+                panic!(
+                    "malformed corpus case {} expected UDP option status, got structured error {error:?}",
+                    case.name
+                );
+            }
+        }
     }
 }
 
