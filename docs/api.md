@@ -204,6 +204,94 @@ let report = send_recv_packets(
 Raw socket operations are exposed through typed wrappers rather than integer
 file descriptors in normal examples.
 
+## DHCP Packets
+
+`Dhcp` is the DHCPv4 layer. It is a packet primitive: it crafts and inspects
+BOOTP/DHCP frames but is not a DHCP client, server, or lease engine. It composes
+over UDP, compiles through `Packet::compile()` with protocol-correct defaults,
+and decodes through the registry when carried on the DHCP ports.
+
+Named constructors cover the registered message types:
+
+```rust
+let discover = Dhcp::discover(client_mac);
+let request = Dhcp::request(client_mac, "192.0.2.50".parse()?, "192.0.2.1".parse()?);
+let offer = Dhcp::offer(client_mac, "192.0.2.50".parse()?, "192.0.2.1".parse()?);
+// Also: decline, ack, nak, release, inform, force_renew,
+// lease_query_by_ip, lease_query_by_mac, lease_query_by_client_id.
+```
+
+### Option model
+
+Options follow a code-plus-value model rather than one enum variant per code.
+A `DhcpOption` exposes its registered code, a typed `DhcpOptionValue` for
+formats the codec understands, and the raw payload bytes for everything else.
+Unknown, private-use, removed, ambiguous, and vendor-specific option payloads
+are preserved as raw bytes rather than dropped or guessed.
+
+```rust
+let dhcp = Dhcp::discover(client_mac)
+    .option(DhcpOption::parameter_request_list([1, 3, 6, 15]))
+    .host_name("workstation");
+```
+
+Use `Dhcp::concatenated_option(code)` to read a logical option that may be
+split across repeated instances (RFC 3396 long options). Per-area raw segments
+remain inspectable through the segment scanner.
+
+### Option overload, long options, and areas
+
+DHCP options may live in the normal options area or in the overloaded `file`
+and `sname` BOOTP fields (option 52). Place options into those areas with
+`file_options(...)` / `sname_options(...)`; `compile()` auto-inserts the
+overload option (52) when an area is used, and `option_overload()` reports the
+decoded selector. Long values are split into 255-byte segments on encode and
+concatenated back into one logical value on decode (RFC 3396), while the raw
+segments stay inspectable.
+
+### Relay agent information (option 82)
+
+Relay agent information (RFC 3046, option 82) is a typed container of
+sub-options. Registered sub-options decode to typed values; unknown
+sub-options are preserved with `DhcpRelaySuboption::other(code, data)`.
+
+```rust
+let relay = DhcpRelayAgentInfo::new(vec![
+    DhcpRelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
+    DhcpRelaySuboption::remote_id(b"relay-1".to_vec()),
+]);
+let dhcp = Dhcp::discover(client_mac).relay_agent_info(relay);
+let recovered = dhcp.relay_agent_information();
+```
+
+### Client identifiers (option 61)
+
+`DhcpClientIdentifier` covers the common Ethernet MAC form, the RFC 4361
+node-specific (IAID + DUID) form, and a raw fallback:
+
+```rust
+let id = DhcpClientIdentifier::ethernet_mac(client_mac.octets());
+let dhcp = Dhcp::discover(client_mac).client_id_value(id);
+let recovered = dhcp.client_identifier_value();
+```
+
+### Authentication and leasequery packet fields
+
+These are packet fields only; the crate does not derive, sign, or verify
+authentication, and does not run a leasequery state machine. The authentication
+option (RFC 3118, option 90) is exposed as `DhcpAuthentication`
+(`authentication()`), and the leasequery family exposes typed status/state
+values (`DhcpStatusCodeOption`, `DhcpState`, `DhcpDataSource`) read back through
+`status_code()`, `dhcp_state()`, and `associated_ip()`.
+
+### Raw and opaque cases
+
+Some registered codepoints are intentionally kept raw (for example PCP server
+158, DNR 162, 6RD 212, and ambiguous historical codes), and intentionally
+malformed packets are built through the explicit `Dhcp::malformed()` surface
+rather than by weakening the typed builders. In all cases the option code and
+payload bytes are preserved so they remain inspectable and re-encodable.
+
 ## Address And Range Helpers
 
 ```rust
@@ -260,6 +348,8 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | `arp_who_has` | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. |
 | `dns_query` | DNS query construction, dry-run send/receive reporting, and synthetic response decoding. |
 | `dhcp_discover` | DHCP discover construction with an explicit client MAC and link-layer send options. |
+| `dhcp_option82` | Offline DHCP relay agent information (option 82), classless static routes, and option overload construction and decode. |
+| `dhcp_leasequery` | Offline DHCP leasequery, typed client identifier, authentication, and status/state packet-field construction and decode. |
 | `icmpv6_echo` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. |
 | `vlan` | 802.1Q VLAN frame construction, compile, and decode. |
 | `linux_sll` | Linux cooked capture packet construction, compile, and decode. |

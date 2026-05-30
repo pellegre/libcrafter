@@ -151,7 +151,7 @@ VirtualBox providers are not part of version 2.0.0.
 | Link | Ethernet, 802.1Q VLAN, Linux cooked capture, null/loopback |
 | Network and control | ARP, IPv4, IPv4 options, IPv6, IPv6 fragment headers, IPv6 routing headers, IPv6 mobile routing headers, IPv6 segment routing headers, ICMP, ICMPv6, ICMP extensions |
 | Transport | TCP, TCP options, UDP, UDP checksums |
-| Application and payload | DNS, DHCP, raw payloads |
+| Application and payload | DNS, DHCPv4 (option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication and leasequery packet fields), raw payloads |
 
 Unknown or unsupported next protocols are preserved as `Raw` payloads when the
 enclosing header is valid.
