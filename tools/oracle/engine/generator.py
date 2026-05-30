@@ -88,7 +88,7 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "urgent_pointer",
         "options",
     },
-    "udp": {"src_port", "dst_port", "checksum"},
+    "udp": {"src_port", "dst_port", "checksum", "options"},
     "vlan": {"priority", "drop_eligible", "vlan_id", "ethertype"},
 }
 _SUPPORTED_FIELD_DOMAINS: dict[tuple[str, str], set[object]] = {
@@ -118,6 +118,15 @@ _SUPPORTED_FIELD_DOMAINS: dict[tuple[str, str], set[object]] = {
         "generic",
     },
     ("udp", "checksum"): {"zero_ipv4"},
+    ("udp", "options"): {
+        "known",
+        "ocs",
+        "apc",
+        "unknown_safe",
+        "unknown_unsafe",
+        "unsupported_frag",
+        "surplus_application_boundary",
+    },
 }
 _SCAPY_MATERIALIZED_LAYERS = {
     "arp",
@@ -413,6 +422,7 @@ class PacketGenerator:
             selected_stack,
             feature,
             family=selected_family,
+            direction=direction,
         )
         selected_feature = self._choose_feature(
             rng,
@@ -760,6 +770,7 @@ class PacketGenerator:
         feature: str | None,
         *,
         family: str | None,
+        direction: str,
     ) -> str:
         coverage_cases = _string_list(stack.get("coverage_cases", []), "stack.coverage_cases")
         if feature is not None:
@@ -771,7 +782,7 @@ class PacketGenerator:
             compatible = self._compatible_feature_cases(
                 stack=_string_list(stack.get("layers"), "stack.layers"),
                 feature=feature,
-                direction="reference_to_libcrafter",
+                direction=direction,
             )
             if compatible:
                 return weighted_choice(rng, tuple((case, 1) for case in compatible))
@@ -786,7 +797,7 @@ class PacketGenerator:
         stack_layers = _string_list(stack.get("layers"), "stack.layers")
         for feature_name, feature_spec in self._matching_features_for_stack(
             stack=stack_layers,
-            direction="reference_to_libcrafter",
+            direction=direction,
         ):
             if family == "udp" and feature_name != "udp_options":
                 continue
@@ -794,7 +805,7 @@ class PacketGenerator:
             for feature_case in self._compatible_feature_cases(
                 stack=stack_layers,
                 feature=feature_name,
-                direction="reference_to_libcrafter",
+                direction=direction,
             ):
                 if feature_case in coverage_cases:
                     continue
@@ -1013,8 +1024,14 @@ class PacketGenerator:
         ]
         if not names:
             return None
+        case_id = _identifier_part(case)
+        case_key = f"-{case_id}-"
         for name in names:
-            if _identifier_part(name) in _identifier_part(case):
+            name_id = _identifier_part(name)
+            if feature == "udp_options":
+                if f"-{name_id}-" in case_key:
+                    return name
+            elif name_id in case_id:
                 return name
         return weighted_choice(rng, tuple((name, 1) for name in names))
 
@@ -1370,6 +1387,10 @@ def _domain_weight(ctx: _SamplingContext, layer: str, field_name: str, domain: o
         if ctx.feature == "tcp_options" or "tcp-options" in ctx.case or ctx.case == "tcp-all-flags-reserved-offset":
             return max(1, ctx.feature_weights.get("boundary", 1))
         return 0
+    if field_name == "options" and layer == "udp":
+        if ctx.feature == "udp_options" or "udp-options" in ctx.case:
+            return max(1, ctx.feature_weights.get("boundary", 1))
+        return 0
     if field_name == "answers" and layer == "dns":
         if ctx.feature == "dns_behavior" and "response" in ctx.case:
             return max(1, ctx.feature_weights.get("boundary", 1))
@@ -1579,6 +1600,12 @@ def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) ->
         return ctx.dst_port
     if field_name == "checksum" and domain == "zero_ipv4" and "ipv4" in ctx.stack:
         return 0
+    if field_name == "options":
+        payload_hex = ctx.payload.hex()
+        return _udp_options_field(
+            f"{ctx.case} {domain}".replace("_", "-"),
+            payload_hex=payload_hex,
+        ) or _SKIP_FIELD
     return _SKIP_FIELD
 
 
@@ -1828,6 +1855,12 @@ def _apply_udp_options_behavior(
     udp_fields = fields.setdefault("udp", {})
     if "ipv4-zero-checksum" in key or "ipv6-zero-checksum" in key:
         udp_fields["checksum"] = 0
+    payload_hex = _payload_hex_from_fields(fields.get("payload", {}))
+    options = _udp_options_field(key, payload_hex=payload_hex)
+    if options is None:
+        udp_fields.pop("options", None)
+    else:
+        udp_fields["options"] = options
 
 
 def _udp_option_feature_tags(case: str, behavior: str | None) -> list[str]:
@@ -1862,20 +1895,18 @@ def _udp_options_metadata(
     behavior: str | None,
 ) -> JSONObject:
     key = f"{case} {behavior or ''}".replace("_", "-")
-    payload = fields.get("payload", {})
-    payload_hex = payload.get("hex", "")
-    if not isinstance(payload_hex, str):
-        payload_hex = ""
+    payload_hex = _payload_hex_from_fields(fields.get("payload", {}))
     checksum_status = "generated"
     if "ipv4-zero-checksum" in key:
         checksum_status = "ipv4_no_checksum"
     elif "ipv6-zero-checksum" in key:
         checksum_status = "ipv6_zero_checksum_exception_required"
 
-    options = _udp_option_intent(key)
-    surplus = bool(options)
+    options_field = _udp_options_field(key, payload_hex=payload_hex)
+    options = _udp_options_items(options_field)
+    surplus = options_field is not None
     return {
-        "intent": "metadata_only",
+        "intent": "logical_plan_fields",
         "requires_backend_materialization": True,
         "stack": list(stack),
         "case": case,
@@ -1893,7 +1924,53 @@ def _udp_options_metadata(
             "payload_excludes_surplus": surplus,
             "surplus_excluded_from_udp_checksum": surplus,
         },
+        "logical_fields": {
+            "application_payload": "fields.payload.hex",
+            "udp_options": "fields.udp.options",
+        },
     }
+
+
+def _payload_hex_from_fields(payload: object) -> str:
+    if not isinstance(payload, Mapping):
+        return ""
+    payload_hex = payload.get("hex", "")
+    return payload_hex if isinstance(payload_hex, str) else ""
+
+
+def _payload_hex_length(payload_hex: str) -> int:
+    try:
+        return len(bytes.fromhex(payload_hex))
+    except ValueError:
+        return 0
+
+
+def _udp_options_field(key: str, *, payload_hex: str) -> JSONObject | None:
+    options = _udp_option_intent(key)
+    if not options:
+        return None
+    return {
+        "format": "udp_surplus_options",
+        "placement": "after_udp_length",
+        "udp_length_scope": "header_and_application_payload",
+        "application_payload": {
+            "layer": "payload",
+            "hex": payload_hex,
+            "length": _payload_hex_length(payload_hex),
+        },
+        "surplus_excluded_from_udp_checksum": True,
+        "option_checksum": _udp_option_checksum_intent(key, True),
+        "items": options,
+    }
+
+
+def _udp_options_items(options_field: JSONObject | None) -> list[JSONObject]:
+    if options_field is None:
+        return []
+    items = options_field.get("items")
+    if not isinstance(items, Sequence) or isinstance(items, (str, bytes)):
+        return []
+    return [dict(item) for item in items if isinstance(item, Mapping)]
 
 
 def _udp_option_checksum_intent(key: str, surplus: bool) -> JSONObject:
