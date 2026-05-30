@@ -30,7 +30,7 @@ sections.
 | SOA, SRV, additional base RDATA | Planned | Typed where the wire format is unambiguous. |
 | EDNS(0) OPT pseudo-record and options | Planned | Wire encode/decode only. |
 | DNSSEC RDATA (DNSKEY, RRSIG, DS, NSEC, NSEC3) | Planned | Wire structures only; no cryptographic validation. |
-| SVCB / HTTPS service binding | Planned | Wire encode/decode of SvcParams. |
+| SVCB / HTTPS service binding | Supported | Typed SvcPriority, uncompressed target, and ordered SvcParams; values stay opaque. |
 | Obsolete, cryptographic-only, or rarely used RDATA | Raw | Left as `DnsRecordData::Raw` unless evidence and fit justify a typed primitive. |
 | DNS over TCP (length-prefixed stream) | Deferred | Out of scope unless a narrow length-prefixed primitive is approved. |
 
@@ -54,6 +54,10 @@ The shipped `Dns` layer covers the base DNS message shape from RFC 1035:
   - `Name` for NS (2), CNAME (5), and PTR (12).
   - `Mx` (15) preference plus exchange name.
   - `Txt` (16) as a list of DNS character-strings.
+  - `Svcb` (64) and `Https` (65) service-binding records: a SvcPriority, an
+    uncompressed target name, and an ordered list of SvcParams. SvcParam values
+    stay opaque wire bytes; unknown SvcParamKeys are preserved verbatim. See
+    [Service binding records](#service-binding-records).
   - `Raw` for every other record type, preserving the original RDATA bytes.
 - Dispatch: UDP port 53 decodes payloads into the `Dns` layer through the
   packet registry.
@@ -92,6 +96,51 @@ from the wire, rendered to its presentation form, and recompiled preserves the
 original label bytes exactly; encoding remains deterministic and never emits
 compression by default.
 
+## Service binding records
+
+SVCB (type 64) and HTTPS (type 65) share one RDATA wire format (RFC 9460
+Section 2.2): a 2-octet SvcPriority, an uncompressed TargetName, and a list of
+SvcParams that consume the remainder of the record. `crafter` types both as
+`DnsRecordData::Svcb` and `DnsRecordData::Https`, built with `DnsRecord::svcb`
+and `DnsRecord::https`.
+
+Each SvcParam is a {SvcParamKey, length, SvcParamValue} tuple. The crate models
+them as an ordered `SvcParams` list of `SvcParam` values:
+
+- SvcPriority is carried verbatim. The mode (AliasMode at priority 0,
+  ServiceMode otherwise) is a resolver concept and is not interpreted here; the
+  wire primitive does not strip or rewrite SvcParams based on the priority.
+- The TargetName is emitted uncompressed, as the source requires, and may be the
+  root name `.` (RFC 9460 Section 2.5).
+- SvcParamKeys are sorted into strictly increasing numeric order on encode, so
+  output is deterministic and conformant regardless of construction order.
+  Duplicate keys are rejected, both when building `SvcParams` and when decoding,
+  matching the wire rule that keys are strictly increasing.
+- Each SvcParamValue is kept as opaque wire bytes because its format is
+  "determined by the SvcParamKey". The crate does not parse the internal
+  structure of any value. Source-backed keys (`mandatory`, `alpn`,
+  `no-default-alpn`, `port`, `ipv4hint`, `ech`, `ipv6hint`, `dohpath`) have
+  named constructors and a registry mnemonic through `svcb_param_key_name`;
+  unknown keys round trip verbatim with no mnemonic.
+
+Decoding returns structured errors, never a panic, when the RDATA is too short
+for the priority, the SvcParams are truncated mid-tuple, a declared value length
+overruns the RDATA, or the keys are not strictly increasing (RFC 9460
+Section 2.2 malformed conditions).
+
+The following service/application material is deliberately deferred and left as
+`DnsRecordData::Raw`:
+
+- Per-SvcParamValue structure. The internal layout of values such as `alpn`,
+  `mandatory`, and `ech` is not parsed into typed sub-fields; only the
+  key-ordered byte values are exposed. Parsing each value format is resolver- and
+  application-leaning work that can be layered on top of the raw bytes.
+- Other service/application records whose evidence is ambiguous, whose layout is
+  too large for this pass, or whose behavior belongs outside a packet primitive:
+  NAPTR (35, naming authority pointer), URI (256), TLSA (52) and other
+  certificate-association records, and SSHFP (44). These stay `Raw` and may
+  become typed later if evidence and project fit justify it.
+
 ## Source-backed gaps
 
 The base layer is intentionally compact. Comparing it against the IANA DNS
@@ -109,8 +158,6 @@ registries and the core RFC wire formats surfaces these source-backed gaps:
 - DNSSEC wire records (DNSKEY 48, RRSIG 46, DS 43, NSEC 47, NSEC3 50) are raw.
   Their RDATA has well-defined wire structures that can be parsed without any
   cryptographic validation.
-- Service-binding records SVCB (64) and HTTPS (65) are raw. Their RDATA is a
-  SvcPriority, a target name, and a list of SvcParam key/value pairs.
 
 ## Planned coverage
 
@@ -131,8 +178,6 @@ builder, decode, and summary shape:
   are carried verbatim and never cryptographically validated. The Signer's Name
   in RRSIG and the Next Domain Name in NSEC are emitted uncompressed, as the
   source requires.
-- Service binding: typed `SVCB` and `HTTPS` RDATA carrying SvcPriority, an
-  uncompressed target name, and SvcParam key/value pairs.
 
 Each planned slice keeps section counts auto-filled, keeps explicit values
 honored, and keeps unknown record data as `Raw`.
@@ -191,6 +236,12 @@ Registries (IANA Domain Name System Parameters, `dns-parameters`):
   Extended DNS Error (15), and others.
 - DNS Header Flags and EDNS Header Flags (DO, CO).
 
+Registry (IANA DNS Service Bindings, `dns-svcb`):
+
+- SVCB SvcParamKeys: mandatory (0), alpn (1), no-default-alpn (2), port (3),
+  ipv4hint (4), ech (5), ipv6hint (6), dohpath (7), and the unassigned and
+  private-use ranges. SvcParamValue formats stay opaque.
+
 RFC wire formats:
 
 - RFC 1035: message format, header, question, resource record framing, name
@@ -206,6 +257,9 @@ RFC wire formats:
   6.2).
 - RFC 5155: NSEC3 and NSEC3PARAM (types 50 and 51).
 - RFC 9460: SVCB and HTTPS service binding (types 64 and 65), Section 2.2 RDATA
-  wire format.
+  wire format (SvcPriority, uncompressed TargetName, SvcParams in strictly
+  increasing SvcParamKey order with no duplicates), and Section 2.5 special
+  handling of the root `.` TargetName. SvcParamKey numbers and presentation names
+  are defined in Section 7 and the IANA SvcParamKeys registry.
 </content>
 </invoke>
