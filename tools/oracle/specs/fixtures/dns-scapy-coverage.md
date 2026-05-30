@@ -125,6 +125,7 @@ Source read for this matrix:
 | --- | --- | --- | --- | --- | --- |
 | SOA (type 6) MNAME/RNAME + 5 fixed fields | `dns-record-soa` | both | strict_bytes | yes (`DNSRRSOA`) | no |
 | SRV (type 33) priority/weight/port/target | `dns-record-srv` | both | strict_bytes | yes (`DNSRRSRV`) | no |
+| Combined SOA + SRV records in one message (`DnsRecordData::Soa` MNAME/RNAME/SERIAL/REFRESH/RETRY/EXPIRE/MINIMUM and `DnsRecordData::Srv` priority/weight/port/target) | `dns-soa-srv-records` | both | strict_bytes | yes (`DNSRRSOA` + `DNSRRSRV`) | no |
 
 ## 6. Raw fallback
 
