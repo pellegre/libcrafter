@@ -1009,12 +1009,13 @@ mod dns_tests {
 #[cfg(test)]
 mod dns_header_codepoints {
     use super::{
-        dns_type_name, Dns, DnsQuestion, DnsRecord, DNS_CLASS_ANY, DNS_CLASS_CH, DNS_CLASS_HS,
-        DNS_CLASS_IN, DNS_CLASS_NONE, DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE,
+        dns_type_name, Dns, DnsQuestion, DnsRecord, DnsRecordData, DNS_CLASS_ANY, DNS_CLASS_CH,
+        DNS_CLASS_HS, DNS_CLASS_IN, DNS_CLASS_NONE, DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE,
         DNS_FLAG_CHECKING_DISABLED, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_AVAILABLE,
         DNS_FLAG_RECURSION_DESIRED, DNS_FLAG_TRUNCATED, DNS_OPCODE_QUERY, DNS_OPCODE_STATUS,
         DNS_OPCODE_UPDATE, DNS_RCODE_NOERROR, DNS_RCODE_NXDOMAIN, DNS_RCODE_REFUSED, DNS_TYPE_A,
-        DNS_TYPE_AAAA, DNS_TYPE_HTTPS, DNS_TYPE_MX, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_TXT,
+        DNS_TYPE_AAAA, DNS_TYPE_HTTPS, DNS_TYPE_MX, DNS_TYPE_NS, DNS_TYPE_OPT, DNS_TYPE_SOA,
+        DNS_TYPE_SRV, DNS_TYPE_TXT,
     };
     use crate::{Ipv4, NetworkLayer, Packet, Udp};
     use std::net::Ipv4Addr;
@@ -1174,6 +1175,81 @@ mod dns_header_codepoints {
         assert_eq!(header.answers().len(), 1);
         assert_eq!(header.authorities().len(), 1);
         assert_eq!(header.additionals().len(), 1);
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn section_placement_survives_decode_and_recompile() {
+        // A single authoritative response that places a record in every DNS
+        // section (RFC 1035 Section 4.1): one A answer, one NS authority record,
+        // and two additional records - an EDNS(0) OPT pseudo-record (RFC 6891)
+        // plus a non-OPT A glue record. Decode must keep each record in its own
+        // section without migration, the OPT must stay in the additional section
+        // next to the non-OPT record, and recompile must reproduce the exact wire
+        // bytes. This mirrors the dns-section-placement oracle case.
+        let dns = Dns::new()
+            .id(0x5023)
+            .response(true)
+            .authoritative(true)
+            .question(DnsQuestion::a("example.com."))
+            .answer(DnsRecord::a(
+                "example.com.",
+                Ipv4Addr::new(192, 0, 2, 10),
+                3600,
+            ))
+            .authority(DnsRecord::new(
+                "example.com.",
+                DNS_TYPE_NS,
+                DNS_CLASS_IN,
+                3600,
+                DnsRecordData::name("ns1.example.com."),
+            ))
+            .additional(DnsRecord::a(
+                "ns1.example.com.",
+                Ipv4Addr::new(192, 0, 2, 53),
+                3600,
+            ))
+            .additional(DnsRecord::opt(1232, 0, 0, false, Vec::new()));
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(203, 0, 113, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 1))
+            / Udp::new().sport(53).dport(53001)
+            / dns)
+            .compile()
+            .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let header = decoded.layer::<Dns>().unwrap();
+
+        // Each section carries exactly the records it was given, and the counts
+        // auto-fill from the typed vectors.
+        assert_eq!(header.questions().len(), 1);
+        assert_eq!(header.answers().len(), 1);
+        assert_eq!(header.authorities().len(), 1);
+        assert_eq!(header.additionals().len(), 2);
+
+        // The answer is the A record, never the NS or OPT.
+        assert_eq!(header.answers()[0].record_type(), DNS_TYPE_A);
+        assert_eq!(header.answers()[0].name(), "example.com.");
+
+        // The NS record stays in the authority section and is not promoted into
+        // the answer or additional sections.
+        assert_eq!(header.authorities()[0].record_type(), DNS_TYPE_NS);
+        assert_eq!(
+            header.authorities()[0].data(),
+            &DnsRecordData::name("ns1.example.com.")
+        );
+
+        // Both additional records stay in the additional section in their given
+        // order: the non-OPT A glue record first, then the EDNS(0) OPT record.
+        assert_eq!(header.additionals()[0].record_type(), DNS_TYPE_A);
+        assert!(!header.additionals()[0].is_opt());
+        assert_eq!(header.additionals()[0].name(), "ns1.example.com.");
+        assert_eq!(header.additionals()[1].record_type(), DNS_TYPE_OPT);
+        assert!(header.additionals()[1].is_opt());
+
+        // Recompiling the decoded packet reproduces the exact bytes, proving no
+        // record migrated between sections during decode.
         assert_eq!(decoded.compile().unwrap(), bytes);
     }
 

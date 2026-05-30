@@ -2121,6 +2121,68 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
             },
         ]
         return
+    if "section-placement" in key:
+        # A single authoritative response whose records each land in their own
+        # DNS section (RFC 1035 Section 4.1.1): one question (QDCOUNT), one A
+        # answer (ANCOUNT), one NS authority record (NSCOUNT), and two additional
+        # records (ARCOUNT) -- an EDNS(0) OPT pseudo-record (RFC 6891) plus a
+        # non-OPT A record. Both backends materialize the answer, authority, and
+        # additional sections from independent plan keys, so the case proves that
+        # placement and counts survive decode and recompile and that no record
+        # migrates between sections. Every value is stable and uncompressed, so
+        # the encoded bytes agree in both directions. ("section-placement" is a
+        # substring only of this case id, so the dispatcher resolves this branch
+        # unambiguously.)
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields["answers"] = [
+            {
+                # Answer section: the requested A record.
+                "name": "example.com.",
+                "type": "A",
+                "class": "IN",
+                "ttl": 3600,
+                "address": "192.0.2.10",
+            },
+        ]
+        fields["authority"] = [
+            {
+                # Authority section: an NS record delegating the zone.
+                "name": "example.com.",
+                "type": "NS",
+                "class": "IN",
+                "ttl": 3600,
+                "target": "ns1.example.com.",
+            },
+        ]
+        fields["additional"] = [
+            {
+                # Additional section: the glue A record for the authority NS.
+                "name": "ns1.example.com.",
+                "type": "A",
+                "class": "IN",
+                "ttl": 3600,
+                "address": "192.0.2.53",
+            },
+            {
+                # Additional section: an EDNS(0) OPT pseudo-record (RFC 6891) with
+                # a root owner name, a non-default UDP payload size, and an empty
+                # option list.
+                "name": ".",
+                "type": "OPT",
+                "udp_payload_size": 1232,
+                "extended_rcode": 0,
+                "version": 0,
+                "dnssec_ok": False,
+                "options": [],
+            },
+        ]
+        fields.pop("authorities", None)
+        fields.pop("additionals", None)
+        return
     if "header-flags-opcodes" in key:
         fields["is_response"] = True
         fields["opcode"] = "status"

@@ -181,6 +181,7 @@ Source read for this matrix:
 | Authority-section records (SOA / NS in `ns`) | `dns-section-authority` | both | strict_bytes | yes (`DNS(ns=...)`) | no |
 | Additional-section records (OPT in `ar`) | `dns-section-additional` | both | strict_bytes | yes (`DNS(ar=...)`) | no |
 | Multi-section response (answer + authority + additional) | `dns-section-multi` | both | strict_bytes | yes | no |
+| Combined placement (question + A answer + NS authority + OPT and non-OPT additional) | `dns-section-placement` | both | strict_bytes | yes (`DNS(an=...,ns=...,ar=...)`) | no |
 
 ## 11. Malformed names
 

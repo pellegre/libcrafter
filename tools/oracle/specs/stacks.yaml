@@ -275,6 +275,7 @@ stacks:
       - dns-svcb-root-target
       - dns-https-service
       - dns-svcb-unknown-param
+      - dns-section-placement
       - dns-section-authority
       - dns-section-additional
       - dns-section-multi

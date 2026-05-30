@@ -201,6 +201,22 @@ behaviors:
     summary: An authoritative response carrying SVCB and HTTPS service-binding answers spanning AliasMode and ServiceMode priorities, root and non-root targets, empty params, the mandatory/alpn/no-default-alpn/port/ipv4hint/ipv6hint/dohpath params, and an unknown SvcParamKey, each value carried verbatim and the params sorted into strictly increasing key order.
     record_kinds:
       - generic
+  # dns_section_placement is the multi-section placement case: a single response
+  # whose question, answer, authority, and additional records each land in their
+  # own DNS section (RFC 1035 Section 4.1.1 QDCOUNT/ANCOUNT/NSCOUNT/ARCOUNT). The
+  # answer carries an A record, the authority section carries an NS record, and
+  # the additional section carries both an EDNS(0) OPT record and a non-OPT A
+  # record. Both backends materialize the answer/authority/additional sections
+  # from independent plan keys and recompile the same wire bytes, so the case is
+  # strict-byte in both directions; it proves no record migrates between sections
+  # on decode and recompile. Its identifier dns-section-placement matches only the
+  # combined case id (none of the other behavior identifiers is a substring of it),
+  # keeping resolution deterministic.
+  - name: dns_section_placement
+    summary: A single response that places a question, an answer A record, an authority NS record, and two additional records (an EDNS(0) OPT record plus a non-OPT A record) so each record stays in its own section across decode and recompile.
+    record_kinds:
+      - a
+      - generic
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -480,6 +496,7 @@ case_groups:
     summary: Authority, additional, and multi-section record placement.
     byte_policy: strict_bytes
     cases:
+      - dns-section-placement
       - dns-section-authority
       - dns-section-additional
       - dns-section-multi
@@ -582,6 +599,7 @@ coverage_cases:
   - dns-svcb-root-target
   - dns-https-service
   - dns-svcb-unknown-param
+  - dns-section-placement
   - dns-section-authority
   - dns-section-additional
   - dns-section-multi
@@ -913,6 +931,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-svcb-unknown-param
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-section-placement
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference

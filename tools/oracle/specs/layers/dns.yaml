@@ -262,6 +262,7 @@ coverage_cases:
   - dns-svcb-alias
   - dns-svcb-service
   - dns-https-service
+  - dns-section-placement
   - dns-section-authority
   - dns-section-additional
   - dns-section-multi
