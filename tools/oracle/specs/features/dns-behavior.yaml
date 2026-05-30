@@ -166,6 +166,27 @@ normalized_model:
       - record_type
       - data
 
+# Normalized-only comparison policy for compressed-name cases.
+#
+# DNS name compression (RFC 1035 Section 4.1.4) lets a message reuse an earlier
+# name by pointer. Scapy can dissect a compressed input, but libcrafter always
+# re-encodes names uncompressed, so the wire bytes of a compressed-name source
+# and the libcrafter re-encode differ on purpose. These cases therefore run with
+# byte_policy: normalized: strict byte equality is NOT asserted, and agreement is
+# checked on the normalized DNS message model instead.
+#
+# The normalized model is the backend-neutral structure both backends map onto
+# (see normalized_model above). Names are compared in their decoded form -- the
+# wire labels and the canonical trailing-dot presentation string with RFC 1035
+# Section 5.1 \DDD escapes -- not as packed wire bytes, so a compressed name and
+# its uncompressed re-encode compare equal. The Scapy backend builds this model
+# in tools/oracle/engine/backends/scapy/normalize.py (_normalize_dns_message),
+# which exposes header, questions, answers, authorities, additionals, names,
+# types, classes, TTLs, and per-record rdata regardless of compression. The same
+# normalized-name rule covers the sorted-SvcParams and minimal-bitmap normalized
+# groups below, where libcrafter rewrites RDATA ordering on encode while the
+# decoded model still agrees.
+
 # Per-group byte-comparison policy. strict_bytes groups must match Scapy
 # octet-for-octet on the deterministic uncompressed encode. normalized groups
 # document a specific encode rewrite where only the normalized decoded DNS

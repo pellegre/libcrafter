@@ -278,6 +278,20 @@ def normalize_packet(
     except Exception as exc:  # pragma: no cover - Scapy exception types vary.
         metadata["reencoded_error"] = _text(exc)
 
+    # The comparison-visible ``dns`` layer fields stay header-only so that the
+    # current libcrafter decode model (which exposes only header counts/flags)
+    # keeps comparing cleanly. The full backend-neutral DNS message model -- the
+    # questions, answers, authorities, additionals, names, types, classes, TTLs,
+    # and per-record RDATA -- is normalized here and stored on the metadata so it
+    # is inspectable for record-level cases and ready for later steps that widen
+    # the comparable surface. Compressed and uncompressed names normalize to the
+    # same trailing-dot presentation form, so a compressed-name input and a
+    # libcrafter uncompressed re-encode agree on this normalized model even when
+    # the wire bytes differ (see specs/features/dns-behavior.yaml).
+    dns_message = _normalize_dns_message(packet)
+    if dns_message is not None:
+        metadata["dns_message"] = dns_message
+
     return DecodedModel(
         backend=BACKEND_NAME,
         layers=normalized_layers,
@@ -430,6 +444,381 @@ def _normalize_dns_fields(fields: JSONObject) -> JSONObject:
         else:
             output[normalized_name] = _normalize_field_value("dns", normalized_name, value)
     return output
+
+
+# DNS record-type codes used to drive RDATA normalization. These are the wire
+# codepoints implemented in the feature worktree; everything else normalizes as
+# raw RDATA so unknown or intentionally deferred types never get misdecoded.
+_DNS_TYPE_A = 1
+_DNS_TYPE_NS = 2
+_DNS_TYPE_CNAME = 5
+_DNS_TYPE_SOA = 6
+_DNS_TYPE_PTR = 12
+_DNS_TYPE_MX = 15
+_DNS_TYPE_TXT = 16
+_DNS_TYPE_AAAA = 28
+_DNS_TYPE_SRV = 33
+_DNS_TYPE_OPT = 41
+_DNS_TYPE_DS = 43
+_DNS_TYPE_RRSIG = 46
+_DNS_TYPE_NSEC = 47
+_DNS_TYPE_DNSKEY = 48
+_DNS_TYPE_NSEC3 = 50
+_DNS_TYPE_SVCB = 64
+_DNS_TYPE_HTTPS = 65
+_DNS_NAME_TARGET_TYPES = frozenset({_DNS_TYPE_NS, _DNS_TYPE_CNAME, _DNS_TYPE_PTR})
+
+
+def _normalize_dns_message(packet: Any) -> JSONObject | None:
+    """Build the backend-neutral normalized DNS message from a Scapy packet.
+
+    Returns ``None`` when the packet carries no DNS layer. The model mirrors the
+    ``normalized_model`` contract in specs/features/dns-behavior.yaml: a header,
+    the four sections (questions, answers, authorities, additionals), and typed
+    or raw RDATA per record. Names use libcrafter's trailing-dot presentation
+    form with RFC 1035 Section 5.1 ``\\DDD`` escapes, and raw RDATA is rendered
+    as lowercase hex so both backends compare consistently.
+    """
+
+    dns = _find_dns_layer(packet)
+    if dns is None:
+        return None
+    return {
+        "header": _normalize_dns_header(dns),
+        "questions": [
+            _normalize_dns_question(question)
+            for question in _dns_section_records(dns, "qd")
+        ],
+        "answers": [
+            _normalize_dns_record(record) for record in _dns_section_records(dns, "an")
+        ],
+        "authorities": [
+            _normalize_dns_record(record) for record in _dns_section_records(dns, "ns")
+        ],
+        "additionals": [
+            _normalize_dns_record(record) for record in _dns_section_records(dns, "ar")
+        ],
+    }
+
+
+def _find_dns_layer(packet: Any) -> Any:
+    current = packet
+    while current is not None and current.__class__.__name__ != "NoPayload":
+        if current.__class__.__name__ == "DNS":
+            return current
+        current = getattr(current, "payload", None)
+    return None
+
+
+def _normalize_dns_header(dns: Any) -> JSONObject:
+    flags_word = _dns_flags_word(dns)
+    return {
+        "transaction_id": _dns_int(getattr(dns, "id", 0)),
+        "is_response": bool(_dns_int(getattr(dns, "qr", 0))),
+        "opcode": _dns_int(getattr(dns, "opcode", 0)),
+        "authoritative": bool(_dns_int(getattr(dns, "aa", 0))),
+        "truncated": bool(_dns_int(getattr(dns, "tc", 0))),
+        "recursion_desired": bool(_dns_int(getattr(dns, "rd", 0))),
+        "recursion_available": bool(_dns_int(getattr(dns, "ra", 0))),
+        "authentic_data": bool(_dns_int(getattr(dns, "ad", 0))),
+        "checking_disabled": bool(_dns_int(getattr(dns, "cd", 0))),
+        "reserved_z": (flags_word >> 6) & 0x01,
+        "response_code": _dns_int(getattr(dns, "rcode", 0)),
+        "question_count": _dns_int(getattr(dns, "qdcount", 0)),
+        "answer_count": _dns_int(getattr(dns, "ancount", 0)),
+        "authority_count": _dns_int(getattr(dns, "nscount", 0)),
+        "additional_count": _dns_int(getattr(dns, "arcount", 0)),
+    }
+
+
+def _dns_flags_word(dns: Any) -> int:
+    word = _dns_int(getattr(dns, "qr", 0)) << 15
+    word |= (_dns_int(getattr(dns, "opcode", 0)) & 0x0F) << 11
+    word |= _dns_int(getattr(dns, "aa", 0)) << 10
+    word |= _dns_int(getattr(dns, "tc", 0)) << 9
+    word |= _dns_int(getattr(dns, "rd", 0)) << 8
+    word |= _dns_int(getattr(dns, "ra", 0)) << 7
+    word |= _dns_int(getattr(dns, "z", 0)) << 6
+    word |= _dns_int(getattr(dns, "ad", 0)) << 5
+    word |= _dns_int(getattr(dns, "cd", 0)) << 4
+    word |= _dns_int(getattr(dns, "rcode", 0)) & 0x0F
+    return word
+
+
+def _dns_section_records(dns: Any, attr: str) -> list[Any]:
+    records = getattr(dns, attr, None)
+    if records is None:
+        return []
+    if isinstance(records, (list, tuple)):
+        return [record for record in records if record is not None]
+    return [records]
+
+
+def _normalize_dns_question(question: Any) -> JSONObject:
+    return {
+        "name": _normalize_dns_name(getattr(question, "qname", b"")),
+        "record_type": _dns_int(getattr(question, "qtype", 0)),
+        "record_class": _dns_int(getattr(question, "qclass", 0)),
+    }
+
+
+def _normalize_dns_record(record: Any) -> JSONObject:
+    record_type = _dns_int(getattr(record, "type", 0))
+    normalized: JSONObject = {
+        "name": _normalize_dns_name(getattr(record, "rrname", b"")),
+        "record_type": record_type,
+        "record_class": _dns_int(getattr(record, "rclass", 0)),
+        "ttl": _dns_int(getattr(record, "ttl", 0)),
+        "rdata": _normalize_dns_rdata(record, record_type),
+    }
+    return normalized
+
+
+def _normalize_dns_rdata(record: Any, record_type: int) -> JSONObject:
+    if record_type in (_DNS_TYPE_A, _DNS_TYPE_AAAA):
+        return {"address": _dns_text(getattr(record, "rdata", ""))}
+    if record_type in _DNS_NAME_TARGET_TYPES:
+        return {"target": _normalize_dns_name(getattr(record, "rdata", b""))}
+    if record_type == _DNS_TYPE_MX:
+        return {
+            "preference": _dns_int(getattr(record, "preference", 0)),
+            "exchange": _normalize_dns_name(getattr(record, "exchange", b"")),
+        }
+    if record_type == _DNS_TYPE_TXT:
+        return {"strings": _normalize_dns_txt_strings(getattr(record, "rdata", []))}
+    if record_type == _DNS_TYPE_SOA:
+        return {
+            "primary_name": _normalize_dns_name(getattr(record, "mname", b"")),
+            "responsible_name": _normalize_dns_name(getattr(record, "rname", b"")),
+            "serial": _dns_int(getattr(record, "serial", 0)),
+            "refresh": _dns_int(getattr(record, "refresh", 0)),
+            "retry": _dns_int(getattr(record, "retry", 0)),
+            "expire": _dns_int(getattr(record, "expire", 0)),
+            "minimum": _dns_int(getattr(record, "minimum", 0)),
+        }
+    if record_type == _DNS_TYPE_SRV:
+        return {
+            "priority": _dns_int(getattr(record, "priority", 0)),
+            "weight": _dns_int(getattr(record, "weight", 0)),
+            "port": _dns_int(getattr(record, "port", 0)),
+            "target": _normalize_dns_name(getattr(record, "target", b"")),
+        }
+    if record_type == _DNS_TYPE_OPT:
+        return _normalize_dns_opt(record)
+    if record_type == _DNS_TYPE_DS:
+        return {
+            "key_tag": _dns_int(getattr(record, "keytag", 0)),
+            "algorithm": _dns_int(getattr(record, "algorithm", 0)),
+            "digest_type": _dns_int(getattr(record, "digesttype", 0)),
+            "digest": _dns_hex(getattr(record, "digest", b"")),
+        }
+    if record_type == _DNS_TYPE_DNSKEY:
+        return {
+            "flags": _dns_int(getattr(record, "flags", 0)),
+            "protocol": _dns_int(getattr(record, "protocol", 0)),
+            "algorithm": _dns_int(getattr(record, "algorithm", 0)),
+            "public_key": _dns_hex(getattr(record, "publickey", b"")),
+        }
+    if record_type == _DNS_TYPE_RRSIG:
+        return {
+            "type_covered": _dns_int(getattr(record, "typecovered", 0)),
+            "algorithm": _dns_int(getattr(record, "algorithm", 0)),
+            "labels": _dns_int(getattr(record, "labels", 0)),
+            "original_ttl": _dns_int(getattr(record, "originalttl", 0)),
+            "signature_expiration": _dns_int(getattr(record, "expiration", 0)),
+            "signature_inception": _dns_int(getattr(record, "inception", 0)),
+            "key_tag": _dns_int(getattr(record, "keytag", 0)),
+            "signer_name": _normalize_dns_name(getattr(record, "signersname", b"")),
+            "signature": _dns_hex(getattr(record, "signature", b"")),
+        }
+    if record_type == _DNS_TYPE_NSEC:
+        return {
+            "next_name": _normalize_dns_name(getattr(record, "nextname", b"")),
+            "type_bitmaps": _dns_hex(getattr(record, "typebitmaps", b"")),
+        }
+    if record_type == _DNS_TYPE_NSEC3:
+        return {
+            "hash_algorithm": _dns_int(getattr(record, "hashalg", 0)),
+            "flags": _dns_int(getattr(record, "flags", 0)),
+            "iterations": _dns_int(getattr(record, "iterations", 0)),
+            "salt": _dns_hex(getattr(record, "salt", b"")),
+            "next_hashed_owner": _dns_hex(getattr(record, "nexthashedownername", b"")),
+            "type_bitmaps": _dns_hex(getattr(record, "typebitmaps", b"")),
+        }
+    if record_type in (_DNS_TYPE_SVCB, _DNS_TYPE_HTTPS):
+        return {
+            "priority": _dns_int(getattr(record, "svc_priority", 0)),
+            "target": _normalize_dns_name(getattr(record, "target_name", b"")),
+            "params": _normalize_dns_svc_params(getattr(record, "svc_params", [])),
+        }
+    return {"record_type": record_type, "data": _dns_hex(getattr(record, "rdata", b""))}
+
+
+def _normalize_dns_opt(record: Any) -> JSONObject:
+    # The OPT pseudo-record stores EDNS state in ordinary record header fields:
+    # CLASS carries the UDP payload size, the upper TTL byte carries the extended
+    # RCODE, then VERSION, the DO flag, and the remaining Z bits.
+    rclass = _dns_int(getattr(record, "rclass", 0))
+    z_word = _dns_int(getattr(record, "z", 0))
+    return {
+        "udp_payload_size": rclass,
+        "extended_rcode": _dns_int(getattr(record, "extrcode", 0)),
+        "version": _dns_int(getattr(record, "version", 0)),
+        "dnssec_ok": bool(z_word & 0x8000),
+        "z_bits": z_word & 0x7FFF,
+        "options": _normalize_dns_edns_options(getattr(record, "rdata", [])),
+    }
+
+
+def _normalize_dns_edns_options(value: Any) -> list[JSONObject]:
+    options: list[JSONObject] = []
+    for option in _dns_iter(value):
+        options.append(
+            {
+                "option_code": _dns_int(getattr(option, "optcode", 0)),
+                "option_data": _dns_hex(_dns_edns_option_data(option)),
+            }
+        )
+    return options
+
+
+def _dns_edns_option_data(option: Any) -> bytes:
+    # Scapy dissects known EDNS options (COOKIE, ECS, ...) into typed subclasses
+    # rather than a flat optdata blob. Re-serialize the option payload so the
+    # normalized option_data is the raw wire bytes regardless of the subclass.
+    raw_option = getattr(option, "optdata", None)
+    if isinstance(raw_option, (bytes, bytearray)):
+        return bytes(raw_option)
+    try:
+        encoded = bytes(option)
+    except Exception:  # pragma: no cover - Scapy exception types vary.
+        return b""
+    # EDNS0TLV layout: 2-byte optcode, 2-byte optlen, then optlen bytes of data.
+    if len(encoded) >= 4:
+        return encoded[4:]
+    return b""
+
+
+def _normalize_dns_svc_params(value: Any) -> list[JSONObject]:
+    params: list[JSONObject] = []
+    for param in _dns_iter(value):
+        params.append(
+            {
+                "key": _dns_int(getattr(param, "key", 0)),
+                "value": _dns_hex(_dns_svc_param_value(param)),
+            }
+        )
+    return params
+
+
+def _dns_svc_param_value(param: Any) -> bytes:
+    value = getattr(param, "value", b"")
+    return _dns_concat_bytes(value)
+
+
+def _normalize_dns_txt_strings(value: Any) -> list[JSONObject]:
+    strings = value
+    if isinstance(strings, (bytes, bytearray, str)):
+        strings = [strings]
+    output: list[JSONObject] = []
+    for item in _dns_iter(strings):
+        output.append({"hex": _dns_hex(item)})
+    return output
+
+
+def _normalize_dns_name(value: Any) -> JSONObject:
+    raw = _dns_name_bytes(value)
+    labels = _dns_name_labels(raw)
+    presentation = _dns_labels_to_presentation(labels)
+    return {
+        "labels": [_dns_hex(label) for label in labels],
+        "presentation": presentation,
+        "is_root": presentation == ".",
+    }
+
+
+def _dns_name_bytes(value: Any) -> bytes:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, str):
+        return value.encode("utf-8", "surrogateescape")
+    if value is None:
+        return b""
+    return _text(value).encode("utf-8", "surrogateescape")
+
+
+def _dns_name_labels(raw: bytes) -> list[bytes]:
+    # Scapy presents a decoded name as the labels joined by ``.`` with a trailing
+    # ``.``. Split on the dot separators to recover labels; an empty input or a
+    # bare ``.`` is the root name (no labels).
+    if not raw or raw == b".":
+        return []
+    trimmed = raw[:-1] if raw.endswith(b".") else raw
+    if not trimmed:
+        return []
+    return trimmed.split(b".")
+
+
+def _dns_labels_to_presentation(labels: Sequence[bytes]) -> str:
+    if not labels:
+        return "."
+    out: list[str] = []
+    for label in labels:
+        for byte in label:
+            if 0x20 < byte < 0x7F and byte not in (0x2E, 0x5C):
+                out.append(chr(byte))
+            else:
+                out.append(f"\\{byte:03d}")
+        out.append(".")
+    return "".join(out)
+
+
+def _dns_concat_bytes(value: Any) -> bytes:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, (list, tuple)):
+        chunks = bytearray()
+        for item in value:
+            chunks.extend(_dns_concat_bytes(item))
+        return bytes(chunks)
+    if isinstance(value, str):
+        return value.encode("utf-8", "surrogateescape")
+    if value is None:
+        return b""
+    return _text(value).encode("utf-8", "surrogateescape")
+
+
+def _dns_iter(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [item for item in value if item is not None]
+    return [value]
+
+
+def _dns_hex(value: Any) -> str:
+    return _dns_concat_bytes(value).hex()
+
+
+def _dns_text(value: Any) -> str:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", "replace")
+    if value is None:
+        return ""
+    return _text(value)
+
+
+def _dns_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _normalize_dhcp_fields(fields: JSONObject) -> JSONObject:
