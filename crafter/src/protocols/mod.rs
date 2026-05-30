@@ -80,7 +80,8 @@ pub use ipv6::{
     IPV6_SEGMENT_POLICY_INGRESS, IPV6_SEGMENT_POLICY_SOURCE_ADDRESS, IPV6_SEGMENT_POLICY_UNSET,
 };
 pub use link::{
-    Arp, ArpOperation, Dot1Q, Ethernet, LinuxSll, NullByteOrder, NullLoopback, Vlan,
+    arp_hardware_type_label, Arp, ArpOperation, Dot1Q, Ethernet, LinuxSll, NullByteOrder,
+    NullLoopback, Vlan,
     ARP_HRD_ATM, ARP_HRD_ETHERNET, ARP_HRD_FIBRE_CHANNEL, ARP_HRD_IEEE_802, ARP_HRD_INFINIBAND,
     ARP_HRD_MAPOS, ARP_OP_ARP_NAK, ARP_OP_DRARP_ERROR, ARP_OP_DRARP_REPLY, ARP_OP_DRARP_REQUEST,
     ARP_OP_EXP1, ARP_OP_EXP2, ARP_OP_INARP_REPLY, ARP_OP_INARP_REQUEST, ARP_OP_MAPOS_UNARP,

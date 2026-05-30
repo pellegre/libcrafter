@@ -257,6 +257,26 @@ pub const ARP_HRD_INFINIBAND: u16 = 32;
 /// [`ETHERTYPE_IPV4`]. Default PRO.
 pub const ARP_PRO_IPV4: u16 = ETHERTYPE_IPV4;
 
+/// Short label for a known ARP hardware type, or `None` for unknown values.
+///
+/// This is a data-only lookup over the source-backed hardware-type codepoints
+/// (IANA registry arp-parameters-2, `target/arp-rfc/scope.md`). It never blocks
+/// or rewrites any value: unknown numeric hardware types simply return `None`
+/// and remain usable through [`Arp::hardware_type`]. Mirrors the
+/// [`ArpOperation::label`] shape so summaries and generated tools can recognize
+/// a hardware type without narrowing the packet model.
+pub fn arp_hardware_type_label(hardware_type: u16) -> Option<&'static str> {
+    match hardware_type {
+        ARP_HRD_ETHERNET => Some("ethernet"),
+        ARP_HRD_IEEE_802 => Some("ieee-802"),
+        ARP_HRD_FIBRE_CHANNEL => Some("fibre-channel"),
+        ARP_HRD_ATM => Some("atm"),
+        ARP_HRD_MAPOS => Some("mapos"),
+        ARP_HRD_INFINIBAND => Some("infiniband"),
+        _ => None,
+    }
+}
+
 /// ARP operation value.
 ///
 /// Source-backed known operation codepoints from IANA registry
@@ -556,6 +576,14 @@ impl Arp {
     /// Hardware type value.
     pub fn hardware_type_value(&self) -> u16 {
         value_or_copy(&self.hardware_type, 1)
+    }
+
+    /// Short label for this packet's hardware type, or `None` if it is not a
+    /// known source-backed codepoint (IANA arp-parameters-2). Unknown numeric
+    /// hardware types stay intact and usable; this only reports whether a name
+    /// exists. See [`arp_hardware_type_label`].
+    pub fn hardware_type_label(&self) -> Option<&'static str> {
+        arp_hardware_type_label(self.hardware_type_value())
     }
 
     /// Protocol type value.
@@ -1709,6 +1737,62 @@ mod arp {
         let arp = decoded.layer::<Arp>().unwrap();
         assert_eq!(arp.opcode_value(), unknown_op);
         assert_eq!(ArpOperation::from_opcode(arp.opcode_value()), None);
+    }
+
+    #[test]
+    fn arp_hardware_type_labels_known_source_backed_codepoints() {
+        use super::{
+            arp_hardware_type_label, ARP_HRD_ATM, ARP_HRD_ETHERNET, ARP_HRD_FIBRE_CHANNEL,
+            ARP_HRD_IEEE_802, ARP_HRD_INFINIBAND, ARP_HRD_MAPOS,
+        };
+
+        // Each scoped hardware-type constant (IANA arp-parameters-2) gets a label.
+        let named = [
+            (ARP_HRD_ETHERNET, "ethernet"),
+            (ARP_HRD_IEEE_802, "ieee-802"),
+            (ARP_HRD_FIBRE_CHANNEL, "fibre-channel"),
+            (ARP_HRD_ATM, "atm"),
+            (ARP_HRD_MAPOS, "mapos"),
+            (ARP_HRD_INFINIBAND, "infiniband"),
+        ];
+
+        for (value, label) in named {
+            assert_eq!(arp_hardware_type_label(value), Some(label));
+
+            // The same lookup is reachable from a built packet's accessor, and
+            // setting the value through the raw u16 setter is preserved intact.
+            let arp = Arp::new().hardware_type(value);
+            assert_eq!(arp.hardware_type_value(), value);
+            assert_eq!(arp.hardware_type_label(), Some(label));
+        }
+    }
+
+    #[test]
+    fn arp_hardware_type_unknown_values_stay_raw_and_unlabeled() {
+        use super::{arp_hardware_type_label, ARP_HRD_ETHERNET};
+
+        // Values the registry lookup does not name return None but remain
+        // fully usable through the raw hardware_type(u16) setter.
+        for unknown in [0_u16, 2, 7, 100, 0x1234, 65535] {
+            assert_eq!(arp_hardware_type_label(unknown), None);
+
+            let arp = Arp::new().hardware_type(unknown);
+            assert_eq!(arp.hardware_type_value(), unknown);
+            assert_eq!(arp.hardware_type_label(), None);
+        }
+
+        // The default hardware type (unset) is still Ethernet and labels as such.
+        let default_arp = Arp::new();
+        assert_eq!(default_arp.hardware_type_value(), ARP_HRD_ETHERNET);
+        assert_eq!(default_arp.hardware_type_label(), Some("ethernet"));
+    }
+
+    #[test]
+    fn arp_hardware_type_label_reexported_through_prelude() {
+        use crate::prelude::{arp_hardware_type_label, ARP_HRD_INFINIBAND};
+
+        assert_eq!(arp_hardware_type_label(ARP_HRD_INFINIBAND), Some("infiniband"));
+        assert_eq!(arp_hardware_type_label(0x4242), None);
     }
 }
 
