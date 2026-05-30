@@ -124,6 +124,36 @@ tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smo
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 11 --count 40 --family ipv6 --out target/oracle/step-11-ipv6
 ```
 
+## Offline Protocol Suites
+
+Offline validation is the default safety boundary, so it should prove
+Scapy/libcrafter agreement before any pcap or live planning. Family selection is
+data-driven: the generator honors each case's declared `directions` and
+`byte_policy` from the feature spec's `supported_cases`, so a
+`reference_to_libcrafter`-only or `normalized` case is never forced through an
+unsupported `libcrafter_to_reference` strict comparison, and `structured_error`
+cases (which have no offline malformed pathway) are excluded.
+
+Run the deterministic DNS offline coverage with the `ci` profile in both
+directions:
+
+```sh
+tools/oracle/run corpus --backend scapy --family dns --profile ci --seed 2701 --count 50 --out target/oracle/dns-offline-corpus
+tools/oracle/run offline --backend scapy --family dns --profile ci --seed 2701 --count 50 --direction reference_to_libcrafter --out target/oracle/dns-offline-rtl
+tools/oracle/run offline --backend scapy --family dns --profile ci --seed 2702 --count 50 --direction libcrafter_to_reference --out target/oracle/dns-offline-ltr
+```
+
+To force *every* offline-eligible DNS case in each direction it supports rather
+than a weighted sample, emit the reproducible suite from the specs. The emitter
+prints the case name, direction, derived seed, and artifact path for each
+command; `--run` executes them and reports the aggregate result:
+
+```sh
+tools/oracle/run specs suite --family dns
+tools/oracle/run specs suite --family dns --json
+tools/oracle/run specs suite --family dns --run
+```
+
 ## Artifacts And Reproduction
 
 Oracle artifacts default below `target/oracle/`:
