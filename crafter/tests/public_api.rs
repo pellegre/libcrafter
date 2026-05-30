@@ -49,12 +49,17 @@ fn public_module_paths_expose_representative_items() -> crafter::Result<()> {
 fn udp_public_api_paths_are_usable() -> crafter::Result<()> {
     let prelude_udp: Udp = Udp::new().sport(1111).dport(2222);
     let core_udp = crafter::core::Udp::new().sport(3333).dport(4444);
+    let root_udp = crafter::Udp::new().sport(5555).dport(6666);
+    let protocols_udp = crafter::protocols::Udp::new().sport(7777).dport(8888);
     let transport_udp = crafter::protocols::transport::Udp::new()
-        .sport(5555)
-        .dport(6666);
+        .sport(9999)
+        .dport(10000);
 
     let prelude_packet = (prelude_udp / Raw::from("prelude")).compile()?;
     let core_packet = (core_udp / crafter::core::Raw::from("core")).compile()?;
+    let root_packet = (root_udp / crafter::Raw::from("root")).compile()?;
+    let protocols_packet =
+        (protocols_udp / crafter::protocols::Raw::from("protocols")).compile()?;
     let transport_packet =
         (transport_udp / crafter::protocols::Raw::from("transport")).compile()?;
 
@@ -62,8 +67,44 @@ fn udp_public_api_paths_are_usable() -> crafter::Result<()> {
     assert_eq!(&prelude_packet.as_bytes()[2..4], &2222u16.to_be_bytes());
     assert_eq!(&core_packet.as_bytes()[0..2], &3333u16.to_be_bytes());
     assert_eq!(&core_packet.as_bytes()[2..4], &4444u16.to_be_bytes());
-    assert_eq!(&transport_packet.as_bytes()[0..2], &5555u16.to_be_bytes());
-    assert_eq!(&transport_packet.as_bytes()[2..4], &6666u16.to_be_bytes());
+    assert_eq!(&root_packet.as_bytes()[0..2], &5555u16.to_be_bytes());
+    assert_eq!(&root_packet.as_bytes()[2..4], &6666u16.to_be_bytes());
+    assert_eq!(&protocols_packet.as_bytes()[0..2], &7777u16.to_be_bytes());
+    assert_eq!(&protocols_packet.as_bytes()[2..4], &8888u16.to_be_bytes());
+    assert_eq!(&transport_packet.as_bytes()[0..2], &9999u16.to_be_bytes());
+    assert_eq!(&transport_packet.as_bytes()[2..4], &10000u16.to_be_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn tcp_public_api_paths_are_usable() -> crafter::Result<()> {
+    let prelude_tcp: Tcp = Tcp::new().sport(1111).dport(2222);
+    let core_tcp = crafter::core::Tcp::new().sport(3333).dport(4444);
+    let root_tcp = crafter::Tcp::new().sport(5555).dport(6666);
+    let protocols_tcp = crafter::protocols::Tcp::new().sport(7777).dport(8888);
+    let transport_tcp = crafter::protocols::transport::Tcp::new()
+        .sport(9999)
+        .dport(10000);
+
+    let prelude_packet = (prelude_tcp / Raw::from("prelude")).compile()?;
+    let core_packet = (core_tcp / crafter::core::Raw::from("core")).compile()?;
+    let root_packet = (root_tcp / crafter::Raw::from("root")).compile()?;
+    let protocols_packet =
+        (protocols_tcp / crafter::protocols::Raw::from("protocols")).compile()?;
+    let transport_packet =
+        (transport_tcp / crafter::protocols::Raw::from("transport")).compile()?;
+
+    assert_eq!(&prelude_packet.as_bytes()[0..2], &1111u16.to_be_bytes());
+    assert_eq!(&prelude_packet.as_bytes()[2..4], &2222u16.to_be_bytes());
+    assert_eq!(&core_packet.as_bytes()[0..2], &3333u16.to_be_bytes());
+    assert_eq!(&core_packet.as_bytes()[2..4], &4444u16.to_be_bytes());
+    assert_eq!(&root_packet.as_bytes()[0..2], &5555u16.to_be_bytes());
+    assert_eq!(&root_packet.as_bytes()[2..4], &6666u16.to_be_bytes());
+    assert_eq!(&protocols_packet.as_bytes()[0..2], &7777u16.to_be_bytes());
+    assert_eq!(&protocols_packet.as_bytes()[2..4], &8888u16.to_be_bytes());
+    assert_eq!(&transport_packet.as_bytes()[0..2], &9999u16.to_be_bytes());
+    assert_eq!(&transport_packet.as_bytes()[2..4], &10000u16.to_be_bytes());
 
     Ok(())
 }
