@@ -239,6 +239,7 @@ stacks:
       - dns-record-txt
       - dns-record-soa
       - dns-record-srv
+      - dns-soa-srv-records
       - dns-record-raw-unknown
       - dns-record-raw-deferred
       - dns-record-raw-empty

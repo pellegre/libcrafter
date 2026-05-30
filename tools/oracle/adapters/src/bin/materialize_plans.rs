@@ -818,44 +818,80 @@ fn icmpv6_layer(plan: &Value) -> ExampleResult<Icmpv6> {
 
 fn dns_layer(plan: &Value) -> ExampleResult<Dns> {
     let fields = layer_fields(plan, "dns")?;
-    let mut layer =
-        Dns::new()
-            .flags(dns_flags(fields)?)
-            .id(optional(fields, &["transaction_id", "id"])
-                .map(u16_value)
-                .transpose()?
-                .unwrap_or(0));
+    let transaction_id = optional(fields, &["transaction_id", "id"])
+        .map(u16_value)
+        .transpose()?
+        .unwrap_or(0);
+    let is_response = optional(fields, &["is_response"])
+        .map(bool_value)
+        .transpose()?
+        .unwrap_or(false);
+    let response_code = optional(fields, &["response_code"])
+        .map(dns_response_code)
+        .transpose()?
+        .unwrap_or(0);
+    let mut layer = Dns::new()
+        .id(transaction_id)
+        .flags(dns_flags(fields)?)
+        .response(is_response)
+        .rcode(response_code);
 
     if let Some(questions) = optional(fields, &["questions"]) {
         for question in array_values(questions)? {
-            let qname = if let Some(object) = question.as_object() {
-                text_optional(object, &["qname", "name"]).unwrap_or("example.com.")
-            } else {
-                question.as_str().unwrap_or("example.com.")
-            };
-            let qtype = if let Some(object) = question.as_object() {
-                object
-                    .get("qtype")
-                    .or_else(|| object.get("type"))
-                    .map(dns_record_type)
-                    .transpose()?
-                    .unwrap_or(DNS_TYPE_A)
-            } else {
-                DNS_TYPE_A
-            };
-            layer = layer.question(DnsQuestion::new(qname, qtype));
+            layer = layer.question(dns_question(question)?);
         }
     }
 
     if let Some(answers) = optional(fields, &["answers"]) {
         for answer in array_values(answers)? {
             if let Some(object) = answer.as_object() {
-                layer = layer.answer(dns_answer(object)?);
+                layer = layer.answer(dns_record(object)?);
+            }
+        }
+    }
+
+    if let Some(authorities) = optional(fields, &["authority", "authorities"]) {
+        for authority in array_values(authorities)? {
+            if let Some(object) = authority.as_object() {
+                layer = layer.authority(dns_record(object)?);
+            }
+        }
+    }
+
+    if let Some(additionals) = optional(fields, &["additional", "additionals"]) {
+        for additional in array_values(additionals)? {
+            if let Some(object) = additional.as_object() {
+                layer = layer.additional(dns_record(object)?);
             }
         }
     }
 
     Ok(layer)
+}
+
+fn dns_question(question: &Value) -> ExampleResult<DnsQuestion> {
+    let (qname, qtype, qclass) = if let Some(object) = question.as_object() {
+        let qname = text_optional(object, &["qname", "name"]).unwrap_or("example.com.");
+        let qtype = optional(object, &["qtype", "type"])
+            .map(dns_record_type)
+            .transpose()?
+            .unwrap_or(DNS_TYPE_A);
+        let qclass = optional(object, &["qclass", "class", "record_class"])
+            .map(dns_class)
+            .transpose()?;
+        (qname, qtype, qclass)
+    } else {
+        (
+            question.as_str().unwrap_or("example.com."),
+            DNS_TYPE_A,
+            None,
+        )
+    };
+    let dns_question = DnsQuestion::new(DnsName::parse(qname)?, qtype);
+    Ok(match qclass {
+        Some(class) => dns_question.class(class),
+        None => dns_question,
+    })
 }
 
 fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcp> {
@@ -896,27 +932,460 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcp> {
     Ok(layer)
 }
 
-fn dns_answer(object: &Map<String, Value>) -> ExampleResult<DnsRecord> {
-    let rr_type = object
-        .get("type")
+fn dns_record(object: &Map<String, Value>) -> ExampleResult<DnsRecord> {
+    let rr_type = optional(object, &["type", "record_type"])
         .map(dns_record_type)
         .transpose()?
         .unwrap_or(DNS_TYPE_A);
-    let name = text_optional(object, &["name", "rrname"]).unwrap_or("example.com.");
-    let ttl = object.get("ttl").map(u32_value).transpose()?.unwrap_or(60);
-    if rr_type == DNS_TYPE_CNAME {
-        return Ok(DnsRecord::cname(
+    let name = dns_name(text_optional(object, &["name", "rrname"]).unwrap_or("example.com."))?;
+    let ttl = optional(object, &["ttl"])
+        .map(u32_value)
+        .transpose()?
+        .unwrap_or(60);
+    let class = optional(object, &["record_class", "rclass", "class"])
+        .map(dns_class)
+        .transpose()?
+        .unwrap_or(DNS_CLASS_IN);
+
+    match rr_type {
+        DNS_TYPE_A => {
+            let address = text_optional(object, &["address", "rdata"]).unwrap_or("192.0.2.53");
+            Ok(dns_with_class(
+                DnsRecord::a(name, Ipv4Addr::from_str(address)?, ttl),
+                class,
+            ))
+        }
+        DNS_TYPE_AAAA => {
+            let address = text_optional(object, &["address", "rdata"]).unwrap_or("2001:db8::53");
+            Ok(dns_with_class(
+                DnsRecord::aaaa(name, Ipv6Addr::from_str(address)?, ttl),
+                class,
+            ))
+        }
+        DNS_TYPE_NS => {
+            let target =
+                dns_name(text_optional(object, &["target", "rdata"]).unwrap_or("ns.example.com."))?;
+            Ok(DnsRecord::new(
+                name,
+                DNS_TYPE_NS,
+                class,
+                ttl,
+                DnsRecordData::name(target),
+            ))
+        }
+        DNS_TYPE_CNAME => {
+            let target = dns_name(
+                text_optional(object, &["target", "rdata"]).unwrap_or("alias.example.com."),
+            )?;
+            Ok(dns_with_class(DnsRecord::cname(name, target, ttl), class))
+        }
+        DNS_TYPE_PTR => {
+            let target = dns_name(
+                text_optional(object, &["target", "rdata"]).unwrap_or("host.example.com."),
+            )?;
+            Ok(DnsRecord::new(
+                name,
+                DNS_TYPE_PTR,
+                class,
+                ttl,
+                DnsRecordData::name(target),
+            ))
+        }
+        DNS_TYPE_MX => {
+            let preference = optional(object, &["preference"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(10);
+            let exchange = dns_name(
+                text_optional(object, &["exchange", "target"]).unwrap_or("mail.example.com."),
+            )?;
+            Ok(DnsRecord::new(
+                name,
+                DNS_TYPE_MX,
+                class,
+                ttl,
+                DnsRecordData::Mx {
+                    preference,
+                    exchange,
+                },
+            ))
+        }
+        DNS_TYPE_TXT => Ok(DnsRecord::new(
             name,
-            text_optional(object, &["target", "rdata"]).unwrap_or("alias.example.com."),
+            DNS_TYPE_TXT,
+            class,
             ttl,
-        ));
+            DnsRecordData::Txt(dns_txt_strings(object)?),
+        )),
+        DNS_TYPE_SOA => Ok(dns_with_class(
+            DnsRecord::soa(
+                name,
+                ttl,
+                dns_name(
+                    text_optional(object, &["primary_name", "mname"]).unwrap_or("ns1.example.com."),
+                )?,
+                dns_name(
+                    text_optional(object, &["responsible_name", "rname"])
+                        .unwrap_or("hostmaster.example.com."),
+                )?,
+                optional(object, &["serial"])
+                    .map(u32_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["refresh"])
+                    .map(u32_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["retry"])
+                    .map(u32_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["expire"])
+                    .map(u32_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["minimum"])
+                    .map(u32_value)
+                    .transpose()?
+                    .unwrap_or(0),
+            ),
+            class,
+        )),
+        DNS_TYPE_SRV => Ok(dns_with_class(
+            DnsRecord::srv(
+                name,
+                ttl,
+                optional(object, &["priority"])
+                    .map(u16_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["weight"])
+                    .map(u16_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["port"])
+                    .map(u16_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                dns_name(text_optional(object, &["target"]).unwrap_or("svc.example.com."))?,
+            ),
+            class,
+        )),
+        DNS_TYPE_DS => Ok(dns_with_class(
+            DnsRecord::ds(
+                name,
+                ttl,
+                optional(object, &["key_tag", "keytag"])
+                    .map(u16_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["algorithm"])
+                    .map(u8_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["digest_type", "digesttype"])
+                    .map(u8_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                dns_blob(optional(object, &["digest"]))?,
+            ),
+            class,
+        )),
+        DNS_TYPE_DNSKEY => Ok(dns_with_class(
+            DnsRecord::dnskey(
+                name,
+                ttl,
+                optional(object, &["flags"])
+                    .map(u16_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["protocol"])
+                    .map(u8_value)
+                    .transpose()?
+                    .unwrap_or(3),
+                optional(object, &["algorithm"])
+                    .map(u8_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                dns_blob(optional(object, &["public_key", "publickey"]))?,
+            ),
+            class,
+        )),
+        DNS_TYPE_RRSIG => Ok(dns_with_class(
+            DnsRecord::rrsig(
+                name,
+                ttl,
+                optional(object, &["type_covered", "typecovered"])
+                    .map(dns_record_type)
+                    .transpose()?
+                    .unwrap_or(DNS_TYPE_A),
+                optional(object, &["algorithm"])
+                    .map(u8_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["labels"])
+                    .map(u8_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["original_ttl", "originalttl"])
+                    .map(u32_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["signature_expiration", "expiration"])
+                    .map(u32_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["signature_inception", "inception"])
+                    .map(u32_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["key_tag", "keytag"])
+                    .map(u16_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                dns_name(
+                    text_optional(object, &["signer_name", "signersname"])
+                        .unwrap_or("example.com."),
+                )?,
+                dns_blob(optional(object, &["signature"]))?,
+            ),
+            class,
+        )),
+        DNS_TYPE_NSEC => Ok(dns_with_class(
+            DnsRecord::nsec(
+                name,
+                ttl,
+                dns_name(
+                    text_optional(object, &["next_name", "nextname"])
+                        .unwrap_or("next.example.com."),
+                )?,
+                dns_type_bitmap_codes(optional(object, &["type_bitmaps", "typebitmaps"]))?,
+            ),
+            class,
+        )),
+        DNS_TYPE_NSEC3 => Ok(dns_with_class(
+            DnsRecord::nsec3(
+                name,
+                ttl,
+                optional(object, &["hash_algorithm", "hashalg"])
+                    .map(u8_value)
+                    .transpose()?
+                    .unwrap_or(1),
+                optional(object, &["flags"])
+                    .map(u8_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                optional(object, &["iterations"])
+                    .map(u16_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                dns_blob(optional(object, &["salt"]))?,
+                dns_blob(optional(
+                    object,
+                    &["next_hashed_owner", "nexthashedownername"],
+                ))?,
+                dns_type_bitmap_codes(optional(object, &["type_bitmaps", "typebitmaps"]))?,
+            ),
+            class,
+        )),
+        DNS_TYPE_SVCB => Ok(dns_with_class(
+            DnsRecord::svcb(
+                name,
+                ttl,
+                optional(object, &["priority", "svc_priority"])
+                    .map(u16_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                dns_name(text_optional(object, &["target", "target_name"]).unwrap_or("."))?,
+                dns_svc_params(optional(object, &["params", "svc_params"]))?,
+            ),
+            class,
+        )),
+        DNS_TYPE_HTTPS => Ok(dns_with_class(
+            DnsRecord::https(
+                name,
+                ttl,
+                optional(object, &["priority", "svc_priority"])
+                    .map(u16_value)
+                    .transpose()?
+                    .unwrap_or(0),
+                dns_name(text_optional(object, &["target", "target_name"]).unwrap_or("."))?,
+                dns_svc_params(optional(object, &["params", "svc_params"]))?,
+            ),
+            class,
+        )),
+        DNS_TYPE_OPT => Ok(DnsRecord::opt(
+            optional(object, &["udp_payload_size", "rclass"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(4096),
+            optional(object, &["extended_rcode", "extrcode"])
+                .map(u8_value)
+                .transpose()?
+                .unwrap_or(0),
+            optional(object, &["version"])
+                .map(u8_value)
+                .transpose()?
+                .unwrap_or(0),
+            optional(object, &["dnssec_ok"])
+                .map(bool_value)
+                .transpose()?
+                .unwrap_or(false),
+            dns_edns_options(optional(object, &["options"]))?,
+        )),
+        // Unknown or intentionally deferred record types stay DnsRecordData::Raw
+        // rather than being mapped to an incorrect typed record.
+        _ => Ok(DnsRecord::new(
+            name,
+            rr_type,
+            class,
+            ttl,
+            DnsRecordData::Raw(dns_blob(optional(object, &["data", "rdata"]))?),
+        )),
     }
-    if rr_type == DNS_TYPE_AAAA {
-        let address = text_optional(object, &["address", "rdata"]).unwrap_or("2001:db8::53");
-        return Ok(DnsRecord::aaaa(name, Ipv6Addr::from_str(address)?, ttl));
+}
+
+fn dns_with_class(record: DnsRecord, class: u16) -> DnsRecord {
+    if class == DNS_CLASS_IN {
+        return record;
     }
-    let address = text_optional(object, &["address", "rdata"]).unwrap_or("192.0.2.53");
-    Ok(DnsRecord::a(name, Ipv4Addr::from_str(address)?, ttl))
+    DnsRecord::new(
+        record.dns_name().clone(),
+        record.record_type(),
+        class,
+        record.ttl(),
+        record.data().clone(),
+    )
+}
+
+fn dns_name(name: &str) -> ExampleResult<DnsName> {
+    DnsName::parse(name).map_err(Into::into)
+}
+
+fn dns_txt_strings(object: &Map<String, Value>) -> ExampleResult<Vec<Vec<u8>>> {
+    if let Some(value) = optional(object, &["strings", "rdata"]) {
+        if let Some(items) = value.as_array() {
+            return items.iter().map(dns_text_string).collect();
+        }
+        return Ok(vec![dns_text_string(value)?]);
+    }
+    Ok(vec![Vec::new()])
+}
+
+fn dns_text_string(value: &Value) -> ExampleResult<Vec<u8>> {
+    if let Some(object) = value.as_object() {
+        if let Some(hex) = object.get("hex").and_then(Value::as_str) {
+            return decode_hex(hex);
+        }
+    }
+    Ok(text_value(value)?.as_bytes().to_vec())
+}
+
+fn dns_blob(value: Option<&Value>) -> ExampleResult<Vec<u8>> {
+    match value {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(value) => {
+            if let Some(text) = value.as_str() {
+                return decode_hex(text);
+            }
+            if let Some(object) = value.as_object() {
+                if let Some(hex) = object.get("hex").and_then(Value::as_str) {
+                    return decode_hex(hex);
+                }
+                return Err(format!("dns blob object requires hex, got {value:?}").into());
+            }
+            Err(format!("expected blob-compatible dns value, got {value:?}").into())
+        }
+    }
+}
+
+fn dns_type_bitmap_codes(value: Option<&Value>) -> ExampleResult<Vec<u16>> {
+    let value = match value {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(value) => value,
+    };
+    // Accept either a bare list of record types or a {record_types: [...]} object.
+    let record_types = if let Some(object) = value.as_object() {
+        match object.get("record_types") {
+            Some(types) => types,
+            None => return Ok(Vec::new()),
+        }
+    } else {
+        value
+    };
+    array_values(record_types)?
+        .iter()
+        .map(dns_record_type)
+        .collect()
+}
+
+fn dns_edns_options(value: Option<&Value>) -> ExampleResult<Vec<EdnsOption>> {
+    let value = match value {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(value) => value,
+    };
+    let mut options = Vec::new();
+    for option in array_values(value)? {
+        if let Some(object) = option.as_object() {
+            let code = optional(object, &["option_code", "optcode"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(0);
+            let data = dns_blob(optional(object, &["option_data", "optdata"]))?;
+            options.push(EdnsOption::new(code, data));
+        }
+    }
+    Ok(options)
+}
+
+fn dns_svc_params(value: Option<&Value>) -> ExampleResult<SvcParams> {
+    let value = match value {
+        None | Some(Value::Null) => return Ok(SvcParams::empty()),
+        Some(value) => value,
+    };
+    let mut params = Vec::new();
+    for param in array_values(value)? {
+        if let Some(object) = param.as_object() {
+            let key = optional(object, &["key"])
+                .map(dns_svc_param_key)
+                .transpose()?
+                .unwrap_or(0);
+            let value = dns_blob(optional(object, &["value"]))?;
+            params.push(SvcParam::new(key, value));
+        }
+    }
+    SvcParams::new(params).map_err(Into::into)
+}
+
+fn dns_svc_param_key(value: &Value) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "mandatory" => Ok(DNS_SVCB_KEY_MANDATORY),
+            "alpn" => Ok(DNS_SVCB_KEY_ALPN),
+            "no-default-alpn" => Ok(DNS_SVCB_KEY_NO_DEFAULT_ALPN),
+            "port" => Ok(DNS_SVCB_KEY_PORT),
+            "ipv4hint" => Ok(DNS_SVCB_KEY_IPV4HINT),
+            "ech" => Ok(DNS_SVCB_KEY_ECH),
+            "ipv6hint" => Ok(DNS_SVCB_KEY_IPV6HINT),
+            "dohpath" => Ok(DNS_SVCB_KEY_DOHPATH),
+            other => u16_text(other),
+        };
+    }
+    u16_value(value)
+}
+
+fn dns_class(value: &Value) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_uppercase().as_str() {
+            "IN" => Ok(DNS_CLASS_IN),
+            "CH" => Ok(DNS_CLASS_CH),
+            "HS" => Ok(DNS_CLASS_HS),
+            "NONE" => Ok(DNS_CLASS_NONE),
+            "ANY" => Ok(DNS_CLASS_ANY),
+            _ => u16_text(text),
+        };
+    }
+    u16_value(value)
 }
 
 fn dhcp_options(value: &Value) -> ExampleResult<Vec<DhcpOption>> {
@@ -1296,17 +1765,18 @@ fn dns_flags(fields: &Map<String, Value>) -> ExampleResult<u16> {
             }
         }
     }
-    if optional(fields, &["is_response"])
+    let is_response = optional(fields, &["is_response"])
         .map(bool_value)
         .transpose()?
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if is_response {
         flags |= DNS_FLAG_QR_RESPONSE;
     }
-    flags |= optional(fields, &["response_code"])
+    let response_code = optional(fields, &["response_code"])
         .map(dns_response_code)
         .transpose()?
-        .unwrap_or(0) as u16;
+        .unwrap_or(0);
+    flags |= response_code as u16;
     Ok(flags)
 }
 
@@ -1320,6 +1790,16 @@ fn dns_record_type(value: &Value) -> ExampleResult<u16> {
             "NS" => Ok(DNS_TYPE_NS),
             "PTR" => Ok(DNS_TYPE_PTR),
             "TXT" => Ok(DNS_TYPE_TXT),
+            "SOA" => Ok(DNS_TYPE_SOA),
+            "SRV" => Ok(DNS_TYPE_SRV),
+            "OPT" => Ok(DNS_TYPE_OPT),
+            "DS" => Ok(DNS_TYPE_DS),
+            "DNSKEY" => Ok(DNS_TYPE_DNSKEY),
+            "RRSIG" => Ok(DNS_TYPE_RRSIG),
+            "NSEC" => Ok(DNS_TYPE_NSEC),
+            "NSEC3" => Ok(DNS_TYPE_NSEC3),
+            "SVCB" => Ok(DNS_TYPE_SVCB),
+            "HTTPS" => Ok(DNS_TYPE_HTTPS),
             _ => u16_text(text),
         };
     }

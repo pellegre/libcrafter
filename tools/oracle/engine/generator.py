@@ -1796,6 +1796,36 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
         ]
         fields.pop("answers", None)
         return
+    if "soa-srv-records" in key:
+        # A response carrying one SOA authority-style answer and one SRV answer
+        # so the libcrafter materializer exercises both typed record builders in
+        # a single message and compares against the Scapy reference.
+        fields["is_response"] = True
+        fields["questions"] = [{"qname": "example.com.", "qtype": "SOA"}]
+        fields["answers"] = [
+            {
+                "name": "example.com.",
+                "type": "SOA",
+                "ttl": 300,
+                "primary_name": "ns1.example.com.",
+                "responsible_name": "hostmaster.example.com.",
+                "serial": 2024010101,
+                "refresh": 7200,
+                "retry": 3600,
+                "expire": 1209600,
+                "minimum": 300,
+            },
+            {
+                "name": "_sip._tcp.example.com.",
+                "type": "SRV",
+                "ttl": 60,
+                "priority": 10,
+                "weight": 60,
+                "port": 5060,
+                "target": "sip.example.com.",
+            },
+        ]
+        return
     if "response" in key:
         fields["is_response"] = True
         fields.pop("answers", None)
