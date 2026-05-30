@@ -2174,7 +2174,9 @@ mod tests {
         UDP_OPTION_RES_LEN, UDP_OPTION_TIME, UDP_OPTION_TIME_LEN, UDP_OPTION_UCMP, UDP_OPTION_UEXP,
         UDP_OPTION_UNASSIGNED_SAFE_START, UDP_OPTION_UNASSIGNED_UNSAFE_START,
     };
-    use crate::checksum::{crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum};
+    use crate::checksum::{
+        crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum,
+    };
     use crate::{
         Dhcp, DhcpMessageType, Dns, IpProtocol, Ipv4, Ipv6, Layer, LinkType, MacAddr, Packet, Raw,
         DNS_PORT, DNS_TYPE_A, IPPROTO_UDP,
@@ -2191,28 +2193,99 @@ mod tests {
         Ipv4Addr::new(198, 51, 100, 2)
     }
 
+    fn ipv6_src() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)
+    }
+
+    fn ipv6_dst() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2)
+    }
+
     fn ipv4_total_len(bytes: &[u8]) -> usize {
         u16::from_be_bytes([bytes[2], bytes[3]]) as usize
+    }
+
+    fn ipv6_payload_len(bytes: &[u8]) -> usize {
+        u16::from_be_bytes([bytes[4], bytes[5]]) as usize
     }
 
     fn udp_length(bytes: &[u8]) -> usize {
         u16::from_be_bytes([bytes[24], bytes[25]]) as usize
     }
 
+    fn ipv6_udp_length(bytes: &[u8]) -> usize {
+        u16::from_be_bytes([bytes[44], bytes[45]]) as usize
+    }
+
     fn udp_surplus_start(bytes: &[u8]) -> usize {
         20 + udp_length(bytes)
+    }
+
+    fn ipv6_udp_surplus_start(bytes: &[u8]) -> usize {
+        40 + ipv6_udp_length(bytes)
     }
 
     fn udp_surplus(bytes: &[u8]) -> &[u8] {
         &bytes[udp_surplus_start(bytes)..ipv4_total_len(bytes)]
     }
 
+    fn ipv6_udp_surplus(bytes: &[u8]) -> &[u8] {
+        &bytes[ipv6_udp_surplus_start(bytes)..40 + ipv6_payload_len(bytes)]
+    }
+
+    fn udp_surplus_option_bytes(surplus_start: usize, surplus: &[u8]) -> &[u8] {
+        &surplus[(surplus_start & 1) + UDP_OPTION_CHECKSUM_LEN..]
+    }
+
     fn udp_surplus_checksum_valid(bytes: &[u8]) -> bool {
         let surplus_start = udp_surplus_start(bytes);
         let surplus = udp_surplus(bytes);
+        udp_surplus_checksum_valid_at(surplus_start, surplus)
+    }
+
+    fn udp_surplus_checksum_valid_at(surplus_start: usize, surplus: &[u8]) -> bool {
         let alignment_len = surplus_start & 1;
         let len = (surplus.len() as u16).to_be_bytes();
         internet_checksum_chunks([len.as_slice(), &surplus[alignment_len..]]) == 0
+    }
+
+    fn wire_checksum(checksum: u16) -> u16 {
+        if checksum == 0 {
+            0xffff
+        } else {
+            checksum
+        }
+    }
+
+    fn udp_checksum(bytes: &[u8]) -> u16 {
+        u16::from_be_bytes([bytes[26], bytes[27]])
+    }
+
+    fn ipv6_udp_checksum(bytes: &[u8]) -> u16 {
+        u16::from_be_bytes([bytes[46], bytes[47]])
+    }
+
+    fn assert_ipv4_udp_checksum_excludes_surplus(bytes: &[u8], payload_len: usize) {
+        let udp_end = 20 + UDP_HEADER_LEN + payload_len;
+        let mut udp = bytes[20..udp_end].to_vec();
+        udp[6] = 0;
+        udp[7] = 0;
+        let expected = wire_checksum(ipv4_pseudo_header_checksum(src(), dst(), IPPROTO_UDP, &udp));
+        assert_eq!(udp_checksum(bytes), expected);
+    }
+
+    fn assert_ipv6_udp_checksum_excludes_surplus(bytes: &[u8], payload_len: usize) {
+        let udp_end = 40 + UDP_HEADER_LEN + payload_len;
+        let mut udp = bytes[40..udp_end].to_vec();
+        udp[6] = 0;
+        udp[7] = 0;
+        let expected = wire_checksum(ipv6_pseudo_header_checksum(
+            ipv6_src(),
+            ipv6_dst(),
+            IPPROTO_UDP,
+            &udp,
+        ));
+        assert_eq!(ipv6_udp_checksum(bytes), expected);
     }
 
     fn apc_checksum_value(udp_options: &UdpOptions) -> u32 {
@@ -3849,6 +3922,142 @@ mod tests {
 
             assert_eq!(&bytes.as_bytes()[26..28], &checksum.to_be_bytes());
         }
+    }
+
+    #[test]
+    fn ipv4_udp_compile_surplus_user_data_and_options_uses_ip_total_length() {
+        let payload = [0xaa, 0xbb, 0xcc];
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2260)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes(payload)
+            / UdpOptions::new().additional_payload_checksum())
+        .compile()
+        .unwrap();
+
+        let surplus_start = udp_surplus_start(bytes.as_bytes());
+        let surplus = udp_surplus(bytes.as_bytes());
+        assert_eq!(ipv4_total_len(bytes.as_bytes()), bytes.len());
+        assert_eq!(udp_length(bytes.as_bytes()), UDP_HEADER_LEN + payload.len());
+        assert_eq!(surplus_start, 20 + UDP_HEADER_LEN + payload.len());
+        assert_eq!(surplus[0], 0);
+        assert!(udp_surplus_checksum_valid(bytes.as_bytes()));
+        assert_eq!(
+            udp_surplus_option_bytes(surplus_start, surplus),
+            [
+                UDP_OPTION_APC,
+                UDP_OPTION_APC_LEN as u8,
+                crc32c(&payload).to_be_bytes()[0],
+                crc32c(&payload).to_be_bytes()[1],
+                crc32c(&payload).to_be_bytes()[2],
+                crc32c(&payload).to_be_bytes()[3],
+            ]
+        );
+        assert_ipv4_udp_checksum_excludes_surplus(bytes.as_bytes(), payload.len());
+    }
+
+    #[test]
+    fn ipv6_udp_compile_surplus_user_data_and_options_uses_payload_length() {
+        let payload = [0xaa, 0xbb, 0xcc];
+        let option_bytes = [UDP_OPTION_NOP, UDP_OPTION_EOL];
+        let bytes = (Ipv6::new().src(ipv6_src()).dst(ipv6_dst())
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes(payload)
+            / UdpOptions::from_bytes(option_bytes))
+        .compile()
+        .unwrap();
+
+        let surplus_start = ipv6_udp_surplus_start(bytes.as_bytes());
+        let surplus = ipv6_udp_surplus(bytes.as_bytes());
+        assert_eq!(ipv6_payload_len(bytes.as_bytes()), bytes.len() - 40);
+        assert_eq!(
+            ipv6_udp_length(bytes.as_bytes()),
+            UDP_HEADER_LEN + payload.len()
+        );
+        assert_eq!(surplus_start, 40 + UDP_HEADER_LEN + payload.len());
+        assert_eq!(surplus[0], 0);
+        assert!(udp_surplus_checksum_valid_at(surplus_start, surplus));
+        assert_eq!(
+            udp_surplus_option_bytes(surplus_start, surplus),
+            option_bytes
+        );
+        assert_ipv6_udp_checksum_excludes_surplus(bytes.as_bytes(), payload.len());
+    }
+
+    #[test]
+    fn ipv4_udp_compile_surplus_options_without_user_data() {
+        let option_bytes = [UDP_OPTION_EOL];
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2261)
+            / Udp::new().sport(1234).dport(4321)
+            / UdpOptions::from_bytes(option_bytes))
+        .compile()
+        .unwrap();
+
+        let surplus_start = udp_surplus_start(bytes.as_bytes());
+        let surplus = udp_surplus(bytes.as_bytes());
+        assert_eq!(ipv4_total_len(bytes.as_bytes()), bytes.len());
+        assert_eq!(udp_length(bytes.as_bytes()), UDP_HEADER_LEN);
+        assert_eq!(surplus_start, 20 + UDP_HEADER_LEN);
+        assert!(udp_surplus_checksum_valid(bytes.as_bytes()));
+        assert_eq!(
+            udp_surplus_option_bytes(surplus_start, surplus),
+            option_bytes
+        );
+        assert_ipv4_udp_checksum_excludes_surplus(bytes.as_bytes(), 0);
+    }
+
+    #[test]
+    fn ipv6_udp_compile_surplus_options_without_user_data() {
+        let option_bytes = [UDP_OPTION_EOL];
+        let bytes = (Ipv6::new().src(ipv6_src()).dst(ipv6_dst())
+            / Udp::new().sport(1234).dport(4321)
+            / UdpOptions::from_bytes(option_bytes))
+        .compile()
+        .unwrap();
+
+        let surplus_start = ipv6_udp_surplus_start(bytes.as_bytes());
+        let surplus = ipv6_udp_surplus(bytes.as_bytes());
+        assert_eq!(ipv6_payload_len(bytes.as_bytes()), bytes.len() - 40);
+        assert_eq!(ipv6_udp_length(bytes.as_bytes()), UDP_HEADER_LEN);
+        assert_eq!(surplus_start, 40 + UDP_HEADER_LEN);
+        assert!(udp_surplus_checksum_valid_at(surplus_start, surplus));
+        assert_eq!(
+            udp_surplus_option_bytes(surplus_start, surplus),
+            option_bytes
+        );
+        assert_ipv6_udp_checksum_excludes_surplus(bytes.as_bytes(), 0);
+    }
+
+    #[test]
+    fn ipv4_udp_compile_surplus_preserves_explicit_malformed_lengths() {
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .id(0x2262)
+            .total_length(0x1234)
+            / Udp::new().sport(1234).dport(4321).len(0x0033)
+            / Raw::from_bytes([0xaa, 0xbb])
+            / UdpOptions::from_bytes([UDP_OPTION_NOP, UDP_OPTION_EOL]))
+        .compile()
+        .unwrap();
+
+        assert_eq!(&bytes.as_bytes()[2..4], &0x1234u16.to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[24..26], &0x0033u16.to_be_bytes());
+    }
+
+    #[test]
+    fn ipv6_udp_compile_surplus_preserves_explicit_malformed_lengths() {
+        let bytes = (Ipv6::new()
+            .src(ipv6_src())
+            .dst(ipv6_dst())
+            .payload_length(0x1234)
+            / Udp::new().sport(1234).dport(4321).len(0x0033)
+            / Raw::from_bytes([0xaa, 0xbb])
+            / UdpOptions::from_bytes([UDP_OPTION_NOP, UDP_OPTION_EOL]))
+        .compile()
+        .unwrap();
+
+        assert_eq!(&bytes.as_bytes()[4..6], &0x1234u16.to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[44..46], &0x0033u16.to_be_bytes());
     }
 
     #[test]
