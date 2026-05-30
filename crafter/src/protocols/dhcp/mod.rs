@@ -1,4 +1,42 @@
-//! Dynamic Host Configuration Protocol implementation.
+//! DHCPv4 (Dynamic Host Configuration Protocol) packet layer.
+//!
+//! [`Dhcp`] is a packet primitive for crafting and inspecting BOOTP/DHCPv4
+//! frames: it is not a DHCP client, server, scanner, or lease engine. The layer
+//! composes over UDP with `/`, compiles through [`Packet::compile`] with
+//! protocol-correct defaults, and decodes through the registry when carried on
+//! the DHCP ports.
+//!
+//! Options use a code-plus-value model rather than one enum variant per code.
+//! A [`DhcpOption`] carries its registered [`DhcpOptionCode`], a typed
+//! [`DhcpOptionValue`] for the wire formats the codec understands, and the raw
+//! payload bytes for everything else. Unknown, private-use, removed, ambiguous,
+//! and vendor-specific option payloads are preserved as raw bytes so they
+//! remain inspectable and re-encodable.
+//!
+//! The expanded surface covers:
+//! - Named message constructors ([`Dhcp::discover`], [`Dhcp::offer`],
+//!   [`Dhcp::request`], decline, ack, nak, release, inform, force_renew, and
+//!   the RFC 4388 leasequery constructors).
+//! - Option overload across the BOOTP `file` and `sname` fields (option 52),
+//!   placed with [`Dhcp::file_option`] / [`Dhcp::sname_option`] and reported by
+//!   [`Dhcp::option_overload`].
+//! - RFC 3396 long options: values split into 255-byte segments on encode and
+//!   concatenated into one logical value on decode, with raw segments still
+//!   inspectable through [`scan_dhcp_option_segments`] and
+//!   [`Dhcp::concatenated_option`].
+//! - Relay agent information (option 82, RFC 3046) as a typed
+//!   [`DhcpRelayAgentInfo`] of [`DhcpRelaySuboption`]s.
+//! - Client identifiers (option 61) as a typed [`DhcpClientIdentifier`]
+//!   (Ethernet MAC, RFC 4361 node-specific, or raw).
+//! - Authentication packet fields (option 90, RFC 3118) as
+//!   [`DhcpAuthentication`] and leasequery packet fields (status/state/data
+//!   source) as [`DhcpStatusCodeOption`], [`DhcpState`], and
+//!   [`DhcpDataSource`].
+//!
+//! Authentication and leasequery are packet data only: the crate never derives,
+//! signs, or verifies authentication, and never runs a leasequery state
+//! machine. Intentionally malformed packets are built through the explicit
+//! [`Dhcp::malformed`] surface rather than by weakening the typed builders.
 
 mod constants;
 mod malformed;

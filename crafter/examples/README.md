@@ -36,6 +36,8 @@ Every example uses only public APIs from the `crafter` crate, with
 | `arp_who_has` | Protocols | Dry-run | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. | `cargo run -p crafter --example arp_who_has` |
 | `dns_query` | Protocols | Dry-run send/receive plus offline decode | DNS query construction, dry-run send/receive reporting, and synthetic response decoding. | `cargo run -p crafter --example dns_query -- --name example.com` |
 | `dhcp_discover` | Protocols | Dry-run by default; live-gated with `--live` | DHCP discover construction with an explicit client MAC and link-layer send options. | `cargo run -p crafter --example dhcp_discover` |
+| `dhcp_option82` | Protocols | Offline | DHCP relay agent information (option 82), classless static routes, and option overload construction and offline decode. | `cargo run -p crafter --example dhcp_option82` |
+| `dhcp_leasequery` | Protocols | Offline | DHCP leasequery, typed client identifier, authentication, and status/state packet-field construction and offline decode. | `cargo run -p crafter --example dhcp_leasequery` |
 | `icmpv6_echo` | Protocols | Offline by default; dry-run with `--send-recv` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. | `cargo run -p crafter --example icmpv6_echo` |
 | `vlan` | Protocols | Offline | 802.1Q VLAN frame construction, compile, and decode. | `cargo run -p crafter --example vlan` |
 | `linux_sll` | Protocols | Offline | Linux cooked capture packet construction, compile, and decode. | `cargo run -p crafter --example linux_sll` |
