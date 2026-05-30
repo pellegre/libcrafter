@@ -849,6 +849,20 @@
       "notes": "Oracle fixture case. Response carrying one EDNS(0) OPT pseudo-record whose RDATA holds an ordered EDNS option list: NSID (3), COOKIE (10), Padding (12), DAU (5, a mnemonic without a libcrafter constructor), and an unknown option code (65534). Each OPTION-DATA payload is raw hex carried verbatim as a generic EDNS0TLV(optcode=N, optdata=...) on the Scapy reference and as an EdnsOption on libcrafter, preserving the exact code and data bytes in a fixed order. Strict bytes in both directions."
     },
     {
+      "name": "dnssec-ds-dnskey-rrsig",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Authoritative response carrying one DS (Key Tag, Algorithm, Digest Type, opaque Digest), one DNSKEY (Flags, Protocol, Algorithm, opaque Public Key), and one RRSIG (Type Covered, Algorithm, Labels, Original TTL, Signature Expiration, Signature Inception, Key Tag, uncompressed Signer's Name, opaque Signature) answer per RFC 4034. The numeric fields and digest/key/signature material are wire data only with no cryptographic validation; Scapy DNSRRDS/DNSRRDNSKEY/DNSRRRSIG and libcrafter DnsRecord::ds/dnskey/rrsig pack the same wire fields and the Signer's Name is uncompressed, so strict bytes hold in both directions."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",
