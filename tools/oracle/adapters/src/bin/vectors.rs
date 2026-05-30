@@ -213,6 +213,7 @@ fn normalize_layer_name(layer: &str) -> String {
         "Raw" => "payload",
         "TCP" => "tcp",
         "UDP" => "udp",
+        "UdpOptions" => "UdpOptions",
         _ => return layer.to_ascii_lowercase(),
     }
     .to_string()

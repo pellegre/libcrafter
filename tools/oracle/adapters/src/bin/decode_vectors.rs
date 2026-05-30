@@ -1,9 +1,10 @@
 use crafter::core::{
     Arp, Dhcp, Dns, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
     Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LinkType,
-    LinuxSll, NetworkLayer, NullLoopback, Packet, Raw, Tcp, Udp, Vlan, DNS_FLAG_AUTHENTIC_DATA,
-    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_CHECKING_DISABLED, DNS_FLAG_QR_RESPONSE,
-    DNS_FLAG_RECURSION_AVAILABLE, DNS_FLAG_RECURSION_DESIRED, DNS_FLAG_TRUNCATED,
+    LinuxSll, NetworkLayer, NullLoopback, Packet, Raw, Tcp, Udp, UdpChecksumStatus, UdpOption,
+    UdpOptionStatus, UdpOptions, Vlan, DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE,
+    DNS_FLAG_CHECKING_DISABLED, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_AVAILABLE,
+    DNS_FLAG_RECURSION_DESIRED, DNS_FLAG_TRUNCATED,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -212,14 +213,25 @@ fn normalize_packet(
     source_hex: String,
     feature_tags: Vec<String>,
 ) -> DecodedModel {
+    let source_bytes = decode_hex(&source_hex).ok();
+    let udp_layout = root.as_deref().and_then(|root| {
+        source_bytes
+            .as_deref()
+            .and_then(|bytes| udp_layout(root, bytes))
+    });
     let packet_layers = packet.iter().collect::<Vec<_>>();
     let mut layers = Vec::with_capacity(packet_layers.len());
     let mut fields = BTreeMap::new();
     let mut native_layers = Vec::with_capacity(packet_layers.len());
+    let mut udp_checksum_status = None;
 
     for layer in packet_layers {
         let layer_name = normalized_layer_name(layer);
-        let layer_fields = normalized_layer_fields(layer);
+        let layer_fields =
+            normalized_layer_fields(layer, udp_layout.as_ref(), source_bytes.as_deref());
+        if let Some(udp) = layer.as_any().downcast_ref::<Udp>() {
+            udp_checksum_status = Some(udp.checksum_status());
+        }
         layers.push(layer_name.clone());
         let key = field_key(&fields, &layer_name);
         fields.insert(key, layer_fields);
@@ -237,12 +249,21 @@ fn normalize_packet(
         root,
         source_hex,
         feature_tags,
-        metadata: json!({
+        metadata: {
+            let mut metadata = json!({
             "native": {
                 "summary": packet.summary(),
                 "layers": native_layers
             }
-        }),
+            });
+            if let Some(status) = udp_checksum_status {
+                metadata["udp"] = json!({
+                    "checksum_status": udp_checksum_status_label(status),
+                    "checksum_status_source": "libcrafter_pseudo_header_validation"
+                });
+            }
+            metadata
+        },
     }
 }
 
@@ -285,6 +306,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "ipv6_routing"
     } else if layer.as_any().is::<Udp>() {
         "udp"
+    } else if layer.as_any().is::<UdpOptions>() {
+        "UdpOptions"
     } else if layer.as_any().is::<Tcp>() {
         "tcp"
     } else if layer.as_any().is::<Icmp>() {
@@ -315,7 +338,11 @@ fn normalize_root_name(root: &str) -> &str {
     }
 }
 
-fn normalized_layer_fields(layer: &dyn Layer) -> BTreeMap<String, Value> {
+fn normalized_layer_fields(
+    layer: &dyn Layer,
+    udp_layout: Option<&UdpLayout>,
+    source_bytes: Option<&[u8]>,
+) -> BTreeMap<String, Value> {
     if let Some(layer) = layer.as_any().downcast_ref::<Ethernet>() {
         return ethernet_fields(layer);
     }
@@ -351,6 +378,9 @@ fn normalized_layer_fields(layer: &dyn Layer) -> BTreeMap<String, Value> {
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Udp>() {
         return udp_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<UdpOptions>() {
+        return udp_options_fields(layer, udp_layout, source_bytes);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Tcp>() {
         return tcp_fields(layer);
@@ -559,6 +589,116 @@ fn udp_fields(layer: &Udp) -> BTreeMap<String, Value> {
         fields.insert("checksum".to_string(), json!(value));
     }
     fields
+}
+
+fn udp_options_fields(
+    layer: &UdpOptions,
+    layout: Option<&UdpLayout>,
+    source_bytes: Option<&[u8]>,
+) -> BTreeMap<String, Value> {
+    map([(
+        "options",
+        json!(udp_options_metadata(layer, layout, source_bytes)),
+    )])
+}
+
+fn udp_options_metadata(
+    layer: &UdpOptions,
+    layout: Option<&UdpLayout>,
+    source_bytes: Option<&[u8]>,
+) -> Value {
+    let option_bytes = layer.as_bytes();
+    let layout_surplus = layout
+        .zip(source_bytes)
+        .and_then(|(layout, raw)| raw.get(layout.surplus_start..layout.ip_end));
+    let alignment = if let (Some(layout), Some(surplus)) = (layout, layout_surplus) {
+        let len = (layout.surplus_start - layout.l3_start) & 1;
+        surplus.get(..len).unwrap_or(&[])
+    } else {
+        layer.alignment_bytes().unwrap_or(&[])
+    };
+    let raw_surplus = layout_surplus.map(hex_bytes).unwrap_or_else(|| {
+        let mut surplus = Vec::new();
+        surplus.extend_from_slice(alignment);
+        if let Some(ocs) = layer.option_checksum_value() {
+            surplus.extend_from_slice(&ocs.to_be_bytes());
+        }
+        surplus.extend_from_slice(option_bytes);
+        hex_bytes(&surplus)
+    });
+    let user_payload = layout
+        .zip(source_bytes)
+        .and_then(|(layout, raw)| raw.get(layout.udp_payload_start..layout.udp_payload_end))
+        .unwrap_or(&[]);
+
+    json!({
+        "status": udp_option_status_label(layer.status()),
+        "raw_surplus_hex": raw_surplus,
+        "raw_surplus_length": raw_surplus.len() / 2,
+        "alignment_hex": hex_bytes(alignment),
+        "option_checksum": layer.option_checksum_value(),
+        "option_bytes_hex": hex_bytes(option_bytes),
+        "option_count": layer.options().len(),
+        "items": layer.options().iter().map(udp_option_item).collect::<Vec<_>>(),
+        "application_payload_hex": hex_bytes(user_payload),
+        "application_payload_length": user_payload.len(),
+        "udp_length": layout.map(|layout| layout.udp_length),
+        "placement": "after_udp_length",
+        "surplus_excluded_from_udp_checksum": true
+    })
+}
+
+fn udp_option_item(option: &UdpOption) -> Value {
+    let kind = option.kind();
+    let mut item = BTreeMap::new();
+    item.insert("kind".to_string(), json!(kind));
+    item.insert("name".to_string(), json!(udp_option_name(kind)));
+    item.insert("length".to_string(), json!(option.encoded_len()));
+    if !matches!(option, UdpOption::EndOfList | UdpOption::NoOperation) {
+        item.insert("data_hex".to_string(), json!(hex_bytes(option.data())));
+    }
+    if let Some(value) = option.additional_payload_checksum_value() {
+        item.insert("checksum".to_string(), json!(value));
+    }
+    if let Some(value) = option.maximum_datagram_size_value() {
+        item.insert("max_datagram_size".to_string(), json!(value));
+    }
+    if let Some((size, segments)) = option.maximum_reassembled_datagram_size_values() {
+        item.insert("max_reassembled_size".to_string(), json!(size));
+        item.insert("segment_count".to_string(), json!(segments));
+    }
+    if let Some(value) = option
+        .echo_request_token()
+        .or_else(|| option.echo_response_token())
+    {
+        item.insert("token".to_string(), json!(value));
+    }
+    if let Some((tsval, tsecr)) = option.timestamp_values() {
+        item.insert("tsval".to_string(), json!(tsval));
+        item.insert("tsecr".to_string(), json!(tsecr));
+    }
+    Value::Object(item.into_iter().collect())
+}
+
+fn udp_option_name(kind: u8) -> &'static str {
+    match kind {
+        0 => "eol",
+        1 => "nop",
+        2 => "apc",
+        3 => "frag",
+        4 => "mds",
+        5 => "mrds",
+        6 => "req",
+        7 => "res",
+        8 => "time",
+        9 => "auth",
+        10..=126 => "unassigned_safe",
+        127 => "exp",
+        128..=191 => "reserved_safe",
+        194..=253 => "unassigned_unsafe",
+        254 => "uexp",
+        _ => "reserved_unsafe",
+    }
 }
 
 fn tcp_fields(layer: &Tcp) -> BTreeMap<String, Value> {
@@ -802,6 +942,154 @@ fn tcp_flags(flags: u16) -> String {
     } else {
         names.join("|")
     }
+}
+
+#[derive(Clone, Copy)]
+struct UdpLayout {
+    l3_start: usize,
+    udp_length: usize,
+    udp_payload_start: usize,
+    udp_payload_end: usize,
+    surplus_start: usize,
+    ip_end: usize,
+}
+
+fn udp_layout(root: &str, raw: &[u8]) -> Option<UdpLayout> {
+    let l3_start = l3_start_offset(root, raw)?;
+    let version = raw.get(l3_start).map(|byte| byte >> 4)?;
+    match version {
+        4 => ipv4_udp_layout(raw, l3_start),
+        6 => ipv6_udp_layout(raw, l3_start),
+        _ => None,
+    }
+}
+
+fn l3_start_offset(root: &str, raw: &[u8]) -> Option<usize> {
+    match root {
+        "link:ethernet" => ethernet_l3_start(raw),
+        "link:linux-cooked" | "link:linux-sll" => Some(16),
+        "link:null-loopback" => Some(4),
+        "link:raw" | "l3:ipv4" | "l3:ipv6" | "l3:raw" => Some(0),
+        _ => Some(0),
+    }
+}
+
+fn ethernet_l3_start(raw: &[u8]) -> Option<usize> {
+    if raw.len() < 14 {
+        return None;
+    }
+    let mut offset = 14;
+    let mut ethertype = u16::from_be_bytes([raw[12], raw[13]]);
+    while matches!(ethertype, 0x8100 | 0x88a8 | 0x9100) {
+        if raw.len() < offset + 4 {
+            return None;
+        }
+        ethertype = u16::from_be_bytes([raw[offset + 2], raw[offset + 3]]);
+        offset += 4;
+    }
+    Some(offset)
+}
+
+fn ipv4_udp_layout(raw: &[u8], l3_start: usize) -> Option<UdpLayout> {
+    let ihl = usize::from(raw.get(l3_start)? & 0x0f) * 4;
+    let total_length = usize::from(u16_at(raw, l3_start + 2)?);
+    let protocol = *raw.get(l3_start + 9)?;
+    if ihl < 20 || protocol != crafter::core::IPPROTO_UDP {
+        return None;
+    }
+    let udp_start = l3_start + ihl;
+    udp_layout_from_offsets(raw, l3_start, udp_start, l3_start + total_length)
+}
+
+fn ipv6_udp_layout(raw: &[u8], l3_start: usize) -> Option<UdpLayout> {
+    let payload_length = usize::from(u16_at(raw, l3_start + 4)?);
+    let mut next_header = *raw.get(l3_start + 6)?;
+    let mut offset = l3_start + 40;
+    let ip_end = l3_start + 40 + payload_length;
+    loop {
+        if next_header == crafter::core::IPPROTO_UDP {
+            return udp_layout_from_offsets(raw, l3_start, offset, ip_end);
+        }
+        match next_header {
+            crafter::core::IPPROTO_IPV6_FRAGMENT => {
+                next_header = *raw.get(offset)?;
+                offset = offset.checked_add(8)?;
+            }
+            crafter::core::IPPROTO_IPV6_ROUTE => {
+                next_header = *raw.get(offset)?;
+                let length = (usize::from(*raw.get(offset + 1)?) + 1) * 8;
+                offset = offset.checked_add(length)?;
+            }
+            _ => return None,
+        }
+        if offset > ip_end {
+            return None;
+        }
+    }
+}
+
+fn udp_layout_from_offsets(
+    raw: &[u8],
+    l3_start: usize,
+    udp_start: usize,
+    ip_end: usize,
+) -> Option<UdpLayout> {
+    if raw.len() < udp_start + 8 || raw.len() < ip_end {
+        return None;
+    }
+    let udp_length = usize::from(u16_at(raw, udp_start + 4)?);
+    if udp_length < 8 {
+        return None;
+    }
+    let udp_payload_start = udp_start + 8;
+    let udp_payload_end = udp_start + udp_length;
+    if udp_payload_end > ip_end {
+        return None;
+    }
+    Some(UdpLayout {
+        l3_start,
+        udp_length,
+        udp_payload_start,
+        udp_payload_end,
+        surplus_start: udp_payload_end,
+        ip_end,
+    })
+}
+
+fn udp_checksum_status_label(status: UdpChecksumStatus) -> &'static str {
+    match status {
+        UdpChecksumStatus::NotChecked => "not_checked",
+        UdpChecksumStatus::Ipv4NoChecksum => "ipv4_no_checksum",
+        UdpChecksumStatus::Valid => "valid",
+        UdpChecksumStatus::Invalid => "invalid",
+        UdpChecksumStatus::Ipv6ZeroChecksum => "ipv6_zero_checksum_exception_required",
+    }
+}
+
+fn udp_option_status_label(status: UdpOptionStatus) -> &'static str {
+    match status {
+        UdpOptionStatus::NoSurplus => "no_surplus",
+        UdpOptionStatus::NotParsed => "not_parsed",
+        UdpOptionStatus::Valid => "valid",
+        UdpOptionStatus::Ignored => "ignored",
+        UdpOptionStatus::Malformed => "malformed",
+        UdpOptionStatus::MalformedEnvelope => "malformed_envelope",
+        UdpOptionStatus::NonzeroAfterEndOfList => "nonzero_after_end_of_list",
+        UdpOptionStatus::TooManyNoOperations => "too_many_no_operations",
+        UdpOptionStatus::Unsupported => "unsupported",
+        UdpOptionStatus::UnsupportedFragmentation => "unsupported_fragmentation",
+        UdpOptionStatus::UnknownSafe => "unknown_safe",
+        UdpOptionStatus::UnknownUnsafe => "unknown_unsafe",
+        UdpOptionStatus::OptionChecksumInvalid => "option_checksum_invalid",
+        UdpOptionStatus::AdditionalPayloadChecksumInvalid => "additional_payload_checksum_invalid",
+    }
+}
+
+fn u16_at(raw: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_be_bytes([
+        *raw.get(offset)?,
+        *raw.get(offset + 1)?,
+    ]))
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
