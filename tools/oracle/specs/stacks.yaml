@@ -24,6 +24,7 @@ roots:
       - linux_cooked
     families:
       - link
+      - arp
       - ipv4
   - name: "link:null-loopback"
     layers:
@@ -88,10 +89,35 @@ stacks:
     coverage_cases:
       - raw-payload-link
       - crafter-raw-payload
+  # ethernet / arp: ARP over Ethernet. ARP is IPv4-era link-layer address
+  # resolution (target/arp-rfc/scope.md: RFC 826 over media-generic
+  # HRD/PRO/HLN/PLN), so it stays rooted at a link layer and is never eligible
+  # for network-layer host raw sends. Offline byte-equivalence, pcap, link-type,
+  # and decode-root coverage run locally; live validation is L2-gated
+  # (requires_l2 / requires_broadcast / requires_provider_mac in
+  # tools/oracle/engine/corpus.py, keyed off the arp layer) and runs only
+  # through provider-backed QEMU/VirtualBox lab sessions, never a privileged raw
+  # send from the developer host.
   - name: ethernet_arp
     root: "link:ethernet"
     layers:
       - ethernet
+      - arp
+    coverage_cases:
+      - arp-request
+      - arp-reply
+      - crafter-arp-reply
+  # linux_cooked / arp: ARP captured/replayed over Linux cooked capture
+  # (DLT_LINUX_SLL). The crafter crate already ships a LinuxSll/ARP fixture and
+  # pcap round trip (pcaps/linux-sll-arp-who-has.pcap), so ARP must select this
+  # supported link root in addition to Ethernet. It carries the same L2/live
+  # constraints as ethernet_arp (the arp layer drives requires_l2 /
+  # requires_broadcast / requires_provider_mac) and is offline/pcap-focused;
+  # live ARP exchange remains a provider-backed QEMU/VirtualBox lab path.
+  - name: linux_cooked_arp
+    root: "link:linux-cooked"
+    layers:
+      - linux_cooked
       - arp
     coverage_cases:
       - arp-request
@@ -274,6 +300,13 @@ constraints:
       - ipv4
       - ipv6
       - payload
+  # ARP rides Linux cooked capture (DLT_LINUX_SLL) the same way it rides
+  # Ethernet; the crafter crate already decodes/encodes the LinuxSll/ARP fixture.
+  - name: linux_cooked_children
+    parent: linux_cooked
+    children:
+      - arp
+      - ipv4
   - name: ipv4_children
     parent: ipv4
     children:
