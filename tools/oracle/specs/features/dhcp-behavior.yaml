@@ -65,6 +65,7 @@ coverage_cases:
   - dhcp-decline-nak
   - dhcp-force-renew
   - dhcp-lease-query
+  - dhcp-option-matrix
   - malformed-dhcp-options
   - crafter-dhcp-message-matrix
 

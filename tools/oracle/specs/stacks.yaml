@@ -180,6 +180,7 @@ stacks:
       - dhcp-decline-nak
       - dhcp-force-renew
       - dhcp-lease-query
+      - dhcp-option-matrix
   - name: ipv4_udp_dhcp
     root: "l3:ipv4"
     layers:
@@ -193,6 +194,7 @@ stacks:
       - dhcp-decline-nak
       - dhcp-force-renew
       - dhcp-lease-query
+      - dhcp-option-matrix
   - name: ipv6_udp_payload
     root: "l3:ipv6"
     layers:
