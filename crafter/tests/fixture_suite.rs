@@ -16,9 +16,9 @@ use crafter::core::{
     DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
     DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
     DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
-    DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3,
-    DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, ETHERTYPE_ARP,
-    ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
+    DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
+    DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
+    ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
     ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6,
     IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
     UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
@@ -86,6 +86,8 @@ enum CoverageFamily {
     Ipv4UdpDnsDnssec,
     Ipv4UdpDnsSvcbHttps,
     Ipv4UdpDnsEdnsOpt,
+    Ipv4UdpDnsRawUnknown,
+    Ipv4UdpDnsSectionPlacement,
     Ipv4UdpDhcp,
     Ipv4UdpOptions,
     Ipv6IcmpEcho,
@@ -531,6 +533,28 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: Some("summaries/ipv4-udp-dns-edns-opt-query.summary.txt"),
     },
     ValidFixtureCase {
+        name: "ipv4-udp-dns-raw-unknown-records-response",
+        path: "bytes/ipv4-udp-dns-raw-unknown-records-response.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-udp-dns-raw-unknown-records-response.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-dns-raw-unknown-records-response.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-dns-section-placement-response",
+        path: "bytes/ipv4-udp-dns-section-placement-response.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-udp-dns-section-placement-response.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-dns-section-placement-response.summary.txt"),
+    },
+    ValidFixtureCase {
         name: "ipv4-udp-dhcp-discover",
         path: "bytes/ipv4-udp-dhcp-discover.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dhcp-discover.hex")),
@@ -799,6 +823,14 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         CoverageFamily::Ipv4UdpDnsEdnsOpt,
         "IPv4 UDP DNS EDNS(0) OPT pseudo-record",
     ),
+    (
+        CoverageFamily::Ipv4UdpDnsRawUnknown,
+        "IPv4 UDP DNS unknown and deferred raw records",
+    ),
+    (
+        CoverageFamily::Ipv4UdpDnsSectionPlacement,
+        "IPv4 UDP DNS four-section placement",
+    ),
     (CoverageFamily::Ipv4UdpDhcp, "IPv4 UDP DHCP message"),
     (
         CoverageFamily::Ipv4UdpOptions,
@@ -916,6 +948,8 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-udp-dns-dnssec-response" => &[CoverageFamily::Ipv4UdpDnsDnssec],
         "ipv4-udp-dns-svcb-https-response" => &[CoverageFamily::Ipv4UdpDnsSvcbHttps],
         "ipv4-udp-dns-edns-opt-query" => &[CoverageFamily::Ipv4UdpDnsEdnsOpt],
+        "ipv4-udp-dns-raw-unknown-records-response" => &[CoverageFamily::Ipv4UdpDnsRawUnknown],
+        "ipv4-udp-dns-section-placement-response" => &[CoverageFamily::Ipv4UdpDnsSectionPlacement],
         "ipv4-udp-dhcp-discover" => &[CoverageFamily::Ipv4UdpDhcp],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
             &[CoverageFamily::Ipv4UdpOptions]
@@ -1622,6 +1656,85 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 }
                 other => panic!("expected SVCB RDATA, got {other:?}"),
             }
+        }
+        "ipv4-udp-dns-raw-unknown-records-response" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(198, 51, 100, 53));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 53);
+            assert_eq!(udp.destination_port_value(), 53_001);
+
+            let dns = expect_layer::<Dns>(case, packet);
+            assert_eq!(dns.id_value(), 0x2a05);
+            assert!(dns.is_response());
+            assert_eq!(dns.questions().len(), 1);
+            assert_eq!(dns.questions()[0].name(), "example.com.");
+
+            // An unknown TYPE (65280, RFC 6895 private use) stays opaque rather
+            // than being mis-mapped to a typed record.
+            assert_eq!(dns.answers().len(), 1);
+            let unknown = &dns.answers()[0];
+            assert_eq!(unknown.name(), "example.com.");
+            assert_eq!(unknown.record_type(), 65_280);
+            assert_eq!(
+                unknown.data(),
+                &DnsRecordData::Raw(vec![0xde, 0xad, 0xbe, 0xef, 0x01, 0x02])
+            );
+
+            // A deferred well-known TYPE (NSEC3PARAM, 51) is likewise carried as
+            // raw RDATA in the additional section.
+            assert_eq!(dns.additionals().len(), 1);
+            let deferred = &dns.additionals()[0];
+            assert_eq!(deferred.record_type(), 51);
+            assert_eq!(
+                deferred.data(),
+                &DnsRecordData::Raw(vec![0x01, 0x00, 0x00, 0x04, 0xaa, 0xbb, 0xcc, 0xdd])
+            );
+            assert_eq!(dns.authorities().len(), 0);
+        }
+        "ipv4-udp-dns-section-placement-response" => {
+            let dns = expect_layer::<Dns>(case, packet);
+            assert_eq!(dns.id_value(), 0x2a06);
+            assert!(dns.is_response());
+
+            // Each of the four DNS sections is populated and survives decode in
+            // place: 1 question, 1 answer, 1 authority, 2 additionals.
+            assert_eq!(dns.questions().len(), 1);
+            assert_eq!(dns.questions()[0].name(), "example.com.");
+            assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_A);
+
+            assert_eq!(dns.answers().len(), 1);
+            let answer = &dns.answers()[0];
+            assert_eq!(answer.record_type(), DNS_TYPE_A);
+            assert_eq!(
+                answer.data(),
+                &DnsRecordData::A(Ipv4Addr::new(192, 0, 2, 10))
+            );
+
+            assert_eq!(dns.authorities().len(), 1);
+            let authority = &dns.authorities()[0];
+            assert_eq!(authority.record_type(), DNS_TYPE_NS);
+            assert_eq!(authority.data(), &DnsRecordData::name("ns1.example.com."));
+
+            // The additional section keeps a non-OPT glue A record before the
+            // OPT pseudo-record; neither migrates to another section.
+            assert_eq!(dns.additionals().len(), 2);
+            let glue = &dns.additionals()[0];
+            assert_eq!(glue.name(), "ns1.example.com.");
+            assert_eq!(glue.record_type(), DNS_TYPE_A);
+            assert!(!glue.is_opt());
+            assert_eq!(
+                glue.data(),
+                &DnsRecordData::A(Ipv4Addr::new(198, 51, 100, 53))
+            );
+            let opt = &dns.additionals()[1];
+            assert_eq!(opt.record_type(), DNS_TYPE_OPT);
+            assert!(opt.is_opt());
+            assert_eq!(opt.edns_udp_payload_size(), 1232);
+            assert!(!opt.edns_dnssec_ok());
         }
         "ipv4-udp-dns-edns-opt-query" => {
             let dns = expect_layer::<Dns>(case, packet);
