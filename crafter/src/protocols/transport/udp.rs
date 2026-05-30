@@ -13,7 +13,87 @@ use super::common::{
     value_or_copy,
 };
 
-const UDP_HEADER_LEN: usize = 8;
+/// UDP header length in bytes.
+pub const UDP_HEADER_LEN: usize = 8;
+
+/// UDP End of Options List option kind.
+pub const UDP_OPTION_EOL: u8 = 0;
+/// UDP No Operation option kind.
+pub const UDP_OPTION_NOP: u8 = 1;
+/// UDP Additional Payload Checksum option kind.
+pub const UDP_OPTION_APC: u8 = 2;
+/// UDP Fragmentation option kind.
+pub const UDP_OPTION_FRAG: u8 = 3;
+/// UDP Maximum Datagram Size option kind.
+pub const UDP_OPTION_MDS: u8 = 4;
+/// UDP Maximum Reassembled Datagram Size option kind.
+pub const UDP_OPTION_MRDS: u8 = 5;
+/// UDP Echo Request option kind.
+pub const UDP_OPTION_REQ: u8 = 6;
+/// UDP Echo Response option kind.
+pub const UDP_OPTION_RES: u8 = 7;
+/// UDP Timestamp option kind.
+pub const UDP_OPTION_TIME: u8 = 8;
+/// UDP option kind reserved for Authentication.
+pub const UDP_OPTION_AUTH: u8 = 9;
+/// First currently unassigned SAFE UDP option kind.
+pub const UDP_OPTION_UNASSIGNED_SAFE_START: u8 = 10;
+/// Last currently unassigned SAFE UDP option kind.
+pub const UDP_OPTION_UNASSIGNED_SAFE_END: u8 = 126;
+/// UDP RFC 3692-style SAFE experiment option kind.
+pub const UDP_OPTION_EXP: u8 = 127;
+/// First reserved SAFE UDP option kind.
+pub const UDP_OPTION_RESERVED_SAFE_START: u8 = 128;
+/// Last reserved SAFE UDP option kind.
+pub const UDP_OPTION_RESERVED_SAFE_END: u8 = 191;
+/// UDP option kind reserved for UNSAFE Compression.
+pub const UDP_OPTION_UCMP: u8 = 192;
+/// UDP option kind reserved for UNSAFE Encryption.
+pub const UDP_OPTION_UENC: u8 = 193;
+/// First currently unassigned UNSAFE UDP option kind.
+pub const UDP_OPTION_UNASSIGNED_UNSAFE_START: u8 = 194;
+/// Last currently unassigned UNSAFE UDP option kind.
+pub const UDP_OPTION_UNASSIGNED_UNSAFE_END: u8 = 253;
+/// UDP RFC 3692-style UNSAFE experiment option kind.
+pub const UDP_OPTION_UEXP: u8 = 254;
+/// Reserved UNSAFE UDP option kind.
+pub const UDP_OPTION_RESERVED_UNSAFE: u8 = 255;
+
+/// Inspection status for UDP checksum handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UdpChecksumStatus {
+    /// Checksum validation was not attempted.
+    NotChecked,
+    /// IPv4 UDP checksum field is zero, meaning no checksum was transmitted.
+    Ipv4NoChecksum,
+    /// Nonzero UDP checksum validates against the pseudo-header and UDP data.
+    Valid,
+    /// Nonzero UDP checksum failed validation.
+    Invalid,
+    /// IPv6 UDP checksum field is zero and requires an explicit exception model.
+    Ipv6ZeroChecksum,
+}
+
+/// Inspection status for UDP surplus option processing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UdpOptionStatus {
+    /// No UDP surplus area is present.
+    NoSurplus,
+    /// UDP surplus option parsing has not been attempted.
+    NotParsed,
+    /// UDP surplus options are well-formed.
+    Valid,
+    /// UDP surplus options were intentionally ignored.
+    Ignored,
+    /// UDP surplus option bytes are malformed.
+    Malformed,
+    /// UDP surplus options include unsupported behavior.
+    Unsupported,
+    /// UDP Option Checksum validation failed.
+    OptionChecksumInvalid,
+    /// UDP Additional Payload Checksum validation failed.
+    AdditionalPayloadChecksumInvalid,
+}
 
 /// User Datagram Protocol header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,7 +358,10 @@ fn decode_udp_parts(bytes: &[u8]) -> Result<(Udp, &[u8], &[u8])> {
 
 #[cfg(test)]
 mod tests {
-    use super::Udp;
+    use super::{
+        Udp, UdpChecksumStatus, UdpOptionStatus, UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_FRAG,
+        UDP_OPTION_MDS, UDP_OPTION_MRDS, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_RES,
+    };
     use crate::checksum::ipv4_pseudo_header_checksum;
     use crate::{IpProtocol, Ipv4, LinkType, Packet, Raw, IPPROTO_UDP};
     use core::net::Ipv4Addr;
@@ -291,6 +374,23 @@ mod tests {
 
     fn dst() -> Ipv4Addr {
         Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn udp_public_constants_and_statuses_are_stable() {
+        assert_eq!(UDP_HEADER_LEN, 8);
+        assert_eq!(UDP_OPTION_NOP, 1);
+        assert_eq!(UDP_OPTION_APC, 2);
+        assert_eq!(UDP_OPTION_FRAG, 3);
+        assert_eq!(UDP_OPTION_MDS, 4);
+        assert_eq!(UDP_OPTION_MRDS, 5);
+        assert_eq!(UDP_OPTION_REQ, 6);
+        assert_eq!(UDP_OPTION_RES, 7);
+
+        let checksum_status = UdpChecksumStatus::NotChecked;
+        let option_status = UdpOptionStatus::NotParsed;
+        assert_eq!(checksum_status, UdpChecksumStatus::NotChecked);
+        assert_eq!(option_status, UdpOptionStatus::NotParsed);
     }
 
     #[test]

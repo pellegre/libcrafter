@@ -78,6 +78,58 @@ fn udp_public_api_paths_are_usable() -> crafter::Result<()> {
 }
 
 #[test]
+fn udp_option_constants_and_statuses_are_public() {
+    let prelude_checksum_status: UdpChecksumStatus = UdpChecksumStatus::NotChecked;
+    let prelude_option_status: UdpOptionStatus = UdpOptionStatus::NoSurplus;
+    let core_checksum_status: crafter::core::UdpChecksumStatus =
+        crafter::core::UdpChecksumStatus::Valid;
+    let root_option_status: crafter::UdpOptionStatus = crafter::UdpOptionStatus::Unsupported;
+    let protocols_checksum_status: crafter::protocols::UdpChecksumStatus =
+        crafter::protocols::UdpChecksumStatus::Ipv4NoChecksum;
+    let transport_option_status: crafter::protocols::transport::UdpOptionStatus =
+        crafter::protocols::transport::UdpOptionStatus::OptionChecksumInvalid;
+
+    assert_eq!(UDP_HEADER_LEN, 8);
+    assert_eq!(crafter::core::UDP_OPTION_EOL, 0);
+    assert_eq!(crafter::UDP_OPTION_NOP, 1);
+    assert_eq!(crafter::UDP_OPTION_APC, 2);
+    assert_eq!(crafter::protocols::UDP_OPTION_FRAG, 3);
+    assert_eq!(crafter::protocols::transport::UDP_OPTION_MDS, 4);
+    assert_eq!(crafter::UDP_OPTION_MRDS, 5);
+    assert_eq!(crafter::UDP_OPTION_REQ, 6);
+    assert_eq!(crafter::UDP_OPTION_RES, 7);
+    assert_eq!(crafter::protocols::transport::UDP_OPTION_TIME, 8);
+    assert_eq!(crafter::UDP_OPTION_AUTH, 9);
+    assert_eq!(crafter::UDP_OPTION_UNASSIGNED_SAFE_START, 10);
+    assert_eq!(crafter::UDP_OPTION_UNASSIGNED_SAFE_END, 126);
+    assert_eq!(crafter::UDP_OPTION_EXP, 127);
+    assert_eq!(crafter::UDP_OPTION_RESERVED_SAFE_START, 128);
+    assert_eq!(crafter::UDP_OPTION_RESERVED_SAFE_END, 191);
+    assert_eq!(crafter::UDP_OPTION_UCMP, 192);
+    assert_eq!(crafter::UDP_OPTION_UENC, 193);
+    assert_eq!(crafter::UDP_OPTION_UNASSIGNED_UNSAFE_START, 194);
+    assert_eq!(crafter::UDP_OPTION_UNASSIGNED_UNSAFE_END, 253);
+    assert_eq!(crafter::UDP_OPTION_UEXP, 254);
+    assert_eq!(crafter::UDP_OPTION_RESERVED_UNSAFE, 255);
+
+    assert_eq!(prelude_checksum_status, UdpChecksumStatus::NotChecked);
+    assert_eq!(prelude_option_status, UdpOptionStatus::NoSurplus);
+    assert_eq!(
+        core_checksum_status,
+        crafter::core::UdpChecksumStatus::Valid
+    );
+    assert_eq!(root_option_status, crafter::UdpOptionStatus::Unsupported);
+    assert_eq!(
+        protocols_checksum_status,
+        crafter::protocols::UdpChecksumStatus::Ipv4NoChecksum
+    );
+    assert_eq!(
+        transport_option_status,
+        crafter::protocols::transport::UdpOptionStatus::OptionChecksumInvalid
+    );
+}
+
+#[test]
 fn tcp_public_api_paths_are_usable() -> crafter::Result<()> {
     let prelude_tcp: Tcp = Tcp::new().sport(1111).dport(2222);
     let core_tcp = crafter::core::Tcp::new().sport(3333).dport(4444);
