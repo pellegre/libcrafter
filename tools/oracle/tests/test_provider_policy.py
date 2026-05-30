@@ -6,6 +6,7 @@ import unittest
 
 from tools.oracle.engine.corpus import (
     CorpusPacket,
+    SKIP_PROVIDER_CAPABILITY_UNAVAILABLE,
     SKIP_REQUIRES_BROADCAST,
     SKIP_REQUIRES_CONTROLLED_SERVICE,
     SKIP_REQUIRES_L2,
@@ -14,6 +15,7 @@ from tools.oracle.engine.corpus import (
     wire_comparison_policy,
 )
 from tools.oracle.engine.model import PacketPlan
+from tools.oracle.engine.providers.hetzner import hetzner_default_provider_capabilities
 from tools.oracle.engine.providers.qemu import qemu_default_provider_capabilities
 from tools.oracle.engine.providers.virtualbox import (
     virtualbox_default_provider_capabilities,
@@ -153,6 +155,24 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
             virtualbox_default_provider_capabilities(dry_run=True),
             provider="virtualbox",
         )
+
+    def test_hetzner_skips_ipv4_root_dhcp_on_blocked_provider_ports(self) -> None:
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(_ipv4_dhcp_plan())],
+            provider_capabilities=hetzner_default_provider_capabilities(dry_run=True),
+            wire_provider="hetzner",
+        )
+
+        self.assertEqual(packet.wire.metadata["provider"], "hetzner")
+        self.assertFalse(packet.wire.eligible)
+        self.assertEqual(packet.wire.compare_root, "l3:ipv4")
+        self.assertIn(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE, packet.wire.skip_reasons)
+        profile = packet.wire.metadata["provider_profiles"]["hetzner"]["metadata"]
+        self.assertEqual(profile["capabilities"]["blocked_udp_ports"], [67, 68])
+        self.assertTrue(profile["requirements"]["blocked_udp_port"])
+        self.assertNotIn(SKIP_REQUIRES_L2, packet.wire.skip_reasons)
+        self.assertNotIn(SKIP_REQUIRES_PROVIDER_MAC, packet.wire.skip_reasons)
 
     def test_qemu_skips_ethernet_root_dhcp_for_link_layer_reasons(self) -> None:
         self._assert_ethernet_root_dhcp_skipped(
