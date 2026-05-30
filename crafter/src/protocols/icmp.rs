@@ -248,6 +248,12 @@ const ICMP_ROUTER_ADVERTISEMENT_ENTRY_LEN: usize = 8;
 const ICMP_EXTENSION_HEADER_LEN: usize = 4;
 const ICMP_EXTENSION_OBJECT_LEN: usize = 4;
 const ICMP_EXTENSION_MPLS_LEN: usize = 4;
+/// RFC 4884 expected extension header version for ICMP multi-part messages.
+const ICMP_EXTENSION_VERSION: u8 = 2;
+/// RFC 4884 minimum "original datagram" size, in octets, when an ICMPv4 message
+/// carries an appended extension structure. Shorter quoted datagrams are zero
+/// padded up to this length before the extension header.
+const ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM: usize = 128;
 const MPLS_MAX_LABEL: u32 = 0x000f_ffff;
 const MPLS_MAX_EXP: u8 = 0x07;
 
@@ -864,8 +870,17 @@ impl Icmp {
             return Ok(None);
         }
 
-        let len = encoded_len_until_extension(ctx);
-        u8::try_from(len / unit).map(Some).map_err(|_| {
+        // RFC 4884: the length attribute counts 32-bit words of the *padded*
+        // original datagram and is meaningful only when an extension structure
+        // is appended. When no `IcmpExtension` follows, the field stays zero so
+        // a compliant receiver reads "no extensions present".
+        if !following_extension_present(ctx) {
+            return Ok(Some(0));
+        }
+
+        let raw_len = encoded_len_until_extension(ctx);
+        let padded = rfc4884_padded_original_len(raw_len, unit);
+        u8::try_from(padded / unit).map(Some).map_err(|_| {
             CrafterError::invalid_field_value(
                 "icmp.length",
                 "ICMP original datagram length does not fit in one byte",
@@ -1922,8 +1937,22 @@ impl Layer for IcmpExtension {
         ICMP_EXTENSION_HEADER_LEN
     }
 
+    fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
+        // The RFC 4884 zero padding emitted before the extension header is part
+        // of this layer's on-wire size, so enclosing length fields (the outer
+        // IPv4 total length, for one) count it.
+        ICMP_EXTENSION_HEADER_LEN + extension_original_datagram_padding(*ctx)
+    }
+
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         self.validate()?;
+
+        // RFC 4884: the preceding "original datagram" field is zero padded so
+        // the extension structure starts at the offset the length field claims.
+        // The padding belongs to the original datagram (it is not covered by the
+        // extension checksum), so emit it before the extension header.
+        let padding = extension_original_datagram_padding(*ctx);
+        out.resize(out.len() + padding, 0);
 
         let mut header = Vec::with_capacity(ICMP_EXTENSION_HEADER_LEN);
         let version_reserved =
@@ -2243,6 +2272,13 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
     // it is pushed (and moved) so the entry parser below can use them.
     let ra_num_addrs = icmp.num_addrs_value().unwrap_or(0) as usize;
     let ra_entry_words = icmp.addr_entry_size_value().unwrap_or(0) as usize;
+    // RFC 4884 length field (32-bit words of the padded original datagram) for
+    // the extension-capable error types; read before the header is moved.
+    let rfc4884_length_words = if icmpv4_type_allows_extensions(icmp_type) {
+        icmp.length_value().unwrap_or(0) as usize
+    } else {
+        0
+    };
     packet = packet.push(icmp);
 
     if payload.is_empty() {
@@ -2257,8 +2293,23 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
         if let Some((quoted, consumed)) = decode_quoted_ipv4(payload) {
             packet = packet.push(IcmpQuotedIpv4 { datagram: quoted });
             let trailing = &payload[consumed..];
-            if !trailing.is_empty() {
-                packet = packet.push(Raw::from_bytes(trailing));
+            if trailing.is_empty() {
+                return Ok(packet);
+            }
+            // RFC 4884: when the length field claims a padded original datagram
+            // and a valid extension structure follows, split the trailing bytes
+            // into the extension header and its objects. Anything that does not
+            // parse defensibly (bad version, bad checksum, non-canonical
+            // padding, impossible object lengths) stays a single `Raw` tail.
+            match decode_icmp_extensions(payload, consumed, rfc4884_length_words) {
+                Some(layers) => {
+                    for layer in layers {
+                        packet = packet.push_box(layer);
+                    }
+                }
+                None => {
+                    packet = packet.push(Raw::from_bytes(trailing));
+                }
             }
             return Ok(packet);
         }
@@ -2322,6 +2373,113 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
 
     packet = packet.push(Raw::from_bytes(payload));
     Ok(packet)
+}
+
+/// Decode the RFC 4884 extension structure that follows a quoted original
+/// datagram, returning the typed [`IcmpExtension`] and [`IcmpExtensionObject`]
+/// layers (plus a `Raw` body per object) when the parse is defensible.
+///
+/// `payload` is the ICMP body after the fixed header, `quoted_len` is the
+/// number of bytes consumed by the quoted datagram, and `length_words` is the
+/// RFC 4884 length field (32-bit words of the padded original datagram).
+///
+/// Returns `None` — so the caller keeps the trailing bytes as a single `Raw`
+/// tail — whenever the length field claims no extensions, the claimed offset is
+/// out of range, the padding is non-canonical (so a typed round-trip would not
+/// reproduce the bytes), the extension version is not 2, the extension checksum
+/// does not verify, or an object length is impossible. The quoted datagram is
+/// never dropped, so an ambiguous structure stays inspectable as raw bytes.
+fn decode_icmp_extensions(
+    payload: &[u8],
+    quoted_len: usize,
+    length_words: usize,
+) -> Option<Vec<Box<dyn Layer>>> {
+    // A zero length field means "no extensions" per RFC 4884.
+    if length_words == 0 {
+        return None;
+    }
+
+    let ext_start = length_words * ICMP_EXTENSION_OBJECT_LEN;
+    // The claimed original datagram region must contain the quote and leave room
+    // for at least the extension header.
+    if ext_start < quoted_len || ext_start + ICMP_EXTENSION_HEADER_LEN > payload.len() {
+        return None;
+    }
+
+    // The padding between the quote and the extension header is part of the
+    // original datagram. Only a canonical (zero) padding round-trips, because
+    // the encoder regenerates it from the length field; anything else is left
+    // raw so the bytes survive unchanged.
+    if payload[quoted_len..ext_start].iter().any(|&byte| byte != 0) {
+        return None;
+    }
+
+    let extension = &payload[ext_start..];
+    let version = extension[0] >> 4;
+    if version != ICMP_EXTENSION_VERSION {
+        return None;
+    }
+    let reserved = u16::from_be_bytes([extension[0], extension[1]]) & 0x0fff;
+    let stored_checksum = u16::from_be_bytes([extension[2], extension[3]]);
+
+    // RFC 4884: a zero checksum means none was transmitted; otherwise the one's
+    // complement sum over the whole extension structure must verify. A bad
+    // checksum is treated as "not really an extension" and the bytes stay raw.
+    if stored_checksum != 0 && internet_checksum(extension) != 0 {
+        return None;
+    }
+
+    let objects = decode_icmp_extension_objects(&extension[ICMP_EXTENSION_HEADER_LEN..])?;
+
+    let mut layers: Vec<Box<dyn Layer>> = Vec::with_capacity(1 + objects.len());
+    layers.push(Box::new(
+        IcmpExtension::new()
+            .version(version)
+            .reserved(reserved)
+            .checksum(stored_checksum),
+    ));
+    layers.extend(objects);
+    Some(layers)
+}
+
+/// Decode the object stream that follows an RFC 4884 extension header into
+/// generic [`IcmpExtensionObject`] layers, each followed by a `Raw` payload
+/// when the object carries a body.
+///
+/// Returns `None` when an object header is truncated or claims a length that
+/// does not fit the remaining bytes, so the caller can keep the whole region
+/// raw rather than fabricating a structure. Typed object bodies (MPLS, etc.)
+/// are layered on top in later steps; here every object is preserved generically
+/// with its length, class, sub-type, and raw payload intact.
+fn decode_icmp_extension_objects(mut bytes: &[u8]) -> Option<Vec<Box<dyn Layer>>> {
+    let mut objects: Vec<Box<dyn Layer>> = Vec::new();
+
+    while !bytes.is_empty() {
+        if bytes.len() < ICMP_EXTENSION_OBJECT_LEN {
+            return None;
+        }
+        let length = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        // The length covers the 4-byte object header plus its payload and must
+        // fit in the remaining bytes; anything else is an impossible object.
+        if length < ICMP_EXTENSION_OBJECT_LEN || length > bytes.len() {
+            return None;
+        }
+        let class_num = bytes[2];
+        let c_type = bytes[3];
+        objects.push(Box::new(
+            IcmpExtensionObject::new()
+                .length(length as u16)
+                .class_num(class_num)
+                .c_type(c_type),
+        ));
+        let body = &bytes[ICMP_EXTENSION_OBJECT_LEN..length];
+        if !body.is_empty() {
+            objects.push(Box::new(Raw::from_bytes(body)));
+        }
+        bytes = &bytes[length..];
+    }
+
+    Some(objects)
 }
 
 /// Append a decoded ICMPv6 packet to an existing packet stack.
@@ -2454,6 +2612,89 @@ fn encoded_len_until_extension(ctx: LayerContext<'_>) -> usize {
         .take_while(|layer| !layer.as_any().is::<IcmpExtension>())
         .map(Layer::encoded_len)
         .sum()
+}
+
+/// True when an [`IcmpExtension`] header follows the layer at `ctx` (looking
+/// past the quoted original datagram). RFC 4884 length, padding, and the
+/// minimum original datagram size only apply when an extension structure is
+/// actually appended.
+fn following_extension_present(ctx: LayerContext<'_>) -> bool {
+    ctx.packet()
+        .iter()
+        .skip(ctx.index() + 1)
+        .any(|layer| layer.as_any().is::<IcmpExtension>())
+}
+
+/// RFC 4884 padded "original datagram" length, in octets.
+///
+/// The quoted datagram is zero padded to the nearest 32-bit (`unit`-byte)
+/// boundary and to at least [`ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM`] octets, so
+/// the appended extension structure starts at a predictable offset that a
+/// compliant receiver can locate from the length field.
+fn rfc4884_padded_original_len(raw_len: usize, unit: usize) -> usize {
+    let unit = unit.max(1);
+    let rounded = raw_len.div_ceil(unit) * unit;
+    rounded.max(ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM)
+}
+
+/// Zero-padding inserted between the quoted original datagram and the
+/// [`IcmpExtension`] at `ctx`, so the original datagram field reaches its RFC
+/// 4884 padded length.
+///
+/// The padding target is driven by the preceding [`Icmp`] length field: an
+/// explicit (or decoded) length is honored verbatim so deliberately malformed
+/// or non-canonical packets round-trip, while an unset length falls back to the
+/// auto-computed minimum/word-rounded size. This keeps the byte the length
+/// field claims and the bytes actually emitted consistent.
+fn extension_original_datagram_padding(ctx: LayerContext<'_>) -> usize {
+    // RFC 4884 original-datagram padding is scoped to ICMPv4 here: when no
+    // ICMPv4 `Icmp` header precedes the extension (for example an ICMPv6 stack,
+    // whose RFC 4884 framing is not in scope), nothing is padded so the layer's
+    // size stays its bare header length.
+    let Some(target) = preceding_icmp_original_datagram_len(ctx) else {
+        return 0;
+    };
+    let raw_len = original_datagram_len_before_extension(ctx);
+    target.saturating_sub(raw_len)
+}
+
+/// Sum of encoded lengths of the layers strictly between the nearest preceding
+/// [`Icmp`] header and the [`IcmpExtension`] at `ctx` — i.e. the unpadded
+/// quoted original datagram bytes.
+fn original_datagram_len_before_extension(ctx: LayerContext<'_>) -> usize {
+    let Some(icmp_index) = preceding_icmp_index(ctx) else {
+        return 0;
+    };
+    ((icmp_index + 1)..ctx.index())
+        .filter_map(|index| ctx.packet().get(index))
+        .map(Layer::encoded_len)
+        .sum()
+}
+
+/// Padded original datagram length, in octets, claimed by the nearest preceding
+/// [`Icmp`] header's RFC 4884 length field. Returns `None` when there is no
+/// preceding ICMPv4 header or it carries no length field.
+fn preceding_icmp_original_datagram_len(ctx: LayerContext<'_>) -> Option<usize> {
+    let icmp_index = preceding_icmp_index(ctx)?;
+    let icmp = ctx
+        .packet()
+        .get(icmp_index)?
+        .as_any()
+        .downcast_ref::<Icmp>()?;
+    let icmp_ctx = LayerContext::new(ctx.packet(), icmp_index);
+    let words = icmp
+        .effective_extension_length(Some(icmp_ctx), ICMP_EXTENSION_OBJECT_LEN)
+        .ok()??;
+    Some(words as usize * ICMP_EXTENSION_OBJECT_LEN)
+}
+
+/// Index of the nearest [`Icmp`] layer preceding `ctx`, if any.
+fn preceding_icmp_index(ctx: LayerContext<'_>) -> Option<usize> {
+    (0..ctx.index()).rev().find(|&index| {
+        ctx.packet()
+            .get(index)
+            .is_some_and(|layer| layer.as_any().is::<Icmp>())
+    })
 }
 
 fn extension_object_payload_len(ctx: LayerContext<'_>) -> usize {
@@ -2844,11 +3085,18 @@ mod icmp_tests {
         let bytes = packet.compile().unwrap();
 
         assert_eq!(bytes.as_bytes()[20], ICMP_TIME_EXCEEDED);
-        assert_eq!(bytes.as_bytes()[25], 8);
-        assert_eq!(&bytes.as_bytes()[60..62], &[0x20, 0x00]);
-        assert_eq!(&bytes.as_bytes()[64..68], &[0x00, 0x0c, 0x01, 0x01]);
-        assert_eq!(bytes.as_bytes()[70] & 0x01, 0);
-        assert_eq!(bytes.as_bytes()[74] & 0x01, 1);
+        // RFC 4884: the 32-byte quoted datagram is zero padded up to the 128
+        // octet minimum, so the length field reports 32 words and the extension
+        // structure starts 96 padding bytes after the 32-byte quote.
+        assert_eq!(bytes.as_bytes()[25], 32);
+        assert!(bytes.as_bytes()[60..156].iter().all(|&byte| byte == 0));
+        // Extension header (version 2, reserved 0) at the padded boundary.
+        assert_eq!(&bytes.as_bytes()[156..158], &[0x20, 0x00]);
+        // Extension object: length 12 (4-byte header + two MPLS words), class 1
+        // (MPLS), C-Type 1 (incoming label stack).
+        assert_eq!(&bytes.as_bytes()[160..164], &[0x00, 0x0c, 0x01, 0x01]);
+        assert_eq!(bytes.as_bytes()[166] & 0x01, 0);
+        assert_eq!(bytes.as_bytes()[170] & 0x01, 1);
     }
 
     #[test]
@@ -4294,5 +4542,266 @@ mod icmpv4_router_discovery {
                 .summary(),
             "IcmpRouterAdvertisementEntry(router=192.0.2.1, preference=-7)"
         );
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_rfc4884_extensions {
+    use super::{
+        Icmp, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpQuotedIpv4,
+        ICMP_EXTENSION_HEADER_LEN, ICMP_PARAMETER_PROBLEM, ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM,
+    };
+    use crate::checksum::verify_internet_checksum;
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // The standard 32-byte quoted datagram (IPv4 + UDP + payload) an agent would
+    // attach to an error message.
+    fn quoted_udp() -> Packet {
+        Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 1))
+            .proto(IpProtocol::Udp)
+            / Udp::new().sport(40000).dport(53)
+            / Raw::from("query")
+    }
+
+    // The first byte of the ICMP body after the 20-byte IPv4 header sits at
+    // offset 28; the RFC 4884 length field is the ICMP rest-of-header byte 1.
+    const ICMP_BODY_START: usize = 28;
+    const RFC4884_LENGTH_BYTE: usize = 25;
+
+    // A time-exceeded message that quotes a short datagram and appends an
+    // extension structure auto-fills the RFC 4884 length field, measured in
+    // 32-bit words of the *padded* original datagram (128 octets minimum here).
+    #[test]
+    fn icmpv4_rfc4884_extensions_autofills_length_field() {
+        let bytes = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(1234).ttl(64))
+        .compile()
+        .unwrap();
+
+        // 128 octets / 4 = 32 words.
+        assert_eq!(bytes.as_bytes()[RFC4884_LENGTH_BYTE], 32);
+    }
+
+    // A plain error message with no extension structure leaves the length field
+    // zero, so a compliant receiver reads "no extensions present".
+    #[test]
+    fn icmpv4_rfc4884_extensions_length_is_zero_without_extensions() {
+        let bytes = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp()))
+        .compile()
+        .unwrap();
+
+        assert_eq!(bytes.as_bytes()[RFC4884_LENGTH_BYTE], 0);
+    }
+
+    // The original datagram is zero padded up to the RFC 4884 minimum of 128
+    // octets before the extension header when the quote is shorter, and a quote
+    // longer than the minimum is only padded up to the next 32-bit boundary.
+    #[test]
+    fn icmpv4_rfc4884_extensions_pads_minimum_original_datagram() {
+        // A short quote (well under 128 octets) is padded up to the 128-octet
+        // minimum.
+        let quote_len = quoted_udp().encoded_len();
+        assert!(quote_len < ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM);
+        let short = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::destination_unreachable()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new())
+        .compile()
+        .unwrap();
+        let ext_start = ICMP_BODY_START + ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM;
+        // Everything past the quote and before the extension header is zero
+        // padding making up the rest of the 128-octet original datagram.
+        assert!(short.as_bytes()[ICMP_BODY_START + quote_len..ext_start]
+            .iter()
+            .all(|&byte| byte == 0));
+        // The extension header (version 2) starts exactly at the padded boundary.
+        assert_eq!(short.as_bytes()[ext_start] >> 4, 2);
+        assert_eq!(short.as_bytes()[RFC4884_LENGTH_BYTE], 32);
+
+        // A quote longer than 128 octets but not word-aligned (133 bytes) is
+        // padded only up to the next 32-bit boundary (136 octets / 4 = 34 words),
+        // never back down to the minimum.
+        let long_quote = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 1))
+            .proto(IpProtocol::Udp)
+            / Udp::new().sport(40000).dport(53)
+            / Raw::from_bytes(vec![0xab; 105]); // 20 + 8 + 105 = 133 bytes
+        let long = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(long_quote)
+            / IcmpExtension::new())
+        .compile()
+        .unwrap();
+        assert_eq!(long.as_bytes()[RFC4884_LENGTH_BYTE], 34);
+        // The three padding octets that round 133 up to 136 are zero.
+        let long_ext_start = ICMP_BODY_START + 136;
+        assert!(long.as_bytes()[ICMP_BODY_START + 133..long_ext_start]
+            .iter()
+            .all(|&byte| byte == 0));
+        assert_eq!(long.as_bytes()[long_ext_start] >> 4, 2);
+    }
+
+    // The extension header checksum is auto-filled over the whole extension
+    // structure (header plus objects), so the structure verifies on the wire.
+    #[test]
+    fn icmpv4_rfc4884_extensions_autofills_extension_checksum() {
+        let bytes = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(99).ttl(10))
+        .compile()
+        .unwrap();
+
+        let ext_start = ICMP_BODY_START + ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM;
+        // The one's-complement sum over the extension structure is zero.
+        assert!(verify_internet_checksum(&bytes.as_bytes()[ext_start..]));
+        // A non-zero checksum was actually emitted (not left at zero).
+        assert_ne!(&bytes.as_bytes()[ext_start + 2..ext_start + 4], &[0, 0]);
+    }
+
+    // An explicit extension checksum is honored verbatim, even when it is
+    // intentionally wrong, and it survives a decode round-trip.
+    #[test]
+    fn icmpv4_rfc4884_extensions_explicit_malformed_checksum_is_preserved() {
+        let bytes = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new().checksum(0xdead)
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(7).ttl(5))
+        .compile()
+        .unwrap();
+
+        let ext_start = ICMP_BODY_START + ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM;
+        assert_eq!(
+            &bytes.as_bytes()[ext_start + 2..ext_start + 4],
+            &0xdeadu16.to_be_bytes()
+        );
+
+        // A non-zero but wrong checksum is treated as "not a real extension" on
+        // decode, so the trailing bytes stay raw rather than being typed.
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        assert!(decoded.layer::<IcmpExtension>().is_none());
+        assert!(decoded.layer::<Raw>().is_some());
+        // The bytes round-trip unchanged regardless.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    // A generic, unrecognized extension object retains its length, class,
+    // sub-type, and raw payload across a compile/decode round-trip.
+    #[test]
+    fn icmpv4_rfc4884_extensions_generic_unknown_object_roundtrip() {
+        let payload = [0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Icmp::new().icmp_type(ICMP_PARAMETER_PROBLEM)
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new().class_num(200).c_type(7)
+            / Raw::from_bytes(payload);
+        let compiled = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let object = decoded.layer::<IcmpExtensionObject>().unwrap();
+        // Length covers the 4-byte object header plus the 8-byte payload.
+        assert_eq!(object.length_value(), Some(12));
+        assert_eq!(object.class_num_value(), 200);
+        assert_eq!(object.c_type_value(), 7);
+        // The unknown object payload survives as raw bytes.
+        let raw = decoded.layer::<Raw>().unwrap();
+        assert_eq!(raw.as_bytes(), &payload);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // A complete RFC 4884 packet decodes into typed Icmp, quoted datagram,
+    // extension header, and extension object layers.
+    #[test]
+    fn icmpv4_rfc4884_extensions_decode_splits_typed_layers() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(1234).ttl(100)
+            / IcmpExtensionMpls::new().label(2345).ttl(50))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+
+        // The ICMP header and quoted datagram are typed.
+        let icmp = decoded.layer::<Icmp>().unwrap();
+        assert_eq!(icmp.length_value(), Some(32));
+        let quoted = decoded.layer::<IcmpQuotedIpv4>().unwrap();
+        assert_eq!(
+            quoted.quoted_layer::<Ipv4>().unwrap().source(),
+            Ipv4Addr::new(192, 0, 2, 1)
+        );
+
+        // The extension header and object are typed.
+        let extension = decoded.layer::<IcmpExtension>().unwrap();
+        assert_eq!(extension.version_value(), 2);
+        assert_eq!(extension.checksum_value().map(|_| true), Some(true));
+        let object = decoded.layer::<IcmpExtensionObject>().unwrap();
+        // Object length covers the 4-byte object header plus the two 4-byte MPLS
+        // label stack words.
+        assert_eq!(object.length_value(), Some(12));
+        assert_eq!(object.class_num_value(), 1);
+        assert_eq!(object.c_type_value(), 1);
+
+        // The whole structure round-trips byte-for-byte.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // When the length field claims an extension structure but the bytes that
+    // follow are not a valid one (here a corrupted version nibble), decoding
+    // keeps the trailing bytes as a single Raw tail instead of fabricating typed
+    // layers or panicking, and the buffer still round-trips unchanged.
+    #[test]
+    fn icmpv4_rfc4884_extensions_ambiguous_data_stays_raw() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(1).ttl(1))
+        .compile()
+        .unwrap();
+
+        // Corrupt the extension version nibble (set it to 0xf instead of 2).
+        let mut corrupt = compiled.as_bytes().to_vec();
+        let ext_start = ICMP_BODY_START + ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM;
+        corrupt[ext_start] = 0xf0 | (corrupt[ext_start] & 0x0f);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &corrupt).unwrap();
+        // No typed extension layers were produced.
+        assert!(decoded.layer::<IcmpExtension>().is_none());
+        assert!(decoded.layer::<IcmpExtensionObject>().is_none());
+        // The quoted datagram is still typed and the ambiguous tail is raw.
+        assert!(decoded.layer::<IcmpQuotedIpv4>().is_some());
+        let raw = decoded.layer::<Raw>().unwrap();
+        // The raw tail is the padding plus the unparsed extension bytes.
+        assert!(raw.as_bytes().len() >= ICMP_EXTENSION_HEADER_LEN);
+        // The corrupted buffer round-trips unchanged.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), &corrupt[..]);
     }
 }

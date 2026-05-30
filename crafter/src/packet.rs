@@ -72,7 +72,13 @@ pub trait Layer: fmt::Debug + Send + Sync + 'static {
     /// Encoded length for this layer before dependent auto-fill.
     fn encoded_len(&self) -> usize;
 
-    /// Encoded length for this layer when neighboring layers affect it.
+    /// Encoded length for this layer once neighboring-layer context is known.
+    ///
+    /// Defaults to [`Layer::encoded_len`]. Layers whose on-wire size depends on
+    /// adjacent layers, for example RFC 4884 ICMP extensions, which zero pad
+    /// the preceding original datagram up to a length the previous header
+    /// declares — override this so enclosing length fields stay accurate. The
+    /// context-free [`Layer::encoded_len`] remains the capacity hint.
     fn encoded_len_with_context(&self, _ctx: &LayerContext<'_>) -> usize {
         self.encoded_len()
     }
