@@ -2369,6 +2369,22 @@ def _live_provider_wire_environment(provider_adapter) -> dict[str, str]:
     return {str(key): str(item) for key, item in value.items()}
 
 
+def _live_provider_normalize_endpoints(provider_adapter, endpoints):
+    """Apply provider-specific endpoint normalization after live lab creation."""
+
+    normalizer = getattr(provider_adapter, "normalize_live_endpoints", None)
+    if not callable(normalizer):
+        return endpoints
+    value = normalizer(endpoints)
+    if not isinstance(value, Mapping):
+        return endpoints
+    return {
+        role: endpoint
+        for role, endpoint in value.items()
+        if isinstance(role, str)
+    }
+
+
 def _live_provider_execute(
     *,
     args: argparse.Namespace,
@@ -2457,6 +2473,7 @@ def _live_provider_execute(
             client=wire,
         )
         endpoints = live_endpoints_from_lab_session(lab_session)
+        endpoints = _live_provider_normalize_endpoints(provider_adapter, endpoints)
         missing_roles = [
             role
             for role in provider_adapter.endpoint_roles
