@@ -10,10 +10,10 @@ use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
     DnsRecordData, Ethernet, Icmp, IcmpKind, Icmpv6, Ipv4, Ipv4Option, Ipv6, Ipv6FragmentHeader,
     Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
-    Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp, UdpOptionStatus, UdpOptions, Vlan,
-    ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
-    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_TYPE_A,
-    DNS_TYPE_AAAA, DNS_TYPE_CNAME, ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN,
+    Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus,
+    UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
+    DNS_CLASS_IN, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED,
+    DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME, ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN,
     ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST,
     IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, TCP_FLAG_ACK,
     TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
@@ -54,6 +54,7 @@ enum ExpectedLayer {
     Icmpv6,
     Tcp,
     Udp,
+    UdpOptions,
     Dns,
     Dhcp,
     Raw,
@@ -77,9 +78,11 @@ enum CoverageFamily {
     Ipv4UdpDnsQuery,
     Ipv4UdpDnsResponse,
     Ipv4UdpDhcp,
+    Ipv4UdpOptions,
     Ipv6IcmpEcho,
     Ipv6IcmpError,
     Ipv6Udp,
+    Ipv6UdpOptions,
     Ipv6Tcp,
     Ipv6ExtensionHeader,
     DhcpOptions,
@@ -492,6 +495,34 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: Some("summaries/ipv4-udp-dhcp-discover.summary.txt"),
     },
     ValidFixtureCase {
+        name: "ipv4-udp-options-known",
+        path: "bytes/ipv4-udp-options-known.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-options-known.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Raw,
+            ExpectedLayer::UdpOptions,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-options-known.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-options-unknown-safe",
+        path: "bytes/ipv4-udp-options-unknown-safe.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-options-unknown-safe.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Raw,
+            ExpectedLayer::UdpOptions,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-options-unknown-safe.summary.txt"),
+    },
+    ValidFixtureCase {
         name: "ipv6-icmp-echo-request",
         path: "bytes/ipv6-icmp-echo-request.bin",
         contents: FixtureContents::Bytes(fixture_bytes!("bytes/ipv6-icmp-echo-request.bin")),
@@ -525,6 +556,34 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         expected_layers: &[ExpectedLayer::Ipv6, ExpectedLayer::Udp, ExpectedLayer::Raw],
         preserve_exact_bytes: true,
         summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-options-unknown-unsafe",
+        path: "bytes/ipv6-udp-options-unknown-unsafe.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-options-unknown-unsafe.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Raw,
+            ExpectedLayer::UdpOptions,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv6-udp-options-unknown-unsafe.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-options-frag",
+        path: "bytes/ipv6-udp-options-frag.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-options-frag.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Raw,
+            ExpectedLayer::UdpOptions,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv6-udp-options-frag.summary.txt"),
     },
     ValidFixtureCase {
         name: "ipv6-tcp-raw",
@@ -680,9 +739,17 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     (CoverageFamily::Ipv4UdpDnsQuery, "IPv4 UDP DNS query"),
     (CoverageFamily::Ipv4UdpDnsResponse, "IPv4 UDP DNS response"),
     (CoverageFamily::Ipv4UdpDhcp, "IPv4 UDP DHCP message"),
+    (
+        CoverageFamily::Ipv4UdpOptions,
+        "IPv4 UDP options surplus decode",
+    ),
     (CoverageFamily::Ipv6IcmpEcho, "IPv6 ICMPv6 echo"),
     (CoverageFamily::Ipv6IcmpError, "IPv6 ICMPv6 error message"),
     (CoverageFamily::Ipv6Udp, "IPv6 UDP payload"),
+    (
+        CoverageFamily::Ipv6UdpOptions,
+        "IPv6 UDP options surplus decode",
+    ),
     (CoverageFamily::Ipv6Tcp, "IPv6 TCP payload"),
     (
         CoverageFamily::Ipv6ExtensionHeader,
@@ -785,9 +852,15 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-udp-dns-query-example-com" => &[CoverageFamily::Ipv4UdpDnsQuery],
         "ipv4-udp-dns-response-example-com" => &[CoverageFamily::Ipv4UdpDnsResponse],
         "ipv4-udp-dhcp-discover" => &[CoverageFamily::Ipv4UdpDhcp],
+        "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
+            &[CoverageFamily::Ipv4UdpOptions]
+        }
         "ipv6-icmp-echo-request" => &[CoverageFamily::Ipv6IcmpEcho],
         "ipv6-icmpv6-time-exceeded" => &[CoverageFamily::Ipv6IcmpError],
         "ipv6-udp-raw" => &[CoverageFamily::Ipv6Udp],
+        "ipv6-udp-options-unknown-unsafe" | "ipv6-udp-options-frag" => {
+            &[CoverageFamily::Ipv6UdpOptions]
+        }
         "ipv6-tcp-raw" => &[CoverageFamily::Ipv6Tcp],
         "ipv6-fragment-udp-raw" => &[CoverageFamily::Ipv6ExtensionHeader],
         other => panic!("fixture {other} has no coverage-family mapping"),
@@ -965,6 +1038,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             }
             ExpectedLayer::Udp => {
                 let _ = expect_layer::<Udp>(case, packet);
+            }
+            ExpectedLayer::UdpOptions => {
+                let _ = expect_layer::<UdpOptions>(case, packet);
             }
             ExpectedLayer::Dns => {
                 let _ = expect_layer::<Dns>(case, packet);
@@ -1332,6 +1408,67 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
             assert_eq!(dhcp.host_name_value(), Some("agent"));
         }
+        "ipv4-udp-options-known" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 31));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 31));
+            assert_eq!(ipv4.identification_value(), 0x3101);
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 53_010);
+            assert_eq!(udp.destination_port_value(), 10_010);
+            assert_eq!(udp.length_value(), Some(12));
+            assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"opts");
+
+            let udp_options = expect_layer::<UdpOptions>(case, packet);
+            assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+            assert_eq!(udp_options.option_checksum_value(), Some(0xc88a));
+            assert_eq!(udp_options.alignment_bytes(), Some(&[][..]));
+            assert_eq!(
+                udp_options.options(),
+                &[
+                    UdpOption::additional_payload_checksum(0x1e38_cf62),
+                    UdpOption::maximum_datagram_size(1500),
+                    UdpOption::maximum_reassembled_datagram_size(9000, 32),
+                    UdpOption::echo_request(0x0102_0304),
+                    UdpOption::echo_response(0x0506_0708),
+                    UdpOption::timestamp(0x1122_3344, 0x5566_7788),
+                    UdpOption::experimental(0x1234, [0xaa, 0xbb]),
+                    UdpOption::unsafe_experimental(0x5678, [0xcc]),
+                    UdpOption::NoOperation,
+                    UdpOption::EndOfList,
+                ]
+            );
+        }
+        "ipv4-udp-options-unknown-safe" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 32));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 32));
+            assert_eq!(ipv4.identification_value(), 0x3102);
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 53_011);
+            assert_eq!(udp.destination_port_value(), 10_011);
+            assert_eq!(udp.length_value(), Some(12));
+            assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"safe");
+
+            let udp_options = expect_layer::<UdpOptions>(case, packet);
+            assert_eq!(udp_options.status(), UdpOptionStatus::UnknownSafe);
+            assert_eq!(udp_options.option_checksum_value(), Some(0x4af4));
+            assert_eq!(udp_options.alignment_bytes(), Some(&[][..]));
+            assert_eq!(
+                udp_options.options(),
+                &[
+                    UdpOption::generic(10, [0xab]),
+                    UdpOption::NoOperation,
+                    UdpOption::EndOfList,
+                ]
+            );
+        }
         "ipv6-icmp-echo-request" => {
             let ipv6 = expect_layer::<Ipv6>(case, packet);
             assert_eq!(
@@ -1391,6 +1528,62 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(udp.source_port_value(), 53_006);
             assert_eq!(udp.destination_port_value(), 10_003);
             assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"ipv6-udp");
+        }
+        "ipv6-udp-options-unknown-unsafe" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0031, 0, 0, 0, 0, 0x0031)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0032, 0, 0, 0, 0, 0x0032)
+            );
+            assert_eq!(ipv6.next_header_value(), IPPROTO_UDP);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 53_012);
+            assert_eq!(udp.destination_port_value(), 10_012);
+            assert_eq!(udp.length_value(), Some(12));
+            assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"unus");
+
+            let udp_options = expect_layer::<UdpOptions>(case, packet);
+            assert_eq!(udp_options.status(), UdpOptionStatus::UnknownUnsafe);
+            assert_eq!(udp_options.option_checksum_value(), Some(0x70f6));
+            assert_eq!(udp_options.alignment_bytes(), Some(&[][..]));
+            assert_eq!(udp_options.options(), &[UdpOption::generic(194, [0xcd])]);
+        }
+        "ipv6-udp-options-frag" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0031, 0, 0, 0, 0, 0x0031)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0033, 0, 0, 0, 0, 0x0033)
+            );
+            assert_eq!(ipv6.next_header_value(), IPPROTO_UDP);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 53_013);
+            assert_eq!(udp.destination_port_value(), 10_013);
+            assert_eq!(udp.length_value(), Some(12));
+            assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"frag");
+
+            let udp_options = expect_layer::<UdpOptions>(case, packet);
+            assert_eq!(
+                udp_options.status(),
+                UdpOptionStatus::UnsupportedFragmentation
+            );
+            assert_eq!(udp_options.option_checksum_value(), Some(0xf8e2));
+            assert_eq!(udp_options.alignment_bytes(), Some(&[][..]));
+            assert_eq!(
+                udp_options.options(),
+                &[UdpOption::generic(3, [1, 2, 3, 4, 0, 0, 0, 1])]
+            );
         }
         "ipv6-tcp-raw" => {
             let ipv6 = expect_layer::<Ipv6>(case, packet);
@@ -1867,6 +2060,33 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
             }
             FixtureDecodeTarget::DhcpOptions => assert_dhcp_option_fixture(case, &bytes),
         }
+    }
+}
+
+#[test]
+fn udp_options_fixture_corpus_decodes_compile_and_summarizes() {
+    let udp_options_cases = VALID_FIXTURES
+        .iter()
+        .filter(|case| {
+            coverage_for_case(case.name).iter().any(|coverage| {
+                matches!(
+                    coverage,
+                    CoverageFamily::Ipv4UdpOptions | CoverageFamily::Ipv6UdpOptions
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(udp_options_cases.len(), 4);
+
+    for case in udp_options_cases {
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+        assert_packet_surface(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
     }
 }
 
