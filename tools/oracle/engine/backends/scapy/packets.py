@@ -1027,6 +1027,26 @@ def _dhcp_chaddr(value: object) -> bytes:
     return raw.ljust(16, b"\x00")
 
 
+# Scapy DHCP option names differ from the backend-neutral / libcrafter option
+# names for several byte-identical options. Mapping the neutral name to the
+# Scapy field name lets the same ``name=value`` option string materialize to
+# identical option bytes through both backends; an unmapped name passes through
+# unchanged so Scapy still recognizes its own native option names.
+_DHCP_OPTION_NAME_TO_SCAPY: dict[str, str] = {
+    "message_type": "message-type",
+    "host_name": "hostname",
+    "domain_name": "domain",
+    "requested_ip": "requested_addr",
+    "requested_ip_address": "requested_addr",
+    "server_identifier": "server_id",
+    "dns": "name_server",
+    "domain_name_server": "name_server",
+}
+# Options whose Scapy field is an integer; the generator carries the value as a
+# JSON string, so it must be coerced back to int before Scapy serializes it.
+_DHCP_INTEGER_OPTIONS = frozenset({"lease_time", "renewal_time", "rebinding_time"})
+
+
 def _dhcp_options(value: object) -> list[object]:
     if not isinstance(value, list):
         return [("message-type", "discover"), "end"]
@@ -1038,7 +1058,7 @@ def _dhcp_options(value: object) -> list[object]:
                 continue
             if "=" in item:
                 name, raw_value = item.split("=", 1)
-                options.append((name, raw_value))
+                options.append(_dhcp_name_value_option(name, raw_value))
                 continue
         if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], str):
             options.append((item[0], _dhcp_option_value(item[1])))
@@ -1047,6 +1067,20 @@ def _dhcp_options(value: object) -> list[object]:
     if not options or options[-1] != "end":
         options.append("end")
     return options
+
+
+def _dhcp_name_value_option(name: str, raw_value: str) -> tuple[str, object]:
+    """Translate a ``name=value`` option string into a Scapy option tuple.
+
+    The option name is normalized to the Scapy field name for the byte-safe
+    option set so the neutral/libcrafter option names round-trip strict-bytes,
+    and integer-valued options are coerced from their JSON string form.
+    """
+
+    scapy_name = _DHCP_OPTION_NAME_TO_SCAPY.get(name, name)
+    if name in _DHCP_INTEGER_OPTIONS:
+        return scapy_name, int(raw_value, 0)
+    return scapy_name, raw_value
 
 
 def _dhcp_option_value(value: object) -> object:

@@ -13,11 +13,30 @@ from __future__ import annotations
 import unittest
 from collections.abc import Mapping, Sequence
 
-from tools.oracle.engine.generator import generate_plans
+from tools.oracle.engine.generator import (
+    DHCP_OPTION_MATRIX_TOKENS,
+    generate_plans,
+)
 from tools.oracle.engine.model import PacketPlan
 
 
 _IPV4_ROOT_STACK = ["ipv4", "udp", "dhcp"]
+
+# The Scapy-byte-safe option kinds the dhcp_behavior option_matrix samples
+# cross-backend, expressed as the backend-neutral option names the generated
+# plans carry. Kinds Scapy cannot encode byte-for-byte are covered by native
+# libcrafter fixtures instead; see tools/oracle/specs/layers/dhcp.yaml.
+_EXPECTED_OPTION_MATRIX_KINDS = (
+    "message-type",
+    "hostname",
+    "domain_name",
+    "requested_ip",
+    "server_id",
+    "router",
+    "domain_name_server",
+    "lease_time",
+    "end",
+)
 
 # DHCP magic cookie (RFC 2132) that prefaces the option list once decoded.
 _DHCP_MAGIC_COOKIE = 0x63825363
@@ -78,6 +97,33 @@ def _dhcp_message_type(plan: PacketPlan) -> str | None:
 def _packet_root(plan: PacketPlan) -> str | None:
     root = plan.metadata.get("root_decoder", plan.metadata.get("root"))
     return root if isinstance(root, str) and root else None
+
+
+def _dhcp_option_kinds(plan: PacketPlan) -> list[str]:
+    """Return the DHCP option kinds a plan encodes, in order.
+
+    Options are carried in ``dhcp.options`` either as ``name=value`` strings or
+    as ``[name, value]`` lists; the bare ``end``/``pad`` markers are kinds too.
+    """
+
+    dhcp = plan.fields.get("dhcp")
+    if not isinstance(dhcp, Mapping):
+        return []
+    options = dhcp.get("options")
+    if not isinstance(options, Sequence) or isinstance(options, (str, bytes)):
+        return []
+    kinds: list[str] = []
+    for option in options:
+        if isinstance(option, str):
+            kinds.append(option.split("=", 1)[0] if "=" in option else option)
+        elif (
+            isinstance(option, Sequence)
+            and not isinstance(option, (str, bytes))
+            and option
+            and isinstance(option[0], str)
+        ):
+            kinds.append(option[0])
+    return kinds
 
 
 class DhcpGeneratorSelectionTest(unittest.TestCase):
@@ -237,6 +283,78 @@ class ScapyIpv4DhcpMaterializationTest(unittest.TestCase):
         self.assertEqual(dhcp.get("hardware_length"), 6)
         self.assertEqual(dhcp.get("magic_cookie"), _DHCP_MAGIC_COOKIE)
         self.assertGreaterEqual(dhcp.get("option_count"), 1)
+
+
+class DhcpOptionMatrixGeneratorTest(unittest.TestCase):
+    """Prove the generator samples the byte-safe DHCP option matrix.
+
+    The ``dhcp_behavior`` ``dhcp-option-matrix`` case must materialize every
+    Scapy-byte-safe option kind in a deterministic order for both DHCP roots
+    and both directions, so the cross-backend offline runs exercise the option
+    matrix rather than only the message-type/server-id subset.
+    """
+
+    _SEED = 114
+    _PROFILE = "wild"
+    _COUNT = 32
+
+    def _matrix_plans(self, direction: str) -> list[PacketPlan]:
+        plans = generate_plans(
+            seed=self._SEED,
+            profile=self._PROFILE,
+            count=self._COUNT,
+            backend="scapy",
+            feature="dhcp_behavior",
+            direction=direction,
+        )
+        matrix = [plan for plan in plans if plan.case == "dhcp-option-matrix"]
+        self.assertTrue(
+            matrix,
+            msg=(
+                "expected at least one dhcp-option-matrix plan for "
+                f"direction={direction!r}, got cases "
+                f"{sorted({plan.case for plan in plans})}"
+            ),
+        )
+        return matrix
+
+    def test_option_matrix_case_is_sampled_in_both_directions(self) -> None:
+        for direction in ("libcrafter_to_reference", "reference_to_libcrafter"):
+            with self.subTest(direction=direction):
+                self._matrix_plans(direction)
+
+    def test_option_matrix_plan_covers_listed_option_kinds(self) -> None:
+        for direction in ("libcrafter_to_reference", "reference_to_libcrafter"):
+            with self.subTest(direction=direction):
+                plan = self._matrix_plans(direction)[0]
+                kinds = _dhcp_option_kinds(plan)
+                self.assertEqual(kinds, list(_EXPECTED_OPTION_MATRIX_KINDS))
+                # Every byte-safe kind from the matrix is present and ends with
+                # the option-list terminator.
+                self.assertEqual(kinds[-1], "end")
+                self.assertGreaterEqual(len(set(kinds)), len(_EXPECTED_OPTION_MATRIX_KINDS))
+
+    def test_option_matrix_root_for_each_direction(self) -> None:
+        # The IPv4-root live stack and the Ethernet-root offline stack both
+        # carry the option matrix; at least the IPv4-root stack must appear so
+        # live-friendly cross-backend coverage stays available.
+        for direction in ("libcrafter_to_reference", "reference_to_libcrafter"):
+            with self.subTest(direction=direction):
+                roots = {_packet_root(plan) for plan in self._matrix_plans(direction)}
+                self.assertIn("l3:ipv4", roots)
+
+    def test_option_matrix_is_deterministic(self) -> None:
+        first = self._matrix_plans("libcrafter_to_reference")
+        second = self._matrix_plans("libcrafter_to_reference")
+        self.assertEqual(
+            [plan.to_dict() for plan in first],
+            [plan.to_dict() for plan in second],
+        )
+
+    def test_option_matrix_tokens_match_published_order(self) -> None:
+        plan = self._matrix_plans("reference_to_libcrafter")[0]
+        options = plan.fields["dhcp"]["options"]
+        self.assertEqual(list(options), list(DHCP_OPTION_MATRIX_TOKENS))
 
 
 if __name__ == "__main__":

@@ -1685,8 +1685,43 @@ def _dns_answers_for_domain(ctx: _SamplingContext, domain: object) -> list[JSONO
     return [{"name": "example.com.", "type": "A", "ttl": 60, "address": ctx.dst_ipv4}]
 
 
+# Backend-neutral DHCP option kinds that materialize byte-for-byte through both
+# the Scapy reference backend and the libcrafter adapter, in fixed option order.
+# Kinds the dhcp_behavior option_matrix lists that Scapy cannot encode
+# byte-for-byte (parameter_request_list, vendor_class, client_identifier,
+# classless_static_route, relay_agent, generic) are covered by native libcrafter
+# fixtures rather than this cross-backend matrix; see
+# tools/oracle/specs/layers/dhcp.yaml and features/dhcp-behavior.yaml.
+DHCP_OPTION_MATRIX_TOKENS: tuple[str, ...] = (
+    "message-type=discover",
+    "hostname=libcrafter-oracle",
+    "domain_name=example.com",
+    "requested_ip=192.0.2.100",
+    "server_id=192.0.2.1",
+    "router=192.0.2.1",
+    "domain_name_server=192.0.2.53",
+    "lease_time=3600",
+    "end",
+)
+
+
+def _dhcp_option_matrix() -> list[object]:
+    """Return the deterministic byte-safe DHCP option matrix in option order.
+
+    The matrix spans every cross-backend option kind the dhcp_behavior
+    option_matrix lists as Scapy-byte-safe, in a fixed order, so a single
+    generated plan exercises the whole matrix and the kinds are deterministic
+    for both directions and both DHCP roots.
+    """
+
+    return list(DHCP_OPTION_MATRIX_TOKENS)
+
+
 def _apply_dhcp_behavior(fields: JSONObject, *, case: str, behavior: str) -> None:
     key = f"{case} {behavior}".replace("_", "-")
+    if "option-matrix" in key:
+        fields["options"] = _dhcp_option_matrix()
+        return
     if "offer" in key or "ack" in key:
         fields["op"] = "bootreply"
         fields["your_ip"] = "192.0.2.100"
