@@ -200,6 +200,132 @@ impl Dhcp {
             .server_identifier(server_identifier)
     }
 
+    /// Create a DHCP decline message (RFC 2131 section 3.1, message type 4).
+    ///
+    /// Source: RFC 2131 section 3.1 step 6 and section 4.4.1. The client sends a
+    /// DHCPDECLINE as a BOOTREQUEST when it finds the offered address already in
+    /// use; the declined address is carried in the requested-address option (50)
+    /// and the chosen server is identified by the server-identifier option (54).
+    pub fn decline(
+        client_mac: MacAddr,
+        declined_ip: Ipv4Addr,
+        server_identifier: Ipv4Addr,
+    ) -> Self {
+        Self::new()
+            .client_mac(client_mac)
+            .message_type(DhcpMessageType::Decline)
+            .requested_ip_address(declined_ip)
+            .server_identifier(server_identifier)
+    }
+
+    /// Create a DHCP ACK message (RFC 2131 section 3.1, message type 5).
+    ///
+    /// Source: RFC 2131 section 4.3.1 and table 3. The server replies with a
+    /// DHCPACK as a BOOTREPLY committing the binding: the assigned address is in
+    /// `yiaddr` and the responding server is named in the server-identifier
+    /// option (54).
+    pub fn ack(client_mac: MacAddr, assigned_ip: Ipv4Addr, server_identifier: Ipv4Addr) -> Self {
+        Self::new()
+            .op(BOOTP_REPLY)
+            .client_mac(client_mac)
+            .yiaddr(assigned_ip)
+            .message_type(DhcpMessageType::Ack)
+            .server_identifier(server_identifier)
+    }
+
+    /// Create a DHCP NAK message (RFC 2131 section 3.1, message type 6).
+    ///
+    /// Source: RFC 2131 section 4.3.2 and table 3. The server replies with a
+    /// DHCPNAK as a BOOTREPLY refusing the request; `yiaddr` is zero and the
+    /// responding server is named in the server-identifier option (54).
+    pub fn nak(client_mac: MacAddr, server_identifier: Ipv4Addr) -> Self {
+        Self::new()
+            .op(BOOTP_REPLY)
+            .client_mac(client_mac)
+            .message_type(DhcpMessageType::Nak)
+            .server_identifier(server_identifier)
+    }
+
+    /// Create a DHCP release message (RFC 2131 section 3.1, message type 7).
+    ///
+    /// Source: RFC 2131 section 4.4.4 and table 5. The client relinquishes its
+    /// lease with a DHCPRELEASE BOOTREQUEST unicast to the server: the released
+    /// address is carried in `ciaddr` and the server is named in the
+    /// server-identifier option (54).
+    pub fn release(client_mac: MacAddr, client_ip: Ipv4Addr, server_identifier: Ipv4Addr) -> Self {
+        Self::new()
+            .client_mac(client_mac)
+            .ciaddr(client_ip)
+            .message_type(DhcpMessageType::Release)
+            .server_identifier(server_identifier)
+    }
+
+    /// Create a DHCP inform message (RFC 2131 section 3.4, message type 8).
+    ///
+    /// Source: RFC 2131 section 3.4 and table 5. A client that already has an
+    /// externally configured address asks only for local configuration with a
+    /// DHCPINFORM BOOTREQUEST: `ciaddr` holds the client's address and the
+    /// parameter-request-list (55) names the wanted options.
+    pub fn inform(client_mac: MacAddr, client_ip: Ipv4Addr) -> Self {
+        Self::new()
+            .client_mac(client_mac)
+            .ciaddr(client_ip)
+            .message_type(DhcpMessageType::Inform)
+            .parameter_request_list(DHCP_DEFAULT_PARAMETER_REQUESTS)
+    }
+
+    /// Create a DHCP FORCERENEW message (RFC 3203, message type 9).
+    ///
+    /// Source: RFC 3203 section 2. The server sends a DHCPFORCERENEW as a
+    /// BOOTREPLY, unicast to a bound client, to force it back into the RENEWING
+    /// state; the responding server is named in the server-identifier option
+    /// (54). This is packet shape only: it carries no timers or retransmission
+    /// behavior.
+    pub fn force_renew(client_mac: MacAddr, server_identifier: Ipv4Addr) -> Self {
+        Self::new()
+            .op(BOOTP_REPLY)
+            .client_mac(client_mac)
+            .message_type(DhcpMessageType::ForceRenew)
+            .server_identifier(server_identifier)
+    }
+
+    /// Create a DHCPLEASEQUERY message that queries by IP address (RFC 4388,
+    /// message type 10).
+    ///
+    /// Source: RFC 4388 section 6.1. A requestor that knows only an IP address
+    /// places it in `ciaddr` and leaves `chaddr` and the client-identifier
+    /// option (61) empty. The BOOTREQUEST carries the
+    /// DHCPLEASEQUERY message type.
+    pub fn lease_query_by_ip(query_ip: Ipv4Addr) -> Self {
+        Self::new()
+            .ciaddr(query_ip)
+            .message_type(DhcpMessageType::LeaseQuery)
+    }
+
+    /// Create a DHCPLEASEQUERY message that queries by MAC address (RFC 4388,
+    /// message type 10).
+    ///
+    /// Source: RFC 4388 section 6.1. A requestor that knows only a hardware
+    /// address places it in `chaddr` (with `htype`/`hlen`) and leaves `ciaddr`
+    /// zero and the client-identifier option (61) absent.
+    pub fn lease_query_by_mac(client_mac: MacAddr) -> Self {
+        Self::new()
+            .client_mac(client_mac)
+            .message_type(DhcpMessageType::LeaseQuery)
+    }
+
+    /// Create a DHCPLEASEQUERY message that queries by client identifier
+    /// (RFC 4388, message type 10).
+    ///
+    /// Source: RFC 4388 section 6.1. A requestor that knows a client identifier
+    /// places it in the client-identifier option (61) and leaves `ciaddr` zero
+    /// and `chaddr` empty.
+    pub fn lease_query_by_client_id(client_id: DhcpClientIdentifier) -> Self {
+        Self::new()
+            .message_type(DhcpMessageType::LeaseQuery)
+            .client_id_value(client_id)
+    }
+
     /// Decode a DHCP packet payload.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         decode_dhcp(bytes)
@@ -457,6 +583,43 @@ impl Dhcp {
     /// Append a lease time option.
     pub fn lease_time(self, seconds: u32) -> Self {
         self.option(DhcpOption::lease_time(seconds))
+    }
+
+    /// Append a renewal (T1) time option (option 58, RFC 2132 section 9.11).
+    pub fn renewal_time(self, seconds: u32) -> Self {
+        self.option(DhcpOption::renewal_time(seconds))
+    }
+
+    /// Append a rebinding (T2) time option (option 59, RFC 2132 section 9.12).
+    pub fn rebinding_time(self, seconds: u32) -> Self {
+        self.option(DhcpOption::rebinding_time(seconds))
+    }
+
+    /// Append a client identifier option (option 61) from raw payload bytes (the
+    /// `type` octet plus identifier).
+    ///
+    /// Source: RFC 2132 section 9.14. Use [`Dhcp::client_id_value`] for a typed
+    /// [`DhcpClientIdentifier`].
+    pub fn client_id(self, identifier: impl Into<Vec<u8>>) -> Self {
+        self.option(DhcpOption::client_identifier(identifier))
+    }
+
+    /// Append a typed client identifier option (option 61) from a
+    /// [`DhcpClientIdentifier`].
+    ///
+    /// Source: RFC 2132 section 9.14 and RFC 4361 section 6.1. Read it back with
+    /// [`Dhcp::client_identifier_value`].
+    pub fn client_id_value(self, identifier: DhcpClientIdentifier) -> Self {
+        self.option(DhcpOption::client_identifier_value(identifier))
+    }
+
+    /// Append a relay agent information option (option 82, RFC 3046).
+    ///
+    /// Source: RFC 3046 section 2. Relay agents add this option when forwarding
+    /// a client message toward a server. Read it back with
+    /// [`Dhcp::relay_agent_information`].
+    pub fn relay_agent_info(self, info: DhcpRelayAgentInfo) -> Self {
+        self.option(DhcpOption::relay_agent_information(info))
     }
 
     /// BOOTP opcode value.
@@ -738,6 +901,26 @@ impl Dhcp {
     pub fn lease_time_value(&self) -> Option<u32> {
         self.options.iter().find_map(|option| match option {
             DhcpOption::IpAddressLeaseTime(seconds) => Some(*seconds),
+            _ => None,
+        })
+    }
+
+    /// Renewal (T1) time option (option 58), when present.
+    ///
+    /// Source: RFC 2132 section 9.11.
+    pub fn renewal_time_value(&self) -> Option<u32> {
+        self.options.iter().find_map(|option| match option {
+            DhcpOption::RenewalTime(seconds) => Some(*seconds),
+            _ => None,
+        })
+    }
+
+    /// Rebinding (T2) time option (option 59), when present.
+    ///
+    /// Source: RFC 2132 section 9.12.
+    pub fn rebinding_time_value(&self) -> Option<u32> {
+        self.options.iter().find_map(|option| match option {
+            DhcpOption::RebindingTime(seconds) => Some(*seconds),
             _ => None,
         })
     }
@@ -2344,5 +2527,227 @@ mod dhcp_forcerenew {
         // A full re-compile reproduces the exact wire bytes.
         let recompiled = Packet::from_layer(parsed).compile().unwrap();
         assert_eq!(recompiled.as_bytes(), bytes.as_slice());
+    }
+}
+
+#[cfg(test)]
+mod dhcp_message_builders {
+    use super::{
+        Dhcp, DhcpClientIdentifier, DhcpMessageType, DhcpRelayAgentInfo, DhcpRelaySuboption,
+        BOOTP_REPLY, BOOTP_REQUEST,
+    };
+    use crate::{MacAddr, Packet};
+    use core::net::Ipv4Addr;
+
+    fn client_mac() -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x2a])
+    }
+
+    fn server() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    /// Compile a [`Dhcp`] layer to wire bytes and decode it back, returning the
+    /// re-decoded layer. Also asserts the re-compile reproduces the exact bytes,
+    /// proving each builder produces a spec-shaped, round-tripping packet.
+    fn roundtrip(dhcp: Dhcp) -> Dhcp {
+        let bytes = Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let parsed = Dhcp::decode(&bytes).unwrap();
+        let recompiled = Packet::from_layer(parsed.clone()).compile().unwrap();
+        assert_eq!(recompiled.as_bytes(), bytes.as_slice());
+        parsed
+    }
+
+    #[test]
+    fn dhcp_expanded_message_builders_compile_and_decode() {
+        let assigned = Ipv4Addr::new(192, 0, 2, 50);
+
+        // DHCPDISCOVER (RFC 2131 section 3.1 step 1): client BOOTREQUEST.
+        let discover = roundtrip(Dhcp::discover(client_mac()).xid(0x1111_0001));
+        assert_eq!(discover.op_value(), BOOTP_REQUEST);
+        assert_eq!(
+            discover.message_type_value(),
+            Some(DhcpMessageType::Discover)
+        );
+        assert_eq!(discover.client_mac_value(), Some(client_mac()));
+
+        // DHCPOFFER (RFC 2131 section 3.1 step 2): server BOOTREPLY.
+        let offer = roundtrip(Dhcp::offer(client_mac(), assigned, server()));
+        assert_eq!(offer.op_value(), BOOTP_REPLY);
+        assert_eq!(offer.message_type_value(), Some(DhcpMessageType::Offer));
+        assert_eq!(offer.offered_ip_address(), Some(assigned));
+        assert_eq!(offer.server_identifier_value(), Some(server()));
+
+        // DHCPREQUEST (RFC 2131 section 3.1 step 3): SELECTING-state request
+        // carrying both requested-address (50) and server-identifier (54).
+        let request = roundtrip(Dhcp::request(client_mac(), assigned, server()));
+        assert_eq!(request.op_value(), BOOTP_REQUEST);
+        assert_eq!(request.message_type_value(), Some(DhcpMessageType::Request));
+        assert_eq!(request.requested_ip_address_value(), Some(assigned));
+        assert_eq!(request.server_identifier_value(), Some(server()));
+
+        // DHCPDECLINE (RFC 2131 section 3.1 step 6): declined address in
+        // requested-address (50), chosen server in server-identifier (54).
+        let decline = roundtrip(Dhcp::decline(client_mac(), assigned, server()));
+        assert_eq!(decline.op_value(), BOOTP_REQUEST);
+        assert_eq!(decline.message_type_value(), Some(DhcpMessageType::Decline));
+        assert_eq!(decline.requested_ip_address_value(), Some(assigned));
+        assert_eq!(decline.server_identifier_value(), Some(server()));
+
+        // DHCPACK (RFC 2131 section 4.3.1): server commits the binding with
+        // yiaddr set and server-identifier (54).
+        let ack = roundtrip(Dhcp::ack(client_mac(), assigned, server()));
+        assert_eq!(ack.op_value(), BOOTP_REPLY);
+        assert_eq!(ack.message_type_value(), Some(DhcpMessageType::Ack));
+        assert_eq!(ack.offered_ip_address(), Some(assigned));
+        assert_eq!(ack.server_identifier_value(), Some(server()));
+
+        // DHCPNAK (RFC 2131 section 4.3.2): refusal with no yiaddr.
+        let nak = roundtrip(Dhcp::nak(client_mac(), server()));
+        assert_eq!(nak.op_value(), BOOTP_REPLY);
+        assert_eq!(nak.message_type_value(), Some(DhcpMessageType::Nak));
+        assert_eq!(nak.your_ip_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(nak.server_identifier_value(), Some(server()));
+
+        // DHCPRELEASE (RFC 2131 section 4.4.4): released address in ciaddr.
+        let release = roundtrip(Dhcp::release(client_mac(), assigned, server()));
+        assert_eq!(release.op_value(), BOOTP_REQUEST);
+        assert_eq!(release.message_type_value(), Some(DhcpMessageType::Release));
+        assert_eq!(release.client_ip_address_value(), assigned);
+        assert_eq!(release.server_identifier_value(), Some(server()));
+
+        // DHCPINFORM (RFC 2131 section 3.4): ciaddr holds the configured address.
+        let inform = roundtrip(Dhcp::inform(client_mac(), assigned));
+        assert_eq!(inform.op_value(), BOOTP_REQUEST);
+        assert_eq!(inform.message_type_value(), Some(DhcpMessageType::Inform));
+        assert_eq!(inform.client_ip_address_value(), assigned);
+
+        // DHCPFORCERENEW (RFC 3203 section 2): server BOOTREPLY to a bound client.
+        let force_renew = roundtrip(Dhcp::force_renew(client_mac(), server()));
+        assert_eq!(force_renew.op_value(), BOOTP_REPLY);
+        assert_eq!(
+            force_renew.message_type_value(),
+            Some(DhcpMessageType::ForceRenew)
+        );
+        assert_eq!(force_renew.server_identifier_value(), Some(server()));
+
+        // DHCPLEASEQUERY by IP (RFC 4388 section 6.1): address in ciaddr.
+        let query_ip = Ipv4Addr::new(192, 0, 2, 77);
+        let lq_ip = roundtrip(Dhcp::lease_query_by_ip(query_ip));
+        assert_eq!(lq_ip.op_value(), BOOTP_REQUEST);
+        assert_eq!(
+            lq_ip.message_type_value(),
+            Some(DhcpMessageType::LeaseQuery)
+        );
+        assert_eq!(lq_ip.client_ip_address_value(), query_ip);
+
+        // DHCPLEASEQUERY by MAC (RFC 4388 section 6.1): address in chaddr only.
+        let lq_mac = roundtrip(Dhcp::lease_query_by_mac(client_mac()));
+        assert_eq!(
+            lq_mac.message_type_value(),
+            Some(DhcpMessageType::LeaseQuery)
+        );
+        assert_eq!(lq_mac.client_mac_value(), Some(client_mac()));
+        assert_eq!(lq_mac.client_ip_address_value(), Ipv4Addr::UNSPECIFIED);
+
+        // DHCPLEASEQUERY by client identifier (RFC 4388 section 6.1): identifier
+        // in option 61 only.
+        let client_id = DhcpClientIdentifier::ethernet_mac(client_mac().octets());
+        let lq_cid = roundtrip(Dhcp::lease_query_by_client_id(client_id.clone()));
+        assert_eq!(
+            lq_cid.message_type_value(),
+            Some(DhcpMessageType::LeaseQuery)
+        );
+        assert_eq!(
+            lq_cid.client_identifier_value().unwrap().unwrap(),
+            client_id
+        );
+
+        // A relay-facing packet (RFC 3046): a forwarded request carrying the
+        // relay agent information option (82) with typed sub-options.
+        let relay_info = DhcpRelayAgentInfo::new(vec![
+            DhcpRelaySuboption::circuit_id(b"eth0/3".to_vec()),
+            DhcpRelaySuboption::remote_id(b"relay-1".to_vec()),
+        ]);
+        let relayed = roundtrip(
+            Dhcp::discover(client_mac())
+                .giaddr(Ipv4Addr::new(192, 0, 2, 254))
+                .relay_agent_info(relay_info.clone()),
+        );
+        assert_eq!(
+            relayed.gateway_ip_address_value(),
+            Ipv4Addr::new(192, 0, 2, 254)
+        );
+        assert_eq!(
+            relayed.relay_agent_information().unwrap().unwrap(),
+            relay_info
+        );
+
+        // Lease-time accessors and builder methods round-trip together.
+        let timed = roundtrip(
+            Dhcp::ack(client_mac(), assigned, server())
+                .lease_time(3600)
+                .renewal_time(1800)
+                .rebinding_time(3150),
+        );
+        assert_eq!(timed.lease_time_value(), Some(3600));
+        assert_eq!(timed.renewal_time_value(), Some(1800));
+        assert_eq!(timed.rebinding_time_value(), Some(3150));
+    }
+
+    #[test]
+    fn dhcp_builder_overrides_are_preserved() {
+        // Every value a caller sets must survive compile untouched, even when it
+        // diverges from the builder's protocol-correct default. Start from the
+        // discover constructor and override the opcode, transaction id, flags,
+        // seconds, hops, and the magic cookie with deliberate values.
+        let weird_cookie = 0xDEAD_BEEF;
+        let dhcp = Dhcp::discover(client_mac())
+            .op(BOOTP_REPLY) // discover normally sets BOOTREQUEST
+            .xid(0x0BAD_F00D)
+            .flags(0x8000)
+            .secs(0x1234)
+            .hops(7)
+            .siaddr(Ipv4Addr::new(192, 0, 2, 9))
+            .magic_cookie(weird_cookie);
+
+        let parsed = roundtrip_keep_cookie(dhcp, weird_cookie);
+
+        // The overridden fixed-header values survive compile -> decode unchanged.
+        assert_eq!(parsed.op_value(), BOOTP_REPLY);
+        assert_eq!(parsed.transaction_id_value(), 0x0BAD_F00D);
+        assert_eq!(parsed.flags_value(), 0x8000);
+        assert_eq!(parsed.seconds_value(), 0x1234);
+        assert_eq!(parsed.hops_value(), 7);
+        assert_eq!(
+            parsed.server_ip_address_value(),
+            Ipv4Addr::new(192, 0, 2, 9)
+        );
+        assert_eq!(parsed.magic_cookie_value(), weird_cookie);
+        // The discover message type the constructor set still survives.
+        assert_eq!(parsed.message_type_value(), Some(DhcpMessageType::Discover));
+    }
+
+    /// Round-trip a packet whose magic cookie was deliberately overridden away
+    /// from the canonical value. `Dhcp::decode` rejects a non-standard cookie, so
+    /// the override is verified directly on the compiled bytes and the rebuilt
+    /// layer rather than through `decode`.
+    fn roundtrip_keep_cookie(dhcp: Dhcp, expected_cookie: u32) -> Dhcp {
+        let bytes = Packet::from_layer(dhcp.clone())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        // The magic cookie occupies the four octets at offset 236.
+        assert_eq!(
+            &bytes[236..240],
+            &expected_cookie.to_be_bytes(),
+            "explicit magic cookie override must survive compile",
+        );
+        dhcp
     }
 }

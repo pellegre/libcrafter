@@ -2288,6 +2288,16 @@ impl DhcpOption {
         Self::IpAddressLeaseTime(seconds)
     }
 
+    /// Create a renewal (T1) time option (option 58, RFC 2132 section 9.11).
+    pub const fn renewal_time(seconds: u32) -> Self {
+        Self::RenewalTime(seconds)
+    }
+
+    /// Create a rebinding (T2) time option (option 59, RFC 2132 section 9.12).
+    pub const fn rebinding_time(seconds: u32) -> Self {
+        Self::RebindingTime(seconds)
+    }
+
     /// Create a server identifier option.
     pub const fn server_identifier(address: Ipv4Addr) -> Self {
         Self::ServerIdentifier(address)
