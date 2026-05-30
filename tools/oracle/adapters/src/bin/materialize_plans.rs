@@ -157,11 +157,20 @@ fn materialize_plan(plan: &Value) -> ExampleResult<Value> {
 fn build_packet(plan: &Value) -> ExampleResult<Packet> {
     let stack = string_array(plan.get("stack")).ok_or("packet plan stack must be an array")?;
     let mut packet = Packet::new();
+    let append_udp_options = udp_options_field(plan).is_some();
+    let mut saw_udp_options_layer = false;
 
     for raw_layer in stack {
         let layer = canonical_layer(&raw_layer);
+        if layer == "udp_options" {
+            saw_udp_options_layer = true;
+        }
         let piece = build_layer(plan, &layer)?;
         packet.push_box_mut(piece);
+    }
+
+    if append_udp_options && !saw_udp_options_layer {
+        packet.push_box_mut(Box::new(udp_options_layer(plan)?));
     }
 
     Ok(packet)
@@ -173,12 +182,14 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "ethernet" => Ok(Box::new(ethernet_layer(plan)?)),
         "linux_cooked" => Ok(Box::new(linux_cooked_layer(plan)?)),
         "vlan" => Ok(Box::new(vlan_layer(plan)?)),
+        "null_loopback" => Ok(Box::new(null_loopback_layer(plan)?)),
         "arp" => Ok(Box::new(arp_layer(plan)?)),
         "ipv4" => Ok(Box::new(ipv4_layer(plan)?)),
         "ipv6" => Ok(Box::new(ipv6_layer(plan)?)),
         "ipv6_fragment" => Ok(Box::new(ipv6_fragment_layer(plan)?)),
         "ipv6_routing" => ipv6_routing_layer(plan),
         "udp" => Ok(Box::new(udp_layer(plan)?)),
+        "udp_options" => Ok(Box::new(udp_options_layer(plan)?)),
         "tcp" => Ok(Box::new(tcp_layer(plan)?)),
         "icmp" => Ok(Box::new(icmp_layer(plan)?)),
         "icmpv6" => Ok(Box::new(icmpv6_layer(plan)?)),
@@ -201,7 +212,12 @@ fn vlan_layer(plan: &Value) -> ExampleResult<Vlan> {
     let fields = layer_fields(plan, "vlan")?;
     Ok(Vlan::new()
         .prio(u8_value(required(fields, &["priority", "prio"])?)?)
-        .dei(bool_value(required(fields, &["drop_eligible", "dei"])?)?)
+        .dei(
+            optional(fields, &["drop_eligible", "dei"])
+                .map(bool_value)
+                .transpose()?
+                .unwrap_or(false),
+        )
         .vlan(u16_value(required(fields, &["vlan_id", "id", "vlan"])?)?)
         .ethertype(ethertype_value(required(fields, &["ethertype", "type"])?)?))
 }
@@ -279,6 +295,15 @@ fn linux_sll_source_address(value: &Value) -> ExampleResult<[u8; 8]> {
     let mut padded = [0u8; 8];
     padded[..raw.len()].copy_from_slice(&raw);
     Ok(padded)
+}
+
+fn null_loopback_layer(plan: &Value) -> ExampleResult<NullLoopback> {
+    let fields = layer_fields(plan, "null_loopback")?;
+    let family = optional(fields, &["type", "family"])
+        .map(address_family_value)
+        .transpose()?
+        .unwrap_or(2);
+    Ok(NullLoopback::new().family(family))
 }
 
 fn arp_layer(plan: &Value) -> ExampleResult<Arp> {
@@ -567,6 +592,173 @@ fn udp_layer(plan: &Value) -> ExampleResult<Udp> {
     Ok(layer)
 }
 
+fn udp_options_layer(plan: &Value) -> ExampleResult<UdpOptions> {
+    let value = udp_options_field(plan).ok_or("packet plan requires udp options")?;
+    let object = value
+        .as_object()
+        .ok_or("udp.options must be an object for UDP surplus materialization")?;
+    if object.get("format").and_then(Value::as_str) != Some("udp_surplus_options") {
+        return Err("udp.options format must be udp_surplus_options".into());
+    }
+    validate_udp_options_payload(plan, object)?;
+
+    let items = object
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or("udp.options.items must be an array")?;
+    let mut layer = UdpOptions::new();
+    for item in items {
+        let item = item
+            .as_object()
+            .ok_or("udp.options.items entries must be objects")?;
+        if udp_option_item_uses_auto_apc(item) {
+            layer = layer.additional_payload_checksum();
+            continue;
+        }
+        layer = layer.udp_option(udp_option_item(item)?)?;
+    }
+
+    if let Some(checksum) = object.get("option_checksum").and_then(Value::as_object) {
+        if let Some(value) = checksum.get("value") {
+            layer = layer.option_checksum(u16_value(value)?);
+        } else if checksum.get("mode").and_then(Value::as_str) == Some("absent")
+            || (checksum.get("mode").and_then(Value::as_str)
+                == Some("zero_allowed_when_udp_checksum_zero")
+                && udp_checksum_is_zero(plan)?)
+        {
+            layer = layer.option_checksum(0);
+        }
+    }
+
+    Ok(layer)
+}
+
+fn udp_options_field(plan: &Value) -> Option<&Value> {
+    plan.get("fields")
+        .and_then(Value::as_object)
+        .and_then(|fields| fields.get("udp"))
+        .and_then(Value::as_object)
+        .and_then(|fields| fields.get("options"))
+}
+
+fn udp_checksum_is_zero(plan: &Value) -> ExampleResult<bool> {
+    let fields = layer_fields(plan, "udp")?;
+    optional(fields, &["checksum", "chksum"])
+        .map(u16_value)
+        .transpose()
+        .map(|value| value == Some(0))
+}
+
+fn validate_udp_options_payload(plan: &Value, options: &Map<String, Value>) -> ExampleResult<()> {
+    let Some(payload) = options
+        .get("application_payload")
+        .and_then(Value::as_object)
+    else {
+        return Ok(());
+    };
+    let Some(hex) = payload.get("hex").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    if let Ok(actual) = payload_bytes(plan) {
+        let declared = decode_hex(hex)?;
+        if actual != declared {
+            return Err("udp.options application payload does not match payload fields".into());
+        }
+    }
+    Ok(())
+}
+
+fn udp_option_item_uses_auto_apc(item: &Map<String, Value>) -> bool {
+    item.get("kind").and_then(Value::as_u64) == Some(UDP_OPTION_APC as u64)
+        && item.get("checksum").and_then(Value::as_str) == Some("auto_crc32c_application_payload")
+}
+
+fn udp_option_item(item: &Map<String, Value>) -> ExampleResult<UdpOption> {
+    let kind = u8_value(required(item, &["kind"])?)?;
+    if kind == UDP_OPTION_EOL {
+        return Ok(UdpOption::end_of_list());
+    }
+    if kind == UDP_OPTION_NOP {
+        return Ok(UdpOption::no_operation());
+    }
+
+    let declared_length = usize::try_from(u64_value(required(item, &["length"])?)?)?;
+    let data = udp_option_item_data(kind, item)?;
+    let actual_length = 2 + data.len();
+    if declared_length != actual_length {
+        return Err(format!(
+            "udp option length mismatch for kind {kind}: declared={declared_length} materialized={actual_length}"
+        )
+        .into());
+    }
+    if !(2..=255).contains(&declared_length) {
+        return Err(format!("udp option length must fit one byte: {declared_length}").into());
+    }
+
+    Ok(match kind {
+        UDP_OPTION_APC => {
+            UdpOption::additional_payload_checksum(u32::from_be_bytes(data.as_slice().try_into()?))
+        }
+        UDP_OPTION_MDS => {
+            UdpOption::maximum_datagram_size(u16::from_be_bytes(data.as_slice().try_into()?))
+        }
+        UDP_OPTION_MRDS => UdpOption::maximum_reassembled_datagram_size(
+            u16::from_be_bytes(data[..2].try_into()?),
+            data[2],
+        ),
+        UDP_OPTION_REQ => UdpOption::echo_request(u32::from_be_bytes(data.as_slice().try_into()?)),
+        UDP_OPTION_RES => UdpOption::echo_response(u32::from_be_bytes(data.as_slice().try_into()?)),
+        UDP_OPTION_TIME => UdpOption::timestamp(
+            u32::from_be_bytes(data[..4].try_into()?),
+            u32::from_be_bytes(data[4..].try_into()?),
+        ),
+        UDP_OPTION_EXP => {
+            let exid = u16::from_be_bytes(data[..2].try_into()?);
+            UdpOption::experimental(exid, data[2..].to_vec())
+        }
+        UDP_OPTION_UEXP => {
+            let exid = u16::from_be_bytes(data[..2].try_into()?);
+            UdpOption::unsafe_experimental(exid, data[2..].to_vec())
+        }
+        _ => UdpOption::generic(kind, data),
+    })
+}
+
+fn udp_option_item_data(kind: u8, item: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    if let Some(hex) = item.get("data_hex").and_then(Value::as_str) {
+        return decode_hex(hex);
+    }
+    Ok(match kind {
+        UDP_OPTION_APC => u32_value(required(item, &["checksum"])?)?
+            .to_be_bytes()
+            .to_vec(),
+        UDP_OPTION_MDS => u16_value(required(item, &["max_datagram_size"])?)?
+            .to_be_bytes()
+            .to_vec(),
+        UDP_OPTION_MRDS => {
+            let mut data = u16_value(required(item, &["max_reassembled_size"])?)?
+                .to_be_bytes()
+                .to_vec();
+            data.push(u8_value(required(item, &["segment_count"])?)?);
+            data
+        }
+        UDP_OPTION_REQ | UDP_OPTION_RES => u32_value(required(item, &["token"])?)?
+            .to_be_bytes()
+            .to_vec(),
+        UDP_OPTION_TIME => {
+            let mut data = u32_value(required(item, &["tsval"])?)?
+                .to_be_bytes()
+                .to_vec();
+            data.extend_from_slice(&u32_value(required(item, &["tsecr"])?)?.to_be_bytes());
+            data
+        }
+        _ => {
+            let declared_length = usize::try_from(u64_value(required(item, &["length"])?)?)?;
+            vec![0; declared_length.saturating_sub(2)]
+        }
+    })
+}
+
 fn tcp_layer(plan: &Value) -> ExampleResult<Tcp> {
     let fields = layer_fields(plan, "tcp")?;
     let mut layer = Tcp::new()
@@ -626,29 +818,33 @@ fn icmpv6_layer(plan: &Value) -> ExampleResult<Icmpv6> {
 
 fn dns_layer(plan: &Value) -> ExampleResult<Dns> {
     let fields = layer_fields(plan, "dns")?;
-    let mut layer = Dns::new()
-        .id(u16_value(required(fields, &["transaction_id", "id"])?)?)
-        .flags(dns_flags(fields)?)
-        .response(bool_value(required(fields, &["is_response"])?)?)
-        .rcode(dns_response_code(required(fields, &["response_code"])?)?);
-
-    for question in array_values(required(fields, &["questions"])?)? {
-        let qname = if let Some(object) = question.as_object() {
-            text_optional(object, &["qname", "name"]).unwrap_or("example.com.")
-        } else {
-            question.as_str().unwrap_or("example.com.")
-        };
-        let qtype = if let Some(object) = question.as_object() {
-            object
-                .get("qtype")
-                .or_else(|| object.get("type"))
-                .map(dns_record_type)
+    let mut layer =
+        Dns::new()
+            .flags(dns_flags(fields)?)
+            .id(optional(fields, &["transaction_id", "id"])
+                .map(u16_value)
                 .transpose()?
-                .unwrap_or(DNS_TYPE_A)
-        } else {
-            DNS_TYPE_A
-        };
-        layer = layer.question(DnsQuestion::new(qname, qtype));
+                .unwrap_or(0));
+
+    if let Some(questions) = optional(fields, &["questions"]) {
+        for question in array_values(questions)? {
+            let qname = if let Some(object) = question.as_object() {
+                text_optional(object, &["qname", "name"]).unwrap_or("example.com.")
+            } else {
+                question.as_str().unwrap_or("example.com.")
+            };
+            let qtype = if let Some(object) = question.as_object() {
+                object
+                    .get("qtype")
+                    .or_else(|| object.get("type"))
+                    .map(dns_record_type)
+                    .transpose()?
+                    .unwrap_or(DNS_TYPE_A)
+            } else {
+                DNS_TYPE_A
+            };
+            layer = layer.question(DnsQuestion::new(qname, qtype));
+        }
     }
 
     if let Some(answers) = optional(fields, &["answers"]) {
@@ -826,6 +1022,20 @@ fn layer_fields<'a>(plan: &'a Value, layer: &str) -> ExampleResult<&'a Map<Strin
                 .ok_or_else(|| "payload fields must be an object".into());
         }
     }
+    if layer == "linux_cooked" {
+        if let Some(value) = fields.get("linux_sll") {
+            return value
+                .as_object()
+                .ok_or_else(|| "linux_sll fields must be an object".into());
+        }
+    }
+    if layer == "null_loopback" {
+        if let Some(value) = fields.get("loopback") {
+            return value
+                .as_object()
+                .ok_or_else(|| "null_loopback fields must be an object".into());
+        }
+    }
     Err(format!("packet plan requires {layer} fields").into())
 }
 
@@ -875,10 +1085,13 @@ fn array_values(value: &Value) -> ExampleResult<&Vec<Value>> {
 
 fn canonical_layer(layer: &str) -> String {
     match layer.to_ascii_lowercase().as_str() {
+        "cookedlinux" | "linux_sll" | "linux-cooked" => "linux_cooked".to_string(),
         "dot1q" => "vlan".to_string(),
         "ether" => "ethernet".to_string(),
         "ip" => "ipv4".to_string(),
+        "loopback" | "null-loopback" => "null_loopback".to_string(),
         "raw" => "payload".to_string(),
+        "udpoptions" | "udp-options" => "udp_options".to_string(),
         value => value.to_string(),
     }
 }
@@ -902,6 +1115,17 @@ fn ethertype_value(value: &Value) -> ExampleResult<u16> {
         };
     }
     u16_value(value)
+}
+
+fn address_family_value(value: &Value) -> ExampleResult<u32> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().as_str() {
+            "ipv4" | "ip" => Ok(2),
+            "ipv6" => Ok(24),
+            _ => Ok(u32::try_from(u64_text(text)?)?),
+        };
+    }
+    Ok(u32::try_from(u64_value(value)?)?)
 }
 
 fn hardware_type_value(value: &Value) -> ExampleResult<u16> {
@@ -1072,10 +1296,17 @@ fn dns_flags(fields: &Map<String, Value>) -> ExampleResult<u16> {
             }
         }
     }
-    if bool_value(required(fields, &["is_response"])?)? {
+    if optional(fields, &["is_response"])
+        .map(bool_value)
+        .transpose()?
+        .unwrap_or(false)
+    {
         flags |= DNS_FLAG_QR_RESPONSE;
     }
-    flags |= dns_response_code(required(fields, &["response_code"])?)? as u16;
+    flags |= optional(fields, &["response_code"])
+        .map(dns_response_code)
+        .transpose()?
+        .unwrap_or(0) as u16;
     Ok(flags)
 }
 
@@ -1130,7 +1361,14 @@ fn dhcp_flags(value: &Value) -> ExampleResult<u16> {
 }
 
 fn option_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
+    bytes_value(value).map_err(|_| format!("unsupported option bytes value: {value:?}").into())
+}
+
+fn bytes_value(value: &Value) -> ExampleResult<Vec<u8>> {
     if let Some(text) = value.as_str() {
+        if text.contains(':') {
+            return mac_bytes(text);
+        }
         return decode_hex(text);
     }
     if let Some(object) = value.as_object() {
@@ -1138,7 +1376,7 @@ fn option_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
             return decode_hex(hex);
         }
     }
-    Err(format!("unsupported option bytes value: {value:?}").into())
+    Err(format!("unsupported byte value: {value:?}").into())
 }
 
 fn bool_value(value: &Value) -> ExampleResult<bool> {

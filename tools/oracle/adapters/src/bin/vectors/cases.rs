@@ -62,6 +62,11 @@ pub(crate) fn build_cases() -> ExampleResult<Vec<Vector>> {
         crafter_ipv6_routing_icmpv6()?,
         crafter_udp_ipv4_checksum_payload()?,
         crafter_udp_ipv6_checksum_payload()?,
+        crafter_udp_options_known()?,
+        crafter_udp_options_apc()?,
+        crafter_udp_options_unknown_safe()?,
+        crafter_udp_options_unknown_unsafe()?,
+        crafter_udp_options_unsupported_frag()?,
         crafter_tcp_all_flags_payload()?,
         crafter_tcp_common_options()?,
         crafter_tcp_advanced_options()?,
@@ -1207,6 +1212,170 @@ fn crafter_udp_ipv6_checksum_payload() -> ExampleResult<Vector> {
             "Raw",
             json!({
                 "load": bytes_field(b"libcrafter-udp6")
+            }),
+        )],
+    )
+}
+
+fn crafter_udp_options_known() -> ExampleResult<Vector> {
+    let payload = b"udpopt-known";
+    let options = UdpOptions::from_options(vec![
+        UdpOption::no_operation(),
+        UdpOption::maximum_datagram_size(1440),
+        UdpOption::maximum_reassembled_datagram_size(1500, 2),
+        UdpOption::echo_request(0x0102_0304),
+        UdpOption::echo_response(0x0a0b_0c0d),
+        UdpOption::timestamp(0x0102_0304, 0x0a0b_0c0d),
+    ])?;
+    let options_hex = hex_bytes(options.as_bytes());
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1261).ttl(61)
+        / Udp::new().sport(53101).dport(33501)
+        / Raw::from_bytes(payload)
+        / options;
+
+    vector(
+        "crafter-udp-options-known",
+        "transport",
+        "l3:ipv4",
+        vec!["IP", "UDP", "Raw", "UdpOptions"],
+        "IP / UDP / Raw / UdpOptions",
+        packet,
+        vec![
+            fields(
+                "Raw",
+                json!({
+                    "load": bytes_field(payload)
+                }),
+            ),
+            fields(
+                "UdpOptions",
+                json!({
+                    "options": {
+                        "status": "valid",
+                        "option_bytes_hex": options_hex,
+                        "option_count": 6,
+                        "application_payload_hex": hex_bytes(payload),
+                        "application_payload_length": payload.len(),
+                        "placement": "after_udp_length",
+                        "surplus_excluded_from_udp_checksum": true
+                    }
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_udp_options_apc() -> ExampleResult<Vector> {
+    let payload = b"apc-payload";
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1262).ttl(61)
+        / Udp::new().sport(53102).dport(33502)
+        / Raw::from_bytes(payload)
+        / UdpOptions::new().additional_payload_checksum();
+
+    vector(
+        "crafter-udp-options-apc",
+        "transport",
+        "l3:ipv4",
+        vec!["IP", "UDP", "Raw", "UdpOptions"],
+        "IP / UDP / Raw / UdpOptions",
+        packet,
+        vec![fields(
+            "Raw",
+            json!({
+                "load": bytes_field(payload)
+            }),
+        )],
+    )
+}
+
+fn crafter_udp_options_unknown_safe() -> ExampleResult<Vector> {
+    let payload = b"udpopt-safe";
+    let options = UdpOptions::from_options(vec![UdpOption::generic(10, [0xaa, 0xbb])])?;
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1263).ttl(61)
+        / Udp::new().sport(53103).dport(33503)
+        / Raw::from_bytes(payload)
+        / options;
+
+    vector(
+        "crafter-udp-options-unknown-safe",
+        "transport",
+        "l3:ipv4",
+        vec!["IP", "UDP", "Raw", "UdpOptions"],
+        "IP / UDP / Raw / UdpOptions",
+        packet,
+        vec![fields(
+            "UdpOptions",
+            json!({
+                "options": {
+                    "status": "unknown_safe",
+                    "option_count": 1
+                }
+            }),
+        )],
+    )
+}
+
+fn crafter_udp_options_unknown_unsafe() -> ExampleResult<Vector> {
+    let payload = b"udpopt-unsafe";
+    let options = UdpOptions::from_options(vec![UdpOption::generic(194, [0xde, 0xad])])?;
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1264).ttl(61)
+        / Udp::new().sport(53104).dport(33504)
+        / Raw::from_bytes(payload)
+        / options;
+
+    vector(
+        "crafter-udp-options-unknown-unsafe",
+        "transport",
+        "l3:ipv4",
+        vec!["IP", "UDP", "Raw", "UdpOptions"],
+        "IP / UDP / Raw / UdpOptions",
+        packet,
+        vec![fields(
+            "UdpOptions",
+            json!({
+                "options": {
+                    "status": "unknown_unsafe",
+                    "option_count": 1
+                }
+            }),
+        )],
+    )
+}
+
+fn crafter_udp_options_unsupported_frag() -> ExampleResult<Vector> {
+    let payload = b"udpopt-frag";
+    let frag = [
+        UDP_OPTION_FRAG,
+        10,
+        0x00,
+        0x01,
+        0x00,
+        0x03,
+        0xaa,
+        0xbb,
+        0xcc,
+        0xdd,
+    ];
+    let packet = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1265).ttl(61)
+        / Udp::new().sport(53105).dport(33505)
+        / Raw::from_bytes(payload)
+        / UdpOptions::from_bytes(frag);
+
+    vector(
+        "crafter-udp-options-unsupported-frag",
+        "transport",
+        "l3:ipv4",
+        vec!["IP", "UDP", "Raw", "UdpOptions"],
+        "IP / UDP / Raw / UdpOptions",
+        packet,
+        vec![fields(
+            "UdpOptions",
+            json!({
+                "options": {
+                    "status": "unsupported_fragmentation",
+                    "option_bytes_hex": hex_bytes(&frag),
+                    "option_count": 1
+                }
             }),
         )],
     )
