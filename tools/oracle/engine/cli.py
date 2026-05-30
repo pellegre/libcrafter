@@ -281,6 +281,7 @@ def _generate(args: argparse.Namespace) -> int:
         selected_specs=list(GENERATOR_SELECTED_SPECS),
         artifacts=[str(plans_path)],
         artifact_paths=[str(plans_path)],
+        packet_plans=plans,
         metadata={
             "direction": args.direction,
             "requested_count": args.count,

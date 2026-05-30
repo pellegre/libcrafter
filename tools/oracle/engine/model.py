@@ -129,6 +129,7 @@ class RunReport(JsonModel):
     reproduction_commands: list[str] = field(default_factory=list)
     backend_versions: JSONObject = field(default_factory=dict)
     libcrafter: JSONObject = field(default_factory=dict)
+    packet_plans: list[PacketPlan] = field(default_factory=list)
     metadata: JSONObject = field(default_factory=dict)
 
 

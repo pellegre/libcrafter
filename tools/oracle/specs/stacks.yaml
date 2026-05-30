@@ -45,6 +45,14 @@ roots:
       - transport
       - icmp
       - dns
+  - name: "l2:ipv4"
+    layers:
+      - ipv4
+    families:
+      - ipv4
+      - transport
+      - icmp
+      - dns
   - name: "l3:ipv6"
     layers:
       - ipv6
@@ -204,6 +212,38 @@ stacks:
     coverage_cases:
       - ipv4-icmp
       - icmpv4-echo-reply
+  - name: l2_ipv4_payload
+    root: "l2:ipv4"
+    layers:
+      - ipv4
+      - payload
+    coverage_cases:
+      - ipv4-icmp
+  - name: l2_ipv4_icmp_payload
+    root: "l2:ipv4"
+    layers:
+      - ipv4
+      - icmp
+      - payload
+    coverage_cases:
+      - ipv4-icmp
+      - icmpv4-echo-reply
+      - icmpv4-destination-unreachable
+      - icmpv4-frag-needed-next-hop-mtu
+      - icmpv4-time-exceeded
+      - icmpv4-parameter-problem
+      - icmpv4-redirect
+      - icmpv4-source-quench
+      - icmpv4-timestamp
+      - icmpv4-information
+      - icmpv4-address-mask
+      - icmpv4-router-solicitation
+      - icmpv4-router-advertisement
+      - icmpv4-extensions-mpls
+      - icmpv4-extensions-interface-info
+      - crafter-icmpv4-errors-extensions
+      - icmpv4-extended-echo-request
+      - crafter-icmpv4-legacy-types
   - name: ipv4_dns
     root: "l3:ipv4"
     layers:
