@@ -515,6 +515,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--profile", default="smoke")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--count", type=_positive_int, default=10)
+    parser.add_argument(
+        "--case",
+        dest="case_name",
+        default=None,
+        help=(
+            "focused packet-generation case (e.g. dhcp-discover) threaded into "
+            "the corpus and provider live commands"
+        ),
+    )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
         "--dry-run",
@@ -608,6 +617,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             str(args.seed),
             "--count",
             str(args.count),
+            *(["--case", args.case_name] if args.case_name is not None else []),
             "--out",
             str(corpus_out),
         ]
@@ -787,6 +797,7 @@ def _oracle_command(
     corpus_path: Path,
     out_dir: Path,
 ) -> list[str]:
+    case_name = getattr(args, "case_name", None)
     return [
         "tools/oracle/run",
         mode,
@@ -798,6 +809,7 @@ def _oracle_command(
         str(args.seed),
         "--count",
         str(args.count),
+        *(["--case", case_name] if case_name is not None else []),
         "--corpus",
         str(corpus_path),
         "--out",
