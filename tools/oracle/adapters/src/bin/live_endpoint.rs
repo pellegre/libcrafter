@@ -1258,6 +1258,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "icmp" => Ok(Box::new(icmp_layer(plan)?)),
         "icmpv6" => Ok(Box::new(icmpv6_layer(plan)?)),
         "dns" => Ok(Box::new(dns_layer(plan)?)),
+        "dhcp" => Ok(Box::new(dhcp_layer(plan)?)),
         _ => Err(format!("unsupported libcrafter live materialization layer: {layer}").into()),
     }
 }
@@ -1447,6 +1448,148 @@ fn dns_answer(object: &Map<String, Value>) -> ExampleResult<DnsRecord> {
     }
     let address = text_optional(object, &["address", "rdata"]).unwrap_or("192.0.2.53");
     Ok(DnsRecord::a(name, Ipv4Addr::from_str(address)?, ttl))
+}
+
+fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcp> {
+    let fields = layer_fields(plan, "dhcp")?;
+    // The fixed BOOTP header fields are optional: a minimal live-friendly DHCP
+    // plan emits only op/flags/options and relies on `Dhcp::new()` defaults
+    // (BOOTP_REQUEST op, Ethernet htype, hlen 6, xid 0, zero MAC, unspecified
+    // addresses) for anything it does not set. This mirrors the materialize
+    // adapter so DHCP flows through the same generic endpoint batch contract.
+    let mut layer = Dhcp::new();
+    if let Some(value) = optional(fields, &["op"]) {
+        layer = layer.op(dhcp_op(value)?);
+    }
+    if let Some(value) = optional(fields, &["hardware_type", "htype"]) {
+        layer = layer.hardware_type(hardware_type_value(value)? as u8);
+    }
+    if let Some(value) = optional(fields, &["hardware_length", "hlen"]) {
+        layer = layer.hardware_len(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["transaction_id", "xid"]) {
+        layer = layer.xid(u32_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["flags"]) {
+        layer = layer.flags(dhcp_flags(value)?);
+    }
+    if let Some(value) = optional(fields, &["client_ip", "ciaddr"]) {
+        layer = layer.ciaddr(Ipv4Addr::from_str(text_value(value)?)?);
+    }
+    if let Some(value) = optional(fields, &["your_ip", "yiaddr"]) {
+        layer = layer.yiaddr(Ipv4Addr::from_str(text_value(value)?)?);
+    }
+    if let Some(value) = optional(fields, &["client_hardware_address", "chaddr"]) {
+        layer = layer.chaddr(mac_bytes(text_value(value)?)?);
+    }
+    if let Some(options) = optional(fields, &["options"]) {
+        layer = layer.options(dhcp_options(options)?);
+    }
+    Ok(layer)
+}
+
+fn dhcp_options(value: &Value) -> ExampleResult<Vec<DhcpOption>> {
+    let mut options = Vec::new();
+    for item in array_values(value)? {
+        if let Some(text) = item.as_str() {
+            if text == "end" {
+                options.push(DhcpOption::End);
+                continue;
+            }
+            if text == "pad" {
+                options.push(DhcpOption::Pad);
+                continue;
+            }
+            if let Some((name, raw_value)) = text.split_once('=') {
+                options.push(dhcp_option_pair(name, raw_value)?);
+                continue;
+            }
+        }
+    }
+    if !matches!(options.last(), Some(DhcpOption::End)) {
+        options.push(DhcpOption::End);
+    }
+    Ok(options)
+}
+
+fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<DhcpOption> {
+    match name.replace('-', "_").as_str() {
+        "message_type" => Ok(DhcpOption::message_type(dhcp_message_type(value))),
+        "hostname" | "host_name" => Ok(DhcpOption::host_name(value)),
+        "domain_name" => Ok(DhcpOption::domain_name(value)),
+        "requested_ip" | "requested_ip_address" => {
+            Ok(DhcpOption::requested_ip_address(Ipv4Addr::from_str(value)?))
+        }
+        "server_id" | "server_identifier" => {
+            Ok(DhcpOption::server_identifier(Ipv4Addr::from_str(value)?))
+        }
+        "router" => Ok(DhcpOption::router(parse_ipv4_list(value)?)),
+        "dns" | "domain_name_server" => Ok(DhcpOption::domain_name_server(parse_ipv4_list(value)?)),
+        "lease_time" => Ok(DhcpOption::lease_time(value.parse::<u32>()?)),
+        _ => Ok(DhcpOption::generic(254, value.as_bytes().to_vec())),
+    }
+}
+
+fn dhcp_message_type(value: &str) -> DhcpMessageType {
+    match value.replace('-', "_").as_str() {
+        "discover" => DhcpMessageType::Discover,
+        "offer" => DhcpMessageType::Offer,
+        "request" => DhcpMessageType::Request,
+        "decline" => DhcpMessageType::Decline,
+        "ack" => DhcpMessageType::Ack,
+        "nak" => DhcpMessageType::Nak,
+        "release" => DhcpMessageType::Release,
+        "inform" => DhcpMessageType::Inform,
+        _ => value
+            .parse::<u8>()
+            .map(DhcpMessageType::Unknown)
+            .unwrap_or(DhcpMessageType::Discover),
+    }
+}
+
+fn dhcp_op(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "bootrequest" | "request" => Ok(BOOTP_REQUEST),
+            "bootreply" | "reply" => Ok(BOOTP_REPLY),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn dhcp_flags(value: &Value) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "broadcast" | "b" => Ok(0x8000),
+            "none" | "0" => Ok(0),
+            _ => u16_text(text),
+        };
+    }
+    u16_value(value)
+}
+
+fn hardware_type_value(value: &Value) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        if matches!(text.to_ascii_lowercase().as_str(), "ether" | "ethernet") {
+            return Ok(1);
+        }
+        return u16_text(text);
+    }
+    u16_value(value)
+}
+
+fn parse_ipv4_list(value: &str) -> ExampleResult<Vec<Ipv4Addr>> {
+    value
+        .split(',')
+        .filter(|item| !item.is_empty())
+        .map(Ipv4Addr::from_str)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+fn mac_bytes(value: &str) -> ExampleResult<Vec<u8>> {
+    Ok(MacAddr::from_str(value)?.octets().to_vec())
 }
 
 fn payload_bytes(plan: &Value) -> ExampleResult<Vec<u8>> {
@@ -1849,4 +1992,313 @@ fn _parse_ipv4(value: &str) -> ExampleResult<Ipv4Addr> {
 #[allow(dead_code)]
 fn _parse_ipv6(value: &str) -> ExampleResult<Ipv6Addr> {
     Ok(Ipv6Addr::from_str(value)?)
+}
+
+/// Live endpoint batch contract coverage for the IPv4-root `ipv4 / udp / dhcp`
+/// stack.
+///
+/// DHCP flows through the same generic endpoint batch contract every other
+/// protocol uses: the libcrafter live endpoint binary must build the
+/// `ipv4 / udp / dhcp` packet (no Ethernet frame, no DHCP-specific protocol),
+/// compile it, and run the dry-run sender/receiver phases for both oracle
+/// directions. The dry-run path sends and captures nothing; all addresses are
+/// RFC 5737 documentation space and the run never touches a network.
+#[cfg(test)]
+mod ipv4_dhcp_live_endpoint {
+    use super::*;
+    use serde_json::json;
+
+    const ENDPOINT_BACKEND: &str = "libcrafter";
+
+    /// A unique scratch directory under the OS temp dir so the dry-run batch
+    /// never writes artifacts into the source tree.
+    fn artifact_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "libcrafter-test-ipv4-dhcp-live-endpoint-{}",
+            std::process::id()
+        ))
+    }
+
+    /// A minimal live-friendly `ipv4 / udp / dhcp` plan matching the seeded
+    /// generator output: only the DHCP op/flags/options are set so the fixed
+    /// BOOTP header falls back to `Dhcp::new()` defaults.
+    fn ipv4_dhcp_discover_plan(index: usize) -> Value {
+        json!({
+            "stack": ["ipv4", "udp", "dhcp"],
+            "index": index,
+            "metadata": {
+                "root_decoder": "l3:ipv4",
+                "root": "l3:ipv4"
+            },
+            "feature_tags": ["ipv4", "udp", "dhcp", "dhcp_behavior"],
+            "strict_bytes": true,
+            "fields": {
+                "ipv4": {
+                    "src": "192.0.2.1",
+                    "dst": "198.51.100.10",
+                    "identification": 4242,
+                    "ttl": 64,
+                    "flags": "none",
+                    "protocol": "udp"
+                },
+                "udp": {
+                    "src_port": 68,
+                    "dst_port": 67
+                },
+                "dhcp": {
+                    "op": "bootrequest",
+                    "flags": "none",
+                    "options": ["message-type=discover", "end"]
+                }
+            }
+        })
+    }
+
+    fn artifact_paths(direction: &str, endpoint_role: &str) -> Value {
+        let base = artifact_root();
+        let root = base
+            .join("artifacts")
+            .join(direction)
+            .join(endpoint_role)
+            .to_string_lossy()
+            .into_owned();
+        json!({
+            "root": root,
+            "request": format!("{root}/request.json"),
+            "response": format!("{root}/response.json"),
+            "stdout": format!("{root}/stdout.log"),
+            "stderr": format!("{root}/stderr.log"),
+            "captures": format!("{root}/captures"),
+            "decoded_models": format!("{root}/decoded-models.json"),
+        })
+    }
+
+    /// Build a libcrafter live endpoint batch request for one direction. The
+    /// `phase_role` is left to be inferred from the direction so the binary's
+    /// own role-assignment logic is exercised.
+    fn dhcp_request(direction: &str) -> EndpointRequest {
+        let plans = vec![ipv4_dhcp_discover_plan(11), ipv4_dhcp_discover_plan(12)];
+        let artifact_paths = artifact_paths(direction, "libcrafter");
+        EndpointRequest {
+            provider: "local-dry-run".to_string(),
+            backend: ENDPOINT_BACKEND.to_string(),
+            seed: 110,
+            profile: "smoke".to_string(),
+            packet_plans: plans,
+            direction: direction.to_string(),
+            endpoint_id: "local-dry-run-libcrafter".to_string(),
+            endpoint_role: "libcrafter".to_string(),
+            peer_role: "reference_backend".to_string(),
+            local_addresses: json!({ "ipv4": "192.0.2.10" }),
+            peer_addresses: json!({ "ipv4": "192.0.2.20" }),
+            interface: "dry-run0".to_string(),
+            timeout_seconds: 30,
+            artifact_paths,
+            metadata: json!({
+                "packets": [
+                    { "index": 11, "compare_root": "l3:ipv4" },
+                    { "index": 12, "compare_root": "l3:ipv4" }
+                ]
+            }),
+        }
+    }
+
+    fn run_dry(direction: &str) -> Value {
+        let request = dhcp_request(direction);
+        let request_json = serde_json::to_value(json!({
+            "provider": request.provider,
+            "backend": request.backend,
+            "seed": request.seed,
+            "profile": request.profile,
+            "packet_plans": request.packet_plans,
+            "direction": request.direction,
+            "endpoint_id": request.endpoint_id,
+            "endpoint_role": request.endpoint_role,
+            "peer_role": request.peer_role,
+            "local_addresses": request.local_addresses,
+            "peer_addresses": request.peer_addresses,
+            "interface": request.interface,
+            "timeout_seconds": request.timeout_seconds,
+            "artifact_paths": request.artifact_paths,
+            "metadata": request.metadata,
+        }))
+        .expect("request must serialize");
+        let args = Args {
+            input: None,
+            out: artifact_root().join(direction),
+            mode: RunMode::DryRun,
+        };
+        run_endpoint(&request, request_json, &args)
+            .expect("ipv4/udp/dhcp dry-run endpoint batch must run")
+    }
+
+    fn status_indexes(response: &Value) -> Vec<u64> {
+        response
+            .get("per_index_status")
+            .and_then(Value::as_array)
+            .expect("response must carry per_index_status")
+            .iter()
+            .map(|status| {
+                status
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .expect("status must carry an index")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn ipv4_dhcp_plan_builds_through_generic_live_endpoint_contract() {
+        // The generic batch contract must materialize the DHCP stack with no
+        // DHCP-specific protocol: ipv4 / udp / dhcp, compiled and re-decodable.
+        let request = dhcp_request("libcrafter_to_reference");
+        let prepared = prepare_packets(&request.packet_plans)
+            .expect("ipv4/udp/dhcp plans must prepare through the generic contract");
+
+        assert_eq!(prepared.len(), 2);
+        for (offset, prepared_packet) in prepared.iter().enumerate() {
+            assert_eq!(prepared_packet.index, 11 + offset);
+            assert_eq!(prepared_packet.root, "l3:ipv4");
+            assert!(
+                !prepared_packet.raw_hex.is_empty(),
+                "compiled DHCP packet must carry bytes"
+            );
+
+            let bytes = decode_hex(&prepared_packet.raw_hex).expect("raw_hex must decode");
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
+                .expect("compiled IPv4 DHCP packet must re-decode from l3");
+            decoded
+                .layer::<Ipv4>()
+                .expect("re-decoded packet must expose an IPv4 layer");
+            let udp = decoded
+                .layer::<Udp>()
+                .expect("re-decoded packet must expose a UDP layer");
+            assert_eq!(udp.source_port_value(), 68, "BOOTP client port");
+            assert_eq!(udp.destination_port_value(), 67, "BOOTP server port");
+            let dhcp = decoded
+                .layer::<Dhcp>()
+                .expect("re-decoded packet must expose a DHCP layer over UDP");
+            assert_eq!(
+                dhcp.message_type_value(),
+                Some(DhcpMessageType::Discover)
+            );
+        }
+    }
+
+    #[test]
+    fn ipv4_dhcp_libcrafter_to_reference_assigns_sender_role() {
+        let request = dhcp_request("libcrafter_to_reference");
+        // libcrafter is the sender when crafting toward the reference backend.
+        assert_eq!(
+            phase_role(&request).expect("phase role must resolve"),
+            "sender"
+        );
+
+        let response = run_dry("libcrafter_to_reference");
+
+        assert_eq!(
+            response.get("direction").and_then(Value::as_str),
+            Some("libcrafter_to_reference")
+        );
+        assert_eq!(
+            response.get("endpoint_role").and_then(Value::as_str),
+            Some("libcrafter")
+        );
+        assert_eq!(
+            response.get("provider").and_then(Value::as_str),
+            Some("local-dry-run")
+        );
+        assert_eq!(
+            response.get("backend").and_then(Value::as_str),
+            Some(ENDPOINT_BACKEND)
+        );
+        // Packet IDs / indexes round-trip from the request.
+        assert_eq!(status_indexes(&response), vec![11, 12]);
+        // The dry-run sender plans but sends nothing.
+        assert_eq!(response.get("sent_count").and_then(Value::as_u64), Some(0));
+        assert_eq!(
+            response.get("received_count").and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            response
+                .get("decoded_models")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0),
+            "dry-run sender must not decode models"
+        );
+        let detail = response.pointer("/metadata/detail/phase_role");
+        assert_eq!(detail.and_then(Value::as_str), Some("sender"));
+        // Sender status carries the IPv4 send root the plan declared.
+        for status in response
+            .get("per_index_status")
+            .and_then(Value::as_array)
+            .expect("statuses")
+        {
+            assert_eq!(status.get("sent").and_then(Value::as_bool), Some(false));
+            assert_eq!(
+                status.get("send_root").and_then(Value::as_str),
+                Some("l3:ipv4")
+            );
+            assert_eq!(
+                status.get("send_mode").and_then(Value::as_str),
+                Some("network-layer")
+            );
+        }
+        // Artifact paths echo the request so the orchestrator can collect them.
+        let expected_response_path = artifact_paths("libcrafter_to_reference", "libcrafter")
+            .get("response")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .expect("artifact paths must declare a response path");
+        assert!(
+            expected_response_path.ends_with(
+                "artifacts/libcrafter_to_reference/libcrafter/response.json"
+            ),
+            "unexpected response artifact path: {expected_response_path}"
+        );
+        assert_eq!(
+            response
+                .pointer("/artifact_paths/response")
+                .and_then(Value::as_str),
+            Some(expected_response_path.as_str())
+        );
+    }
+
+    #[test]
+    fn ipv4_dhcp_reference_to_libcrafter_assigns_receiver_role() {
+        let request = dhcp_request("reference_to_libcrafter");
+        // libcrafter is the receiver when the reference backend is the sender.
+        assert_eq!(
+            phase_role(&request).expect("phase role must resolve"),
+            "receiver"
+        );
+
+        let response = run_dry("reference_to_libcrafter");
+
+        assert_eq!(
+            response.get("direction").and_then(Value::as_str),
+            Some("reference_to_libcrafter")
+        );
+        assert_eq!(status_indexes(&response), vec![11, 12]);
+        assert_eq!(
+            response.get("received_count").and_then(Value::as_u64),
+            Some(0)
+        );
+        let detail = response.pointer("/metadata/detail/phase_role");
+        assert_eq!(detail.and_then(Value::as_str), Some("receiver"));
+        // Receiver statuses pin the IPv4 capture (compare) root.
+        for status in response
+            .get("per_index_status")
+            .and_then(Value::as_array)
+            .expect("statuses")
+        {
+            assert_eq!(status.get("received").and_then(Value::as_bool), Some(false));
+            assert_eq!(
+                status.get("capture_root").and_then(Value::as_str),
+                Some("l3:ipv4")
+            );
+        }
+    }
 }
