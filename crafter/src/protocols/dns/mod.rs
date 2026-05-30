@@ -573,9 +573,9 @@ mod dns_tests {
     use super::{
         decode_dns_name, Dns, DnsName, DnsQuestion, DnsRecord, DnsRecordData, DNS_CLASS_IN,
         DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_TYPE_A,
-        DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_TXT,
+        DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_MX, DNS_TYPE_SRV, DNS_TYPE_TXT,
     };
-    use crate::{Ipv4, NetworkLayer, Packet, Udp};
+    use crate::{Ipv4, NetworkLayer, Packet, Raw, Udp};
     use core::net::{Ipv4Addr, Ipv6Addr};
 
     #[test]
@@ -720,6 +720,117 @@ mod dns_tests {
         // non-text first label and the text second label render as one name.
         assert_eq!(answer.name(), "\\000\\255.example.");
         assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn dns_compression_decodes_then_recompiles_uncompressed() {
+        // A handcrafted DNS response whose owner names and embedded RDATA
+        // <domain-name> fields are compression pointers (0xC0 0x0C) back to the
+        // question name "example.com." at the fixed 12-octet offset. libcrafter
+        // must follow each pointer on decode and then re-emit every name
+        // uncompressed on recompile, so the decoded DNS-name model is preserved
+        // while the recompiled wire bytes intentionally differ from the
+        // compressed input (the deterministic uncompressed encoder owns output
+        // form). This mirrors the Scapy-backed `dns-compressed-names` oracle case.
+        let message: &[u8] = &[
+            // Header: id=0x1234, flags=0x8180 (response, RD, RA), qd=1, an=3.
+            0x12, 0x34, 0x81, 0x80, 0x00, 0x01, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00,
+            // Question at offset 12: example.com. A IN.
+            7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0, //
+            0x00, 0x01, 0x00, 0x01, //
+            // Answer 1 CNAME: owner = pointer(12); RDATA = "alias" + pointer(12).
+            0xc0, 0x0c, 0x00, 0x05, 0x00, 0x01, 0x00, 0x00, 0x01, 0x2c, 0x00, 0x08, //
+            5, b'a', b'l', b'i', b'a', b's', 0xc0, 0x0c, //
+            // Answer 2 MX: owner = pointer(12); RDATA = pref(10) + "mail" + ptr.
+            0xc0, 0x0c, 0x00, 0x0f, 0x00, 0x01, 0x00, 0x00, 0x01, 0x2c, 0x00, 0x09, //
+            0x00, 0x0a, 4, b'm', b'a', b'i', b'l', 0xc0, 0x0c, //
+            // Answer 3 SRV: owner = "_sip._tcp" + pointer(12); RDATA = prio/
+            // weight/port + "sip" + pointer(12).
+            4, b'_', b's', b'i', b'p', 4, b'_', b't', b'c', b'p', 0xc0, 0x0c, //
+            0x00, 0x21, 0x00, 0x01, 0x00, 0x00, 0x01, 0x2c, 0x00, 0x0c, //
+            0x00, 0x0a, 0x00, 0x05, 0x16, 0x2c, 3, b's', b'i', b'p', 0xc0, 0x0c,
+        ];
+
+        // Carry the handcrafted compressed DNS payload as a raw UDP body so
+        // compile() auto-fills the IPv4/UDP lengths and checksums, then decode it
+        // through the packet entrypoint with port-53 context so the DNS layer
+        // parses the compressed message.
+        let wire = (Ipv4::new()
+            .src(Ipv4Addr::new(198, 51, 100, 53))
+            .dst(Ipv4Addr::new(192, 0, 2, 10))
+            / Udp::new().sport(53).dport(53001)
+            / Raw::from_bytes(message))
+        .compile()
+        .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, wire.as_bytes()).unwrap();
+        let dns = decoded.layer::<Dns>().unwrap();
+
+        // Every compressed name decompressed to its full presentation form.
+        assert_eq!(dns.questions()[0].name(), "example.com.");
+        assert_eq!(dns.answers().len(), 3);
+        assert_eq!(dns.answers()[0].name(), "example.com.");
+        assert_eq!(dns.answers()[0].record_type(), DNS_TYPE_CNAME);
+        match dns.answers()[0].data() {
+            DnsRecordData::Name(name) => assert_eq!(name.presentation(), "alias.example.com."),
+            other => panic!("expected CNAME name, got {other:?}"),
+        }
+        assert_eq!(dns.answers()[1].record_type(), DNS_TYPE_MX);
+        match dns.answers()[1].data() {
+            DnsRecordData::Mx {
+                preference,
+                exchange,
+            } => {
+                assert_eq!(*preference, 10);
+                assert_eq!(exchange.presentation(), "mail.example.com.");
+            }
+            other => panic!("expected MX, got {other:?}"),
+        }
+        assert_eq!(dns.answers()[2].name(), "_sip._tcp.example.com.");
+        assert_eq!(dns.answers()[2].record_type(), DNS_TYPE_SRV);
+        match dns.answers()[2].data() {
+            DnsRecordData::Srv {
+                priority,
+                weight,
+                port,
+                target,
+            } => {
+                assert_eq!((*priority, *weight, *port), (10, 5, 5676));
+                assert_eq!(target.presentation(), "sip.example.com.");
+            }
+            other => panic!("expected SRV, got {other:?}"),
+        }
+
+        // Re-encode the decoded DNS model into a fresh datagram. The decoder set
+        // the original (compressed) UDP length on the decoded packet, so building
+        // a new packet lets compile() auto-fill the larger uncompressed lengths
+        // and checksums. The deterministic encoder emits every name uncompressed,
+        // so the recompiled DNS payload carries no compression pointer.
+        let recompiled = (Ipv4::new()
+            .src(Ipv4Addr::new(198, 51, 100, 53))
+            .dst(Ipv4Addr::new(192, 0, 2, 10))
+            / Udp::new().sport(53).dport(53001)
+            / dns.clone())
+        .compile()
+        .unwrap();
+        let dns_payload = &recompiled.as_bytes()[28..];
+        // The uncompressed encode is strictly larger than the compressed input.
+        assert!(dns_payload.len() > message.len());
+        assert!(
+            !dns_payload.iter().any(|&b| b & 0xc0 == 0xc0),
+            "recompiled DNS payload must not contain a compression pointer",
+        );
+
+        // The decoded DNS-name model is stable across the recompile: decoding the
+        // uncompressed re-encode yields the same names, so normalization agrees
+        // even though the wire bytes changed.
+        let redecoded = Packet::decode_from_l3(NetworkLayer::Ipv4, recompiled.as_bytes()).unwrap();
+        let redns = redecoded.layer::<Dns>().unwrap();
+        assert_eq!(redns.answers().len(), 3);
+        assert_eq!(redns.questions()[0].name(), "example.com.");
+        assert_eq!(redns.answers()[0].data(), dns.answers()[0].data());
+        assert_eq!(redns.answers()[1].data(), dns.answers()[1].data());
+        assert_eq!(redns.answers()[2].data(), dns.answers()[2].data());
+        assert_eq!(redns.answers()[2].name(), "_sip._tcp.example.com.");
     }
 
     #[test]

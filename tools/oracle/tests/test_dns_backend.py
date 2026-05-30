@@ -72,15 +72,23 @@ class RawCompressedDnsPacketTest(unittest.TestCase):
         spec = _dns_compressed_names_raw_spec()
         message = dns_raw.build_raw_dns_bytes(spec)
 
-        # Fixed 12-octet header: id 0x1234, one question, one answer.
+        # Fixed 12-octet header: id 0x1234, one question, ten answers (one per
+        # byte-preserving record type whose RDATA carries a compressed name).
         self.assertEqual(message[:2], b"\x12\x34")
-        self.assertEqual(message[4:12], b"\x00\x01\x00\x01\x00\x00\x00\x00")
-        # The question name example.com. is fully spelled at offset 12.
+        self.assertEqual(message[4:12], b"\x00\x01\x00\x0a\x00\x00\x00\x00")
+        # The question name example.com. is fully spelled at offset 12, so every
+        # compression pointer in the message targets offset 12.
         self.assertEqual(message[12:25], b"\x07example\x03com\x00")
-        # The answer owner name is a bare pointer to offset 12, and the CNAME
+        # The CNAME owner name is a bare pointer to offset 12, and the CNAME
         # target is the "alias" label followed by a pointer to the same offset.
         self.assertIn(b"\xc0\x0c", message[25:])
         self.assertIn(b"\x05alias\xc0\x0c", message)
+        # Each structured record type embeds a compressed <domain-name>.
+        self.assertIn(b"\x00\x0a\x04mail\xc0\x0c", message)  # MX exchange.
+        self.assertIn(b"\x0ahostmaster\xc0\x0c", message)  # SOA RNAME.
+        self.assertIn(b"\x03sip\xc0\x0c", message)  # SRV target.
+        self.assertIn(b"\x04next\xc0\x0c", message)  # NSEC next-domain.
+        self.assertIn(b"\x03svc\xc0\x0c", message)  # SVCB target.
 
     @unittest.skipUnless(_SCAPY_AVAILABLE, "scapy not importable")
     def test_materialize_raw_dns_round_trips_pointers(self) -> None:
