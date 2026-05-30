@@ -105,6 +105,39 @@ pub const DNS_RCODE_NOTZONE: u8 = 10;
 /// DNS DSOTYPENI (DSO-TYPE not implemented) response code (RFC 8490).
 pub const DNS_RCODE_DSOTYPENI: u8 = 11;
 
+/// EDNS(0) option code NSID (RFC 5001), IANA DNS EDNS0 Option Codes.
+pub const DNS_EDNS_OPTION_NSID: u16 = 3;
+/// EDNS(0) option code DAU (RFC 6975), IANA DNS EDNS0 Option Codes.
+pub const DNS_EDNS_OPTION_DAU: u16 = 5;
+/// EDNS(0) option code DHU (RFC 6975), IANA DNS EDNS0 Option Codes.
+pub const DNS_EDNS_OPTION_DHU: u16 = 6;
+/// EDNS(0) option code N3U (RFC 6975), IANA DNS EDNS0 Option Codes.
+pub const DNS_EDNS_OPTION_N3U: u16 = 7;
+/// EDNS(0) option code edns-client-subnet (RFC 7871), IANA DNS EDNS0 Option
+/// Codes.
+pub const DNS_EDNS_OPTION_CLIENT_SUBNET: u16 = 8;
+/// EDNS(0) option code EDNS EXPIRE (RFC 7314), IANA DNS EDNS0 Option Codes.
+pub const DNS_EDNS_OPTION_EXPIRE: u16 = 9;
+/// EDNS(0) option code COOKIE (RFC 7873), IANA DNS EDNS0 Option Codes.
+pub const DNS_EDNS_OPTION_COOKIE: u16 = 10;
+/// EDNS(0) option code edns-tcp-keepalive (RFC 7828), IANA DNS EDNS0 Option
+/// Codes.
+pub const DNS_EDNS_OPTION_TCP_KEEPALIVE: u16 = 11;
+/// EDNS(0) option code Padding (RFC 7830), IANA DNS EDNS0 Option Codes.
+pub const DNS_EDNS_OPTION_PADDING: u16 = 12;
+/// EDNS(0) option code Extended DNS Error (RFC 8914), IANA DNS EDNS0 Option
+/// Codes.
+pub const DNS_EDNS_OPTION_EXTENDED_ERROR: u16 = 15;
+
+/// Default EDNS(0) requestor UDP payload size carried in the OPT CLASS field
+/// (RFC 6891 Section 6.2.5 recommends 4096 as a sensible default).
+pub const DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE: u16 = 4096;
+
+/// EDNS(0) DO ("DNSSEC OK") flag bit within the lower 16 bits of the OPT TTL
+/// field (RFC 6891 Section 6.1.3; IANA EDNS Header Flags bit 0). In the full
+/// 32-bit TTL word this is mask `0x0000_8000`.
+pub const DNS_EDNS_FLAG_DO: u16 = 0x8000;
+
 /// DNS response flag bit.
 pub const DNS_FLAG_QR_RESPONSE: u16 = 0x8000;
 /// DNS authoritative-answer flag bit.
@@ -131,6 +164,15 @@ const DNS_OPCODE_MASK: u16 = 0x7800;
 const DNS_OPCODE_SHIFT: u16 = 11;
 /// Mask for the four-bit RCODE field within the DNS flags word (bits 0-3).
 const DNS_RCODE_MASK: u16 = 0x000f;
+
+/// Bit shift for the EXTENDED-RCODE byte (upper 8 bits) of the OPT TTL field
+/// (RFC 6891 Section 6.1.3).
+const DNS_EDNS_EXTENDED_RCODE_SHIFT: u32 = 24;
+/// Bit shift for the VERSION byte (bits 16-23) of the OPT TTL field
+/// (RFC 6891 Section 6.1.3).
+const DNS_EDNS_VERSION_SHIFT: u32 = 16;
+/// Mask selecting the lower 16-bit DO/Z half of the OPT TTL field.
+const DNS_EDNS_FLAGS_MASK: u32 = 0x0000_ffff;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -395,6 +437,99 @@ impl DnsQuestion {
     }
 }
 
+/// One EDNS(0) option carried in the RDATA of an OPT pseudo-record.
+///
+/// Each option is an {OPTION-CODE, OPTION-LENGTH, OPTION-DATA} tuple
+/// (RFC 6891 Section 6.1.2). The option data is kept as raw bytes: every
+/// OPTION-DATA "MUST be treated as a bit field" and its layout varies per
+/// OPTION-CODE, so this primitive preserves the exact wire bytes rather than
+/// reinterpreting each option's internal structure. Source-backed option codes
+/// have named constructors and a registry mnemonic; unknown codes round trip as
+/// raw bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EdnsOption {
+    code: u16,
+    data: Vec<u8>,
+}
+
+impl EdnsOption {
+    /// Build an EDNS option from an explicit option code and data bytes.
+    pub fn new(code: u16, data: impl Into<Vec<u8>>) -> Self {
+        Self {
+            code,
+            data: data.into(),
+        }
+    }
+
+    /// Build an NSID option (RFC 5001), carrying opaque identifier bytes.
+    pub fn nsid(data: impl Into<Vec<u8>>) -> Self {
+        Self::new(DNS_EDNS_OPTION_NSID, data)
+    }
+
+    /// Build a COOKIE option (RFC 7873), carrying the client/server cookie
+    /// bytes verbatim.
+    pub fn cookie(data: impl Into<Vec<u8>>) -> Self {
+        Self::new(DNS_EDNS_OPTION_COOKIE, data)
+    }
+
+    /// Build a Padding option (RFC 7830) of `len` zero octets.
+    pub fn padding(len: usize) -> Self {
+        Self::new(DNS_EDNS_OPTION_PADDING, vec![0u8; len])
+    }
+
+    /// Option code value (an IANA DNS EDNS0 Option Code).
+    pub const fn code(&self) -> u16 {
+        self.code
+    }
+
+    /// Option data bytes, kept verbatim from the wire.
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// IANA registry mnemonic for a source-backed EDNS option code, or `None`
+    /// for codes this crate does not name (callers can fall back to the numeric
+    /// value).
+    pub fn option_code_name(&self) -> Option<&'static str> {
+        edns_option_code_name(self.code)
+    }
+
+    fn encoded_len(&self) -> usize {
+        4 + self.data.len()
+    }
+
+    fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let length = u16::try_from(self.data.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "dns.opt.option.length",
+                "EDNS option data exceeds 65535 bytes",
+            )
+        })?;
+        out.extend_from_slice(&self.code.to_be_bytes());
+        out.extend_from_slice(&length.to_be_bytes());
+        out.extend_from_slice(&self.data);
+        Ok(())
+    }
+}
+
+/// Return the IANA registry mnemonic for a source-backed EDNS(0) option code,
+/// or `None` when the code is not named by this crate.
+pub fn edns_option_code_name(code: u16) -> Option<&'static str> {
+    Some(match code {
+        DNS_EDNS_OPTION_NSID => "NSID",
+        DNS_EDNS_OPTION_DAU => "DAU",
+        DNS_EDNS_OPTION_DHU => "DHU",
+        DNS_EDNS_OPTION_N3U => "N3U",
+        DNS_EDNS_OPTION_CLIENT_SUBNET => "edns-client-subnet",
+        DNS_EDNS_OPTION_EXPIRE => "EDNS EXPIRE",
+        DNS_EDNS_OPTION_COOKIE => "COOKIE",
+        DNS_EDNS_OPTION_TCP_KEEPALIVE => "edns-tcp-keepalive",
+        DNS_EDNS_OPTION_PADDING => "Padding",
+        DNS_EDNS_OPTION_EXTENDED_ERROR => "Extended DNS Error",
+        _ => return None,
+    })
+}
+
 /// DNS resource record data for common record types.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DnsRecordData {
@@ -441,6 +576,12 @@ pub enum DnsRecordData {
     },
     /// TXT strings, each encoded as one DNS character-string.
     Txt(Vec<Vec<u8>>),
+    /// EDNS(0) OPT pseudo-record RDATA: a list of {code, length, data} options
+    /// (RFC 6891 Section 6.1.2). The OPT CLASS and TTL fields carry the UDP
+    /// payload size and the extended RCODE/version/flags rather than ordinary
+    /// class and TTL meaning; build with [`DnsRecord::opt`] and inspect with the
+    /// `edns_*` accessors on [`DnsRecord`].
+    Opt(Vec<EdnsOption>),
     /// Unknown or caller-defined record payload bytes.
     Raw(Vec<u8>),
 }
@@ -464,6 +605,7 @@ impl DnsRecordData {
             Self::Soa { .. } => Some(DNS_TYPE_SOA),
             Self::Srv { .. } => Some(DNS_TYPE_SRV),
             Self::Txt(_) => Some(DNS_TYPE_TXT),
+            Self::Opt(_) => Some(DNS_TYPE_OPT),
             Self::Name(_) | Self::Raw(_) => None,
         }
     }
@@ -477,6 +619,7 @@ impl DnsRecordData {
             Self::Soa { mname, rname, .. } => mname.encoded_len() + rname.encoded_len() + 20,
             Self::Srv { target, .. } => 6 + target.encoded_len(),
             Self::Txt(strings) => strings.iter().map(|value| 1 + value.len()).sum(),
+            Self::Opt(options) => options.iter().map(EdnsOption::encoded_len).sum(),
             Self::Raw(bytes) => bytes.len(),
         }
     }
@@ -540,6 +683,11 @@ impl DnsRecordData {
                     }
                     out.push(text.len() as u8);
                     out.extend_from_slice(text);
+                }
+            }
+            Self::Opt(options) => {
+                for option in options {
+                    option.encode(out)?;
                 }
             }
             Self::Raw(bytes) => out.extend_from_slice(bytes),
@@ -662,6 +810,33 @@ impl DnsRecord {
         )
     }
 
+    /// Create an EDNS(0) OPT pseudo-record (RFC 6891 Section 6.1).
+    ///
+    /// The OPT pseudo-record reuses ordinary resource-record fields with EDNS
+    /// meanings: the owner name MUST be root, the CLASS field carries the
+    /// requestor's UDP payload size, and the TTL field carries the extended
+    /// RCODE, EDNS version, the DO flag, and the Z bits. This builder packs
+    /// those EDNS fields into the underlying `class` and `ttl` so the record
+    /// still encodes through the normal name/type/class/ttl/rdlength/RDATA path;
+    /// inspect or override the raw fields with [`DnsRecord::class`],
+    /// [`DnsRecord::ttl`], and the EDNS getters.
+    pub fn opt(
+        udp_payload_size: u16,
+        extended_rcode: u8,
+        version: u8,
+        dnssec_ok: bool,
+        options: Vec<EdnsOption>,
+    ) -> Self {
+        let ttl = encode_edns_ttl(extended_rcode, version, dnssec_ok, 0);
+        Self::new(
+            DnsName::root(),
+            DNS_TYPE_OPT,
+            udp_payload_size,
+            ttl,
+            DnsRecordData::Opt(options),
+        )
+    }
+
     /// Record name in canonical trailing-dot presentation form.
     ///
     /// Non-text labels are rendered with `\DDD` escapes; use
@@ -699,6 +874,54 @@ impl DnsRecord {
     /// Record data.
     pub const fn data(&self) -> &DnsRecordData {
         &self.data
+    }
+
+    /// True when this record is an EDNS(0) OPT pseudo-record (TYPE 41).
+    pub const fn is_opt(&self) -> bool {
+        self.record_type == DNS_TYPE_OPT
+    }
+
+    /// EDNS(0) requestor UDP payload size, taken from the OPT CLASS field
+    /// (RFC 6891 Section 6.1.2).
+    ///
+    /// This reads the raw CLASS field; it is only meaningful when
+    /// [`DnsRecord::is_opt`] is true. The underlying value stays available
+    /// through [`DnsRecord::class`].
+    pub const fn edns_udp_payload_size(&self) -> u16 {
+        self.class
+    }
+
+    /// EDNS(0) EXTENDED-RCODE: the upper 8 bits of the 12-bit extended RCODE,
+    /// taken from the OPT TTL field (RFC 6891 Section 6.1.3).
+    pub const fn edns_extended_rcode(&self) -> u8 {
+        (self.ttl >> DNS_EDNS_EXTENDED_RCODE_SHIFT) as u8
+    }
+
+    /// EDNS(0) VERSION, taken from the OPT TTL field (RFC 6891 Section 6.1.3).
+    pub const fn edns_version(&self) -> u8 {
+        (self.ttl >> DNS_EDNS_VERSION_SHIFT) as u8
+    }
+
+    /// EDNS(0) DO ("DNSSEC OK") flag, taken from the OPT TTL field
+    /// (RFC 6891 Section 6.1.3; IANA EDNS Header Flags bit 0).
+    pub const fn edns_dnssec_ok(&self) -> bool {
+        ((self.ttl as u16) & DNS_EDNS_FLAG_DO) != 0
+    }
+
+    /// EDNS(0) header flags word (the lower 16 bits of the OPT TTL field,
+    /// including the DO bit and the Z bits) returned verbatim.
+    pub const fn edns_flags(&self) -> u16 {
+        (self.ttl & DNS_EDNS_FLAGS_MASK) as u16
+    }
+
+    /// EDNS(0) option list when this record's RDATA is typed as OPT, or `None`
+    /// for any other record data (including an OPT type whose RDATA decoded as
+    /// raw bytes).
+    pub fn edns_options(&self) -> Option<&[EdnsOption]> {
+        match &self.data {
+            DnsRecordData::Opt(options) => Some(options),
+            _ => None,
+        }
     }
 
     fn encoded_len(&self) -> usize {
@@ -1375,6 +1598,38 @@ fn decode_record_data(
             }
             Ok(DnsRecordData::Txt(strings))
         }
+        DNS_TYPE_OPT => {
+            // OPT RDATA is a sequence of {OPTION-CODE (2), OPTION-LENGTH (2),
+            // OPTION-DATA (OPTION-LENGTH)} tuples (RFC 6891 Section 6.1.2).
+            let mut options = Vec::new();
+            let mut offset = 0;
+            while offset < rdata.len() {
+                if offset + 4 > rdata.len() {
+                    // A partial option header (fewer than the four fixed bytes)
+                    // is a truncated option.
+                    return Err(CrafterError::buffer_too_short(
+                        "dns.opt.option",
+                        offset + 4,
+                        rdata.len(),
+                    ));
+                }
+                let code = read_u16_be(&rdata[offset..offset + 2])?;
+                let length = read_u16_be(&rdata[offset + 2..offset + 4])? as usize;
+                let data_start = offset + 4;
+                let data_end = data_start + length;
+                if data_end > rdata.len() {
+                    // The declared OPTION-LENGTH runs past the end of the RDATA.
+                    return Err(CrafterError::buffer_too_short(
+                        "dns.opt.option.data",
+                        data_end,
+                        rdata.len(),
+                    ));
+                }
+                options.push(EdnsOption::new(code, rdata[data_start..data_end].to_vec()));
+                offset = data_end;
+            }
+            Ok(DnsRecordData::Opt(options))
+        }
         _ => Ok(DnsRecordData::Raw(rdata.to_vec())),
     }
 }
@@ -1553,6 +1808,20 @@ fn validate_count(field: &'static str, count: usize) -> Result<()> {
 
 fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
     field.value().copied().unwrap_or(default)
+}
+
+/// Pack the EDNS(0) OPT TTL field from its EXTENDED-RCODE, VERSION, DO flag,
+/// and Z bits (RFC 6891 Section 6.1.3). `z` carries the reserved Z bits
+/// alongside the DO bit in the lower 16-bit half; the DO bit is set or cleared
+/// from `dnssec_ok` so callers do not have to encode it into `z` themselves.
+fn encode_edns_ttl(extended_rcode: u8, version: u8, dnssec_ok: bool, z: u16) -> u32 {
+    let mut flags = z & !DNS_EDNS_FLAG_DO;
+    if dnssec_ok {
+        flags |= DNS_EDNS_FLAG_DO;
+    }
+    ((extended_rcode as u32) << DNS_EDNS_EXTENDED_RCODE_SHIFT)
+        | ((version as u32) << DNS_EDNS_VERSION_SHIFT)
+        | (flags as u32)
 }
 
 fn record_type_summary(record_type: u16) -> String {
@@ -1995,6 +2264,160 @@ mod dns_base_rdata {
             },
         );
         assert!(Packet::from_layer(Dns::new().answer(record))
+            .compile()
+            .is_err());
+    }
+}
+
+#[cfg(test)]
+mod dns_edns {
+    use super::{
+        decode_record_data, Dns, DnsRecord, DnsRecordData, EdnsOption,
+        DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
+        DNS_TYPE_OPT,
+    };
+    use crate::{Ipv4, NetworkLayer, Packet, Udp};
+    use core::net::Ipv4Addr;
+
+    /// Build a DNS query carrying one OPT additional record, compile it through
+    /// the packet stack, decode it back, and return the decoded additional
+    /// record along with the original and recompiled bytes for byte-stable
+    /// round-trip assertions.
+    fn round_trip_opt(opt: DnsRecord) -> (DnsRecord, Vec<u8>, Vec<u8>) {
+        let original = Dns::a_query("example.com.").id(0x4242).additional(opt);
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 53))
+            / Udp::new().sport(53001).dport(53)
+            / original)
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let record = decoded.layer::<Dns>().unwrap().additionals()[0].clone();
+        let recompiled = decoded.compile().unwrap();
+        (
+            record,
+            bytes.as_bytes().to_vec(),
+            recompiled.as_bytes().to_vec(),
+        )
+    }
+
+    #[test]
+    fn dns_edns_opt_with_no_options_round_trips() {
+        // A bare OPT record (RFC 6891 Section 6.1) advertises a UDP payload
+        // size and the DO flag with an empty option list.
+        let opt = DnsRecord::opt(DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, 0, 0, true, Vec::new());
+        let (record, original, recompiled) = round_trip_opt(opt);
+
+        assert!(record.is_opt());
+        // The OPT CLASS field carries the UDP payload size; the raw class
+        // getter and the EDNS view agree.
+        assert_eq!(record.class(), 4096);
+        assert_eq!(record.edns_udp_payload_size(), 4096);
+        assert_eq!(record.edns_extended_rcode(), 0);
+        assert_eq!(record.edns_version(), 0);
+        assert!(record.edns_dnssec_ok());
+        // Empty RDATA decodes to an empty, non-None option list.
+        assert_eq!(record.edns_options(), Some(&[][..]));
+        assert_eq!(record.data(), &DnsRecordData::Opt(Vec::new()));
+        // The OPT owner name is root and the bytes round trip unchanged.
+        assert_eq!(record.name(), ".");
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dns_edns_opt_with_typed_option_round_trips() {
+        // NSID (RFC 5001) is a source-backed option in the coverage map; its
+        // data is opaque identifier bytes carried verbatim.
+        let opt = DnsRecord::opt(1232, 0, 0, false, vec![EdnsOption::nsid(b"ns1".to_vec())]);
+        let (record, original, recompiled) = round_trip_opt(opt);
+
+        let options = record.edns_options().unwrap();
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].code(), DNS_EDNS_OPTION_NSID);
+        assert_eq!(options[0].data(), b"ns1");
+        assert_eq!(options[0].option_code_name(), Some("NSID"));
+        assert_eq!(record.edns_udp_payload_size(), 1232);
+        assert!(!record.edns_dnssec_ok());
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dns_edns_opt_unknown_option_round_trips_as_raw_bytes() {
+        // An option with a code this crate does not name keeps its exact data
+        // bytes and surfaces no mnemonic, but still round trips.
+        let unknown_code = 0xfffeu16;
+        let opt = DnsRecord::opt(
+            512,
+            0,
+            0,
+            false,
+            vec![
+                EdnsOption::cookie(b"clientcookie".to_vec()),
+                EdnsOption::new(unknown_code, vec![0xde, 0xad, 0xbe, 0xef]),
+            ],
+        );
+        let (record, original, recompiled) = round_trip_opt(opt);
+
+        let options = record.edns_options().unwrap();
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[0].code(), DNS_EDNS_OPTION_COOKIE);
+        assert_eq!(options[0].option_code_name(), Some("COOKIE"));
+        assert_eq!(options[1].code(), unknown_code);
+        assert_eq!(options[1].option_code_name(), None);
+        assert_eq!(options[1].data(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dns_edns_unsupported_version_is_preserved_not_rejected() {
+        // VERSION validation (RCODE=BADVERS) is resolver policy and out of
+        // scope; the wire primitive must carry any version verbatim.
+        let opt = DnsRecord::opt(4096, 0, 7, false, vec![EdnsOption::padding(4)]);
+        let (record, original, recompiled) = round_trip_opt(opt);
+
+        assert_eq!(record.edns_version(), 7);
+        assert_eq!(record.edns_options().unwrap()[0].data(), &[0, 0, 0, 0]);
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dns_edns_extended_rcode_and_flags_fold_into_ttl() {
+        // EXTENDED-RCODE and the DO flag share the OPT TTL field; reading the
+        // typed getters must reflect the packed value exactly.
+        let opt = DnsRecord::opt(4096, 0x12, 0, true, Vec::new());
+        assert_eq!(opt.edns_extended_rcode(), 0x12);
+        assert!(opt.edns_dnssec_ok());
+        // The full lower-16 flags word carries only the DO bit here.
+        assert_eq!(opt.edns_flags(), super::DNS_EDNS_FLAG_DO);
+    }
+
+    #[test]
+    fn dns_edns_option_length_overrun_is_rejected() {
+        // OPTION-LENGTH claims more data than the RDATA actually carries.
+        let mut rdata = Vec::new();
+        rdata.extend_from_slice(&DNS_EDNS_OPTION_NSID.to_be_bytes()); // code
+        rdata.extend_from_slice(&8u16.to_be_bytes()); // length 8
+        rdata.extend_from_slice(&[0u8; 2]); // only 2 data bytes present
+        let end = rdata.len();
+        assert!(decode_record_data(DNS_TYPE_OPT, &rdata, 0, end).is_err());
+    }
+
+    #[test]
+    fn dns_edns_truncated_option_header_is_rejected() {
+        // Fewer than the four fixed option-header bytes remain in the RDATA.
+        let rdata = [0x00u8, 0x03, 0x00]; // code + half a length field
+        assert!(decode_record_data(DNS_TYPE_OPT, &rdata, 0, rdata.len()).is_err());
+    }
+
+    #[test]
+    fn dns_edns_option_data_too_large_is_rejected_on_encode() {
+        // An option carrying more than 65535 data bytes cannot encode an
+        // OPTION-LENGTH and must error rather than truncate.
+        let oversized = EdnsOption::new(DNS_EDNS_OPTION_NSID, vec![0u8; 65_536]);
+        let opt = DnsRecord::opt(4096, 0, 0, false, vec![oversized]);
+        assert!(Packet::from_layer(Dns::new().additional(opt))
             .compile()
             .is_err());
     }
