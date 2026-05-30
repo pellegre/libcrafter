@@ -38,6 +38,7 @@ Every example uses only public APIs from the `crafter` crate, with
 | `dhcp_discover` | Protocols | Dry-run by default; live-gated with `--live` | DHCP discover construction with an explicit client MAC and link-layer send options. | `cargo run -p crafter --example dhcp_discover` |
 | `dhcp_option82` | Protocols | Offline | DHCP relay agent information (option 82), classless static routes, and option overload construction and offline decode. | `cargo run -p crafter --example dhcp_option82` |
 | `dhcp_leasequery` | Protocols | Offline | DHCP leasequery, typed client identifier, authentication, and status/state packet-field construction and offline decode. | `cargo run -p crafter --example dhcp_leasequery` |
+| `icmpv4_error` | Protocols | Offline | ICMPv4 time-exceeded error with a quoted datagram and an RFC 4884/4950 MPLS extension object, compiled and decoded offline. | `cargo run -p crafter --example icmpv4_error` |
 | `icmpv6_echo` | Protocols | Offline by default; dry-run with `--send-recv` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. | `cargo run -p crafter --example icmpv6_echo` |
 | `vlan` | Protocols | Offline | 802.1Q VLAN frame construction, compile, and decode. | `cargo run -p crafter --example vlan` |
 | `linux_sll` | Protocols | Offline | Linux cooked capture packet construction, compile, and decode. | `cargo run -p crafter --example linux_sll` |

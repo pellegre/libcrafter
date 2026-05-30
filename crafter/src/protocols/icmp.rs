@@ -1,4 +1,70 @@
 //! ICMP, ICMPv6, and ICMP extension implementations.
+//!
+//! # ICMPv4 surface
+//!
+//! [`Icmp`] is the fixed 8-byte ICMPv4 header and the front of every ICMPv4
+//! packet. Typed constructors cover the IANA registry: the RFC 792 echo, error,
+//! timestamp, and information families; RFC 950 address mask; RFC 1256 router
+//! discovery; RFC 8335 extended echo; and by-name constructors for the
+//! deprecated and experimental legacy types. Data that follows the fixed header
+//! is modeled as its own typed body or extension layer composed with `/`:
+//!
+//! - [`IcmpQuotedIpv4`] — the quoted original datagram in an ICMPv4 error.
+//! - [`IcmpTimestamp`] — RFC 792 originate/receive/transmit timestamps.
+//! - [`IcmpAddressMask`] — the RFC 950 address mask.
+//! - [`IcmpRouterAdvertisementEntry`] — one RFC 1256 advertised router entry.
+//! - [`IcmpExtension`] + [`IcmpExtensionObject`] — RFC 4884 multi-part framing
+//!   and a generic extension object, with typed object bodies for RFC 4950 MPLS
+//!   ([`IcmpExtensionMpls`]), RFC 5837 interface information
+//!   ([`IcmpExtensionInterfaceInfo`]), and RFC 8335 interface identification
+//!   ([`IcmpExtensionInterfaceId`]).
+//!
+//! `compile()` fills protocol-correct defaults the caller left unset — the ICMP
+//! checksum, RFC 4884 length and zero padding, extension checksums, router
+//! advertisement counts and entry size, and type-specific default codes — while
+//! any value set explicitly survives untouched, including intentionally invalid
+//! ones. The raw escape hatches [`Icmp::type_`], [`Icmp::code`],
+//! [`Icmp::checksum`], and [`Icmp::rest_of_header`] (plus a [`Raw`] body) build
+//! malformed or not-yet-typed messages.
+//!
+//! `decode_from_l3` (see [`crate::core::Packet::decode_from_l3`]) types the
+//! header and any body it can parse defensibly; ambiguous, unknown, or
+//! truncated trailing bytes stay a [`Raw`] payload, and genuine header
+//! truncation returns a structured buffer error rather than panicking.
+//! [`Packet::summary`](crate::core::Packet::summary) names known types and codes
+//! while still printing raw numeric values, and
+//! [`show`](crate::core::Packet::show) lists every typed field.
+//!
+//! ```rust
+//! use crafter::prelude::*;
+//! use std::net::Ipv4Addr;
+//!
+//! # fn main() -> crafter::Result<()> {
+//! // A port-unreachable error quoting the datagram that triggered it.
+//! let offending = Ipv4::new()
+//!     .src(Ipv4Addr::new(198, 51, 100, 20))
+//!     .dst(Ipv4Addr::new(192, 0, 2, 10))
+//!     / Udp::new().sport(40000).dport(53)
+//!     / Raw::from("query");
+//!
+//! let packet = Ipv4::new()
+//!     .src(Ipv4Addr::new(192, 0, 2, 10))
+//!     .dst(Ipv4Addr::new(198, 51, 100, 20))
+//!     / Icmp::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
+//!     / IcmpQuotedIpv4::new(offending);
+//!
+//! // compile() auto-fills the ICMP checksum and IPv4 length/protocol.
+//! let bytes = packet.compile()?;
+//!
+//! // decode_from_l3 recovers the typed header and quoted datagram.
+//! let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+//! let icmp = decoded.layer::<Icmp>().expect("icmp header");
+//! assert_eq!(icmp.icmp_type_value(), ICMP_DESTINATION_UNREACHABLE);
+//! let quote = decoded.layer::<IcmpQuotedIpv4>().expect("quoted datagram");
+//! assert!(quote.quoted_layer::<Ipv4>().is_some());
+//! # Ok(())
+//! # }
+//! ```
 
 use core::any::Any;
 use core::net::Ipv4Addr;
@@ -7319,8 +7385,9 @@ mod icmpv4_legacy_assigned_types {
         ICMP_CODE_PHOTURIS_BAD_SPI, ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION,
         ICMP_DATAGRAM_CONVERSION_ERROR, ICMP_DOMAIN_NAME_REPLY, ICMP_DOMAIN_NAME_REQUEST,
         ICMP_EXPERIMENTAL_253, ICMP_EXPERIMENTAL_254, ICMP_IPV6_I_AM_HERE, ICMP_IPV6_WHERE_ARE_YOU,
-        ICMP_MOBILE_HOST_REDIRECT, ICMP_MOBILE_REGISTRATION_REPLY, ICMP_MOBILE_REGISTRATION_REQUEST,
-        ICMP_PHOTURIS, ICMP_RESERVED_255, ICMP_SEAMOBY_EXPERIMENTAL, ICMP_SKIP, ICMP_TRACEROUTE,
+        ICMP_MOBILE_HOST_REDIRECT, ICMP_MOBILE_REGISTRATION_REPLY,
+        ICMP_MOBILE_REGISTRATION_REQUEST, ICMP_PHOTURIS, ICMP_RESERVED_255,
+        ICMP_SEAMOBY_EXPERIMENTAL, ICMP_SKIP, ICMP_TRACEROUTE,
     };
     use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
@@ -7430,8 +7497,7 @@ mod icmpv4_legacy_assigned_types {
             let compiled = (Ipv4::new().src(src()).dst(dst()) / icmp / Raw::from("xprmnt"))
                 .compile()
                 .unwrap();
-            let decoded =
-                Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
             let icmp = decoded.layer::<Icmp>().unwrap();
             assert_eq!(icmp.icmp_type_value(), expected_type);
             let raw = decoded.layer::<Raw>().unwrap();

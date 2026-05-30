@@ -459,7 +459,10 @@ mod icmpv4_oracle {
             let inner = quoted
                 .quoted_layer::<Ipv4>()
                 .unwrap_or_else(|| panic!("quoted datagram is not IPv4 for {name}"));
-            assert_eq!(inner.destination(), std::net::Ipv4Addr::new(198, 51, 100, 20));
+            assert_eq!(
+                inner.destination(),
+                std::net::Ipv4Addr::new(198, 51, 100, 20)
+            );
         }
     }
 
