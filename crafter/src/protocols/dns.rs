@@ -411,6 +411,34 @@ pub enum DnsRecordData {
         /// Mail exchanger domain name.
         exchange: DnsName,
     },
+    /// Start of authority data (RFC 1035 Section 3.3.13).
+    Soa {
+        /// MNAME: primary source domain name for this zone.
+        mname: DnsName,
+        /// RNAME: responsible-person mailbox domain name.
+        rname: DnsName,
+        /// SERIAL: 32-bit zone version number.
+        serial: u32,
+        /// REFRESH: 32-bit refresh interval, in seconds.
+        refresh: u32,
+        /// RETRY: 32-bit retry interval, in seconds.
+        retry: u32,
+        /// EXPIRE: 32-bit expiry interval, in seconds.
+        expire: u32,
+        /// MINIMUM: 32-bit minimum TTL, in seconds.
+        minimum: u32,
+    },
+    /// Service location data (RFC 2782): priority, weight, port, target.
+    Srv {
+        /// Priority of this target host.
+        priority: u16,
+        /// Relative weight among entries with the same priority.
+        weight: u16,
+        /// Port of the service on the target host.
+        port: u16,
+        /// Target host domain name.
+        target: DnsName,
+    },
     /// TXT strings, each encoded as one DNS character-string.
     Txt(Vec<Vec<u8>>),
     /// Unknown or caller-defined record payload bytes.
@@ -433,6 +461,8 @@ impl DnsRecordData {
             Self::A(_) => Some(DNS_TYPE_A),
             Self::Aaaa(_) => Some(DNS_TYPE_AAAA),
             Self::Mx { .. } => Some(DNS_TYPE_MX),
+            Self::Soa { .. } => Some(DNS_TYPE_SOA),
+            Self::Srv { .. } => Some(DNS_TYPE_SRV),
             Self::Txt(_) => Some(DNS_TYPE_TXT),
             Self::Name(_) | Self::Raw(_) => None,
         }
@@ -444,6 +474,8 @@ impl DnsRecordData {
             Self::Aaaa(_) => 16,
             Self::Name(name) => name.encoded_len(),
             Self::Mx { exchange, .. } => 2 + exchange.encoded_len(),
+            Self::Soa { mname, rname, .. } => mname.encoded_len() + rname.encoded_len() + 20,
+            Self::Srv { target, .. } => 6 + target.encoded_len(),
             Self::Txt(strings) => strings.iter().map(|value| 1 + value.len()).sum(),
             Self::Raw(bytes) => bytes.len(),
         }
@@ -469,6 +501,34 @@ impl DnsRecordData {
             } => {
                 out.extend_from_slice(&preference.to_be_bytes());
                 exchange.encode(out)?;
+            }
+            Self::Soa {
+                mname,
+                rname,
+                serial,
+                refresh,
+                retry,
+                expire,
+                minimum,
+            } => {
+                mname.encode(out)?;
+                rname.encode(out)?;
+                out.extend_from_slice(&serial.to_be_bytes());
+                out.extend_from_slice(&refresh.to_be_bytes());
+                out.extend_from_slice(&retry.to_be_bytes());
+                out.extend_from_slice(&expire.to_be_bytes());
+                out.extend_from_slice(&minimum.to_be_bytes());
+            }
+            Self::Srv {
+                priority,
+                weight,
+                port,
+                target,
+            } => {
+                out.extend_from_slice(&priority.to_be_bytes());
+                out.extend_from_slice(&weight.to_be_bytes());
+                out.extend_from_slice(&port.to_be_bytes());
+                target.encode(out)?;
             }
             Self::Txt(strings) => {
                 for text in strings {
@@ -546,6 +606,59 @@ impl DnsRecord {
             DNS_CLASS_IN,
             ttl,
             DnsRecordData::name(target),
+        )
+    }
+
+    /// Create a SOA record (RFC 1035 Section 3.3.13).
+    #[allow(clippy::too_many_arguments)]
+    pub fn soa(
+        name: impl Into<DnsName>,
+        ttl: u32,
+        mname: impl Into<DnsName>,
+        rname: impl Into<DnsName>,
+        serial: u32,
+        refresh: u32,
+        retry: u32,
+        expire: u32,
+        minimum: u32,
+    ) -> Self {
+        Self::new(
+            name,
+            DNS_TYPE_SOA,
+            DNS_CLASS_IN,
+            ttl,
+            DnsRecordData::Soa {
+                mname: mname.into(),
+                rname: rname.into(),
+                serial,
+                refresh,
+                retry,
+                expire,
+                minimum,
+            },
+        )
+    }
+
+    /// Create a SRV record (RFC 2782).
+    pub fn srv(
+        name: impl Into<DnsName>,
+        ttl: u32,
+        priority: u16,
+        weight: u16,
+        port: u16,
+        target: impl Into<DnsName>,
+    ) -> Self {
+        Self::new(
+            name,
+            DNS_TYPE_SRV,
+            DNS_CLASS_IN,
+            ttl,
+            DnsRecordData::Srv {
+                priority,
+                weight,
+                port,
+                target: target.into(),
+            },
         )
     }
 
@@ -1206,6 +1319,47 @@ fn decode_record_data(
                 exchange,
             })
         }
+        DNS_TYPE_SOA => {
+            // MNAME and RNAME are <domain-name> fields (RFC 1035 Section
+            // 3.3.13) followed by five fixed 32-bit fields (20 octets total).
+            let (mname, mname_used) = decode_dns_name_typed(message, rdata_start)?;
+            let (rname, rname_used) = decode_dns_name_typed(message, rdata_start + mname_used)?;
+            let fixed_start = mname_used + rname_used;
+            if fixed_start + 20 != rdata.len() {
+                return Err(CrafterError::invalid_field_value(
+                    "dns.soa.rdlength",
+                    "SOA RDATA must end with exactly twenty bytes after MNAME and RNAME",
+                ));
+            }
+            let fixed = &rdata[fixed_start..fixed_start + 20];
+            Ok(DnsRecordData::Soa {
+                mname,
+                rname,
+                serial: read_u32_be(&fixed[0..4])?,
+                refresh: read_u32_be(&fixed[4..8])?,
+                retry: read_u32_be(&fixed[8..12])?,
+                expire: read_u32_be(&fixed[12..16])?,
+                minimum: read_u32_be(&fixed[16..20])?,
+            })
+        }
+        DNS_TYPE_SRV => {
+            // Priority, weight, and port are 16-bit fields, followed by an
+            // uncompressed target <domain-name> (RFC 2782).
+            if rdata.len() < 7 {
+                return Err(CrafterError::buffer_too_short("dns.srv", 7, rdata.len()));
+            }
+            let priority = read_u16_be(&rdata[0..2])?;
+            let weight = read_u16_be(&rdata[2..4])?;
+            let port = read_u16_be(&rdata[4..6])?;
+            let (target, consumed) = decode_dns_name_typed(message, rdata_start + 6)?;
+            ensure_rdata_consumed("dns.srv.target", consumed + 6, rdata.len())?;
+            Ok(DnsRecordData::Srv {
+                priority,
+                weight,
+                port,
+                target,
+            })
+        }
         DNS_TYPE_TXT => {
             let mut strings = Vec::new();
             let mut offset = 0;
@@ -1699,6 +1853,150 @@ mod dns_header_codepoints {
         assert_eq!(dns_type_name(DNS_TYPE_HTTPS), Some("HTTPS"));
         // Unknown values stay numeric for callers to format.
         assert_eq!(dns_type_name(60000), None);
+    }
+}
+
+#[cfg(test)]
+mod dns_base_rdata {
+    use super::{
+        decode_record_data, Dns, DnsName, DnsRecord, DnsRecordData, DNS_CLASS_IN, DNS_TYPE_SOA,
+        DNS_TYPE_SRV,
+    };
+    use crate::{Ipv4, NetworkLayer, Packet, Udp};
+    use core::net::Ipv4Addr;
+
+    /// Build a DNS message carrying one answer, compile it through the packet
+    /// stack, decode it back, and return the decoded answer's record data along
+    /// with the original compiled bytes and the recompiled bytes for byte-stable
+    /// round-trip assertions.
+    fn round_trip_answer(answer: DnsRecord) -> (DnsRecordData, Vec<u8>, Vec<u8>) {
+        let original = Dns::new().id(0x4242).response(true).answer(answer);
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(198, 51, 100, 53))
+            .dst(Ipv4Addr::new(192, 0, 2, 10))
+            / Udp::new().sport(53).dport(53001)
+            / original)
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let data = decoded.layer::<Dns>().unwrap().answers()[0].data().clone();
+        let recompiled = decoded.compile().unwrap();
+        (
+            data,
+            bytes.as_bytes().to_vec(),
+            recompiled.as_bytes().to_vec(),
+        )
+    }
+
+    #[test]
+    fn soa_record_round_trips_through_packet_stack() {
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::soa(
+            "example.com.",
+            300,
+            "ns1.example.com.",
+            "hostmaster.example.com.",
+            2024010101,
+            7200,
+            3600,
+            1209600,
+            300,
+        ));
+        assert_eq!(
+            data,
+            DnsRecordData::Soa {
+                mname: DnsName::parse("ns1.example.com.").unwrap(),
+                rname: DnsName::parse("hostmaster.example.com.").unwrap(),
+                serial: 2024010101,
+                refresh: 7200,
+                retry: 3600,
+                expire: 1209600,
+                minimum: 300,
+            }
+        );
+        // Stable wire bytes round trip (no compression emitted by default).
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn srv_record_round_trips_through_packet_stack() {
+        let (data, original, recompiled) = round_trip_answer(DnsRecord::srv(
+            "_sip._tcp.example.com.",
+            60,
+            10,
+            60,
+            5060,
+            "sip.example.com.",
+        ));
+        assert_eq!(
+            data,
+            DnsRecordData::Srv {
+                priority: 10,
+                weight: 60,
+                port: 5060,
+                target: DnsName::parse("sip.example.com.").unwrap(),
+            }
+        );
+        // Round-trip is byte-stable.
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn soa_too_short_fixed_tail_is_rejected() {
+        // MNAME = "a.", RNAME = ".", then only 19 bytes where 20 are required.
+        let mut rdata = Vec::new();
+        rdata.extend_from_slice(&[1, b'a', 0]); // mname "a."
+        rdata.push(0); // rname root
+        rdata.extend_from_slice(&[0u8; 19]); // one byte short of the 20-byte tail
+        let end = rdata.len();
+        assert!(decode_record_data(DNS_TYPE_SOA, &rdata, 0, end).is_err());
+    }
+
+    #[test]
+    fn soa_trailing_bytes_after_fixed_tail_are_rejected() {
+        let mut rdata = Vec::new();
+        rdata.extend_from_slice(&[1, b'a', 0]); // mname "a."
+        rdata.push(0); // rname root
+        rdata.extend_from_slice(&[0u8; 21]); // one byte too many
+        let end = rdata.len();
+        assert!(decode_record_data(DNS_TYPE_SOA, &rdata, 0, end).is_err());
+    }
+
+    #[test]
+    fn srv_too_short_fixed_header_is_rejected() {
+        // Fewer than the six fixed bytes (priority/weight/port) plus a name.
+        let rdata = [0u8; 5];
+        assert!(decode_record_data(DNS_TYPE_SRV, &rdata, 0, rdata.len()).is_err());
+    }
+
+    #[test]
+    fn srv_trailing_bytes_after_target_are_rejected() {
+        // priority/weight/port + root target + one stray trailing byte.
+        let rdata = [0u8, 1, 0, 2, 0x13, 0x88, 0, 0xff];
+        assert!(decode_record_data(DNS_TYPE_SRV, &rdata, 0, rdata.len()).is_err());
+    }
+
+    #[test]
+    fn record_data_type_mismatch_is_rejected_on_compile() {
+        // A SOA payload under an SRV type must be refused at compile time.
+        let record = DnsRecord::new(
+            "example.com.",
+            DNS_TYPE_SRV,
+            DNS_CLASS_IN,
+            60,
+            DnsRecordData::Soa {
+                mname: DnsName::parse("ns1.example.com.").unwrap(),
+                rname: DnsName::parse("hostmaster.example.com.").unwrap(),
+                serial: 1,
+                refresh: 2,
+                retry: 3,
+                expire: 4,
+                minimum: 5,
+            },
+        );
+        assert!(Packet::from_layer(Dns::new().answer(record))
+            .compile()
+            .is_err());
     }
 }
 
