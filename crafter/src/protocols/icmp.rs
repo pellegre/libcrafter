@@ -2443,14 +2443,18 @@ fn decode_icmp_extensions(
 }
 
 /// Decode the object stream that follows an RFC 4884 extension header into
-/// generic [`IcmpExtensionObject`] layers, each followed by a `Raw` payload
-/// when the object carries a body.
+/// [`IcmpExtensionObject`] layers, each followed by the object body.
+///
+/// RFC 4950 MPLS label stack objects (class 1, C-Type 1) whose body is a whole
+/// number of 4-octet entries decode into typed [`IcmpExtensionMpls`] layers,
+/// preserving the label, experimental/traffic-class bits, bottom-of-stack bit,
+/// and TTL of each entry. Every other object — and any MPLS object whose body
+/// is not entry-aligned — keeps its body as a single `Raw` payload so unknown
+/// classes/sub-types and malformed MPLS bodies round-trip byte-for-byte.
 ///
 /// Returns `None` when an object header is truncated or claims a length that
 /// does not fit the remaining bytes, so the caller can keep the whole region
-/// raw rather than fabricating a structure. Typed object bodies (MPLS, etc.)
-/// are layered on top in later steps; here every object is preserved generically
-/// with its length, class, sub-type, and raw payload intact.
+/// raw rather than fabricating a structure.
 fn decode_icmp_extension_objects(mut bytes: &[u8]) -> Option<Vec<Box<dyn Layer>>> {
     let mut objects: Vec<Box<dyn Layer>> = Vec::new();
 
@@ -2474,12 +2478,47 @@ fn decode_icmp_extension_objects(mut bytes: &[u8]) -> Option<Vec<Box<dyn Layer>>
         ));
         let body = &bytes[ICMP_EXTENSION_OBJECT_LEN..length];
         if !body.is_empty() {
-            objects.push(Box::new(Raw::from_bytes(body)));
+            // RFC 4950: a MPLS label stack object carries one or more 4-octet
+            // label stack entries. Type them only when the body is a whole
+            // number of entries; a partial entry is a malformed body and stays
+            // raw so the bytes survive and decoding never panics.
+            if class_num == ICMP_EXTENSION_CLASS_MPLS
+                && c_type == ICMP_EXTENSION_CTYPE_MPLS_INCOMING
+                && body.len() % ICMP_EXTENSION_MPLS_LEN == 0
+            {
+                for chunk in body.chunks_exact(ICMP_EXTENSION_MPLS_LEN) {
+                    objects.push(Box::new(decode_mpls_entry(chunk)));
+                }
+            } else {
+                objects.push(Box::new(Raw::from_bytes(body)));
+            }
         }
         bytes = &bytes[length..];
     }
 
     Some(objects)
+}
+
+/// Decode a single RFC 4950 MPLS label stack entry (4 octets) into a typed
+/// [`IcmpExtensionMpls`] layer.
+///
+/// The 32-bit word packs a 20-bit label, a 3-bit experimental/traffic-class
+/// field, a 1-bit bottom-of-stack flag, and an 8-bit TTL. Every field is set as
+/// a user value — including the bottom-of-stack bit — so a re-compile reproduces
+/// the exact bits even when the decoded stack is non-canonical (for example a
+/// set bottom-of-stack bit that is not on the final entry).
+fn decode_mpls_entry(chunk: &[u8]) -> IcmpExtensionMpls {
+    let word = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    let label = word >> 12;
+    let experimental = ((word >> 9) & 0x07) as u8;
+    let bottom_of_stack = (word >> 8) & 0x01 == 1;
+    let ttl = (word & 0xff) as u8;
+    IcmpExtensionMpls {
+        label: Field::user(label),
+        experimental: Field::user(experimental),
+        bottom_of_stack: Field::user(bottom_of_stack),
+        ttl: Field::user(ttl),
+    }
 }
 
 /// Append a decoded ICMPv6 packet to an existing packet stack.
@@ -4803,5 +4842,268 @@ mod icmpv4_rfc4884_extensions {
         assert!(raw.as_bytes().len() >= ICMP_EXTENSION_HEADER_LEN);
         // The corrupted buffer round-trips unchanged.
         assert_eq!(decoded.compile().unwrap().as_bytes(), &corrupt[..]);
+    }
+}
+
+#[cfg(test)]
+mod icmpv4_rfc4950_mpls {
+    use super::{
+        Icmp, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpQuotedIpv4,
+        ICMP_EXTENSION_CLASS_MPLS, ICMP_EXTENSION_CTYPE_MPLS_INCOMING,
+        ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM,
+    };
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    // The standard short quoted datagram (IPv4 + UDP + payload) attached to an
+    // error message before the extension structure.
+    fn quoted_udp() -> Packet {
+        Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 1))
+            .proto(IpProtocol::Udp)
+            / Udp::new().sport(40000).dport(53)
+            / Raw::from("query")
+    }
+
+    // The ICMP body begins at offset 28 (20-byte IPv4 header + 8-byte ICMP
+    // header). The quote is padded up to the 128-octet RFC 4884 minimum, so the
+    // extension header sits at offset 28 + 128 and the first object header four
+    // bytes later.
+    const EXT_HEADER_START: usize = 28 + ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM;
+    const OBJECT_HEADER_START: usize = EXT_HEADER_START + 4;
+    const FIRST_ENTRY_START: usize = OBJECT_HEADER_START + 4;
+
+    // A single MPLS label stack entry encodes its label, experimental bits,
+    // bottom-of-stack flag, and TTL into one 4-octet word, and decodes back into
+    // a typed IcmpExtensionMpls layer.
+    #[test]
+    fn icmpv4_rfc4950_mpls_single_label_encode_decode() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(0xabcde).exp(5).ttl(64))
+        .compile()
+        .unwrap();
+
+        // Object header: length 8 (4-byte object header + one 4-byte entry),
+        // class 1 (MPLS), C-Type 1 (incoming label stack).
+        assert_eq!(
+            &compiled.as_bytes()[OBJECT_HEADER_START..OBJECT_HEADER_START + 4],
+            &[
+                0x00,
+                0x08,
+                ICMP_EXTENSION_CLASS_MPLS,
+                ICMP_EXTENSION_CTYPE_MPLS_INCOMING
+            ]
+        );
+        // The 32-bit entry word packs label (20 bits) | exp (3) | S (1) | TTL.
+        let expected = (0xabcdeu32 << 12) | (5u32 << 9) | (1u32 << 8) | 64u32;
+        assert_eq!(
+            &compiled.as_bytes()[FIRST_ENTRY_START..FIRST_ENTRY_START + 4],
+            &expected.to_be_bytes()
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let mpls = decoded.layer::<IcmpExtensionMpls>().unwrap();
+        assert_eq!(mpls.label_value(), 0xabcde);
+        assert_eq!(mpls.experimental_value(), 5);
+        assert_eq!(mpls.ttl_value(), 64);
+        // A single entry is the bottom of the stack.
+        assert_eq!(mpls.bottom_of_stack_value(), Some(true));
+        // The typed object header is also exposed.
+        let object = decoded.layer::<IcmpExtensionObject>().unwrap();
+        assert_eq!(object.length_value(), Some(8));
+        assert_eq!(object.class_num_value(), ICMP_EXTENSION_CLASS_MPLS);
+        assert_eq!(object.c_type_value(), ICMP_EXTENSION_CTYPE_MPLS_INCOMING);
+    }
+
+    // A multi-label stack encodes each entry as its own 4-octet word, and decode
+    // exposes every entry as a separate typed layer in order, preserving each
+    // entry's label, experimental bits, and TTL.
+    #[test]
+    fn icmpv4_rfc4950_mpls_multi_label_encode_decode() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(100).exp(1).ttl(10)
+            / IcmpExtensionMpls::new().label(200).exp(2).ttl(20)
+            / IcmpExtensionMpls::new().label(300).exp(3).ttl(30))
+        .compile()
+        .unwrap();
+
+        // Object length covers the 4-byte header plus three 4-byte entries.
+        let object = {
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+            decoded.layer::<IcmpExtensionObject>().unwrap().length_value()
+        };
+        assert_eq!(object, Some(16));
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let entries: Vec<&IcmpExtensionMpls> = decoded.layers::<IcmpExtensionMpls>().collect();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].label_value(), 100);
+        assert_eq!(entries[0].experimental_value(), 1);
+        assert_eq!(entries[0].ttl_value(), 10);
+        assert_eq!(entries[1].label_value(), 200);
+        assert_eq!(entries[2].label_value(), 300);
+        // Only the final entry carries the bottom-of-stack bit.
+        assert_eq!(entries[0].bottom_of_stack_value(), Some(false));
+        assert_eq!(entries[1].bottom_of_stack_value(), Some(false));
+        assert_eq!(entries[2].bottom_of_stack_value(), Some(true));
+    }
+
+    // With the bottom-of-stack bit left unset, compile auto-fills it: only the
+    // final entry in a stack is the bottom of stack.
+    #[test]
+    fn icmpv4_rfc4950_mpls_bottom_of_stack_autofill() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(1).ttl(1)
+            / IcmpExtensionMpls::new().label(2).ttl(2))
+        .compile()
+        .unwrap();
+
+        // The bottom-of-stack S bit is bit 8 of the 32-bit entry word, which in
+        // big-endian layout is the LSB of the entry's third octet (offset +2).
+        // First entry: S bit clear (not the bottom of the stack).
+        assert_eq!(compiled.as_bytes()[FIRST_ENTRY_START + 2] & 0x01, 0);
+        // Second entry (four octets later): S bit set (bottom of the stack).
+        assert_eq!(compiled.as_bytes()[FIRST_ENTRY_START + 6] & 0x01, 1);
+    }
+
+    // An explicit bottom-of-stack override is honored verbatim, even when it
+    // contradicts the auto-fill rule (here a set bit on a non-final entry and a
+    // clear bit on the final entry), and survives a decode round-trip.
+    #[test]
+    fn icmpv4_rfc4950_mpls_explicit_bottom_of_stack_override() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(1).ttl(1).bottom_of_stack(true)
+            / IcmpExtensionMpls::new().label(2).ttl(2).bottom_of_stack(false))
+        .compile()
+        .unwrap();
+
+        // The S bit lives in the LSB of each entry's third octet (offset +2).
+        // First entry forced to bottom-of-stack despite a following entry.
+        assert_eq!(compiled.as_bytes()[FIRST_ENTRY_START + 2] & 0x01, 1);
+        // Final entry forced to not-bottom-of-stack despite being last.
+        assert_eq!(compiled.as_bytes()[FIRST_ENTRY_START + 6] & 0x01, 0);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let entries: Vec<&IcmpExtensionMpls> = decoded.layers::<IcmpExtensionMpls>().collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].bottom_of_stack_value(), Some(true));
+        assert_eq!(entries[1].bottom_of_stack_value(), Some(false));
+    }
+
+    // A label that does not fit in 20 bits, and experimental bits that do not fit
+    // in 3 bits, are rejected at compile time per the existing invalid-field
+    // policy.
+    #[test]
+    fn icmpv4_rfc4950_mpls_invalid_field_bounds() {
+        let too_large_label = Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(0x10_0000).ttl(1);
+        assert!(too_large_label.compile().is_err());
+
+        let too_large_exp = Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(1).exp(8).ttl(1);
+        assert!(too_large_exp.compile().is_err());
+    }
+
+    // A complete MPLS-bearing error message round-trips byte-for-byte through
+    // Packet::decode_from_l3 even when the entries carry maximal field values.
+    #[test]
+    fn icmpv4_rfc4950_mpls_byte_for_byte_roundtrip() {
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::destination_unreachable()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(0xfffff).exp(7).ttl(255)
+            / IcmpExtensionMpls::new().label(0).exp(0).ttl(0))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        // The typed MPLS entries are present.
+        assert_eq!(decoded.layers::<IcmpExtensionMpls>().count(), 2);
+        // And the whole packet reproduces the original bytes exactly.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    // An MPLS object whose body is not a whole number of 4-octet entries is
+    // malformed; decode keeps the body as a single Raw payload (never panicking)
+    // and the buffer still round-trips unchanged.
+    #[test]
+    fn icmpv4_rfc4950_mpls_partial_entry_stays_raw() {
+        // Build a valid two-entry MPLS object, then truncate the object so its
+        // body holds one full entry plus two stray octets (a partial entry).
+        let compiled = (Ipv4::new().src(src()).dst(dst())
+            / Icmp::time_exceeded()
+            / IcmpQuotedIpv4::new(quoted_udp())
+            / IcmpExtension::new()
+            / IcmpExtensionObject::new()
+            / IcmpExtensionMpls::new().label(7).ttl(7)
+            / IcmpExtensionMpls::new().label(8).ttl(8))
+        .compile()
+        .unwrap();
+
+        let mut bytes = compiled.as_bytes().to_vec();
+        // Drop the final two octets so the trailing object body is 6 bytes (one
+        // 4-octet entry + a 2-octet partial entry), shrinking the object length
+        // and the IPv4 total length to keep the buffer self-consistent.
+        bytes.truncate(bytes.len() - 2);
+        // Object length field (big-endian u16) drops from 12 to 10.
+        bytes[OBJECT_HEADER_START] = 0x00;
+        bytes[OBJECT_HEADER_START + 1] = 0x0a;
+        // IPv4 total length (offset 2..4) drops by two as well.
+        let total = u16::from_be_bytes([bytes[2], bytes[3]]) - 2;
+        bytes[2..4].copy_from_slice(&total.to_be_bytes());
+        // Recompute the IPv4 header checksum over the patched header.
+        bytes[10] = 0;
+        bytes[11] = 0;
+        let mut sum = 0u32;
+        for pair in bytes[0..20].chunks(2) {
+            sum += u16::from_be_bytes([pair[0], pair[1]]) as u32;
+        }
+        while sum >> 16 != 0 {
+            sum = (sum & 0xffff) + (sum >> 16);
+        }
+        let csum = !(sum as u16);
+        bytes[10..12].copy_from_slice(&csum.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes).unwrap();
+        // The malformed MPLS body is not typed into entries.
+        assert_eq!(decoded.layers::<IcmpExtensionMpls>().count(), 0);
+        // It survives as a raw body and the buffer round-trips unchanged.
+        assert!(decoded.layer::<Raw>().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), &bytes[..]);
     }
 }
