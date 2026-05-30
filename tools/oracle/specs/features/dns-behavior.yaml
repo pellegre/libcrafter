@@ -143,6 +143,17 @@ behaviors:
     summary: One OPT pseudo-record whose RDATA carries an ordered EDNS(0) option list spanning NSID, COOKIE, Padding, the DAU option (mnemonic without a constructor), and an unknown option code, every option preserving its exact code and opaque data bytes.
     record_kinds:
       - generic
+  # dnssec_ds_dnskey_rrsig is the combined core-DNSSEC case carrying one DS, one
+  # DNSKEY, and one RRSIG answer in a single authoritative response so the three
+  # wire-only delegation/signature records and their opaque key/digest/signature
+  # material round trip byte-for-byte in one reproduction. Its identifier
+  # dnssec-ds-dnskey-rrsig matches only the combined case id, never the focused
+  # dns-dnssec-ds / dns-dnssec-dnskey / dns-dnssec-rrsig ids, so the behavior
+  # matcher resolves it deterministically.
+  - name: dnssec_ds_dnskey_rrsig
+    summary: An authoritative response carrying DS, DNSKEY, and RRSIG answers whose numeric fields and opaque digest/key/signature material are wire data only; uncompressed and byte-exact in both directions.
+    record_kinds:
+      - generic
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -374,6 +385,7 @@ case_groups:
     summary: DS, DNSKEY, and RRSIG fixed fields with raw key/signature material.
     byte_policy: strict_bytes
     cases:
+      - dnssec-ds-dnskey-rrsig
       - dns-dnssec-ds
       - dns-dnssec-dnskey
       - dns-dnssec-rrsig
@@ -498,6 +510,7 @@ coverage_cases:
   - dns-edns-options
   - dns-edns-options-known
   - dns-edns-options-unknown
+  - dnssec-ds-dnskey-rrsig
   - dns-dnssec-ds
   - dns-dnssec-dnskey
   - dns-dnssec-rrsig
@@ -757,6 +770,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-edns-options-unknown
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dnssec-ds-dnskey-rrsig
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference

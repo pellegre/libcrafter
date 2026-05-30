@@ -150,6 +150,7 @@ Source read for this matrix:
 
 | Feature | Case ID | Directions | Byte policy | Scapy high-level? | Raw bytes needed? |
 | --- | --- | --- | --- | --- | --- |
+| Combined DS + DNSKEY + RRSIG core record response (all fixed fields, opaque digest/key/signature) | `dnssec-ds-dnskey-rrsig` | both | strict_bytes | yes (`DNSRRDS` / `DNSRRDNSKEY` / `DNSRRRSIG`) | no |
 | DS (type 43) key tag / algorithm / digest type / digest | `dns-dnssec-ds` | both | strict_bytes | partial (raw digest bytes) | yes |
 | DNSKEY (type 48) flags / protocol / algorithm / key | `dns-dnssec-dnskey` | both | strict_bytes | partial (raw key bytes) | yes |
 | RRSIG (type 46) fixed fields + uncompressed signer name + signature | `dns-dnssec-rrsig` | both | strict_bytes | partial (raw signature bytes) | yes |

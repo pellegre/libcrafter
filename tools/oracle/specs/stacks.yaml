@@ -258,6 +258,7 @@ stacks:
       - dns-edns-options
       - dns-edns-options-known
       - dns-edns-options-unknown
+      - dnssec-ds-dnskey-rrsig
       - dns-dnssec-ds
       - dns-dnssec-dnskey
       - dns-dnssec-rrsig

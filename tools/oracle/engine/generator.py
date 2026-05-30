@@ -1849,6 +1849,69 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
             },
         ]
         return
+    if "dnssec-ds-dnskey-rrsig" in key:
+        # An authoritative response carrying the three core DNSSEC delegation and
+        # signature records (RFC 4034) with raw numeric fields and opaque
+        # key/digest/signature material that neither backend interprets
+        # cryptographically. The DS RDATA is Key Tag, Algorithm, Digest Type, and
+        # Digest (Section 5.1); the DNSKEY RDATA is Flags, Protocol, Algorithm,
+        # and Public Key (Section 2.1); the RRSIG RDATA is Type Covered,
+        # Algorithm, Labels, Original TTL, Signature Expiration, Signature
+        # Inception, Key Tag, the uncompressed Signer's Name, and the Signature
+        # (Section 3.1). Every name is uncompressed and the records use stable
+        # values, so both backends agree byte-for-byte in both directions.
+        # (dnssec-ds-dnskey-rrsig is not a substring of any other case id, so the
+        # dispatcher resolves this branch unambiguously.)
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "DS"}]
+        fields["answers"] = [
+            {
+                # DS: Key Tag 12345, Algorithm 8 (RSASHA256), Digest Type 2
+                # (SHA-256), and a 32-octet opaque digest.
+                "name": "example.com.",
+                "type": "DS",
+                "class": "IN",
+                "ttl": 3600,
+                "key_tag": 12345,
+                "algorithm": 8,
+                "digest_type": 2,
+                "digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            },
+            {
+                # DNSKEY: Flags 257 (Zone Key + SEP), Protocol 3, Algorithm 8, and
+                # an opaque public-key blob.
+                "name": "example.com.",
+                "type": "DNSKEY",
+                "class": "IN",
+                "ttl": 3600,
+                "flags": 257,
+                "protocol": 3,
+                "algorithm": 8,
+                "public_key": "03010001deadbeefcafebabe",
+            },
+            {
+                # RRSIG over the DS RRset: every fixed field carries a stable raw
+                # value, the Signer's Name is uncompressed example.com., and the
+                # signature is opaque bytes.
+                "name": "example.com.",
+                "type": "RRSIG",
+                "class": "IN",
+                "ttl": 3600,
+                "type_covered": "DS",
+                "algorithm": 8,
+                "labels": 2,
+                "original_ttl": 3600,
+                "signature_expiration": 0x65005D00,
+                "signature_inception": 0x645E0B80,
+                "key_tag": 12345,
+                "signer_name": "example.com.",
+                "signature": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+            },
+        ]
+        return
     if "header-flags-opcodes" in key:
         fields["is_response"] = True
         fields["opcode"] = "status"

@@ -250,6 +250,7 @@ coverage_cases:
   - dns-edns-opt-basic
   - dns-edns-options
   - dns-edns-options-known
+  - dnssec-ds-dnskey-rrsig
   - dns-dnssec-ds
   - dns-dnssec-dnskey
   - dns-dnssec-rrsig
