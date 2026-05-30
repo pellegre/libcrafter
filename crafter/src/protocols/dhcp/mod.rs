@@ -17,48 +17,54 @@ use crate::mac::MacAddr;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 pub use constants::{
-    BOOTP_REPLY, BOOTP_REQUEST, DHCP_ACK, DHCP_CLIENT_PORT, DHCP_DECLINE, DHCP_DISCOVER,
-    DHCP_FIXED_HEADER_LEN, DHCP_HTYPE_ETHERNET, DHCP_INFORM, DHCP_MAGIC_COOKIE,
-    DHCP_MAGIC_COOKIE_LEN, DHCP_MIN_LEN, DHCP_NAK, DHCP_OFFER, DHCP_OPTION_6RD,
+    BOOTP_REPLY, BOOTP_REQUEST, DHCP_ACK, DHCP_AUTH_ALGORITHM_HMAC_MD5, DHCP_AUTH_HEADER_LEN,
+    DHCP_AUTH_PROTOCOL_CONFIGURATION_TOKEN, DHCP_AUTH_PROTOCOL_DELAYED,
+    DHCP_AUTH_PROTOCOL_RECONFIGURE_KEY, DHCP_AUTH_RDM_MONOTONIC_COUNTER,
+    DHCP_AUTH_REPLAY_DETECTION_LEN, DHCP_CLIENT_PORT, DHCP_DECLINE, DHCP_DISCOVER,
+    DHCP_FIXED_HEADER_LEN, DHCP_FORCERENEW_NONCE_TYPE_HMAC_MD5, DHCP_FORCERENEW_NONCE_TYPE_NONCE,
+    DHCP_HTYPE_ETHERNET, DHCP_INFORM, DHCP_MAGIC_COOKIE, DHCP_MAGIC_COOKIE_LEN, DHCP_MIN_LEN,
+    DHCP_NAK, DHCP_OFFER, DHCP_OPTION_6RD, DHCP_OPTION_AUTHENTICATION,
     DHCP_OPTION_BCMCS_DOMAIN_LIST, DHCP_OPTION_BCMCS_IPV4_LIST, DHCP_OPTION_BOOTFILE_NAME,
     DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
     DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
     DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_DOMAIN_NAME,
     DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH, DHCP_OPTION_END,
-    DHCP_OPTION_GEOCONF, DHCP_OPTION_GEOCONF_CIVIC, DHCP_OPTION_GEOLOC, DHCP_OPTION_HOST_NAME,
-    DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_MUD_URL_V4,
-    DHCP_OPTION_NAME_SERVICE_SEARCH, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
-    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PCODE, DHCP_OPTION_PXELINUX_CONFIGFILE,
-    DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX, DHCP_OPTION_PXELINUX_REBOOTTIME,
-    DHCP_OPTION_RDNSS_SELECTION, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RELAY_AGENT_INFORMATION,
-    DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER,
-    DHCP_OPTION_SERVER_IDENTIFIER, DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_SIP_UA_CONFIG_DOMAINS,
-    DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_TCODE,
-    DHCP_OPTION_TFTP_SERVER_ADDRESS, DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_USER_CLASS,
-    DHCP_OPTION_V4_DNR, DHCP_OPTION_V4_DOTS_ADDRESS, DHCP_OPTION_V4_DOTS_RI,
-    DHCP_OPTION_V4_PCP_SERVER, DHCP_OPTION_VENDOR_CLASS_IDENTIFIER, DHCP_OPTION_VENDOR_SPECIFIC,
-    DHCP_OPTION_VI_VENDOR_CLASS, DHCP_OPTION_VI_VENDOR_SPECIFIC, DHCP_OVERLOAD_BOTH,
-    DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME, DHCP_RELAY_FLAG_UNICAST,
-    DHCP_RELAY_SUBOPTION_ACCESS_NETWORK_NAME, DHCP_RELAY_SUBOPTION_ACCESS_POINT_BSSID,
-    DHCP_RELAY_SUBOPTION_ACCESS_POINT_NAME, DHCP_RELAY_SUBOPTION_ACCESS_TECHNOLOGY_TYPE,
-    DHCP_RELAY_SUBOPTION_AUTHENTICATION, DHCP_RELAY_SUBOPTION_CIRCUIT_ID,
-    DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS, DHCP_RELAY_SUBOPTION_LINK_SELECTION,
-    DHCP_RELAY_SUBOPTION_OPERATOR_IDENTIFIER, DHCP_RELAY_SUBOPTION_OPERATOR_REALM,
-    DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES, DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID,
-    DHCP_RELAY_SUBOPTION_RELAY_FLAGS, DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
-    DHCP_RELAY_SUBOPTION_REMOTE_ID, DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
-    DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID, DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC,
-    DHCP_RELAY_SUBOPTION_VSS, DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_RELEASE, DHCP_REQUEST,
-    DHCP_SERVER_PORT, DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
+    DHCP_OPTION_FORCERENEW_NONCE_CAPABLE, DHCP_OPTION_GEOCONF, DHCP_OPTION_GEOCONF_CIVIC,
+    DHCP_OPTION_GEOLOC, DHCP_OPTION_HOST_NAME, DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
+    DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_MUD_URL_V4, DHCP_OPTION_NAME_SERVICE_SEARCH,
+    DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD, DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PCODE,
+    DHCP_OPTION_PXELINUX_CONFIGFILE, DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX,
+    DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_RDNSS_SELECTION, DHCP_OPTION_REBINDING_TIME,
+    DHCP_OPTION_RELAY_AGENT_INFORMATION, DHCP_OPTION_RENEWAL_TIME,
+    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER,
+    DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_SIP_UA_CONFIG_DOMAINS, DHCP_OPTION_STATIC_ROUTE,
+    DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_TCODE, DHCP_OPTION_TFTP_SERVER_ADDRESS,
+    DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_USER_CLASS, DHCP_OPTION_V4_DNR,
+    DHCP_OPTION_V4_DOTS_ADDRESS, DHCP_OPTION_V4_DOTS_RI, DHCP_OPTION_V4_PCP_SERVER,
+    DHCP_OPTION_VENDOR_CLASS_IDENTIFIER, DHCP_OPTION_VENDOR_SPECIFIC, DHCP_OPTION_VI_VENDOR_CLASS,
+    DHCP_OPTION_VI_VENDOR_SPECIFIC, DHCP_OVERLOAD_BOTH, DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME,
+    DHCP_RELAY_FLAG_UNICAST, DHCP_RELAY_SUBOPTION_ACCESS_NETWORK_NAME,
+    DHCP_RELAY_SUBOPTION_ACCESS_POINT_BSSID, DHCP_RELAY_SUBOPTION_ACCESS_POINT_NAME,
+    DHCP_RELAY_SUBOPTION_ACCESS_TECHNOLOGY_TYPE, DHCP_RELAY_SUBOPTION_AUTHENTICATION,
+    DHCP_RELAY_SUBOPTION_CIRCUIT_ID, DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS,
+    DHCP_RELAY_SUBOPTION_LINK_SELECTION, DHCP_RELAY_SUBOPTION_OPERATOR_IDENTIFIER,
+    DHCP_RELAY_SUBOPTION_OPERATOR_REALM, DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES,
+    DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID, DHCP_RELAY_SUBOPTION_RELAY_FLAGS,
+    DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT, DHCP_RELAY_SUBOPTION_REMOTE_ID,
+    DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE, DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID,
+    DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC, DHCP_RELAY_SUBOPTION_VSS,
+    DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_RELEASE, DHCP_REQUEST, DHCP_SERVER_PORT,
+    DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
 };
 pub use malformed::DhcpMalformed;
 pub use message::DhcpMessageType;
 pub use option::{
     decode_tftp_server_addresses, scan_dhcp_option_segments, typed_option_value,
-    ClientNetworkDeviceInterface, ClientSystemArchitecture, DhcpClasslessRoute,
-    DhcpClientIdentifier, DhcpClientUuid, DhcpOption, DhcpOptionArea, DhcpOptionCode,
-    DhcpOptionFormat, DhcpOptionKind, DhcpOptionSegment, DhcpOptionValue, DhcpRelayAgentInfo,
-    DhcpRelaySuboption, DhcpRelayVendorSpecific, DhcpStaticRoute, DhcpUserClass,
+    ClientNetworkDeviceInterface, ClientSystemArchitecture, DhcpAuthAlgorithm, DhcpAuthProtocol,
+    DhcpAuthentication, DhcpClasslessRoute, DhcpClientIdentifier, DhcpClientUuid,
+    DhcpForcerenewNonceCapable, DhcpOption, DhcpOptionArea, DhcpOptionCode, DhcpOptionFormat,
+    DhcpOptionKind, DhcpOptionSegment, DhcpOptionValue, DhcpRelayAgentInfo, DhcpRelaySuboption,
+    DhcpRelayVendorSpecific, DhcpReplayDetectionMethod, DhcpStaticRoute, DhcpUserClass,
     DhcpVendorClassData, DhcpVendorIdentifyingOption, DhcpVendorSuboption, DhcpVssInfo,
     OptionOverload, SipServers,
 };
@@ -966,6 +972,46 @@ impl Dhcp {
                 result.map(|value| match value {
                     DhcpOptionValue::RelayAgentInformation(info) => info,
                     _ => DhcpRelayAgentInfo::default(),
+                })
+            })
+    }
+
+    /// RFC 3118 Authentication (option 90), concatenated across areas.
+    ///
+    /// Source: RFC 3118 section 2. Reassembles the logical payload (RFC 3396)
+    /// and decodes the typed header fields (Protocol, Algorithm, RDM, and the
+    /// 64-bit Replay Detection value), preserving the variable Authentication
+    /// Information as raw bytes. This is a packet-field accessor only: the crate
+    /// never derives, signs, or verifies the authentication information.
+    /// Returns `None` when no area carries the option; a payload shorter than
+    /// the 11-octet header surfaces as a structured error.
+    pub fn authentication(&self) -> Option<Result<DhcpAuthentication>> {
+        self.typed_value_in_areas(DHCP_OPTION_AUTHENTICATION)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::Authentication(auth) => auth,
+                    _ => DhcpAuthentication::new(
+                        DhcpAuthProtocol::Unknown(0),
+                        DhcpAuthAlgorithm::Unknown(0),
+                        DhcpReplayDetectionMethod::Unknown(0),
+                        0,
+                        Vec::new(),
+                    ),
+                })
+            })
+    }
+
+    /// RFC 6704 FORCERENEW_NONCE_CAPABLE (option 145), concatenated across areas.
+    ///
+    /// Source: RFC 6704 section 4. Reassembles the logical payload (RFC 3396)
+    /// and surfaces the list of supported authentication algorithm octets.
+    /// Returns `None` when no area carries the option.
+    pub fn forcerenew_nonce_capable(&self) -> Option<Result<DhcpForcerenewNonceCapable>> {
+        self.typed_value_in_areas(DHCP_OPTION_FORCERENEW_NONCE_CAPABLE)
+            .map(|result| {
+                result.map(|value| match value {
+                    DhcpOptionValue::ForcerenewNonceCapable(value) => value,
+                    _ => DhcpForcerenewNonceCapable::default(),
                 })
             })
     }
@@ -2083,5 +2129,88 @@ mod dhcp_option_overload {
             error,
             CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.file.options"
         ));
+    }
+}
+
+#[cfg(test)]
+mod dhcp_forcerenew {
+    use super::constants::DHCP_FORCE_RENEW;
+    use super::{
+        Dhcp, DhcpAuthAlgorithm, DhcpAuthProtocol, DhcpAuthentication, DhcpForcerenewNonceCapable,
+        DhcpMessageType, DhcpOption, DhcpReplayDetectionMethod, BOOTP_REPLY,
+    };
+    use crate::Packet;
+    use core::net::Ipv4Addr;
+
+    #[test]
+    fn dhcp_forcerenew_packet_fields_roundtrip() {
+        // RFC 3203 section 4: the DHCPFORCERENEW message (message type 9) uses
+        // the normal DHCP message layout, is sent by a server (BOOTP reply
+        // opcode), and MUST be authenticated using the RFC 3118 authentication
+        // option. RFC 6704 lets the client advertise forcerenew nonce capability
+        // via option 145. This test builds such a packet from packet fields only
+        // and proves every field survives compile -> decode -> compile unchanged.
+        // The digest bytes are arbitrary documentation values, not a real MAC;
+        // the crate never derives or verifies them.
+        let mut auth_info = vec![0x00, 0x00, 0x00, 0x07]; // 4-octet Secret ID
+        auth_info.extend_from_slice(&[0xCDu8; 16]); // 16-octet HMAC-MD5 digest
+        let auth = DhcpAuthentication::new(
+            DhcpAuthProtocol::Delayed,
+            DhcpAuthAlgorithm::HmacMd5,
+            DhcpReplayDetectionMethod::MonotonicCounter,
+            0x1122_3344_5566_7788,
+            auth_info.clone(),
+        );
+        let nonce_capable = DhcpForcerenewNonceCapable::hmac_md5();
+
+        let dhcp = Dhcp::new()
+            .op(BOOTP_REPLY)
+            .xid(0xCAFE_F00D)
+            .ciaddr(Ipv4Addr::new(192, 0, 2, 25))
+            .message_type(DhcpMessageType::ForceRenew)
+            .option(DhcpOption::server_identifier(Ipv4Addr::new(192, 0, 2, 1)))
+            .option(DhcpOption::authentication(auth.clone()))
+            .option(DhcpOption::forcerenew_nonce_capable(nonce_capable.clone()));
+
+        let compiled = Packet::from_layer(dhcp).compile().unwrap();
+        let bytes = compiled.as_bytes().to_vec();
+        let parsed = Dhcp::decode(&bytes).unwrap();
+
+        // The FORCERENEW message type round-trips and pins to its RFC 3203 value.
+        assert_eq!(
+            parsed.message_type_value(),
+            Some(DhcpMessageType::ForceRenew)
+        );
+        assert_eq!(DhcpMessageType::ForceRenew.code(), DHCP_FORCE_RENEW);
+        assert_eq!(DHCP_FORCE_RENEW, 9);
+        assert_eq!(parsed.op_value(), BOOTP_REPLY);
+        assert_eq!(parsed.transaction_id_value(), 0xCAFE_F00D);
+        assert_eq!(
+            parsed.client_ip_address_value(),
+            Ipv4Addr::new(192, 0, 2, 25)
+        );
+
+        // The authentication option round-trips field-for-field, preserving the
+        // raw authentication information.
+        let decoded_auth = parsed.authentication().unwrap().unwrap();
+        assert_eq!(decoded_auth, auth);
+        assert_eq!(decoded_auth.protocol, DhcpAuthProtocol::Delayed);
+        assert_eq!(decoded_auth.algorithm, DhcpAuthAlgorithm::HmacMd5);
+        assert_eq!(
+            decoded_auth.rdm,
+            DhcpReplayDetectionMethod::MonotonicCounter
+        );
+        assert_eq!(decoded_auth.replay_detection, 0x1122_3344_5566_7788);
+        assert_eq!(decoded_auth.authentication_information, auth_info);
+
+        // The forcerenew nonce capability option round-trips.
+        assert_eq!(
+            parsed.forcerenew_nonce_capable().unwrap().unwrap(),
+            nonce_capable,
+        );
+
+        // A full re-compile reproduces the exact wire bytes.
+        let recompiled = Packet::from_layer(parsed).compile().unwrap();
+        assert_eq!(recompiled.as_bytes(), bytes.as_slice());
     }
 }

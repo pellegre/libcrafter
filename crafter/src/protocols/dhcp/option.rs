@@ -7,27 +7,30 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 
 use super::constants::{
-    DHCP_CLIENT_ID_TYPE_NONE, DHCP_CLIENT_ID_TYPE_RFC4361, DHCP_CLIENT_MACHINE_UUID_TYPE,
-    DHCP_CLIENT_NDI_TYPE_UNDI, DHCP_HTYPE_ETHERNET, DHCP_IAID_LEN, DHCP_OPTION_ALL_SUBNETS_LOCAL,
-    DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_BOOTFILE_NAME, DHCP_OPTION_BOOT_FILE_SIZE,
-    DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
+    DHCP_AUTH_ALGORITHM_HMAC_MD5, DHCP_AUTH_HEADER_LEN, DHCP_AUTH_PROTOCOL_CONFIGURATION_TOKEN,
+    DHCP_AUTH_PROTOCOL_DELAYED, DHCP_AUTH_PROTOCOL_RECONFIGURE_KEY,
+    DHCP_AUTH_RDM_MONOTONIC_COUNTER, DHCP_AUTH_REPLAY_DETECTION_LEN, DHCP_CLIENT_ID_TYPE_NONE,
+    DHCP_CLIENT_ID_TYPE_RFC4361, DHCP_CLIENT_MACHINE_UUID_TYPE, DHCP_CLIENT_NDI_TYPE_UNDI,
+    DHCP_HTYPE_ETHERNET, DHCP_IAID_LEN, DHCP_OPTION_ALL_SUBNETS_LOCAL,
+    DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_AUTHENTICATION, DHCP_OPTION_BOOTFILE_NAME,
+    DHCP_OPTION_BOOT_FILE_SIZE, DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
     DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
     DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_COOKIE_SERVER, DHCP_OPTION_DEFAULT_IP_TTL,
     DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH,
     DHCP_OPTION_END, DHCP_OPTION_ETHERNET_ENCAPSULATION, DHCP_OPTION_EXTENSIONS_PATH,
-    DHCP_OPTION_HOST_NAME, DHCP_OPTION_IMPRESS_SERVER, DHCP_OPTION_INTERFACE_MTU,
-    DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_IP_FORWARDING, DHCP_OPTION_LOG_SERVER,
-    DHCP_OPTION_LPR_SERVER, DHCP_OPTION_MASK_SUPPLIER, DHCP_OPTION_MAX_DATAGRAM_REASSEMBLY,
-    DHCP_OPTION_MAX_MESSAGE_SIZE, DHCP_OPTION_MERIT_DUMP_FILE, DHCP_OPTION_MESSAGE,
-    DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_NAME_SERVER, DHCP_OPTION_NETBIOS_DATAGRAM_SERVER,
-    DHCP_OPTION_NETBIOS_NAME_SERVER, DHCP_OPTION_NETBIOS_NODE_TYPE, DHCP_OPTION_NETBIOS_SCOPE,
-    DHCP_OPTION_NIS_DOMAIN, DHCP_OPTION_NIS_SERVERS, DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING,
-    DHCP_OPTION_NTP_SERVERS, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
-    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PATH_MTU_AGING_TIMEOUT,
-    DHCP_OPTION_PATH_MTU_PLATEAU_TABLE, DHCP_OPTION_PERFORM_MASK_DISCOVERY,
-    DHCP_OPTION_PERFORM_ROUTER_DISCOVERY, DHCP_OPTION_POLICY_FILTER,
-    DHCP_OPTION_PXELINUX_CONFIGFILE, DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX,
-    DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_REBINDING_TIME,
+    DHCP_OPTION_FORCERENEW_NONCE_CAPABLE, DHCP_OPTION_HOST_NAME, DHCP_OPTION_IMPRESS_SERVER,
+    DHCP_OPTION_INTERFACE_MTU, DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_IP_FORWARDING,
+    DHCP_OPTION_LOG_SERVER, DHCP_OPTION_LPR_SERVER, DHCP_OPTION_MASK_SUPPLIER,
+    DHCP_OPTION_MAX_DATAGRAM_REASSEMBLY, DHCP_OPTION_MAX_MESSAGE_SIZE, DHCP_OPTION_MERIT_DUMP_FILE,
+    DHCP_OPTION_MESSAGE, DHCP_OPTION_MESSAGE_TYPE, DHCP_OPTION_NAME_SERVER,
+    DHCP_OPTION_NETBIOS_DATAGRAM_SERVER, DHCP_OPTION_NETBIOS_NAME_SERVER,
+    DHCP_OPTION_NETBIOS_NODE_TYPE, DHCP_OPTION_NETBIOS_SCOPE, DHCP_OPTION_NIS_DOMAIN,
+    DHCP_OPTION_NIS_SERVERS, DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING, DHCP_OPTION_NTP_SERVERS,
+    DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD, DHCP_OPTION_PARAMETER_REQUEST_LIST,
+    DHCP_OPTION_PATH_MTU_AGING_TIMEOUT, DHCP_OPTION_PATH_MTU_PLATEAU_TABLE,
+    DHCP_OPTION_PERFORM_MASK_DISCOVERY, DHCP_OPTION_PERFORM_ROUTER_DISCOVERY,
+    DHCP_OPTION_POLICY_FILTER, DHCP_OPTION_PXELINUX_CONFIGFILE, DHCP_OPTION_PXELINUX_MAGIC,
+    DHCP_OPTION_PXELINUX_PATHPREFIX, DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_REBINDING_TIME,
     DHCP_OPTION_RELAY_AGENT_INFORMATION, DHCP_OPTION_RENEWAL_TIME,
     DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH,
     DHCP_OPTION_ROUTER, DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
@@ -416,6 +419,226 @@ impl DhcpClientIdentifier {
             }
             Self::Raw(bytes) => bytes.clone(),
         }
+    }
+}
+
+/// The RFC 3118 authentication Protocol field (option 90, first octet).
+///
+/// Source: RFC 3118 section 2 and the IANA "DHCP Authentication Protocols"
+/// sub-registry. The Protocol field selects how the variable Authentication
+/// Information is interpreted. Registered values are surfaced as named variants;
+/// any unassigned or reserved value is preserved verbatim through
+/// [`DhcpAuthProtocol::Unknown`] so no information is lost. This is a packet
+/// field only: the crate never selects or runs an authentication protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DhcpAuthProtocol {
+    /// Configuration token protocol (value `0`, RFC 3118 section 4): the
+    /// authentication information is an opaque shared token.
+    ConfigurationToken,
+    /// Delayed authentication protocol (value `1`, RFC 3118 section 5): the
+    /// authentication information is a Secret ID plus a keyed hash.
+    Delayed,
+    /// Reconfigure Key protocol (value `3`), reused by RFC 6704 Forcerenew Nonce
+    /// Authentication to carry a forcerenew nonce or its HMAC-MD5 digest.
+    ReconfigureKey,
+    /// Any other Protocol value, preserved verbatim.
+    Unknown(u8),
+}
+
+impl DhcpAuthProtocol {
+    /// Classify a raw Protocol octet (RFC 3118 section 2).
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            DHCP_AUTH_PROTOCOL_CONFIGURATION_TOKEN => Self::ConfigurationToken,
+            DHCP_AUTH_PROTOCOL_DELAYED => Self::Delayed,
+            DHCP_AUTH_PROTOCOL_RECONFIGURE_KEY => Self::ReconfigureKey,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Wire octet value for this Protocol.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::ConfigurationToken => DHCP_AUTH_PROTOCOL_CONFIGURATION_TOKEN,
+            Self::Delayed => DHCP_AUTH_PROTOCOL_DELAYED,
+            Self::ReconfigureKey => DHCP_AUTH_PROTOCOL_RECONFIGURE_KEY,
+            Self::Unknown(code) => code,
+        }
+    }
+}
+
+/// The RFC 3118 authentication Algorithm field (option 90, second octet).
+///
+/// Source: RFC 3118 sections 4 and 5.1 and the IANA "DHCP Authentication
+/// Algorithm" sub-registry. The Algorithm value is interpreted relative to the
+/// Protocol. The well-known value is HMAC-MD5 (`1`), used by the Delayed
+/// Authentication protocol and by RFC 6704. Other values are preserved
+/// verbatim through [`DhcpAuthAlgorithm::Unknown`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DhcpAuthAlgorithm {
+    /// HMAC-MD5 generating function (value `1`, RFC 3118 section 5.1).
+    HmacMd5,
+    /// Any other Algorithm value, preserved verbatim (including the Protocol-0
+    /// value `0`).
+    Unknown(u8),
+}
+
+impl DhcpAuthAlgorithm {
+    /// Classify a raw Algorithm octet (RFC 3118 section 5.1).
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            DHCP_AUTH_ALGORITHM_HMAC_MD5 => Self::HmacMd5,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Wire octet value for this Algorithm.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::HmacMd5 => DHCP_AUTH_ALGORITHM_HMAC_MD5,
+            Self::Unknown(code) => code,
+        }
+    }
+}
+
+/// The RFC 3118 authentication Replay Detection Method (RDM) field (option 90,
+/// third octet).
+///
+/// Source: RFC 3118 section 2. The RDM names how the 64-bit Replay Detection
+/// field is interpreted. RFC 3118 defines value `0`, a monotonically increasing
+/// counter (NTP timestamps are recommended). Other values are preserved
+/// verbatim through [`DhcpReplayDetectionMethod::Unknown`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DhcpReplayDetectionMethod {
+    /// Monotonically increasing counter (value `0`, RFC 3118 section 2).
+    MonotonicCounter,
+    /// Any other RDM value, preserved verbatim.
+    Unknown(u8),
+}
+
+impl DhcpReplayDetectionMethod {
+    /// Classify a raw RDM octet (RFC 3118 section 2).
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            DHCP_AUTH_RDM_MONOTONIC_COUNTER => Self::MonotonicCounter,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Wire octet value for this RDM.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::MonotonicCounter => DHCP_AUTH_RDM_MONOTONIC_COUNTER,
+            Self::Unknown(code) => code,
+        }
+    }
+}
+
+/// An RFC 3118 DHCP Authentication option value (option 90).
+///
+/// Source: RFC 3118 section 2. The option is a fixed 11-octet header followed by
+/// variable Authentication Information:
+///
+/// ```text
+/// Code | Length | Protocol | Algorithm | RDM | Replay Detection (8) | Auth Info...
+/// ```
+///
+/// This type models each header field as a typed value and preserves the
+/// Authentication Information as raw bytes, because its structure depends on the
+/// Protocol (for the Delayed Authentication protocol it is a 4-octet Secret ID
+/// plus a keyed hash; for RFC 6704 it is a Type octet plus a 128-bit value).
+/// The crate models these as packet data only: it never derives, signs,
+/// verifies, or looks up keys or secrets.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DhcpAuthentication {
+    /// Authentication Protocol (RFC 3118 section 2, first octet).
+    pub protocol: DhcpAuthProtocol,
+    /// Authentication Algorithm (RFC 3118 section 2, second octet).
+    pub algorithm: DhcpAuthAlgorithm,
+    /// Replay Detection Method (RFC 3118 section 2, third octet).
+    pub rdm: DhcpReplayDetectionMethod,
+    /// The 64-bit Replay Detection field (RFC 3118 section 2). For RDM `0` this
+    /// is a monotonically increasing counter value.
+    pub replay_detection: u64,
+    /// Authentication Information bytes, preserved verbatim. The internal layout
+    /// depends on the Protocol and is not interpreted by the codec.
+    pub authentication_information: Vec<u8>,
+}
+
+impl DhcpAuthentication {
+    /// Create an authentication option value from its typed header fields and the
+    /// raw authentication information bytes.
+    pub fn new(
+        protocol: DhcpAuthProtocol,
+        algorithm: DhcpAuthAlgorithm,
+        rdm: DhcpReplayDetectionMethod,
+        replay_detection: u64,
+        authentication_information: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            protocol,
+            algorithm,
+            rdm,
+            replay_detection,
+            authentication_information: authentication_information.into(),
+        }
+    }
+
+    /// Encode this authentication option to its option 90 payload bytes (the
+    /// header fields followed by the authentication information, without the
+    /// option code or length byte).
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes =
+            Vec::with_capacity(DHCP_AUTH_HEADER_LEN + self.authentication_information.len());
+        bytes.push(self.protocol.code());
+        bytes.push(self.algorithm.code());
+        bytes.push(self.rdm.code());
+        bytes.extend_from_slice(&self.replay_detection.to_be_bytes());
+        bytes.extend_from_slice(&self.authentication_information);
+        bytes
+    }
+}
+
+/// An RFC 6704 FORCERENEW_NONCE_CAPABLE option value (option 145).
+///
+/// Source: RFC 6704 section 4. The option carries the list of authentication
+/// algorithms a client supports for Forcerenew Nonce Authentication, one
+/// algorithm per octet:
+///
+/// ```text
+/// Code (145) | Len (n) | A1 | A2 | A3 | ...
+/// ```
+///
+/// The algorithm octets are preserved verbatim so unspecified values still
+/// round-trip. This is packet data only; the crate does not negotiate or run an
+/// algorithm.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct DhcpForcerenewNonceCapable {
+    /// The supported authentication algorithm identifiers, one per octet
+    /// (RFC 6704 section 4). HMAC-MD5 is value `1`.
+    pub algorithms: Vec<u8>,
+}
+
+impl DhcpForcerenewNonceCapable {
+    /// Create a FORCERENEW_NONCE_CAPABLE value from a list of algorithm octets.
+    pub fn new(algorithms: impl Into<Vec<u8>>) -> Self {
+        Self {
+            algorithms: algorithms.into(),
+        }
+    }
+
+    /// Create a FORCERENEW_NONCE_CAPABLE value advertising HMAC-MD5 (algorithm
+    /// `1`, RFC 6704 section 4).
+    pub fn hmac_md5() -> Self {
+        Self {
+            algorithms: vec![DHCP_AUTH_ALGORITHM_HMAC_MD5],
+        }
+    }
+
+    /// Encode this value to its option 145 payload bytes (the algorithm octets,
+    /// without the option code or length byte).
+    pub fn encode(&self) -> Vec<u8> {
+        self.algorithms.clone()
     }
 }
 
@@ -904,6 +1127,13 @@ pub enum DhcpOptionValue {
     /// A DHCPv4 Client-identifier value (option 61): an RFC 2132 hardware-type
     /// identifier, an RFC 4361 IAID+DUID identifier, or a raw identifier.
     ClientIdentifier(DhcpClientIdentifier),
+    /// An RFC 3118 Authentication value (option 90): typed Protocol, Algorithm,
+    /// RDM, and Replay Detection header fields plus raw authentication
+    /// information.
+    Authentication(DhcpAuthentication),
+    /// An RFC 6704 FORCERENEW_NONCE_CAPABLE value (option 145): the list of
+    /// supported authentication algorithm octets.
+    ForcerenewNonceCapable(DhcpForcerenewNonceCapable),
     /// Opaque bytes preserved verbatim for options without a richer decode yet.
     Opaque(Vec<u8>),
 }
@@ -972,6 +1202,8 @@ impl DhcpOptionValue {
             Self::ViVendorSpecific(instances) => encode_vi_vendor_specific(instances),
             Self::RelayAgentInformation(info) => encode_relay_agent_information(info),
             Self::ClientIdentifier(identifier) => identifier.encode(),
+            Self::Authentication(auth) => auth.encode(),
+            Self::ForcerenewNonceCapable(value) => value.encode(),
             Self::Text(bytes) | Self::ParameterRequestList(bytes) | Self::Opaque(bytes) => {
                 bytes.clone()
             }
@@ -1043,6 +1275,12 @@ pub enum DhcpOptionFormat {
     /// DHCPv4 Client-identifier (option 61): a type octet plus an RFC 2132
     /// hardware identifier, RFC 4361 IAID+DUID identifier, or raw identifier.
     ClientIdentifier,
+    /// RFC 3118 Authentication (option 90): an 11-octet header (Protocol,
+    /// Algorithm, RDM, 64-bit Replay Detection) plus raw authentication info.
+    Authentication,
+    /// RFC 6704 FORCERENEW_NONCE_CAPABLE (option 145): a list of algorithm
+    /// octets.
+    ForcerenewNonceCapable,
     /// Opaque bytes preserved verbatim (vendor-specific, client/vendor id).
     Opaque,
 }
@@ -1134,6 +1372,8 @@ pub enum DhcpOptionKind {
     ViVendorClass,
     ViVendorSpecificInformation,
     RelayAgentInformation,
+    Authentication,
+    ForcerenewNonceCapable,
     PxelinuxMagic,
     PxelinuxConfigFile,
     PxelinuxPathPrefix,
@@ -1217,6 +1457,8 @@ impl DhcpOptionKind {
             DHCP_OPTION_VI_VENDOR_CLASS => Self::ViVendorClass,
             DHCP_OPTION_VI_VENDOR_SPECIFIC => Self::ViVendorSpecificInformation,
             DHCP_OPTION_RELAY_AGENT_INFORMATION => Self::RelayAgentInformation,
+            DHCP_OPTION_AUTHENTICATION => Self::Authentication,
+            DHCP_OPTION_FORCERENEW_NONCE_CAPABLE => Self::ForcerenewNonceCapable,
             DHCP_OPTION_PXELINUX_MAGIC => Self::PxelinuxMagic,
             DHCP_OPTION_PXELINUX_CONFIGFILE => Self::PxelinuxConfigFile,
             DHCP_OPTION_PXELINUX_PATHPREFIX => Self::PxelinuxPathPrefix,
@@ -1302,6 +1544,8 @@ impl DhcpOptionKind {
             Self::ViVendorClass => DHCP_OPTION_VI_VENDOR_CLASS,
             Self::ViVendorSpecificInformation => DHCP_OPTION_VI_VENDOR_SPECIFIC,
             Self::RelayAgentInformation => DHCP_OPTION_RELAY_AGENT_INFORMATION,
+            Self::Authentication => DHCP_OPTION_AUTHENTICATION,
+            Self::ForcerenewNonceCapable => DHCP_OPTION_FORCERENEW_NONCE_CAPABLE,
             Self::PxelinuxMagic => DHCP_OPTION_PXELINUX_MAGIC,
             Self::PxelinuxConfigFile => DHCP_OPTION_PXELINUX_CONFIGFILE,
             Self::PxelinuxPathPrefix => DHCP_OPTION_PXELINUX_PATHPREFIX,
@@ -1406,6 +1650,11 @@ impl DhcpOptionKind {
             // RFC 2132 / RFC 4361 client identifier (option 61): a type octet
             // plus a hardware identifier, an IAID+DUID, or a raw identifier.
             Self::ClientIdentifier => F::ClientIdentifier,
+            // RFC 3118 authentication (option 90): typed header fields plus raw
+            // authentication information.
+            Self::Authentication => F::Authentication,
+            // RFC 6704 FORCERENEW_NONCE_CAPABLE (option 145): algorithm octets.
+            Self::ForcerenewNonceCapable => F::ForcerenewNonceCapable,
             // Opaque/vendor data preserved verbatim. The PXELINUX magic is a
             // fixed 4-octet value whose meaning is positional, so it is kept
             // opaque rather than reinterpreted.
@@ -1484,6 +1733,12 @@ pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValu
         }
         DhcpOptionFormat::ClientIdentifier => {
             DhcpOptionValue::ClientIdentifier(decode_client_identifier(data)?)
+        }
+        DhcpOptionFormat::Authentication => {
+            DhcpOptionValue::Authentication(decode_authentication(data)?)
+        }
+        DhcpOptionFormat::ForcerenewNonceCapable => {
+            DhcpOptionValue::ForcerenewNonceCapable(DhcpForcerenewNonceCapable::new(data.to_vec()))
         }
         DhcpOptionFormat::Opaque => {
             if data.is_empty() {
@@ -1846,6 +2101,32 @@ impl DhcpOption {
         Self::typed(
             DhcpOptionKind::RelayAgentInformation,
             DhcpOptionValue::RelayAgentInformation(info),
+        )
+    }
+
+    /// Create an RFC 3118 Authentication option (option 90).
+    ///
+    /// The header fields (Protocol, Algorithm, RDM, Replay Detection) and the
+    /// raw authentication information are serialized to the RFC 3118 layout and
+    /// re-decode through [`DhcpOption::typed_value`] into a
+    /// [`DhcpOptionValue::Authentication`]. This is packet data only: the crate
+    /// does not derive, sign, or verify the authentication information.
+    pub fn authentication(auth: DhcpAuthentication) -> Self {
+        Self::typed(
+            DhcpOptionKind::Authentication,
+            DhcpOptionValue::Authentication(auth),
+        )
+    }
+
+    /// Create an RFC 6704 FORCERENEW_NONCE_CAPABLE option (option 145).
+    ///
+    /// The supported authentication algorithm octets are carried verbatim and
+    /// re-decode through [`DhcpOption::typed_value`] into a
+    /// [`DhcpOptionValue::ForcerenewNonceCapable`].
+    pub fn forcerenew_nonce_capable(value: DhcpForcerenewNonceCapable) -> Self {
+        Self::typed(
+            DhcpOptionKind::ForcerenewNonceCapable,
+            DhcpOptionValue::ForcerenewNonceCapable(value),
         )
     }
 
@@ -2944,6 +3225,42 @@ fn decode_client_identifier(data: &[u8]) -> Result<DhcpClientIdentifier> {
     Ok(DhcpClientIdentifier::LegacyHardware {
         hardware_type: type_octet,
         address: rest.to_vec(),
+    })
+}
+
+/// Decode an RFC 3118 DHCP Authentication option (option 90).
+///
+/// Source: RFC 3118 section 2. The payload is a fixed 11-octet header (a
+/// one-octet Protocol, a one-octet Algorithm, a one-octet RDM, and an 8-octet
+/// Replay Detection field) followed by variable Authentication Information. A
+/// payload shorter than the 11-octet header surfaces as a structured
+/// [`CrafterError`] rather than a panic. The Authentication Information is
+/// preserved verbatim because its structure depends on the Protocol; the codec
+/// never interprets, signs, or verifies it.
+fn decode_authentication(data: &[u8]) -> Result<DhcpAuthentication> {
+    let field = "dhcp.option.authentication";
+    if data.len() < DHCP_AUTH_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            field,
+            DHCP_AUTH_HEADER_LEN,
+            data.len(),
+        ));
+    }
+    let protocol = DhcpAuthProtocol::from_code(data[0]);
+    let algorithm = DhcpAuthAlgorithm::from_code(data[1]);
+    let rdm = DhcpReplayDetectionMethod::from_code(data[2]);
+    let replay_end = 3 + DHCP_AUTH_REPLAY_DETECTION_LEN;
+    // The length check above guarantees at least DHCP_AUTH_HEADER_LEN (11)
+    // octets, so this 8-octet slice is always present.
+    let mut replay_bytes = [0u8; DHCP_AUTH_REPLAY_DETECTION_LEN];
+    replay_bytes.copy_from_slice(&data[3..replay_end]);
+    let replay_detection = u64::from_be_bytes(replay_bytes);
+    Ok(DhcpAuthentication {
+        protocol,
+        algorithm,
+        rdm,
+        replay_detection,
+        authentication_information: data[replay_end..].to_vec(),
     })
 }
 
@@ -5173,5 +5490,192 @@ mod dhcp_client_identifier {
 
         // The codepoint is pinned to its IANA value for clarity.
         assert_eq!(CLIENT_IDENTIFIER, 61);
+    }
+}
+
+#[cfg(test)]
+mod dhcp_authentication {
+    use super::super::{
+        Dhcp, DhcpAuthAlgorithm, DhcpAuthProtocol, DhcpAuthentication, DhcpForcerenewNonceCapable,
+        DhcpMessageType, DhcpOption, DhcpOptionValue, DhcpReplayDetectionMethod,
+    };
+    use super::{decode_authentication, typed_option_value};
+    use crate::error::CrafterError;
+
+    const AUTHENTICATION: u8 = super::super::DHCP_OPTION_AUTHENTICATION; // 90
+    const FORCERENEW_NONCE_CAPABLE: u8 = super::super::DHCP_OPTION_FORCERENEW_NONCE_CAPABLE; // 145
+
+    fn build_and_decode(options: Vec<DhcpOption>) -> Dhcp {
+        let dhcp = Dhcp::new()
+            .op(super::super::BOOTP_REQUEST)
+            .message_type(DhcpMessageType::Request)
+            .options(options);
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        Dhcp::decode(&bytes).unwrap()
+    }
+
+    fn recompile_is_stable(parsed: &Dhcp) {
+        let bytes = crate::Packet::from_layer(parsed.clone())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let recompiled = crate::Packet::from_layer(Dhcp::decode(&bytes).unwrap())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn dhcp_authentication_option_roundtrip() {
+        // RFC 3118 section 2: the delayed-authentication option carries a typed
+        // 11-octet header (Protocol 1, Algorithm 1 = HMAC-MD5, RDM 0 =
+        // monotonic counter, an 8-octet Replay Detection value) followed by the
+        // Authentication Information (here a 4-octet Secret ID plus a 16-octet
+        // HMAC-MD5 digest). The crate models these as packet fields only; the
+        // digest bytes below are arbitrary documentation values, not a real MAC.
+        let secret_id = [0x00, 0x00, 0x00, 0x2a];
+        let digest = [0xABu8; 16];
+        let mut auth_info = Vec::new();
+        auth_info.extend_from_slice(&secret_id);
+        auth_info.extend_from_slice(&digest);
+        let auth = DhcpAuthentication::new(
+            DhcpAuthProtocol::Delayed,
+            DhcpAuthAlgorithm::HmacMd5,
+            DhcpReplayDetectionMethod::MonotonicCounter,
+            0x0102_0304_0506_0708,
+            auth_info.clone(),
+        );
+
+        // The typed value encodes to the RFC 3118 wire layout and decodes back
+        // losslessly.
+        let value = DhcpOptionValue::Authentication(auth.clone());
+        let payload = value.encode_payload();
+        let mut expected = vec![1u8, 1, 0]; // Protocol, Algorithm, RDM
+        expected.extend_from_slice(&0x0102_0304_0506_0708u64.to_be_bytes());
+        expected.extend_from_slice(&auth_info);
+        assert_eq!(payload, expected);
+        assert_eq!(decode_authentication(&payload).unwrap(), auth);
+        assert_eq!(
+            typed_option_value(AUTHENTICATION, &payload)
+                .unwrap()
+                .unwrap(),
+            value,
+        );
+
+        // Full packet round-trip through the typed builder and the cross-area
+        // accessor.
+        let parsed = build_and_decode(vec![
+            DhcpOption::authentication(auth.clone()),
+            DhcpOption::End,
+        ]);
+        let decoded = parsed.authentication().unwrap().unwrap();
+        assert_eq!(decoded, auth);
+        assert_eq!(decoded.authentication_information, auth_info);
+        recompile_is_stable(&parsed);
+
+        // The codepoint is pinned to its IANA value for clarity.
+        assert_eq!(AUTHENTICATION, 90);
+    }
+
+    #[test]
+    fn dhcp_authentication_unknown_codes_preserved() {
+        // RFC 3118 leaves most Protocol, Algorithm, and RDM values unassigned.
+        // Unknown values in any of those fields are preserved verbatim rather
+        // than coerced, and the authentication information stays raw.
+        let auth = DhcpAuthentication::new(
+            DhcpAuthProtocol::Unknown(0x7f),
+            DhcpAuthAlgorithm::Unknown(0x42),
+            DhcpReplayDetectionMethod::Unknown(0x99),
+            0,
+            vec![0xde, 0xad, 0xbe, 0xef],
+        );
+        let payload = DhcpOptionValue::Authentication(auth.clone()).encode_payload();
+        assert_eq!(payload[0], 0x7f, "unknown Protocol preserved");
+        assert_eq!(payload[1], 0x42, "unknown Algorithm preserved");
+        assert_eq!(payload[2], 0x99, "unknown RDM preserved");
+
+        let decoded = decode_authentication(&payload).unwrap();
+        assert_eq!(decoded, auth);
+        // The unknown octets re-classify back to their numeric value.
+        assert_eq!(decoded.protocol.code(), 0x7f);
+        assert_eq!(decoded.algorithm.code(), 0x42);
+        assert_eq!(decoded.rdm.code(), 0x99);
+
+        let parsed = build_and_decode(vec![
+            DhcpOption::authentication(auth.clone()),
+            DhcpOption::End,
+        ]);
+        assert_eq!(parsed.authentication().unwrap().unwrap(), auth);
+        recompile_is_stable(&parsed);
+    }
+
+    #[test]
+    fn dhcp_authentication_malformed_lengths_are_structured() {
+        // RFC 3118 section 2: the option must carry at least the 11-octet header
+        // (Protocol, Algorithm, RDM, and the 8-octet Replay Detection field). A
+        // payload shorter than that is a structured BufferTooShort error, never
+        // a panic, on both the decode helper and the typed dispatch.
+        for len in 0..super::super::DHCP_AUTH_HEADER_LEN {
+            let short = vec![0u8; len];
+            assert!(
+                matches!(
+                    decode_authentication(&short),
+                    Err(CrafterError::BufferTooShort { .. }),
+                ),
+                "len {len} must be rejected",
+            );
+            assert!(typed_option_value(AUTHENTICATION, &short).is_err());
+        }
+
+        // A payload of exactly the header length is valid with empty auth info.
+        let header_only = vec![1u8, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let decoded = decode_authentication(&header_only).unwrap();
+        assert!(decoded.authentication_information.is_empty());
+        assert_eq!(decoded.encode(), header_only);
+    }
+
+    #[test]
+    fn dhcp_forcerenew_nonce_capable_option_parsing() {
+        // RFC 6704 section 4: the FORCERENEW_NONCE_CAPABLE option (145) carries
+        // the list of supported authentication algorithm octets. HMAC-MD5 is
+        // algorithm 1.
+        let value = DhcpForcerenewNonceCapable::hmac_md5();
+        assert_eq!(value.algorithms, vec![1]);
+        let payload = DhcpOptionValue::ForcerenewNonceCapable(value.clone()).encode_payload();
+        assert_eq!(payload, vec![1]);
+        assert_eq!(
+            typed_option_value(FORCERENEW_NONCE_CAPABLE, &payload)
+                .unwrap()
+                .unwrap(),
+            DhcpOptionValue::ForcerenewNonceCapable(value.clone()),
+        );
+
+        // Multiple algorithm octets (including unspecified values) round-trip.
+        let multi = DhcpForcerenewNonceCapable::new(vec![1, 2, 0xff]);
+        let parsed = build_and_decode(vec![
+            DhcpOption::forcerenew_nonce_capable(multi.clone()),
+            DhcpOption::End,
+        ]);
+        assert_eq!(parsed.forcerenew_nonce_capable().unwrap().unwrap(), multi);
+        recompile_is_stable(&parsed);
+
+        // An empty algorithm list (zero-length option) is valid and parses to an
+        // empty list rather than panicking.
+        assert_eq!(
+            typed_option_value(FORCERENEW_NONCE_CAPABLE, &[])
+                .unwrap()
+                .unwrap(),
+            DhcpOptionValue::ForcerenewNonceCapable(DhcpForcerenewNonceCapable::default()),
+        );
+
+        // The codepoint is pinned to its IANA value for clarity.
+        assert_eq!(FORCERENEW_NONCE_CAPABLE, 145);
     }
 }

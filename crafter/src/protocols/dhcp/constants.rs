@@ -196,6 +196,69 @@ pub const DHCP_OPTION_V4_DNR: u8 = 162;
 /// DHCP OPTION_6RD (IPv6 Rapid Deployment) option code (RFC 5969).
 pub const DHCP_OPTION_6RD: u8 = 212;
 
+// Authentication and FORCERENEW option codes and field constants. Codepoints
+// come from the IANA "BOOTP Vendor Extensions and DHCP Options" registry
+// (updated 2026-02-02) and the authentication sub-registries; each wire format
+// is defined by the RFC cited inline.
+
+/// DHCP Authentication option code (RFC 3118 section 2).
+pub const DHCP_OPTION_AUTHENTICATION: u8 = 90;
+/// DHCP FORCERENEW_NONCE_CAPABLE option code (RFC 6704 section 4).
+pub const DHCP_OPTION_FORCERENEW_NONCE_CAPABLE: u8 = 145;
+
+/// Fixed length in octets of the RFC 3118 authentication option header that
+/// precedes the variable authentication information: a one-octet Protocol, a
+/// one-octet Algorithm, a one-octet RDM, and an 8-octet Replay Detection field.
+///
+/// Source: RFC 3118 section 2.
+pub const DHCP_AUTH_HEADER_LEN: usize = 11;
+/// Length in octets of the RFC 3118 authentication option Replay Detection
+/// field (a 64-bit value).
+///
+/// Source: RFC 3118 section 2.
+pub const DHCP_AUTH_REPLAY_DETECTION_LEN: usize = 8;
+
+/// RFC 3118 authentication Protocol value for the Configuration Token protocol.
+///
+/// Source: RFC 3118 section 4 and the IANA "DHCP Authentication Protocols"
+/// sub-registry (value `0`).
+pub const DHCP_AUTH_PROTOCOL_CONFIGURATION_TOKEN: u8 = 0;
+/// RFC 3118 authentication Protocol value for the Delayed Authentication
+/// protocol.
+///
+/// Source: RFC 3118 section 5 and the IANA "DHCP Authentication Protocols"
+/// sub-registry (value `1`).
+pub const DHCP_AUTH_PROTOCOL_DELAYED: u8 = 1;
+/// RFC 6704 authentication Protocol value used by Forcerenew Nonce
+/// Authentication. RFC 6704 reuses the RFC 3118 Reconfigure Key protocol value
+/// `3` to carry the forcerenew nonce.
+///
+/// Source: RFC 6704 section 5.
+pub const DHCP_AUTH_PROTOCOL_RECONFIGURE_KEY: u8 = 3;
+
+/// RFC 3118 authentication Algorithm value for the HMAC-MD5 generating function
+/// used by the Delayed Authentication protocol and by RFC 6704.
+///
+/// Source: RFC 3118 section 5.1 and RFC 6704 section 5 (Algorithm `1`).
+pub const DHCP_AUTH_ALGORITHM_HMAC_MD5: u8 = 1;
+
+/// RFC 3118 authentication Replay Detection Method (RDM) value for a
+/// monotonically increasing counter.
+///
+/// Source: RFC 3118 section 2 (RDM `0`).
+pub const DHCP_AUTH_RDM_MONOTONIC_COUNTER: u8 = 0;
+
+/// RFC 6704 Forcerenew nonce authentication-information Type value carrying the
+/// 128-bit forcerenew nonce (server to client).
+///
+/// Source: RFC 6704 section 5.
+pub const DHCP_FORCERENEW_NONCE_TYPE_NONCE: u8 = 1;
+/// RFC 6704 Forcerenew nonce authentication-information Type value carrying the
+/// 128-bit HMAC-MD5 digest (in the authenticated FORCERENEW message).
+///
+/// Source: RFC 6704 section 5.
+pub const DHCP_FORCERENEW_NONCE_TYPE_HMAC_MD5: u8 = 2;
+
 // Vendor, user-class, PXE, and vendor-identifying option codes. Codepoints come
 // from the IANA "BOOTP Vendor Extensions and DHCP Options" registry (updated
 // 2026-02-02); each wire format is defined by the RFC cited inline.
