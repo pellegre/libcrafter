@@ -78,6 +78,11 @@ const UDP_OPTION_MRDS_LEN: usize = 5;
 const UDP_OPTION_REQ_LEN: usize = 6;
 const UDP_OPTION_RES_LEN: usize = 6;
 const UDP_OPTION_TIME_LEN: usize = 10;
+const UDP_OPTION_EXPERIMENT_DATA_MIN_LEN: usize = 2;
+const UDP_OPTION_EXPERIMENT_SHORT_MIN_LEN: usize =
+    UDP_OPTION_SHORT_HEADER_LEN + UDP_OPTION_EXPERIMENT_DATA_MIN_LEN;
+const UDP_OPTION_EXPERIMENT_EXTENDED_MIN_LEN: usize =
+    UDP_OPTION_EXTENDED_HEADER_LEN + UDP_OPTION_EXPERIMENT_DATA_MIN_LEN;
 
 /// Inspection status for UDP checksum handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -151,6 +156,26 @@ pub enum UdpOption {
     Timestamp {
         /// 32-bit TSval followed by 32-bit TSecr in network byte order.
         timestamps: [u8; 8],
+    },
+    /// SAFE experimental option.
+    Experimental {
+        /// 16-bit ExID followed by experiment-specific bytes.
+        exid_and_data: Vec<u8>,
+    },
+    /// SAFE experimental option using extended length encoding.
+    ExtendedExperimental {
+        /// 16-bit ExID followed by experiment-specific bytes.
+        exid_and_data: Vec<u8>,
+    },
+    /// UNSAFE experimental option.
+    UnsafeExperimental {
+        /// 16-bit ExID followed by experiment-specific bytes.
+        exid_and_data: Vec<u8>,
+    },
+    /// UNSAFE experimental option using extended length encoding.
+    ExtendedUnsafeExperimental {
+        /// 16-bit ExID followed by experiment-specific bytes.
+        exid_and_data: Vec<u8>,
     },
     /// Unknown or caller-defined option with the standard one-byte length field.
     Generic {
@@ -256,6 +281,50 @@ impl UdpOption {
         Self::timestamp(tsval, tsecr)
     }
 
+    /// Create a SAFE experimental option.
+    pub fn experimental(exid: u16, data: impl Into<Vec<u8>>) -> Self {
+        let exid_and_data = udp_experiment_payload(exid, data);
+        if udp_option_needs_extended_length(exid_and_data.len()) {
+            Self::ExtendedExperimental { exid_and_data }
+        } else {
+            Self::Experimental { exid_and_data }
+        }
+    }
+
+    /// Compatibility-style short alias for [`Self::experimental`].
+    pub fn exp(exid: u16, data: impl Into<Vec<u8>>) -> Self {
+        Self::experimental(exid, data)
+    }
+
+    /// Create a SAFE experimental option using the extended length encoding.
+    pub fn extended_experimental(exid: u16, data: impl Into<Vec<u8>>) -> Self {
+        Self::ExtendedExperimental {
+            exid_and_data: udp_experiment_payload(exid, data),
+        }
+    }
+
+    /// Create an UNSAFE experimental option.
+    pub fn unsafe_experimental(exid: u16, data: impl Into<Vec<u8>>) -> Self {
+        let exid_and_data = udp_experiment_payload(exid, data);
+        if udp_option_needs_extended_length(exid_and_data.len()) {
+            Self::ExtendedUnsafeExperimental { exid_and_data }
+        } else {
+            Self::UnsafeExperimental { exid_and_data }
+        }
+    }
+
+    /// Compatibility-style short alias for [`Self::unsafe_experimental`].
+    pub fn uexp(exid: u16, data: impl Into<Vec<u8>>) -> Self {
+        Self::unsafe_experimental(exid, data)
+    }
+
+    /// Create an UNSAFE experimental option using the extended length encoding.
+    pub fn extended_unsafe_experimental(exid: u16, data: impl Into<Vec<u8>>) -> Self {
+        Self::ExtendedUnsafeExperimental {
+            exid_and_data: udp_experiment_payload(exid, data),
+        }
+    }
+
     /// Create a caller-defined option.
     pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
         let data = data.into();
@@ -285,6 +354,10 @@ impl UdpOption {
             Self::EchoRequest { .. } => UDP_OPTION_REQ,
             Self::EchoResponse { .. } => UDP_OPTION_RES,
             Self::Timestamp { .. } => UDP_OPTION_TIME,
+            Self::Experimental { .. } | Self::ExtendedExperimental { .. } => UDP_OPTION_EXP,
+            Self::UnsafeExperimental { .. } | Self::ExtendedUnsafeExperimental { .. } => {
+                UDP_OPTION_UEXP
+            }
             Self::Generic { kind, .. } | Self::ExtendedGeneric { kind, .. } => *kind,
         }
     }
@@ -300,6 +373,10 @@ impl UdpOption {
             } => size_and_segment_count,
             Self::EchoRequest { token } | Self::EchoResponse { token } => token,
             Self::Timestamp { timestamps } => timestamps,
+            Self::Experimental { exid_and_data }
+            | Self::ExtendedExperimental { exid_and_data }
+            | Self::UnsafeExperimental { exid_and_data }
+            | Self::ExtendedUnsafeExperimental { exid_and_data } => exid_and_data,
             Self::Generic { data, .. } | Self::ExtendedGeneric { data, .. } => data,
         }
     }
@@ -360,9 +437,29 @@ impl UdpOption {
         }
     }
 
+    /// Return the EXP or UEXP experiment identifier.
+    pub fn experiment_id(&self) -> Option<u16> {
+        udp_experiment_parts(self).map(|(exid, _)| exid)
+    }
+
+    /// Return the EXP or UEXP experiment-specific bytes after ExID.
+    pub fn experiment_data(&self) -> Option<&[u8]> {
+        udp_experiment_parts(self).map(|(_, data)| data)
+    }
+
+    /// Return true when this option kind is in the UDP UNSAFE range.
+    pub const fn is_unsafe(&self) -> bool {
+        udp_option_kind_is_unsafe(self.kind())
+    }
+
     /// Return true if this option uses the extended length format.
     pub const fn uses_extended_length(&self) -> bool {
-        matches!(self, Self::ExtendedGeneric { .. })
+        matches!(
+            self,
+            Self::ExtendedExperimental { .. }
+                | Self::ExtendedUnsafeExperimental { .. }
+                | Self::ExtendedGeneric { .. }
+        )
     }
 
     /// Encoded option length in bytes.
@@ -375,6 +472,13 @@ impl UdpOption {
             Self::EchoRequest { .. } => UDP_OPTION_REQ_LEN,
             Self::EchoResponse { .. } => UDP_OPTION_RES_LEN,
             Self::Timestamp { .. } => UDP_OPTION_TIME_LEN,
+            Self::Experimental { exid_and_data } | Self::UnsafeExperimental { exid_and_data } => {
+                UDP_OPTION_SHORT_HEADER_LEN + exid_and_data.len()
+            }
+            Self::ExtendedExperimental { exid_and_data }
+            | Self::ExtendedUnsafeExperimental { exid_and_data } => {
+                UDP_OPTION_EXTENDED_HEADER_LEN + exid_and_data.len()
+            }
             Self::Generic { data, .. } => UDP_OPTION_SHORT_HEADER_LEN + data.len(),
             Self::ExtendedGeneric { data, .. } => UDP_OPTION_EXTENDED_HEADER_LEN + data.len(),
         }
@@ -412,6 +516,42 @@ impl UdpOption {
             Self::Timestamp { timestamps } => {
                 bytes.extend_from_slice(&[UDP_OPTION_TIME, UDP_OPTION_TIME_LEN as u8]);
                 bytes.extend_from_slice(timestamps);
+            }
+            Self::Experimental { exid_and_data } => {
+                encode_udp_experiment_option(
+                    UDP_OPTION_EXP,
+                    exid_and_data,
+                    false,
+                    "udp.option.exp.length",
+                    &mut bytes,
+                )?;
+            }
+            Self::ExtendedExperimental { exid_and_data } => {
+                encode_udp_experiment_option(
+                    UDP_OPTION_EXP,
+                    exid_and_data,
+                    true,
+                    "udp.option.exp.length",
+                    &mut bytes,
+                )?;
+            }
+            Self::UnsafeExperimental { exid_and_data } => {
+                encode_udp_experiment_option(
+                    UDP_OPTION_UEXP,
+                    exid_and_data,
+                    false,
+                    "udp.option.uexp.length",
+                    &mut bytes,
+                )?;
+            }
+            Self::ExtendedUnsafeExperimental { exid_and_data } => {
+                encode_udp_experiment_option(
+                    UDP_OPTION_UEXP,
+                    exid_and_data,
+                    true,
+                    "udp.option.uexp.length",
+                    &mut bytes,
+                )?;
             }
             Self::Generic { kind, data } => {
                 validate_udp_generic_option_kind(*kind)?;
@@ -659,6 +799,34 @@ impl UdpOptionIter<'_> {
                 ],
             }));
         }
+        if kind == UDP_OPTION_EXP {
+            if let Err(err) = validate_udp_min_option_len(
+                "udp.option.exp.length",
+                len,
+                UDP_OPTION_EXPERIMENT_SHORT_MIN_LEN,
+            ) {
+                self.done = true;
+                return Some(Err(err));
+            }
+            let data_start = start + UDP_OPTION_SHORT_HEADER_LEN;
+            return Some(Ok(UdpOption::Experimental {
+                exid_and_data: self.bytes[data_start..end].to_vec(),
+            }));
+        }
+        if kind == UDP_OPTION_UEXP {
+            if let Err(err) = validate_udp_min_option_len(
+                "udp.option.uexp.length",
+                len,
+                UDP_OPTION_EXPERIMENT_SHORT_MIN_LEN,
+            ) {
+                self.done = true;
+                return Some(Err(err));
+            }
+            let data_start = start + UDP_OPTION_SHORT_HEADER_LEN;
+            return Some(Ok(UdpOption::UnsafeExperimental {
+                exid_and_data: self.bytes[data_start..end].to_vec(),
+            }));
+        }
 
         Some(Ok(UdpOption::Generic {
             kind,
@@ -734,6 +902,34 @@ impl UdpOptionIter<'_> {
                 "udp.option.time.length",
                 "fixed-length UDP option must use the short length format",
             )));
+        }
+        if kind == UDP_OPTION_EXP {
+            if let Err(err) = validate_udp_min_option_len(
+                "udp.option.exp.length",
+                len,
+                UDP_OPTION_EXPERIMENT_EXTENDED_MIN_LEN,
+            ) {
+                self.done = true;
+                return Some(Err(err));
+            }
+            self.offset = end;
+            return Some(Ok(UdpOption::ExtendedExperimental {
+                exid_and_data: self.bytes[start + UDP_OPTION_EXTENDED_HEADER_LEN..end].to_vec(),
+            }));
+        }
+        if kind == UDP_OPTION_UEXP {
+            if let Err(err) = validate_udp_min_option_len(
+                "udp.option.uexp.length",
+                len,
+                UDP_OPTION_EXPERIMENT_EXTENDED_MIN_LEN,
+            ) {
+                self.done = true;
+                return Some(Err(err));
+            }
+            self.offset = end;
+            return Some(Ok(UdpOption::ExtendedUnsafeExperimental {
+                exid_and_data: self.bytes[start + UDP_OPTION_EXTENDED_HEADER_LEN..end].to_vec(),
+            }));
         }
 
         self.offset = end;
@@ -1014,6 +1210,83 @@ fn encode_udp_options(options: &[UdpOption]) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn udp_experiment_payload(exid: u16, data: impl Into<Vec<u8>>) -> Vec<u8> {
+    let mut exid_and_data = Vec::with_capacity(UDP_OPTION_EXPERIMENT_DATA_MIN_LEN);
+    exid_and_data.extend_from_slice(&exid.to_be_bytes());
+    exid_and_data.extend(data.into());
+    exid_and_data
+}
+
+const fn udp_option_needs_extended_length(data_len: usize) -> bool {
+    UDP_OPTION_SHORT_HEADER_LEN + data_len >= UDP_OPTION_EXTENDED_LEN_SENTINEL as usize
+}
+
+const fn udp_option_kind_is_unsafe(kind: u8) -> bool {
+    kind >= UDP_OPTION_UCMP
+}
+
+fn udp_experiment_parts(option: &UdpOption) -> Option<(u16, &[u8])> {
+    match option {
+        UdpOption::Experimental { exid_and_data }
+        | UdpOption::ExtendedExperimental { exid_and_data }
+        | UdpOption::UnsafeExperimental { exid_and_data }
+        | UdpOption::ExtendedUnsafeExperimental { exid_and_data } => {
+            udp_experiment_parts_from_data(exid_and_data)
+        }
+        _ => None,
+    }
+}
+
+fn udp_experiment_parts_from_data(exid_and_data: &[u8]) -> Option<(u16, &[u8])> {
+    if exid_and_data.len() < UDP_OPTION_EXPERIMENT_DATA_MIN_LEN {
+        return None;
+    }
+
+    Some((
+        u16::from_be_bytes([exid_and_data[0], exid_and_data[1]]),
+        &exid_and_data[UDP_OPTION_EXPERIMENT_DATA_MIN_LEN..],
+    ))
+}
+
+fn encode_udp_experiment_option(
+    kind: u8,
+    exid_and_data: &[u8],
+    extended: bool,
+    field: &'static str,
+    bytes: &mut Vec<u8>,
+) -> Result<()> {
+    if exid_and_data.len() < UDP_OPTION_EXPERIMENT_DATA_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "UDP experimental option requires a 16-bit ExID",
+        ));
+    }
+
+    if extended {
+        let len = UDP_OPTION_EXTENDED_HEADER_LEN + exid_and_data.len();
+        let len = u16::try_from(len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                field,
+                "UDP experimental option extended length must fit in two bytes",
+            )
+        })?;
+        bytes.extend_from_slice(&[kind, UDP_OPTION_EXTENDED_LEN_SENTINEL]);
+        bytes.extend_from_slice(&len.to_be_bytes());
+    } else {
+        let len = UDP_OPTION_SHORT_HEADER_LEN + exid_and_data.len();
+        if len >= UDP_OPTION_EXTENDED_LEN_SENTINEL as usize {
+            return Err(CrafterError::invalid_field_value(
+                field,
+                "UDP experimental option short length must be less than 255 bytes",
+            ));
+        }
+        bytes.extend_from_slice(&[kind, len as u8]);
+    }
+
+    bytes.extend_from_slice(exid_and_data);
+    Ok(())
+}
+
 fn parse_udp_options_for_status(bytes: &[u8]) -> (Vec<UdpOption>, UdpOptionStatus) {
     if bytes.is_empty() {
         return (Vec::new(), UdpOptionStatus::NoSurplus);
@@ -1179,6 +1452,14 @@ fn udp_option_inspection_summary(option: &UdpOption) -> String {
                 u32::from_be_bytes([timestamps[4], timestamps[5], timestamps[6], timestamps[7]]);
             format!("TIME(tsval=0x{tsval:08x},tsecr=0x{tsecr:08x})")
         }
+        UdpOption::Experimental { exid_and_data }
+        | UdpOption::ExtendedExperimental { exid_and_data } => {
+            udp_experiment_inspection_summary("EXP", exid_and_data, "SAFE")
+        }
+        UdpOption::UnsafeExperimental { exid_and_data }
+        | UdpOption::ExtendedUnsafeExperimental { exid_and_data } => {
+            udp_experiment_inspection_summary("UEXP", exid_and_data, "UNSAFE")
+        }
         UdpOption::Generic { kind, data } => {
             format!(
                 "Generic(kind={kind},len={})",
@@ -1190,6 +1471,21 @@ fn udp_option_inspection_summary(option: &UdpOption) -> String {
             UDP_OPTION_EXTENDED_HEADER_LEN + data.len()
         ),
     }
+}
+
+fn udp_experiment_inspection_summary(label: &str, exid_and_data: &[u8], safety: &str) -> String {
+    let Some((exid, data)) = udp_experiment_parts_from_data(exid_and_data) else {
+        return format!(
+            "{label}(malformed,data_len={},safety={safety})",
+            exid_and_data.len()
+        );
+    };
+    let data = if data.is_empty() {
+        "empty".to_string()
+    } else {
+        hex_bytes(data)
+    };
+    format!("{label}(exid=0x{exid:04x},data={data},safety={safety})")
 }
 
 fn udp_options_inspection_summary(options: &[UdpOption]) -> String {
@@ -1219,6 +1515,16 @@ fn validate_udp_option_len(field: &'static str, actual: usize, expected: usize) 
         return Err(CrafterError::invalid_field_value(
             field,
             "UDP option has an invalid fixed length",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_udp_min_option_len(field: &'static str, actual: usize, minimum: usize) -> Result<()> {
+    if actual < minimum {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "UDP option is shorter than its minimum length",
         ));
     }
     Ok(())
@@ -1677,7 +1983,7 @@ mod tests {
         UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_APC_LEN, UDP_OPTION_CHECKSUM_LEN,
         UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MDS_LEN,
         UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_REQ_LEN,
-        UDP_OPTION_RES, UDP_OPTION_RES_LEN, UDP_OPTION_TIME, UDP_OPTION_TIME_LEN,
+        UDP_OPTION_RES, UDP_OPTION_RES_LEN, UDP_OPTION_TIME, UDP_OPTION_TIME_LEN, UDP_OPTION_UEXP,
     };
     use crate::checksum::{crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum};
     use crate::{
@@ -1762,6 +2068,15 @@ mod tests {
                 assert_eq!(field, expected_field);
             }
             other => panic!("expected UDP option length field error, got {other:?}"),
+        }
+    }
+
+    fn assert_udp_option_encode_field_error(option: UdpOption, expected_field: &'static str) {
+        match option.encode().unwrap_err() {
+            crate::CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, expected_field);
+            }
+            other => panic!("expected UDP option encode field error, got {other:?}"),
         }
     }
 
@@ -1929,6 +2244,8 @@ mod tests {
         assert_eq!(UDP_OPTION_REQ, 6);
         assert_eq!(UDP_OPTION_RES, 7);
         assert_eq!(UDP_OPTION_TIME, 8);
+        assert_eq!(UDP_OPTION_EXP, 127);
+        assert_eq!(UDP_OPTION_UEXP, 254);
 
         let checksum_status = UdpChecksumStatus::NotChecked;
         let option_status = UdpOptionStatus::NotParsed;
@@ -1960,9 +2277,8 @@ mod tests {
             decoded,
             vec![
                 UdpOption::NoOperation,
-                UdpOption::ExtendedGeneric {
-                    kind: UDP_OPTION_EXP,
-                    data: vec![0x12, 0x34]
+                UdpOption::ExtendedExperimental {
+                    exid_and_data: vec![0x12, 0x34]
                 }
             ]
         );
@@ -2344,6 +2660,167 @@ mod tests {
     }
 
     #[test]
+    fn udp_option_exp_encode_decode_variable_length_and_display() {
+        let empty_data: &[u8] = &[];
+        let empty = UdpOption::experimental(0x1234, empty_data);
+        assert_eq!(empty, UdpOption::exp(0x1234, empty_data));
+        assert_eq!(empty.kind(), UDP_OPTION_EXP);
+        assert_eq!(empty.data(), &[0x12, 0x34]);
+        assert_eq!(empty.experiment_id(), Some(0x1234));
+        assert_eq!(empty.experiment_data(), Some(empty_data));
+        assert!(!empty.is_unsafe());
+        assert!(!empty.uses_extended_length());
+        assert_eq!(empty.encoded_len(), 4);
+        assert_eq!(empty.encode().unwrap(), vec![UDP_OPTION_EXP, 4, 0x12, 0x34]);
+        assert_eq!(empty.to_string(), "EXP(exid=0x1234,data=empty,safety=SAFE)");
+        assert_eq!(
+            UdpOption::decode_all(&[UDP_OPTION_EXP, 4, 0x12, 0x34]).unwrap(),
+            vec![empty.clone()]
+        );
+
+        let non_empty = UdpOption::experimental(0xabcd, [0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(non_empty.data(), &[0xab, 0xcd, 0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(non_empty.experiment_id(), Some(0xabcd));
+        assert_eq!(
+            non_empty.experiment_data(),
+            Some([0xde, 0xad, 0xbe, 0xef].as_slice())
+        );
+        assert!(!non_empty.is_unsafe());
+        assert_eq!(
+            non_empty.encode().unwrap(),
+            vec![UDP_OPTION_EXP, 8, 0xab, 0xcd, 0xde, 0xad, 0xbe, 0xef]
+        );
+        assert_eq!(
+            non_empty.to_string(),
+            "EXP(exid=0xabcd,data=de ad be ef,safety=SAFE)"
+        );
+
+        let udp_options =
+            UdpOptions::from_bytes([UDP_OPTION_EXP, 8, 0xab, 0xcd, 0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.options(), &[non_empty.clone()]);
+        assert!(udp_options.inspection_fields().iter().any(|(name, value)| {
+            *name == "options" && value == "EXP(exid=0xabcd,data=de ad be ef,safety=SAFE)"
+        }));
+
+        let typed = UdpOptions::from_options(vec![non_empty]).unwrap();
+        assert_eq!(
+            typed.as_bytes(),
+            &[UDP_OPTION_EXP, 8, 0xab, 0xcd, 0xde, 0xad, 0xbe, 0xef]
+        );
+        assert_eq!(typed.status(), UdpOptionStatus::Valid);
+
+        let long = UdpOption::experimental(0xbeef, vec![0x5a; 251]);
+        assert!(long.uses_extended_length());
+        let encoded = long.encode().unwrap();
+        assert_eq!(
+            &encoded[..6],
+            &[UDP_OPTION_EXP, 255, 0x01, 0x01, 0xbe, 0xef]
+        );
+    }
+
+    #[test]
+    fn udp_option_exp_malformed_lengths_are_rejected() {
+        for bytes in [
+            [UDP_OPTION_EXP, 3, 0x12].as_slice(),
+            [UDP_OPTION_EXP, 255, 0, 4].as_slice(),
+            [UDP_OPTION_EXP, 255, 0, 5, 0x12].as_slice(),
+        ] {
+            assert_udp_option_length_field_error(bytes, "udp.option.exp.length");
+        }
+
+        let malformed = UdpOption::Experimental {
+            exid_and_data: vec![0x12],
+        };
+        assert_udp_option_encode_field_error(malformed, "udp.option.exp.length");
+    }
+
+    #[test]
+    fn udp_option_uexp_encode_decode_variable_length_and_safety() {
+        let empty_data: &[u8] = &[];
+        let empty = UdpOption::unsafe_experimental(0x5678, empty_data);
+        assert_eq!(empty, UdpOption::uexp(0x5678, empty_data));
+        assert_eq!(empty.kind(), UDP_OPTION_UEXP);
+        assert_eq!(empty.data(), &[0x56, 0x78]);
+        assert_eq!(empty.experiment_id(), Some(0x5678));
+        assert_eq!(empty.experiment_data(), Some(empty_data));
+        assert!(empty.is_unsafe());
+        assert!(!empty.uses_extended_length());
+        assert_eq!(empty.encoded_len(), 4);
+        assert_eq!(
+            empty.encode().unwrap(),
+            vec![UDP_OPTION_UEXP, 4, 0x56, 0x78]
+        );
+        assert_eq!(
+            empty.to_string(),
+            "UEXP(exid=0x5678,data=empty,safety=UNSAFE)"
+        );
+        assert_eq!(
+            UdpOption::decode_all(&[UDP_OPTION_UEXP, 4, 0x56, 0x78]).unwrap(),
+            vec![empty.clone()]
+        );
+
+        let generic_unsafe = UdpOption::generic(UDP_OPTION_UEXP, [0x56, 0x78]);
+        assert!(generic_unsafe.is_unsafe());
+
+        let non_empty = UdpOption::unsafe_experimental(0xcafe, [0x01, 0x02, 0x03]);
+        assert_eq!(non_empty.data(), &[0xca, 0xfe, 0x01, 0x02, 0x03]);
+        assert_eq!(non_empty.experiment_id(), Some(0xcafe));
+        assert_eq!(
+            non_empty.experiment_data(),
+            Some([0x01, 0x02, 0x03].as_slice())
+        );
+        assert!(non_empty.is_unsafe());
+        assert_eq!(
+            non_empty.encode().unwrap(),
+            vec![UDP_OPTION_UEXP, 7, 0xca, 0xfe, 0x01, 0x02, 0x03]
+        );
+        assert_eq!(
+            non_empty.to_string(),
+            "UEXP(exid=0xcafe,data=01 02 03,safety=UNSAFE)"
+        );
+
+        let udp_options =
+            UdpOptions::from_bytes([UDP_OPTION_UEXP, 7, 0xca, 0xfe, 0x01, 0x02, 0x03]);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.options(), &[non_empty.clone()]);
+        assert!(udp_options.inspection_fields().iter().any(|(name, value)| {
+            *name == "options" && value == "UEXP(exid=0xcafe,data=01 02 03,safety=UNSAFE)"
+        }));
+
+        let typed = UdpOptions::from_options(vec![non_empty]).unwrap();
+        assert_eq!(
+            typed.as_bytes(),
+            &[UDP_OPTION_UEXP, 7, 0xca, 0xfe, 0x01, 0x02, 0x03]
+        );
+        assert_eq!(typed.status(), UdpOptionStatus::Valid);
+
+        let long = UdpOption::unsafe_experimental(0xace0, vec![0x77; 251]);
+        assert!(long.uses_extended_length());
+        let encoded = long.encode().unwrap();
+        assert_eq!(
+            &encoded[..6],
+            &[UDP_OPTION_UEXP, 255, 0x01, 0x01, 0xac, 0xe0]
+        );
+    }
+
+    #[test]
+    fn udp_option_uexp_malformed_lengths_are_rejected() {
+        for bytes in [
+            [UDP_OPTION_UEXP, 3, 0x56].as_slice(),
+            [UDP_OPTION_UEXP, 255, 0, 4].as_slice(),
+            [UDP_OPTION_UEXP, 255, 0, 5, 0x56].as_slice(),
+        ] {
+            assert_udp_option_length_field_error(bytes, "udp.option.uexp.length");
+        }
+
+        let malformed = UdpOption::UnsafeExperimental {
+            exid_and_data: vec![0x56],
+        };
+        assert_udp_option_encode_field_error(malformed, "udp.option.uexp.length");
+    }
+
+    #[test]
     fn udp_options_show_includes_time_option() {
         let packet = Ipv4::new().src(src()).dst(dst()).id(0x2241)
             / Udp::new().sport(1234).dport(4321)
@@ -2504,9 +2981,8 @@ mod tests {
         let decoded = UdpOption::decode_all(&[UDP_OPTION_EXP, 255, 0, 6, 0x12, 0x34]).unwrap();
         assert_eq!(
             decoded,
-            vec![UdpOption::ExtendedGeneric {
-                kind: UDP_OPTION_EXP,
-                data: vec![0x12, 0x34]
+            vec![UdpOption::ExtendedExperimental {
+                exid_and_data: vec![0x12, 0x34]
             }]
         );
     }
@@ -2688,9 +3164,8 @@ mod tests {
             udp_options.options(),
             &[
                 UdpOption::NoOperation,
-                UdpOption::ExtendedGeneric {
-                    kind: UDP_OPTION_EXP,
-                    data: vec![0x12, 0x34]
+                UdpOption::ExtendedExperimental {
+                    exid_and_data: vec![0x12, 0x34]
                 }
             ]
         );
