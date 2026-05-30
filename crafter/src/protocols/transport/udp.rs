@@ -75,6 +75,8 @@ const UDP_OPTION_CHECKSUM_LEN: usize = 2;
 const UDP_OPTION_APC_LEN: usize = 6;
 const UDP_OPTION_MDS_LEN: usize = 4;
 const UDP_OPTION_MRDS_LEN: usize = 5;
+const UDP_OPTION_REQ_LEN: usize = 6;
+const UDP_OPTION_RES_LEN: usize = 6;
 
 /// Inspection status for UDP checksum handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -133,6 +135,16 @@ pub enum UdpOption {
     MaximumReassembledDatagramSize {
         /// 16-bit size followed by 8-bit segment count.
         size_and_segment_count: [u8; 3],
+    },
+    /// Echo Request option.
+    EchoRequest {
+        /// Opaque 32-bit token bytes in network byte order.
+        token: [u8; 4],
+    },
+    /// Echo Response option.
+    EchoResponse {
+        /// Opaque 32-bit token bytes in network byte order.
+        token: [u8; 4],
     },
     /// Unknown or caller-defined option with the standard one-byte length field.
     Generic {
@@ -198,6 +210,30 @@ impl UdpOption {
         Self::maximum_reassembled_datagram_size(size, segment_count)
     }
 
+    /// Create an Echo Request option with an opaque token.
+    pub fn echo_request(token: u32) -> Self {
+        Self::EchoRequest {
+            token: token.to_be_bytes(),
+        }
+    }
+
+    /// Compatibility-style short alias for [`Self::echo_request`].
+    pub fn req(token: u32) -> Self {
+        Self::echo_request(token)
+    }
+
+    /// Create an Echo Response option with an opaque token.
+    pub fn echo_response(token: u32) -> Self {
+        Self::EchoResponse {
+            token: token.to_be_bytes(),
+        }
+    }
+
+    /// Compatibility-style short alias for [`Self::echo_response`].
+    pub fn res(token: u32) -> Self {
+        Self::echo_response(token)
+    }
+
     /// Create a caller-defined option.
     pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
         let data = data.into();
@@ -224,6 +260,8 @@ impl UdpOption {
             Self::AdditionalPayloadChecksum { .. } => UDP_OPTION_APC,
             Self::MaximumDatagramSize { .. } => UDP_OPTION_MDS,
             Self::MaximumReassembledDatagramSize { .. } => UDP_OPTION_MRDS,
+            Self::EchoRequest { .. } => UDP_OPTION_REQ,
+            Self::EchoResponse { .. } => UDP_OPTION_RES,
             Self::Generic { kind, .. } | Self::ExtendedGeneric { kind, .. } => *kind,
         }
     }
@@ -237,6 +275,7 @@ impl UdpOption {
             Self::MaximumReassembledDatagramSize {
                 size_and_segment_count,
             } => size_and_segment_count,
+            Self::EchoRequest { token } | Self::EchoResponse { token } => token,
             Self::Generic { data, .. } | Self::ExtendedGeneric { data, .. } => data,
         }
     }
@@ -270,6 +309,22 @@ impl UdpOption {
         }
     }
 
+    /// Return the REQ token value, if this option is REQ.
+    pub fn echo_request_token(&self) -> Option<u32> {
+        match self {
+            Self::EchoRequest { token } => Some(u32::from_be_bytes(*token)),
+            _ => None,
+        }
+    }
+
+    /// Return the RES token value, if this option is RES.
+    pub fn echo_response_token(&self) -> Option<u32> {
+        match self {
+            Self::EchoResponse { token } => Some(u32::from_be_bytes(*token)),
+            _ => None,
+        }
+    }
+
     /// Return true if this option uses the extended length format.
     pub const fn uses_extended_length(&self) -> bool {
         matches!(self, Self::ExtendedGeneric { .. })
@@ -282,6 +337,8 @@ impl UdpOption {
             Self::AdditionalPayloadChecksum { .. } => UDP_OPTION_APC_LEN,
             Self::MaximumDatagramSize { .. } => UDP_OPTION_MDS_LEN,
             Self::MaximumReassembledDatagramSize { .. } => UDP_OPTION_MRDS_LEN,
+            Self::EchoRequest { .. } => UDP_OPTION_REQ_LEN,
+            Self::EchoResponse { .. } => UDP_OPTION_RES_LEN,
             Self::Generic { data, .. } => UDP_OPTION_SHORT_HEADER_LEN + data.len(),
             Self::ExtendedGeneric { data, .. } => UDP_OPTION_EXTENDED_HEADER_LEN + data.len(),
         }
@@ -307,6 +364,14 @@ impl UdpOption {
             } => {
                 bytes.extend_from_slice(&[UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN as u8]);
                 bytes.extend_from_slice(size_and_segment_count);
+            }
+            Self::EchoRequest { token } => {
+                bytes.extend_from_slice(&[UDP_OPTION_REQ, UDP_OPTION_REQ_LEN as u8]);
+                bytes.extend_from_slice(token);
+            }
+            Self::EchoResponse { token } => {
+                bytes.extend_from_slice(&[UDP_OPTION_RES, UDP_OPTION_RES_LEN as u8]);
+                bytes.extend_from_slice(token);
             }
             Self::Generic { kind, data } => {
                 validate_udp_generic_option_kind(*kind)?;
@@ -499,6 +564,40 @@ impl UdpOptionIter<'_> {
                 ],
             }));
         }
+        if kind == UDP_OPTION_REQ {
+            if let Err(err) =
+                validate_udp_option_len("udp.option.req.length", len, UDP_OPTION_REQ_LEN)
+            {
+                self.done = true;
+                return Some(Err(err));
+            }
+            let data_start = start + UDP_OPTION_SHORT_HEADER_LEN;
+            return Some(Ok(UdpOption::EchoRequest {
+                token: [
+                    self.bytes[data_start],
+                    self.bytes[data_start + 1],
+                    self.bytes[data_start + 2],
+                    self.bytes[data_start + 3],
+                ],
+            }));
+        }
+        if kind == UDP_OPTION_RES {
+            if let Err(err) =
+                validate_udp_option_len("udp.option.res.length", len, UDP_OPTION_RES_LEN)
+            {
+                self.done = true;
+                return Some(Err(err));
+            }
+            let data_start = start + UDP_OPTION_SHORT_HEADER_LEN;
+            return Some(Ok(UdpOption::EchoResponse {
+                token: [
+                    self.bytes[data_start],
+                    self.bytes[data_start + 1],
+                    self.bytes[data_start + 2],
+                    self.bytes[data_start + 3],
+                ],
+            }));
+        }
 
         Some(Ok(UdpOption::Generic {
             kind,
@@ -551,6 +650,20 @@ impl UdpOptionIter<'_> {
             self.done = true;
             return Some(Err(CrafterError::invalid_field_value(
                 "udp.option.mrds.length",
+                "fixed-length UDP option must use the short length format",
+            )));
+        }
+        if kind == UDP_OPTION_REQ {
+            self.done = true;
+            return Some(Err(CrafterError::invalid_field_value(
+                "udp.option.req.length",
+                "fixed-length UDP option must use the short length format",
+            )));
+        }
+        if kind == UDP_OPTION_RES {
+            self.done = true;
+            return Some(Err(CrafterError::invalid_field_value(
+                "udp.option.res.length",
                 "fixed-length UDP option must use the short length format",
             )));
         }
@@ -985,6 +1098,12 @@ fn udp_option_inspection_summary(option: &UdpOption) -> String {
             u16::from_be_bytes([size_and_segment_count[0], size_and_segment_count[1]]),
             size_and_segment_count[2]
         ),
+        UdpOption::EchoRequest { token } => {
+            format!("REQ(token=0x{:08x})", u32::from_be_bytes(*token))
+        }
+        UdpOption::EchoResponse { token } => {
+            format!("RES(token=0x{:08x})", u32::from_be_bytes(*token))
+        }
         UdpOption::Generic { kind, data } => {
             format!(
                 "Generic(kind={kind},len={})",
@@ -1482,7 +1601,8 @@ mod tests {
         Udp, UdpChecksumStatus, UdpOption, UdpOptionIter, UdpOptionStatus, UdpOptions,
         UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_APC_LEN, UDP_OPTION_CHECKSUM_LEN,
         UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MDS_LEN,
-        UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_RES,
+        UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_REQ_LEN,
+        UDP_OPTION_RES, UDP_OPTION_RES_LEN,
     };
     use crate::checksum::{crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum};
     use crate::{
@@ -1891,6 +2011,115 @@ mod tests {
             [UDP_OPTION_MRDS, 255, 0, 5, 0x20].as_slice(),
         ] {
             assert_udp_option_length_field_error(bytes, "udp.option.mrds.length");
+        }
+    }
+
+    #[test]
+    fn udp_option_req_encode_decode_fixed_length_and_display() {
+        let req = UdpOption::echo_request(0x0102_0304);
+        assert_eq!(req, UdpOption::req(0x0102_0304));
+        assert_eq!(req.kind(), UDP_OPTION_REQ);
+        assert_eq!(req.data(), &[0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(req.echo_request_token(), Some(0x0102_0304));
+        assert_eq!(req.echo_response_token(), None);
+        assert!(!req.uses_extended_length());
+        assert_eq!(req.encoded_len(), UDP_OPTION_REQ_LEN);
+        assert_eq!(
+            req.encode().unwrap(),
+            vec![
+                UDP_OPTION_REQ,
+                UDP_OPTION_REQ_LEN as u8,
+                0x01,
+                0x02,
+                0x03,
+                0x04
+            ]
+        );
+        assert_eq!(req.to_string(), "REQ(token=0x01020304)");
+
+        let decoded =
+            UdpOption::decode_all(&[UDP_OPTION_REQ, UDP_OPTION_REQ_LEN as u8, 1, 2, 3, 4]).unwrap();
+        assert_eq!(decoded, vec![req.clone()]);
+
+        let udp_options = UdpOptions::from_bytes([UDP_OPTION_REQ, 6, 0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.options(), &[req.clone()]);
+        assert!(udp_options
+            .inspection_fields()
+            .iter()
+            .any(|(name, value)| *name == "options" && value == "REQ(token=0x01020304)"));
+
+        let typed = UdpOptions::from_options(vec![req]).unwrap();
+        assert_eq!(
+            typed.as_bytes(),
+            &[UDP_OPTION_REQ, 6, 0x01, 0x02, 0x03, 0x04]
+        );
+        assert_eq!(typed.status(), UdpOptionStatus::Valid);
+    }
+
+    #[test]
+    fn udp_option_req_malformed_lengths_are_rejected() {
+        for bytes in [
+            [UDP_OPTION_REQ, 5, 0x01, 0x02, 0x03].as_slice(),
+            [UDP_OPTION_REQ, 7, 0x01, 0x02, 0x03, 0x04, 0x05].as_slice(),
+            [UDP_OPTION_REQ, 255, 0, 6, 0x01, 0x02].as_slice(),
+        ] {
+            assert_udp_option_length_field_error(bytes, "udp.option.req.length");
+        }
+    }
+
+    #[test]
+    fn udp_option_res_encode_decode_fixed_length_and_display() {
+        let res = UdpOption::echo_response(0x0a0b_0c0d);
+        assert_eq!(res, UdpOption::res(0x0a0b_0c0d));
+        assert_eq!(res.kind(), UDP_OPTION_RES);
+        assert_eq!(res.data(), &[0x0a, 0x0b, 0x0c, 0x0d]);
+        assert_eq!(res.echo_response_token(), Some(0x0a0b_0c0d));
+        assert_eq!(res.echo_request_token(), None);
+        assert!(!res.uses_extended_length());
+        assert_eq!(res.encoded_len(), UDP_OPTION_RES_LEN);
+        assert_eq!(
+            res.encode().unwrap(),
+            vec![
+                UDP_OPTION_RES,
+                UDP_OPTION_RES_LEN as u8,
+                0x0a,
+                0x0b,
+                0x0c,
+                0x0d
+            ]
+        );
+        assert_eq!(res.to_string(), "RES(token=0x0a0b0c0d)");
+
+        let decoded =
+            UdpOption::decode_all(&[UDP_OPTION_RES, UDP_OPTION_RES_LEN as u8, 10, 11, 12, 13])
+                .unwrap();
+        assert_eq!(decoded, vec![res.clone()]);
+
+        let udp_options = UdpOptions::from_bytes([UDP_OPTION_RES, 6, 0x0a, 0x0b, 0x0c, 0x0d]);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.options(), &[res.clone()]);
+        assert!(udp_options
+            .inspection_fields()
+            .iter()
+            .any(|(name, value)| *name == "options" && value == "RES(token=0x0a0b0c0d)"));
+
+        let typed = UdpOptions::from_options(vec![res]).unwrap();
+        assert_eq!(
+            typed.as_bytes(),
+            &[UDP_OPTION_RES, 6, 0x0a, 0x0b, 0x0c, 0x0d]
+        );
+        assert_eq!(typed.status(), UdpOptionStatus::Valid);
+    }
+
+    #[test]
+    fn udp_option_res_malformed_lengths_are_rejected() {
+        for bytes in [
+            [UDP_OPTION_RES, 5, 0x0a, 0x0b, 0x0c].as_slice(),
+            [UDP_OPTION_RES, 7, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e].as_slice(),
+            [UDP_OPTION_RES, 255, 0, 6, 0x0a, 0x0b].as_slice(),
+        ] {
+            assert_udp_option_length_field_error(bytes, "udp.option.res.length");
         }
     }
 
