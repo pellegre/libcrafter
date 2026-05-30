@@ -1,12 +1,14 @@
 //! UDP protocol implementation.
 
+use crate::checksum::internet_checksum_chunks;
 use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext, Packet, Raw};
 use crate::protocols::dhcp::{Dhcp, DHCP_CLIENT_PORT, DHCP_SERVER_PORT};
 use crate::protocols::dns::Dns;
-use crate::protocols::ip::IPPROTO_UDP;
+use crate::protocols::ip::{Ipv4, IPPROTO_UDP};
+use crate::protocols::ipv6::Ipv6;
 use crate::registry::ProtocolRegistry;
 
 use super::common::{
@@ -67,6 +69,7 @@ const UDP_OPTION_LENGTH_CONTEXT: &str = "udp option length";
 const UDP_OPTION_PAYLOAD_CONTEXT: &str = "udp option payload";
 const UDP_OPTION_EXTENDED_LENGTH_CONTEXT: &str = "udp option extended length";
 const UDP_OPTION_EXTENDED_PAYLOAD_CONTEXT: &str = "udp option extended payload";
+const UDP_OPTION_CHECKSUM_LEN: usize = 2;
 
 /// Inspection status for UDP checksum handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -398,6 +401,9 @@ pub struct UdpOptions {
     bytes: Vec<u8>,
     options: Vec<UdpOption>,
     status: UdpOptionStatus,
+    option_checksum: Option<u16>,
+    alignment: Option<Vec<u8>>,
+    raw_surplus: Option<Vec<u8>>,
 }
 
 impl UdpOptions {
@@ -407,10 +413,13 @@ impl UdpOptions {
             bytes: Vec::new(),
             options: Vec::new(),
             status: UdpOptionStatus::NoSurplus,
+            option_checksum: None,
+            alignment: None,
+            raw_surplus: None,
         }
     }
 
-    /// Create a UDP options layer by copying bytes.
+    /// Create a UDP options layer by copying option bytes after OCS.
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Self {
         let bytes = bytes.as_ref().to_vec();
         let (options, status) = parse_udp_options_for_status(&bytes);
@@ -418,6 +427,9 @@ impl UdpOptions {
             bytes,
             options,
             status,
+            option_checksum: None,
+            alignment: None,
+            raw_surplus: None,
         }
     }
 
@@ -429,24 +441,73 @@ impl UdpOptions {
             bytes,
             options,
             status,
+            option_checksum: None,
+            alignment: None,
+            raw_surplus: None,
         })
     }
 
-    /// Borrow the encoded UDP option bytes.
+    fn from_decoded_surplus(
+        surplus: &[u8],
+        surplus_offset_in_ip_datagram: usize,
+        udp_checksum: u16,
+    ) -> Self {
+        if surplus.is_empty() {
+            return Self::new();
+        }
+
+        let alignment_len = udp_options_alignment_len(surplus_offset_in_ip_datagram);
+        if surplus.len() < alignment_len + UDP_OPTION_CHECKSUM_LEN {
+            return Self {
+                bytes: Vec::new(),
+                options: Vec::new(),
+                status: UdpOptionStatus::Malformed,
+                option_checksum: None,
+                alignment: Some(surplus[..surplus.len().min(alignment_len)].to_vec()),
+                raw_surplus: Some(surplus.to_vec()),
+            };
+        }
+
+        let alignment = surplus[..alignment_len].to_vec();
+        let option_checksum =
+            u16::from_be_bytes([surplus[alignment_len], surplus[alignment_len + 1]]);
+        let bytes = surplus[alignment_len + UDP_OPTION_CHECKSUM_LEN..].to_vec();
+        let (options, parsed_status) = parse_udp_options_for_status(&bytes);
+        let status = if alignment.iter().any(|byte| *byte != 0) {
+            UdpOptionStatus::Ignored
+        } else if !udp_options_ocs_valid(surplus, alignment_len, option_checksum, udp_checksum) {
+            UdpOptionStatus::OptionChecksumInvalid
+        } else {
+            parsed_status
+        };
+
+        Self {
+            bytes,
+            options,
+            status,
+            option_checksum: Some(option_checksum),
+            alignment: Some(alignment),
+            raw_surplus: None,
+        }
+    }
+
+    /// Borrow the encoded UDP option bytes after OCS.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
 
-    /// Mutably borrow the encoded UDP option bytes.
+    /// Mutably borrow the encoded UDP option bytes after OCS.
     pub fn as_bytes_mut(&mut self) -> &mut Vec<u8> {
         self.options.clear();
         self.status = UdpOptionStatus::NotParsed;
+        self.raw_surplus = None;
         &mut self.bytes
     }
 
     /// Append encoded UDP option bytes.
     pub fn extend_from_slice(&mut self, bytes: &[u8]) -> &mut Self {
         self.bytes.extend_from_slice(bytes);
+        self.raw_surplus = None;
         self.refresh_parse();
         self
     }
@@ -454,8 +515,31 @@ impl UdpOptions {
     /// Append a typed UDP option.
     pub fn udp_option(mut self, option: UdpOption) -> Result<Self> {
         self.bytes.extend_from_slice(&option.encode()?);
+        self.raw_surplus = None;
         self.refresh_parse();
         Ok(self)
+    }
+
+    /// Set the UDP Option Checksum field explicitly.
+    pub fn option_checksum(mut self, checksum: u16) -> Self {
+        self.option_checksum = Some(checksum);
+        self.raw_surplus = None;
+        self
+    }
+
+    /// Compatibility-style short alias for [`Self::option_checksum`].
+    pub fn ocs(self, checksum: u16) -> Self {
+        self.option_checksum(checksum)
+    }
+
+    /// Stored UDP Option Checksum value, when explicit or decoded.
+    pub const fn option_checksum_value(&self) -> Option<u16> {
+        self.option_checksum
+    }
+
+    /// Alignment bytes before OCS, when decoded or explicitly preserved.
+    pub fn alignment_bytes(&self) -> Option<&[u8]> {
+        self.alignment.as_deref()
     }
 
     /// Consume the layer and return its encoded UDP option bytes.
@@ -528,6 +612,94 @@ fn parse_udp_options_for_status(bytes: &[u8]) -> (Vec<UdpOption>, UdpOptionStatu
     (options, UdpOptionStatus::Valid)
 }
 
+fn udp_options_alignment_len(offset_in_ip_datagram: usize) -> usize {
+    offset_in_ip_datagram & 1
+}
+
+fn udp_options_generated_ocs(alignment: &[u8], option_bytes: &[u8]) -> Result<u16> {
+    let surplus_len = alignment
+        .len()
+        .checked_add(UDP_OPTION_CHECKSUM_LEN)
+        .and_then(|len| len.checked_add(option_bytes.len()))
+        .ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "udp.options.length",
+                "UDP surplus area length overflows usize",
+            )
+        })?;
+    let surplus_len = u16::try_from(surplus_len).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "udp.options.length",
+            "UDP surplus area length must fit in two bytes",
+        )
+    })?;
+
+    // RFC 9868 aligns OCS relative to the IP datagram; pre-OCS bytes are
+    // zero padding, while the OCS covers the remainder plus full surplus len.
+    let mut checksummed = Vec::with_capacity(UDP_OPTION_CHECKSUM_LEN + option_bytes.len());
+    checksummed.extend_from_slice(&0u16.to_be_bytes());
+    checksummed.extend_from_slice(option_bytes);
+
+    let len_bytes = surplus_len.to_be_bytes();
+    let checksum = internet_checksum_chunks([len_bytes.as_slice(), checksummed.as_slice()]);
+    Ok(if checksum == 0 { 0xffff } else { checksum })
+}
+
+fn udp_options_ocs_valid(
+    surplus: &[u8],
+    alignment_len: usize,
+    option_checksum: u16,
+    udp_checksum: u16,
+) -> bool {
+    if option_checksum == 0 {
+        return udp_checksum == 0;
+    }
+
+    let Ok(surplus_len) = u16::try_from(surplus.len()) else {
+        return false;
+    };
+    let len_bytes = surplus_len.to_be_bytes();
+    internet_checksum_chunks([len_bytes.as_slice(), &surplus[alignment_len..]]) == 0
+}
+
+fn first_ip_layer_index(packet: &Packet) -> Option<usize> {
+    packet
+        .iter()
+        .position(|layer| layer.as_any().is::<Ipv4>() || layer.as_any().is::<Ipv6>())
+}
+
+fn udp_options_surplus_offset_in_ip_datagram(ctx: LayerContext<'_>) -> usize {
+    let packet = ctx.packet();
+    let start = first_ip_layer_index(packet).unwrap_or(0);
+    packet
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(ctx.index().saturating_sub(start))
+        .map(|(index, layer)| {
+            let layer_ctx = LayerContext::new(packet, index);
+            layer.encoded_len_with_context(&layer_ctx)
+        })
+        .sum()
+}
+
+fn udp_decoded_surplus_offset_in_ip_datagram(
+    packet_before_udp: &Packet,
+    udp_length: usize,
+) -> usize {
+    let start = first_ip_layer_index(packet_before_udp).unwrap_or(0);
+    packet_before_udp
+        .iter()
+        .enumerate()
+        .skip(start)
+        .map(|(index, layer)| {
+            let layer_ctx = LayerContext::new(packet_before_udp, index);
+            layer.encoded_len_with_context(&layer_ctx)
+        })
+        .sum::<usize>()
+        + udp_length
+}
+
 fn udp_option_inspection_summary(option: &UdpOption) -> String {
     match option {
         UdpOption::EndOfList => "EOL".to_string(),
@@ -584,6 +756,25 @@ impl Layer for UdpOptions {
         vec![
             ("len", self.bytes.len().to_string()),
             ("status", format!("{:?}", self.status)),
+            (
+                "ocs",
+                self.option_checksum
+                    .map(|value| format!("0x{value:04x}"))
+                    .unwrap_or_else(|| {
+                        if self.bytes.is_empty() {
+                            "absent".to_string()
+                        } else {
+                            "auto".to_string()
+                        }
+                    }),
+            ),
+            (
+                "alignment",
+                self.alignment
+                    .as_ref()
+                    .map(|bytes| hex_bytes(bytes))
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
             ("option_count", self.options.len().to_string()),
             ("options", udp_options_inspection_summary(&self.options)),
             ("bytes", hex_bytes(&self.bytes)),
@@ -591,10 +782,50 @@ impl Layer for UdpOptions {
     }
 
     fn encoded_len(&self) -> usize {
-        self.bytes.len()
+        if let Some(raw_surplus) = &self.raw_surplus {
+            return raw_surplus.len();
+        }
+        if self.bytes.is_empty() && self.option_checksum.is_none() {
+            return 0;
+        }
+
+        self.alignment.as_ref().map_or(0, Vec::len) + UDP_OPTION_CHECKSUM_LEN + self.bytes.len()
     }
 
-    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+    fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
+        if let Some(raw_surplus) = &self.raw_surplus {
+            return raw_surplus.len();
+        }
+        if self.bytes.is_empty() && self.option_checksum.is_none() {
+            return 0;
+        }
+
+        let alignment_len = self.alignment.as_ref().map_or_else(
+            || udp_options_alignment_len(udp_options_surplus_offset_in_ip_datagram(*ctx)),
+            Vec::len,
+        );
+        alignment_len + UDP_OPTION_CHECKSUM_LEN + self.bytes.len()
+    }
+
+    fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        if let Some(raw_surplus) = &self.raw_surplus {
+            out.extend_from_slice(raw_surplus);
+            return Ok(());
+        }
+        if self.bytes.is_empty() && self.option_checksum.is_none() {
+            return Ok(());
+        }
+
+        let alignment = self.alignment.clone().unwrap_or_else(|| {
+            vec![0; udp_options_alignment_len(udp_options_surplus_offset_in_ip_datagram(*ctx))]
+        });
+        let option_checksum = match self.option_checksum {
+            Some(value) => value,
+            None => udp_options_generated_ocs(&alignment, &self.bytes)?,
+        };
+
+        out.extend_from_slice(&alignment);
+        out.extend_from_slice(&option_checksum.to_be_bytes());
         out.extend_from_slice(&self.bytes);
         Ok(())
     }
@@ -821,6 +1052,9 @@ pub(crate) fn append_udp_packet_with_registry(
     let decoded = decode_udp_parts(bytes)?;
     let source_port = decoded.udp.source_port_value();
     let destination_port = decoded.udp.destination_port_value();
+    let udp_length = decoded.udp.length_value().unwrap_or(UDP_HEADER_LEN as u16) as usize;
+    let udp_checksum = decoded.udp.checksum_value().unwrap_or(0);
+    let surplus_offset = udp_decoded_surplus_offset_in_ip_datagram(&packet, udp_length);
     packet = packet.push(decoded.udp);
     if !decoded.user_payload.is_empty() {
         packet = registry.decode_udp_application(
@@ -831,7 +1065,11 @@ pub(crate) fn append_udp_packet_with_registry(
         )?;
     }
     if !decoded.surplus.is_empty() {
-        packet = packet.push(UdpOptions::from_bytes(decoded.surplus));
+        packet = packet.push(UdpOptions::from_decoded_surplus(
+            decoded.surplus,
+            surplus_offset,
+            udp_checksum,
+        ));
     }
     Ok(packet)
 }
@@ -912,10 +1150,11 @@ fn is_current_udp_surplus_layer(layer: &dyn Layer, seen_application_layer: bool)
 mod tests {
     use super::{
         Udp, UdpChecksumStatus, UdpOption, UdpOptionIter, UdpOptionStatus, UdpOptions,
-        UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG,
-        UDP_OPTION_MDS, UDP_OPTION_MRDS, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_RES,
+        UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_CHECKSUM_LEN, UDP_OPTION_EOL, UDP_OPTION_EXP,
+        UDP_OPTION_FRAG, UDP_OPTION_MDS, UDP_OPTION_MRDS, UDP_OPTION_NOP, UDP_OPTION_REQ,
+        UDP_OPTION_RES,
     };
-    use crate::checksum::ipv4_pseudo_header_checksum;
+    use crate::checksum::{internet_checksum_chunks, ipv4_pseudo_header_checksum};
     use crate::{
         Dhcp, DhcpMessageType, Dns, IpProtocol, Ipv4, Layer, LinkType, MacAddr, Packet, Raw,
         DNS_PORT, DNS_TYPE_A, IPPROTO_UDP,
@@ -930,6 +1169,30 @@ mod tests {
 
     fn dst() -> Ipv4Addr {
         Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    fn ipv4_total_len(bytes: &[u8]) -> usize {
+        u16::from_be_bytes([bytes[2], bytes[3]]) as usize
+    }
+
+    fn udp_length(bytes: &[u8]) -> usize {
+        u16::from_be_bytes([bytes[24], bytes[25]]) as usize
+    }
+
+    fn udp_surplus_start(bytes: &[u8]) -> usize {
+        20 + udp_length(bytes)
+    }
+
+    fn udp_surplus(bytes: &[u8]) -> &[u8] {
+        &bytes[udp_surplus_start(bytes)..ipv4_total_len(bytes)]
+    }
+
+    fn udp_surplus_checksum_valid(bytes: &[u8]) -> bool {
+        let surplus_start = udp_surplus_start(bytes);
+        let surplus = udp_surplus(bytes);
+        let alignment_len = surplus_start & 1;
+        let len = (surplus.len() as u16).to_be_bytes();
+        internet_checksum_chunks([len.as_slice(), &surplus[alignment_len..]]) == 0
     }
 
     fn assert_udp_option_length_buffer_error(
@@ -967,6 +1230,159 @@ mod tests {
             }
             other => panic!("expected UDP option length field error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn udp_options_ocs_absent_is_malformed_and_preserved() {
+        let mut datagram = Vec::new();
+        datagram.extend_from_slice(&0x1111u16.to_be_bytes());
+        datagram.extend_from_slice(&0x2222u16.to_be_bytes());
+        datagram.extend_from_slice(&(UDP_HEADER_LEN as u16).to_be_bytes());
+        datagram.extend_from_slice(&0u16.to_be_bytes());
+        datagram.push(0);
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .proto(IpProtocol::Udp)
+            .id(0x2210)
+            / Raw::from_bytes(datagram))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
+        assert_eq!(udp_options.status(), UdpOptionStatus::Malformed);
+        assert_eq!(udp_options.option_checksum_value(), None);
+        assert_eq!(udp_options.as_bytes(), &[]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn udp_options_ocs_auto_filled_valid_and_inspectable() {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2211)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0xaa, 0xbb])
+            / UdpOptions::from_bytes([UDP_OPTION_NOP, UDP_OPTION_EOL]))
+        .compile()
+        .unwrap();
+
+        let surplus = udp_surplus(bytes.as_bytes());
+        assert_eq!(surplus.len(), UDP_OPTION_CHECKSUM_LEN + 2);
+        let ocs = u16::from_be_bytes([surplus[0], surplus[1]]);
+        assert_ne!(ocs, 0);
+        assert!(udp_surplus_checksum_valid(bytes.as_bytes()));
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
+        assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(udp_options.option_checksum_value(), Some(ocs));
+        assert_eq!(
+            udp_options.options(),
+            &[UdpOption::NoOperation, UdpOption::EndOfList]
+        );
+        assert!(udp_options
+            .inspection_fields()
+            .iter()
+            .any(|(name, value)| { *name == "ocs" && value == &format!("0x{ocs:04x}") }));
+    }
+
+    #[test]
+    fn udp_options_ocs_invalid_is_reported_and_preserved() {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2212)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0xaa, 0xbb])
+            / UdpOptions::from_bytes([UDP_OPTION_NOP, UDP_OPTION_EOL]))
+        .compile()
+        .unwrap();
+        let mut invalid = bytes.as_bytes().to_vec();
+        let surplus_start = udp_surplus_start(&invalid);
+        invalid[surplus_start] ^= 0x01;
+        assert!(!udp_surplus_checksum_valid(&invalid));
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, &invalid).unwrap();
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
+        assert_eq!(udp_options.status(), UdpOptionStatus::OptionChecksumInvalid);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), invalid.as_slice());
+    }
+
+    #[test]
+    fn udp_options_ocs_explicit_override_survives_compile() {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2213)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0xaa, 0xbb])
+            / UdpOptions::from_bytes([UDP_OPTION_NOP, UDP_OPTION_EOL]).option_checksum(0x1234))
+        .compile()
+        .unwrap();
+
+        let surplus = udp_surplus(bytes.as_bytes());
+        assert_eq!(
+            &surplus[..UDP_OPTION_CHECKSUM_LEN],
+            &0x1234u16.to_be_bytes()
+        );
+        assert!(!udp_surplus_checksum_valid(bytes.as_bytes()));
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
+        assert_eq!(udp_options.option_checksum_value(), Some(0x1234));
+        assert_eq!(udp_options.status(), UdpOptionStatus::OptionChecksumInvalid);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn udp_options_alignment_even_and_odd_surplus_offsets() {
+        let even = (Ipv4::new().src(src()).dst(dst()).id(0x2214)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0xaa, 0xbb])
+            / UdpOptions::from_bytes([UDP_OPTION_EOL]))
+        .compile()
+        .unwrap();
+        let even_surplus = udp_surplus(even.as_bytes());
+        assert_eq!(even_surplus.len(), UDP_OPTION_CHECKSUM_LEN + 1);
+        assert!(udp_surplus_checksum_valid(even.as_bytes()));
+        let even_decoded =
+            Packet::decode_from_l3(crate::NetworkLayer::Ipv4, even.as_bytes()).unwrap();
+        assert_eq!(
+            even_decoded
+                .layer::<UdpOptions>()
+                .unwrap()
+                .alignment_bytes(),
+            Some([].as_slice())
+        );
+
+        let odd = (Ipv4::new().src(src()).dst(dst()).id(0x2215)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0xaa])
+            / UdpOptions::from_bytes([UDP_OPTION_EOL]))
+        .compile()
+        .unwrap();
+        let odd_surplus = udp_surplus(odd.as_bytes());
+        assert_eq!(odd_surplus.len(), 1 + UDP_OPTION_CHECKSUM_LEN + 1);
+        assert_eq!(odd_surplus[0], 0);
+        assert!(udp_surplus_checksum_valid(odd.as_bytes()));
+        let odd_decoded =
+            Packet::decode_from_l3(crate::NetworkLayer::Ipv4, odd.as_bytes()).unwrap();
+        let odd_options = odd_decoded.layer::<UdpOptions>().unwrap();
+        assert_eq!(odd_options.status(), UdpOptionStatus::Valid);
+        assert_eq!(odd_options.alignment_bytes(), Some([0].as_slice()));
+    }
+
+    #[test]
+    fn udp_options_alignment_nonzero_fill_ignores_options() {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2216)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes([0xaa])
+            / UdpOptions::from_bytes([UDP_OPTION_EOL]))
+        .compile()
+        .unwrap();
+        let mut invalid = bytes.as_bytes().to_vec();
+        let surplus_start = udp_surplus_start(&invalid);
+        invalid[surplus_start] = 0x7f;
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, &invalid).unwrap();
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
+        assert_eq!(udp_options.status(), UdpOptionStatus::Ignored);
+        assert_eq!(udp_options.alignment_bytes(), Some([0x7f].as_slice()));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), invalid.as_slice());
     }
 
     #[test]
@@ -1340,7 +1756,8 @@ mod tests {
 
         assert_eq!(
             &bytes.as_bytes()[2..4],
-            &((20 + UDP_HEADER_LEN + dns_len + surplus.len()) as u16).to_be_bytes()
+            &((20 + UDP_HEADER_LEN + dns_len + udp_surplus(bytes.as_bytes()).len()) as u16)
+                .to_be_bytes()
         );
         assert_eq!(
             &bytes.as_bytes()[24..26],
@@ -1384,7 +1801,8 @@ mod tests {
 
         assert_eq!(
             &bytes.as_bytes()[2..4],
-            &((20 + UDP_HEADER_LEN + dhcp_len + surplus.len()) as u16).to_be_bytes()
+            &((20 + UDP_HEADER_LEN + dhcp_len + udp_surplus(bytes.as_bytes()).len()) as u16)
+                .to_be_bytes()
         );
         assert_eq!(
             &bytes.as_bytes()[24..26],
@@ -1416,7 +1834,7 @@ mod tests {
 
         assert_eq!(
             &bytes.as_bytes()[2..4],
-            &((20 + UDP_HEADER_LEN + 3 + 2) as u16).to_be_bytes()
+            &((20 + UDP_HEADER_LEN + 3 + udp_surplus(bytes.as_bytes()).len()) as u16).to_be_bytes()
         );
         assert_eq!(
             &bytes.as_bytes()[24..26],
@@ -1453,7 +1871,11 @@ mod tests {
         assert_eq!(decoded.layer::<Udp>().unwrap().length_value(), Some(11));
         assert_eq!(raw_layers.len(), 1);
         assert_eq!(raw_layers[0].as_bytes(), udp_payload);
-        assert_eq!(udp_options.as_bytes(), surplus);
+        assert_eq!(udp_options.status(), UdpOptionStatus::Ignored);
+        assert_eq!(udp_options.alignment_bytes(), Some([0xde].as_slice()));
+        assert_eq!(udp_options.option_checksum_value(), Some(0xadbe));
+        assert_eq!(udp_options.as_bytes(), &[0xef]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
     #[test]

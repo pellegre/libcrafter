@@ -1691,8 +1691,12 @@ fn decode_fragment_header(bytes: &[u8]) -> Result<(Ipv6FragmentHeader, u8, &[u8]
 fn payload_len_after(ctx: LayerContext<'_>) -> usize {
     ctx.packet()
         .iter()
+        .enumerate()
         .skip(ctx.index() + 1)
-        .map(Layer::encoded_len)
+        .map(|(index, layer)| {
+            let layer_ctx = LayerContext::new(ctx.packet(), index);
+            layer.encoded_len_with_context(&layer_ctx)
+        })
         .sum()
 }
 
