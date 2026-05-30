@@ -144,6 +144,7 @@ _ROOT_ALIASES: dict[str, str] = {
     "IPv6": "l3:ipv6",
     "Loopback": "link:null-loopback",
     "Raw": "link:raw",
+    "l2:ipv4": "l3:ipv4",
     "link:linux-sll": "link:linux-cooked",
 }
 
@@ -170,6 +171,7 @@ def decode_root(
         "link:linux-sll": "CookedLinux",
         "link:null-loopback": "Loopback",
         "link:raw": "Raw",
+        "l2:ipv4": "IP",
         "l3:ipv4": "IP",
         "l3:ipv6": "IPv6",
         "l3:raw": "Raw",
