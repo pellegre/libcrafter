@@ -64,6 +64,17 @@ QEMU_WIRE_POLICY: JSONObject = {
 }
 
 
+def _oracle_private_group() -> str:
+    """Per-run private group for live infra isolation.
+
+    Defaults to ORACLE_PRIVATE_GROUP so unit tests stay deterministic; the
+    live CLI sets ORACLE_LIVE_PRIVATE_GROUP to a unique value per invocation
+    so concurrent live runs get isolated networks/IP allocations.
+    """
+
+    return os.environ.get("ORACLE_LIVE_PRIVATE_GROUP", ORACLE_PRIVATE_GROUP)
+
+
 def qemu_default_provider_capabilities(
     *,
     dry_run: bool,
@@ -129,7 +140,7 @@ def qemu_wire_endpoint_plan(
     *,
     dry_run: bool,
     client: wire_client.WireClient | None = None,
-    private_group: str = ORACLE_PRIVATE_GROUP,
+    private_group: str | None = None,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
 ) -> dict[str, object]:
@@ -138,7 +149,7 @@ def qemu_wire_endpoint_plan(
     return _oracle_wire_endpoint_plan(
         dry_run=dry_run,
         client=client,
-        private_group=private_group,
+        private_group=private_group or _oracle_private_group(),
         confirm_live_run=confirm_live_run,
         created_endpoint_ids=created_endpoint_ids,
     )
@@ -256,7 +267,7 @@ def validate_qemu_provider_workflow(
             errors.append("provider command must be marked as wire_command")
         if command.metadata.get("provider") != PROVIDER_NAME:
             errors.append("provider command must target QEMU")
-        if command.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+        if command.metadata.get("private_group") != _oracle_private_group():
             errors.append("provider command must use the QEMU oracle private group")
         if dry_run and command.metadata.get("operation") in {
             "doctor",
@@ -281,7 +292,7 @@ def validate_qemu_provider_workflow(
             "provider": PROVIDER_NAME,
             "dry_run": dry_run,
             "creates_infrastructure": not dry_run,
-            "private_group": ORACLE_PRIVATE_GROUP,
+            "private_group": _oracle_private_group(),
             "always_collect_artifacts": True,
             "always_teardown": True,
         },
@@ -304,9 +315,9 @@ def validate_qemu_dry_run_exchange(
         errors.append("sender endpoint must use a private network")
     if not bool(exchange.receiver.metadata.get("private_network")):
         errors.append("receiver endpoint must use a private network")
-    if exchange.sender.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+    if exchange.sender.metadata.get("private_group") != _oracle_private_group():
         errors.append("sender endpoint must use the QEMU oracle private group")
-    if exchange.receiver.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+    if exchange.receiver.metadata.get("private_group") != _oracle_private_group():
         errors.append("receiver endpoint must use the QEMU oracle private group")
     if exchange.sender.metadata.get("provider") != PROVIDER_NAME:
         errors.append("sender endpoint must be a QEMU endpoint")
@@ -335,7 +346,7 @@ def validate_qemu_dry_run_exchange(
             "direction": exchange.direction,
             "packet_index": exchange.index,
             "private_network": True,
-            "private_group": ORACLE_PRIVATE_GROUP,
+            "private_group": _oracle_private_group(),
             "creates_infrastructure": False,
             "live_packet_exchange": False,
         },
@@ -466,10 +477,10 @@ def qemu_wire_comparison_policy(plan: PacketPlan) -> JSONObject:
 def _oracle_lab_request(
     *,
     dry_run: bool,
-    private_group: str | None = ORACLE_PRIVATE_GROUP,
+    private_group: str | None = None,
     confirm_live_run: bool = False,
 ) -> LabRequest:
-    group = private_group or ORACLE_PRIVATE_GROUP
+    group = private_group or _oracle_private_group()
     return LabRequest(
         provider=PROVIDER_NAME,
         profile=ORACLE_LIVE_SUITE,
@@ -549,7 +560,7 @@ def _oracle_wire_endpoint_plan(
     *,
     dry_run: bool,
     client: wire_client.WireClient | None = None,
-    private_group: str | None = ORACLE_PRIVATE_GROUP,
+    private_group: str | None = None,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
 ) -> dict[str, object]:
@@ -623,7 +634,7 @@ def _oracle_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "would_create_infrastructure": False,
                 "oracle_two_endpoint": True,
                 "private_network": True,
-                "private_group": ORACLE_PRIVATE_GROUP,
+                "private_group": _oracle_private_group(),
                 "wire_policy": dict(QEMU_WIRE_POLICY),
                 "wire_command": True,
                 "operation": "exec",
@@ -1049,7 +1060,7 @@ class QemuLiveProviderAdapter:
         return qemu_wire_endpoint_plan(
             dry_run=dry_run,
             client=client,
-            private_group=private_group or self.private_group or ORACLE_PRIVATE_GROUP,
+            private_group=private_group or _oracle_private_group(),
             confirm_live_run=confirm_live_run,
             created_endpoint_ids=created_endpoint_ids,
         )
