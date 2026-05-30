@@ -241,6 +241,7 @@ coverage_cases:
   - dns-record-ptr
   - dns-record-mx
   - dns-record-txt
+  - dns-mx-txt-records
   - dns-record-soa
   - dns-record-srv
   - dns-soa-srv-records

@@ -751,6 +751,20 @@
       "notes": "Oracle fixture case. NS, CNAME, and PTR answers whose owner and embedded RDATA names are compression pointers in the Scapy-owned raw bytes; libcrafter normalizes to the same uncompressed DnsRecordData::Name model on decode (reference_to_libcrafter only, normalized byte policy)."
     },
     {
+      "name": "dns-mx-txt-records",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Authoritative DNS response with one MX answer (preference + nested exchange name) and TXT answers covering a single string, multiple strings, an empty string, a non-UTF-8 binary string, and a 255-octet character-string; uncompressed and strict bytes in both directions."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",

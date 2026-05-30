@@ -2047,6 +2047,63 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
             },
         ]
         return
+    if "mx-txt-records" in key:
+        # A response carrying one MX answer and a sequence of TXT answers so a
+        # single message exercises the MX preference + nested exchange name plus
+        # every TXT character-string shape libcrafter must preserve: one string,
+        # multiple strings, an empty string, a non-UTF-8 binary string (carried
+        # as hex so neither materializer mangles the octets), and a single
+        # string at the 255-octet length boundary. Both materializers emit
+        # uncompressed names and exact-length character-strings, so the encode is
+        # byte-exact in both directions.
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative", "recursion_available"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "MX"}]
+        fields["answers"] = [
+            {
+                "name": "example.com.",
+                "type": "MX",
+                "ttl": 3600,
+                "preference": 10,
+                "exchange": "mail.example.com.",
+            },
+            {
+                "name": "example.com.",
+                "type": "TXT",
+                "ttl": 300,
+                "strings": ["v=spf1 -all"],
+            },
+            {
+                "name": "example.com.",
+                "type": "TXT",
+                "ttl": 300,
+                "strings": ["first chunk", "second chunk"],
+            },
+            {
+                "name": "empty.example.com.",
+                "type": "TXT",
+                "ttl": 300,
+                "strings": [""],
+            },
+            {
+                "name": "bin.example.com.",
+                "type": "TXT",
+                "ttl": 300,
+                # Non-UTF-8 octets (NUL, 0xfe, 0xff, DEL) carried as hex so the
+                # character-string bytes survive both materializers verbatim.
+                "strings": [{"hex": "000a1ffeff617f"}],
+            },
+            {
+                "name": "max.example.com.",
+                "type": "TXT",
+                "ttl": 300,
+                # A single character-string at the 255-octet length boundary.
+                "strings": [{"hex": "78" * 255}],
+            },
+        ]
+        return
     if "multi-question-classes" in key:
         # A single query carrying several questions in a deterministic order that
         # exercise the QTYPE and QCLASS axes together: named QTYPEs (A, AAAA, MX,
