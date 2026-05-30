@@ -196,7 +196,14 @@ class SvcbHttpsRecordTest(unittest.TestCase):
         self.assertEqual(encoded[23:], b"\x00\x00")
 
     @unittest.skipUnless(_SCAPY_AVAILABLE, "scapy not importable")
-    def test_high_level_https_record_round_trips_priority_and_params(self) -> None:
+    def test_https_record_carries_priority_target_and_verbatim_params(self) -> None:
+        # Scapy's high-level SvcParam field re-interprets known SvcParamKeys (it
+        # length-prefixes the alpn id list and rejects raw port/ipvNhint bytes),
+        # so the backend builds the exact SVCB/HTTPS RDATA octets and hands them
+        # to a generic DNSRR (TYPE 65). The SvcParamValue is opaque wire data, so
+        # the assertion checks the verbatim RDATA bytes rather than Scapy's lossy
+        # per-key dissection: SvcPriority 1, root target (single 0x00), then the
+        # alpn SvcParam {key 0x0001, length 0x0009, value 0268320568332d3239}.
         record = packets._dns_record_entry(
             {
                 "type": "HTTPS",
@@ -210,15 +217,19 @@ class SvcbHttpsRecordTest(unittest.TestCase):
             },
             _scapy_all,
         )
-        decoded = _scapy_all.DNS(
-            bytes(_scapy_all.raw(_scapy_all.DNS(ancount=1, an=record)))
-        )
+        self.assertEqual(record.type, 65)  # HTTPS
+        rdata = bytes(record.rdata)
+        expected_rdata = bytes.fromhex("0001" + "00" + "0001" + "0009" + "0268320568332d3239")
+        self.assertEqual(rdata, expected_rdata)
 
-        https = decoded.an[0]
-        self.assertEqual(https.type, 65)  # HTTPS
-        self.assertEqual(https.svc_priority, 1)
-        self.assertEqual(https.svc_params[0].key, 1)
-        self.assertEqual(bytes(https.svc_params[0].value), bytes.fromhex("0268320568332d3239"))
+        # The verbatim RDATA bytes survive a full DNS message round trip. Scapy
+        # re-dissects TYPE 65 as DNSRRHTTPS on decode, so re-serialize the whole
+        # message and confirm the RDATA octets appear unchanged in the wire image
+        # rather than reading Scapy's lossy per-key SvcParam fields.
+        message = bytes(_scapy_all.raw(_scapy_all.DNS(ancount=1, an=record)))
+        self.assertIn(expected_rdata, message)
+        reencoded = bytes(_scapy_all.raw(_scapy_all.DNS(message)))
+        self.assertIn(expected_rdata, reencoded)
 
 
 if __name__ == "__main__":

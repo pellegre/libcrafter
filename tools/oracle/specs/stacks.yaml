@@ -269,6 +269,7 @@ stacks:
       - dns-dnssec-nsec3
       - dns-dnssec-nsec3-empty-salt
       - dns-dnssec-unknown-algorithm
+      - dns-svcb-https
       - dns-svcb-alias
       - dns-svcb-service
       - dns-svcb-root-target

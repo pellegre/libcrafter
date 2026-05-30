@@ -408,6 +408,91 @@ mod dns_service_rdata {
     }
 
     #[test]
+    fn https_service_mode_full_param_set_sorts_and_preserves_values() {
+        // Mirror of the dns-svcb-https oracle case: an HTTPS ServiceMode answer
+        // with a root target carrying the full named SvcParam set (RFC 9460 / RFC
+        // 9461) supplied out of key order plus an unknown key, proving that the
+        // params encode in strictly increasing SvcParamKey order while each
+        // SvcParamValue is preserved verbatim as opaque bytes.
+        use super::super::{
+            DNS_SVCB_KEY_DOHPATH, DNS_SVCB_KEY_ECH, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_MANDATORY,
+            DNS_SVCB_KEY_NO_DEFAULT_ALPN,
+        };
+        let unknown_key = 0xff00u16;
+        let params = SvcParams::new([
+            // Deliberately scrambled construction order: unknown key, ipv6hint,
+            // ech, dohpath, mandatory, alpn, no-default-alpn, port, ipv4hint.
+            SvcParam::new(unknown_key, vec![0xde, 0xad, 0xbe, 0xef]),
+            SvcParam::new(
+                DNS_SVCB_KEY_IPV6HINT,
+                b"\x20\x01\x0d\xb8\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01".to_vec(),
+            ),
+            SvcParam::new(DNS_SVCB_KEY_ECH, vec![0x01, 0x02, 0x03]),
+            SvcParam::new(DNS_SVCB_KEY_DOHPATH, b"/dns-query{?dns}".to_vec()),
+            // mandatory lists alpn(1) and port(3) as two-octet keys.
+            SvcParam::mandatory(b"\x00\x01\x00\x03".to_vec()),
+            SvcParam::alpn(b"\x02h2\x05h3-29".to_vec()),
+            SvcParam::no_default_alpn(),
+            SvcParam::port(443),
+            SvcParam::ipv4hint([Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(192, 0, 2, 10)]),
+        ])
+        .unwrap();
+        let record = DnsRecord::https("example.com.", 7200, 1, ".", params);
+        let (data, original, recompiled) = round_trip_answer(record);
+        let DnsRecordData::Https {
+            priority,
+            target,
+            params,
+        } = data
+        else {
+            panic!("expected HTTPS data");
+        };
+        assert_eq!(priority, 1);
+        assert_eq!(target, DnsName::root());
+        // Keys appear in strictly increasing numeric order with the unknown key
+        // last (RFC 9460 Section 2.2).
+        let keys: Vec<u16> = params.params().iter().map(SvcParam::key).collect();
+        assert_eq!(
+            keys,
+            vec![
+                DNS_SVCB_KEY_MANDATORY,
+                DNS_SVCB_KEY_ALPN,
+                DNS_SVCB_KEY_NO_DEFAULT_ALPN,
+                DNS_SVCB_KEY_PORT,
+                DNS_SVCB_KEY_IPV4HINT,
+                DNS_SVCB_KEY_ECH,
+                DNS_SVCB_KEY_IPV6HINT,
+                DNS_SVCB_KEY_DOHPATH,
+                unknown_key,
+            ]
+        );
+        // Opaque values survive verbatim.
+        assert_eq!(
+            params.get(DNS_SVCB_KEY_MANDATORY),
+            Some(&[0x00, 0x01, 0x00, 0x03][..])
+        );
+        assert_eq!(params.get(DNS_SVCB_KEY_ALPN), Some(&b"\x02h2\x05h3-29"[..]));
+        assert_eq!(params.get(DNS_SVCB_KEY_NO_DEFAULT_ALPN), Some(&[][..]));
+        assert_eq!(
+            params.get(DNS_SVCB_KEY_PORT),
+            Some(&443u16.to_be_bytes()[..])
+        );
+        assert_eq!(
+            params.get(DNS_SVCB_KEY_IPV4HINT),
+            Some(&[192, 0, 2, 1, 192, 0, 2, 10][..])
+        );
+        assert_eq!(
+            params.get(DNS_SVCB_KEY_DOHPATH),
+            Some(&b"/dns-query{?dns}"[..])
+        );
+        assert_eq!(params.get(unknown_key), Some(&[0xde, 0xad, 0xbe, 0xef][..]));
+        // The unknown key surfaces no mnemonic.
+        assert_eq!(svcb_param_key_name(unknown_key), None);
+        // Byte-stable round trip through the packet stack.
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
     fn svcb_param_key_names_cover_source_backed_keys() {
         assert_eq!(
             svcb_param_key_name(super::super::DNS_SVCB_KEY_MANDATORY),

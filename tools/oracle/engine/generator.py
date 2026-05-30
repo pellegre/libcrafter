@@ -2045,6 +2045,82 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
             },
         ]
         return
+    if "svcb-https" in key:
+        # An authoritative response carrying one answer per SVCB/HTTPS
+        # service-binding shape (RFC 9460 / RFC 9461). Every SvcParamValue is
+        # opaque wire data carried verbatim through both backends; the Scapy
+        # reference owns the exact RDATA bytes and libcrafter materializes the
+        # same bytes through DnsRecord::svcb / ::https and SvcParams, so the case
+        # is strict-byte in both directions. The third answer feeds params in a
+        # deliberately scrambled key order; both the libcrafter SvcParams
+        # constructor and the reference RDATA builder sort the params into
+        # strictly increasing SvcParamKey order, so the encoded output is
+        # deterministic regardless of source order. Values:
+        #   * mandatory (0): the two-octet SvcParamKey list [alpn(1), port(3)];
+        #   * alpn (1): the length-prefixed ALPN id list "h2"/"h3-29";
+        #   * no-default-alpn (2): an empty value;
+        #   * port (3): the 16-bit port in network byte order;
+        #   * ipv4hint (4): two concatenated documentation IPv4 addresses;
+        #   * ipv6hint (6): one documentation IPv6 address;
+        #   * dohpath (7): the RFC 9461 DoH URI template as UTF-8 octets;
+        #   * an unknown SvcParamKey (65280): opaque bytes preserved verbatim.
+        # (svcb-https is dispatched here before any shorter dns-svcb / dns-https
+        # substring branch, so resolution stays deterministic.)
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "HTTPS"}]
+        fields["answers"] = [
+            {
+                # SVCB AliasMode: SvcPriority 0 with a real (non-root) target and
+                # an empty SvcParams list (RFC 9460 Section 2.4.2).
+                "name": "example.com.",
+                "type": "SVCB",
+                "class": "IN",
+                "ttl": 3600,
+                "priority": 0,
+                "target": "foo.example.com.",
+                "params": [],
+            },
+            {
+                # HTTPS ServiceMode: non-zero SvcPriority with a root target and
+                # the full named SvcParam set, listed out of key order to prove
+                # the deterministic sort. mandatory lists alpn(1) and port(3).
+                "name": "example.com.",
+                "type": "HTTPS",
+                "class": "IN",
+                "ttl": 7200,
+                "priority": 1,
+                "target": ".",
+                "params": [
+                    {"key": "ipv6hint", "value": {"hex": "20010db8000000000000000000000001"}},
+                    {"key": "port", "value": {"hex": "01bb"}},
+                    {"key": "alpn", "value": {"hex": "0268320568332d3239"}},
+                    {"key": "mandatory", "value": {"hex": "00010003"}},
+                    {"key": "no-default-alpn", "value": {"hex": ""}},
+                    {"key": "dohpath", "value": {"hex": "2f646e732d71756572797b3f646e737d"}},
+                    {"key": "ipv4hint", "value": {"hex": "c0000201c000020a"}},
+                ],
+            },
+            {
+                # SVCB ServiceMode with a non-root target carrying an unknown
+                # SvcParamKey (65280, RFC 6895 private use) plus a named param, so
+                # an unrecognized key still round trips byte-for-byte as opaque
+                # bytes alongside a known key.
+                "name": "svc.example.com.",
+                "type": "SVCB",
+                "class": "IN",
+                "ttl": 60,
+                "priority": 16,
+                "target": "svc.example.net.",
+                "params": [
+                    {"key": 65280, "value": {"hex": "deadbeef"}},
+                    {"key": "no-default-alpn", "value": {"hex": ""}},
+                ],
+            },
+        ]
+        return
     if "header-flags-opcodes" in key:
         fields["is_response"] = True
         fields["opcode"] = "status"

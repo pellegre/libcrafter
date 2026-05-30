@@ -1942,15 +1942,89 @@ def _dns_record_nsec3(record: Mapping[str, object], scapy_all: Any, *, name: str
 
 def _dns_record_svcb(rr_type: str) -> Any:
     def builder(record: Mapping[str, object], scapy_all: Any, *, name: str, ttl: int) -> Any:
-        factory = scapy_all.DNSRRSVCB if rr_type == "SVCB" else scapy_all.DNSRRHTTPS
-        return factory(
-            svc_priority=_int(record.get("priority", record.get("svc_priority")), 0),
-            target_name=_dns_normalized_name(record.get("target", record.get("target_name"))),
-            svc_params=_dns_svc_params(record.get("params", record.get("svc_params")), scapy_all),
+        # Scapy's high-level DNSRRSVCB/DNSRRHTTPS SvcParam field re-interprets and
+        # re-encodes the per-key SvcParamValue (for example it length-prefixes the
+        # alpn id list and rejects raw port/ipvNhint bytes), so it cannot carry the
+        # SvcParamValue verbatim the way libcrafter and the wire format require.
+        # The oracle contract compares SvcParam values as opaque bytes, so this
+        # builder owns the exact RDATA octets and hands them to Scapy as a generic
+        # DNSRR (TYPE 64/65) whose rdata is preserved verbatim. Scapy still
+        # re-dissects the bytes as SVCB/HTTPS on decode; the byte image is the
+        # reference boundary either way.
+        rdata = _dns_svcb_rdata_bytes(record)
+        return scapy_all.DNSRR(
+            type=_dns_record_type_int(rr_type),
+            rdata=rdata,
             **_dns_rr_common(record, name=name, ttl=ttl),
         )
 
     return builder
+
+
+def _dns_svcb_rdata_bytes(record: Mapping[str, object]) -> bytes:
+    """Build SVCB/HTTPS RDATA verbatim: SvcPriority, uncompressed TargetName, then
+    SvcParams in strictly increasing SvcParamKey order with opaque values.
+
+    The TargetName is uncompressed (RFC 9460 Section 2.2) and may be the root
+    name ``.``. Each SvcParam is a {SvcParamKey, length, value} tuple whose value
+    bytes are carried exactly as given so the encoding matches libcrafter's
+    byte-for-byte. Params are sorted by ascending key to mirror the libcrafter
+    SvcParams ordering rule.
+    """
+
+    priority = _int(record.get("priority", record.get("svc_priority")), 0)
+    target = dns_raw.dns_name_bytes(record.get("target", record.get("target_name")))
+    params = _dns_svcb_param_tuples(record.get("params", record.get("svc_params")))
+    params.sort(key=lambda pair: pair[0])
+    body = bytearray()
+    body += int(priority & 0xFFFF).to_bytes(2, "big")
+    body += target
+    for key, value in params:
+        body += int(key & 0xFFFF).to_bytes(2, "big")
+        body += int(len(value) & 0xFFFF).to_bytes(2, "big")
+        body += value
+    return bytes(body)
+
+
+def _dns_svcb_param_tuples(value: object) -> list[tuple[int, bytes]]:
+    if not isinstance(value, list):
+        return []
+    params: list[tuple[int, bytes]] = []
+    for param in value:
+        if not isinstance(param, Mapping):
+            continue
+        key = _dns_svc_param_key_code(param.get("key"))
+        param_value = _dns_blob(param.get("value"))
+        params.append((key, param_value))
+    return params
+
+
+def _dns_svc_param_key_code(value: object) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    text = _text(value, "0").strip()
+    if text.isdigit():
+        return int(text)
+    lowered = text.lower().replace("_", "-")
+    code = _SVCB_PARAM_KEY_CODES.get(lowered)
+    if code is not None:
+        return code
+    return int(text, 0)
+
+
+# SvcParamKey mnemonic -> numeric codepoint (IANA DNS SVCB SvcParamKeys, RFC
+# 9460 / RFC 9461). Mirrors the libcrafter dns_svc_param_key mapping so a case
+# may give either a named or a numeric key.
+_SVCB_PARAM_KEY_CODES: dict[str, int] = {
+    "mandatory": 0,
+    "alpn": 1,
+    "no-default-alpn": 2,
+    "port": 3,
+    "ipv4hint": 4,
+    "ech": 5,
+    "ipv6hint": 6,
+    "dohpath": 7,
+}
 
 
 def _dns_record_opt(record: Mapping[str, object], scapy_all: Any, *, name: str, ttl: int) -> Any:

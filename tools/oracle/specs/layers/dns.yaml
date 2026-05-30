@@ -258,6 +258,7 @@ coverage_cases:
   - dns-dnssec-nsec
   - dnssec-nsec3
   - dns-dnssec-nsec3
+  - dns-svcb-https
   - dns-svcb-alias
   - dns-svcb-service
   - dns-https-service
