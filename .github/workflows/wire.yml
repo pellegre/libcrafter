@@ -12,6 +12,10 @@ on:
         description: "Type run to create Hetzner wire endpoints and exchange packets."
         required: true
         default: "no"
+      confirm_vm_dhcp_live:
+        description: "Type run to create local QEMU/VirtualBox endpoints for DHCP live validation."
+        required: true
+        default: "no"
       oracle_live_profile:
         description: "Oracle profile for Hetzner wire dry-run and real exchange."
         required: true
@@ -45,7 +49,7 @@ env:
 
 jobs:
   dry-run:
-    name: Hetzner wire endpoint dry runs
+    name: wire endpoint dry runs
     runs-on: ubuntu-latest
     env:
       ORACLE_LIVE_PROFILE: ${{ github.event.inputs.oracle_live_profile || 'smoke' }}
@@ -76,14 +80,17 @@ jobs:
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
 
-      - name: Run oracle DHCP IPv4 live dry run
+      - name: Run oracle DHCP IPv4 VM matrix dry run
         run: |
-          tools/oracle/run live --backend scapy --provider hetzner --dry-run \
+          python3 tools/oracle/engine/live_provider_matrix.py \
+            --providers qemu,virtualbox \
+            --backend scapy \
             --profile smoke \
             --seed 133 \
             --count 2 \
             --case dhcp-discover \
-            --out target/oracle/dhcp-hetzner-dry-run
+            --dry-run \
+            --out target/oracle/dhcp-vm-matrix-dry-run
 
       - name: Run probe Hetzner wire dry run
         run: |
@@ -100,7 +107,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             target/oracle/live
-            target/oracle/dhcp-hetzner-dry-run
+            target/oracle/dhcp-vm-matrix-dry-run
             target/probe
 
   hetzner-live:
@@ -156,16 +163,6 @@ jobs:
             --profile "$ORACLE_LIVE_PROFILE" \
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
-
-      - name: Run real Hetzner DHCP IPv4 oracle exchange
-        run: |
-          tools/oracle/run live --backend scapy --provider hetzner \
-            --confirm-live-run \
-            --profile smoke \
-            --seed 133 \
-            --count 2 \
-            --case dhcp-discover \
-            --out target/oracle/dhcp-hetzner-live
 
       - name: Run real Hetzner probe exchange
         run: |
@@ -233,6 +230,57 @@ jobs:
           if-no-files-found: ignore
           path: |
             target/oracle/live
-            target/oracle/dhcp-hetzner-live
             target/probe
             target/wire-artifacts
+
+  vm-dhcp-live:
+    name: protected VM DHCP live exchange
+    runs-on: [self-hosted, linux]
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_vm_dhcp_live == 'run' }}
+    environment: vm-live
+    timeout-minutes: 120
+    concurrency:
+      group: vm-dhcp-live
+      cancel-in-progress: false
+    env:
+      CONFIRM_VM_DHCP_LIVE: ${{ github.event.inputs.confirm_vm_dhcp_live }}
+      LIBCRAFTER_ORACLE_VM_SMOKE_ALLOW_CREATE: "1"
+      LIBCRAFTER_ORACLE_VM_SMOKE_STRICT: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate protected inputs
+        run: |
+          if [ "${CONFIRM_VM_DHCP_LIVE}" != "run" ]; then
+            echo "::error::Set confirm_vm_dhcp_live=run to create local VM resources."
+            exit 78
+          fi
+
+      - name: Install oracle dependencies
+        run: |
+          python3 --version
+
+      - name: Run real VM DHCP oracle exchange
+        run: |
+          python3 tools/oracle/engine/live_provider_matrix.py \
+            --providers qemu,virtualbox \
+            --backend scapy \
+            --profile smoke \
+            --seed 133 \
+            --count 2 \
+            --case dhcp-discover \
+            --real \
+            --allow-vm-create \
+            --strict-vm-smoke \
+            --confirm-live-run \
+            --out target/oracle/dhcp-vm-matrix-live
+
+      - name: Upload VM DHCP artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcrafter-wire-vm-dhcp-${{ github.run_id }}
+          if-no-files-found: ignore
+          path: target/oracle/dhcp-vm-matrix-live
