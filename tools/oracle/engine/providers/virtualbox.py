@@ -1,8 +1,8 @@
 """VirtualBox oracle live orchestration planning.
 
 This adapter maps the oracle two-endpoint live lab onto the local VirtualBox
-wire provider. VirtualBox currently exposes packet exchange through a bridged
-LAN interface, so it does not use private groups or requested private IPs.
+wire provider. VirtualBox uses a private same-segment internal network, so DHCP
+coverage stays off any bridged or public LAN.
 """
 
 from __future__ import annotations
@@ -42,9 +42,10 @@ from ..model import JSONObject, PacketPlan
 PROVIDER_NAME = "virtualbox"
 WIRE_ENTRYPOINT = "tools/wire/run"
 ORACLE_LIVE_SUITE = "oracle-live"
-BRIDGE_INTERFACE_ENV = "LIBCRAFTER_VBOX_BRIDGE_IFACE"
-PLANNED_LIBCRAFTER_LAN_ADDRESS = "192.0.2.110"
-PLANNED_REFERENCE_LAN_ADDRESS = "192.0.2.120"
+ORACLE_PRIVATE_GROUP = "oracle-live-private"
+PRIVATE_NETWORK_CIDR = "10.78.0.0/24"
+LIBCRAFTER_PRIVATE_ADDRESS = "10.78.0.10"
+REFERENCE_PRIVATE_ADDRESS = "10.78.0.20"
 CAPABILITY_REPORT_ARTIFACT = "live-artifacts/oracle-live/capabilities.json"
 PROVIDER_CAPABILITY_NAMES = (
     "ipv4_unicast",
@@ -68,7 +69,7 @@ def virtualbox_default_provider_capabilities(
     dry_run: bool,
     source: str = "planned-defaults",
 ) -> JSONObject:
-    """Return conservative VirtualBox bridged-LAN capability defaults."""
+    """Return conservative VirtualBox private-network capability defaults."""
 
     capabilities = VIRTUALBOX_LAB_PROVIDER_ADAPTER.default_provider_capabilities(
         dry_run=dry_run,
@@ -106,14 +107,14 @@ def virtualbox_token_configured() -> bool:
     return VIRTUALBOX_LAB_PROVIDER_ADAPTER.credentials_available()
 
 
-def virtualbox_lan_plan(*, dry_run: bool) -> JSONObject:
-    """Return local VM resources required for an oracle VirtualBox LAN lab."""
+def virtualbox_private_network_plan(*, dry_run: bool) -> JSONObject:
+    """Return local VM resources required for an oracle VirtualBox private lab."""
 
     return _oracle_planned_infrastructure(dry_run=dry_run)
 
 
 def virtualbox_packet_exchange_metadata(*, dry_run: bool) -> JSONObject:
-    """Return packet-exchange network metadata for the VirtualBox LAN lab."""
+    """Return packet-exchange network metadata for the VirtualBox private lab."""
 
     return _oracle_packet_exchange_metadata(dry_run=dry_run)
 
@@ -134,26 +135,27 @@ def _planned_virtualbox_endpoint(
 ) -> LiveEndpoint:
     metadata: JSONObject = {
         "provider": PROVIDER_NAME,
-        "exposure": "lan",
+        "exposure": "private",
         "dry_run": dry_run,
         "creates_infrastructure": not dry_run,
         "would_create_infrastructure": dry_run,
-        "isolated_network": False,
-        "private_network": False,
-        "bridged_lan": True,
+        "isolated_network": True,
+        "private_network": True,
+        "private_network_cidr": PRIVATE_NETWORK_CIDR,
+        "bridged_lan": False,
         "resource_type": "virtualbox-vm",
         "peer_role": peer_role,
         "peer_address": peer_address,
         "planned_address": True,
-        "address_source": "oracle-planned-lan-placeholder",
-        "bridge_interface_env": BRIDGE_INTERFACE_ENV,
+        "address_source": "oracle-planned-private-address",
+        "private_group": ORACLE_PRIVATE_GROUP,
     }
     if role == "reference_backend":
         metadata["backend"] = "scapy"
     return LiveEndpoint(
         endpoint_id=f"virtualbox-planned-{role}",
         role=role,
-        interface="lan",
+        interface="private",
         address=address,
         metadata=metadata,
     )
@@ -163,14 +165,16 @@ def virtualbox_wire_endpoint_plan(
     *,
     dry_run: bool,
     client: wire_client.WireClient | None = None,
+    private_group: str | None = ORACLE_PRIVATE_GROUP,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
 ) -> dict[str, object]:
-    """Create or plan the two LAN wire endpoints used by VirtualBox oracle runs."""
+    """Create or plan the two private wire endpoints used by VirtualBox oracle runs."""
 
     return _oracle_wire_endpoint_plan(
         dry_run=dry_run,
         client=client,
+        private_group=private_group,
         confirm_live_run=confirm_live_run,
         created_endpoint_ids=created_endpoint_ids,
     )
@@ -180,47 +184,51 @@ def _live_endpoint_from_wire_plan(
     endpoint_plan: JSONObject,
     *,
     role: str,
-    planned_address: str,
+    private_ip: str,
+    peer_address: str,
     dry_run: bool,
 ) -> LiveEndpoint:
-    interface = _lan_interface(endpoint_plan)
+    interface = _private_interface(endpoint_plan)
     discovered_address = _optional_string(interface.get("ipv4"))
     if discovered_address is None and not dry_run:
         endpoint_id = _string_or(endpoint_plan.get("endpoint_id"), f"virtualbox-{role}")
         raise RuntimeError(
-            f"virtualbox wire manifest {endpoint_id!r} lacks a LAN packet-exchange IPv4 address"
+            f"virtualbox wire manifest {endpoint_id!r} lacks a private packet-exchange IPv4 address"
         )
-    address = discovered_address or planned_address
-    interface_metadata = _json_object(interface.get("metadata", {}))
+    address = discovered_address or private_ip
     metadata: JSONObject = {
         "provider": PROVIDER_NAME,
-        "exposure": "lan",
+        "exposure": "private",
         "dry_run": dry_run,
         "creates_infrastructure": not dry_run,
         "would_create_infrastructure": dry_run,
-        "isolated_network": False,
-        "private_network": False,
-        "bridged_lan": True,
+        "isolated_network": True,
+        "private_network": True,
+        "private_network_cidr": PRIVATE_NETWORK_CIDR,
+        "bridged_lan": False,
         "resource_type": "wire-endpoint",
         "planned_address": discovered_address is None,
         "address_source": (
-            "oracle-planned-lan-placeholder"
+            "oracle-planned-private-address"
             if discovered_address is None
-            else "manifest-lan-interface"
+            else "manifest-private-interface"
         ),
+        "peer_role": (
+            "reference_backend" if role == "libcrafter" else "libcrafter"
+        ),
+        "peer_address": peer_address,
         "wire_endpoint_plan": endpoint_plan,
         "manifest_path": endpoint_plan.get("manifest_path"),
         "artifact_dir": endpoint_plan.get("artifact_dir"),
-        "bridge_interface": interface_metadata.get("bridge_interface"),
-        "bridge_selection": interface_metadata.get("bridge_selection"),
-        "bridge_env": interface_metadata.get("bridge_env", BRIDGE_INTERFACE_ENV),
+        "private_group": _wire_private_group(endpoint_plan),
+        "provider_network_id": interface.get("provider_network_id"),
         "mac_address": interface.get("mac"),
         **({"backend": "scapy"} if role == "reference_backend" else {}),
     }
     return LiveEndpoint(
         endpoint_id=_string_or(endpoint_plan.get("endpoint_id"), f"virtualbox-planned-{role}"),
         role=role,
-        interface=_string_or(interface.get("name"), "lan"),
+        interface=_string_or(interface.get("name"), "private"),
         address=address,
         ipv6_address=_optional_string(interface.get("ipv6")),
         metadata=metadata,
@@ -252,21 +260,31 @@ def _with_peer_metadata(endpoints: dict[str, LiveEndpoint]) -> dict[str, LiveEnd
     }
 
 
-def _lan_interface(endpoint_plan: JSONObject) -> JSONObject:
+def _private_interface(endpoint_plan: JSONObject) -> JSONObject:
     interfaces = endpoint_plan.get("interfaces")
     if isinstance(interfaces, list):
         for item in interfaces:
-            if isinstance(item, dict) and item.get("exposure") == "lan":
+            if isinstance(item, dict) and item.get("exposure") == "private":
+                return {str(key): value for key, value in item.items() if isinstance(key, str)}
+        for item in interfaces:
+            if isinstance(item, dict):
                 return {str(key): value for key, value in item.items() if isinstance(key, str)}
     return {}
 
 
-def _json_object(value: object) -> JSONObject:
-    return {
-        str(key): item
-        for key, item in value.items()
-        if isinstance(key, str)
-    } if isinstance(value, Mapping) else {}
+def _wire_private_group(endpoint_plan: JSONObject) -> str | None:
+    metadata = endpoint_plan.get("metadata")
+    if isinstance(metadata, dict):
+        private_group = metadata.get("private_group")
+        if isinstance(private_group, str):
+            return private_group
+    interface = _private_interface(endpoint_plan)
+    interface_metadata = interface.get("metadata")
+    if isinstance(interface_metadata, dict):
+        private_group = interface_metadata.get("private_group")
+        if isinstance(private_group, str):
+            return private_group
+    return None
 
 
 def _optional_string(value: object) -> str | None:
@@ -294,8 +312,8 @@ def validate_virtualbox_provider_workflow(
     purposes = {command.purpose for command in commands}
     required = {
         "check-virtualbox-provider",
-        "create-libcrafter-lan-wire-endpoint",
-        "create-reference-lan-wire-endpoint",
+        "create-libcrafter-private-wire-endpoint",
+        "create-reference-private-wire-endpoint",
         "run-oracle-live-exchange-suite",
         "collect-live-endpoint-artifacts",
         "teardown-disposable-virtualbox-endpoints",
@@ -313,10 +331,17 @@ def validate_virtualbox_provider_workflow(
             errors.append("provider command must be marked as wire_command")
         if command.metadata.get("provider") != PROVIDER_NAME:
             errors.append("provider command must target VirtualBox")
-        if command.metadata.get("private_network") is True:
-            errors.append("provider command must not require a private network")
-        if "--private-group" in command.argv or "--private-ip" in command.argv:
-            errors.append("VirtualBox provider commands must not pass private network flags")
+        if command.metadata.get("private_network") is not True:
+            errors.append("provider command must require a private network")
+        if command.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+            errors.append("provider command must use the VirtualBox oracle private group")
+        if command.metadata.get("bridged_lan") is True:
+            errors.append("provider command must not require bridged LAN")
+        if command.metadata.get("operation") == "create":
+            if "--private-group" not in command.argv:
+                errors.append("VirtualBox private create command lacks --private-group")
+            if "--private-ip" not in command.argv:
+                errors.append("VirtualBox private create command lacks --private-ip")
         if dry_run and command.metadata.get("operation") in {
             "doctor",
             "create",
@@ -340,7 +365,9 @@ def validate_virtualbox_provider_workflow(
             "provider": PROVIDER_NAME,
             "dry_run": dry_run,
             "creates_infrastructure": not dry_run,
-            "bridged_lan": True,
+            "private_network": True,
+            "private_group": ORACLE_PRIVATE_GROUP,
+            "bridged_lan": False,
             "always_collect_artifacts": True,
             "always_teardown": True,
         },
@@ -350,7 +377,7 @@ def validate_virtualbox_provider_workflow(
 def validate_virtualbox_dry_run_exchange(
     exchange: LiveExchangePlan,
 ) -> LiveValidationCheck:
-    """Validate that a VirtualBox dry-run exchange is LAN-backed and non-mutating."""
+    """Validate that a VirtualBox dry-run exchange is private and non-mutating."""
 
     errors: list[str] = []
     if exchange.provider != PROVIDER_NAME:
@@ -359,20 +386,24 @@ def validate_virtualbox_dry_run_exchange(
         errors.append("VirtualBox dry-run cannot claim live packet exchange")
     if exchange.sender.role == exchange.receiver.role:
         errors.append("sender and receiver roles must differ")
-    if bool(exchange.sender.metadata.get("private_network")):
-        errors.append("sender endpoint must not use a private network")
-    if bool(exchange.receiver.metadata.get("private_network")):
-        errors.append("receiver endpoint must not use a private network")
-    if not bool(exchange.sender.metadata.get("bridged_lan")):
-        errors.append("sender endpoint must use bridged LAN")
-    if not bool(exchange.receiver.metadata.get("bridged_lan")):
-        errors.append("receiver endpoint must use bridged LAN")
+    if not bool(exchange.sender.metadata.get("private_network")):
+        errors.append("sender endpoint must use a private network")
+    if not bool(exchange.receiver.metadata.get("private_network")):
+        errors.append("receiver endpoint must use a private network")
+    if exchange.sender.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+        errors.append("sender endpoint must use the VirtualBox oracle private group")
+    if exchange.receiver.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+        errors.append("receiver endpoint must use the VirtualBox oracle private group")
+    if bool(exchange.sender.metadata.get("bridged_lan")):
+        errors.append("sender endpoint must not use bridged LAN")
+    if bool(exchange.receiver.metadata.get("bridged_lan")):
+        errors.append("receiver endpoint must not use bridged LAN")
     if exchange.sender.metadata.get("provider") != PROVIDER_NAME:
         errors.append("sender endpoint must be a VirtualBox endpoint")
     if exchange.receiver.metadata.get("provider") != PROVIDER_NAME:
         errors.append("receiver endpoint must be a VirtualBox endpoint")
     if exchange.sender.address == exchange.receiver.address:
-        errors.append("sender and receiver LAN addresses must differ")
+        errors.append("sender and receiver private addresses must differ")
     if (
         exchange.sender_command.sends_live_packets
         or exchange.receiver_command.sends_live_packets
@@ -393,7 +424,9 @@ def validate_virtualbox_dry_run_exchange(
             "provider": PROVIDER_NAME,
             "direction": exchange.direction,
             "packet_index": exchange.index,
-            "bridged_lan": True,
+            "private_network": True,
+            "private_group": ORACLE_PRIVATE_GROUP,
+            "bridged_lan": False,
             "creates_infrastructure": False,
             "live_packet_exchange": False,
         },
@@ -524,24 +557,33 @@ def virtualbox_wire_comparison_policy(plan: PacketPlan) -> JSONObject:
 def _oracle_lab_request(
     *,
     dry_run: bool,
+    private_group: str | None = ORACLE_PRIVATE_GROUP,
     confirm_live_run: bool = False,
 ) -> LabRequest:
+    group = private_group or ORACLE_PRIVATE_GROUP
     return LabRequest(
         provider=PROVIDER_NAME,
         profile=ORACLE_LIVE_SUITE,
         seed=0,
         roles=[
-            LabRole(name="libcrafter", planned_ipv4=PLANNED_LIBCRAFTER_LAN_ADDRESS),
-            LabRole(name="reference_backend", planned_ipv4=PLANNED_REFERENCE_LAN_ADDRESS),
+            LabRole(
+                name="libcrafter",
+                requested_private_ipv4=LIBCRAFTER_PRIVATE_ADDRESS,
+            ),
+            LabRole(
+                name="reference_backend",
+                requested_private_ipv4=REFERENCE_PRIVATE_ADDRESS,
+            ),
         ],
         dry_run=dry_run,
         confirm_live_run=confirm_live_run,
         workload_label=ORACLE_LIVE_SUITE,
         metadata={
             "session_id": ORACLE_LIVE_SUITE,
-            "role_lan_ipv4s": {
-                "libcrafter": PLANNED_LIBCRAFTER_LAN_ADDRESS,
-                "reference_backend": PLANNED_REFERENCE_LAN_ADDRESS,
+            "private_group": group,
+            "role_private_ipv4s": {
+                "libcrafter": LIBCRAFTER_PRIVATE_ADDRESS,
+                "reference_backend": REFERENCE_PRIVATE_ADDRESS,
             },
         },
     )
@@ -550,9 +592,6 @@ def _oracle_lab_request(
 def _oracle_planned_infrastructure(*, dry_run: bool) -> JSONObject:
     request = _oracle_lab_request(dry_run=dry_run)
     infrastructure = VIRTUALBOX_LAB_PROVIDER_ADAPTER.planned_infrastructure(request)
-    network = infrastructure.get("network")
-    if isinstance(network, dict):
-        network.setdefault("bridge_interface_env", network.get("bridge_env", BRIDGE_INTERFACE_ENV))
     provider_capabilities = infrastructure.get("provider_capabilities")
     if isinstance(provider_capabilities, dict):
         provider_capabilities["capability_report_artifact"] = CAPABILITY_REPORT_ARTIFACT
@@ -561,19 +600,21 @@ def _oracle_planned_infrastructure(*, dry_run: bool) -> JSONObject:
 
 
 def _oracle_packet_exchange_metadata(*, dry_run: bool) -> JSONObject:
+    request = _oracle_lab_request(dry_run=dry_run)
+    private_group = VIRTUALBOX_LAB_PROVIDER_ADAPTER.private_group(request)
     return {
         "provider": PROVIDER_NAME,
         "wire_provider": VIRTUALBOX_LAB_PROVIDER_ADAPTER.wire_provider,
         "wire_exposure": VIRTUALBOX_LAB_PROVIDER_ADAPTER.wire_exposure,
         "endpoint_roles": ["libcrafter", "reference_backend"],
-        "private_group": None,
-        "isolated_network": False,
-        "private_network": False,
-        "bridged_lan": True,
+        "private_group": private_group,
+        "isolated_network": True,
+        "private_network": True,
+        "private_network_cidr": PRIVATE_NETWORK_CIDR,
+        "bridged_lan": False,
         "packet_exchange_network": VIRTUALBOX_LAB_PROVIDER_ADAPTER.wire_exposure,
-        "packet_exchange_network_label": "virtualbox-bridged-lan",
-        "address_source": "guest-lan-interface-discovery",
-        "bridge_interface_env": BRIDGE_INTERFACE_ENV,
+        "packet_exchange_network_label": "virtualbox-private-internal-network",
+        "address_source": "static-private-ipv4",
         "dry_run": dry_run,
     }
 
@@ -601,11 +642,13 @@ def _oracle_wire_endpoint_plan(
     *,
     dry_run: bool,
     client: wire_client.WireClient | None = None,
+    private_group: str | None = ORACLE_PRIVATE_GROUP,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
 ) -> dict[str, object]:
     request = _oracle_lab_request(
         dry_run=dry_run,
+        private_group=private_group,
         confirm_live_run=confirm_live_run,
     )
     plan = VIRTUALBOX_LAB_PROVIDER_ADAPTER.wire_endpoint_plan(
@@ -672,9 +715,9 @@ def _oracle_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "creates_infrastructure": False,
                 "would_create_infrastructure": False,
                 "oracle_two_endpoint": True,
-                "private_network": False,
-                "bridged_lan": True,
-                "bridge_interface_env": BRIDGE_INTERFACE_ENV,
+                "private_network": True,
+                "private_group": ORACLE_PRIVATE_GROUP,
+                "bridged_lan": False,
                 "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
                 "wire_command": True,
                 "operation": "exec",
@@ -690,9 +733,9 @@ def _live_provider_command_from_lab(command: LabCommandPlan) -> LiveCommandPlan:
     metadata["operation"] = _oracle_operation(command.operation)
     metadata.setdefault("provider", PROVIDER_NAME)
     metadata.setdefault("exposure", VIRTUALBOX_LAB_PROVIDER_ADAPTER.wire_exposure)
-    metadata.setdefault("private_network", False)
-    metadata.setdefault("bridged_lan", True)
-    metadata.setdefault("bridge_interface_env", BRIDGE_INTERFACE_ENV)
+    metadata.setdefault("private_network", True)
+    metadata.setdefault("private_group", ORACLE_PRIVATE_GROUP)
+    metadata.setdefault("bridged_lan", False)
     metadata.setdefault("wire_policy", dict(VIRTUALBOX_WIRE_POLICY))
     metadata.setdefault("wire_command", True)
     return LiveCommandPlan(
@@ -710,7 +753,7 @@ def _oracle_workflow_purpose(command: LabCommandPlan) -> str:
         return "check-virtualbox-provider"
     if command.operation == "wire.create":
         suffix = "libcrafter" if command.role == "libcrafter" else "reference"
-        return f"create-{suffix}-lan-wire-endpoint"
+        return f"create-{suffix}-private-wire-endpoint"
     if command.operation == "wire.collect_artifacts":
         return "collect-live-endpoint-artifacts"
     if command.operation == "wire.destroy":
@@ -735,8 +778,9 @@ def _peer_roles_for(role: LabRole, roles: Sequence[LabRole]) -> list[LabRole]:
 
 
 def _planned_manifest_for_role(role: LabRole, *, request: LabRequest) -> EndpointManifest:
+    private_group = VIRTUALBOX_LAB_PROVIDER_ADAPTER.private_group(request)
     return EndpointManifest(
-        endpoint_id=f"virtualbox-planned-{role.name}",
+        endpoint_id=f"virtualbox-planned-{_endpoint_suffix(role.name)}",
         provider=VIRTUALBOX_LAB_PROVIDER_ADAPTER.wire_provider,
         exposure=VIRTUALBOX_LAB_PROVIDER_ADAPTER.wire_exposure,
         status="planned" if request.dry_run else "created",
@@ -745,14 +789,13 @@ def _planned_manifest_for_role(role: LabRole, *, request: LabRequest) -> Endpoin
         ssh=EndpointSSHInfo(host="127.0.0.1", user="root"),
         interfaces=[
             NetworkInterface(
-                name="lan",
+                name="private",
                 exposure=VIRTUALBOX_LAB_PROVIDER_ADAPTER.wire_exposure,
-                ipv4=role.planned_ipv4,
+                ipv4=role.requested_private_ipv4 or role.planned_ipv4,
+                provider_network_id=private_group,
                 metadata={
-                    "bridge_interface": "auto",
-                    "bridge_selection": "auto",
-                    "bridge_env": BRIDGE_INTERFACE_ENV,
-                    "type": "bridged-lan",
+                    "private_group": private_group,
+                    "type": "virtualbox-internal-network",
                 },
             )
         ],
@@ -760,12 +803,14 @@ def _planned_manifest_for_role(role: LabRole, *, request: LabRequest) -> Endpoin
         artifact_dir=f"/tmp/libcrafter-wire/{PROVIDER_NAME}/{role.name}",
         metadata={
             "planned": True,
-            "bridge_interface": "auto",
-            "bridge_selection": "auto",
-            "bridge_env": BRIDGE_INTERFACE_ENV,
-            "type": "bridged-lan",
+            "private_group": private_group,
+            "type": "virtualbox-internal-network",
         },
     )
+
+
+def _endpoint_suffix(role: str) -> str:
+    return "reference" if role == "reference_backend" else role
 
 
 @dataclass(frozen=True, slots=True)
@@ -776,6 +821,8 @@ class _LabWireCreateResponse:
     provider: str
     exposure: str
     role: str
+    private_group: str | None
+    private_ip: str | None
     dry_run: bool
 
     def command_plan(
@@ -790,11 +837,10 @@ class _LabWireCreateResponse:
             {
                 "provider": self.provider,
                 "exposure": self.exposure,
-                "private_group": None,
-                "private_ip": None,
-                "private_network": False,
-                "bridged_lan": True,
-                "bridge_interface_env": BRIDGE_INTERFACE_ENV,
+                "private_group": self.private_group,
+                "private_ip": self.private_ip,
+                "private_network": True,
+                "bridged_lan": False,
                 "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
                 "wire_command": True,
             }
@@ -806,6 +852,8 @@ class _LabWireCreateResponse:
                 provider=self.provider,
                 exposure=self.exposure,
                 role=self.role,
+                private_group=self.private_group,
+                private_ip=self.private_ip,
                 dry_run=self.dry_run,
             ),
             operation="wire.create",
@@ -859,6 +907,8 @@ class _OracleLabWireClient:
             provider=provider,
             exposure=exposure,
             role=role,
+            private_group=private_group,
+            private_ip=private_ip,
             dry_run=dry_run,
         )
         json_data = _response_json_for_lab(response, manifest)
@@ -869,6 +919,8 @@ class _OracleLabWireClient:
             provider=provider,
             exposure=exposure,
             role=role,
+            private_group=private_group,
+            private_ip=private_ip,
             dry_run=dry_run,
         )
 
@@ -879,6 +931,8 @@ def _response_manifest_for_lab(
     provider: str,
     exposure: str,
     role: str,
+    private_group: str | None,
+    private_ip: str | None,
     dry_run: bool,
 ) -> EndpointManifest:
     manifest = getattr(response, "manifest", None)
@@ -891,6 +945,8 @@ def _response_manifest_for_lab(
             provider=provider,
             exposure=exposure,
             role=role,
+            private_group=private_group,
+            private_ip=private_ip,
             dry_run=dry_run,
         )
     endpoint_id = getattr(manifest, "endpoint_id", None)
@@ -899,6 +955,8 @@ def _response_manifest_for_lab(
         provider=provider,
         exposure=exposure,
         role=role,
+        private_group=private_group,
+        private_ip=private_ip,
         dry_run=dry_run,
     )
 
@@ -916,6 +974,8 @@ def _manifest_from_wire_json(
     provider: str,
     exposure: str,
     role: str,
+    private_group: str | None,
+    private_ip: str | None,
     dry_run: bool,
 ) -> EndpointManifest:
     endpoint_id = data.get("endpoint_id")
@@ -932,14 +992,11 @@ def _manifest_from_wire_json(
     if not interface_models:
         interface_models = [
             NetworkInterface(
-                name="lan",
+                name="private",
                 exposure=exposure,
-                metadata={
-                    "bridge_interface": "auto",
-                    "bridge_selection": "auto",
-                    "bridge_env": BRIDGE_INTERFACE_ENV,
-                    "type": "bridged-lan",
-                },
+                ipv4=private_ip,
+                provider_network_id=private_group,
+                metadata={"private_group": private_group} if private_group else {},
             )
         ]
     metadata = data.get("metadata")
@@ -957,7 +1014,7 @@ def _manifest_from_wire_json(
         metadata={
             **({str(key): value for key, value in metadata.items() if isinstance(key, str)}
                if isinstance(metadata, Mapping) else {}),
-            "bridge_env": BRIDGE_INTERFACE_ENV,
+            **({"private_group": private_group} if private_group else {}),
         },
     )
 
@@ -965,8 +1022,8 @@ def _manifest_from_wire_json(
 def _network_interface_from_json(value: Mapping[str, object]) -> NetworkInterface:
     metadata = value.get("metadata")
     return NetworkInterface(
-        name=_string_or(value.get("name"), "lan"),
-        exposure=_string_or(value.get("exposure"), "lan"),
+        name=_string_or(value.get("name"), "private"),
+        exposure=_string_or(value.get("exposure"), "private"),
         ipv4=_optional_string(value.get("ipv4")),
         ipv6=_optional_string(value.get("ipv6")),
         mac=_optional_string(value.get("mac")),
@@ -995,6 +1052,8 @@ def _wire_create_argv(
     provider: str,
     exposure: str,
     role: str,
+    private_group: str | None,
+    private_ip: str | None,
     dry_run: bool,
 ) -> list[str]:
     argv = [
@@ -1008,6 +1067,10 @@ def _wire_create_argv(
         role,
         "--json",
     ]
+    if private_group is not None:
+        argv.extend(["--private-group", private_group])
+    if private_ip is not None:
+        argv.extend(["--private-ip", private_ip])
     if dry_run:
         argv.append("--dry-run")
     return argv
@@ -1015,14 +1078,19 @@ def _wire_create_argv(
 
 @dataclass(frozen=True, slots=True)
 class VirtualBoxLiveProviderAdapter:
-    """Oracle live adapter for the local VirtualBox bridged-LAN wire lab."""
+    """Oracle live adapter for the local VirtualBox private wire lab."""
 
     name: str = PROVIDER_NAME
     wire_provider: str = PROVIDER_NAME
-    wire_exposure: str = "lan"
+    wire_exposure: str = "private"
     endpoint_roles: tuple[str, str] = ("libcrafter", "reference_backend")
-    private_group: str | None = None
-    endpoint_private_ips: Mapping[str, str] = field(default_factory=dict)
+    private_group: str | None = ORACLE_PRIVATE_GROUP
+    endpoint_private_ips: Mapping[str, str] = field(
+        default_factory=lambda: {
+            "libcrafter": LIBCRAFTER_PRIVATE_ADDRESS,
+            "reference_backend": REFERENCE_PRIVATE_ADDRESS,
+        }
+    )
     artifact_collection_purpose: str = "collect-live-endpoint-artifacts"
     teardown_purpose: str = "teardown-disposable-virtualbox-endpoints"
     credential_label: str = "VirtualBox host prerequisites"
@@ -1059,9 +1127,9 @@ class VirtualBoxLiveProviderAdapter:
         )
 
     def planned_infrastructure(self, *, dry_run: bool) -> JSONObject:
-        """Return planned VirtualBox LAN lab infrastructure."""
+        """Return planned VirtualBox private lab infrastructure."""
 
-        return virtualbox_lan_plan(dry_run=dry_run)
+        return virtualbox_private_network_plan(dry_run=dry_run)
 
     def packet_exchange_metadata(self, *, dry_run: bool) -> JSONObject:
         """Return VirtualBox packet-exchange network metadata."""
@@ -1082,13 +1150,12 @@ class VirtualBoxLiveProviderAdapter:
         confirm_live_run: bool = False,
         created_endpoint_ids: list[str] | None = None,
     ) -> dict[str, object]:
-        """Create or plan the two VirtualBox LAN wire endpoints."""
+        """Create or plan the two VirtualBox private wire endpoints."""
 
-        if private_group is not None:
-            raise ValueError("VirtualBox oracle live adapter does not support private_group")
         return virtualbox_wire_endpoint_plan(
             dry_run=dry_run,
             client=client,
+            private_group=private_group or ORACLE_PRIVATE_GROUP,
             confirm_live_run=confirm_live_run,
             created_endpoint_ids=created_endpoint_ids,
         )
