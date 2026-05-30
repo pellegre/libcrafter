@@ -85,6 +85,7 @@ _SUPPORTED_FEATURES = {
     "pcap_contracts",
     "pcap_link_types",
     "tcp_options",
+    "udp_options",
 }
 _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
     "arp": {
@@ -218,7 +219,17 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "urgptr",
         "window",
     },
-    "udp": {"checksum", "chksum", "dport", "dst_port", "len", "length", "sport", "src_port"},
+    "udp": {
+        "checksum",
+        "chksum",
+        "dport",
+        "dst_port",
+        "len",
+        "length",
+        "options",
+        "sport",
+        "src_port",
+    },
     "vlan": {
         "dei",
         "drop_eligible",
@@ -261,22 +272,26 @@ def encode_packet_plan(
         raise ValueError("packet plan did not produce a packet")
 
     raw_bytes = bytes(raw(packet))
+    raw_bytes, udp_options_metadata = _materialize_udp_options(plan, root, raw_bytes)
+    metadata: JSONObject = {
+        "backend": BACKEND_NAME,
+        "feature_tags": list(plan.feature_tags),
+        "scapy_version": scapy_version,
+        "root_decoder": root,
+        "stack_tags": list(plan.feature_tags),
+        "strict_bytes": plan.strict_bytes,
+        "scapy_stack": [_scapy_layer_name(layer) for layer in stack],
+        "length": len(raw_bytes),
+    }
+    if udp_options_metadata is not None:
+        metadata["udp_options_materialization"] = udp_options_metadata
     return EncodedVector.from_bytes(
         plan=plan,
         backend=BACKEND_NAME,
         raw=raw_bytes,
         root=root,
         decoder=_scapy_decoder(root),
-        metadata={
-            "backend": BACKEND_NAME,
-            "feature_tags": list(plan.feature_tags),
-            "scapy_version": scapy_version,
-            "root_decoder": root,
-            "stack_tags": list(plan.feature_tags),
-            "strict_bytes": plan.strict_bytes,
-            "scapy_stack": [_scapy_layer_name(layer) for layer in stack],
-            "length": len(raw_bytes),
-        },
+        metadata=metadata,
     )
 
 
@@ -347,7 +362,7 @@ def _vlan(plan: PacketPlan, scapy_all: Any) -> Any:
         "prio": _int(_required_field(fields, "vlan", "priority", "prio"), 0),
         "vlan": _int(_required_field(fields, "vlan", "vlan_id", "id", "vlan"), 0),
         "type": _ethertype_value(_required_field(fields, "vlan", "ethertype", "type")),
-        "dei": _int(_required_field(fields, "vlan", "drop_eligible", "dei"), 0),
+        "dei": _int(_optional_field(fields, "drop_eligible", "dei"), 0),
     }
     return scapy_all.Dot1Q(**kwargs)
 
@@ -921,6 +936,325 @@ def _tcp_option_tuples(raw: bytes) -> list[object]:
             options.append((kind, data))
         index += length
     return options
+
+
+def _materialize_udp_options(
+    plan: PacketPlan,
+    root: str,
+    raw: bytes,
+) -> tuple[bytes, JSONObject | None]:
+    udp_fields = _layer_fields(plan.fields, "udp")
+    options = udp_fields.get("options")
+    if not isinstance(options, Mapping):
+        return raw, None
+    if options.get("format") != "udp_surplus_options":
+        raise ValueError("udp.options format must be udp_surplus_options")
+
+    layout = _udp_layout(root, raw)
+    payload = raw[layout["udp_payload_start"] : layout["udp_payload_end"]]
+    declared_payload = _udp_options_application_payload(options)
+    if declared_payload is not None and declared_payload != payload:
+        raise ValueError(
+            "udp.options application payload does not match materialized UDP payload"
+        )
+
+    option_bytes = _udp_surplus_option_bytes(options, payload)
+    if not option_bytes and _udp_options_checksum_mode(options) == "absent":
+        return raw, None
+
+    l3_relative_surplus_start = layout["surplus_start"] - layout["l3_start"]
+    alignment = b"\x00" * (l3_relative_surplus_start & 1)
+    option_checksum = _udp_option_checksum_value(
+        options,
+        alignment=alignment,
+        option_bytes=option_bytes,
+        udp_checksum=int.from_bytes(
+            raw[layout["udp_start"] + 6 : layout["udp_start"] + 8],
+            "big",
+        ),
+    )
+    surplus = alignment + option_checksum.to_bytes(2, "big") + option_bytes
+    materialized = raw[: layout["surplus_start"]] + surplus + raw[layout["surplus_start"] :]
+    materialized = _patch_ip_payload_length(materialized, layout, len(surplus))
+
+    return materialized, {
+        "format": "udp_surplus_options",
+        "native_scapy_support": False,
+        "materialization": "udp_payload_bytes_plus_explicit_surplus",
+        "application_payload_hex": payload.hex(),
+        "udp_length": layout["udp_length"],
+        "udp_checksum": int.from_bytes(
+            materialized[layout["udp_start"] + 6 : layout["udp_start"] + 8],
+            "big",
+        ),
+        "surplus_hex": surplus.hex(),
+        "surplus_length": len(surplus),
+        "surplus_start": layout["surplus_start"],
+        "option_checksum": option_checksum,
+        "option_bytes_hex": option_bytes.hex(),
+        "alignment_hex": alignment.hex(),
+        "placement": "after_udp_length",
+    }
+
+
+def _udp_options_application_payload(options: Mapping[str, object]) -> bytes | None:
+    value = options.get("application_payload")
+    if not isinstance(value, Mapping):
+        return None
+    hex_value = value.get("hex")
+    if not isinstance(hex_value, str):
+        return None
+    payload = bytes.fromhex(hex_value)
+    length = value.get("length")
+    if isinstance(length, int) and length != len(payload):
+        raise ValueError(
+            f"udp.options application payload length mismatch: "
+            f"declared={length} actual={len(payload)}"
+        )
+    return payload
+
+
+def _udp_surplus_option_bytes(options: Mapping[str, object], payload: bytes) -> bytes:
+    items = options.get("items")
+    if not isinstance(items, list):
+        raise ValueError("udp.options.items must be a list")
+    output = bytearray()
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise ValueError("udp.options.items entries must be objects")
+        output.extend(_udp_surplus_option_item_bytes(item, payload))
+    return bytes(output)
+
+
+def _udp_surplus_option_item_bytes(item: Mapping[str, object], payload: bytes) -> bytes:
+    kind = _int(_required_field(item, "udp.options", "kind"), 0)
+    if kind in {0, 1}:
+        return bytes([kind])
+
+    declared_length = _int(_required_field(item, "udp.options", "length"), 0)
+    data = _udp_surplus_option_item_data(kind, item, payload)
+    actual_length = 2 + len(data)
+    if declared_length != actual_length:
+        raise ValueError(
+            f"udp option length mismatch for kind {kind}: "
+            f"declared={declared_length} materialized={actual_length}"
+        )
+    if not 2 <= declared_length <= 255:
+        raise ValueError(f"udp option length must fit one byte: {declared_length}")
+    return bytes([kind, declared_length]) + data
+
+
+def _udp_surplus_option_item_data(
+    kind: int,
+    item: Mapping[str, object],
+    payload: bytes,
+) -> bytes:
+    data_hex = item.get("data_hex")
+    if isinstance(data_hex, str):
+        return bytes.fromhex(data_hex)
+
+    if kind == 2:
+        checksum = item.get("checksum")
+        if checksum == "auto_crc32c_application_payload":
+            return _crc32c(payload).to_bytes(4, "big")
+        if isinstance(checksum, int):
+            return checksum.to_bytes(4, "big")
+    if kind == 4:
+        return _int(
+            _required_field(item, "udp.options", "max_datagram_size"),
+            0,
+        ).to_bytes(2, "big")
+    if kind == 5:
+        return (
+            _int(
+                _required_field(item, "udp.options", "max_reassembled_size"),
+                0,
+            ).to_bytes(2, "big")
+            + bytes(
+                [
+                    _int(
+                        _required_field(item, "udp.options", "segment_count"),
+                        0,
+                    )
+                ]
+            )
+        )
+    if kind in {6, 7}:
+        return _int(_required_field(item, "udp.options", "token"), 0).to_bytes(4, "big")
+    if kind == 8:
+        return (
+            _int(_required_field(item, "udp.options", "tsval"), 0).to_bytes(4, "big")
+            + _int(_required_field(item, "udp.options", "tsecr"), 0).to_bytes(4, "big")
+        )
+
+    declared_length = _int(_required_field(item, "udp.options", "length"), 0)
+    return b"\x00" * max(0, declared_length - 2)
+
+
+def _udp_options_checksum_mode(options: Mapping[str, object]) -> str:
+    checksum = options.get("option_checksum")
+    if isinstance(checksum, Mapping):
+        mode = checksum.get("mode")
+        if isinstance(mode, str):
+            return mode
+    return "auto_internet_checksum"
+
+
+def _udp_option_checksum_value(
+    options: Mapping[str, object],
+    *,
+    alignment: bytes,
+    option_bytes: bytes,
+    udp_checksum: int,
+) -> int:
+    checksum = options.get("option_checksum")
+    if isinstance(checksum, Mapping):
+        value = checksum.get("value")
+        if isinstance(value, int):
+            return value
+        mode = checksum.get("mode")
+        if mode == "absent":
+            return 0
+        if mode == "zero_allowed_when_udp_checksum_zero" and udp_checksum == 0:
+            return 0
+
+    surplus_len = len(alignment) + 2 + len(option_bytes)
+    if surplus_len > 0xFFFF:
+        raise ValueError("udp options surplus length must fit in two bytes")
+    checksum_value = _internet_checksum(
+        surplus_len.to_bytes(2, "big") + b"\x00\x00" + option_bytes
+    )
+    return 0xFFFF if checksum_value == 0 else checksum_value
+
+
+def _udp_layout(root: str, raw: bytes) -> dict[str, int]:
+    l3_start = _l3_start_offset(root, raw)
+    if l3_start >= len(raw):
+        raise ValueError(f"packet is too short for root {root!r}")
+    version = raw[l3_start] >> 4
+    if version == 4:
+        ihl = (raw[l3_start] & 0x0F) * 4
+        if ihl < 20 or l3_start + ihl + 8 > len(raw):
+            raise ValueError("IPv4 packet is too short to locate UDP header")
+        protocol = raw[l3_start + 9]
+        if protocol != 17:
+            raise ValueError(f"IPv4 next protocol is not UDP: {protocol}")
+        ip_end = l3_start + int.from_bytes(raw[l3_start + 2 : l3_start + 4], "big")
+        udp_start = l3_start + ihl
+    elif version == 6:
+        if l3_start + 48 > len(raw):
+            raise ValueError("IPv6 packet is too short to locate UDP header")
+        payload_len = int.from_bytes(raw[l3_start + 4 : l3_start + 6], "big")
+        ip_end = l3_start + 40 + payload_len
+        udp_start = _ipv6_udp_start(raw, l3_start)
+    else:
+        raise ValueError(f"unsupported IP version for UDP options: {version}")
+
+    if udp_start + 8 > len(raw):
+        raise ValueError("packet is too short for UDP header")
+    udp_length = int.from_bytes(raw[udp_start + 4 : udp_start + 6], "big")
+    if udp_length < 8:
+        raise ValueError(f"UDP length is too short: {udp_length}")
+    udp_payload_start = udp_start + 8
+    udp_payload_end = udp_start + udp_length
+    if udp_payload_end > len(raw) or udp_payload_end > ip_end:
+        raise ValueError(
+            f"UDP length exceeds materialized packet: udp_end={udp_payload_end} ip_end={ip_end}"
+        )
+    return {
+        "ip_version": version,
+        "l3_start": l3_start,
+        "ip_end": ip_end,
+        "udp_start": udp_start,
+        "udp_length": udp_length,
+        "udp_payload_start": udp_payload_start,
+        "udp_payload_end": udp_payload_end,
+        "surplus_start": udp_payload_end,
+    }
+
+
+def _l3_start_offset(root: str, raw: bytes) -> int:
+    if root in {"l3:ipv4", "l3:ipv6", "IP", "IPv6"}:
+        return 0
+    if root in {"link:linux-cooked", "link:linux-sll", "CookedLinux"}:
+        return 16
+    if root in {"link:null-loopback", "Loopback"}:
+        return 4
+    if root in {"link:ethernet", "Ether"}:
+        offset = 14
+        while len(raw) >= offset + 4:
+            ethertype = int.from_bytes(raw[offset - 2 : offset], "big")
+            if ethertype not in {0x8100, 0x88A8, 0x9100}:
+                return offset
+            offset += 4
+        return offset
+    raise ValueError(f"unsupported UDP option materialization root: {root!r}")
+
+
+def _ipv6_udp_start(raw: bytes, l3_start: int) -> int:
+    next_header = raw[l3_start + 6]
+    cursor = l3_start + 40
+    while next_header != 17:
+        if cursor + 8 > len(raw):
+            raise ValueError("IPv6 extension header chain is truncated before UDP")
+        if next_header == 44:
+            next_header = raw[cursor]
+            cursor += 8
+            continue
+        if next_header in {0, 43, 60}:
+            header_len = (raw[cursor + 1] + 1) * 8
+            next_header = raw[cursor]
+            cursor += header_len
+            continue
+        raise ValueError(f"IPv6 next header is not UDP: {next_header}")
+    return cursor
+
+
+def _patch_ip_payload_length(raw: bytes, layout: Mapping[str, int], added_len: int) -> bytes:
+    if added_len == 0:
+        return raw
+    output = bytearray(raw)
+    l3_start = layout["l3_start"]
+    if layout["ip_version"] == 4:
+        total_length = int.from_bytes(output[l3_start + 2 : l3_start + 4], "big")
+        total_length += added_len
+        if total_length > 0xFFFF:
+            raise ValueError("IPv4 total length must fit in two bytes")
+        output[l3_start + 2 : l3_start + 4] = total_length.to_bytes(2, "big")
+        output[l3_start + 10 : l3_start + 12] = b"\x00\x00"
+        ihl = (output[l3_start] & 0x0F) * 4
+        checksum = _internet_checksum(bytes(output[l3_start : l3_start + ihl]))
+        output[l3_start + 10 : l3_start + 12] = checksum.to_bytes(2, "big")
+    else:
+        payload_length = int.from_bytes(output[l3_start + 4 : l3_start + 6], "big")
+        payload_length += added_len
+        if payload_length > 0xFFFF:
+            raise ValueError("IPv6 payload length must fit in two bytes")
+        output[l3_start + 4 : l3_start + 6] = payload_length.to_bytes(2, "big")
+    return bytes(output)
+
+
+def _internet_checksum(data: bytes) -> int:
+    if len(data) % 2:
+        data += b"\x00"
+    total = 0
+    for index in range(0, len(data), 2):
+        total += int.from_bytes(data[index : index + 2], "big")
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
+
+
+def _crc32c(data: bytes) -> int:
+    crc = 0xFFFF_FFFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ 0x82F6_3B78
+            else:
+                crc >>= 1
+    return (~crc) & 0xFFFF_FFFF
 
 
 def _require_encode_capability(
