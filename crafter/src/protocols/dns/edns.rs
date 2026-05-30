@@ -119,9 +119,9 @@ pub(super) fn encode_edns_ttl(extended_rcode: u8, version: u8, dnssec_ok: bool, 
 #[cfg(test)]
 mod dns_edns {
     use super::super::{
-        decode_record_data, Dns, DnsRecord, DnsRecordData, EdnsOption,
-        DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
-        DNS_TYPE_OPT,
+        decode_record_data, Dns, DnsName, DnsRecord, DnsRecordData, EdnsOption,
+        DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_FLAG_DO, DNS_EDNS_OPTION_COOKIE,
+        DNS_EDNS_OPTION_NSID, DNS_TYPE_OPT,
     };
     use crate::{Ipv4, NetworkLayer, Packet, Udp};
     use core::net::Ipv4Addr;
@@ -267,5 +267,71 @@ mod dns_edns {
         assert!(Packet::from_layer(Dns::new().additional(opt))
             .compile()
             .is_err());
+    }
+
+    #[test]
+    fn dns_edns_opt_basic_fields_round_trip_through_typed_getters() {
+        // The basic OPT field matrix from the dns-edns-opt-basic oracle case:
+        // the UDP payload size lives in the OPT CLASS while the extended RCODE,
+        // EDNS version, and DO flag are packed into the OPT TTL, with an empty
+        // option list and a root owner name. Each combination must survive a
+        // compile/decode round trip and read back exactly through the typed
+        // getters.
+        for (payload_size, extended_rcode, version, dnssec_ok) in [
+            (DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, 0u8, 0u8, false),
+            (512u16, 0u8, 0u8, true),
+            (1232u16, 0x12u8, 0u8, false),
+            (65535u16, 0u8, 1u8, true),
+        ] {
+            let opt = DnsRecord::opt(payload_size, extended_rcode, version, dnssec_ok, Vec::new());
+            let (record, original, recompiled) = round_trip_opt(opt);
+
+            assert!(record.is_opt());
+            // Root owner name (RFC 6891 Section 6.1.2).
+            assert_eq!(record.name(), ".");
+            // UDP payload size mirrors the raw CLASS field.
+            assert_eq!(record.class(), payload_size);
+            assert_eq!(record.edns_udp_payload_size(), payload_size);
+            // Extended RCODE, version, and DO flag unpack from the TTL.
+            assert_eq!(record.edns_extended_rcode(), extended_rcode);
+            assert_eq!(record.edns_version(), version);
+            assert_eq!(record.edns_dnssec_ok(), dnssec_ok);
+            // Empty RDATA decodes to an empty, non-None option list.
+            assert_eq!(record.edns_options(), Some(&[][..]));
+            assert_eq!(record.data(), &DnsRecordData::Opt(Vec::new()));
+            // The basic builder never sets Z bits beyond the DO flag.
+            let expected_flags = if dnssec_ok { DNS_EDNS_FLAG_DO } else { 0 };
+            assert_eq!(record.edns_flags(), expected_flags);
+            assert_eq!(recompiled, original);
+        }
+    }
+
+    #[test]
+    fn dns_edns_opt_nonzero_z_bits_are_preserved() {
+        // The public DnsRecord::opt builder always packs Z=0, but the general
+        // DnsRecord::new path can carry arbitrary OPT TTL bytes, so non-zero
+        // reserved Z bits (RFC 6891 Section 6.1.4) are preservable through the
+        // public API. Build an OPT whose TTL sets the DO flag plus non-zero Z
+        // bits and confirm both survive the round trip while extended RCODE and
+        // version stay zero.
+        let z_bits: u16 = 0x0102; // reserved Z bits in the low 15-bit field.
+        let ttl = u32::from(DNS_EDNS_FLAG_DO | z_bits);
+        let opt = DnsRecord::new(
+            DnsName::root(),
+            DNS_TYPE_OPT,
+            1232,
+            ttl,
+            DnsRecordData::Opt(Vec::new()),
+        );
+        let (record, original, recompiled) = round_trip_opt(opt);
+
+        assert!(record.is_opt());
+        assert_eq!(record.edns_udp_payload_size(), 1232);
+        assert_eq!(record.edns_extended_rcode(), 0);
+        assert_eq!(record.edns_version(), 0);
+        assert!(record.edns_dnssec_ok());
+        // The full lower-16 flags word carries the DO bit and the Z bits verbatim.
+        assert_eq!(record.edns_flags(), DNS_EDNS_FLAG_DO | z_bits);
+        assert_eq!(recompiled, original);
     }
 }

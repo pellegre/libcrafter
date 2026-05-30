@@ -821,6 +821,20 @@
       "notes": "Oracle fixture case. Authoritative response carrying an unknown private-use numeric TYPE (65280) plus the deferred NSEC3PARAM (51), TLSA (52), KEY (25), and NAPTR (35) types, each as opaque RDATA carried via DNSRR(type=N, rdata=...) on the Scapy reference; libcrafter decodes every answer to DnsRecordData::Raw and recompiles the same bytes. Strict bytes in both directions."
     },
     {
+      "name": "dns-edns-opt-basic",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Response carrying several EDNS(0) OPT pseudo-records in the additional section with a root owner name and empty option list, spanning the bare default, non-default UDP payload sizes (512, 1232, 65535) in the OPT CLASS, a non-zero extended RCODE, a non-default EDNS version, and the DO flag set and clear packed into the OPT TTL. Scapy DNSRROPT and libcrafter DnsRecord::opt pack the same wire fields, so strict bytes hold in both directions."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",

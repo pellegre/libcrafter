@@ -2236,6 +2236,69 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
         ]
         fields.pop("answers", None)
         return
+    if "edns-opt-basic" in key:
+        # A response carrying several EDNS(0) OPT pseudo-records in the additional
+        # section (RFC 6891 Section 6.1). Each OPT exercises a different basic
+        # field combination so a regression in any one packed field reproduces in
+        # isolation: the UDP payload size lives in the OPT CLASS, while the
+        # extended RCODE, EDNS version, and DO flag are packed into the OPT TTL.
+        # The owner name is always root ("."), the option list is empty (the
+        # option-TLV matrix is the separate dns-edns-options-* cases), and every
+        # value round trips byte-for-byte because both the Scapy DNSRROPT
+        # reference and the libcrafter DnsRecord::opt builder pack the same wire
+        # fields. (edns-opt-basic is a substring only of this case id, so the
+        # dispatcher resolves this branch unambiguously.)
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["recursion_available"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields.pop("answers", None)
+        fields["additional"] = [
+            {
+                # Bare OPT: default UDP payload size, no extended RCODE/version,
+                # DO clear, empty option list.
+                "name": ".",
+                "type": "OPT",
+                "udp_payload_size": 4096,
+                "extended_rcode": 0,
+                "version": 0,
+                "dnssec_ok": False,
+                "options": [],
+            },
+            {
+                # Non-default small UDP payload size with the DO flag set.
+                "name": ".",
+                "type": "OPT",
+                "udp_payload_size": 512,
+                "extended_rcode": 0,
+                "version": 0,
+                "dnssec_ok": True,
+                "options": [],
+            },
+            {
+                # Non-zero extended RCODE (upper 8 bits of the 12-bit RCODE) on a
+                # 1232-octet payload size, DO clear.
+                "name": ".",
+                "type": "OPT",
+                "udp_payload_size": 1232,
+                "extended_rcode": 0x12,
+                "version": 0,
+                "dnssec_ok": False,
+                "options": [],
+            },
+            {
+                # Maximum UDP payload size, a non-default EDNS version, DO set.
+                "name": ".",
+                "type": "OPT",
+                "udp_payload_size": 65535,
+                "extended_rcode": 0,
+                "version": 1,
+                "dnssec_ok": True,
+                "options": [],
+            },
+        ]
+        return
     if "response" in key:
         fields["is_response"] = True
         fields.pop("answers", None)

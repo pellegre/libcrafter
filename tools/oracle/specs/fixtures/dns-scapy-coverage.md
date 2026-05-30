@@ -140,7 +140,7 @@ Source read for this matrix:
 
 | Feature | Case ID | Directions | Byte policy | Scapy high-level? | Raw bytes needed? |
 | --- | --- | --- | --- | --- | --- |
-| OPT (type 41) bare record, UDP payload size in CLASS | `dns-edns-opt-basic` | both | strict_bytes | yes (`DNSRROPT`) | no |
+| OPT (type 41) basic fields: bare record, non-default UDP payload size in CLASS, extended RCODE, EDNS version, and DO flag set/clear packed into the TTL, root owner, empty option list | `dns-edns-opt-basic` | both | strict_bytes | yes (`DNSRROPT`) | no |
 | OPT TTL fields: extended RCODE, version, DO flag, Z bits | `dns-edns-opt-ttl-fields` | both | strict_bytes | yes (`DNSRROPT` z/extrcode/version) | no |
 | EDNS option TLVs: NSID, COOKIE, Padding | `dns-edns-options-known` | both | strict_bytes | partial (`EDNS0TLV` raw option data) | yes |
 | Unknown EDNS option code round trips verbatim | `dns-edns-options-unknown` | both | strict_bytes | partial (`EDNS0TLV(optcode=N)`) | yes |
