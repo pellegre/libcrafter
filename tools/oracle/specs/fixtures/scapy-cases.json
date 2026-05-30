@@ -891,6 +891,20 @@
       "notes": "Oracle fixture case. Authoritative response carrying three NSEC3 (type 50) answers per RFC 5155 Section 3.2: answer one has a non-empty salt, a non-empty next hashed owner name, and multiple type bitmap entries (A/NS/SOA/RRSIG/DNSKEY) in a single window block; answer two has an empty salt (Salt Length 0 omits the Salt field); answer three uses an unknown hash algorithm value (0xfe) and an unknown high type bitmap codepoint (TYPE65280) spanning a later window block. The hash algorithm, flags, iterations, salt, and next hashed owner material is wire data only with no cryptographic validation, and salt and hash fields are carried and normalized as bytes rather than text. Scapy DNSRRNSEC3 and libcrafter DnsRecord::nsec3 pack the same uncompressed wire fields, so strict bytes hold in both directions."
     },
     {
+      "name": "dns-svcb-https",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Authoritative response carrying three SVCB/HTTPS (type 64/65) service-binding answers per RFC 9460 / RFC 9461: an SVCB AliasMode answer (SvcPriority 0, non-root target, empty SvcParams); an HTTPS ServiceMode answer (non-zero SvcPriority, root target) carrying the mandatory/alpn/no-default-alpn/port/ipv4hint/ipv6hint/dohpath params supplied out of key order; and an SVCB ServiceMode answer carrying an unknown SvcParamKey (65280) alongside a named key. Each SvcParamValue is opaque wire data carried verbatim, and both libcrafter SvcParams and the reference RDATA builder sort the params into strictly increasing SvcParamKey order. Scapy's high-level SvcParam field re-interprets known keys and rejects raw port/ipvNhint bytes, so the backend builds the exact RDATA octets and hands them to a generic DNSRR; libcrafter materializes the same bytes through DnsRecord::svcb / ::https and SvcParams, so strict bytes hold in both directions."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",

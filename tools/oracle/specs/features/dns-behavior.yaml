@@ -182,6 +182,25 @@ behaviors:
     summary: An authoritative response carrying NSEC3 answers whose hash algorithm, flags, iterations, salt, next hashed owner name, and type bitmaps are wire data only, including a non-empty salt, an empty salt, multiple bitmap entries, an unknown algorithm value, and an unknown bitmap codepoint.
     record_kinds:
       - generic
+  # dns_svcb_https is the combined SVCB/HTTPS service-binding case carrying one
+  # answer per service-binding shape (RFC 9460 / RFC 9461): SVCB AliasMode
+  # (SvcPriority 0, empty SvcParams), SVCB ServiceMode with a non-root target and
+  # a deliberately out-of-order param list that libcrafter and the reference both
+  # sort into strictly increasing SvcParamKey order, an HTTPS ServiceMode answer
+  # with a root target carrying mandatory/alpn/no-default-alpn/port/ipv4hint/
+  # ipv6hint/dohpath params, and an SVCB answer carrying an unknown SvcParamKey.
+  # Each SvcParamValue is opaque wire data carried verbatim, so the Scapy
+  # reference owns the exact RDATA bytes (DNSRR TYPE 64/65, rdata preserved) and
+  # libcrafter materializes the same bytes through DnsRecord::svcb / ::https and
+  # SvcParams. The case is strict-byte in both directions because both sides
+  # emit the same sorted, verbatim-value encoding. Its identifier dns-svcb-https
+  # matches only the combined case id (the shorter dns-svcb / dns-https tokens are
+  # substrings of it, so this branch is dispatched before any of them), keeping
+  # resolution deterministic.
+  - name: dns_svcb_https
+    summary: An authoritative response carrying SVCB and HTTPS service-binding answers spanning AliasMode and ServiceMode priorities, root and non-root targets, empty params, the mandatory/alpn/no-default-alpn/port/ipv4hint/ipv6hint/dohpath params, and an unknown SvcParamKey, each value carried verbatim and the params sorted into strictly increasing key order.
+    record_kinds:
+      - generic
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -446,6 +465,7 @@ case_groups:
     summary: SVCB and HTTPS AliasMode/ServiceMode, root targets, and unknown params.
     byte_policy: strict_bytes
     cases:
+      - dns-svcb-https
       - dns-svcb-alias
       - dns-svcb-root-target
       - dns-https-service
@@ -556,6 +576,7 @@ coverage_cases:
   - dns-dnssec-nsec3
   - dns-dnssec-nsec3-empty-salt
   - dns-dnssec-unknown-algorithm
+  - dns-svcb-https
   - dns-svcb-alias
   - dns-svcb-service
   - dns-svcb-root-target
@@ -862,6 +883,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-dnssec-nsec3-empty-salt
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-svcb-https
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference

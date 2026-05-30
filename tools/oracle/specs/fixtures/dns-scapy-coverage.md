@@ -166,6 +166,7 @@ Source read for this matrix:
 
 | Feature | Case ID | Directions | Byte policy | Scapy high-level? | Raw bytes needed? |
 | --- | --- | --- | --- | --- | --- |
+| Combined SVCB/HTTPS: AliasMode (priority 0) + ServiceMode (non-zero priority), root and non-root targets, empty params, the mandatory/alpn/no-default-alpn/port/ipv4hint/ipv6hint/dohpath params supplied out of order, and an unknown SvcParamKey, all sorted into strictly increasing key order with each SvcParamValue carried verbatim | `dns-svcb-https` | both | strict_bytes (libcrafter and the reference both sort the params into strictly increasing SvcParamKey order and carry each opaque value verbatim, so the wire bytes match byte-for-byte) | no (Scapy's high-level `SvcParam` field re-interprets known keys and rejects raw port/ipvNhint bytes; the backend builds the exact RDATA octets and hands them to a generic `DNSRR` so SvcParamValues are opaque) | yes |
 | SVCB (type 64) AliasMode (priority 0), real target, no params | `dns-svcb-alias` | both | strict_bytes | partial (raw RDATA or `DNSRRSVCB`) | yes |
 | SVCB ServiceMode with sorted SvcParams (alpn, port, ipv4hint) | `dns-svcb-service` | both | normalized: libcrafter sorts SvcParamKeys into strictly increasing order on encode, so an out-of-order source compares by the normalized decoded SvcParams model | partial (raw RDATA) | yes |
 | SVCB/HTTPS root target `.` | `dns-svcb-root-target` | both | strict_bytes | partial (raw RDATA) | yes |
