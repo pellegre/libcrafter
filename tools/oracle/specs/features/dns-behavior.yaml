@@ -113,6 +113,15 @@ behaviors:
     summary: Authoritative response with one MX answer (preference + nested exchange name) and TXT answers covering single, multiple, empty, non-UTF-8 binary, and 255-octet character-strings; uncompressed and byte-exact in both directions.
     record_kinds:
       - generic
+  # raw_unknown_records carries an unknown private-use numeric TYPE plus the
+  # deferred NSEC3PARAM (51), TLSA (52), KEY (25), and NAPTR (35) types, each of
+  # which libcrafter keeps as DnsRecordData::Raw. The identifier
+  # raw-unknown-records is a substring only of dns-raw-unknown-records and of no
+  # other case id, so the behavior matcher resolves it unambiguously.
+  - name: raw_unknown_records
+    summary: Authoritative response carrying an unknown numeric TYPE and the deferred NSEC3PARAM, TLSA, KEY, and NAPTR types as opaque RDATA; libcrafter decodes each to DnsRecordData::Raw and recompiles the same bytes.
+    record_kinds:
+      - generic
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -327,6 +336,7 @@ case_groups:
     summary: Unknown, deferred, and empty RDATA stay DnsRecordData::Raw.
     byte_policy: strict_bytes
     cases:
+      - dns-raw-unknown-records
       - dns-record-raw-unknown
       - dns-record-raw-deferred
       - dns-record-raw-empty
@@ -457,6 +467,7 @@ coverage_cases:
   - dns-record-soa
   - dns-record-srv
   - dns-soa-srv-records
+  - dns-raw-unknown-records
   - dns-record-raw-unknown
   - dns-record-raw-deferred
   - dns-record-raw-empty
@@ -678,6 +689,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-soa-srv-records
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-raw-unknown-records
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference

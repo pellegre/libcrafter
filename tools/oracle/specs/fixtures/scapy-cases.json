@@ -807,6 +807,20 @@
       "notes": "Oracle fixture case. Authoritative response carrying one SOA answer (MNAME, RNAME, SERIAL, REFRESH, RETRY, EXPIRE, MINIMUM) and one SRV answer (priority, weight, port, nested target) in a single message; uncompressed and strict bytes in both directions."
     },
     {
+      "name": "dns-raw-unknown-records",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Authoritative response carrying an unknown private-use numeric TYPE (65280) plus the deferred NSEC3PARAM (51), TLSA (52), KEY (25), and NAPTR (35) types, each as opaque RDATA carried via DNSRR(type=N, rdata=...) on the Scapy reference; libcrafter decodes every answer to DnsRecordData::Raw and recompiles the same bytes. Strict bytes in both directions."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",

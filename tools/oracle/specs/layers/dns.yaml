@@ -245,6 +245,7 @@ coverage_cases:
   - dns-record-soa
   - dns-record-srv
   - dns-soa-srv-records
+  - dns-raw-unknown-records
   - dns-record-raw-unknown
   - dns-edns-opt-basic
   - dns-edns-options-known
