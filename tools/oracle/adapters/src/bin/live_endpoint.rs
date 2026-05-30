@@ -1844,6 +1844,7 @@ fn ip_protocol(value: &Value) -> ExampleResult<u8> {
             "icmp" => Ok(IPPROTO_ICMP),
             "tcp" => Ok(IPPROTO_TCP),
             "udp" => Ok(IPPROTO_UDP),
+            "payload" | "raw" | "unknown" => Ok(253),
             _ => u8_text(text),
         };
     }
@@ -2471,6 +2472,35 @@ mod l2_ipv4_root {
             mode,
             send_mode_for_root("l3:ipv4").expect("l3:ipv4 is a network-layer send root"),
         );
+    }
+
+    #[test]
+    fn ipv4_protocol_unknown_builds_bare_payload_stack() {
+        // The generator emits protocol "unknown" for bare ipv4/payload stacks
+        // (l2_ipv4_payload). The live build path must map it to the reserved 253,
+        // matching the offline materialize/scapy encode, instead of failing to
+        // parse it as an integer.
+        assert_eq!(ip_protocol(&json!("unknown")).expect("unknown protocol maps"), 253);
+        assert_eq!(ip_protocol(&json!("payload")).expect("payload protocol maps"), 253);
+        assert_eq!(ip_protocol(&json!("raw")).expect("raw protocol maps"), 253);
+
+        let plan = json!({
+            "stack": ["ipv4", "payload"],
+            "fields": {
+                "ipv4": {
+                    "src": "10.42.19.10",
+                    "dst": "10.42.19.20",
+                    "identification": 1,
+                    "ttl": 64,
+                    "flags": "none",
+                    "protocol": "unknown"
+                },
+                "payload": {"hex": "deadbeef", "length": 4}
+            }
+        });
+        let packet = build_packet(&plan).expect("ipv4/payload unknown-protocol plan builds");
+        let compiled = packet.compile().expect("plan compiles to bytes");
+        assert!(!compiled.as_bytes().is_empty());
     }
 
     #[test]
