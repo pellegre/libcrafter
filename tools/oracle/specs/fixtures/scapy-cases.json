@@ -709,6 +709,20 @@
       "notes": "DNS response with A, AAAA, CNAME, PTR, MX, TXT, NS, TTLs, flags, counts, and compressed names."
     },
     {
+      "name": "dns-a-aaaa-records",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Authoritative DNS response with A and AAAA answers for documentation IPv4/IPv6 addresses, stable TTLs, and both answer orderings; strict bytes in both directions."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",
