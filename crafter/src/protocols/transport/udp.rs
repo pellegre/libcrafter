@@ -87,6 +87,12 @@ const UDP_OPTION_EXPERIMENT_EXTENDED_MIN_LEN: usize =
     UDP_OPTION_EXTENDED_HEADER_LEN + UDP_OPTION_EXPERIMENT_DATA_MIN_LEN;
 
 /// Inspection status for UDP checksum handling.
+///
+/// IPv6 zero-checksum UDP is not treated as normal UDP by default: RFC 8200
+/// makes the UDP checksum mandatory for IPv6, while RFC 6935 and RFC 6936 only
+/// define narrow, explicitly enabled tunnel exceptions. `crafter` preserves
+/// decoded bytes and reports [`Self::Ipv6ZeroChecksum`] instead of silently
+/// accepting or normalizing that condition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UdpChecksumStatus {
     /// Checksum validation was not attempted.
@@ -99,6 +105,14 @@ pub enum UdpChecksumStatus {
     Invalid,
     /// IPv6 UDP checksum field is zero and requires an explicit exception model.
     Ipv6ZeroChecksum,
+}
+
+impl UdpChecksumStatus {
+    /// Whether this status requires an explicit RFC 6935/RFC 6936 IPv6 zero
+    /// checksum exception before being treated as valid tunnel traffic.
+    pub const fn requires_ipv6_zero_checksum_exception(self) -> bool {
+        matches!(self, Self::Ipv6ZeroChecksum)
+    }
 }
 
 /// Inspection status for UDP surplus option processing.
@@ -1913,6 +1927,11 @@ impl Udp {
     }
 
     /// Inspection status from decoded UDP checksum validation.
+    ///
+    /// A zero IPv6 UDP checksum is reported as
+    /// [`UdpChecksumStatus::Ipv6ZeroChecksum`]. RFC 8200 makes that non-valid
+    /// for ordinary IPv6 UDP, and RFC 6935/RFC 6936 only allow explicitly
+    /// enabled tunnel exceptions.
     pub fn checksum_status(&self) -> UdpChecksumStatus {
         self.checksum_status
     }
@@ -4264,6 +4283,23 @@ mod tests {
             bytes.as_bytes(),
             UdpChecksumStatus::Ipv6ZeroChecksum,
         );
+    }
+
+    #[test]
+    fn udp_ipv6_zero_checksum_default_requires_exception_status_and_roundtrips() {
+        let bytes = (Ipv6::new().src(ipv6_src()).dst(ipv6_dst())
+            / Udp::new().sport(0x1234).dport(0x5678).checksum(0)
+            / Raw::from_bytes([0xde, 0xad, 0xbe]))
+        .compile()
+        .unwrap();
+
+        assert_eq!(ipv6_udp_checksum(bytes.as_bytes()), 0);
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let status = decoded.layer::<Udp>().unwrap().checksum_status();
+        assert_eq!(status, UdpChecksumStatus::Ipv6ZeroChecksum);
+        assert!(status.requires_ipv6_zero_checksum_exception());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
     #[test]
