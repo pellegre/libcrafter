@@ -12,6 +12,16 @@ from .bootstrap import import_scapy
 
 BACKEND_NAME = "scapy"
 
+# Synthetic field key carrying the raw DHCP option TLV region (hex) captured
+# from the live Scapy DHCP sub-layer. Consumed and removed during DHCP field
+# normalization so it never leaks into the comparable model.
+_DHCP_OPTION_REGION_KEY = "__option_region_hex__"
+
+# DHCP option codes whose payload is a single message-type octet (option 53).
+_DHCP_OPTION_MESSAGE_TYPE = 53
+_DHCP_OPTION_PAD = 0
+_DHCP_OPTION_END = 255
+
 _LAYER_ALIASES: dict[str, str] = {
     "ARP": "arp",
     "BOOTP": "dhcp",
@@ -303,18 +313,35 @@ def _packet_layers(packet: Any) -> list[JSONObject]:
     layers: list[JSONObject] = []
     current = packet
     while current is not None and current.__class__.__name__ != "NoPayload":
+        fields = {
+            str(key): _json_value(value)
+            for key, value in sorted(current.fields.items())
+        }
+        if current.__class__.__name__ == "DHCP":
+            # Capture the raw option TLV region so normalization can record
+            # backend-neutral {code, payload_hex} option details instead of the
+            # Scapy-typed option list, which is not byte-comparable across
+            # backends. The DHCP sub-layer's wire bytes are exactly the option
+            # region (after the BOOTP fixed fields and magic cookie).
+            option_bytes = _dhcp_option_region_bytes(current)
+            if option_bytes is not None:
+                fields[_DHCP_OPTION_REGION_KEY] = option_bytes.hex()
         layers.append(
             {
                 "name": current.__class__.__name__,
-                "fields": {
-                    str(key): _json_value(value)
-                    for key, value in sorted(current.fields.items())
-                },
+                "fields": fields,
                 "summary": _text(current.summary()),
             }
         )
         current = current.payload
     return layers
+
+
+def _dhcp_option_region_bytes(dhcp_layer: Any) -> bytes | None:
+    try:
+        return bytes(import_scapy()["all"].raw(dhcp_layer))
+    except Exception:  # pragma: no cover - Scapy serialization edge cases.
+        return None
 
 
 def _normalize_layer_name(native_name: str) -> str:
@@ -404,9 +431,10 @@ def _normalize_dhcp_fields(fields: JSONObject) -> JSONObject:
         "giaddr": "relay_ip",
         "chaddr": "client_hardware_address",
     }
+    option_region_hex = fields.get(_DHCP_OPTION_REGION_KEY)
     output: JSONObject = {}
     for native_name, value in fields.items():
-        if native_name in {"sname", "file"}:
+        if native_name in {"sname", "file", _DHCP_OPTION_REGION_KEY}:
             continue
         if native_name == "options" and isinstance(value, list):
             output["option_count"] = len(value)
@@ -422,7 +450,65 @@ def _normalize_dhcp_fields(fields: JSONObject) -> JSONObject:
     if isinstance(options, Mapping) and options.get("hex") == "63825363":
         output["magic_cookie"] = 0x63825363
         output.pop("options", None)
+    if isinstance(option_region_hex, str):
+        _apply_dhcp_option_details(output, option_region_hex)
     return output
+
+
+def _apply_dhcp_option_details(output: JSONObject, option_region_hex: str) -> None:
+    """Record backend-neutral DHCP option details from the raw TLV region.
+
+    Each option is normalized to a stable ``{code, payload_hex}`` pair carrying
+    the raw option payload (no typed reinterpretation), which compares cleanly
+    against the libcrafter decoded option view regardless of how either backend
+    types the value. The message type (option 53) is also surfaced as an integer
+    so option coverage records it directly rather than only as a count.
+    """
+
+    options = _decode_dhcp_option_tlvs(option_region_hex)
+    if options is None:
+        return
+    output["options"] = options
+    output["option_count"] = len(options)
+    for option in options:
+        if option["code"] == _DHCP_OPTION_MESSAGE_TYPE:
+            payload = bytes.fromhex(option["payload_hex"])
+            if len(payload) == 1:
+                output["message_type"] = payload[0]
+            break
+
+
+def _decode_dhcp_option_tlvs(option_region_hex: str) -> list[JSONObject] | None:
+    """Parse a DHCP option TLV region into ``{code, payload_hex}`` entries.
+
+    Pad (0) and end (255) are single-octet options with empty payloads. A
+    truncated or malformed region returns ``None`` so the raw typed option list
+    handling is preserved instead of emitting partial option details.
+    """
+
+    try:
+        raw = bytes.fromhex(option_region_hex)
+    except ValueError:
+        return None
+    options: list[JSONObject] = []
+    index = 0
+    length = len(raw)
+    while index < length:
+        code = raw[index]
+        index += 1
+        if code in {_DHCP_OPTION_PAD, _DHCP_OPTION_END}:
+            options.append({"code": code, "payload_hex": ""})
+            continue
+        if index >= length:
+            return None
+        option_length = raw[index]
+        index += 1
+        if index + option_length > length:
+            return None
+        payload = raw[index : index + option_length]
+        index += option_length
+        options.append({"code": code, "payload_hex": payload.hex()})
+    return options
 
 
 def _normalize_payload_fields(fields: JSONObject) -> JSONObject:
