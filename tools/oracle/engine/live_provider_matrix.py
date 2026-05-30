@@ -469,6 +469,7 @@ def build_matrix_summary(
     skip_unavailable: bool = False,
     strict_vm_smoke: bool = False,
     allow_vm_create: bool = False,
+    confirm_live_run: bool = False,
     corpus_path: Path,
     corpus_report: Mapping[str, Any],
     offline_report_path: Path,
@@ -483,6 +484,7 @@ def build_matrix_summary(
         "skip_unavailable": skip_unavailable,
         "strict_vm_smoke": strict_vm_smoke,
         "allow_vm_create": allow_vm_create,
+        "confirm_live_run": confirm_live_run,
         "backend": backend,
         "profile": profile,
         "seed": seed,
@@ -568,6 +570,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=_default_real_max_count(),
         help="maximum packet count allowed for guarded real VM smoke",
     )
+    parser.add_argument(
+        "--confirm-live-run",
+        action="store_true",
+        help=(
+            "confirm protected non-dry-run provider execution; required for --real "
+            "(ignored for --dry-run, which never sends packets)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.providers is None:
@@ -592,6 +602,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+
+    if args.real and not args.confirm_live_run:
+        print(
+            "error: real VM matrix requires --confirm-live-run to send live packets; "
+            "no infrastructure was created (use --dry-run to plan without confirmation)",
+            file=sys.stderr,
+        )
+        return 2
 
     if not args.skip_unavailable and args.real and not strict_vm_smoke:
         print("error: real VM matrix requires skip-unavailable or strict mode", file=sys.stderr)
@@ -704,7 +722,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 "--provider",
                 provider,
-                *(["--dry-run"] if args.dry_run else ["--confirm-live-run"]),
+                *(
+                    ["--dry-run"]
+                    if args.dry_run
+                    else (["--confirm-live-run"] if args.confirm_live_run else [])
+                ),
             ]
             live_record = _run_command(
                 live_command,
@@ -765,6 +787,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             skip_unavailable=bool(args.skip_unavailable),
             strict_vm_smoke=strict_vm_smoke,
             allow_vm_create=allow_vm_create,
+            confirm_live_run=bool(args.confirm_live_run),
             corpus_path=corpus_path,
             corpus_report=corpus_report,
             offline_report_path=offline_report_path,
