@@ -112,7 +112,6 @@ pub fn ipv6_pseudo_header_checksum(
 }
 
 /// Compute CRC-32C/Castagnoli over `data`.
-#[allow(dead_code)]
 pub(crate) fn crc32c(data: &[u8]) -> u32 {
     const POLY_REFLECTED: u32 = 0x82f6_3b78;
 
