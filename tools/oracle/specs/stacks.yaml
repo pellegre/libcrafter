@@ -215,9 +215,12 @@ stacks:
       - dns-response-records
       - dns-multiple-questions
       - dns-header-flags-opcodes
+      - dns-header-id
+      - dns-header-qr
       - dns-header-flags
       - dns-header-opcode
       - dns-header-rcode
+      - dns-header-raw-flags
       - dns-header-counts
       - dns-header-empty-sections
       - dns-name-root

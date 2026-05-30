@@ -830,10 +830,15 @@ fn dns_layer(plan: &Value) -> ExampleResult<Dns> {
         .map(dns_response_code)
         .transpose()?
         .unwrap_or(0);
+    let opcode = optional(fields, &["opcode"])
+        .map(dns_opcode)
+        .transpose()?
+        .unwrap_or(DNS_OPCODE_QUERY);
     let mut layer = Dns::new()
         .id(transaction_id)
         .flags(dns_flags(fields)?)
         .response(is_response)
+        .opcode(opcode)
         .rcode(response_code);
 
     if let Some(questions) = optional(fields, &["questions"]) {
@@ -1754,12 +1759,18 @@ fn dns_flags(fields: &Map<String, Value>) -> ExampleResult<u16> {
         for item in value.as_array().into_iter().flatten() {
             if let Some(text) = item.as_str() {
                 match text.to_ascii_lowercase().replace('-', "_").as_str() {
-                    "authoritative" => flags |= DNS_FLAG_AUTHORITATIVE,
-                    "truncated" => flags |= DNS_FLAG_TRUNCATED,
-                    "recursion_desired" => flags |= DNS_FLAG_RECURSION_DESIRED,
-                    "recursion_available" => flags |= DNS_FLAG_RECURSION_AVAILABLE,
-                    "authenticated_data" => flags |= DNS_FLAG_AUTHENTIC_DATA,
-                    "checking_disabled" => flags |= DNS_FLAG_CHECKING_DISABLED,
+                    "authoritative" | "aa" => flags |= DNS_FLAG_AUTHORITATIVE,
+                    "truncated" | "tc" => flags |= DNS_FLAG_TRUNCATED,
+                    "recursion_desired" | "rd" => flags |= DNS_FLAG_RECURSION_DESIRED,
+                    "recursion_available" | "ra" => flags |= DNS_FLAG_RECURSION_AVAILABLE,
+                    "authentic_data" | "authenticated_data" | "ad" => {
+                        flags |= DNS_FLAG_AUTHENTIC_DATA
+                    }
+                    "checking_disabled" | "cd" => flags |= DNS_FLAG_CHECKING_DISABLED,
+                    // Reserved Z bit (header bit 6), between RA (0x0080) and AD
+                    // (0x0020). The crate has no named constant for the reserved
+                    // bit, so mirror Scapy's `z` slot directly.
+                    "reserved_z" | "raw" | "z" => flags |= 0x0040,
                     _ => {}
                 }
             }
@@ -1809,9 +1820,33 @@ fn dns_record_type(value: &Value) -> ExampleResult<u16> {
 fn dns_response_code(value: &Value) -> ExampleResult<u8> {
     if let Some(text) = value.as_str() {
         return match text.to_ascii_lowercase().replace('-', "_").as_str() {
-            "no_error" => Ok(0),
-            "server_failure" => Ok(2),
-            "name_error" => Ok(3),
+            "no_error" | "noerror" => Ok(DNS_RCODE_NOERROR),
+            "format_error" | "formerr" => Ok(DNS_RCODE_FORMERR),
+            "server_failure" | "servfail" => Ok(DNS_RCODE_SERVFAIL),
+            "name_error" | "nxdomain" => Ok(DNS_RCODE_NXDOMAIN),
+            "not_implemented" | "notimp" => Ok(DNS_RCODE_NOTIMP),
+            "refused" => Ok(DNS_RCODE_REFUSED),
+            // Mirror the Scapy backend's representable "unknown" rcode codepoint
+            // (RFC 6895 reserves 11 in the base header range).
+            "unknown" => Ok(DNS_RCODE_DSOTYPENI),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn dns_opcode(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "query" => Ok(DNS_OPCODE_QUERY),
+            "iquery" | "inverse_query" => Ok(DNS_OPCODE_IQUERY),
+            "status" => Ok(DNS_OPCODE_STATUS),
+            "notify" => Ok(DNS_OPCODE_NOTIFY),
+            "update" => Ok(DNS_OPCODE_UPDATE),
+            "dso" => Ok(DNS_OPCODE_DSO),
+            // Mirror the Scapy backend's representable "unknown" opcode codepoint
+            // (14 is an unassigned base-header opcode value).
+            "unknown" => Ok(14),
             _ => u8_text(text),
         };
     }

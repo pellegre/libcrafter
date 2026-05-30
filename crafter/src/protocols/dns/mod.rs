@@ -740,12 +740,15 @@ mod dns_tests {
 #[cfg(test)]
 mod dns_header_codepoints {
     use super::{
-        dns_type_name, Dns, DnsQuestion, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE,
-        DNS_FLAG_RECURSION_DESIRED, DNS_OPCODE_QUERY, DNS_OPCODE_STATUS, DNS_OPCODE_UPDATE,
-        DNS_RCODE_NOERROR, DNS_RCODE_NXDOMAIN, DNS_RCODE_REFUSED, DNS_TYPE_A, DNS_TYPE_HTTPS,
-        DNS_TYPE_SOA, DNS_TYPE_SRV,
+        dns_type_name, Dns, DnsQuestion, DnsRecord, DNS_FLAG_AUTHENTIC_DATA,
+        DNS_FLAG_AUTHORITATIVE, DNS_FLAG_CHECKING_DISABLED, DNS_FLAG_QR_RESPONSE,
+        DNS_FLAG_RECURSION_AVAILABLE, DNS_FLAG_RECURSION_DESIRED, DNS_FLAG_TRUNCATED,
+        DNS_OPCODE_QUERY, DNS_OPCODE_STATUS, DNS_OPCODE_UPDATE, DNS_RCODE_NOERROR,
+        DNS_RCODE_NXDOMAIN, DNS_RCODE_REFUSED, DNS_TYPE_A, DNS_TYPE_HTTPS, DNS_TYPE_SOA,
+        DNS_TYPE_SRV,
     };
-    use crate::Udp;
+    use crate::{Ipv4, NetworkLayer, Packet, Udp};
+    use std::net::Ipv4Addr;
 
     #[test]
     fn existing_flag_helpers_compile_identically() {
@@ -821,6 +824,88 @@ mod dns_header_codepoints {
         // Extracted fields reflect the raw word without rejecting it.
         assert_eq!(dns.opcode_value(), ((0xabcd & 0x7800) >> 11) as u8);
         assert_eq!(dns.rcode_value(), (0xabcd & 0x000f) as u8);
+    }
+
+    #[test]
+    fn all_named_header_flag_bits_survive_compile_and_decode() {
+        // Every named header flag constant set together must round-trip through
+        // compile and decode untouched, including the authentic-data and
+        // checking-disabled bits that have no dedicated setter.
+        let all_named = DNS_FLAG_AUTHORITATIVE
+            | DNS_FLAG_TRUNCATED
+            | DNS_FLAG_RECURSION_DESIRED
+            | DNS_FLAG_RECURSION_AVAILABLE
+            | DNS_FLAG_AUTHENTIC_DATA
+            | DNS_FLAG_CHECKING_DISABLED;
+        let dns = Dns::new()
+            .flags(all_named)
+            .question(DnsQuestion::a("example.com."));
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(203, 0, 113, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 1))
+            / Udp::new().sport(53001).dport(53)
+            / dns)
+            .compile()
+            .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let header = decoded.layer::<Dns>().unwrap();
+
+        assert_eq!(header.flags_value(), all_named);
+        assert_ne!(header.flags_value() & DNS_FLAG_AUTHENTIC_DATA, 0);
+        assert_ne!(header.flags_value() & DNS_FLAG_CHECKING_DISABLED, 0);
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn recursion_available_setter_sets_only_its_bit() {
+        // The recursion-available setter must light its own flag without
+        // disturbing the recursion-desired default or other bits.
+        let dns = Dns::new().recursion_available(true);
+        assert_ne!(dns.flags_value() & DNS_FLAG_RECURSION_AVAILABLE, 0);
+        assert_ne!(dns.flags_value() & DNS_FLAG_RECURSION_DESIRED, 0);
+        assert_eq!(
+            dns.flags_value() & !(DNS_FLAG_RECURSION_AVAILABLE | DNS_FLAG_RECURSION_DESIRED),
+            0
+        );
+    }
+
+    #[test]
+    fn section_counts_auto_fill_from_typed_vectors() {
+        // Each section's count is derived from the typed vectors at compile
+        // time; placing one record in every response section yields counts of
+        // one across the header.
+        let dns = Dns::new()
+            .response(true)
+            .question(DnsQuestion::a("example.com."))
+            .answer(DnsRecord::a(
+                "example.com.",
+                Ipv4Addr::new(192, 0, 2, 10),
+                60,
+            ))
+            .authority(DnsRecord::cname("example.com.", "ns1.example.com.", 300))
+            .additional(DnsRecord::a(
+                "ns1.example.com.",
+                Ipv4Addr::new(192, 0, 2, 53),
+                300,
+            ));
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(203, 0, 113, 1))
+            .dst(Ipv4Addr::new(198, 51, 100, 1))
+            / Udp::new().sport(53).dport(53001)
+            / dns)
+            .compile()
+            .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let header = decoded.layer::<Dns>().unwrap();
+
+        // QDCOUNT/ANCOUNT/NSCOUNT/ARCOUNT each reflect exactly one vector entry.
+        assert_eq!(header.questions().len(), 1);
+        assert_eq!(header.answers().len(), 1);
+        assert_eq!(header.authorities().len(), 1);
+        assert_eq!(header.additionals().len(), 1);
+        assert_eq!(decoded.compile().unwrap(), bytes);
     }
 
     #[test]
