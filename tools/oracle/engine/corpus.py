@@ -32,6 +32,18 @@ CORPUS_SCHEMA_VERSION = 1
 CORPUS_MODE = "corpus"
 SKIP_BACKEND_UNSUPPORTED = "backend_unsupported"
 SKIP_PCAP_LINK_TYPE_UNAVAILABLE = "pcap_link_type_unavailable"
+SKIP_PCAP_NORMALIZED_ONLY = "pcap_normalized_only"
+SKIP_PCAP_STRUCTURED_ERROR = "pcap_structured_error"
+# Case byte policies that pcap mode cannot represent safely. A ``normalized``
+# case intentionally carries wire bytes that differ from the libcrafter encode
+# (for example compressed names), so a strict pcap roundtrip would not preserve
+# the source bytes. A ``structured_error`` case is malformed input with no clean
+# pcap representation. Both are skipped with an explicit reason rather than
+# silently dropped.
+_PCAP_INELIGIBLE_BYTE_POLICIES = {
+    "normalized": SKIP_PCAP_NORMALIZED_ONLY,
+    "structured_error": SKIP_PCAP_STRUCTURED_ERROR,
+}
 SKIP_REQUIRES_IPV4 = "requires_ipv4"
 SKIP_REQUIRES_IPV6 = "requires_ipv6"
 SKIP_REQUIRES_L2 = "requires_l2"
@@ -295,10 +307,14 @@ class CorpusReport(JsonModel):
         selected_specs: Sequence[str] = (),
         corpus_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
+        case_byte_policies: Mapping[str, str] | None = None,
     ) -> "CorpusReport":
+        if case_byte_policies is None:
+            case_byte_policies = _default_case_byte_policies()
         packets = populate_corpus_eligibility(
             backend=backend,
             packets=[CorpusPacket.from_plan(plan) for plan in plans],
+            case_byte_policies=case_byte_policies,
         )
         resolved_metadata = json_object(metadata or {}, "metadata")
         resolved_metadata["eligibility"] = corpus_eligibility_summary(packets)
@@ -379,6 +395,7 @@ def build_corpus_report(
     plans: Sequence[PacketPlan],
     selected_specs: Sequence[str] = (),
     metadata: Mapping[str, object] | None = None,
+    case_byte_policies: Mapping[str, str] | None = None,
 ) -> CorpusReport:
     """Wrap generated plans in the shared corpus report contract."""
 
@@ -390,7 +407,24 @@ def build_corpus_report(
         plans=plans,
         selected_specs=selected_specs,
         metadata=metadata,
+        case_byte_policies=case_byte_policies,
     )
+
+
+def _default_case_byte_policies() -> dict[str, str]:
+    """Resolve the spec-declared case byte policies for pcap eligibility.
+
+    Loaded lazily from the generator so the shared corpus module stays decoupled
+    from spec loading at import time. Returns an empty map if the specs cannot be
+    loaded, leaving prior (link-type only) pcap eligibility behavior intact.
+    """
+
+    try:
+        from .generator import case_byte_policy_index
+
+        return case_byte_policy_index()
+    except Exception:
+        return {}
 
 
 def populate_corpus_eligibility(
@@ -399,6 +433,7 @@ def populate_corpus_eligibility(
     packets: Sequence[CorpusPacket],
     provider_capabilities: Mapping[str, object] | None = None,
     wire_provider: str = _WIRE_DEFAULT_PROVIDER,
+    case_byte_policies: Mapping[str, str] | None = None,
 ) -> list[CorpusPacket]:
     """Return packets with offline, pcap, and wire eligibility populated."""
 
@@ -409,7 +444,11 @@ def populate_corpus_eligibility(
             index=packet.index,
             plan=packet.plan,
             offline=_offline_eligibility(packet.plan, backend),
-            pcap=_pcap_eligibility(packet.plan, backend),
+            pcap=_pcap_eligibility(
+                packet.plan,
+                backend,
+                case_byte_policies=case_byte_policies,
+            ),
             wire=_wire_eligibility(
                 packet.plan,
                 backend,
@@ -477,7 +516,12 @@ def _offline_eligibility(plan: PacketPlan, backend: str) -> CorpusEligibility:
     )
 
 
-def _pcap_eligibility(plan: PacketPlan, backend: str) -> CorpusEligibility:
+def _pcap_eligibility(
+    plan: PacketPlan,
+    backend: str,
+    *,
+    case_byte_policies: Mapping[str, str] | None = None,
+) -> CorpusEligibility:
     required = ("pcap_read", "pcap_write")
     missing = _missing_backend_capabilities(backend, required)
     reasons: list[str] = []
@@ -487,6 +531,14 @@ def _pcap_eligibility(plan: PacketPlan, backend: str) -> CorpusEligibility:
     link_type = _PCAP_LINK_TYPES_BY_ROOT.get(root or "")
     if link_type is None:
         reasons.append(SKIP_PCAP_LINK_TYPE_UNAVAILABLE)
+    byte_policy = None
+    if case_byte_policies and plan.case is not None:
+        byte_policy = case_byte_policies.get(plan.case)
+    policy_reason = (
+        _PCAP_INELIGIBLE_BYTE_POLICIES.get(byte_policy) if byte_policy is not None else None
+    )
+    if policy_reason is not None:
+        reasons.append(policy_reason)
     reasons = _unique_strings(reasons)
     return CorpusEligibility(
         eligible=not reasons,
@@ -498,6 +550,7 @@ def _pcap_eligibility(plan: PacketPlan, backend: str) -> CorpusEligibility:
             "backend_capabilities": _enabled_backend_capabilities(backend),
             "root": root,
             "pcap_link_type": link_type,
+            "byte_policy": byte_policy,
             "stack": list(plan.stack),
             "family": plan.family,
             "case": plan.case,

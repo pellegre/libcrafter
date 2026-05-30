@@ -7485,8 +7485,20 @@ def _pcap_record_link_type_for_plan(link_type: str) -> str:
     return link_type
 
 
+_PCAP_PASSTHROUGH_SKIP_REASONS = {
+    "pcap_link_type_unavailable",
+    "pcap_case_filter",
+    # Corpus-declared byte-policy skips (a normalized-only or structured-error
+    # case is not safely representable through pcap). Preserve the explicit
+    # reason instead of collapsing it so the report records why each case was
+    # skipped rather than silently dropping it.
+    "pcap_normalized_only",
+    "pcap_structured_error",
+}
+
+
 def _pcap_normalized_skip_reason(reason: str | None) -> str:
-    if reason in {"pcap_link_type_unavailable", "pcap_case_filter"}:
+    if reason in _PCAP_PASSTHROUGH_SKIP_REASONS:
         return reason
     return "pcap_case_filter"
 
@@ -7499,6 +7511,9 @@ def _pcap_packet_skip_reason(direction_decisions: Sequence[JSONObject]) -> str:
     ]
     if "pcap_link_type_unavailable" in reasons:
         return "pcap_link_type_unavailable"
+    for reason in ("pcap_normalized_only", "pcap_structured_error"):
+        if reason in reasons:
+            return reason
     if "pcap_case_filter" in reasons:
         return "pcap_case_filter"
     return "pcap_case_filter"
