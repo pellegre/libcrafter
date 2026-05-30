@@ -139,6 +139,85 @@
       "notes": "Oracle fixture case. ARP is-at reply covers opcode, sender and target hardware/protocol addresses."
     },
     {
+      "name": "arp-request-reply-roundtrip",
+      "family": "link",
+      "direction": "scapy_to_libcrafter",
+      "root": "link:ethernet",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Standard Ethernet/IPv4 ARP request and reply byte preservation: hardware_type 1, protocol_type IPv4, HLN 6, PLN 4, and the 6-octet MAC / 4-octet IPv4 sender and target addresses must round-trip unchanged (RFC 826 base header; target/arp-rfc/scope.md). Guards the existing ethernet_arp golden bytes; fixture bytes wired by later materialization steps."
+    },
+    {
+      "name": "arp-unknown-opcode-raw",
+      "family": "link",
+      "direction": "scapy_to_libcrafter",
+      "root": "link:ethernet",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Structurally valid ARP with an unknown numeric operation value (for example RFC 5494 experimental OP_EXP1 24 / OP_EXP2 25 or an unassigned numeric opcode) must decode as ARP, preserve the raw u16 operation, and never be remapped to request/reply (arp-parameters-1; RFC 5494; target/arp-rfc/scope.md). Fixture bytes wired by later materialization steps."
+    },
+    {
+      "name": "arp-variable-address-lengths",
+      "family": "link",
+      "direction": "scapy_to_libcrafter",
+      "root": "link:ethernet",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Nonstandard hardware_length / protocol_length ARP (for example HLN 8 and PLN 16, plus zero-length HLN/PLN) must split sender and target address byte vectors by HLN/PLN, preserve the bytes accurately, and not overflow (RFC 826 generic format; arp.yaml address_fields byte_vectors; target/arp-rfc/scope.md). Uses documentation address space only. Fixture bytes wired by later materialization steps."
+    },
+    {
+      "name": "arp-gratuitous-probe",
+      "family": "link",
+      "direction": "scapy_to_libcrafter",
+      "root": "link:ethernet",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "RFC 5227 gratuitous announcement and probe ARP are expressed through base REQUEST/REPLY with specific sender/target field conventions (zero sender or target protocol address; no new opcode), not a new ARP variant (RFC 5227 updates RFC 826; target/arp-rfc/scope.md assumption 2). Fixture bytes wired by later materialization steps."
+    },
+    {
+      "name": "arp-trailing-raw-payload",
+      "family": "link",
+      "direction": "scapy_to_libcrafter",
+      "root": "link:ethernet",
+      "expected_stack": [
+        "Ether",
+        "ARP",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Extra bytes after a complete ARP body remain observable as raw payload after the ARP layer (spec: trailing bytes preserved as Raw; RFC 826 fixed body length is HLN/PLN-derived). Fixture bytes wired by later materialization steps."
+    },
+    {
+      "name": "arp-family-rarp-inarp-codepoints",
+      "family": "link",
+      "direction": "scapy_to_libcrafter",
+      "root": "link:ethernet",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "ARP-family operation codepoints in scope as codepoint-only round-trippable values with no extension message bodies: RARP 3/4 (RFC 903), DRARP 5/6/7 (RFC 1931), InARP 8/9 (RFC 2390), ARP-NAK 10 (RFC 1577), MAPOS-UNARP 23 (RFC 2176). They ride the unmodified RFC 826 wire format (arp-parameters-1; target/arp-rfc/scope.md). MARS opcodes 11-22 and other unassigned values are deferred to data-only recognition (no named ergonomics). Fixture bytes wired by later materialization steps."
+    },
+    {
       "name": "vlan-boundary-fields",
       "family": "link",
       "direction": "scapy_to_libcrafter",
@@ -845,6 +924,58 @@
       "strict_bytes": true,
       "status": "implemented",
       "notes": "libcrafter ARP reply matches Scapy fields and bytes for documentation addresses and MAC values."
+    },
+    {
+      "name": "crafter-arp-unknown-opcode-raw",
+      "family": "link",
+      "direction": "libcrafter_to_scapy",
+      "root": "link:ethernet",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "libcrafter ARP built with an unknown numeric operation via opcode(u16) (for example RFC 5494 experimental 24/25 or an unassigned numeric opcode) emits the raw operation and decodes in Scapy with the same numeric op preserved, neither rejected nor remapped (arp-parameters-1; RFC 5494; target/arp-rfc/scope.md). Fixture bytes wired by later materialization steps."
+    },
+    {
+      "name": "crafter-arp-variable-address-lengths",
+      "family": "link",
+      "direction": "libcrafter_to_scapy",
+      "root": "link:ethernet",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "libcrafter ARP built with nonstandard hardware_length / protocol_length and matching raw address byte vectors (for example HLN 8 / PLN 16, plus zero-length forms) serializes the generic RFC 826 header and decodes identically in Scapy, with byte-accurate variable address fields and no overflow (arp.yaml address_fields byte_vectors; target/arp-rfc/scope.md). Documentation address space only. Fixture bytes wired by later materialization steps."
+    },
+    {
+      "name": "crafter-arp-gratuitous-probe",
+      "family": "link",
+      "direction": "libcrafter_to_scapy",
+      "root": "link:ethernet",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "libcrafter RFC 5227 gratuitous/probe ARP produced through the base builder with explicit sender/target field conventions (no dedicated constructor, no new opcode) decodes in Scapy with identical fields (RFC 5227 updates RFC 826; target/arp-rfc/scope.md assumption 2). Fixture bytes wired by later materialization steps."
+    },
+    {
+      "name": "crafter-arp-family-codepoints",
+      "family": "link",
+      "direction": "libcrafter_to_scapy",
+      "root": "link:ethernet",
+      "expected_stack": [
+        "Ether",
+        "ARP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "libcrafter ARP-family codepoint-only operations (RARP 3/4, DRARP 5/6/7, InARP 8/9, ARP-NAK 10, MAPOS-UNARP 23) ride the unmodified RFC 826 wire format with no extension message bodies and round-trip through Scapy as numeric operations (arp-parameters-1; RFCs 903/1931/2390/1577/2176; target/arp-rfc/scope.md). MARS opcodes 11-22 stay deferred data-only. Fixture bytes wired by later materialization steps."
     },
     {
       "name": "crafter-vlan-boundary-fields",
