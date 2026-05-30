@@ -113,6 +113,47 @@ endpoints down. Always validate the focused DHCP path with `--dry-run` first:
 python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 132 --count 2 --case dhcp-discover --dry-run --out target/oracle/dhcp-vm-dry-run
 ```
 
+### Guarded DHCP Hetzner Live Exchange
+
+The same `ipv4 / udp / dhcp` packet (selected with `--case dhcp-discover`) runs
+against Hetzner private cloud networking through `tools/oracle/run live
+--provider hetzner`. Hetzner is a routed private cloud segment: the DHCP packet
+under test is wire-eligible there because it is IPv4 unicast, while the
+Ethernet-root DHCP stack stays skipped for `requires_l2` and
+`requires_provider_mac`. Always plan the focused DHCP path with `--dry-run`
+first; it creates no cloud resources and sends no packets:
+
+```sh
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 133 --count 2 --case dhcp-discover --out target/oracle/dhcp-hetzner-dry-run
+```
+
+Keep the real Hetzner live run opt-in behind an explicit environment gate so
+unattended CI never provisions cloud endpoints or sends real DHCP packets:
+
+```sh
+if [ "${LIBCRAFTER_RUN_DHCP_HETZNER_LIVE:-0}" = "1" ]; then
+  tools/oracle/run live \
+    --backend scapy --provider hetzner --profile smoke \
+    --seed 133 --count 2 --case dhcp-discover \
+    --confirm-live-run \
+    --out target/oracle/dhcp-hetzner-live
+else
+  echo "skipping protected Hetzner DHCP live run; set LIBCRAFTER_RUN_DHCP_HETZNER_LIVE=1 to execute"
+fi
+```
+
+With `LIBCRAFTER_RUN_DHCP_HETZNER_LIVE` unset (the default), the gate takes the
+echo-skip branch and nothing runs. When it is `1`, the run still refuses to
+exchange packets unless `--confirm-live-run` is passed, and it refuses again
+unless Hetzner credentials are present in the environment: the wire provider
+reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN`. Credentials are never hardcoded,
+committed, or written to tracked files. When confirmed and credentialed, the
+run provisions disposable Hetzner endpoints, runs the libcrafter and
+reference-backend roles over the private cloud segment, collects artifacts under
+`--out`, and tears the endpoints down on success or failure. Do not record
+provider account data, public IPs, host IDs, or captures from the live run in
+tracked files; keep those artifacts under `--out` (an ignored `target/` path).
+
 ## Exchange Directions
 
 Live reports use the same backend-neutral direction names as offline and pcap
