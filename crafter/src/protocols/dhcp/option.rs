@@ -11,13 +11,16 @@ use super::constants::{
     DHCP_AUTH_PROTOCOL_DELAYED, DHCP_AUTH_PROTOCOL_RECONFIGURE_KEY,
     DHCP_AUTH_RDM_MONOTONIC_COUNTER, DHCP_AUTH_REPLAY_DETECTION_LEN, DHCP_CLIENT_ID_TYPE_NONE,
     DHCP_CLIENT_ID_TYPE_RFC4361, DHCP_CLIENT_MACHINE_UUID_TYPE, DHCP_CLIENT_NDI_TYPE_UNDI,
-    DHCP_HTYPE_ETHERNET, DHCP_IAID_LEN, DHCP_OPTION_ALL_SUBNETS_LOCAL,
-    DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_AUTHENTICATION, DHCP_OPTION_BOOTFILE_NAME,
+    DHCP_DATA_SOURCE_FLAG_REMOTE, DHCP_HTYPE_ETHERNET, DHCP_IAID_LEN,
+    DHCP_OPTION_ALL_SUBNETS_LOCAL, DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_ASSOCIATED_IP,
+    DHCP_OPTION_AUTHENTICATION, DHCP_OPTION_BASE_TIME, DHCP_OPTION_BOOTFILE_NAME,
     DHCP_OPTION_BOOT_FILE_SIZE, DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
-    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
-    DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_COOKIE_SERVER, DHCP_OPTION_DEFAULT_IP_TTL,
-    DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH,
-    DHCP_OPTION_END, DHCP_OPTION_ETHERNET_ENCAPSULATION, DHCP_OPTION_EXTENSIONS_PATH,
+    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME,
+    DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
+    DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_COOKIE_SERVER, DHCP_OPTION_DATA_SOURCE,
+    DHCP_OPTION_DEFAULT_IP_TTL, DHCP_OPTION_DHCP_STATE, DHCP_OPTION_DOMAIN_NAME,
+    DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH, DHCP_OPTION_END,
+    DHCP_OPTION_ETHERNET_ENCAPSULATION, DHCP_OPTION_EXTENSIONS_PATH,
     DHCP_OPTION_FORCERENEW_NONCE_CAPABLE, DHCP_OPTION_HOST_NAME, DHCP_OPTION_IMPRESS_SERVER,
     DHCP_OPTION_INTERFACE_MTU, DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_IP_FORWARDING,
     DHCP_OPTION_LOG_SERVER, DHCP_OPTION_LPR_SERVER, DHCP_OPTION_MASK_SUPPLIER,
@@ -30,12 +33,14 @@ use super::constants::{
     DHCP_OPTION_PATH_MTU_AGING_TIMEOUT, DHCP_OPTION_PATH_MTU_PLATEAU_TABLE,
     DHCP_OPTION_PERFORM_MASK_DISCOVERY, DHCP_OPTION_PERFORM_ROUTER_DISCOVERY,
     DHCP_OPTION_POLICY_FILTER, DHCP_OPTION_PXELINUX_CONFIGFILE, DHCP_OPTION_PXELINUX_MAGIC,
-    DHCP_OPTION_PXELINUX_PATHPREFIX, DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_REBINDING_TIME,
-    DHCP_OPTION_RELAY_AGENT_INFORMATION, DHCP_OPTION_RENEWAL_TIME,
-    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH,
-    DHCP_OPTION_ROUTER, DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
-    DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_SUBNET_MASK,
-    DHCP_OPTION_SWAP_SERVER, DHCP_OPTION_TCP_DEFAULT_TTL, DHCP_OPTION_TCP_KEEPALIVE_GARBAGE,
+    DHCP_OPTION_PXELINUX_PATHPREFIX, DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_QUERY_END_TIME,
+    DHCP_OPTION_QUERY_START_TIME, DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RELAY_AGENT_INFORMATION,
+    DHCP_OPTION_RENEWAL_TIME, DHCP_OPTION_REQUESTED_IP_ADDRESS,
+    DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH, DHCP_OPTION_ROUTER,
+    DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
+    DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_START_TIME_OF_STATE, DHCP_OPTION_STATIC_ROUTE,
+    DHCP_OPTION_STATUS_CODE, DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_SWAP_SERVER,
+    DHCP_OPTION_TCP_DEFAULT_TTL, DHCP_OPTION_TCP_KEEPALIVE_GARBAGE,
     DHCP_OPTION_TCP_KEEPALIVE_INTERVAL, DHCP_OPTION_TFTP_SERVER_ADDRESS,
     DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_TIME_OFFSET, DHCP_OPTION_TIME_SERVER,
     DHCP_OPTION_TRAILER_ENCAPSULATION, DHCP_OPTION_USER_CLASS, DHCP_OPTION_VENDOR_CLASS_IDENTIFIER,
@@ -48,8 +53,13 @@ use super::constants::{
     DHCP_RELAY_SUBOPTION_RELAY_FLAGS, DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
     DHCP_RELAY_SUBOPTION_REMOTE_ID, DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
     DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID, DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC,
-    DHCP_RELAY_SUBOPTION_VSS, DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_VSS_TYPE_GLOBAL_DEFAULT,
-    DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
+    DHCP_RELAY_SUBOPTION_VSS, DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_STATE_ABANDONED,
+    DHCP_STATE_ACTIVE, DHCP_STATE_AVAILABLE, DHCP_STATE_EXPIRED, DHCP_STATE_RELEASED,
+    DHCP_STATE_REMOTE, DHCP_STATE_RESERVED, DHCP_STATE_RESET, DHCP_STATE_TRANSITIONING,
+    DHCP_STATUS_CATCH_UP_COMPLETE, DHCP_STATUS_CONNECTION_ACTIVE, DHCP_STATUS_DATA_MISSING,
+    DHCP_STATUS_MALFORMED_QUERY, DHCP_STATUS_NOT_ALLOWED, DHCP_STATUS_QUERY_TERMINATED,
+    DHCP_STATUS_SUCCESS, DHCP_STATUS_TLS_CONNECTION_REFUSED, DHCP_STATUS_UNSPEC_FAIL,
+    DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
 };
 use super::message::DhcpMessageType;
 use super::registry::{option_name, option_status, DhcpOptionStatus};
@@ -642,6 +652,226 @@ impl DhcpForcerenewNonceCapable {
     }
 }
 
+/// A DHCP leasequery status code (option 151, first octet).
+///
+/// Source: RFC 6926 section 6.2.2 and the IANA "DHCP Status Code Type 151
+/// Values" sub-registry (XML retrieved 2026-05-29). The status octet conveys
+/// the result of a (bulk) leasequery. Registered values are surfaced as named
+/// variants; any unassigned value is preserved verbatim through
+/// [`DhcpStatusCode::Unknown`] so no information is lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DhcpStatusCode {
+    /// Success (value `0`, RFC 6926).
+    Success,
+    /// UnspecFail (value `1`, RFC 6926).
+    UnspecFail,
+    /// QueryTerminated (value `2`, RFC 6926).
+    QueryTerminated,
+    /// MalformedQuery (value `3`, RFC 6926).
+    MalformedQuery,
+    /// NotAllowed (value `4`, RFC 6926).
+    NotAllowed,
+    /// DataMissing (value `5`, RFC 7724).
+    DataMissing,
+    /// ConnectionActive (value `6`, RFC 7724).
+    ConnectionActive,
+    /// CatchUpComplete (value `7`, RFC 7724).
+    CatchUpComplete,
+    /// TLSConnectionRefused (value `8`, RFC 7724).
+    TlsConnectionRefused,
+    /// Any other status value, preserved verbatim.
+    Unknown(u8),
+}
+
+impl DhcpStatusCode {
+    /// Classify a raw status octet (RFC 6926 section 6.2.2).
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            DHCP_STATUS_SUCCESS => Self::Success,
+            DHCP_STATUS_UNSPEC_FAIL => Self::UnspecFail,
+            DHCP_STATUS_QUERY_TERMINATED => Self::QueryTerminated,
+            DHCP_STATUS_MALFORMED_QUERY => Self::MalformedQuery,
+            DHCP_STATUS_NOT_ALLOWED => Self::NotAllowed,
+            DHCP_STATUS_DATA_MISSING => Self::DataMissing,
+            DHCP_STATUS_CONNECTION_ACTIVE => Self::ConnectionActive,
+            DHCP_STATUS_CATCH_UP_COMPLETE => Self::CatchUpComplete,
+            DHCP_STATUS_TLS_CONNECTION_REFUSED => Self::TlsConnectionRefused,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Wire octet value for this status code.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Success => DHCP_STATUS_SUCCESS,
+            Self::UnspecFail => DHCP_STATUS_UNSPEC_FAIL,
+            Self::QueryTerminated => DHCP_STATUS_QUERY_TERMINATED,
+            Self::MalformedQuery => DHCP_STATUS_MALFORMED_QUERY,
+            Self::NotAllowed => DHCP_STATUS_NOT_ALLOWED,
+            Self::DataMissing => DHCP_STATUS_DATA_MISSING,
+            Self::ConnectionActive => DHCP_STATUS_CONNECTION_ACTIVE,
+            Self::CatchUpComplete => DHCP_STATUS_CATCH_UP_COMPLETE,
+            Self::TlsConnectionRefused => DHCP_STATUS_TLS_CONNECTION_REFUSED,
+            Self::Unknown(code) => code,
+        }
+    }
+}
+
+/// A DHCP status-code option value (option 151).
+///
+/// Source: RFC 6926 section 6.2.2. The option is a one-octet status code
+/// followed by an optional UTF-8-encoded status message with no termination or
+/// null characters:
+///
+/// ```text
+/// Code (151) | Len (n+1) | status | s1 | s2 | ... | sn
+/// ```
+///
+/// The status octet is decoded into a typed [`DhcpStatusCode`] (unknown values
+/// preserved verbatim) and the message bytes are kept raw, because the text is
+/// not guaranteed to be valid UTF-8 in arbitrary captures. Use
+/// [`DhcpStatusCodeOption::message_lossy`] for a convenience string view.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DhcpStatusCodeOption {
+    /// The leasequery status code (RFC 6926 section 6.2.2, first octet).
+    pub status: DhcpStatusCode,
+    /// The optional status message bytes, preserved verbatim (RFC 6926 says the
+    /// message is UTF-8 with no termination or null characters, but captured
+    /// bytes are kept raw rather than forced through a lossy decode).
+    pub message: Vec<u8>,
+}
+
+impl DhcpStatusCodeOption {
+    /// Create a status-code value from a typed status and raw message bytes.
+    pub fn new(status: DhcpStatusCode, message: impl Into<Vec<u8>>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+        }
+    }
+
+    /// Lossy UTF-8 view of the status message, preserving the raw bytes.
+    pub fn message_lossy(&self) -> String {
+        String::from_utf8_lossy(&self.message).into_owned()
+    }
+
+    /// Encode this value to its option 151 payload bytes (the status octet
+    /// followed by the message, without the option code or length byte).
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(1 + self.message.len());
+        bytes.push(self.status.code());
+        bytes.extend_from_slice(&self.message);
+        bytes
+    }
+}
+
+/// A DHCP IP-address binding state (option 156, State octet).
+///
+/// Source: RFC 6926 section 6.2.7 and the IANA "DHCP State Type 156 Values"
+/// sub-registry (XML retrieved 2026-05-29). Registered values are surfaced as
+/// named variants; any unassigned value is preserved verbatim through
+/// [`DhcpState::Unknown`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DhcpState {
+    /// Reserved (value `0`, RFC 6926).
+    Reserved,
+    /// AVAILABLE (value `1`, RFC 6926).
+    Available,
+    /// ACTIVE (value `2`, RFC 6926).
+    Active,
+    /// EXPIRED (value `3`, RFC 6926).
+    Expired,
+    /// RELEASED (value `4`, RFC 6926).
+    Released,
+    /// ABANDONED (value `5`, RFC 6926).
+    Abandoned,
+    /// RESET (value `6`, RFC 6926).
+    Reset,
+    /// REMOTE (value `7`, RFC 6926).
+    Remote,
+    /// TRANSITIONING (value `8`, RFC 6926).
+    Transitioning,
+    /// Any other state value, preserved verbatim.
+    Unknown(u8),
+}
+
+impl DhcpState {
+    /// Classify a raw State octet (RFC 6926 section 6.2.7).
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            DHCP_STATE_RESERVED => Self::Reserved,
+            DHCP_STATE_AVAILABLE => Self::Available,
+            DHCP_STATE_ACTIVE => Self::Active,
+            DHCP_STATE_EXPIRED => Self::Expired,
+            DHCP_STATE_RELEASED => Self::Released,
+            DHCP_STATE_ABANDONED => Self::Abandoned,
+            DHCP_STATE_RESET => Self::Reset,
+            DHCP_STATE_REMOTE => Self::Remote,
+            DHCP_STATE_TRANSITIONING => Self::Transitioning,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Wire octet value for this state.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Reserved => DHCP_STATE_RESERVED,
+            Self::Available => DHCP_STATE_AVAILABLE,
+            Self::Active => DHCP_STATE_ACTIVE,
+            Self::Expired => DHCP_STATE_EXPIRED,
+            Self::Released => DHCP_STATE_RELEASED,
+            Self::Abandoned => DHCP_STATE_ABANDONED,
+            Self::Reset => DHCP_STATE_RESET,
+            Self::Remote => DHCP_STATE_REMOTE,
+            Self::Transitioning => DHCP_STATE_TRANSITIONING,
+            Self::Unknown(code) => code,
+        }
+    }
+}
+
+/// A DHCP data-source option value (option 157, Flags octet).
+///
+/// Source: RFC 6926 section 6.2.8. The option is a single Flags octet whose
+/// least-significant bit is the REMOTE flag (`R`): set means the binding data
+/// came from a remote server, clear means it came from the local server. The
+/// remaining bits (the `UNA` field) are unassigned and MUST be ignored, but
+/// they are preserved verbatim here so the octet round-trips exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct DhcpDataSource {
+    /// The raw Flags octet (RFC 6926 section 6.2.8), preserved verbatim.
+    pub flags: u8,
+}
+
+impl DhcpDataSource {
+    /// Create a data-source value from a raw Flags octet.
+    pub const fn new(flags: u8) -> Self {
+        Self { flags }
+    }
+
+    /// Create a data-source value with only the REMOTE (`R`) flag set or clear.
+    pub const fn from_remote(remote: bool) -> Self {
+        Self {
+            flags: if remote {
+                DHCP_DATA_SOURCE_FLAG_REMOTE
+            } else {
+                0
+            },
+        }
+    }
+
+    /// Whether the REMOTE (`R`) flag is set: the data came from a remote server
+    /// (RFC 6926 section 6.2.8). A clear flag means the local server.
+    pub const fn is_remote(self) -> bool {
+        self.flags & DHCP_DATA_SOURCE_FLAG_REMOTE != 0
+    }
+
+    /// Encode this value to its option 157 payload byte (the Flags octet,
+    /// without the option code or length byte).
+    pub fn encode(self) -> Vec<u8> {
+        vec![self.flags]
+    }
+}
+
 /// An RFC 4578 UUID/GUID-based client machine identifier (option 97).
 ///
 /// Source: RFC 4578 section 2.3. Option 97 is a `type` octet followed by the
@@ -1134,6 +1364,15 @@ pub enum DhcpOptionValue {
     /// An RFC 6704 FORCERENEW_NONCE_CAPABLE value (option 145): the list of
     /// supported authentication algorithm octets.
     ForcerenewNonceCapable(DhcpForcerenewNonceCapable),
+    /// An RFC 6926 leasequery status-code value (option 151): a typed status
+    /// octet plus an optional raw status message.
+    StatusCode(DhcpStatusCodeOption),
+    /// An RFC 6926 dhcp-state value (option 156): a typed IP-address binding
+    /// state octet.
+    DhcpState(DhcpState),
+    /// An RFC 6926 data-source value (option 157): the Flags octet, including
+    /// the REMOTE (`R`) flag.
+    DataSource(DhcpDataSource),
     /// Opaque bytes preserved verbatim for options without a richer decode yet.
     Opaque(Vec<u8>),
 }
@@ -1204,6 +1443,9 @@ impl DhcpOptionValue {
             Self::ClientIdentifier(identifier) => identifier.encode(),
             Self::Authentication(auth) => auth.encode(),
             Self::ForcerenewNonceCapable(value) => value.encode(),
+            Self::StatusCode(status) => status.encode(),
+            Self::DhcpState(state) => vec![state.code()],
+            Self::DataSource(source) => source.encode(),
             Self::Text(bytes) | Self::ParameterRequestList(bytes) | Self::Opaque(bytes) => {
                 bytes.clone()
             }
@@ -1281,6 +1523,13 @@ pub enum DhcpOptionFormat {
     /// RFC 6704 FORCERENEW_NONCE_CAPABLE (option 145): a list of algorithm
     /// octets.
     ForcerenewNonceCapable,
+    /// RFC 6926 leasequery status-code (option 151): a status octet plus an
+    /// optional text message.
+    StatusCode,
+    /// RFC 6926 dhcp-state (option 156): a single IP-address binding state octet.
+    DhcpState,
+    /// RFC 6926 data-source (option 157): a single Flags octet.
+    DataSource,
     /// Opaque bytes preserved verbatim (vendor-specific, client/vendor id).
     Opaque,
 }
@@ -1374,6 +1623,15 @@ pub enum DhcpOptionKind {
     RelayAgentInformation,
     Authentication,
     ForcerenewNonceCapable,
+    ClientLastTransactionTime,
+    AssociatedIp,
+    StatusCode,
+    BaseTime,
+    StartTimeOfState,
+    QueryStartTime,
+    QueryEndTime,
+    DhcpState,
+    DataSource,
     PxelinuxMagic,
     PxelinuxConfigFile,
     PxelinuxPathPrefix,
@@ -1459,6 +1717,15 @@ impl DhcpOptionKind {
             DHCP_OPTION_RELAY_AGENT_INFORMATION => Self::RelayAgentInformation,
             DHCP_OPTION_AUTHENTICATION => Self::Authentication,
             DHCP_OPTION_FORCERENEW_NONCE_CAPABLE => Self::ForcerenewNonceCapable,
+            DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME => Self::ClientLastTransactionTime,
+            DHCP_OPTION_ASSOCIATED_IP => Self::AssociatedIp,
+            DHCP_OPTION_STATUS_CODE => Self::StatusCode,
+            DHCP_OPTION_BASE_TIME => Self::BaseTime,
+            DHCP_OPTION_START_TIME_OF_STATE => Self::StartTimeOfState,
+            DHCP_OPTION_QUERY_START_TIME => Self::QueryStartTime,
+            DHCP_OPTION_QUERY_END_TIME => Self::QueryEndTime,
+            DHCP_OPTION_DHCP_STATE => Self::DhcpState,
+            DHCP_OPTION_DATA_SOURCE => Self::DataSource,
             DHCP_OPTION_PXELINUX_MAGIC => Self::PxelinuxMagic,
             DHCP_OPTION_PXELINUX_CONFIGFILE => Self::PxelinuxConfigFile,
             DHCP_OPTION_PXELINUX_PATHPREFIX => Self::PxelinuxPathPrefix,
@@ -1546,6 +1813,15 @@ impl DhcpOptionKind {
             Self::RelayAgentInformation => DHCP_OPTION_RELAY_AGENT_INFORMATION,
             Self::Authentication => DHCP_OPTION_AUTHENTICATION,
             Self::ForcerenewNonceCapable => DHCP_OPTION_FORCERENEW_NONCE_CAPABLE,
+            Self::ClientLastTransactionTime => DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME,
+            Self::AssociatedIp => DHCP_OPTION_ASSOCIATED_IP,
+            Self::StatusCode => DHCP_OPTION_STATUS_CODE,
+            Self::BaseTime => DHCP_OPTION_BASE_TIME,
+            Self::StartTimeOfState => DHCP_OPTION_START_TIME_OF_STATE,
+            Self::QueryStartTime => DHCP_OPTION_QUERY_START_TIME,
+            Self::QueryEndTime => DHCP_OPTION_QUERY_END_TIME,
+            Self::DhcpState => DHCP_OPTION_DHCP_STATE,
+            Self::DataSource => DHCP_OPTION_DATA_SOURCE,
             Self::PxelinuxMagic => DHCP_OPTION_PXELINUX_MAGIC,
             Self::PxelinuxConfigFile => DHCP_OPTION_PXELINUX_CONFIGFILE,
             Self::PxelinuxPathPrefix => DHCP_OPTION_PXELINUX_PATHPREFIX,
@@ -1579,7 +1855,9 @@ impl DhcpOptionKind {
             | Self::NetbiosNameServer
             | Self::NetbiosDatagramServer
             | Self::XWindowFontServer
-            | Self::XWindowDisplayManager => F::Ipv4List,
+            | Self::XWindowDisplayManager
+            // RFC 4388 associated-ip (option 92): one or more IPv4 addresses.
+            | Self::AssociatedIp => F::Ipv4List,
             // IPv4 address pairs.
             Self::PolicyFilter => F::Ipv4Pairs,
             // Static routes are destination/router IPv4 pairs, surfaced as typed
@@ -1612,13 +1890,22 @@ impl DhcpOptionKind {
             Self::PathMtuPlateauTable => F::U16List,
             // 32-bit signed.
             Self::TimeOffset => F::I32,
-            // 32-bit unsigned.
+            // 32-bit unsigned. The leasequery time options (RFC 4388 client
+            // last transaction time option 91 and RFC 6926 base-time 152,
+            // start-time-of-state 153, query-start-time 154, query-end-time 155)
+            // are all 4-octet unsigned seconds values; some are absolute time and
+            // some are seconds-in-the-past, but the wire format is identical.
             Self::PathMtuAgingTimeout
             | Self::ArpCacheTimeout
             | Self::TcpKeepaliveInterval
             | Self::IpAddressLeaseTime
             | Self::RenewalTime
-            | Self::RebindingTime => F::U32,
+            | Self::RebindingTime
+            | Self::ClientLastTransactionTime
+            | Self::BaseTime
+            | Self::StartTimeOfState
+            | Self::QueryStartTime
+            | Self::QueryEndTime => F::U32,
             // NVT ASCII / text-like.
             Self::HostName
             | Self::MeritDumpFile
@@ -1655,6 +1942,12 @@ impl DhcpOptionKind {
             Self::Authentication => F::Authentication,
             // RFC 6704 FORCERENEW_NONCE_CAPABLE (option 145): algorithm octets.
             Self::ForcerenewNonceCapable => F::ForcerenewNonceCapable,
+            // RFC 6926 leasequery status-code (option 151): status octet + text.
+            Self::StatusCode => F::StatusCode,
+            // RFC 6926 dhcp-state (option 156): a single binding-state octet.
+            Self::DhcpState => F::DhcpState,
+            // RFC 6926 data-source (option 157): a single Flags octet.
+            Self::DataSource => F::DataSource,
             // Opaque/vendor data preserved verbatim. The PXELINUX magic is a
             // fixed 4-octet value whose meaning is positional, so it is kept
             // opaque rather than reinterpreted.
@@ -1739,6 +2032,17 @@ pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValu
         }
         DhcpOptionFormat::ForcerenewNonceCapable => {
             DhcpOptionValue::ForcerenewNonceCapable(DhcpForcerenewNonceCapable::new(data.to_vec()))
+        }
+        DhcpOptionFormat::StatusCode => {
+            DhcpOptionValue::StatusCode(decode_status_code(field, data)?)
+        }
+        DhcpOptionFormat::DhcpState => {
+            validate_fixed_len(field, data.len(), 1)?;
+            DhcpOptionValue::DhcpState(DhcpState::from_code(data[0]))
+        }
+        DhcpOptionFormat::DataSource => {
+            validate_fixed_len(field, data.len(), 1)?;
+            DhcpOptionValue::DataSource(DhcpDataSource::new(data[0]))
         }
         DhcpOptionFormat::Opaque => {
             if data.is_empty() {
@@ -2127,6 +2431,98 @@ impl DhcpOption {
         Self::typed(
             DhcpOptionKind::ForcerenewNonceCapable,
             DhcpOptionValue::ForcerenewNonceCapable(value),
+        )
+    }
+
+    /// Create an RFC 4388 client-last-transaction-time option (option 91).
+    ///
+    /// The value is the unsigned number of seconds in the past from when the
+    /// DHCPLEASEACTIVE message is sent that the client last dealt with the
+    /// server about this IP address (RFC 4388 section 6.1).
+    pub fn client_last_transaction_time(seconds: u32) -> Self {
+        Self::typed(
+            DhcpOptionKind::ClientLastTransactionTime,
+            DhcpOptionValue::U32(seconds),
+        )
+    }
+
+    /// Create an RFC 4388 associated-ip option (option 92).
+    ///
+    /// The payload is one or more IPv4 addresses associated with the queried
+    /// client (RFC 4388 section 6.1).
+    pub fn associated_ip(addresses: impl Into<Vec<Ipv4Addr>>) -> Self {
+        Self::typed(
+            DhcpOptionKind::AssociatedIp,
+            DhcpOptionValue::Ipv4List(addresses.into()),
+        )
+    }
+
+    /// Create an RFC 6926 status-code option (option 151).
+    ///
+    /// The status octet and optional message re-decode through
+    /// [`DhcpOption::typed_value`] into a [`DhcpOptionValue::StatusCode`].
+    pub fn status_code(status: DhcpStatusCodeOption) -> Self {
+        Self::typed(
+            DhcpOptionKind::StatusCode,
+            DhcpOptionValue::StatusCode(status),
+        )
+    }
+
+    /// Create an RFC 6926 base-time option (option 152).
+    ///
+    /// The value is the absolute time (seconds since Jan 1, 1970) the message
+    /// was created (RFC 6926 section 6.2.3).
+    pub fn base_time(seconds: u32) -> Self {
+        Self::typed(DhcpOptionKind::BaseTime, DhcpOptionValue::U32(seconds))
+    }
+
+    /// Create an RFC 6926 start-time-of-state option (option 153).
+    ///
+    /// The value is the number of seconds in the past from base-time when the
+    /// IP address entered its current state (RFC 6926 section 6.2.4).
+    pub fn start_time_of_state(seconds: u32) -> Self {
+        Self::typed(
+            DhcpOptionKind::StartTimeOfState,
+            DhcpOptionValue::U32(seconds),
+        )
+    }
+
+    /// Create an RFC 6926 query-start-time option (option 154).
+    ///
+    /// The value is the absolute start time (seconds since Jan 1, 1970) of the
+    /// query (RFC 6926 section 6.2.5).
+    pub fn query_start_time(seconds: u32) -> Self {
+        Self::typed(
+            DhcpOptionKind::QueryStartTime,
+            DhcpOptionValue::U32(seconds),
+        )
+    }
+
+    /// Create an RFC 6926 query-end-time option (option 155).
+    ///
+    /// The value is the absolute end time (seconds since Jan 1, 1970) of the
+    /// query (RFC 6926 section 6.2.6).
+    pub fn query_end_time(seconds: u32) -> Self {
+        Self::typed(DhcpOptionKind::QueryEndTime, DhcpOptionValue::U32(seconds))
+    }
+
+    /// Create an RFC 6926 dhcp-state option (option 156).
+    ///
+    /// The state octet re-decodes through [`DhcpOption::typed_value`] into a
+    /// [`DhcpOptionValue::DhcpState`] (RFC 6926 section 6.2.7).
+    pub fn dhcp_state(state: DhcpState) -> Self {
+        Self::typed(DhcpOptionKind::DhcpState, DhcpOptionValue::DhcpState(state))
+    }
+
+    /// Create an RFC 6926 data-source option (option 157).
+    ///
+    /// The Flags octet (including the REMOTE flag) re-decodes through
+    /// [`DhcpOption::typed_value`] into a [`DhcpOptionValue::DataSource`] (RFC
+    /// 6926 section 6.2.8).
+    pub fn data_source(source: DhcpDataSource) -> Self {
+        Self::typed(
+            DhcpOptionKind::DataSource,
+            DhcpOptionValue::DataSource(source),
         )
     }
 
@@ -3262,6 +3658,24 @@ fn decode_authentication(data: &[u8]) -> Result<DhcpAuthentication> {
         replay_detection,
         authentication_information: data[replay_end..].to_vec(),
     })
+}
+
+/// Decode an RFC 6926 leasequery status-code option (option 151).
+///
+/// Source: RFC 6926 section 6.2.2. The payload is a one-octet status code
+/// followed by an optional status message of zero or more octets (the RFC
+/// describes the message as UTF-8 with no termination or null characters, but
+/// the bytes are preserved verbatim). At least the status octet must be present;
+/// an empty payload surfaces as a structured [`CrafterError`] rather than a
+/// panic.
+fn decode_status_code(field: &'static str, data: &[u8]) -> Result<DhcpStatusCodeOption> {
+    let Some((&status, message)) = data.split_first() else {
+        return Err(CrafterError::buffer_too_short(field, 1, 0));
+    };
+    Ok(DhcpStatusCodeOption::new(
+        DhcpStatusCode::from_code(status),
+        message.to_vec(),
+    ))
 }
 
 /// Encode an RFC 4578 UUID/GUID client machine identifier (option 97).
@@ -5677,5 +6091,277 @@ mod dhcp_authentication {
 
         // The codepoint is pinned to its IANA value for clarity.
         assert_eq!(FORCERENEW_NONCE_CAPABLE, 145);
+    }
+}
+
+#[cfg(test)]
+mod dhcp_leasequery {
+    use super::super::{
+        Dhcp, DhcpDataSource, DhcpMessageType, DhcpOption, DhcpOptionValue, DhcpState,
+        DhcpStatusCode, DhcpStatusCodeOption,
+    };
+    use super::typed_option_value;
+    use crate::error::CrafterError;
+    use core::net::Ipv4Addr;
+
+    const CLIENT_LAST_TRANSACTION_TIME: u8 = super::super::DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME; // 91
+    const ASSOCIATED_IP: u8 = super::super::DHCP_OPTION_ASSOCIATED_IP; // 92
+    const STATUS_CODE: u8 = super::super::DHCP_OPTION_STATUS_CODE; // 151
+    const BASE_TIME: u8 = super::super::DHCP_OPTION_BASE_TIME; // 152
+    const START_TIME_OF_STATE: u8 = super::super::DHCP_OPTION_START_TIME_OF_STATE; // 153
+    const QUERY_START_TIME: u8 = super::super::DHCP_OPTION_QUERY_START_TIME; // 154
+    const QUERY_END_TIME: u8 = super::super::DHCP_OPTION_QUERY_END_TIME; // 155
+    const DHCP_STATE: u8 = super::super::DHCP_OPTION_DHCP_STATE; // 156
+    const DATA_SOURCE: u8 = super::super::DHCP_OPTION_DATA_SOURCE; // 157
+
+    fn ip(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
+        Ipv4Addr::new(a, b, c, d)
+    }
+
+    fn build_and_decode(options: Vec<DhcpOption>) -> Dhcp {
+        let dhcp = Dhcp::new()
+            .op(super::super::BOOTP_REPLY)
+            .message_type(DhcpMessageType::LeaseActive)
+            .options(options);
+        let bytes = crate::Packet::from_layer(dhcp)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        Dhcp::decode(&bytes).unwrap()
+    }
+
+    fn recompile_is_stable(parsed: &Dhcp) {
+        let bytes = crate::Packet::from_layer(parsed.clone())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let recompiled = crate::Packet::from_layer(Dhcp::decode(&bytes).unwrap())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn dhcp_leasequery_options_roundtrip() {
+        // Every leasequery option carries its source-backed wire format without
+        // data loss: the RFC 4388 client-last-transaction-time (91) and
+        // associated-ip (92); the RFC 6926 status-code (151), base-time (152),
+        // start-time-of-state (153), query-start-time (154), query-end-time
+        // (155), dhcp-state (156), and data-source (157). Documentation IPv4
+        // addresses and arbitrary times are used; no live traffic is involved.
+        let status = DhcpStatusCodeOption::new(DhcpStatusCode::Success, b"ok".to_vec());
+
+        // Each typed value encodes to the expected wire layout and decodes back
+        // losslessly through the source-backed format dispatch.
+        let cases: Vec<(u8, DhcpOptionValue, Vec<u8>)> = vec![
+            (
+                CLIENT_LAST_TRANSACTION_TIME,
+                DhcpOptionValue::U32(3600),
+                3600u32.to_be_bytes().to_vec(),
+            ),
+            (
+                ASSOCIATED_IP,
+                DhcpOptionValue::Ipv4List(vec![ip(192, 0, 2, 10), ip(198, 51, 100, 20)]),
+                vec![192, 0, 2, 10, 198, 51, 100, 20],
+            ),
+            (
+                STATUS_CODE,
+                DhcpOptionValue::StatusCode(status.clone()),
+                vec![0, b'o', b'k'],
+            ),
+            (
+                BASE_TIME,
+                DhcpOptionValue::U32(1_700_000_000),
+                1_700_000_000u32.to_be_bytes().to_vec(),
+            ),
+            (
+                START_TIME_OF_STATE,
+                DhcpOptionValue::U32(120),
+                120u32.to_be_bytes().to_vec(),
+            ),
+            (
+                QUERY_START_TIME,
+                DhcpOptionValue::U32(1_699_999_000),
+                1_699_999_000u32.to_be_bytes().to_vec(),
+            ),
+            (
+                QUERY_END_TIME,
+                DhcpOptionValue::U32(1_700_000_500),
+                1_700_000_500u32.to_be_bytes().to_vec(),
+            ),
+            (
+                DHCP_STATE,
+                DhcpOptionValue::DhcpState(DhcpState::Active),
+                vec![2],
+            ),
+            (
+                DATA_SOURCE,
+                DhcpOptionValue::DataSource(DhcpDataSource::from_remote(true)),
+                vec![1],
+            ),
+        ];
+        for (code, value, expected) in &cases {
+            let payload = value.encode_payload();
+            assert_eq!(&payload, expected, "wire payload for code {code}");
+            assert_eq!(
+                typed_option_value(*code, &payload).unwrap().unwrap(),
+                *value,
+                "typed decode mismatch for code {code}",
+            );
+        }
+
+        // Full packet round-trip through the typed builders and the cross-area
+        // accessors, with no loss across compile -> decode -> compile.
+        let parsed = build_and_decode(vec![
+            DhcpOption::client_last_transaction_time(3600),
+            DhcpOption::associated_ip(vec![ip(192, 0, 2, 10), ip(198, 51, 100, 20)]),
+            DhcpOption::status_code(status.clone()),
+            DhcpOption::base_time(1_700_000_000),
+            DhcpOption::start_time_of_state(120),
+            DhcpOption::query_start_time(1_699_999_000),
+            DhcpOption::query_end_time(1_700_000_500),
+            DhcpOption::dhcp_state(DhcpState::Active),
+            DhcpOption::data_source(DhcpDataSource::from_remote(true)),
+            DhcpOption::End,
+        ]);
+        assert_eq!(
+            parsed.client_last_transaction_time().unwrap().unwrap(),
+            3600
+        );
+        assert_eq!(
+            parsed.associated_ip().unwrap().unwrap(),
+            vec![ip(192, 0, 2, 10), ip(198, 51, 100, 20)],
+        );
+        let decoded_status = parsed.status_code().unwrap().unwrap();
+        assert_eq!(decoded_status.status, DhcpStatusCode::Success);
+        assert_eq!(decoded_status.message, b"ok");
+        assert_eq!(decoded_status.message_lossy(), "ok");
+        assert_eq!(parsed.base_time().unwrap().unwrap(), 1_700_000_000);
+        assert_eq!(parsed.start_time_of_state().unwrap().unwrap(), 120);
+        assert_eq!(parsed.query_start_time().unwrap().unwrap(), 1_699_999_000);
+        assert_eq!(parsed.query_end_time().unwrap().unwrap(), 1_700_000_500);
+        assert_eq!(parsed.dhcp_state().unwrap().unwrap(), DhcpState::Active);
+        let source = parsed.data_source().unwrap().unwrap();
+        assert!(source.is_remote());
+        recompile_is_stable(&parsed);
+
+        // The codepoints are pinned to their IANA values for clarity.
+        assert_eq!(CLIENT_LAST_TRANSACTION_TIME, 91);
+        assert_eq!(ASSOCIATED_IP, 92);
+        assert_eq!(STATUS_CODE, 151);
+        assert_eq!(BASE_TIME, 152);
+        assert_eq!(START_TIME_OF_STATE, 153);
+        assert_eq!(QUERY_START_TIME, 154);
+        assert_eq!(QUERY_END_TIME, 155);
+        assert_eq!(DHCP_STATE, 156);
+        assert_eq!(DATA_SOURCE, 157);
+    }
+
+    #[test]
+    fn dhcp_leasequery_unknown_status_and_state_preserved() {
+        // RFC 6926 / RFC 7724 leave most status and state values unassigned; the
+        // IANA sub-registries mark 9-255 Unassigned. Unknown values are preserved
+        // verbatim through the Unknown variants rather than coerced.
+        assert_eq!(DhcpStatusCode::from_code(200), DhcpStatusCode::Unknown(200));
+        assert_eq!(DhcpStatusCode::Unknown(200).code(), 200);
+        assert_eq!(DhcpState::from_code(99), DhcpState::Unknown(99));
+        assert_eq!(DhcpState::Unknown(99).code(), 99);
+
+        // A status-code option with an unassigned status and non-UTF-8 message
+        // bytes round-trips with the raw message preserved.
+        let status =
+            DhcpStatusCodeOption::new(DhcpStatusCode::Unknown(0x40), vec![0xff, 0xfe, 0x00]);
+        let payload = DhcpOptionValue::StatusCode(status.clone()).encode_payload();
+        assert_eq!(payload, vec![0x40, 0xff, 0xfe, 0x00]);
+        assert_eq!(
+            typed_option_value(STATUS_CODE, &payload).unwrap().unwrap(),
+            DhcpOptionValue::StatusCode(status.clone()),
+        );
+        let parsed = build_and_decode(vec![
+            DhcpOption::status_code(status.clone()),
+            DhcpOption::End,
+        ]);
+        assert_eq!(parsed.status_code().unwrap().unwrap(), status);
+        recompile_is_stable(&parsed);
+
+        // An unassigned dhcp-state octet round-trips through the typed value.
+        let parsed_state = build_and_decode(vec![
+            DhcpOption::dhcp_state(DhcpState::Unknown(0x55)),
+            DhcpOption::End,
+        ]);
+        assert_eq!(
+            parsed_state.dhcp_state().unwrap().unwrap(),
+            DhcpState::Unknown(0x55),
+        );
+
+        // The data-source UNA bits (RFC 6926 section 6.2.8, "MUST be ignored")
+        // are preserved verbatim so the octet round-trips exactly, while the
+        // typed REMOTE flag is still readable.
+        let source = DhcpDataSource::new(0xFE);
+        assert!(
+            !source.is_remote(),
+            "REMOTE bit clear when only UNA bits set"
+        );
+        assert_eq!(source.encode(), vec![0xFE]);
+        let source_remote = DhcpDataSource::new(0xFF);
+        assert!(source_remote.is_remote());
+        assert_eq!(
+            typed_option_value(DATA_SOURCE, &[0xFE]).unwrap().unwrap(),
+            DhcpOptionValue::DataSource(DhcpDataSource::new(0xFE)),
+        );
+    }
+
+    #[test]
+    fn dhcp_leasequery_malformed_lengths_are_structured() {
+        // Fixed-length leasequery options reject wrong lengths with structured
+        // errors rather than panicking. The 4-octet time options (91, 152-155)
+        // reject any length other than four; the single-octet state (156) and
+        // data-source (157) reject any length other than one; associated-ip (92)
+        // requires a non-zero multiple of four; status-code (151) requires at
+        // least the one status octet.
+        for code in [
+            CLIENT_LAST_TRANSACTION_TIME,
+            BASE_TIME,
+            START_TIME_OF_STATE,
+            QUERY_START_TIME,
+            QUERY_END_TIME,
+        ] {
+            for len in [0usize, 1, 2, 3, 5, 8] {
+                assert!(
+                    typed_option_value(code, &vec![0u8; len]).is_err(),
+                    "code {code} len {len} must be rejected",
+                );
+            }
+        }
+        for code in [DHCP_STATE, DATA_SOURCE] {
+            for len in [0usize, 2, 3] {
+                assert!(
+                    typed_option_value(code, &vec![0u8; len]).is_err(),
+                    "code {code} len {len} must be rejected",
+                );
+            }
+        }
+        // associated-ip: a length that is not a non-zero multiple of four.
+        for len in [1usize, 2, 3, 5, 7] {
+            assert!(typed_option_value(ASSOCIATED_IP, &vec![0u8; len]).is_err());
+        }
+        // status-code: an empty payload has no status octet.
+        assert!(matches!(
+            typed_option_value(STATUS_CODE, &[]),
+            Err(CrafterError::BufferTooShort { .. }),
+        ));
+        // status-code: a bare status octet with no message is valid (empty msg).
+        let bare = typed_option_value(STATUS_CODE, &[3]).unwrap().unwrap();
+        assert_eq!(
+            bare,
+            DhcpOptionValue::StatusCode(DhcpStatusCodeOption::new(
+                DhcpStatusCode::MalformedQuery,
+                Vec::new(),
+            )),
+        );
     }
 }

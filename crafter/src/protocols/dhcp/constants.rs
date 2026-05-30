@@ -259,6 +259,83 @@ pub const DHCP_FORCERENEW_NONCE_TYPE_NONCE: u8 = 1;
 /// Source: RFC 6704 section 5.
 pub const DHCP_FORCERENEW_NONCE_TYPE_HMAC_MD5: u8 = 2;
 
+// Leasequery, bulk leasequery, and active leasequery option codes and field
+// constants. Codepoints come from the IANA "BOOTP Vendor Extensions and DHCP
+// Options" registry (updated 2026-02-02) and its DHCP Status Code (type 151)
+// and DHCP State (type 156) sub-registries (XML retrieved 2026-05-29); each
+// wire format is defined by the RFC cited inline.
+
+/// DHCP client-last-transaction-time option code (RFC 4388 section 6.1).
+pub const DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME: u8 = 91;
+/// DHCP associated-ip option code (RFC 4388 section 6.1).
+pub const DHCP_OPTION_ASSOCIATED_IP: u8 = 92;
+/// DHCP status-code option code (RFC 6926 section 6.2.2).
+pub const DHCP_OPTION_STATUS_CODE: u8 = 151;
+/// DHCP base-time option code (RFC 6926 section 6.2.3).
+pub const DHCP_OPTION_BASE_TIME: u8 = 152;
+/// DHCP start-time-of-state option code (RFC 6926 section 6.2.4).
+pub const DHCP_OPTION_START_TIME_OF_STATE: u8 = 153;
+/// DHCP query-start-time option code (RFC 6926 section 6.2.5).
+pub const DHCP_OPTION_QUERY_START_TIME: u8 = 154;
+/// DHCP query-end-time option code (RFC 6926 section 6.2.6).
+pub const DHCP_OPTION_QUERY_END_TIME: u8 = 155;
+/// DHCP dhcp-state option code (RFC 6926 section 6.2.7).
+pub const DHCP_OPTION_DHCP_STATE: u8 = 156;
+/// DHCP data-source option code (RFC 6926 section 6.2.8).
+pub const DHCP_OPTION_DATA_SOURCE: u8 = 157;
+
+/// DHCP status-code value Success (`0`).
+///
+/// Source: RFC 6926 section 6.2.2 and the IANA "DHCP Status Code Type 151
+/// Values" sub-registry.
+pub const DHCP_STATUS_SUCCESS: u8 = 0;
+/// DHCP status-code value UnspecFail (`1`). Source: RFC 6926, IANA type-151.
+pub const DHCP_STATUS_UNSPEC_FAIL: u8 = 1;
+/// DHCP status-code value QueryTerminated (`2`). Source: RFC 6926, IANA type-151.
+pub const DHCP_STATUS_QUERY_TERMINATED: u8 = 2;
+/// DHCP status-code value MalformedQuery (`3`). Source: RFC 6926, IANA type-151.
+pub const DHCP_STATUS_MALFORMED_QUERY: u8 = 3;
+/// DHCP status-code value NotAllowed (`4`). Source: RFC 6926, IANA type-151.
+pub const DHCP_STATUS_NOT_ALLOWED: u8 = 4;
+/// DHCP status-code value DataMissing (`5`). Source: RFC 7724, IANA type-151.
+pub const DHCP_STATUS_DATA_MISSING: u8 = 5;
+/// DHCP status-code value ConnectionActive (`6`). Source: RFC 7724, IANA type-151.
+pub const DHCP_STATUS_CONNECTION_ACTIVE: u8 = 6;
+/// DHCP status-code value CatchUpComplete (`7`). Source: RFC 7724, IANA type-151.
+pub const DHCP_STATUS_CATCH_UP_COMPLETE: u8 = 7;
+/// DHCP status-code value TLSConnectionRefused (`8`). Source: RFC 7724, IANA type-151.
+pub const DHCP_STATUS_TLS_CONNECTION_REFUSED: u8 = 8;
+
+/// DHCP dhcp-state value Reserved (`0`).
+///
+/// Source: RFC 6926 section 6.2.7 and the IANA "DHCP State Type 156 Values"
+/// sub-registry.
+pub const DHCP_STATE_RESERVED: u8 = 0;
+/// DHCP dhcp-state value AVAILABLE (`1`). Source: RFC 6926, IANA type-156.
+pub const DHCP_STATE_AVAILABLE: u8 = 1;
+/// DHCP dhcp-state value ACTIVE (`2`). Source: RFC 6926, IANA type-156.
+pub const DHCP_STATE_ACTIVE: u8 = 2;
+/// DHCP dhcp-state value EXPIRED (`3`). Source: RFC 6926, IANA type-156.
+pub const DHCP_STATE_EXPIRED: u8 = 3;
+/// DHCP dhcp-state value RELEASED (`4`). Source: RFC 6926, IANA type-156.
+pub const DHCP_STATE_RELEASED: u8 = 4;
+/// DHCP dhcp-state value ABANDONED (`5`). Source: RFC 6926, IANA type-156.
+pub const DHCP_STATE_ABANDONED: u8 = 5;
+/// DHCP dhcp-state value RESET (`6`). Source: RFC 6926, IANA type-156.
+pub const DHCP_STATE_RESET: u8 = 6;
+/// DHCP dhcp-state value REMOTE (`7`). Source: RFC 6926, IANA type-156.
+pub const DHCP_STATE_REMOTE: u8 = 7;
+/// DHCP dhcp-state value TRANSITIONING (`8`). Source: RFC 6926, IANA type-156.
+pub const DHCP_STATE_TRANSITIONING: u8 = 8;
+
+/// RFC 6926 data-source option (option 157) Flags REMOTE bit (`R`, `0x01`).
+///
+/// Source: RFC 6926 section 6.2.8. The Flags octet's least-significant bit is
+/// the REMOTE flag: set (`1`) means the data came from a remote server, clear
+/// (`0`) means it came from the local server. The remaining bits (UNA) are
+/// unassigned and MUST be ignored.
+pub const DHCP_DATA_SOURCE_FLAG_REMOTE: u8 = 0x01;
+
 // Vendor, user-class, PXE, and vendor-identifying option codes. Codepoints come
 // from the IANA "BOOTP Vendor Extensions and DHCP Options" registry (updated
 // 2026-02-02); each wire format is defined by the RFC cited inline.
