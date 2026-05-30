@@ -1961,6 +1961,45 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
             },
         ]
         return
+    if "a-aaaa-records" in key:
+        # An authoritative response carrying A and AAAA answers for the same
+        # owner name, with stable TTLs and documentation IPv4/IPv6 addresses.
+        # The two answers are ordered AAAA before A so the case also exercises a
+        # non-canonical answer ordering; both materializers must preserve the
+        # supplied order and emit identical uncompressed names so the encode is
+        # byte-exact in both directions.
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative", "recursion_available"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields["answers"] = [
+            {
+                "name": "host.example.com.",
+                "type": "AAAA",
+                "ttl": 3600,
+                "address": "2001:db8:1::10",
+            },
+            {
+                "name": "host.example.com.",
+                "type": "A",
+                "ttl": 3600,
+                "address": "192.0.2.10",
+            },
+            {
+                "name": "alt.example.net.",
+                "type": "A",
+                "ttl": 300,
+                "address": "198.51.100.20",
+            },
+            {
+                "name": "alt.example.net.",
+                "type": "AAAA",
+                "ttl": 300,
+                "address": "2001:db8:2::20",
+            },
+        ]
+        return
     if "multi-question-classes" in key:
         # A single query carrying several questions in a deterministic order that
         # exercise the QTYPE and QCLASS axes together: named QTYPEs (A, AAAA, MX,

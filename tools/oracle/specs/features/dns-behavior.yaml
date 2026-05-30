@@ -76,6 +76,12 @@ behaviors:
     record_kinds:
       - question_a
       - question_aaaa
+  - name: a_aaaa_records
+    summary: Authoritative response with A and AAAA answers for documentation IPv4/IPv6 addresses, stable TTLs, and both answer orderings.
+    record_kinds:
+      - question_a
+      - a
+      - aaaa
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -275,6 +281,7 @@ case_groups:
       - dns-record-mx
       - dns-record-txt
       - dns-response-records
+      - dns-a-aaaa-records
   - name: dns-soa-srv
     summary: SOA and SRV records.
     byte_policy: strict_bytes
@@ -404,6 +411,7 @@ coverage_cases:
   - dns-question-unknown-codes
   - dns-record-a
   - dns-record-aaaa
+  - dns-a-aaaa-records
   - dns-record-ns
   - dns-record-cname
   - dns-record-ptr
@@ -569,6 +577,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-record-aaaa
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-a-aaaa-records
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference

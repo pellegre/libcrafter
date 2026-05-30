@@ -237,6 +237,7 @@ stacks:
       - dns-question-unknown-codes
       - dns-record-a
       - dns-record-aaaa
+      - dns-a-aaaa-records
       - dns-record-ns
       - dns-record-cname
       - dns-record-ptr
