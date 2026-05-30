@@ -264,6 +264,53 @@ These are explicitly out of scope for the current DNS wire work:
 - Zone file presentation parsing. The crate works on wire bytes, not master
   file text.
 
+## Validation coverage
+
+The DNS wire layer is validated against a reference backend (Scapy) through the
+`tools/oracle/` boundary. The suite validates packet construction, decode, and
+capture behavior, not DNS client, resolver, or server semantics. All cases use
+documentation address space and reserved names; offline is the default path and
+real live exchange is opt-in. See [Oracle validation](validation.md) for the
+boundary and command shapes.
+
+The oracle cases and the deterministic crate fixtures together cover every
+implemented DNS group:
+
+- Header (transaction id, QR, AA/TC/RD/RA/AD/CD flags, user opcodes and rcodes,
+  the raw flags escape hatch, auto-filled and empty section counts).
+- Names and compression (root, trailing-dot, label-boundary, `\DDD`-escaped,
+  non-UTF-8 labels, and compressed-name decode).
+- Questions (single and multi-question, the QTYPE/QCLASS axes, and unknown
+  numeric codepoints).
+- A and AAAA address records.
+- NS, CNAME, and PTR name records.
+- MX and TXT records (including empty, binary, and 255-octet character-strings).
+- SOA and SRV records.
+- Unknown and intentionally deferred record types preserved as
+  `DnsRecordData::Raw`.
+- EDNS(0) OPT basic fields and the option TLV matrix.
+- DNSSEC DS, DNSKEY, RRSIG, NSEC, and NSEC3 wire records.
+- SVCB and HTTPS service binding.
+- Section placement across answer, authority, and additional.
+- Malformed names and malformed RDATA, asserted as structured errors with no
+  panic.
+
+A few features cannot be compared as strict reference bytes and use raw bytes or
+a normalized-model comparison instead:
+
+- Compressed names compare as the normalized decoded model: libcrafter
+  re-encodes names uncompressed, so the decoded `DnsName` agrees while the wire
+  bytes intentionally differ from the compressed reference input.
+- SVCB/HTTPS RDATA is supplied as Scapy-owned raw bytes, because the reference
+  backend's high-level SvcParam encoder re-interprets known keys; the crate
+  keeps each SvcParamValue opaque.
+- `\DDD` name escapes are flattened to literal text by the reference high-level
+  encoder, so byte-faithful agreement for special labels is proven by the
+  libcrafter encode direction and the byte-preserving crate name tests.
+- Malformed inputs are covered by the deterministic crate corpus and
+  `resilience.rs` structured-error assertions, not by an offline oracle
+  comparison.
+
 ## Evidence
 
 Protocol facts above come from the following reviewed sources. Compact

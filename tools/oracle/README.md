@@ -124,6 +124,42 @@ tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smo
 tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 11 --count 40 --family ipv6 --out target/oracle/step-11-ipv6
 ```
 
+## DNS Scapy Coverage
+
+The DNS family has an extensive Scapy-backed suite. It validates packet
+construction, decode, and capture behavior, **not** DNS client, resolver, or
+server semantics. The case contract and per-feature byte policy live in
+`tools/oracle/specs/fixtures/dns-scapy-coverage.md`; the cases are wired through
+`tools/oracle/specs/features/dns-behavior.yaml`, `layers/dns.yaml`,
+`stacks.yaml`, and `fixtures/scapy-cases.json`.
+
+The suite covers every implemented DNS group: header (id, QR, AA/TC/RD/RA/AD/CD
+flags, opcodes, rcodes, raw flags, auto-filled and empty section counts), names
+and compression, questions and the QTYPE/QCLASS axes, A/AAAA, NS/CNAME/PTR,
+MX/TXT, SOA/SRV, raw-unknown and deferred record types, EDNS OPT basic fields
+and the option TLV matrix, DNSSEC DS/DNSKEY/RRSIG/NSEC/NSEC3, SVCB/HTTPS, section
+placement, and malformed names and RDATA.
+
+Most cases compare strict reference bytes. A few features cannot, and the case
+row documents the reason:
+
+- Compressed names use `normalized` comparison: libcrafter re-encodes names
+  uncompressed, so the decoded model agrees while the wire bytes differ from the
+  compressed Scapy input (`dns-name-compressed`, `dns-compressed-names`,
+  `dns-name-records-compressed`).
+- SVCB/HTTPS RDATA is built as Scapy-owned raw RDATA bytes through a generic
+  `DNSRR`, because Scapy's high-level `SvcParam` field re-interprets known keys
+  and rejects raw `port`/`ipvNhint` bytes; SvcParamValues stay opaque
+  (`dns-svcb-https`).
+- `\DDD` name escapes are flattened to literal text by the Scapy high-level
+  encode, so byte-faithful agreement for special labels is carried by the
+  `libcrafter_to_reference` direction and the `crafter` byte-preserving name
+  tests, with the oracle comparing header and section counts
+  (`dns-name-root-escaped`).
+- Malformed names and RDATA are covered by the deterministic `crafter` decode
+  corpus and `crafter/tests/resilience.rs` structured-error assertions, not by
+  an offline oracle comparison (the oracle has no offline malformed pathway).
+
 ## Offline Protocol Suites
 
 Offline validation is the default safety boundary, so it should prove
@@ -152,6 +188,18 @@ command; `--run` executes them and reports the aggregate result:
 tools/oracle/run specs suite --family dns
 tools/oracle/run specs suite --family dns --json
 tools/oracle/run specs suite --family dns --run
+```
+
+## DNS Pcap Suite
+
+Pcap validation round trips every representable DNS case through deterministic
+pcap write/read. Pcap eligibility is data-driven from each case's `byte_policy`:
+`normalized` cases (compressed names) are skipped `pcap_normalized_only` and
+`structured_error` (malformed) cases are skipped `pcap_structured_error`, since
+neither has a strict-byte wire form to round trip:
+
+```sh
+tools/oracle/run pcap --backend scapy --family dns --profile ci --seed 2802 --count 50 --out target/oracle/dns-pcap
 ```
 
 ## DNS Live Dry-Run Suite

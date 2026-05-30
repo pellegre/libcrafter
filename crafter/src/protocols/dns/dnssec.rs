@@ -639,8 +639,7 @@ mod dns_dnssec {
         for &(record_type, rdata) in RAW_TYPE_CASES {
             // The decoder surfaces the RDATA verbatim rather than rejecting an
             // unknown/deferred type.
-            let decoded =
-                decode_record_data(record_type, rdata, 0, rdata.len()).unwrap();
+            let decoded = decode_record_data(record_type, rdata, 0, rdata.len()).unwrap();
             assert_eq!(
                 decoded,
                 DnsRecordData::Raw(rdata.to_vec()),

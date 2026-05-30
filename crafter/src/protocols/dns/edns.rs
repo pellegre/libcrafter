@@ -363,8 +363,14 @@ mod dns_edns {
         // COOKIE, Padding), the DAU option (a registered mnemonic without a
         // libcrafter constructor), and an unknown option code.
         assert_eq!(edns_option_code_name(DNS_EDNS_OPTION_NSID), Some("NSID"));
-        assert_eq!(edns_option_code_name(DNS_EDNS_OPTION_COOKIE), Some("COOKIE"));
-        assert_eq!(edns_option_code_name(DNS_EDNS_OPTION_PADDING), Some("Padding"));
+        assert_eq!(
+            edns_option_code_name(DNS_EDNS_OPTION_COOKIE),
+            Some("COOKIE")
+        );
+        assert_eq!(
+            edns_option_code_name(DNS_EDNS_OPTION_PADDING),
+            Some("Padding")
+        );
         // DAU has a mnemonic but no named constructor.
         assert_eq!(edns_option_code_name(DNS_EDNS_OPTION_DAU), Some("DAU"));
         // An unknown option code has no mnemonic.

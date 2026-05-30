@@ -566,7 +566,11 @@ mod dns_name_parse {
         let name = DnsName::parse("lit\\046dot\\092slash.example.com.").unwrap();
         assert_eq!(
             name.labels(),
-            &[b"lit.dot\\slash".to_vec(), b"example".to_vec(), b"com".to_vec()]
+            &[
+                b"lit.dot\\slash".to_vec(),
+                b"example".to_vec(),
+                b"com".to_vec()
+            ]
         );
         // The label is text-compatible bytes that still need escaping, so the
         // presentation re-renders the special octets.
