@@ -62,6 +62,9 @@ coverage_cases:
   - dhcp-discover
   - dhcp-request-offer-ack
   - dhcp-inform-release-generic-options
+  - dhcp-decline-nak
+  - dhcp-force-renew
+  - dhcp-lease-query
   - malformed-dhcp-options
   - crafter-dhcp-message-matrix
 
