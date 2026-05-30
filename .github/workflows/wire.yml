@@ -76,6 +76,15 @@ jobs:
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
 
+      - name: Run oracle DHCP IPv4 live dry run
+        run: |
+          tools/oracle/run live --backend scapy --provider hetzner --dry-run \
+            --profile smoke \
+            --seed 133 \
+            --count 2 \
+            --case dhcp-discover \
+            --out target/oracle/dhcp-hetzner-dry-run
+
       - name: Run probe Hetzner wire dry run
         run: |
           tools/probe/run --provider hetzner --dry-run \
@@ -91,6 +100,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             target/oracle/live
+            target/oracle/dhcp-hetzner-dry-run
             target/probe
 
   hetzner-live:
