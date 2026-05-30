@@ -525,3 +525,93 @@ mod dns_name_decode {
         assert!(decode_dns_name_typed(&wire, 0).is_err());
     }
 }
+
+#[cfg(test)]
+mod dns_name_parse {
+    use super::{decode_dns_name_typed, DnsName};
+
+    #[test]
+    fn parses_root_name_to_empty_labels() {
+        // Both the canonical "." and the empty string are the root name with no
+        // labels and a "." presentation.
+        for input in [".", ""] {
+            let name = DnsName::parse(input).unwrap();
+            assert!(name.labels().is_empty());
+            assert_eq!(name.presentation(), ".");
+            assert!(name.is_text());
+        }
+        assert_eq!(DnsName::root(), DnsName::parse(".").unwrap());
+    }
+
+    #[test]
+    fn trailing_dot_and_relative_names_parse_identically() {
+        // A trailing dot is canonical; a bare relative name is treated as fully
+        // qualified, so both forms yield the same wire labels.
+        let with_dot = DnsName::parse("trailing.example.com.").unwrap();
+        let relative = DnsName::parse("trailing.example.com").unwrap();
+
+        assert_eq!(with_dot.labels(), relative.labels());
+        assert_eq!(
+            with_dot.labels(),
+            &[b"trailing".to_vec(), b"example".to_vec(), b"com".to_vec()]
+        );
+        assert_eq!(with_dot.presentation(), "trailing.example.com.");
+        assert!(with_dot.is_text());
+    }
+
+    #[test]
+    fn escapes_for_literal_dot_and_backslash_parse_into_one_label() {
+        // RFC 1035 Section 5.1 \. and \\ escapes keep a literal '.' (0x2e) and
+        // '\' (0x5c) inside a single label instead of splitting on them.
+        let name = DnsName::parse("lit\\046dot\\092slash.example.com.").unwrap();
+        assert_eq!(
+            name.labels(),
+            &[b"lit.dot\\slash".to_vec(), b"example".to_vec(), b"com".to_vec()]
+        );
+        // The label is text-compatible bytes that still need escaping, so the
+        // presentation re-renders the special octets.
+        assert_eq!(name.labels()[0], b"lit.dot\\slash");
+        assert!(!name.is_text());
+
+        // The \X (non-digit) escape form is equivalent for '.' and '\'.
+        let alt = DnsName::parse("lit\\.dot\\\\slash.example.com.").unwrap();
+        assert_eq!(alt.labels(), name.labels());
+    }
+
+    #[test]
+    fn decimal_escapes_parse_into_exact_non_utf8_octets() {
+        // \000 and \255 are the byte-preserving form of a non-text label; the
+        // parsed wire bytes are exactly 0x00 and 0xff.
+        let name = DnsName::parse("\\000\\255.example.com.").unwrap();
+        assert_eq!(
+            name.labels(),
+            &[vec![0x00, 0xff], b"example".to_vec(), b"com".to_vec()]
+        );
+        assert!(!name.is_text());
+        assert_eq!(name.presentation(), "\\000\\255.example.com.");
+    }
+
+    #[test]
+    fn non_text_presentation_round_trips_parse_decode_encode() {
+        // Parsing a non-UTF-8 presentation name and re-encoding it yields the
+        // same wire image a decode of those bytes recovers, so parse and decode
+        // agree on the exact label octets.
+        let parsed = DnsName::parse("\\000\\255.example.com.").unwrap();
+        let mut encoded = Vec::new();
+        parsed.encode(&mut encoded).unwrap();
+
+        let (decoded, used) = decode_dns_name_typed(&encoded, 0).unwrap();
+        assert_eq!(used, encoded.len());
+        assert_eq!(decoded.labels(), parsed.labels());
+        assert_eq!(decoded.presentation(), parsed.presentation());
+    }
+
+    #[test]
+    fn malformed_escapes_are_rejected_without_panic() {
+        // A dangling backslash and an out-of-range \DDD escape both surface as
+        // structured errors rather than panicking.
+        assert!(DnsName::parse("bad\\").is_err());
+        assert!(DnsName::parse("bad\\99.example.com.").is_err());
+        assert!(DnsName::parse("\\300.example.com.").is_err());
+    }
+}

@@ -1897,6 +1897,40 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
         fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
         fields.pop("answers", None)
         return
+    if "name-root-escaped" in key:
+        # Byte-preserving name shapes in one message: the root name as the
+        # question owner, a trailing-dot text answer name, a CNAME target that
+        # carries literal dot and backslash octets via the RFC 1035 Section 5.1
+        # \DDD escape, and a PTR target whose label is a non-UTF-8 byte run
+        # (\000 and \255). The libcrafter materializer parses these presentation
+        # strings back into the exact wire octets, so the decoded header/section
+        # model agrees in both directions. The compared subset is header plus
+        # section counts, so the special label octets never need a lossless
+        # Scapy high-level encode; the faithful byte-preserving assertions live
+        # in the crate name tests.
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["recursion_available"]
+        fields["questions"] = [{"qname": ".", "qtype": "A"}]
+        fields["answers"] = [
+            {"name": "example.com.", "type": "A", "ttl": 60, "address": "192.0.2.10"},
+            {
+                "name": "trailing.example.com.",
+                "type": "CNAME",
+                "ttl": 300,
+                # Literal '.' (\046) and '\' (\092) inside a single label.
+                "target": "lit\\046dot\\092slash.example.com.",
+            },
+            {
+                "name": "ptr.example.com.",
+                "type": "PTR",
+                "ttl": 300,
+                # Non-UTF-8 label: NUL (\000) and 0xff (\255) octets.
+                "target": "\\000\\255.example.com.",
+            },
+        ]
+        return
     if "soa-srv-records" in key:
         # A response carrying one SOA authority-style answer and one SRV answer
         # so the libcrafter materializer exercises both typed record builders in

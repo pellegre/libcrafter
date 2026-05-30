@@ -228,6 +228,7 @@ stacks:
       - dns-name-label-boundary
       - dns-name-escaped
       - dns-name-non-text
+      - dns-name-root-escaped
       - dns-name-compressed
       - dns-compressed-names
       - crafter-dns-name-uncompressed
