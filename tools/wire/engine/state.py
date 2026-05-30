@@ -16,7 +16,7 @@ MANIFEST_FILENAME = "endpoint.json"
 LEGACY_MANIFEST_FILENAME = "manifest.json"
 PRIVATE_KEY_FILENAME = "id_ed25519"
 KNOWN_HOSTS_FILENAME = "known_hosts"
-DEFAULT_PRIVATE_CIDR = "10.0.0.0/16"
+DEFAULT_PRIVATE_CIDR = "10.42.19.0/24"
 
 
 @dataclass(frozen=True, slots=True)

@@ -109,6 +109,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="requested private IPv4 address for private exposure",
     )
     create_endpoint.add_argument(
+        "--private-cidr",
+        metavar="CIDR",
+        help="private network IPv4 CIDR for private exposure",
+    )
+    create_endpoint.add_argument(
         "--dry-run",
         action="store_true",
         help="plan endpoint creation without creating provider resources",
@@ -262,15 +267,18 @@ def _run_doctor(args: argparse.Namespace) -> int:
 def _run_create_endpoint(args: argparse.Namespace) -> int:
     try:
         provider = resolve_provider(args.provider, args.exposure)
-        manifest = provider.create_endpoint(
-            provider=args.provider,
-            exposure=args.exposure,
-            role=args.role,
-            private_group=args.private_group,
-            private_ip=args.private_ip,
-            dry_run=args.dry_run,
-            confirm_live_run=args.confirm_live_run,
-        )
+        create_kwargs: dict[str, object] = {
+            "provider": args.provider,
+            "exposure": args.exposure,
+            "role": args.role,
+            "private_group": args.private_group,
+            "private_ip": args.private_ip,
+            "dry_run": args.dry_run,
+            "confirm_live_run": args.confirm_live_run,
+        }
+        if args.private_cidr is not None:
+            create_kwargs["private_cidr"] = args.private_cidr
+        manifest = provider.create_endpoint(**create_kwargs)
     except (
         NotImplementedError,
         PermissionError,

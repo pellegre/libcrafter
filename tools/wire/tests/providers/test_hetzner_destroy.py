@@ -358,7 +358,7 @@ def _network_resource() -> dict[str, object]:
         "network_id": "network-123",
         "network_name": "wire-group-a",
         "private_group": "group-a",
-        "ip_range": "10.0.0.0/16",
+        "ip_range": "10.42.19.0/24",
     }
 
 

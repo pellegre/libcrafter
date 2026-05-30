@@ -75,6 +75,98 @@ class HetznerCreateEndpointTest(unittest.TestCase):
         )
         self.assertEqual(json.loads(stdout.getvalue())["formatted_by"], "fake-provider")
 
+    def test_cli_create_endpoint_threads_private_cidr_when_supplied(self) -> None:
+        fake_provider = mock.Mock()
+        fake_provider.create_endpoint.return_value = {
+            "endpoint_id": "hetzner-private-planned",
+            "provider": "hetzner",
+            "exposure": "private",
+            "created": False,
+            "dry_run": True,
+        }
+        fake_provider.cli_output_manifest.side_effect = lambda manifest: manifest
+
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with (
+                mock.patch.object(
+                    wire_cli,
+                    "resolve_provider",
+                    return_value=fake_provider,
+                ),
+                redirect_stdout(stdout),
+            ):
+                exit_code = wire_cli.main(
+                    [
+                        "create-endpoint",
+                        "--provider",
+                        "hetzner",
+                        "--exposure",
+                        "private",
+                        "--private-group",
+                        "oracle-live-private",
+                        "--private-ip",
+                        "10.42.19.10",
+                        "--private-cidr",
+                        "10.42.19.0/24",
+                        "--dry-run",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            fake_provider.create_endpoint.call_args.kwargs,
+            {
+                "provider": "hetzner",
+                "exposure": "private",
+                "role": "libcrafter",
+                "private_group": "oracle-live-private",
+                "private_ip": "10.42.19.10",
+                "private_cidr": "10.42.19.0/24",
+                "dry_run": True,
+                "confirm_live_run": False,
+            },
+        )
+
+    def test_cli_create_endpoint_omits_private_cidr_when_absent(self) -> None:
+        fake_provider = mock.Mock()
+        fake_provider.create_endpoint.return_value = {
+            "endpoint_id": "hetzner-private-planned",
+            "provider": "hetzner",
+            "exposure": "private",
+            "created": False,
+            "dry_run": True,
+        }
+        fake_provider.cli_output_manifest.side_effect = lambda manifest: manifest
+
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with (
+                mock.patch.object(
+                    wire_cli,
+                    "resolve_provider",
+                    return_value=fake_provider,
+                ),
+                redirect_stdout(io.StringIO()),
+            ):
+                wire_cli.main(
+                    [
+                        "create-endpoint",
+                        "--provider",
+                        "hetzner",
+                        "--exposure",
+                        "private",
+                        "--private-group",
+                        "oracle-live-private",
+                        "--private-ip",
+                        "10.42.19.10",
+                        "--dry-run",
+                        "--json",
+                    ]
+                )
+
+        self.assertNotIn("private_cidr", fake_provider.create_endpoint.call_args.kwargs)
+
     def test_cli_create_endpoint_reports_resolved_provider_errors(self) -> None:
         fake_provider = mock.Mock()
         fake_provider.create_endpoint.side_effect = RuntimeError("provider exploded")
@@ -113,7 +205,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                 exposure="private",
                 role="oracle",
                 private_group="pair-a",
-                private_ip="10.0.0.9",
+                private_ip="10.42.19.9",
                 dry_run=True,
                 command_runner=fake_runner,
             )
@@ -226,7 +318,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                     exposure="private",
                     role="oracle",
                     private_group="pair-a",
-                    private_ip="10.0.0.9",
+                    private_ip="10.42.19.9",
                     dry_run=False,
                     confirm_live_run=True,
                     env={"HCLOUD_TOKEN": "token"},
@@ -239,12 +331,12 @@ class HetznerCreateEndpointTest(unittest.TestCase):
             self.assertTrue(output["created"])
             self.assertEqual(stored.exposure, "private")
             self.assertEqual(stored.interfaces[0].name, "ens10")
-            self.assertEqual(stored.interfaces[0].ipv4, "10.0.0.9")
+            self.assertEqual(stored.interfaces[0].ipv4, "10.42.19.9")
             self.assertEqual(stored.interfaces[0].mac, "86:00:00:00:00:09")
             self.assertEqual(stored.metadata["discovery"]["private_interface"], "ens10")
             self.assertTrue(stored.metadata["discovery"]["private_interface_matched"])
             self.assertEqual(record.allocated_endpoint_ids, [endpoint_id])
-            self.assertEqual(record.allocated_private_ipv4s, ["10.0.0.9"])
+            self.assertEqual(record.allocated_private_ipv4s, ["10.42.19.9"])
             self.assertEqual(record.network_resource["network_id"], "network-303")
             self.assertEqual(
                 calls,
@@ -257,7 +349,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                         "--name",
                         "wire-pair-a",
                         "--ip-range",
-                        "10.0.0.0/16",
+                        "10.42.19.0/24",
                         "--label",
                         "libcrafter-wire=true",
                         "--label",
@@ -311,7 +403,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                         "--network",
                         "network-303",
                         "--ip",
-                        "10.0.0.9",
+                        "10.42.19.9",
                     ),
                     ("hcloud", "server", "describe", "server-202", "-o", "json"),
                 ],
@@ -345,7 +437,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                     exposure="private",
                     role="oracle",
                     private_group="pair-a",
-                    private_ip="10.0.0.9",
+                    private_ip="10.42.19.9",
                     dry_run=False,
                     confirm_live_run=True,
                     env={"HCLOUD_TOKEN": "token"},
@@ -357,6 +449,74 @@ class HetznerCreateEndpointTest(unittest.TestCase):
             self.assertEqual(discovery.call_count, 2)
             sleep.assert_called_once()
             self.assertEqual(stored.metadata["discovery"]["private_interface"], "ens10")
+
+    def test_private_live_create_uses_explicit_private_cidr(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            calls: list[tuple[str, ...]] = []
+
+            def fake_runner(argv: Sequence[str], **_: object) -> CommandResult:
+                calls.append(tuple(argv))
+                return _hcloud_result(argv, _private_hcloud_payload_with_cidr(argv))
+
+            with _patched_endpoint_helpers(), _wire_env(root):
+                hetzner.create_endpoint(
+                    provider="hetzner",
+                    exposure="private",
+                    role="oracle",
+                    private_group="pair-a",
+                    private_ip="10.42.19.10",
+                    private_cidr="10.42.19.0/24",
+                    dry_run=False,
+                    confirm_live_run=True,
+                    env={"HCLOUD_TOKEN": "token", "HETZNER_PRIVATE_CIDR": "10.99.0.0/16"},
+                    command_runner=fake_runner,
+                )
+                record = read_private_group_record("hetzner", "pair-a")
+
+            network_create = next(
+                call for call in calls if call[:3] == ("hcloud", "network", "create")
+            )
+            self.assertIn("--ip-range", network_create)
+            self.assertEqual(
+                network_create[network_create.index("--ip-range") + 1],
+                "10.42.19.0/24",
+            )
+            self.assertEqual(record.private_cidr, "10.42.19.0/24")
+
+    def test_private_create_rejects_invalid_private_cidr(self) -> None:
+        def fake_runner(argv: Sequence[str], **_: object) -> CommandResult:
+            self.fail(f"invalid private-cidr should not run hcloud: {argv}")
+
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with self.assertRaisesRegex(ValueError, "private_cidr must be a valid IPv4 CIDR"):
+                hetzner.create_endpoint(
+                    provider="hetzner",
+                    exposure="private",
+                    role="oracle",
+                    private_group="pair-a",
+                    private_ip="10.42.19.10",
+                    private_cidr="not-a-cidr",
+                    dry_run=True,
+                    command_runner=fake_runner,
+                )
+
+    def test_private_cidr_rejected_for_non_private_exposure(self) -> None:
+        def fake_runner(argv: Sequence[str], **_: object) -> CommandResult:
+            self.fail(f"rejected request should not run hcloud: {argv}")
+
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with self.assertRaisesRegex(
+                ValueError, "--private-cidr is only valid with --exposure private"
+            ):
+                hetzner.create_endpoint(
+                    provider="hetzner",
+                    exposure="wan",
+                    role="probe",
+                    private_cidr="10.42.19.0/24",
+                    dry_run=True,
+                    command_runner=fake_runner,
+                )
 
     def test_private_interface_configuration_uses_onlink_gateway_route(self) -> None:
         script = hetzner_create._configure_private_network_interface_script(
@@ -509,12 +669,37 @@ def _private_hcloud_payload(argv: Sequence[str]) -> dict[str, object] | None:
             "network": {
                 "id": "network-303",
                 "name": "wire-pair-a",
-                "ip_range": "10.0.0.0/16",
+                "ip_range": "10.42.19.0/24",
                 "subnets": [
                     {
                         "type": "server",
                         "network_zone": "eu-central",
-                        "ip_range": "10.0.0.0/16",
+                        "ip_range": "10.42.19.0/24",
+                    }
+                ],
+            }
+        }
+    if parts[:3] == ("hcloud", "server", "attach-to-network"):
+        return {}
+    return _wan_hcloud_payload(argv)
+
+
+def _private_hcloud_payload_with_cidr(argv: Sequence[str]) -> dict[str, object] | None:
+    parts = tuple(argv)
+    if parts == ("hcloud", "network", "describe", "wire-pair-a", "-o", "json"):
+        return None
+    if parts[:3] == ("hcloud", "network", "create"):
+        ip_range = parts[parts.index("--ip-range") + 1]
+        return {
+            "network": {
+                "id": "network-303",
+                "name": "wire-pair-a",
+                "ip_range": ip_range,
+                "subnets": [
+                    {
+                        "type": "server",
+                        "network_zone": "eu-central",
+                        "ip_range": ip_range,
                     }
                 ],
             }
@@ -549,7 +734,7 @@ def _private_discovered_interfaces() -> list[NetworkInterface]:
         NetworkInterface(
             name="ens10",
             exposure="private",
-            ipv4="10.0.0.9",
+            ipv4="10.42.19.9",
             mac="86:00:00:00:00:09",
             metadata={"source": "test", "default_route": False},
         ),
