@@ -368,6 +368,8 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
     for native_name, value in fields.items():
         normalized_name = _normalize_field_name(layer_name, native_name)
         output[normalized_name] = _normalize_field_value(layer_name, normalized_name, value)
+    if layer_name == "arp":
+        _normalize_arp_fields(output)
     if layer_name in {"icmp", "icmpv6"}:
         output.pop("unused", None)
         if output.get("data") == {"hex": "", "ascii": ""}:
@@ -686,6 +688,41 @@ def _normalize_ipv6_routing_fields(fields: JSONObject) -> None:
         fields.pop("addresses", None)
 
 
+_ARP_ADDRESS_FIELDS = (
+    "sender_hardware_address",
+    "sender_protocol_address",
+    "target_hardware_address",
+    "target_protocol_address",
+)
+
+
+def _normalize_arp_fields(fields: JSONObject) -> None:
+    """Normalize ARP fields for backend-neutral comparison.
+
+    The fixed-header fields (hardware/protocol type, hardware/protocol length,
+    and opcode) are already aliased and kept numeric so known and unknown
+    codepoints stay raw-preserving and round-trippable. The four variable
+    sender/target address fields are reduced to a stable comparable form:
+    standard Ethernet/IPv4 ARP keeps the colon-formatted MAC and dotted IPv4
+    strings (matching the current fixtures and the libcrafter decoded view),
+    while nonstandard or unknown-family address byte vectors are reduced to a
+    bare ``{"hex": ...}`` value carrying the raw octets without the Scapy
+    ASCII rendering, which is not byte-comparable across backends.
+    """
+
+    for name in _ARP_ADDRESS_FIELDS:
+        if name in fields:
+            fields[name] = _normalize_arp_address(fields[name])
+
+
+def _normalize_arp_address(value: JSONValue) -> JSONValue:
+    if isinstance(value, Mapping):
+        hex_value = value.get("hex")
+        if isinstance(hex_value, str):
+            return {"hex": hex_value}
+    return value
+
+
 def _normalize_linux_sll_source_address(value: JSONValue) -> JSONValue:
     if isinstance(value, Mapping):
         hex_value = value.get("hex")
@@ -728,6 +765,7 @@ def _expected_stack(plan: PacketPlan) -> list[str]:
         "dot1q": "vlan",
         "ether": "ethernet",
         "ip": "ipv4",
+        "linux_cooked": "linux_sll",
         "raw": "payload",
     }
     output = [aliases.get(layer.lower(), layer.lower()) for layer in plan.stack]
