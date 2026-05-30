@@ -335,6 +335,37 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
     }
 
 
+def case_byte_policy_index(path: str | Path | None = None) -> dict[str, str]:
+    """Map each declared supported case to its byte policy.
+
+    Built from every feature's ``supported_cases`` block so other oracle modes
+    (pcap eligibility in particular) can honor the same per-case byte policy the
+    generator reads. Cases without a ``supported_cases`` entry are absent from
+    the map; cases that declare no ``byte_policy`` are absent as well. The result
+    is data-driven from the specs, never a hardcoded case list.
+    """
+
+    grammar = load_stack_grammar(path)
+    features = grammar.get("features", {})
+    index: dict[str, str] = {}
+    if not isinstance(features, Mapping):
+        return index
+    for raw_feature in features.values():
+        if not isinstance(raw_feature, Mapping):
+            continue
+        supported = raw_feature.get("supported_cases", [])
+        if not isinstance(supported, Sequence) or isinstance(supported, (str, bytes)):
+            continue
+        for raw_case in supported:
+            if not isinstance(raw_case, Mapping):
+                continue
+            name = raw_case.get("name")
+            byte_policy = raw_case.get("byte_policy")
+            if isinstance(name, str) and isinstance(byte_policy, str):
+                index[name] = byte_policy
+    return index
+
+
 def _layer_field_grammar(
     layer_raw: JSONObject,
     name: str,
