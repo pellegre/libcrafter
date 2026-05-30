@@ -2176,10 +2176,10 @@ mod tests {
     };
     use crate::checksum::{crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum};
     use crate::{
-        Dhcp, DhcpMessageType, Dns, IpProtocol, Ipv4, Layer, LinkType, MacAddr, Packet, Raw,
+        Dhcp, DhcpMessageType, Dns, IpProtocol, Ipv4, Ipv6, Layer, LinkType, MacAddr, Packet, Raw,
         DNS_PORT, DNS_TYPE_A, IPPROTO_UDP,
     };
-    use core::net::Ipv4Addr;
+    use core::net::{Ipv4Addr, Ipv6Addr};
 
     const VLAN_FIXTURE: &[u8] = fixture_bytes!("bytes/ethernet-vlan-ipv4-udp-raw.bin");
 
@@ -3852,7 +3852,7 @@ mod tests {
     }
 
     #[test]
-    fn dns_decode_uses_udp_user_payload_and_preserves_udp_options() {
+    fn udp_decode_surplus_dns_uses_user_payload_and_preserves_options() {
         let dns = Dns::a_query("example.com").id(0xbeef);
         let dns_len = dns.encoded_len();
         let surplus = [UDP_OPTION_NOP, UDP_OPTION_EOL, 0, 0];
@@ -3890,7 +3890,7 @@ mod tests {
     }
 
     #[test]
-    fn dhcp_decode_uses_udp_user_payload_and_preserves_udp_options() {
+    fn udp_decode_surplus_dhcp_uses_user_payload_and_preserves_options() {
         let client_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
         let dhcp = Dhcp::discover(client_mac)
             .transaction_id(0x3903_f326)
@@ -3934,28 +3934,57 @@ mod tests {
     }
 
     #[test]
-    fn udp_options_compile_outside_udp_length_for_raw_payload() {
+    fn udp_decode_surplus_raw_payload_uses_typed_options_for_ipv4_and_ipv6() {
+        let malformed_option = [UDP_OPTION_MDS, 1];
+        let payload = [0xaa, 0xbb, 0xcc];
+
         let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2228)
             / Udp::new().sport(1234).dport(4321)
-            / Raw::from_bytes([0xaa, 0xbb, 0xcc])
-            / UdpOptions::from_bytes([UDP_OPTION_NOP, UDP_OPTION_EOL]))
+            / Raw::from_bytes(payload)
+            / UdpOptions::from_bytes(malformed_option))
         .compile()
         .unwrap();
 
         assert_eq!(
             &bytes.as_bytes()[2..4],
-            &((20 + UDP_HEADER_LEN + 3 + udp_surplus(bytes.as_bytes()).len()) as u16).to_be_bytes()
+            &((20 + UDP_HEADER_LEN + payload.len() + udp_surplus(bytes.as_bytes()).len()) as u16)
+                .to_be_bytes()
         );
         assert_eq!(
             &bytes.as_bytes()[24..26],
-            &((UDP_HEADER_LEN + 3) as u16).to_be_bytes()
+            &((UDP_HEADER_LEN + payload.len()) as u16).to_be_bytes()
         );
 
         let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &payload);
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
+        assert_eq!(udp_options.as_bytes(), &malformed_option);
+        assert_eq!(udp_options.status(), UdpOptionStatus::MalformedEnvelope);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+
+        let ipv6_src = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+        let ipv6_dst = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2);
+        let bytes = (Ipv6::new().src(ipv6_src).dst(ipv6_dst)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes(payload)
+            / UdpOptions::from_bytes(malformed_option))
+        .compile()
+        .unwrap();
+
         assert_eq!(
-            decoded.layer::<UdpOptions>().unwrap().as_bytes(),
-            &[UDP_OPTION_NOP, UDP_OPTION_EOL]
+            &bytes.as_bytes()[4..6],
+            &((bytes.as_bytes().len() - 40) as u16).to_be_bytes()
         );
+        assert_eq!(
+            &bytes.as_bytes()[44..46],
+            &((UDP_HEADER_LEN + payload.len()) as u16).to_be_bytes()
+        );
+
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &payload);
+        let udp_options = decoded.layer::<UdpOptions>().unwrap();
+        assert_eq!(udp_options.as_bytes(), &malformed_option);
+        assert_eq!(udp_options.status(), UdpOptionStatus::MalformedEnvelope);
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
