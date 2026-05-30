@@ -592,15 +592,31 @@ def _resolve_capture_interface(request: JSONObject, scapy_all: Any) -> str:
     """Resolve the real OS network device for live send/capture.
 
     The orchestrator passes a logical interface name (for example "private"),
-    which is not an actual device on the endpoint. Resolve the device that
-    carries the private network by routing to the peer's private address (the
-    egress device for the peer is the private NIC, which is also where packets
-    from the peer arrive). Fall back to the configured name when routing cannot
-    resolve a device.
+    which is not an actual device on the endpoint. Resolve the device that owns
+    the local address first, then fall back to route-style resolution toward the
+    peer and finally to the configured name.
     """
 
     configured = request.get("interface")
     configured = configured if isinstance(configured, str) and configured else None
+    try:
+        ifaces = scapy_all.conf.ifaces
+        devices = list(ifaces.values())
+    except Exception:
+        devices = []
+    if configured and any(getattr(device, "name", None) == configured for device in devices):
+        return configured
+    local_ipv4 = _address_value(request, "local_addresses", "ipv4")
+    if local_ipv4:
+        for device in devices:
+            device_name = getattr(device, "name", None)
+            if not device_name:
+                continue
+            try:
+                if scapy_all.get_if_addr(device_name) == local_ipv4:
+                    return device_name
+            except Exception:
+                continue
     peer = request.get("peer_addresses")
     peer_ipv4 = None
     if isinstance(peer, Mapping):
