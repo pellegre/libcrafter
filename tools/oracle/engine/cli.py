@@ -862,6 +862,7 @@ def _live_count_metadata(direction_counts: Mapping[str, Mapping[str, object]]) -
         "decode_passed_count": overall["decode_passed_count"],
         "failed_count": overall["failed_count"],
         "live_counts": {
+            **directions,
             "overall": overall,
             "directions": directions,
         },
