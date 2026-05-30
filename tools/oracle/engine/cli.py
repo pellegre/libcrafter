@@ -7874,6 +7874,188 @@ def _self_check(args: argparse.Namespace) -> int:
     return 0
 
 
+_SUITE_FEATURE_BY_FAMILY = {
+    "dns": "dns_behavior",
+}
+_SUITE_OFFLINE_DIRECTIONS = (
+    "reference_to_libcrafter",
+    "libcrafter_to_reference",
+)
+
+
+def _suite_offline_cases(feature_name: str) -> list[JSONObject]:
+    """Derive the offline suite case matrix from a feature's supported_cases.
+
+    Each entry pairs a declared case with one supported offline direction and
+    its byte policy, excluding structured_error cases (the oracle has no offline
+    malformed comparison pathway). The result is sorted for reproducibility.
+    """
+
+    from .generator import load_stack_grammar
+
+    grammar = load_stack_grammar()
+    features = grammar.get("features", {})
+    if not isinstance(features, Mapping) or feature_name not in features:
+        raise ValueError(f"unknown suite feature: {feature_name}")
+    feature_spec = features[feature_name]
+    supported = feature_spec.get("supported_cases", []) if isinstance(feature_spec, Mapping) else []
+    entries: list[JSONObject] = []
+    for raw_case in supported:
+        if not isinstance(raw_case, Mapping):
+            continue
+        name = raw_case.get("name")
+        if not isinstance(name, str):
+            continue
+        byte_policy = raw_case.get("byte_policy")
+        if byte_policy == "structured_error":
+            continue
+        directions = raw_case.get("directions", [])
+        if not isinstance(directions, Sequence) or isinstance(directions, str):
+            directions = []
+        for direction in _SUITE_OFFLINE_DIRECTIONS:
+            if direction not in directions and "roundtrip" not in directions:
+                continue
+            entries.append(
+                {
+                    "case": name,
+                    "direction": direction,
+                    "byte_policy": byte_policy if isinstance(byte_policy, str) else None,
+                }
+            )
+    entries.sort(key=lambda entry: (entry["case"], entry["direction"]))
+    return entries
+
+
+def _specs_suite(args: argparse.Namespace) -> int:
+    family = args.family
+    feature_name = _SUITE_FEATURE_BY_FAMILY.get(family)
+    if feature_name is None:
+        print(
+            f"no offline suite is defined for family {family!r}; "
+            f"known families: {', '.join(sorted(_SUITE_FEATURE_BY_FAMILY))}",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        cases = _suite_offline_cases(feature_name)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    out_root = posixpath.join(args.out, f"{family}-offline-suite")
+    commands: list[JSONObject] = []
+    for entry in cases:
+        case = entry["case"]
+        direction = entry["direction"]
+        seed = _derive_suite_seed(args.seed, family, case, direction)
+        artifact = posixpath.join(out_root, direction, case)
+        argv = [
+            "tools/oracle/run",
+            "offline",
+            "--backend",
+            args.backend,
+            "--profile",
+            args.profile,
+            "--family",
+            family,
+            "--case",
+            case,
+            "--direction",
+            direction,
+            "--seed",
+            str(seed),
+            "--count",
+            "1",
+            "--out",
+            artifact,
+        ]
+        commands.append(
+            {
+                "case": case,
+                "direction": direction,
+                "byte_policy": entry["byte_policy"],
+                "seed": seed,
+                "artifact": artifact,
+                "command": argv,
+            }
+        )
+
+    summary: JSONObject = {
+        "mode": "specs.suite",
+        "family": family,
+        "feature": feature_name,
+        "backend": args.backend,
+        "profile": args.profile,
+        "base_seed": args.seed,
+        "out": out_root,
+        "count": len(commands),
+        "directions": list(_SUITE_OFFLINE_DIRECTIONS),
+        "commands": commands,
+    }
+
+    if args.run:
+        return _run_specs_suite(summary, commands)
+
+    if args.json:
+        sys.stdout.write(dumps_json(summary))
+    else:
+        print(
+            f"offline suite: family={family} feature={feature_name} "
+            f"backend={args.backend} profile={args.profile} cases={len(commands)}"
+        )
+        for command in commands:
+            print(
+                f"  {command['direction']:<26} {command['case']:<34} "
+                f"seed={command['seed']} -> {command['artifact']}"
+            )
+    return 0
+
+
+def _derive_suite_seed(base_seed: int, family: str, case: str, direction: str) -> int:
+    import hashlib
+
+    material = "\0".join((str(base_seed), family, case, direction)).encode("utf-8")
+    digest = int.from_bytes(hashlib.sha256(material).digest()[:4], byteorder="big")
+    return digest % 1_000_000
+
+
+def _run_specs_suite(summary: JSONObject, commands: Sequence[JSONObject]) -> int:
+    results: list[JSONObject] = []
+    failed = 0
+    for command in commands:
+        argv = list(command["command"])
+        runner = REPO_ROOT / "tools" / "oracle" / "run"
+        process = subprocess.run(
+            [str(runner), *argv[1:]],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if process.returncode != 0:
+            failed += 1
+        results.append(
+            {
+                "case": command["case"],
+                "direction": command["direction"],
+                "seed": command["seed"],
+                "exit_code": process.returncode,
+            }
+        )
+    status = "passed" if failed == 0 else "failed"
+    summary = {
+        **summary,
+        "status": status,
+        "passed": len(results) - failed,
+        "failed": failed,
+        "results": results,
+    }
+    sys.stdout.write(dumps_json(summary))
+    return 0 if failed == 0 else 1
+
+
 def _specs_validate(args: argparse.Namespace) -> int:
     from .spec_loader import SpecValidationError, load_oracle_specs
 
@@ -8284,6 +8466,55 @@ def build_parser() -> argparse.ArgumentParser:
         help="run strict cross-file spec validation",
     )
     specs_validate_parser.set_defaults(func=_specs_validate)
+
+    specs_suite_parser = specs_subparsers.add_parser(
+        "suite",
+        help="emit the reproducible offline case suite for a protocol family",
+        description=(
+            "Emit every offline-eligible supported case for a protocol family in "
+            "each direction it declares, derived from the feature spec's "
+            "supported_cases (directions + byte_policy). structured_error cases are "
+            "excluded because the oracle has no offline malformed pathway."
+        ),
+    )
+    specs_suite_parser.add_argument(
+        "--family",
+        default="dns",
+        help="protocol family to emit the offline suite for (default: %(default)s)",
+    )
+    specs_suite_parser.add_argument(
+        "--backend",
+        default="scapy",
+        choices=("scapy", "wireshark"),
+        help="reference backend for the emitted commands (default: %(default)s)",
+    )
+    specs_suite_parser.add_argument(
+        "--profile",
+        default="ci",
+        help="sampling profile for the emitted commands (default: %(default)s)",
+    )
+    specs_suite_parser.add_argument(
+        "--seed",
+        type=int,
+        default=2701,
+        help="base seed; per-case seeds derive deterministically (default: %(default)s)",
+    )
+    specs_suite_parser.add_argument(
+        "--out",
+        default=str(DEFAULT_OUTPUT_ROOT),
+        help="artifact output root for the emitted commands (default: %(default)s)",
+    )
+    specs_suite_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the suite plan as JSON",
+    )
+    specs_suite_parser.add_argument(
+        "--run",
+        action="store_true",
+        help="execute each emitted offline command and report the aggregate result",
+    )
+    specs_suite_parser.set_defaults(func=_specs_suite)
 
     report_parser = subparsers.add_parser(
         "report",

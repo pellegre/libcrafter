@@ -320,6 +320,9 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
                 "malformed": feature.malformed,
                 "coverage_cases": list(feature.coverage_cases),
                 "behaviors": list(_object_list(feature.raw.get("behaviors", []), "feature.behaviors")),
+                "supported_cases": list(
+                    _object_list(feature.raw.get("supported_cases", []), "feature.supported_cases")
+                ),
                 "categories": _feature_categories(
                     feature.name,
                     feature.directions,
@@ -776,7 +779,11 @@ class PacketGenerator:
         if feature is not None:
             feature_spec = self._feature_spec(feature)
             feature_cases = _string_list(feature_spec.get("coverage_cases"), "feature.coverage_cases")
-            matching = [case for case in coverage_cases if case in feature_cases]
+            matching = [
+                case
+                for case in coverage_cases
+                if case in feature_cases and self._case_supported_in_direction(case, direction)
+            ]
             if matching:
                 return weighted_choice(rng, tuple((case, 1) for case in matching))
             compatible = self._compatible_feature_cases(
@@ -791,6 +798,8 @@ class PacketGenerator:
 
         choices: list[tuple[str, int]] = []
         for stack_case in coverage_cases:
+            if not self._case_supported_in_direction(stack_case, direction):
+                continue
             weight = self._case_weight(stack_case, categories=_case_categories([stack_case]))
             if weight > 0:
                 choices.append((stack_case, weight))
@@ -808,6 +817,8 @@ class PacketGenerator:
                 direction=direction,
             ):
                 if feature_case in coverage_cases:
+                    continue
+                if not self._case_supported_in_direction(feature_case, direction):
                     continue
                 weight = self._case_weight(
                     feature_case,
@@ -934,6 +945,63 @@ class PacketGenerator:
         feature_spec = self._feature_spec(feature)
         return _string_list(feature_spec.get("categories", []), f"features.{feature}.categories")
 
+    def _supported_case_index(self) -> dict[str, JSONObject]:
+        """Map each declared supported case to its directions and byte policy.
+
+        Built from every feature's ``supported_cases`` block so case selection
+        can honor the per-case ``directions`` and ``byte_policy`` contract that
+        the feature specs declare. Cases without a ``supported_cases`` entry are
+        absent from the map and keep the historical sampling behavior.
+        """
+
+        cached = getattr(self, "_supported_case_index_cache", None)
+        if cached is not None:
+            return cached
+        index: dict[str, JSONObject] = {}
+        features = _object(self.grammar.get("features", {}), "features")
+        for feature_name, raw_feature in features.items():
+            feature_spec = _object(raw_feature, f"features.{feature_name}")
+            supported = _object_list(
+                feature_spec.get("supported_cases", []),
+                f"features.{feature_name}.supported_cases",
+            )
+            for raw_case in supported:
+                if not isinstance(raw_case, Mapping):
+                    continue
+                name = raw_case.get("name")
+                if not isinstance(name, str):
+                    continue
+                directions = _string_list(
+                    raw_case.get("directions", []),
+                    f"features.{feature_name}.supported_cases.{name}.directions",
+                )
+                byte_policy = raw_case.get("byte_policy")
+                index[name] = {
+                    "directions": list(directions),
+                    "byte_policy": byte_policy if isinstance(byte_policy, str) else None,
+                }
+        self._supported_case_index_cache = index  # type: ignore[attr-defined]
+        return index
+
+    def _case_supported_in_direction(self, case: str, direction: str) -> bool:
+        """Return whether ``case`` may be generated for ``direction``.
+
+        A case that declares ``supported_cases`` directions is excluded from a
+        direction it does not list, and any ``structured_error`` case is excluded
+        from offline encode/decode sampling entirely (the oracle has no offline
+        malformed comparison pathway). Undeclared cases keep the prior behavior.
+        """
+
+        entry = self._supported_case_index().get(case)
+        if entry is None:
+            return True
+        if entry.get("byte_policy") == "structured_error":
+            return False
+        directions = entry.get("directions") or []
+        if not directions:
+            return True
+        return direction in directions or "roundtrip" in directions
+
     def _family_spec(self, family: str) -> JSONObject:
         families = _object(self.grammar.get("families"), "families")
         return _object(families.get(family), f"families.{family}")
@@ -1033,6 +1101,16 @@ class PacketGenerator:
                     return name
             elif name_id in case_id:
                 return name
+        # No behavior identifier is a substring of the case id, so fall back to a
+        # deterministic weighted pick. Drop any DNS behavior that would emit a raw
+        # compressed-bytes spec the libcrafter materializer cannot encode, unless
+        # the case id itself opts into the raw path. This keeps a typed case such
+        # as dns-record-txt from being materialized through the name-records
+        # compressed raw builder in the libcrafter_to_reference direction.
+        if feature == "dns_behavior":
+            typed = [name for name in names if not _dns_behavior_emits_raw(case, name)]
+            if typed:
+                names = typed
         return weighted_choice(rng, tuple((name, 1) for name in names))
 
     def _apply_feature_behavior(
@@ -1775,6 +1853,18 @@ def _icmp_error_type_for_case(case: str, behavior: str, *, ipv6: bool) -> str:
     if "redirect" in key and not ipv6:
         return "redirect"
     return "destination_unreachable"
+
+
+def _dns_behavior_emits_raw(case: str, behavior: str) -> bool:
+    """Whether applying ``behavior`` to ``case`` emits a Scapy-owned raw spec.
+
+    Mirrors the ``dns_raw`` branches in ``_apply_dns_behavior`` so case/behavior
+    selection can avoid pairing a typed case with a compressed raw-byte builder
+    that only the reference backend can encode.
+    """
+
+    key = f"{case} {behavior}".replace("_", "-")
+    return "compressed-names" in key or "name-records-compressed" in key
 
 
 def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None:
