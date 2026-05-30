@@ -169,6 +169,22 @@ impl ProtocolRegistry {
         registry.bind_udp_port_with_registry(DNS_PORT, |_registry, packet, payload| {
             append_dns_packet(packet, payload)
         });
+        // DHCPv4 decode stays deliberately conservative to avoid false
+        // positives: it binds only when the UDP pair is the standard client/
+        // server port pair (67/68, in either direction) AND the payload carries
+        // enough BOOTP structure with the valid magic cookie. The magic-cookie
+        // check is what keeps unrelated traffic that merely happens to use a
+        // DHCP port from misdecoding as `Dhcp`.
+        //
+        // Intentionally unsupported port inference: RFC 8357 lets a relay agent
+        // advertise a non-67 UDP source port through the relay source-port
+        // sub-option (option 82, sub-option 19), and the server then directs the
+        // relayed reply to that port. Inferring DHCP from such non-standard
+        // ports would require trusting in-payload option data to widen the port
+        // match, which would reintroduce exactly the false-positive surface the
+        // magic-cookie gate exists to remove. `crafter` therefore does not infer
+        // DHCP on non-67/68 port pairs; callers that need to decode those frames
+        // bind the port explicitly via `bind_udp`/`bind_udp_port`.
         registry.bind_udp_with_registry(
             |ctx| {
                 is_dhcp_port_pair(ctx.source_port, ctx.destination_port)
