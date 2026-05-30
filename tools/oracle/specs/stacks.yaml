@@ -175,6 +175,14 @@ stacks:
       - dhcp
     coverage_cases:
       - dhcp-discover
+  - name: ipv4_udp_dhcp
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - dhcp
+    coverage_cases:
+      - dhcp-discover
   - name: ipv6_udp_payload
     root: "l3:ipv6"
     layers:
