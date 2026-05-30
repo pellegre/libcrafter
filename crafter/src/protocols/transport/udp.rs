@@ -73,6 +73,8 @@ const UDP_OPTION_EXTENDED_LENGTH_CONTEXT: &str = "udp option extended length";
 const UDP_OPTION_EXTENDED_PAYLOAD_CONTEXT: &str = "udp option extended payload";
 const UDP_OPTION_CHECKSUM_LEN: usize = 2;
 const UDP_OPTION_APC_LEN: usize = 6;
+const UDP_OPTION_FRAG_SHORT_LEN: usize = 10;
+const UDP_OPTION_FRAG_LONG_LEN: usize = 12;
 const UDP_OPTION_MDS_LEN: usize = 4;
 const UDP_OPTION_MRDS_LEN: usize = 5;
 const UDP_OPTION_REQ_LEN: usize = 6;
@@ -1363,8 +1365,12 @@ fn parse_udp_options_for_status(bytes: &[u8]) -> (Vec<UdpOption>, UdpOptionStatu
         match option {
             Ok(option) => {
                 has_malformed_apc |= udp_option_is_malformed_apc(&option);
+                let is_malformed_frag = udp_option_is_malformed_frag(&option);
                 let is_unsupported = option.is_unsupported();
                 options.push(option);
+                if is_malformed_frag {
+                    return (options, UdpOptionStatus::Malformed);
+                }
                 if is_unsupported {
                     let status = if has_malformed_apc {
                         UdpOptionStatus::AdditionalPayloadChecksumInvalid
@@ -1398,6 +1404,23 @@ fn udp_option_is_malformed_apc(option: &UdpOption) -> bool {
             ..
         }
     )
+}
+
+fn udp_option_is_malformed_frag(option: &UdpOption) -> bool {
+    match option {
+        UdpOption::Generic {
+            kind: UDP_OPTION_FRAG,
+            data,
+        } => !matches!(
+            UDP_OPTION_SHORT_HEADER_LEN + data.len(),
+            UDP_OPTION_FRAG_SHORT_LEN | UDP_OPTION_FRAG_LONG_LEN
+        ),
+        UdpOption::ExtendedGeneric {
+            kind: UDP_OPTION_FRAG,
+            ..
+        } => true,
+        _ => false,
+    }
 }
 
 fn udp_options_apc_status(options: &[UdpOption], user_payload: &[u8]) -> UdpOptionStatus {
@@ -2082,12 +2105,12 @@ mod tests {
         udp_option_kind_class, udp_option_kind_is_unsafe, udp_option_kind_is_unsupported, Udp,
         UdpChecksumStatus, UdpOption, UdpOptionIter, UdpOptionKindClass, UdpOptionStatus,
         UdpOptions, UDP_HEADER_LEN, UDP_OPTION_APC, UDP_OPTION_APC_LEN, UDP_OPTION_AUTH,
-        UDP_OPTION_CHECKSUM_LEN, UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG, UDP_OPTION_MDS,
-        UDP_OPTION_MDS_LEN, UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN, UDP_OPTION_NOP, UDP_OPTION_REQ,
-        UDP_OPTION_REQ_LEN, UDP_OPTION_RES, UDP_OPTION_RESERVED_SAFE_START,
-        UDP_OPTION_RESERVED_UNSAFE, UDP_OPTION_RES_LEN, UDP_OPTION_TIME, UDP_OPTION_TIME_LEN,
-        UDP_OPTION_UCMP, UDP_OPTION_UEXP, UDP_OPTION_UNASSIGNED_SAFE_START,
-        UDP_OPTION_UNASSIGNED_UNSAFE_START,
+        UDP_OPTION_CHECKSUM_LEN, UDP_OPTION_EOL, UDP_OPTION_EXP, UDP_OPTION_FRAG,
+        UDP_OPTION_FRAG_LONG_LEN, UDP_OPTION_FRAG_SHORT_LEN, UDP_OPTION_MDS, UDP_OPTION_MDS_LEN,
+        UDP_OPTION_MRDS, UDP_OPTION_MRDS_LEN, UDP_OPTION_NOP, UDP_OPTION_REQ, UDP_OPTION_REQ_LEN,
+        UDP_OPTION_RES, UDP_OPTION_RESERVED_SAFE_START, UDP_OPTION_RESERVED_UNSAFE,
+        UDP_OPTION_RES_LEN, UDP_OPTION_TIME, UDP_OPTION_TIME_LEN, UDP_OPTION_UCMP, UDP_OPTION_UEXP,
+        UDP_OPTION_UNASSIGNED_SAFE_START, UDP_OPTION_UNASSIGNED_UNSAFE_START,
     };
     use crate::checksum::{crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum};
     use crate::{
@@ -3005,6 +3028,103 @@ mod tests {
             )]
         );
         assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    #[test]
+    fn udp_option_frag_unsupported_preserves_valid_and_malformed_bytes() {
+        let frag10 = UdpOption::generic(
+            UDP_OPTION_FRAG,
+            [0x00, 0x01, 0x00, 0x03, 0xaa, 0xbb, 0xcc, 0xdd],
+        );
+        let frag12 = UdpOption::generic(
+            UDP_OPTION_FRAG,
+            [0x00, 0x02, 0x00, 0x04, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff],
+        );
+
+        assert_eq!(frag10.encoded_len(), UDP_OPTION_FRAG_SHORT_LEN);
+        assert_eq!(frag12.encoded_len(), UDP_OPTION_FRAG_LONG_LEN);
+        assert_eq!(frag10.kind_class(), UdpOptionKindClass::KnownSafe);
+        assert!(!frag10.is_unsafe());
+        assert!(frag10.is_unsupported());
+        assert_eq!(
+            frag10.to_string(),
+            "Generic(kind=3,len=10,class=KnownSafe,safety=SAFE,support=unsupported)"
+        );
+
+        let valid10 = UdpOptions::from_options(vec![frag10.clone()]).unwrap();
+        assert_eq!(valid10.status(), UdpOptionStatus::Unsupported);
+        assert_eq!(valid10.options(), &[frag10.clone()]);
+        assert_eq!(
+            valid10.as_bytes(),
+            &[
+                UDP_OPTION_FRAG,
+                UDP_OPTION_FRAG_SHORT_LEN as u8,
+                0x00,
+                0x01,
+                0x00,
+                0x03,
+                0xaa,
+                0xbb,
+                0xcc,
+                0xdd
+            ]
+        );
+
+        let valid12 = UdpOptions::from_options(vec![frag12.clone()]).unwrap();
+        assert_eq!(valid12.status(), UdpOptionStatus::Unsupported);
+        assert_eq!(valid12.options(), &[frag12.clone()]);
+
+        let malformed_short = [UDP_OPTION_FRAG, 9, 0x00, 0x01, 0x00, 0x03, 0xaa, 0xbb, 0xcc];
+        let malformed = UdpOptions::from_bytes(malformed_short);
+        assert_eq!(malformed.status(), UdpOptionStatus::Malformed);
+        assert_eq!(malformed.as_bytes(), &malformed_short);
+        assert_eq!(
+            malformed.options(),
+            &[UdpOption::generic(
+                UDP_OPTION_FRAG,
+                [0x00, 0x01, 0x00, 0x03, 0xaa, 0xbb, 0xcc],
+            )]
+        );
+
+        let malformed_extended = [
+            UDP_OPTION_FRAG,
+            255,
+            0,
+            10,
+            0x00,
+            0x01,
+            0x00,
+            0x03,
+            0xaa,
+            0xbb,
+        ];
+        let malformed = UdpOptions::from_bytes(malformed_extended);
+        assert_eq!(malformed.status(), UdpOptionStatus::Malformed);
+        assert_eq!(malformed.as_bytes(), &malformed_extended);
+        assert_eq!(
+            malformed.options(),
+            &[UdpOption::ExtendedGeneric {
+                kind: UDP_OPTION_FRAG,
+                data: vec![0x00, 0x01, 0x00, 0x03, 0xaa, 0xbb],
+            }]
+        );
+
+        let user_payload = [0x55, 0x66];
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2247)
+            / Udp::new().sport(1234).dport(4321)
+            / Raw::from_bytes(user_payload)
+            / UdpOptions::from_options(vec![frag12.clone()]).unwrap())
+        .compile()
+        .unwrap();
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+        let decoded_options = decoded.layer::<UdpOptions>().unwrap();
+
+        assert_eq!(raw_layers.len(), 1);
+        assert_eq!(raw_layers[0].as_bytes(), user_payload);
+        assert_eq!(decoded_options.status(), UdpOptionStatus::Unsupported);
+        assert_eq!(decoded_options.options(), &[frag12]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
     #[test]
