@@ -325,6 +325,55 @@ class LiveProviderRegistryTest(unittest.TestCase):
         )
         self.assertFalse(endpoint.metadata["endpoint_protocol_mac"])
 
+    def test_hetzner_execution_endpoint_normalization_omits_mac(self) -> None:
+        adapter = resolve_live_provider("hetzner")
+        endpoints = {
+            "libcrafter": LiveEndpoint(
+                endpoint_id="hetzner-private-libcrafter",
+                role="libcrafter",
+                interface="enp7s0",
+                address="10.42.19.10",
+                metadata={
+                    "provider": "hetzner",
+                    "mac_address": "86:00:00:55:b4:dc",
+                },
+            ),
+            "reference_backend": LiveEndpoint(
+                endpoint_id="hetzner-private-reference",
+                role="reference_backend",
+                interface="enp7s0",
+                address="10.42.19.20",
+                metadata={
+                    "provider": "hetzner",
+                    "mac_address": "86:00:00:55:b4:d8",
+                },
+            ),
+        }
+
+        normalized = cli._live_provider_normalize_endpoints(adapter, endpoints)
+        request = build_live_endpoint_batch_request(
+            provider="hetzner",
+            backend="scapy",
+            seed=133,
+            profile="smoke",
+            packet_plans=[_ipv4_dhcp_plan(133)],
+            direction="libcrafter_to_reference",
+            endpoint=normalized["libcrafter"],
+            peer=normalized["reference_backend"],
+            artifact_paths=live_endpoint_artifact_paths(
+                output_dir="/tmp/oracle-live",
+                direction="libcrafter_to_reference",
+                endpoint_role="libcrafter",
+            ),
+        )
+
+        self.assertNotIn("mac", request.local_addresses)
+        self.assertNotIn("mac", request.peer_addresses)
+        self.assertEqual(
+            normalized["libcrafter"].metadata["observed_mac_address"],
+            "86:00:00:55:b4:dc",
+        )
+
     def test_qemu_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
         adapter = resolve_live_provider("qemu")
         client = _FakeWireClient()
@@ -640,6 +689,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             )
             self.assertEqual(wire.destroyed, ["fake-reference_backend", "fake-libcrafter"])
             self.assertEqual(adapter.transit_plan_ttls, [64])
+            self.assertEqual(adapter.normalized_endpoint_roles, ["libcrafter", "reference_backend"])
             self.assertEqual(
                 sorted({call["endpoint_role"] for call in adapter.remote_command_calls}),
                 ["libcrafter", "reference_backend"],
@@ -1408,6 +1458,7 @@ class _FakeLiveProviderAdapter:
     def __init__(self) -> None:
         self.remote_command_calls: list[dict[str, str]] = []
         self.transit_plan_ttls: list[int] = []
+        self.normalized_endpoint_roles: list[str] = []
         self.lab_provider_adapter = _FakeLabProviderAdapter(self)
 
     def token_configured(self) -> bool:
@@ -1546,6 +1597,13 @@ class _FakeLiveProviderAdapter:
             }
         )
         return ["fake-live", endpoint_role, request_path, out_dir]
+
+    def normalize_live_endpoints(
+        self,
+        endpoints: dict[str, LiveEndpoint],
+    ) -> dict[str, LiveEndpoint]:
+        self.normalized_endpoint_roles = sorted(endpoints)
+        return endpoints
 
     def apply_transit_plan(self, plan: PacketPlan) -> PacketPlan:
         ipv4 = dict(plan.fields.get("ipv4", {}))

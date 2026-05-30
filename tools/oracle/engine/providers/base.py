@@ -95,6 +95,12 @@ class LiveProviderAdapter(Protocol):
     ) -> list[str]:
         """Return the remote endpoint protocol command for one role."""
 
+    def normalize_live_endpoints(
+        self,
+        endpoints: Mapping[str, LiveEndpoint],
+    ) -> Mapping[str, LiveEndpoint]:
+        """Normalize provider endpoint metadata before live request creation."""
+
     def apply_transit_plan(self, plan: PacketPlan) -> PacketPlan:
         """Apply provider transit rewrites before expected-model generation."""
 

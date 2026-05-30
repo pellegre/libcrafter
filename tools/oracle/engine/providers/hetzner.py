@@ -1224,6 +1224,17 @@ class HetznerLiveProviderAdapter:
             out_dir=out_dir,
         )
 
+    def normalize_live_endpoints(
+        self,
+        endpoints: Mapping[str, LiveEndpoint],
+    ) -> Mapping[str, LiveEndpoint]:
+        """Force routed private endpoints to use L3 endpoint protocol addresses."""
+
+        return {
+            role: _routed_private_live_endpoint(endpoint)
+            for role, endpoint in endpoints.items()
+        }
+
     def apply_transit_plan(self, plan: PacketPlan) -> PacketPlan:
         """Apply Hetzner transit rewrites before live comparison."""
 
