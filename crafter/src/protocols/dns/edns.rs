@@ -119,9 +119,9 @@ pub(super) fn encode_edns_ttl(extended_rcode: u8, version: u8, dnssec_ok: bool, 
 #[cfg(test)]
 mod dns_edns {
     use super::super::{
-        decode_record_data, Dns, DnsName, DnsRecord, DnsRecordData, EdnsOption,
-        DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_FLAG_DO, DNS_EDNS_OPTION_COOKIE,
-        DNS_EDNS_OPTION_NSID, DNS_TYPE_OPT,
+        decode_record_data, edns_option_code_name, Dns, DnsName, DnsRecord, DnsRecordData,
+        EdnsOption, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_FLAG_DO, DNS_EDNS_OPTION_COOKIE,
+        DNS_EDNS_OPTION_DAU, DNS_EDNS_OPTION_NSID, DNS_EDNS_OPTION_PADDING, DNS_TYPE_OPT,
     };
     use crate::{Ipv4, NetworkLayer, Packet, Udp};
     use core::net::Ipv4Addr;
@@ -332,6 +332,75 @@ mod dns_edns {
         assert!(record.edns_dnssec_ok());
         // The full lower-16 flags word carries the DO bit and the Z bits verbatim.
         assert_eq!(record.edns_flags(), DNS_EDNS_FLAG_DO | z_bits);
+        assert_eq!(recompiled, original);
+    }
+
+    #[test]
+    fn dns_edns_option_code_name_registry_covers_the_option_matrix() {
+        // The registry free function names source-backed option codes and
+        // returns None for codes this crate does not name. The dns-edns-options
+        // oracle case spans the three options with named constructors (NSID,
+        // COOKIE, Padding), the DAU option (a registered mnemonic without a
+        // libcrafter constructor), and an unknown option code.
+        assert_eq!(edns_option_code_name(DNS_EDNS_OPTION_NSID), Some("NSID"));
+        assert_eq!(edns_option_code_name(DNS_EDNS_OPTION_COOKIE), Some("COOKIE"));
+        assert_eq!(edns_option_code_name(DNS_EDNS_OPTION_PADDING), Some("Padding"));
+        // DAU has a mnemonic but no named constructor.
+        assert_eq!(edns_option_code_name(DNS_EDNS_OPTION_DAU), Some("DAU"));
+        // An unknown option code has no mnemonic.
+        assert_eq!(edns_option_code_name(0xfffe), None);
+        // The free function and the EdnsOption method agree.
+        assert_eq!(
+            EdnsOption::new(DNS_EDNS_OPTION_DAU, vec![5, 1, 8, 10]).option_code_name(),
+            edns_option_code_name(DNS_EDNS_OPTION_DAU),
+        );
+    }
+
+    #[test]
+    fn dns_edns_option_matrix_preserves_code_and_data_in_order() {
+        // Mirror the dns-edns-options oracle case: a single OPT record whose
+        // RDATA carries an ordered option list spanning NSID, COOKIE, Padding,
+        // DAU (a mnemonic without a named constructor, built via the generic
+        // EdnsOption::new), and an unknown option code. Every option must keep
+        // its exact code and opaque data bytes in order across a compile/decode
+        // round trip, and the bytes must round trip unchanged.
+        let unknown_code = 0xfffeu16;
+        let options = vec![
+            EdnsOption::nsid(b"ns01".to_vec()),
+            EdnsOption::cookie(vec![1, 2, 3, 4, 5, 6, 7, 8]),
+            EdnsOption::padding(8),
+            EdnsOption::new(DNS_EDNS_OPTION_DAU, vec![5, 1, 8, 10]),
+            EdnsOption::new(unknown_code, vec![0xca, 0xfe]),
+        ];
+        let opt = DnsRecord::opt(4096, 0, 0, true, options);
+        let (record, original, recompiled) = round_trip_opt(opt);
+
+        let decoded = record.edns_options().unwrap();
+        assert_eq!(decoded.len(), 5);
+
+        assert_eq!(decoded[0].code(), DNS_EDNS_OPTION_NSID);
+        assert_eq!(decoded[0].data(), b"ns01");
+        assert_eq!(decoded[0].option_code_name(), Some("NSID"));
+
+        assert_eq!(decoded[1].code(), DNS_EDNS_OPTION_COOKIE);
+        assert_eq!(decoded[1].data(), &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(decoded[1].option_code_name(), Some("COOKIE"));
+
+        assert_eq!(decoded[2].code(), DNS_EDNS_OPTION_PADDING);
+        assert_eq!(decoded[2].data(), &[0u8; 8]);
+        assert_eq!(decoded[2].option_code_name(), Some("Padding"));
+
+        // DAU has a registry mnemonic but no named constructor; its data is
+        // preserved verbatim.
+        assert_eq!(decoded[3].code(), DNS_EDNS_OPTION_DAU);
+        assert_eq!(decoded[3].data(), &[5, 1, 8, 10]);
+        assert_eq!(decoded[3].option_code_name(), Some("DAU"));
+
+        // The unknown code surfaces no mnemonic but keeps its bytes.
+        assert_eq!(decoded[4].code(), unknown_code);
+        assert_eq!(decoded[4].data(), &[0xca, 0xfe]);
+        assert_eq!(decoded[4].option_code_name(), None);
+
         assert_eq!(recompiled, original);
     }
 }

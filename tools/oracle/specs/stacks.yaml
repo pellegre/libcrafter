@@ -255,6 +255,7 @@ stacks:
       - dns-record-raw-empty
       - dns-edns-opt-basic
       - dns-edns-opt-ttl-fields
+      - dns-edns-options
       - dns-edns-options-known
       - dns-edns-options-unknown
       - dns-dnssec-ds

@@ -2236,6 +2236,52 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
         ]
         fields.pop("answers", None)
         return
+    if "edns-options" in key:
+        # A response carrying a single EDNS(0) OPT pseudo-record (RFC 6891
+        # Section 6.1) whose RDATA holds an ordered list of option TLVs
+        # (Section 6.1.2). The matrix spans the three source-backed options with
+        # named constructors (NSID RFC 5001, COOKIE RFC 7873, Padding RFC 7830),
+        # one option that has a registry mnemonic but no named constructor (DAU
+        # RFC 6975, code 5), and one unknown option code (65534) that has no
+        # mnemonic at all. The option order is fixed so the encoded byte stream
+        # is deterministic, and every OPTION-DATA payload is carried as raw hex
+        # so neither backend reinterprets the per-option bit field: Scapy emits
+        # each as a generic EDNS0TLV(optcode=N, optdata=...) and libcrafter
+        # carries each as an EdnsOption preserving the exact code and data bytes.
+        # ("edns-options" is a substring only of this case id, never of
+        # dns-edns-opt-basic, so the dispatcher resolves this branch
+        # unambiguously and before the edns-opt-basic branch below.)
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["recursion_available"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "A"}]
+        fields.pop("answers", None)
+        fields["additional"] = [
+            {
+                "name": ".",
+                "type": "OPT",
+                "udp_payload_size": 4096,
+                "extended_rcode": 0,
+                "version": 0,
+                "dnssec_ok": True,
+                "options": [
+                    # NSID (code 3): opaque name-server identifier bytes.
+                    {"option_code": 3, "option_data": "6e733031"},
+                    # COOKIE (code 10): an 8-octet client cookie.
+                    {"option_code": 10, "option_data": "0102030405060708"},
+                    # Padding (code 12): zero octets used only for size padding.
+                    {"option_code": 12, "option_data": "0000000000000000"},
+                    # DAU (code 5): a registered option with a mnemonic but no
+                    # named libcrafter constructor; raw algorithm-list bytes.
+                    {"option_code": 5, "option_data": "0501080a"},
+                    # Unknown option code 65534: no IANA mnemonic, preserved as
+                    # opaque bytes.
+                    {"option_code": 65534, "option_data": "cafe"},
+                ],
+            },
+        ]
+        return
     if "edns-opt-basic" in key:
         # A response carrying several EDNS(0) OPT pseudo-records in the additional
         # section (RFC 6891 Section 6.1). Each OPT exercises a different basic

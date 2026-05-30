@@ -132,6 +132,17 @@ behaviors:
     summary: Several OPT pseudo-records in the additional section spanning an empty option list, non-default UDP payload sizes, extended RCODE values, EDNS version values, and the DO flag set and clear; the OPT owner name stays root and every field reuses an ordinary record field.
     record_kinds:
       - generic
+  # edns_options is the EDNS(0) option-TLV matrix case. Its identifier
+  # edns-options is a substring of dns-edns-options but not of dns-edns-opt-basic
+  # (so the matcher never selects this for the basic-fields case, and the
+  # generator branch is ordered before edns-opt-basic regardless). It carries the
+  # three options with named constructors (NSID, COOKIE, Padding), one option
+  # that has a registry mnemonic but no constructor (DAU), and one unknown option
+  # code, each with raw option data in a fixed order.
+  - name: edns_options
+    summary: One OPT pseudo-record whose RDATA carries an ordered EDNS(0) option list spanning NSID, COOKIE, Padding, the DAU option (mnemonic without a constructor), and an unknown option code, every option preserving its exact code and opaque data bytes.
+    record_kinds:
+      - generic
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -356,6 +367,7 @@ case_groups:
     cases:
       - dns-edns-opt-basic
       - dns-edns-opt-ttl-fields
+      - dns-edns-options
       - dns-edns-options-known
       - dns-edns-options-unknown
   - name: dnssec-ds-dnskey-rrsig
@@ -483,6 +495,7 @@ coverage_cases:
   - dns-record-raw-empty
   - dns-edns-opt-basic
   - dns-edns-opt-ttl-fields
+  - dns-edns-options
   - dns-edns-options-known
   - dns-edns-options-unknown
   - dns-dnssec-ds
@@ -729,6 +742,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: dns-edns-opt-ttl-fields
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dns-edns-options
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference
