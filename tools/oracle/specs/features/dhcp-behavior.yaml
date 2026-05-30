@@ -3,8 +3,11 @@ kind: feature
 name: dhcp_behavior
 summary: DHCP message matrix and option list behavior over BOOTP.
 
+# DHCP message and option behavior rides on the IP-layer stack and does not
+# depend on Ethernet framing. Listing ipv4/udp/dhcp lets this feature match both
+# the Ethernet-root stack (ethernet/ipv4/udp/dhcp) and the IPv4-root live stack
+# (ipv4/udp/dhcp) without requiring link-layer authoring.
 layers:
-  - ethernet
   - ipv4
   - udp
   - dhcp

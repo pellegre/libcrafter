@@ -298,8 +298,9 @@ def _generate(args: argparse.Namespace) -> int:
 def _corpus(args: argparse.Namespace) -> int:
     from .corpus import write_corpus_report
 
+    direction = getattr(args, "direction", "reference_to_libcrafter")
     try:
-        report = _build_corpus_report_from_generation(args)
+        report = _build_corpus_report_from_generation(args, direction=direction)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -7801,6 +7802,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="corpus output root (default: %(default)s)",
     )
     _add_generation_options(corpus_parser)
+    corpus_parser.add_argument(
+        "--direction",
+        default="reference_to_libcrafter",
+        choices=(
+            "reference_to_libcrafter",
+            "libcrafter_to_reference",
+            "roundtrip",
+            "live",
+            "live_exchange",
+        ),
+        help="plan direction metadata (default: %(default)s)",
+    )
     corpus_parser.set_defaults(func=_corpus)
 
     offline_parser = subparsers.add_parser(
