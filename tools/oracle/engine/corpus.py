@@ -760,13 +760,18 @@ def _requires_ipv6(plan: PacketPlan) -> bool:
 
 def _requires_l2(plan: PacketPlan) -> bool:
     root = _packet_root(plan)
-    return bool(root and root.startswith("link:")) or bool(
+    if root and root.startswith("link:"):
+        return True
+    # Driven by explicit link-layer layers only. DHCP carried over an IPv4
+    # root (``ipv4 / udp / dhcp``) is an application payload and needs no L2
+    # send/capture; only an explicit Ethernet/VLAN/ARP/cooked/loopback layer
+    # requires it.
+    return bool(
         set(plan.stack).intersection(
             {
                 "ethernet",
                 "vlan",
                 "arp",
-                "dhcp",
                 "linux_cooked",
                 "null_loopback",
             }
@@ -775,7 +780,11 @@ def _requires_l2(plan: PacketPlan) -> bool:
 
 
 def _requires_broadcast(plan: PacketPlan) -> bool:
-    if set(plan.stack).intersection({"arp", "dhcp"}):
+    # ARP resolution is inherently link-layer broadcast. DHCP is not broadcast
+    # by virtue of being DHCP: the Ethernet-root broadcast DHCP stack sets
+    # explicit broadcast destinations/flags (caught below), while the IPv4-root
+    # unicast DHCP stack carries no broadcast fields and stays eligible.
+    if "arp" in plan.stack:
         return True
     return _fields_contain_value(
         plan.fields,
@@ -788,13 +797,15 @@ def _requires_broadcast(plan: PacketPlan) -> bool:
 
 
 def _requires_provider_mac(plan: PacketPlan) -> bool:
+    # Provider MAC discovery is only needed to author real link-layer frames.
+    # IPv4-root DHCP authors no Ethernet header, so the bare presence of a
+    # ``dhcp`` layer must not demand a known provider MAC.
     return bool(
         set(plan.stack).intersection(
             {
                 "ethernet",
                 "vlan",
                 "arp",
-                "dhcp",
                 "linux_cooked",
             }
         )
@@ -802,8 +813,12 @@ def _requires_provider_mac(plan: PacketPlan) -> bool:
 
 
 def _requires_controlled_service(plan: PacketPlan) -> bool:
+    # A controlled service is only required when the case explicitly exercises a
+    # responder/service workflow. The IPv4-root DHCP oracle packet is a one-way
+    # observation packet, not a DHCP server or lease exchange, so the presence
+    # of a ``dhcp`` layer alone must not demand a controlled DHCP service.
     case = (plan.case or "").replace("_", "-")
-    if "dhcp" in plan.stack:
+    if "dhcp" in plan.stack and ("server" in case or "service" in case or "lease" in case):
         return True
     if "dns" in plan.stack and "response" in case:
         return True
