@@ -41,6 +41,12 @@ All files under `pcaps/` must be listed in `PCAP_FIXTURES`.
 The catalog tests fail if checked-in fixtures are missing from the catalogs or
 if a required supported protocol family loses coverage.
 
+UDP options fixtures use synthetic documentation-space packets whose UDP Length
+field ends at the user payload and whose surplus area carries OCS plus option
+bytes. Add these as `udp-options` catalog cases with an expected `UdpOptions`
+layer, a stable summary fixture, and typed assertions for the option status and
+decoded options.
+
 The deterministic malformed packet corpus is consumed by
 `crafter/tests/resilience.rs`. The malformed pcap corpus is consumed by
 `crafter/tests/fixture_suite.rs`.
@@ -71,14 +77,20 @@ Valid byte fixtures cover:
   `ipv4-udp-dns-response-example-com.hex`
 - IPv4 UDP DHCP message and DHCP option corpus:
   `ipv4-udp-dhcp-discover.hex`, `dhcp-offer-options.hex`
+- IPv4 UDP options surplus decode:
+  `ipv4-udp-options-known.hex`,
+  `ipv4-udp-options-unknown-safe.hex`
 - IPv6 ICMPv6 echo and ICMPv6 error:
   `ipv6-icmp-echo-request.bin`, `ipv6-icmpv6-time-exceeded.hex`
 - IPv6 UDP, TCP, and fragment extension-header stacks:
   `ipv6-udp-raw.hex`, `ipv6-tcp-raw.hex`,
   `ipv6-fragment-udp-raw.hex`
+- IPv6 UDP options surplus decode:
+  `ipv6-udp-options-unknown-unsafe.hex`,
+  `ipv6-udp-options-frag.hex`
 
 Summary fixtures cover representative raw, ARP, Linux cooked, IPv4 TCP options,
-IPv4 DNS response, IPv4 DHCP, and IPv6 fragment stacks.
+IPv4 DNS response, IPv4 DHCP, UDP options, and IPv6 fragment stacks.
 
 Pcap fixtures cover:
 
