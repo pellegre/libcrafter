@@ -154,6 +154,41 @@ tools/oracle/run specs suite --family dns --json
 tools/oracle/run specs suite --family dns --run
 ```
 
+## DNS Live Dry-Run Suite
+
+Live validation is the two-machine packet writer/capture comparison: one
+endpoint writes a DNS packet with libcrafter, the other captures and decodes it
+with Scapy. It is *not* DNS client/server behavior. Live selection is
+data-driven from each case's `byte_policy` in `supported_cases`, mirroring the
+pcap gate:
+
+- `strict_bytes` DNS cases are live-eligible in both
+  `libcrafter_to_reference` and `reference_to_libcrafter` directions (the
+  endpoint adapters send and decode the deterministic uncompressed encode);
+- `normalized` cases (compressed names, sorted SvcParams, minimal bitmaps) are
+  live-ineligible and skipped with `wire_normalized_only` -- libcrafter
+  re-encodes the bytes, so only the decoded model agrees, which a live byte
+  comparison cannot assert;
+- `structured_error` (malformed) cases are kept out of live exchange and
+  skipped with `wire_structured_error`.
+
+Real packet exchange stays opt-in behind `--confirm-live-run` and the protected
+provider workflow. Ordinary acceptance is dry-run only. Plan and inspect the
+DNS live coverage without sending real traffic:
+
+```sh
+tools/oracle/run live --backend scapy --provider local-dry-run --family dns --profile ci --seed 2901 --count 50 --direction live_exchange --out target/oracle/dns-live-local-dry
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --family dns --profile ci --seed 2902 --count 50 --direction live_exchange --out target/oracle/dns-live-hetzner-dry
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile ci --seed 2903 --count 50 --dry-run --out target/oracle/dns-live-provider-matrix
+```
+
+The `local-dry-run` provider needs no credentials. The `hetzner` `--dry-run`
+plan and the provider matrix `--dry-run` never contact a real provider, never
+read `HETZNER_API_TOKEN`/`HCLOUD_TOKEN`, and report
+`creates_infrastructure=false` / `bootstrap=planned`. Each run prints
+`wire_eligible`, `wire_skipped`, and `wire_skip_reasons` so the byte-policy
+gating is inspectable.
+
 ## Artifacts And Reproduction
 
 Oracle artifacts default below `target/oracle/`:

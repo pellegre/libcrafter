@@ -52,6 +52,21 @@ SKIP_REQUIRES_PROVIDER_MAC = "requires_provider_mac"
 SKIP_REQUIRES_CONTROLLED_SERVICE = "requires_controlled_service"
 SKIP_PROVIDER_CAPABILITY_UNAVAILABLE = "provider_capability_unavailable"
 SKIP_WIRE_COMPARE_ROOT_UNAVAILABLE = "wire_compare_root_unavailable"
+SKIP_WIRE_NORMALIZED_ONLY = "wire_normalized_only"
+SKIP_WIRE_STRUCTURED_ERROR = "wire_structured_error"
+# Case byte policies that the live/wire path cannot validate as a two-machine
+# packet exchange. A ``normalized`` case (for example a compressed-name input
+# that libcrafter re-encodes uncompressed) only agrees on the decoded model, not
+# the on-wire bytes the source declares, so it is not a clean live-exchange
+# comparison. A ``structured_error`` case is malformed input that must stay out
+# of live exchange. Both are marked live-ineligible with an explicit skip reason
+# rather than silently dropped, mirroring the pcap byte-policy gating above and
+# keeping live selection data-driven from the spec ``supported_cases`` block.
+# ``strict_bytes`` cases stay live-eligible in both directions.
+_WIRE_INELIGIBLE_BYTE_POLICIES = {
+    "normalized": SKIP_WIRE_NORMALIZED_ONLY,
+    "structured_error": SKIP_WIRE_STRUCTURED_ERROR,
+}
 
 _PCAP_LINK_TYPES_BY_ROOT = {
     "link:ethernet": "DLT_EN10MB",
@@ -454,6 +469,7 @@ def populate_corpus_eligibility(
                 backend,
                 profiles=profiles,
                 selected_provider=wire_provider,
+                case_byte_policies=case_byte_policies,
             ),
         )
         for packet in packets
@@ -565,13 +581,18 @@ def _wire_eligibility(
     *,
     profiles: Mapping[str, JSONObject],
     selected_provider: str,
+    case_byte_policies: Mapping[str, str] | None = None,
 ) -> CorpusEligibility:
+    byte_policy = None
+    if case_byte_policies and plan.case is not None:
+        byte_policy = case_byte_policies.get(plan.case)
     profile_decisions: dict[str, JSONObject] = {}
     for provider, capabilities in profiles.items():
         profile_decisions[provider] = _wire_profile_decision(
             plan,
             backend,
             capabilities=capabilities,
+            byte_policy=byte_policy,
         )
 
     selected = profile_decisions.get(selected_provider)
@@ -612,6 +633,7 @@ def _wire_eligibility(
         metadata={
             **metadata,
             "provider": selected_provider,
+            "byte_policy": byte_policy,
             "provider_profiles": profile_decisions,
         },
     )
@@ -622,12 +644,18 @@ def _wire_profile_decision(
     backend: str,
     *,
     capabilities: Mapping[str, object],
+    byte_policy: str | None = None,
 ) -> JSONObject:
     required = ("encode", "decode", "live_endpoint")
     missing = _missing_backend_capabilities(backend, required)
     reasons: list[str] = []
     if missing:
         reasons.append(SKIP_BACKEND_UNSUPPORTED)
+    policy_reason = (
+        _WIRE_INELIGIBLE_BYTE_POLICIES.get(byte_policy) if byte_policy is not None else None
+    )
+    if policy_reason is not None:
+        reasons.append(policy_reason)
     if not _capability_bool(capabilities, "live_packet_exchange"):
         reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
     if _requires_ipv4(plan) and not _provider_capability_bool(
@@ -701,6 +729,7 @@ def _wire_profile_decision(
             "stack": list(plan.stack),
             "family": plan.family,
             "case": plan.case,
+            "byte_policy": byte_policy,
             "feature_tags": list(plan.feature_tags),
             "requirements": {
                 "ipv4_unicast": _requires_ipv4(plan),
