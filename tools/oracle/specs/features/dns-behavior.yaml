@@ -41,6 +41,10 @@ behaviors:
     comparison:
       - normalized_names
     raw_dns: true
+  - name: soa_srv_records
+    record_kinds:
+      - soa
+      - srv
 
 # Normalized comparison contract for the DNS oracle.
 #
@@ -223,6 +227,7 @@ case_groups:
     cases:
       - dns-record-soa
       - dns-record-srv
+      - dns-soa-srv-records
   - name: dns-raw-records
     summary: Unknown, deferred, and empty RDATA stay DnsRecordData::Raw.
     byte_policy: strict_bytes
@@ -350,6 +355,7 @@ coverage_cases:
   - dns-record-txt
   - dns-record-soa
   - dns-record-srv
+  - dns-soa-srv-records
   - dns-record-raw-unknown
   - dns-record-raw-deferred
   - dns-record-raw-empty
