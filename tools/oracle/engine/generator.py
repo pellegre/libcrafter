@@ -1783,6 +1783,15 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
         fields.clear()
         fields["dns_raw"] = _dns_compressed_names_raw_spec()
         return
+    if "name-records-compressed" in key:
+        # Compressed NS/CNAME/PTR input: the Scapy reference owns hand-built
+        # bytes whose owner and RDATA names are compression pointers, and
+        # libcrafter normalizes to the same uncompressed DnsRecordData::Name
+        # model on decode. Checked before the uncompressed name-records branch
+        # because that token is a substring of this one.
+        fields.clear()
+        fields["dns_raw"] = _dns_name_records_compressed_raw_spec()
+        return
     if "header-flags-opcodes" in key:
         fields["is_response"] = True
         fields["opcode"] = "status"
@@ -2000,6 +2009,44 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
             },
         ]
         return
+    if "name-records" in key:
+        # An authoritative response carrying NS, CNAME, and PTR answers. NS,
+        # CNAME, and PTR all carry their RDATA as a single nested <domain-name>,
+        # so all three map to DnsRecordData::Name and must match Scapy in both
+        # the record owner and the RDATA name. The CNAME target is root-adjacent
+        # (a single label directly under the root) and the PTR owner is a
+        # reverse-DNS name, so the case spans ordinary and boundary name shapes.
+        # Both materializers emit every name uncompressed, so the encode is
+        # byte-exact in both directions. The compressed companion is the separate
+        # dns-name-records-compressed case. (Checked after name-records-compressed,
+        # which returns early at the top of this dispatcher.)
+        fields["is_response"] = True
+        fields["opcode"] = "query"
+        fields["response_code"] = "no_error"
+        fields["flags"] = ["authoritative"]
+        fields["questions"] = [{"qname": "example.com.", "qtype": "NS"}]
+        fields["answers"] = [
+            {
+                "name": "example.com.",
+                "type": "NS",
+                "ttl": 3600,
+                "target": "ns1.example.com.",
+            },
+            {
+                "name": "www.example.com.",
+                "type": "CNAME",
+                "ttl": 300,
+                # Root-adjacent target: a single label directly under the root.
+                "target": "host.example.",
+            },
+            {
+                "name": "20.113.0.203.in-addr.arpa.",
+                "type": "PTR",
+                "ttl": 300,
+                "target": "host.example.com.",
+            },
+        ]
+        return
     if "multi-question-classes" in key:
         # A single query carrying several questions in a deterministic order that
         # exercise the QTYPE and QCLASS axes together: named QTYPEs (A, AAAA, MX,
@@ -2182,6 +2229,61 @@ def _dns_compressed_names_raw_spec() -> JSONObject:
                     "prefix_hex": "0001",
                     "pointers": [{"prefix": None, "pointer_offset": ptr}],
                 },
+            },
+        ],
+    }
+
+
+def _dns_name_records_compressed_raw_spec() -> JSONObject:
+    """Raw DNS spec for the compressed NS/CNAME/PTR name-records case.
+
+    The question name ``example.com.`` is at the fixed 12-octet offset, so every
+    owner and embedded RDATA name in this message is a compression pointer back
+    to offset 12. NS, CNAME, and PTR all carry their RDATA as a single nested
+    <domain-name> at the start of the RDATA, so each answer's target is a label
+    prefix plus a pointer to the question name. Scapy's high-level fields will not
+    emit these pointers, so the bytes are built by hand under the Scapy reference
+    backend; libcrafter follows each pointer on decode and re-encodes every name
+    uncompressed, so this case is normalized and matches the uncompressed
+    ``dns-name-records`` decoded DnsRecordData::Name model.
+    """
+
+    ptr = 12  # The question name example.com. is at the fixed 12-octet offset.
+    return {
+        "transaction_id": 0x4E43,
+        "is_response": True,
+        "flags": ["authoritative"],
+        "response_code": "no_error",
+        "questions": [
+            {"name": "example.com.", "type": "NS", "class": "IN"},
+        ],
+        "answers": [
+            # NS owner is a bare pointer to the question name; the RDATA target is
+            # the label "ns1" plus a pointer back to example.com.
+            {
+                "name": "example.com.",
+                "type": "NS",
+                "class": "IN",
+                "ttl": 3600,
+                "target_with_pointer": {"prefix": "ns1", "pointer_offset": ptr},
+            },
+            # CNAME owner is "www" plus a pointer; the RDATA target is "host"
+            # plus a pointer back to example.com.
+            {
+                "name_with_pointer": {"prefix": "www", "pointer_offset": ptr},
+                "type": "CNAME",
+                "class": "IN",
+                "ttl": 300,
+                "target_with_pointer": {"prefix": "host", "pointer_offset": ptr},
+            },
+            # PTR owner is "ptr" plus a pointer; the RDATA target is "host" plus a
+            # pointer back to example.com.
+            {
+                "name_with_pointer": {"prefix": "ptr", "pointer_offset": ptr},
+                "type": "PTR",
+                "class": "IN",
+                "ttl": 300,
+                "target_with_pointer": {"prefix": "host", "pointer_offset": ptr},
             },
         ],
     }

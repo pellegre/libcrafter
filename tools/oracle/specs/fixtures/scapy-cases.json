@@ -723,6 +723,34 @@
       "notes": "Oracle fixture case. Authoritative DNS response with A and AAAA answers for documentation IPv4/IPv6 addresses, stable TTLs, and both answer orderings; strict bytes in both directions."
     },
     {
+      "name": "dns-name-records",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. Authoritative DNS response carrying NS, CNAME (root-adjacent target), and PTR answers, each a nested <domain-name> as DnsRecordData::Name; uncompressed and strict bytes in both directions."
+    },
+    {
+      "name": "dns-name-records-compressed",
+      "family": "dns",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "UDP",
+        "DNS"
+      ],
+      "strict_bytes": false,
+      "status": "implemented",
+      "notes": "Oracle fixture case. NS, CNAME, and PTR answers whose owner and embedded RDATA names are compression pointers in the Scapy-owned raw bytes; libcrafter normalizes to the same uncompressed DnsRecordData::Name model on decode (reference_to_libcrafter only, normalized byte policy)."
+    },
+    {
       "name": "dns-multiple-questions",
       "family": "dns",
       "direction": "scapy_to_libcrafter",
