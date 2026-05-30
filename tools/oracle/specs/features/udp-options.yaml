@@ -59,6 +59,77 @@ coverage_cases:
   - udp-ipv4-zero-checksum
   - udp-ipv6-zero-checksum
   - udp-options-surplus-application-boundary
+  - udp-options-known-dns-surplus
+  - udp-options-known-dhcp-surplus
+
+live_cases:
+  - name: no-options
+    case: ipv4-udp
+    root: "l3:ipv4"
+    family: udp
+    feature: null
+    expected_live: eligible
+  - name: ocs
+    case: udp-options-ocs
+    root: "l3:ipv4"
+    family: udp
+    feature: udp_options
+    expected_live: eligible
+  - name: apc
+    case: udp-options-apc
+    root: "l3:ipv4"
+    family: udp
+    feature: udp_options
+    expected_live: eligible
+  - name: unknown-safe
+    case: udp-options-unknown-safe
+    root: "l3:ipv4"
+    family: udp
+    feature: udp_options
+    expected_live: eligible
+  - name: unknown-unsafe
+    case: udp-options-unknown-unsafe
+    root: "l3:ipv4"
+    family: udp
+    feature: udp_options
+    expected_live: eligible
+  - name: dns-surplus
+    case: udp-options-known-dns-surplus
+    root: "l3:ipv4"
+    family: udp
+    feature: udp_options
+    expected_live: eligible
+  - name: dhcp-surplus
+    case: udp-options-known-dhcp-surplus
+    root: "link:ethernet"
+    family: udp
+    feature: udp_options
+    expected_live: provider-gated
+    skip_reasons:
+      - requires_l2
+      - requires_broadcast
+      - requires_provider_mac
+      - requires_controlled_service
+  - name: ipv4-zero-checksum
+    case: udp-ipv4-zero-checksum
+    root: "l3:ipv4"
+    family: udp
+    feature: udp_options
+    expected_live: eligible
+  - name: ipv6-zero-checksum-status
+    case: udp-ipv6-zero-checksum
+    root: "l3:ipv6"
+    family: udp
+    feature: udp_options
+    expected_live: provider-gated
+    skip_reasons:
+      - requires_ipv6
+  - name: unsupported-frag-preservation
+    case: udp-options-unsupported-frag
+    root: "l3:ipv4"
+    family: udp
+    feature: udp_options
+    expected_live: eligible
 
 backend_support:
   scapy:

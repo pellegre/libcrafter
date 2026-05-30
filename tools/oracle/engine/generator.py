@@ -1398,7 +1398,22 @@ def _domain_weight(ctx: _SamplingContext, layer: str, field_name: str, domain: o
     if ctx.profile == "smoke" and _is_boundary_domain(domain):
         return 0
     if ctx.profile == "smoke" and layer in {"dns", "dhcp"}:
-        return 0 if domain not in {False, 0, 6, "a_in", "bootrequest", "ethernet", "message_type", "none", "query", "zero"} else 10
+        smoke_domains = {
+            False,
+            0,
+            6,
+            "a_in",
+            "bootrequest",
+            "deterministic",
+            "documentation_ipv4",
+            "documentation_mac_padded",
+            "ethernet",
+            "message_type",
+            "none",
+            "query",
+            "zero",
+        }
+        return 0 if domain not in smoke_domains else 10
     if _is_boundary_domain(domain):
         return max(0, ctx.feature_weights.get("boundary", 0))
     return max(1, ctx.feature_weights.get("baseline", 1))
@@ -1601,7 +1616,7 @@ def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) ->
     if field_name == "checksum" and domain == "zero_ipv4" and "ipv4" in ctx.stack:
         return 0
     if field_name == "options":
-        payload_hex = ctx.payload.hex()
+        payload_hex = ctx.payload.hex() if "payload" in ctx.stack else None
         return _udp_options_field(
             f"{ctx.case} {domain}".replace("_", "-"),
             payload_hex=payload_hex,
@@ -1855,7 +1870,7 @@ def _apply_udp_options_behavior(
     udp_fields = fields.setdefault("udp", {})
     if "ipv4-zero-checksum" in key or "ipv6-zero-checksum" in key:
         udp_fields["checksum"] = 0
-    payload_hex = _payload_hex_from_fields(fields.get("payload", {}))
+    payload_hex = _payload_hex_from_fields(fields.get("payload", {})) if "payload" in fields else None
     options = _udp_options_field(key, payload_hex=payload_hex)
     if options is None:
         udp_fields.pop("options", None)
@@ -1895,7 +1910,7 @@ def _udp_options_metadata(
     behavior: str | None,
 ) -> JSONObject:
     key = f"{case} {behavior or ''}".replace("_", "-")
-    payload_hex = _payload_hex_from_fields(fields.get("payload", {}))
+    payload_hex = _payload_hex_from_fields(fields.get("payload", {})) if "payload" in fields else None
     checksum_status = "generated"
     if "ipv4-zero-checksum" in key:
         checksum_status = "ipv4_no_checksum"
@@ -1925,7 +1940,9 @@ def _udp_options_metadata(
             "surplus_excluded_from_udp_checksum": surplus,
         },
         "logical_fields": {
-            "application_payload": "fields.payload.hex",
+            "application_payload": "fields.payload.hex"
+            if payload_hex is not None
+            else "materialized_udp_payload",
             "udp_options": "fields.udp.options",
         },
     }
@@ -1945,23 +1962,25 @@ def _payload_hex_length(payload_hex: str) -> int:
         return 0
 
 
-def _udp_options_field(key: str, *, payload_hex: str) -> JSONObject | None:
+def _udp_options_field(key: str, *, payload_hex: str | None) -> JSONObject | None:
     options = _udp_option_intent(key)
     if not options:
         return None
-    return {
+    field: JSONObject = {
         "format": "udp_surplus_options",
         "placement": "after_udp_length",
         "udp_length_scope": "header_and_application_payload",
-        "application_payload": {
-            "layer": "payload",
-            "hex": payload_hex,
-            "length": _payload_hex_length(payload_hex),
-        },
         "surplus_excluded_from_udp_checksum": True,
         "option_checksum": _udp_option_checksum_intent(key, True),
         "items": options,
     }
+    if payload_hex is not None:
+        field["application_payload"] = {
+            "layer": "payload",
+            "hex": payload_hex,
+            "length": _payload_hex_length(payload_hex),
+        }
+    return field
 
 
 def _udp_options_items(options_field: JSONObject | None) -> list[JSONObject]:

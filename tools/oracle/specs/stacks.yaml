@@ -212,6 +212,7 @@ stacks:
       - dns
     coverage_cases:
       - dns-query
+      - udp-options-known-dns-surplus
   # ethernet / ipv4 / udp / dhcp: link-layer DHCP for offline byte
   # equivalence, pcap, link-type, and decode-root coverage. It stays
   # link-layer-gated for live (requires_l2 / requires_provider_mac /
@@ -225,6 +226,7 @@ stacks:
       - dhcp
     coverage_cases:
       - dhcp-discover
+      - udp-options-known-dhcp-surplus
       - dhcp-request-offer-ack
       - dhcp-inform-release-generic-options
       - dhcp-decline-nak
