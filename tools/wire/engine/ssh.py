@@ -118,7 +118,12 @@ def ssh_argv(
     if isinstance(command, str):
         argv.append(command)
     else:
-        argv.append(" ".join(shlex.quote(str(part)) for part in command))
+        # ssh joins the trailing command tokens with spaces and the remote login
+        # shell re-splits them, so a multi-token command such as
+        # ["bash", "-lc", "<script with spaces>"] must be shell-quoted into a
+        # single argument to survive intact on the remote side. Without this the
+        # remote shell mangles any token that contains whitespace.
+        argv.append(shlex.join(str(part) for part in command))
     return argv
 
 

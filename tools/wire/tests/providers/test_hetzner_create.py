@@ -566,5 +566,103 @@ def _wire_env(root: Path):
     )
 
 
+class HetznerPrivateNetworkSubnetTest(unittest.TestCase):
+    """Regression: real `hcloud network create` returns a subnet-less network,
+    so `_ensure_private_network` must call `network add-subnet` and that action
+    command must not carry `-o/--output` (the CLI rejects it)."""
+
+    def test_add_subnet_called_without_output_flag(self) -> None:
+        from tools.wire.engine.providers.hetzner.network import _ensure_private_network
+
+        calls: list[tuple[str, ...]] = []
+
+        def fake_runner(argv: Sequence[str], **_: object) -> CommandResult:
+            parts = tuple(argv)
+            calls.append(parts)
+
+            def result(
+                payload: dict[str, object] | None,
+                *,
+                exit_code: int = 0,
+                stderr: str = "",
+            ) -> CommandResult:
+                return CommandResult(
+                    argv=parts,
+                    redacted_argv=parts,
+                    cwd=None,
+                    exit_code=exit_code,
+                    stdout=json.dumps(payload) if payload is not None else "",
+                    stderr=stderr,
+                )
+
+            if parts[:3] == ("hcloud", "network", "describe") and "wire-pair-a" in parts:
+                return result(None, exit_code=1, stderr="network not found")
+            if parts[:3] == ("hcloud", "network", "create"):
+                return result(
+                    {
+                        "network": {
+                            "id": "network-303",
+                            "name": "wire-pair-a",
+                            "ip_range": "10.0.0.0/16",
+                            "subnets": [],
+                        }
+                    }
+                )
+            if parts[:3] == ("hcloud", "network", "add-subnet"):
+                # action command: emits human-readable text, not JSON
+                return result(None)
+            if parts[:3] == ("hcloud", "network", "describe") and "network-303" in parts:
+                return result(
+                    {
+                        "network": {
+                            "id": "network-303",
+                            "name": "wire-pair-a",
+                            "ip_range": "10.0.0.0/16",
+                            "subnets": [
+                                {
+                                    "type": "server",
+                                    "network_zone": "eu-central",
+                                    "ip_range": "10.0.0.0/16",
+                                }
+                            ],
+                        }
+                    }
+                )
+            raise AssertionError(f"unexpected hcloud argv: {parts}")
+
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            outcome = _ensure_private_network(
+                provider="hetzner",
+                private_group="pair-a",
+                private_cidr="10.0.0.0/16",
+                network_zone="eu-central",
+                env={},
+                command_runner=fake_runner,
+            )
+
+        add_subnet_calls = [c for c in calls if c[:3] == ("hcloud", "network", "add-subnet")]
+        self.assertEqual(len(add_subnet_calls), 1)
+        add_subnet = add_subnet_calls[0]
+        self.assertNotIn("-o", add_subnet)
+        self.assertNotIn("--output", add_subnet)
+        self.assertNotIn("json", add_subnet)
+        self.assertEqual(
+            add_subnet,
+            (
+                "hcloud",
+                "network",
+                "add-subnet",
+                "network-303",
+                "--type",
+                "server",
+                "--network-zone",
+                "eu-central",
+                "--ip-range",
+                "10.0.0.0/16",
+            ),
+        )
+        self.assertTrue(outcome["created"])
+
+
 if __name__ == "__main__":
     unittest.main()

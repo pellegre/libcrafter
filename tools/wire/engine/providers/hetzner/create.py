@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import shlex
 import shutil
@@ -346,6 +347,36 @@ def _create_wan_endpoint(
         raise
 
 
+def _resolve_requested_private_cidr(
+    private_cidr: str,
+    *,
+    requested_private_ip: str | None,
+    explicit: bool,
+) -> str:
+    """Return a private CIDR that contains ``requested_private_ip``.
+
+    The Hetzner wire default (``DEFAULT_PRIVATE_CIDR`` = 10.0.0.0/16) does not
+    contain every caller's requested private address; the oracle live lab, for
+    example, requests 10.42.19.0/24 endpoints. When the caller requests a
+    private IPv4 outside the resolved CIDR and ``HETZNER_PRIVATE_CIDR`` was not
+    explicitly set, derive the containing /24 so the private network is created
+    to hold the requested address. An explicit operator override is always
+    honored (a mismatching address then surfaces the existing out-of-range
+    error from ``_allocate_private_ipv4``).
+    """
+
+    if requested_private_ip is None or explicit:
+        return private_cidr
+    try:
+        network = ipaddress.ip_network(private_cidr, strict=False)
+        address = ipaddress.ip_address(requested_private_ip)
+    except ValueError:
+        return private_cidr
+    if address.version != 4 or address in network:
+        return private_cidr
+    return str(ipaddress.ip_network(f"{requested_private_ip}/24", strict=False))
+
+
 def _create_private_endpoint(
     *,
     provider: str,
@@ -374,6 +405,11 @@ def _create_private_endpoint(
 
     hcloud_env = {HCLOUD_TOKEN_ENV: token}
     private_cidr = _env_or_default(environ, "HETZNER_PRIVATE_CIDR", DEFAULT_PRIVATE_CIDR)
+    private_cidr = _resolve_requested_private_cidr(
+        private_cidr,
+        requested_private_ip=private_ip,
+        explicit=bool(environ.get("HETZNER_PRIVATE_CIDR")),
+    )
     network_zone = _env_or_default(
         environ,
         "HETZNER_NETWORK_ZONE",
