@@ -1939,7 +1939,9 @@ fn dns_record_data_matches(data: &DnsRecordData, expected: &str) -> bool {
         DnsRecordData::Aaaa(address) => expected
             .parse::<Ipv6Addr>()
             .is_ok_and(|expected| *address == expected),
-        DnsRecordData::Name(name) => canonical_dns_name(name) == canonical_dns_name(expected),
+        DnsRecordData::Name(name) => {
+            canonical_dns_name(name.presentation()) == canonical_dns_name(expected)
+        }
         DnsRecordData::Txt(strings) => strings
             .iter()
             .filter_map(|bytes| std::str::from_utf8(bytes).ok())
@@ -1947,8 +1949,14 @@ fn dns_record_data_matches(data: &DnsRecordData, expected: &str) -> bool {
         DnsRecordData::Mx {
             preference,
             exchange,
-        } => format!("{preference} {}", canonical_dns_name(exchange)) == expected,
+        } => {
+            format!(
+                "{preference} {}",
+                canonical_dns_name(exchange.presentation())
+            ) == expected
+        }
         DnsRecordData::Raw(bytes) => hex_bytes(bytes) == expected,
+        _ => false,
     }
 }
 
@@ -1993,7 +2001,7 @@ fn dns_record_data_json(data: &DnsRecordData) -> Value {
         }),
         DnsRecordData::Name(name) => json!({
             "kind": "name",
-            "value": name,
+            "value": name.presentation(),
         }),
         DnsRecordData::Mx {
             preference,
@@ -2001,7 +2009,7 @@ fn dns_record_data_json(data: &DnsRecordData) -> Value {
         } => json!({
             "kind": "mx",
             "preference": preference,
-            "exchange": exchange,
+            "exchange": exchange.presentation(),
         }),
         DnsRecordData::Txt(strings) => json!({
             "kind": "txt",
@@ -2013,6 +2021,10 @@ fn dns_record_data_json(data: &DnsRecordData) -> Value {
         DnsRecordData::Raw(bytes) => json!({
             "kind": "raw",
             "hex": hex_bytes(bytes),
+        }),
+        _ => json!({
+            "kind": "other",
+            "debug": format!("{data:?}"),
         }),
     }
 }
