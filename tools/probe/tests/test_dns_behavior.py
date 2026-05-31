@@ -89,6 +89,14 @@ def _dns_txt_answer_plan(*, seed: int = 1015, sequence: int = 0) -> dict:
     )
 
 
+def _dns_mx_answer_plan(*, seed: int = 1016, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dns-mx-answer"]),
+        case=planning.PROBE_CASE_BY_NAME["dns-mx-answer"],
+        sequence=sequence,
+    )
+
+
 class DnsASuccessPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct A query/answer contract."""
 
@@ -802,6 +810,127 @@ class DnsTxtAnswerTest(unittest.TestCase):
                 if result.get("case") == "dns-txt-answer"
             ]
             self.assertTrue(results, "endpoint emitted no dns-txt-answer result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+
+class DnsMxAnswerPlanTest(unittest.TestCase):
+    """The plan carries an RFC-correct MX query/answer contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dns-mx-answer", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dns-mx-answer"],
+            planning._dns_mx_answer_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dns_mx_answer_plan(), _dns_mx_answer_plan())
+
+    def test_plan_carries_an_mx_query_contract(self) -> None:
+        plan = _dns_mx_answer_plan()
+
+        self.assertEqual(plan["case"], "dns-mx-answer")
+        self.assertEqual(plan["stimulus"], "dns_query")
+        self.assertEqual(plan["expected_response"], "dns_response")
+
+        # Query id, source port, target port 53, query name, and QTYPE MX.
+        self.assertIsInstance(plan["query_id"], int)
+        self.assertTrue(1 <= plan["query_id"] <= 0xFFFF)
+        self.assertIsInstance(plan["source_port"], int)
+        self.assertNotEqual(plan["source_port"], 53)
+        self.assertEqual(plan["destination_port"], 53)
+        self.assertTrue(plan["query_name"].endswith("."))
+        self.assertEqual(plan["query_type"], "MX")
+        self.assertEqual(plan["query_type_value"], 15)
+        self.assertEqual(plan["query_class_value"], 1)
+
+        # Expected answer: an MX record carrying a preference + exchange name.
+        self.assertEqual(plan["expected_answer_type"], "MX")
+        self.assertEqual(plan["expected_answer_type_value"], 15)
+        self.assertEqual(plan["expected_answer_name"], plan["query_name"])
+        self.assertIsInstance(plan["expected_mx_preference"], int)
+        self.assertTrue(1 <= plan["expected_mx_preference"] <= 0xFFFF)
+        self.assertTrue(plan["expected_mx_exchange"].endswith("."))
+        self.assertNotEqual(plan["expected_mx_exchange"], plan["query_name"])
+        self.assertEqual(plan["expected_response_code"], 0)
+        self.assertIsInstance(plan["answer_ttl"], int)
+        self.assertGreater(plan["answer_ttl"], 0)
+        self.assertIn("qr", plan["expected_response_flags"])
+
+    def test_validation_contract_covers_id_qr_question_mx_answer_peer(self) -> None:
+        plan = _dns_mx_answer_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (response flows target -> stimulus).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 53)
+        self.assertEqual(validation["destination_port"], plan["source_port"])
+
+        # Transaction id, QR flag, and rcode.
+        self.assertEqual(validation["query_id"], plan["query_id"])
+        self.assertTrue(validation["qr"])
+        self.assertEqual(validation["response_code"], 0)
+
+        # Question name/type/class.
+        question = validation["question"]
+        self.assertEqual(question["name"], plan["query_name"])
+        self.assertEqual(question["type"], "MX")
+        self.assertEqual(question["class"], "IN")
+
+        # Answer name/type/class, the decoded preference and exchange name, and
+        # the TTL.
+        answer = validation["answer"]
+        self.assertEqual(answer["name"], plan["query_name"])
+        self.assertEqual(answer["type"], "MX")
+        self.assertEqual(answer["class"], "IN")
+        self.assertEqual(answer["preference"], plan["expected_mx_preference"])
+        self.assertEqual(answer["exchange"], plan["expected_mx_exchange"])
+        self.assertEqual(answer["ttl"], plan["answer_ttl"])
+
+    def test_target_service_is_controlled_udp_dns_responder(self) -> None:
+        plan = _dns_mx_answer_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-dns-responder")
+        self.assertEqual(target_service["port"], 53)
+        self.assertEqual(target_service["query_type"], "MX")
+        self.assertEqual(target_service["mx_preference"], plan["expected_mx_preference"])
+        self.assertEqual(target_service["mx_exchange"], plan["expected_mx_exchange"])
+
+
+class DnsMxAnswerTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dns-mx-answer",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1016,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dns-mx-answer", planned)
+
+            # The endpoint produced a result for the focused case and it built
+            # the MX query (a dry-run plan compiles the outgoing stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dns-mx-answer"
+            ]
+            self.assertTrue(results, "endpoint emitted no dns-mx-answer result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))

@@ -76,9 +76,9 @@ class ProbeProfileMembershipTest(unittest.TestCase):
         self.assertEqual([case.name for case in selected], list(_LEGACY_CASE_NAMES))
 
     def test_explicit_cases_override_profile_selection(self) -> None:
-        selected = cases.profile_selected_cases("behavior", ["icmp-echo", "dns-mx"])
+        selected = cases.profile_selected_cases("behavior", ["icmp-echo", "dns-mx-answer"])
 
-        self.assertEqual([case.name for case in selected], ["icmp-echo", "dns-mx"])
+        self.assertEqual([case.name for case in selected], ["icmp-echo", "dns-mx-answer"])
 
     def test_unknown_profile_falls_back_to_full_catalog(self) -> None:
         selected = cases.profile_selected_cases("not-a-profile", [])

@@ -429,6 +429,58 @@ pub fn validate_dns_candidate(
         }
     }
 
+    // MX answers carry composite RDATA: a 16-bit preference followed by the
+    // exchange <domain-name>. The contract validates the answer owner name,
+    // type (15), class, the decoded structured preference and exchange name, and
+    // the TTL. Comparing the decoded preference (a u16) and exchange (a domain
+    // name) separately is what exercises the crate's MX RDATA decode rather than
+    // a flat byte comparison.
+    if let Some(expected_preference) = plan.expected_mx_preference {
+        let expected_exchange = canonical_dns_name(required_str(
+            plan.expected_mx_exchange.as_deref(),
+            "expected_mx_exchange",
+        )?);
+        let expected_answer_name = canonical_dns_name(required_str(
+            plan.expected_answer_name.as_deref(),
+            "expected_answer_name",
+        )?);
+        let expected_answer_type = plan.expected_answer_type_value.unwrap_or(DNS_TYPE_MX);
+        let expected_answer_class = plan.query_class_value.unwrap_or(DNS_CLASS_IN);
+        let matching_answer = dns.answers().iter().find(|answer| {
+            answer.name() == expected_answer_name
+                && answer.record_type() == expected_answer_type
+                && answer.class() == expected_answer_class
+                && dns_mx_fields(answer.data()).is_some_and(|(preference, exchange)| {
+                    preference == expected_preference
+                        && canonical_dns_name(&exchange) == expected_exchange
+                })
+        });
+        match matching_answer {
+            Some(answer) => {
+                if let Some(expected_ttl) = plan.answer_ttl {
+                    if answer.ttl() != expected_ttl {
+                        mismatches.push(json!({
+                            "field": "dns.answer.ttl",
+                            "expected": expected_ttl,
+                            "actual": answer.ttl(),
+                        }));
+                    }
+                }
+            }
+            None => mismatches.push(json!({
+                "field": "dns.answer",
+                "expected": {
+                    "name": expected_answer_name,
+                    "type": expected_answer_type,
+                    "class": expected_answer_class,
+                    "preference": expected_preference,
+                    "exchange": expected_exchange,
+                },
+                "actual": dns_answers_json(dns),
+            })),
+        }
+    }
+
     // Multi-answer chain cases (the CNAME chain) additionally require a specific
     // non-terminal answer (the CNAME whose RDATA is the canonical domain name)
     // and an exact answer count, so a response that decoded the terminal A but
@@ -504,6 +556,7 @@ pub fn dns_type_value(plan: &ProbePlan) -> ExampleResult<u16> {
         "A" => Ok(DNS_TYPE_A),
         "AAAA" => Ok(DNS_TYPE_AAAA),
         "TXT" => Ok(DNS_TYPE_TXT),
+        "MX" => Ok(DNS_TYPE_MX),
         other => Err(format!("unsupported DNS query type: {other}").into()),
     }
 }
@@ -523,6 +576,20 @@ pub fn canonical_dns_name(name: &str) -> String {
 pub fn dns_txt_strings(data: &DnsRecordData) -> Option<Vec<Vec<u8>>> {
     match data {
         DnsRecordData::Txt(strings) => Some(strings.clone()),
+        _ => None,
+    }
+}
+
+/// Return the structured MX `(preference, exchange)` when `data` is MX RDATA, or
+/// `None` for any other record data. The exchange is the presentation-form
+/// domain name. Used by the MX answer contract to compare the decoded numeric
+/// preference and exchange name separately (not as a flat byte comparison).
+pub fn dns_mx_fields(data: &DnsRecordData) -> Option<(u16, String)> {
+    match data {
+        DnsRecordData::Mx {
+            preference,
+            exchange,
+        } => Some((*preference, exchange.presentation().to_string())),
         _ => None,
     }
 }
@@ -1096,6 +1163,150 @@ mod tests {
             DNS_TYPE_TXT
         );
         assert_eq!(dns.id_value(), 0x515a);
+    }
+
+    /// Build the IPv4/UDP/DNS MX response a controlled responder emits: QR set,
+    /// rcode 0, the original question echoed, and a single MX answer whose RDATA
+    /// is a 16-bit preference followed by the exchange domain name.
+    fn mx_response_bytes(
+        query_name: &str,
+        preference: u16,
+        exchange: &str,
+        ttl: u32,
+        query_id: u16,
+    ) -> Vec<u8> {
+        let mx = DnsRecordData::Mx {
+            preference,
+            exchange: DnsName::parse(exchange).expect("exchange parses"),
+        };
+        let dns = Dns::query(query_name, DNS_TYPE_MX)
+            .id(query_id)
+            .response(true)
+            .answer(DnsRecord::new(query_name, DNS_TYPE_MX, DNS_CLASS_IN, ttl, mx));
+        (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .expect("mx response compiles")
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn mx_plan(query_name: &str, preference: u16, exchange: &str, ttl: u32) -> ProbePlan {
+        let mut plan = base_plan("dns-mx-answer");
+        plan.source_ipv4 = Some("10.77.0.10".to_string());
+        plan.destination_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.77.0.10".to_string());
+        plan.source_port = Some(40000);
+        plan.destination_port = Some(53);
+        plan.query_id = Some(0x4d58);
+        plan.query_name = Some(query_name.to_string());
+        plan.query_type = Some("MX".to_string());
+        plan.query_type_value = Some(DNS_TYPE_MX);
+        plan.query_class_value = Some(DNS_CLASS_IN);
+        plan.expected_answer_name = Some(query_name.to_string());
+        plan.expected_answer_type = Some("MX".to_string());
+        plan.expected_answer_type_value = Some(DNS_TYPE_MX);
+        plan.expected_mx_preference = Some(preference);
+        plan.expected_mx_exchange = Some(exchange.to_string());
+        plan.answer_ttl = Some(ttl);
+        plan.expected_response_code = Some(0);
+        plan
+    }
+
+    #[test]
+    fn mx_response_validates_preference_and_exchange() {
+        let query = "probe-1016-0-mx0000abcd.behavior.libcrafter.test.";
+        let exchange = "mail-1016-0-mx0000abcd.behavior.libcrafter.test.";
+        let raw = mx_response_bytes(query, 10, exchange, 120, 0x4d58);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+
+        // The crate decodes the MX RDATA into a structured preference + exchange.
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        assert_eq!(dns.answers().len(), 1);
+        let answer = &dns.answers()[0];
+        assert_eq!(answer.record_type(), DNS_TYPE_MX);
+        match answer.data() {
+            DnsRecordData::Mx {
+                preference,
+                exchange: decoded,
+            } => {
+                assert_eq!(*preference, 10);
+                assert_eq!(
+                    canonical_dns_name(decoded.presentation()),
+                    canonical_dns_name(exchange)
+                );
+            }
+            other => panic!("expected MX rdata, got {other:?}"),
+        }
+
+        let plan = mx_plan(query, 10, exchange, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed for mx answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mx_wrong_preference_fails_payload() {
+        let query = "probe-1016-0-mx0000abcd.behavior.libcrafter.test.";
+        let exchange = "mail-1016-0-mx0000abcd.behavior.libcrafter.test.";
+        // Correct exchange but a preference that does not match the contract.
+        let raw = mx_response_bytes(query, 99, exchange, 120, 0x4d58);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = mx_plan(query, 10, exchange, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong mx preference, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mx_wrong_exchange_fails_payload() {
+        let query = "probe-1016-0-mx0000abcd.behavior.libcrafter.test.";
+        let exchange = "mail-1016-0-mx0000abcd.behavior.libcrafter.test.";
+        // Correct preference but the wrong exchange domain name.
+        let raw = mx_response_bytes(
+            query,
+            10,
+            "other-mail.behavior.libcrafter.test.",
+            120,
+            0x4d58,
+        );
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = mx_plan(query, 10, exchange, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong mx exchange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mx_wrong_ttl_fails_payload() {
+        let query = "probe-1016-0-mx0000abcd.behavior.libcrafter.test.";
+        let exchange = "mail-1016-0-mx0000abcd.behavior.libcrafter.test.";
+        // Correct preference and exchange but a TTL that does not match.
+        let raw = mx_response_bytes(query, 10, exchange, 999, 0x4d58);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = mx_plan(query, 10, exchange, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong mx ttl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mx_response_dns_packet_builds_mx_query() {
+        let query = "probe-1016-0-mx0000abcd.behavior.libcrafter.test.";
+        let exchange = "mail-1016-0-mx0000abcd.behavior.libcrafter.test.";
+        let plan = mx_plan(query, 10, exchange, 120);
+        let packet = dns_packet(&plan).unwrap();
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        assert_eq!(dns.questions().first().unwrap().question_type(), DNS_TYPE_MX);
+        assert_eq!(dns.id_value(), 0x4d58);
     }
 
     #[test]

@@ -59,6 +59,8 @@ pub(crate) mod test_support {
             expected_answer_type_value: None,
             expected_answer_data: None,
             expected_txt_strings: None,
+            expected_mx_preference: None,
+            expected_mx_exchange: None,
             expected_answer_count: None,
             original_name: None,
             absent_name: None,
