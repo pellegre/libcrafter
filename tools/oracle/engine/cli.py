@@ -88,7 +88,7 @@ LIVE_ROOT_ALIASES = {
 # the send/receive race and the receiver captures zero packets. Override via
 # ORACLE_LIVE_CAPTURE_SETTLE_SECONDS for slower or faster endpoints.
 LIVE_RECEIVER_STARTUP_GRACE_SECONDS = max(
-    1.0, float(os.environ.get("ORACLE_LIVE_CAPTURE_SETTLE_SECONDS", "20"))
+    1.0, float(os.environ.get("ORACLE_LIVE_CAPTURE_SETTLE_SECONDS", "35"))
 )
 LIVE_VM_RECEIVER_STARTUP_GRACE_SECONDS = max(
     1.0,
