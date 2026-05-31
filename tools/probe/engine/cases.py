@@ -208,7 +208,7 @@ BEHAVIOR_DHCP_CASES: tuple[ProbeCase, ...] = (
         protocol="dhcp",
     ),
     _behavior_case(
-        name="dhcp-renew-unicast-ack",
+        name="dhcp-renewal-unicast-ack",
         description="Send a unicast renewal Request and validate the unicast Ack.",
         stimulus="dhcp_request",
         expected_response="dhcp_ack",

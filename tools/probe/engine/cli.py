@@ -595,6 +595,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "dhcp-hostname",
         "dhcp-parameter-request-list",
         "dhcp-lease-time",
+        "dhcp-renewal-unicast-ack",
     }
 )
 
@@ -1111,15 +1112,21 @@ def _probe_plan_with_endpoint_addresses(
         "dhcp-hostname",
         "dhcp-parameter-request-list",
         "dhcp-lease-time",
+        "dhcp-renewal-unicast-ack",
     }:
         # DHCP uses fixed privileged ports (client 68 -> server 67). The Offer/Ack
         # flows from the responder (target) back to the client (stimulus); the
         # server identifier names the responder, so it follows the target
-        # address onto the lab segment. For a Request the client also names the
-        # chosen server (option 54), so the stimulus server identifier is
-        # rewritten to the target as well. The client identifier (option 61) and
-        # the hostname (option 12) are opaque identities that carry no IP, so they
-        # stay unchanged across the lab-segment rewrite.
+        # address onto the lab segment. For a SELECTING-state Request the client
+        # also names the chosen server (option 54), so the stimulus server
+        # identifier is rewritten to the target as well. A RENEWING-state
+        # renewal Request (dhcp-renewal-unicast-ack) is unicast directly to the
+        # leasing server and carries no server-identifier (54) option, so the
+        # rewrite below only touches the stimulus server identifier when one is
+        # present. The client identifier (option 61), the hostname (option 12),
+        # and the already-bound client address (ciaddr) are opaque identities or
+        # documentation-space leases that carry no transport IP, so they stay
+        # unchanged across the lab-segment rewrite.
         source_port = int(updated.get("source_port", 68))
         destination_port = int(updated.get("destination_port", 67))
         updated["capture_filter"] = (
@@ -1287,6 +1294,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "dhcp-hostname",
         "dhcp-parameter-request-list",
         "dhcp-lease-time",
+        "dhcp-renewal-unicast-ack",
     }:
         return [
             FAILURE_TIMEOUT,
