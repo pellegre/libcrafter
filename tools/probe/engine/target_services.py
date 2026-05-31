@@ -411,9 +411,11 @@ def tcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
 
 
 # Probe cases that drive the controlled UDP DNS responder. ``dns-query`` is the
-# legacy smoke case; ``dns-a-success`` and the later DNS behavioral cases reuse
-# the same responder descriptor and target setup.
-_DNS_RESPONDER_CASES: frozenset[str] = frozenset({"dns-query", "dns-a-success"})
+# legacy smoke case; ``dns-a-success``, ``dns-aaaa-success``, and the later DNS
+# behavioral cases reuse the same responder descriptor and target setup.
+_DNS_RESPONDER_CASES: frozenset[str] = frozenset(
+    {"dns-query", "dns-a-success", "dns-aaaa-success"}
+)
 
 
 def dns_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:

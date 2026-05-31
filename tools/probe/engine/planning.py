@@ -396,6 +396,117 @@ def _dns_a_success_probe_plan(
     }
 
 
+def _dns_aaaa_success_probe_plan(
+    *,
+    case_name: str = "dns-aaaa-success",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dns-aaaa-success`` behavioral case.
+
+    Always an AAAA (QTYPE 28) query against the controlled UDP DNS responder on
+    port 53, with a deterministic documentation-space IPv6 answer
+    (``2001:db8::/32``). The lab transport stays IPv4; only the DNS payload
+    carries the AAAA answer. The validation contract covers transaction id, QR,
+    rcode, question (name/type/class), and answer (name/type/class/data/ttl)
+    plus peer addresses and ports.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    destination_port = 53
+    query_name = dns_query_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    answer_data = deterministic_documentation_ipv6(digest)
+    answer_ttl = 60 + digest[9] % 180
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": "AAAA",
+        "query_type_value": 28,
+        "query_class": "IN",
+        "query_class_value": 1,
+        "expected_answer_name": query_name,
+        "expected_answer_type": "AAAA",
+        "expected_answer_type_value": 28,
+        "expected_answer_class": "IN",
+        "expected_answer_class_value": 1,
+        "expected_answer_data": answer_data,
+        "expected_response_code": 0,
+        "expected_response_flags": ["qr", "aa"],
+        "answer_ttl": answer_ttl,
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": "AAAA",
+            "answer_data": answer_data,
+            "answer_ttl": answer_ttl,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": 0,
+            "question": {
+                "name": query_name,
+                "type": "AAAA",
+                "type_value": 28,
+                "class": "IN",
+                "class_value": 1,
+            },
+            "answer": {
+                "name": query_name,
+                "type": "AAAA",
+                "type_value": 28,
+                "class": "IN",
+                "class_value": 1,
+                "data": answer_data,
+                "ttl": answer_ttl,
+            },
+        },
+    }
+
+
+def deterministic_documentation_ipv6(digest: bytes) -> str:
+    """Return a deterministic IPv6 address in the ``2001:db8::/32`` block.
+
+    The four trailing hextets are derived from the case digest so the answer is
+    stable per (case, profile, seed, sequence) while staying inside the RFC 3849
+    documentation prefix.
+    """
+
+    group_e = int.from_bytes(digest[4:6], "big")
+    group_f = int.from_bytes(digest[6:8], "big")
+    group_g = int.from_bytes(digest[8:10], "big")
+    host = 1 + int.from_bytes(digest[10:12], "big") % 0xFFFE
+    return f"2001:db8:{group_e:x}:{group_f:x}:0:{group_g:x}:0:{host:x}"
+
+
 def dns_query_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
     label = dns_label(profile)
     suffix = digest.hex()[:10]
@@ -574,6 +685,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "tcp-syn-closed": _tcp_syn_probe_plan,
     "dns-query": _dns_query_probe_plan,
     "dns-a-success": _dns_a_success_probe_plan,
+    "dns-aaaa-success": _dns_aaaa_success_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }
