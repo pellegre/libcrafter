@@ -683,6 +683,12 @@ fn malformed_dhcp_corpus_errors_carry_structured_fields() {
         // The variant/context match is shared with the corpus runner; here we
         // additionally assert the structured payload.
         assert_error_matches(case, error.clone());
+        let ExpectedOutcome::Error(expected_error) = case.expected_outcome else {
+            panic!(
+                "malformed DHCP case {} expected structured error outcome",
+                case.name
+            );
+        };
         match error {
             CrafterError::BufferTooShort {
                 context,
@@ -690,7 +696,7 @@ fn malformed_dhcp_corpus_errors_carry_structured_fields() {
                 available,
             } => {
                 assert_eq!(
-                    context, case.expected_error.context_or_field,
+                    context, expected_error.context_or_field,
                     "malformed DHCP case {} carried an unexpected buffer context",
                     case.name
                 );
@@ -703,7 +709,7 @@ fn malformed_dhcp_corpus_errors_carry_structured_fields() {
             }
             CrafterError::InvalidFieldValue { field, reason } => {
                 assert_eq!(
-                    field, case.expected_error.context_or_field,
+                    field, expected_error.context_or_field,
                     "malformed DHCP case {} carried an unexpected invalid field",
                     case.name
                 );
@@ -918,6 +924,12 @@ fn malformed_arp_corpus_errors_carry_structured_fields() {
         // The variant/context match is shared with the corpus runner; here we
         // additionally assert the structured payload.
         assert_error_matches(case, error.clone());
+        let ExpectedOutcome::Error(expected_error) = case.expected_outcome else {
+            panic!(
+                "malformed ARP case {} expected structured error outcome",
+                case.name
+            );
+        };
         match error {
             CrafterError::BufferTooShort {
                 context,
@@ -925,7 +937,7 @@ fn malformed_arp_corpus_errors_carry_structured_fields() {
                 available,
             } => {
                 assert_eq!(
-                    context, case.expected_error.context_or_field,
+                    context, expected_error.context_or_field,
                     "malformed ARP case {} carried an unexpected buffer context",
                     case.name
                 );
