@@ -237,7 +237,7 @@ fn normalize_packet(
         let key = field_key(&fields, &layer_name);
         fields.insert(key, layer_fields);
         native_layers.push(json!({
-            "fields": inspection_fields(*layer),
+            "fields": inspection_fields(layer),
             "name": layer.name(),
             "summary": layer.summary()
         }));
