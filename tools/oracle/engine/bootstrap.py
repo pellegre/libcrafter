@@ -43,6 +43,7 @@ LIBCRAFTER_VALIDATION_COMMAND = "cargo build -p oracle-adapters --bin live_endpo
 REFERENCE_VALIDATION_COMMAND = "tools/oracle/run backend-info --backend scapy"
 TOPOLOGY_METADATA_KEYS = (
     "private_network",
+    "private_network_cidr",
     "private_group",
     "bridged_lan",
     "bridge_interface_env",
@@ -320,6 +321,7 @@ def _endpoint_bootstrap_script(
         lab_bootstrap.DEBIAN_FRONTEND_LINE,
         *lab_bootstrap.role_artifact_dir_lines(artifact_dir),
         *lab_bootstrap.package_install_lines(_packages_for_role(role)),
+        *_private_network_config_lines(topology_metadata),
         *_install_uv_lines(),
     ]
     if role == LIBCRAFTER_ROLE:
@@ -381,6 +383,48 @@ def _install_uv_lines() -> list[str]:
         "}",
         "install_uv",
     ]
+
+
+def _private_network_config_lines(topology_metadata: Mapping[str, object]) -> list[str]:
+    if not bool(topology_metadata.get("private_network")):
+        return []
+
+    lines: list[str] = []
+    private_cidr = topology_metadata.get("private_network_cidr")
+    if isinstance(private_cidr, str) and private_cidr:
+        lines.append(f"export LIBCRAFTER_PRIVATE_CIDR={shlex.quote(private_cidr)}")
+    lines.extend(
+        [
+            "configure_private_ipv4() {",
+            "  [ -n \"${LIBCRAFTER_PRIVATE_IPV4:-}\" ] || return 0",
+            "  if ip -4 addr show scope global | grep -qw \"${LIBCRAFTER_PRIVATE_IPV4}\"; then return 0; fi",
+            "  default_dev=\"$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == \"dev\") {print $(i+1); exit}}' || true)\"",
+            "  if [ -z \"$default_dev\" ]; then echo \"could not identify default interface\" >&2; return 1; fi",
+            "  private_prefix=24",
+            "  case \"${LIBCRAFTER_PRIVATE_CIDR:-}\" in */*) private_prefix=\"${LIBCRAFTER_PRIVATE_CIDR##*/}\" ;; esac",
+            "  deadline=$((SECONDS + 120))",
+            "  while [ \"$SECONDS\" -lt \"$deadline\" ]; do",
+            "    private_dev=\"$(ip -o link show | awk -F': ' -v default_dev_name=\"$default_dev\" '$2 != \"lo\" {split($2, a, \"@\"); dev=a[1]; if (dev != default_dev_name) {print dev; exit}}')\"",
+            "    if [ -n \"$private_dev\" ]; then",
+            "      ip link set \"$private_dev\" up || true",
+            "      ip addr add \"${LIBCRAFTER_PRIVATE_IPV4}/${private_prefix}\" dev \"$private_dev\" 2>/dev/null || true",
+            "      if [ -n \"${LIBCRAFTER_PEER_PRIVATE_IPV4:-}\" ]; then ip route replace \"${LIBCRAFTER_PEER_PRIVATE_IPV4}/32\" dev \"$private_dev\" src \"$LIBCRAFTER_PRIVATE_IPV4\" || true; fi",
+            "      if ip -4 addr show dev \"$private_dev\" | grep -qw \"$LIBCRAFTER_PRIVATE_IPV4\"; then",
+            "        export LIBCRAFTER_PRIVATE_INTERFACE=\"$private_dev\"",
+            "        printf 'private_interface=%s\\nprivate_ipv4=%s\\n' \"$private_dev\" \"$LIBCRAFTER_PRIVATE_IPV4\" > \"${LIBCRAFTER_BOOTSTRAP_ARTIFACT_DIR}/private-interface.env\"",
+            "        return 0",
+            "      fi",
+            "    fi",
+            "    sleep 1",
+            "  done",
+            "  echo \"private IPv4 ${LIBCRAFTER_PRIVATE_IPV4} did not appear on a non-default interface\" >&2",
+            "  ip -br addr >&2 || true",
+            "  return 1",
+            "}",
+            "configure_private_ipv4",
+        ]
+    )
+    return lines
 
 
 def _libcrafter_env_artifact(

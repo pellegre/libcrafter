@@ -1803,13 +1803,23 @@ fn mac_bytes(value: &str) -> ExampleResult<Vec<u8>> {
 
 fn payload_bytes(plan: &Value) -> ExampleResult<Vec<u8>> {
     let fields = layer_fields(plan, "payload")?;
-    if let Some(value) = optional(fields, &["hex", "bytes_hex"]) {
-        return decode_hex(text_value(value)?);
+    let mut bytes = if let Some(value) = optional(fields, &["hex", "bytes_hex"]) {
+        decode_hex(text_value(value)?)?
+    } else if let Some(value) = optional(fields, &["text", "value"]) {
+        text_value(value)?.as_bytes().to_vec()
+    } else {
+        return Err(
+            "payload materialization requires bytes in hex, bytes_hex, text, or value".into(),
+        );
+    };
+
+    let mut prefix = icmp_payload_prefix_bytes(plan)?;
+    if prefix.is_empty() {
+        Ok(bytes)
+    } else {
+        prefix.append(&mut bytes);
+        Ok(prefix)
     }
-    if let Some(value) = optional(fields, &["text", "value"]) {
-        return Ok(text_value(value)?.as_bytes().to_vec());
-    }
-    Err("payload materialization requires bytes in hex, bytes_hex, text, or value".into())
 }
 
 fn layer_fields<'a>(plan: &'a Value, layer: &str) -> ExampleResult<&'a Map<String, Value>> {
@@ -1884,6 +1894,90 @@ fn canonical_layer(layer: &str) -> String {
         "raw" => "payload".to_string(),
         value => value.to_string(),
     }
+}
+
+fn optional_layer_fields<'a>(
+    plan: &'a Value,
+    layer: &str,
+) -> ExampleResult<Option<&'a Map<String, Value>>> {
+    let Some(fields) = plan.get("fields").and_then(Value::as_object) else {
+        return Ok(None);
+    };
+    fields
+        .get(layer)
+        .map(|value| {
+            value
+                .as_object()
+                .ok_or_else(|| format!("{layer} fields must be an object").into())
+        })
+        .transpose()
+}
+
+fn icmp_payload_prefix_bytes(plan: &Value) -> ExampleResult<Vec<u8>> {
+    let Some(fields) = optional_layer_fields(plan, "icmp")? else {
+        return Ok(Vec::new());
+    };
+
+    let mut bytes = Vec::new();
+    if let Some(value) = optional(fields, &["type"]) {
+        match icmp_type(value, false)? {
+            ICMP_TIMESTAMP | ICMP_TIMESTAMP_REPLY => {
+                bytes.extend_from_slice(
+                    &optional(fields, &["originate_timestamp"])
+                        .map(u32_value)
+                        .transpose()?
+                        .unwrap_or(0)
+                        .to_be_bytes(),
+                );
+                bytes.extend_from_slice(
+                    &optional(fields, &["receive_timestamp"])
+                        .map(u32_value)
+                        .transpose()?
+                        .unwrap_or(0)
+                        .to_be_bytes(),
+                );
+                bytes.extend_from_slice(
+                    &optional(fields, &["transmit_timestamp"])
+                        .map(u32_value)
+                        .transpose()?
+                        .unwrap_or(0)
+                        .to_be_bytes(),
+                );
+            }
+            ICMP_ADDRESS_MASK_REQUEST | ICMP_ADDRESS_MASK_REPLY => {
+                if let Some(value) = optional(fields, &["address_mask"]) {
+                    bytes.extend_from_slice(&ipv4_text(value)?.octets());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(value) = optional(fields, &["embedded_header"]) {
+        bytes.extend_from_slice(&option_bytes(value)?);
+    }
+    if let Some(value) = optional(fields, &["router_addresses"]) {
+        bytes.extend_from_slice(&router_address_bytes(value)?);
+    }
+    if let Some(value) = optional(fields, &["extension_bytes"]) {
+        bytes.extend_from_slice(&option_bytes(value)?);
+    }
+
+    Ok(bytes)
+}
+
+fn router_address_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    for entry in array_values(value)? {
+        let object = entry
+            .as_object()
+            .ok_or_else(|| format!("router address entry must be an object, got {entry:?}"))?;
+        let address = ipv4_text(required(object, &["address", "rdata"])?)?;
+        let preference = u32_value(required(object, &["preference"])?)?;
+        bytes.extend_from_slice(&address.octets());
+        bytes.extend_from_slice(&preference.to_be_bytes());
+    }
+    Ok(bytes)
 }
 
 fn plan_root(plan: &Value) -> ExampleResult<&str> {
@@ -2703,6 +2797,75 @@ mod l2_ipv4_root {
         let bytes = compiled.as_bytes();
         assert_eq!(bytes[20], ICMP_SOURCE_QUENCH);
         assert_eq!(&bytes[24..28], &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn icmp_timestamp_plan_prepends_timestamp_body_to_payload() {
+        let plan = json!({
+            "stack": ["ipv4", "icmp", "payload"],
+            "fields": {
+                "ipv4": {
+                    "src": "10.42.19.10",
+                    "dst": "10.42.19.20",
+                    "identification": 1,
+                    "ttl": 64,
+                    "flags": "none",
+                    "protocol": "icmp"
+                },
+                "icmp": {
+                    "type": "timestamp_reply",
+                    "code": 0,
+                    "identifier": 0x1111,
+                    "sequence": 0x2222,
+                    "originate_timestamp": 0x01020304,
+                    "receive_timestamp": 0x05060708,
+                    "transmit_timestamp": 0x090a0b0c
+                },
+                "payload": {"hex": "aabb", "length": 2}
+            }
+        });
+
+        let packet = build_packet(&plan).expect("timestamp plan builds");
+        let compiled = packet.compile().expect("timestamp plan compiles");
+        let bytes = compiled.as_bytes();
+        assert_eq!(bytes[20], ICMP_TIMESTAMP_REPLY);
+        assert_eq!(&bytes[24..28], &[0x11, 0x11, 0x22, 0x22]);
+        assert_eq!(
+            &bytes[28..42],
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0xaa, 0xbb]
+        );
+    }
+
+    #[test]
+    fn icmp_address_mask_plan_prepends_mask_to_payload() {
+        let plan = json!({
+            "stack": ["ipv4", "icmp", "payload"],
+            "fields": {
+                "ipv4": {
+                    "src": "10.42.19.10",
+                    "dst": "10.42.19.20",
+                    "identification": 1,
+                    "ttl": 64,
+                    "flags": "none",
+                    "protocol": "icmp"
+                },
+                "icmp": {
+                    "type": "address_mask_reply",
+                    "code": 0,
+                    "identifier": 0x1111,
+                    "sequence": 0x2222,
+                    "address_mask": "255.255.255.0"
+                },
+                "payload": {"hex": "ccdd", "length": 2}
+            }
+        });
+
+        let packet = build_packet(&plan).expect("address-mask plan builds");
+        let compiled = packet.compile().expect("address-mask plan compiles");
+        let bytes = compiled.as_bytes();
+        assert_eq!(bytes[20], ICMP_ADDRESS_MASK_REPLY);
+        assert_eq!(&bytes[24..28], &[0x11, 0x11, 0x22, 0x22]);
+        assert_eq!(&bytes[28..34], &[255, 255, 255, 0, 0xcc, 0xdd]);
     }
 
     #[test]
