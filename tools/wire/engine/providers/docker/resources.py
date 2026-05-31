@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterable, Mapping, Sequence
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
 from pathlib import Path
 from typing import Any
 
-from ...model import ProviderResource, ProviderResources
-from ...process import CommandResult, render_argv
+from ...model import ProviderResource, ProviderResources, write_json
+from ...process import CommandResult, render_argv, run_command
 from ..vm import (
+    command_error,
     endpoint_id as local_endpoint_id,
     file_resource,
     free_localhost_tcp_port,
@@ -23,9 +25,13 @@ from ..vm import (
 from .constants import (
     DOCKER_COMMAND,
     DOCKER_COMMAND_ENV,
+    DOCKER_DEFAULT_IMAGE,
     DOCKER_DEFAULT_PRIVATE_CIDR,
+    DOCKER_IMAGE_ENV,
     DOCKER_PRIVATE_CIDR_ENV,
+    DOCKER_REBUILD_ENV,
     PROVIDER_NAME,
+    DockerRunner,
 )
 
 
@@ -44,6 +50,9 @@ DOCKER_CONTAINER_KIND = "docker-container"
 DOCKER_NETWORK_KIND = "docker-network"
 DOCKER_IMAGE_KIND = "docker-image"
 DOCKER_PRIVATE_GATEWAY_HOST_INDEX = 1
+DOCKER_IMAGE_COMMAND_LOG_NAME = "docker-image-commands.json"
+DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS = 30
+DOCKER_IMAGE_BUILD_TIMEOUT_SECONDS = 600
 
 
 def docker_endpoint_id(
@@ -417,6 +426,238 @@ def docker_argv(
     return [_non_empty_string(command, "docker_command"), *(str(arg) for arg in args)]
 
 
+def requested_docker_image(env: Mapping[str, str] | None = None) -> str:
+    """Return the requested Docker endpoint image tag from env or the default."""
+
+    environ = _env_source(env)
+    image = (environ.get(DOCKER_IMAGE_ENV) or DOCKER_DEFAULT_IMAGE).strip()
+    return image or DOCKER_DEFAULT_IMAGE
+
+
+def docker_rebuild_requested(env: Mapping[str, str] | None = None) -> bool:
+    """Return whether the provider image should be rebuilt."""
+
+    environ = _env_source(env)
+    return (environ.get(DOCKER_REBUILD_ENV) or "").strip() == "1"
+
+
+def docker_image_context_dir() -> Path:
+    """Return the provider-owned Docker image build context directory."""
+
+    return Path(__file__).resolve(strict=False).parent / "image"
+
+
+def docker_image_dockerfile_path() -> Path:
+    """Return the provider-owned endpoint image Dockerfile path."""
+
+    return docker_image_context_dir() / "Dockerfile"
+
+
+def docker_image_command_log_path(
+    artifact_dir: str | Path,
+    *,
+    name: str = DOCKER_IMAGE_COMMAND_LOG_NAME,
+) -> Path:
+    """Return the command artifact path for Docker image operations."""
+
+    return Path(artifact_dir).expanduser().resolve(strict=False) / _non_empty_string(
+        name,
+        "name",
+    )
+
+
+def docker_image_inspect_argv(
+    image_tag: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    docker_command: str | None = None,
+) -> list[str]:
+    """Return argv for a Docker image existence check."""
+
+    return docker_argv(
+        "image",
+        "inspect",
+        _non_empty_string(image_tag, "image_tag"),
+        env=env,
+        docker_command=docker_command,
+    )
+
+
+def docker_image_build_argv(
+    image_tag: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    docker_command: str | None = None,
+) -> list[str]:
+    """Return argv for building the provider-owned Docker endpoint image."""
+
+    return docker_argv(
+        "build",
+        "-t",
+        _non_empty_string(image_tag, "image_tag"),
+        "-f",
+        docker_image_dockerfile_path(),
+        docker_image_context_dir(),
+        env=env,
+        docker_command=docker_command,
+    )
+
+
+def docker_image_metadata(
+    env: Mapping[str, str] | None = None,
+    *,
+    artifact_dir: str | Path | None = None,
+    image_exists: bool | None = None,
+    built: bool | None = None,
+    docker_command: str | None = None,
+) -> dict[str, object]:
+    """Return manifest-ready Docker image metadata for dry-run or live output."""
+
+    environ = _env_source(env)
+    image_tag = requested_docker_image(environ)
+    metadata: dict[str, object] = {
+        "tag": image_tag,
+        "env": DOCKER_IMAGE_ENV,
+        "default": DOCKER_DEFAULT_IMAGE,
+        "uses_default": image_tag == DOCKER_DEFAULT_IMAGE,
+        "rebuild_env": DOCKER_REBUILD_ENV,
+        "rebuild_requested": docker_rebuild_requested(environ),
+        "dockerfile_path": str(docker_image_dockerfile_path()),
+        "context_dir": str(docker_image_context_dir()),
+        "inspect_argv": docker_image_inspect_argv(
+            image_tag,
+            env=environ,
+            docker_command=docker_command,
+        ),
+        "build_argv": docker_image_build_argv(
+            image_tag,
+            env=environ,
+            docker_command=docker_command,
+        ),
+    }
+    if artifact_dir is not None:
+        metadata["command_log_path"] = str(docker_image_command_log_path(artifact_dir))
+    if image_exists is not None:
+        metadata["image_exists"] = bool(image_exists)
+    if built is not None:
+        metadata["built"] = bool(built)
+    return metadata
+
+
+def plan_docker_image(
+    env: Mapping[str, str] | None = None,
+    *,
+    artifact_dir: str | Path | None = None,
+    docker_command: str | None = None,
+) -> dict[str, object]:
+    """Return dry-run metadata for the provider-owned Docker endpoint image."""
+
+    return {
+        "docker_image": docker_image_metadata(
+            env,
+            artifact_dir=artifact_dir,
+            docker_command=docker_command,
+        )
+    }
+
+
+def docker_image_exists(
+    image_tag: str,
+    *,
+    env: Mapping[str, str] | None = None,
+    docker_command: str | None = None,
+    command_runner: DockerRunner | None = None,
+    artifact_dir: str | Path | None = None,
+    timeout: float | None = DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS,
+) -> bool:
+    """Return whether the requested Docker image exists locally."""
+
+    environ = _env_source(env)
+    runner = _recording_docker_runner(
+        command_runner,
+        artifact_dir,
+        command_log_name=DOCKER_IMAGE_COMMAND_LOG_NAME,
+    )
+    result = _inspect_docker_image(
+        image_tag,
+        env=environ,
+        docker_command=docker_command,
+        runner=runner,
+        timeout=timeout,
+    )
+    return result.ok
+
+
+def ensure_docker_image(
+    *,
+    env: Mapping[str, str] | None = None,
+    artifact_dir: str | Path,
+    docker_command: str | None = None,
+    command_runner: DockerRunner | None = None,
+    inspect_timeout: float | None = DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS,
+    build_timeout: float | None = DOCKER_IMAGE_BUILD_TIMEOUT_SECONDS,
+) -> dict[str, object]:
+    """Ensure the configured Docker image is available and return image metadata."""
+
+    environ = _env_source(env)
+    image_tag = requested_docker_image(environ)
+    command_log_path = docker_image_command_log_path(artifact_dir)
+    runner = _recording_docker_runner(
+        command_runner,
+        artifact_dir,
+        command_log_name=DOCKER_IMAGE_COMMAND_LOG_NAME,
+    )
+
+    inspect_result = _inspect_docker_image(
+        image_tag,
+        env=environ,
+        docker_command=docker_command,
+        runner=runner,
+        timeout=inspect_timeout,
+    )
+    exists_before = inspect_result.ok
+    should_build = docker_rebuild_requested(environ) or (
+        image_tag == DOCKER_DEFAULT_IMAGE and not exists_before
+    )
+
+    built = False
+    if should_build:
+        build_result = _build_docker_image(
+            image_tag,
+            env=environ,
+            docker_command=docker_command,
+            runner=runner,
+            timeout=build_timeout,
+        )
+        if not build_result.ok:
+            raise RuntimeError(command_error("Docker image build failed", build_result))
+        built = True
+        inspect_result = _inspect_docker_image(
+            image_tag,
+            env=environ,
+            docker_command=docker_command,
+            runner=runner,
+            timeout=inspect_timeout,
+        )
+
+    if not inspect_result.ok:
+        raise RuntimeError(command_error("Docker image is not available", inspect_result))
+
+    return {
+        "docker_image": docker_image_metadata(
+            environ,
+            artifact_dir=artifact_dir,
+            image_exists=True,
+            built=built,
+            docker_command=docker_command,
+        )
+        | {
+            "exists_before": exists_before,
+            "command_log_path": str(command_log_path),
+        }
+    }
+
+
 def docker_publish_arg(
     *,
     host_port: int,
@@ -546,6 +787,95 @@ def docker_inspect_name(record: Mapping[str, object]) -> str | None:
     return name or None
 
 
+def _env_source(env: Mapping[str, str] | None) -> Mapping[str, str]:
+    return os.environ if env is None else env
+
+
+def _recording_docker_runner(
+    command_runner: DockerRunner | None,
+    artifact_dir: str | Path | None,
+    *,
+    command_log_name: str,
+) -> DockerRunner:
+    runner = run_command if command_runner is None else command_runner
+    if artifact_dir is None:
+        return runner
+    return _DockerCommandRecorder(
+        runner,
+        docker_image_command_log_path(artifact_dir, name=command_log_name),
+    )
+
+
+def _inspect_docker_image(
+    image_tag: str,
+    *,
+    env: Mapping[str, str],
+    docker_command: str | None,
+    runner: DockerRunner,
+    timeout: float | None,
+) -> CommandResult:
+    return runner(
+        docker_image_inspect_argv(
+            image_tag,
+            env=env,
+            docker_command=docker_command,
+        ),
+        env=env,
+        timeout=timeout,
+    )
+
+
+def _build_docker_image(
+    image_tag: str,
+    *,
+    env: Mapping[str, str],
+    docker_command: str | None,
+    runner: DockerRunner,
+    timeout: float | None,
+) -> CommandResult:
+    return runner(
+        docker_image_build_argv(
+            image_tag,
+            env=env,
+            docker_command=docker_command,
+        ),
+        env=env,
+        timeout=timeout,
+    )
+
+
+class _DockerCommandRecorder:
+    def __init__(self, runner: DockerRunner, log_path: Path) -> None:
+        self._runner = runner
+        self.path = log_path.resolve(strict=False)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._records: list[dict[str, object]] = []
+        self._write()
+
+    def __call__(self, argv: Sequence[object], **kwargs: object) -> CommandResult:
+        result = self._runner(argv, **kwargs)
+        self._records.append(_command_result_record(result))
+        self._write()
+        return result
+
+    def _write(self) -> None:
+        write_json(self.path, {"commands": self._records})
+
+
+def _command_result_record(result: CommandResult) -> dict[str, object]:
+    return {
+        "argv": list(result.redacted_argv),
+        "cwd": result.cwd,
+        "exit_code": result.exit_code,
+        "ok": result.ok,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "timed_out": result.timed_out,
+        "timeout": result.timeout,
+        "error": result.error,
+    }
+
+
 def _private_network(private_cidr: str | IPv4Network) -> IPv4Network:
     if isinstance(private_cidr, IPv4Network):
         return private_cidr
@@ -585,7 +915,10 @@ def _positive_int(value: int, name: str) -> int:
 
 __all__ = [
     "DOCKER_CONTAINER_KIND",
+    "DOCKER_IMAGE_BUILD_TIMEOUT_SECONDS",
+    "DOCKER_IMAGE_COMMAND_LOG_NAME",
     "DOCKER_IMAGE_KIND",
+    "DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS",
     "DOCKER_LABEL_CREATED_AT",
     "DOCKER_LABEL_ENDPOINT_ID",
     "DOCKER_LABEL_EXPOSURE",
@@ -600,6 +933,13 @@ __all__ = [
     "DOCKER_RESOURCE_NAME_LIMIT",
     "allocate_private_ipv4",
     "deterministic_private_mac",
+    "docker_image_build_argv",
+    "docker_image_command_log_path",
+    "docker_image_context_dir",
+    "docker_image_dockerfile_path",
+    "docker_image_exists",
+    "docker_image_inspect_argv",
+    "docker_image_metadata",
     "docker_argv",
     "docker_container_name",
     "docker_container_resource",
@@ -617,17 +957,21 @@ __all__ = [
     "docker_private_network_name",
     "docker_provider_resources",
     "docker_publish_arg",
+    "docker_rebuild_requested",
     "docker_resource_name",
+    "ensure_docker_image",
     "free_localhost_tcp_port",
     "parse_docker_inspect_output",
     "parse_docker_json_output",
     "parse_ipv4_address",
     "parse_private_cidr",
     "parse_single_docker_inspect_output",
+    "plan_docker_image",
     "planned_docker_endpoint_id",
     "private_gateway_ipv4",
     "render_docker_argv",
     "requested_docker_command",
+    "requested_docker_image",
     "requested_private_cidr",
     "utc_now",
     "validate_requested_private_ipv4",
