@@ -57,6 +57,14 @@ def _dns_aaaa_success_plan(*, seed: int = 1011, sequence: int = 0) -> dict:
     )
 
 
+def _dns_cname_chain_plan(*, seed: int = 1012, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dns-cname-chain"]),
+        case=planning.PROBE_CASE_BY_NAME["dns-cname-chain"],
+        sequence=sequence,
+    )
+
+
 class DnsASuccessPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct A query/answer contract."""
 
@@ -284,6 +292,136 @@ class DnsAaaaSuccessTest(unittest.TestCase):
                 if result.get("case") == "dns-aaaa-success"
             ]
             self.assertTrue(results, "endpoint emitted no dns-aaaa-success result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+
+class DnsCnameChainPlanTest(unittest.TestCase):
+    """The plan carries an RFC-correct CNAME-to-A chain contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dns-cname-chain", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dns-cname-chain"],
+            planning._dns_cname_chain_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dns_cname_chain_plan(), _dns_cname_chain_plan())
+
+    def test_plan_carries_original_canonical_terminal_and_count(self) -> None:
+        plan = _dns_cname_chain_plan()
+
+        self.assertEqual(plan["case"], "dns-cname-chain")
+        self.assertEqual(plan["stimulus"], "dns_query")
+        self.assertEqual(plan["expected_response"], "dns_response")
+
+        # The query is an A query for the original name on port 53.
+        self.assertEqual(plan["destination_port"], 53)
+        self.assertEqual(plan["query_type"], "A")
+        self.assertEqual(plan["query_type_value"], 1)
+        self.assertTrue(plan["query_name"].endswith("."))
+
+        # Original name, canonical name, terminal IPv4, and answer count.
+        self.assertEqual(plan["original_name"], plan["query_name"])
+        self.assertTrue(plan["canonical_name"].endswith("."))
+        self.assertNotEqual(plan["canonical_name"], plan["original_name"])
+        self.assertTrue(plan["terminal_ipv4"].startswith("203.0.113."))
+        # Documentation-space IPv4 terminal answer.
+        terminal = ipaddress.IPv4Address(plan["terminal_ipv4"])
+        self.assertIn(terminal, ipaddress.ip_network("203.0.113.0/24"))
+        self.assertEqual(plan["expected_answer_count"], 2)
+
+        # The terminal A answer is owned by the canonical name.
+        self.assertEqual(plan["expected_answer_name"], plan["canonical_name"])
+        self.assertEqual(plan["expected_answer_type"], "A")
+        self.assertEqual(plan["expected_answer_data"], plan["terminal_ipv4"])
+        self.assertEqual(plan["expected_response_code"], 0)
+        self.assertIn("qr", plan["expected_response_flags"])
+
+        # The CNAME answer is owned by the original name and points at canonical.
+        cname = plan["expected_cname_answer"]
+        self.assertEqual(cname["name"], plan["original_name"])
+        self.assertEqual(cname["type"], "CNAME")
+        self.assertEqual(cname["type_value"], 5)
+        self.assertEqual(cname["data"], plan["canonical_name"])
+
+    def test_validation_contract_covers_chain_and_preserved_question(self) -> None:
+        plan = _dns_cname_chain_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (response flows target -> stimulus).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 53)
+        self.assertEqual(validation["destination_port"], plan["source_port"])
+
+        # Transaction id, QR flag, and rcode.
+        self.assertEqual(validation["query_id"], plan["query_id"])
+        self.assertTrue(validation["qr"])
+        self.assertEqual(validation["response_code"], 0)
+
+        # The ORIGINAL question is preserved: the queried name, QTYPE A, class IN.
+        question = validation["question"]
+        self.assertEqual(question["name"], plan["original_name"])
+        self.assertEqual(question["type"], "A")
+        self.assertEqual(question["class"], "IN")
+
+        # Both answers are part of the contract: a CNAME and the terminal A, and
+        # the answer count is exactly two.
+        self.assertEqual(validation["answer_count"], 2)
+        cname_answer = validation["cname_answer"]
+        self.assertEqual(cname_answer["name"], plan["original_name"])
+        self.assertEqual(cname_answer["type"], "CNAME")
+        self.assertEqual(cname_answer["data"], plan["canonical_name"])
+        answer = validation["answer"]
+        self.assertEqual(answer["name"], plan["canonical_name"])
+        self.assertEqual(answer["type"], "A")
+        self.assertEqual(answer["data"], plan["terminal_ipv4"])
+
+    def test_target_service_describes_cname_chain(self) -> None:
+        target_service = _dns_cname_chain_plan()["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-dns-responder")
+        self.assertEqual(target_service["port"], 53)
+        self.assertEqual(target_service["query_type"], "A")
+        chain = target_service["cname_chain"]
+        self.assertTrue(chain["canonical_name"].endswith("."))
+        self.assertIsInstance(chain["cname_ttl"], int)
+        self.assertIsInstance(chain["address_ttl"], int)
+
+
+class DnsCnameChainTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dns-cname-chain",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1012,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dns-cname-chain", planned)
+
+            # The endpoint produced a result for the focused case and it built
+            # the A query (a dry-run plan compiles the outgoing stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dns-cname-chain"
+            ]
+            self.assertTrue(results, "endpoint emitted no dns-cname-chain result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))
