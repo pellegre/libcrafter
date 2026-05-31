@@ -4,16 +4,36 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
 
-from ...model import ArtifactPath, EndpointManifest, EndpointSSHInfo, NetworkInterface
+from ...model import (
+    ArtifactPath,
+    EndpointManifest,
+    EndpointSSHInfo,
+    NetworkInterface,
+    ProviderResource,
+    write_json,
+)
 from ...process import CommandResult, run_command
 from ...registry import validate_request
 from ...ssh import ensure_known_hosts_file, wait_for_ssh
-from ...state import endpoint_layout, planned_private_group_record, private_group_path
-from ..vm import ensure_endpoint_ssh_key, public_key_path
+from ...state import (
+    endpoint_layout,
+    ensure_endpoint_dirs,
+    planned_private_group_record,
+    private_group_path,
+    write_endpoint_manifest,
+)
+from ..vm import (
+    command_error,
+    discover_linux_endpoint_interfaces,
+    ensure_endpoint_ssh_key,
+    public_key_path,
+    utc_now,
+)
 from .constants import (
     CONFIRMATION_ERROR,
     DOCKER_DEFAULT_LAN_NETWORK,
@@ -29,6 +49,7 @@ from .constants import (
     NAT_L3_CAPABILITIES,
     PLANNED_CREATED_AT,
     PRIVATE_CAPABILITIES,
+    PROVIDER_NAME,
     DockerRunner,
 )
 from .resources import (
@@ -36,6 +57,7 @@ from .resources import (
     docker_argv,
     docker_container_name,
     docker_container_resource,
+    docker_endpoint_id,
     docker_image_resource,
     docker_label_args,
     docker_labels,
@@ -44,6 +66,7 @@ from .resources import (
     docker_private_network_name,
     docker_provider_resources,
     docker_publish_arg,
+    ensure_docker_image,
     free_localhost_tcp_port,
     parse_private_cidr,
     plan_docker_image,
@@ -52,6 +75,7 @@ from .resources import (
     requested_docker_command,
     requested_docker_image,
     requested_private_cidr,
+    render_docker_argv,
     validate_requested_private_ipv4,
 )
 
@@ -63,6 +87,8 @@ DOCKER_LAN_INTERFACE = "eth0"
 DOCKER_WAN_INTERFACE = "eth0"
 DOCKER_SSH_WAIT_TIMEOUT = 300
 DOCKER_SSH_WAIT_INTERVAL = 5
+DOCKER_CONTAINER_COMMAND_LOG_NAME = "docker-container-commands.json"
+DOCKER_CONTAINER_CREATE_TIMEOUT = 120
 
 
 def create_endpoint(
@@ -782,6 +808,728 @@ def _wait_for_docker_ssh(
         )
     except TimeoutError as exc:
         raise RuntimeError(str(exc)) from exc
+
+
+def _create_live_container_endpoint(
+    *,
+    provider: str,
+    exposure: str,
+    role: str,
+    env: Mapping[str, str],
+    command_runner: DockerRunner,
+    network_name: str,
+    network_args: Sequence[object],
+    network_resources: Sequence[ProviderResource],
+    security: Mapping[str, object],
+    capabilities: Mapping[str, object],
+    planned_interfaces: Sequence[NetworkInterface],
+    private_group: str | None = None,
+    endpoint_id: str | None = None,
+    created_at: str | None = None,
+    extra_labels: Mapping[str, object] | None = None,
+    extra_metadata: Mapping[str, object] | None = None,
+    ssh_wait_timeout: float = DOCKER_SSH_WAIT_TIMEOUT,
+    ssh_wait_interval: float = DOCKER_SSH_WAIT_INTERVAL,
+    discovery_prefer_public_or_default: bool = True,
+) -> EndpointManifest:
+    """Create one live Docker container after exposure-specific networking is ready."""
+
+    endpoint_id = endpoint_id or docker_endpoint_id(
+        provider=provider,
+        exposure=exposure,
+        role=role,
+    )
+    created_at = created_at or utc_now()
+    layout = ensure_endpoint_dirs(endpoint_id)
+    docker_command = requested_docker_command(env)
+    command_log_path = layout.artifact_dir / DOCKER_CONTAINER_COMMAND_LOG_NAME
+    recorder = _DockerContainerCommandRecorder(command_runner, command_log_path)
+    image = ensure_docker_image(
+        env=env,
+        artifact_dir=layout.artifact_dir,
+        docker_command=docker_command,
+        command_runner=command_runner,
+    )["docker_image"]
+    image_tag = requested_docker_image(env)
+    ssh_port = free_localhost_tcp_port()
+    container_name = docker_container_name(endpoint_id)
+
+    _, public_key, known_hosts = _ensure_docker_ssh_material(
+        endpoint_id=endpoint_id,
+        private_key_path=layout.private_key_path,
+        known_hosts_path=layout.known_hosts_path,
+        command_runner=recorder,
+    )
+    labels = docker_labels(
+        endpoint_id=endpoint_id,
+        exposure=exposure,
+        role=role,
+        private_group=private_group,
+        created_at=created_at,
+        provider=provider,
+        extra=extra_labels,
+    )
+    run_network_args = tuple(network_args) if network_args else ("--network", network_name)
+    run_argv = _docker_live_run_argv(
+        container_name=container_name,
+        endpoint_id=endpoint_id,
+        image_tag=image_tag,
+        ssh_port=ssh_port,
+        network_args=run_network_args,
+        labels=labels,
+        security=security,
+        docker_command=docker_command,
+        authorized_key_source=public_key,
+    )
+    container = _live_container_metadata(
+        container_id=None,
+        container_name=container_name,
+        endpoint_id=endpoint_id,
+        image_tag=image_tag,
+        exposure=exposure,
+        network_name=network_name,
+        ssh_port=ssh_port,
+        labels=labels,
+        security=security,
+        docker_command=docker_command,
+        authorized_key_source=public_key,
+        run_argv=run_argv,
+        created=False,
+    )
+    provider_resources = _live_container_provider_resources(
+        container_id=None,
+        container_name=container_name,
+        endpoint_id=endpoint_id,
+        exposure=exposure,
+        role=role,
+        image_tag=image_tag,
+        image=image,
+        network_name=network_name,
+        network_resources=network_resources,
+        layout=layout,
+        public_key=public_key,
+        command_log_path=command_log_path,
+        security=security,
+        created=False,
+    )
+    write_endpoint_manifest(
+        EndpointManifest(
+            endpoint_id=endpoint_id,
+            provider=provider,
+            exposure=exposure,
+            status="creating",
+            role=role,
+            created_at=created_at,
+            ssh=_docker_live_ssh_info(
+                layout=layout,
+                container_name=container_name,
+                ssh_port=ssh_port,
+                control_interface=_first_planned_interface_name(planned_interfaces),
+            ),
+            interfaces=list(planned_interfaces),
+            provider_resources=provider_resources,
+            artifact_dir=str(layout.artifact_dir),
+            metadata=_docker_live_manifest_metadata(
+                created=False,
+                layout=layout,
+                docker_command=docker_command,
+                container=container,
+                network_name=network_name,
+                network_resources=network_resources,
+                image=image,
+                security=security,
+                capabilities=capabilities,
+                command_log_path=command_log_path,
+                extra_metadata=extra_metadata,
+                discovery={
+                    "ssh_ready": False,
+                    "interfaces": False,
+                },
+            ),
+        )
+    )
+
+    run_result = _run_docker(
+        run_argv,
+        runner=recorder,
+        env=env,
+        timeout=DOCKER_CONTAINER_CREATE_TIMEOUT,
+    )
+    container_id = _docker_container_id_from_run(run_result, fallback=container_name)
+    container = _live_container_metadata(
+        container_id=container_id,
+        container_name=container_name,
+        endpoint_id=endpoint_id,
+        image_tag=image_tag,
+        exposure=exposure,
+        network_name=network_name,
+        ssh_port=ssh_port,
+        labels=labels,
+        security=security,
+        docker_command=docker_command,
+        authorized_key_source=public_key,
+        run_argv=run_argv,
+        created=True,
+    )
+    provider_resources = _live_container_provider_resources(
+        container_id=container_id,
+        container_name=container_name,
+        endpoint_id=endpoint_id,
+        exposure=exposure,
+        role=role,
+        image_tag=image_tag,
+        image=image,
+        network_name=network_name,
+        network_resources=network_resources,
+        layout=layout,
+        public_key=public_key,
+        command_log_path=command_log_path,
+        security=security,
+        created=True,
+    )
+    write_endpoint_manifest(
+        EndpointManifest(
+            endpoint_id=endpoint_id,
+            provider=provider,
+            exposure=exposure,
+            status="creating",
+            role=role,
+            created_at=created_at,
+            ssh=_docker_live_ssh_info(
+                layout=layout,
+                container_name=container_name,
+                ssh_port=ssh_port,
+                control_interface=_first_planned_interface_name(planned_interfaces),
+            ),
+            interfaces=list(planned_interfaces),
+            provider_resources=provider_resources,
+            artifact_dir=str(layout.artifact_dir),
+            metadata=_docker_live_manifest_metadata(
+                created=True,
+                layout=layout,
+                docker_command=docker_command,
+                container=container,
+                network_name=network_name,
+                network_resources=network_resources,
+                image=image,
+                security=security,
+                capabilities=capabilities,
+                command_log_path=command_log_path,
+                extra_metadata=extra_metadata,
+                discovery={
+                    "ssh_ready": False,
+                    "interfaces": False,
+                },
+            ),
+        )
+    )
+
+    _wait_for_docker_ssh(
+        private_key_path=layout.private_key_path,
+        known_hosts_path=known_hosts,
+        ssh_port=ssh_port,
+        command_runner=recorder,
+        wait_timeout=ssh_wait_timeout,
+        interval=ssh_wait_interval,
+    )
+    discovered_interfaces = discover_linux_endpoint_interfaces(
+        host=DOCKER_SSH_HOST,
+        user=DOCKER_SSH_USER,
+        identity_file=layout.private_key_path,
+        known_hosts=known_hosts,
+        exposure=exposure,
+        port=ssh_port,
+        runner=recorder,
+        source="docker-ssh-discovery",
+        metadata={
+            "container_id": container_id,
+            "container_name": container_name,
+            "docker_network": network_name,
+        },
+        prefer_public_or_default=discovery_prefer_public_or_default,
+    )
+    active_interfaces = _docker_active_interfaces(
+        planned_interfaces=planned_interfaces,
+        discovered_interfaces=discovered_interfaces,
+        network_name=network_name,
+        container=container,
+    )
+    if not active_interfaces:
+        raise RuntimeError("Docker interface discovery did not find any interfaces")
+
+    manifest = EndpointManifest(
+        endpoint_id=endpoint_id,
+        provider=provider,
+        exposure=exposure,
+        status="active",
+        role=role,
+        created_at=created_at,
+        ssh=_docker_live_ssh_info(
+            layout=layout,
+            container_name=container_name,
+            ssh_port=ssh_port,
+            control_interface=active_interfaces[0].name,
+        ),
+        interfaces=active_interfaces,
+        provider_resources=provider_resources,
+        artifact_dir=str(layout.artifact_dir),
+        metadata=_docker_live_manifest_metadata(
+            created=True,
+            layout=layout,
+            docker_command=docker_command,
+            container=container,
+            network_name=network_name,
+            network_resources=network_resources,
+            image=image,
+            security=security,
+            capabilities=capabilities,
+            command_log_path=command_log_path,
+            extra_metadata=extra_metadata,
+            discovery={
+                "ssh_ready": True,
+                "interfaces": True,
+                "interface_count": len(discovered_interfaces),
+            },
+        ),
+    )
+    write_endpoint_manifest(manifest)
+    return manifest
+
+
+def _docker_live_run_argv(
+    *,
+    container_name: str,
+    endpoint_id: str,
+    image_tag: str,
+    ssh_port: int,
+    network_args: Sequence[object],
+    labels: Mapping[str, object],
+    security: Mapping[str, object],
+    docker_command: str,
+    authorized_key_source: str | Path,
+) -> list[str]:
+    return docker_argv(
+        "run",
+        "--detach",
+        "--name",
+        container_name,
+        "--hostname",
+        endpoint_id,
+        *network_args,
+        "--publish",
+        docker_publish_arg(host_port=ssh_port, guest_port=DOCKER_SSH_GUEST_PORT),
+        *_docker_security_argv(security),
+        "--mount",
+        _authorized_key_mount_spec(authorized_key_source),
+        *docker_label_args(labels),
+        image_tag,
+        docker_command=docker_command,
+    )
+
+
+def _docker_security_argv(security: Mapping[str, object]) -> list[str]:
+    _validate_docker_security(security)
+    args: list[str] = []
+    for capability in _string_sequence(security.get("cap_drop", ()), "security.cap_drop"):
+        args.extend(["--cap-drop", capability])
+    for capability in _string_sequence(security.get("cap_add", ()), "security.cap_add"):
+        args.extend(["--cap-add", capability])
+    for option in _string_sequence(security.get("security_opt", ()), "security.security_opt"):
+        args.extend(["--security-opt", option])
+    return args
+
+
+def _validate_docker_security(security: Mapping[str, object]) -> None:
+    if bool(security.get("docker_socket_mounted")):
+        raise ValueError("Docker endpoint containers must not mount the Docker socket")
+    if bool(security.get("privileged")):
+        raise ValueError("Docker endpoint containers must not use --privileged")
+    if bool(security.get("host_network")):
+        raise ValueError("Docker endpoint containers must not use host networking")
+    if bool(security.get("host_pid")):
+        raise ValueError("Docker endpoint containers must not use host PID mode")
+    if bool(security.get("broad_host_filesystem_mounts")):
+        raise ValueError("Docker endpoint containers must not use broad host mounts")
+    cap_drop = _string_sequence(security.get("cap_drop", ()), "security.cap_drop")
+    security_opt = _string_sequence(
+        security.get("security_opt", ()),
+        "security.security_opt",
+    )
+    if "ALL" not in cap_drop:
+        raise ValueError("Docker endpoint containers must use --cap-drop ALL")
+    if "no-new-privileges" not in security_opt:
+        raise ValueError(
+            "Docker endpoint containers must use --security-opt no-new-privileges"
+        )
+
+
+def _live_container_metadata(
+    *,
+    container_id: str | None,
+    container_name: str,
+    endpoint_id: str,
+    image_tag: str,
+    exposure: str,
+    network_name: str,
+    ssh_port: int,
+    labels: Mapping[str, object],
+    security: Mapping[str, object],
+    docker_command: str,
+    authorized_key_source: Path,
+    run_argv: Sequence[object],
+    created: bool,
+) -> dict[str, object]:
+    return {
+        "planned": False,
+        "created": created,
+        "type": "docker-container",
+        "container_id": container_id,
+        "container_name": container_name,
+        "endpoint_id": endpoint_id,
+        "image": image_tag,
+        "exposure": exposure,
+        "network": network_name,
+        "docker_network": network_name,
+        "ssh": {
+            "host": DOCKER_SSH_HOST,
+            "host_port": ssh_port,
+            "guest_port": DOCKER_SSH_GUEST_PORT,
+            "publish": docker_publish_arg(
+                host_port=ssh_port,
+                guest_port=DOCKER_SSH_GUEST_PORT,
+            ),
+            "public_inbound_reachability": False,
+        },
+        "authorized_key": {
+            "source": str(authorized_key_source),
+            "target": AUTHORIZED_KEY_TARGET,
+            "readonly": True,
+        },
+        "labels": dict(labels),
+        "security": dict(security),
+        "docker_command": docker_command,
+        "run_argv": list(run_argv),
+        "run_command": render_docker_argv(run_argv),
+    }
+
+
+def _live_container_provider_resources(
+    *,
+    container_id: str | None,
+    container_name: str,
+    endpoint_id: str,
+    exposure: str,
+    role: str,
+    image_tag: str,
+    image: Mapping[str, object],
+    network_name: str,
+    network_resources: Sequence[ProviderResource],
+    layout: object,
+    public_key: Path,
+    command_log_path: Path,
+    security: Mapping[str, object],
+    created: bool,
+):
+    return docker_provider_resources(
+        [
+            docker_container_resource(
+                container_id,
+                name=container_name,
+                endpoint_id=endpoint_id,
+                metadata={
+                    "created": created,
+                    "exposure": exposure,
+                    "role": role,
+                    "image": image_tag,
+                    "docker_network": network_name,
+                    "ssh_host": DOCKER_SSH_HOST,
+                    "ssh_guest_port": DOCKER_SSH_GUEST_PORT,
+                    "security": security,
+                },
+            ),
+            *network_resources,
+            docker_image_resource(
+                image_tag,
+                cleanup=False,
+                metadata={"planned": False, **dict(image)},
+            ),
+            docker_local_file_resource(
+                getattr(layout, "private_key_path"),
+                name="ssh-private-key",
+                metadata={"role": "ssh-private-key"},
+            ),
+            docker_local_file_resource(
+                public_key,
+                name="ssh-public-key",
+                metadata={"role": "ssh-public-key"},
+            ),
+            docker_local_file_resource(
+                getattr(layout, "known_hosts_path"),
+                name="ssh-known-hosts",
+                metadata={"role": "ssh-known-hosts"},
+            ),
+            docker_local_file_resource(
+                getattr(layout, "state_dir"),
+                name="endpoint-state-dir",
+                metadata={"role": "endpoint-state"},
+            ),
+            docker_local_file_resource(
+                getattr(layout, "manifest_path"),
+                name="endpoint-manifest",
+                metadata={"role": "endpoint-manifest"},
+            ),
+            docker_local_file_resource(
+                getattr(layout, "artifact_dir"),
+                name="endpoint-artifact-dir",
+                cleanup=False,
+                metadata={"role": "endpoint-artifacts"},
+            ),
+            docker_local_file_resource(
+                command_log_path,
+                name="docker-container-command-log",
+                cleanup=False,
+                metadata={"role": "docker-container-command-log"},
+            ),
+        ],
+        metadata={
+            "provider": PROVIDER_NAME,
+            "exposure": exposure,
+            "docker_network": network_name,
+            "created": created,
+        },
+    )
+
+
+def _docker_live_manifest_metadata(
+    *,
+    created: bool,
+    layout: object,
+    docker_command: str,
+    container: Mapping[str, object],
+    network_name: str,
+    network_resources: Sequence[ProviderResource],
+    image: Mapping[str, object],
+    security: Mapping[str, object],
+    capabilities: Mapping[str, object],
+    command_log_path: Path,
+    extra_metadata: Mapping[str, object] | None,
+    discovery: Mapping[str, object],
+) -> dict[str, object]:
+    metadata = dict(extra_metadata or {})
+    docker_metadata = _metadata_mapping(metadata.get("docker"))
+    docker_metadata.update(
+        {
+            "command": docker_command,
+            "container": dict(container),
+            "network_name": network_name,
+            "network_resources": [resource.to_dict() for resource in network_resources],
+            "image": dict(image),
+            "security": dict(security),
+            "capabilities": dict(capabilities),
+            "command_log_path": str(command_log_path),
+        }
+    )
+    metadata.update(
+        {
+            "created": created,
+            "dry_run": False,
+            "state_dir": str(getattr(layout, "state_dir")),
+            "manifest_path": str(getattr(layout, "manifest_path")),
+            "docker": docker_metadata,
+            "docker_network": network_name,
+            "docker_image": dict(image),
+            "capabilities": dict(capabilities),
+            "command_artifacts": {
+                "container": str(command_log_path),
+                "image": image.get("command_log_path"),
+            },
+            "discovery": dict(discovery),
+        }
+    )
+    return metadata
+
+
+def _docker_live_ssh_info(
+    *,
+    layout: object,
+    container_name: str,
+    ssh_port: int,
+    control_interface: str,
+) -> EndpointSSHInfo:
+    return EndpointSSHInfo(
+        host=DOCKER_SSH_HOST,
+        user=DOCKER_SSH_USER,
+        port=ssh_port,
+        identity_file=str(getattr(layout, "private_key_path")),
+        known_hosts_file=str(getattr(layout, "known_hosts_path")),
+        metadata={
+            "created_by": "tools/wire",
+            "transport": "docker-localhost-port-forward",
+            "container_name": container_name,
+            "control_interface": control_interface,
+            "host": DOCKER_SSH_HOST,
+            "host_port": ssh_port,
+            "guest_port": DOCKER_SSH_GUEST_PORT,
+        },
+    )
+
+
+def _docker_active_interfaces(
+    *,
+    planned_interfaces: Sequence[NetworkInterface],
+    discovered_interfaces: Sequence[NetworkInterface],
+    network_name: str,
+    container: Mapping[str, object],
+) -> list[NetworkInterface]:
+    if not discovered_interfaces:
+        return []
+    if not planned_interfaces:
+        return [
+            replace(
+                interface,
+                provider_network_id=interface.provider_network_id or network_name,
+                metadata={
+                    **interface.metadata,
+                    "planned": False,
+                    "discovered": True,
+                    "docker_network": network_name,
+                    "container": dict(container),
+                },
+            )
+            for interface in discovered_interfaces
+        ]
+
+    active: list[NetworkInterface] = []
+    for planned in planned_interfaces:
+        selected = _select_docker_discovered_interface(
+            planned,
+            discovered_interfaces,
+        )
+        if selected is None:
+            raise RuntimeError(
+                f"Docker interface discovery did not find interface {planned.name}"
+            )
+        active.append(
+            replace(
+                selected,
+                exposure=planned.exposure,
+                ipv4=planned.ipv4 or selected.ipv4,
+                ipv6=planned.ipv6 or selected.ipv6,
+                mac=planned.mac or selected.mac,
+                provider_network_id=planned.provider_network_id
+                or selected.provider_network_id
+                or network_name,
+                metadata={
+                    **planned.metadata,
+                    **selected.metadata,
+                    "planned": False,
+                    "discovered": True,
+                    "docker_network": network_name,
+                    "container": dict(container),
+                },
+            )
+        )
+    return active
+
+
+def _select_docker_discovered_interface(
+    planned: NetworkInterface,
+    discovered_interfaces: Sequence[NetworkInterface],
+) -> NetworkInterface | None:
+    planned_mac = (planned.mac or "").lower()
+    for interface in discovered_interfaces:
+        if planned.ipv4 is not None and interface.ipv4 == planned.ipv4:
+            return interface
+    for interface in discovered_interfaces:
+        if planned_mac and (interface.mac or "").lower() == planned_mac:
+            return interface
+    for interface in discovered_interfaces:
+        if interface.name == planned.name:
+            return interface
+    for interface in discovered_interfaces:
+        if bool(interface.metadata.get("default_route")):
+            return interface
+    return discovered_interfaces[0] if discovered_interfaces else None
+
+
+def _first_planned_interface_name(interfaces: Sequence[NetworkInterface]) -> str:
+    if interfaces:
+        return interfaces[0].name
+    return "eth0"
+
+
+def _run_docker(
+    argv: Sequence[object],
+    *,
+    runner: DockerRunner,
+    env: Mapping[str, str],
+    timeout: float | None,
+) -> CommandResult:
+    result = runner(argv, env=env, timeout=timeout)
+    if not result.ok:
+        raise RuntimeError(command_error("Docker command failed", result))
+    return result
+
+
+def _docker_container_id_from_run(result: CommandResult, *, fallback: str) -> str:
+    for line in result.stdout.splitlines():
+        container_id = line.strip()
+        if container_id:
+            return container_id
+    return fallback
+
+
+class _DockerContainerCommandRecorder:
+    def __init__(self, runner: DockerRunner, log_path: Path) -> None:
+        self._runner = runner
+        self.path = log_path.resolve(strict=False)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._records: list[dict[str, object]] = []
+        self._write()
+
+    def __call__(self, argv: Sequence[object], **kwargs: object) -> CommandResult:
+        result = self._runner(argv, **kwargs)
+        self._records.append(_command_result_record(result))
+        self._write()
+        return result
+
+    def _write(self) -> None:
+        write_json(self.path, {"commands": self._records})
+
+
+def _command_result_record(result: CommandResult) -> dict[str, object]:
+    return {
+        "argv": list(result.redacted_argv),
+        "cwd": result.cwd,
+        "exit_code": result.exit_code,
+        "ok": result.ok,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "timed_out": result.timed_out,
+        "timeout": result.timeout,
+        "error": result.error,
+    }
+
+
+def _metadata_mapping(value: object) -> dict[str, object]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _string_sequence(value: object, name: str) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        values: Sequence[object] = (value,)
+    elif isinstance(value, Sequence):
+        values = value
+    else:
+        raise ValueError(f"{name} must be a string sequence")
+    output: list[str] = []
+    for item in values:
+        if not isinstance(item, str) or item == "":
+            raise ValueError(f"{name} must contain non-empty strings")
+        output.append(item)
+    return output
 
 
 def _validate_create_request(
