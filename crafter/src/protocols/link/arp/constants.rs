@@ -1,5 +1,7 @@
 use super::super::ETHERTYPE_IPV4;
 
+pub(super) const ARP_FIXED_HEADER_LEN: usize = 8;
+
 /// ARP operation codepoint: Reserved (RFC 5494, IANA arp-parameters-1 value 0).
 pub const ARP_OP_RESERVED: u16 = 0;
 /// ARP operation codepoint: REQUEST (RFC 826, IANA arp-parameters-1 value 1).

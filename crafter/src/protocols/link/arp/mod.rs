@@ -1,9 +1,16 @@
-//! ARP codepoints and labeling helpers.
+//! ARP packet layer, codec, codepoints, and labeling helpers.
 
+mod address;
+mod codec;
 mod constants;
 mod labels;
+mod layer;
 mod operation;
 
+#[cfg(test)]
+mod tests;
+
+pub(crate) use self::codec::append_arp_packet;
 pub use self::constants::{
     ARP_HRD_ATM, ARP_HRD_ETHERNET, ARP_HRD_FIBRE_CHANNEL, ARP_HRD_IEEE_802, ARP_HRD_INFINIBAND,
     ARP_HRD_MAPOS, ARP_OP_ARP_NAK, ARP_OP_DRARP_ERROR, ARP_OP_DRARP_REPLY, ARP_OP_DRARP_REQUEST,
@@ -12,7 +19,8 @@ pub use self::constants::{
     ARP_OP_RESERVED_MAX, ARP_PRO_IPV4,
 };
 pub use self::labels::{arp_hardware_type_label, arp_protocol_type_label};
-pub(in crate::protocols::link) use self::labels::{
-    hardware_type_inspection, operation_inspection, operation_summary, protocol_type_inspection,
-};
+pub use self::layer::Arp;
 pub use self::operation::ArpOperation;
+
+#[cfg(test)]
+use super::{Ethernet, ETHERTYPE_ARP, ETHERTYPE_IPV4};
