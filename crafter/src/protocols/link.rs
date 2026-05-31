@@ -1681,6 +1681,29 @@ mod arp {
         "02:00:5e:00:53:01".parse().unwrap()
     }
 
+    /// The standard Ethernet/IPv4 ARP reply wire bytes, mirroring the
+    /// `bytes/ethernet-arp-reply.hex` fixture. A reply built from the public
+    /// `Arp::is_at` helper must reproduce these bytes exactly so the expanded
+    /// ARP implementation cannot regress the standard reply golden.
+    const ARP_REPLY_GOLDEN: &[u8] = &[
+        0x02, 0x00, 0x5e, 0x00, 0x53, 0x01, // Ethernet dst = target hardware
+        0x02, 0x00, 0x5e, 0x00, 0x53, 0x02, // Ethernet src = sender hardware
+        0x08, 0x06, // EtherType = ARP (autofilled)
+        0x00, 0x01, // HRD = Ethernet
+        0x08, 0x00, // PRO = IPv4
+        0x06, // HLN = 6
+        0x04, // PLN = 4
+        0x00, 0x02, // OP = reply
+        0x02, 0x00, 0x5e, 0x00, 0x53, 0x02, // sender hardware
+        0xc0, 0x00, 0x02, 0x01, // sender protocol 192.0.2.1
+        0x02, 0x00, 0x5e, 0x00, 0x53, 0x01, // target hardware
+        0xc0, 0x00, 0x02, 0x0a, // target protocol 192.0.2.10
+    ];
+
+    fn sender_mac() -> MacAddr {
+        "02:00:5e:00:53:02".parse().unwrap()
+    }
+
     #[test]
     fn arp_request_matches_golden_bytes() {
         let packet = Ethernet::new().src(src_mac())
@@ -1691,6 +1714,90 @@ mod arp {
             );
 
         assert_eq!(packet.compile().unwrap().as_bytes(), ARP_REQUEST_FIXTURE);
+    }
+
+    #[test]
+    fn arp_reply_builder_matches_golden_bytes() {
+        // A standard Ethernet/IPv4 reply built through `Arp::is_at` plus an
+        // Ethernet header (src = sender MAC, dst = target MAC) must compile to
+        // the exact reply golden bytes. The Ethernet EtherType is left unset so
+        // this also exercises ARP ethertype autofill on the reply path.
+        let packet = Ethernet::new().src(sender_mac()).dst(src_mac())
+            / Arp::is_at(
+                Ipv4Addr::new(192, 0, 2, 1),
+                sender_mac(),
+                Ipv4Addr::new(192, 0, 2, 10),
+                src_mac(),
+            );
+
+        assert_eq!(packet.compile().unwrap().as_bytes(), ARP_REPLY_GOLDEN);
+    }
+
+    #[test]
+    fn arp_who_has_builder_sets_request_fields_and_autofills_ethertype() {
+        // `who_has` must produce a request opcode, copy the sender/target
+        // protocol addresses, set the sender hardware address, and zero the
+        // unknown target hardware address. Wrapping it in a bare Ethernet header
+        // (no explicit EtherType) must autofill the ARP EtherType.
+        let arp = Arp::who_has(
+            Ipv4Addr::new(192, 0, 2, 10),
+            Ipv4Addr::new(192, 0, 2, 1),
+            src_mac(),
+        );
+        assert_eq!(arp.opcode_value(), ArpOperation::Request as u16);
+        assert_eq!(arp.sender_mac(), Some(src_mac()));
+        assert_eq!(arp.sender_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 10)));
+        assert_eq!(arp.target_mac(), Some(MacAddr::ZERO));
+        assert_eq!(arp.target_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 1)));
+
+        let frame = (Ethernet::new().src(src_mac()) / arp).compile().unwrap();
+        assert_eq!(&frame.as_bytes()[12..14], &ETHERTYPE_ARP.to_be_bytes());
+    }
+
+    #[test]
+    fn arp_is_at_builder_sets_reply_fields() {
+        // `is_at` must produce a reply opcode and place each address in the
+        // correct sender/target slot.
+        let arp = Arp::is_at(
+            Ipv4Addr::new(192, 0, 2, 1),
+            sender_mac(),
+            Ipv4Addr::new(192, 0, 2, 10),
+            src_mac(),
+        );
+        assert_eq!(arp.opcode_value(), ArpOperation::Reply as u16);
+        assert_eq!(arp.sender_mac(), Some(sender_mac()));
+        assert_eq!(arp.sender_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 1)));
+        assert_eq!(arp.target_mac(), Some(src_mac()));
+        assert_eq!(arp.target_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 10)));
+    }
+
+    #[test]
+    fn arp_compile_decode_round_trip_preserves_standard_request_fields() {
+        // A standard request decodes back to the same field values and
+        // recompiles byte-exact, locking the compile/decode preservation path
+        // for common Ethernet/IPv4 ARP.
+        let packet = Ethernet::new().src(src_mac())
+            / Arp::who_has(
+                Ipv4Addr::new(192, 0, 2, 10),
+                Ipv4Addr::new(192, 0, 2, 1),
+                src_mac(),
+            );
+        let compiled = packet.compile().unwrap();
+        let wire = compiled.as_bytes().to_vec();
+
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &wire).unwrap();
+        let arp = decoded.layer::<Arp>().unwrap();
+        assert_eq!(arp.hardware_type_value(), 1);
+        assert_eq!(arp.protocol_type_value(), super::ETHERTYPE_IPV4);
+        assert_eq!(arp.hardware_len_value(), 6);
+        assert_eq!(arp.protocol_len_value(), 4);
+        assert_eq!(arp.opcode_value(), ArpOperation::Request as u16);
+        assert_eq!(arp.sender_mac(), Some(src_mac()));
+        assert_eq!(arp.sender_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 10)));
+        assert_eq!(arp.target_mac(), Some(MacAddr::ZERO));
+        assert_eq!(arp.target_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 1)));
+
+        assert_eq!(decoded.compile().unwrap().as_bytes(), wire.as_slice());
     }
 
     #[test]
