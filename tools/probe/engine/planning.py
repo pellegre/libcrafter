@@ -2617,6 +2617,134 @@ def _dhcp_inform_ack_probe_plan(
     }
 
 
+def _dhcp_request_nak_probe_plan(
+    *,
+    case_name: str = "dhcp-request-nak",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dhcp-request-nak`` behavioral case.
+
+    The stimulus is a BOOTP/DHCP Request (message type 3) built by libcrafter and
+    sent from the DHCP client port (68) to the server port (67) against a
+    controlled DHCP responder on a private L2 lab segment. Unlike the
+    ``dhcp-request-ack`` Request, the requested-IP option (50) names an address
+    *outside* the responder's controlled lease pool: the responder's pool lives in
+    ``198.51.100.0/24`` (the address it would otherwise commit), while the
+    requested address is placed in a different documentation subnet
+    (``192.0.2.0/24``) that the server does not serve. RFC 2131 section 4.3.2 says
+    that when the address the client asks for is invalid or unacceptable the server
+    refuses the binding with a DHCPNAK (message type 6). The Request still names
+    the chosen server in the server-identifier option (54) and echoes the
+    transaction id (xid) and client hardware address (chaddr).
+
+    The controlled responder answers with a Nak (message type 6). RFC 2131 section
+    4.3.2 and table 3 say a DHCPNAK is a BOOTREPLY that refuses the request: it
+    carries no allocation (``yiaddr`` is 0.0.0.0), grants no lease (no
+    IP-address-lease-time option 51), names the responding server in the
+    server-identifier option (54), and MAY include a text message option (56)
+    explaining the refusal (RFC 2132 section 9.9).
+
+    The validation contract covers the decoded UDP/BOOTP/DHCP response: the BOOTP
+    opcode (reply), message type Nak, the echoed transaction id and client hardware
+    address, the server identifier, the optional message text, the response
+    direction (server -> client over ports 67 -> 68), and the two negative
+    invariants that distinguish a Nak from a lease Ack: ``yiaddr`` is zero (no
+    allocation) and there is no lease-time option. Addresses stay in documentation
+    space: the rejected requested address is in ``192.0.2.0/24`` and the lab
+    transport uses the private endpoint pair.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    client_mac = dhcp_client_mac(profile, seed, sequence)
+    transaction_id = int.from_bytes(digest[0:4], "big") or 1
+    # DHCP uses fixed privileged ports: client 68 -> server 67.
+    source_port = 68
+    destination_port = 67
+    # The client asks for an address the responder cannot grant: the responder
+    # serves the 198.51.100.0/24 pool, so a requested address in a *different*
+    # documentation subnet (192.0.2.0/24) is invalid for this server and triggers a
+    # DHCPNAK (RFC 2131 section 4.3.2).
+    requested_ipv4 = f"192.0.2.{1 + digest[4] % 250}"
+    server_identifier = target_ipv4
+    # RFC 2132 section 9.9: the optional DHCP message option (56) the responder
+    # returns to explain the refusal.
+    message_text = (
+        f"requested address {requested_ipv4} is not on this network "
+        f"({profile}:{seed}:{sequence})"
+    )
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dhcp_request",
+        "expected_response": "dhcp_nak",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "client_mac": client_mac,
+        "transaction_id": transaction_id,
+        # The SELECTING/INIT-REBOOT-style Request names the address it wants in
+        # option 50 (invalid for this server) and the chosen server in option 54.
+        "requested_ipv4": requested_ipv4,
+        "server_identifier": server_identifier,
+        "expected_message_type": "nak",
+        "expected_message_type_value": 6,
+        # RFC 2131 section 4.3.2: a DHCPNAK allocates no address (yiaddr 0.0.0.0)
+        # and grants no lease (no option 51).
+        "expected_yiaddr_zero": True,
+        "expected_no_lease_time": True,
+        "expected_server_identifier": server_identifier,
+        "expected_message": message_text,
+        "target_service": {
+            "required": True,
+            "kind": "dhcp-responder",
+            "port": destination_port,
+            "client_port": source_port,
+            "client_mac": client_mac,
+            "transaction_id": transaction_id,
+            "requested_ipv4": requested_ipv4,
+            "server_identifier": server_identifier,
+            # The requested address is outside the served pool, so the responder
+            # refuses with a Nak rather than committing a binding.
+            "nak": True,
+            "yiaddr_zero": True,
+            "no_lease_time": True,
+            "message": message_text,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "op": "reply",
+            "op_value": 2,
+            "message_type": "nak",
+            "message_type_value": 6,
+            "transaction_id": transaction_id,
+            "client_hardware_address": client_mac,
+            # The Nak allocates no address and grants no lease.
+            "yiaddr_zero": True,
+            "no_lease_time": True,
+            "server_identifier": server_identifier,
+            "message": message_text,
+            "direction": "server_to_client",
+        },
+    }
+
+
 def _ttl_expired_probe_plan(
     *,
     case_name: str = "ttl-expired",
@@ -2806,6 +2934,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dhcp-lease-time": _dhcp_lease_time_probe_plan,
     "dhcp-renewal-unicast-ack": _dhcp_renewal_unicast_ack_probe_plan,
     "dhcp-inform-ack": _dhcp_inform_ack_probe_plan,
+    "dhcp-request-nak": _dhcp_request_nak_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }

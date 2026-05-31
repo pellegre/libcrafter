@@ -603,6 +603,14 @@ impl Dhcp {
         self.host_name(host_name)
     }
 
+    /// Append a DHCP message option (option 56).
+    ///
+    /// Source: RFC 2132 section 9.9. Carries the text status message a server
+    /// includes in a DHCPNAK (or DHCPDECLINE) to explain the error condition.
+    pub fn message(self, message: impl Into<String>) -> Self {
+        self.option(DhcpOption::message(message))
+    }
+
     /// Append a subnet mask option.
     pub fn subnet_mask(self, mask: Ipv4Addr) -> Self {
         self.option(DhcpOption::subnet_mask(mask))
@@ -931,6 +939,17 @@ impl Dhcp {
     pub fn host_name_value(&self) -> Option<&str> {
         self.options.iter().find_map(|option| match option {
             DhcpOption::HostName(host_name) => Some(host_name.as_str()),
+            _ => None,
+        })
+    }
+
+    /// DHCP message option (option 56), when present.
+    ///
+    /// Source: RFC 2132 section 9.9. The text status message a server includes
+    /// in a DHCPNAK (or DHCPDECLINE) to explain the error condition.
+    pub fn message_value(&self) -> Option<&str> {
+        self.options.iter().find_map(|option| match option {
+            DhcpOption::DhcpMessage(message) => Some(message.as_str()),
             _ => None,
         })
     }
@@ -2765,8 +2784,8 @@ mod dhcp_forcerenew {
 #[cfg(test)]
 mod dhcp_message_builders {
     use super::{
-        Dhcp, DhcpClientIdentifier, DhcpMessageType, DhcpRelayAgentInfo, DhcpRelaySuboption,
-        BOOTP_REPLY, BOOTP_REQUEST,
+        Dhcp, DhcpClientIdentifier, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo,
+        DhcpRelaySuboption, BOOTP_REPLY, BOOTP_REQUEST,
     };
     use crate::{MacAddr, Packet};
     use core::net::Ipv4Addr;
@@ -2929,6 +2948,27 @@ mod dhcp_message_builders {
         assert_eq!(timed.lease_time_value(), Some(3600));
         assert_eq!(timed.renewal_time_value(), Some(1800));
         assert_eq!(timed.rebinding_time_value(), Some(3150));
+    }
+
+    #[test]
+    fn dhcp_nak_message_option_round_trips() {
+        // RFC 2132 section 9.9: a server may include a text message option (56)
+        // in a DHCPNAK to explain the refusal. The builder appends it, compile()
+        // encodes it as the typed string option, and decode surfaces it through
+        // the typed accessor.
+        let nak = roundtrip(
+            Dhcp::nak(client_mac(), server()).message("requested address not on this network"),
+        );
+        assert_eq!(nak.message_type_value(), Some(DhcpMessageType::Nak));
+        assert_eq!(
+            nak.message_value(),
+            Some("requested address not on this network")
+        );
+        // The message rides as the typed DHCP message option (56).
+        assert!(nak
+            .options_value()
+            .iter()
+            .any(|option| matches!(option, DhcpOption::DhcpMessage(_))));
     }
 
     #[test]

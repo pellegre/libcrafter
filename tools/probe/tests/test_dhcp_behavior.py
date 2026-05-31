@@ -106,6 +106,14 @@ def _dhcp_inform_ack_plan(*, seed: int = 1027, sequence: int = 0) -> dict:
     )
 
 
+def _dhcp_request_nak_plan(*, seed: int = 1028, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dhcp-request-nak"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcp-request-nak"],
+        sequence=sequence,
+    )
+
+
 class DhcpDiscoverOfferPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct Discover stimulus and Offer contract."""
 
@@ -1252,6 +1260,162 @@ class DhcpInformAckTest(unittest.TestCase):
                 self.assertTrue(plan_view.get("client_ciaddr"))
                 self.assertTrue(plan_view.get("expected_yiaddr_zero"))
                 self.assertTrue(plan_view.get("expected_no_lease_time"))
+
+
+class DhcpRequestNakPlanTest(unittest.TestCase):
+    """The plan carries a Request for an invalid address and a Nak contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dhcp-request-nak", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dhcp-request-nak"],
+            planning._dhcp_request_nak_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dhcp_request_nak_plan(), _dhcp_request_nak_plan())
+
+    def test_plan_carries_a_request_for_an_invalid_address(self) -> None:
+        plan = _dhcp_request_nak_plan()
+
+        self.assertEqual(plan["case"], "dhcp-request-nak")
+        self.assertEqual(plan["stimulus"], "dhcp_request")
+        self.assertEqual(plan["expected_response"], "dhcp_nak")
+
+        # DHCP fixed ports: client 68 -> server 67.
+        self.assertEqual(plan["source_port"], 68)
+        self.assertEqual(plan["destination_port"], 67)
+
+        # A client hardware address in the RFC 7042 documentation MAC range and a
+        # 32-bit transaction id (xid).
+        mac = plan["client_mac"]
+        self.assertTrue(mac.startswith("00:00:5e:00:53:"))
+        self.assertIsInstance(plan["transaction_id"], int)
+        self.assertTrue(1 <= plan["transaction_id"] <= 0xFFFFFFFF)
+
+        # RFC 2131 section 4.3.2: the Request names (option 50) an address the
+        # server cannot grant. The responder serves 198.51.100.0/24, so the
+        # requested address sits in a different documentation subnet
+        # (192.0.2.0/24) and is invalid for this server. The chosen server is
+        # named in option 54.
+        requested = ipaddress.IPv4Address(plan["requested_ipv4"])
+        self.assertIn(requested, ipaddress.ip_network("192.0.2.0/24"))
+        self.assertNotIn(requested, ipaddress.ip_network("198.51.100.0/24"))
+        self.assertEqual(plan["server_identifier"], plan["destination_ipv4"])
+
+    def test_plan_nak_expectations(self) -> None:
+        plan = _dhcp_request_nak_plan()
+
+        # RFC 2131 section 4.3.2: the server refuses with a DHCPNAK (type 6) that
+        # allocates no address and grants no lease.
+        self.assertEqual(plan["expected_message_type"], "nak")
+        self.assertEqual(plan["expected_message_type_value"], 6)
+        self.assertTrue(plan["expected_yiaddr_zero"])
+        self.assertTrue(plan["expected_no_lease_time"])
+        self.assertNotIn("expected_yiaddr", plan)
+        self.assertNotIn("expected_lease_time", plan)
+
+        # The Nak names the responding server (option 54) and carries the optional
+        # message text (option 56, RFC 2132 section 9.9).
+        self.assertEqual(plan["expected_server_identifier"], plan["destination_ipv4"])
+        self.assertIn(plan["requested_ipv4"], plan["expected_message"])
+
+    def test_validation_contract_covers_nak_fields_and_direction(self) -> None:
+        plan = _dhcp_request_nak_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (Nak flows server -> client, 67 -> 68).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 67)
+        self.assertEqual(validation["destination_port"], 68)
+        self.assertEqual(validation["direction"], "server_to_client")
+
+        # BOOTP reply opcode and the Nak message type.
+        self.assertEqual(validation["op_value"], 2)
+        self.assertEqual(validation["message_type_value"], 6)
+
+        # Identity: transaction id and client hardware address echoed from the
+        # Request.
+        self.assertEqual(validation["transaction_id"], plan["transaction_id"])
+        self.assertEqual(validation["client_hardware_address"], plan["client_mac"])
+
+        # The negative invariants that distinguish a Nak from a lease Ack: no
+        # allocated address (yiaddr 0.0.0.0) and no lease-time option.
+        self.assertTrue(validation["yiaddr_zero"])
+        self.assertTrue(validation["no_lease_time"])
+        self.assertNotIn("lease_time", validation)
+        self.assertNotIn("yiaddr", validation)
+
+        # Server identifier and the message text the Nak returns.
+        self.assertEqual(
+            validation["server_identifier"], plan["expected_server_identifier"]
+        )
+        self.assertEqual(validation["message"], plan["expected_message"])
+
+    def test_target_service_records_the_nak_invariants(self) -> None:
+        plan = _dhcp_request_nak_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["port"], 67)
+        self.assertEqual(target_service["client_port"], 68)
+        self.assertEqual(target_service["requested_ipv4"], plan["requested_ipv4"])
+        self.assertTrue(target_service["nak"])
+        self.assertTrue(target_service["yiaddr_zero"])
+        self.assertTrue(target_service["no_lease_time"])
+        self.assertEqual(target_service["message"], plan["expected_message"])
+
+    def test_capture_filter_matches_nak_direction(self) -> None:
+        plan = _dhcp_request_nak_plan()
+        self.assertIn("src port 67", plan["capture_filter"])
+        self.assertIn("dst port 68", plan["capture_filter"])
+        self.assertIn(
+            f"src host {plan['expected_reply_source_ipv4']}", plan["capture_filter"]
+        )
+
+
+class DhcpRequestNakTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dhcp-request-nak",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1028,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dhcp-request-nak", planned)
+
+            # The endpoint produced a result for the focused case and it built the
+            # Request (a dry-run plan compiles the outgoing stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dhcp-request-nak"
+            ]
+            self.assertTrue(results, "endpoint emitted no dhcp-request-nak result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                # The planned Nak invariants are visible in the dry-run metadata so
+                # the endpoint validates the refusal it expects: message type Nak,
+                # no allocation, no lease, and the optional message text.
+                plan_view = metadata.get("probe_plan", {})
+                self.assertEqual(plan_view.get("expected_message_type_value"), 6)
+                self.assertTrue(plan_view.get("expected_yiaddr_zero"))
+                self.assertTrue(plan_view.get("expected_no_lease_time"))
+                self.assertTrue(plan_view.get("expected_message"))
 
 
 if __name__ == "__main__":

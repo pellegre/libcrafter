@@ -2217,6 +2217,9 @@ pub enum DhcpOption {
     HostName(String),
     /// Domain name.
     DomainName(String),
+    /// DHCP message (option 56): a text status message, typically carried by a
+    /// DHCPNAK to explain why the request was refused (RFC 2132 section 9.9).
+    DhcpMessage(String),
     /// Broadcast address.
     BroadcastAddress(Ipv4Addr),
     /// Requested IP address.
@@ -2276,6 +2279,14 @@ impl DhcpOption {
     /// Create a domain name option.
     pub fn domain_name(domain_name: impl Into<String>) -> Self {
         Self::DomainName(domain_name.into())
+    }
+
+    /// Create a DHCP message option (option 56).
+    ///
+    /// Source: RFC 2132 section 9.9. The text message a server may include in a
+    /// DHCPNAK (or DHCPDECLINE) to explain the error condition.
+    pub fn message(message: impl Into<String>) -> Self {
+        Self::DhcpMessage(message.into())
     }
 
     /// Create a requested IP address option.
@@ -2607,6 +2618,7 @@ impl DhcpOption {
             Self::DomainNameServer(_) => DHCP_OPTION_DOMAIN_NAME_SERVER,
             Self::HostName(_) => DHCP_OPTION_HOST_NAME,
             Self::DomainName(_) => DHCP_OPTION_DOMAIN_NAME,
+            Self::DhcpMessage(_) => DHCP_OPTION_MESSAGE,
             Self::BroadcastAddress(_) => DHCP_OPTION_BROADCAST_ADDRESS,
             Self::RequestedIpAddress(_) => DHCP_OPTION_REQUESTED_IP_ADDRESS,
             Self::IpAddressLeaseTime(_) => DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
@@ -2646,7 +2658,7 @@ impl DhcpOption {
             Self::Router(addresses) | Self::DomainNameServer(addresses) => {
                 DhcpOptionValue::Ipv4List(addresses.clone())
             }
-            Self::HostName(text) | Self::DomainName(text) => {
+            Self::HostName(text) | Self::DomainName(text) | Self::DhcpMessage(text) => {
                 DhcpOptionValue::Text(text.as_bytes().to_vec())
             }
             Self::IpAddressLeaseTime(seconds)
@@ -2706,7 +2718,9 @@ impl DhcpOption {
             Self::Router(addresses) | Self::DomainNameServer(addresses) => {
                 split_option_encoded_len(addresses.len() * 4)
             }
-            Self::HostName(name) | Self::DomainName(name) => split_option_encoded_len(name.len()),
+            Self::HostName(name) | Self::DomainName(name) | Self::DhcpMessage(name) => {
+                split_option_encoded_len(name.len())
+            }
             Self::IpAddressLeaseTime(_) | Self::RenewalTime(_) | Self::RebindingTime(_) => 6,
             Self::ParameterRequestList(requests)
             | Self::ClientIdentifier(requests)
@@ -2775,9 +2789,9 @@ impl DhcpOption {
             Self::Router(addresses) | Self::DomainNameServer(addresses) => {
                 encode_ipv4_list(addresses)
             }
-            Self::HostName(host_name) | Self::DomainName(host_name) => {
-                host_name.as_bytes().to_vec()
-            }
+            Self::HostName(host_name)
+            | Self::DomainName(host_name)
+            | Self::DhcpMessage(host_name) => host_name.as_bytes().to_vec(),
             Self::IpAddressLeaseTime(seconds)
             | Self::RenewalTime(seconds)
             | Self::RebindingTime(seconds) => seconds.to_be_bytes().to_vec(),
@@ -3052,6 +3066,17 @@ pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<DhcpOption> {
         }),
         DHCP_OPTION_DOMAIN_NAME => Ok(match decode_optional_text(data) {
             Some(text) => DhcpOption::DomainName(text),
+            None => DhcpOption::Generic {
+                code,
+                data: data.to_vec(),
+            },
+        }),
+        // RFC 2132 section 9.9: the DHCP message option (56) carries NVT ASCII
+        // text. When the bytes decode as UTF-8 the convenience String variant is
+        // used; otherwise the raw bytes are preserved verbatim through the generic
+        // variant so no data is lost.
+        DHCP_OPTION_MESSAGE => Ok(match decode_optional_text(data) {
+            Some(text) => DhcpOption::DhcpMessage(text),
             None => DhcpOption::Generic {
                 code,
                 data: data.to_vec(),

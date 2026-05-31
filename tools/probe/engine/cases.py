@@ -224,7 +224,7 @@ BEHAVIOR_DHCP_CASES: tuple[ProbeCase, ...] = (
         protocol="dhcp",
     ),
     _behavior_case(
-        name="dhcp-invalid-addr-nak",
+        name="dhcp-request-nak",
         description="Request an invalid address and validate the Nak.",
         stimulus="dhcp_request",
         expected_response="dhcp_nak",
