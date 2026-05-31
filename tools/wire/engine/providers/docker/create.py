@@ -15,10 +15,14 @@ from ...state import endpoint_layout, planned_private_group_record, private_grou
 from ..vm import public_key_path
 from .constants import (
     CONFIRMATION_ERROR,
+    DOCKER_DEFAULT_LAN_NETWORK,
+    DOCKER_LAN_NETWORK_ENV,
     DOCKER_SSH_GUEST_PORT,
     DOCKER_SSH_HOST,
     DOCKER_SSH_USER,
+    EXPOSURE_LAN,
     EXPOSURE_PRIVATE,
+    NAT_L3_CAPABILITIES,
     PLANNED_CREATED_AT,
     PRIVATE_CAPABILITIES,
     DockerRunner,
@@ -51,6 +55,7 @@ from .resources import (
 AUTHORIZED_KEY_TARGET = "/run/libcrafter/authorized_key.pub"
 DEFAULT_PRIVATE_GROUP = "default"
 DOCKER_PRIVATE_INTERFACE = "eth0"
+DOCKER_LAN_INTERFACE = "eth0"
 
 
 def create_endpoint(
@@ -69,6 +74,7 @@ def create_endpoint(
 
     validate_request(provider, exposure)
     _validate_create_request(exposure, role, private_group, private_ip)
+    environ = os.environ if env is None else env
 
     if dry_run:
         if exposure == EXPOSURE_PRIVATE:
@@ -79,7 +85,14 @@ def create_endpoint(
                 private_group=_effective_private_group(private_group),
                 private_group_source=_private_group_source(private_group),
                 private_ip=private_ip,
-                env=os.environ if env is None else env,
+                env=environ,
+            )
+        if exposure == EXPOSURE_LAN:
+            return _planned_lan_endpoint_manifest(
+                provider=provider,
+                exposure=exposure,
+                role=role,
+                env=environ,
             )
         raise NotImplementedError(
             f"docker dry-run create-endpoint is not implemented for {exposure}"
@@ -324,6 +337,200 @@ def _planned_private_endpoint_manifest(
     return output
 
 
+def _planned_lan_endpoint_manifest(
+    *,
+    provider: str,
+    exposure: str,
+    role: str,
+    env: Mapping[str, str],
+) -> dict[str, object]:
+    endpoint_id = planned_docker_endpoint_id(
+        provider=provider,
+        exposure=exposure,
+        role=role,
+    )
+    layout = endpoint_layout(endpoint_id)
+    endpoint_public_key_path = public_key_path(layout.private_key_path)
+    ssh_port = free_localhost_tcp_port()
+    docker_command = requested_docker_command(env)
+    image = plan_docker_image(
+        env,
+        artifact_dir=layout.artifact_dir,
+        docker_command=docker_command,
+    )["docker_image"]
+    image_tag = requested_docker_image(env)
+    lan_network_name, lan_network_source = _requested_lan_network(env)
+    lan_network = _lan_network_metadata(
+        network_name=lan_network_name,
+        network_source=lan_network_source,
+        docker_command=docker_command,
+    )
+    security = _docker_nat_l3_security_flags(
+        exposure=exposure,
+        network_name=lan_network_name,
+    )
+    labels = docker_labels(
+        endpoint_id=endpoint_id,
+        exposure=exposure,
+        role=role,
+        created_at=PLANNED_CREATED_AT,
+        provider=provider,
+    )
+    container_name = docker_container_name(endpoint_id)
+    container = _nat_l3_container_metadata(
+        container_name=container_name,
+        endpoint_id=endpoint_id,
+        image_tag=image_tag,
+        exposure=exposure,
+        network_name=lan_network_name,
+        ssh_port=ssh_port,
+        labels=labels,
+        security=security,
+        docker_command=docker_command,
+        authorized_key_source=endpoint_public_key_path,
+    )
+    capabilities = _nat_l3_capabilities_metadata(
+        provider=provider,
+        exposure=exposure,
+        dry_run=True,
+    )
+
+    manifest = EndpointManifest(
+        endpoint_id=endpoint_id,
+        provider=provider,
+        exposure=exposure,
+        status="planned",
+        role=role,
+        created_at=PLANNED_CREATED_AT,
+        ssh=EndpointSSHInfo(
+            host=DOCKER_SSH_HOST,
+            user=DOCKER_SSH_USER,
+            port=ssh_port,
+            identity_file=str(layout.private_key_path),
+            known_hosts_file=str(layout.known_hosts_path),
+            metadata={
+                "planned": True,
+                "transport": "docker-localhost-port-forward",
+                "host": DOCKER_SSH_HOST,
+                "host_port": ssh_port,
+                "guest_port": DOCKER_SSH_GUEST_PORT,
+                "container_name": container_name,
+                "public_inbound_reachability": False,
+                "endpoint_key_paths": {
+                    "private_key": str(layout.private_key_path),
+                    "public_key": str(endpoint_public_key_path),
+                    "known_hosts": str(layout.known_hosts_path),
+                },
+            },
+        ),
+        interfaces=[_lan_interface(lan_network=lan_network)],
+        provider_resources=docker_provider_resources(
+            [
+                docker_container_resource(
+                    None,
+                    name=container_name,
+                    endpoint_id=endpoint_id,
+                    metadata={
+                        "planned": True,
+                        "exposure": exposure,
+                        "role": role,
+                        "image": image_tag,
+                        "docker_network": lan_network_name,
+                        "ssh_host": DOCKER_SSH_HOST,
+                        "ssh_host_port": ssh_port,
+                        "ssh_guest_port": DOCKER_SSH_GUEST_PORT,
+                        "security": security,
+                    },
+                ),
+                docker_network_resource(
+                    None,
+                    name=lan_network_name,
+                    cleanup=False,
+                    metadata=lan_network,
+                ),
+                docker_image_resource(
+                    image_tag,
+                    cleanup=False,
+                    metadata={"planned": True, **image},
+                ),
+                docker_local_file_resource(
+                    layout.private_key_path,
+                    name="ssh-private-key",
+                    metadata={"planned": True, "role": "ssh-private-key"},
+                ),
+                docker_local_file_resource(
+                    endpoint_public_key_path,
+                    name="ssh-public-key",
+                    metadata={"planned": True, "role": "ssh-public-key"},
+                ),
+                docker_local_file_resource(
+                    layout.known_hosts_path,
+                    name="ssh-known-hosts",
+                    metadata={"planned": True, "role": "ssh-known-hosts"},
+                ),
+                docker_local_file_resource(
+                    layout.state_dir,
+                    name="endpoint-state-dir",
+                    metadata={"planned": True, "role": "endpoint-state"},
+                ),
+                docker_local_file_resource(
+                    layout.manifest_path,
+                    name="endpoint-manifest",
+                    metadata={"planned": True, "role": "endpoint-manifest"},
+                ),
+                docker_local_file_resource(
+                    layout.artifact_dir,
+                    name="endpoint-artifact-dir",
+                    cleanup=False,
+                    metadata={"planned": True, "role": "endpoint-artifacts"},
+                ),
+            ],
+            metadata={
+                "provider": provider,
+                "exposure": exposure,
+                "planned": True,
+                "mode": "nat-backed-l3-lan",
+                "docker_network": lan_network_name,
+            },
+        ),
+        artifact_dir=str(layout.artifact_dir),
+        metadata={
+            "created": False,
+            "dry_run": True,
+            "state_dir": str(layout.state_dir),
+            "manifest_path": str(layout.manifest_path),
+            "docker": {
+                "command": docker_command,
+                "container": container,
+                "network": lan_network,
+                "lan_network": lan_network,
+                "image": image,
+                "security": security,
+                "capabilities": capabilities,
+            },
+            "lan": lan_network,
+            "lan_network": lan_network,
+            "docker_network": lan_network_name,
+            "docker_network_source": lan_network_source,
+            "capabilities": capabilities,
+            "docker_image": image,
+        },
+    )
+    output = manifest.to_dict()
+    output["metadata"]["artifact_paths"] = manifest.artifact_paths(  # type: ignore[index]
+        _artifact_paths(
+            layout=layout,
+            public_key=endpoint_public_key_path,
+            docker_image=image,
+        )
+    ).to_dict()
+    output["created"] = False
+    output["dry_run"] = True
+    output["state_dir"] = str(layout.state_dir)
+    output["manifest_path"] = str(layout.manifest_path)
+    return output
+
+
 def _validate_create_request(
     exposure: str,
     role: str,
@@ -471,6 +678,86 @@ def _private_interface(
     )
 
 
+def _requested_lan_network(env: Mapping[str, str]) -> tuple[str, str]:
+    raw_value = env.get(DOCKER_LAN_NETWORK_ENV)
+    if raw_value is not None and raw_value.strip():
+        return raw_value.strip(), "env"
+    return DOCKER_DEFAULT_LAN_NETWORK, "default"
+
+
+def _lan_network_metadata(
+    *,
+    network_name: str,
+    network_source: str,
+    docker_command: str,
+) -> dict[str, object]:
+    inspect_argv = docker_argv(
+        "network",
+        "inspect",
+        network_name,
+        docker_command=docker_command,
+    )
+    return {
+        "planned": True,
+        "type": "docker-nat-l3-lan-network",
+        "mode": "lan",
+        "network_id": network_name,
+        "network_name": network_name,
+        "configured_network": network_name,
+        "env": DOCKER_LAN_NETWORK_ENV,
+        "default": DOCKER_DEFAULT_LAN_NETWORK,
+        "source": network_source,
+        "owned_by_provider": False,
+        "cleanup": False,
+        "backend": "docker-bridge-routing",
+        "reachability": "nat-backed-l3-lan",
+        "nat": True,
+        "nat_backed_l3": True,
+        "ipv4_unicast": True,
+        "l3": True,
+        "l2": False,
+        "same_segment": False,
+        "same_segment_l2": False,
+        "physical_lan_l2": False,
+        "link_layer_fidelity": False,
+        "arp_injection": False,
+        "broadcast": False,
+        "controlled_router": False,
+        "public_inbound_reachability": False,
+        "localhost_ssh_forwarding": True,
+        "docker_capabilities": ["NET_RAW"],
+        "inspect_argv": inspect_argv,
+        "semantics": "NAT-backed L3 reachability from Docker bridge routing to LAN targets",
+    }
+
+
+def _lan_interface(*, lan_network: Mapping[str, object]) -> NetworkInterface:
+    network_name = str(lan_network["network_name"])
+    return NetworkInterface(
+        name=DOCKER_LAN_INTERFACE,
+        exposure=EXPOSURE_LAN,
+        provider_network_id=network_name,
+        metadata={
+            "planned": True,
+            "type": "docker-nat-l3-lan",
+            "interface": DOCKER_LAN_INTERFACE,
+            "network_name": network_name,
+            "network": dict(lan_network),
+            "nat_backed_l3": True,
+            "ipv4_unicast": True,
+            "link_layer_send": False,
+            "link_layer_capture": False,
+            "link_layer_fidelity": False,
+            "provider_mac_known": False,
+            "broadcast": False,
+            "controlled_router": False,
+            "public_inbound_reachability": False,
+            "physical_lan_l2": False,
+            "arp_injection": False,
+        },
+    )
+
+
 def _container_metadata(
     *,
     container_name: str,
@@ -548,6 +835,77 @@ def _container_metadata(
     }
 
 
+def _nat_l3_container_metadata(
+    *,
+    container_name: str,
+    endpoint_id: str,
+    image_tag: str,
+    exposure: str,
+    network_name: str,
+    ssh_port: int,
+    labels: Mapping[str, object],
+    security: Mapping[str, object],
+    docker_command: str,
+    authorized_key_source: Path,
+) -> dict[str, object]:
+    run_argv = docker_argv(
+        "run",
+        "--detach",
+        "--name",
+        container_name,
+        "--hostname",
+        endpoint_id,
+        "--network",
+        network_name,
+        "--publish",
+        docker_publish_arg(host_port=ssh_port, guest_port=DOCKER_SSH_GUEST_PORT),
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "NET_RAW",
+        "--security-opt",
+        "no-new-privileges",
+        "--mount",
+        (
+            "type=bind,"
+            f"source={authorized_key_source},"
+            f"target={AUTHORIZED_KEY_TARGET},readonly"
+        ),
+        *docker_label_args(labels),
+        image_tag,
+        docker_command=docker_command,
+    )
+    return {
+        "planned": True,
+        "type": "docker-container",
+        "container_id": None,
+        "container_name": container_name,
+        "endpoint_id": endpoint_id,
+        "image": image_tag,
+        "exposure": exposure,
+        "network": network_name,
+        "docker_network": network_name,
+        "ssh": {
+            "host": DOCKER_SSH_HOST,
+            "host_port": ssh_port,
+            "guest_port": DOCKER_SSH_GUEST_PORT,
+            "publish": docker_publish_arg(
+                host_port=ssh_port,
+                guest_port=DOCKER_SSH_GUEST_PORT,
+            ),
+            "public_inbound_reachability": False,
+        },
+        "authorized_key": {
+            "source": str(authorized_key_source),
+            "target": AUTHORIZED_KEY_TARGET,
+            "readonly": True,
+        },
+        "labels": dict(labels),
+        "security": dict(security),
+        "run_argv": run_argv,
+    }
+
+
 def _docker_private_security_flags() -> dict[str, object]:
     return {
         "docker_socket_mounted": False,
@@ -560,6 +918,33 @@ def _docker_private_security_flags() -> dict[str, object]:
         "cap_add": ["NET_RAW", "NET_ADMIN"],
         "security_opt": ["no-new-privileges"],
         "no_new_privileges": True,
+    }
+
+
+def _docker_nat_l3_security_flags(
+    *,
+    exposure: str,
+    network_name: str,
+) -> dict[str, object]:
+    return {
+        "docker_socket_mounted": False,
+        "privileged": False,
+        "host_network": False,
+        "host_pid": False,
+        "broad_host_filesystem_mounts": False,
+        "network_mode": "configured-docker-network",
+        "network_name": network_name,
+        "exposure": exposure,
+        "cap_drop": ["ALL"],
+        "cap_add": ["NET_RAW"],
+        "net_raw_only": True,
+        "net_admin": False,
+        "security_opt": ["no-new-privileges"],
+        "no_new_privileges": True,
+        "link_layer_fidelity": False,
+        "broadcast": False,
+        "controlled_router": False,
+        "public_inbound_reachability": False,
     }
 
 
@@ -587,6 +972,39 @@ def _private_capabilities_metadata(
         "l2": True,
         "l3": True,
         "semantics": "provider-owned Docker bridge with same-segment L2/L3 packet exchange",
+    }
+
+
+def _nat_l3_capabilities_metadata(
+    *,
+    provider: str,
+    exposure: str,
+    dry_run: bool,
+) -> dict[str, object]:
+    return {
+        "provider": provider,
+        "exposure": exposure,
+        "dry_run": dry_run,
+        "capabilities": list(NAT_L3_CAPABILITIES),
+        "ipv4_unicast": True,
+        "ipv6_unicast": False,
+        "link_layer_send": False,
+        "link_layer_capture": False,
+        "broadcast": False,
+        "provider_mac_known": False,
+        "controlled_services": False,
+        "controlled_router": False,
+        "same_segment_l2": False,
+        "same_segment_l3": False,
+        "l2": False,
+        "l3": True,
+        "nat_backed_l3": True,
+        "physical_lan_l2": False,
+        "link_layer_fidelity": False,
+        "arp_injection": False,
+        "public_inbound_reachability": False,
+        "docker_capabilities": ["NET_RAW"],
+        "semantics": "NAT-backed L3 reachability from Docker bridge routing to LAN targets",
     }
 
 
