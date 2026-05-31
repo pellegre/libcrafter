@@ -809,7 +809,10 @@ fn malformed_arp_corpus_errors_carry_structured_fields() {
 
     for case in arp_cases {
         let Err(error) = decode_malformed_case(case) else {
-            panic!("malformed ARP corpus case {} unexpectedly decoded", case.name);
+            panic!(
+                "malformed ARP corpus case {} unexpectedly decoded",
+                case.name
+            );
         };
         // The variant/context match is shared with the corpus runner; here we
         // additionally assert the structured payload.
