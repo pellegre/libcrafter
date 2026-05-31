@@ -56,6 +56,7 @@ PROBE_SELECTED_SPECS = ("probe-contracts",)
 SKIP_CAPABILITY_UNAVAILABLE = "provider_capability_unavailable"
 SKIP_CONFIRMATION_REQUIRED = "confirm_live_run_required"
 SKIP_REQUIRES_CONTROLLED_ROUTER = "requires_controlled_router"
+SKIP_REQUIRES_LINK_LAYER = "requires_link_layer"
 STATUS_DRY_RUN = "dry-run"
 STATUS_FAILED = "failed"
 STATUS_PASSED = "passed"
@@ -113,6 +114,23 @@ _PROBE_CASES: tuple[ProbeCase, ...] = (
         required_capabilities=["controlled_router"],
         endpoint_roles=["stimulus", "router"],
         metadata={"protocol": "icmp", "service": "controlled_router"},
+    ),
+    ProbeCase(
+        name="arp-resolution",
+        description=(
+            "Broadcast an ARP who-has request on the lab segment and validate the "
+            "target's unicast is-at reply."
+        ),
+        stimulus="arp_who_has",
+        expected_response="arp_is_at",
+        required_capabilities=[
+            "arp_resolution",
+            "link_layer_send",
+            "link_layer_capture",
+            "broadcast",
+        ],
+        endpoint_roles=["stimulus", "target"],
+        metadata={"protocol": "arp", "service": "kernel", "layer": "link"},
     ),
 )
 _PROBE_CASE_BY_NAME = {case.name: case for case in _PROBE_CASES}
@@ -336,6 +354,12 @@ def _probe_plan_for_case(
         )
     if case.name == "ttl-expired":
         return _ttl_expired_probe_plan(
+            profile=request.profile,
+            seed=request.seed,
+            sequence=sequence,
+        )
+    if case.name == "arp-resolution":
+        return _arp_resolution_probe_plan(
             profile=request.profile,
             seed=request.seed,
             sequence=sequence,
@@ -610,6 +634,82 @@ def _ttl_expired_probe_plan(
             },
         },
     }
+
+
+def _arp_resolution_probe_plan(
+    *,
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    digest = _deterministic_bytes("arp-resolution", profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = _deterministic_ipv4_pair(profile, seed, sequence)
+    stimulus_mac = _deterministic_documentation_mac(profile, seed, sequence, role="stimulus")
+    target_mac = _deterministic_documentation_mac(profile, seed, sequence, role="target")
+    broadcast_mac = "ff:ff:ff:ff:ff:ff"
+    zero_mac = "00:00:00:00:00:00"
+    return {
+        "schema_version": 1,
+        "case": "arp-resolution",
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "arp_who_has",
+        "expected_response": "arp_is_at",
+        # ARP rides Ethernet directly; these are link-layer documentation values.
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": stimulus_ipv4,
+        "target_hardware_addr": zero_mac,
+        "target_protocol_addr": target_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        # ARP cannot be selected by host/IP BPF; match on the protocol + opcode.
+        "capture_filter": "arp and arp[6:2] = 2",
+        "validation": {
+            "ethertype": 0x0806,
+            "operation": 2,
+            "operation_label": "reply",
+            "sender_hardware_addr": target_mac,
+            "sender_protocol_addr": target_ipv4,
+            "target_hardware_addr": stimulus_mac,
+            "target_protocol_addr": stimulus_ipv4,
+            "ethernet_destination": stimulus_mac,
+        },
+        "wire_requirements": {
+            "requires_link_layer_send": True,
+            "requires_link_layer_capture": True,
+            "requires_broadcast": True,
+            "note": (
+                "ARP resolution is L2 broadcast/unicast traffic; it runs only on a "
+                "provider-backed lab segment, never from privileged host raw sends."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
+def _deterministic_documentation_mac(
+    profile: str,
+    seed: int,
+    sequence: int,
+    *,
+    role: str,
+) -> str:
+    digest = _deterministic_bytes(f"arp-mac-{role}", profile, seed, sequence)
+    # RFC 7042 reserves 00:00:5e:00:53:00-ff for documentation unicast MACs.
+    return f"00:00:5e:00:53:{digest[0]:02x}"
 
 
 def _dns_label(value: str) -> str:
@@ -2817,6 +2917,13 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
         ]
+    if case_name == "arp-resolution":
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_DECODE_FAILED,
+        ]
     return []
 
 
@@ -2907,6 +3014,13 @@ def _missing_capabilities(
 def _skip_reason_for_missing_capability(case: ProbeCase, capability: str) -> str:
     if case.name == "ttl-expired" and capability == "controlled_router":
         return SKIP_REQUIRES_CONTROLLED_ROUTER
+    if case.name == "arp-resolution" and capability in {
+        "arp_resolution",
+        "link_layer_send",
+        "link_layer_capture",
+        "broadcast",
+    }:
+        return SKIP_REQUIRES_LINK_LAYER
     return SKIP_CAPABILITY_UNAVAILABLE
 
 
