@@ -112,6 +112,10 @@ _WIRE_PROVIDER_CAPABILITY_PROFILES: dict[str, JSONObject] = {
         "l2": False,
         "provider_mac": False,
         "controlled_service": True,
+        "unsupported_live_cases": ["icmpv4-source-quench"],
+        "unsupported_live_case_reasons": {
+            "icmpv4-source-quench": "hetzner_private_network_drops_icmpv4_source_quench",
+        },
     },
 }
 
@@ -690,6 +694,7 @@ def _wire_profile_decision(
         reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
     if _is_wire_provider_unsafe_feature(plan):
         reasons.append(SKIP_PROVIDER_CAPABILITY_UNAVAILABLE)
+    reasons.extend(_provider_unsupported_live_case_reasons(plan, capabilities))
 
     provider = str(capabilities.get("provider", "unknown"))
     policy = wire_comparison_policy(
@@ -795,6 +800,8 @@ def _wire_capability_metadata(capabilities: Mapping[str, object]) -> JSONObject:
         "provider_mac",
         "controlled_service",
         "blocked_udp_ports",
+        "unsupported_live_cases",
+        "unsupported_live_case_reasons",
     )
     return {
         key: coerce_json_value(capabilities[key])
@@ -966,6 +973,51 @@ def _is_wire_provider_unsafe_feature(plan: PacketPlan) -> bool:
     if bool(plan.metadata.get("malformed")):
         return True
     return bool(set(plan.feature_tags).intersection({"malformed", "non_strict_reencode"}))
+
+
+def _provider_unsupported_live_case_reasons(
+    plan: PacketPlan,
+    capabilities: Mapping[str, object],
+) -> list[str]:
+    case = _normalized_live_case(plan.case)
+    if case is None:
+        return []
+
+    unsupported_cases = {
+        normalized
+        for value in _string_list_value(
+            capabilities.get("unsupported_live_cases", []),
+            "provider_capabilities.unsupported_live_cases",
+        )
+        if (normalized := _normalized_live_case(value)) is not None
+    }
+    if case not in unsupported_cases:
+        return []
+
+    reasons = [SKIP_PROVIDER_CAPABILITY_UNAVAILABLE]
+    reason = _provider_unsupported_live_case_reason(capabilities, case)
+    if reason is not None:
+        reasons.append(reason)
+    return reasons
+
+
+def _provider_unsupported_live_case_reason(
+    capabilities: Mapping[str, object],
+    case: str,
+) -> str | None:
+    raw_reasons = capabilities.get("unsupported_live_case_reasons")
+    if not isinstance(raw_reasons, Mapping):
+        return None
+    for raw_case, raw_reason in raw_reasons.items():
+        if _normalized_live_case(raw_case) == case and isinstance(raw_reason, str):
+            return raw_reason
+    return None
+
+
+def _normalized_live_case(value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return value.replace("_", "-")
 
 
 def wire_comparison_policy(

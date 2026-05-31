@@ -49,6 +49,10 @@ REFERENCE_PRIVATE_ADDRESS = "10.42.19.20"
 LIBCRAFTER_PRIVATE_IPV6_ADDRESS = "fd42:19::10"
 REFERENCE_PRIVATE_IPV6_ADDRESS = "fd42:19::20"
 CAPABILITY_REPORT_ARTIFACT = "live-artifacts/oracle-live/capabilities.json"
+HETZNER_UNSUPPORTED_LIVE_CASE_REASON = (
+    "hetzner_private_network_drops_icmpv4_source_quench"
+)
+HETZNER_UNSUPPORTED_LIVE_CASES = ("icmpv4-source-quench",)
 PROVIDER_CAPABILITY_NAMES = (
     "ipv4_unicast",
     "ipv6_unicast",
@@ -84,6 +88,17 @@ def hetzner_default_provider_capabilities(
         source=source,
     )
     capabilities["capability_report_artifact"] = CAPABILITY_REPORT_ARTIFACT
+    capabilities.setdefault(
+        "unsupported_live_cases",
+        list(HETZNER_UNSUPPORTED_LIVE_CASES),
+    )
+    capabilities.setdefault(
+        "unsupported_live_case_reasons",
+        {
+            case: HETZNER_UNSUPPORTED_LIVE_CASE_REASON
+            for case in HETZNER_UNSUPPORTED_LIVE_CASES
+        },
+    )
     return capabilities
 
 
@@ -103,6 +118,17 @@ def normalize_hetzner_provider_capabilities(
     normalized["capability_report_artifact"] = raw.get(
         "capability_report_artifact",
         CAPABILITY_REPORT_ARTIFACT,
+    )
+    normalized.setdefault(
+        "unsupported_live_cases",
+        list(HETZNER_UNSUPPORTED_LIVE_CASES),
+    )
+    normalized.setdefault(
+        "unsupported_live_case_reasons",
+        {
+            case: HETZNER_UNSUPPORTED_LIVE_CASE_REASON
+            for case in HETZNER_UNSUPPORTED_LIVE_CASES
+        },
     )
     return normalized
 
