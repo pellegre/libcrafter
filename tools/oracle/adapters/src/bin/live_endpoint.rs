@@ -1086,6 +1086,8 @@ fn normalize_layer_name(name: &str) -> &str {
         "Tcp" => "tcp",
         "UDP" => "udp",
         "Udp" => "udp",
+        "IcmpAddressMask" => "payload",
+        "IcmpTimestamp" => "payload",
         "Raw" => "payload",
         value => value,
     }
@@ -1097,6 +1099,7 @@ fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value
             .as_any()
             .downcast_ref::<Ethernet>()
             .map(ethernet_fields),
+        "payload" => typed_body_payload_fields(layer),
         "ipv6" => layer.as_any().downcast_ref::<Ipv6>().map(ipv6_fields),
         "tcp" => layer.as_any().downcast_ref::<Tcp>().map(tcp_fields),
         "icmp" => layer.as_any().downcast_ref::<Icmp>().map(icmp_fields),
@@ -1118,6 +1121,27 @@ fn ethernet_fields(layer: &Ethernet) -> Map<String, Value> {
     if let Some(value) = layer.ethertype_value() {
         fields.insert("ethertype".to_string(), json!(value));
     }
+    fields
+}
+
+fn typed_body_payload_fields(layer: &dyn Layer) -> Option<Map<String, Value>> {
+    if let Some(mask) = layer.as_any().downcast_ref::<IcmpAddressMask>() {
+        return Some(payload_fields_from_bytes(&mask.mask_octets()));
+    }
+    if let Some(timestamp) = layer.as_any().downcast_ref::<IcmpTimestamp>() {
+        let mut bytes = Vec::with_capacity(12);
+        bytes.extend_from_slice(&timestamp.originate_value().to_be_bytes());
+        bytes.extend_from_slice(&timestamp.receive_value().to_be_bytes());
+        bytes.extend_from_slice(&timestamp.transmit_value().to_be_bytes());
+        return Some(payload_fields_from_bytes(&bytes));
+    }
+    None
+}
+
+fn payload_fields_from_bytes(bytes: &[u8]) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("hex".to_string(), json!(hex_bytes(bytes)));
+    fields.insert("length".to_string(), json!(bytes.len()));
     fields
 }
 
@@ -2866,6 +2890,66 @@ mod l2_ipv4_root {
         assert_eq!(bytes[20], ICMP_ADDRESS_MASK_REPLY);
         assert_eq!(&bytes[24..28], &[0x11, 0x11, 0x22, 0x22]);
         assert_eq!(&bytes[28..34], &[255, 255, 255, 0, 0xcc, 0xdd]);
+    }
+
+    #[test]
+    fn decoded_address_mask_body_normalizes_as_payload() {
+        let packet = Ipv4::new()
+            .src_str("10.42.19.10")
+            .expect("valid source")
+            .dst_str("10.42.19.20")
+            .expect("valid destination")
+            .id(1)
+            .ttl(64)
+            .protocol(IPPROTO_ICMP)
+            / Icmp::address_mask_reply().id(0x1111).seq(0x2222)
+            / IcmpAddressMask::new().mask(Ipv4Addr::new(255, 255, 255, 0));
+        let compiled = packet.compile().expect("packet compiles");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("packet decodes");
+        let model = decoded_model(&decoded, Some("l3:ipv4"), compiled.as_bytes(), vec![])
+            .expect("model builds");
+        assert_eq!(
+            model["layers"],
+            json!(["ipv4", "icmp", "payload"]),
+            "typed address-mask body should compare as flat payload"
+        );
+        assert_eq!(model["fields"]["payload"]["hex"], json!("ffffff00"));
+        assert_eq!(model["fields"]["payload"]["length"], json!(4));
+        assert!(model["fields"].get("IcmpAddressMask").is_none());
+    }
+
+    #[test]
+    fn decoded_timestamp_body_normalizes_as_payload() {
+        let packet = Ipv4::new()
+            .src_str("10.42.19.10")
+            .expect("valid source")
+            .dst_str("10.42.19.20")
+            .expect("valid destination")
+            .id(1)
+            .ttl(64)
+            .protocol(IPPROTO_ICMP)
+            / Icmp::timestamp_request().id(0x1111).seq(0x2222)
+            / IcmpTimestamp::new()
+                .originate(0x0102_0304)
+                .receive(0x0506_0708)
+                .transmit(0x090a_0b0c);
+        let compiled = packet.compile().expect("packet compiles");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("packet decodes");
+        let model = decoded_model(&decoded, Some("l3:ipv4"), compiled.as_bytes(), vec![])
+            .expect("model builds");
+        assert_eq!(
+            model["layers"],
+            json!(["ipv4", "icmp", "payload"]),
+            "typed timestamp body should compare as flat payload"
+        );
+        assert_eq!(
+            model["fields"]["payload"]["hex"],
+            json!("0102030405060708090a0b0c")
+        );
+        assert_eq!(model["fields"]["payload"]["length"], json!(12));
+        assert!(model["fields"].get("IcmpTimestamp").is_none());
     }
 
     #[test]
