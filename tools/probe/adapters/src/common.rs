@@ -113,6 +113,16 @@ pub struct ProbePlan {
     #[serde(default)]
     pub expected_answer_data: Option<String>,
     #[serde(default)]
+    pub expected_answer_count: Option<usize>,
+    #[serde(default)]
+    pub original_name: Option<String>,
+    #[serde(default)]
+    pub canonical_name: Option<String>,
+    #[serde(default)]
+    pub terminal_ipv4: Option<String>,
+    #[serde(default)]
+    pub expected_cname_answer: Option<DnsAnswerExpectation>,
+    #[serde(default)]
     pub expected_response_code: Option<u8>,
     #[serde(default)]
     pub answer_ttl: Option<u32>,
@@ -126,6 +136,22 @@ pub struct ProbePlan {
     pub expected_embedded_prefix_hex: Option<String>,
     #[serde(default)]
     pub expected_embedded_prefix_length: Option<usize>,
+}
+
+/// One expected DNS answer record carried in a probe plan.
+///
+/// Used by multi-answer DNS cases (the CNAME chain) so the stimulus endpoint
+/// can confirm an individual non-terminal answer (name/type/class/data) decoded
+/// out of the response in addition to the terminal answer the shared
+/// single-answer fields already describe.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DnsAnswerExpectation {
+    pub name: String,
+    #[serde(default)]
+    pub type_value: Option<u16>,
+    #[serde(default)]
+    pub class_value: Option<u16>,
+    pub data: String,
 }
 
 #[derive(Debug)]
@@ -335,10 +361,11 @@ fn dispatch_case(
         (RunMode::Live, "icmp-echo") => icmp::run_icmp_live(request, plan),
         (RunMode::DryRun, "tcp-syn-open" | "tcp-syn-closed") => tcp::run_tcp_dry_run(request, plan),
         (RunMode::Live, "tcp-syn-open" | "tcp-syn-closed") => tcp::run_tcp_live(request, plan),
-        (RunMode::DryRun, "dns-query" | "dns-a-success" | "dns-aaaa-success") => {
-            dns::run_dns_dry_run(request, plan)
-        }
-        (RunMode::Live, "dns-query" | "dns-a-success" | "dns-aaaa-success") => {
+        (
+            RunMode::DryRun,
+            "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain",
+        ) => dns::run_dns_dry_run(request, plan),
+        (RunMode::Live, "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain") => {
             dns::run_dns_live(request, plan)
         }
         (RunMode::DryRun, "ttl-expired") => icmp::run_ttl_expired_dry_run(request, plan),
@@ -448,6 +475,10 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_answer_type": plan.expected_answer_type,
         "expected_answer_type_value": plan.expected_answer_type_value,
         "expected_answer_data": plan.expected_answer_data,
+        "expected_answer_count": plan.expected_answer_count,
+        "original_name": plan.original_name,
+        "canonical_name": plan.canonical_name,
+        "terminal_ipv4": plan.terminal_ipv4,
         "expected_response_code": plan.expected_response_code,
         "answer_ttl": plan.answer_ttl,
         "ttl": plan.ttl,
@@ -524,7 +555,7 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
             plan.destination_port.unwrap_or(0),
             plan.source_port.unwrap_or(0),
         ),
-        "dns-query" | "dns-a-success" | "dns-aaaa-success" => format!(
+        "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" => format!(
             "udp and src host {} and dst host {} and src port {} and dst port {}",
             plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
             plan.expected_reply_destination_ipv4
@@ -551,7 +582,9 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "icmp-echo" => "icmp_echo_reply",
             "tcp-syn-open" => "tcp_syn_ack",
             "tcp-syn-closed" => "tcp_rst",
-            "dns-query" | "dns-a-success" | "dns-aaaa-success" => "dns_response",
+            "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" => {
+                "dns_response"
+            }
             "ttl-expired" => "icmp_ttl_expired",
             _ => "unknown",
         })
@@ -576,6 +609,19 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "query_name": plan.query_name,
             "query_type": plan.query_type,
             "answer_data": plan.expected_answer_data,
+        }),
+        "dns-cname-chain" => json!({
+            "required": true,
+            "kind": "udp-dns-responder",
+            "port": plan.destination_port,
+            "query_name": plan.query_name,
+            "query_type": plan.query_type,
+            "answer_data": plan.expected_answer_data,
+            "cname_chain": {
+                "canonical_name": plan.canonical_name,
+                "terminal_ipv4": plan.terminal_ipv4,
+                "expected_answer_count": plan.expected_answer_count,
+            },
         }),
         _ => json!({}),
     }

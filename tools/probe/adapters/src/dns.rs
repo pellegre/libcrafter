@@ -378,6 +378,43 @@ pub fn validate_dns_candidate(
         }));
     }
 
+    // Multi-answer chain cases (the CNAME chain) additionally require a specific
+    // non-terminal answer (the CNAME whose RDATA is the canonical domain name)
+    // and an exact answer count, so a response that decoded the terminal A but
+    // dropped or mangled the CNAME RDATA still fails the payload check. The
+    // original question is already validated above and stays untouched.
+    if let Some(expected_cname) = plan.expected_cname_answer.as_ref() {
+        let expected_cname_name = canonical_dns_name(&expected_cname.name);
+        let expected_cname_type = expected_cname.type_value.unwrap_or(DNS_TYPE_CNAME);
+        let matching_cname = dns.answers().iter().find(|answer| {
+            answer.name() == expected_cname_name
+                && answer.record_type() == expected_cname_type
+                && dns_record_data_matches(answer.data(), &expected_cname.data)
+        });
+        if matching_cname.is_none() {
+            mismatches.push(json!({
+                "field": "dns.cname_answer",
+                "expected": {
+                    "name": expected_cname_name,
+                    "type": expected_cname_type,
+                    "data": expected_cname.data,
+                },
+                "actual": dns_answers_json(dns),
+            }));
+        }
+    }
+
+    if let Some(expected_count) = plan.expected_answer_count {
+        let actual_count = dns.answers().len();
+        if actual_count != expected_count {
+            mismatches.push(json!({
+                "field": "dns.answer_count",
+                "expected": expected_count,
+                "actual": actual_count,
+            }));
+        }
+    }
+
     if !mismatches.is_empty() {
         return Ok(CandidateValidation::WrongPayload(json!({
             "packet": decoded,
@@ -529,6 +566,7 @@ fn dns_record_data_json(data: &DnsRecordData) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::DnsAnswerExpectation;
     use crate::test_support::base_plan;
 
     #[test]
@@ -576,5 +614,107 @@ mod tests {
     fn canonical_dns_name_normalizes() {
         assert_eq!(canonical_dns_name("Example.Test."), "example.test.");
         assert_eq!(canonical_dns_name(""), ".");
+    }
+
+    /// Build the IPv4/UDP/DNS response a controlled CNAME-chain responder emits:
+    /// a CNAME answer owned by the queried name whose RDATA is the canonical
+    /// domain name, followed by a terminal A answer owned by that canonical
+    /// name. Returns the decoded packet plus the raw bytes for validation.
+    fn cname_chain_response_bytes(
+        query_name: &str,
+        canonical_name: &str,
+        terminal: Ipv4Addr,
+        query_id: u16,
+    ) -> Vec<u8> {
+        let dns = Dns::query(query_name, DNS_TYPE_A)
+            .id(query_id)
+            .response(true)
+            .answer(DnsRecord::cname(query_name, canonical_name, 120))
+            .answer(DnsRecord::a(canonical_name, terminal, 90));
+        (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .expect("cname chain response compiles")
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn cname_chain_plan(query_name: &str, canonical_name: &str, terminal: &str) -> ProbePlan {
+        let mut plan = base_plan("dns-cname-chain");
+        plan.source_ipv4 = Some("10.77.0.10".to_string());
+        plan.destination_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.77.0.10".to_string());
+        plan.source_port = Some(40000);
+        plan.destination_port = Some(53);
+        plan.query_id = Some(0x6642);
+        plan.query_name = Some(query_name.to_string());
+        plan.query_type = Some("A".to_string());
+        plan.query_type_value = Some(DNS_TYPE_A);
+        plan.query_class_value = Some(DNS_CLASS_IN);
+        plan.expected_answer_name = Some(canonical_name.to_string());
+        plan.expected_answer_type = Some("A".to_string());
+        plan.expected_answer_type_value = Some(DNS_TYPE_A);
+        plan.expected_answer_data = Some(terminal.to_string());
+        plan.expected_answer_count = Some(2);
+        plan.original_name = Some(query_name.to_string());
+        plan.canonical_name = Some(canonical_name.to_string());
+        plan.terminal_ipv4 = Some(terminal.to_string());
+        plan.expected_cname_answer = Some(DnsAnswerExpectation {
+            name: query_name.to_string(),
+            type_value: Some(DNS_TYPE_CNAME),
+            class_value: Some(DNS_CLASS_IN),
+            data: canonical_name.to_string(),
+        });
+        plan.expected_response_code = Some(0);
+        plan
+    }
+
+    #[test]
+    fn cname_chain_response_validates_both_answers() {
+        let query = "probe-1012-0-e6426682f3.behavior.libcrafter.test.";
+        let canonical = "canonical-1012-0-03040be178.behavior.libcrafter.test.";
+        let terminal = Ipv4Addr::new(203, 0, 113, 244);
+        let raw = cname_chain_response_bytes(query, canonical, terminal, 0x6642);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+
+        // The crate decodes both answers, including the CNAME domain-name RDATA.
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        assert_eq!(dns.answers().len(), 2);
+
+        let plan = cname_chain_plan(query, canonical, "203.0.113.244");
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed for cname chain, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cname_chain_missing_terminal_answer_fails_payload() {
+        let query = "probe-1012-0-e6426682f3.behavior.libcrafter.test.";
+        let canonical = "canonical-1012-0-03040be178.behavior.libcrafter.test.";
+        // A response that carries only the CNAME (no terminal A) must not pass.
+        let dns = Dns::query(query, DNS_TYPE_A)
+            .id(0x6642)
+            .response(true)
+            .answer(DnsRecord::cname(query, canonical, 120));
+        let raw = (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = cname_chain_plan(query, canonical, "203.0.113.244");
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for incomplete chain, got {other:?}"),
+        }
     }
 }

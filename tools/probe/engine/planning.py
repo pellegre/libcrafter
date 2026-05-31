@@ -492,6 +492,154 @@ def _dns_aaaa_success_probe_plan(
     }
 
 
+def _dns_cname_chain_probe_plan(
+    *,
+    case_name: str = "dns-cname-chain",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dns-cname-chain`` behavioral case.
+
+    An A (QTYPE 1) query whose answer section is a two-record chain: a CNAME
+    (QTYPE 5) record whose RDATA is the canonical domain name, followed by a
+    terminal A record for that canonical name with a deterministic
+    documentation-space IPv4 answer. The validation contract preserves the
+    *original* question (the queried name and QTYPE A), confirms the response
+    flags (QR/rcode), and asserts both answers are present with an expected
+    answer count of two. ``data`` on the CNAME answer is the canonical name so
+    the controlled responder's domain-name RDATA round-trips through libcrafter.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    destination_port = 53
+    query_name = dns_query_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    canonical_name = dns_canonical_name(
+        profile=profile, seed=seed, sequence=sequence, digest=digest
+    )
+    terminal_ipv4 = f"203.0.113.{1 + digest[4] % 250}"
+    cname_ttl = 60 + digest[9] % 180
+    address_ttl = 60 + digest[10] % 180
+    expected_answer_count = 2
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": "A",
+        "query_type_value": 1,
+        "query_class": "IN",
+        "query_class_value": 1,
+        # The CNAME answer is the canonical name; the terminal A answer carries
+        # the documentation-space IPv4 address. ``expected_answer_*`` keeps the
+        # legacy single-answer fields pointed at the terminal A record so the
+        # endpoint's shared answer match continues to find the address answer.
+        "original_name": query_name,
+        "canonical_name": canonical_name,
+        "terminal_ipv4": terminal_ipv4,
+        "expected_answer_count": expected_answer_count,
+        "expected_answer_name": canonical_name,
+        "expected_answer_type": "A",
+        "expected_answer_type_value": 1,
+        "expected_answer_class": "IN",
+        "expected_answer_class_value": 1,
+        "expected_answer_data": terminal_ipv4,
+        "expected_cname_answer": {
+            "name": query_name,
+            "type": "CNAME",
+            "type_value": 5,
+            "class": "IN",
+            "class_value": 1,
+            "data": canonical_name,
+            "ttl": cname_ttl,
+        },
+        "expected_response_code": 0,
+        "expected_response_flags": ["qr", "aa"],
+        "answer_ttl": address_ttl,
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": "A",
+            "answer_data": terminal_ipv4,
+            "answer_ttl": address_ttl,
+            "cname_chain": {
+                "canonical_name": canonical_name,
+                "cname_ttl": cname_ttl,
+                "address_ttl": address_ttl,
+            },
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": 0,
+            "question": {
+                "name": query_name,
+                "type": "A",
+                "type_value": 1,
+                "class": "IN",
+                "class_value": 1,
+            },
+            "answer_count": expected_answer_count,
+            "cname_answer": {
+                "name": query_name,
+                "type": "CNAME",
+                "type_value": 5,
+                "class": "IN",
+                "class_value": 1,
+                "data": canonical_name,
+                "ttl": cname_ttl,
+            },
+            "answer": {
+                "name": canonical_name,
+                "type": "A",
+                "type_value": 1,
+                "class": "IN",
+                "class_value": 1,
+                "data": terminal_ipv4,
+                "ttl": address_ttl,
+            },
+        },
+    }
+
+
+def dns_canonical_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
+    """Return the deterministic canonical (CNAME target) name for a chain case.
+
+    The canonical name shares the controlled ``libcrafter.test.`` suffix as the
+    queried name but uses a distinct ``canonical-`` label so the chain has two
+    different owner names (the queried CNAME and its terminal A target).
+    """
+
+    label = dns_label(profile)
+    suffix = digest.hex()[10:20]
+    return f"canonical-{seed}-{sequence}-{suffix}.{label}.libcrafter.test."
+
+
 def deterministic_documentation_ipv6(digest: bytes) -> str:
     """Return a deterministic IPv6 address in the ``2001:db8::/32`` block.
 
@@ -686,6 +834,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-query": _dns_query_probe_plan,
     "dns-a-success": _dns_a_success_probe_plan,
     "dns-aaaa-success": _dns_aaaa_success_probe_plan,
+    "dns-cname-chain": _dns_cname_chain_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }
