@@ -617,7 +617,7 @@ mod dns_dnssec {
         // NAPTR (35) types must each decode to DnsRecordData::Raw (never a
         // mis-typed record) and recompile their exact RDATA bytes through the
         // packet stack. The numeric codepoints and opaque RDATA match the oracle
-        // fixture so the crate test and the Scapy comparison stay in lockstep.
+        // fixture so the crate test and the reference comparison stay in lockstep.
         const RAW_TYPE_CASES: &[(u16, &[u8])] = &[
             // Private-use unknown TYPE 65280 (RFC 6895 Section 3.1).
             (65280, &[0xde, 0xad, 0xbe, 0xef]),

@@ -65,7 +65,7 @@ Focused offline checks for UDP options:
 
 ```sh
 cargo test -p crafter --test fixture_suite udp_options
-tools/oracle/run offline --backend scapy --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-example-offline
+tools/oracle/run offline --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-example-offline
 ```
 
 Examples are safe by default. Live-capable examples require `--live` and
