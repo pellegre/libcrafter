@@ -627,6 +627,95 @@ def _dns_cname_chain_probe_plan(
     }
 
 
+def _dns_nxdomain_probe_plan(
+    *,
+    case_name: str = "dns-nxdomain",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dns-nxdomain`` behavioral case.
+
+    An A (QTYPE 1) query for a deterministically planned *absent* name. The
+    controlled UDP DNS responder has no record for the name, so it returns a
+    negative response: rcode 3 (NXDOMAIN), QR set, the original question echoed,
+    and an empty answer section (ancount 0). The validation contract asserts the
+    transaction id, QR flag, rcode NXDOMAIN, the preserved question
+    (name/type/class), an answer count of zero, plus the peer addresses and
+    ports. ``target_service`` marks the name ``absent`` so the responder leaves
+    it unregistered and answers NXDOMAIN.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    destination_port = 53
+    query_name = dns_query_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    expected_answer_count = 0
+    expected_response_code = 3
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": "A",
+        "query_type_value": 1,
+        "query_class": "IN",
+        "query_class_value": 1,
+        # NXDOMAIN carries no answer; the queried name is absent. The expected
+        # answer count is zero and the rcode is 3 (NXDOMAIN). The legacy
+        # ``expected_answer_*`` fields are intentionally omitted so the endpoint
+        # does not look for an answer record.
+        "absent_name": query_name,
+        "expected_answer_count": expected_answer_count,
+        "expected_response_code": expected_response_code,
+        "expected_response_flags": ["qr"],
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": "A",
+            "absent": True,
+            "expected_response_code": expected_response_code,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": expected_response_code,
+            "question": {
+                "name": query_name,
+                "type": "A",
+                "type_value": 1,
+                "class": "IN",
+                "class_value": 1,
+            },
+            "answer_count": expected_answer_count,
+        },
+    }
+
+
 def dns_canonical_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
     """Return the deterministic canonical (CNAME target) name for a chain case.
 
@@ -835,6 +924,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-a-success": _dns_a_success_probe_plan,
     "dns-aaaa-success": _dns_aaaa_success_probe_plan,
     "dns-cname-chain": _dns_cname_chain_probe_plan,
+    "dns-nxdomain": _dns_nxdomain_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }

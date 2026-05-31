@@ -65,6 +65,14 @@ def _dns_cname_chain_plan(*, seed: int = 1012, sequence: int = 0) -> dict:
     )
 
 
+def _dns_nxdomain_plan(*, seed: int = 1013, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dns-nxdomain"]),
+        case=planning.PROBE_CASE_BY_NAME["dns-nxdomain"],
+        sequence=sequence,
+    )
+
+
 class DnsASuccessPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct A query/answer contract."""
 
@@ -422,6 +430,118 @@ class DnsCnameChainTest(unittest.TestCase):
                 if result.get("case") == "dns-cname-chain"
             ]
             self.assertTrue(results, "endpoint emitted no dns-cname-chain result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+
+class DnsNxdomainPlanTest(unittest.TestCase):
+    """The plan carries an RFC-correct NXDOMAIN (negative response) contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dns-nxdomain", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dns-nxdomain"],
+            planning._dns_nxdomain_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dns_nxdomain_plan(), _dns_nxdomain_plan())
+
+    def test_plan_carries_an_absent_name_query_contract(self) -> None:
+        plan = _dns_nxdomain_plan()
+
+        self.assertEqual(plan["case"], "dns-nxdomain")
+        self.assertEqual(plan["stimulus"], "dns_query")
+        self.assertEqual(plan["expected_response"], "dns_response")
+
+        # Query id, source port, target port 53, query name, and QTYPE A.
+        self.assertIsInstance(plan["query_id"], int)
+        self.assertTrue(1 <= plan["query_id"] <= 0xFFFF)
+        self.assertIsInstance(plan["source_port"], int)
+        self.assertNotEqual(plan["source_port"], 53)
+        self.assertEqual(plan["destination_port"], 53)
+        self.assertTrue(plan["query_name"].endswith("."))
+        self.assertEqual(plan["query_type"], "A")
+        self.assertEqual(plan["query_type_value"], 1)
+        self.assertEqual(plan["query_class_value"], 1)
+
+        # The queried name is the planned absent name; the response is a negative
+        # answer: rcode 3 (NXDOMAIN), zero answers, no answer data.
+        self.assertEqual(plan["absent_name"], plan["query_name"])
+        self.assertEqual(plan["expected_response_code"], 3)
+        self.assertEqual(plan["expected_answer_count"], 0)
+        self.assertNotIn("expected_answer_data", plan)
+        self.assertIn("qr", plan["expected_response_flags"])
+
+    def test_validation_contract_covers_id_qr_rcode_question_zero_answers(self) -> None:
+        plan = _dns_nxdomain_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (response flows target -> stimulus).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 53)
+        self.assertEqual(validation["destination_port"], plan["source_port"])
+
+        # Transaction id, QR flag, and rcode NXDOMAIN (3).
+        self.assertEqual(validation["query_id"], plan["query_id"])
+        self.assertTrue(validation["qr"])
+        self.assertEqual(validation["response_code"], 3)
+
+        # The original question is preserved (the absent name, QTYPE A, class IN).
+        question = validation["question"]
+        self.assertEqual(question["name"], plan["query_name"])
+        self.assertEqual(question["type"], "A")
+        self.assertEqual(question["class"], "IN")
+
+        # Negative responses carry no answer: the answer count is exactly zero,
+        # and the contract does not assert any answer record.
+        self.assertEqual(validation["answer_count"], 0)
+        self.assertNotIn("answer", validation)
+
+    def test_target_service_marks_the_name_absent(self) -> None:
+        target_service = _dns_nxdomain_plan()["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-dns-responder")
+        self.assertEqual(target_service["port"], 53)
+        self.assertEqual(target_service["query_type"], "A")
+        # The responder leaves the name unregistered and answers NXDOMAIN.
+        self.assertTrue(target_service["absent"])
+        self.assertEqual(target_service["expected_response_code"], 3)
+
+
+class DnsNxdomainTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dns-nxdomain",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1013,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dns-nxdomain", planned)
+
+            # The endpoint produced a result for the focused case and it built
+            # the A query for the absent name (a dry-run plan compiles the
+            # outgoing stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dns-nxdomain"
+            ]
+            self.assertTrue(results, "endpoint emitted no dns-nxdomain result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))

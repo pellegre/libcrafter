@@ -297,13 +297,6 @@ pub fn validate_dns_candidate(
         canonical_dns_name(required_str(plan.query_name.as_deref(), "query_name")?);
     let expected_qtype = dns_type_value(plan)?;
     let expected_qclass = plan.query_class_value.unwrap_or(DNS_CLASS_IN);
-    let expected_answer_name = canonical_dns_name(required_str(
-        plan.expected_answer_name.as_deref(),
-        "expected_answer_name",
-    )?);
-    let expected_answer_type = plan.expected_answer_type_value.unwrap_or(expected_qtype);
-    let expected_answer_data =
-        required_str(plan.expected_answer_data.as_deref(), "expected_answer_data")?;
     let expected_rcode = plan.expected_response_code.unwrap_or(0);
     let mut mismatches = Vec::new();
 
@@ -361,21 +354,32 @@ pub fn validate_dns_candidate(
         })),
     }
 
-    let matching_answer = dns.answers().iter().find(|answer| {
-        answer.name() == expected_answer_name
-            && answer.record_type() == expected_answer_type
-            && dns_record_data_matches(answer.data(), expected_answer_data)
-    });
-    if matching_answer.is_none() {
-        mismatches.push(json!({
-            "field": "dns.answer",
-            "expected": {
-                "name": expected_answer_name,
-                "type": expected_answer_type,
-                "data": expected_answer_data,
-            },
-            "actual": dns_answers_json(dns),
-        }));
+    // Negative responses (NXDOMAIN) carry no answer record, so the terminal
+    // answer match only runs when an answer is expected. The empty answer
+    // section is enforced by `expected_answer_count` (0) below; rcode 3, the QR
+    // flag, transaction id, and the preserved question are checked above.
+    if let Some(expected_answer_data) = plan.expected_answer_data.as_deref() {
+        let expected_answer_name = canonical_dns_name(required_str(
+            plan.expected_answer_name.as_deref(),
+            "expected_answer_name",
+        )?);
+        let expected_answer_type = plan.expected_answer_type_value.unwrap_or(expected_qtype);
+        let matching_answer = dns.answers().iter().find(|answer| {
+            answer.name() == expected_answer_name
+                && answer.record_type() == expected_answer_type
+                && dns_record_data_matches(answer.data(), expected_answer_data)
+        });
+        if matching_answer.is_none() {
+            mismatches.push(json!({
+                "field": "dns.answer",
+                "expected": {
+                    "name": expected_answer_name,
+                    "type": expected_answer_type,
+                    "data": expected_answer_data,
+                },
+                "actual": dns_answers_json(dns),
+            }));
+        }
     }
 
     // Multi-answer chain cases (the CNAME chain) additionally require a specific
@@ -715,6 +719,116 @@ mod tests {
         match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
             CandidateValidation::WrongPayload(_) => {}
             other => panic!("expected WrongPayload for incomplete chain, got {other:?}"),
+        }
+    }
+
+    /// Build the IPv4/UDP/DNS NXDOMAIN response a controlled responder emits for
+    /// an absent name: QR set, rcode 3 (NXDOMAIN), the original question echoed,
+    /// and an empty answer section.
+    fn nxdomain_response_bytes(query_name: &str, query_id: u16) -> Vec<u8> {
+        let dns = Dns::query(query_name, DNS_TYPE_A)
+            .id(query_id)
+            .response(true)
+            .rcode(DNS_RCODE_NXDOMAIN);
+        (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .expect("nxdomain response compiles")
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn nxdomain_plan(query_name: &str) -> ProbePlan {
+        let mut plan = base_plan("dns-nxdomain");
+        plan.source_ipv4 = Some("10.77.0.10".to_string());
+        plan.destination_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.77.0.10".to_string());
+        plan.source_port = Some(40000);
+        plan.destination_port = Some(53);
+        plan.query_id = Some(0x4d2a);
+        plan.query_name = Some(query_name.to_string());
+        plan.query_type = Some("A".to_string());
+        plan.query_type_value = Some(DNS_TYPE_A);
+        plan.query_class_value = Some(DNS_CLASS_IN);
+        plan.absent_name = Some(query_name.to_string());
+        plan.expected_answer_count = Some(0);
+        plan.expected_response_code = Some(DNS_RCODE_NXDOMAIN);
+        plan
+    }
+
+    #[test]
+    fn nxdomain_response_validates_negative_answer() {
+        let query = "probe-1013-0-absent00aa.behavior.libcrafter.test.";
+        let raw = nxdomain_response_bytes(query, 0x4d2a);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+
+        // The crate decodes the NXDOMAIN response: QR set, rcode 3, no answers,
+        // the original question preserved.
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        assert!(dns.is_response());
+        assert_eq!(dns.rcode_value(), DNS_RCODE_NXDOMAIN);
+        assert_eq!(dns.answers().len(), 0);
+        assert_eq!(dns.questions().first().unwrap().name(), query);
+
+        let plan = nxdomain_plan(query);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed for nxdomain, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nxdomain_with_answer_fails_payload() {
+        let query = "probe-1013-0-absent00aa.behavior.libcrafter.test.";
+        // A responder that wrongly returns an A answer for the absent name (or a
+        // NOERROR/rcode-0 answer) must not pass the NXDOMAIN contract: the
+        // answer count is non-zero.
+        let dns = Dns::query(query, DNS_TYPE_A)
+            .id(0x4d2a)
+            .response(true)
+            .rcode(DNS_RCODE_NXDOMAIN)
+            .answer(DnsRecord::a(query, Ipv4Addr::new(203, 0, 113, 5), 60));
+        let raw = (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = nxdomain_plan(query);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for nxdomain with answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wrong_rcode_fails_nxdomain() {
+        let query = "probe-1013-0-absent00aa.behavior.libcrafter.test.";
+        // A NOERROR (rcode 0) response with no answers is NODATA, not NXDOMAIN;
+        // the rcode mismatch must surface.
+        let dns = Dns::query(query, DNS_TYPE_A).id(0x4d2a).response(true);
+        let raw = (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = nxdomain_plan(query);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong rcode, got {other:?}"),
         }
     }
 }

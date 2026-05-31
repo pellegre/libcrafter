@@ -414,7 +414,13 @@ def tcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
 # legacy smoke case; ``dns-a-success``, ``dns-aaaa-success``, and the later DNS
 # behavioral cases reuse the same responder descriptor and target setup.
 _DNS_RESPONDER_CASES: frozenset[str] = frozenset(
-    {"dns-query", "dns-a-success", "dns-aaaa-success", "dns-cname-chain"}
+    {
+        "dns-query",
+        "dns-a-success",
+        "dns-aaaa-success",
+        "dns-cname-chain",
+        "dns-nxdomain",
+    }
 )
 
 
@@ -681,11 +687,17 @@ def target_service_setup_script(
                 "for plan in plans:",
                 "    name = str(plan['query_name']).lower().rstrip('.') + '.'",
                 "    qtype = int(plan['query_type_value'])",
+                "    service = plan.get('target_service') or {}",
+                "    # NXDOMAIN cases register no record: the name is deliberately",
+                "    # absent so the responder returns rcode 3 with an empty answer",
+                "    # section and the original question echoed.",
+                "    if isinstance(service, dict) and service.get('absent'):",
+                "        records.pop((name, qtype), None)",
+                "        continue",
                 "    record = {",
                 "        'answer_data': str(plan['expected_answer_data']),",
                 "        'ttl': int(plan.get('answer_ttl', 60)),",
                 "    }",
-                "    service = plan.get('target_service') or {}",
                 "    chain = service.get('cname_chain') if isinstance(service, dict) else None",
                 "    if isinstance(chain, dict):",
                 "        canonical = str(chain['canonical_name']).lower().rstrip('.') + '.'",
