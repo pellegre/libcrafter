@@ -1261,8 +1261,9 @@ class PacketGenerator:
         bytes after the ICMP rest-of-header.
 
         Extension-framing behaviors marked raw-compatible (RFC 4884/4950 MPLS,
-        RFC 5837 interface information) keep the flat ``extension_bytes`` body and
-        do not quote a datagram, matching the live coverage matrix.
+        RFC 5837 interface information) still include the quoted datagram before
+        their deterministic ``extension_bytes`` body. The reference model keeps
+        this as a flat trailing payload for backend-neutral comparison.
         """
 
         icmp = fields["icmp"]
@@ -1275,10 +1276,10 @@ class PacketGenerator:
 
         embeds = _icmp_behavior_embeds(spec)
 
-        # Extension-only error behaviors stay on the flat raw-compatible body
-        # (deterministic RFC 4884/4950 extension bytes); they do not quote a
-        # datagram.
+        # Extension error behaviors keep backend-neutral flat payload bytes, but
+        # the ICMP error body still starts with a quoted datagram.
         if "icmp_extension_mpls" in embeds:
+            icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
             icmp["extension_bytes"] = {"hex": _ICMP_MPLS_EXTENSION_BYTES}
             return
         if embeds.intersection({"icmp_extension_header", "icmp_extension_object"}):
@@ -2184,16 +2185,26 @@ def _apply_icmp_live_body(
 ) -> None:
     """Populate the type-specific rest-of-header body for one ICMP behavior."""
 
-    # RFC 4884/4950 extension framing: append deterministic, raw-compatible
-    # extension bytes that both backends emit and parse the same way.
+    # RFC 4884/4950 extension framing: ICMP error packets carry a quoted
+    # datagram before deterministic, raw-compatible extension bytes. Extended
+    # echo uses the same extension byte field without an embedded datagram.
     embeds = entry.get("embeds")
     if isinstance(embeds, Sequence) and not isinstance(embeds, (str, bytes)):
         embed_names = {value for value in embeds if isinstance(value, str)}
+        is_error_type = icmp_type in {
+            "destination_unreachable",
+            "time_exceeded",
+            "parameter_problem",
+        }
         if "icmp_extension_mpls" in embed_names:
+            if is_error_type:
+                icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
             icmp["extension_bytes"] = {"hex": _ICMP_MPLS_EXTENSION_BYTES}
         elif embed_names.intersection(
             {"icmp_extension_header", "icmp_extension_object"}
         ):
+            if is_error_type:
+                icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
             icmp["extension_bytes"] = {"hex": _ICMP_EXTENSION_BYTES}
 
     if behavior == "redirect" or icmp_type == "redirect":

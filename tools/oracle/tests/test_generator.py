@@ -61,6 +61,7 @@ class IcmpCommonFieldGenerationTest(unittest.TestCase):
             "address_mask",
             "router_addresses",
             "extension_bytes",
+            "embedded_header",
         ):
             self.assertNotIn(body_field, icmp)
 
@@ -122,6 +123,9 @@ class IcmpCommonFieldGenerationTest(unittest.TestCase):
     def test_mpls_extension_lists_raw_compatible_extension_bytes(self) -> None:
         icmp = _icmp_for_case("icmpv4-extensions-mpls")
         self.assertEqual(icmp["type"], "destination_unreachable")
+        embedded = icmp["embedded_header"]
+        self.assertIsInstance(embedded, dict)
+        bytes.fromhex(embedded["hex"])
         extension = icmp["extension_bytes"]
         self.assertIsInstance(extension, dict)
         self.assertIn("hex", extension)

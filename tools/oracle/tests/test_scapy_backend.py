@@ -331,11 +331,17 @@ class ScapyIcmpLiveMaterializationTest(unittest.TestCase):
         self.assertEqual(decoded.fields["icmp"]["rest_of_header"], "00000000")
 
     def test_extension_bytes_become_flat_payload(self) -> None:
+        quoted = (
+            "45000028424200004011b464c000020ac00002149c40003500140000"
+            "71756f7465642d7175657279"
+        )
+        extension = "2000000000080100000010ff"
         plan = _icmp_live_plan(
             {
                 "type": "destination_unreachable",
                 "code": 0,
-                "extension_bytes": {"hex": "2000000000080100000010ff"},
+                "embedded_header": {"hex": quoted},
+                "extension_bytes": {"hex": extension},
             },
             case="icmpv4-extensions-mpls",
             payload_hex="",
@@ -345,9 +351,7 @@ class ScapyIcmpLiveMaterializationTest(unittest.TestCase):
         # rest-of-header stays in the icmp header; the extension blob is the
         # flat payload both backends parse identically.
         self.assertEqual(decoded.fields["icmp"]["rest_of_header"], "00000000")
-        self.assertEqual(
-            decoded.fields["payload"]["hex"], "2000000000080100000010ff"
-        )
+        self.assertEqual(decoded.fields["payload"]["hex"], quoted + extension)
 
     def test_extended_echo_request_numeric_type(self) -> None:
         plan = _icmp_live_plan(
