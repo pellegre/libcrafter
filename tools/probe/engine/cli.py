@@ -37,10 +37,13 @@ from .capabilities import (
     skip_reason_for_missing_capability as _skip_reason_for_missing_capability,
 )
 from .cases import (
+    DEFAULT_PROFILE,
     ENDPOINT_ROLES as _ENDPOINT_ROLES,
     PROBE_CASES as _PROBE_CASES,
     PROBE_CASE_BY_NAME as _PROBE_CASE_BY_NAME,
     case_name_filters as _case_name_filters,
+    profile_default_count as _profile_default_count,
+    profile_selected_cases as _profile_selected_cases,
     selected_cases as _selected_cases,
 )
 from .lab import (
@@ -152,8 +155,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--profile",
-        default="smoke",
-        help="probe sampling profile (default: %(default)s)",
+        default=DEFAULT_PROFILE,
+        help=(
+            "probe sampling profile (default: %(default)s); "
+            "'behavior' selects the full DNS/DHCP/ARP/UDP suite"
+        ),
     )
     parser.add_argument(
         "--seed",
@@ -164,8 +170,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--count",
         type=_positive_int,
-        default=5,
-        help="number of probe cases to plan (default: %(default)s)",
+        default=None,
+        help=(
+            "number of probe cases to plan "
+            "(default: profile default, smoke=5, behavior=40)"
+        ),
     )
     parser.add_argument(
         "--case",
@@ -193,7 +202,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _run(args: argparse.Namespace) -> int:
     try:
         request = _request_from_args(args)
-        selected_cases = _selected_cases(request.case_names)
+        selected_cases = _profile_selected_cases(request.profile, request.case_names)
         planned_cases = _planned_cases(
             selected_cases,
             seed=request.seed,
@@ -240,8 +249,12 @@ def _run(args: argparse.Namespace) -> int:
 
 def _request_from_args(args: argparse.Namespace) -> ProbeRunRequest:
     case_names = _case_name_filters(args.case_names)
+    count_explicit = args.count is not None
+    count = args.count if count_explicit else _profile_default_count(args.profile)
     metadata: JSONObject = {
-        "requested_count": args.count,
+        "requested_count": count,
+        "count_explicit": count_explicit,
+        "profile_default_count": _profile_default_count(args.profile),
         "requested_cases": list(case_names),
         "selected_specs": list(PROBE_SELECTED_SPECS),
         "command": _requested_command(),
@@ -250,7 +263,7 @@ def _request_from_args(args: argparse.Namespace) -> ProbeRunRequest:
         provider=args.provider,
         profile=args.profile,
         seed=args.seed,
-        count=args.count,
+        count=count,
         case_names=case_names,
         dry_run=bool(args.dry_run),
         confirm_live_run=bool(args.confirm_live_run),

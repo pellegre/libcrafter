@@ -76,12 +76,23 @@ class ProbePlanningDispatchTest(unittest.TestCase):
             self.assertEqual(plan["profile"], request.profile)
             self.assertEqual(plan["seed"], request.seed)
 
-    def test_dispatch_routes_each_known_case_to_its_builder(self) -> None:
+    def test_dispatch_routes_each_registered_case_to_its_builder(self) -> None:
+        request = _request()
+        for name in planning.PLAN_BUILDERS:
+            case = probe_cases.PROBE_CASE_BY_NAME[name]
+            plan = planning.probe_plan_for_case(request=request, case=case, sequence=0)
+            self.assertEqual(plan["case"], case.name)
+            self.assertNotIn("planned_only", plan)
+
+    def test_dispatch_falls_back_to_planned_only_for_unregistered_case(self) -> None:
         request = _request()
         for case in probe_cases.PROBE_CASES:
             plan = planning.probe_plan_for_case(request=request, case=case, sequence=0)
             self.assertEqual(plan["case"], case.name)
-            self.assertNotIn("planned_only", plan)
+            if case.name in planning.PLAN_BUILDERS:
+                self.assertNotIn("planned_only", plan)
+            else:
+                self.assertIs(plan["planned_only"], True)
 
     def test_icmp_plan_shape_is_stable(self) -> None:
         plan = planning.probe_plan_for_case(
@@ -161,9 +172,9 @@ class ProbePlanningRegistryTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             planning.register_plan_builder("not-a-real-case", lambda **_: {})
 
-    def test_existing_cases_resolve_through_dispatch_not_fallback(self) -> None:
+    def test_registered_cases_resolve_through_dispatch_not_fallback(self) -> None:
         request = _request()
-        for name in probe_cases.known_case_names():
+        for name in planning.PLAN_BUILDERS:
             case = probe_cases.PROBE_CASE_BY_NAME[name]
             plan = planning.probe_plan_for_case(
                 request=request,

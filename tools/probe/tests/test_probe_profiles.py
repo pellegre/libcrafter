@@ -1,0 +1,188 @@
+"""Unit coverage for probe sampling profiles.
+
+These tests pin the profile-to-case mapping (smoke stays the legacy set, behavior
+selects the full forty-case DNS/DHCP/ARP/UDP suite) and the deterministic
+seed/count planning the profile feeds into the planner.
+"""
+
+from __future__ import annotations
+
+import unittest
+
+from tools.probe.engine import cases, cli, planning
+from tools.probe.engine.model import ProbeRunRequest
+
+
+_LEGACY_CASE_NAMES = (
+    "icmp-echo",
+    "tcp-syn-open",
+    "tcp-syn-closed",
+    "dns-query",
+    "ttl-expired",
+    "arp-resolution",
+)
+
+
+def _request(**overrides: object) -> ProbeRunRequest:
+    base = {
+        "provider": "qemu",
+        "profile": "behavior",
+        "seed": 7,
+        "count": 40,
+        "case_names": [],
+        "dry_run": True,
+    }
+    base.update(overrides)
+    return ProbeRunRequest(**base)  # type: ignore[arg-type]
+
+
+class ProbeProfileMembershipTest(unittest.TestCase):
+    def test_behavior_profile_selects_forty_behavioral_cases(self) -> None:
+        names = cases.profile_case_names("behavior")
+
+        self.assertIsNotNone(names)
+        assert names is not None
+        self.assertEqual(len(names), 40)
+        self.assertEqual(len(set(names)), 40)
+
+    def test_behavior_profile_covers_ten_per_protocol(self) -> None:
+        selected = cases.profile_selected_cases("behavior", [])
+        by_protocol: dict[str, int] = {}
+        for case in selected:
+            protocol = str(case.metadata.get("protocol"))
+            by_protocol[protocol] = by_protocol.get(protocol, 0) + 1
+
+        self.assertEqual(by_protocol, {"dns": 10, "dhcp": 10, "arp": 10, "udp": 10})
+
+    def test_behavior_profile_order_is_dns_dhcp_arp_udp(self) -> None:
+        selected = cases.profile_selected_cases("behavior", [])
+        protocols = [str(case.metadata.get("protocol")) for case in selected]
+
+        self.assertEqual(protocols, ["dns"] * 10 + ["dhcp"] * 10 + ["arp"] * 10 + ["udp"] * 10)
+        self.assertEqual(
+            [case.name for case in selected],
+            list(cases.BEHAVIOR_PROFILE_CASE_NAMES),
+        )
+
+    def test_behavior_profile_cases_are_catalog_entries(self) -> None:
+        for name in cases.BEHAVIOR_PROFILE_CASE_NAMES:
+            self.assertIn(name, cases.PROBE_CASE_BY_NAME)
+            self.assertIn(name, cases.known_case_names())
+
+    def test_smoke_profile_selects_legacy_cases_unchanged(self) -> None:
+        self.assertEqual(cases.profile_case_names("smoke"), _LEGACY_CASE_NAMES)
+
+        selected = cases.profile_selected_cases("smoke", [])
+        self.assertEqual([case.name for case in selected], list(_LEGACY_CASE_NAMES))
+
+    def test_explicit_cases_override_profile_selection(self) -> None:
+        selected = cases.profile_selected_cases("behavior", ["icmp-echo", "dns-mx"])
+
+        self.assertEqual([case.name for case in selected], ["icmp-echo", "dns-mx"])
+
+    def test_unknown_profile_falls_back_to_full_catalog(self) -> None:
+        selected = cases.profile_selected_cases("not-a-profile", [])
+
+        self.assertEqual(
+            [case.name for case in selected],
+            [case.name for case in cases.PROBE_CASES],
+        )
+
+    def test_known_profiles_listed_sorted(self) -> None:
+        self.assertEqual(cases.known_profiles(), ("behavior", "smoke"))
+
+
+class ProbeProfileDefaultCountTest(unittest.TestCase):
+    def test_behavior_profile_default_count_is_forty(self) -> None:
+        self.assertEqual(cases.profile_default_count("behavior"), 40)
+        self.assertEqual(
+            cases.profile_default_count("behavior"),
+            len(cases.BEHAVIOR_PROFILE_CASE_NAMES),
+        )
+
+    def test_smoke_profile_default_count_is_legacy_five(self) -> None:
+        self.assertEqual(cases.profile_default_count("smoke"), 5)
+
+    def test_unknown_profile_default_count_is_legacy_five(self) -> None:
+        self.assertEqual(cases.profile_default_count("ghost"), 5)
+
+
+class ProbeProfilePlanningDeterminismTest(unittest.TestCase):
+    def test_full_behavior_count_plans_every_case_once(self) -> None:
+        request = _request(seed=7, count=40)
+        selected = cases.profile_selected_cases(request.profile, request.case_names)
+        planned = planning.planned_cases(selected, seed=request.seed, count=request.count)
+
+        self.assertEqual(len(planned), 40)
+        self.assertEqual(
+            {case.name for case in planned},
+            set(cases.BEHAVIOR_PROFILE_CASE_NAMES),
+        )
+
+    def test_same_seed_and_count_plan_identically(self) -> None:
+        selected = cases.profile_selected_cases("behavior", [])
+        first = planning.planned_cases(selected, seed=13, count=40)
+        second = planning.planned_cases(selected, seed=13, count=40)
+
+        self.assertEqual(
+            [case.name for case in first],
+            [case.name for case in second],
+        )
+
+    def test_seed_rotates_planned_starting_case(self) -> None:
+        selected = cases.profile_selected_cases("behavior", [])
+        zero = planning.planned_cases(selected, seed=0, count=40)
+        shifted = planning.planned_cases(selected, seed=5, count=40)
+
+        self.assertEqual(zero[0].name, cases.BEHAVIOR_PROFILE_CASE_NAMES[0])
+        self.assertEqual(shifted[0].name, cases.BEHAVIOR_PROFILE_CASE_NAMES[5])
+        # A rotation reorders without dropping any case.
+        self.assertEqual(
+            {case.name for case in zero},
+            {case.name for case in shifted},
+        )
+
+    def test_count_below_suite_size_is_a_stable_prefix(self) -> None:
+        selected = cases.profile_selected_cases("behavior", [])
+        names = [case.name for case in planning.planned_cases(selected, seed=0, count=10)]
+
+        self.assertEqual(names, list(cases.BEHAVIOR_PROFILE_CASE_NAMES[:10]))
+
+
+class ProbeProfileCliWiringTest(unittest.TestCase):
+    def test_cli_uses_profile_default_count_when_count_omitted(self) -> None:
+        parser = cli._build_parser()
+        args = parser.parse_args(
+            ["--provider", "qemu", "--dry-run", "--profile", "behavior"]
+        )
+        request = cli._request_from_args(args)
+
+        self.assertEqual(request.count, 40)
+        self.assertIs(request.metadata["count_explicit"], False)
+
+    def test_cli_explicit_count_overrides_profile_default(self) -> None:
+        parser = cli._build_parser()
+        args = parser.parse_args(
+            ["--provider", "qemu", "--dry-run", "--profile", "behavior", "--count", "12"]
+        )
+        request = cli._request_from_args(args)
+
+        self.assertEqual(request.count, 12)
+        self.assertIs(request.metadata["count_explicit"], True)
+
+    def test_cli_smoke_default_count_preserved(self) -> None:
+        parser = cli._build_parser()
+        args = parser.parse_args(["--provider", "qemu", "--dry-run"])
+        request = cli._request_from_args(args)
+
+        self.assertEqual(request.profile, "smoke")
+        self.assertEqual(request.count, 5)
+
+    def test_cli_reexports_profile_helpers(self) -> None:
+        self.assertIs(cli._profile_selected_cases, cases.profile_selected_cases)
+        self.assertIs(cli._profile_default_count, cases.profile_default_count)
+        self.assertEqual(cli.DEFAULT_PROFILE, cases.DEFAULT_PROFILE)
+
+
+if __name__ == "__main__":
+    unittest.main()
