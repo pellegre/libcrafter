@@ -1280,6 +1280,220 @@ def _dns_edns_opt_probe_plan(
     }
 
 
+def _dns_repeat_transaction_send(
+    *,
+    case_name: str,
+    profile: str,
+    seed: int,
+    sequence: int,
+    digest: bytes,
+    index: int,
+    source_ipv4: str,
+    target_ipv4: str,
+    query_id: int,
+    source_port: int,
+    destination_port: int,
+    query_name: str,
+) -> JSONObject:
+    """Build one of the two sends for the ``dns-repeat-transaction`` case.
+
+    Each send reuses the shared transaction id and query name but owns a distinct
+    source port (the spec wants repeated ids over *separate* source ports) and a
+    distinct deterministic A answer, plus a per-send capture filter and full
+    validation contract so its response is matched back to it by id/source-port
+    and never confused with the sibling send's same-name response.
+    """
+
+    answer_data = f"203.0.113.{1 + digest[10 + index] % 250}"
+    answer_ttl = 60 + digest[12 + index] % 180
+    return {
+        "index": index,
+        "source_ipv4": source_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": source_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": "A",
+        "query_type_value": 1,
+        "query_class": "IN",
+        "query_class_value": 1,
+        "expected_answer_name": query_name,
+        "expected_answer_type": "A",
+        "expected_answer_type_value": 1,
+        "expected_answer_class": "IN",
+        "expected_answer_class_value": 1,
+        "expected_answer_data": answer_data,
+        "expected_answer_count": 1,
+        "expected_response_code": 0,
+        "expected_response_flags": ["qr", "aa"],
+        "answer_ttl": answer_ttl,
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": "A",
+            "answer_data": answer_data,
+            "answer_ttl": answer_ttl,
+        },
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": source_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": 0,
+            "question": {
+                "name": query_name,
+                "type": "A",
+                "type_value": 1,
+                "class": "IN",
+                "class_value": 1,
+            },
+            "answer": {
+                "name": query_name,
+                "type": "A",
+                "type_value": 1,
+                "class": "IN",
+                "class_value": 1,
+                "data": answer_data,
+                "ttl": answer_ttl,
+            },
+        },
+    }
+
+
+def _dns_repeat_transaction_probe_plan(
+    *,
+    case_name: str = "dns-repeat-transaction",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dns-repeat-transaction`` behavioral case.
+
+    Two A (QTYPE 1) queries against the controlled UDP DNS responder, reusing one
+    transaction id and one query name across both sends but using two *distinct*
+    deterministic source ports (RFC 5452 advises varying the source port; this
+    case exercises the inverse — a reused id distinguished only by source port).
+    Each send carries its own deterministic IPv4 answer, so the endpoint must
+    receive two responses, decode each, and match every response back to *its*
+    send by id and source port (and validate its own answer) without confusing
+    the two same-name responses.
+
+    The plan carries a ``sends`` array (one entry per send) plus the conventional
+    single-send top-level fields (mirroring the first send) so the generic plan
+    echo and any single-send consumer keep working unchanged; the DNS dispatch
+    detects ``sends`` and drives both sends.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    # One shared transaction id reused across both sends (the case point), and one
+    # shared query name; the two sends differ only in source port and answer.
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    destination_port = 53
+    query_name = dns_query_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    first_source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    # Offset the second source port deterministically and keep it distinct from
+    # the first (separate source ports is the whole point of the case).
+    second_offset = 1 + int.from_bytes(digest[4:6], "big") % 5000
+    second_source_port = 45000 + (first_source_port + second_offset) % 20000
+    if second_source_port == first_source_port:
+        second_source_port = first_source_port + 1
+    source_ports = (first_source_port, second_source_port)
+
+    sends = [
+        _dns_repeat_transaction_send(
+            case_name=case_name,
+            profile=profile,
+            seed=seed,
+            sequence=sequence,
+            digest=digest,
+            index=index,
+            source_ipv4=stimulus_ipv4,
+            target_ipv4=target_ipv4,
+            query_id=query_id,
+            source_port=source_port,
+            destination_port=destination_port,
+            query_name=query_name,
+        )
+        for index, source_port in enumerate(source_ports)
+    ]
+    first = sends[0]
+
+    plan: JSONObject = {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        # Conventional single-send top-level fields mirror the first send so the
+        # generic plan echo / capture filter / single-send consumers keep working.
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": first["source_port"],
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": "A",
+        "query_type_value": 1,
+        "query_class": "IN",
+        "query_class_value": 1,
+        "expected_answer_name": query_name,
+        "expected_answer_type": "A",
+        "expected_answer_type_value": 1,
+        "expected_answer_class": "IN",
+        "expected_answer_class_value": 1,
+        "expected_answer_data": first["expected_answer_data"],
+        "expected_answer_count": 1,
+        "expected_response_code": 0,
+        "expected_response_flags": ["qr", "aa"],
+        "answer_ttl": first["answer_ttl"],
+        # The repeat-transaction contract: two independent sends, each with its
+        # own deterministic source port and answer, validated separately.
+        "send_count": len(sends),
+        "sends": sends,
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": "A",
+            "answer_data": first["expected_answer_data"],
+            "answer_ttl": first["answer_ttl"],
+            "repeat_transaction": {
+                "query_id": query_id,
+                "query_name": query_name,
+                "sends": [
+                    {
+                        "source_port": send["source_port"],
+                        "answer_data": send["expected_answer_data"],
+                        "answer_ttl": send["answer_ttl"],
+                    }
+                    for send in sends
+                ],
+            },
+        },
+        "capture_filter": first["capture_filter"],
+        "validation": first["validation"],
+    }
+    return plan
+
+
 def dns_edns_nsid(*, profile: str, seed: int, sequence: int, digest: bytes, role: str) -> str:
     """Return deterministic EDNS(0) NSID option data bytes as a hex string.
 
@@ -1566,6 +1780,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-mx-answer": _dns_mx_answer_probe_plan,
     "dns-srv-answer": _dns_srv_answer_probe_plan,
     "dns-edns-opt": _dns_edns_opt_probe_plan,
+    "dns-repeat-transaction": _dns_repeat_transaction_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }
