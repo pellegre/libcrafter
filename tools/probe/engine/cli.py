@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import posixpath
 import shlex
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
 from pathlib import Path
 
 _REPO_ROOT_FOR_IMPORTS = Path(__file__).resolve().parents[3]
@@ -22,7 +20,6 @@ from tools.lab.engine import repo as lab_repo
 from tools.lab.engine import session as lab_session_state
 from tools.lab.engine import wire_client as lab_wire_client
 
-from . import bootstrap as probe_bootstrap
 from .capabilities import (
     SKIP_CAPABILITY_UNAVAILABLE,
     SKIP_CONFIRMATION_REQUIRED,
@@ -57,6 +54,42 @@ from .lab import (
     probe_provider_names,
     resolve_probe_lab_provider,
 )
+from . import live as probe_live
+from .live import (
+    cleanup_wire_probe_target as _cleanup_wire_probe_target,
+    cleanup_wire_stimulus_rst_guards as _cleanup_wire_stimulus_rst_guards,
+    command_artifact_paths as _command_artifact_paths,
+    dedupe_paths as _dedupe_paths,
+    dedupe_strings as _dedupe_strings,
+    download_wire_probe_artifacts as _download_wire_probe_artifacts,
+    existing_paths_from_stdout as _existing_paths_from_stdout,
+    install_wire_stimulus_rst_guards as _install_wire_stimulus_rst_guards,
+    json_list as _json_list,
+    json_mapping as _json_mapping,
+    lab_endpoint_id as _lab_endpoint_id,
+    lab_endpoint_interface as _lab_endpoint_interface,
+    lab_endpoint_ipv4 as _lab_endpoint_ipv4,
+    parse_json_stdout as _parse_json_stdout,
+    prepare_wire_probe_target as _prepare_wire_probe_target,
+    probe_endpoint_response_from_path as _probe_endpoint_response_from_path,
+    probe_lab_remote_dir as _probe_lab_remote_dir,
+    probe_process_timeout_seconds as _probe_process_timeout_seconds,
+    probe_timeout_seconds as _probe_timeout_seconds,
+    rst_guard_iptables_args as _rst_guard_iptables_args,
+    rst_guard_script as _rst_guard_script,
+    run_lab_wire_command as _run_lab_wire_command,
+    run_wire_stimulus_endpoint as _run_wire_stimulus_endpoint,
+    string_list as _string_list,
+    string_or as _string_or,
+    upload_wire_probe_request as _upload_wire_probe_request,
+    wire_command_failed as _wire_command_failed,
+)
+from . import results as probe_results
+from .results import (
+    failed_counts_by_reason as _failed_counts_by_reason,
+    failed_live_probe_results as _failed_live_probe_results,
+    probe_results_from_endpoint_response as _probe_results_from_endpoint_response,
+)
 from .model import (
     JSONObject,
     JSONValue,
@@ -81,17 +114,8 @@ from .planning import (
     probe_plans_for_cases as _probe_plans_for_cases,
 )
 from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
-from . import target_services as probe_target_services
 from .target_services import (
-    cleanup_wire_probe_target as _cleanup_target_services_wire,
-    dedupe_ints as _dedupe_ints,
-    dns_probe_plans as _dns_probe_plans,
-    plans_by_destination_port as _plans_by_destination_port,
-    prepare_wire_probe_target as _prepare_target_services_wire,
-    target_service_address_fields as _target_service_address_fields,
     target_service_setup_plan as _target_service_setup_plan,
-    target_service_setup_script as _target_service_setup_script,
-    tcp_probe_plans as _tcp_probe_plans,
 )
 
 
@@ -744,45 +768,6 @@ def _first_plan_address(
     return default
 
 
-def _lab_endpoint_id(endpoint: Mapping[str, JSONValue], *, role: str) -> str:
-    endpoint_id = _string_or(endpoint.get("endpoint_id"), "")
-    if not endpoint_id:
-        raise RuntimeError(f"lab session did not include {role} endpoint ID")
-    return endpoint_id
-
-
-def _lab_endpoint_ipv4(endpoint: Mapping[str, JSONValue], *, role: str) -> str:
-    ipv4 = _string_or(endpoint.get("address"), _string_or(endpoint.get("ipv4"), ""))
-    if not ipv4:
-        raise RuntimeError(f"lab session did not include {role} endpoint IPv4")
-    return ipv4
-
-
-def _lab_endpoint_interface(endpoint: Mapping[str, JSONValue], *, role: str) -> str:
-    interface = _string_or(endpoint.get("interface"), "")
-    if not interface:
-        raise RuntimeError(f"lab session did not include {role} endpoint interface")
-    return interface
-
-
-def _wire_command_failed(command: Mapping[str, JSONValue]) -> bool:
-    exit_code = command.get("exit_code")
-    if isinstance(exit_code, int):
-        return exit_code != 0
-    ok = command.get("ok")
-    if isinstance(ok, bool):
-        return not ok
-    metadata = command.get("metadata")
-    if isinstance(metadata, Mapping):
-        metadata_exit = metadata.get("exit_code")
-        if isinstance(metadata_exit, int):
-            return metadata_exit != 0
-        metadata_ok = metadata.get("ok")
-        if isinstance(metadata_ok, bool):
-            return not metadata_ok
-    return False
-
-
 def _lab_endpoint_live_report(
     *,
     request: ProbeRunRequest,
@@ -791,442 +776,29 @@ def _lab_endpoint_live_report(
     probe_plans: Sequence[JSONObject],
     report_path: Path,
 ) -> ProbeReport:
-    output_dir = report_path.parent
-    endpoint_dir = output_dir / "artifacts" / "lab-stimulus-endpoint"
-    endpoint_dir.mkdir(parents=True, exist_ok=True)
-    provider_commands: list[JSONObject] = []
-    execution_errors: list[str] = []
-    endpoint_response: JSONObject | None = None
-    wire_endpoint_plan: JSONObject = {}
-    endpoints: JSONObject = {}
-    address_context: JSONObject = {}
-    lab_session: LabSession | None = None
-    lab_report_metadata: JSONObject = {}
-    created_endpoint_ids: list[str] = []
-    endpoint_artifact_paths: list[str] = []
-    provider_capabilities = _probe_capabilities_for_request(request, dry_run=False)
-    skipped_results, skips, skip_counts, skipped_sequences = _capability_skip_state(
+    """Assemble a lab-backed live probe report via the live orchestration module.
+
+    The live execution domain (lab session lifecycle, wire transport, target
+    setup, stimulus execution, artifact download, and result assembly) lives in
+    :mod:`tools.probe.engine.live`. This thin wrapper injects the CLI-owned
+    plan-rewrite, report-metadata, and address helpers so the live module stays
+    free of an import cycle back into the CLI.
+    """
+
+    return probe_live.lab_endpoint_live_report(
         request=request,
+        selected_cases=selected_cases,
         planned_cases=planned_cases,
         probe_plans=probe_plans,
-        dry_run=False,
-        provider_capabilities=provider_capabilities,
-    )
-    all_live_plans = list(probe_plans)
-    live_plans = [
-        plan
-        for plan in probe_plans
-        if int(plan.get("sequence", -1)) not in skipped_sequences
-    ]
-    executable_planned_cases = [
-        case
-        for sequence, case in enumerate(planned_cases)
-        if sequence not in skipped_sequences
-    ]
-    local_request_path = endpoint_dir / "stimulus.request.json"
-    target_setup_attempted = False
-    rst_guard_attempted = False
-    stimulus_endpoint: JSONObject = {}
-    target_endpoint: JSONObject = {}
-    target_endpoint_id = ""
-    stimulus_endpoint_id = ""
-    remote_dir = ""
-    remote_artifact_root = ""
-    wire = lab_wire_client.WireClient()
-
-    if live_plans:
-        try:
-            lab_adapter = resolve_probe_lab_provider(request.provider)
-            lab_session = lab_session_state.create_session(
-                lab_adapter,
-                _probe_lab_request(
-                    request,
-                    dry_run=False,
-                    confirm_live_run=True,
-                    remote_dir=_probe_lab_remote_dir(),
-                ),
-                client=wire,
-            )
-            created_endpoint_ids = list(lab_session.created_endpoint_ids)
-            address_context = probe_address_context_from_lab_session(lab_session)
-
-            endpoints = json_object(
-                address_context.get("endpoints", {}),
-                "lab_address_context.endpoints",
-            )
-            stimulus_endpoint = _json_mapping(
-                endpoints.get(STIMULUS_ROLE, {}),
-                "lab.endpoints.stimulus",
-            )
-            target_endpoint = _json_mapping(
-                endpoints.get(TARGET_ROLE, {}),
-                "lab.endpoints.target",
-            )
-            stimulus_endpoint_id = _lab_endpoint_id(
-                stimulus_endpoint,
-                role=STIMULUS_ROLE,
-            )
-            target_endpoint_id = _lab_endpoint_id(
-                target_endpoint,
-                role=TARGET_ROLE,
-            )
-
-            source_ipv4 = _string_or(
-                stimulus_endpoint.get("address"),
-                _first_plan_address(probe_plans, "source_ipv4", "192.0.2.10"),
-            )
-            target_ipv4 = _string_or(
-                target_endpoint.get("address"),
-                _first_plan_address(probe_plans, "destination_ipv4", "192.0.2.20"),
-            )
-            interface = _string_or(
-                stimulus_endpoint.get("interface"),
-                _probe_interface(request.provider, dry_run=False),
-            )
-            all_live_plans = [
-                _probe_plan_with_endpoint_addresses(
-                    plan,
-                    source_ipv4=source_ipv4,
-                    target_ipv4=target_ipv4,
-                )
-                for plan in probe_plans
-            ]
-            live_plans = [
-                plan
-                for plan in all_live_plans
-                if int(plan.get("sequence", -1)) not in skipped_sequences
-            ]
-
-            repo_archive = lab_repo.create_repository_archive(
-                output_dir / "artifacts" / "lab" / "repo",
-                source_root=REPO_ROOT,
-            )
-            lab_session = replace(
-                lab_session,
-                command_records=[
-                    *lab_session.command_records,
-                    repo_archive.command_record,
-                ],
-            )
-            endpoint_artifact_paths.extend(
-                [
-                    str(repo_archive.archive_path),
-                    str(repo_archive.stdout_path),
-                    str(repo_archive.stderr_path),
-                ]
-            )
-            remote_dir = _string_or(lab_session.remote_dir, "/root/libcrafter")
-            bootstrap_result = lab_repo.bootstrap_lab_session(
-                lab_session,
-                probe_bootstrap.bootstrap_commands(),
-                remote_dir=remote_dir,
-                archive=repo_archive,
-                output_dir=output_dir / "artifacts" / "lab" / "bootstrap",
-                client=wire,
-            )
-            lab_session = lab_repo.session_with_bootstrap_records(
-                lab_session,
-                bootstrap_result,
-            )
-            lab_session_state.write_session_manifest(lab_session)
-            endpoint_artifact_paths.extend(bootstrap_result.artifacts)
-            if not bootstrap_result.ok:
-                message = f"{request.provider} endpoint bootstrap failed"
-                if bootstrap_result.errors:
-                    message = f"{message}: {'; '.join(bootstrap_result.errors)}"
-                execution_errors.append(message)
-                raise RuntimeError(message)
-
-            remote_artifact_root = posixpath.join(
-                bootstrap_result.remote_artifact_root,
-                "probe",
-                "endpoint",
-            )
-            target_artifact_root = posixpath.join(
-                bootstrap_result.remote_artifact_root,
-                "probe",
-                "target-services",
-            )
-
-            remote_request_path = posixpath.join(
-                remote_artifact_root,
-                "inputs",
-                "stimulus.request.json",
-            )
-            endpoint_request = _stimulus_endpoint_request_object(
-                request=request,
-                probe_plans=live_plans,
-                dry_run=False,
-                interface=interface,
-                artifact_root=remote_artifact_root,
-                request_path=remote_request_path,
-                stimulus_endpoint=stimulus_endpoint,
-            )
-            write_json(local_request_path, endpoint_request)
-
-            target_setup = _prepare_wire_probe_target(
-                wire=wire,
-                target_endpoint=target_endpoint,
-                artifact_root=target_artifact_root,
-                probe_plans=live_plans,
-                output_dir=endpoint_dir,
-            )
-            if target_setup is not None:
-                target_setup_attempted = True
-                provider_commands.append(target_setup)
-                execution_errors.extend(_string_list(target_setup.get("errors", [])))
-                if target_setup["exit_code"] != 0:
-                    execution_errors.append("target endpoint setup failed")
-
-            rst_setup = _install_wire_stimulus_rst_guards(
-                wire=wire,
-                stimulus_endpoint=stimulus_endpoint,
-                probe_plans=live_plans,
-                output_dir=endpoint_dir,
-            )
-            if rst_setup is not None:
-                rst_guard_attempted = True
-                provider_commands.append(rst_setup)
-                execution_errors.extend(_string_list(rst_setup.get("errors", [])))
-                if rst_setup["exit_code"] != 0:
-                    execution_errors.append("stimulus RST guard setup failed")
-
-            if not execution_errors:
-                upload = _upload_wire_probe_request(
-                    wire=wire,
-                    endpoint_id=stimulus_endpoint_id,
-                    local_request_path=local_request_path,
-                    remote_request_path=remote_request_path,
-                    output_dir=endpoint_dir,
-                )
-                provider_commands.append(upload)
-                if upload["exit_code"] != 0:
-                    execution_errors.append("failed to upload stimulus endpoint request")
-            else:
-                upload = None
-
-            if not execution_errors and upload is not None:
-                execution = _run_wire_stimulus_endpoint(
-                    wire=wire,
-                    endpoint_id=stimulus_endpoint_id,
-                    remote_dir=remote_dir,
-                    remote_request_path=remote_request_path,
-                    remote_artifact_root=remote_artifact_root,
-                    output_dir=endpoint_dir,
-                    timeout_seconds=_probe_process_timeout_seconds(len(live_plans)),
-                )
-                provider_commands.append(execution)
-                endpoint_response = execution.get("response") if isinstance(
-                    execution.get("response"), dict
-                ) else None
-                execution_errors.extend(_string_list(execution.get("errors", [])))
-                if execution["exit_code"] != 0:
-                    execution_errors.append("stimulus endpoint command failed")
-
-                downloads = _download_wire_probe_artifacts(
-                    wire=wire,
-                    endpoint_id=stimulus_endpoint_id,
-                    artifact_paths=json_object(
-                        endpoint_request.get("artifact_paths", {}),
-                        "stimulus.artifact_paths",
-                    ),
-                    output_dir=endpoint_dir,
-                    response_path=endpoint_dir / "stimulus.response.json",
-                )
-                provider_commands.extend(downloads)
-                endpoint_artifact_paths.extend(
-                    [
-                        path
-                        for command in downloads
-                        for path in _command_artifact_paths(command)
-                    ]
-                )
-                if endpoint_response is None:
-                    endpoint_response = _probe_endpoint_response_from_path(
-                        endpoint_dir / "stimulus.response.json"
-                    )
-                if endpoint_response is None:
-                    execution_errors.append("stimulus endpoint did not return JSON")
-        except Exception as exc:  # pragma: no cover - live-provider only.
-            execution_errors.append(str(exc))
-        finally:
-            if stimulus_endpoint_id and rst_guard_attempted:
-                rst_cleanup = _cleanup_wire_stimulus_rst_guards(
-                    wire=wire,
-                    stimulus_endpoint=stimulus_endpoint,
-                    probe_plans=live_plans,
-                    output_dir=endpoint_dir,
-                )
-                provider_commands.append(rst_cleanup)
-                execution_errors.extend(_string_list(rst_cleanup.get("errors", [])))
-                if rst_cleanup["exit_code"] != 0:
-                    execution_errors.append("stimulus RST guard cleanup failed")
-            if target_endpoint_id and target_setup_attempted:
-                target_cleanup = _cleanup_wire_probe_target(
-                    wire=wire,
-                    target_endpoint=target_endpoint,
-                    artifact_root=target_artifact_root,
-                    output_dir=endpoint_dir,
-                )
-                provider_commands.append(target_cleanup)
-                execution_errors.extend(_string_list(target_cleanup.get("errors", [])))
-                if target_cleanup["exit_code"] != 0:
-                    execution_errors.append("target endpoint cleanup failed")
-            if lab_session is not None:
-                try:
-                    lab_session = lab_session_state.cleanup_lab_session(
-                        lab_session,
-                        client=wire,
-                    )
-                    lab_session_state.write_session_manifest(lab_session)
-                except Exception as cleanup_exc:  # pragma: no cover - defensive fallback.
-                    execution_errors.append(
-                        f"{request.provider} lab cleanup failed: {cleanup_exc}"
-                    )
-
-    if lab_session is not None:
-        address_context = address_context or probe_address_context_from_lab_session(
-            lab_session
-        )
-        lab_report_metadata = _lab_session_probe_report_metadata(
-            lab_session,
-            address_context=address_context,
-            provider_capabilities=provider_capabilities,
-        )
-        wire_endpoint_plan = _json_mapping(
-            lab_report_metadata.get("wire_endpoint_plan", {}),
-            "lab_report.wire_endpoint_plan",
-        )
-        endpoints = _json_mapping(
-            lab_report_metadata.get("endpoints", {}),
-            "lab_report.endpoints",
-        )
-        provider_commands = [
-            *_json_list(
-                lab_report_metadata.get("command_records", []),
-                "lab_report.command_records",
-            ),
-            *provider_commands,
-        ]
-
-    if not live_plans:
-        endpoint_results: list[ProbeResult] = []
-        observed_responses = []
-    elif endpoint_response is None:
-        endpoint_results, observed_responses = _failed_live_probe_results(
-            planned_cases=executable_planned_cases,
-            probe_plans=live_plans,
-            reason=FAILURE_DECODE_FAILED,
-            errors=execution_errors,
-        )
-    else:
-        endpoint_results, observed_responses = _probe_results_from_endpoint_response(
-            endpoint_response
-        )
-
-    results = sorted(
-        [*skipped_results, *endpoint_results],
-        key=lambda result: result.sequence,
-    )
-    failures = [result for result in results if result.passed is False]
-    status = STATUS_PASSED if results and not failures and not execution_errors else STATUS_FAILED
-    failed_counts = _failed_counts_by_reason(results)
-    executed_count = sum(1 for result in results if result.status != "skipped")
-    artifact_paths = [str(report_path)]
-    if local_request_path.exists():
-        artifact_paths.append(str(local_request_path))
-    artifact_paths.extend(endpoint_artifact_paths)
-    artifact_paths.extend(
-        [
-            path
-            for command in provider_commands
-            for path in _command_artifact_paths(command)
-        ]
-    )
-    if endpoint_response is not None:
-        artifact_paths.extend(_string_list(endpoint_response.get("artifacts", [])))
-        artifact_paths.extend(_string_list(endpoint_response.get("artifact_paths", [])))
-    artifact_paths = _dedupe_paths(artifact_paths)
-    lab_wire_endpoint_lifecycle = _json_mapping(
-        lab_report_metadata.get("wire_endpoint_lifecycle", {}),
-        "lab_report.wire_endpoint_lifecycle",
-    )
-    cleanup_state = _json_mapping(
-        lab_wire_endpoint_lifecycle.get("cleanup_state", {}),
-        "lab_report.cleanup_state",
-    )
-    destroy_attempted = bool(
-        cleanup_state.get("teardown_attempted", bool(created_endpoint_ids))
-    )
-
-    return ProbeReport(
-        mode="probe",
-        provider=request.provider,
-        profile=request.profile,
-        seed=request.seed,
-        count=len(planned_cases),
-        status=status,
-        request=request,
-        cases=list(selected_cases),
-        endpoint_roles=list(_ENDPOINT_ROLES),
-        results=results,
-        skips=skips,
-        observed_responses=observed_responses,
-        artifacts=artifact_paths,
-        artifact_paths=artifact_paths,
-        metadata={
-            "provider": request.provider,
-            "cases": [case.name for case in selected_cases],
-            "requested_count": request.count,
-            "planned_count": len(planned_cases),
-            "selected_count": len(selected_cases),
-            "executed_count": sum(1 for result in results if result.status != "skipped"),
-            "passed_count": sum(1 for result in results if result.passed is True),
-            "failed_count": len(failures),
-            "executed_cases": _dedupe_strings(
-                [result.case for result in results if result.status != "skipped"]
-            ),
-            "failed_counts_by_reason": failed_counts,
-            "skipped_count": len(skips),
-            "observed_count": sum(
-                1 for response in observed_responses if response.observed
-            ),
-            "provider_capabilities": dict(provider_capabilities),
-            "skip_reasons": list(skip_counts),
-            "skip_counts_by_reason": skip_counts,
-            "selected_case_names": [case.name for case in selected_cases],
-            "planned_case_names": [case.name for case in planned_cases],
-            "probe_plans": all_live_plans,
-            "selected_specs": list(PROBE_SELECTED_SPECS),
-            "dry_run": False,
-            "creates_infrastructure": bool(created_endpoint_ids),
-            "requires_provider_lifecycle": True,
-            "mutates_lab": True,
-            "live_packet_exchange": status == STATUS_PASSED and executed_count > 0,
-            "provider_workflow": lab_report_metadata.get("provider_workflow", []),
-            "wire_endpoint_plan": wire_endpoint_plan,
-            "endpoints": endpoints,
-            "wire_endpoint_lifecycle": {
-                **lab_wire_endpoint_lifecycle,
-                "remote_dir": remote_dir,
-                "remote_artifact_root": remote_artifact_root,
-                "created_endpoint_ids": list(created_endpoint_ids),
-                "destroy_attempted": destroy_attempted,
-            },
-            "provider_commands": provider_commands,
-            "command_records": provider_commands,
-            "lab_session": lab_report_metadata.get("lab_session"),
-            "planned_infrastructure": lab_report_metadata.get(
-                "planned_infrastructure",
-                {},
-            ),
-            "lab_address_context": address_context,
-            "execution_errors": execution_errors,
-            "target_service_setup": _target_service_setup_plan(
-                probe_plans=live_plans,
-                dry_run=False,
-            ),
-        },
+        report_path=report_path,
+        endpoint_roles=_ENDPOINT_ROLES,
+        probe_lab_request=_probe_lab_request,
+        probe_plan_with_endpoint_addresses=_probe_plan_with_endpoint_addresses,
+        stimulus_endpoint_request_object=_stimulus_endpoint_request_object,
+        lab_session_probe_report_metadata=_lab_session_probe_report_metadata,
+        probe_interface=_probe_interface,
+        first_plan_address=_first_plan_address,
+        selected_specs=PROBE_SELECTED_SPECS,
     )
 
 
@@ -1436,382 +1008,6 @@ def _probe_plan_with_endpoint_addresses(
     return updated
 
 
-def _probe_lab_remote_dir() -> str | None:
-    remote_dir = os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR")
-    if remote_dir is None or remote_dir == "":
-        return None
-    if not remote_dir.startswith("/"):
-        raise RuntimeError("probe lab remote_dir must be an absolute path")
-    if "'" in remote_dir:
-        raise RuntimeError("probe lab remote_dir must not contain single quotes")
-    return remote_dir.rstrip("/") or "/"
-
-
-def _run_lab_wire_command(
-    response: object,
-    *,
-    output_dir: Path,
-    label: str,
-) -> JSONObject:
-    command_dir = output_dir / "provider"
-    command_dir.mkdir(parents=True, exist_ok=True)
-    stdout_path = command_dir / f"{label}.stdout.txt"
-    stderr_path = command_dir / f"{label}.stderr.txt"
-    result = getattr(response, "result")
-    stdout = str(getattr(result, "stdout", ""))
-    stderr = str(getattr(result, "stderr", ""))
-    stdout_path.write_text(stdout, encoding="utf-8")
-    stderr_path.write_text(stderr, encoding="utf-8")
-    metadata_func = getattr(response, "metadata", None)
-    metadata = (
-        json_object(metadata_func(), f"{label}.metadata")
-        if callable(metadata_func)
-        else {}
-    )
-    metadata.update(
-        {
-            "label": label,
-            "wire_command": True,
-            "stdout_path": str(stdout_path),
-            "stderr_path": str(stderr_path),
-        }
-    )
-    error = getattr(result, "error", None)
-    if isinstance(error, str) and error:
-        metadata["error"] = error
-    collected_artifacts = _existing_paths_from_stdout(stdout)
-    if collected_artifacts:
-        metadata["collected_artifacts"] = collected_artifacts
-    return metadata
-
-
-def _upload_wire_probe_request(
-    *,
-    wire: object,
-    endpoint_id: str,
-    local_request_path: Path,
-    remote_request_path: str,
-    output_dir: Path,
-) -> JSONObject:
-    remote_parent = posixpath.dirname(remote_request_path)
-    mkdir = _run_lab_wire_command(
-        wire.exec(
-            endpoint_id,
-            ["bash", "-lc", f"mkdir -p {shlex.quote(remote_parent)}"],
-            timeout=60,
-        ),
-        output_dir=output_dir,
-        label="upload-stimulus-request-mkdir",
-    )
-    upload = (
-        _run_lab_wire_command(
-            wire.upload(endpoint_id, local_request_path, remote_request_path),
-            output_dir=output_dir,
-            label="upload-stimulus-request",
-        )
-        if mkdir["exit_code"] == 0
-        else None
-    )
-    commands = [mkdir] + ([] if upload is None else [upload])
-    exit_code = next(
-        (
-            int(command.get("exit_code", 1))
-            for command in commands
-            if command.get("exit_code") != 0
-        ),
-        0,
-    )
-    return {
-        "wire_command": True,
-        "operation": "upload",
-        "endpoint_id": endpoint_id,
-        "label": "upload-stimulus-request",
-        "exit_code": exit_code,
-        "request_path": str(local_request_path),
-        "remote_request_path": remote_request_path,
-        "commands": commands,
-        "errors": [
-            error
-            for command in commands
-            for error in _string_list(command.get("errors", []))
-        ],
-    }
-
-
-def _run_wire_stimulus_endpoint(
-    *,
-    wire: object,
-    endpoint_id: str,
-    remote_dir: str,
-    remote_request_path: str,
-    remote_artifact_root: str,
-    output_dir: Path,
-    timeout_seconds: int,
-) -> JSONObject:
-    quoted_remote_dir = shlex.quote(remote_dir)
-    quoted_request = shlex.quote(remote_request_path)
-    quoted_out = shlex.quote(remote_artifact_root)
-    script = "\n".join(
-        [
-            "set -euo pipefail",
-            f"cd {quoted_remote_dir}",
-            'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
-            (
-                "cargo run -q -p probe-adapters --bin stimulus_endpoint -- "
-                f"--live --input {quoted_request} --out {quoted_out}"
-            ),
-        ]
-    )
-    response = wire.exec(
-        endpoint_id,
-        ["bash", "-lc", script],
-        timeout=timeout_seconds,
-    )
-    command = _run_lab_wire_command(
-        response,
-        output_dir=output_dir,
-        label="stimulus-endpoint",
-    )
-    parsed, parse_errors = _parse_json_stdout(
-        str(getattr(response.result, "stdout", "")),
-        "stimulus-endpoint",
-    )
-    command["response"] = parsed
-    command["errors"] = [
-        *_string_list(command.get("errors", [])),
-        *parse_errors,
-    ]
-    return command
-
-
-def _prepare_wire_probe_target(
-    *,
-    wire: object,
-    target_endpoint: Mapping[str, JSONValue],
-    artifact_root: str,
-    probe_plans: Sequence[JSONObject],
-    output_dir: Path,
-) -> JSONObject | None:
-    return _prepare_target_services_wire(
-        wire=wire,
-        target_endpoint=target_endpoint,
-        artifact_root=artifact_root,
-        probe_plans=probe_plans,
-        output_dir=output_dir,
-        endpoint_id_resolver=_lab_endpoint_id,
-        endpoint_ipv4_resolver=_lab_endpoint_ipv4,
-        run_wire_command=_run_lab_wire_command,
-    )
-
-
-def _cleanup_wire_probe_target(
-    *,
-    wire: object,
-    target_endpoint: Mapping[str, JSONValue],
-    artifact_root: str,
-    output_dir: Path,
-) -> JSONObject:
-    return _cleanup_target_services_wire(
-        wire=wire,
-        target_endpoint=target_endpoint,
-        artifact_root=artifact_root,
-        output_dir=output_dir,
-        endpoint_id_resolver=_lab_endpoint_id,
-        run_wire_command=_run_lab_wire_command,
-    )
-
-
-def _install_wire_stimulus_rst_guards(
-    *,
-    wire: object,
-    stimulus_endpoint: Mapping[str, JSONValue],
-    probe_plans: Sequence[JSONObject],
-    output_dir: Path,
-) -> JSONObject | None:
-    tcp_plans = _tcp_probe_plans(probe_plans)
-    if not tcp_plans:
-        return None
-    endpoint_id = _lab_endpoint_id(stimulus_endpoint, role=STIMULUS_ROLE)
-    interface = _lab_endpoint_interface(stimulus_endpoint, role=STIMULUS_ROLE)
-    return _run_lab_wire_command(
-        wire.exec(
-            endpoint_id,
-            [
-                "bash",
-                "-lc",
-                _rst_guard_script(
-                    tcp_plans,
-                    install=True,
-                    interface=interface,
-                ),
-            ],
-            timeout=60,
-        ),
-        output_dir=output_dir,
-        label="probe-stimulus-rst-guard-setup",
-    )
-
-
-def _cleanup_wire_stimulus_rst_guards(
-    *,
-    wire: object,
-    stimulus_endpoint: Mapping[str, JSONValue],
-    probe_plans: Sequence[JSONObject],
-    output_dir: Path,
-) -> JSONObject:
-    endpoint_id = _lab_endpoint_id(stimulus_endpoint, role=STIMULUS_ROLE)
-    interface = _lab_endpoint_interface(stimulus_endpoint, role=STIMULUS_ROLE)
-    return _run_lab_wire_command(
-        wire.exec(
-            endpoint_id,
-            [
-                "bash",
-                "-lc",
-                _rst_guard_script(
-                    _tcp_probe_plans(probe_plans),
-                    install=False,
-                    interface=interface,
-                ),
-            ],
-            timeout=60,
-        ),
-        output_dir=output_dir,
-        label="probe-stimulus-rst-guard-cleanup",
-    )
-
-
-def _download_wire_probe_artifacts(
-    *,
-    wire: object,
-    endpoint_id: str,
-    artifact_paths: Mapping[str, JSONValue],
-    output_dir: Path,
-    response_path: Path,
-) -> list[JSONObject]:
-    local_root = output_dir / "downloads" / "stimulus"
-    downloads: list[JSONObject] = []
-    local_by_key = {
-        "response": response_path,
-        "captures": local_root / "captures",
-    }
-    for key, local_path in local_by_key.items():
-        remote_path = artifact_paths.get(key)
-        if not isinstance(remote_path, str) or not remote_path.startswith("/"):
-            continue
-        record = _run_lab_wire_command(
-            wire.download(endpoint_id, remote_path, local_path),
-            output_dir=output_dir,
-            label=f"download-stimulus-{key}",
-        )
-        record.update(
-            {
-                "endpoint_id": endpoint_id,
-                "endpoint_role": "stimulus",
-                "artifact_key": key,
-                "remote_path": remote_path,
-                "local_path": str(local_path),
-            }
-        )
-        downloads.append(record)
-    return downloads
-
-
-def _existing_paths_from_stdout(stdout: str) -> list[str]:
-    paths: list[str] = []
-    for line in stdout.splitlines():
-        value = line.strip()
-        if not value or "=" in value:
-            continue
-        path = Path(value)
-        if path.exists():
-            paths.append(str(path))
-    return _dedupe_paths(paths)
-
-
-def _probe_endpoint_response_from_path(path: Path) -> JSONObject | None:
-    if not path.exists():
-        return None
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(value, Mapping):
-        return None
-    return json_object(value, "stimulus.response")
-
-
-def _rst_guard_script(
-    probe_plans: Sequence[JSONObject],
-    *,
-    install: bool,
-    interface: str | None = None,
-) -> str:
-    lines = [
-        "set -euo pipefail",
-        "if ! command -v iptables >/dev/null 2>&1; then",
-        "  echo 'iptables is required for TCP raw SYN probes' >&2",
-        "  exit 69",
-        "fi",
-    ]
-    for argv in _rst_guard_iptables_args(probe_plans, interface=interface):
-        quoted_args = " ".join(shlex.quote(arg) for arg in argv)
-        check = f"iptables -C OUTPUT {quoted_args}"
-        if install:
-            lines.extend(
-                [
-                    f"if ! {check} >/dev/null 2>&1; then",
-                    f"  iptables -I OUTPUT 1 {quoted_args}",
-                    "fi",
-                ]
-            )
-        else:
-            lines.extend(
-                [
-                    f"while {check} >/dev/null 2>&1; do",
-                    f"  iptables -D OUTPUT {quoted_args}",
-                    "done",
-                ]
-            )
-    lines.append(
-        "echo stimulus_rst_guard={}".format("installed" if install else "removed")
-    )
-    return "\n".join(lines)
-
-
-def _rst_guard_iptables_args(
-    probe_plans: Sequence[JSONObject],
-    *,
-    interface: str | None = None,
-) -> list[list[str]]:
-    rules: list[list[str]] = []
-    for plan in probe_plans:
-        guard = json_object(plan.get("stimulus_rst_guard", {}), "stimulus_rst_guard")
-        if guard.get("required") is not True:
-            continue
-        interface_args = ["-o", interface] if interface else []
-        rules.append(
-            [
-                *interface_args,
-                "-p",
-                "tcp",
-                "-s",
-                str(guard.get("source_ipv4", plan.get("source_ipv4", ""))),
-                "-d",
-                str(guard.get("destination_ipv4", plan.get("destination_ipv4", ""))),
-                "--sport",
-                str(guard.get("source_port", plan.get("source_port", ""))),
-                "--dport",
-                str(guard.get("destination_port", plan.get("destination_port", ""))),
-                "--tcp-flags",
-                "RST",
-                "RST",
-                "-j",
-                "DROP",
-            ]
-        )
-    return rules
-
-
 def _run_command(
     argv: Sequence[str],
     *,
@@ -1883,167 +1079,6 @@ def _redacted_argv(argv: Sequence[str]) -> list[str]:
     return redacted
 
 
-def _parse_json_stdout(stdout: str, label: str) -> tuple[JSONObject | None, list[str]]:
-    if not stdout.strip():
-        return None, [f"{label}: endpoint produced no JSON response"]
-    try:
-        value = json.loads(stdout)
-    except json.JSONDecodeError:
-        start = stdout.find("{")
-        end = stdout.rfind("}")
-        if start < 0 or end <= start:
-            return None, [f"{label}: endpoint stdout was not JSON"]
-        try:
-            value = json.loads(stdout[start : end + 1])
-        except json.JSONDecodeError as exc:
-            return None, [f"{label}: endpoint stdout JSON parse failed: {exc}"]
-    if not isinstance(value, Mapping):
-        return None, [f"{label}: endpoint response must be a JSON object"]
-    return json_object(value, f"{label}.response"), []
-
-
-def _probe_results_from_endpoint_response(
-    response: JSONObject,
-) -> tuple[list[ProbeResult], list[ObservedResponse]]:
-    results: list[ProbeResult] = []
-    observed_responses: list[ObservedResponse] = []
-    raw_results = response.get("results", [])
-    if not isinstance(raw_results, Sequence) or isinstance(
-        raw_results, (str, bytes, bytearray)
-    ):
-        raw_results = []
-
-    for raw_result in raw_results:
-        if not isinstance(raw_result, Mapping):
-            continue
-        result_obj = json_object(raw_result, "endpoint.results[]")
-        observed = None
-        raw_observed = result_obj.get("observed_response")
-        if isinstance(raw_observed, Mapping):
-            observed_obj = json_object(raw_observed, "endpoint.observed_response")
-            observed = ObservedResponse(
-                case=str(observed_obj.get("case", result_obj.get("case", ""))),
-                sequence=int(observed_obj.get("sequence", result_obj.get("sequence", 0))),
-                endpoint_role=str(observed_obj.get("endpoint_role", "stimulus")),
-                observed=bool(observed_obj.get("observed")),
-                response_type=_optional_string(observed_obj.get("response_type")),
-                raw_hex=_optional_string(observed_obj.get("raw_hex")),
-                decoded=json_object(observed_obj.get("decoded", {}), "observed.decoded"),
-                metadata=json_object(observed_obj.get("metadata", {}), "observed.metadata"),
-            )
-            observed_responses.append(observed)
-        results.append(
-            ProbeResult(
-                case=str(result_obj.get("case", "")),
-                sequence=int(result_obj.get("sequence", 0)),
-                status=str(result_obj.get("status", STATUS_FAILED)),
-                endpoint_role=str(result_obj.get("endpoint_role", "stimulus")),
-                passed=(
-                    bool(result_obj["passed"])
-                    if isinstance(result_obj.get("passed"), bool)
-                    else None
-                ),
-                observed_response=observed,
-                metadata=json_object(result_obj.get("metadata", {}), "result.metadata"),
-            )
-        )
-    return results, observed_responses
-
-
-def _failed_live_probe_results(
-    *,
-    planned_cases: Sequence[ProbeCase],
-    probe_plans: Sequence[JSONObject],
-    reason: str,
-    errors: Sequence[str],
-) -> tuple[list[ProbeResult], list[ObservedResponse]]:
-    results: list[ProbeResult] = []
-    for index, case in enumerate(planned_cases):
-        plan = probe_plans[index] if index < len(probe_plans) else {}
-        sequence = (
-            int(plan["sequence"])
-            if isinstance(plan.get("sequence"), int)
-            else index
-        )
-        results.append(
-            ProbeResult(
-                case=case.name,
-                sequence=sequence,
-                status=STATUS_FAILED,
-                endpoint_role=_primary_endpoint_role(case),
-                passed=False,
-                metadata={
-                    "failure_reason": reason,
-                    "errors": list(errors),
-                    "probe_plan": plan,
-                },
-            )
-        )
-    return results, []
-
-
-def _failed_counts_by_reason(results: Sequence[ProbeResult]) -> JSONObject:
-    counts: dict[str, int] = {}
-    for result in results:
-        if result.passed is not False:
-            continue
-        reason = result.metadata.get("failure_reason")
-        if isinstance(reason, str) and reason:
-            counts[reason] = counts.get(reason, 0) + 1
-    return counts
-
-
-def _command_artifact_paths(command: Mapping[str, JSONValue]) -> list[str]:
-    paths: list[str] = []
-    for key in ("stdout_path", "stderr_path", "request_path"):
-        value = command.get(key)
-        if isinstance(value, str) and value:
-            paths.append(value)
-    return paths
-
-
-def _probe_process_timeout_seconds(plan_count: int) -> int:
-    return (_probe_timeout_seconds(plan_count) * max(plan_count, 1)) + 60
-
-
-def _optional_string(value: object) -> str | None:
-    return value if isinstance(value, str) else None
-
-
-def _string_or(value: object, default: str) -> str:
-    return value if isinstance(value, str) and value else default
-
-
-def _string_list(value: object) -> list[str]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        return []
-    return [str(item) for item in value if isinstance(item, str)]
-
-
-def _json_mapping(value: object, name: str) -> JSONObject:
-    if isinstance(value, Mapping):
-        return json_object(value, name)
-    return {}
-
-
-def _json_list(value: object, name: str) -> list[JSONObject]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        return []
-    return [
-        json_object(item, f"{name}[]")
-        for item in value
-        if isinstance(item, Mapping)
-    ]
-
-
-def _dedupe_paths(paths: Sequence[str]) -> list[str]:
-    return list(dict.fromkeys(path for path in paths if path))
-
-
-def _dedupe_strings(values: Sequence[str]) -> list[str]:
-    return list(dict.fromkeys(value for value in values if value))
-
-
 def _probe_interface(provider: str, *, dry_run: bool) -> str:
     if provider == LOCAL_DRY_RUN_PROVIDER:
         return "dry-run0"
@@ -2053,10 +1088,6 @@ def _probe_interface(provider: str, *, dry_run: bool) -> str:
     if dry_run:
         return "eth1"
     return "auto"
-
-
-def _probe_timeout_seconds(plan_count: int) -> int:
-    return 3
 
 
 def _failure_reasons_for_case(case_name: str) -> list[str]:
