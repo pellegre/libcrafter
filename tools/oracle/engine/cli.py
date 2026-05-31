@@ -4204,13 +4204,14 @@ def _live_endpoint_process_timeout(endpoint_timeout: int) -> int:
 
 def _live_endpoint_timeout_for_count(packet_count: int) -> int:
     # The receiver's capture must stay open until well after the sender
-    # transmits. The sender only starts after the settle window, then needs its
-    # own process startup (uv + scapy import, or cargo) before it sends, so the
-    # capture deadline must exceed settle + sender startup + send, or the
-    # receiver times out observing zero packets even though the exchange is fine.
+    # transmits. The sender only starts after the settle window, then may need
+    # its own process startup plus per-packet route/MAC resolution on provider
+    # private networks. The capture deadline must exceed settle + sender startup
+    # + the slowest supported send path, or larger batches can lose only the
+    # tail packets even though the exchange is fine.
     return max(
         60,
-        min(300, int(LIVE_VM_RECEIVER_STARTUP_GRACE_SECONDS) + 30 + int(packet_count)),
+        min(600, int(LIVE_VM_RECEIVER_STARTUP_GRACE_SECONDS) + 60 + (int(packet_count) * 3)),
     )
 
 

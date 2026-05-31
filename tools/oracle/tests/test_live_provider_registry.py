@@ -142,6 +142,12 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertIn("qemu", message)
         self.assertIn("virtualbox", message)
 
+    def test_live_endpoint_timeout_scales_for_full_matrix_batches(self) -> None:
+        with patch.object(cli, "LIVE_VM_RECEIVER_STARTUP_GRACE_SECONDS", 35.0):
+            self.assertEqual(cli._live_endpoint_timeout_for_count(1), 98)
+            self.assertEqual(cli._live_endpoint_timeout_for_count(57), 266)
+            self.assertEqual(cli._live_endpoint_timeout_for_count(400), 600)
+
     def test_hetzner_adapter_exposes_report_plans(self) -> None:
         adapter = resolve_live_provider("hetzner")
 
