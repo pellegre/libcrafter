@@ -757,6 +757,89 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
     let _ = Dhcp::decode(&bytes); // must not panic; structured error or raw preservation
 }
 
+/// ARP malformed corpus rows: every Ethernet-rooted vector whose ARP body is
+/// truncated. This covers the short fixed header plus a truncation point inside
+/// each of the four variable address fields (sender hardware, sender protocol,
+/// target hardware, target protocol).
+fn is_arp_malformed_case(case: &MalformedCase) -> bool {
+    matches!(case.target, DecodeTarget::Ethernet) && case.name.contains("arp")
+}
+
+/// Every malformed ARP vector must decode to a fully structured
+/// `CrafterError::BufferTooShort`, carrying the `context` that names the failing
+/// stage (`arp header` for a short fixed header, `arp addresses` for a truncated
+/// address field) plus `required > available` so the expected and available
+/// lengths are both observable. Decoding must never panic.
+///
+/// The cases are driven entirely off the malformed corpus so no fixture bytes
+/// are duplicated. The required-dimension guard keeps the row set from silently
+/// narrowing below the truncation points the step calls out: the short fixed
+/// header and partial sender/target hardware/protocol addresses.
+#[test]
+fn malformed_arp_corpus_errors_carry_structured_fields() {
+    let cases = malformed_cases();
+    let arp_cases = cases
+        .iter()
+        .filter(|case| is_arp_malformed_case(case))
+        .collect::<Vec<_>>();
+    assert!(
+        !arp_cases.is_empty(),
+        "malformed corpus must carry ARP vectors"
+    );
+
+    // Each truncation point the step requires must be represented by name so
+    // this coverage never silently narrows.
+    let arp_required_rows = [
+        "short-arp-header",
+        "truncated-arp-sender-hardware-address",
+        "truncated-arp-sender-protocol-address",
+        "truncated-arp-target-hardware-address",
+        "truncated-arp-target-protocol-address",
+    ];
+    let covered = arp_cases
+        .iter()
+        .map(|case| case.name)
+        .collect::<std::collections::HashSet<_>>();
+    for row in arp_required_rows {
+        assert!(
+            covered.contains(row),
+            "malformed ARP corpus missing structured-field coverage for {row}"
+        );
+    }
+
+    for case in arp_cases {
+        let Err(error) = decode_malformed_case(case) else {
+            panic!("malformed ARP corpus case {} unexpectedly decoded", case.name);
+        };
+        // The variant/context match is shared with the corpus runner; here we
+        // additionally assert the structured payload.
+        assert_error_matches(case, error.clone());
+        match error {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(
+                    context, case.expected_error.context_or_field,
+                    "malformed ARP case {} carried an unexpected buffer context",
+                    case.name
+                );
+                assert!(
+                    required > available,
+                    "malformed ARP case {} BufferTooShort must require more ({required}) \
+                     than is available ({available})",
+                    case.name
+                );
+            }
+            other => panic!(
+                "malformed ARP case {} returned an unexpected error {other:?}",
+                case.name
+            ),
+        }
+    }
+}
+
 #[test]
 fn malformed_corpus_decoder_paths_do_not_panic() {
     let cases = malformed_cases();

@@ -6,6 +6,13 @@ short-ethernet|ethernet|buffer-too-short|ethernet header|0011
 truncated-vlan-header|ethernet|buffer-too-short|vlan header|ffffffffffff020000000001810000
 short-arp-header|ethernet|buffer-too-short|arp header|ffffffffffff020000000001080600010800
 truncated-arp-addresses|ethernet|buffer-too-short|arp addresses|ffffffffffff02000000000108060001080006040001
+# arp address truncation points: a complete 8-byte fixed header declares 6/4
+# address lengths (28 bytes required) but the body is cut off inside each of the
+# four variable address fields in turn.
+truncated-arp-sender-hardware-address|ethernet|buffer-too-short|arp addresses|ffffffffffff02000000000108060001080006040001aabbcc
+truncated-arp-sender-protocol-address|ethernet|buffer-too-short|arp addresses|ffffffffffff02000000000108060001080006040001aabbccddeeffc000
+truncated-arp-target-hardware-address|ethernet|buffer-too-short|arp addresses|ffffffffffff02000000000108060001080006040001aabbccddeeffc0000201112233
+truncated-arp-target-protocol-address|ethernet|buffer-too-short|arp addresses|ffffffffffff02000000000108060001080006040001aabbccddeeffc0000201112233445566c000
 short-linux-sll|linux-sll|buffer-too-short|linux sll header|0001
 short-null-loopback|null-loopback|buffer-too-short|null loopback header|020000
 
