@@ -1867,6 +1867,93 @@ def _live_provider_lab_request(
     )
 
 
+def _cleanup_existing_live_lab_session(
+    *,
+    lab_session_state,
+    lab_request,
+    client,
+) -> JSONObject:
+    """Best-effort cleanup for an unfinished oracle live lab session."""
+
+    metadata = getattr(lab_request, "metadata", {})
+    session_id = (
+        metadata.get("session_id")
+        if isinstance(metadata, Mapping)
+        else None
+    )
+    if not isinstance(session_id, str) or not session_id:
+        return {"attempted": False, "reason": "no_session_id"}
+
+    summary: JSONObject = {
+        "attempted": False,
+        "session_id": session_id,
+    }
+    try:
+        existing = lab_session_state.read_session_manifest(session_id)
+    except FileNotFoundError:
+        summary["reason"] = "no_existing_session"
+        return summary
+    except Exception as exc:  # pragma: no cover - corrupt local state varies.
+        summary["reason"] = "read_failed"
+        summary["errors"] = [str(exc)]
+        return summary
+
+    if bool(getattr(existing, "dry_run", False)):
+        summary["reason"] = "existing_session_is_dry_run"
+        return summary
+    if getattr(existing, "provider", None) != getattr(lab_request, "provider", None):
+        summary["reason"] = "provider_mismatch"
+        summary["existing_provider"] = getattr(existing, "provider", None)
+        summary["requested_provider"] = getattr(lab_request, "provider", None)
+        return summary
+
+    cleanup_state = getattr(existing, "cleanup_state", {})
+    cleanup_status = (
+        cleanup_state.get("status")
+        if isinstance(cleanup_state, Mapping)
+        else None
+    )
+    if cleanup_status in {"completed", "no_endpoints"}:
+        summary["reason"] = "existing_session_already_cleaned"
+        summary["status"] = cleanup_status
+        return summary
+
+    endpoint_ids = list(getattr(existing, "created_endpoint_ids", []) or [])
+    if not endpoint_ids:
+        endpoint_ids = [
+            endpoint.endpoint_id
+            for endpoint in getattr(existing, "endpoints", [])
+            if isinstance(getattr(endpoint, "endpoint_id", None), str)
+        ]
+    if not endpoint_ids:
+        summary["reason"] = "existing_session_has_no_endpoints"
+        return summary
+
+    command_count = len(getattr(existing, "command_records", []) or [])
+    cleaned = lab_session_state.cleanup_lab_session(existing, client=client)
+    lab_session_state.write_session_manifest(cleaned)
+    cleanup_commands = list(getattr(cleaned, "command_records", []) or [])[command_count:]
+    cleaned_state = getattr(cleaned, "cleanup_state", {})
+    errors = (
+        _string_values(cleaned_state.get("errors", []))
+        if isinstance(cleaned_state, Mapping)
+        else []
+    )
+    return {
+        "attempted": True,
+        "session_id": session_id,
+        "provider": getattr(existing, "provider", None),
+        "endpoint_ids": endpoint_ids,
+        "status": (
+            cleaned_state.get("status")
+            if isinstance(cleaned_state, Mapping)
+            else None
+        ),
+        "errors": errors,
+        "commands": _live_provider_lab_command_records(cleanup_commands),
+    }
+
+
 def _live_provider_bootstrap_commands(
     provider_adapter,
     *,
@@ -2436,6 +2523,7 @@ def _live_provider_execute(
     exchanges: list[LiveExchangePlan] = []
     results: list[ComparisonResult] = []
     execution_errors: list[str] = []
+    preflight_cleanup: JSONObject = {"attempted": False}
     keep_wire_endpoints = bool(getattr(args, "keep_wire_endpoints", False))
     created_endpoint_ids: list[str] = []
     live_packet_exchange = False
@@ -2469,6 +2557,12 @@ def _live_provider_execute(
             confirm_live_run=True,
             remote_dir=remote_dir,
         )
+        if not keep_wire_endpoints:
+            preflight_cleanup = _cleanup_existing_live_lab_session(
+                lab_session_state=lab_session_state,
+                lab_request=lab_request,
+                client=wire,
+            )
         lab_session = lab_session_state.create_session(
             lab_adapter,
             lab_request,
@@ -3131,6 +3225,7 @@ def _live_provider_execute(
             "provider_commands": provider_commands,
             "command_records": lab_report_metadata.get("command_records", provider_commands),
             "lab_session": lab_report_metadata.get("lab_session"),
+            "preflight_cleanup": preflight_cleanup,
             "endpoint_bootstrap": [command.to_dict() for command in endpoint_bootstrap],
             "artifact_collection": {
                 "always_attempt": True,

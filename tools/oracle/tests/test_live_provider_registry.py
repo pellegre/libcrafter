@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -660,8 +661,10 @@ class LiveProviderRegistryTest(unittest.TestCase):
             wire = _FakeLiveWireClient()
             plan = _fake_packet_plan()
             corpus_metadata = _fake_corpus_metadata(adapter.name, [plan])
+            lab_env = _isolated_lab_env(temp_dir)
 
             with (
+                patch.dict(os.environ, lab_env),
                 patch("tools.lab.engine.wire_client.WireClient", return_value=wire),
                 patch("tools.lab.engine.repo.create_repository_archive", side_effect=_fake_repo_archive),
                 patch.object(cli, "_backend_versions", return_value={}),
@@ -750,6 +753,104 @@ class LiveProviderRegistryTest(unittest.TestCase):
             self.assertIn("provider-exchange/fakecloud/reference_to_libcrafter", artifact_paths)
             self.assertNotIn("hetzner-exchange", artifact_paths)
 
+    def test_real_live_execution_cleans_stale_lab_session_before_create(self) -> None:
+        from tools.lab.engine import session as lab_session_state
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "oracle-live"
+            report_path = output_dir / "report.json"
+            args = _real_live_args("fakecloud", output_dir)
+            adapter = _FakeLiveProviderAdapter()
+            wire = _FakeLiveWireClient()
+            plan = _fake_packet_plan()
+            corpus_metadata = _fake_corpus_metadata(adapter.name, [plan])
+            lab_env = _isolated_lab_env(temp_dir)
+            stale_session = LabSession(
+                provider=adapter.name,
+                wire_provider=adapter.wire_provider,
+                wire_exposure=adapter.wire_exposure,
+                session_id="oracle-live",
+                roles=[LabRole(name="libcrafter"), LabRole(name="reference_backend")],
+                endpoints=[
+                    LabEndpoint(
+                        endpoint_id="fake-stale-libcrafter",
+                        role="libcrafter",
+                        interface="fake0",
+                        ipv4="10.0.0.10",
+                    ),
+                    LabEndpoint(
+                        endpoint_id="fake-stale-reference",
+                        role="reference_backend",
+                        interface="fake0",
+                        ipv4="10.0.0.20",
+                    ),
+                ],
+                provider_capabilities={},
+                infrastructure_metadata={},
+                provider_workflow=[],
+                command_records=[],
+                remote_dir="/srv/fake-oracle",
+                remote_artifact_root="/srv/fake-oracle/artifacts/oracle-live",
+                created_endpoint_ids=[
+                    "fake-stale-libcrafter",
+                    "fake-stale-reference",
+                ],
+                dry_run=False,
+                cleanup_state={
+                    "status": "not_started",
+                    "artifact_collection_attempted": False,
+                    "teardown_attempted": False,
+                },
+                metadata={"provider": adapter.name},
+            )
+
+            with (
+                patch.dict(os.environ, lab_env),
+                patch("tools.lab.engine.wire_client.WireClient", return_value=wire),
+                patch("tools.lab.engine.repo.create_repository_archive", side_effect=_fake_repo_archive),
+                patch.object(cli, "_backend_versions", return_value={}),
+                patch.object(cli, "_libcrafter_info", return_value={}),
+                patch.object(cli, "_live_corpus_plans", return_value=(
+                    [plan],
+                    ["fake-spec.yaml"],
+                    corpus_metadata,
+                )),
+                patch("tools.oracle.engine.backends.scapy.packets.encode_packet_plans", side_effect=_fake_encode_packet_plans),
+                patch("tools.oracle.engine.backends.scapy.normalize.decode_vectors", side_effect=_fake_decode_vectors),
+                patch.object(cli.time, "sleep", return_value=None),
+                patch.object(cli, "_start_wire_endpoint_batch", side_effect=_fake_start_wire_endpoint_batch),
+                patch.object(cli, "_run_wire_endpoint_batch", side_effect=_fake_run_wire_endpoint_batch),
+                patch.object(cli, "_wait_wire_endpoint_batch", side_effect=lambda execution, *, timeout_seconds: execution),
+            ):
+                lab_session_state.write_session_manifest(stale_session)
+                code = cli._live_provider_execute(
+                    args=args,
+                    provider_adapter=adapter,
+                    report_path=report_path,
+                    directions=["reference_to_libcrafter"],
+                    plans=[plan],
+                    selected_specs=["base-spec.yaml"],
+                    corpus_metadata=corpus_metadata,
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                wire.destroyed[:2],
+                ["fake-stale-reference", "fake-stale-libcrafter"],
+            )
+            self.assertEqual(
+                wire.destroyed[-2:],
+                ["fake-reference_backend", "fake-libcrafter"],
+            )
+            report = read_json(report_path)
+            preflight = report["metadata"]["preflight_cleanup"]
+            self.assertTrue(preflight["attempted"])
+            self.assertEqual(preflight["status"], "completed")
+            self.assertEqual(
+                preflight["endpoint_ids"],
+                ["fake-stale-libcrafter", "fake-stale-reference"],
+            )
+
     def test_real_live_execution_tears_down_after_artifact_collection_exception(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "oracle-live"
@@ -759,8 +860,10 @@ class LiveProviderRegistryTest(unittest.TestCase):
             wire = _FakeLiveWireClient(collect_raises=True)
             plan = _fake_packet_plan()
             corpus_metadata = _fake_corpus_metadata(adapter.name, [plan])
+            lab_env = _isolated_lab_env(temp_dir)
 
             with (
+                patch.dict(os.environ, lab_env),
                 patch("tools.lab.engine.wire_client.WireClient", return_value=wire),
                 patch("tools.lab.engine.repo.create_repository_archive", side_effect=_fake_repo_archive),
                 patch.object(cli, "_backend_versions", return_value={}),
@@ -1235,6 +1338,14 @@ def _fake_corpus_metadata(provider: str, plans: list[PacketPlan]) -> dict[str, o
         "wire_skip_counts_by_reason": {},
         "wire_eligibility": [],
         "packet_indexes": [plan.index for plan in plans],
+    }
+
+
+def _isolated_lab_env(temp_dir: str) -> dict[str, str]:
+    root = Path(temp_dir)
+    return {
+        "LIBCRAFTER_LAB_STATE_ROOT": str(root / "lab-state"),
+        "LIBCRAFTER_LAB_ARTIFACT_ROOT": str(root / "lab-artifacts"),
     }
 
 
