@@ -145,6 +145,24 @@ pub struct ProbePlan {
     #[serde(default)]
     pub expected_cname_answer: Option<DnsAnswerExpectation>,
     #[serde(default)]
+    pub edns_udp_payload_size: Option<u16>,
+    #[serde(default)]
+    pub edns_version: Option<u8>,
+    #[serde(default)]
+    pub edns_do: Option<bool>,
+    #[serde(default)]
+    pub edns_request_options: Option<Vec<EdnsOptionExpectation>>,
+    #[serde(default)]
+    pub expected_edns_udp_payload_size: Option<u16>,
+    #[serde(default)]
+    pub expected_edns_version: Option<u8>,
+    #[serde(default)]
+    pub expected_edns_extended_rcode: Option<u8>,
+    #[serde(default)]
+    pub expected_edns_do: Option<bool>,
+    #[serde(default)]
+    pub expected_edns_options: Option<Vec<EdnsOptionExpectation>>,
+    #[serde(default)]
     pub expected_response_code: Option<u8>,
     #[serde(default)]
     pub answer_ttl: Option<u32>,
@@ -174,6 +192,19 @@ pub struct DnsAnswerExpectation {
     #[serde(default)]
     pub class_value: Option<u16>,
     pub data: String,
+}
+
+/// One EDNS(0) option carried in a probe plan (RFC 6891 Section 6.1.2).
+///
+/// The option code is the IANA EDNS0 Option Code; `data_hex` is the opaque
+/// OPTION-DATA bytes in lowercase hex so the JSON contract stays text-only. Used
+/// by the EDNS OPT case to describe the option list the stimulus sends and the
+/// ordered option list the response's OPT record must decode to.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EdnsOptionExpectation {
+    pub code: u16,
+    #[serde(default)]
+    pub data_hex: String,
 }
 
 #[derive(Debug)]
@@ -386,12 +417,12 @@ fn dispatch_case(
         (
             RunMode::DryRun,
             "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain"
-            | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer",
+            | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer" | "dns-edns-opt",
         ) => dns::run_dns_dry_run(request, plan),
         (
             RunMode::Live,
             "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain"
-            | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer",
+            | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer" | "dns-edns-opt",
         ) => dns::run_dns_live(request, plan),
         (RunMode::DryRun, "ttl-expired") => icmp::run_ttl_expired_dry_run(request, plan),
         (RunMode::Live, "ttl-expired") => icmp::run_ttl_expired_live(request, plan),
@@ -515,6 +546,15 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "present_type_value": plan.present_type_value,
         "canonical_name": plan.canonical_name,
         "terminal_ipv4": plan.terminal_ipv4,
+        "edns_udp_payload_size": plan.edns_udp_payload_size,
+        "edns_version": plan.edns_version,
+        "edns_do": plan.edns_do,
+        "edns_request_options": dns::edns_options_json(plan.edns_request_options.as_deref()),
+        "expected_edns_udp_payload_size": plan.expected_edns_udp_payload_size,
+        "expected_edns_version": plan.expected_edns_version,
+        "expected_edns_extended_rcode": plan.expected_edns_extended_rcode,
+        "expected_edns_do": plan.expected_edns_do,
+        "expected_edns_options": dns::edns_options_json(plan.expected_edns_options.as_deref()),
         "expected_response_code": plan.expected_response_code,
         "answer_ttl": plan.answer_ttl,
         "ttl": plan.ttl,
@@ -592,7 +632,7 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
             plan.source_port.unwrap_or(0),
         ),
         "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain"
-        | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer" => {
+        | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer" | "dns-edns-opt" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -623,7 +663,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "tcp-syn-closed" => "tcp_rst",
             "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain"
             | "dns-nxdomain" | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer"
-            | "dns-srv-answer" => "dns_response",
+            | "dns-srv-answer" | "dns-edns-opt" => "dns_response",
             "ttl-expired" => "icmp_ttl_expired",
             _ => "unknown",
         })
@@ -712,6 +752,22 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "srv_port": plan.expected_srv_port,
             "srv_target": plan.expected_srv_target,
             "answer_ttl": plan.answer_ttl,
+        }),
+        "dns-edns-opt" => json!({
+            "required": true,
+            "kind": "udp-dns-responder",
+            "port": plan.destination_port,
+            "query_name": plan.query_name,
+            "query_type": plan.query_type,
+            "answer_data": plan.expected_answer_data,
+            "answer_ttl": plan.answer_ttl,
+            "edns": {
+                "udp_payload_size": plan.expected_edns_udp_payload_size,
+                "version": plan.expected_edns_version,
+                "extended_rcode": plan.expected_edns_extended_rcode,
+                "do": plan.expected_edns_do,
+                "options": dns::edns_options_json(plan.expected_edns_options.as_deref()),
+            },
         }),
         _ => json!({}),
     }

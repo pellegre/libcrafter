@@ -1136,6 +1136,165 @@ def _dns_srv_answer_probe_plan(
     }
 
 
+def _dns_edns_opt_probe_plan(
+    *,
+    case_name: str = "dns-edns-opt",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dns-edns-opt`` behavioral case.
+
+    An A (QTYPE 1) query that carries an EDNS(0) OPT pseudo-record (RFC 6891) in
+    its additional section, advertising a planned requestor UDP payload size and
+    one EDNS option (a deterministic NSID, RFC 5001). The controlled UDP DNS
+    responder answers with a matching A record and synthesizes its own OPT
+    pseudo-record in the response's additional section: the OPT owner name is
+    root ``.``, TYPE is 41, the CLASS field carries the responder's UDP payload
+    size, the TTL field packs the extended RCODE, EDNS version, and the DO flag,
+    and the RDATA carries the responder's deterministic NSID option. The case
+    exercises the additional section and the OPT pseudo-record's EDNS field
+    layout (payload size in CLASS; extended rcode/version/flags packed into TTL;
+    {code,length,data} options in RDATA). The validation contract covers the
+    transaction id, QR, rcode, question (name/type/class), the A answer, the
+    decoded additional-section OPT metadata (UDP payload size, extended rcode,
+    version, DO flag, and the ordered option list), plus peer addresses/ports.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    destination_port = 53
+    query_name = dns_query_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    answer_data = f"203.0.113.{1 + digest[4] % 250}"
+    answer_ttl = 60 + digest[9] % 180
+    # The stimulus advertises a deterministic requestor UDP payload size (a valid
+    # EDNS(0) value) and one NSID option; the responder advertises its own size
+    # and NSID. Keep both within the OPT CLASS u16 range.
+    request_udp_payload_size = 1232
+    response_udp_payload_size = 4096
+    edns_version = 0
+    edns_extended_rcode = 0
+    edns_do = True
+    request_nsid = dns_edns_nsid(profile=profile, seed=seed, sequence=sequence, digest=digest, role="client")
+    response_nsid = dns_edns_nsid(profile=profile, seed=seed, sequence=sequence, digest=digest, role="server")
+    # NSID (RFC 5001) option code is 3; the data is opaque identifier bytes.
+    request_options = [{"code": 3, "data_hex": request_nsid}]
+    response_options = [{"code": 3, "data_hex": response_nsid}]
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": "A",
+        "query_type_value": 1,
+        "query_class": "IN",
+        "query_class_value": 1,
+        "expected_answer_name": query_name,
+        "expected_answer_type": "A",
+        "expected_answer_type_value": 1,
+        "expected_answer_class": "IN",
+        "expected_answer_class_value": 1,
+        "expected_answer_data": answer_data,
+        "expected_response_code": 0,
+        "expected_response_flags": ["qr", "aa"],
+        "answer_ttl": answer_ttl,
+        # The stimulus carries an EDNS(0) OPT record in its additional section.
+        "edns_udp_payload_size": request_udp_payload_size,
+        "edns_version": edns_version,
+        "edns_do": edns_do,
+        "edns_request_options": request_options,
+        # The response's additional-section OPT metadata the endpoint decodes and
+        # validates: UDP payload size (OPT CLASS), extended rcode/version/DO flag
+        # (OPT TTL), and the ordered option list ({code, data} tuples).
+        "expected_edns_udp_payload_size": response_udp_payload_size,
+        "expected_edns_version": edns_version,
+        "expected_edns_extended_rcode": edns_extended_rcode,
+        "expected_edns_do": edns_do,
+        "expected_edns_options": response_options,
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": "A",
+            "answer_data": answer_data,
+            "answer_ttl": answer_ttl,
+            "edns": {
+                "udp_payload_size": response_udp_payload_size,
+                "version": edns_version,
+                "extended_rcode": edns_extended_rcode,
+                "do": edns_do,
+                "options": response_options,
+            },
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": 0,
+            "question": {
+                "name": query_name,
+                "type": "A",
+                "type_value": 1,
+                "class": "IN",
+                "class_value": 1,
+            },
+            "answer": {
+                "name": query_name,
+                "type": "A",
+                "type_value": 1,
+                "class": "IN",
+                "class_value": 1,
+                "data": answer_data,
+                "ttl": answer_ttl,
+            },
+            "edns_opt": {
+                "udp_payload_size": response_udp_payload_size,
+                "version": edns_version,
+                "extended_rcode": edns_extended_rcode,
+                "do": edns_do,
+                "options": response_options,
+            },
+        },
+    }
+
+
+def dns_edns_nsid(*, profile: str, seed: int, sequence: int, digest: bytes, role: str) -> str:
+    """Return deterministic EDNS(0) NSID option data bytes as a hex string.
+
+    NSID (RFC 5001) carries opaque identifier bytes. The client and server roles
+    derive distinct, stable values per (case, profile, seed, sequence) so the
+    stimulus and the response OPT records carry recognizably different option
+    data. Returned as lowercase hex (no ``0x`` prefix) so the Rust endpoint can
+    decode it back to bytes.
+    """
+
+    label = dns_label(profile)
+    text = f"libcrafter-nsid-{role}={label}-{seed}-{sequence}-{digest.hex()[:8]}"
+    return text.encode("ascii").hex()
+
+
 def dns_service_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
     """Return the deterministic SRV service owner name (``_service._proto.name``).
 
@@ -1406,6 +1565,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-txt-answer": _dns_txt_answer_probe_plan,
     "dns-mx-answer": _dns_mx_answer_probe_plan,
     "dns-srv-answer": _dns_srv_answer_probe_plan,
+    "dns-edns-opt": _dns_edns_opt_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }

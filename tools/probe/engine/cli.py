@@ -587,6 +587,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "dns-txt-answer",
         "dns-mx-answer",
         "dns-srv-answer",
+        "dns-edns-opt",
     }
 )
 
@@ -1049,6 +1050,7 @@ def _probe_plan_with_endpoint_addresses(
         "dns-txt-answer",
         "dns-mx-answer",
         "dns-srv-answer",
+        "dns-edns-opt",
     }:
         source_port = int(updated.get("source_port", 0))
         destination_port = int(updated.get("destination_port", 53))
@@ -1190,6 +1192,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "dns-txt-answer",
         "dns-mx-answer",
         "dns-srv-answer",
+        "dns-edns-opt",
     }:
         return [
             FAILURE_TIMEOUT,
