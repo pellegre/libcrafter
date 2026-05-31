@@ -463,6 +463,26 @@ def dhcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     return [plan for plan in probe_plans if plan.get("case") in _DHCP_RESPONDER_CASES]
 
 
+# Probe cases whose target is primarily the kernel answering ARP who-has on a
+# private L2 segment. ``arp-resolution`` is the legacy smoke case;
+# ``arp-basic-who-has`` is the baseline ARP behavioral case. Both rely on the
+# target kernel answering ARP for its own configured address, with ARP sysctl
+# tuning and a neighbor-cache flush as setup (no listening daemon). Providers
+# without link-layer/broadcast capability skip these cases.
+_ARP_KERNEL_CASES: frozenset[str] = frozenset(
+    {
+        "arp-resolution",
+        "arp-basic-who-has",
+    }
+)
+
+
+def arp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the ARP probe plans in order."""
+
+    return [plan for plan in probe_plans if plan.get("case") in _ARP_KERNEL_CASES]
+
+
 def dedupe_ints(values: Iterable[int]) -> list[int]:
     """Return the integer sequence with duplicates removed, order preserved."""
 
@@ -1068,6 +1088,7 @@ __all__ = [
     "KernelStateDescriptor",
     "TargetServiceDescriptor",
     "arp_alias_descriptor",
+    "arp_probe_plans",
     "arp_sysctl_descriptor",
     "cleanup_wire_probe_target",
     "closed_udp_port_descriptor",
