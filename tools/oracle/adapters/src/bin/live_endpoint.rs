@@ -446,7 +446,16 @@ fn run_receiver(
     if let Some(filter) = capture_filter.clone() {
         sniffer = sniffer.filter(filter);
     }
-    let captured = sniffer.collect()?;
+    let capture = sniffer.open()?;
+    // Signal that the capture is open and listening so the orchestrator only
+    // launches the sender once packets can actually be observed. Without this
+    // the sender can transmit its whole burst before the receiver is ready,
+    // leaving the receiver to time out having observed zero packets.
+    let _ = fs::write(
+        out_dir.join(format!("receiver-ready-{}", request.direction)),
+        b"ready",
+    );
+    let captured = capture.collect_packets()?;
 
     let capture_dir = artifact_path(out_dir, &request.artifact_paths, "captures", "captures");
     fs::create_dir_all(&capture_dir)?;

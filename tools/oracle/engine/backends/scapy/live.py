@@ -438,6 +438,20 @@ def _run_receiver(
     }
     if capture_filter := _request_capture_filter(request):
         sniff_kwargs["filter"] = capture_filter
+
+    direction = _optional_string(request.get("direction")) or "unknown"
+    ready_marker = out_dir / f"receiver-ready-{direction}"
+
+    def _signal_receiver_ready() -> None:
+        # Tell the orchestrator the capture is live so the sender only starts
+        # once packets can actually be observed (avoids the send/receive race
+        # where the sender's burst is gone before the receiver is listening).
+        try:
+            ready_marker.write_text("ready", encoding="utf-8")
+        except Exception:
+            pass
+
+    sniff_kwargs["started_callback"] = _signal_receiver_ready
     captured = scapy_all.sniff(**sniff_kwargs)
 
     decoded_models: list[JSONObject] = []
