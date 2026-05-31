@@ -302,6 +302,100 @@ def _dns_query_probe_plan(
     }
 
 
+def _dns_a_success_probe_plan(
+    *,
+    case_name: str = "dns-a-success",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dns-a-success`` behavioral case.
+
+    Always an A (QTYPE 1) query against the controlled UDP DNS responder on
+    port 53, with a deterministic documentation-space IPv4 answer. The validation
+    contract covers transaction id, QR, rcode, question (name/type/class), and
+    answer (name/type/class/data/ttl) plus peer addresses and ports.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    destination_port = 53
+    query_name = dns_query_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    answer_data = f"203.0.113.{1 + digest[4] % 250}"
+    answer_ttl = 60 + digest[9] % 180
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": "A",
+        "query_type_value": 1,
+        "query_class": "IN",
+        "query_class_value": 1,
+        "expected_answer_name": query_name,
+        "expected_answer_type": "A",
+        "expected_answer_type_value": 1,
+        "expected_answer_class": "IN",
+        "expected_answer_class_value": 1,
+        "expected_answer_data": answer_data,
+        "expected_response_code": 0,
+        "expected_response_flags": ["qr", "aa"],
+        "answer_ttl": answer_ttl,
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": "A",
+            "answer_data": answer_data,
+            "answer_ttl": answer_ttl,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": 0,
+            "question": {
+                "name": query_name,
+                "type": "A",
+                "type_value": 1,
+                "class": "IN",
+                "class_value": 1,
+            },
+            "answer": {
+                "name": query_name,
+                "type": "A",
+                "type_value": 1,
+                "class": "IN",
+                "class_value": 1,
+                "data": answer_data,
+                "ttl": answer_ttl,
+            },
+        },
+    }
+
+
 def dns_query_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
     label = dns_label(profile)
     suffix = digest.hex()[:10]
@@ -479,6 +573,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "tcp-syn-open": _tcp_syn_probe_plan,
     "tcp-syn-closed": _tcp_syn_probe_plan,
     "dns-query": _dns_query_probe_plan,
+    "dns-a-success": _dns_a_success_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }
