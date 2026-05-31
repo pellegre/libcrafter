@@ -82,6 +82,14 @@ def _dhcp_parameter_request_list_plan(*, seed: int = 1024, sequence: int = 0) ->
     )
 
 
+def _dhcp_lease_time_plan(*, seed: int = 1025, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dhcp-lease-time"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcp-lease-time"],
+        sequence=sequence,
+    )
+
+
 class DhcpDiscoverOfferPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct Discover stimulus and Offer contract."""
 
@@ -757,6 +765,144 @@ class DhcpParameterRequestListTest(unittest.TestCase):
                 self.assertEqual(
                     plan_view.get("parameter_request_list"), [1, 3, 6, 51, 58, 59]
                 )
+
+
+class DhcpLeaseTimePlanTest(unittest.TestCase):
+    """The plan carries a Discover whose Offer returns the three timing options."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dhcp-lease-time", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dhcp-lease-time"],
+            planning._dhcp_lease_time_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dhcp_lease_time_plan(), _dhcp_lease_time_plan())
+
+    def test_plan_carries_a_discover_stimulus(self) -> None:
+        plan = _dhcp_lease_time_plan()
+
+        self.assertEqual(plan["case"], "dhcp-lease-time")
+        self.assertEqual(plan["stimulus"], "dhcp_discover")
+        self.assertEqual(plan["expected_response"], "dhcp_offer")
+
+        # DHCP fixed ports: client 68 -> server 67.
+        self.assertEqual(plan["source_port"], 68)
+        self.assertEqual(plan["destination_port"], 67)
+
+        # A client hardware address in the RFC 7042 documentation MAC range and a
+        # 32-bit transaction id (xid).
+        mac = plan["client_mac"]
+        self.assertTrue(mac.startswith("00:00:5e:00:53:"))
+        self.assertIsInstance(plan["transaction_id"], int)
+        self.assertTrue(1 <= plan["transaction_id"] <= 0xFFFFFFFF)
+
+    def test_offer_expectations_carry_three_timing_options(self) -> None:
+        plan = _dhcp_lease_time_plan()
+
+        self.assertEqual(plan["expected_message_type"], "offer")
+        self.assertEqual(plan["expected_message_type_value"], 2)
+        offered = ipaddress.IPv4Address(plan["expected_yiaddr"])
+        self.assertIn(offered, ipaddress.ip_network("198.51.100.0/24"))
+        self.assertEqual(plan["expected_server_identifier"], plan["destination_ipv4"])
+
+        # The three timing options are 32-bit second counts with T1 < T2 < lease.
+        lease = plan["expected_lease_time"]
+        renewal = plan["expected_renewal_time"]
+        rebinding = plan["expected_rebinding_time"]
+        for value in (lease, renewal, rebinding):
+            self.assertIsInstance(value, int)
+            self.assertTrue(0 < value <= 0xFFFFFFFF)
+        self.assertLess(renewal, rebinding)
+        self.assertLess(rebinding, lease)
+
+    def test_validation_contract_covers_each_timing_option_and_identity(self) -> None:
+        plan = _dhcp_lease_time_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (Offer flows server -> client, 67 -> 68).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 67)
+        self.assertEqual(validation["destination_port"], 68)
+        self.assertEqual(validation["direction"], "server_to_client")
+
+        # BOOTP reply opcode and the Offer message type.
+        self.assertEqual(validation["op_value"], 2)
+        self.assertEqual(validation["message_type_value"], 2)
+
+        # Identity: transaction id, client hardware address, and server identifier.
+        self.assertEqual(validation["transaction_id"], plan["transaction_id"])
+        self.assertEqual(validation["client_hardware_address"], plan["client_mac"])
+        self.assertEqual(validation["yiaddr"], plan["expected_yiaddr"])
+        self.assertEqual(
+            validation["server_identifier"], plan["expected_server_identifier"]
+        )
+
+        # Each timing option value is asserted (lease 51, renewal 58, rebinding 59).
+        self.assertEqual(validation["lease_time"], plan["expected_lease_time"])
+        self.assertEqual(validation["renewal_time"], plan["expected_renewal_time"])
+        self.assertEqual(validation["rebinding_time"], plan["expected_rebinding_time"])
+
+    def test_target_service_records_the_timing_options(self) -> None:
+        plan = _dhcp_lease_time_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["port"], 67)
+        self.assertEqual(target_service["client_port"], 68)
+        self.assertEqual(target_service["lease_time"], plan["expected_lease_time"])
+        self.assertEqual(target_service["renewal_time"], plan["expected_renewal_time"])
+        self.assertEqual(
+            target_service["rebinding_time"], plan["expected_rebinding_time"]
+        )
+
+    def test_capture_filter_matches_offer_direction(self) -> None:
+        plan = _dhcp_lease_time_plan()
+        self.assertIn("src port 67", plan["capture_filter"])
+        self.assertIn("dst port 68", plan["capture_filter"])
+
+
+class DhcpLeaseTimeTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dhcp-lease-time",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1025,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dhcp-lease-time", planned)
+
+            # The endpoint produced a result for the focused case and it built
+            # the Discover (a dry-run plan compiles the outgoing stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dhcp-lease-time"
+            ]
+            self.assertTrue(results, "endpoint emitted no dhcp-lease-time result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                # The planned Offer's three timing options are visible in the
+                # dry-run metadata so the endpoint validates the values it expects.
+                target_service = metadata.get("target_service", {})
+                self.assertIsInstance(target_service.get("lease_time"), int)
+                self.assertIsInstance(target_service.get("renewal_time"), int)
+                self.assertIsInstance(target_service.get("rebinding_time"), int)
 
 
 if __name__ == "__main__":
