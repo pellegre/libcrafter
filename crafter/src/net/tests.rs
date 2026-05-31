@@ -432,6 +432,54 @@ mod send_recv_filters {
             "arp and src host 192.0.2.1 and dst host 192.0.2.10"
         );
     }
+
+    // The `arp_filter` name on the next three tests is deliberate: it keeps them
+    // selectable via `cargo test -p crafter arp_filter` alongside the
+    // `reply_filter_for_arp` selector above.
+
+    #[test]
+    fn arp_filter_non_ipv4_protocol_degrades_to_bare_arp() {
+        // A non-IPv4 protocol type means `sender_ipv4()`/`target_ipv4()` both
+        // return `None`, so deriving "host" clauses from the protocol bytes
+        // would be meaningless. The filter must stay a conservative bare `arp`.
+        let packet = Arp::new()
+            .protocol_type(0x86dd)
+            .protocol_len(16)
+            .sender_protocol(vec![0u8; 16])
+            .target_protocol(vec![0u8; 16])
+            .into_packet();
+
+        assert_eq!(packet.reply_filter().unwrap(), "arp");
+    }
+
+    #[test]
+    fn arp_filter_variable_protocol_length_degrades_to_bare_arp() {
+        // IPv4 protocol type but a nonstandard protocol length: the four-byte
+        // IPv4 view does not apply, so no host clause should be emitted.
+        let packet = Arp::new()
+            .protocol_len(7)
+            .sender_protocol(vec![0u8; 7])
+            .target_protocol(vec![0u8; 7])
+            .into_packet();
+
+        assert_eq!(packet.reply_filter().unwrap(), "arp");
+    }
+
+    #[test]
+    fn arp_filter_partial_ipv4_addresses_degrade_to_bare_arp() {
+        // Only one protocol address is genuine IPv4 (the other is too short for
+        // its declared IPv4 protocol type). Emitting a single half-populated
+        // host clause would be misleading, so the filter degrades to bare `arp`.
+        let packet = Arp::who_has(
+            Ipv4Addr::new(192, 0, 2, 10),
+            Ipv4Addr::new(192, 0, 2, 1),
+            MacAddr::new([0x02, 0, 0, 0, 0, 1]),
+        )
+        .target_protocol(vec![192, 0, 2])
+        .into_packet();
+
+        assert_eq!(packet.reply_filter().unwrap(), "arp");
+    }
 }
 
 #[cfg(test)]
