@@ -105,6 +105,14 @@ def _dns_srv_answer_plan(*, seed: int = 1017, sequence: int = 0) -> dict:
     )
 
 
+def _dns_edns_opt_plan(*, seed: int = 1018, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dns-edns-opt"]),
+        case=planning.PROBE_CASE_BY_NAME["dns-edns-opt"],
+        sequence=sequence,
+    )
+
+
 class DnsASuccessPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct A query/answer contract."""
 
@@ -1071,6 +1079,160 @@ class DnsSrvAnswerTest(unittest.TestCase):
                 if result.get("case") == "dns-srv-answer"
             ]
             self.assertTrue(results, "endpoint emitted no dns-srv-answer result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+
+class DnsEdnsOptPlanTest(unittest.TestCase):
+    """The plan carries an RFC 6891 EDNS(0) OPT query/response contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dns-edns-opt", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dns-edns-opt"],
+            planning._dns_edns_opt_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dns_edns_opt_plan(), _dns_edns_opt_plan())
+
+    def test_plan_carries_an_edns_query_contract(self) -> None:
+        plan = _dns_edns_opt_plan()
+
+        self.assertEqual(plan["case"], "dns-edns-opt")
+        self.assertEqual(plan["stimulus"], "dns_query")
+        self.assertEqual(plan["expected_response"], "dns_response")
+
+        # Query id, source port, target port 53, a query name, and QTYPE A.
+        self.assertIsInstance(plan["query_id"], int)
+        self.assertTrue(1 <= plan["query_id"] <= 0xFFFF)
+        self.assertIsInstance(plan["source_port"], int)
+        self.assertNotEqual(plan["source_port"], 53)
+        self.assertEqual(plan["destination_port"], 53)
+        self.assertTrue(plan["query_name"].endswith("."))
+        self.assertEqual(plan["query_type"], "A")
+        self.assertEqual(plan["query_type_value"], 1)
+        self.assertEqual(plan["query_class_value"], 1)
+
+        # The stimulus advertises an EDNS(0) OPT record: a requestor UDP payload
+        # size, a version, the DO flag, and an NSID option.
+        self.assertIsInstance(plan["edns_udp_payload_size"], int)
+        self.assertTrue(1 <= plan["edns_udp_payload_size"] <= 0xFFFF)
+        self.assertEqual(plan["edns_version"], 0)
+        self.assertTrue(plan["edns_do"])
+        request_options = plan["edns_request_options"]
+        self.assertEqual(len(request_options), 1)
+        # NSID option code is 3 (RFC 5001); the data is opaque hex bytes.
+        self.assertEqual(request_options[0]["code"], 3)
+        bytes.fromhex(request_options[0]["data_hex"])
+
+        # The response's expected OPT metadata: UDP payload size, version,
+        # extended rcode, DO flag, and the ordered option list.
+        self.assertIsInstance(plan["expected_edns_udp_payload_size"], int)
+        self.assertTrue(1 <= plan["expected_edns_udp_payload_size"] <= 0xFFFF)
+        self.assertEqual(plan["expected_edns_version"], 0)
+        self.assertEqual(plan["expected_edns_extended_rcode"], 0)
+        self.assertTrue(plan["expected_edns_do"])
+        response_options = plan["expected_edns_options"]
+        self.assertEqual(len(response_options), 1)
+        self.assertEqual(response_options[0]["code"], 3)
+        bytes.fromhex(response_options[0]["data_hex"])
+        # The client and server NSID values are recognizably distinct.
+        self.assertNotEqual(
+            request_options[0]["data_hex"], response_options[0]["data_hex"]
+        )
+        self.assertEqual(plan["expected_response_code"], 0)
+        self.assertIn("qr", plan["expected_response_flags"])
+
+    def test_validation_contract_covers_id_qr_question_answer_and_opt(self) -> None:
+        plan = _dns_edns_opt_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (response flows target -> stimulus).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 53)
+        self.assertEqual(validation["destination_port"], plan["source_port"])
+
+        # Transaction id, QR flag, and rcode.
+        self.assertEqual(validation["query_id"], plan["query_id"])
+        self.assertTrue(validation["qr"])
+        self.assertEqual(validation["response_code"], 0)
+
+        # Question name/type/class.
+        question = validation["question"]
+        self.assertEqual(question["name"], plan["query_name"])
+        self.assertEqual(question["type"], "A")
+        self.assertEqual(question["class"], "IN")
+
+        # The A answer is preserved alongside the OPT pseudo-record.
+        answer = validation["answer"]
+        self.assertEqual(answer["name"], plan["query_name"])
+        self.assertEqual(answer["type"], "A")
+        ipaddress.ip_address(answer["data"])
+
+        # The additional-section OPT contract: UDP payload size, version,
+        # extended rcode, DO flag, and the ordered option list.
+        edns_opt = validation["edns_opt"]
+        self.assertEqual(
+            edns_opt["udp_payload_size"], plan["expected_edns_udp_payload_size"]
+        )
+        self.assertEqual(edns_opt["version"], plan["expected_edns_version"])
+        self.assertEqual(
+            edns_opt["extended_rcode"], plan["expected_edns_extended_rcode"]
+        )
+        self.assertEqual(edns_opt["do"], plan["expected_edns_do"])
+        self.assertEqual(edns_opt["options"], plan["expected_edns_options"])
+
+    def test_target_service_describes_the_response_opt(self) -> None:
+        plan = _dns_edns_opt_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-dns-responder")
+        self.assertEqual(target_service["port"], 53)
+        self.assertEqual(target_service["query_type"], "A")
+        edns = target_service["edns"]
+        self.assertEqual(
+            edns["udp_payload_size"], plan["expected_edns_udp_payload_size"]
+        )
+        self.assertEqual(edns["version"], plan["expected_edns_version"])
+        self.assertEqual(edns["extended_rcode"], plan["expected_edns_extended_rcode"])
+        self.assertEqual(edns["do"], plan["expected_edns_do"])
+        self.assertEqual(edns["options"], plan["expected_edns_options"])
+
+
+class DnsEdnsOptTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dns-edns-opt",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1018,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dns-edns-opt", planned)
+
+            # The endpoint produced a result for the focused case and it built
+            # the EDNS query (a dry-run plan compiles the outgoing stimulus
+            # packet, which carries the OPT additional record).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dns-edns-opt"
+            ]
+            self.assertTrue(results, "endpoint emitted no dns-edns-opt result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))

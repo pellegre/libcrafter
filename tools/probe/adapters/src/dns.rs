@@ -8,10 +8,11 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use crate::common::{
-    capture_filter, decoded_packet_json, failed_outcome, hex_bytes, observed_response, plan_json,
-    required_str, required_u16, send_report_json, target_service_json, CandidateValidation,
-    ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED,
-    FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
+    capture_filter, decode_hex, decoded_packet_json, failed_outcome, hex_bytes, observed_response,
+    plan_json, required_str, required_u16, send_report_json, target_service_json,
+    CandidateValidation, EdnsOptionExpectation, ExampleResult, ProbeOutcome, ProbePlan,
+    StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD,
+    FAILURE_WRONG_PEER,
 };
 
 pub fn run_dns_dry_run(
@@ -566,6 +567,79 @@ pub fn validate_dns_candidate(
         }
     }
 
+    // EDNS(0) cases require a decoded OPT pseudo-record (RFC 6891) in the
+    // response's additional section. The contract validates each EDNS field
+    // separately out of the OPT record: the requestor UDP payload size (OPT
+    // CLASS), the extended RCODE, EDNS version, and DO flag (packed in the OPT
+    // TTL), and the ordered option list (each {code, data} preserved verbatim).
+    // Reading these from the typed OPT getters is what exercises the crate's OPT
+    // decode rather than treating the additional record as trailing bytes.
+    if let Some(expected_payload_size) = plan.expected_edns_udp_payload_size {
+        let expected_version = plan.expected_edns_version.unwrap_or(0);
+        let expected_extended_rcode = plan.expected_edns_extended_rcode.unwrap_or(0);
+        let expected_do = plan.expected_edns_do.unwrap_or(false);
+        let expected_options = edns_options_from_plan(plan.expected_edns_options.as_deref())?;
+        match dns.additionals().iter().find(|record| record.is_opt()) {
+            Some(opt) => {
+                if opt.name() != "." {
+                    mismatches.push(json!({
+                        "field": "dns.opt.name",
+                        "expected": ".",
+                        "actual": opt.name(),
+                    }));
+                }
+                if opt.edns_udp_payload_size() != expected_payload_size {
+                    mismatches.push(json!({
+                        "field": "dns.opt.udp_payload_size",
+                        "expected": expected_payload_size,
+                        "actual": opt.edns_udp_payload_size(),
+                    }));
+                }
+                if opt.edns_version() != expected_version {
+                    mismatches.push(json!({
+                        "field": "dns.opt.version",
+                        "expected": expected_version,
+                        "actual": opt.edns_version(),
+                    }));
+                }
+                if opt.edns_extended_rcode() != expected_extended_rcode {
+                    mismatches.push(json!({
+                        "field": "dns.opt.extended_rcode",
+                        "expected": expected_extended_rcode,
+                        "actual": opt.edns_extended_rcode(),
+                    }));
+                }
+                if opt.edns_dnssec_ok() != expected_do {
+                    mismatches.push(json!({
+                        "field": "dns.opt.do",
+                        "expected": expected_do,
+                        "actual": opt.edns_dnssec_ok(),
+                    }));
+                }
+                let actual_options = opt.edns_options().unwrap_or(&[]);
+                let options_match = actual_options.len() == expected_options.len()
+                    && actual_options.iter().zip(expected_options.iter()).all(
+                        |(actual, expected)| {
+                            actual.code() == expected.code() && actual.data() == expected.data()
+                        },
+                    );
+                if !options_match {
+                    mismatches.push(json!({
+                        "field": "dns.opt.options",
+                        "expected": edns_options_json(plan.expected_edns_options.as_deref()),
+                        "actual": dns_opt_options_json(actual_options),
+                    }));
+                }
+            }
+            None => mismatches.push(json!({
+                "field": "dns.opt",
+                "expected": "present",
+                "actual": "missing",
+                "additionals": dns_additionals_json(dns),
+            })),
+        }
+    }
+
     if let Some(expected_count) = plan.expected_answer_count {
         let actual_count = dns.answers().len();
         if actual_count != expected_count {
@@ -596,9 +670,62 @@ pub fn dns_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let query_id = required_u16(plan.query_id, "query_id")?;
     let query_name = required_str(plan.query_name.as_deref(), "query_name")?;
     let query_type = dns_type_value(plan)?;
+    let mut dns = Dns::query(query_name, query_type).id(query_id);
+    // EDNS(0) cases carry an OPT pseudo-record in the query's additional section
+    // (RFC 6891): the requestor's UDP payload size plus an optional option list.
+    if let Some(udp_payload_size) = plan.edns_udp_payload_size {
+        let options = edns_options_from_plan(plan.edns_request_options.as_deref())?;
+        let version = plan.edns_version.unwrap_or(0);
+        let dnssec_ok = plan.edns_do.unwrap_or(false);
+        dns = dns.additional(DnsRecord::opt(
+            udp_payload_size,
+            0,
+            version,
+            dnssec_ok,
+            options,
+        ));
+    }
     Ok(Ipv4::new().src(source).dst(destination)
         / Udp::new().sport(source_port).dport(destination_port)
-        / Dns::query(query_name, query_type).id(query_id))
+        / dns)
+}
+
+/// Decode a plan's EDNS option expectations into crate `EdnsOption`s.
+///
+/// Each entry carries an IANA option code plus opaque OPTION-DATA bytes (hex);
+/// the bytes are preserved verbatim per RFC 6891 Section 6.1.2.
+pub fn edns_options_from_plan(
+    options: Option<&[EdnsOptionExpectation]>,
+) -> ExampleResult<Vec<EdnsOption>> {
+    let mut decoded = Vec::new();
+    for option in options.unwrap_or(&[]) {
+        let data = if option.data_hex.is_empty() {
+            Vec::new()
+        } else {
+            decode_hex(&option.data_hex)?
+        };
+        decoded.push(EdnsOption::new(option.code, data));
+    }
+    Ok(decoded)
+}
+
+/// JSON view of a plan's EDNS option expectations (code plus hex data) for the
+/// dry-run report and plan echo. `None` renders as JSON null.
+pub fn edns_options_json(options: Option<&[EdnsOptionExpectation]>) -> Value {
+    match options {
+        Some(options) => Value::Array(
+            options
+                .iter()
+                .map(|option| {
+                    json!({
+                        "code": option.code,
+                        "data_hex": option.data_hex,
+                    })
+                })
+                .collect(),
+        ),
+        None => Value::Null,
+    }
 }
 
 pub fn dns_type_value(plan: &ProbePlan) -> ExampleResult<u16> {
@@ -712,11 +839,59 @@ pub fn dns_json(dns: &Dns) -> Value {
             "class": question.question_class(),
         })).collect::<Vec<_>>(),
         "answers": dns_answers_json(dns),
+        "additionals": dns_additionals_json(dns),
     })
 }
 
 pub fn dns_answers_json(dns: &Dns) -> Value {
     Value::Array(dns.answers().iter().map(dns_record_json).collect())
+}
+
+/// JSON view of the additional-section records, surfacing the decoded EDNS(0)
+/// OPT pseudo-record metadata (UDP payload size, version, extended rcode, DO
+/// flag, and the ordered option list) so the OPT contract is inspectable from
+/// agent code rather than buried in the raw bytes.
+pub fn dns_additionals_json(dns: &Dns) -> Value {
+    Value::Array(
+        dns.additionals()
+            .iter()
+            .map(|record| {
+                if record.is_opt() {
+                    json!({
+                        "name": record.name(),
+                        "type": record.record_type(),
+                        "is_opt": true,
+                        "udp_payload_size": record.edns_udp_payload_size(),
+                        "version": record.edns_version(),
+                        "extended_rcode": record.edns_extended_rcode(),
+                        "do": record.edns_dnssec_ok(),
+                        "flags": record.edns_flags(),
+                        "options": dns_opt_options_json(record.edns_options().unwrap_or(&[])),
+                    })
+                } else {
+                    dns_record_json(record)
+                }
+            })
+            .collect(),
+    )
+}
+
+/// JSON view of a decoded EDNS(0) option list: each option's IANA code, its
+/// registry mnemonic when this crate names the code, and its opaque data bytes
+/// in hex (preserved verbatim per RFC 6891 Section 6.1.2).
+pub fn dns_opt_options_json(options: &[EdnsOption]) -> Value {
+    Value::Array(
+        options
+            .iter()
+            .map(|option| {
+                json!({
+                    "code": option.code(),
+                    "name": option.option_code_name(),
+                    "data_hex": hex_bytes(option.data()),
+                })
+            })
+            .collect(),
+    )
 }
 
 fn dns_record_json(record: &DnsRecord) -> Value {
@@ -1620,6 +1795,239 @@ mod tests {
         match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
             CandidateValidation::WrongPayload(_) => {}
             other => panic!("expected WrongPayload for nxdomain rcode, got {other:?}"),
+        }
+    }
+
+    /// Build the IPv4/UDP/DNS EDNS response a controlled responder emits: QR set,
+    /// rcode 0, the original A question echoed, an A answer, and an OPT
+    /// pseudo-record in the additional section advertising the UDP payload size,
+    /// version, DO flag, and the NSID option.
+    fn edns_response_bytes(
+        query_name: &str,
+        answer: Ipv4Addr,
+        ttl: u32,
+        payload_size: u16,
+        version: u8,
+        dnssec_ok: bool,
+        nsid: &[u8],
+        query_id: u16,
+    ) -> Vec<u8> {
+        let opt = DnsRecord::opt(
+            payload_size,
+            0,
+            version,
+            dnssec_ok,
+            vec![EdnsOption::nsid(nsid.to_vec())],
+        );
+        let dns = Dns::query(query_name, DNS_TYPE_A)
+            .id(query_id)
+            .response(true)
+            .answer(DnsRecord::a(query_name, answer, ttl))
+            .additional(opt);
+        (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .expect("edns response compiles")
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn edns_plan(
+        query_name: &str,
+        answer: &str,
+        ttl: u32,
+        payload_size: u16,
+        version: u8,
+        dnssec_ok: bool,
+        nsid: &[u8],
+    ) -> ProbePlan {
+        let mut plan = base_plan("dns-edns-opt");
+        plan.source_ipv4 = Some("10.77.0.10".to_string());
+        plan.destination_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.77.0.10".to_string());
+        plan.source_port = Some(40000);
+        plan.destination_port = Some(53);
+        plan.query_id = Some(0xed01);
+        plan.query_name = Some(query_name.to_string());
+        plan.query_type = Some("A".to_string());
+        plan.query_type_value = Some(DNS_TYPE_A);
+        plan.query_class_value = Some(DNS_CLASS_IN);
+        plan.expected_answer_name = Some(query_name.to_string());
+        plan.expected_answer_type = Some("A".to_string());
+        plan.expected_answer_type_value = Some(DNS_TYPE_A);
+        plan.expected_answer_data = Some(answer.to_string());
+        plan.answer_ttl = Some(ttl);
+        plan.expected_response_code = Some(0);
+        // The stimulus advertises its own OPT; the responder echoes one back.
+        plan.edns_udp_payload_size = Some(1232);
+        plan.edns_version = Some(version);
+        plan.edns_do = Some(dnssec_ok);
+        plan.edns_request_options = Some(vec![EdnsOptionExpectation {
+            code: 3,
+            data_hex: hex_bytes(b"client"),
+        }]);
+        plan.expected_edns_udp_payload_size = Some(payload_size);
+        plan.expected_edns_version = Some(version);
+        plan.expected_edns_extended_rcode = Some(0);
+        plan.expected_edns_do = Some(dnssec_ok);
+        plan.expected_edns_options = Some(vec![EdnsOptionExpectation {
+            code: 3,
+            data_hex: hex_bytes(nsid),
+        }]);
+        plan
+    }
+
+    #[test]
+    fn edns_query_carries_opt_record() {
+        // The stimulus query attaches an OPT pseudo-record advertising the
+        // requestor UDP payload size and the NSID option.
+        let query = "probe-1018-0-edns0000aa.behavior.libcrafter.test.";
+        let plan = edns_plan(query, "203.0.113.7", 120, 4096, 0, true, b"server");
+        let packet = dns_packet(&plan).unwrap();
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        assert_eq!(dns.questions().first().unwrap().question_type(), DNS_TYPE_A);
+        let opt = dns
+            .additionals()
+            .iter()
+            .find(|record| record.is_opt())
+            .expect("query carries an OPT additional record");
+        assert_eq!(opt.edns_udp_payload_size(), 1232);
+        assert!(opt.edns_dnssec_ok());
+        let options = opt.edns_options().unwrap();
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].code(), DNS_EDNS_OPTION_NSID);
+        assert_eq!(options[0].data(), b"client");
+    }
+
+    #[test]
+    fn edns_response_validates_opt_metadata() {
+        let query = "probe-1018-0-edns0000aa.behavior.libcrafter.test.";
+        let raw = edns_response_bytes(
+            query,
+            Ipv4Addr::new(203, 0, 113, 7),
+            120,
+            4096,
+            0,
+            true,
+            b"server",
+            0xed01,
+        );
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+
+        // The crate decodes the additional-section OPT pseudo-record fields.
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        let opt = dns
+            .additionals()
+            .iter()
+            .find(|record| record.is_opt())
+            .expect("response carries an OPT additional record");
+        assert_eq!(opt.name(), ".");
+        assert_eq!(opt.edns_udp_payload_size(), 4096);
+        assert_eq!(opt.edns_version(), 0);
+        assert_eq!(opt.edns_extended_rcode(), 0);
+        assert!(opt.edns_dnssec_ok());
+        assert_eq!(opt.edns_options().unwrap()[0].data(), b"server");
+
+        let plan = edns_plan(query, "203.0.113.7", 120, 4096, 0, true, b"server");
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed for edns opt answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn edns_missing_opt_fails_payload() {
+        let query = "probe-1018-0-edns0000aa.behavior.libcrafter.test.";
+        // A response with the correct A answer but no OPT additional record must
+        // not pass the EDNS contract.
+        let dns = Dns::query(query, DNS_TYPE_A)
+            .id(0xed01)
+            .response(true)
+            .answer(DnsRecord::a(query, Ipv4Addr::new(203, 0, 113, 7), 120));
+        let raw = (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = edns_plan(query, "203.0.113.7", 120, 4096, 0, true, b"server");
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for missing OPT, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn edns_wrong_payload_size_fails_payload() {
+        let query = "probe-1018-0-edns0000aa.behavior.libcrafter.test.";
+        // Correct option/DO but the OPT advertises a different UDP payload size.
+        let raw = edns_response_bytes(
+            query,
+            Ipv4Addr::new(203, 0, 113, 7),
+            120,
+            512,
+            0,
+            true,
+            b"server",
+            0xed01,
+        );
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = edns_plan(query, "203.0.113.7", 120, 4096, 0, true, b"server");
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong payload size, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn edns_wrong_do_flag_fails_payload() {
+        let query = "probe-1018-0-edns0000aa.behavior.libcrafter.test.";
+        // Correct fields but the DO ("DNSSEC OK") flag is cleared.
+        let raw = edns_response_bytes(
+            query,
+            Ipv4Addr::new(203, 0, 113, 7),
+            120,
+            4096,
+            0,
+            false,
+            b"server",
+            0xed01,
+        );
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = edns_plan(query, "203.0.113.7", 120, 4096, 0, true, b"server");
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong DO flag, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn edns_wrong_option_data_fails_payload() {
+        let query = "probe-1018-0-edns0000aa.behavior.libcrafter.test.";
+        // Correct OPT header fields but the NSID option data differs.
+        let raw = edns_response_bytes(
+            query,
+            Ipv4Addr::new(203, 0, 113, 7),
+            120,
+            4096,
+            0,
+            true,
+            b"WRONG",
+            0xed01,
+        );
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = edns_plan(query, "203.0.113.7", 120, 4096, 0, true, b"server");
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong option data, got {other:?}"),
         }
     }
 }
