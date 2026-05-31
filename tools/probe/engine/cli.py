@@ -573,7 +573,14 @@ def _write_stimulus_endpoint_request_artifact(
 
 
 _STIMULUS_ENDPOINT_CASES = frozenset(
-    {"icmp-echo", "tcp-syn-open", "tcp-syn-closed", "dns-query", "ttl-expired"}
+    {
+        "icmp-echo",
+        "tcp-syn-open",
+        "tcp-syn-closed",
+        "dns-query",
+        "ttl-expired",
+        "dns-a-success",
+    }
 )
 
 
