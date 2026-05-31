@@ -171,6 +171,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
     match layer {
         "payload" | "raw" => Ok(Box::new(Raw::from_bytes(payload_bytes(plan)?))),
         "ethernet" => Ok(Box::new(ethernet_layer(plan)?)),
+        "linux_cooked" => Ok(Box::new(linux_cooked_layer(plan)?)),
         "vlan" => Ok(Box::new(vlan_layer(plan)?)),
         "arp" => Ok(Box::new(arp_layer(plan)?)),
         "ipv4" => Ok(Box::new(ipv4_layer(plan)?)),
@@ -203,6 +204,79 @@ fn vlan_layer(plan: &Value) -> ExampleResult<Vlan> {
         .dei(bool_value(required(fields, &["drop_eligible", "dei"])?)?)
         .vlan(u16_value(required(fields, &["vlan_id", "id", "vlan"])?)?)
         .ethertype(ethertype_value(required(fields, &["ethertype", "type"])?)?))
+}
+
+/// Materialize a Linux cooked-capture (SLL) header from a plan.
+///
+/// Mirrors the Scapy `_linux_cooked` reference: `packet_type`, `address_type`
+/// (an ARPHRD hardware type), `address_length`, `source_address` (a MAC string
+/// or a raw `{"hex": ...}` byte form padded to eight octets), and `protocol`
+/// (an EtherType). The raw `source_address_bytes` path preserves the exact
+/// eight-octet source field and the declared address length so an ARP body over
+/// a linux-cooked root materializes byte-for-byte against the reference.
+fn linux_cooked_layer(plan: &Value) -> ExampleResult<LinuxSll> {
+    let fields = layer_fields(plan, "linux_cooked")?;
+    let packet_type = linux_sll_packet_type(required(fields, &["packet_type", "pkttype"])?)?;
+    let address_type = hardware_type_value(required(fields, &["address_type", "lladdrtype"])?)?;
+    let address_len = u16_value(required(fields, &["address_length", "lladdrlen"])?)?;
+    let source_address = linux_sll_source_address(required(
+        fields,
+        &["source_address", "src", "lladdr"],
+    )?)?;
+    let protocol = ethertype_value(required(fields, &["protocol", "proto"])?)?;
+    Ok(LinuxSll::new()
+        .packet_type(packet_type)
+        .address_type(address_type)
+        .source_address_bytes(source_address, address_len)
+        .protocol(protocol))
+}
+
+/// Map a Linux SLL packet-type value (named string or numeric) to its code.
+///
+/// Matches the Scapy reference mapping so named packet types materialize to the
+/// same code; unknown strings parse as a numeric literal and numeric values
+/// pass through.
+fn linux_sll_packet_type(value: &Value) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        let lowered = text.to_ascii_lowercase().replace('-', "_");
+        return match lowered.as_str() {
+            "host" => Ok(0),
+            "broadcast" => Ok(1),
+            "multicast" => Ok(2),
+            "otherhost" => Ok(3),
+            "outgoing" => Ok(4),
+            _ => u16_text(text),
+        };
+    }
+    u16_value(value)
+}
+
+/// Decode a Linux SLL source address into the fixed eight-octet field.
+///
+/// Accepts a standard colon-separated MAC string or a raw `{"hex": ...}`/hex
+/// string byte form. The decoded bytes are left-aligned into eight octets and
+/// trailing octets stay zero, matching the Scapy reference's `pad_to=8`.
+fn linux_sll_source_address(value: &Value) -> ExampleResult<[u8; 8]> {
+    let raw = if let Some(object) = value.as_object() {
+        match object.get("hex").and_then(Value::as_str) {
+            Some(hex) => decode_hex(&strip_address_separators(hex))?,
+            None => return Err(format!("unsupported linux_cooked source address object: {value:?}").into()),
+        }
+    } else if let Some(text) = value.as_str() {
+        decode_hex(&strip_address_separators(text))?
+    } else {
+        return Err(format!("unsupported linux_cooked source address value: {value:?}").into());
+    };
+    if raw.len() > 8 {
+        return Err(format!(
+            "linux_cooked source address has {} octets, exceeds the eight-octet SLL field",
+            raw.len()
+        )
+        .into());
+    }
+    let mut padded = [0u8; 8];
+    padded[..raw.len()].copy_from_slice(&raw);
+    Ok(padded)
 }
 
 fn arp_layer(plan: &Value) -> ExampleResult<Arp> {
