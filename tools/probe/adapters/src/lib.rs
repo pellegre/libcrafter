@@ -104,6 +104,8 @@ pub(crate) mod test_support {
             parameter_request_list: None,
             expected_message_type_value: None,
             expected_yiaddr: None,
+            expected_yiaddr_zero: None,
+            expected_no_lease_time: None,
             expected_server_identifier: None,
             expected_subnet_mask: None,
             expected_router_ipv4: None,

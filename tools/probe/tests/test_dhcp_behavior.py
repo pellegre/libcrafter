@@ -98,6 +98,14 @@ def _dhcp_renewal_unicast_ack_plan(*, seed: int = 1026, sequence: int = 0) -> di
     )
 
 
+def _dhcp_inform_ack_plan(*, seed: int = 1027, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dhcp-inform-ack"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcp-inform-ack"],
+        sequence=sequence,
+    )
+
+
 class DhcpDiscoverOfferPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct Discover stimulus and Offer contract."""
 
@@ -1079,6 +1087,171 @@ class DhcpRenewalUnicastAckTest(unittest.TestCase):
                 # metadata so the endpoint validates the renewal it built.
                 plan_view = metadata.get("probe_plan", {})
                 self.assertTrue(plan_view.get("client_ciaddr"))
+
+
+class DhcpInformAckPlanTest(unittest.TestCase):
+    """The plan carries an Inform stimulus and a no-allocation Ack contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dhcp-inform-ack", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dhcp-inform-ack"],
+            planning._dhcp_inform_ack_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dhcp_inform_ack_plan(), _dhcp_inform_ack_plan())
+
+    def test_plan_carries_an_inform_stimulus(self) -> None:
+        plan = _dhcp_inform_ack_plan()
+
+        self.assertEqual(plan["case"], "dhcp-inform-ack")
+        self.assertEqual(plan["stimulus"], "dhcp_inform")
+        self.assertEqual(plan["expected_response"], "dhcp_ack")
+
+        # DHCP fixed ports: client 68 -> server 67.
+        self.assertEqual(plan["source_port"], 68)
+        self.assertEqual(plan["destination_port"], 67)
+
+        # A client hardware address in the RFC 7042 documentation MAC range and a
+        # 32-bit transaction id (xid).
+        mac = plan["client_mac"]
+        self.assertTrue(mac.startswith("00:00:5e:00:53:"))
+        self.assertIsInstance(plan["transaction_id"], int)
+        self.assertTrue(1 <= plan["transaction_id"] <= 0xFFFFFFFF)
+
+        # INFORM (RFC 2131 section 3.4): the client already holds its address and
+        # carries it in ciaddr (documentation space). It asks only for
+        # configuration parameters, so the parameter request list names the
+        # configuration options (subnet 1, router 3, DNS 6) and NOT the lease
+        # timing options (51/58/59); no requested-IP (50) option is set.
+        configured = ipaddress.IPv4Address(plan["client_ciaddr"])
+        self.assertIn(configured, ipaddress.ip_network("198.51.100.0/24"))
+        self.assertEqual(plan["parameter_request_list"], [1, 3, 6])
+        self.assertNotIn("requested_ipv4", plan)
+
+    def test_plan_inform_ack_expectations(self) -> None:
+        plan = _dhcp_inform_ack_plan()
+
+        # The Ack returns configuration metadata but allocates no address and
+        # grants no lease (RFC 2131 section 4.3.5).
+        self.assertEqual(plan["expected_message_type"], "ack")
+        self.assertEqual(plan["expected_message_type_value"], 5)
+        self.assertTrue(plan["expected_yiaddr_zero"])
+        self.assertTrue(plan["expected_no_lease_time"])
+        self.assertNotIn("expected_yiaddr", plan)
+        self.assertNotIn("expected_lease_time", plan)
+        self.assertNotIn("expected_renewal_time", plan)
+        self.assertNotIn("expected_rebinding_time", plan)
+
+        # Configuration options the Ack commits: subnet mask, router, DNS.
+        self.assertEqual(plan["expected_subnet_mask"], "255.255.255.0")
+        self.assertTrue(plan["expected_router_ipv4"])
+        dns = ipaddress.IPv4Address(plan["expected_dns_ipv4"])
+        self.assertIn(dns, ipaddress.ip_network("198.51.100.0/24"))
+        self.assertEqual(plan["expected_server_identifier"], plan["destination_ipv4"])
+
+    def test_validation_contract_covers_inform_ack_fields_and_direction(self) -> None:
+        plan = _dhcp_inform_ack_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (Ack flows server -> client, 67 -> 68).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 67)
+        self.assertEqual(validation["destination_port"], 68)
+        self.assertEqual(validation["direction"], "server_to_client")
+
+        # BOOTP reply opcode and the Ack message type.
+        self.assertEqual(validation["op_value"], 2)
+        self.assertEqual(validation["message_type_value"], 5)
+
+        # Identity: transaction id, client hardware address, and the address the
+        # Inform carried in ciaddr.
+        self.assertEqual(validation["transaction_id"], plan["transaction_id"])
+        self.assertEqual(validation["client_hardware_address"], plan["client_mac"])
+        self.assertEqual(validation["client_ciaddr"], plan["client_ciaddr"])
+
+        # The two negative invariants that distinguish an Inform Ack from a lease
+        # Ack: no allocated address (yiaddr 0.0.0.0) and no lease-time option.
+        self.assertTrue(validation["yiaddr_zero"])
+        self.assertTrue(validation["no_lease_time"])
+        self.assertNotIn("lease_time", validation)
+        self.assertNotIn("yiaddr", validation)
+
+        # Configuration options and server identifier the Ack returns.
+        self.assertEqual(validation["requested_parameters"], [1, 3, 6])
+        self.assertEqual(validation["subnet_mask"], plan["expected_subnet_mask"])
+        self.assertEqual(validation["router_ipv4"], plan["expected_router_ipv4"])
+        self.assertEqual(validation["dns_ipv4"], plan["expected_dns_ipv4"])
+        self.assertEqual(
+            validation["server_identifier"], plan["expected_server_identifier"]
+        )
+
+    def test_target_service_records_the_inform_invariants(self) -> None:
+        plan = _dhcp_inform_ack_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["port"], 67)
+        self.assertEqual(target_service["client_port"], 68)
+        self.assertEqual(target_service["client_ciaddr"], plan["client_ciaddr"])
+        self.assertEqual(
+            target_service["parameter_request_list"], plan["parameter_request_list"]
+        )
+        self.assertTrue(target_service["inform"])
+        self.assertTrue(target_service["yiaddr_zero"])
+        self.assertTrue(target_service["no_lease_time"])
+
+    def test_capture_filter_matches_ack_direction(self) -> None:
+        plan = _dhcp_inform_ack_plan()
+        self.assertIn("src port 67", plan["capture_filter"])
+        self.assertIn("dst port 68", plan["capture_filter"])
+        self.assertIn(
+            f"src host {plan['expected_reply_source_ipv4']}", plan["capture_filter"]
+        )
+
+
+class DhcpInformAckTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dhcp-inform-ack",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1027,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dhcp-inform-ack", planned)
+
+            # The endpoint produced a result for the focused case and it built the
+            # Inform (a dry-run plan compiles the outgoing stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dhcp-inform-ack"
+            ]
+            self.assertTrue(results, "endpoint emitted no dhcp-inform-ack result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                # The planned no-allocation/no-lease invariants are visible in the
+                # dry-run metadata so the endpoint validates the Inform Ack it
+                # expects.
+                plan_view = metadata.get("probe_plan", {})
+                self.assertTrue(plan_view.get("client_ciaddr"))
+                self.assertTrue(plan_view.get("expected_yiaddr_zero"))
+                self.assertTrue(plan_view.get("expected_no_lease_time"))
 
 
 if __name__ == "__main__":

@@ -450,6 +450,7 @@ _DHCP_RESPONDER_CASES: frozenset[str] = frozenset(
         "dhcp-parameter-request-list",
         "dhcp-lease-time",
         "dhcp-renewal-unicast-ack",
+        "dhcp-inform-ack",
     }
 )
 

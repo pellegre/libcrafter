@@ -2485,6 +2485,138 @@ def _dhcp_renewal_unicast_ack_probe_plan(
     }
 
 
+def _dhcp_inform_ack_probe_plan(
+    *,
+    case_name: str = "dhcp-inform-ack",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dhcp-inform-ack`` behavioral case.
+
+    The stimulus is a BOOTP/DHCP Inform (message type 8) built by libcrafter and
+    sent from the DHCP client port (68) to the server port (67) against a
+    controlled DHCP responder on a private L2 lab segment. RFC 2131 section 3.4
+    and section 4.4.3 say that a client that already has an externally configured
+    IP address uses a DHCPINFORM to ask only for local configuration parameters:
+    it fills ``ciaddr`` with the address it is already using and names the wanted
+    options in the parameter request list (option 55), but it does NOT request a
+    lease, so it omits the requested-IP option (50). Because no lease is being
+    granted, the request list names only configuration options (subnet 1, router
+    3, DNS 6) and not the lease timing options (51/58/59).
+
+    The controlled responder answers with an Ack (message type 5) that carries
+    the requested configuration options (subnet mask 1, router 3, DNS 6) and the
+    server identifier (option 54). Critically, RFC 2131 section 4.3.5 says the
+    server MUST NOT allocate a new address in response to a DHCPINFORM: ``yiaddr``
+    MUST be 0.0.0.0 and the Ack MUST NOT carry an IP-address-lease-time option
+    (51). The validation contract therefore asserts the decoded message type Ack,
+    the echoed transaction id and client hardware address, the configuration
+    options and their values, the server identifier, the client's ``ciaddr``,
+    and the two negative invariants that distinguish an Inform Ack from a lease
+    Ack: ``yiaddr`` is zero (no allocation) and there is no lease-time option.
+
+    Addresses stay in documentation space: the client's already-configured
+    address (``ciaddr``) is in ``198.51.100.0/24`` and the lab transport uses the
+    private endpoint pair.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    client_mac = dhcp_client_mac(profile, seed, sequence)
+    transaction_id = int.from_bytes(digest[0:4], "big") or 1
+    # DHCP uses fixed privileged ports: client 68 -> server 67.
+    source_port = 68
+    destination_port = 67
+    # The client already holds this address (configured externally) and carries
+    # it in ``ciaddr``; the Inform asks only for configuration parameters.
+    configured_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
+    subnet_mask = "255.255.255.0"
+    server_identifier = target_ipv4
+    router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
+    dns_server_ipv4 = f"198.51.100.{1 + digest[6] % 250}"
+    # Configuration-only parameter request list: subnet mask (1), router (3), and
+    # DNS server (6). An Inform does not request a lease, so the list omits the
+    # lease timing options (51/58/59).
+    parameter_request_list = [1, 3, 6]
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dhcp_inform",
+        "expected_response": "dhcp_ack",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "client_mac": client_mac,
+        "transaction_id": transaction_id,
+        # INFORM: the externally-configured address is carried in ciaddr; the
+        # parameter request list (option 55) names the configuration options the
+        # Ack must return. No requested-IP (50) option, because no lease is asked.
+        "client_ciaddr": configured_ipv4,
+        "parameter_request_list": parameter_request_list,
+        "expected_message_type": "ack",
+        "expected_message_type_value": 5,
+        # RFC 2131 section 4.3.5: an Inform Ack allocates no address. yiaddr is
+        # 0.0.0.0 and there is no lease-time (51) option.
+        "expected_yiaddr_zero": True,
+        "expected_no_lease_time": True,
+        "expected_server_identifier": server_identifier,
+        "expected_subnet_mask": subnet_mask,
+        "expected_router_ipv4": router_ipv4,
+        "expected_dns_ipv4": dns_server_ipv4,
+        "target_service": {
+            "required": True,
+            "kind": "dhcp-responder",
+            "port": destination_port,
+            "client_port": source_port,
+            "client_mac": client_mac,
+            "transaction_id": transaction_id,
+            "client_ciaddr": configured_ipv4,
+            "parameter_request_list": parameter_request_list,
+            "inform": True,
+            "yiaddr_zero": True,
+            "no_lease_time": True,
+            "server_identifier": server_identifier,
+            "subnet_mask": subnet_mask,
+            "router_ipv4": router_ipv4,
+            "dns_ipv4": dns_server_ipv4,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "op": "reply",
+            "op_value": 2,
+            "message_type": "ack",
+            "message_type_value": 5,
+            "transaction_id": transaction_id,
+            "client_hardware_address": client_mac,
+            "client_ciaddr": configured_ipv4,
+            # The Inform Ack allocates no address and grants no lease.
+            "yiaddr_zero": True,
+            "no_lease_time": True,
+            "server_identifier": server_identifier,
+            "subnet_mask": subnet_mask,
+            "router_ipv4": router_ipv4,
+            "dns_ipv4": dns_server_ipv4,
+            "requested_parameters": parameter_request_list,
+            "direction": "server_to_client",
+        },
+    }
+
+
 def _ttl_expired_probe_plan(
     *,
     case_name: str = "ttl-expired",
@@ -2673,6 +2805,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dhcp-parameter-request-list": _dhcp_parameter_request_list_probe_plan,
     "dhcp-lease-time": _dhcp_lease_time_probe_plan,
     "dhcp-renewal-unicast-ack": _dhcp_renewal_unicast_ack_probe_plan,
+    "dhcp-inform-ack": _dhcp_inform_ack_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }
