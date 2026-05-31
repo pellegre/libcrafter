@@ -345,6 +345,26 @@ println!("bytes_sent={}", report.bytes_sent());
 
 Always destroy provider resources after the run.
 
+## Choose Docker Provider Modes
+
+Use Docker through the wire, lab, oracle, or probe provider commands, not
+through arbitrary `docker run` access from generated tools. Docker socket access
+is host-root equivalent; do not mount the socket into provider containers or
+generated workloads.
+
+Prefer `docker/private` when an agent needs a local, safe packet lab before
+using heavier VM or cloud providers. It runs endpoints on an isolated
+provider-owned bridge and is the Docker mode for same-segment packet work.
+Use `docker/lan` only as a NAT-backed L3 reachability smoke to LAN targets, and
+use `docker/wan` only as a NAT-backed L3 egress smoke to internet targets. Do
+not treat either mode as true LAN/WAN link-layer access.
+
+Live Docker runs still require `--confirm-live-run`. Start with dry-run plans,
+run the provider command that creates the endpoint or lab, collect artifacts,
+then destroy the endpoint with the matching provider cleanup command. If a live
+run fails halfway through, keep local artifacts for debugging but still run
+cleanup so containers and provider-owned private networks do not linger.
+
 ## Oracle Validation
 
 Use the oracle runner when generated tools change packet behavior. The oracle is
