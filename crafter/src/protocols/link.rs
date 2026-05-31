@@ -2042,6 +2042,160 @@ mod arp {
         assert_eq!(arp.hardware_len_value(), u8::MAX);
         assert_eq!(arp.sender_hardware_bytes_value().len(), 300);
     }
+
+    #[test]
+    fn arp_preserves_explicit_fields_through_compile_and_decode() {
+        // Every fixed-header field is set explicitly to a value that disagrees
+        // with the Ethernet/IPv4 defaults, including the deliberately unusual
+        // hardware/protocol types and an unknown opcode. compile() fills nothing
+        // it did not need to; each explicit value must reach the wire untouched.
+        let sender_hw = vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11];
+        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let target_hw = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+
+        let arp = Arp::new()
+            .hardware_type(super::ARP_HRD_INFINIBAND)
+            .protocol_type(0x86dd)
+            .hardware_len(8)
+            .protocol_len(16)
+            .opcode(0x0fa0)
+            .sender_hardware_bytes(sender_hw.clone())
+            .sender_protocol_bytes(sender_pa.clone())
+            .target_hardware_bytes(target_hw.clone())
+            .target_protocol_bytes(target_pa.clone());
+
+        // The builder records exactly what was set.
+        assert_eq!(arp.hardware_type_value(), super::ARP_HRD_INFINIBAND);
+        assert_eq!(arp.protocol_type_value(), 0x86dd);
+        assert_eq!(arp.hardware_len_value(), 8);
+        assert_eq!(arp.protocol_len_value(), 16);
+        assert_eq!(arp.opcode_value(), 0x0fa0);
+        assert_eq!(arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(arp.sender_protocol_bytes_value(), sender_pa);
+        assert_eq!(arp.target_hardware_bytes_value(), target_hw);
+        assert_eq!(arp.target_protocol_bytes_value(), target_pa);
+
+        // Those values survive a full Ethernet/ARP compile -> decode round trip.
+        let frame = Ethernet::new().src(src_mac()) / arp;
+        let bytes = frame.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &bytes).unwrap();
+        let decoded_arp = decoded.layer::<Arp>().unwrap();
+        assert_eq!(decoded_arp.hardware_type_value(), super::ARP_HRD_INFINIBAND);
+        assert_eq!(decoded_arp.protocol_type_value(), 0x86dd);
+        assert_eq!(decoded_arp.hardware_len_value(), 8);
+        assert_eq!(decoded_arp.protocol_len_value(), 16);
+        assert_eq!(decoded_arp.opcode_value(), 0x0fa0);
+        assert_eq!(decoded_arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(decoded_arp.sender_protocol_bytes_value(), sender_pa);
+        assert_eq!(decoded_arp.target_hardware_bytes_value(), target_hw);
+        assert_eq!(decoded_arp.target_protocol_bytes_value(), target_pa);
+    }
+
+    #[test]
+    fn arp_preserves_intentionally_malformed_address_bytes() {
+        // A consistent but nonstandard 3-octet hardware / 1-octet protocol body:
+        // the bytes are wrong for a real Ethernet/IPv4 ARP yet must compile and
+        // round-trip exactly, since generated tools need malformed packets to
+        // exercise a stack.
+        let arp = Arp::new()
+            .hardware_len(3)
+            .protocol_len(1)
+            .opcode(0)
+            .sender_hardware_bytes(vec![0xde, 0xad, 0xbe])
+            .sender_protocol_bytes(vec![0x01])
+            .target_hardware_bytes(vec![0xca, 0xfe, 0x99])
+            .target_protocol_bytes(vec![0x02]);
+
+        let frame = Ethernet::new().src(src_mac()) / arp;
+        let bytes = frame.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &bytes).unwrap();
+        let decoded_arp = decoded.layer::<Arp>().unwrap();
+
+        assert_eq!(decoded_arp.hardware_len_value(), 3);
+        assert_eq!(decoded_arp.protocol_len_value(), 1);
+        assert_eq!(decoded_arp.opcode_value(), 0);
+        assert_eq!(decoded_arp.sender_hardware_bytes_value(), vec![0xde, 0xad, 0xbe]);
+        assert_eq!(decoded_arp.sender_protocol_bytes_value(), vec![0x01]);
+        assert_eq!(decoded_arp.target_hardware_bytes_value(), vec![0xca, 0xfe, 0x99]);
+        assert_eq!(decoded_arp.target_protocol_bytes_value(), vec![0x02]);
+    }
+
+    #[test]
+    fn arp_preserves_user_values_against_later_helper_defaults() {
+        // Helper defaults (set_default_if_unset / length auto-fill) must only
+        // touch UNSET fields. Setting the lengths and protocol type explicitly
+        // first, then calling the convenience MAC/IPv4 helpers, must leave the
+        // explicit values intact even though those helpers would otherwise
+        // default them to 6 / 4 / IPv4.
+        let arp = Arp::new()
+            .hardware_len(9)
+            .protocol_len(7)
+            .protocol_type(0xbeef)
+            .sender_hardware_addr(MacAddr::ZERO)
+            .sender_protocol_addr(Ipv4Addr::new(192, 0, 2, 10))
+            .target_hardware_addr(MacAddr::BROADCAST)
+            .target_protocol_addr(Ipv4Addr::new(192, 0, 2, 1));
+
+        assert_eq!(arp.hardware_len_value(), 9);
+        assert_eq!(arp.protocol_len_value(), 7);
+        assert_eq!(arp.protocol_type_value(), 0xbeef);
+
+        // The raw byte payloads the MAC/IPv4 helpers wrote are themselves never
+        // rewritten by any later default.
+        assert_eq!(arp.sender_hardware_bytes_value(), MacAddr::ZERO.octets().to_vec());
+        assert_eq!(
+            arp.target_protocol_bytes_value(),
+            Ipv4Addr::new(192, 0, 2, 1).octets().to_vec()
+        );
+    }
+
+    #[test]
+    fn arp_override_of_helper_defaulted_lengths_and_types_is_honored() {
+        // The generic address builders auto-fill lengths only as a Defaulted
+        // value, so a later explicit override of the length or type wins, and
+        // the raw bytes set by the builder are preserved unchanged.
+        let arp = Arp::new()
+            .sender_hardware(vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x10, 0xaa, 0xbb])
+            .hardware_len(4)
+            .protocol_type(0x86dd);
+
+        assert_eq!(arp.hardware_len_value(), 4);
+        assert_eq!(arp.protocol_type_value(), 0x86dd);
+        assert_eq!(
+            arp.sender_hardware_bytes_value(),
+            vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x10, 0xaa, 0xbb]
+        );
+    }
+
+    #[test]
+    fn arp_override_of_opcode_and_types_survives_who_has_helper() {
+        // Building from the who_has helper (which sets request opcode and IPv4
+        // addresses) and then overriding the opcode, hardware type, and protocol
+        // type must keep every override; who_has supplied no explicit override
+        // for these so the later setters take effect and are not reset.
+        let arp = Arp::who_has(
+            Ipv4Addr::new(192, 0, 2, 10),
+            Ipv4Addr::new(192, 0, 2, 1),
+            src_mac(),
+        )
+        .opcode(0x1234)
+        .hardware_type(super::ARP_HRD_ATM)
+        .protocol_type(0x0805);
+
+        assert_eq!(arp.opcode_value(), 0x1234);
+        assert_eq!(arp.hardware_type_value(), super::ARP_HRD_ATM);
+        assert_eq!(arp.protocol_type_value(), 0x0805);
+
+        // The overrides reach the wire and decode back unchanged.
+        let frame = Ethernet::new().src(src_mac()) / arp;
+        let bytes = frame.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &bytes).unwrap();
+        let decoded_arp = decoded.layer::<Arp>().unwrap();
+        assert_eq!(decoded_arp.opcode_value(), 0x1234);
+        assert_eq!(decoded_arp.hardware_type_value(), super::ARP_HRD_ATM);
+        assert_eq!(decoded_arp.protocol_type_value(), 0x0805);
+    }
 }
 
 #[cfg(test)]
