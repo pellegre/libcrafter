@@ -83,8 +83,22 @@ LIVE_ROOT_ALIASES = {
     "l2:ipv4": "l3:ipv4",
     "l2:ipv6": "l3:ipv6",
 }
-LIVE_RECEIVER_STARTUP_GRACE_SECONDS = 2.0
-LIVE_VM_RECEIVER_STARTUP_GRACE_SECONDS = 12.0
+# Seconds to let a receiver's live capture fully open (remote process start,
+# pcap open, BPF filter compile) before the sender transmits. Too short loses
+# the send/receive race and the receiver captures zero packets. Override via
+# ORACLE_LIVE_CAPTURE_SETTLE_SECONDS for slower or faster endpoints.
+LIVE_RECEIVER_STARTUP_GRACE_SECONDS = max(
+    1.0, float(os.environ.get("ORACLE_LIVE_CAPTURE_SETTLE_SECONDS", "20"))
+)
+LIVE_VM_RECEIVER_STARTUP_GRACE_SECONDS = max(
+    1.0,
+    float(
+        os.environ.get(
+            "ORACLE_LIVE_VM_CAPTURE_SETTLE_SECONDS",
+            str(LIVE_RECEIVER_STARTUP_GRACE_SECONDS),
+        )
+    ),
+)
 FINAL_REPORT_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("formatting", ("cargo", "fmt", "--all", "--", "--check")),
     ("clippy", ("cargo", "clippy", "--workspace", "--all-targets")),
