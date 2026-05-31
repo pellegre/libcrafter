@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[lib]
+name = "probe_adapters"
+path = "src/lib.rs"
+
 [[bin]]
 name = "stimulus_endpoint"
 path = "src/bin/stimulus_endpoint.rs"
