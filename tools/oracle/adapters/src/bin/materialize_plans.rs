@@ -219,10 +219,8 @@ fn linux_cooked_layer(plan: &Value) -> ExampleResult<LinuxSll> {
     let packet_type = linux_sll_packet_type(required(fields, &["packet_type", "pkttype"])?)?;
     let address_type = hardware_type_value(required(fields, &["address_type", "lladdrtype"])?)?;
     let address_len = u16_value(required(fields, &["address_length", "lladdrlen"])?)?;
-    let source_address = linux_sll_source_address(required(
-        fields,
-        &["source_address", "src", "lladdr"],
-    )?)?;
+    let source_address =
+        linux_sll_source_address(required(fields, &["source_address", "src", "lladdr"])?)?;
     let protocol = ethertype_value(required(fields, &["protocol", "proto"])?)?;
     Ok(LinuxSll::new()
         .packet_type(packet_type)
@@ -260,7 +258,11 @@ fn linux_sll_source_address(value: &Value) -> ExampleResult<[u8; 8]> {
     let raw = if let Some(object) = value.as_object() {
         match object.get("hex").and_then(Value::as_str) {
             Some(hex) => decode_hex(&strip_address_separators(hex))?,
-            None => return Err(format!("unsupported linux_cooked source address object: {value:?}").into()),
+            None => {
+                return Err(
+                    format!("unsupported linux_cooked source address object: {value:?}").into(),
+                )
+            }
         }
     } else if let Some(text) = value.as_str() {
         decode_hex(&strip_address_separators(text))?
