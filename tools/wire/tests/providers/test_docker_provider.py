@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -27,6 +28,7 @@ from tools.wire.engine.providers.docker.constants import (
     PRIVATE_CAPABILITIES,
 )
 from tools.wire.engine.registry import ProviderExposureError
+from tools.wire.engine.state import update_private_group_allocation
 
 
 class DockerRegistryTest(unittest.TestCase):
@@ -908,6 +910,302 @@ class DockerCreateEndpointLiveNatL3Test(unittest.TestCase):
                 self.assertFalse(resources[case["network_name"]]["cleanup"])  # type: ignore[index]
 
 
+class DockerDestroyEndpointTest(unittest.TestCase):
+    def test_planned_only_destroy_marks_destroyed_without_docker_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with mock.patch(
+                "tools.wire.engine.providers.docker.create.free_localhost_tcp_port",
+                return_value=29422,
+            ):
+                output = docker.create_endpoint(
+                    provider="docker",
+                    exposure="private",
+                    role="oracle",
+                    private_group="pair-planned",
+                    private_ip="10.79.0.44",
+                    dry_run=True,
+                    env={},
+                )
+
+            manifest = EndpointManifest.from_dict(output)
+            runner = _DockerDestroyRunner()
+            destroy_output = docker.destroy_endpoint(
+                manifest,
+                env={},
+                command_runner=runner,
+            )
+            manifest_path = Path(str(destroy_output["manifest_path"]))
+            destroyed_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(runner.calls, [])
+        self.assertTrue(destroy_output["destroyed"])
+        self.assertFalse(destroy_output["already_destroyed"])
+        self.assertEqual(destroy_output["status"], "destroyed")
+        self.assertEqual(destroy_output["actions"], [])
+        self.assertEqual(destroyed_manifest["status"], "destroyed")
+        skip_reasons = _destroy_skip_reasons(destroy_output)
+        self.assertIn(
+            "endpoint was planned only; no Docker container was created",
+            skip_reasons,
+        )
+        self.assertIn(
+            "endpoint was planned only; no Docker network was created",
+            skip_reasons,
+        )
+        self.assertIn("local endpoint state and artifacts are preserved", skip_reasons)
+
+    def test_destroy_is_idempotent_for_already_destroyed_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with mock.patch(
+                "tools.wire.engine.providers.docker.create.free_localhost_tcp_port",
+                return_value=29423,
+            ):
+                output = docker.create_endpoint(
+                    provider="docker",
+                    exposure="lan",
+                    role="probe",
+                    dry_run=True,
+                    env={},
+                )
+
+            manifest = EndpointManifest.from_dict(output)
+            first_destroy = docker.destroy_endpoint(
+                manifest,
+                env={},
+                command_runner=_DockerDestroyRunner(),
+            )
+            destroyed_manifest = EndpointManifest.from_dict(
+                json.loads(
+                    Path(str(first_destroy["manifest_path"])).read_text(encoding="utf-8")
+                )
+            )
+            runner = _DockerDestroyRunner()
+            second_destroy = docker.destroy_endpoint(
+                destroyed_manifest,
+                env={},
+                command_runner=runner,
+            )
+
+        self.assertEqual(runner.calls, [])
+        self.assertFalse(second_destroy["destroyed"])
+        self.assertTrue(second_destroy["already_destroyed"])
+        self.assertEqual(second_destroy["status"], "destroyed")
+        self.assertEqual(second_destroy["actions"], [])
+        self.assertTrue(second_destroy["skipped"])
+        self.assertEqual(
+            set(_destroy_skip_reasons(second_destroy)),
+            {"endpoint already destroyed"},
+        )
+
+    def test_active_private_destroy_removes_container_last_network_and_preserves_local_files(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            create_runner = _DockerLivePrivateRunner(
+                image_exists=True,
+                network_exists=True,
+            )
+            with mock.patch(
+                "tools.wire.engine.providers.docker.create.free_localhost_tcp_port",
+                return_value=29424,
+            ):
+                output = docker.create_endpoint(
+                    provider="docker",
+                    exposure="private",
+                    role="oracle",
+                    private_group="pair-live",
+                    private_ip="10.79.0.42",
+                    dry_run=False,
+                    confirm_live_run=True,
+                    env={},
+                    command_runner=create_runner,
+                )
+
+            manifest = EndpointManifest.from_dict(output)
+            state_dir = Path(str(output["state_dir"]))
+            artifact_dir = Path(str(output["artifact_dir"]))
+            state_sentinel = state_dir / "destroy-debug-state.txt"
+            artifact_sentinel = artifact_dir / "destroy-debug-artifact.txt"
+            state_sentinel.write_text("keep state\n", encoding="utf-8")
+            artifact_sentinel.write_text("keep artifact\n", encoding="utf-8")
+
+            runner = _DockerDestroyRunner()
+            destroy_output = docker.destroy_endpoint(
+                manifest,
+                env={},
+                command_runner=runner,
+            )
+            manifest_path = Path(str(destroy_output["manifest_path"]))
+            destroyed_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            allocation_state = output["metadata"]["allocation_state"]  # type: ignore[index]
+            record_path = Path(str(allocation_state["record_path"]))  # type: ignore[index]
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            state_sentinel_exists = state_sentinel.exists()
+            artifact_sentinel_exists = artifact_sentinel.exists()
+            manifest_path_exists = manifest_path.exists()
+
+        self.assertEqual(
+            runner.calls,
+            [
+                ("docker", "container", "rm", "--force", "container-private-1"),
+                ("docker", "network", "inspect", "network-pair-live"),
+                ("docker", "network", "rm", "network-pair-live"),
+            ],
+        )
+        self.assertTrue(destroy_output["destroyed"])
+        self.assertFalse(destroy_output["already_destroyed"])
+        self.assertEqual(destroy_output["status"], "destroyed")
+        self.assertEqual(
+            [(action["kind"], action["action"]) for action in destroy_output["actions"]],  # type: ignore[index]
+            [
+                ("docker-container", "remove"),
+                ("private-group", "remove-private-allocation"),
+                ("docker-network", "inspect"),
+                ("docker-network", "remove"),
+            ],
+        )
+        self.assertTrue(destroyed_manifest["metadata"]["docker"]["container_removed"])
+        private_destroy = destroyed_manifest["metadata"]["private_group_destroy"]
+        self.assertTrue(private_destroy["record_found"])
+        self.assertEqual(private_destroy["remaining_endpoints"], [])
+        self.assertTrue(private_destroy["network_removed"])
+        self.assertEqual(record["allocated_endpoint_ids"], [])
+        self.assertEqual(record["allocated_private_ipv4s"], [])
+        self.assertTrue(state_sentinel_exists)
+        self.assertTrue(artifact_sentinel_exists)
+        self.assertTrue(manifest_path_exists)
+        self.assertIn(
+            "local endpoint state and artifacts are preserved",
+            _destroy_skip_reasons(destroy_output),
+        )
+
+    def test_missing_container_destroy_marks_container_already_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            create_runner = _DockerLiveNatL3Runner(
+                container_id="container-lan-missing",
+                discovered_ipv4="172.20.0.20",
+                discovered_mac="02:42:ac:14:00:14",
+            )
+            with mock.patch(
+                "tools.wire.engine.providers.docker.create.free_localhost_tcp_port",
+                return_value=29425,
+            ):
+                output = docker.create_endpoint(
+                    provider="docker",
+                    exposure="lan",
+                    role="probe",
+                    dry_run=False,
+                    confirm_live_run=True,
+                    env={DOCKER_LAN_NETWORK_ENV: "wire-lan-destroy"},
+                    command_runner=create_runner,
+                )
+
+            runner = _DockerDestroyRunner(container_missing=True)
+            destroy_output = docker.destroy_endpoint(
+                EndpointManifest.from_dict(output),
+                env={},
+                command_runner=runner,
+            )
+            destroyed_manifest = json.loads(
+                Path(str(destroy_output["manifest_path"])).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(
+            runner.calls,
+            [("docker", "container", "rm", "--force", "container-lan-missing")],
+        )
+        self.assertTrue(destroy_output["destroyed"])
+        self.assertEqual(
+            [(action["kind"], action["action"]) for action in destroy_output["actions"]],  # type: ignore[index]
+            [("docker-container", "already-missing")],
+        )
+        self.assertIn("Docker container was already missing", _destroy_action_reasons(destroy_output))
+        self.assertTrue(destroyed_manifest["metadata"]["docker"]["container_removed"])
+
+    def test_private_network_is_retained_while_another_allocation_remains(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            create_runner = _DockerLivePrivateRunner(
+                image_exists=True,
+                network_exists=True,
+            )
+            with mock.patch(
+                "tools.wire.engine.providers.docker.create.free_localhost_tcp_port",
+                return_value=29426,
+            ):
+                output = docker.create_endpoint(
+                    provider="docker",
+                    exposure="private",
+                    role="oracle",
+                    private_group="pair-live",
+                    private_ip="10.79.0.42",
+                    dry_run=False,
+                    confirm_live_run=True,
+                    env={},
+                    command_runner=create_runner,
+                )
+
+            update_private_group_allocation(
+                provider="docker",
+                group="pair-live",
+                endpoint_id="other-docker-private-probe",
+                private_ipv4="10.79.0.43",
+            )
+            runner = _DockerDestroyRunner()
+            destroy_output = docker.destroy_endpoint(
+                EndpointManifest.from_dict(output),
+                env={},
+                command_runner=runner,
+            )
+            destroyed_manifest = json.loads(
+                Path(str(destroy_output["manifest_path"])).read_text(encoding="utf-8")
+            )
+            allocation_state = output["metadata"]["allocation_state"]  # type: ignore[index]
+            record_path = Path(str(allocation_state["record_path"]))  # type: ignore[index]
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            runner.calls,
+            [("docker", "container", "rm", "--force", "container-private-1")],
+        )
+        self.assertEqual(runner.calls_matching("docker", "network", "inspect"), [])
+        self.assertEqual(runner.calls_matching("docker", "network", "rm"), [])
+        private_destroy = destroyed_manifest["metadata"]["private_group_destroy"]
+        self.assertTrue(private_destroy["record_found"])
+        self.assertFalse(private_destroy["network_removed"])
+        self.assertEqual(private_destroy["remaining_endpoints"], ["other-docker-private-probe"])
+        self.assertEqual(record["allocated_endpoint_ids"], ["other-docker-private-probe"])
+        self.assertEqual(record["allocated_private_ipv4s"], ["10.79.0.43"])
+        self.assertIn(
+            "private group still has allocated endpoints; network retained",
+            _destroy_skip_reasons(destroy_output),
+        )
+
+    def test_destroy_rejects_non_docker_manifest_before_provider_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with mock.patch(
+                "tools.wire.engine.providers.docker.create.free_localhost_tcp_port",
+                return_value=29427,
+            ):
+                output = docker.create_endpoint(
+                    provider="docker",
+                    exposure="wan",
+                    role="client",
+                    dry_run=True,
+                    env={},
+                )
+
+            invalid_manifest = replace(EndpointManifest.from_dict(output), provider="qemu")
+            runner = _DockerDestroyRunner()
+            with self.assertRaisesRegex(ValueError, "manifest provider must be 'docker'"):
+                docker.destroy_endpoint(
+                    invalid_manifest,
+                    env={},
+                    command_runner=runner,
+                )
+
+        self.assertEqual(runner.calls, [])
+
+
 class _DockerLivePrivateRunner:
     def __init__(self, *, image_exists: bool, network_exists: bool) -> None:
         self.image_exists = image_exists
@@ -1024,6 +1322,32 @@ class _DockerLiveNatL3Runner:
         if len(calls) != 1:
             raise AssertionError(f"expected one call matching {prefix!r}, got {calls!r}")
         return calls[0]
+
+
+class _DockerDestroyRunner:
+    def __init__(self, *, container_missing: bool = False) -> None:
+        self.container_missing = container_missing
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, argv: Sequence[object], **_: object) -> CommandResult:
+        parts = tuple(str(part) for part in argv)
+        self.calls.append(parts)
+
+        if parts[:4] == ("docker", "container", "rm", "--force"):
+            if self.container_missing:
+                return _result(parts, exit_code=1, stderr="No such container\n")
+            return _result(parts, stdout=f"{parts[-1]}\n")
+
+        if parts[:3] == ("docker", "network", "inspect"):
+            return _result(parts, stdout=_docker_private_network_inspect_stdout())
+
+        if parts[:3] == ("docker", "network", "rm"):
+            return _result(parts, stdout=f"{parts[-1]}\n")
+
+        return _result(parts, exit_code=1, stderr=f"unexpected command: {parts!r}\n")
+
+    def calls_matching(self, *prefix: str) -> list[tuple[str, ...]]:
+        return [call for call in self.calls if call[: len(prefix)] == prefix]
 
 
 def _option_values(argv: Sequence[str], option: str) -> list[str]:
@@ -1290,6 +1614,28 @@ def _resources_by_name(output: Mapping[str, object]) -> dict[str, Mapping[str, o
         if isinstance(name, str):
             resources_by_name[name] = resource
     return resources_by_name
+
+
+def _destroy_skip_reasons(output: Mapping[str, object]) -> list[str]:
+    skipped = output["skipped"]
+    if not isinstance(skipped, Sequence):
+        raise AssertionError("destroy skipped entries must be a sequence")
+    return [
+        str(entry["reason"])
+        for entry in skipped
+        if isinstance(entry, Mapping) and "reason" in entry
+    ]
+
+
+def _destroy_action_reasons(output: Mapping[str, object]) -> list[str]:
+    actions = output["actions"]
+    if not isinstance(actions, Sequence):
+        raise AssertionError("destroy actions must be a sequence")
+    return [
+        str(entry["reason"])
+        for entry in actions
+        if isinstance(entry, Mapping) and "reason" in entry
+    ]
 
 
 @contextmanager
