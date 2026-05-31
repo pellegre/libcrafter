@@ -111,6 +111,12 @@ def docker_container_name(endpoint_id: str) -> str:
     return docker_resource_name("container", endpoint_id, fallback="wire-docker-container")
 
 
+def docker_hostname(endpoint_id: str) -> str:
+    """Return a Docker hostname-safe label for an endpoint."""
+
+    return docker_resource_name("host", endpoint_id, fallback="wire-docker-host")
+
+
 def docker_private_network_name(private_group: str) -> str:
     """Return the provider-owned Docker network name for a private group."""
 
@@ -944,6 +950,7 @@ __all__ = [
     "docker_container_name",
     "docker_container_resource",
     "docker_endpoint_id",
+    "docker_hostname",
     "docker_image_resource",
     "docker_inspect_argv",
     "docker_inspect_id",

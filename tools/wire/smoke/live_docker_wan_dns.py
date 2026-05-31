@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             _write_unattached_failure(repo_root, "create_endpoint", create)
             raise SmokeError("Docker WAN endpoint creation failed", create.exit_code)
 
-        manifest = _json_object(create.stdout, "create-endpoint output")
+        manifest = _endpoint_manifest(create.stdout, "create-endpoint output")
         endpoint_id = _string(manifest.get("endpoint_id"), "endpoint_id")
         artifact_dir = Path(_string(manifest.get("artifact_dir"), "artifact_dir"))
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -632,6 +632,14 @@ def _json_object(value: str, name: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise SmokeError(f"{name} was not a JSON object")
     return parsed
+
+
+def _endpoint_manifest(value: str, name: str) -> dict[str, Any]:
+    output = _json_object(value, name)
+    endpoint = output.get("endpoint")
+    if isinstance(endpoint, dict):
+        return endpoint
+    return output
 
 
 def _string(value: Any, name: str) -> str:

@@ -66,6 +66,7 @@ from .resources import (
     docker_container_name,
     docker_container_resource,
     docker_endpoint_id,
+    docker_hostname,
     docker_image_resource,
     docker_inspect_id,
     docker_inspect_labels,
@@ -101,6 +102,8 @@ DOCKER_SSH_WAIT_TIMEOUT = 300
 DOCKER_SSH_WAIT_INTERVAL = 5
 DOCKER_CONTAINER_COMMAND_LOG_NAME = "docker-container-commands.json"
 DOCKER_CONTAINER_CREATE_TIMEOUT = 120
+DOCKER_CONTROL_NETWORK = "bridge"
+DOCKER_NETWORK_CONNECT_TIMEOUT = 60
 DOCKER_NETWORK_INSPECT_TIMEOUT = 30
 DOCKER_NETWORK_CREATE_TIMEOUT = 60
 
@@ -269,6 +272,7 @@ def _create_live_private_endpoint(
         endpoint_id=endpoint_id,
         created_at=created_at,
         extra_metadata=_metadata_mapping(private_plan.get("extra_metadata")),
+        control_network=DOCKER_CONTROL_NETWORK,
         discovery_prefer_public_or_default=False,
     )
     return _docker_live_output(manifest)
@@ -1098,6 +1102,7 @@ def _create_live_container_endpoint(
     created_at: str | None = None,
     extra_labels: Mapping[str, object] | None = None,
     extra_metadata: Mapping[str, object] | None = None,
+    control_network: str | None = None,
     ssh_wait_timeout: float = DOCKER_SSH_WAIT_TIMEOUT,
     ssh_wait_interval: float = DOCKER_SSH_WAIT_INTERVAL,
     discovery_prefer_public_or_default: bool = True,
@@ -1166,6 +1171,8 @@ def _create_live_container_endpoint(
         authorized_key_source=public_key,
         run_argv=run_argv,
         created=False,
+        control_network=control_network,
+        control_network_connected=False,
     )
     provider_resources = _live_container_provider_resources(
         container_id=None,
@@ -1241,6 +1248,8 @@ def _create_live_container_endpoint(
         authorized_key_source=public_key,
         run_argv=run_argv,
         created=True,
+        control_network=control_network,
+        control_network_connected=False,
     )
     provider_resources = _live_container_provider_resources(
         container_id=container_id,
@@ -1294,6 +1303,92 @@ def _create_live_container_endpoint(
             ),
         )
     )
+
+    control_network_connected = False
+    if control_network:
+        control_connect_argv = _docker_network_connect_argv(
+            docker_command=docker_command,
+            network_name=control_network,
+            container_id=container_id,
+        )
+        _run_docker(
+            control_connect_argv,
+            runner=recorder,
+            env=env,
+            timeout=DOCKER_NETWORK_CONNECT_TIMEOUT,
+        )
+        control_network_connected = True
+        container = _live_container_metadata(
+            container_id=container_id,
+            container_name=container_name,
+            endpoint_id=endpoint_id,
+            image_tag=image_tag,
+            exposure=exposure,
+            network_name=network_name,
+            ssh_port=ssh_port,
+            labels=labels,
+            security=security,
+            docker_command=docker_command,
+            authorized_key_source=public_key,
+            run_argv=run_argv,
+            created=True,
+            control_network=control_network,
+            control_network_connected=True,
+        )
+        provider_resources = _live_container_provider_resources(
+            container_id=container_id,
+            container_name=container_name,
+            endpoint_id=endpoint_id,
+            exposure=exposure,
+            role=role,
+            image_tag=image_tag,
+            image=image,
+            network_name=network_name,
+            network_resources=network_resources,
+            layout=layout,
+            public_key=public_key,
+            command_log_path=command_log_path,
+            security=security,
+            created=True,
+            control_network=control_network,
+            control_network_connected=True,
+        )
+        write_endpoint_manifest(
+            EndpointManifest(
+                endpoint_id=endpoint_id,
+                provider=provider,
+                exposure=exposure,
+                status="creating",
+                role=role,
+                created_at=created_at,
+                ssh=_docker_live_ssh_info(
+                    layout=layout,
+                    container_name=container_name,
+                    ssh_port=ssh_port,
+                    control_interface=_first_planned_interface_name(planned_interfaces),
+                ),
+                interfaces=list(planned_interfaces),
+                provider_resources=provider_resources,
+                artifact_dir=str(layout.artifact_dir),
+                metadata=_docker_live_manifest_metadata(
+                    created=True,
+                    layout=layout,
+                    docker_command=docker_command,
+                    container=container,
+                    network_name=network_name,
+                    network_resources=network_resources,
+                    image=image,
+                    security=security,
+                    capabilities=capabilities,
+                    command_log_path=command_log_path,
+                    extra_metadata=extra_metadata,
+                    discovery={
+                        "ssh_ready": False,
+                        "interfaces": False,
+                    },
+                ),
+            )
+        )
 
     _wait_for_docker_ssh(
         private_key_path=layout.private_key_path,
@@ -1432,13 +1527,14 @@ def _docker_live_run_argv(
     docker_command: str,
     authorized_key_source: str | Path,
 ) -> list[str]:
+    hostname = docker_hostname(endpoint_id)
     return docker_argv(
         "run",
         "--detach",
         "--name",
         container_name,
         "--hostname",
-        endpoint_id,
+        hostname,
         *network_args,
         "--publish",
         docker_publish_arg(host_port=ssh_port, guest_port=DOCKER_SSH_GUEST_PORT),
@@ -1447,6 +1543,21 @@ def _docker_live_run_argv(
         _authorized_key_mount_spec(authorized_key_source),
         *docker_label_args(labels),
         image_tag,
+        docker_command=docker_command,
+    )
+
+
+def _docker_network_connect_argv(
+    *,
+    docker_command: str,
+    network_name: str,
+    container_id: str,
+) -> list[str]:
+    return docker_argv(
+        "network",
+        "connect",
+        network_name,
+        container_id,
         docker_command=docker_command,
     )
 
@@ -1502,13 +1613,17 @@ def _live_container_metadata(
     authorized_key_source: Path,
     run_argv: Sequence[object],
     created: bool,
+    control_network: str | None = None,
+    control_network_connected: bool = False,
 ) -> dict[str, object]:
+    hostname = docker_hostname(endpoint_id)
     return {
         "planned": False,
         "created": created,
         "type": "docker-container",
         "container_id": container_id,
         "container_name": container_name,
+        "hostname": hostname,
         "endpoint_id": endpoint_id,
         "image": image_tag,
         "exposure": exposure,
@@ -1534,6 +1649,8 @@ def _live_container_metadata(
         "docker_command": docker_command,
         "run_argv": list(run_argv),
         "run_command": render_docker_argv(run_argv),
+        "control_network": control_network,
+        "control_network_connected": control_network_connected,
     }
 
 
@@ -1553,6 +1670,8 @@ def _live_container_provider_resources(
     command_log_path: Path,
     security: Mapping[str, object],
     created: bool,
+    control_network: str | None = None,
+    control_network_connected: bool = False,
 ):
     return docker_provider_resources(
         [
@@ -1568,6 +1687,8 @@ def _live_container_provider_resources(
                     "docker_network": network_name,
                     "ssh_host": DOCKER_SSH_HOST,
                     "ssh_guest_port": DOCKER_SSH_GUEST_PORT,
+                    "control_network": control_network,
+                    "control_network_connected": control_network_connected,
                     "security": security,
                 },
             ),
@@ -2920,13 +3041,14 @@ def _container_metadata(
     docker_command: str,
     authorized_key_source: Path,
 ) -> dict[str, object]:
+    hostname = docker_hostname(endpoint_id)
     run_argv = docker_argv(
         "run",
         "--detach",
         "--name",
         container_name,
         "--hostname",
-        endpoint_id,
+        hostname,
         "--network",
         network_name,
         "--ip",
@@ -2935,14 +3057,7 @@ def _container_metadata(
         private_mac,
         "--publish",
         docker_publish_arg(host_port=ssh_port, guest_port=DOCKER_SSH_GUEST_PORT),
-        "--cap-drop",
-        "ALL",
-        "--cap-add",
-        "NET_RAW",
-        "--cap-add",
-        "NET_ADMIN",
-        "--security-opt",
-        "no-new-privileges",
+        *_docker_security_argv(security),
         "--mount",
         _authorized_key_mount_spec(authorized_key_source),
         *docker_label_args(labels),
@@ -2954,6 +3069,7 @@ def _container_metadata(
         "type": "docker-container",
         "container_id": None,
         "container_name": container_name,
+        "hostname": hostname,
         "endpoint_id": endpoint_id,
         "image": image_tag,
         "private_network": network_name,
@@ -2992,23 +3108,19 @@ def _nat_l3_container_metadata(
     docker_command: str,
     authorized_key_source: Path,
 ) -> dict[str, object]:
+    hostname = docker_hostname(endpoint_id)
     run_argv = docker_argv(
         "run",
         "--detach",
         "--name",
         container_name,
         "--hostname",
-        endpoint_id,
+        hostname,
         "--network",
         network_name,
         "--publish",
         docker_publish_arg(host_port=ssh_port, guest_port=DOCKER_SSH_GUEST_PORT),
-        "--cap-drop",
-        "ALL",
-        "--cap-add",
-        "NET_RAW",
-        "--security-opt",
-        "no-new-privileges",
+        *_docker_security_argv(security),
         "--mount",
         _authorized_key_mount_spec(authorized_key_source),
         *docker_label_args(labels),
@@ -3020,6 +3132,7 @@ def _nat_l3_container_metadata(
         "type": "docker-container",
         "container_id": None,
         "container_name": container_name,
+        "hostname": hostname,
         "endpoint_id": endpoint_id,
         "image": image_tag,
         "exposure": exposure,
@@ -3068,7 +3181,8 @@ def _docker_private_security_flags() -> dict[str, object]:
         "broad_host_filesystem_mounts": False,
         "network_mode": "provider-owned-bridge",
         "cap_drop": ["ALL"],
-        "cap_add": ["NET_RAW", "NET_ADMIN"],
+        "cap_add": ["NET_RAW", "NET_ADMIN", "SYS_CHROOT", "SETGID", "SETUID"],
+        "ssh_control_capabilities": ["SYS_CHROOT", "SETGID", "SETUID"],
         "security_opt": ["no-new-privileges"],
         "no_new_privileges": True,
     }
@@ -3089,7 +3203,8 @@ def _docker_nat_l3_security_flags(
         "network_name": network_name,
         "exposure": exposure,
         "cap_drop": ["ALL"],
-        "cap_add": ["NET_RAW"],
+        "cap_add": ["NET_RAW", "SYS_CHROOT", "SETGID", "SETUID"],
+        "ssh_control_capabilities": ["SYS_CHROOT", "SETGID", "SETUID"],
         "net_raw_only": True,
         "net_admin": False,
         "security_opt": ["no-new-privileges"],
