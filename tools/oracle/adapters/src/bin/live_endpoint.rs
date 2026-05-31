@@ -1562,14 +1562,19 @@ fn icmp_layer(plan: &Value) -> ExampleResult<Icmp> {
     let mut layer = Icmp::new()
         .type_(icmp_type(required(fields, &["type"])?, false)?)
         .code(u8_value(required(fields, &["code"])?)?);
-    if let Some(value) = optional(fields, &["rest_of_header"]) {
+    let has_rest_of_header = if let Some(value) = optional(fields, &["rest_of_header"]) {
         layer = layer.rest_of_header(fixed_4_bytes(value, "icmp.rest_of_header")?);
-    }
-    if let Some(value) = optional(fields, &["id", "identifier"]) {
-        layer = layer.id(u16_value(value)?);
-    }
-    if let Some(value) = optional(fields, &["seq", "sequence"]) {
-        layer = layer.seq(u16_value(value)?);
+        true
+    } else {
+        false
+    };
+    if !has_rest_of_header {
+        if let Some(value) = optional(fields, &["id", "identifier"]) {
+            layer = layer.id(u16_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["seq", "sequence"]) {
+            layer = layer.seq(u16_value(value)?);
+        }
     }
     if let Some(value) = optional(fields, &["pointer"]) {
         layer = layer.pointer(u8_value(value)?);
@@ -2845,6 +2850,38 @@ mod l2_ipv4_root {
         let bytes = compiled.as_bytes();
         assert_eq!(bytes[20], ICMP_SOURCE_QUENCH);
         assert_eq!(&bytes[24..28], &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn icmp_extended_echo_plan_preserves_rest_of_header() {
+        let plan = json!({
+            "stack": ["ipv4", "icmp", "payload"],
+            "fields": {
+                "ipv4": {
+                    "src": "10.42.19.10",
+                    "dst": "10.42.19.20",
+                    "identification": 1,
+                    "ttl": 64,
+                    "flags": "none",
+                    "protocol": "icmp"
+                },
+                "icmp": {
+                    "type": "extended_echo_request",
+                    "code": 0,
+                    "identifier": 0x1111,
+                    "sequence": 0x2222,
+                    "rest_of_header": {"hex": "00000100"},
+                    "extension_bytes": {"hex": "20000000000800010102030405060708"}
+                },
+                "payload": {"hex": "aabb", "length": 2}
+            }
+        });
+
+        let packet = build_packet(&plan).expect("extended echo plan builds");
+        let compiled = packet.compile().expect("extended echo plan compiles");
+        let bytes = compiled.as_bytes();
+        assert_eq!(bytes[20], ICMP_EXTENDED_ECHO_REQUEST);
+        assert_eq!(&bytes[24..28], &[0, 0, 1, 0]);
     }
 
     #[test]

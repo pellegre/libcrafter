@@ -12,6 +12,8 @@ use pnet_transport::{transport_channel, TransportChannelType};
 
 use super::error::{NetError, Result};
 
+const IPPROTO_RAW_SOCKET: u8 = 255;
+
 /// Caller intent for selecting a send path.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum SendMode {
@@ -559,7 +561,14 @@ fn transmit_network(
     destination: IpAddr,
     protocol: u8,
 ) -> Result<usize> {
-    let channel_type = TransportChannelType::Layer3(IpNextHeaderProtocol::new(protocol));
+    // IPv4 Layer3 sends include a complete caller-compiled IP header. Opening
+    // the socket as IPPROTO_RAW keeps the header's protocol byte authoritative
+    // and avoids protocol-specific raw socket filtering of newer ICMP types.
+    let socket_protocol = match network_layer {
+        NetworkLayer::Ipv4 => IPPROTO_RAW_SOCKET,
+        NetworkLayer::Ipv6 | NetworkLayer::Raw => protocol,
+    };
+    let channel_type = TransportChannelType::Layer3(IpNextHeaderProtocol::new(socket_protocol));
     let buffer_size = options.write_buffer_size.max(plan.len());
     let (mut tx, _) = transport_channel(buffer_size, channel_type)
         .map_err(|source| net_io_error("open raw network socket", source))?;
