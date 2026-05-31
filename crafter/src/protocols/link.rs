@@ -1642,7 +1642,7 @@ mod ethernet {
 #[cfg(test)]
 mod arp {
     use super::{Arp, ArpOperation, Ethernet, ETHERTYPE_ARP};
-    use crate::{CrafterError, LinkType, MacAddr, Packet};
+    use crate::{CrafterError, LinkType, MacAddr, Packet, Raw};
     use core::net::Ipv4Addr;
 
     const ARP_REQUEST_FIXTURE: &[u8] = fixture_bytes!("bytes/arp-who-has.bin");
@@ -2692,6 +2692,116 @@ mod arp {
         assert!(arp.sender_mac().is_some());
         assert_eq!(arp.sender_ipv4(), None);
         assert_eq!(arp.target_ipv4(), None);
+    }
+
+    /// A complete Ethernet/IPv4 ARP request body followed by extra octets.
+    /// Per repo policy the decoder validates the fixed header plus the four
+    /// address fields (sized by HLN/PLN), then preserves any leftover bytes as
+    /// a trailing `Raw` payload rather than rejecting the frame.
+    const ARP_TRAILER: &[u8] = b"trailing-after-arp";
+
+    fn arp_body_ipv4_request() -> Vec<u8> {
+        vec![
+            0x00, 0x01, // HRD = Ethernet
+            0x08, 0x00, // PRO = IPv4
+            0x06, // HLN = 6
+            0x04, // PLN = 4
+            0x00, 0x01, // OP = request
+            0x02, 0x00, 0x5e, 0x00, 0x53, 0x01, // sender hardware
+            0xc0, 0x00, 0x02, 0x0a, // sender protocol 192.0.2.10
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // target hardware
+            0xc0, 0x00, 0x02, 0x01, // target protocol 192.0.2.1
+        ]
+    }
+
+    #[test]
+    fn arp_trailing_bytes_decode_as_raw_after_arp_layer() {
+        // A structurally complete ARP body carries trailing padding/junk. The
+        // ARP header decodes intact and the leftover bytes land in a Raw layer.
+        let mut body = arp_body_ipv4_request();
+        body.extend_from_slice(ARP_TRAILER);
+        let frame = arp_frame(&body);
+
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &frame)
+            .expect("complete ARP body with a trailer must decode");
+
+        let arp = decoded
+            .layer::<Arp>()
+            .expect("decoded packet must carry an Arp layer");
+        assert_eq!(arp.opcode_value(), ArpOperation::Request as u16);
+        assert_eq!(arp.sender_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 10)));
+        assert_eq!(arp.target_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 1)));
+
+        let raw = decoded
+            .layer::<Raw>()
+            .expect("trailing bytes must surface as a Raw layer");
+        assert_eq!(raw.as_bytes(), ARP_TRAILER);
+    }
+
+    #[test]
+    fn arp_trailing_bytes_recompile_preserves_payload_byte_exact() {
+        // Re-compiling the decoded stack must reproduce the original frame
+        // byte-for-byte, including the trailing Raw payload.
+        let mut body = arp_body_ipv4_request();
+        body.extend_from_slice(ARP_TRAILER);
+        let frame = arp_frame(&body);
+
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &frame).unwrap();
+
+        assert_eq!(decoded.compile().unwrap().as_bytes(), frame.as_slice());
+    }
+
+    #[test]
+    fn raw_after_arp_preserved_with_nonstandard_address_lengths() {
+        // Trailing bytes survive even when the ARP body uses nonstandard
+        // hardware/protocol address widths: the decoder splits the addresses by
+        // HLN/PLN and the remainder still becomes a Raw layer.
+        let mut body = vec![
+            0x00, 0x19, // HRD = ATM (nonstandard for this test)
+            0x86, 0xdd, // PRO = IPv6 ethertype
+            0x02, // HLN = 2
+            0x03, // PLN = 3
+            0x04, 0x00, // OP = 0x0400 (unknown numeric opcode)
+            0xaa, 0xbb, // sender hardware (2 octets)
+            0x01, 0x02, 0x03, // sender protocol (3 octets)
+            0xcc, 0xdd, // target hardware (2 octets)
+            0x04, 0x05, 0x06, // target protocol (3 octets)
+        ];
+        let trailer: &[u8] = &[0xde, 0xad, 0xbe, 0xef];
+        body.extend_from_slice(trailer);
+        let frame = arp_frame(&body);
+
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &frame)
+            .expect("nonstandard but complete ARP body must decode");
+
+        let arp = decoded.layer::<Arp>().expect("expected an Arp layer");
+        assert_eq!(arp.hardware_len_value(), 2);
+        assert_eq!(arp.protocol_len_value(), 3);
+        assert_eq!(arp.opcode_value(), 0x0400);
+
+        let raw = decoded
+            .layer::<Raw>()
+            .expect("trailing bytes must surface as a Raw layer");
+        assert_eq!(raw.as_bytes(), trailer);
+
+        // The full frame round-trips byte-exact through the packet stack.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), frame.as_slice());
+    }
+
+    #[test]
+    fn raw_after_arp_absent_when_body_is_exact() {
+        // A body that ends exactly at the ARP boundary leaves no trailing Raw
+        // layer; this guards the trailing-Raw path against off-by-one slicing.
+        let frame = arp_frame(&arp_body_ipv4_request());
+
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &frame).unwrap();
+
+        assert!(decoded.layer::<Arp>().is_some());
+        assert!(
+            decoded.layer::<Raw>().is_none(),
+            "an exact ARP body must not synthesize a Raw layer"
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), frame.as_slice());
     }
 
     /// Decode a bare ARP body inside an Ethernet frame and return the `Arp`
