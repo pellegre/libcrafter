@@ -302,6 +302,14 @@ pub struct ProbePlan {
     pub ethernet_destination: Option<String>,
     #[serde(default)]
     pub validation: Option<ArpValidation>,
+    // Multi-send ARP behavioral case fields (`arp-repeat-two-replies`). The plan
+    // carries an `arp_sends` array (one entry per who-has -> is-at send), each
+    // with its own sender/target hardware/protocol address, Ethernet framing,
+    // capture filter, and is-at validation contract, so the ARP dispatch can
+    // build/send two who-has requests for the same target and validate two
+    // independently-decoded is-at replies. Single-send ARP cases leave this unset.
+    #[serde(default)]
+    pub arp_sends: Option<Vec<ArpSend>>,
 }
 
 /// Validation contract for the ARP is-at reply (`arp-basic-who-has`).
@@ -327,6 +335,39 @@ pub struct ArpValidation {
     pub ethernet_source: Option<String>,
     #[serde(default)]
     pub ethernet_destination: Option<String>,
+}
+
+/// One send of a multi-send ARP probe case (`arp-repeat-two-replies`).
+///
+/// ARP rides Ethernet directly (no IP/UDP), so each send carries link-layer
+/// values: the sender/target hardware and protocol addresses, the Ethernet
+/// source/destination framing, its own capture filter, and its own typed is-at
+/// `validation` contract. The two sends resolve the *same* target address (the
+/// case point is that a repeated who-has receives two parseable replies), so the
+/// ARP dispatch can build/send each who-has independently and validate every
+/// is-at reply against its own send.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArpSend {
+    #[serde(default)]
+    pub index: Option<usize>,
+    #[serde(default)]
+    pub operation: Option<u16>,
+    #[serde(default)]
+    pub sender_hardware_addr: Option<String>,
+    #[serde(default)]
+    pub sender_protocol_addr: Option<String>,
+    #[serde(default)]
+    pub target_hardware_addr: Option<String>,
+    #[serde(default)]
+    pub target_protocol_addr: Option<String>,
+    #[serde(default)]
+    pub ethernet_source: Option<String>,
+    #[serde(default)]
+    pub ethernet_destination: Option<String>,
+    #[serde(default)]
+    pub capture_filter: Option<String>,
+    #[serde(default)]
+    pub validation: Option<ArpValidation>,
 }
 
 /// One send of a multi-send DHCP probe case (`dhcp-rapid-repeat`).
@@ -720,8 +761,12 @@ fn dispatch_case(
             | "dhcp-request-nak"
             | "dhcp-rapid-repeat",
         ) => dhcp::run_dhcp_live(request, plan),
-        (RunMode::DryRun, "arp-basic-who-has") => arp::run_arp_dry_run(request, plan),
-        (RunMode::Live, "arp-basic-who-has") => arp::run_arp_live(request, plan),
+        (RunMode::DryRun, "arp-basic-who-has" | "arp-repeat-two-replies") => {
+            arp::run_arp_dry_run(request, plan)
+        }
+        (RunMode::Live, "arp-basic-who-has" | "arp-repeat-two-replies") => {
+            arp::run_arp_live(request, plan)
+        }
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
             // modules (`arp`, `udp`) by later steps; until then they fall
@@ -893,6 +938,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "target_protocol_addr": plan.target_protocol_addr,
         "ethernet_source": plan.ethernet_source,
         "ethernet_destination": plan.ethernet_destination,
+        "arp_sends": arp::sends_json(plan.arp_sends.as_deref()),
         "target_service": target_service_json(plan),
         "capture_filter": capture_filter(plan),
     })
@@ -1022,7 +1068,7 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         }
         // ARP rides Ethernet directly and cannot be selected by host/IP BPF, so
         // match on the protocol plus the reply opcode (ARP byte 6:2 == 2).
-        "arp-basic-who-has" => "arp and arp[6:2] = 2".to_string(),
+        "arp-basic-who-has" | "arp-repeat-two-replies" => "arp and arp[6:2] = 2".to_string(),
         _ => String::new(),
     }
 }
@@ -1056,7 +1102,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-inform-ack" => "dhcp_ack",
             "dhcp-request-nak" => "dhcp_nak",
             "dhcp-rapid-repeat" => "dhcp_offer",
-            "arp-basic-who-has" => "arp_is_at",
+            "arp-basic-who-has" | "arp-repeat-two-replies" => "arp_is_at",
             _ => "unknown",
         })
 }
@@ -1367,6 +1413,27 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 .and_then(|validation| validation.sender_hardware_addr.clone()),
             "arp_sysctls": true,
             "neighbor_cache_flush": true,
+        }),
+        "arp-repeat-two-replies" => json!({
+            "required": true,
+            // ARP relies primarily on the target kernel answering who-has for
+            // its own configured address; setup tunes ARP sysctls and flushes
+            // the neighbor cache (no listening daemon). The repeated who-has
+            // resolves the same target twice, so the kernel answers each send.
+            "kind": "arp-kernel",
+            "layer": "link",
+            "target_protocol_addr": plan.target_protocol_addr,
+            "target_hardware_addr": plan
+                .validation
+                .as_ref()
+                .and_then(|validation| validation.sender_hardware_addr.clone()),
+            "arp_sysctls": true,
+            "neighbor_cache_flush": true,
+            // The kernel answers each repeated who-has for the same target with
+            // its own is-at, so each decoded reply is validated against its send.
+            "repeat": {
+                "sends": arp::repeat_sends_json(plan.arp_sends.as_deref()),
+            },
         }),
         _ => json!({}),
     }

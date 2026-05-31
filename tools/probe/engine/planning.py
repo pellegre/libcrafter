@@ -3229,6 +3229,189 @@ def _arp_basic_who_has_probe_plan(
     }
 
 
+def _arp_repeat_two_replies_send(
+    *,
+    index: int,
+    stimulus_ipv4: str,
+    target_ipv4: str,
+    stimulus_mac: str,
+    target_mac: str,
+    broadcast_mac: str,
+    zero_mac: str,
+) -> JSONObject:
+    """Build one of the two who-has -> is-at sends for ``arp-repeat-two-replies``.
+
+    Both sends resolve the *same* target protocol address: the case point is that
+    a repeated who-has receives two parseable replies, so the sender hardware /
+    protocol address and the target the kernel answers stay constant across the
+    two sends. Each send carries its own broadcast who-has stimulus (operation 1)
+    and its own full is-at validation contract (operation 2, the resolved target
+    MAC/IPv4 as the reply sender, the original querier as the reply target, and
+    the unicast Ethernet framing) so the endpoint validates each decoded reply
+    independently and matches it back to its send.
+    """
+
+    return {
+        "index": index,
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": stimulus_ipv4,
+        "target_hardware_addr": zero_mac,
+        "target_protocol_addr": target_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        # ARP cannot be selected by host/IP BPF; match on the protocol + opcode.
+        "capture_filter": "arp and arp[6:2] = 2",
+        "validation": {
+            "ethertype": 0x0806,
+            "operation": 2,
+            "operation_label": "reply",
+            "sender_hardware_addr": target_mac,
+            "sender_protocol_addr": target_ipv4,
+            "target_hardware_addr": stimulus_mac,
+            "target_protocol_addr": stimulus_ipv4,
+            "ethernet_source": target_mac,
+            "ethernet_destination": stimulus_mac,
+        },
+    }
+
+
+def _arp_repeat_two_replies_probe_plan(
+    *,
+    case_name: str = "arp-repeat-two-replies",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``arp-repeat-two-replies`` behavioral case.
+
+    Two Ethernet-broadcast ARP who-has requests (operation 1) for the *same*
+    target endpoint IPv4, answered by the target kernel with two unicast is-at
+    replies (operation 2). Unlike the single-send ``arp-basic-who-has`` case, the
+    plan carries an ``arp_sends`` array (one entry per who-has -> is-at send) so
+    the endpoint sends the who-has twice, captures two replies, decodes each
+    independently, and validates two is-at contracts. Repeated who-has exercises
+    capture matching and is-at parsing more than once for the same target; ARP
+    relies primarily on the target kernel answering for its own configured
+    address, so a neighbor-cache flush between sends keeps the kernel re-answering
+    rather than the client caching the first reply.
+
+    ARP rides Ethernet directly (no IP/UDP), so the plan carries link-layer
+    documentation values: a sender hardware address in the RFC 7042 documentation
+    MAC range, a sender protocol address (the stimulus IPv4), the target protocol
+    address to resolve (the target IPv4), and an Ethernet frame addressed from the
+    sender MAC to the broadcast address. The capture filter is link-layer (ARP
+    plus the reply opcode); the target service is the target kernel answering ARP
+    for its own configured address (no daemon). The conventional single-send
+    top-level fields mirror the first send so the generic plan echo and any
+    single-send consumer keep working unchanged; the ARP dispatch detects
+    ``arp_sends`` and drives both sends.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    stimulus_mac = deterministic_documentation_mac(profile, seed, sequence, role="stimulus")
+    target_mac = deterministic_documentation_mac(profile, seed, sequence, role="target")
+    broadcast_mac = "ff:ff:ff:ff:ff:ff"
+    zero_mac = "00:00:00:00:00:00"
+
+    sends = [
+        _arp_repeat_two_replies_send(
+            index=index,
+            stimulus_ipv4=stimulus_ipv4,
+            target_ipv4=target_ipv4,
+            stimulus_mac=stimulus_mac,
+            target_mac=target_mac,
+            broadcast_mac=broadcast_mac,
+            zero_mac=zero_mac,
+        )
+        for index in range(2)
+    ]
+    first = sends[0]
+
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "arp_who_has",
+        "expected_response": "arp_is_at",
+        # ARP rides Ethernet directly; these are link-layer documentation values.
+        # The conventional single-send top-level fields mirror the first send so
+        # the generic plan echo / capture filter / single-send consumers keep
+        # working unchanged.
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": stimulus_ipv4,
+        "target_hardware_addr": zero_mac,
+        "target_protocol_addr": target_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "capture_filter": "arp and arp[6:2] = 2",
+        # The repeat contract: two independent who-has -> is-at sends for the same
+        # target, validated separately.
+        "send_count": len(sends),
+        "arp_sends": sends,
+        "target_service": {
+            "required": True,
+            "kind": "arp-kernel",
+            "layer": "link",
+            # The target kernel answers ARP who-has for its own configured
+            # address; setup tunes ARP sysctls and flushes the neighbor cache.
+            # The repeated who-has resolves the same target twice, so a flush
+            # between sends keeps the kernel re-answering rather than the client
+            # short-circuiting on a cached entry.
+            "target_protocol_addr": target_ipv4,
+            "target_hardware_addr": target_mac,
+            "arp_sysctls": True,
+            "neighbor_cache_flush": True,
+            "repeat": {
+                "sends": [
+                    {
+                        "target_protocol_addr": send["target_protocol_addr"],
+                        "sender_hardware_addr": send["validation"]["sender_hardware_addr"],
+                        "sender_protocol_addr": send["validation"]["sender_protocol_addr"],
+                    }
+                    for send in sends
+                ],
+            },
+        },
+        "validation": first["validation"],
+        "wire_requirements": {
+            "requires_link_layer_send": True,
+            "requires_link_layer_capture": True,
+            "requires_broadcast": True,
+            "note": (
+                "ARP resolution is L2 broadcast/unicast traffic; it runs only on a "
+                "provider-backed lab segment, never from privileged host raw sends."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 def deterministic_documentation_mac(
     profile: str,
     seed: int,
@@ -3298,6 +3481,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
     "arp-basic-who-has": _arp_basic_who_has_probe_plan,
+    "arp-repeat-two-replies": _arp_repeat_two_replies_probe_plan,
 }
 
 
