@@ -592,6 +592,76 @@ impl Arp {
         self
     }
 
+    /// Set the sender hardware address from raw bytes of any length and let the
+    /// hardware address length follow the byte count.
+    ///
+    /// This is the canonical generic path for variable-length or unknown-family
+    /// hardware addresses. The hardware address length is filled from the byte
+    /// count only when it has not been explicitly set with [`Arp::hardware_len`];
+    /// an explicit length is always honored, even when it disagrees with the
+    /// bytes, so deliberately inconsistent packets remain expressible. The raw
+    /// bytes themselves are never rewritten.
+    pub fn sender_hardware(mut self, address: impl Into<Vec<u8>>) -> Self {
+        let bytes = address.into();
+        self.fill_hardware_len_from(&bytes);
+        self.sender_hardware_addr.set_user(bytes);
+        self
+    }
+
+    /// Set the target hardware address from raw bytes of any length and let the
+    /// hardware address length follow the byte count.
+    ///
+    /// See [`Arp::sender_hardware`] for the length-fill and override rules.
+    pub fn target_hardware(mut self, address: impl Into<Vec<u8>>) -> Self {
+        let bytes = address.into();
+        self.fill_hardware_len_from(&bytes);
+        self.target_hardware_addr.set_user(bytes);
+        self
+    }
+
+    /// Set the sender protocol address from raw bytes of any length and let the
+    /// protocol address length follow the byte count.
+    ///
+    /// This is the canonical generic path for variable-length or unknown-family
+    /// protocol addresses. The protocol address length is filled from the byte
+    /// count only when it has not been explicitly set with [`Arp::protocol_len`];
+    /// an explicit length is always honored, even when it disagrees with the
+    /// bytes. The raw bytes themselves are never rewritten.
+    pub fn sender_protocol(mut self, address: impl Into<Vec<u8>>) -> Self {
+        let bytes = address.into();
+        self.fill_protocol_len_from(&bytes);
+        self.sender_protocol_addr.set_user(bytes);
+        self
+    }
+
+    /// Set the target protocol address from raw bytes of any length and let the
+    /// protocol address length follow the byte count.
+    ///
+    /// See [`Arp::sender_protocol`] for the length-fill and override rules.
+    pub fn target_protocol(mut self, address: impl Into<Vec<u8>>) -> Self {
+        let bytes = address.into();
+        self.fill_protocol_len_from(&bytes);
+        self.target_protocol_addr.set_user(bytes);
+        self
+    }
+
+    /// Fill the hardware address length from a byte slice unless the caller set
+    /// it explicitly. A length truncated by [`u8`] saturation is left for the
+    /// later compile-time length validation rather than silently corrected.
+    fn fill_hardware_len_from(&mut self, bytes: &[u8]) {
+        if !self.hardware_len.is_user_set() {
+            self.hardware_len = Field::defaulted(saturating_len_u8(bytes.len()));
+        }
+    }
+
+    /// Fill the protocol address length from a byte slice unless the caller set
+    /// it explicitly. See [`Arp::fill_hardware_len_from`].
+    fn fill_protocol_len_from(&mut self, bytes: &[u8]) {
+        if !self.protocol_len.is_user_set() {
+            self.protocol_len = Field::defaulted(saturating_len_u8(bytes.len()));
+        }
+    }
+
     /// Hardware type value.
     pub fn hardware_type_value(&self) -> u16 {
         value_or_copy(&self.hardware_type, 1)
@@ -1411,6 +1481,13 @@ fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
     field.value().copied().unwrap_or(default)
 }
 
+/// Clamp a byte length into the [`u8`] ARP length field without overflow. A
+/// length beyond 255 is saturated rather than wrapped so it surfaces as a
+/// length mismatch at compile time instead of silently aliasing a small value.
+fn saturating_len_u8(len: usize) -> u8 {
+    u8::try_from(len).unwrap_or(u8::MAX)
+}
+
 fn value_or_vec(field: &Field<Vec<u8>>, len: u8) -> Vec<u8> {
     field
         .value()
@@ -1871,6 +1948,99 @@ mod arp {
 
         assert_eq!(arp_protocol_type_label(ARP_PRO_IPV4), Some("ipv4"));
         assert_eq!(arp_protocol_type_label(0x4242), None);
+    }
+
+    #[test]
+    fn arp_raw_address_builders_fill_lengths_from_byte_count() {
+        let sender_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x10, 0xaa, 0xbb];
+        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let target_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x20, 0xcc, 0xdd];
+        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+
+        let arp = Arp::new()
+            .sender_hardware(sender_hw.clone())
+            .sender_protocol(sender_pa.clone())
+            .target_hardware(target_hw.clone())
+            .target_protocol(target_pa.clone());
+
+        // Lengths follow the supplied byte counts.
+        assert_eq!(arp.hardware_len_value(), 8);
+        assert_eq!(arp.protocol_len_value(), 16);
+
+        // Raw bytes are preserved exactly.
+        assert_eq!(arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(arp.sender_protocol_bytes_value(), sender_pa);
+        assert_eq!(arp.target_hardware_bytes_value(), target_hw);
+        assert_eq!(arp.target_protocol_bytes_value(), target_pa);
+
+        // The variable-length packet compiles and round-trips byte-exact
+        // through an Ethernet frame.
+        let frame = Ethernet::new().src(src_mac()) / arp;
+        let bytes = frame.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &bytes).unwrap();
+        let decoded_arp = decoded.layer::<Arp>().unwrap();
+        assert_eq!(decoded_arp.hardware_len_value(), 8);
+        assert_eq!(decoded_arp.protocol_len_value(), 16);
+        assert_eq!(decoded_arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(decoded_arp.target_protocol_bytes_value(), target_pa);
+    }
+
+    #[test]
+    fn arp_raw_address_builders_honor_explicit_length_override() {
+        // An explicit length set before the bytes is not overwritten, so a
+        // deliberately inconsistent packet stays expressible for the later
+        // compile-time validation path.
+        let arp = Arp::new()
+            .hardware_len(5)
+            .sender_hardware(vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0x11]);
+        assert_eq!(arp.hardware_len_value(), 5);
+        assert_eq!(
+            arp.sender_hardware_bytes_value(),
+            vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0x11]
+        );
+
+        // An explicit length set after the bytes is likewise honored.
+        let arp = Arp::new()
+            .target_protocol(vec![0x0a, 0x0b, 0x0c, 0x0d])
+            .protocol_len(2);
+        assert_eq!(arp.protocol_len_value(), 2);
+        assert_eq!(
+            arp.target_protocol_bytes_value(),
+            vec![0x0a, 0x0b, 0x0c, 0x0d]
+        );
+    }
+
+    #[test]
+    fn arp_raw_address_builders_accept_zero_length_addresses() {
+        let arp = Arp::new()
+            .sender_hardware(Vec::<u8>::new())
+            .sender_protocol(Vec::<u8>::new())
+            .target_hardware(Vec::<u8>::new())
+            .target_protocol(Vec::<u8>::new());
+
+        assert_eq!(arp.hardware_len_value(), 0);
+        assert_eq!(arp.protocol_len_value(), 0);
+        assert!(arp.sender_hardware_bytes_value().is_empty());
+
+        // A zero-length ARP body is just the eight-byte fixed header and
+        // round-trips through an Ethernet frame.
+        let frame = Ethernet::new().src(src_mac()) / arp;
+        let bytes = frame.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &bytes).unwrap();
+        let decoded_arp = decoded.layer::<Arp>().unwrap();
+        assert_eq!(decoded_arp.hardware_len_value(), 0);
+        assert_eq!(decoded_arp.protocol_len_value(), 0);
+    }
+
+    #[test]
+    fn arp_raw_address_builder_saturates_oversized_length() {
+        // A byte vector longer than a u8 length field saturates rather than
+        // wrapping, so the mismatch is caught by length validation later
+        // instead of silently aliasing a small length.
+        let oversized = vec![0u8; 300];
+        let arp = Arp::new().sender_hardware(oversized);
+        assert_eq!(arp.hardware_len_value(), u8::MAX);
+        assert_eq!(arp.sender_hardware_bytes_value().len(), 300);
     }
 }
 
