@@ -3085,6 +3085,7 @@ def _live_provider_execute(
                 wire=wire,
                 endpoint_id=receiver.endpoint_id,
                 role=receiver.role,
+                phase_role="receiver",
                 artifact_paths=receiver_request.artifact_paths,
                 output_dir=local_direction_dir,
                 response_path=receiver_local_response_path,
@@ -3094,6 +3095,7 @@ def _live_provider_execute(
                 wire=wire,
                 endpoint_id=sender.endpoint_id,
                 role=sender.role,
+                phase_role="sender",
                 artifact_paths=sender_request.artifact_paths,
                 output_dir=local_direction_dir,
                 response_path=sender_local_response_path,
@@ -3859,7 +3861,13 @@ def _wait_wire_endpoint_batch(
         errors: list[str] = []
     except subprocess.TimeoutExpired:
         process.kill()
-        stdout, stderr = process.communicate()
+        # Drain the killed process's pipes with a hard bound so a wedged ssh
+        # child (or a remote that never closes the channel) can never block the
+        # orchestrator indefinitely the way an unbounded communicate() can.
+        try:
+            stdout, stderr = process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
         exit_code = 124
         errors = [f"endpoint command timed out after {timeout_seconds}s"]
 
@@ -3881,6 +3889,7 @@ def _download_wire_endpoint_artifacts(
     wire,
     endpoint_id: str,
     role: str,
+    phase_role: str,
     artifact_paths: Mapping[str, object],
     output_dir: Path,
     response_path: Path,
@@ -3891,7 +3900,7 @@ def _download_wire_endpoint_artifacts(
     local_by_key = {
         "response": response_path,
     }
-    if include_endpoint_artifacts:
+    if include_endpoint_artifacts and phase_role == "receiver":
         local_by_key.update(
             {
                 "decoded_models": local_root / "decoded-models.json",
@@ -4640,7 +4649,9 @@ def _live_mutable_field_spans(
             spans.append((12, 2))
     ipv4_offset = _live_ipv4_header_offset(raw, compare_root)
     if ipv4_offset is not None:
-        if field in {"ipv4.ttl", "ip.ttl"}:
+        if field in {"ipv4.id", "ipv4.identification", "ip.id", "ip.identification"}:
+            spans.append((ipv4_offset + 4, 2))
+        elif field in {"ipv4.ttl", "ip.ttl"}:
             spans.append((ipv4_offset + 8, 1))
         elif field in {"ipv4.checksum", "ipv4.chksum", "ip.checksum", "ip.chksum"}:
             spans.append((ipv4_offset + 10, 2))
