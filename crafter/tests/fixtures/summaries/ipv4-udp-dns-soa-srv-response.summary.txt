@@ -1,1 +1,1 @@
-Ipv4(src=198.51.100.53, dst=192.0.2.10, proto=udp(17)) / Udp(sport=53, dport=53001, len=183) / Dns(id=0x2a01, response example.com. SOA, answers=1)
+Ipv4(src=198.51.100.53, dst=192.0.2.10, proto=udp(17)) / Udp(sport=53, dport=53001, len=183, checksum_status=Valid) / Dns(id=0x2a01, response example.com. SOA, answers=1)
