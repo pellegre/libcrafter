@@ -167,8 +167,11 @@ BEHAVIOR_DHCP_CASES: tuple[ProbeCase, ...] = (
         protocol="dhcp",
     ),
     _behavior_case(
-        name="dhcp-clientid-offer",
-        description="Send a Discover with a client id and validate the matching Offer.",
+        name="dhcp-client-identifier",
+        description=(
+            "Send a Discover carrying a client identifier (option 61) and validate "
+            "the matching Offer that records the client identity."
+        ),
         stimulus="dhcp_discover",
         expected_response="dhcp_offer",
         required_capabilities=_DHCP_CAPABILITIES,
