@@ -219,7 +219,7 @@ single-endpoint provider credentials, artifacts, and cleanup.
 
 The ICMPv4 live matrix runs the oracle live path against the `l2:ipv4` root
 with the `icmpv4_live` feature. It validates packet write/parse parity: that
-libcrafter and the Scapy reference backend agree on the bytes placed on the
+libcrafter and the selected reference backend agree on the bytes placed on the
 wire and on the decoded model after a real round trip over a Hetzner private
 network. It does not validate kernel ICMP behavior, ping semantics, or
 router-generated errors. The root is IPv4-rooted; comparison canonicalizes to
@@ -229,9 +229,9 @@ Use the offline and dry-run paths for planning and CI-safe checks. Neither
 sends packets or creates infrastructure, and neither needs a credential:
 
 ```sh
-tools/oracle/run offline --backend scapy --root l2:ipv4 --feature icmpv4_live --profile smoke --seed 22 --count 20 --out target/oracle/icmp-live/offline
-tools/oracle/run live --backend scapy --provider hetzner --dry-run --root l2:ipv4 --feature icmpv4_live --profile smoke --seed 70 --count 40 --out target/oracle/icmp-live/dry
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner --backend scapy --profile smoke --seed 70 --count 20 --dry-run --out target/oracle/icmp-live/matrix-dry
+tools/oracle/run offline --root l2:ipv4 --feature icmpv4_live --profile smoke --seed 22 --count 20 --out target/oracle/icmp-live/offline
+tools/oracle/run live --provider hetzner --dry-run --root l2:ipv4 --feature icmpv4_live --profile smoke --seed 70 --count 40 --out target/oracle/icmp-live/dry
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner --profile smoke --seed 70 --count 20 --dry-run --out target/oracle/icmp-live/matrix-dry
 ```
 
 Real Hetzner exchange is explicit and protected. It requires `--confirm-live-run`
@@ -239,7 +239,7 @@ and a Hetzner credential in the environment (`HETZNER_API_TOKEN`, or
 `HCLOUD_TOKEN`); never store the token value in a tracked file:
 
 ```sh
-tools/oracle/run live --backend scapy --provider hetzner --confirm-live-run --root l2:ipv4 --feature icmpv4_live --profile smoke --seed 71 --count 60 --out target/oracle/icmp-live/full-matrix
+tools/oracle/run live --provider hetzner --confirm-live-run --root l2:ipv4 --feature icmpv4_live --profile smoke --seed 71 --count 60 --out target/oracle/icmp-live/full-matrix
 ```
 
 Artifacts land under the requested `--out` directory, e.g.

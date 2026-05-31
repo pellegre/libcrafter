@@ -64,6 +64,17 @@ VIRTUALBOX_WIRE_POLICY: JSONObject = {
 }
 
 
+def _oracle_private_group() -> str:
+    """Per-run private group for live infra isolation.
+
+    Defaults to ORACLE_PRIVATE_GROUP so unit tests stay deterministic; the
+    live CLI sets ORACLE_LIVE_PRIVATE_GROUP to a unique value per invocation
+    so concurrent live runs get isolated networks/IP allocations.
+    """
+
+    return os.environ.get("ORACLE_LIVE_PRIVATE_GROUP", ORACLE_PRIVATE_GROUP)
+
+
 def virtualbox_default_provider_capabilities(
     *,
     dry_run: bool,
@@ -148,7 +159,7 @@ def _planned_virtualbox_endpoint(
         "peer_address": peer_address,
         "planned_address": True,
         "address_source": "oracle-planned-private-address",
-        "private_group": ORACLE_PRIVATE_GROUP,
+        "private_group": _oracle_private_group(),
     }
     if role == "reference_backend":
         metadata["backend"] = "scapy"
@@ -165,7 +176,7 @@ def virtualbox_wire_endpoint_plan(
     *,
     dry_run: bool,
     client: wire_client.WireClient | None = None,
-    private_group: str | None = ORACLE_PRIVATE_GROUP,
+    private_group: str | None = None,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
 ) -> dict[str, object]:
@@ -333,7 +344,7 @@ def validate_virtualbox_provider_workflow(
             errors.append("provider command must target VirtualBox")
         if command.metadata.get("private_network") is not True:
             errors.append("provider command must require a private network")
-        if command.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+        if command.metadata.get("private_group") != _oracle_private_group():
             errors.append("provider command must use the VirtualBox oracle private group")
         if command.metadata.get("bridged_lan") is True:
             errors.append("provider command must not require bridged LAN")
@@ -366,7 +377,7 @@ def validate_virtualbox_provider_workflow(
             "dry_run": dry_run,
             "creates_infrastructure": not dry_run,
             "private_network": True,
-            "private_group": ORACLE_PRIVATE_GROUP,
+            "private_group": _oracle_private_group(),
             "bridged_lan": False,
             "always_collect_artifacts": True,
             "always_teardown": True,
@@ -390,9 +401,9 @@ def validate_virtualbox_dry_run_exchange(
         errors.append("sender endpoint must use a private network")
     if not bool(exchange.receiver.metadata.get("private_network")):
         errors.append("receiver endpoint must use a private network")
-    if exchange.sender.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+    if exchange.sender.metadata.get("private_group") != _oracle_private_group():
         errors.append("sender endpoint must use the VirtualBox oracle private group")
-    if exchange.receiver.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+    if exchange.receiver.metadata.get("private_group") != _oracle_private_group():
         errors.append("receiver endpoint must use the VirtualBox oracle private group")
     if bool(exchange.sender.metadata.get("bridged_lan")):
         errors.append("sender endpoint must not use bridged LAN")
@@ -425,7 +436,7 @@ def validate_virtualbox_dry_run_exchange(
             "direction": exchange.direction,
             "packet_index": exchange.index,
             "private_network": True,
-            "private_group": ORACLE_PRIVATE_GROUP,
+            "private_group": _oracle_private_group(),
             "bridged_lan": False,
             "creates_infrastructure": False,
             "live_packet_exchange": False,
@@ -557,10 +568,10 @@ def virtualbox_wire_comparison_policy(plan: PacketPlan) -> JSONObject:
 def _oracle_lab_request(
     *,
     dry_run: bool,
-    private_group: str | None = ORACLE_PRIVATE_GROUP,
+    private_group: str | None = None,
     confirm_live_run: bool = False,
 ) -> LabRequest:
-    group = private_group or ORACLE_PRIVATE_GROUP
+    group = private_group or _oracle_private_group()
     return LabRequest(
         provider=PROVIDER_NAME,
         profile=ORACLE_LIVE_SUITE,
@@ -642,7 +653,7 @@ def _oracle_wire_endpoint_plan(
     *,
     dry_run: bool,
     client: wire_client.WireClient | None = None,
-    private_group: str | None = ORACLE_PRIVATE_GROUP,
+    private_group: str | None = None,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
 ) -> dict[str, object]:
@@ -716,7 +727,7 @@ def _oracle_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "would_create_infrastructure": False,
                 "oracle_two_endpoint": True,
                 "private_network": True,
-                "private_group": ORACLE_PRIVATE_GROUP,
+                "private_group": _oracle_private_group(),
                 "bridged_lan": False,
                 "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
                 "wire_command": True,
@@ -734,7 +745,7 @@ def _live_provider_command_from_lab(command: LabCommandPlan) -> LiveCommandPlan:
     metadata.setdefault("provider", PROVIDER_NAME)
     metadata.setdefault("exposure", VIRTUALBOX_LAB_PROVIDER_ADAPTER.wire_exposure)
     metadata.setdefault("private_network", True)
-    metadata.setdefault("private_group", ORACLE_PRIVATE_GROUP)
+    metadata.setdefault("private_group", _oracle_private_group())
     metadata.setdefault("bridged_lan", False)
     metadata.setdefault("wire_policy", dict(VIRTUALBOX_WIRE_POLICY))
     metadata.setdefault("wire_command", True)
@@ -1155,7 +1166,7 @@ class VirtualBoxLiveProviderAdapter:
         return virtualbox_wire_endpoint_plan(
             dry_run=dry_run,
             client=client,
-            private_group=private_group or ORACLE_PRIVATE_GROUP,
+            private_group=private_group or _oracle_private_group(),
             confirm_live_run=confirm_live_run,
             created_endpoint_ids=created_endpoint_ids,
         )

@@ -13,12 +13,14 @@ from tools.probe.engine.model import ProbeReport, ProbeRunRequest
 
 
 EXPECTED_EXPOSURES = {
+    "docker": "private",
     "hetzner": "private",
     "qemu": "private",
     "virtualbox": "private",
 }
 
 EXPECTED_INTERFACES = {
+    "docker": "eth0",
     "hetzner": "private",
     "qemu": "private",
     "virtualbox": "wirepriv0",

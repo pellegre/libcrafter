@@ -33,7 +33,7 @@ from tools.wire.engine.state import (
 
 class WireRegistryTest(unittest.TestCase):
     def test_hetzner_supports_only_wan_and_private(self) -> None:
-        self.assertEqual(registered_providers(), ("hetzner", "qemu", "virtualbox"))
+        self.assertEqual(registered_providers(), ("docker", "hetzner", "qemu", "virtualbox"))
         self.assertEqual(supported_exposures("hetzner"), ("private", "wan"))
         self.assertTrue(is_supported_request("hetzner", "wan"))
         self.assertTrue(is_supported_request("hetzner", "private"))
