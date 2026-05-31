@@ -430,7 +430,7 @@ def _run_receiver(
     scapy_all = import_scapy()["all"]
     scapy_all.conf.verb = 0
     sniff_kwargs: dict[str, Any] = {
-        "iface": _required_string(request, "interface"),
+        "iface": _resolve_capture_interface(request, scapy_all),
         "count": max(1, len(vectors)),
         "timeout": max(1, _int_value(request.get("timeout_seconds"), 30)),
         "lfilter": lambda packet: _matches_live_capture(scapy_all, packet, request),
@@ -587,13 +587,44 @@ def _run_receiver(
     )
 
 
+def _resolve_capture_interface(request: JSONObject, scapy_all: Any) -> str:
+    """Resolve the real OS network device for live send/capture.
+
+    The orchestrator passes a logical interface name (for example "private"),
+    which is not an actual device on the endpoint. Resolve the device that
+    carries the private network by routing to the peer's private address (the
+    egress device for the peer is the private NIC, which is also where packets
+    from the peer arrive). Fall back to the configured name when routing cannot
+    resolve a device.
+    """
+
+    configured = request.get("interface")
+    configured = configured if isinstance(configured, str) and configured else None
+    peer = request.get("peer_addresses")
+    peer_ipv4 = None
+    if isinstance(peer, Mapping):
+        value = peer.get("ipv4")
+        if isinstance(value, str) and value:
+            peer_ipv4 = value
+    if peer_ipv4:
+        try:
+            resolved = scapy_all.conf.route.route(peer_ipv4)[0]
+        except Exception:
+            resolved = None
+        if isinstance(resolved, str) and resolved and resolved != "lo":
+            return resolved
+    if configured:
+        return configured
+    raise ValueError("could not resolve a live capture interface")
+
+
 def _send_packet(
     scapy_all: Any,
     packet: Any,
     request: JSONObject,
     send_mode: str,
 ) -> None:
-    kwargs = {"iface": _required_string(request, "interface"), "verbose": False}
+    kwargs = {"iface": _resolve_capture_interface(request, scapy_all), "verbose": False}
     if send_mode == "link-layer":
         scapy_all.sendp(packet, **kwargs)
     else:
