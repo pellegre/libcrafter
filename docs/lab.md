@@ -26,6 +26,13 @@ name. The current lab-backed providers are:
 - `hetzner`: private cloud endpoints.
 - `qemu`: local private VM segment.
 - `virtualbox`: bridged LAN VM endpoints.
+- `docker`: local constrained containers on an isolated `docker/private`
+  bridge.
+
+The Docker lab provider maps provider `docker` to the wire provider/exposure
+pair `docker/private`. It is the Docker mode intended for coordinated
+multi-endpoint lab sessions. Docker `lan` and `wan` are direct wire endpoint
+modes for single-endpoint smokes, not lab-backed multi-endpoint modes.
 
 ## Bootstrap Ownership
 
@@ -41,10 +48,29 @@ artifacts, and writes cleanup records. Workload bootstrap happens after this
 repository bootstrap step.
 
 Oracle owns the `libcrafter` and `reference_backend` workload setup. Probe owns
-the `stimulus` and `target` workload setup. If Docker or another runtime is
-added later, it should be a workload runner behind those oracle or probe
-bootstrap hooks, not a lab provider abstraction. This refactor does not add
-Docker.
+the `stimulus` and `target` workload setup. Docker does not change that
+boundary: the Docker lab adapter owns only the constrained private endpoint
+substrate, while oracle and probe still own role-specific bootstrap commands.
+
+## Docker Private Capability Model
+
+The Docker lab provider creates role endpoints on a provider-owned internal
+Docker bridge. Endpoints in the same lab session share one private group,
+receive deterministic private IPv4 addresses, record provider MAC metadata,
+and remain reachable through the existing SSH transport on localhost port
+forwards. Live containers run with `--cap-drop ALL`,
+`--security-opt no-new-privileges`, and only the packet capabilities required
+for `docker/private`.
+
+`docker/private` advertises IPv4 unicast, link-layer send, link-layer capture,
+broadcast, provider MAC knowledge, and controlled services. It does not
+advertise IPv6 unicast or a controlled routed hop. Cases that require a router
+capability, such as TTL-expired probe cases, are skipped by provider
+capability checks.
+
+Docker socket access is still host-root equivalent. Use the narrow provider
+commands from the host; do not mount the Docker socket into provider
+containers.
 
 ## Dry-Run Planning
 
@@ -57,6 +83,7 @@ tools/lab/run providers --json
 tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider virtualbox --dry-run --profile smoke --seed 1 --role stimulus --role target --json
+tools/lab/run plan --provider docker --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 ```
 
 Oracle and probe dry-runs call the same lab provider substrate:
@@ -65,10 +92,25 @@ Oracle and probe dry-runs call the same lab provider substrate:
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 tools/oracle/run live --provider qemu --dry-run --profile smoke --seed 12345 --count 10
 tools/oracle/run live --provider virtualbox --dry-run --profile smoke --seed 12345 --count 10
+tools/oracle/run live --provider docker --dry-run --profile smoke --seed 12345 --count 10
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider docker --dry-run --profile smoke --seed 1 --count 10
 ```
+
+Docker LAN and WAN reachability checks are direct wire smokes because they
+exercise one container's NAT-backed L3 path through Docker bridge routing:
+
+```sh
+tools/wire/smoke/live_docker_lan_icmp.py --plan-only
+tools/wire/smoke/live_docker_wan_dns.py --plan-only
+```
+
+Those scripts default to plan output. Live LAN/WAN smokes require their own
+explicit `--live --i-understand-isolated-lab` flags and do not imply lab
+support for LAN L2, WAN L2, public inbound reachability, or multi-endpoint
+LAN/WAN sessions.
 
 ## Live Sessions
 
@@ -76,6 +118,7 @@ Live lab creation requires explicit confirmation:
 
 ```sh
 tools/lab/run create --provider qemu --profile smoke --seed 1 --role stimulus --role target --confirm-live-run --json
+tools/lab/run create --provider docker --profile smoke --seed 1 --role stimulus --role target --confirm-live-run --json
 tools/lab/run list-sessions --json
 tools/lab/run session-info SESSION_ID --json
 tools/lab/run destroy SESSION_ID --json

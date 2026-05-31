@@ -11,6 +11,7 @@ The command surface is:
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider docker --dry-run --profile smoke --seed 1 --count 10
 ```
 
 Dry-runs are CI-safe. They write deterministic plans and reports below
@@ -34,9 +35,12 @@ artifacts, and cleanup records. Probe owns the workload bootstrap for the
 the `target` role prepares the controlled service runtime and target-side
 state.
 
-This refactor does not introduce Docker. If Docker or another runner is added
-later, it belongs behind probe workload bootstrap for `stimulus` or `target`,
-not in the provider abstraction.
+Docker is a lab provider for private multi-endpoint probe sessions. The Docker
+adapter maps provider `docker` to `docker/private`, so lab owns only the
+constrained private endpoint substrate while probe still owns `stimulus` and
+`target` workload bootstrap. Docker `lan` and `wan` stay direct wire smoke
+modes for NAT-backed L3 reachability, not probe lab-backed multi-endpoint
+modes.
 
 ## Cases
 
@@ -53,10 +57,13 @@ The smoke profile currently samples these cases:
 - `ttl-expired`: send a low-TTL packet and validate ICMP time exceeded from a
   controlled routed hop when the provider advertises that capability.
 
-The current lab providers do not advertise a controlled router hop, so
-`ttl-expired` is skipped with `requires_controlled_router` for Hetzner, QEMU,
-and VirtualBox. Skips remain in the report and do not count as failures when
-the provider lacks the capability.
+The current lab providers, including Docker, do not advertise a controlled
+router hop, so `ttl-expired` is skipped with `requires_controlled_router` for
+Hetzner, QEMU, VirtualBox, and Docker. Skips remain in the report and do not
+count as failures when the provider lacks the capability. Docker private probe
+sessions advertise IPv4 unicast, link-layer send and capture, broadcast,
+provider MAC knowledge, and controlled services; they do not advertise IPv6 or
+a controlled router.
 
 ## Protected Lab Runs
 
@@ -68,10 +75,23 @@ cargo test --workspace
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider docker --dry-run --profile smoke --seed 1 --count 10
 tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider virtualbox --dry-run --profile smoke --seed 1 --role stimulus --role target --json
+tools/lab/run plan --provider docker --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 ```
+
+Docker LAN and WAN checks use direct wire smokes instead of probe lab sessions:
+
+```sh
+tools/wire/smoke/live_docker_lan_icmp.py --plan-only
+tools/wire/smoke/live_docker_wan_dns.py --plan-only
+```
+
+Those smokes default to plan output. Live runs require explicit
+`--live --i-understand-isolated-lab` flags and do not assert LAN L2, WAN L2, or
+public inbound reachability.
 
 Start a protected live run only when disposable resources are intended:
 
@@ -79,6 +99,7 @@ Start a protected live run only when disposable resources are intended:
 tools/probe/run --provider hetzner --confirm-live-run --profile smoke --seed 21 --count 25
 tools/probe/run --provider qemu --confirm-live-run --profile smoke --seed 21 --count 25
 tools/probe/run --provider virtualbox --confirm-live-run --profile smoke --seed 21 --count 25
+tools/probe/run --provider docker --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
 The probe runner uses `tools/lab` to create both endpoints, transfer and unpack
