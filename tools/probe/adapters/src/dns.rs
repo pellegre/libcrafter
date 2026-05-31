@@ -481,6 +481,65 @@ pub fn validate_dns_candidate(
         }
     }
 
+    // SRV answers carry composite RDATA: three 16-bit fields (priority, weight,
+    // service port) followed by the target <domain-name>. The contract validates
+    // the answer owner name, type (33), class, every decoded structured field
+    // (priority, weight, port, and target name) separately, and the TTL.
+    // Comparing the decoded numeric fields and the target domain name
+    // individually is what exercises the crate's SRV RDATA decode rather than a
+    // flat byte comparison.
+    if let Some(expected_priority) = plan.expected_srv_priority {
+        let expected_weight = required_u16(plan.expected_srv_weight, "expected_srv_weight")?;
+        let expected_port = required_u16(plan.expected_srv_port, "expected_srv_port")?;
+        let expected_target = canonical_dns_name(required_str(
+            plan.expected_srv_target.as_deref(),
+            "expected_srv_target",
+        )?);
+        let expected_answer_name = canonical_dns_name(required_str(
+            plan.expected_answer_name.as_deref(),
+            "expected_answer_name",
+        )?);
+        let expected_answer_type = plan.expected_answer_type_value.unwrap_or(DNS_TYPE_SRV);
+        let expected_answer_class = plan.query_class_value.unwrap_or(DNS_CLASS_IN);
+        let matching_answer = dns.answers().iter().find(|answer| {
+            answer.name() == expected_answer_name
+                && answer.record_type() == expected_answer_type
+                && answer.class() == expected_answer_class
+                && dns_srv_fields(answer.data()).is_some_and(|(priority, weight, port, target)| {
+                    priority == expected_priority
+                        && weight == expected_weight
+                        && port == expected_port
+                        && canonical_dns_name(&target) == expected_target
+                })
+        });
+        match matching_answer {
+            Some(answer) => {
+                if let Some(expected_ttl) = plan.answer_ttl {
+                    if answer.ttl() != expected_ttl {
+                        mismatches.push(json!({
+                            "field": "dns.answer.ttl",
+                            "expected": expected_ttl,
+                            "actual": answer.ttl(),
+                        }));
+                    }
+                }
+            }
+            None => mismatches.push(json!({
+                "field": "dns.answer",
+                "expected": {
+                    "name": expected_answer_name,
+                    "type": expected_answer_type,
+                    "class": expected_answer_class,
+                    "priority": expected_priority,
+                    "weight": expected_weight,
+                    "port": expected_port,
+                    "target": expected_target,
+                },
+                "actual": dns_answers_json(dns),
+            })),
+        }
+    }
+
     // Multi-answer chain cases (the CNAME chain) additionally require a specific
     // non-terminal answer (the CNAME whose RDATA is the canonical domain name)
     // and an exact answer count, so a response that decoded the terminal A but
@@ -557,6 +616,7 @@ pub fn dns_type_value(plan: &ProbePlan) -> ExampleResult<u16> {
         "AAAA" => Ok(DNS_TYPE_AAAA),
         "TXT" => Ok(DNS_TYPE_TXT),
         "MX" => Ok(DNS_TYPE_MX),
+        "SRV" => Ok(DNS_TYPE_SRV),
         other => Err(format!("unsupported DNS query type: {other}").into()),
     }
 }
@@ -590,6 +650,23 @@ pub fn dns_mx_fields(data: &DnsRecordData) -> Option<(u16, String)> {
             preference,
             exchange,
         } => Some((*preference, exchange.presentation().to_string())),
+        _ => None,
+    }
+}
+
+/// Return the structured SRV `(priority, weight, port, target)` when `data` is
+/// SRV RDATA, or `None` for any other record data. The target is the
+/// presentation-form domain name. Used by the SRV answer contract to compare
+/// each decoded numeric field and the target name separately (not as a flat byte
+/// comparison).
+pub fn dns_srv_fields(data: &DnsRecordData) -> Option<(u16, u16, u16, String)> {
+    match data {
+        DnsRecordData::Srv {
+            priority,
+            weight,
+            port,
+            target,
+        } => Some((*priority, *weight, *port, target.presentation().to_string())),
         _ => None,
     }
 }
@@ -673,6 +750,18 @@ fn dns_record_data_json(data: &DnsRecordData) -> Value {
             "kind": "mx",
             "preference": preference,
             "exchange": exchange.presentation(),
+        }),
+        DnsRecordData::Srv {
+            priority,
+            weight,
+            port,
+            target,
+        } => json!({
+            "kind": "srv",
+            "priority": priority,
+            "weight": weight,
+            "port": port,
+            "target": target.presentation(),
         }),
         DnsRecordData::Txt(strings) => json!({
             "kind": "txt",
@@ -1182,7 +1271,13 @@ mod tests {
         let dns = Dns::query(query_name, DNS_TYPE_MX)
             .id(query_id)
             .response(true)
-            .answer(DnsRecord::new(query_name, DNS_TYPE_MX, DNS_CLASS_IN, ttl, mx));
+            .answer(DnsRecord::new(
+                query_name,
+                DNS_TYPE_MX,
+                DNS_CLASS_IN,
+                ttl,
+                mx,
+            ));
         (Ipv4::new()
             .src(Ipv4Addr::new(10, 77, 0, 20))
             .dst(Ipv4Addr::new(10, 77, 0, 10))
@@ -1305,8 +1400,201 @@ mod tests {
         let plan = mx_plan(query, 10, exchange, 120);
         let packet = dns_packet(&plan).unwrap();
         let dns = packet.layer::<Dns>().expect("dns layer present");
-        assert_eq!(dns.questions().first().unwrap().question_type(), DNS_TYPE_MX);
+        assert_eq!(
+            dns.questions().first().unwrap().question_type(),
+            DNS_TYPE_MX
+        );
         assert_eq!(dns.id_value(), 0x4d58);
+    }
+
+    /// Build the IPv4/UDP/DNS SRV response a controlled responder emits: QR set,
+    /// rcode 0, the original question echoed, and a single SRV answer whose RDATA
+    /// is priority + weight + port + the target domain name.
+    fn srv_response_bytes(
+        query_name: &str,
+        priority: u16,
+        weight: u16,
+        port: u16,
+        target: &str,
+        ttl: u32,
+        query_id: u16,
+    ) -> Vec<u8> {
+        let dns = Dns::query(query_name, DNS_TYPE_SRV)
+            .id(query_id)
+            .response(true)
+            .answer(DnsRecord::srv(
+                query_name, ttl, priority, weight, port, target,
+            ));
+        (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .expect("srv response compiles")
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn srv_plan(
+        query_name: &str,
+        priority: u16,
+        weight: u16,
+        port: u16,
+        target: &str,
+        ttl: u32,
+    ) -> ProbePlan {
+        let mut plan = base_plan("dns-srv-answer");
+        plan.source_ipv4 = Some("10.77.0.10".to_string());
+        plan.destination_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.77.0.10".to_string());
+        plan.source_port = Some(40000);
+        plan.destination_port = Some(53);
+        plan.query_id = Some(0x53a7);
+        plan.query_name = Some(query_name.to_string());
+        plan.query_type = Some("SRV".to_string());
+        plan.query_type_value = Some(DNS_TYPE_SRV);
+        plan.query_class_value = Some(DNS_CLASS_IN);
+        plan.expected_answer_name = Some(query_name.to_string());
+        plan.expected_answer_type = Some("SRV".to_string());
+        plan.expected_answer_type_value = Some(DNS_TYPE_SRV);
+        plan.expected_srv_priority = Some(priority);
+        plan.expected_srv_weight = Some(weight);
+        plan.expected_srv_port = Some(port);
+        plan.expected_srv_target = Some(target.to_string());
+        plan.answer_ttl = Some(ttl);
+        plan.expected_response_code = Some(0);
+        plan
+    }
+
+    #[test]
+    fn srv_response_validates_priority_weight_port_and_target() {
+        let query = "_sip._tcp.srv-1017-0-srv00abcd.behavior.libcrafter.test.";
+        let target = "target-1017-0-srv00abcd.behavior.libcrafter.test.";
+        let raw = srv_response_bytes(query, 10, 5, 5060, target, 120, 0x53a7);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+
+        // The crate decodes the SRV RDATA into structured priority/weight/port +
+        // target name.
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        assert_eq!(dns.answers().len(), 1);
+        let answer = &dns.answers()[0];
+        assert_eq!(answer.record_type(), DNS_TYPE_SRV);
+        match answer.data() {
+            DnsRecordData::Srv {
+                priority,
+                weight,
+                port,
+                target: decoded,
+            } => {
+                assert_eq!((*priority, *weight, *port), (10, 5, 5060));
+                assert_eq!(
+                    canonical_dns_name(decoded.presentation()),
+                    canonical_dns_name(target)
+                );
+            }
+            other => panic!("expected SRV rdata, got {other:?}"),
+        }
+
+        let plan = srv_plan(query, 10, 5, 5060, target, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed for srv answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn srv_wrong_priority_fails_payload() {
+        let query = "_sip._tcp.srv-1017-0-srv00abcd.behavior.libcrafter.test.";
+        let target = "target-1017-0-srv00abcd.behavior.libcrafter.test.";
+        // Correct weight/port/target but a priority that does not match.
+        let raw = srv_response_bytes(query, 99, 5, 5060, target, 120, 0x53a7);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = srv_plan(query, 10, 5, 5060, target, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong srv priority, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn srv_wrong_weight_fails_payload() {
+        let query = "_sip._tcp.srv-1017-0-srv00abcd.behavior.libcrafter.test.";
+        let target = "target-1017-0-srv00abcd.behavior.libcrafter.test.";
+        // Correct priority/port/target but a weight that does not match.
+        let raw = srv_response_bytes(query, 10, 99, 5060, target, 120, 0x53a7);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = srv_plan(query, 10, 5, 5060, target, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong srv weight, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn srv_wrong_port_fails_payload() {
+        let query = "_sip._tcp.srv-1017-0-srv00abcd.behavior.libcrafter.test.";
+        let target = "target-1017-0-srv00abcd.behavior.libcrafter.test.";
+        // Correct priority/weight/target but a service port that does not match.
+        let raw = srv_response_bytes(query, 10, 5, 9999, target, 120, 0x53a7);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = srv_plan(query, 10, 5, 5060, target, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong srv port, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn srv_wrong_target_fails_payload() {
+        let query = "_sip._tcp.srv-1017-0-srv00abcd.behavior.libcrafter.test.";
+        let target = "target-1017-0-srv00abcd.behavior.libcrafter.test.";
+        // Correct numeric fields but the wrong target domain name.
+        let raw = srv_response_bytes(
+            query,
+            10,
+            5,
+            5060,
+            "other-target.behavior.libcrafter.test.",
+            120,
+            0x53a7,
+        );
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = srv_plan(query, 10, 5, 5060, target, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong srv target, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn srv_wrong_ttl_fails_payload() {
+        let query = "_sip._tcp.srv-1017-0-srv00abcd.behavior.libcrafter.test.";
+        let target = "target-1017-0-srv00abcd.behavior.libcrafter.test.";
+        // Correct priority/weight/port/target but a TTL that does not match.
+        let raw = srv_response_bytes(query, 10, 5, 5060, target, 999, 0x53a7);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = srv_plan(query, 10, 5, 5060, target, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong srv ttl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn srv_response_dns_packet_builds_srv_query() {
+        let query = "_sip._tcp.srv-1017-0-srv00abcd.behavior.libcrafter.test.";
+        let target = "target-1017-0-srv00abcd.behavior.libcrafter.test.";
+        let plan = srv_plan(query, 10, 5, 5060, target, 120);
+        let packet = dns_packet(&plan).unwrap();
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        assert_eq!(
+            dns.questions().first().unwrap().question_type(),
+            DNS_TYPE_SRV
+        );
+        assert_eq!(dns.id_value(), 0x53a7);
     }
 
     #[test]

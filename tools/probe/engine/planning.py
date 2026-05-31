@@ -1021,6 +1021,148 @@ def _dns_mx_answer_probe_plan(
     }
 
 
+def _dns_srv_answer_probe_plan(
+    *,
+    case_name: str = "dns-srv-answer",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dns-srv-answer`` behavioral case.
+
+    An SRV (QTYPE 33) query against the controlled UDP DNS responder on port 53.
+    SRV is a ``_service._proto.name`` query whose single answer carries composite
+    RDATA: three 16-bit numeric fields (priority, weight, port) followed by the
+    target ``<domain-name>`` (encoded uncompressed so the wire rdlength is
+    ``6 + encoded-name length``). The case exercises a record that mixes several
+    numeric fields with a domain name. The validation contract covers the
+    transaction id, QR, rcode, question (name/type/class), and the SRV answer
+    (name/type 33/class, the decoded priority, weight, service port, and target
+    name, and the TTL) plus peer addresses and ports.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    destination_port = 53
+    service_name = dns_service_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    target_name = dns_target_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    # Priority, weight, and service port are 16-bit fields; keep them deterministic
+    # and non-zero so the encoded/decoded values are unambiguous.
+    srv_priority = 1 + int.from_bytes(digest[8:10], "big") % 0xFFFE
+    srv_weight = int.from_bytes(digest[10:12], "big")
+    srv_port = 1 + int.from_bytes(digest[12:14], "big") % 0xFFFE
+    answer_ttl = 60 + digest[9] % 180
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": service_name,
+        "query_type": "SRV",
+        "query_type_value": 33,
+        "query_class": "IN",
+        "query_class_value": 1,
+        "expected_answer_name": service_name,
+        "expected_answer_type": "SRV",
+        "expected_answer_type_value": 33,
+        "expected_answer_class": "IN",
+        "expected_answer_class_value": 1,
+        # The SRV RDATA is priority + weight + port + target domain name. The
+        # endpoint compares the decoded structured fields against these.
+        "expected_srv_priority": srv_priority,
+        "expected_srv_weight": srv_weight,
+        "expected_srv_port": srv_port,
+        "expected_srv_target": target_name,
+        "expected_response_code": 0,
+        "expected_response_flags": ["qr", "aa"],
+        "answer_ttl": answer_ttl,
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": service_name,
+            "query_type": "SRV",
+            "srv_priority": srv_priority,
+            "srv_weight": srv_weight,
+            "srv_port": srv_port,
+            "srv_target": target_name,
+            "answer_ttl": answer_ttl,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": 0,
+            "question": {
+                "name": service_name,
+                "type": "SRV",
+                "type_value": 33,
+                "class": "IN",
+                "class_value": 1,
+            },
+            "answer": {
+                "name": service_name,
+                "type": "SRV",
+                "type_value": 33,
+                "class": "IN",
+                "class_value": 1,
+                "priority": srv_priority,
+                "weight": srv_weight,
+                "port": srv_port,
+                "target": target_name,
+                "ttl": answer_ttl,
+            },
+        },
+    }
+
+
+def dns_service_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
+    """Return the deterministic SRV service owner name (``_service._proto.name``).
+
+    SRV owner names follow the RFC 2782 ``_Service._Proto.Name`` form. The name
+    shares the controlled ``libcrafter.test.`` suffix as the other DNS cases but
+    is prefixed with ``_sip._tcp`` so it is recognizably an SRV owner. Stable per
+    (case, profile, seed, sequence).
+    """
+
+    label = dns_label(profile)
+    suffix = digest.hex()[14:24]
+    return f"_sip._tcp.srv-{seed}-{sequence}-{suffix}.{label}.libcrafter.test."
+
+
+def dns_target_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
+    """Return the deterministic SRV target (service host) domain name.
+
+    The target shares the controlled ``libcrafter.test.`` suffix as the queried
+    SRV owner but uses a distinct ``target-`` label so the SRV RDATA points at a
+    separate host name. Stable per (case, profile, seed, sequence).
+    """
+
+    label = dns_label(profile)
+    suffix = digest.hex()[16:26]
+    return f"target-{seed}-{sequence}-{suffix}.{label}.libcrafter.test."
+
+
 def dns_exchange_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
     """Return the deterministic MX exchange (mail server) domain name.
 
@@ -1263,6 +1405,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-nodata": _dns_nodata_probe_plan,
     "dns-txt-answer": _dns_txt_answer_probe_plan,
     "dns-mx-answer": _dns_mx_answer_probe_plan,
+    "dns-srv-answer": _dns_srv_answer_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }

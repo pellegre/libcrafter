@@ -119,6 +119,14 @@ pub struct ProbePlan {
     #[serde(default)]
     pub expected_mx_exchange: Option<String>,
     #[serde(default)]
+    pub expected_srv_priority: Option<u16>,
+    #[serde(default)]
+    pub expected_srv_weight: Option<u16>,
+    #[serde(default)]
+    pub expected_srv_port: Option<u16>,
+    #[serde(default)]
+    pub expected_srv_target: Option<String>,
+    #[serde(default)]
     pub expected_answer_count: Option<usize>,
     #[serde(default)]
     pub original_name: Option<String>,
@@ -378,12 +386,12 @@ fn dispatch_case(
         (
             RunMode::DryRun,
             "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain"
-            | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer",
+            | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer",
         ) => dns::run_dns_dry_run(request, plan),
         (
             RunMode::Live,
             "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain"
-            | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer",
+            | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer",
         ) => dns::run_dns_live(request, plan),
         (RunMode::DryRun, "ttl-expired") => icmp::run_ttl_expired_dry_run(request, plan),
         (RunMode::Live, "ttl-expired") => icmp::run_ttl_expired_live(request, plan),
@@ -495,6 +503,10 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_txt_strings": plan.expected_txt_strings,
         "expected_mx_preference": plan.expected_mx_preference,
         "expected_mx_exchange": plan.expected_mx_exchange,
+        "expected_srv_priority": plan.expected_srv_priority,
+        "expected_srv_weight": plan.expected_srv_weight,
+        "expected_srv_port": plan.expected_srv_port,
+        "expected_srv_target": plan.expected_srv_target,
         "expected_answer_count": plan.expected_answer_count,
         "original_name": plan.original_name,
         "absent_name": plan.absent_name,
@@ -580,7 +592,7 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
             plan.source_port.unwrap_or(0),
         ),
         "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain"
-        | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" => {
+        | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -610,7 +622,8 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "tcp-syn-open" => "tcp_syn_ack",
             "tcp-syn-closed" => "tcp_rst",
             "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain"
-            | "dns-nxdomain" | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" => "dns_response",
+            | "dns-nxdomain" | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer"
+            | "dns-srv-answer" => "dns_response",
             "ttl-expired" => "icmp_ttl_expired",
             _ => "unknown",
         })
@@ -686,6 +699,18 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "query_type": plan.query_type,
             "mx_preference": plan.expected_mx_preference,
             "mx_exchange": plan.expected_mx_exchange,
+            "answer_ttl": plan.answer_ttl,
+        }),
+        "dns-srv-answer" => json!({
+            "required": true,
+            "kind": "udp-dns-responder",
+            "port": plan.destination_port,
+            "query_name": plan.query_name,
+            "query_type": plan.query_type,
+            "srv_priority": plan.expected_srv_priority,
+            "srv_weight": plan.expected_srv_weight,
+            "srv_port": plan.expected_srv_port,
+            "srv_target": plan.expected_srv_target,
             "answer_ttl": plan.answer_ttl,
         }),
         _ => json!({}),
