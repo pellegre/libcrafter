@@ -175,6 +175,7 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "router_address_entry_size",
         "router_lifetime",
         "extension_bytes",
+        "embedded_header",
     },
     "icmpv6": {"checksum", "cksum", "code", "id", "identifier", "seq", "sequence", "type"},
     "ipv4": {
@@ -761,12 +762,20 @@ def _icmp_rest_of_header_bytes(value: object) -> bytes:
 def _icmp_body_bytes(icmp_fields: Mapping[str, JSONObject]) -> bytes:
     """Deterministic raw bytes that follow the ICMP four-byte rest-of-header.
 
-    Covers ICMP shapes the reference ICMP layer does not type natively: the RFC
-    1256 router-advertisement address list and the RFC 4884/4950 extension
-    framing blobs. Both backends emit and parse these bytes identically.
+    Covers ICMP shapes the reference ICMP layer does not type natively: the
+    quoted (embedded) original IPv4 datagram carried by RFC 792 error messages,
+    the RFC 1256 router-advertisement address list, and the RFC 4884/4950
+    extension framing blobs. The quoted datagram comes first (immediately after
+    the rest-of-header), then any extension objects, matching RFC 4884 framing.
+    Both backends emit and parse these bytes identically.
     """
 
     body = b""
+
+    embedded = icmp_fields.get("embedded_header")
+    embedded_bytes = _icmp_hex_bytes(embedded)
+    if embedded_bytes:
+        body += embedded_bytes
 
     routers = icmp_fields.get("router_addresses")
     if isinstance(routers, list) and routers:
