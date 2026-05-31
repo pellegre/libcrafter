@@ -1,0 +1,21 @@
+Packet(len=44, layers=2)
+  [0] LinuxSll
+      packet_type: 0
+      address_type: 1
+      address_len: 6
+      source_address: 02:00:5e:00:53:01
+      protocol: 0x0806
+  [1] Arp
+      hardware_type: ethernet (0x0001)
+      protocol_type: ipv4 (0x0800)
+      hardware_len: 6
+      protocol_len: 4
+      operation: request (1)
+      sender_hardware_addr: 02:00:5e:00:53:01
+      sender_hardware_bytes: 02 00 5e 00 53 01
+      sender_protocol_addr: 192.0.2.10
+      sender_protocol_bytes: c0 00 02 0a
+      target_hardware_addr: 00:00:00:00:00:00
+      target_hardware_bytes: 00 00 00 00 00 00
+      target_protocol_addr: 192.0.2.1
+      target_protocol_bytes: c0 00 02 01

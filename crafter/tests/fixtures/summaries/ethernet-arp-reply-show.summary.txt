@@ -1,0 +1,19 @@
+Packet(len=42, layers=2)
+  [0] Ethernet
+      dst: 02:00:5e:00:53:01
+      src: 02:00:5e:00:53:02
+      ethertype: 0x0806
+  [1] Arp
+      hardware_type: ethernet (0x0001)
+      protocol_type: ipv4 (0x0800)
+      hardware_len: 6
+      protocol_len: 4
+      operation: reply (2)
+      sender_hardware_addr: 02:00:5e:00:53:02
+      sender_hardware_bytes: 02 00 5e 00 53 02
+      sender_protocol_addr: 192.0.2.1
+      sender_protocol_bytes: c0 00 02 01
+      target_hardware_addr: 02:00:5e:00:53:01
+      target_hardware_bytes: 02 00 5e 00 53 01
+      target_protocol_addr: 192.0.2.10
+      target_protocol_bytes: c0 00 02 0a
