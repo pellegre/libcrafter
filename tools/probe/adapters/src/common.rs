@@ -16,7 +16,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use crate::{dhcp, dns, icmp, tcp};
+use crate::{arp, dhcp, dns, icmp, tcp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -272,6 +272,61 @@ pub struct ProbePlan {
     // independently-decoded Offers. Single-send DHCP cases leave this unset.
     #[serde(default)]
     pub dhcp_sends: Option<Vec<DhcpSend>>,
+    // ARP behavioral case fields. ARP rides Ethernet directly (no IP/UDP), so
+    // these are link-layer values: the stimulus builds an Ethernet/ARP who-has
+    // from `sender_hardware_addr`/`sender_protocol_addr` for the target it wants
+    // to resolve (`target_protocol_addr`), framed from `ethernet_source` to
+    // `ethernet_destination` (broadcast for who-has). The validation contract is
+    // carried in the typed `validation` object so the endpoint can confirm the
+    // decoded is-at operation, sender/target hardware/protocol addresses, and the
+    // Ethernet source/destination. Non-ARP cases leave these unset.
+    #[serde(default)]
+    pub ethertype: Option<u16>,
+    #[serde(default)]
+    pub hardware_type: Option<u16>,
+    #[serde(default)]
+    pub protocol_type: Option<u16>,
+    #[serde(default)]
+    pub operation: Option<u16>,
+    #[serde(default)]
+    pub sender_hardware_addr: Option<String>,
+    #[serde(default)]
+    pub sender_protocol_addr: Option<String>,
+    #[serde(default)]
+    pub target_hardware_addr: Option<String>,
+    #[serde(default)]
+    pub target_protocol_addr: Option<String>,
+    #[serde(default)]
+    pub ethernet_source: Option<String>,
+    #[serde(default)]
+    pub ethernet_destination: Option<String>,
+    #[serde(default)]
+    pub validation: Option<ArpValidation>,
+}
+
+/// Validation contract for the ARP is-at reply (`arp-basic-who-has`).
+///
+/// The stimulus endpoint decodes the captured Ethernet/ARP reply with
+/// libcrafter and asserts the operation (reply = 2), the sender
+/// hardware/protocol address (the resolved target MAC/IPv4), the target
+/// hardware/protocol address (the original sender), and the Ethernet
+/// source/destination of the unicast reply.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArpValidation {
+    #[serde(default)]
+    pub operation: Option<u16>,
+    #[serde(default)]
+    pub sender_hardware_addr: Option<String>,
+    #[serde(default)]
+    pub sender_protocol_addr: Option<String>,
+    #[serde(default)]
+    pub target_hardware_addr: Option<String>,
+    #[serde(default)]
+    pub target_protocol_addr: Option<String>,
+    #[serde(default)]
+    pub ethernet_source: Option<String>,
+    #[serde(default)]
+    pub ethernet_destination: Option<String>,
 }
 
 /// One send of a multi-send DHCP probe case (`dhcp-rapid-repeat`).
@@ -665,9 +720,11 @@ fn dispatch_case(
             | "dhcp-request-nak"
             | "dhcp-rapid-repeat",
         ) => dhcp::run_dhcp_live(request, plan),
+        (RunMode::DryRun, "arp-basic-who-has") => arp::run_arp_dry_run(request, plan),
+        (RunMode::Live, "arp-basic-who-has") => arp::run_arp_live(request, plan),
         _ => {
-            // DHCP, ARP, and UDP behavioral cases are wired into their modules
-            // (`dhcp`, `arp`, `udp`) by later steps; until then they fall
+            // The remaining ARP and UDP behavioral cases are wired into their
+            // modules (`arp`, `udp`) by later steps; until then they fall
             // through to the same structured `decode_failed` outcome as any
             // other unknown case.
             let message = format!("unsupported probe case: {}", plan.case);
@@ -826,6 +883,16 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_lease_time": plan.expected_lease_time,
         "expected_renewal_time": plan.expected_renewal_time,
         "expected_rebinding_time": plan.expected_rebinding_time,
+        "ethertype": plan.ethertype,
+        "hardware_type": plan.hardware_type,
+        "protocol_type": plan.protocol_type,
+        "operation": plan.operation,
+        "sender_hardware_addr": plan.sender_hardware_addr,
+        "sender_protocol_addr": plan.sender_protocol_addr,
+        "target_hardware_addr": plan.target_hardware_addr,
+        "target_protocol_addr": plan.target_protocol_addr,
+        "ethernet_source": plan.ethernet_source,
+        "ethernet_destination": plan.ethernet_destination,
         "target_service": target_service_json(plan),
         "capture_filter": capture_filter(plan),
     })
@@ -838,10 +905,18 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let udp = packet.layer::<Udp>();
     let dns = packet.layer::<Dns>();
     let dhcp = packet.layer::<Dhcp>();
+    let ethernet = packet.layer::<Ethernet>();
+    let arp_layer = packet.layer::<Arp>();
     json!({
         "backend": BACKEND_NAME,
         "summary": packet.summary(),
         "raw_hex": hex_bytes(raw),
+        "ethernet": ethernet.map(|layer| json!({
+            "src": layer.source().map(|mac| mac.to_string()),
+            "dst": layer.destination().map(|mac| mac.to_string()),
+            "ethertype": layer.ethertype_value(),
+        })),
+        "arp": arp_layer.map(arp::arp_json),
         "ipv4": ipv4.map(|layer| json!({
             "src": layer.source().to_string(),
             "dst": layer.destination().to_string(),
@@ -945,6 +1020,9 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 plan.source_port.unwrap_or(DHCP_CLIENT_PORT),
             )
         }
+        // ARP rides Ethernet directly and cannot be selected by host/IP BPF, so
+        // match on the protocol plus the reply opcode (ARP byte 6:2 == 2).
+        "arp-basic-who-has" => "arp and arp[6:2] = 2".to_string(),
         _ => String::new(),
     }
 }
@@ -978,6 +1056,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-inform-ack" => "dhcp_ack",
             "dhcp-request-nak" => "dhcp_nak",
             "dhcp-rapid-repeat" => "dhcp_offer",
+            "arp-basic-who-has" => "arp_is_at",
             _ => "unknown",
         })
 }
@@ -1273,6 +1352,21 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "rapid_repeat": {
                 "sends": dhcp::repeat_sends_json(plan.dhcp_sends.as_deref()),
             },
+        }),
+        "arp-basic-who-has" => json!({
+            "required": true,
+            // ARP relies primarily on the target kernel answering who-has for
+            // its own configured address; setup tunes ARP sysctls and flushes
+            // the neighbor cache (no listening daemon).
+            "kind": "arp-kernel",
+            "layer": "link",
+            "target_protocol_addr": plan.target_protocol_addr,
+            "target_hardware_addr": plan
+                .validation
+                .as_ref()
+                .and_then(|validation| validation.sender_hardware_addr.clone()),
+            "arp_sysctls": true,
+            "neighbor_cache_flush": true,
         }),
         _ => json!({}),
     }

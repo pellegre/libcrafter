@@ -599,6 +599,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "dhcp-inform-ack",
         "dhcp-request-nak",
         "dhcp-rapid-repeat",
+        "arp-basic-who-has",
     }
 )
 
@@ -1204,6 +1205,46 @@ def _probe_plan_with_endpoint_addresses(
         )
         dhcp_validation["server_identifier"] = target_ipv4
         updated["validation"] = dhcp_validation
+    elif case_name == "arp-basic-who-has":
+        # ARP rides Ethernet directly (no IP/UDP), so the lab rewrite touches the
+        # ARP protocol addresses rather than transport IPs: the stimulus resolves
+        # the target endpoint's IPv4 (target protocol address) from its own IPv4
+        # (sender protocol address). The Ethernet source stays the stimulus MAC
+        # and the request is broadcast; the target hardware/protocol addresses the
+        # reply resolves are the target endpoint's on-segment MAC/IPv4. The
+        # capture filter is link-layer (ARP plus the reply opcode), so it carries
+        # no host/IP terms to rewrite. ARP carries no transport source/destination
+        # IPv4 to overwrite, so this branch returns directly rather than falling
+        # into the shared IP-layer validation tail.
+        updated["source_ipv4"] = source_ipv4
+        updated["destination_ipv4"] = target_ipv4
+        updated["expected_reply_source_ipv4"] = target_ipv4
+        updated["expected_reply_destination_ipv4"] = source_ipv4
+        updated["sender_protocol_addr"] = source_ipv4
+        updated["target_protocol_addr"] = target_ipv4
+        target_service = dict(
+            json_object(updated.get("target_service", {}), "probe_plan.target_service")
+        )
+        target_service.update(
+            {
+                "bind_ipv4": target_ipv4,
+                "source_ipv4": source_ipv4,
+                "target_protocol_addr": target_ipv4,
+            }
+        )
+        updated["target_service"] = target_service
+        arp_validation = dict(
+            json_object(updated.get("validation", {}), "probe_plan.validation")
+        )
+        arp_validation["sender_protocol_addr"] = target_ipv4
+        arp_validation["target_protocol_addr"] = source_ipv4
+        updated["validation"] = arp_validation
+        updated["live_address_rewrite"] = {
+            "source": rewrite_source,
+            "stimulus_ipv4": source_ipv4,
+            "target_ipv4": target_ipv4,
+        }
+        return updated
     validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
     validation["source_ipv4"] = (
         str(updated.get("controlled_router_ipv4"))
@@ -1365,7 +1406,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
         ]
-    if case_name == "arp-resolution":
+    if case_name in {"arp-resolution", "arp-basic-who-has"}:
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,

@@ -248,7 +248,7 @@ BEHAVIOR_DHCP_CASES: tuple[ProbeCase, ...] = (
 # private L2 segment with provider MAC knowledge).
 BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
-        name="arp-who-has-is-at",
+        name="arp-basic-who-has",
         description="Broadcast a who-has request and validate the is-at reply.",
         stimulus="arp_who_has",
         expected_response="arp_is_at",

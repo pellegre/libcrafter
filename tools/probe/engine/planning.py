@@ -3133,6 +3133,102 @@ def _arp_resolution_probe_plan(
     }
 
 
+def _arp_basic_who_has_probe_plan(
+    *,
+    case_name: str = "arp-basic-who-has",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``arp-basic-who-has`` behavioral case.
+
+    The baseline ARP behavioral check: an Ethernet-broadcast ARP who-has request
+    (operation 1) resolving the target endpoint's IPv4 address, answered by the
+    target kernel with a unicast is-at reply (operation 2). ARP rides Ethernet
+    directly (no IP/UDP), so the plan carries link-layer documentation values: a
+    sender hardware address in the RFC 7042 documentation MAC range, a sender
+    protocol address (the stimulus IPv4), the target protocol address to resolve
+    (the target IPv4), the request operation, and an Ethernet frame addressed
+    from the sender MAC to the broadcast address ``ff:ff:ff:ff:ff:ff``. The
+    capture filter is link-layer (ARP plus the reply opcode); the target service
+    is the target kernel answering ARP for its own configured address (no
+    daemon), with ARP sysctls and a neighbor-cache flush as setup. The validation
+    contract covers the is-at operation, the reply sender hardware/protocol
+    address (the resolved target MAC/IPv4), the reply target hardware/protocol
+    address (the original sender), and the Ethernet source/destination of the
+    unicast reply.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    stimulus_mac = deterministic_documentation_mac(profile, seed, sequence, role="stimulus")
+    target_mac = deterministic_documentation_mac(profile, seed, sequence, role="target")
+    broadcast_mac = "ff:ff:ff:ff:ff:ff"
+    zero_mac = "00:00:00:00:00:00"
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "arp_who_has",
+        "expected_response": "arp_is_at",
+        # ARP rides Ethernet directly; these are link-layer documentation values.
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": stimulus_ipv4,
+        "target_hardware_addr": zero_mac,
+        "target_protocol_addr": target_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        # ARP cannot be selected by host/IP BPF; match on the protocol + opcode.
+        "capture_filter": "arp and arp[6:2] = 2",
+        "target_service": {
+            "required": True,
+            "kind": "arp-kernel",
+            "layer": "link",
+            # The target kernel answers ARP who-has for its own configured
+            # address; setup tunes ARP sysctls and flushes the neighbor cache.
+            "target_protocol_addr": target_ipv4,
+            "target_hardware_addr": target_mac,
+            "arp_sysctls": True,
+            "neighbor_cache_flush": True,
+        },
+        "validation": {
+            "ethertype": 0x0806,
+            "operation": 2,
+            "operation_label": "reply",
+            "sender_hardware_addr": target_mac,
+            "sender_protocol_addr": target_ipv4,
+            "target_hardware_addr": stimulus_mac,
+            "target_protocol_addr": stimulus_ipv4,
+            "ethernet_source": target_mac,
+            "ethernet_destination": stimulus_mac,
+        },
+        "wire_requirements": {
+            "requires_link_layer_send": True,
+            "requires_link_layer_capture": True,
+            "requires_broadcast": True,
+            "note": (
+                "ARP resolution is L2 broadcast/unicast traffic; it runs only on a "
+                "provider-backed lab segment, never from privileged host raw sends."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 def deterministic_documentation_mac(
     profile: str,
     seed: int,
@@ -3201,6 +3297,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dhcp-rapid-repeat": _dhcp_rapid_repeat_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
+    "arp-basic-who-has": _arp_basic_who_has_probe_plan,
 }
 
 

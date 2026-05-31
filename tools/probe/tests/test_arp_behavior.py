@@ -1,0 +1,227 @@
+"""Focused coverage for the ARP behavioral probe cases.
+
+Each test asserts the deterministic plan shape its case produces and, when the
+``uv``/``cargo`` toolchains are available, drives the case end to end through the
+probe planner dry-run and the Rust ``stimulus_endpoint`` dry-run via the shared
+:mod:`tools.probe.tests.probe_acceptance` harness.
+
+``arp-basic-who-has`` is the baseline ARP behavioral check: an Ethernet-broadcast
+ARP who-has request (operation 1) resolving the target endpoint's IPv4 address,
+answered by the target kernel with a unicast is-at reply (operation 2). ARP rides
+Ethernet directly (no IP/UDP); the stimulus endpoint sends at the link layer,
+captures the is-at reply, decodes the Ethernet/ARP frame with libcrafter, and
+validates the operation, the sender/target hardware/protocol addresses, and the
+Ethernet source/destination. Providers without link-layer send, link-layer
+capture, or broadcast support skip the case.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+import tempfile
+import unittest
+from pathlib import Path
+
+from tools.probe.engine import planning
+from tools.probe.engine.model import ProbeRunRequest
+from tools.probe.tests import probe_acceptance
+
+
+def _request(
+    *,
+    case_names: list[str] | None = None,
+    **overrides: object,
+) -> ProbeRunRequest:
+    base = {
+        "provider": "qemu",
+        "profile": "behavior",
+        "seed": 1030,
+        "count": 1,
+        "case_names": case_names or ["arp-basic-who-has"],
+        "dry_run": True,
+    }
+    base.update(overrides)
+    return ProbeRunRequest(**base)  # type: ignore[arg-type]
+
+
+def _arp_basic_who_has_plan(*, seed: int = 1030, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed),
+        case=planning.PROBE_CASE_BY_NAME["arp-basic-who-has"],
+        sequence=sequence,
+    )
+
+
+def _is_documentation_mac(mac: str) -> bool:
+    # RFC 7042 reserves 00:00:5e:00:53:00-ff for documentation unicast MACs.
+    return mac.startswith("00:00:5e:00:53:")
+
+
+class ArpBasicWhoHasPlanTest(unittest.TestCase):
+    """The plan carries an RFC-correct who-has stimulus and is-at contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("arp-basic-who-has", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["arp-basic-who-has"],
+            planning._arp_basic_who_has_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_arp_basic_who_has_plan(), _arp_basic_who_has_plan())
+
+    def test_plan_carries_a_broadcast_who_has_stimulus(self) -> None:
+        plan = _arp_basic_who_has_plan()
+
+        self.assertEqual(plan["case"], "arp-basic-who-has")
+        self.assertEqual(plan["stimulus"], "arp_who_has")
+        self.assertEqual(plan["expected_response"], "arp_is_at")
+
+        # ARP rides Ethernet directly (no IP/UDP): ethertype 0x0806, IPv4/Ethernet
+        # hardware/protocol parameters, and the request operation (1).
+        self.assertEqual(plan["ethertype"], 0x0806)
+        self.assertEqual(plan["hardware_type"], 1)
+        self.assertEqual(plan["protocol_type"], 0x0800)
+        self.assertEqual(plan["hardware_length"], 6)
+        self.assertEqual(plan["protocol_length"], 4)
+        self.assertEqual(plan["operation"], 1)
+        self.assertEqual(plan["operation_label"], "request")
+
+        # The sender hardware address is a documentation MAC; the who-has leaves
+        # the target hardware address all-zero. The request is broadcast.
+        self.assertTrue(_is_documentation_mac(plan["sender_hardware_addr"]))
+        self.assertEqual(plan["target_hardware_addr"], "00:00:00:00:00:00")
+        self.assertEqual(plan["ethernet_source"], plan["sender_hardware_addr"])
+        self.assertEqual(plan["ethernet_destination"], "ff:ff:ff:ff:ff:ff")
+
+        # The sender resolves the target endpoint's protocol address.
+        self.assertEqual(plan["sender_protocol_addr"], plan["source_ipv4"])
+        self.assertEqual(plan["target_protocol_addr"], plan["destination_ipv4"])
+
+    def test_validation_contract_covers_is_at_fields(self) -> None:
+        plan = _arp_basic_who_has_plan()
+        validation = plan["validation"]
+
+        # The expected reply is an ARP is-at (operation 2).
+        self.assertEqual(validation["ethertype"], 0x0806)
+        self.assertEqual(validation["operation"], 2)
+        self.assertEqual(validation["operation_label"], "reply")
+
+        # The reply resolves the target: its sender hardware/protocol address is
+        # the target MAC/IPv4 the who-has asked for.
+        self.assertTrue(_is_documentation_mac(validation["sender_hardware_addr"]))
+        self.assertEqual(validation["sender_protocol_addr"], plan["target_protocol_addr"])
+
+        # The reply is addressed back to the original sender (target hardware /
+        # protocol address are the querier's MAC/IPv4).
+        self.assertEqual(
+            validation["target_hardware_addr"], plan["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["target_protocol_addr"], plan["sender_protocol_addr"]
+        )
+
+        # The unicast reply's Ethernet framing: resolved target MAC -> querier MAC.
+        self.assertEqual(validation["ethernet_source"], validation["sender_hardware_addr"])
+        self.assertEqual(validation["ethernet_destination"], plan["sender_hardware_addr"])
+
+        # The resolved MAC is distinct from the querier MAC.
+        self.assertNotEqual(
+            validation["sender_hardware_addr"], plan["sender_hardware_addr"]
+        )
+
+    def test_capture_filter_is_link_layer_arp_reply(self) -> None:
+        plan = _arp_basic_who_has_plan()
+        # ARP cannot be selected by host/IP BPF: match on the protocol and the
+        # reply opcode (ARP byte 6:2 == 2).
+        self.assertEqual(plan["capture_filter"], "arp and arp[6:2] = 2")
+
+    def test_target_service_is_the_arp_answering_kernel(self) -> None:
+        plan = _arp_basic_who_has_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "arp-kernel")
+        self.assertEqual(target_service["layer"], "link")
+        # The kernel answers ARP for its own configured address; setup tunes ARP
+        # sysctls and flushes the neighbor cache.
+        self.assertEqual(
+            target_service["target_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertTrue(target_service["arp_sysctls"])
+        self.assertTrue(target_service["neighbor_cache_flush"])
+
+    def test_wire_requirements_gate_on_link_layer(self) -> None:
+        plan = _arp_basic_who_has_plan()
+        requirements = plan["wire_requirements"]
+        self.assertTrue(requirements["requires_link_layer_send"])
+        self.assertTrue(requirements["requires_link_layer_capture"])
+        self.assertTrue(requirements["requires_broadcast"])
+
+
+class ArpBasicWhoHasTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "arp-basic-who-has",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1030,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("arp-basic-who-has", planned)
+
+            # The endpoint produced a result for the focused case and it built the
+            # Ethernet/ARP who-has (a dry-run plan compiles the outgoing stimulus
+            # frame at the link layer).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "arp-basic-who-has"
+            ]
+            self.assertTrue(results, "endpoint emitted no arp-basic-who-has result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus frame bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                # The compiled who-has frame is an Ethernet/ARP broadcast: the
+                # Ethernet destination is the broadcast address and the ethertype
+                # is ARP (0x0806). The first 14 octets are the Ethernet header.
+                frame = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertGreaterEqual(len(frame), 14 + 28)
+                self.assertEqual(frame[0:6], b"\xff\xff\xff\xff\xff\xff")
+                self.assertEqual(frame[12:14], (0x0806).to_bytes(2, "big"))
+                # ARP opcode (bytes 6:2 of the ARP payload, i.e. frame[20:22]) is
+                # the who-has request (1).
+                self.assertEqual(frame[20:22], (1).to_bytes(2, "big"))
+
+    def test_provider_without_link_layer_skips(self) -> None:
+        # Hetzner cannot provide L2/broadcast/provider-MAC, so the case skips with
+        # a stable capability reason rather than planning a stimulus.
+        if not probe_acceptance.probe_run_available():
+            self.skipTest("probe runner requires uv on PATH")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "hetzner"
+            report_path = probe_acceptance._run_probe_dry_run(
+                "arp-basic-who-has",
+                out_dir=out_dir,
+                provider="hetzner",
+                profile="behavior",
+                seed=1030,
+                count=1,
+                timeout_seconds=600,
+            )
+            report = probe_acceptance._load_json(report_path)
+            skips = report.get("skips", [])
+            arp_skips = [skip for skip in skips if skip.get("case") == "arp-basic-who-has"]
+            self.assertTrue(arp_skips, "expected arp-basic-who-has to skip on hetzner")
+
+
+if __name__ == "__main__":
+    unittest.main()

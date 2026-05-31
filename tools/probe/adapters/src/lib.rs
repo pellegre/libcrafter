@@ -13,7 +13,7 @@
 // The `plan_json` builder serializes the full probe-plan contract through a
 // single `json!` literal; the field count pushes the macro past serde_json's
 // default recursion limit, so raise it for the crate.
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 
 pub mod arp;
 pub mod common;
@@ -115,6 +115,17 @@ pub(crate) mod test_support {
             expected_renewal_time: None,
             expected_rebinding_time: None,
             dhcp_sends: None,
+            ethertype: None,
+            hardware_type: None,
+            protocol_type: None,
+            operation: None,
+            sender_hardware_addr: None,
+            sender_protocol_addr: None,
+            target_hardware_addr: None,
+            target_protocol_addr: None,
+            ethernet_source: None,
+            ethernet_destination: None,
+            validation: None,
         }
     }
 }
