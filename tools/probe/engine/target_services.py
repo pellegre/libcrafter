@@ -436,6 +436,24 @@ def dns_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     return [plan for plan in probe_plans if plan.get("case") in _DNS_RESPONDER_CASES]
 
 
+# Probe cases that drive the controlled DHCP/BOOTP responder on a private L2
+# segment. ``dhcp-discover-offer`` is the baseline Discover->Offer case; the
+# later DHCP behavioral cases reuse the same responder descriptor and target
+# setup. Providers without link-layer/broadcast capability skip these cases (the
+# descriptor records the link-layer requirement that gates them).
+_DHCP_RESPONDER_CASES: frozenset[str] = frozenset(
+    {
+        "dhcp-discover-offer",
+    }
+)
+
+
+def dhcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the DHCP probe plans in order."""
+
+    return [plan for plan in probe_plans if plan.get("case") in _DHCP_RESPONDER_CASES]
+
+
 def dedupe_ints(values: Iterable[int]) -> list[int]:
     """Return the integer sequence with duplicates removed, order preserved."""
 
@@ -1045,6 +1063,7 @@ __all__ = [
     "cleanup_wire_probe_target",
     "closed_udp_port_descriptor",
     "dedupe_ints",
+    "dhcp_probe_plans",
     "dhcp_responder_descriptor",
     "dns_probe_plans",
     "dns_responder_descriptor",

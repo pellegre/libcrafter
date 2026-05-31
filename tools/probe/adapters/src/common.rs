@@ -16,7 +16,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use crate::{dns, icmp, tcp};
+use crate::{dhcp, dns, icmp, tcp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -180,6 +180,30 @@ pub struct ProbePlan {
     pub send_count: Option<usize>,
     #[serde(default)]
     pub sends: Option<Vec<DnsSend>>,
+    // DHCP/BOOTP behavioral case fields. The stimulus builds a Discover from the
+    // client MAC and transaction id; the validation contract names the expected
+    // Offer message type, offered address (`yiaddr`), server identifier, and
+    // lease timing options decoded out of the response.
+    #[serde(default)]
+    pub client_mac: Option<String>,
+    #[serde(default)]
+    pub transaction_id: Option<u32>,
+    #[serde(default)]
+    pub expected_message_type_value: Option<u8>,
+    #[serde(default)]
+    pub expected_yiaddr: Option<String>,
+    #[serde(default)]
+    pub expected_server_identifier: Option<String>,
+    #[serde(default)]
+    pub expected_subnet_mask: Option<String>,
+    #[serde(default)]
+    pub expected_router_ipv4: Option<String>,
+    #[serde(default)]
+    pub expected_lease_time: Option<u32>,
+    #[serde(default)]
+    pub expected_renewal_time: Option<u32>,
+    #[serde(default)]
+    pub expected_rebinding_time: Option<u32>,
 }
 
 /// One send of a multi-send DNS probe case (`dns-repeat-transaction`).
@@ -499,6 +523,8 @@ fn dispatch_case(
         ) => dns::run_dns_live(request, plan),
         (RunMode::DryRun, "ttl-expired") => icmp::run_ttl_expired_dry_run(request, plan),
         (RunMode::Live, "ttl-expired") => icmp::run_ttl_expired_live(request, plan),
+        (RunMode::DryRun, "dhcp-discover-offer") => dhcp::run_dhcp_dry_run(request, plan),
+        (RunMode::Live, "dhcp-discover-offer") => dhcp::run_dhcp_live(request, plan),
         _ => {
             // DHCP, ARP, and UDP behavioral cases are wired into their modules
             // (`dhcp`, `arp`, `udp`) by later steps; until then they fall
@@ -637,6 +663,16 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_embedded_prefix_length": plan.expected_embedded_prefix_length,
         "send_count": plan.send_count,
         "sends": dns::sends_json(plan.sends.as_deref()),
+        "client_mac": plan.client_mac,
+        "transaction_id": plan.transaction_id,
+        "expected_message_type_value": plan.expected_message_type_value,
+        "expected_yiaddr": plan.expected_yiaddr,
+        "expected_server_identifier": plan.expected_server_identifier,
+        "expected_subnet_mask": plan.expected_subnet_mask,
+        "expected_router_ipv4": plan.expected_router_ipv4,
+        "expected_lease_time": plan.expected_lease_time,
+        "expected_renewal_time": plan.expected_renewal_time,
+        "expected_rebinding_time": plan.expected_rebinding_time,
         "target_service": target_service_json(plan),
         "capture_filter": capture_filter(plan),
     })
@@ -648,6 +684,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let tcp = packet.layer::<Tcp>();
     let udp = packet.layer::<Udp>();
     let dns = packet.layer::<Dns>();
+    let dhcp = packet.layer::<Dhcp>();
     json!({
         "backend": BACKEND_NAME,
         "summary": packet.summary(),
@@ -680,6 +717,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
             "checksum": layer.checksum_value(),
         })),
         "dns": dns.map(dns::dns_json),
+        "dhcp": dhcp.map(dhcp::dhcp_json),
         "payload_hex": hex_bytes(raw_payload(packet)),
     })
 }
@@ -734,6 +772,15 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 .as_deref()
                 .unwrap_or("")
         ),
+        "dhcp-discover-offer" => format!(
+            "udp and src host {} and dst host {} and src port {} and dst port {}",
+            plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+            plan.expected_reply_destination_ipv4
+                .as_deref()
+                .unwrap_or(""),
+            plan.destination_port.unwrap_or(DHCP_SERVER_PORT),
+            plan.source_port.unwrap_or(DHCP_CLIENT_PORT),
+        ),
         _ => String::new(),
     }
 }
@@ -757,6 +804,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "dns-edns-opt"
             | "dns-repeat-transaction" => "dns_response",
             "ttl-expired" => "icmp_ttl_expired",
+            "dhcp-discover-offer" => "dhcp_offer",
             _ => "unknown",
         })
 }
@@ -874,6 +922,21 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "query_name": plan.query_name,
                 "sends": dns::repeat_sends_json(plan.sends.as_deref()),
             },
+        }),
+        "dhcp-discover-offer" => json!({
+            "required": true,
+            "kind": "dhcp-responder",
+            "port": plan.destination_port,
+            "client_port": plan.source_port,
+            "client_mac": plan.client_mac,
+            "transaction_id": plan.transaction_id,
+            "yiaddr": plan.expected_yiaddr,
+            "server_identifier": plan.expected_server_identifier,
+            "subnet_mask": plan.expected_subnet_mask,
+            "router_ipv4": plan.expected_router_ipv4,
+            "lease_time": plan.expected_lease_time,
+            "renewal_time": plan.expected_renewal_time,
+            "rebinding_time": plan.expected_rebinding_time,
         }),
         _ => json!({}),
     }

@@ -1600,6 +1600,130 @@ def dns_query_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> 
     return f"probe-{seed}-{sequence}-{suffix}.{label}.libcrafter.test."
 
 
+def dhcp_client_mac(profile: str, seed: int, sequence: int) -> str:
+    """Return the deterministic DHCP client Ethernet MAC for a probe case.
+
+    Uses the RFC 7042 documentation unicast range (``00:00:5e:00:53:00-ff``)
+    derived from the case digest so the client hardware address (BOOTP
+    ``chaddr``) is stable per (case, profile, seed, sequence) and stays inside
+    the documentation MAC block.
+    """
+
+    digest = deterministic_bytes(f"dhcp-client-mac-{profile}", profile, seed, sequence)
+    return f"00:00:5e:00:53:{digest[0]:02x}"
+
+
+def dhcp_hostname(profile: str, seed: int, sequence: int) -> str:
+    """Return the deterministic DHCP client hostname (option 12) for a probe case."""
+
+    label = dns_label(profile)
+    return f"probe-{label}-{seed}-{sequence}"
+
+
+def _dhcp_discover_offer_probe_plan(
+    *,
+    case_name: str = "dhcp-discover-offer",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dhcp-discover-offer`` behavioral case.
+
+    The stimulus is a BOOTP/DHCP Discover (message type 1) built by libcrafter
+    and sent from the DHCP client port (68) to the server port (67) against a
+    controlled DHCP responder on a private L2 lab segment. The responder answers
+    with an Offer (message type 2) carrying the offered address in ``yiaddr``,
+    the server identifier (option 54), and lease timing options (51/58/59).
+
+    The validation contract covers the decoded UDP/BOOTP/DHCP response: the
+    BOOTP opcode (reply), message type Offer, the echoed transaction id (xid),
+    the client hardware address (chaddr), the offered address (yiaddr), the
+    server identifier, the lease time option, and the response direction
+    (server -> client over ports 67 -> 68). Addresses stay in documentation
+    space: the offered address is in ``198.51.100.0/24`` and the lab transport
+    uses the private endpoint pair.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    client_mac = dhcp_client_mac(profile, seed, sequence)
+    transaction_id = int.from_bytes(digest[0:4], "big") or 1
+    # DHCP uses fixed privileged ports: client 68 -> server 67.
+    source_port = 68
+    destination_port = 67
+    offered_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
+    subnet_mask = "255.255.255.0"
+    server_identifier = target_ipv4
+    router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
+    lease_time = 3600 + 60 * (digest[5] % 60)
+    renewal_time = lease_time // 2
+    rebinding_time = (lease_time * 7) // 8
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dhcp_discover",
+        "expected_response": "dhcp_offer",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "client_mac": client_mac,
+        "transaction_id": transaction_id,
+        "expected_message_type": "offer",
+        "expected_message_type_value": 2,
+        "expected_yiaddr": offered_ipv4,
+        "expected_server_identifier": server_identifier,
+        "expected_subnet_mask": subnet_mask,
+        "expected_router_ipv4": router_ipv4,
+        "expected_lease_time": lease_time,
+        "expected_renewal_time": renewal_time,
+        "expected_rebinding_time": rebinding_time,
+        "target_service": {
+            "required": True,
+            "kind": "dhcp-responder",
+            "port": destination_port,
+            "client_port": source_port,
+            "client_mac": client_mac,
+            "transaction_id": transaction_id,
+            "yiaddr": offered_ipv4,
+            "server_identifier": server_identifier,
+            "subnet_mask": subnet_mask,
+            "router_ipv4": router_ipv4,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "op": "reply",
+            "op_value": 2,
+            "message_type": "offer",
+            "message_type_value": 2,
+            "transaction_id": transaction_id,
+            "client_hardware_address": client_mac,
+            "yiaddr": offered_ipv4,
+            "server_identifier": server_identifier,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+            "direction": "server_to_client",
+        },
+    }
+
+
 def _ttl_expired_probe_plan(
     *,
     case_name: str = "ttl-expired",
@@ -1781,6 +1905,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-srv-answer": _dns_srv_answer_probe_plan,
     "dns-edns-opt": _dns_edns_opt_probe_plan,
     "dns-repeat-transaction": _dns_repeat_transaction_probe_plan,
+    "dhcp-discover-offer": _dhcp_discover_offer_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }

@@ -589,6 +589,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "dns-srv-answer",
         "dns-edns-opt",
         "dns-repeat-transaction",
+        "dhcp-discover-offer",
     }
 )
 
@@ -1098,6 +1099,35 @@ def _probe_plan_with_endpoint_addresses(
                 send["validation"] = send_validation
                 rewritten_sends.append(send)
             updated["sends"] = rewritten_sends
+    elif case_name == "dhcp-discover-offer":
+        # DHCP uses fixed privileged ports (client 68 -> server 67). The Offer
+        # flows from the responder (target) back to the client (stimulus); the
+        # server identifier names the responder, so it follows the target
+        # address onto the lab segment.
+        source_port = int(updated.get("source_port", 68))
+        destination_port = int(updated.get("destination_port", 67))
+        updated["capture_filter"] = (
+            f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        )
+        updated["expected_server_identifier"] = target_ipv4
+        target_service = dict(
+            json_object(updated.get("target_service", {}), "probe_plan.target_service")
+        )
+        target_service.update(
+            {
+                "bind_ipv4": target_ipv4,
+                "port": destination_port,
+                "source_ipv4": source_ipv4,
+                "server_identifier": target_ipv4,
+            }
+        )
+        updated["target_service"] = target_service
+        dhcp_validation = dict(
+            json_object(updated.get("validation", {}), "probe_plan.validation")
+        )
+        dhcp_validation["server_identifier"] = target_ipv4
+        updated["validation"] = dhcp_validation
     validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
     validation["source_ipv4"] = (
         str(updated.get("controlled_router_ipv4"))
@@ -1224,6 +1254,15 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "dns-edns-opt",
         "dns-repeat-transaction",
     }:
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_WRONG_FLAGS,
+            FAILURE_DECODE_FAILED,
+            FAILURE_TARGET_SETUP_FAILED,
+        ]
+    if case_name == "dhcp-discover-offer":
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,
