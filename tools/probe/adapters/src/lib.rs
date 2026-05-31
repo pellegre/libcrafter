@@ -92,6 +92,16 @@ pub(crate) mod test_support {
             expected_embedded_prefix_length: None,
             send_count: None,
             sends: None,
+            client_mac: None,
+            transaction_id: None,
+            expected_message_type_value: None,
+            expected_yiaddr: None,
+            expected_server_identifier: None,
+            expected_subnet_mask: None,
+            expected_router_ipv4: None,
+            expected_lease_time: None,
+            expected_renewal_time: None,
+            expected_rebinding_time: None,
         }
     }
 }
