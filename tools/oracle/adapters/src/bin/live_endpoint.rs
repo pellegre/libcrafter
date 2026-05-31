@@ -2504,8 +2504,14 @@ mod l2_ipv4_root {
         // (l2_ipv4_payload). The live build path must map it to the reserved 253,
         // matching the offline materialize/scapy encode, instead of failing to
         // parse it as an integer.
-        assert_eq!(ip_protocol(&json!("unknown")).expect("unknown protocol maps"), 253);
-        assert_eq!(ip_protocol(&json!("payload")).expect("payload protocol maps"), 253);
+        assert_eq!(
+            ip_protocol(&json!("unknown")).expect("unknown protocol maps"),
+            253
+        );
+        assert_eq!(
+            ip_protocol(&json!("payload")).expect("payload protocol maps"),
+            253
+        );
         assert_eq!(ip_protocol(&json!("raw")).expect("raw protocol maps"), 253);
 
         let plan = json!({
