@@ -686,18 +686,20 @@ def _icmp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
 
     # Types whose four-byte rest-of-header the reference ICMP layer cannot type
     # (router solicitation, legacy/deprecated families, extended echo) carry an
-    # explicit rest_of_header. Build the ICMP header from raw bytes so those four
-    # bytes land in the real rest-of-header rather than as trailing payload, then
-    # let Scapy recompute the checksum.
+    # explicit rest_of_header. Build opaque ICMP bytes so those four bytes land
+    # in the real rest-of-header rather than as trailing payload; parsing them
+    # back through Scapy can trigger type-specific body expectations.
     if explicit_rest is not None:
         rest_bytes = _icmp_rest_of_header_bytes(explicit_rest)
-        header = bytes([icmp_type_int & 0xFF, code & 0xFF, 0, 0]) + rest_bytes
-        icmp = scapy_all.ICMP(header + body)
         if "checksum" in icmp_fields or "chksum" in icmp_fields:
-            icmp.chksum = _int(_optional_field(icmp_fields, "checksum", "chksum"), 0)
+            checksum = _int(_optional_field(icmp_fields, "checksum", "chksum"), 0)
         else:
-            icmp.chksum = None
-        return icmp
+            checksum = _internet_checksum(
+                bytes([icmp_type_int & 0xFF, code & 0xFF, 0, 0]) + rest_bytes + body
+            )
+        header = bytes([icmp_type_int & 0xFF, code & 0xFF])
+        header += checksum.to_bytes(2, "big") + rest_bytes
+        return scapy_all.Raw(load=header + body)
 
     kwargs: dict[str, Any] = {"type": scapy_type, "code": code}
 
@@ -757,6 +759,18 @@ def _icmp_rest_of_header_bytes(value: object) -> bytes:
             f"ICMP rest_of_header must be exactly four bytes, got {len(rest)}"
         )
     return rest
+
+
+def _internet_checksum(data: bytes) -> int:
+    if len(data) % 2:
+        data += b"\x00"
+    total = sum(
+        int.from_bytes(data[index : index + 2], "big")
+        for index in range(0, len(data), 2)
+    )
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
 
 
 def _icmp_body_bytes(icmp_fields: Mapping[str, JSONObject]) -> bytes:

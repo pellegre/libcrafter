@@ -383,6 +383,20 @@ class ScapyIcmpLiveMaterializationTest(unittest.TestCase):
         self.assertEqual(decoded.fields["icmp"]["type"], 30)
         self.assertEqual(decoded.fields["icmp"]["rest_of_header"], "00000000")
 
+    def test_domain_name_request_rest_of_header_materializes_raw(self) -> None:
+        plan = _icmp_live_plan(
+            {"type": "domain_name_request", "code": 0, "rest_of_header": {"hex": "00000000"}},
+            case="crafter-icmpv4-legacy-types",
+            payload_hex="01020304",
+        )
+        vector, decoded = self._decode(plan)
+        raw = vector.to_bytes()
+        self.assertEqual(raw[20], 37)
+        self.assertNotEqual(raw[22:24], b"\x00\x00")
+        self.assertEqual(decoded.fields["icmp"]["type"], 37)
+        self.assertEqual(decoded.fields["icmp"]["rest_of_header"], "00000000")
+        self.assertEqual(decoded.fields["payload"]["hex"], "01020304")
+
 
 if __name__ == "__main__":
     unittest.main()
