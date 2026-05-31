@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from tools.lab.engine.model import LabEndpoint, LabRole, LabSession
+from tools.probe.engine import cases as probe_cases
 from tools.probe.engine import cli
 from tools.probe.engine.lab import probe_address_context_from_lab_session
 from tools.probe.engine.model import ProbeRunRequest
@@ -166,9 +167,9 @@ def _rewritten_service_plans() -> tuple[
         dry_run=True,
     )
     cases = [
-        cli._PROBE_CASE_BY_NAME["tcp-syn-open"],
-        cli._PROBE_CASE_BY_NAME["tcp-syn-closed"],
-        cli._PROBE_CASE_BY_NAME["dns-query"],
+        probe_cases.PROBE_CASE_BY_NAME["tcp-syn-open"],
+        probe_cases.PROBE_CASE_BY_NAME["tcp-syn-closed"],
+        probe_cases.PROBE_CASE_BY_NAME["dns-query"],
     ]
     original_plans = cli._probe_plans_for_cases(request, cases)
     context = probe_address_context_from_lab_session(_fake_session())
