@@ -34,6 +34,7 @@ from .capabilities import (
     missing_capabilities as _missing_capabilities,
     primary_endpoint_role as _primary_endpoint_role,
     probe_capabilities_for_request as _probe_capabilities_for_request,
+    skip_class_counts as _skip_class_counts,
     skip_reason_for_missing_capability as _skip_reason_for_missing_capability,
 )
 from .cases import (
@@ -477,6 +478,14 @@ def _build_report(
     if endpoint_request_path is not None:
         artifact_paths.append(str(endpoint_request_path))
 
+    # Separate provider skips from real outcomes. A dry run executes nothing, so
+    # executed/passed/failed stay zero; the skip total is split by class so a
+    # capability skip can never be confused with a confirmation skip -- or, more
+    # importantly, with a behavioral failure. A case the provider can support but
+    # that builds the wrong packet, returns an undecodable response, or fails
+    # validation must surface as `failed`, fixed in libcrafter or the probe
+    # infrastructure, and rerun -- never relabeled as a skip.
+    skip_class = _skip_class_counts(skips)
     metadata: JSONObject = {
         "provider": request.provider,
         "cases": [case.name for case in selected_cases],
@@ -484,11 +493,16 @@ def _build_report(
         "planned_count": len(planned_cases),
         "selected_count": len(selected_cases),
         "executed_count": 0,
+        "executed": 0,
         "passed_count": 0,
+        "passed": 0,
         "failed_count": 0,
+        "failed": 0,
         "executed_cases": [],
         "failed_counts_by_reason": {},
         "skipped_count": len(skips),
+        "skipped_by_capability": skip_class["skipped_by_capability"],
+        "skipped_by_confirmation": skip_class["skipped_by_confirmation"],
         "observed_count": sum(1 for response in observed_responses if response.observed),
         "provider_capabilities": dict(provider_capabilities),
         "skip_reasons": list(skip_counts),

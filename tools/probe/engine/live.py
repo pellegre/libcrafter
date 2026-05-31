@@ -33,6 +33,7 @@ from . import bootstrap as probe_bootstrap
 from .capabilities import (
     capability_skip_state,
     probe_capabilities_for_request,
+    skip_class_counts,
 )
 from .lab import (
     STIMULUS_ROLE,
@@ -471,6 +472,14 @@ def lab_endpoint_live_report(
     status = STATUS_PASSED if results and not failures and not execution_errors else STATUS_FAILED
     failed_counts = probe_results.failed_counts_by_reason(results)
     executed_count = sum(1 for result in results if result.status != "skipped")
+    passed_count = sum(1 for result in results if result.passed is True)
+    # Live runs must keep provider skips and real failures in distinct columns.
+    # `skip_class` splits the skipped cases into capability vs confirmation; a
+    # case the provider can support but that builds the wrong packet, returns an
+    # undecodable response, or fails validation is a `failed` outcome that must
+    # be fixed in libcrafter or the probe infrastructure and rerun -- it is never
+    # demoted to a skip to make the report pass.
+    skip_class = skip_class_counts(skips)
     artifact_paths = [str(report_path)]
     if local_request_path.exists():
         artifact_paths.append(str(local_request_path))
@@ -519,14 +528,19 @@ def lab_endpoint_live_report(
             "requested_count": request.count,
             "planned_count": len(planned_cases),
             "selected_count": len(selected_cases),
-            "executed_count": sum(1 for result in results if result.status != "skipped"),
-            "passed_count": sum(1 for result in results if result.passed is True),
+            "executed_count": executed_count,
+            "executed": executed_count,
+            "passed_count": passed_count,
+            "passed": passed_count,
             "failed_count": len(failures),
+            "failed": len(failures),
             "executed_cases": dedupe_strings(
                 [result.case for result in results if result.status != "skipped"]
             ),
             "failed_counts_by_reason": failed_counts,
             "skipped_count": len(skips),
+            "skipped_by_capability": skip_class["skipped_by_capability"],
+            "skipped_by_confirmation": skip_class["skipped_by_confirmation"],
             "observed_count": sum(
                 1 for response in observed_responses if response.observed
             ),

@@ -108,6 +108,38 @@ def primary_endpoint_role(case: ProbeCase) -> str:
     return case.endpoint_roles[0] if case.endpoint_roles else "stimulus"
 
 
+def skip_class_for_reason(reason: str) -> str:
+    """Classify a stable skip reason as a capability or confirmation skip.
+
+    A skip is *only* a skip when the provider does not declare a required
+    capability, or when a live run was not explicitly confirmed. Neither class
+    is allowed to absorb a real failure: a case that the provider *can* support
+    but that produces a wrong packet, an undecodable response, or a failed
+    validation must surface as ``failed`` so libcrafter or the probe
+    infrastructure gets fixed. Do not invent a new skip reason to hide such a
+    regression.
+    """
+
+    if reason == SKIP_CONFIRMATION_REQUIRED:
+        return "skipped_by_confirmation"
+    return "skipped_by_capability"
+
+
+def skip_class_counts(skips: Sequence[ProbeSkip]) -> dict[str, int]:
+    """Tally skips into ``skipped_by_capability`` / ``skipped_by_confirmation``.
+
+    Every skip lands in exactly one bucket so a report's skip total always
+    reconciles with the per-class counts. Failures are deliberately *not*
+    counted here; they are tracked separately so a provider skip can never be
+    confused with a libcrafter/probe defect that must be fixed.
+    """
+
+    counts = {"skipped_by_capability": 0, "skipped_by_confirmation": 0}
+    for skip in skips:
+        counts[skip_class_for_reason(skip.reason)] += 1
+    return counts
+
+
 def capability_skip_result(
     *,
     request: ProbeRunRequest,
@@ -207,5 +239,7 @@ __all__ = [
     "missing_capabilities",
     "primary_endpoint_role",
     "probe_capabilities_for_request",
+    "skip_class_counts",
+    "skip_class_for_reason",
     "skip_reason_for_missing_capability",
 ]
