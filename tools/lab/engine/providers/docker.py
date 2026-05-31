@@ -6,9 +6,10 @@ LAN and WAN Docker modes remain direct wire-provider modes in this phase.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 
+from tools.wire.engine.model import EndpointManifest
 from tools.wire.engine.providers.docker.constants import (
     DOCKER_COMMAND,
     DOCKER_COMMAND_ENV,
@@ -17,12 +18,26 @@ from tools.wire.engine.providers.docker.constants import (
     DOCKER_IMAGE_ENV,
     DOCKER_PRIVATE_CIDR_ENV,
 )
-from tools.wire.engine.providers.docker.resources import docker_private_network_name
+from tools.wire.engine.providers.docker.resources import (
+    docker_private_network_name,
+    validate_requested_private_ipv4,
+)
 
-from .. import paths
-from ..model import JSONObject, LabCommandPlan, LabRequest, LabRole
+from .. import paths, wire_client
+from ..model import (
+    JSONObject,
+    LabCommandPlan,
+    LabEndpoint,
+    LabRequest,
+    LabRole,
+    LabSession,
+    LabValidationCheck,
+    json_object,
+)
+from .base import LabProviderAdapter
 from .common import (
     build_command_plan,
+    lab_endpoint_from_manifest,
     normalize_provider_capabilities as normalize_common_provider_capabilities,
     request_session_label,
     slug_label,
@@ -448,6 +463,10 @@ def docker_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
     return commands
 
 
+def _request_with_planned_roles(request: LabRequest) -> LabRequest:
+    return replace(request, roles=plan_docker_roles(request))
+
+
 def _default_private_ipv4(index: int) -> str:
     host_octet = 10 + (index * 10)
     return f"{DEFAULT_PRIVATE_IPV4_PREFIX}.{host_octet}"
@@ -481,6 +500,13 @@ def _role_private_ipv4_metadata(metadata: JSONObject) -> dict[str, str]:
 def _metadata_string(metadata: JSONObject, key: str) -> str | None:
     value = metadata.get(key)
     return value if isinstance(value, str) and value else None
+
+
+def _peer_roles_for(role: LabRole, roles: Sequence[LabRole]) -> list[LabRole]:
+    if role.peer_roles:
+        requested = set(role.peer_roles)
+        return [peer for peer in roles if peer.name in requested]
+    return [peer for peer in roles if peer.name != role.name]
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,5 +576,417 @@ class DockerLabProviderAdapter:
 
         return docker_provider_workflow(request)
 
+    def wire_endpoint_plan(
+        self,
+        request: LabRequest,
+        *,
+        client: wire_client.WireClient | None = None,
+        created_endpoint_ids: list[str] | None = None,
+    ) -> JSONObject:
+        """Plan or create Docker wire endpoints for all request roles."""
 
-DOCKER_LAB_PROVIDER_ADAPTER = DockerLabProviderAdapter()
+        planned_request = _request_with_planned_roles(request)
+        validation = self.validate_request(planned_request)
+        if not validation.passed:
+            raise PermissionError("; ".join(validation.errors))
+
+        wire = client or wire_client.WireClient()
+        private_group = self.private_group(planned_request)
+        endpoint_plans: list[JSONObject] = []
+        endpoints: dict[str, JSONObject] = {}
+        command_records: list[JSONObject] = []
+        created_ids: list[str] = []
+
+        for role in planned_request.roles:
+            private_ip = self.requested_private_ip(role, planned_request)
+            response = wire.create(
+                provider=self.wire_provider,
+                exposure=self.wire_exposure,
+                role=role.name,
+                private_group=private_group,
+                private_ip=private_ip,
+                dry_run=planned_request.dry_run,
+                write_manifest=not planned_request.dry_run,
+                confirm_live_run=planned_request.confirm_live_run,
+            )
+            manifest = _response_manifest(response)
+            endpoint_plan = _response_json(response, manifest)
+            endpoint_plans.append(endpoint_plan)
+            endpoint = self.normalize_endpoint(
+                manifest,
+                role=role,
+                peer_roles=_peer_roles_for(role, planned_request.roles),
+                request=planned_request,
+            )
+            endpoints[role.name] = endpoint.to_dict()
+            command_records.append(
+                response.command_plan(
+                    purpose=f"create {role.name} Docker private endpoint",
+                    role=role.name,
+                ).to_dict()
+            )
+            if not planned_request.dry_run:
+                created_ids.append(manifest.endpoint_id)
+                if created_endpoint_ids is not None:
+                    created_endpoint_ids.append(manifest.endpoint_id)
+
+        return {
+            "provider": self.name,
+            "wire_provider": self.wire_provider,
+            "exposure": self.wire_exposure,
+            "wire_exposure": self.wire_exposure,
+            "dry_run": planned_request.dry_run,
+            "private_group": private_group,
+            "private_network": True,
+            "private_network_cidr": PRIVATE_NETWORK_CIDR,
+            "docker_private_network": docker_private_network_metadata(private_group),
+            "wire_policy": dict(DOCKER_WIRE_POLICY),
+            "endpoint_count": len(endpoint_plans),
+            "endpoint_plans": endpoint_plans,
+            "endpoints": endpoints,
+            "command_records": command_records,
+            "created_endpoint_ids": created_ids,
+        }
+
+    def normalize_endpoint(
+        self,
+        manifest: EndpointManifest | Mapping[str, object],
+        *,
+        role: LabRole,
+        peer_roles: Sequence[LabRole] = (),
+        request: LabRequest,
+    ) -> LabEndpoint:
+        """Convert a wire manifest into a provider-neutral endpoint."""
+
+        private_group = self.private_group(request)
+        private_network = docker_private_network_metadata(private_group)
+        return lab_endpoint_from_manifest(
+            manifest,
+            role=role,
+            exposure=self.wire_exposure,
+            peer_roles=peer_roles,
+            dry_run=request.dry_run,
+            metadata={
+                "provider": self.name,
+                "wire_provider": self.wire_provider,
+                "wire_exposure": self.wire_exposure,
+                "private_group": private_group,
+                "private_network": True,
+                "private_network_cidr": PRIVATE_NETWORK_CIDR,
+                "packet_exchange_network": self.wire_exposure,
+                "isolated_network": True,
+                "docker_private_network": private_network,
+                "container_runtime": "docker",
+                "ssh_transport": "localhost-port-forward",
+                "required_capabilities": ["NET_RAW", "NET_ADMIN"],
+                "cap_drop_all": True,
+                "no_new_privileges": True,
+                "planned_private_address": role.planned_ipv4,
+                "planned_private_address_source": role.metadata.get(
+                    "planned_private_address_source",
+                    role.metadata.get(
+                        "address_source",
+                        "deterministic-private-default",
+                    ),
+                ),
+                "requested_private_ip_used_for_wire": bool(
+                    role.metadata.get(
+                        "requested_private_ip_used_for_wire",
+                        role.requested_private_ipv4 is not None,
+                    )
+                ),
+                "wire_policy": dict(DOCKER_WIRE_POLICY),
+            },
+        )
+
+    def plan_session(
+        self,
+        request: LabRequest,
+        *,
+        client: wire_client.WireClient | None = None,
+    ) -> LabSession:
+        """Return a planned or live Docker lab session."""
+
+        planned_request = _request_with_planned_roles(request)
+        session_id = docker_session_id(planned_request)
+        remote_dir = validate_remote_dir(planned_request.remote_dir)
+        remote_artifacts = paths.remote_artifact_root(session_id, remote_dir=remote_dir)
+        provider_capabilities = self.default_provider_capabilities(
+            dry_run=planned_request.dry_run,
+        )
+        provider_workflow = self.provider_workflow(planned_request)
+        request_check = self.validate_request(planned_request)
+        workflow_check = self.validate_provider_workflow(
+            provider_workflow,
+            dry_run=planned_request.dry_run,
+        )
+        endpoint_plan = self.wire_endpoint_plan(planned_request, client=client)
+        endpoints = _endpoint_models(endpoint_plan, planned_request.roles)
+        command_records = _command_models(endpoint_plan)
+
+        session = LabSession(
+            provider=self.name,
+            wire_provider=self.wire_provider,
+            wire_exposure=self.wire_exposure,
+            session_id=session_id,
+            roles=planned_request.roles,
+            endpoints=endpoints,
+            provider_capabilities=provider_capabilities,
+            infrastructure_metadata=self.planned_infrastructure(planned_request),
+            provider_workflow=provider_workflow,
+            command_records=command_records,
+            remote_dir=remote_dir,
+            remote_artifact_root=remote_artifacts,
+            created_endpoint_ids=[
+                item
+                for item in endpoint_plan.get("created_endpoint_ids", [])
+                if isinstance(item, str)
+            ],
+            dry_run=planned_request.dry_run,
+            cleanup_state={
+                "status": "not_started",
+                "artifact_collection_attempted": False,
+                "teardown_attempted": False,
+            },
+            validation_checks=[request_check, workflow_check],
+            metadata={
+                "provider": self.name,
+                "private_group": self.private_group(planned_request),
+                "private_network": True,
+                "private_network_cidr": PRIVATE_NETWORK_CIDR,
+                "credential_label": self.credential_label,
+                "credentials_available": self.credentials_available(),
+                "missing_credential_reason": self.missing_credential_reason,
+                "docker_private_network": docker_private_network_metadata(
+                    self.private_group(planned_request)
+                ),
+                "wire_policy": dict(DOCKER_WIRE_POLICY),
+                "wire_endpoint_plan": endpoint_plan,
+            },
+        )
+        return replace(
+            session,
+            validation_checks=[
+                *session.validation_checks,
+                *self.validate_session(session),
+            ],
+        )
+
+    def validate_request(self, request: LabRequest) -> LabValidationCheck:
+        """Validate Docker-specific request invariants before planning."""
+
+        errors: list[str] = []
+        if request.provider != self.name:
+            errors.append(f"unexpected provider: {request.provider}")
+        if not request.dry_run and not request.confirm_live_run:
+            errors.append("live Docker lab creation requires confirm_live_run")
+        private_group = self.private_group(request)
+        if private_group == "":
+            errors.append("private_group must be non-empty")
+
+        planned_roles = plan_docker_roles(request)
+        planned_ips = [
+            role.requested_private_ipv4 or role.planned_ipv4 for role in planned_roles
+        ]
+        duplicates = sorted(
+            ip
+            for ip in set(planned_ips)
+            if ip is not None and planned_ips.count(ip) > 1
+        )
+        if duplicates:
+            errors.append(f"duplicate private IPv4 addresses: {', '.join(duplicates)}")
+        for private_ip in planned_ips:
+            if private_ip is None:
+                continue
+            try:
+                validate_requested_private_ipv4(private_ip, PRIVATE_NETWORK_CIDR)
+            except ValueError as exc:
+                errors.append(str(exc))
+
+        return LabValidationCheck(
+            name="docker-request",
+            passed=not errors,
+            subject=self.name,
+            errors=errors,
+            metadata={
+                "provider": self.name,
+                "dry_run": request.dry_run,
+                "confirm_live_run": request.confirm_live_run,
+                "credentials_available": self.credentials_available(),
+                "private_group": private_group,
+                "private_network": True,
+                "private_network_cidr": PRIVATE_NETWORK_CIDR,
+                "role_count": len(request.roles),
+            },
+        )
+
+    def validate_provider_workflow(
+        self,
+        commands: list[LabCommandPlan],
+        *,
+        dry_run: bool,
+    ) -> LabValidationCheck:
+        """Validate provider lifecycle command invariants."""
+
+        errors: list[str] = []
+        purposes = {command.purpose for command in commands}
+        required = {
+            "check-docker-private-wire",
+            "collect-lab-artifacts",
+            "teardown-disposable-docker-wire-endpoints",
+        }
+        if not any(purpose.startswith("create-") for purpose in purposes):
+            errors.append("missing provider workflow phase: create role endpoint")
+        missing = sorted(required - purposes)
+        if missing:
+            errors.append(f"missing provider workflow phases: {', '.join(missing)}")
+
+        for command in commands:
+            if len(command.argv) < 2 or command.argv[0] != WIRE_ENTRYPOINT:
+                errors.append(f"provider command must route through {WIRE_ENTRYPOINT}")
+            if command.metadata.get("wire_command") is not True:
+                errors.append("provider command must be marked as wire_command")
+            if command.metadata.get("provider") != self.name:
+                errors.append("provider command must target Docker")
+            if command.metadata.get("exposure") != self.wire_exposure:
+                errors.append("provider command must target private exposure")
+            if command.metadata.get("private_network") is not True:
+                errors.append("Docker provider command must carry private network metadata")
+            if command.operation == "wire.create":
+                if "--private-group" not in command.argv:
+                    errors.append("Docker private create command lacks --private-group")
+                if "--private-ip" not in command.argv:
+                    errors.append("Docker private create command lacks --private-ip")
+                if "--provider" not in command.argv or self.wire_provider not in command.argv:
+                    errors.append("Docker private create command lacks provider argument")
+                if "--exposure" not in command.argv or self.wire_exposure not in command.argv:
+                    errors.append("Docker private create command lacks private exposure argument")
+            if dry_run and command.operation in {"wire.doctor", "wire.create"}:
+                if "--dry-run" not in command.argv:
+                    errors.append(f"dry-run provider command lacks --dry-run: {command.shell()}")
+                if command.live_mutation:
+                    errors.append("dry-run provider command cannot be marked live_mutation")
+            if not dry_run and command.operation == "wire.create":
+                if "--confirm-live-run" not in command.argv:
+                    errors.append("real provider create command lacks --confirm-live-run")
+                if not command.live_mutation:
+                    errors.append("real provider create command must be live_mutation")
+            if command.operation in {"wire.collect_artifacts", "wire.destroy"}:
+                if command.metadata.get("always_attempt") is not True:
+                    errors.append(f"{command.operation} must be marked always_attempt")
+
+        return LabValidationCheck(
+            name="docker-provider-workflow",
+            passed=not errors,
+            subject=self.name,
+            errors=errors,
+            metadata={
+                "provider": self.name,
+                "dry_run": dry_run,
+                "always_collect_artifacts": True,
+                "always_teardown": True,
+                "private_network": True,
+                "private_network_cidr": PRIVATE_NETWORK_CIDR,
+            },
+        )
+
+    def validate_session(self, session: LabSession) -> list[LabValidationCheck]:
+        """Validate Docker-specific invariants on a planned session."""
+
+        errors: list[str] = []
+        if session.provider != self.name:
+            errors.append(f"unexpected provider: {session.provider}")
+        if session.wire_provider != self.wire_provider:
+            errors.append(f"unexpected wire provider: {session.wire_provider}")
+        if session.wire_exposure != self.wire_exposure:
+            errors.append(f"unexpected wire exposure: {session.wire_exposure}")
+        if len(session.endpoints) != len(session.roles):
+            errors.append("endpoint count must match role count")
+        if session.infrastructure_metadata.get("private_network") is not True:
+            errors.append("infrastructure metadata must describe a private network")
+        if session.infrastructure_metadata.get("wire_policy") != DOCKER_WIRE_POLICY:
+            errors.append("infrastructure metadata must preserve Docker wire policy")
+        network = session.infrastructure_metadata.get("network")
+        if not isinstance(network, Mapping):
+            errors.append("infrastructure metadata must include Docker network metadata")
+        else:
+            if network.get("backend") != "docker-internal-bridge":
+                errors.append("Docker lab network must be an internal bridge")
+            if network.get("internal") is not True:
+                errors.append("Docker lab network must be internal")
+
+        for endpoint in session.endpoints:
+            if endpoint.metadata.get("private_network") is not True:
+                errors.append(f"endpoint lacks private network metadata: {endpoint.role}")
+            if endpoint.metadata.get("private_group") is None:
+                errors.append(f"endpoint lacks private group metadata: {endpoint.role}")
+            if endpoint.metadata.get("container_runtime") != "docker":
+                errors.append(f"endpoint lacks Docker runtime metadata: {endpoint.role}")
+            if endpoint.metadata.get("wire_policy") != DOCKER_WIRE_POLICY:
+                errors.append(f"endpoint lacks Docker wire policy metadata: {endpoint.role}")
+
+        return [
+            LabValidationCheck(
+                name="docker-session",
+                passed=not errors,
+                subject=session.session_id,
+                errors=errors,
+                metadata={
+                    "provider": self.name,
+                    "endpoint_count": len(session.endpoints),
+                    "role_count": len(session.roles),
+                    "dry_run": session.dry_run,
+                    "private_group": session.metadata.get("private_group"),
+                    "private_network": True,
+                    "private_network_cidr": PRIVATE_NETWORK_CIDR,
+                },
+            )
+        ]
+
+
+def _response_manifest(response: object) -> EndpointManifest:
+    manifest = getattr(response, "manifest", None)
+    if isinstance(manifest, EndpointManifest):
+        return manifest
+    json_data = getattr(response, "json_data", None)
+    if isinstance(json_data, Mapping):
+        return EndpointManifest.from_dict(json_object(json_data, "wire_manifest"))
+    metadata = getattr(response, "metadata", None)
+    if callable(metadata):
+        value = metadata()
+        if isinstance(value, Mapping):
+            return EndpointManifest.from_dict(json_object(value, "wire_manifest"))
+    raise ValueError("wire create response did not include an endpoint manifest")
+
+
+def _response_json(response: object, manifest: EndpointManifest) -> JSONObject:
+    json_data = getattr(response, "json_data", None)
+    if isinstance(json_data, Mapping):
+        return json_object(json_data, "wire_create_response")
+    return manifest.to_dict()
+
+
+def _endpoint_models(endpoint_plan: JSONObject, roles: Sequence[LabRole]) -> list[LabEndpoint]:
+    endpoints = endpoint_plan.get("endpoints")
+    if not isinstance(endpoints, Mapping):
+        return []
+    output: list[LabEndpoint] = []
+    for role in roles:
+        endpoint = endpoints.get(role.name)
+        if isinstance(endpoint, Mapping):
+            output.append(LabEndpoint.from_dict(endpoint))
+    return output
+
+
+def _command_models(endpoint_plan: JSONObject) -> list[LabCommandPlan]:
+    commands = endpoint_plan.get("command_records")
+    if not isinstance(commands, list):
+        return []
+    return [
+        LabCommandPlan.from_dict(command)
+        for command in commands
+        if isinstance(command, Mapping)
+    ]
+
+
+DOCKER_LAB_PROVIDER_ADAPTER: LabProviderAdapter = DockerLabProviderAdapter()
