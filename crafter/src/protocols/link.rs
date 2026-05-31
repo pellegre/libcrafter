@@ -3141,6 +3141,165 @@ mod arp {
         assert_eq!(inspection_value(&arp, "sender_protocol_bytes"), "01 02 03");
         assert_eq!(inspection_value(&arp, "target_protocol_bytes"), "04 05 06");
     }
+
+    #[test]
+    fn arp_codepoint_known_operations_compile_decode_and_round_trip() {
+        use super::{
+            ARP_OP_ARP_NAK, ARP_OP_DRARP_ERROR, ARP_OP_DRARP_REPLY, ARP_OP_DRARP_REQUEST,
+            ARP_OP_INARP_REPLY, ARP_OP_INARP_REQUEST, ARP_OP_MAPOS_UNARP, ARP_OP_RARP_REPLY,
+            ARP_OP_RARP_REQUEST, ARP_OP_REPLY, ARP_OP_REQUEST,
+        };
+        use crate::packet::Layer;
+
+        // Every source-backed known operation included by scope.md
+        // (IANA arp-parameters-1): REQUEST/REPLY (RFC 826), RARP req/reply
+        // (RFC 903), DRARP req/reply/error (RFC 1931), InARP req/reply
+        // (RFC 2390), ARP-NAK (RFC 1577), MAPOS-UNARP (RFC 2176). Each must be
+        // ergonomic through the named enum *and* compile, decode, summarize, and
+        // round-trip byte-exact over a full Ethernet/ARP stack.
+        let known = [
+            (ArpOperation::Request, ARP_OP_REQUEST, "request"),
+            (ArpOperation::Reply, ARP_OP_REPLY, "reply"),
+            (
+                ArpOperation::RarpRequest,
+                ARP_OP_RARP_REQUEST,
+                "rarp-request",
+            ),
+            (ArpOperation::RarpReply, ARP_OP_RARP_REPLY, "rarp-reply"),
+            (
+                ArpOperation::DrarpRequest,
+                ARP_OP_DRARP_REQUEST,
+                "drarp-request",
+            ),
+            (ArpOperation::DrarpReply, ARP_OP_DRARP_REPLY, "drarp-reply"),
+            (ArpOperation::DrarpError, ARP_OP_DRARP_ERROR, "drarp-error"),
+            (
+                ArpOperation::InArpRequest,
+                ARP_OP_INARP_REQUEST,
+                "inarp-request",
+            ),
+            (ArpOperation::InArpReply, ARP_OP_INARP_REPLY, "inarp-reply"),
+            (ArpOperation::ArpNak, ARP_OP_ARP_NAK, "arp-nak"),
+            (ArpOperation::MaposUnarp, ARP_OP_MAPOS_UNARP, "mapos-unarp"),
+        ];
+
+        for (operation, opcode, label) in known {
+            // The named enum is the ergonomic surface and agrees with the
+            // numeric codepoint constant in both directions.
+            assert_eq!(operation.opcode(), opcode);
+            assert_eq!(ArpOperation::from_opcode(opcode), Some(operation));
+            assert_eq!(operation.label(), label);
+
+            // Build a standard Ethernet/IPv4 body carrying this operation and
+            // confirm it compiles, then decodes back to the same opcode.
+            let arp = Arp::new()
+                .operation(operation)
+                .sender_hardware(sender_mac().octets().to_vec())
+                .sender_protocol(Ipv4Addr::new(192, 0, 2, 1).octets().to_vec())
+                .target_hardware(src_mac().octets().to_vec())
+                .target_protocol(Ipv4Addr::new(192, 0, 2, 10).octets().to_vec());
+            assert_eq!(arp.opcode_value(), opcode);
+
+            // Summaries surface every known operation by its name.
+            assert!(
+                arp.summary().contains(&format!("op={label}")),
+                "summary for {label} was {}",
+                arp.summary()
+            );
+
+            let frame = (Ethernet::new().src(sender_mac()).dst(src_mac()) / arp.clone())
+                .compile()
+                .expect("known-codepoint ARP must compile");
+
+            let decoded = Packet::decode_from_link(LinkType::Ethernet, frame.as_bytes())
+                .expect("known-codepoint ARP must decode");
+            let decoded_arp = decoded
+                .layer::<Arp>()
+                .expect("decoded packet must carry an Arp layer");
+            assert_eq!(decoded_arp.opcode_value(), opcode);
+            assert_eq!(
+                ArpOperation::from_opcode(decoded_arp.opcode_value()),
+                Some(operation)
+            );
+
+            // The decoded stack recompiles to the exact original bytes.
+            assert_eq!(decoded.compile().unwrap().as_bytes(), frame.as_bytes());
+        }
+    }
+
+    #[test]
+    fn arp_unknown_codepoints_are_not_rejected() {
+        use super::{arp_hardware_type_label, arp_protocol_type_label};
+        use crate::packet::Layer;
+
+        // Numeric values that no scoped registry names must NOT be rejected
+        // solely because they are unknown: an unknown opcode, an unknown
+        // hardware type, and an unknown protocol type all compile, decode,
+        // round-trip byte-exact, and remain visible as their raw numbers.
+        let unknown_opcode: u16 = 0x0fa0; // 4000, not an IANA arp-parameters-1 op
+        let unknown_hardware: u16 = 0x1234; // not in ARP_HRD_*
+        let unknown_protocol: u16 = 0x88b5; // IEEE local-experimental ethertype
+
+        // The lookups disclaim these values rather than rejecting them.
+        assert_eq!(ArpOperation::from_opcode(unknown_opcode), None);
+        assert_eq!(arp_hardware_type_label(unknown_hardware), None);
+        assert_eq!(arp_protocol_type_label(unknown_protocol), None);
+
+        let arp = Arp::new()
+            .hardware_type(unknown_hardware)
+            .protocol_type(unknown_protocol)
+            .opcode(unknown_opcode)
+            .sender_hardware(vec![0xaa, 0xbb, 0xcc])
+            .sender_protocol(vec![0x01, 0x02])
+            .target_hardware(vec![0xdd, 0xee, 0xff])
+            .target_protocol(vec![0x03, 0x04]);
+
+        // All three unknown values are preserved on the builder, unchanged.
+        assert_eq!(arp.hardware_type_value(), unknown_hardware);
+        assert_eq!(arp.protocol_type_value(), unknown_protocol);
+        assert_eq!(arp.opcode_value(), unknown_opcode);
+
+        // The unknown opcode stays numeric and visible in the summary.
+        assert!(
+            arp.summary().contains(&format!("op={unknown_opcode}")),
+            "summary was {}",
+            arp.summary()
+        );
+        // Unknown hardware/protocol types render as bare hex codepoints.
+        assert_eq!(
+            inspection_value(&arp, "hardware_type"),
+            format!("0x{unknown_hardware:04x}")
+        );
+        assert_eq!(
+            inspection_value(&arp, "protocol_type"),
+            format!("0x{unknown_protocol:04x}")
+        );
+        assert_eq!(
+            inspection_value(&arp, "operation"),
+            format!("{unknown_opcode}")
+        );
+
+        // The packet compiles (accepted, not rejected) and survives a full
+        // Ethernet/ARP compile -> decode cycle with every value intact and the
+        // recompiled bytes identical to the original frame.
+        let frame = (Ethernet::new().src(src_mac()) / arp)
+            .compile()
+            .expect("unknown ARP codepoints must compile, not be rejected");
+
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, frame.as_bytes())
+            .expect("unknown ARP codepoints must decode, not be rejected");
+        let decoded_arp = decoded
+            .layer::<Arp>()
+            .expect("decoded packet must carry an Arp layer");
+        assert_eq!(decoded_arp.hardware_type_value(), unknown_hardware);
+        assert_eq!(decoded_arp.protocol_type_value(), unknown_protocol);
+        assert_eq!(decoded_arp.opcode_value(), unknown_opcode);
+        assert_eq!(decoded_arp.hardware_type_label(), None);
+        assert_eq!(decoded_arp.protocol_type_label(), None);
+        assert_eq!(ArpOperation::from_opcode(decoded_arp.opcode_value()), None);
+
+        assert_eq!(decoded.compile().unwrap().as_bytes(), frame.as_bytes());
+    }
 }
 
 #[cfg(test)]
