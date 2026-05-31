@@ -600,6 +600,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "dhcp-request-nak",
         "dhcp-rapid-repeat",
         "arp-basic-who-has",
+        "arp-repeat-two-replies",
     }
 )
 
@@ -1205,7 +1206,7 @@ def _probe_plan_with_endpoint_addresses(
         )
         dhcp_validation["server_identifier"] = target_ipv4
         updated["validation"] = dhcp_validation
-    elif case_name == "arp-basic-who-has":
+    elif case_name in {"arp-basic-who-has", "arp-repeat-two-replies"}:
         # ARP rides Ethernet directly (no IP/UDP), so the lab rewrite touches the
         # ARP protocol addresses rather than transport IPs: the stimulus resolves
         # the target endpoint's IPv4 (target protocol address) from its own IPv4
@@ -1239,6 +1240,31 @@ def _probe_plan_with_endpoint_addresses(
         arp_validation["sender_protocol_addr"] = target_ipv4
         arp_validation["target_protocol_addr"] = source_ipv4
         updated["validation"] = arp_validation
+        # arp-repeat-two-replies carries a per-send array: rewrite each who-has
+        # send's ARP protocol addresses and is-at validation contract onto the lab
+        # segment so every send resolves the same target and each decoded is-at
+        # reply is validated against its own send. The two sends share the target
+        # (the case point is a repeated who-has for one target), so they all
+        # resolve the same on-segment protocol addresses.
+        arp_sends = updated.get("arp_sends")
+        if isinstance(arp_sends, list):
+            rewritten_arp_sends: list[JSONObject] = []
+            for raw_send in arp_sends:
+                send = dict(json_object(raw_send, "probe_plan.arp_send"))
+                send["source_ipv4"] = source_ipv4
+                send["destination_ipv4"] = target_ipv4
+                send["expected_reply_source_ipv4"] = target_ipv4
+                send["expected_reply_destination_ipv4"] = source_ipv4
+                send["sender_protocol_addr"] = source_ipv4
+                send["target_protocol_addr"] = target_ipv4
+                send_validation = dict(
+                    json_object(send.get("validation", {}), "probe_plan.arp_send.validation")
+                )
+                send_validation["sender_protocol_addr"] = target_ipv4
+                send_validation["target_protocol_addr"] = source_ipv4
+                send["validation"] = send_validation
+                rewritten_arp_sends.append(send)
+            updated["arp_sends"] = rewritten_arp_sends
         updated["live_address_rewrite"] = {
             "source": rewrite_source,
             "stimulus_ipv4": source_ipv4,
@@ -1406,7 +1432,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
         ]
-    if case_name in {"arp-resolution", "arp-basic-who-has"}:
+    if case_name in {"arp-resolution", "arp-basic-who-has", "arp-repeat-two-replies"}:
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,

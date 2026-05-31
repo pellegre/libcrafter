@@ -257,7 +257,7 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
         metadata={"layer": "link"},
     ),
     _behavior_case(
-        name="arp-repeated-who-has",
+        name="arp-repeat-two-replies",
         description="Repeat a who-has request and validate two parseable replies.",
         stimulus="arp_who_has",
         expected_response="arp_is_at",

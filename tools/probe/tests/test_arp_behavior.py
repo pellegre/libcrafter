@@ -223,5 +223,195 @@ class ArpBasicWhoHasTest(unittest.TestCase):
             self.assertTrue(arp_skips, "expected arp-basic-who-has to skip on hetzner")
 
 
+def _arp_repeat_two_replies_plan(*, seed: int = 1031, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["arp-repeat-two-replies"]),
+        case=planning.PROBE_CASE_BY_NAME["arp-repeat-two-replies"],
+        sequence=sequence,
+    )
+
+
+class ArpRepeatTwoRepliesPlanTest(unittest.TestCase):
+    """The repeat case plans two who-has sends for one target and two contracts."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("arp-repeat-two-replies", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["arp-repeat-two-replies"],
+            planning._arp_repeat_two_replies_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _arp_repeat_two_replies_plan(), _arp_repeat_two_replies_plan()
+        )
+
+    def test_plan_carries_two_who_has_sends_for_one_target(self) -> None:
+        plan = _arp_repeat_two_replies_plan()
+
+        self.assertEqual(plan["case"], "arp-repeat-two-replies")
+        self.assertEqual(plan["stimulus"], "arp_who_has")
+        self.assertEqual(plan["expected_response"], "arp_is_at")
+
+        # The repeat contract is a per-send array of two who-has -> is-at sends.
+        sends = plan["arp_sends"]
+        self.assertEqual(plan["send_count"], 2)
+        self.assertEqual(len(sends), 2)
+
+        # Both sends resolve the SAME target (the case point is a repeated who-has
+        # for one target) and share the sender hardware/protocol address.
+        for index, send in enumerate(sends):
+            self.assertEqual(send["index"], index)
+            self.assertEqual(send["operation"], 1)
+            self.assertEqual(send["operation_label"], "request")
+            self.assertEqual(send["ethertype"], 0x0806)
+            self.assertEqual(send["target_protocol_addr"], plan["target_protocol_addr"])
+            self.assertEqual(send["sender_protocol_addr"], plan["sender_protocol_addr"])
+            self.assertTrue(_is_documentation_mac(send["sender_hardware_addr"]))
+            self.assertEqual(send["target_hardware_addr"], "00:00:00:00:00:00")
+            self.assertEqual(send["ethernet_destination"], "ff:ff:ff:ff:ff:ff")
+            self.assertEqual(send["capture_filter"], "arp and arp[6:2] = 2")
+
+        self.assertEqual(
+            sends[0]["target_protocol_addr"], sends[1]["target_protocol_addr"]
+        )
+
+    def test_each_send_carries_an_is_at_validation_contract(self) -> None:
+        plan = _arp_repeat_two_replies_plan()
+        for send in plan["arp_sends"]:
+            validation = send["validation"]
+            # Each expected reply is an ARP is-at (operation 2) resolving the
+            # target MAC/IPv4 back to the original querier.
+            self.assertEqual(validation["operation"], 2)
+            self.assertTrue(_is_documentation_mac(validation["sender_hardware_addr"]))
+            self.assertEqual(
+                validation["sender_protocol_addr"], send["target_protocol_addr"]
+            )
+            self.assertEqual(
+                validation["target_hardware_addr"], send["sender_hardware_addr"]
+            )
+            self.assertEqual(
+                validation["target_protocol_addr"], send["sender_protocol_addr"]
+            )
+            self.assertEqual(
+                validation["ethernet_source"], validation["sender_hardware_addr"]
+            )
+            self.assertEqual(
+                validation["ethernet_destination"], send["sender_hardware_addr"]
+            )
+            # The resolved MAC is distinct from the querier MAC.
+            self.assertNotEqual(
+                validation["sender_hardware_addr"], send["sender_hardware_addr"]
+            )
+
+    def test_target_service_repeat_descriptor_covers_both_sends(self) -> None:
+        plan = _arp_repeat_two_replies_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "arp-kernel")
+        self.assertEqual(target_service["layer"], "link")
+        self.assertTrue(target_service["arp_sysctls"])
+        # A neighbor-cache flush keeps the kernel re-answering each repeated
+        # who-has rather than the client short-circuiting on a cached reply.
+        self.assertTrue(target_service["neighbor_cache_flush"])
+        repeat_sends = target_service["repeat"]["sends"]
+        self.assertEqual(len(repeat_sends), 2)
+        for repeat_send in repeat_sends:
+            self.assertEqual(
+                repeat_send["target_protocol_addr"], plan["target_protocol_addr"]
+            )
+
+    def test_wire_requirements_gate_on_link_layer(self) -> None:
+        plan = _arp_repeat_two_replies_plan()
+        requirements = plan["wire_requirements"]
+        self.assertTrue(requirements["requires_link_layer_send"])
+        self.assertTrue(requirements["requires_link_layer_capture"])
+        self.assertTrue(requirements["requires_broadcast"])
+
+
+class ArpRepeatTwoRepliesTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_plans_two_sends_and_two_expected_replies(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "arp-repeat-two-replies",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1031,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("arp-repeat-two-replies", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "arp-repeat-two-replies"
+            ]
+            self.assertTrue(
+                results, "endpoint emitted no arp-repeat-two-replies result"
+            )
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # The multi-send dry-run plans two who-has sends and two expected
+                # is-at replies.
+                self.assertEqual(metadata.get("send_count"), 2)
+                planned_sends = metadata.get("planned_sends", [])
+                expected_responses = metadata.get("expected_responses", [])
+                self.assertEqual(len(planned_sends), 2)
+                self.assertEqual(len(expected_responses), 2)
+
+                targets = set()
+                for send in planned_sends:
+                    # Each planned send carries the compiled Ethernet/ARP who-has
+                    # broadcast frame bytes.
+                    frame = bytes.fromhex(send["sent_raw_hex"])
+                    self.assertGreaterEqual(len(frame), 14 + 28)
+                    self.assertEqual(frame[0:6], b"\xff\xff\xff\xff\xff\xff")
+                    self.assertEqual(frame[12:14], (0x0806).to_bytes(2, "big"))
+                    # ARP opcode (frame[20:22]) is the who-has request (1).
+                    self.assertEqual(frame[20:22], (1).to_bytes(2, "big"))
+                    targets.add(send["target_protocol_addr"])
+
+                # Both who-has sends resolve the same target address.
+                self.assertEqual(len(targets), 1)
+
+                # Each expected reply is an ARP is-at (operation 2).
+                for expected in expected_responses:
+                    self.assertEqual(expected["operation"], 2)
+
+    def test_provider_without_link_layer_skips(self) -> None:
+        # Hetzner cannot provide L2/broadcast/provider-MAC, so the case skips with
+        # a stable capability reason rather than planning a stimulus.
+        if not probe_acceptance.probe_run_available():
+            self.skipTest("probe runner requires uv on PATH")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "hetzner"
+            report_path = probe_acceptance._run_probe_dry_run(
+                "arp-repeat-two-replies",
+                out_dir=out_dir,
+                provider="hetzner",
+                profile="behavior",
+                seed=1031,
+                count=1,
+                timeout_seconds=600,
+            )
+            report = probe_acceptance._load_json(report_path)
+            skips = report.get("skips", [])
+            arp_skips = [
+                skip
+                for skip in skips
+                if skip.get("case") == "arp-repeat-two-replies"
+            ]
+            self.assertTrue(
+                arp_skips, "expected arp-repeat-two-replies to skip on hetzner"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

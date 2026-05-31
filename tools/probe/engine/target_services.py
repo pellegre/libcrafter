@@ -473,6 +473,7 @@ _ARP_KERNEL_CASES: frozenset[str] = frozenset(
     {
         "arp-resolution",
         "arp-basic-who-has",
+        "arp-repeat-two-replies",
     }
 )
 

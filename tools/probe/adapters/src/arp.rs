@@ -21,9 +21,9 @@ use std::time::Duration;
 
 use crate::common::{
     capture_filter, decoded_packet_json, failed_outcome, hex_bytes, observed_response, plan_json,
-    required_str, required_u16, send_report_json, target_service_json, CandidateValidation,
-    ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED,
-    FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
+    required_str, required_u16, send_report_json, target_service_json, ArpSend, ArpValidation,
+    CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest,
+    FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 
 /// Stable identifier for the ARP case module.
@@ -36,6 +36,9 @@ pub fn run_arp_dry_run(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
+    if let Some(sends) = plan.arp_sends.as_deref() {
+        return run_arp_multi_send_dry_run(request, plan, sends);
+    }
     let packet = arp_who_has_packet(plan)?;
     // ARP is sent at the link layer (Ethernet), not the network layer: the
     // outgoing frame starts at Ethernet, so the dry-run send plan uses
@@ -90,6 +93,9 @@ pub fn run_arp_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
+    if let Some(sends) = plan.arp_sends.as_deref() {
+        return run_arp_multi_send_live(request, plan, sends);
+    }
     let packet = arp_who_has_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer = match Sniffer::interface(request.interface.clone())
@@ -231,6 +237,336 @@ pub fn run_arp_live(
         sent,
         false,
     ))
+}
+
+/// Derive a single-send `ProbePlan` for one entry of a multi-send ARP case's
+/// `arp_sends` array. The derived plan reuses the parent's case and shared fields
+/// but overrides the per-send sender/target hardware/protocol addresses, the
+/// Ethernet framing, the capture filter, and the typed is-at validation contract
+/// so the existing single-send builders (`arp_who_has_packet`,
+/// `validate_arp_candidate`) operate on exactly this one who-has and its own
+/// expected is-at reply.
+fn send_as_plan(parent: &ProbePlan, send: &ArpSend) -> ProbePlan {
+    let mut derived = parent.clone();
+    // This send is a single, self-contained who-has -> is-at exchange; clear the
+    // multi-send marker so the single-send build/validate path runs against just
+    // this send.
+    derived.arp_sends = None;
+    if let Some(value) = send.operation {
+        derived.operation = Some(value);
+    }
+    if let Some(value) = send.sender_hardware_addr.clone() {
+        derived.sender_hardware_addr = Some(value);
+    }
+    if let Some(value) = send.sender_protocol_addr.clone() {
+        derived.sender_protocol_addr = Some(value);
+    }
+    if let Some(value) = send.target_hardware_addr.clone() {
+        derived.target_hardware_addr = Some(value);
+    }
+    if let Some(value) = send.target_protocol_addr.clone() {
+        derived.target_protocol_addr = Some(value);
+    }
+    if let Some(value) = send.ethernet_source.clone() {
+        derived.ethernet_source = Some(value);
+    }
+    if let Some(value) = send.ethernet_destination.clone() {
+        derived.ethernet_destination = Some(value);
+    }
+    if let Some(value) = send.validation.clone() {
+        derived.validation = Some(value);
+    }
+    derived
+}
+
+/// Dry-run a multi-send ARP case (`arp-repeat-two-replies`): compile every
+/// per-send Ethernet/ARP who-has with libcrafter and emit one planned send and
+/// one expected is-at reply per send. No traffic leaves the host. The output
+/// carries a `planned_sends` array (one entry per build) and a top-level
+/// `send_count` so an inspector sees two planned sends and two expected
+/// responses.
+fn run_arp_multi_send_dry_run(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sends: &[ArpSend],
+) -> ExampleResult<ProbeOutcome> {
+    let mut planned_sends = Vec::with_capacity(sends.len());
+    for (offset, send) in sends.iter().enumerate() {
+        let send_plan = send_as_plan(plan, send);
+        let packet = arp_who_has_packet(&send_plan)?;
+        let report = SocketSender::new(
+            SendOptions::new()
+                .iface(request.interface.clone())
+                .link_layer()
+                .dry_run(),
+        )
+        .send(&packet)?;
+        let sent_raw_hex = hex_bytes(report.plan().bytes());
+        planned_sends.push(json!({
+            "index": send.index.unwrap_or(offset),
+            "operation": send_plan.operation,
+            "sender_hardware_addr": send_plan.sender_hardware_addr,
+            "sender_protocol_addr": send_plan.sender_protocol_addr,
+            "target_protocol_addr": send_plan.target_protocol_addr,
+            "ethernet_source": send_plan.ethernet_source,
+            "ethernet_destination": send_plan.ethernet_destination,
+            "send_report": send_report_json(&report),
+            "sent_raw_hex": sent_raw_hex,
+            "capture_filter": capture_filter(&send_plan),
+            "expected_response": arp_expected_response_json(&send_plan),
+        }));
+    }
+    let expected_responses: Vec<Value> = planned_sends
+        .iter()
+        .filter_map(|entry| entry.get("expected_response").cloned())
+        .collect();
+    let observed = observed_response(
+        plan,
+        false,
+        None,
+        json!({}),
+        json!({
+            "planned_only": true,
+            "send_count": planned_sends.len(),
+            "planned_sends": planned_sends,
+            "expected_responses": expected_responses,
+            "target_service": target_service_json(plan),
+        }),
+    );
+    let result = json!({
+        "case": plan.case,
+        "sequence": plan.sequence,
+        "status": "planned",
+        "endpoint_role": "stimulus",
+        "passed": null,
+        "observed_response": observed,
+        "metadata": {
+            "dry_run": true,
+            "probe_plan": plan_json(plan),
+            "planned_only": true,
+            "send_count": planned_sends.len(),
+            "planned_sends": planned_sends,
+            "expected_responses": expected_responses,
+            "target_service": target_service_json(plan),
+        }
+    });
+    Ok(ProbeOutcome {
+        result,
+        observed_response: observed,
+        sent: false,
+        received: false,
+    })
+}
+
+/// Live multi-send ARP case (`arp-repeat-two-replies`): build and send every
+/// per-send libcrafter who-has, capture the is-at replies, decode each, and
+/// validate every reply against *its* send's is-at contract (operation, resolved
+/// sender hardware/protocol address, target hardware/protocol address, and
+/// Ethernet framing). Each send opens its own link-layer capture, so the two
+/// replies for the repeated who-has are validated independently — every reply is
+/// matched to the who-has that produced it. The case passes only when every send
+/// validates, and the report records both responses and their raw hex.
+fn run_arp_multi_send_live(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sends: &[ArpSend],
+) -> ExampleResult<ProbeOutcome> {
+    let mut send_results = Vec::with_capacity(sends.len());
+    let mut all_passed = true;
+    let mut any_sent = false;
+    let mut any_received = false;
+    let mut failure_reason: Option<&'static str> = None;
+    let mut errors: Vec<String> = Vec::new();
+
+    for (offset, send) in sends.iter().enumerate() {
+        let send_plan = send_as_plan(plan, send);
+        let outcome = run_arp_live(request, &send_plan)?;
+        any_sent |= outcome.sent;
+        any_received |= outcome.received;
+        let status = outcome
+            .result
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("failed");
+        if status != "passed" {
+            all_passed = false;
+            let reason = outcome
+                .result
+                .get("metadata")
+                .and_then(|metadata| metadata.get("failure_reason"))
+                .and_then(Value::as_str);
+            if let Some(reason) = reason {
+                failure_reason.get_or_insert(static_failure_reason(reason));
+                errors.push(format!(
+                    "send {} (target {:?}) failed: {reason}",
+                    send.index.unwrap_or(offset),
+                    send_plan.target_protocol_addr,
+                ));
+            }
+        }
+        // Record both the per-send raw hex and the decoded reply so the report
+        // captures every observed is-at response.
+        let raw_hex = outcome
+            .observed_response
+            .get("raw_hex")
+            .cloned()
+            .unwrap_or(Value::Null);
+        send_results.push(json!({
+            "index": send.index.unwrap_or(offset),
+            "operation": send_plan.operation,
+            "target_protocol_addr": send_plan.target_protocol_addr,
+            "status": status,
+            "raw_hex": raw_hex,
+            "result": outcome.result,
+        }));
+    }
+
+    let summary = json!({
+        "send_count": sends.len(),
+        "send_results": send_results,
+    });
+
+    if all_passed {
+        let observed = observed_response(
+            plan,
+            true,
+            None,
+            summary.clone(),
+            json!({
+                "capture_filter": capture_filter(plan),
+                "send_count": sends.len(),
+            }),
+        );
+        let result = json!({
+            "case": plan.case,
+            "sequence": plan.sequence,
+            "status": "passed",
+            "endpoint_role": "stimulus",
+            "passed": true,
+            "observed_response": observed,
+            "metadata": {
+                "dry_run": false,
+                "probe_plan": plan_json(plan),
+                "send_count": sends.len(),
+                "send_results": observed["decoded"]["send_results"].clone(),
+            }
+        });
+        return Ok(ProbeOutcome {
+            result,
+            observed_response: observed,
+            sent: any_sent,
+            received: any_received,
+        });
+    }
+
+    Ok(failed_outcome(
+        plan,
+        failure_reason.unwrap_or(FAILURE_WRONG_PAYLOAD),
+        if errors.is_empty() {
+            vec!["one or more repeat-two-replies sends failed validation".to_string()]
+        } else {
+            errors
+        },
+        Some(summary),
+        any_sent,
+        any_received,
+    ))
+}
+
+/// Map a failure-reason string (as it appears in a per-send result) back to the
+/// crate's `'static` failure-reason constants so the aggregate failure uses a
+/// stable reason.
+fn static_failure_reason(reason: &str) -> &'static str {
+    match reason {
+        FAILURE_TIMEOUT => FAILURE_TIMEOUT,
+        FAILURE_WRONG_PEER => FAILURE_WRONG_PEER,
+        FAILURE_DECODE_FAILED => FAILURE_DECODE_FAILED,
+        _ => FAILURE_WRONG_PAYLOAD,
+    }
+}
+
+/// JSON view of one send's expected is-at reply (operation, resolved sender
+/// hardware/protocol address, target hardware/protocol address, and Ethernet
+/// framing) for the dry-run report.
+fn arp_expected_response_json(send_plan: &ProbePlan) -> Value {
+    let validation = send_plan.validation.as_ref();
+    json!({
+        "operation": validation.and_then(|v| v.operation),
+        "sender_hardware_addr": validation.and_then(|v| v.sender_hardware_addr.clone()),
+        "sender_protocol_addr": validation.and_then(|v| v.sender_protocol_addr.clone()),
+        "target_hardware_addr": validation.and_then(|v| v.target_hardware_addr.clone()),
+        "target_protocol_addr": validation.and_then(|v| v.target_protocol_addr.clone()),
+        "ethernet_source": validation.and_then(|v| v.ethernet_source.clone()),
+        "ethernet_destination": validation.and_then(|v| v.ethernet_destination.clone()),
+        "direction": "target_to_sender",
+    })
+}
+
+/// JSON view of a plan's `arp_sends` array for the plan echo. `None` renders
+/// null.
+pub fn sends_json(sends: Option<&[ArpSend]>) -> Value {
+    match sends {
+        Some(sends) => Value::Array(
+            sends
+                .iter()
+                .map(|send| {
+                    json!({
+                        "index": send.index,
+                        "operation": send.operation,
+                        "sender_hardware_addr": send.sender_hardware_addr,
+                        "sender_protocol_addr": send.sender_protocol_addr,
+                        "target_hardware_addr": send.target_hardware_addr,
+                        "target_protocol_addr": send.target_protocol_addr,
+                        "ethernet_source": send.ethernet_source,
+                        "ethernet_destination": send.ethernet_destination,
+                        "capture_filter": send.capture_filter,
+                        "validation": arp_validation_json(send.validation.as_ref()),
+                    })
+                })
+                .collect(),
+        ),
+        None => Value::Null,
+    }
+}
+
+/// JSON view of a plan's `arp_sends` for the target kernel's `repeat` descriptor:
+/// the per-send target protocol address the kernel answers and the resolved
+/// sender hardware/protocol address each is-at reply carries.
+pub fn repeat_sends_json(sends: Option<&[ArpSend]>) -> Value {
+    match sends {
+        Some(sends) => Value::Array(
+            sends
+                .iter()
+                .map(|send| {
+                    let validation = send.validation.as_ref();
+                    json!({
+                        "target_protocol_addr": send.target_protocol_addr,
+                        "sender_hardware_addr": validation
+                            .and_then(|v| v.sender_hardware_addr.clone()),
+                        "sender_protocol_addr": validation
+                            .and_then(|v| v.sender_protocol_addr.clone()),
+                    })
+                })
+                .collect(),
+        ),
+        None => Value::Null,
+    }
+}
+
+/// JSON view of one is-at validation contract for the plan echo.
+fn arp_validation_json(validation: Option<&ArpValidation>) -> Value {
+    match validation {
+        Some(validation) => json!({
+            "operation": validation.operation,
+            "sender_hardware_addr": validation.sender_hardware_addr,
+            "sender_protocol_addr": validation.sender_protocol_addr,
+            "target_hardware_addr": validation.target_hardware_addr,
+            "target_protocol_addr": validation.target_protocol_addr,
+            "ethernet_source": validation.ethernet_source,
+            "ethernet_destination": validation.ethernet_destination,
+        }),
+        None => Value::Null,
+    }
 }
 
 /// Build the Ethernet/ARP who-has request with libcrafter.
@@ -606,5 +942,74 @@ mod tests {
         let raw = is_at_frame(&who_has_plan());
         let packet = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
         assert!(validate_arp_candidate(&plan, &packet, &raw).is_err());
+    }
+
+    /// Build a two-send `arp-repeat-two-replies` plan resolving the same target
+    /// twice, mirroring the planner's per-send shape.
+    fn repeat_plan() -> ProbePlan {
+        let base = who_has_plan();
+        let send = ArpSend {
+            index: None,
+            operation: Some(1),
+            sender_hardware_addr: base.sender_hardware_addr.clone(),
+            sender_protocol_addr: base.sender_protocol_addr.clone(),
+            target_hardware_addr: Some("00:00:00:00:00:00".to_string()),
+            target_protocol_addr: base.target_protocol_addr.clone(),
+            ethernet_source: base.ethernet_source.clone(),
+            ethernet_destination: Some(BROADCAST_MAC.to_string()),
+            capture_filter: Some("arp and arp[6:2] = 2".to_string()),
+            validation: base.validation.clone(),
+        };
+        let mut plan = base_plan("arp-repeat-two-replies");
+        plan.arp_sends = Some(vec![
+            ArpSend {
+                index: Some(0),
+                ..send.clone()
+            },
+            ArpSend {
+                index: Some(1),
+                ..send
+            },
+        ]);
+        plan
+    }
+
+    #[test]
+    fn send_as_plan_derives_a_single_send_who_has() {
+        let parent = repeat_plan();
+        let sends = parent.arp_sends.clone().unwrap();
+        let derived = send_as_plan(&parent, &sends[0]);
+
+        // The derived plan is single-send (no nested array) and builds a real
+        // Ethernet/ARP broadcast who-has.
+        assert!(derived.arp_sends.is_none());
+        let packet = arp_who_has_packet(&derived).unwrap();
+        let ethernet = packet.layer::<Ethernet>().expect("ethernet layer");
+        assert_eq!(ethernet.destination().unwrap().to_string(), BROADCAST_MAC);
+        let arp = packet.layer::<Arp>().expect("arp layer");
+        assert_eq!(arp.opcode_value(), u16::from(ArpOperation::Request));
+        assert_eq!(arp.target_ipv4().unwrap().to_string(), "10.64.0.20");
+    }
+
+    #[test]
+    fn both_repeated_sends_resolve_the_same_target_and_pass_validation() {
+        let parent = repeat_plan();
+        let sends = parent.arp_sends.clone().unwrap();
+        assert_eq!(sends.len(), 2);
+
+        // Both sends resolve the same target, and the canonical is-at reply each
+        // produces validates against its own derived single-send plan.
+        let mut resolved_targets = Vec::new();
+        for send in &sends {
+            let derived = send_as_plan(&parent, send);
+            resolved_targets.push(derived.target_protocol_addr.clone());
+            let raw = is_at_frame(&derived);
+            let packet = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
+            match validate_arp_candidate(&derived, &packet, &raw).unwrap() {
+                CandidateValidation::Passed(_) => {}
+                other => panic!("expected Passed, got {other:?}"),
+            }
+        }
+        assert_eq!(resolved_targets[0], resolved_targets[1]);
     }
 }
