@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 from tools.lab.engine.providers import (
+    DOCKER_LAB_PROVIDER_ADAPTER,
     HETZNER_LAB_PROVIDER_ADAPTER,
     LabProviderAdapter,
     QEMU_LAB_PROVIDER_ADAPTER,
@@ -18,8 +19,15 @@ from tools.lab.engine.providers.registry import registered_provider_names as reg
 
 class LabProviderRegistryTest(unittest.TestCase):
     def test_registry_exposes_registered_providers(self) -> None:
-        self.assertEqual(registered_provider_names(), ("hetzner", "qemu", "virtualbox"))
-        self.assertEqual(registry_names(), ("hetzner", "qemu", "virtualbox"))
+        self.assertEqual(
+            registered_provider_names(),
+            ("docker", "hetzner", "qemu", "virtualbox"),
+        )
+        self.assertEqual(
+            registry_names(),
+            ("docker", "hetzner", "qemu", "virtualbox"),
+        )
+        self.assertIs(resolve_lab_provider("docker"), DOCKER_LAB_PROVIDER_ADAPTER)
         self.assertIs(resolve_lab_provider("hetzner"), HETZNER_LAB_PROVIDER_ADAPTER)
         self.assertIs(resolve_lab_provider("qemu"), QEMU_LAB_PROVIDER_ADAPTER)
         self.assertIs(resolve_lab_provider("virtualbox"), VIRTUALBOX_LAB_PROVIDER_ADAPTER)
@@ -27,7 +35,7 @@ class LabProviderRegistryTest(unittest.TestCase):
     def test_unknown_provider_error_reports_known_set(self) -> None:
         with self.assertRaisesRegex(
             UnknownLabProviderError,
-            "unsupported lab provider 'unknown'; known providers: hetzner, qemu, virtualbox",
+            "unsupported lab provider 'unknown'; known providers: docker, hetzner, qemu, virtualbox",
         ):
             resolve_lab_provider("unknown")
 

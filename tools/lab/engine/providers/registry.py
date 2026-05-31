@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .base import LabProviderAdapter
+from .docker import DOCKER_LAB_PROVIDER_ADAPTER
 from .hetzner import HETZNER_LAB_PROVIDER_ADAPTER
 from .qemu import QEMU_LAB_PROVIDER_ADAPTER
 from .virtualbox import VIRTUALBOX_LAB_PROVIDER_ADAPTER
@@ -13,6 +14,7 @@ class UnknownLabProviderError(ValueError):
 
 
 _REGISTERED_PROVIDERS: dict[str, LabProviderAdapter] = {
+    DOCKER_LAB_PROVIDER_ADAPTER.name: DOCKER_LAB_PROVIDER_ADAPTER,
     HETZNER_LAB_PROVIDER_ADAPTER.name: HETZNER_LAB_PROVIDER_ADAPTER,
     QEMU_LAB_PROVIDER_ADAPTER.name: QEMU_LAB_PROVIDER_ADAPTER,
     VIRTUALBOX_LAB_PROVIDER_ADAPTER.name: VIRTUALBOX_LAB_PROVIDER_ADAPTER,
