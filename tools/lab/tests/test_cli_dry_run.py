@@ -27,7 +27,9 @@ class LabCliProviderListTest(unittest.TestCase):
         providers = {provider["name"]: provider for provider in payload["providers"]}
 
         self.assertTrue(payload["ok"])
-        self.assertEqual(sorted(providers), ["hetzner", "qemu", "virtualbox"])
+        self.assertEqual(sorted(providers), ["docker", "hetzner", "qemu", "virtualbox"])
+        self.assertEqual(providers["docker"]["wire_provider"], "docker")
+        self.assertEqual(providers["docker"]["wire_exposure"], "private")
         self.assertEqual(providers["hetzner"]["wire_provider"], "hetzner")
         self.assertEqual(providers["hetzner"]["wire_exposure"], "private")
         self.assertEqual(providers["qemu"]["wire_provider"], "qemu")
@@ -72,6 +74,7 @@ class LabCliDoctorTest(unittest.TestCase):
 class LabCliPlanTest(unittest.TestCase):
     def test_plan_emits_lab_session_for_each_provider_without_writing_manifests(self) -> None:
         cases = [
+            ("docker", "docker", "private"),
             ("hetzner", "hetzner", "private"),
             ("qemu", "qemu", "private"),
             ("virtualbox", "virtualbox", "private"),

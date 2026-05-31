@@ -28,6 +28,14 @@ class _ProviderCase:
 
 PROVIDER_CASES = (
     _ProviderCase(
+        name="docker",
+        wire_provider="docker",
+        wire_exposure="private",
+        uses_private_wire_flags=True,
+        alpha_ipv4="10.79.0.101",
+        beta_ipv4="10.79.0.102",
+    ),
+    _ProviderCase(
         name="hetzner",
         wire_provider="hetzner",
         wire_exposure="private",
