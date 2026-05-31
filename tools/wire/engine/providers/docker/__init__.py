@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .doctor import doctor
 from .constants import (
     CONFIRMATION_ERROR,
     DOCKER_COMMAND,
@@ -41,6 +42,7 @@ __all__ = [
     "DOCKER_SSH_HOST",
     "DOCKER_SSH_USER",
     "DOCKER_WAN_NETWORK_ENV",
+    "doctor",
     "NAT_L3_CAPABILITIES",
     "PLANNED_CREATED_AT",
     "PRIVATE_CAPABILITIES",
