@@ -316,7 +316,9 @@ def main(argv: list[str] | None = None) -> int:
             private_ip=args.receiver_ip,
             timeout=args.create_timeout,
         )
-        receiver_manifest = _json_object(receiver_create.stdout, "receiver create-endpoint output")
+        receiver_manifest = _endpoint_manifest(
+            receiver_create.stdout, "receiver create-endpoint output"
+        )
         receiver_id = _string(receiver_manifest.get("endpoint_id"), "receiver endpoint_id")
         receiver_artifact_dir = Path(
             _string(receiver_manifest.get("artifact_dir"), "receiver artifact_dir")
@@ -334,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
             private_ip=args.sender_ip,
             timeout=args.create_timeout,
         )
-        sender_manifest = _json_object(sender_create.stdout, "sender create-endpoint output")
+        sender_manifest = _endpoint_manifest(sender_create.stdout, "sender create-endpoint output")
         sender_id = _string(sender_manifest.get("endpoint_id"), "sender endpoint_id")
         sender_artifact_dir = Path(_string(sender_manifest.get("artifact_dir"), "sender artifact_dir"))
         artifact_dirs.append(sender_artifact_dir)
@@ -684,9 +686,16 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
             str(wire),
             "collect-artifacts",
             "<receiver_endpoint_id>",
+            "--remote",
             args.remote_artifact_dir,
         ],
-        [str(wire), "collect-artifacts", "<sender_endpoint_id>", args.remote_artifact_dir],
+        [
+            str(wire),
+            "collect-artifacts",
+            "<sender_endpoint_id>",
+            "--remote",
+            args.remote_artifact_dir,
+        ],
         [str(wire), "destroy-endpoint", "<sender_endpoint_id>", "--json"],
         [str(wire), "destroy-endpoint", "<receiver_endpoint_id>", "--json"],
     ]
@@ -797,7 +806,7 @@ def _collect_artifacts(
     timeout: float,
 ) -> CommandCapture:
     return _run(
-        [str(wire), "collect-artifacts", endpoint_id, remote_artifact_dir],
+        [str(wire), "collect-artifacts", endpoint_id, "--remote", remote_artifact_dir],
         cwd=repo_root,
         timeout=timeout,
     )
@@ -1024,6 +1033,14 @@ def _json_object(value: str, name: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise SmokeError(f"{name} was not a JSON object")
     return parsed
+
+
+def _endpoint_manifest(value: str, name: str) -> dict[str, Any]:
+    output = _json_object(value, name)
+    endpoint = output.get("endpoint")
+    if isinstance(endpoint, dict):
+        return endpoint
+    return output
 
 
 def _string(value: Any, name: str) -> str:

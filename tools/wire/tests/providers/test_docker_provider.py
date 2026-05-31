@@ -27,6 +27,7 @@ from tools.wire.engine.providers.docker.constants import (
     NAT_L3_CAPABILITIES,
     PRIVATE_CAPABILITIES,
 )
+from tools.wire.engine.providers.docker.resources import docker_hostname
 from tools.wire.engine.registry import ProviderExposureError
 from tools.wire.engine.state import update_private_group_allocation
 
@@ -240,7 +241,10 @@ class DockerDoctorTest(unittest.TestCase):
         self.assertIn("controlled_services", wire["capabilities"])
         self.assertNotIn("controlled_router", wire["capabilities"])
         self.assertEqual(container["cap_drop"], ["ALL"])
-        self.assertEqual(container["cap_add"], ["NET_RAW", "NET_ADMIN"])
+        self.assertEqual(
+            container["cap_add"],
+            ["NET_RAW", "NET_ADMIN", "SYS_CHROOT", "SETGID", "SETUID"],
+        )
         self.assertTrue(container["no_new_privileges"])
         self.assertFalse(report["security_model"]["docker_socket_mounted"])  # type: ignore[index]
         self.assertFalse(report["security_model"]["privileged"])  # type: ignore[index]
@@ -370,8 +374,35 @@ class DockerCreateEndpointDryRunTest(unittest.TestCase):
         container = metadata["docker"]["container"]  # type: ignore[index]
         self.assertIn("--cap-add", container["run_argv"])  # type: ignore[index]
         self.assertIn("NET_ADMIN", container["run_argv"])  # type: ignore[index]
+        self.assertIn("SYS_CHROOT", container["run_argv"])  # type: ignore[index]
         self.assertEqual(container["private_ipv4"], "10.79.0.42")  # type: ignore[index]
         self.assertEqual(container["private_network"], "wire-private-pair-a")  # type: ignore[index]
+
+    def test_private_dry_run_uses_bounded_hostname_for_long_endpoint_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            with mock.patch(
+                "tools.wire.engine.providers.docker.create.free_localhost_tcp_port",
+                return_value=27222,
+            ):
+                output = docker.create_endpoint(
+                    provider="docker",
+                    exposure="private",
+                    role="docker-private-smoke-receiver",
+                    private_group="docker-private-smoke",
+                    private_ip="10.79.0.20",
+                    dry_run=True,
+                    env={},
+                )
+
+        endpoint_id = "planned-docker-private-docker-private-smoke-receiver-docker-private-smoke"
+        self.assertEqual(output["endpoint_id"], endpoint_id)
+
+        container = output["metadata"]["docker"]["container"]  # type: ignore[index]
+        hostname = _option_values(container["run_argv"], "--hostname")[0]  # type: ignore[index]
+        self.assertEqual(hostname, docker_hostname(endpoint_id))
+        self.assertEqual(container["hostname"], hostname)  # type: ignore[index]
+        self.assertLessEqual(len(hostname), 63)
+        self.assertNotEqual(hostname, endpoint_id)
 
     def test_lan_and_wan_dry_run_manifests_are_nat_l3_and_conservative(self) -> None:
         cases = {
@@ -443,7 +474,10 @@ class DockerCreateEndpointDryRunTest(unittest.TestCase):
                     docker_metadata = metadata["docker"]  # type: ignore[index]
                     security = docker_metadata["security"]  # type: ignore[index]
                     self.assertEqual(security["cap_drop"], ["ALL"])  # type: ignore[index]
-                    self.assertEqual(security["cap_add"], ["NET_RAW"])  # type: ignore[index]
+                    self.assertEqual(
+                        security["cap_add"],  # type: ignore[index]
+                        ["NET_RAW", "SYS_CHROOT", "SETGID", "SETUID"],
+                    )
                     self.assertTrue(security["net_raw_only"])  # type: ignore[index]
                     self.assertFalse(security["net_admin"])  # type: ignore[index]
                     self.assertFalse(security["host_network"])  # type: ignore[index]
@@ -589,7 +623,10 @@ class DockerCreateEndpointLivePrivateTest(unittest.TestCase):
         self.assertIn("--mac-address", run_argv)
         self.assertIn("--cap-drop", run_argv)
         self.assertIn("ALL", run_argv)
-        self.assertEqual(_option_values(run_argv, "--cap-add"), ["NET_RAW", "NET_ADMIN"])
+        self.assertEqual(
+            _option_values(run_argv, "--cap-add"),
+            ["NET_RAW", "NET_ADMIN", "SYS_CHROOT", "SETGID", "SETUID"],
+        )
         self.assertEqual(
             _option_values(run_argv, "--security-opt"),
             ["no-new-privileges"],
@@ -599,6 +636,12 @@ class DockerCreateEndpointLivePrivateTest(unittest.TestCase):
         self.assertNotIn("--privileged", run_argv)
         self.assertNotIn("--network=host", run_argv)
         self.assertNotIn("/var/run/docker.sock", " ".join(run_argv))
+
+        control_connect = runner.only_call_matching("docker", "network", "connect")
+        self.assertEqual(
+            control_connect,
+            ("docker", "network", "connect", "bridge", "container-private-1"),
+        )
 
         ssh_calls = [call for call in runner.calls if call and call[0] == "ssh"]
         self.assertGreaterEqual(len(ssh_calls), 2)
@@ -624,7 +667,10 @@ class DockerCreateEndpointLivePrivateTest(unittest.TestCase):
         docker_metadata = metadata["docker"]  # type: ignore[index]
         security = docker_metadata["security"]  # type: ignore[index]
         self.assertEqual(security["cap_drop"], ["ALL"])  # type: ignore[index]
-        self.assertEqual(security["cap_add"], ["NET_RAW", "NET_ADMIN"])  # type: ignore[index]
+        self.assertEqual(
+            security["cap_add"],  # type: ignore[index]
+            ["NET_RAW", "NET_ADMIN", "SYS_CHROOT", "SETGID", "SETUID"],
+        )
         self.assertTrue(security["no_new_privileges"])  # type: ignore[index]
         self.assertFalse(security["privileged"])  # type: ignore[index]
         self.assertFalse(security["host_network"])  # type: ignore[index]
@@ -637,6 +683,8 @@ class DockerCreateEndpointLivePrivateTest(unittest.TestCase):
         self.assertEqual(container["ssh"]["host_port"], 29222)  # type: ignore[index]
         self.assertEqual(container["ssh"]["publish"], "127.0.0.1:29222:22")  # type: ignore[index]
         self.assertEqual(container["run_argv"], list(run_argv))  # type: ignore[index]
+        self.assertEqual(container["control_network"], "bridge")  # type: ignore[index]
+        self.assertTrue(container["control_network_connected"])  # type: ignore[index]
 
         interfaces = output["interfaces"]  # type: ignore[assignment]
         self.assertEqual(len(interfaces), 1)
@@ -782,7 +830,10 @@ class DockerCreateEndpointLiveNatL3Test(unittest.TestCase):
                 self.assertNotIn("--network=host", run_argv)
                 self.assertNotIn("host", _option_values(run_argv, "--network"))
                 self.assertEqual(_option_values(run_argv, "--cap-drop"), ["ALL"])
-                self.assertEqual(_option_values(run_argv, "--cap-add"), ["NET_RAW"])
+                self.assertEqual(
+                    _option_values(run_argv, "--cap-add"),
+                    ["NET_RAW", "SYS_CHROOT", "SETGID", "SETUID"],
+                )
                 self.assertNotIn("NET_ADMIN", _option_values(run_argv, "--cap-add"))
                 self.assertEqual(
                     _option_values(run_argv, "--security-opt"),
@@ -821,7 +872,10 @@ class DockerCreateEndpointLiveNatL3Test(unittest.TestCase):
                 docker_metadata = metadata["docker"]  # type: ignore[index]
                 security = docker_metadata["security"]  # type: ignore[index]
                 self.assertEqual(security["cap_drop"], ["ALL"])  # type: ignore[index]
-                self.assertEqual(security["cap_add"], ["NET_RAW"])  # type: ignore[index]
+                self.assertEqual(
+                    security["cap_add"],  # type: ignore[index]
+                    ["NET_RAW", "SYS_CHROOT", "SETGID", "SETUID"],
+                )
                 self.assertTrue(security["net_raw_only"])  # type: ignore[index]
                 self.assertFalse(security["net_admin"])  # type: ignore[index]
                 self.assertTrue(security["no_new_privileges"])  # type: ignore[index]
@@ -1240,6 +1294,9 @@ class _DockerLivePrivateRunner:
         if parts[:3] == ("docker", "network", "create"):
             self.network_created = True
             return _result(parts, stdout="network-pair-live\n")
+
+        if parts[:3] == ("docker", "network", "connect"):
+            return _result(parts)
 
         if parts[:2] == ("docker", "run"):
             self.private_ip = _option_values(parts, "--ip")[0]
