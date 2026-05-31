@@ -14,6 +14,20 @@ use crate::protocols::ip::Ipv4;
 use crate::protocols::ipv6::Ipv6;
 use crate::registry::ProtocolRegistry;
 
+mod arp;
+
+pub use self::arp::{
+    arp_hardware_type_label, arp_protocol_type_label, ArpOperation, ARP_HRD_ATM, ARP_HRD_ETHERNET,
+    ARP_HRD_FIBRE_CHANNEL, ARP_HRD_IEEE_802, ARP_HRD_INFINIBAND, ARP_HRD_MAPOS, ARP_OP_ARP_NAK,
+    ARP_OP_DRARP_ERROR, ARP_OP_DRARP_REPLY, ARP_OP_DRARP_REQUEST, ARP_OP_EXP1, ARP_OP_EXP2,
+    ARP_OP_INARP_REPLY, ARP_OP_INARP_REQUEST, ARP_OP_MAPOS_UNARP, ARP_OP_RARP_REPLY,
+    ARP_OP_RARP_REQUEST, ARP_OP_REPLY, ARP_OP_REQUEST, ARP_OP_RESERVED, ARP_OP_RESERVED_MAX,
+    ARP_PRO_IPV4,
+};
+use self::arp::{
+    hardware_type_inspection, operation_inspection, operation_summary, protocol_type_inspection,
+};
+
 /// Ethernet type for IPv4 payloads.
 pub const ETHERTYPE_IPV4: u16 = 0x0800;
 /// Ethernet type for ARP payloads.
@@ -195,209 +209,6 @@ impl Layer for Ethernet {
 }
 
 impl_layer_div!(Ethernet);
-
-/// ARP operation codepoint: Reserved (RFC 5494, IANA arp-parameters-1 value 0).
-pub const ARP_OP_RESERVED: u16 = 0;
-/// ARP operation codepoint: REQUEST (RFC 826, IANA arp-parameters-1 value 1).
-pub const ARP_OP_REQUEST: u16 = 1;
-/// ARP operation codepoint: REPLY (RFC 826, IANA arp-parameters-1 value 2).
-pub const ARP_OP_REPLY: u16 = 2;
-/// ARP operation codepoint: request Reverse / RARP request
-/// (RFC 903, IANA arp-parameters-1 value 3). Codepoint-only: rides the base
-/// ARP wire format with no extension-specific behavior.
-pub const ARP_OP_RARP_REQUEST: u16 = 3;
-/// ARP operation codepoint: reply Reverse / RARP reply
-/// (RFC 903, IANA arp-parameters-1 value 4). Codepoint-only.
-pub const ARP_OP_RARP_REPLY: u16 = 4;
-/// ARP operation codepoint: DRARP-Request
-/// (RFC 1931, IANA arp-parameters-1 value 5). Codepoint-only.
-pub const ARP_OP_DRARP_REQUEST: u16 = 5;
-/// ARP operation codepoint: DRARP-Reply
-/// (RFC 1931, IANA arp-parameters-1 value 6). Codepoint-only.
-pub const ARP_OP_DRARP_REPLY: u16 = 6;
-/// ARP operation codepoint: DRARP-Error
-/// (RFC 1931, IANA arp-parameters-1 value 7). Codepoint-only.
-pub const ARP_OP_DRARP_ERROR: u16 = 7;
-/// ARP operation codepoint: InARP-Request
-/// (RFC 2390, IANA arp-parameters-1 value 8). Codepoint-only.
-pub const ARP_OP_INARP_REQUEST: u16 = 8;
-/// ARP operation codepoint: InARP-Reply
-/// (RFC 2390, IANA arp-parameters-1 value 9). Codepoint-only.
-pub const ARP_OP_INARP_REPLY: u16 = 9;
-/// ARP operation codepoint: ARP-NAK
-/// (RFC 1577, IANA arp-parameters-1 value 10). Codepoint-only.
-pub const ARP_OP_ARP_NAK: u16 = 10;
-/// ARP operation codepoint: MAPOS-UNARP
-/// (RFC 2176, IANA arp-parameters-1 value 23). Codepoint-only.
-pub const ARP_OP_MAPOS_UNARP: u16 = 23;
-/// ARP operation codepoint: experimental OP_EXP1
-/// (RFC 5494, IANA arp-parameters-1 value 24).
-pub const ARP_OP_EXP1: u16 = 24;
-/// ARP operation codepoint: experimental OP_EXP2
-/// (RFC 5494, IANA arp-parameters-1 value 25).
-pub const ARP_OP_EXP2: u16 = 25;
-/// ARP operation codepoint: Reserved (RFC 5494, IANA arp-parameters-1 value 65535).
-pub const ARP_OP_RESERVED_MAX: u16 = 65535;
-
-/// ARP hardware type: Ethernet (10Mb) (IANA arp-parameters-2 value 1). Default HRD.
-pub const ARP_HRD_ETHERNET: u16 = 1;
-/// ARP hardware type: IEEE 802 Networks (IANA arp-parameters-2 value 6).
-pub const ARP_HRD_IEEE_802: u16 = 6;
-/// ARP hardware type: Fibre Channel (RFC 4338, IANA arp-parameters-2 value 18).
-pub const ARP_HRD_FIBRE_CHANNEL: u16 = 18;
-/// ARP hardware type: ATM (RFC 2225, IANA arp-parameters-2 value 19).
-pub const ARP_HRD_ATM: u16 = 19;
-/// ARP hardware type: MAPOS (RFC 2176, IANA arp-parameters-2 value 25).
-pub const ARP_HRD_MAPOS: u16 = 25;
-/// ARP hardware type: InfiniBand (RFC 4391, IANA arp-parameters-2 value 32).
-pub const ARP_HRD_INFINIBAND: u16 = 32;
-
-/// ARP protocol type: IPv4. The protocol-type field shares the EtherType space
-/// (IANA arp-parameters-3, administered per RFC 5342), so this equals
-/// [`ETHERTYPE_IPV4`]. Default PRO.
-pub const ARP_PRO_IPV4: u16 = ETHERTYPE_IPV4;
-
-/// Short label for a known ARP hardware type, or `None` for unknown values.
-///
-/// This is a data-only lookup over the source-backed hardware-type codepoints
-/// (IANA registry arp-parameters-2, `target/arp-rfc/scope.md`). It never blocks
-/// or rewrites any value: unknown numeric hardware types simply return `None`
-/// and remain usable through [`Arp::hardware_type`]. Mirrors the
-/// [`ArpOperation::label`] shape so summaries and generated tools can recognize
-/// a hardware type without narrowing the packet model.
-pub fn arp_hardware_type_label(hardware_type: u16) -> Option<&'static str> {
-    match hardware_type {
-        ARP_HRD_ETHERNET => Some("ethernet"),
-        ARP_HRD_IEEE_802 => Some("ieee-802"),
-        ARP_HRD_FIBRE_CHANNEL => Some("fibre-channel"),
-        ARP_HRD_ATM => Some("atm"),
-        ARP_HRD_MAPOS => Some("mapos"),
-        ARP_HRD_INFINIBAND => Some("infiniband"),
-        _ => None,
-    }
-}
-
-/// Short label for a known ARP protocol type, or `None` for unknown values.
-///
-/// This is a data-only lookup over the source-backed protocol-type codepoints.
-/// The ARP protocol-type field shares the EtherType space (IANA registry
-/// arp-parameters-3, administered per RFC 5342), and that sub-registry returned
-/// no records of its own in the manifest build, so the only source-backed known
-/// value is the IPv4 default ([`ARP_PRO_IPV4`] = [`ETHERTYPE_IPV4`])
-/// (`target/arp-rfc/scope.md`, assumption 3). It never blocks or rewrites any
-/// value: unknown numeric protocol types simply return `None` and remain usable
-/// through [`Arp::protocol_type`]. Mirrors the [`arp_hardware_type_label`] shape
-/// so summaries and generated tools can recognize a protocol type without
-/// narrowing the packet model.
-pub fn arp_protocol_type_label(protocol_type: u16) -> Option<&'static str> {
-    match protocol_type {
-        ARP_PRO_IPV4 => Some("ipv4"),
-        _ => None,
-    }
-}
-
-/// ARP operation value.
-///
-/// Source-backed known operation codepoints from IANA registry
-/// arp-parameters-1 (`target/arp-rfc/scope.md`). Base ARP behavior is built
-/// around [`ArpOperation::Request`] and [`ArpOperation::Reply`] (RFC 826); the
-/// remaining ARP-family operations are exposed as named codepoints only, with
-/// no extension-specific behavior. Unknown numeric values are never blocked:
-/// use [`Arp::opcode`] for any value this enum does not name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-#[repr(u16)]
-pub enum ArpOperation {
-    /// ARP who-has request (RFC 826).
-    Request = ARP_OP_REQUEST,
-    /// ARP is-at reply (RFC 826).
-    Reply = ARP_OP_REPLY,
-    /// RARP request (RFC 903).
-    RarpRequest = ARP_OP_RARP_REQUEST,
-    /// RARP reply (RFC 903).
-    RarpReply = ARP_OP_RARP_REPLY,
-    /// DRARP request (RFC 1931).
-    DrarpRequest = ARP_OP_DRARP_REQUEST,
-    /// DRARP reply (RFC 1931).
-    DrarpReply = ARP_OP_DRARP_REPLY,
-    /// DRARP error (RFC 1931).
-    DrarpError = ARP_OP_DRARP_ERROR,
-    /// Inverse ARP request (RFC 2390).
-    InArpRequest = ARP_OP_INARP_REQUEST,
-    /// Inverse ARP reply (RFC 2390).
-    InArpReply = ARP_OP_INARP_REPLY,
-    /// ARP-NAK (RFC 1577).
-    ArpNak = ARP_OP_ARP_NAK,
-    /// MAPOS UNARP (RFC 2176).
-    MaposUnarp = ARP_OP_MAPOS_UNARP,
-}
-
-impl ArpOperation {
-    /// Map a raw operation opcode to a named [`ArpOperation`].
-    ///
-    /// Returns `None` for any value not named by this enum (reserved,
-    /// experimental, MARS, or unassigned codepoints, and any other unknown
-    /// number). Those values stay usable through [`Arp::opcode`] and remain
-    /// round-trippable; this conversion only reports whether a name exists.
-    pub fn from_opcode(opcode: u16) -> Option<Self> {
-        match opcode {
-            ARP_OP_REQUEST => Some(Self::Request),
-            ARP_OP_REPLY => Some(Self::Reply),
-            ARP_OP_RARP_REQUEST => Some(Self::RarpRequest),
-            ARP_OP_RARP_REPLY => Some(Self::RarpReply),
-            ARP_OP_DRARP_REQUEST => Some(Self::DrarpRequest),
-            ARP_OP_DRARP_REPLY => Some(Self::DrarpReply),
-            ARP_OP_DRARP_ERROR => Some(Self::DrarpError),
-            ARP_OP_INARP_REQUEST => Some(Self::InArpRequest),
-            ARP_OP_INARP_REPLY => Some(Self::InArpReply),
-            ARP_OP_ARP_NAK => Some(Self::ArpNak),
-            ARP_OP_MAPOS_UNARP => Some(Self::MaposUnarp),
-            _ => None,
-        }
-    }
-
-    /// Numeric opcode for this operation (IANA arp-parameters-1).
-    pub fn opcode(self) -> u16 {
-        self as u16
-    }
-
-    /// Short, stable label for this operation.
-    ///
-    /// `Request`/`Reply` keep the `request`/`reply` labels base ARP summaries
-    /// have always used; the remaining ARP-family operations use compact names.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Request => "request",
-            Self::Reply => "reply",
-            Self::RarpRequest => "rarp-request",
-            Self::RarpReply => "rarp-reply",
-            Self::DrarpRequest => "drarp-request",
-            Self::DrarpReply => "drarp-reply",
-            Self::DrarpError => "drarp-error",
-            Self::InArpRequest => "inarp-request",
-            Self::InArpReply => "inarp-reply",
-            Self::ArpNak => "arp-nak",
-            Self::MaposUnarp => "mapos-unarp",
-        }
-    }
-}
-
-impl From<ArpOperation> for u16 {
-    fn from(value: ArpOperation) -> Self {
-        value as u16
-    }
-}
-
-impl TryFrom<u16> for ArpOperation {
-    type Error = u16;
-
-    /// Convert a raw opcode into a named operation, returning the original
-    /// value as the error when it is not a known codepoint so callers can keep
-    /// it via [`Arp::opcode`].
-    fn try_from(value: u16) -> core::result::Result<Self, Self::Error> {
-        Self::from_opcode(value).ok_or(value)
-    }
-}
 
 /// Address Resolution Protocol packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1549,42 +1360,6 @@ fn address_summary_ipv4(protocol_type: u16, bytes: &[u8]) -> String {
         .unwrap_or_else(|| hex_bytes(bytes))
 }
 
-fn operation_summary(operation: u16) -> String {
-    match ArpOperation::from_opcode(operation) {
-        Some(named) => named.label().to_string(),
-        None => operation.to_string(),
-    }
-}
-
-/// Inspection rendering for the ARP operation: known operations show their
-/// source-backed label alongside the raw opcode so unknown numeric values stay
-/// visible (e.g. `reply (2)`, `1024`).
-fn operation_inspection(operation: u16) -> String {
-    match ArpOperation::from_opcode(operation) {
-        Some(named) => format!("{} ({operation})", named.label()),
-        None => operation.to_string(),
-    }
-}
-
-/// Inspection rendering for the ARP hardware type: known IANA hardware types
-/// show their label next to the raw codepoint, unknown values render as a bare
-/// hex codepoint so nonstandard hardware types stay inspectable.
-fn hardware_type_inspection(hardware_type: u16) -> String {
-    match arp_hardware_type_label(hardware_type) {
-        Some(label) => format!("{label} (0x{hardware_type:04x})"),
-        None => format!("0x{hardware_type:04x}"),
-    }
-}
-
-/// Inspection rendering for the ARP protocol type, mirroring
-/// [`hardware_type_inspection`].
-fn protocol_type_inspection(protocol_type: u16) -> String {
-    match arp_protocol_type_label(protocol_type) {
-        Some(label) => format!("{label} (0x{protocol_type:04x})"),
-        None => format!("0x{protocol_type:04x}"),
-    }
-}
-
 fn hex_bytes(bytes: &[u8]) -> String {
     let mut output = String::new();
 
@@ -1670,7 +1445,7 @@ mod ethernet {
 }
 
 #[cfg(test)]
-mod arp {
+mod arp_tests {
     use super::{Arp, ArpOperation, Ethernet, ETHERTYPE_ARP};
     use crate::{CrafterError, LinkType, MacAddr, Packet, Raw};
     use core::net::Ipv4Addr;
