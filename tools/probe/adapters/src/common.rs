@@ -335,8 +335,12 @@ fn dispatch_case(
         (RunMode::Live, "icmp-echo") => icmp::run_icmp_live(request, plan),
         (RunMode::DryRun, "tcp-syn-open" | "tcp-syn-closed") => tcp::run_tcp_dry_run(request, plan),
         (RunMode::Live, "tcp-syn-open" | "tcp-syn-closed") => tcp::run_tcp_live(request, plan),
-        (RunMode::DryRun, "dns-query" | "dns-a-success") => dns::run_dns_dry_run(request, plan),
-        (RunMode::Live, "dns-query" | "dns-a-success") => dns::run_dns_live(request, plan),
+        (RunMode::DryRun, "dns-query" | "dns-a-success" | "dns-aaaa-success") => {
+            dns::run_dns_dry_run(request, plan)
+        }
+        (RunMode::Live, "dns-query" | "dns-a-success" | "dns-aaaa-success") => {
+            dns::run_dns_live(request, plan)
+        }
         (RunMode::DryRun, "ttl-expired") => icmp::run_ttl_expired_dry_run(request, plan),
         (RunMode::Live, "ttl-expired") => icmp::run_ttl_expired_live(request, plan),
         _ => {
@@ -520,7 +524,7 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
             plan.destination_port.unwrap_or(0),
             plan.source_port.unwrap_or(0),
         ),
-        "dns-query" | "dns-a-success" => format!(
+        "dns-query" | "dns-a-success" | "dns-aaaa-success" => format!(
             "udp and src host {} and dst host {} and src port {} and dst port {}",
             plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
             plan.expected_reply_destination_ipv4
@@ -547,7 +551,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "icmp-echo" => "icmp_echo_reply",
             "tcp-syn-open" => "tcp_syn_ack",
             "tcp-syn-closed" => "tcp_rst",
-            "dns-query" | "dns-a-success" => "dns_response",
+            "dns-query" | "dns-a-success" | "dns-aaaa-success" => "dns_response",
             "ttl-expired" => "icmp_ttl_expired",
             _ => "unknown",
         })
@@ -565,7 +569,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "kind": "closed-port",
             "port": plan.destination_port,
         }),
-        "dns-query" | "dns-a-success" => json!({
+        "dns-query" | "dns-a-success" | "dns-aaaa-success" => json!({
             "required": true,
             "kind": "udp-dns-responder",
             "port": plan.destination_port,
