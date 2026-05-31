@@ -118,7 +118,7 @@ BEHAVIOR_DNS_CASES: tuple[ProbeCase, ...] = (
         protocol="dns",
     ),
     _behavior_case(
-        name="dns-srv",
+        name="dns-srv-answer",
         description="Send an SRV query and validate the SRV answer.",
         stimulus="dns_query",
         expected_response="dns_response",

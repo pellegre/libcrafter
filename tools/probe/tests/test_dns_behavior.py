@@ -97,6 +97,14 @@ def _dns_mx_answer_plan(*, seed: int = 1016, sequence: int = 0) -> dict:
     )
 
 
+def _dns_srv_answer_plan(*, seed: int = 1017, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dns-srv-answer"]),
+        case=planning.PROBE_CASE_BY_NAME["dns-srv-answer"],
+        sequence=sequence,
+    )
+
+
 class DnsASuccessPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct A query/answer contract."""
 
@@ -931,6 +939,138 @@ class DnsMxAnswerTest(unittest.TestCase):
                 if result.get("case") == "dns-mx-answer"
             ]
             self.assertTrue(results, "endpoint emitted no dns-mx-answer result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+
+class DnsSrvAnswerPlanTest(unittest.TestCase):
+    """The plan carries an RFC 2782-correct SRV query/answer contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dns-srv-answer", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dns-srv-answer"],
+            planning._dns_srv_answer_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dns_srv_answer_plan(), _dns_srv_answer_plan())
+
+    def test_plan_carries_an_srv_query_contract(self) -> None:
+        plan = _dns_srv_answer_plan()
+
+        self.assertEqual(plan["case"], "dns-srv-answer")
+        self.assertEqual(plan["stimulus"], "dns_query")
+        self.assertEqual(plan["expected_response"], "dns_response")
+
+        # Query id, source port, target port 53, an SRV owner name, and QTYPE SRV.
+        self.assertIsInstance(plan["query_id"], int)
+        self.assertTrue(1 <= plan["query_id"] <= 0xFFFF)
+        self.assertIsInstance(plan["source_port"], int)
+        self.assertNotEqual(plan["source_port"], 53)
+        self.assertEqual(plan["destination_port"], 53)
+        self.assertTrue(plan["query_name"].endswith("."))
+        # SRV owner names are _service._proto.name.
+        self.assertTrue(plan["query_name"].startswith("_sip._tcp."))
+        self.assertEqual(plan["query_type"], "SRV")
+        self.assertEqual(plan["query_type_value"], 33)
+        self.assertEqual(plan["query_class_value"], 1)
+
+        # Expected answer: an SRV record carrying priority, weight, service port,
+        # and a target host name.
+        self.assertEqual(plan["expected_answer_type"], "SRV")
+        self.assertEqual(plan["expected_answer_type_value"], 33)
+        self.assertEqual(plan["expected_answer_name"], plan["query_name"])
+        self.assertIsInstance(plan["expected_srv_priority"], int)
+        self.assertTrue(1 <= plan["expected_srv_priority"] <= 0xFFFF)
+        self.assertIsInstance(plan["expected_srv_weight"], int)
+        self.assertTrue(0 <= plan["expected_srv_weight"] <= 0xFFFF)
+        self.assertIsInstance(plan["expected_srv_port"], int)
+        self.assertTrue(1 <= plan["expected_srv_port"] <= 0xFFFF)
+        self.assertTrue(plan["expected_srv_target"].endswith("."))
+        self.assertNotEqual(plan["expected_srv_target"], plan["query_name"])
+        self.assertEqual(plan["expected_response_code"], 0)
+        self.assertIsInstance(plan["answer_ttl"], int)
+        self.assertGreater(plan["answer_ttl"], 0)
+        self.assertIn("qr", plan["expected_response_flags"])
+
+    def test_validation_contract_covers_id_qr_question_srv_answer_peer(self) -> None:
+        plan = _dns_srv_answer_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (response flows target -> stimulus).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 53)
+        self.assertEqual(validation["destination_port"], plan["source_port"])
+
+        # Transaction id, QR flag, and rcode.
+        self.assertEqual(validation["query_id"], plan["query_id"])
+        self.assertTrue(validation["qr"])
+        self.assertEqual(validation["response_code"], 0)
+
+        # Question name/type/class.
+        question = validation["question"]
+        self.assertEqual(question["name"], plan["query_name"])
+        self.assertEqual(question["type"], "SRV")
+        self.assertEqual(question["class"], "IN")
+
+        # Answer name/type/class, the decoded priority/weight/port/target, and
+        # the TTL.
+        answer = validation["answer"]
+        self.assertEqual(answer["name"], plan["query_name"])
+        self.assertEqual(answer["type"], "SRV")
+        self.assertEqual(answer["class"], "IN")
+        self.assertEqual(answer["priority"], plan["expected_srv_priority"])
+        self.assertEqual(answer["weight"], plan["expected_srv_weight"])
+        self.assertEqual(answer["port"], plan["expected_srv_port"])
+        self.assertEqual(answer["target"], plan["expected_srv_target"])
+        self.assertEqual(answer["ttl"], plan["answer_ttl"])
+
+    def test_target_service_is_controlled_udp_dns_responder(self) -> None:
+        plan = _dns_srv_answer_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-dns-responder")
+        self.assertEqual(target_service["port"], 53)
+        self.assertEqual(target_service["query_type"], "SRV")
+        self.assertEqual(target_service["srv_priority"], plan["expected_srv_priority"])
+        self.assertEqual(target_service["srv_weight"], plan["expected_srv_weight"])
+        self.assertEqual(target_service["srv_port"], plan["expected_srv_port"])
+        self.assertEqual(target_service["srv_target"], plan["expected_srv_target"])
+
+
+class DnsSrvAnswerTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dns-srv-answer",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1017,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dns-srv-answer", planned)
+
+            # The endpoint produced a result for the focused case and it built
+            # the SRV query (a dry-run plan compiles the outgoing stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dns-srv-answer"
+            ]
+            self.assertTrue(results, "endpoint emitted no dns-srv-answer result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))
