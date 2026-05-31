@@ -196,6 +196,16 @@ pub struct ProbePlan {
     pub requested_ipv4: Option<String>,
     #[serde(default)]
     pub server_identifier: Option<String>,
+    // The DHCP client identifier (option 61, RFC 2132 section 9.14), carried as
+    // the lowercase hex of the encoded option payload (type octet plus
+    // identifier). `client_identifier_hex` is set on the stimulus Discover that
+    // identifies with option 61 (`dhcp-client-identifier`);
+    // `expected_client_identifier_hex` is the value the responder must echo back
+    // in its Offer. A case that relies only on `chaddr` leaves both unset.
+    #[serde(default)]
+    pub client_identifier_hex: Option<String>,
+    #[serde(default)]
+    pub expected_client_identifier_hex: Option<String>,
     #[serde(default)]
     pub expected_message_type_value: Option<u8>,
     #[serde(default)]
@@ -533,10 +543,11 @@ fn dispatch_case(
         ) => dns::run_dns_live(request, plan),
         (RunMode::DryRun, "ttl-expired") => icmp::run_ttl_expired_dry_run(request, plan),
         (RunMode::Live, "ttl-expired") => icmp::run_ttl_expired_live(request, plan),
-        (RunMode::DryRun, "dhcp-discover-offer" | "dhcp-request-ack") => {
-            dhcp::run_dhcp_dry_run(request, plan)
-        }
-        (RunMode::Live, "dhcp-discover-offer" | "dhcp-request-ack") => {
+        (
+            RunMode::DryRun,
+            "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier",
+        ) => dhcp::run_dhcp_dry_run(request, plan),
+        (RunMode::Live, "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier") => {
             dhcp::run_dhcp_live(request, plan)
         }
         _ => {
@@ -681,6 +692,8 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "transaction_id": plan.transaction_id,
         "requested_ipv4": plan.requested_ipv4,
         "server_identifier": plan.server_identifier,
+        "client_identifier_hex": plan.client_identifier_hex,
+        "expected_client_identifier_hex": plan.expected_client_identifier_hex,
         "expected_message_type_value": plan.expected_message_type_value,
         "expected_yiaddr": plan.expected_yiaddr,
         "expected_server_identifier": plan.expected_server_identifier,
@@ -789,7 +802,7 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 .as_deref()
                 .unwrap_or("")
         ),
-        "dhcp-discover-offer" | "dhcp-request-ack" => format!(
+        "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier" => format!(
             "udp and src host {} and dst host {} and src port {} and dst port {}",
             plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
             plan.expected_reply_destination_ipv4
@@ -823,6 +836,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "ttl-expired" => "icmp_ttl_expired",
             "dhcp-discover-offer" => "dhcp_offer",
             "dhcp-request-ack" => "dhcp_ack",
+            "dhcp-client-identifier" => "dhcp_offer",
             _ => "unknown",
         })
 }
@@ -969,6 +983,22 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "subnet_mask": plan.expected_subnet_mask,
             "router_ipv4": plan.expected_router_ipv4,
             "dns_ipv4": plan.expected_dns_ipv4,
+            "lease_time": plan.expected_lease_time,
+            "renewal_time": plan.expected_renewal_time,
+            "rebinding_time": plan.expected_rebinding_time,
+        }),
+        "dhcp-client-identifier" => json!({
+            "required": true,
+            "kind": "dhcp-responder",
+            "port": plan.destination_port,
+            "client_port": plan.source_port,
+            "client_mac": plan.client_mac,
+            "client_identifier_hex": plan.client_identifier_hex,
+            "transaction_id": plan.transaction_id,
+            "yiaddr": plan.expected_yiaddr,
+            "server_identifier": plan.expected_server_identifier,
+            "subnet_mask": plan.expected_subnet_mask,
+            "router_ipv4": plan.expected_router_ipv4,
             "lease_time": plan.expected_lease_time,
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,

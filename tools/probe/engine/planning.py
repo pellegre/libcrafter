@@ -1620,6 +1620,33 @@ def dhcp_hostname(profile: str, seed: int, sequence: int) -> str:
     return f"probe-{label}-{seed}-{sequence}"
 
 
+def dhcp_client_identifier(profile: str, seed: int, sequence: int) -> str:
+    """Return the deterministic DHCP client identifier (option 61) payload hex.
+
+    Builds an RFC 4361 node-specific identifier: the type octet ``0xff``, a
+    deterministic 4-octet IAID, and a deterministic DUID-LL (DUID type 3,
+    hardware type 1) over an RFC 7042 documentation MAC. This is a stable client
+    identity distinct from ``chaddr`` so the controlled responder can record and
+    the validator can confirm option 61 specifically (RFC 2132 section 9.14).
+
+    The returned value is the lowercase hex of the encoded option-61 payload
+    (type octet plus identifier, without the option code or length), which is
+    exactly what the libcrafter ``DhcpClientIdentifier`` decoder re-encodes.
+    """
+
+    digest = deterministic_bytes("dhcp-client-identifier", profile, seed, sequence)
+    # RFC 4361 type octet 0xff, then a 4-octet IAID derived from the digest.
+    payload = bytearray()
+    payload.append(0xFF)
+    payload.extend(digest[0:4])
+    # DUID-LL (RFC 3315 / RFC 4361): DUID type 3, hardware type 1 (Ethernet),
+    # followed by a documentation MAC (RFC 7042 00:00:5e:00:53:00-ff).
+    payload.extend((0x00, 0x03))  # DUID type 3 (DUID-LL)
+    payload.extend((0x00, 0x01))  # hardware type 1 (Ethernet)
+    payload.extend((0x00, 0x00, 0x5E, 0x00, 0x53, digest[4]))
+    return payload.hex()
+
+
 def _dhcp_discover_offer_probe_plan(
     *,
     case_name: str = "dhcp-discover-offer",
@@ -1714,6 +1741,117 @@ def _dhcp_discover_offer_probe_plan(
             "message_type_value": 2,
             "transaction_id": transaction_id,
             "client_hardware_address": client_mac,
+            "yiaddr": offered_ipv4,
+            "server_identifier": server_identifier,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+            "direction": "server_to_client",
+        },
+    }
+
+
+def _dhcp_client_identifier_probe_plan(
+    *,
+    case_name: str = "dhcp-client-identifier",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dhcp-client-identifier`` behavioral case.
+
+    The stimulus is a BOOTP/DHCP Discover (message type 1) built by libcrafter
+    that carries a client identifier option (option 61, RFC 2132 section 9.14)
+    in addition to the client hardware address (``chaddr``). DHCP clients may
+    identify themselves with option 61 instead of relying only on ``chaddr``, so
+    the controlled responder records the offered client identity and echoes the
+    client identifier back in its Offer (RFC 6842 makes echoing the option a MUST
+    for compliant servers).
+
+    The validation contract covers the decoded UDP/BOOTP/DHCP Offer: the BOOTP
+    opcode (reply), message type Offer, the echoed transaction id (xid), the
+    client hardware address (chaddr), the offered address (yiaddr), the server
+    identifier (option 54), the echoed client identifier (option 61), and the
+    response direction (server -> client over ports 67 -> 68). Addresses stay in
+    documentation space: the offered address is in ``198.51.100.0/24`` and the
+    lab transport uses the private endpoint pair.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    client_mac = dhcp_client_mac(profile, seed, sequence)
+    client_identifier_hex = dhcp_client_identifier(profile, seed, sequence)
+    transaction_id = int.from_bytes(digest[0:4], "big") or 1
+    # DHCP uses fixed privileged ports: client 68 -> server 67.
+    source_port = 68
+    destination_port = 67
+    offered_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
+    subnet_mask = "255.255.255.0"
+    server_identifier = target_ipv4
+    router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
+    lease_time = 3600 + 60 * (digest[5] % 60)
+    renewal_time = lease_time // 2
+    rebinding_time = (lease_time * 7) // 8
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dhcp_discover",
+        "expected_response": "dhcp_offer",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "client_mac": client_mac,
+        "client_identifier_hex": client_identifier_hex,
+        "transaction_id": transaction_id,
+        "expected_message_type": "offer",
+        "expected_message_type_value": 2,
+        "expected_yiaddr": offered_ipv4,
+        "expected_server_identifier": server_identifier,
+        "expected_client_identifier_hex": client_identifier_hex,
+        "expected_subnet_mask": subnet_mask,
+        "expected_router_ipv4": router_ipv4,
+        "expected_lease_time": lease_time,
+        "expected_renewal_time": renewal_time,
+        "expected_rebinding_time": rebinding_time,
+        "target_service": {
+            "required": True,
+            "kind": "dhcp-responder",
+            "port": destination_port,
+            "client_port": source_port,
+            "client_mac": client_mac,
+            "client_identifier_hex": client_identifier_hex,
+            "transaction_id": transaction_id,
+            "yiaddr": offered_ipv4,
+            "server_identifier": server_identifier,
+            "subnet_mask": subnet_mask,
+            "router_ipv4": router_ipv4,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "op": "reply",
+            "op_value": 2,
+            "message_type": "offer",
+            "message_type_value": 2,
+            "transaction_id": transaction_id,
+            "client_hardware_address": client_mac,
+            "client_identifier_hex": client_identifier_hex,
             "yiaddr": offered_ipv4,
             "server_identifier": server_identifier,
             "lease_time": lease_time,
@@ -2029,6 +2167,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-repeat-transaction": _dns_repeat_transaction_probe_plan,
     "dhcp-discover-offer": _dhcp_discover_offer_probe_plan,
     "dhcp-request-ack": _dhcp_request_ack_probe_plan,
+    "dhcp-client-identifier": _dhcp_client_identifier_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }
