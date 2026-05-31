@@ -10,8 +10,8 @@ use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
     DnsRecordData, Ethernet, Icmp, IcmpKind, Icmpv6, Ipv4, Ipv4Option, Ipv6, Ipv6FragmentHeader,
     Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
-    Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp, Vlan, BOOTP_REQUEST, DHCP_CLIENT_PORT,
-    DHCP_SERVER_PORT, DNS_CLASS_IN, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE,
+    Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST,
+    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE,
     DNS_FLAG_RECURSION_DESIRED, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME, ETHERTYPE_ARP,
     ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
     ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6,
@@ -2066,4 +2066,83 @@ fn summary_fixture_reader_matches_current_summary_fixture() {
     );
 
     assert_eq!(actual, expected);
+}
+
+fn assert_show_matches_fixture(label: &str, packet: &Packet, show_fixture: &str) {
+    let expected = read_summary_fixture(show_fixture);
+    assert_eq!(
+        expected.trim_end(),
+        packet.show().trim_end(),
+        "{label} show() did not match {show_fixture}"
+    );
+}
+
+/// Standard Ethernet/IPv4 ARP `show()` output stays readable and byte-stable
+/// against its golden snapshot (labelled hardware/protocol type and operation,
+/// typed MAC/IPv4 address views). Decoded from the existing golden byte fixture
+/// so the snapshot tracks the same packet the rest of the suite exercises.
+#[test]
+fn ethernet_arp_reply_show_matches_snapshot() {
+    let case = valid_fixture_case("ethernet-arp-reply");
+    let bytes = fixture_bytes_for_case(case);
+    let packet = decode_packet(PacketDecodeTarget::Link(LinkType::Ethernet), &bytes)
+        .expect("ethernet ARP reply fixture should decode");
+    assert_show_matches_fixture(
+        "ethernet-arp-reply",
+        &packet,
+        "summaries/ethernet-arp-reply-show.summary.txt",
+    );
+}
+
+/// Standard Linux cooked ARP who-has `show()` output stays readable and stable
+/// against its golden snapshot. Decoded from the existing golden byte fixture.
+#[test]
+fn linux_sll_arp_who_has_show_matches_snapshot() {
+    let case = valid_fixture_case("linux-sll-arp-who-has");
+    let bytes = fixture_bytes_for_case(case);
+    let packet = decode_packet(PacketDecodeTarget::Link(LinkType::LinuxSll), &bytes)
+        .expect("linux cooked ARP who-has fixture should decode");
+    assert_show_matches_fixture(
+        "linux-sll-arp-who-has",
+        &packet,
+        "summaries/linux-sll-arp-who-has-show.summary.txt",
+    );
+}
+
+/// Nonstandard ARP `show()` output remains inspectable against its golden
+/// snapshot: an InfiniBand hardware type (HRD 32), an IPv6 EtherType protocol
+/// type, variable-length raw sender/target addresses (HLN=8, PLN=16), and an
+/// unknown numeric opcode. Unknown codepoints render as bare hex / numeric
+/// values and the raw address bytes stay visible. Documentation address space
+/// only (RFC 7042 MAC OUI, RFC 3849 2001:db8::/32 IPv6).
+#[test]
+fn ethernet_arp_nonstandard_show_matches_snapshot() {
+    let arp = Arp::new()
+        .hardware_type(ARP_HRD_INFINIBAND)
+        .protocol_type(0x86dd)
+        .opcode(1024)
+        .sender_hardware(vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x10, 0x11, 0x12])
+        .sender_protocol(vec![
+            0x20, 0x01, 0x0d, 0xb8, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x10,
+        ])
+        .target_hardware(vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x20, 0x21, 0x22])
+        .target_protocol(vec![
+            0x20, 0x01, 0x0d, 0xb8, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x20,
+        ]);
+
+    let packet = Packet::from_layer(
+        Ethernet::new()
+            .src(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]))
+            .dst(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]))
+            .ethertype(ETHERTYPE_ARP),
+    )
+    .push(arp);
+
+    assert_show_matches_fixture(
+        "ethernet-arp-infiniband-ipv6-nonstandard",
+        &packet,
+        "summaries/ethernet-arp-infiniband-ipv6-nonstandard-show.summary.txt",
+    );
 }
