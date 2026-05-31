@@ -12,10 +12,34 @@ use super::{
 };
 
 const ARP_REQUEST: &[u8] = fixture_bytes!("bytes/arp-who-has.bin");
+const ARP_REPLY_HEX: &str = fixture_str!("bytes/ethernet-arp-reply.hex");
+const ARP_NONSTANDARD_HEX: &str =
+    fixture_str!("bytes/ethernet-arp-infiniband-ipv6-nonstandard.hex");
 static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
+
+fn decode_hex(text: &str) -> Vec<u8> {
+    let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+    assert!(compact.len() % 2 == 0, "hex fixture has an odd hex length");
+    compact
+        .as_bytes()
+        .chunks(2)
+        .map(|chunk| {
+            let byte = std::str::from_utf8(chunk).expect("hex fixture is not valid UTF-8");
+            u8::from_str_radix(byte, 16).expect("hex fixture has an invalid hex byte")
+        })
+        .collect()
+}
 
 fn ethernet_arp_packet() -> Packet {
     Packet::decode_from_link(LinkType::Ethernet, ARP_REQUEST).unwrap()
+}
+
+fn ethernet_arp_reply_bytes() -> Vec<u8> {
+    decode_hex(ARP_REPLY_HEX)
+}
+
+fn ethernet_arp_nonstandard_bytes() -> Vec<u8> {
+    decode_hex(ARP_NONSTANDARD_HEX)
 }
 
 fn tcp_packet(source_port: u16, destination_port: u16) -> Packet {
@@ -381,6 +405,120 @@ fn bpf_filter_sniffer_offline_uses_libpcap() {
         .unwrap();
     assert_eq!(accepted, 1);
     assert_eq!(callback_count, 1);
+
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn pcap_roundtrip_arp_request_and_reply_records() {
+    let request = ethernet_arp_packet();
+    let reply = Packet::decode_from_link(LinkType::Ethernet, ethernet_arp_reply_bytes()).unwrap();
+
+    let mut output = Vec::new();
+    {
+        let mut writer = PcapWriter::from_writer(&mut output, LinkType::Ethernet).unwrap();
+        writer
+            .write_packet_with_timestamp(&request, PcapTimestamp::micros(1, 0).unwrap())
+            .unwrap();
+        writer
+            .write_packet_with_timestamp(&reply, PcapTimestamp::micros(2, 0).unwrap())
+            .unwrap();
+        writer.flush().unwrap();
+    }
+
+    let records = PcapReader::from_reader(Cursor::new(output))
+        .unwrap()
+        .collect_records()
+        .unwrap();
+    assert_eq!(records.len(), 2);
+
+    assert_eq!(records[0].data(), ARP_REQUEST);
+    assert_eq!(records[1].data(), ethernet_arp_reply_bytes());
+
+    let decoded_request = records[0].decode().unwrap();
+    let decoded_reply = records[1].decode().unwrap();
+    assert_eq!(
+        decoded_request.layer::<Arp>().unwrap().opcode_value(),
+        crate::ARP_OP_REQUEST
+    );
+    assert_eq!(
+        decoded_reply.layer::<Arp>().unwrap().opcode_value(),
+        crate::ARP_OP_REPLY
+    );
+
+    assert_eq!(decoded_request.compile().unwrap().as_bytes(), ARP_REQUEST);
+    assert_eq!(
+        decoded_reply.compile().unwrap().as_bytes(),
+        ethernet_arp_reply_bytes()
+    );
+}
+
+#[test]
+fn pcap_roundtrip_nonstandard_arp_preserves_record_bytes() {
+    let nonstandard = ethernet_arp_nonstandard_bytes();
+    let packet = Packet::decode_from_link(LinkType::Ethernet, &nonstandard).unwrap();
+
+    // Confirm the decode preserved the nonstandard codepoints and variable
+    // address lengths before exercising the pcap round trip.
+    let arp = packet.layer::<Arp>().unwrap();
+    assert_eq!(arp.hardware_type_value(), crate::ARP_HRD_INFINIBAND);
+    assert_eq!(arp.protocol_type_value(), crate::ETHERTYPE_IPV6);
+    assert_eq!(arp.hardware_len_value(), 8);
+    assert_eq!(arp.protocol_len_value(), 16);
+    assert_eq!(arp.opcode_value(), 1024);
+    assert_eq!(packet.compile().unwrap().as_bytes(), nonstandard);
+
+    let mut first = Vec::new();
+    {
+        let mut writer = PcapWriter::from_writer(&mut first, LinkType::Ethernet).unwrap();
+        writer
+            .write_packet_with_timestamp(&packet, PcapTimestamp::micros(9, 9).unwrap())
+            .unwrap();
+        writer.flush().unwrap();
+    }
+
+    let records = PcapReader::from_reader(Cursor::new(&first))
+        .unwrap()
+        .collect_records()
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].data(), nonstandard);
+
+    // Re-emit the read records: byte-exact pcap round trip for the nonstandard case.
+    let mut second = Vec::new();
+    {
+        let mut writer = PcapWriter::from_writer(&mut second, LinkType::Ethernet).unwrap();
+        for record in &records {
+            writer.write_record(record).unwrap();
+        }
+        writer.flush().unwrap();
+    }
+    assert_eq!(first, second);
+
+    // Decoding the read record reproduces the exact nonstandard bytes.
+    let decoded = records[0].decode().unwrap();
+    assert_eq!(decoded.compile().unwrap().as_bytes(), nonstandard);
+    let decoded_arp = decoded.layer::<Arp>().unwrap();
+    assert_eq!(decoded_arp.hardware_type_value(), crate::ARP_HRD_INFINIBAND);
+    assert_eq!(decoded_arp.protocol_type_value(), crate::ETHERTYPE_IPV6);
+    assert_eq!(decoded_arp.hardware_len_value(), 8);
+    assert_eq!(decoded_arp.protocol_len_value(), 16);
+    assert_eq!(decoded_arp.opcode_value(), 1024);
+}
+
+#[test]
+fn pcap_read_filter_selects_arp_with_libpcap_bpf() {
+    let tcp = tcp_packet(10, 80);
+    let arp = ethernet_arp_packet();
+    let path = write_temp_pcap("read-filter-arp", &[tcp, arp]);
+
+    let packets = super::read_pcap_filtered(&path, "arp").unwrap();
+
+    assert_eq!(packets.len(), 1);
+    let decoded = packets[0].packet();
+    assert!(decoded.layer::<Arp>().is_some());
+    assert!(decoded.layer::<Tcp>().is_none());
+    assert_eq!(decoded.compile().unwrap().as_bytes(), ARP_REQUEST);
 
     std::fs::remove_file(path).unwrap();
 }
