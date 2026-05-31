@@ -261,6 +261,15 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         Dhcp::discover(client_mac)
             .transaction_id(transaction_id)
             .client_id(client_identifier)
+    } else if plan.case == "dhcp-hostname" {
+        // RFC 2132 section 3.14: a client may name itself with the hostname
+        // option (12), a string option, in addition to chaddr. The hostname is
+        // carried verbatim in the plan; `compile()` fills the option
+        // code/length and the magic cookie. The caller-set string survives.
+        let hostname = required_str(plan.hostname.as_deref(), "hostname")?;
+        Dhcp::discover(client_mac)
+            .transaction_id(transaction_id)
+            .hostname(hostname)
     } else {
         // RFC 2131 section 4.1: a client that cannot receive unicast before its
         // address is configured sets the broadcast flag. The lab transport
@@ -489,6 +498,21 @@ pub fn validate_dhcp_candidate(
         }
     }
 
+    // Hostname (option 12, a string option) echoed by the responder when the
+    // plan names it (RFC 2132 section 3.14). The decoded string option must
+    // match the planned hostname exactly so the string option round-trips
+    // through libcrafter encode and decode.
+    if let Some(expected_hostname) = plan.expected_hostname.as_deref() {
+        match dhcp.host_name_value() {
+            Some(actual) if actual == expected_hostname => {}
+            actual => mismatches.push(json!({
+                "field": "dhcp.host_name",
+                "expected": expected_hostname,
+                "actual": actual,
+            })),
+        }
+    }
+
     // Lease time option (51); renewal (58) and rebinding (59) when planned.
     if let Some(expected_lease_time) = plan.expected_lease_time {
         match dhcp.lease_time_value() {
@@ -596,6 +620,7 @@ pub fn dhcp_json(dhcp: &Dhcp) -> Value {
             .client_identifier_value()
             .and_then(|identifier| identifier.ok())
             .map(|identifier| hex_bytes(&identifier.encode())),
+        "host_name": dhcp.host_name_value(),
         "subnet_mask": dhcp.subnet_mask_value().map(|address| address.to_string()),
         "routers": dhcp
             .routers()
@@ -1092,6 +1117,156 @@ mod tests {
         // The responder echoed the Discover's identifier, but the plan now expects
         // a different one: a payload mismatch on option 61.
         plan.expected_client_identifier_hex = Some("ff99887766".to_string());
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    fn hostname_plan() -> ProbePlan {
+        let hostname = "probe-qemu-1023-0".to_string();
+        let mut plan = base_plan("dhcp-hostname");
+        plan.source_ipv4 = Some("10.64.0.10".to_string());
+        plan.destination_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
+        plan.source_port = Some(DHCP_CLIENT_PORT);
+        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
+        plan.hostname = Some(hostname.clone());
+        plan.transaction_id = Some(0x3903_f326);
+        plan.expected_message_type_value = Some(DHCP_OFFER);
+        plan.expected_yiaddr = Some("198.51.100.42".to_string());
+        plan.expected_server_identifier = Some("10.64.0.20".to_string());
+        plan.expected_hostname = Some(hostname);
+        plan.expected_lease_time = Some(3600);
+        plan.expected_renewal_time = Some(1800);
+        plan.expected_rebinding_time = Some(3150);
+        plan
+    }
+
+    /// Build the canonical Offer the controlled responder would unicast back,
+    /// echoing the hostname (option 12) the Discover carried.
+    fn offer_with_hostname_packet(plan: &ProbePlan) -> Packet {
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
+        let hostname = plan.expected_hostname.as_deref().unwrap().to_string();
+        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .lease_time(plan.expected_lease_time.unwrap())
+            .renewal_time(plan.expected_renewal_time.unwrap())
+            .rebinding_time(plan.expected_rebinding_time.unwrap())
+            .subnet_mask("255.255.255.0".parse().unwrap())
+            .hostname(hostname);
+        Ipv4::new()
+            .src(
+                plan.expected_reply_source_ipv4
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Ipv4Addr>()
+                    .unwrap(),
+            )
+            .dst(
+                plan.expected_reply_destination_ipv4
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Ipv4Addr>()
+                    .unwrap(),
+            )
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp
+    }
+
+    #[test]
+    fn dhcp_discover_compiles_with_hostname_option() {
+        let plan = hostname_plan();
+        let packet = dhcp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let dhcp = decoded.layer::<Dhcp>().unwrap();
+
+        // Client 68 -> server 67; a Discover carrying chaddr plus option 12.
+        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        // The decoded hostname (option 12) round-trips to the planned string.
+        assert_eq!(dhcp.host_name_value(), plan.hostname.as_deref());
+        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+    }
+
+    #[test]
+    fn dhcp_hostname_requires_hostname() {
+        let mut plan = hostname_plan();
+        plan.hostname = None;
+        assert!(dhcp_packet(&plan).is_err());
+    }
+
+    #[test]
+    fn matching_offer_with_hostname_passes_validation() {
+        let plan = hostname_plan();
+        let bytes = offer_with_hostname_packet(&plan)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(
+            matches!(validation, CandidateValidation::Passed(_)),
+            "expected Passed, got {validation:?}"
+        );
+    }
+
+    #[test]
+    fn offer_missing_hostname_is_wrong_payload() {
+        let plan = hostname_plan();
+        // An otherwise-correct Offer that omits the hostname (option 12) reaches
+        // the right peer but fails the contract.
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
+        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .lease_time(plan.expected_lease_time.unwrap())
+            .renewal_time(plan.expected_renewal_time.unwrap())
+            .rebinding_time(plan.expected_rebinding_time.unwrap())
+            .subnet_mask("255.255.255.0".parse().unwrap());
+        let packet = Ipv4::new()
+            .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
+            .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp;
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    #[test]
+    fn offer_with_wrong_hostname_is_wrong_payload() {
+        let mut plan = hostname_plan();
+        let bytes = offer_with_hostname_packet(&plan)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        // The responder echoed the Discover's hostname, but the plan now expects
+        // a different one: a payload mismatch on option 12.
+        plan.expected_hostname = Some("other-host".to_string());
         let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
