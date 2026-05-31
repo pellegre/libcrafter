@@ -105,6 +105,31 @@ DOCKER_NETWORK_INSPECT_TIMEOUT = 30
 DOCKER_NETWORK_CREATE_TIMEOUT = 60
 
 
+class DockerInterfaceDiscoveryError(RuntimeError):
+    """Structured Docker provider error for endpoint interface discovery failures."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        context: Mapping[str, object],
+        required: Mapping[str, object] | None = None,
+        available: Mapping[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.context = dict(context)
+        self.required = dict(required or {})
+        self.available = dict(available or {})
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "message": str(self.args[0]),
+            "context": dict(self.context),
+            "required": dict(self.required),
+            "available": dict(self.available),
+        }
+
+
 def create_endpoint(
     *,
     provider: str,
@@ -1278,34 +1303,63 @@ def _create_live_container_endpoint(
         wait_timeout=ssh_wait_timeout,
         interval=ssh_wait_interval,
     )
-    discovered_interfaces = discover_linux_endpoint_interfaces(
-        host=DOCKER_SSH_HOST,
-        user=DOCKER_SSH_USER,
-        identity_file=layout.private_key_path,
-        known_hosts=known_hosts,
+    discovered_interfaces = _discover_docker_endpoint_interfaces(
+        provider=provider,
         exposure=exposure,
-        port=ssh_port,
+        endpoint_id=endpoint_id,
+        container_id=container_id,
+        container_name=container_name,
+        network_name=network_name,
+        layout=layout,
+        known_hosts=known_hosts,
+        ssh_port=ssh_port,
         runner=recorder,
-        source="docker-ssh-discovery",
-        metadata={
-            "container_id": container_id,
-            "container_name": container_name,
-            "docker_network": network_name,
-        },
         prefer_public_or_default=discovery_prefer_public_or_default,
     )
     active_interfaces = _docker_active_interfaces(
+        provider=provider,
+        exposure=exposure,
+        endpoint_id=endpoint_id,
         planned_interfaces=planned_interfaces,
         discovered_interfaces=discovered_interfaces,
         network_name=network_name,
         container=container,
     )
     if not active_interfaces:
-        raise RuntimeError("Docker interface discovery did not find any interfaces")
+        raise DockerInterfaceDiscoveryError(
+            "Docker interface discovery did not find any interfaces",
+            context=_docker_discovery_context(
+                provider=provider,
+                exposure=exposure,
+                endpoint_id=endpoint_id,
+                container_id=container_id,
+                container_name=container_name,
+                network_name=network_name,
+            ),
+            required={"interfaces": "at least one active Docker interface"},
+            available={"interfaces": []},
+        )
     if require_discovered_ipv4 and not any(
         interface.ipv4 is not None for interface in active_interfaces
     ):
-        raise RuntimeError("Docker interface discovery did not find an IPv4 address")
+        raise DockerInterfaceDiscoveryError(
+            "Docker interface discovery did not find an IPv4 address",
+            context=_docker_discovery_context(
+                provider=provider,
+                exposure=exposure,
+                endpoint_id=endpoint_id,
+                container_id=container_id,
+                container_name=container_name,
+                network_name=network_name,
+            ),
+            required={"ipv4": "one discovered Docker network IPv4 address"},
+            available={
+                "interfaces": [
+                    _docker_available_interface_metadata(interface)
+                    for interface in active_interfaces
+                ],
+            },
+        )
 
     manifest = EndpointManifest(
         endpoint_id=endpoint_id,
@@ -1644,15 +1698,88 @@ def _docker_live_ssh_info(
     )
 
 
+def _discover_docker_endpoint_interfaces(
+    *,
+    provider: str,
+    exposure: str,
+    endpoint_id: str,
+    container_id: str,
+    container_name: str,
+    network_name: str,
+    layout: object,
+    known_hosts: Path,
+    ssh_port: int,
+    runner: DockerRunner,
+    prefer_public_or_default: bool,
+) -> list[NetworkInterface]:
+    """Discover Docker endpoint interfaces through the endpoint SSH path."""
+
+    context = _docker_discovery_context(
+        provider=provider,
+        exposure=exposure,
+        endpoint_id=endpoint_id,
+        container_id=container_id,
+        container_name=container_name,
+        network_name=network_name,
+    )
+    try:
+        return discover_linux_endpoint_interfaces(
+            host=DOCKER_SSH_HOST,
+            user=DOCKER_SSH_USER,
+            identity_file=getattr(layout, "private_key_path"),
+            known_hosts=known_hosts,
+            exposure=exposure,
+            port=ssh_port,
+            runner=runner,
+            source="docker-ssh-discovery",
+            metadata={
+                "provider": provider,
+                "endpoint_id": endpoint_id,
+                "container_id": container_id,
+                "container_name": container_name,
+                "docker_network": network_name,
+                "discovery_transport": "ssh",
+            },
+            prefer_public_or_default=prefer_public_or_default,
+        )
+    except RuntimeError as exc:
+        raise DockerInterfaceDiscoveryError(
+            "Docker interface discovery over SSH failed",
+            context=context,
+            required={
+                "transport": "ssh",
+                "markers": ["addr", "link", "route"],
+                "json_sections": ["ip_address", "ip_link", "ip_route"],
+            },
+            available={"error": str(exc)},
+        ) from exc
+
+
 def _docker_active_interfaces(
     *,
+    provider: str,
+    exposure: str,
+    endpoint_id: str,
     planned_interfaces: Sequence[NetworkInterface],
     discovered_interfaces: Sequence[NetworkInterface],
     network_name: str,
     container: Mapping[str, object],
 ) -> list[NetworkInterface]:
+    context = _docker_discovery_context(
+        provider=provider,
+        exposure=exposure,
+        endpoint_id=endpoint_id,
+        container_id=_optional_mapping_string(container, "container_id") or "",
+        container_name=_optional_mapping_string(container, "container_name") or "",
+        network_name=network_name,
+    )
     if not discovered_interfaces:
-        return []
+        raise DockerInterfaceDiscoveryError(
+            "Docker interface discovery did not find any interfaces",
+            context=context,
+            required={"interfaces": "at least one global interface"},
+            available={"interfaces": []},
+        )
     if not planned_interfaces:
         return [
             replace(
@@ -1660,10 +1787,14 @@ def _docker_active_interfaces(
                 provider_network_id=interface.provider_network_id or network_name,
                 metadata={
                     **interface.metadata,
+                    **_docker_discovered_interface_metadata(
+                        interface=interface,
+                        planned=None,
+                        network_name=network_name,
+                        container=container,
+                    ),
                     "planned": False,
                     "discovered": True,
-                    "docker_network": network_name,
-                    "container": dict(container),
                 },
             )
             for interface in discovered_interfaces
@@ -1676,26 +1807,44 @@ def _docker_active_interfaces(
             discovered_interfaces,
         )
         if selected is None:
-            raise RuntimeError(
-                f"Docker interface discovery did not find interface {planned.name}"
+            raise DockerInterfaceDiscoveryError(
+                f"Docker interface discovery did not find interface {planned.name}",
+                context=context,
+                required=_docker_required_interface_metadata(planned),
+                available={
+                    "interfaces": [
+                        _docker_available_interface_metadata(interface)
+                        for interface in discovered_interfaces
+                    ],
+                },
             )
+        _validate_docker_discovered_interface(
+            planned=planned,
+            selected=selected,
+            context=context,
+            discovered_interfaces=discovered_interfaces,
+        )
         active.append(
             replace(
                 selected,
                 exposure=planned.exposure,
-                ipv4=planned.ipv4 or selected.ipv4,
-                ipv6=planned.ipv6 or selected.ipv6,
-                mac=planned.mac or selected.mac,
+                ipv4=selected.ipv4 or planned.ipv4,
+                ipv6=selected.ipv6 or planned.ipv6,
+                mac=selected.mac or planned.mac,
                 provider_network_id=planned.provider_network_id
                 or selected.provider_network_id
                 or network_name,
                 metadata={
                     **planned.metadata,
                     **selected.metadata,
+                    **_docker_discovered_interface_metadata(
+                        interface=selected,
+                        planned=planned,
+                        network_name=network_name,
+                        container=container,
+                    ),
                     "planned": False,
                     "discovered": True,
-                    "docker_network": network_name,
-                    "container": dict(container),
                 },
             )
         )
@@ -1720,6 +1869,174 @@ def _select_docker_discovered_interface(
         if bool(interface.metadata.get("default_route")):
             return interface
     return discovered_interfaces[0] if discovered_interfaces else None
+
+
+def _validate_docker_discovered_interface(
+    *,
+    planned: NetworkInterface,
+    selected: NetworkInterface,
+    context: Mapping[str, object],
+    discovered_interfaces: Sequence[NetworkInterface],
+) -> None:
+    if planned.exposure != EXPOSURE_PRIVATE:
+        return
+
+    if planned.ipv4 is not None and selected.ipv4 != planned.ipv4:
+        raise DockerInterfaceDiscoveryError(
+            "Docker private interface discovery IPv4 mismatch",
+            context=context,
+            required={
+                **_docker_required_interface_metadata(planned),
+                "ipv4": planned.ipv4,
+            },
+            available={
+                "selected_interface": _docker_available_interface_metadata(selected),
+                "interfaces": [
+                    _docker_available_interface_metadata(interface)
+                    for interface in discovered_interfaces
+                ],
+            },
+        )
+    planned_mac = (planned.mac or "").lower()
+    selected_mac = (selected.mac or "").lower()
+    if planned_mac and selected_mac != planned_mac:
+        raise DockerInterfaceDiscoveryError(
+            "Docker private interface discovery MAC mismatch",
+            context=context,
+            required={
+                **_docker_required_interface_metadata(planned),
+                "mac": planned.mac,
+            },
+            available={
+                "selected_interface": _docker_available_interface_metadata(selected),
+                "interfaces": [
+                    _docker_available_interface_metadata(interface)
+                    for interface in discovered_interfaces
+                ],
+            },
+        )
+
+
+def _docker_discovered_interface_metadata(
+    *,
+    interface: NetworkInterface,
+    planned: NetworkInterface | None,
+    network_name: str,
+    container: Mapping[str, object],
+) -> dict[str, object]:
+    exposure = planned.exposure if planned is not None else interface.exposure
+    metadata: dict[str, object] = {
+        "interface": interface.name,
+        "interface_name": interface.name,
+        "exposure": exposure,
+        "discovered_interface": interface.name,
+        "discovered_exposure": interface.exposure,
+        "discovered_ipv4": interface.ipv4,
+        "discovered_ipv6": interface.ipv6,
+        "discovered_mac": interface.mac,
+        "discovery_source": interface.metadata.get("source", "docker-ssh-discovery"),
+        "discovery_transport": interface.metadata.get("discovery_transport", "ssh"),
+        "docker_network": network_name,
+        "docker_network_address": {
+            "source": "docker-network-discovery",
+            "network_name": network_name,
+            "interface": interface.name,
+            "ipv4": interface.ipv4,
+            "ipv6": interface.ipv6,
+            "mac": interface.mac,
+        },
+        "route": _docker_interface_route_metadata(interface),
+        "route_metadata": _docker_interface_route_metadata(interface),
+        "container": dict(container),
+    }
+    if planned is not None:
+        metadata.update(
+            {
+                "planned_interface": planned.name,
+                "planned_ipv4": planned.ipv4,
+                "planned_ipv6": planned.ipv6,
+                "planned_mac": planned.mac,
+            }
+        )
+    if exposure == EXPOSURE_PRIVATE:
+        metadata.update(
+            {
+                "static_ipv4": planned.ipv4 if planned is not None else interface.ipv4,
+                "static_mac": planned.mac if planned is not None else interface.mac,
+                "requested_private_ipv4": planned.ipv4 if planned is not None else interface.ipv4,
+                "requested_private_mac": planned.mac if planned is not None else interface.mac,
+                "discovery_verified": True,
+                "address_source": "docker-private-static",
+                "mac_source": "deterministic",
+            }
+        )
+    else:
+        metadata.update(
+            {
+                "address_source": "docker-network-discovery",
+                "ipv4_source": "docker-network-discovery",
+                "mac_source": "docker-network-discovery",
+                "discovered_from_docker_network": True,
+            }
+        )
+    return metadata
+
+
+def _docker_interface_route_metadata(interface: NetworkInterface) -> dict[str, object]:
+    default_route = bool(interface.metadata.get("default_route"))
+    return {
+        "source": interface.metadata.get("source", "docker-ssh-discovery"),
+        "default_route": default_route,
+        "default_route_interface": interface.name if default_route else None,
+    }
+
+
+def _docker_required_interface_metadata(interface: NetworkInterface) -> dict[str, object]:
+    return {
+        "name": interface.name,
+        "exposure": interface.exposure,
+        "ipv4": interface.ipv4,
+        "ipv6": interface.ipv6,
+        "mac": interface.mac,
+        "provider_network_id": interface.provider_network_id,
+    }
+
+
+def _docker_available_interface_metadata(interface: NetworkInterface) -> dict[str, object]:
+    return {
+        "name": interface.name,
+        "exposure": interface.exposure,
+        "ipv4": interface.ipv4,
+        "ipv6": interface.ipv6,
+        "mac": interface.mac,
+        "provider_network_id": interface.provider_network_id,
+        "default_route": bool(interface.metadata.get("default_route")),
+    }
+
+
+def _docker_discovery_context(
+    *,
+    provider: str,
+    exposure: str,
+    endpoint_id: str,
+    container_id: str,
+    container_name: str,
+    network_name: str,
+) -> dict[str, object]:
+    return {
+        "provider": provider,
+        "exposure": exposure,
+        "endpoint_id": endpoint_id,
+        "container_id": container_id,
+        "container_name": container_name,
+        "docker_network": network_name,
+        "operation": "docker-interface-discovery",
+    }
+
+
+def _optional_mapping_string(mapping: Mapping[str, object], key: str) -> str | None:
+    value = mapping.get(key)
+    return value if isinstance(value, str) and value else None
 
 
 def _first_planned_interface_name(interfaces: Sequence[NetworkInterface]) -> str:
