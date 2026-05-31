@@ -805,40 +805,41 @@ impl Layer for Arp {
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let protocol_type = self.protocol_type_value();
+        let sender_hardware = self.sender_hardware_bytes_value();
+        let sender_protocol = self.sender_protocol_bytes_value();
+        let target_hardware = self.target_hardware_bytes_value();
+        let target_protocol = self.target_protocol_bytes_value();
+
         vec![
             (
                 "hardware_type",
-                format!("0x{:04x}", self.hardware_type_value()),
+                hardware_type_inspection(self.hardware_type_value()),
             ),
-            (
-                "protocol_type",
-                format!("0x{:04x}", self.protocol_type_value()),
-            ),
+            ("protocol_type", protocol_type_inspection(protocol_type)),
             ("hardware_len", self.hardware_len_value().to_string()),
             ("protocol_len", self.protocol_len_value().to_string()),
-            ("operation", operation_summary(self.opcode_value())),
+            ("operation", operation_inspection(self.opcode_value())),
             (
                 "sender_hardware_addr",
-                address_summary_mac(&self.sender_hardware_bytes_value()),
+                address_summary_mac(&sender_hardware),
             ),
+            ("sender_hardware_bytes", hex_bytes(&sender_hardware)),
             (
                 "sender_protocol_addr",
-                address_summary_ipv4(
-                    self.protocol_type_value(),
-                    &self.sender_protocol_bytes_value(),
-                ),
+                address_summary_ipv4(protocol_type, &sender_protocol),
             ),
+            ("sender_protocol_bytes", hex_bytes(&sender_protocol)),
             (
                 "target_hardware_addr",
-                address_summary_mac(&self.target_hardware_bytes_value()),
+                address_summary_mac(&target_hardware),
             ),
+            ("target_hardware_bytes", hex_bytes(&target_hardware)),
             (
                 "target_protocol_addr",
-                address_summary_ipv4(
-                    self.protocol_type_value(),
-                    &self.target_protocol_bytes_value(),
-                ),
+                address_summary_ipv4(protocol_type, &target_protocol),
             ),
+            ("target_protocol_bytes", hex_bytes(&target_protocol)),
         ]
     }
 
@@ -1555,6 +1556,35 @@ fn operation_summary(operation: u16) -> String {
     }
 }
 
+/// Inspection rendering for the ARP operation: known operations show their
+/// source-backed label alongside the raw opcode so unknown numeric values stay
+/// visible (e.g. `reply (2)`, `1024`).
+fn operation_inspection(operation: u16) -> String {
+    match ArpOperation::from_opcode(operation) {
+        Some(named) => format!("{} ({operation})", named.label()),
+        None => operation.to_string(),
+    }
+}
+
+/// Inspection rendering for the ARP hardware type: known IANA hardware types
+/// show their label next to the raw codepoint, unknown values render as a bare
+/// hex codepoint so nonstandard hardware types stay inspectable.
+fn hardware_type_inspection(hardware_type: u16) -> String {
+    match arp_hardware_type_label(hardware_type) {
+        Some(label) => format!("{label} (0x{hardware_type:04x})"),
+        None => format!("0x{hardware_type:04x}"),
+    }
+}
+
+/// Inspection rendering for the ARP protocol type, mirroring
+/// [`hardware_type_inspection`].
+fn protocol_type_inspection(protocol_type: u16) -> String {
+    match arp_protocol_type_label(protocol_type) {
+        Some(label) => format!("{label} (0x{protocol_type:04x})"),
+        None => format!("0x{protocol_type:04x}"),
+    }
+}
+
 fn hex_bytes(bytes: &[u8]) -> String {
     let mut output = String::new();
 
@@ -1711,9 +1741,13 @@ mod arp {
         // 8-octet hardware / 16-octet protocol body compiles cleanly and the
         // declared lengths reach the wire unchanged.
         let sender_hw = vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11];
-        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let sender_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ];
         let target_hw = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
-        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+        let target_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+        ];
 
         let arp = Arp::new()
             .hardware_len(8)
@@ -1813,11 +1847,8 @@ mod arp {
     fn arp_length_zero_length_field_against_nonempty_bytes_is_a_conflict() {
         // A zero-length field paired with a non-empty byte vector is still a
         // conflict: zero-length is only valid when the bytes are also empty.
-        let packet = Packet::new().push(
-            Arp::new()
-                .protocol_len(0)
-                .sender_protocol_bytes(vec![0x01]),
-        );
+        let packet =
+            Packet::new().push(Arp::new().protocol_len(0).sender_protocol_bytes(vec![0x01]));
         let err = packet.compile().unwrap_err();
         match err {
             CrafterError::BufferTooShort {
@@ -2161,9 +2192,13 @@ mod arp {
     #[test]
     fn arp_raw_address_builders_fill_lengths_from_byte_count() {
         let sender_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x10, 0xaa, 0xbb];
-        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let sender_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ];
         let target_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x20, 0xcc, 0xdd];
-        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+        let target_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+        ];
 
         let arp = Arp::new()
             .sender_hardware(sender_hw.clone())
@@ -2258,9 +2293,13 @@ mod arp {
         // hardware/protocol types and an unknown opcode. compile() fills nothing
         // it did not need to; each explicit value must reach the wire untouched.
         let sender_hw = vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11];
-        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let sender_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ];
         let target_hw = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
-        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+        let target_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+        ];
 
         let arp = Arp::new()
             .hardware_type(super::ARP_HRD_INFINIBAND)
@@ -2323,9 +2362,15 @@ mod arp {
         assert_eq!(decoded_arp.hardware_len_value(), 3);
         assert_eq!(decoded_arp.protocol_len_value(), 1);
         assert_eq!(decoded_arp.opcode_value(), 0);
-        assert_eq!(decoded_arp.sender_hardware_bytes_value(), vec![0xde, 0xad, 0xbe]);
+        assert_eq!(
+            decoded_arp.sender_hardware_bytes_value(),
+            vec![0xde, 0xad, 0xbe]
+        );
         assert_eq!(decoded_arp.sender_protocol_bytes_value(), vec![0x01]);
-        assert_eq!(decoded_arp.target_hardware_bytes_value(), vec![0xca, 0xfe, 0x99]);
+        assert_eq!(
+            decoded_arp.target_hardware_bytes_value(),
+            vec![0xca, 0xfe, 0x99]
+        );
         assert_eq!(decoded_arp.target_protocol_bytes_value(), vec![0x02]);
     }
 
@@ -2351,7 +2396,10 @@ mod arp {
 
         // The raw byte payloads the MAC/IPv4 helpers wrote are themselves never
         // rewritten by any later default.
-        assert_eq!(arp.sender_hardware_bytes_value(), MacAddr::ZERO.octets().to_vec());
+        assert_eq!(
+            arp.sender_hardware_bytes_value(),
+            MacAddr::ZERO.octets().to_vec()
+        );
         assert_eq!(
             arp.target_protocol_bytes_value(),
             Ipv4Addr::new(192, 0, 2, 1).octets().to_vec()
@@ -2451,10 +2499,14 @@ mod arp {
 
         // The decoded packet re-compiles to the exact input bytes.
         let frame = Ethernet::new().src(src_mac()) / arp;
-        let recompiled = Packet::decode_from_link(LinkType::Ethernet, frame.compile().unwrap().as_bytes())
-            .unwrap();
+        let recompiled =
+            Packet::decode_from_link(LinkType::Ethernet, frame.compile().unwrap().as_bytes())
+                .unwrap();
         assert_eq!(
-            recompiled.layer::<Arp>().unwrap().sender_hardware_bytes_value(),
+            recompiled
+                .layer::<Arp>()
+                .unwrap()
+                .sender_hardware_bytes_value(),
             sender_hw
         );
     }
@@ -2467,8 +2519,12 @@ mod arp {
         // is not IPv4 so sender_ipv4()/target_ipv4() report None.
         let sender_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x10];
         let target_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x20];
-        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
-        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+        let sender_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ];
+        let target_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+        ];
 
         let mut bytes = vec![
             0x00, 0x01, // HRD = Ethernet
@@ -2491,8 +2547,14 @@ mod arp {
         assert_eq!(arp.target_protocol_bytes_value(), target_pa);
 
         // Six-octet hardware addresses are valid MACs.
-        assert_eq!(arp.sender_mac().map(|m| m.octets().to_vec()), Some(sender_hw));
-        assert_eq!(arp.target_mac().map(|m| m.octets().to_vec()), Some(target_hw));
+        assert_eq!(
+            arp.sender_mac().map(|m| m.octets().to_vec()),
+            Some(sender_hw)
+        );
+        assert_eq!(
+            arp.target_mac().map(|m| m.octets().to_vec()),
+            Some(target_hw)
+        );
         // The protocol type is not IPv4 (and the address is 16 octets), so the
         // typed IPv4 accessors decline.
         assert_eq!(arp.sender_ipv4(), None);
@@ -2627,9 +2689,13 @@ mod arp {
         // builders, compile inside an Ethernet frame, decode, and confirm every
         // field and byte survives the split-by-length decode path unchanged.
         let sender_hw = vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11];
-        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let sender_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ];
         let target_hw = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
-        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+        let target_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+        ];
 
         let arp = Arp::new()
             .hardware_type(super::ARP_HRD_INFINIBAND)
@@ -2679,8 +2745,9 @@ mod arp {
             0x00, 0x01, // OP
             0x00, 0x00, 0x5e, 0x00, 0x53, 0x10, // sender hardware (6 octets)
             // sender protocol: 0 octets
-            0x00, 0x00, 0x5e, 0x00, 0x53, 0x20, // target hardware (6 octets)
-            // target protocol: 0 octets
+            0x00, 0x00, 0x5e, 0x00, 0x53,
+            0x20, // target hardware (6 octets)
+                  // target protocol: 0 octets
         ];
 
         let arp = decode_arp_layer(&bytes);
@@ -2826,6 +2893,146 @@ mod arp {
         frame.extend_from_slice(&ETHERTYPE_ARP.to_be_bytes());
         frame.extend_from_slice(body);
         frame
+    }
+
+    /// Look up a single inspection field by key, panicking when absent so a
+    /// renamed or dropped field surfaces as a test failure rather than a silent
+    /// `None`.
+    fn inspection_value(arp: &Arp, key: &str) -> String {
+        use crate::packet::Layer;
+
+        arp.inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, value)| value)
+            .unwrap_or_else(|| panic!("expected inspection field `{key}`"))
+    }
+
+    #[test]
+    fn arp_summary_standard_ethernet_ipv4_stays_concise_and_readable() {
+        use crate::packet::Layer;
+
+        // The canonical Ethernet/IPv4 reply summary must match the historic
+        // short form exactly (this is the byte-stable golden fixture shape):
+        // operation label plus dotted sender/target protocol addresses.
+        let reply = Arp::is_at(
+            Ipv4Addr::new(192, 0, 2, 1),
+            "02:00:5e:00:53:02".parse().unwrap(),
+            Ipv4Addr::new(192, 0, 2, 10),
+            "02:00:5e:00:53:01".parse().unwrap(),
+        );
+
+        assert_eq!(
+            reply.summary(),
+            "Arp(op=reply, psrc=192.0.2.1, pdst=192.0.2.10)"
+        );
+
+        let request = Arp::who_has(
+            Ipv4Addr::new(192, 0, 2, 10),
+            Ipv4Addr::new(192, 0, 2, 1),
+            src_mac(),
+        );
+        assert_eq!(
+            request.summary(),
+            "Arp(op=request, psrc=192.0.2.10, pdst=192.0.2.1)"
+        );
+    }
+
+    #[test]
+    fn arp_summary_unknown_operation_and_nonstandard_protocol_stay_visible() {
+        use crate::packet::Layer;
+
+        // An unknown numeric opcode renders as its raw number, and a protocol
+        // address that is not standard IPv4 (here an 8-octet protocol field)
+        // falls back to a hex byte rendering so the summary never hides what
+        // was built.
+        let arp = Arp::new()
+            .opcode(0x0400)
+            .protocol_type(super::ETHERTYPE_IPV4)
+            .sender_protocol(vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
+            .target_protocol(vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
+
+        let summary = arp.summary();
+        assert!(summary.contains("op=1024"), "summary was {summary}");
+        assert!(
+            summary.contains("psrc=01 02 03 04 05 06 07 08"),
+            "summary was {summary}"
+        );
+        assert!(
+            summary.contains("pdst=11 22 33 44 55 66 77 88"),
+            "summary was {summary}"
+        );
+    }
+
+    #[test]
+    fn arp_inspection_standard_ethernet_ipv4_exposes_named_fields() {
+        // Standard Ethernet/IPv4 inspection shows human-readable type labels
+        // alongside the raw codepoints, the operation name with its number, the
+        // header lengths, and both typed addresses and their raw bytes.
+        let request = Arp::who_has(
+            Ipv4Addr::new(192, 0, 2, 10),
+            Ipv4Addr::new(192, 0, 2, 1),
+            src_mac(),
+        );
+
+        assert_eq!(
+            inspection_value(&request, "hardware_type"),
+            "ethernet (0x0001)"
+        );
+        assert_eq!(inspection_value(&request, "protocol_type"), "ipv4 (0x0800)");
+        assert_eq!(inspection_value(&request, "hardware_len"), "6");
+        assert_eq!(inspection_value(&request, "protocol_len"), "4");
+        assert_eq!(inspection_value(&request, "operation"), "request (1)");
+        assert_eq!(
+            inspection_value(&request, "sender_hardware_addr"),
+            "02:00:5e:00:53:01"
+        );
+        assert_eq!(
+            inspection_value(&request, "sender_protocol_addr"),
+            "192.0.2.10"
+        );
+        assert_eq!(
+            inspection_value(&request, "target_protocol_addr"),
+            "192.0.2.1"
+        );
+        // Raw byte views accompany the typed renderings.
+        assert_eq!(
+            inspection_value(&request, "sender_hardware_bytes"),
+            "02 00 5e 00 53 01"
+        );
+        assert_eq!(
+            inspection_value(&request, "sender_protocol_bytes"),
+            "c0 00 02 0a"
+        );
+    }
+
+    #[test]
+    fn arp_inspection_nonstandard_values_remain_inspectable() {
+        // Nonstandard hardware/protocol types, an unknown opcode, and variable
+        // address widths must all remain inspectable: unknown types render as
+        // bare hex codepoints, the opcode keeps its raw number, and the address
+        // fields surface raw bytes when typed formatting does not apply.
+        let arp = Arp::new()
+            .hardware_type(0x4242)
+            .protocol_type(0x86dd)
+            .opcode(0x0400)
+            .sender_hardware(vec![0xaa, 0xbb])
+            .sender_protocol(vec![0x01, 0x02, 0x03])
+            .target_hardware(vec![0xcc, 0xdd])
+            .target_protocol(vec![0x04, 0x05, 0x06]);
+
+        assert_eq!(inspection_value(&arp, "hardware_type"), "0x4242");
+        assert_eq!(inspection_value(&arp, "protocol_type"), "0x86dd");
+        assert_eq!(inspection_value(&arp, "operation"), "1024");
+        assert_eq!(inspection_value(&arp, "hardware_len"), "2");
+        assert_eq!(inspection_value(&arp, "protocol_len"), "3");
+        // No standard MAC/IPv4 view applies, so the typed fields fall back to
+        // the raw hex bytes and the explicit *_bytes fields agree.
+        assert_eq!(inspection_value(&arp, "sender_hardware_addr"), "aa bb");
+        assert_eq!(inspection_value(&arp, "sender_hardware_bytes"), "aa bb");
+        assert_eq!(inspection_value(&arp, "sender_protocol_addr"), "01 02 03");
+        assert_eq!(inspection_value(&arp, "sender_protocol_bytes"), "01 02 03");
+        assert_eq!(inspection_value(&arp, "target_protocol_bytes"), "04 05 06");
     }
 }
 
