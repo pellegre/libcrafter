@@ -1514,11 +1514,53 @@ fn icmp_layer(plan: &Value) -> ExampleResult<Icmp> {
     let mut layer = Icmp::new()
         .type_(icmp_type(required(fields, &["type"])?, false)?)
         .code(u8_value(required(fields, &["code"])?)?);
+    if let Some(value) = optional(fields, &["rest_of_header"]) {
+        layer = layer.rest_of_header(fixed_4_bytes(value, "icmp.rest_of_header")?);
+    }
     if let Some(value) = optional(fields, &["id", "identifier"]) {
         layer = layer.id(u16_value(value)?);
     }
     if let Some(value) = optional(fields, &["seq", "sequence"]) {
         layer = layer.seq(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["pointer"]) {
+        layer = layer.pointer(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["gateway"]) {
+        layer = layer.gateway(ipv4_text(value)?);
+    }
+    if let Some(value) = optional(fields, &["length", "len"]) {
+        layer = layer.length(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["next_hop_mtu", "mtu_next_hop", "mtu"]) {
+        layer = layer.mtu_next_hop(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["num_addrs", "router_num_addrs"]) {
+        layer = layer.num_addrs(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["addr_entry_size", "router_address_entry_size"]) {
+        layer = layer.addr_entry_size(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["lifetime", "router_lifetime"]) {
+        layer = layer.lifetime(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_flags"]) {
+        layer = layer.extended_flags(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_l_bit", "l_bit"]) {
+        layer = layer.extended_l_bit(bool_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_state"]) {
+        layer = layer.extended_state(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_active"]) {
+        layer = layer.extended_active(bool_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_ipv4"]) {
+        layer = layer.extended_ipv4(bool_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_ipv6"]) {
+        layer = layer.extended_ipv6(bool_value(value)?);
     }
     if let Some(value) = optional(fields, &["checksum", "chksum"]) {
         layer = layer.chksum(u16_value(value)?);
@@ -1998,6 +2040,33 @@ fn icmp_type(value: &Value, ipv6: bool) -> ExampleResult<u8> {
             } else {
                 ICMP_TIME_EXCEEDED
             }),
+            "source-quench" if !ipv6 => Ok(ICMP_SOURCE_QUENCH),
+            "redirect" if !ipv6 => Ok(ICMP_REDIRECT),
+            "router-advertisement" if !ipv6 => Ok(ICMP_ROUTER_ADVERTISEMENT),
+            "router-solicitation" if !ipv6 => Ok(ICMP_ROUTER_SOLICITATION),
+            "timestamp" if !ipv6 => Ok(ICMP_TIMESTAMP),
+            "timestamp-reply" if !ipv6 => Ok(ICMP_TIMESTAMP_REPLY),
+            "information-request" if !ipv6 => Ok(ICMP_INFORMATION_REQUEST),
+            "information-reply" if !ipv6 => Ok(ICMP_INFORMATION_REPLY),
+            "address-mask-request" if !ipv6 => Ok(ICMP_ADDRESS_MASK_REQUEST),
+            "address-mask-reply" if !ipv6 => Ok(ICMP_ADDRESS_MASK_REPLY),
+            "alternate-host-address" if !ipv6 => Ok(ICMP_ALTERNATE_HOST_ADDRESS),
+            "traceroute" if !ipv6 => Ok(ICMP_TRACEROUTE),
+            "datagram-conversion-error" if !ipv6 => Ok(ICMP_DATAGRAM_CONVERSION_ERROR),
+            "mobile-host-redirect" if !ipv6 => Ok(ICMP_MOBILE_HOST_REDIRECT),
+            "ipv6-where-are-you" if !ipv6 => Ok(ICMP_IPV6_WHERE_ARE_YOU),
+            "ipv6-i-am-here" if !ipv6 => Ok(ICMP_IPV6_I_AM_HERE),
+            "mobile-registration-request" if !ipv6 => Ok(ICMP_MOBILE_REGISTRATION_REQUEST),
+            "mobile-registration-reply" if !ipv6 => Ok(ICMP_MOBILE_REGISTRATION_REPLY),
+            "domain-name-request" if !ipv6 => Ok(ICMP_DOMAIN_NAME_REQUEST),
+            "domain-name-reply" if !ipv6 => Ok(ICMP_DOMAIN_NAME_REPLY),
+            "skip" if !ipv6 => Ok(ICMP_SKIP),
+            "photuris" if !ipv6 => Ok(ICMP_PHOTURIS),
+            "seamoby-experimental" if !ipv6 => Ok(ICMP_SEAMOBY_EXPERIMENTAL),
+            "extended-echo-request" if !ipv6 => Ok(ICMP_EXTENDED_ECHO_REQUEST),
+            "extended-echo-reply" if !ipv6 => Ok(ICMP_EXTENDED_ECHO_REPLY),
+            "experiment-1" if !ipv6 => Ok(ICMP_EXPERIMENTAL_253),
+            "experiment-2" if !ipv6 => Ok(ICMP_EXPERIMENTAL_254),
             _ => u8_text(text),
         };
     }
@@ -2074,6 +2143,20 @@ fn option_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
         }
     }
     Err(format!("unsupported option bytes value: {value:?}").into())
+}
+
+fn fixed_4_bytes(value: &Value, field: &str) -> ExampleResult<[u8; 4]> {
+    let bytes = option_bytes(value)?;
+    Ok(bytes.try_into().map_err(|bytes: Vec<u8>| {
+        format!("{field} must contain exactly 4 bytes, got {}", bytes.len())
+    })?)
+}
+
+fn ipv4_text(value: &Value) -> ExampleResult<Ipv4Addr> {
+    let text = value
+        .as_str()
+        .ok_or_else(|| format!("expected IPv4 address string, got {value:?}"))?;
+    Ok(Ipv4Addr::from_str(text)?)
 }
 
 fn bool_value(value: &Value) -> ExampleResult<bool> {
@@ -2531,6 +2614,95 @@ mod l2_ipv4_root {
         let packet = build_packet(&plan).expect("ipv4/payload unknown-protocol plan builds");
         let compiled = packet.compile().expect("plan compiles to bytes");
         assert!(!compiled.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn icmpv4_live_matrix_type_names_are_accepted() {
+        let named = [
+            ("source_quench", ICMP_SOURCE_QUENCH),
+            ("redirect", ICMP_REDIRECT),
+            ("router_advertisement", ICMP_ROUTER_ADVERTISEMENT),
+            ("router_solicitation", ICMP_ROUTER_SOLICITATION),
+            ("timestamp", ICMP_TIMESTAMP),
+            ("timestamp_reply", ICMP_TIMESTAMP_REPLY),
+            ("information_request", ICMP_INFORMATION_REQUEST),
+            ("information_reply", ICMP_INFORMATION_REPLY),
+            ("address_mask_request", ICMP_ADDRESS_MASK_REQUEST),
+            ("address_mask_reply", ICMP_ADDRESS_MASK_REPLY),
+            ("extended_echo_request", ICMP_EXTENDED_ECHO_REQUEST),
+            ("extended_echo_reply", ICMP_EXTENDED_ECHO_REPLY),
+            ("domain_name_request", ICMP_DOMAIN_NAME_REQUEST),
+            ("experiment_1", ICMP_EXPERIMENTAL_253),
+            ("experiment_2", ICMP_EXPERIMENTAL_254),
+        ];
+
+        for (name, expected) in named {
+            assert_eq!(
+                icmp_type(&json!(name), false).expect("icmpv4 matrix name maps"),
+                expected,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn icmp_redirect_plan_sets_gateway_rest_of_header() {
+        let plan = json!({
+            "stack": ["ipv4", "icmp", "payload"],
+            "fields": {
+                "ipv4": {
+                    "src": "10.42.19.10",
+                    "dst": "10.42.19.20",
+                    "identification": 1,
+                    "ttl": 64,
+                    "flags": "none",
+                    "protocol": "icmp"
+                },
+                "icmp": {
+                    "type": "redirect",
+                    "code": 1,
+                    "gateway": "192.0.2.1",
+                    "identifier": 0xaaaa,
+                    "sequence": 0xbbbb
+                },
+                "payload": {"hex": "45000014000100004001f6e0c0000201c6336401", "length": 20}
+            }
+        });
+
+        let packet = build_packet(&plan).expect("redirect plan builds");
+        let compiled = packet.compile().expect("redirect plan compiles");
+        let bytes = compiled.as_bytes();
+        assert_eq!(bytes[20], ICMP_REDIRECT);
+        assert_eq!(&bytes[24..28], &[192, 0, 2, 1]);
+    }
+
+    #[test]
+    fn icmp_source_quench_accepts_raw_rest_of_header() {
+        let plan = json!({
+            "stack": ["ipv4", "icmp", "payload"],
+            "fields": {
+                "ipv4": {
+                    "src": "10.42.19.10",
+                    "dst": "10.42.19.20",
+                    "identification": 1,
+                    "ttl": 64,
+                    "flags": "none",
+                    "protocol": "icmp"
+                },
+                "icmp": {
+                    "type": "source_quench",
+                    "code": 0,
+                    "rest_of_header": {"hex": "01020304"}
+                },
+                "payload": {"hex": "00010203", "length": 4}
+            }
+        });
+
+        let packet = build_packet(&plan).expect("source-quench plan builds");
+        let compiled = packet.compile().expect("source-quench plan compiles");
+        let bytes = compiled.as_bytes();
+        assert_eq!(bytes[20], ICMP_SOURCE_QUENCH);
+        assert_eq!(&bytes[24..28], &[1, 2, 3, 4]);
     }
 
     #[test]
