@@ -279,6 +279,31 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
             .ciaddr(client_ciaddr)
             .transaction_id(transaction_id)
             .parameter_request_list(requests)
+    } else if plan.case == "dhcp-inform-ack" {
+        // RFC 2131 section 3.4 and section 4.4.3: a client that already has an
+        // externally configured IP address uses a DHCPINFORM to ask only for
+        // local configuration parameters. It fills `ciaddr` with the address it
+        // is already using and names the wanted options in the parameter request
+        // list (option 55), but it does NOT request a lease, so it omits the
+        // requested-IP option (50). Build the Inform shape directly (rather than
+        // `Dhcp::inform`, which injects a default request list) so the stimulus
+        // carries exactly the caller's configuration-only request list (no lease
+        // options). `compile()` fills the BOOTP op/htype/hlen, magic cookie, and
+        // lengths; the caller-set ciaddr, client MAC, transaction id, and request
+        // list survive untouched.
+        let client_ciaddr: Ipv4Addr =
+            required_str(plan.client_ciaddr.as_deref(), "client_ciaddr")?.parse()?;
+        let requests = required_u8_list(
+            plan.parameter_request_list.as_deref(),
+            "parameter_request_list",
+        )?
+        .to_vec();
+        Dhcp::new()
+            .client_mac(client_mac)
+            .message_type(DhcpMessageType::Inform)
+            .ciaddr(client_ciaddr)
+            .transaction_id(transaction_id)
+            .parameter_request_list(requests)
     } else if plan.case == "dhcp-client-identifier" {
         // RFC 2132 section 9.14: a client may identify itself with the client
         // identifier option (61) in addition to chaddr. The encoded option-61
@@ -472,24 +497,37 @@ pub fn validate_dhcp_candidate(
         })),
     }
 
-    // Offered address (yiaddr).
-    let expected_yiaddr: Ipv4Addr =
-        required_str(plan.expected_yiaddr.as_deref(), "expected_yiaddr")?.parse()?;
-    match dhcp.offered_ip_address() {
-        Some(actual_yiaddr) => {
-            if actual_yiaddr != expected_yiaddr {
-                mismatches.push(json!({
-                    "field": "dhcp.yiaddr",
-                    "expected": expected_yiaddr.to_string(),
-                    "actual": actual_yiaddr.to_string(),
-                }));
-            }
+    // Offered/assigned address (yiaddr). RFC 2131 section 4.3.5: a DHCPINFORM Ack
+    // allocates no address, so for the Inform case the plan asserts `yiaddr` is
+    // the all-zero address instead of naming a concrete `expected_yiaddr`.
+    if plan.expected_yiaddr_zero.unwrap_or(false) {
+        let actual_yiaddr = dhcp.your_ip_address_value();
+        if actual_yiaddr != Ipv4Addr::UNSPECIFIED {
+            mismatches.push(json!({
+                "field": "dhcp.yiaddr",
+                "expected": Ipv4Addr::UNSPECIFIED.to_string(),
+                "actual": actual_yiaddr.to_string(),
+            }));
         }
-        None => mismatches.push(json!({
-            "field": "dhcp.yiaddr",
-            "expected": expected_yiaddr.to_string(),
-            "actual": dhcp.your_ip_address_value().to_string(),
-        })),
+    } else {
+        let expected_yiaddr: Ipv4Addr =
+            required_str(plan.expected_yiaddr.as_deref(), "expected_yiaddr")?.parse()?;
+        match dhcp.offered_ip_address() {
+            Some(actual_yiaddr) => {
+                if actual_yiaddr != expected_yiaddr {
+                    mismatches.push(json!({
+                        "field": "dhcp.yiaddr",
+                        "expected": expected_yiaddr.to_string(),
+                        "actual": actual_yiaddr.to_string(),
+                    }));
+                }
+            }
+            None => mismatches.push(json!({
+                "field": "dhcp.yiaddr",
+                "expected": expected_yiaddr.to_string(),
+                "actual": dhcp.your_ip_address_value().to_string(),
+            })),
+        }
     }
 
     // Server identifier (option 54).
@@ -570,6 +608,18 @@ pub fn validate_dhcp_candidate(
                 "expected": expected_lease_time,
                 "actual": actual,
             })),
+        }
+    }
+    // RFC 2131 section 4.3.5: a DHCPINFORM Ack grants no lease, so it MUST NOT
+    // carry an IP-address-lease-time option (51). When the plan asserts this
+    // negative invariant, any lease-time option present is a payload mismatch.
+    if plan.expected_no_lease_time.unwrap_or(false) {
+        if let Some(actual) = dhcp.lease_time_value() {
+            mismatches.push(json!({
+                "field": "dhcp.lease_time",
+                "expected": Value::Null,
+                "actual": actual,
+            }));
         }
     }
     if let Some(expected_renewal_time) = plan.expected_renewal_time {
@@ -1716,6 +1766,239 @@ mod tests {
         // The server renewed 198.51.100.42, but the plan now expects a different
         // address: a payload mismatch on the renewed yiaddr.
         plan.expected_yiaddr = Some("198.51.100.99".to_string());
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    fn inform_plan() -> ProbePlan {
+        // RFC 2131 section 3.4: a client that already has an externally configured
+        // address sends a DHCPINFORM carrying its address in ciaddr and a
+        // configuration-only parameter request list (subnet 1, router 3, DNS 6).
+        // The server replies with an Ack that returns those options but allocates
+        // no address (yiaddr 0.0.0.0) and grants no lease (no option 51).
+        let mut plan = base_plan("dhcp-inform-ack");
+        plan.source_ipv4 = Some("10.64.0.10".to_string());
+        plan.destination_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
+        plan.source_port = Some(DHCP_CLIENT_PORT);
+        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
+        plan.transaction_id = Some(0x3903_f326);
+        plan.client_ciaddr = Some("198.51.100.42".to_string());
+        plan.parameter_request_list = Some(vec![1, 3, 6]);
+        plan.expected_message_type_value = Some(DHCP_ACK);
+        plan.expected_yiaddr_zero = Some(true);
+        plan.expected_no_lease_time = Some(true);
+        plan.expected_server_identifier = Some("10.64.0.20".to_string());
+        plan.expected_subnet_mask = Some("255.255.255.0".to_string());
+        plan.expected_router_ipv4 = Some("10.64.0.1".to_string());
+        plan.expected_dns_ipv4 = Some("198.51.100.53".to_string());
+        plan
+    }
+
+    /// Build the canonical Inform Ack the controlled responder would unicast back:
+    /// the configuration options (subnet 1, router 3, DNS 6) and the server
+    /// identifier (54), but no allocated address (yiaddr 0.0.0.0) and no lease
+    /// (no option 51) — RFC 2131 section 4.3.5.
+    fn inform_ack_packet(plan: &ProbePlan) -> Packet {
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let subnet_mask: Ipv4Addr = plan
+            .expected_subnet_mask
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let router: Ipv4Addr = plan
+            .expected_router_ipv4
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let dns: Ipv4Addr = plan.expected_dns_ipv4.as_deref().unwrap().parse().unwrap();
+        // An Ack in response to an Inform commits no binding: yiaddr is left as the
+        // all-zero address (Dhcp::ack with the unspecified address) and no lease
+        // timing options are set.
+        let dhcp = Dhcp::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .subnet_mask(subnet_mask)
+            .router(vec![router])
+            .domain_name_server(vec![dns]);
+        Ipv4::new()
+            .src(
+                plan.expected_reply_source_ipv4
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Ipv4Addr>()
+                    .unwrap(),
+            )
+            .dst(
+                plan.expected_reply_destination_ipv4
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Ipv4Addr>()
+                    .unwrap(),
+            )
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp
+    }
+
+    #[test]
+    fn dhcp_inform_compiles_with_ciaddr_and_config_only_request_list() {
+        let plan = inform_plan();
+        let packet = dhcp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let dhcp = decoded.layer::<Dhcp>().unwrap();
+
+        // Client 68 -> server 67; a BOOTP request carrying an Inform (type 8).
+        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Inform));
+        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        // The externally-configured address is carried in ciaddr.
+        assert_eq!(
+            dhcp.client_ip_address_value(),
+            "198.51.100.42".parse::<Ipv4Addr>().unwrap()
+        );
+        // RFC 2131 section 3.4: an Inform asks for no lease, so it omits the
+        // requested-IP option (50); the request list names configuration options
+        // only (no lease options 51/58/59).
+        assert_eq!(dhcp.requested_ip_address_value(), None);
+        assert_eq!(
+            dhcp.parameter_request_list_value(),
+            Some([1u8, 3, 6].as_slice())
+        );
+        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+    }
+
+    #[test]
+    fn dhcp_inform_requires_client_ciaddr() {
+        let mut plan = inform_plan();
+        plan.client_ciaddr = None;
+        assert!(dhcp_packet(&plan).is_err());
+    }
+
+    #[test]
+    fn dhcp_inform_requires_parameter_request_list() {
+        let mut plan = inform_plan();
+        plan.parameter_request_list = None;
+        assert!(dhcp_packet(&plan).is_err());
+    }
+
+    #[test]
+    fn matching_inform_ack_passes_validation() {
+        let plan = inform_plan();
+        let bytes = inform_ack_packet(&plan)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        // The Inform Ack carries config options, no allocated address, and no lease.
+        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        assert_eq!(dhcp.your_ip_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(dhcp.lease_time_value(), None);
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(
+            matches!(validation, CandidateValidation::Passed(_)),
+            "expected Passed, got {validation:?}"
+        );
+    }
+
+    #[test]
+    fn inform_ack_that_allocates_an_address_is_wrong_payload() {
+        let plan = inform_plan();
+        // A server that wrongly allocates an address (non-zero yiaddr) in response
+        // to an Inform reaches the right peer but violates RFC 2131 section 4.3.5.
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let dhcp = Dhcp::ack(
+            client_mac,
+            "198.51.100.42".parse().unwrap(),
+            server_identifier,
+        )
+        .transaction_id(plan.transaction_id.unwrap())
+        .subnet_mask("255.255.255.0".parse().unwrap())
+        .router(vec!["10.64.0.1".parse().unwrap()])
+        .domain_name_server(vec!["198.51.100.53".parse().unwrap()]);
+        let packet = Ipv4::new()
+            .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
+            .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp;
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    #[test]
+    fn inform_ack_with_a_lease_time_is_wrong_payload() {
+        let plan = inform_plan();
+        // A server that wrongly grants a lease (option 51) in response to an Inform
+        // reaches the right peer but violates RFC 2131 section 4.3.5.
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let dhcp = Dhcp::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .lease_time(3600)
+            .subnet_mask("255.255.255.0".parse().unwrap())
+            .router(vec!["10.64.0.1".parse().unwrap()])
+            .domain_name_server(vec!["198.51.100.53".parse().unwrap()]);
+        let packet = Ipv4::new()
+            .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
+            .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp;
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    #[test]
+    fn inform_ack_missing_a_config_option_is_wrong_payload() {
+        let plan = inform_plan();
+        // An Inform Ack that omits the requested DNS server option (6) reaches the
+        // right peer but fails the configuration contract.
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let dhcp = Dhcp::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .subnet_mask("255.255.255.0".parse().unwrap())
+            .router(vec!["10.64.0.1".parse().unwrap()]);
+        let packet = Ipv4::new()
+            .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
+            .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp;
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }

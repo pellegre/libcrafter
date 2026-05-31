@@ -233,6 +233,17 @@ pub struct ProbePlan {
     pub expected_message_type_value: Option<u8>,
     #[serde(default)]
     pub expected_yiaddr: Option<String>,
+    // RFC 2131 section 4.3.5: a DHCPINFORM Ack allocates no address, so `yiaddr`
+    // MUST be 0.0.0.0 and the Ack MUST NOT carry an IP-address-lease-time option
+    // (51). `expected_yiaddr_zero` asserts the decoded `yiaddr` is the all-zero
+    // address; `expected_no_lease_time` asserts no lease-time (51) option is
+    // present. They are set on the Inform Ack case (`dhcp-inform-ack`) and left
+    // unset by the lease-granting cases. When `expected_yiaddr_zero` is set, the
+    // positive `expected_yiaddr` match is skipped in favor of the zero assertion.
+    #[serde(default)]
+    pub expected_yiaddr_zero: Option<bool>,
+    #[serde(default)]
+    pub expected_no_lease_time: Option<bool>,
     #[serde(default)]
     pub expected_server_identifier: Option<String>,
     #[serde(default)]
@@ -574,7 +585,8 @@ fn dispatch_case(
             | "dhcp-hostname"
             | "dhcp-parameter-request-list"
             | "dhcp-lease-time"
-            | "dhcp-renewal-unicast-ack",
+            | "dhcp-renewal-unicast-ack"
+            | "dhcp-inform-ack",
         ) => dhcp::run_dhcp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -584,7 +596,8 @@ fn dispatch_case(
             | "dhcp-hostname"
             | "dhcp-parameter-request-list"
             | "dhcp-lease-time"
-            | "dhcp-renewal-unicast-ack",
+            | "dhcp-renewal-unicast-ack"
+            | "dhcp-inform-ack",
         ) => dhcp::run_dhcp_live(request, plan),
         _ => {
             // DHCP, ARP, and UDP behavioral cases are wired into their modules
@@ -736,6 +749,8 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "parameter_request_list": plan.parameter_request_list,
         "expected_message_type_value": plan.expected_message_type_value,
         "expected_yiaddr": plan.expected_yiaddr,
+        "expected_yiaddr_zero": plan.expected_yiaddr_zero,
+        "expected_no_lease_time": plan.expected_no_lease_time,
         "expected_server_identifier": plan.expected_server_identifier,
         "expected_subnet_mask": plan.expected_subnet_mask,
         "expected_router_ipv4": plan.expected_router_ipv4,
@@ -848,7 +863,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "dhcp-hostname"
         | "dhcp-parameter-request-list"
         | "dhcp-lease-time"
-        | "dhcp-renewal-unicast-ack" => {
+        | "dhcp-renewal-unicast-ack"
+        | "dhcp-inform-ack" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -889,6 +905,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-parameter-request-list" => "dhcp_offer",
             "dhcp-lease-time" => "dhcp_offer",
             "dhcp-renewal-unicast-ack" => "dhcp_ack",
+            "dhcp-inform-ack" => "dhcp_ack",
             _ => "unknown",
         })
 }
@@ -1123,6 +1140,27 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "lease_time": plan.expected_lease_time,
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
+        }),
+        "dhcp-inform-ack" => json!({
+            "required": true,
+            "kind": "dhcp-responder",
+            "port": plan.destination_port,
+            "client_port": plan.source_port,
+            "client_mac": plan.client_mac,
+            "transaction_id": plan.transaction_id,
+            // INFORM: the client already holds this address (carried in ciaddr)
+            // and asks only for configuration parameters. RFC 2131 section 4.3.5:
+            // the Ack allocates no address (yiaddr 0.0.0.0) and grants no lease
+            // (no option 51).
+            "client_ciaddr": plan.client_ciaddr,
+            "parameter_request_list": plan.parameter_request_list,
+            "inform": true,
+            "yiaddr_zero": plan.expected_yiaddr_zero,
+            "no_lease_time": plan.expected_no_lease_time,
+            "server_identifier": plan.expected_server_identifier,
+            "subnet_mask": plan.expected_subnet_mask,
+            "router_ipv4": plan.expected_router_ipv4,
+            "dns_ipv4": plan.expected_dns_ipv4,
         }),
         _ => json!({}),
     }
