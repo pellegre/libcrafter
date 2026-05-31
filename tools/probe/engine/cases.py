@@ -197,8 +197,11 @@ BEHAVIOR_DHCP_CASES: tuple[ProbeCase, ...] = (
         protocol="dhcp",
     ),
     _behavior_case(
-        name="dhcp-lease-timing",
-        description="Send a Discover and validate lease and renewal timing options.",
+        name="dhcp-lease-time",
+        description=(
+            "Send a Discover and validate the lease time (51), renewal T1 (58), "
+            "and rebinding T2 (59) timing options in the Offer."
+        ),
         stimulus="dhcp_discover",
         expected_response="dhcp_offer",
         required_capabilities=_DHCP_CAPABILITIES,

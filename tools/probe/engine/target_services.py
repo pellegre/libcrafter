@@ -448,6 +448,7 @@ _DHCP_RESPONDER_CASES: frozenset[str] = frozenset(
         "dhcp-client-identifier",
         "dhcp-hostname",
         "dhcp-parameter-request-list",
+        "dhcp-lease-time",
     }
 )
 

@@ -594,6 +594,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "dhcp-client-identifier",
         "dhcp-hostname",
         "dhcp-parameter-request-list",
+        "dhcp-lease-time",
     }
 )
 
@@ -1109,6 +1110,7 @@ def _probe_plan_with_endpoint_addresses(
         "dhcp-client-identifier",
         "dhcp-hostname",
         "dhcp-parameter-request-list",
+        "dhcp-lease-time",
     }:
         # DHCP uses fixed privileged ports (client 68 -> server 67). The Offer/Ack
         # flows from the responder (target) back to the client (stimulus); the
@@ -1284,6 +1286,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "dhcp-client-identifier",
         "dhcp-hostname",
         "dhcp-parameter-request-list",
+        "dhcp-lease-time",
     }:
         return [
             FAILURE_TIMEOUT,

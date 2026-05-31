@@ -1289,6 +1289,141 @@ mod tests {
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
+    fn lease_time_plan() -> ProbePlan {
+        // RFC 2132: the responder returns the IP address lease time (option 51),
+        // the renewal T1 time value (option 58), and the rebinding T2 time value
+        // (option 59) as 32-bit second counts; T1 < T2 < lease.
+        let mut plan = base_plan("dhcp-lease-time");
+        plan.source_ipv4 = Some("10.64.0.10".to_string());
+        plan.destination_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
+        plan.source_port = Some(DHCP_CLIENT_PORT);
+        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
+        plan.transaction_id = Some(0x3903_f326);
+        plan.expected_message_type_value = Some(DHCP_OFFER);
+        plan.expected_yiaddr = Some("198.51.100.42".to_string());
+        plan.expected_server_identifier = Some("10.64.0.20".to_string());
+        plan.expected_lease_time = Some(3600);
+        plan.expected_renewal_time = Some(1800);
+        plan.expected_rebinding_time = Some(3150);
+        plan
+    }
+
+    /// Build the canonical Offer the controlled responder would unicast back,
+    /// carrying the three DHCP timing options (lease 51, renewal 58, rebinding 59).
+    fn offer_with_timing_options_packet(plan: &ProbePlan) -> Packet {
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
+        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .lease_time(plan.expected_lease_time.unwrap())
+            .renewal_time(plan.expected_renewal_time.unwrap())
+            .rebinding_time(plan.expected_rebinding_time.unwrap())
+            .subnet_mask("255.255.255.0".parse().unwrap());
+        Ipv4::new()
+            .src(
+                plan.expected_reply_source_ipv4
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Ipv4Addr>()
+                    .unwrap(),
+            )
+            .dst(
+                plan.expected_reply_destination_ipv4
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Ipv4Addr>()
+                    .unwrap(),
+            )
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp
+    }
+
+    #[test]
+    fn offer_timing_options_decode_to_planned_second_counts() {
+        let plan = lease_time_plan();
+        let bytes = offer_with_timing_options_packet(&plan)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        // Each timing option decodes to the planned 32-bit second count.
+        assert_eq!(dhcp.lease_time_value(), Some(3600));
+        assert_eq!(dhcp.renewal_time_value(), Some(1800));
+        assert_eq!(dhcp.rebinding_time_value(), Some(3150));
+    }
+
+    #[test]
+    fn matching_offer_with_timing_options_passes_validation() {
+        let plan = lease_time_plan();
+        let bytes = offer_with_timing_options_packet(&plan)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(
+            matches!(validation, CandidateValidation::Passed(_)),
+            "expected Passed, got {validation:?}"
+        );
+    }
+
+    #[test]
+    fn offer_with_wrong_renewal_time_is_wrong_payload() {
+        let mut plan = lease_time_plan();
+        let bytes = offer_with_timing_options_packet(&plan)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        // The responder returned T1 = 1800, but the plan now expects a different
+        // renewal time: a payload mismatch on option 58.
+        plan.expected_renewal_time = Some(900);
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    #[test]
+    fn offer_missing_rebinding_time_is_wrong_payload() {
+        let plan = lease_time_plan();
+        // An otherwise-correct Offer that omits the rebinding (T2) option (59) the
+        // plan requires reaches the right peer but fails the contract.
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
+        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .lease_time(plan.expected_lease_time.unwrap())
+            .renewal_time(plan.expected_renewal_time.unwrap())
+            .subnet_mask("255.255.255.0".parse().unwrap());
+        let packet = Ipv4::new()
+            .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
+            .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp;
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
     fn parameter_request_list_plan() -> ProbePlan {
         // RFC 2132 section 9.8 parameter request list (option 55): subnet mask (1),
         // router (3), DNS server (6), lease time (51), renewal T1 (58), and

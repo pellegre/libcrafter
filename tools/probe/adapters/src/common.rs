@@ -565,7 +565,8 @@ fn dispatch_case(
             | "dhcp-request-ack"
             | "dhcp-client-identifier"
             | "dhcp-hostname"
-            | "dhcp-parameter-request-list",
+            | "dhcp-parameter-request-list"
+            | "dhcp-lease-time",
         ) => dhcp::run_dhcp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -573,7 +574,8 @@ fn dispatch_case(
             | "dhcp-request-ack"
             | "dhcp-client-identifier"
             | "dhcp-hostname"
-            | "dhcp-parameter-request-list",
+            | "dhcp-parameter-request-list"
+            | "dhcp-lease-time",
         ) => dhcp::run_dhcp_live(request, plan),
         _ => {
             // DHCP, ARP, and UDP behavioral cases are wired into their modules
@@ -834,7 +836,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "dhcp-request-ack"
         | "dhcp-client-identifier"
         | "dhcp-hostname"
-        | "dhcp-parameter-request-list" => {
+        | "dhcp-parameter-request-list"
+        | "dhcp-lease-time" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -873,6 +876,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-client-identifier" => "dhcp_offer",
             "dhcp-hostname" => "dhcp_offer",
             "dhcp-parameter-request-list" => "dhcp_offer",
+            "dhcp-lease-time" => "dhcp_offer",
             _ => "unknown",
         })
 }
@@ -1068,6 +1072,21 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "subnet_mask": plan.expected_subnet_mask,
             "router_ipv4": plan.expected_router_ipv4,
             "dns_ipv4": plan.expected_dns_ipv4,
+            "lease_time": plan.expected_lease_time,
+            "renewal_time": plan.expected_renewal_time,
+            "rebinding_time": plan.expected_rebinding_time,
+        }),
+        "dhcp-lease-time" => json!({
+            "required": true,
+            "kind": "dhcp-responder",
+            "port": plan.destination_port,
+            "client_port": plan.source_port,
+            "client_mac": plan.client_mac,
+            "transaction_id": plan.transaction_id,
+            "yiaddr": plan.expected_yiaddr,
+            "server_identifier": plan.expected_server_identifier,
+            "subnet_mask": plan.expected_subnet_mask,
+            "router_ipv4": plan.expected_router_ipv4,
             "lease_time": plan.expected_lease_time,
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
