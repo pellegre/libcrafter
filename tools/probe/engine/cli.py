@@ -535,7 +535,7 @@ def _write_stimulus_endpoint_request_artifact(
     dry_run: bool,
     stimulus_endpoint: Mapping[str, JSONValue] | None = None,
 ) -> Path | None:
-    endpoint_plans = _stimulus_endpoint_plans(probe_plans)
+    endpoint_plans = _stimulus_endpoint_request_plans(probe_plans, dry_run=dry_run)
     if not endpoint_plans:
         return None
 
@@ -565,6 +565,31 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
 
 def _stimulus_endpoint_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     return [plan for plan in probe_plans if plan.get("case") in _STIMULUS_ENDPOINT_CASES]
+
+
+def _stimulus_endpoint_request_plans(
+    probe_plans: Sequence[JSONObject],
+    *,
+    dry_run: bool,
+) -> list[JSONObject]:
+    """Select the probe plans embedded in the stimulus-endpoint request artifact.
+
+    Live execution still gates on :data:`_STIMULUS_ENDPOINT_CASES` (the cases
+    the Rust endpoint wires to a protocol module); that gating is owned by
+    :func:`_guarded_live_report` and is unchanged here. The dry-run request
+    artifact, however, carries every planned case so each behavioral case has a
+    deterministic stimulus-endpoint request to dry-run against — even cases that
+    are still planned-only and route through the endpoint's structured
+    ``decode_failed`` outcome.
+    """
+
+    if dry_run:
+        return [
+            plan
+            for plan in probe_plans
+            if isinstance(plan.get("case"), str) and plan.get("case")
+        ]
+    return _stimulus_endpoint_plans(probe_plans)
 
 
 def _probe_lab_dry_run_session(request: ProbeRunRequest) -> LabSession:
