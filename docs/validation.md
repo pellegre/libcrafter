@@ -132,7 +132,7 @@ zero-checksum status or DHCP-style L2 broadcast requirements:
 
 ```sh
 tools/oracle/run live --provider local-dry-run --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-local-dry-run
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile smoke --seed 9868 --count 20 --dry-run --out target/oracle/udp-options-live-dry-run-matrix
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox,docker --profile smoke --seed 9868 --count 20 --dry-run --out target/oracle/udp-options-live-dry-run-matrix
 ```
 
 ## Live Validation
@@ -156,9 +156,21 @@ repository. Packet generation, endpoint protocol comparison, report assembly,
 and the generic provider execution flow remain in the oracle runner.
 `tools/wire` owns one endpoint and artifact transport.
 
-This refactor does not introduce Docker. A future Docker path would be a
-workload runner behind oracle bootstrap for the `libcrafter` or
-`reference_backend` role, not a provider abstraction.
+Docker is available as a lab-backed oracle provider through the constrained
+`docker/private` lab adapter. The Docker adapter owns only the private
+multi-endpoint substrate; oracle still owns the `libcrafter` and
+`reference_backend` workload setup. The Docker private capability model
+advertises IPv4 unicast, link-layer send and capture, broadcast, provider MAC
+knowledge, and controlled services, but not IPv6 or a controlled router.
+
+Docker `lan` and `wan` are direct wire smokes for NAT-backed L3 reachability
+from one container. They are not oracle lab-backed multi-endpoint modes and do
+not claim LAN L2, WAN L2, or public inbound behavior:
+
+```sh
+tools/wire/smoke/live_docker_lan_icmp.py --plan-only
+tools/wire/smoke/live_docker_wan_dns.py --plan-only
+```
 
 Use the non-provider-backed local dry-run or provider-backed dry-runs for
 planning and CI-safe checks:
@@ -166,10 +178,12 @@ planning and CI-safe checks:
 ```sh
 tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
 tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role libcrafter --role reference_backend --json
+tools/lab/run plan --provider docker --dry-run --profile smoke --seed 1 --role libcrafter --role reference_backend --json
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 tools/oracle/run live --provider qemu --dry-run --profile smoke --seed 12345 --count 10
 tools/oracle/run live --provider virtualbox --dry-run --profile smoke --seed 12345 --count 10
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
+tools/oracle/run live --provider docker --dry-run --profile smoke --seed 12345 --count 10
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox,docker --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 ```
 
 Real provider-backed validation is reserved for explicit protected workflows on
@@ -178,6 +192,7 @@ still uses the same live oracle command and adapter registry:
 
 ```sh
 tools/oracle/run live --provider hetzner --confirm-live-run --profile smoke --seed 12345 --count 10
+tools/oracle/run live --provider docker --confirm-live-run --profile smoke --seed 12345 --count 10
 ```
 
 For local VM providers, use the guarded matrix smoke path. It runs QEMU and
@@ -215,10 +230,11 @@ cargo test --workspace
 tools/oracle/run corpus --profile ci --seed 12345 --count 100 --out target/oracle/final-corpus
 tools/oracle/run offline --corpus target/oracle/final-corpus/plans.json --out target/oracle/final-offline
 tools/oracle/run pcap --corpus target/oracle/final-corpus/plans.json --out target/oracle/final-pcap
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile ci --seed 12345 --count 100 --dry-run --out target/oracle/final-live-matrix
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox,docker --profile ci --seed 12345 --count 100 --dry-run --out target/oracle/final-live-matrix
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run-qemu
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run-virtualbox
+tools/probe/run --provider docker --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run-docker
 ```
 
 Oracle artifacts default below `target/oracle/`, with mode-specific reports
