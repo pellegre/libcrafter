@@ -154,10 +154,83 @@ def create_endpoint(
 
     if not confirm_live_run:
         raise PermissionError(CONFIRMATION_ERROR)
-    _ = command_runner
+    if exposure == EXPOSURE_PRIVATE:
+        return _create_live_private_endpoint(
+            provider=provider,
+            exposure=exposure,
+            role=role,
+            private_group=private_group,
+            private_ip=private_ip,
+            env=environ,
+            command_runner=command_runner,
+        )
     raise NotImplementedError(
         f"real docker create-endpoint is not implemented for {exposure}"
     )
+
+
+def _create_live_private_endpoint(
+    *,
+    provider: str,
+    exposure: str,
+    role: str,
+    private_group: str | None,
+    private_ip: str | None,
+    env: Mapping[str, str],
+    command_runner: DockerRunner,
+) -> dict[str, object]:
+    if private_group is None:
+        raise ValueError("--private-group is required for live docker/private endpoints")
+
+    endpoint_id = docker_endpoint_id(
+        provider=provider,
+        exposure=exposure,
+        role=role,
+    )
+    created_at = utc_now()
+    docker_command = requested_docker_command(env)
+    private_plan = _prepare_live_private_network(
+        provider=provider,
+        exposure=exposure,
+        role=role,
+        private_group=private_group,
+        endpoint_id=endpoint_id,
+        private_cidr=requested_private_cidr(env),
+        requested_private_ip=private_ip,
+        env=env,
+        docker_command=docker_command,
+        command_runner=command_runner,
+        created_at=created_at,
+    )
+    manifest = _create_live_container_endpoint(
+        provider=provider,
+        exposure=exposure,
+        role=role,
+        env=env,
+        command_runner=command_runner,
+        network_name=str(private_plan["network_name"]),
+        network_args=_object_sequence(private_plan["network_args"], "private.network_args"),
+        network_resources=_provider_resource_sequence(
+            private_plan["network_resources"],
+            "private.network_resources",
+        ),
+        security=_docker_private_security_flags(),
+        capabilities=_private_capabilities_metadata(
+            provider=provider,
+            exposure=exposure,
+            dry_run=False,
+        ),
+        planned_interfaces=_network_interface_sequence(
+            private_plan["planned_interfaces"],
+            "private.planned_interfaces",
+        ),
+        private_group=private_group,
+        endpoint_id=endpoint_id,
+        created_at=created_at,
+        extra_metadata=_metadata_mapping(private_plan.get("extra_metadata")),
+        discovery_prefer_public_or_default=False,
+    )
+    return _docker_live_output(manifest)
 
 
 def _planned_private_endpoint_manifest(
@@ -1110,6 +1183,25 @@ def _create_live_container_endpoint(
     return manifest
 
 
+def _docker_live_output(manifest: EndpointManifest) -> dict[str, object]:
+    layout = endpoint_layout(manifest.endpoint_id)
+    output = manifest.to_dict()
+    output["created"] = True
+    output["dry_run"] = False
+    output["state_dir"] = str(manifest.metadata.get("state_dir", layout.state_dir))
+    output["manifest_path"] = str(
+        manifest.metadata.get("manifest_path", layout.manifest_path)
+    )
+    output["metadata"]["artifact_paths"] = manifest.artifact_paths(  # type: ignore[index]
+        _artifact_paths(
+            layout=layout,
+            public_key=public_key_path(layout.private_key_path),
+            docker_image=_metadata_mapping(manifest.metadata.get("docker_image")),
+        )
+    ).to_dict()
+    return output
+
+
 def _docker_live_run_argv(
     *,
     container_name: str,
@@ -1550,6 +1642,34 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return []
     return [item for item in value if isinstance(item, str)]
+
+
+def _object_sequence(value: object, name: str) -> list[object]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{name} must be a sequence")
+    return list(value)
+
+
+def _provider_resource_sequence(value: object, name: str) -> list[ProviderResource]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{name} must be a provider resource sequence")
+    resources: list[ProviderResource] = []
+    for item in value:
+        if not isinstance(item, ProviderResource):
+            raise ValueError(f"{name} must contain provider resources")
+        resources.append(item)
+    return resources
+
+
+def _network_interface_sequence(value: object, name: str) -> list[NetworkInterface]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{name} must be a network interface sequence")
+    interfaces: list[NetworkInterface] = []
+    for item in value:
+        if not isinstance(item, NetworkInterface):
+            raise ValueError(f"{name} must contain network interfaces")
+        interfaces.append(item)
+    return interfaces
 
 
 def _validate_create_request(
