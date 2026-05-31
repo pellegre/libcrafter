@@ -119,7 +119,12 @@ def _policy_mutable_fields(
         provider_capabilities,
         "ipv4_header_mutable",
     ) and "ipv4" in plan.stack:
-        fields.extend(["ipv4.ttl", "ipv4.checksum"])
+        # The host kernel assigns the IPv4 identification on raw L3 send when the
+        # sender leaves it zero, so it is not under the sender's deterministic
+        # control on the live path — treat it as mutable alongside ttl/checksum.
+        # The name must match the decoded-model field key (`identification`) so
+        # both the byte mask and the decoded-model strip clear it.
+        fields.extend(["ipv4.ttl", "ipv4.checksum", "ipv4.identification"])
     if _provider_policy_flag(
         provider,
         provider_capabilities,
@@ -156,6 +161,10 @@ def _policy_transit_mutations(
                 {
                     "field": "ipv4.checksum",
                     "reason": "IPv4 header checksum follows provider TTL mutation",
+                },
+                {
+                    "field": "ipv4.identification",
+                    "reason": "host kernel assigns the IPv4 identification on raw L3 send when sent as zero",
                 },
             ]
         )

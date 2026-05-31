@@ -34,6 +34,14 @@ class LiveProviderPolicyTest(unittest.TestCase):
         self.assertIn("ipv4.checksum", policy["mutable_fields"])
         self.assertIn("ipv4.ttl", policy["byte_mutable_fields"])
         self.assertIn("ipv4.checksum", policy["byte_mutable_fields"])
+        # The host kernel assigns the IPv4 identification on raw L3 send when the
+        # sender leaves it zero, so it must be wire-mutable for live comparison.
+        self.assertIn("ipv4.identification", policy["mutable_fields"])
+        self.assertIn("ipv4.identification", policy["byte_mutable_fields"])
+        self.assertIn(
+            "ipv4.identification",
+            {mutation["field"] for mutation in policy["transit_mutations"]},
+        )
         self.assertFalse(policy["strict_bytes"])
 
     def test_supplied_fake_provider_policy_does_not_inherit_hetzner_mutables(
