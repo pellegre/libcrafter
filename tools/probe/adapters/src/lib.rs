@@ -90,6 +90,8 @@ pub(crate) mod test_support {
             expected_icmp_code: None,
             expected_embedded_prefix_hex: None,
             expected_embedded_prefix_length: None,
+            send_count: None,
+            sends: None,
         }
     }
 }

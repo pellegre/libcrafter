@@ -134,7 +134,7 @@ BEHAVIOR_DNS_CASES: tuple[ProbeCase, ...] = (
         protocol="dns",
     ),
     _behavior_case(
-        name="dns-txid-reuse",
+        name="dns-repeat-transaction",
         description=(
             "Reuse a transaction id over separate source ports and validate each "
             "independently decoded response."

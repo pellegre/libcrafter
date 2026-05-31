@@ -176,6 +176,61 @@ pub struct ProbePlan {
     pub expected_embedded_prefix_hex: Option<String>,
     #[serde(default)]
     pub expected_embedded_prefix_length: Option<usize>,
+    #[serde(default)]
+    pub send_count: Option<usize>,
+    #[serde(default)]
+    pub sends: Option<Vec<DnsSend>>,
+}
+
+/// One send of a multi-send DNS probe case (`dns-repeat-transaction`).
+///
+/// Each send carries its own transaction id, source port, query name, expected
+/// A answer, and per-send capture filter/peer expectations so the stimulus
+/// endpoint can build/send/capture/decode each query independently and match
+/// every response back to *its* send by source port and id — never confusing two
+/// responses that share the same query name.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DnsSend {
+    #[serde(default)]
+    pub index: Option<usize>,
+    #[serde(default)]
+    pub source_ipv4: Option<String>,
+    #[serde(default)]
+    pub destination_ipv4: Option<String>,
+    #[serde(default)]
+    pub expected_reply_source_ipv4: Option<String>,
+    #[serde(default)]
+    pub expected_reply_destination_ipv4: Option<String>,
+    #[serde(default)]
+    pub source_port: Option<u16>,
+    #[serde(default)]
+    pub destination_port: Option<u16>,
+    #[serde(default)]
+    pub query_id: Option<u16>,
+    #[serde(default)]
+    pub query_name: Option<String>,
+    #[serde(default)]
+    pub query_type: Option<String>,
+    #[serde(default)]
+    pub query_type_value: Option<u16>,
+    #[serde(default)]
+    pub query_class_value: Option<u16>,
+    #[serde(default)]
+    pub expected_answer_name: Option<String>,
+    #[serde(default)]
+    pub expected_answer_type: Option<String>,
+    #[serde(default)]
+    pub expected_answer_type_value: Option<u16>,
+    #[serde(default)]
+    pub expected_answer_data: Option<String>,
+    #[serde(default)]
+    pub expected_answer_count: Option<usize>,
+    #[serde(default)]
+    pub expected_response_code: Option<u8>,
+    #[serde(default)]
+    pub answer_ttl: Option<u32>,
+    #[serde(default)]
+    pub capture_filter: Option<String>,
 }
 
 /// One expected DNS answer record carried in a probe plan.
@@ -416,13 +471,31 @@ fn dispatch_case(
         (RunMode::Live, "tcp-syn-open" | "tcp-syn-closed") => tcp::run_tcp_live(request, plan),
         (
             RunMode::DryRun,
-            "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain"
-            | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer" | "dns-edns-opt",
+            "dns-query"
+            | "dns-a-success"
+            | "dns-aaaa-success"
+            | "dns-cname-chain"
+            | "dns-nxdomain"
+            | "dns-nodata"
+            | "dns-txt-answer"
+            | "dns-mx-answer"
+            | "dns-srv-answer"
+            | "dns-edns-opt"
+            | "dns-repeat-transaction",
         ) => dns::run_dns_dry_run(request, plan),
         (
             RunMode::Live,
-            "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain"
-            | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer" | "dns-edns-opt",
+            "dns-query"
+            | "dns-a-success"
+            | "dns-aaaa-success"
+            | "dns-cname-chain"
+            | "dns-nxdomain"
+            | "dns-nodata"
+            | "dns-txt-answer"
+            | "dns-mx-answer"
+            | "dns-srv-answer"
+            | "dns-edns-opt"
+            | "dns-repeat-transaction",
         ) => dns::run_dns_live(request, plan),
         (RunMode::DryRun, "ttl-expired") => icmp::run_ttl_expired_dry_run(request, plan),
         (RunMode::Live, "ttl-expired") => icmp::run_ttl_expired_live(request, plan),
@@ -562,6 +635,8 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_icmp_code": plan.expected_icmp_code,
         "expected_embedded_prefix_hex": plan.expected_embedded_prefix_hex,
         "expected_embedded_prefix_length": plan.expected_embedded_prefix_length,
+        "send_count": plan.send_count,
+        "sends": dns::sends_json(plan.sends.as_deref()),
         "target_service": target_service_json(plan),
         "capture_filter": capture_filter(plan),
     })
@@ -631,8 +706,17 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
             plan.destination_port.unwrap_or(0),
             plan.source_port.unwrap_or(0),
         ),
-        "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain"
-        | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer" | "dns-srv-answer" | "dns-edns-opt" => {
+        "dns-query"
+        | "dns-a-success"
+        | "dns-aaaa-success"
+        | "dns-cname-chain"
+        | "dns-nxdomain"
+        | "dns-nodata"
+        | "dns-txt-answer"
+        | "dns-mx-answer"
+        | "dns-srv-answer"
+        | "dns-edns-opt"
+        | "dns-repeat-transaction" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -661,9 +745,17 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "icmp-echo" => "icmp_echo_reply",
             "tcp-syn-open" => "tcp_syn_ack",
             "tcp-syn-closed" => "tcp_rst",
-            "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain"
-            | "dns-nxdomain" | "dns-nodata" | "dns-txt-answer" | "dns-mx-answer"
-            | "dns-srv-answer" | "dns-edns-opt" => "dns_response",
+            "dns-query"
+            | "dns-a-success"
+            | "dns-aaaa-success"
+            | "dns-cname-chain"
+            | "dns-nxdomain"
+            | "dns-nodata"
+            | "dns-txt-answer"
+            | "dns-mx-answer"
+            | "dns-srv-answer"
+            | "dns-edns-opt"
+            | "dns-repeat-transaction" => "dns_response",
             "ttl-expired" => "icmp_ttl_expired",
             _ => "unknown",
         })
@@ -767,6 +859,20 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "extended_rcode": plan.expected_edns_extended_rcode,
                 "do": plan.expected_edns_do,
                 "options": dns::edns_options_json(plan.expected_edns_options.as_deref()),
+            },
+        }),
+        "dns-repeat-transaction" => json!({
+            "required": true,
+            "kind": "udp-dns-responder",
+            "port": plan.destination_port,
+            "query_name": plan.query_name,
+            "query_type": plan.query_type,
+            "answer_data": plan.expected_answer_data,
+            "answer_ttl": plan.answer_ttl,
+            "repeat_transaction": {
+                "query_id": plan.query_id,
+                "query_name": plan.query_name,
+                "sends": dns::repeat_sends_json(plan.sends.as_deref()),
             },
         }),
         _ => json!({}),

@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::common::{
     capture_filter, decode_hex, decoded_packet_json, failed_outcome, hex_bytes, observed_response,
     plan_json, required_str, required_u16, send_report_json, target_service_json,
-    CandidateValidation, EdnsOptionExpectation, ExampleResult, ProbeOutcome, ProbePlan,
+    CandidateValidation, DnsSend, EdnsOptionExpectation, ExampleResult, ProbeOutcome, ProbePlan,
     StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD,
     FAILURE_WRONG_PEER,
 };
@@ -19,6 +19,9 @@ pub fn run_dns_dry_run(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
+    if let Some(sends) = plan.sends.as_deref() {
+        return run_dns_multi_send_dry_run(request, plan, sends);
+    }
     let packet = dns_packet(plan)?;
     let report = SocketSender::new(
         SendOptions::new()
@@ -69,6 +72,9 @@ pub fn run_dns_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
+    if let Some(sends) = plan.sends.as_deref() {
+        return run_dns_multi_send_live(request, plan, sends);
+    }
     let packet = dns_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer = match Sniffer::interface(request.interface.clone())
@@ -210,6 +216,350 @@ pub fn run_dns_live(
         sent,
         false,
     ))
+}
+
+/// Derive a single-send `ProbePlan` from a parent multi-send plan and one of its
+/// `sends` entries. The derived plan reuses the parent's case and shared fields
+/// but overrides the per-send transaction id, source port, query name, peer
+/// addresses, expected answer, and capture filter so the existing single-send
+/// builders (`dns_packet`, `validate_dns_candidate`) operate on exactly this one
+/// send and its own expected response.
+fn send_as_plan(parent: &ProbePlan, send: &DnsSend) -> ProbePlan {
+    let mut derived = parent.clone();
+    // This send is a single, self-contained query; clear the multi-send markers
+    // so the single-send build/validate path runs against just this send.
+    derived.sends = None;
+    derived.send_count = None;
+    if let Some(value) = send.source_ipv4.clone() {
+        derived.source_ipv4 = Some(value);
+    }
+    if let Some(value) = send.destination_ipv4.clone() {
+        derived.destination_ipv4 = Some(value);
+    }
+    if let Some(value) = send.expected_reply_source_ipv4.clone() {
+        derived.expected_reply_source_ipv4 = Some(value);
+    }
+    if let Some(value) = send.expected_reply_destination_ipv4.clone() {
+        derived.expected_reply_destination_ipv4 = Some(value);
+    }
+    if let Some(value) = send.source_port {
+        derived.source_port = Some(value);
+    }
+    if let Some(value) = send.destination_port {
+        derived.destination_port = Some(value);
+    }
+    if let Some(value) = send.query_id {
+        derived.query_id = Some(value);
+    }
+    if let Some(value) = send.query_name.clone() {
+        derived.query_name = Some(value);
+    }
+    if let Some(value) = send.query_type.clone() {
+        derived.query_type = Some(value);
+    }
+    if let Some(value) = send.query_type_value {
+        derived.query_type_value = Some(value);
+    }
+    if let Some(value) = send.query_class_value {
+        derived.query_class_value = Some(value);
+    }
+    if let Some(value) = send.expected_answer_name.clone() {
+        derived.expected_answer_name = Some(value);
+    }
+    if let Some(value) = send.expected_answer_type.clone() {
+        derived.expected_answer_type = Some(value);
+    }
+    if let Some(value) = send.expected_answer_type_value {
+        derived.expected_answer_type_value = Some(value);
+    }
+    if let Some(value) = send.expected_answer_data.clone() {
+        derived.expected_answer_data = Some(value);
+    }
+    if let Some(value) = send.expected_answer_count {
+        derived.expected_answer_count = Some(value);
+    }
+    if let Some(value) = send.expected_response_code {
+        derived.expected_response_code = Some(value);
+    }
+    if let Some(value) = send.answer_ttl {
+        derived.answer_ttl = Some(value);
+    }
+    derived
+}
+
+/// Dry-run a multi-send DNS case (`dns-repeat-transaction`): compile every
+/// per-send stimulus packet with libcrafter and emit one planned send and one
+/// expected response per send. No traffic leaves the host. The output carries a
+/// `planned_sends` array (one entry per build) and a top-level `send_count` so an
+/// inspector sees two planned sends and two expected responses.
+fn run_dns_multi_send_dry_run(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sends: &[DnsSend],
+) -> ExampleResult<ProbeOutcome> {
+    let mut planned_sends = Vec::with_capacity(sends.len());
+    for (offset, send) in sends.iter().enumerate() {
+        let send_plan = send_as_plan(plan, send);
+        let packet = dns_packet(&send_plan)?;
+        let report = SocketSender::new(
+            SendOptions::new()
+                .iface(request.interface.clone())
+                .network_layer()
+                .dry_run(),
+        )
+        .send(&packet)?;
+        let sent_raw_hex = hex_bytes(report.plan().bytes());
+        planned_sends.push(json!({
+            "index": send.index.unwrap_or(offset),
+            "query_id": send_plan.query_id,
+            "source_port": send_plan.source_port,
+            "destination_port": send_plan.destination_port,
+            "query_name": send_plan.query_name,
+            "expected_answer_data": send_plan.expected_answer_data,
+            "answer_ttl": send_plan.answer_ttl,
+            "send_report": send_report_json(&report),
+            "sent_raw_hex": sent_raw_hex,
+            "capture_filter": capture_filter(&send_plan),
+            "expected_response": dns_expected_response_json(&send_plan),
+        }));
+    }
+    let expected_responses: Vec<Value> = planned_sends
+        .iter()
+        .filter_map(|entry| entry.get("expected_response").cloned())
+        .collect();
+    let observed = observed_response(
+        plan,
+        false,
+        None,
+        json!({}),
+        json!({
+            "planned_only": true,
+            "send_count": planned_sends.len(),
+            "planned_sends": planned_sends,
+            "expected_responses": expected_responses,
+            "target_service": target_service_json(plan),
+        }),
+    );
+    let result = json!({
+        "case": plan.case,
+        "sequence": plan.sequence,
+        "status": "planned",
+        "endpoint_role": "stimulus",
+        "passed": null,
+        "observed_response": observed,
+        "metadata": {
+            "dry_run": true,
+            "probe_plan": plan_json(plan),
+            "planned_only": true,
+            "send_count": planned_sends.len(),
+            "planned_sends": planned_sends,
+            "expected_responses": expected_responses,
+            "target_service": target_service_json(plan),
+        }
+    });
+    Ok(ProbeOutcome {
+        result,
+        observed_response: observed,
+        sent: false,
+        received: false,
+    })
+}
+
+/// Live multi-send DNS case (`dns-repeat-transaction`): build and send every
+/// per-send libcrafter query, capture the responses, decode each, and validate
+/// every response against *its* send's id, source port, and expected answer.
+/// Each send opens its own capture filtered to its source port, so two responses
+/// that share a query name are never confused — every response is matched to the
+/// send that produced it. The case passes only when every send validates.
+fn run_dns_multi_send_live(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sends: &[DnsSend],
+) -> ExampleResult<ProbeOutcome> {
+    let mut send_results = Vec::with_capacity(sends.len());
+    let mut all_passed = true;
+    let mut any_sent = false;
+    let mut any_received = false;
+    let mut failure_reason: Option<&'static str> = None;
+    let mut errors: Vec<String> = Vec::new();
+
+    for (offset, send) in sends.iter().enumerate() {
+        let send_plan = send_as_plan(plan, send);
+        let outcome = run_dns_live(request, &send_plan)?;
+        any_sent |= outcome.sent;
+        any_received |= outcome.received;
+        let status = outcome
+            .result
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("failed");
+        if status != "passed" {
+            all_passed = false;
+            let reason = outcome
+                .result
+                .get("metadata")
+                .and_then(|metadata| metadata.get("failure_reason"))
+                .and_then(Value::as_str);
+            if let Some(reason) = reason {
+                failure_reason.get_or_insert(static_failure_reason(reason));
+                errors.push(format!(
+                    "send {} (source port {:?}) failed: {reason}",
+                    send.index.unwrap_or(offset),
+                    send_plan.source_port,
+                ));
+            }
+        }
+        send_results.push(json!({
+            "index": send.index.unwrap_or(offset),
+            "query_id": send_plan.query_id,
+            "source_port": send_plan.source_port,
+            "expected_answer_data": send_plan.expected_answer_data,
+            "status": status,
+            "result": outcome.result,
+        }));
+    }
+
+    let summary = json!({
+        "send_count": sends.len(),
+        "send_results": send_results,
+    });
+
+    if all_passed {
+        let observed = observed_response(
+            plan,
+            true,
+            None,
+            summary.clone(),
+            json!({
+                "capture_filter": capture_filter(plan),
+                "send_count": sends.len(),
+            }),
+        );
+        let result = json!({
+            "case": plan.case,
+            "sequence": plan.sequence,
+            "status": "passed",
+            "endpoint_role": "stimulus",
+            "passed": true,
+            "observed_response": observed,
+            "metadata": {
+                "dry_run": false,
+                "probe_plan": plan_json(plan),
+                "send_count": sends.len(),
+                "send_results": observed["decoded"]["send_results"].clone(),
+            }
+        });
+        return Ok(ProbeOutcome {
+            result,
+            observed_response: observed,
+            sent: any_sent,
+            received: any_received,
+        });
+    }
+
+    Ok(failed_outcome(
+        plan,
+        failure_reason.unwrap_or(FAILURE_WRONG_PAYLOAD),
+        if errors.is_empty() {
+            vec!["one or more repeat-transaction sends failed validation".to_string()]
+        } else {
+            errors
+        },
+        Some(summary),
+        any_sent,
+        any_received,
+    ))
+}
+
+/// Map a failure-reason string (as it appears in a per-send result) back to the
+/// crate's `'static` failure-reason constants so the aggregate failure uses a
+/// stable reason.
+fn static_failure_reason(reason: &str) -> &'static str {
+    match reason {
+        FAILURE_TIMEOUT => FAILURE_TIMEOUT,
+        FAILURE_WRONG_PEER => FAILURE_WRONG_PEER,
+        FAILURE_DECODE_FAILED => FAILURE_DECODE_FAILED,
+        _ => FAILURE_WRONG_PAYLOAD,
+    }
+}
+
+/// JSON view of one send's expected response (peer/ports, transaction id, the
+/// QR/rcode flags, the question, and the A answer) for the dry-run report.
+fn dns_expected_response_json(send_plan: &ProbePlan) -> Value {
+    json!({
+        "source_ipv4": send_plan.expected_reply_source_ipv4,
+        "destination_ipv4": send_plan.expected_reply_destination_ipv4,
+        "source_port": send_plan.destination_port,
+        "destination_port": send_plan.source_port,
+        "query_id": send_plan.query_id,
+        "qr": true,
+        "response_code": send_plan.expected_response_code.unwrap_or(0),
+        "question": {
+            "name": send_plan.query_name,
+            "type": send_plan.query_type,
+            "type_value": send_plan.query_type_value,
+        },
+        "answer": {
+            "name": send_plan.expected_answer_name,
+            "type": send_plan.expected_answer_type,
+            "data": send_plan.expected_answer_data,
+            "ttl": send_plan.answer_ttl,
+        },
+    })
+}
+
+/// JSON view of a plan's `sends` array for the plan echo. `None` renders null.
+pub fn sends_json(sends: Option<&[DnsSend]>) -> Value {
+    match sends {
+        Some(sends) => Value::Array(
+            sends
+                .iter()
+                .map(|send| {
+                    json!({
+                        "index": send.index,
+                        "source_ipv4": send.source_ipv4,
+                        "destination_ipv4": send.destination_ipv4,
+                        "expected_reply_source_ipv4": send.expected_reply_source_ipv4,
+                        "expected_reply_destination_ipv4": send.expected_reply_destination_ipv4,
+                        "source_port": send.source_port,
+                        "destination_port": send.destination_port,
+                        "query_id": send.query_id,
+                        "query_name": send.query_name,
+                        "query_type": send.query_type,
+                        "query_type_value": send.query_type_value,
+                        "expected_answer_name": send.expected_answer_name,
+                        "expected_answer_type": send.expected_answer_type,
+                        "expected_answer_data": send.expected_answer_data,
+                        "expected_answer_count": send.expected_answer_count,
+                        "expected_response_code": send.expected_response_code,
+                        "answer_ttl": send.answer_ttl,
+                        "capture_filter": send.capture_filter,
+                    })
+                })
+                .collect(),
+        ),
+        None => Value::Null,
+    }
+}
+
+/// JSON view of a plan's `sends` for the responder zone's `repeat_transaction`
+/// descriptor: just the per-send source port and the A answer that port expects.
+pub fn repeat_sends_json(sends: Option<&[DnsSend]>) -> Value {
+    match sends {
+        Some(sends) => Value::Array(
+            sends
+                .iter()
+                .map(|send| {
+                    json!({
+                        "source_port": send.source_port,
+                        "answer_data": send.expected_answer_data,
+                        "answer_ttl": send.answer_ttl,
+                    })
+                })
+                .collect(),
+        ),
+        None => Value::Null,
+    }
 }
 
 pub fn validate_dns_candidate(
@@ -2029,5 +2379,136 @@ mod tests {
             CandidateValidation::WrongPayload(_) => {}
             other => panic!("expected WrongPayload for wrong option data, got {other:?}"),
         }
+    }
+
+    /// Build a `dns-repeat-transaction` plan with two sends reusing one
+    /// transaction id and one query name over two distinct source ports, each
+    /// with its own A answer.
+    fn repeat_transaction_plan() -> ProbePlan {
+        let query = "probe-1019-0-rep00000aa.behavior.libcrafter.test.";
+        let make_send = |index: usize, source_port: u16, answer: &str, ttl: u32| DnsSend {
+            index: Some(index),
+            source_ipv4: Some("10.77.0.10".to_string()),
+            destination_ipv4: Some("10.77.0.20".to_string()),
+            expected_reply_source_ipv4: Some("10.77.0.20".to_string()),
+            expected_reply_destination_ipv4: Some("10.77.0.10".to_string()),
+            source_port: Some(source_port),
+            destination_port: Some(53),
+            query_id: Some(0xab12),
+            query_name: Some(query.to_string()),
+            query_type: Some("A".to_string()),
+            query_type_value: Some(DNS_TYPE_A),
+            query_class_value: Some(DNS_CLASS_IN),
+            expected_answer_name: Some(query.to_string()),
+            expected_answer_type: Some("A".to_string()),
+            expected_answer_type_value: Some(DNS_TYPE_A),
+            expected_answer_data: Some(answer.to_string()),
+            expected_answer_count: Some(1),
+            expected_response_code: Some(0),
+            answer_ttl: Some(ttl),
+            capture_filter: None,
+        };
+        let mut plan = base_plan("dns-repeat-transaction");
+        plan.source_ipv4 = Some("10.77.0.10".to_string());
+        plan.destination_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.77.0.10".to_string());
+        plan.source_port = Some(40100);
+        plan.destination_port = Some(53);
+        plan.query_id = Some(0xab12);
+        plan.query_name = Some(query.to_string());
+        plan.query_type = Some("A".to_string());
+        plan.query_type_value = Some(DNS_TYPE_A);
+        plan.query_class_value = Some(DNS_CLASS_IN);
+        plan.expected_answer_data = Some("203.0.113.10".to_string());
+        plan.answer_ttl = Some(90);
+        plan.send_count = Some(2);
+        plan.sends = Some(vec![
+            make_send(0, 40100, "203.0.113.10", 90),
+            make_send(1, 50200, "203.0.113.20", 120),
+        ]);
+        plan
+    }
+
+    #[test]
+    fn send_as_plan_overrides_per_send_fields() {
+        let plan = repeat_transaction_plan();
+        let sends = plan.sends.clone().unwrap();
+        let first = send_as_plan(&plan, &sends[0]);
+        let second = send_as_plan(&plan, &sends[1]);
+        // Each derived plan is single-send (no nested sends) so the existing
+        // build/validate path runs against exactly one query.
+        assert!(first.sends.is_none());
+        assert!(second.sends.is_none());
+        // Shared transaction id and query name; distinct source port and answer.
+        assert_eq!(first.query_id, second.query_id);
+        assert_eq!(first.query_name, second.query_name);
+        assert_ne!(first.source_port, second.source_port);
+        assert_eq!(first.source_port, Some(40100));
+        assert_eq!(second.source_port, Some(50200));
+        assert_eq!(first.expected_answer_data.as_deref(), Some("203.0.113.10"));
+        assert_eq!(second.expected_answer_data.as_deref(), Some("203.0.113.20"));
+    }
+
+    #[test]
+    fn each_send_compiles_its_own_query() {
+        let plan = repeat_transaction_plan();
+        let sends = plan.sends.clone().unwrap();
+        for send in &sends {
+            let send_plan = send_as_plan(&plan, send);
+            let packet = dns_packet(&send_plan).unwrap();
+            let bytes = packet.compile().unwrap();
+            assert!(bytes.len() >= 28, "dns packet too short: {}", bytes.len());
+            let udp = packet.layer::<Udp>().expect("udp layer present");
+            assert_eq!(udp.source_port_value(), send.source_port.unwrap());
+            let dns = packet.layer::<Dns>().expect("dns layer present");
+            assert_eq!(dns.id_value(), 0xab12);
+        }
+    }
+
+    #[test]
+    fn multi_send_dry_run_emits_two_planned_sends_and_responses() {
+        let plan = repeat_transaction_plan();
+        let request: StimulusEndpointRequest = serde_json::from_value(serde_json::json!({
+            "provider": "qemu",
+            "profile": "behavior",
+            "seed": 1019,
+            "endpoint_role": "stimulus",
+            "interface": "eth1",
+            "local_ipv4": "10.77.0.10",
+            "peer_ipv4": "10.77.0.20",
+            "timeout_seconds": 5,
+            "probe_plans": [],
+        }))
+        .expect("request deserializes");
+        let outcome = run_dns_dry_run(&request, &plan).expect("dry-run succeeds");
+        let metadata = &outcome.result["metadata"];
+        assert_eq!(metadata["send_count"], serde_json::json!(2));
+        let planned_sends = metadata["planned_sends"].as_array().expect("planned_sends");
+        assert_eq!(planned_sends.len(), 2);
+        let expected_responses = metadata["expected_responses"]
+            .as_array()
+            .expect("expected_responses");
+        assert_eq!(expected_responses.len(), 2);
+        // Each planned send compiled its own stimulus bytes.
+        for send in planned_sends {
+            assert!(send["sent_raw_hex"]
+                .as_str()
+                .is_some_and(|hex| !hex.is_empty()));
+        }
+        // Reused id, separate source ports, distinct answers.
+        let ports: Vec<_> = planned_sends
+            .iter()
+            .map(|send| send["source_port"].clone())
+            .collect();
+        assert_ne!(ports[0], ports[1]);
+        assert_eq!(
+            planned_sends[0]["query_id"], planned_sends[1]["query_id"],
+            "both sends reuse one transaction id"
+        );
+        assert_ne!(
+            expected_responses[0]["answer"]["data"], expected_responses[1]["answer"]["data"],
+            "each expected response carries its own answer"
+        );
     }
 }

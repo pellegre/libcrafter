@@ -113,6 +113,14 @@ def _dns_edns_opt_plan(*, seed: int = 1018, sequence: int = 0) -> dict:
     )
 
 
+def _dns_repeat_transaction_plan(*, seed: int = 1019, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dns-repeat-transaction"]),
+        case=planning.PROBE_CASE_BY_NAME["dns-repeat-transaction"],
+        sequence=sequence,
+    )
+
+
 class DnsASuccessPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct A query/answer contract."""
 
@@ -1238,6 +1246,135 @@ class DnsEdnsOptTest(unittest.TestCase):
                 self.assertTrue(metadata.get("dry_run"))
                 # A planned dry-run carries the compiled stimulus packet bytes.
                 self.assertTrue(metadata.get("sent_raw_hex"))
+
+
+class DnsRepeatTransactionPlanTest(unittest.TestCase):
+    """The plan carries two sends reusing one id over separate source ports."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dns-repeat-transaction", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dns-repeat-transaction"],
+            planning._dns_repeat_transaction_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _dns_repeat_transaction_plan(), _dns_repeat_transaction_plan()
+        )
+
+    def test_plan_carries_two_sends_with_one_id_over_separate_ports(self) -> None:
+        plan = _dns_repeat_transaction_plan()
+
+        self.assertEqual(plan["case"], "dns-repeat-transaction")
+        self.assertEqual(plan["stimulus"], "dns_query")
+        self.assertEqual(plan["expected_response"], "dns_response")
+
+        sends = plan["sends"]
+        self.assertEqual(plan["send_count"], 2)
+        self.assertEqual(len(sends), 2)
+
+        first, second = sends
+        # Repeated transaction id: both sends reuse one id and one query name.
+        self.assertEqual(first["query_id"], second["query_id"])
+        self.assertEqual(first["query_name"], second["query_name"])
+        self.assertTrue(first["query_name"].endswith("."))
+        # Over separate source ports: the two sends differ only in source port.
+        self.assertNotEqual(first["source_port"], second["source_port"])
+        self.assertEqual(first["destination_port"], 53)
+        self.assertEqual(second["destination_port"], 53)
+        # Each send carries its own deterministic A answer so a response can be
+        # matched to its send by source port and not confused with the sibling.
+        self.assertNotEqual(
+            first["expected_answer_data"], second["expected_answer_data"]
+        )
+        for send in sends:
+            self.assertEqual(send["query_type"], "A")
+            self.assertEqual(send["query_type_value"], 1)
+            ipaddress.ip_address(send["expected_answer_data"])
+            self.assertEqual(send["expected_answer_count"], 1)
+            self.assertEqual(send["expected_response_code"], 0)
+
+    def test_each_send_validation_matches_its_own_id_port_and_answer(self) -> None:
+        plan = _dns_repeat_transaction_plan()
+        for send in plan["sends"]:
+            validation = send["validation"]
+            self.assertEqual(validation["query_id"], send["query_id"])
+            self.assertTrue(validation["qr"])
+            self.assertEqual(validation["response_code"], 0)
+            # The response flows target -> stimulus on this send's source port.
+            self.assertEqual(validation["source_port"], send["destination_port"])
+            self.assertEqual(validation["destination_port"], send["source_port"])
+            self.assertEqual(validation["source_ipv4"], send["expected_reply_source_ipv4"])
+            self.assertEqual(
+                validation["destination_ipv4"], send["expected_reply_destination_ipv4"]
+            )
+            self.assertEqual(validation["question"]["name"], send["query_name"])
+            self.assertEqual(validation["answer"]["data"], send["expected_answer_data"])
+
+    def test_target_service_describes_per_port_answers(self) -> None:
+        plan = _dns_repeat_transaction_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-dns-responder")
+        repeat = target_service["repeat_transaction"]
+        self.assertEqual(repeat["query_id"], plan["query_id"])
+        self.assertEqual(repeat["query_name"], plan["query_name"])
+        repeat_sends = repeat["sends"]
+        self.assertEqual(len(repeat_sends), 2)
+        # The responder gets one answer per source port so each send's response
+        # carries its own planned answer.
+        ports = {entry["source_port"] for entry in repeat_sends}
+        answers = {entry["answer_data"] for entry in repeat_sends}
+        self.assertEqual(len(ports), 2)
+        self.assertEqual(len(answers), 2)
+
+
+class DnsRepeatTransactionTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dns-repeat-transaction",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1019,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dns-repeat-transaction", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dns-repeat-transaction"
+            ]
+            self.assertTrue(
+                results, "endpoint emitted no dns-repeat-transaction result"
+            )
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # The dry-run shows TWO planned sends and TWO expected responses.
+                self.assertEqual(metadata.get("send_count"), 2)
+                planned_sends = metadata.get("planned_sends", [])
+                expected_responses = metadata.get("expected_responses", [])
+                self.assertEqual(len(planned_sends), 2)
+                self.assertEqual(len(expected_responses), 2)
+                # Each planned send compiled its own stimulus packet bytes.
+                for send in planned_sends:
+                    self.assertTrue(send.get("sent_raw_hex"))
+                # The two sends reuse one transaction id over separate ports.
+                ids = {send.get("query_id") for send in planned_sends}
+                ports = {send.get("source_port") for send in planned_sends}
+                answers = {send.get("expected_answer_data") for send in planned_sends}
+                self.assertEqual(len(ids), 1)
+                self.assertEqual(len(ports), 2)
+                self.assertEqual(len(answers), 2)
 
 
 if __name__ == "__main__":
