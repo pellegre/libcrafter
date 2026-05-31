@@ -23,6 +23,22 @@ from tools.lab.engine import session as lab_session_state
 from tools.lab.engine import wire_client as lab_wire_client
 
 from . import bootstrap as probe_bootstrap
+from .capabilities import (
+    SKIP_CAPABILITY_UNAVAILABLE,
+    SKIP_CONFIRMATION_REQUIRED,
+    SKIP_REQUIRES_BROADCAST,
+    SKIP_REQUIRES_CONTROLLED_ROUTER,
+    SKIP_REQUIRES_CONTROLLED_SERVICE,
+    SKIP_REQUIRES_LINK_LAYER,
+    SKIP_REQUIRES_PRIVILEGED_PORT,
+    SKIP_REQUIRES_PROVIDER_MAC,
+    capability_skip_result as _capability_skip_result,
+    capability_skip_state as _capability_skip_state,
+    missing_capabilities as _missing_capabilities,
+    primary_endpoint_role as _primary_endpoint_role,
+    probe_capabilities_for_request as _probe_capabilities_for_request,
+    skip_reason_for_missing_capability as _skip_reason_for_missing_capability,
+)
 from .cases import (
     ENDPOINT_ROLES as _ENDPOINT_ROLES,
     PROBE_CASES as _PROBE_CASES,
@@ -37,7 +53,6 @@ from .lab import (
     TARGET_ROLE,
     is_probe_lab_provider,
     probe_address_context_from_lab_session,
-    probe_capabilities_for_provider,
     probe_capabilities_from_lab_capabilities,
     probe_provider_names,
     resolve_probe_lab_provider,
@@ -69,10 +84,6 @@ from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 
 
 PROBE_SELECTED_SPECS = ("probe-contracts",)
-SKIP_CAPABILITY_UNAVAILABLE = "provider_capability_unavailable"
-SKIP_CONFIRMATION_REQUIRED = "confirm_live_run_required"
-SKIP_REQUIRES_CONTROLLED_ROUTER = "requires_controlled_router"
-SKIP_REQUIRES_LINK_LAYER = "requires_link_layer"
 STATUS_DRY_RUN = "dry-run"
 STATUS_FAILED = "failed"
 STATUS_PASSED = "passed"
@@ -505,14 +516,6 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
 
 def _stimulus_endpoint_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     return [plan for plan in probe_plans if plan.get("case") in _STIMULUS_ENDPOINT_CASES]
-
-
-def _probe_capabilities_for_request(
-    request: ProbeRunRequest,
-    *,
-    dry_run: bool,
-) -> JSONObject:
-    return probe_capabilities_for_provider(request.provider, dry_run=dry_run)
 
 
 def _probe_lab_dry_run_session(request: ProbeRunRequest) -> LabSession:
@@ -2400,107 +2403,6 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_DECODE_FAILED,
         ]
     return []
-
-
-def _capability_skip_result(
-    *,
-    request: ProbeRunRequest,
-    case: ProbeCase,
-    sequence: int,
-    probe_plan: JSONObject,
-    dry_run: bool,
-    provider_capabilities: Mapping[str, JSONValue],
-) -> tuple[ProbeSkip, ProbeResult] | None:
-    missing = _missing_capabilities(case, provider_capabilities)
-    if not missing:
-        return None
-
-    skip = ProbeSkip(
-        case=case.name,
-        sequence=sequence,
-        reason=_skip_reason_for_missing_capability(case, missing[0]),
-        capability=missing[0],
-        metadata={
-            "missing_capabilities": list(missing),
-            "provider": request.provider,
-            "dry_run": dry_run,
-            "probe_plan": probe_plan,
-        },
-    )
-    result = ProbeResult(
-        case=case.name,
-        sequence=sequence,
-        status="skipped",
-        endpoint_role=_primary_endpoint_role(case),
-        passed=None,
-        skip=skip,
-        metadata={"dry_run": dry_run, "probe_plan": probe_plan},
-    )
-    return skip, result
-
-
-def _capability_skip_state(
-    *,
-    request: ProbeRunRequest,
-    planned_cases: Sequence[ProbeCase],
-    probe_plans: Sequence[JSONObject],
-    dry_run: bool,
-    provider_capabilities: Mapping[str, JSONValue],
-) -> tuple[list[ProbeResult], list[ProbeSkip], dict[str, int], set[int]]:
-    probe_plans_by_sequence = {
-        int(plan["sequence"]): plan
-        for plan in probe_plans
-        if isinstance(plan.get("sequence"), int)
-    }
-    results: list[ProbeResult] = []
-    skips: list[ProbeSkip] = []
-    skip_counts: dict[str, int] = {}
-    skipped_sequences: set[int] = set()
-    for sequence, case in enumerate(planned_cases):
-        capability_skip = _capability_skip_result(
-            request=request,
-            case=case,
-            sequence=sequence,
-            probe_plan=probe_plans_by_sequence.get(sequence, {}),
-            dry_run=dry_run,
-            provider_capabilities=provider_capabilities,
-        )
-        if capability_skip is None:
-            continue
-        skip, result = capability_skip
-        skips.append(skip)
-        results.append(result)
-        skipped_sequences.add(sequence)
-        skip_counts[skip.reason] = skip_counts.get(skip.reason, 0) + 1
-    return results, skips, skip_counts, skipped_sequences
-
-
-def _missing_capabilities(
-    case: ProbeCase,
-    provider_capabilities: Mapping[str, JSONValue],
-) -> list[str]:
-    missing: list[str] = []
-    for capability in case.required_capabilities:
-        if provider_capabilities.get(capability) is not True:
-            missing.append(capability)
-    return missing
-
-
-def _skip_reason_for_missing_capability(case: ProbeCase, capability: str) -> str:
-    if case.name == "ttl-expired" and capability == "controlled_router":
-        return SKIP_REQUIRES_CONTROLLED_ROUTER
-    if case.name == "arp-resolution" and capability in {
-        "arp_resolution",
-        "link_layer_send",
-        "link_layer_capture",
-        "broadcast",
-    }:
-        return SKIP_REQUIRES_LINK_LAYER
-    return SKIP_CAPABILITY_UNAVAILABLE
-
-
-def _primary_endpoint_role(case: ProbeCase) -> str:
-    return case.endpoint_roles[0] if case.endpoint_roles else "stimulus"
 
 
 def _live_status(request: ProbeRunRequest) -> str:
