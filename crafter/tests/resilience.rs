@@ -1085,6 +1085,100 @@ proptest! {
         exercise_packet_decode(PacketDecodeTarget::L3(NetworkLayer::Ipv4), bytes.as_bytes());
     }
 
+    /// Bounded ARP packets with valid length fields and matching address
+    /// vectors must round-trip byte-exact through the Ethernet link decode
+    /// boundary. The ARP body size is length-derived (HLN + PLN), so the address
+    /// vectors are generated to exactly match the sampled lengths, and unusual
+    /// hardware/protocol types, unknown numeric opcodes (including reserved and
+    /// experimental code points), and nonstandard zero/short/long address lengths
+    /// are all exercised. The four address fields are set through the raw byte
+    /// setters so no auto-fill rewrites the explicit length fields, and the whole
+    /// frame is compiled, decoded, and recompiled with [`assert_roundtrip`] which
+    /// asserts the bytes are preserved. Lengths are kept in 0..=12 so the body
+    /// stays small and CI stays fast.
+    #[test]
+    fn arp_roundtrip_variable_length_property(
+        hardware_type in any::<u16>(),
+        protocol_type in any::<u16>(),
+        opcode in any::<u16>(),
+        hardware_len in 0u8..=12,
+        protocol_len in 0u8..=12,
+        sender_hardware_seed in any::<u8>(),
+        sender_protocol_seed in any::<u8>(),
+        target_hardware_seed in any::<u8>(),
+        target_protocol_seed in any::<u8>(),
+    ) {
+        // Matching address vectors: each field is exactly as long as the length
+        // field declares, with deterministic content seeded per field so the
+        // bytes are distinguishable but bounded.
+        let address = |len: u8, seed: u8| -> Vec<u8> {
+            (0..len).map(|i| seed.wrapping_add(i)).collect()
+        };
+
+        let arp = Arp::new()
+            .hardware_type(hardware_type)
+            .protocol_type(protocol_type)
+            .hardware_len(hardware_len)
+            .protocol_len(protocol_len)
+            .opcode(opcode)
+            .sender_hardware_bytes(address(hardware_len, sender_hardware_seed))
+            .sender_protocol_bytes(address(protocol_len, sender_protocol_seed))
+            .target_hardware_bytes(address(hardware_len, target_hardware_seed))
+            .target_protocol_bytes(address(protocol_len, target_protocol_seed));
+
+        let packet = Ethernet::new() / arp;
+        assert_roundtrip(PacketDecodeTarget::Link(LinkType::Ethernet), packet);
+    }
+
+    /// The same bounded ARP packets, but with a small block of trailing bytes
+    /// appended after the complete ARP body. The trailing bytes must remain
+    /// observable as a raw payload and survive the compile/decode/compile round
+    /// trip unchanged. The trailing block is non-empty (so a `Raw` layer is
+    /// always produced) and bounded to keep CI fast.
+    #[test]
+    fn arp_roundtrip_trailing_raw_property(
+        hardware_type in any::<u16>(),
+        protocol_type in any::<u16>(),
+        opcode in any::<u16>(),
+        hardware_len in 0u8..=12,
+        protocol_len in 0u8..=12,
+        sender_hardware_seed in any::<u8>(),
+        sender_protocol_seed in any::<u8>(),
+        target_hardware_seed in any::<u8>(),
+        target_protocol_seed in any::<u8>(),
+        trailing in prop::collection::vec(any::<u8>(), 1..16),
+    ) {
+        let address = |len: u8, seed: u8| -> Vec<u8> {
+            (0..len).map(|i| seed.wrapping_add(i)).collect()
+        };
+
+        let arp = Arp::new()
+            .hardware_type(hardware_type)
+            .protocol_type(protocol_type)
+            .hardware_len(hardware_len)
+            .protocol_len(protocol_len)
+            .opcode(opcode)
+            .sender_hardware_bytes(address(hardware_len, sender_hardware_seed))
+            .sender_protocol_bytes(address(protocol_len, sender_protocol_seed))
+            .target_hardware_bytes(address(hardware_len, target_hardware_seed))
+            .target_protocol_bytes(address(protocol_len, target_protocol_seed));
+
+        let packet = Ethernet::new() / arp / Raw::from(trailing.clone());
+
+        // Decode the compiled frame and confirm the trailing bytes survive as a
+        // raw payload before asserting the full byte-exact round trip.
+        let bytes = packet.compile().expect("generated ARP frame should compile");
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, bytes.as_bytes())
+            .expect("generated ARP frame should decode");
+        let recompiled = decoded.compile().expect("decoded ARP frame should compile");
+        prop_assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+        // The trailing bytes must be the final bytes on the wire, unchanged.
+        prop_assert!(
+            bytes.as_bytes().ends_with(&trailing),
+            "trailing raw payload must be observable on the wire"
+        );
+    }
+
     #[test]
     fn roundtrip_raw_payload_property(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
         let decoded = Packet::decode_raw(&bytes).expect("raw decode should not fail");
