@@ -20,6 +20,10 @@ from tools.oracle.engine.corpus import (
 )
 from tools.oracle.engine.generator import generate_plans
 from tools.oracle.engine.model import PacketPlan
+from tools.oracle.engine.providers.hetzner import (
+    HETZNER_UNSUPPORTED_LIVE_CASE_REASON,
+    hetzner_default_provider_capabilities,
+)
 
 
 # Mirror the step-06 acceptance corpus command:
@@ -154,6 +158,35 @@ class IcmpL2Ipv4CorpusAccountingTest(unittest.TestCase):
             summary["wire_provider_skipped_counts"].get("local-dry-run", 0),
             _COUNT,
         )
+
+    def test_hetzner_skips_source_quench_with_stable_reason(self) -> None:
+        plans = generate_plans(
+            seed=47,
+            profile=_PROFILE,
+            count=2,
+            backend=_BACKEND,
+            root=_ROOT,
+            case="icmpv4-source-quench",
+            direction=_DIRECTION,
+        )
+        packets = populate_corpus_eligibility(
+            backend=_BACKEND,
+            packets=[CorpusPacket.from_plan(plan) for plan in plans],
+            provider_capabilities=hetzner_default_provider_capabilities(dry_run=True),
+            wire_provider="hetzner",
+        )
+
+        self.assertEqual(len(packets), 2)
+        for packet in packets:
+            self.assertFalse(packet.wire.eligible)
+            self.assertIn(
+                SKIP_PROVIDER_CAPABILITY_UNAVAILABLE,
+                packet.wire.skip_reasons,
+            )
+            self.assertIn(
+                HETZNER_UNSUPPORTED_LIVE_CASE_REASON,
+                packet.wire.skip_reasons,
+            )
 
 
 if __name__ == "__main__":

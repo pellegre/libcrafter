@@ -180,6 +180,13 @@ live_matrix:
     representation: typed
     scapy_support: supported
     skip_reason: none
+    provider_skip_reasons:
+      hetzner: hetzner_private_network_drops_icmpv4_source_quench
+    notes:
+      - Scapy supports deterministic source-quench bytes, but Hetzner private
+        exchange drops ICMPv4 type 4 before peer capture. The Hetzner provider
+        marks this case unsupported while non-filtering providers may still
+        exercise it.
   - behavior: timestamp
     coverage_case: icmpv4-timestamp
     icmp_type: timestamp

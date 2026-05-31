@@ -39,8 +39,11 @@ from tools.oracle.engine.providers.docker import (
     PRIVATE_NETWORK_CIDR as DOCKER_PRIVATE_NETWORK_CIDR,
     REFERENCE_PRIVATE_ADDRESS as DOCKER_REFERENCE_PRIVATE_ADDRESS,
 )
-from tools.oracle.engine.providers.hetzner import ORACLE_PRIVATE_GROUP
-from tools.oracle.engine.providers.hetzner import PRIVATE_NETWORK_CIDR as HETZNER_PRIVATE_NETWORK_CIDR
+from tools.oracle.engine.providers.hetzner import (
+    HETZNER_UNSUPPORTED_LIVE_CASE_REASON,
+    ORACLE_PRIVATE_GROUP,
+    PRIVATE_NETWORK_CIDR as HETZNER_PRIVATE_NETWORK_CIDR,
+)
 from tools.oracle.engine.providers.qemu import (
     LIBCRAFTER_PRIVATE_ADDRESS as QEMU_LIBCRAFTER_PRIVATE_ADDRESS,
     ORACLE_PRIVATE_GROUP as QEMU_ORACLE_PRIVATE_GROUP,
@@ -150,6 +153,11 @@ class LiveProviderRegistryTest(unittest.TestCase):
         bootstrap = _endpoint_bootstrap_plan(adapter, dry_run=True)
 
         self.assertEqual(capabilities["provider"], "hetzner")
+        self.assertIn("icmpv4-source-quench", capabilities["unsupported_live_cases"])
+        self.assertEqual(
+            capabilities["unsupported_live_case_reasons"]["icmpv4-source-quench"],
+            HETZNER_UNSUPPORTED_LIVE_CASE_REASON,
+        )
         self.assertEqual(infrastructure["provider"], "hetzner")
         self.assertEqual(exchange_metadata["provider"], "hetzner")
         self.assertEqual(exchange_metadata["wire_provider"], "hetzner")
