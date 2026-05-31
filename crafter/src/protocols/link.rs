@@ -1498,9 +1498,16 @@ fn value_or_vec(field: &Field<Vec<u8>>, len: u8) -> Vec<u8> {
 fn validate_len(field: &'static str, value: Option<&Vec<u8>>, expected: u8) -> Result<()> {
     if let Some(value) = value {
         if value.len() != expected as usize {
-            return Err(CrafterError::invalid_field_value(
+            // The declared ARP length field and the explicit address byte vector
+            // disagree. Surface a structured error that names the failing field
+            // and both the expected length (the declared length field) and the
+            // available length (the supplied byte count). `expected` is a `u8`,
+            // so the required/available widths are bounded and the comparison
+            // cannot overflow even at the `u8::MAX` boundary.
+            return Err(CrafterError::buffer_too_short(
                 field,
-                "address length does not match ARP length field",
+                expected as usize,
+                value.len(),
             ));
         }
     }
@@ -1635,7 +1642,7 @@ mod ethernet {
 #[cfg(test)]
 mod arp {
     use super::{Arp, ArpOperation, Ethernet};
-    use crate::{LinkType, MacAddr, Packet};
+    use crate::{CrafterError, LinkType, MacAddr, Packet};
     use core::net::Ipv4Addr;
 
     const ARP_REQUEST_FIXTURE: &[u8] = fixture_bytes!("bytes/arp-who-has.bin");
@@ -1681,7 +1688,208 @@ mod arp {
         );
         let err = packet.compile().unwrap_err();
 
-        assert!(err.to_string().contains("address length"));
+        // The conflict surfaces as a structured error naming the failing field
+        // and both the declared length (5) and the supplied byte count (6).
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "arp.sender_hardware_addr");
+                assert_eq!(required, 5);
+                assert_eq!(available, 6);
+            }
+            other => panic!("expected a structured length error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arp_length_matching_explicit_lengths_compile_without_false_positive() {
+        // Explicit length fields that agree with the supplied byte vectors must
+        // not trip the conflict check. A nonstandard but self-consistent
+        // 8-octet hardware / 16-octet protocol body compiles cleanly and the
+        // declared lengths reach the wire unchanged.
+        let sender_hw = vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11];
+        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let target_hw = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+
+        let arp = Arp::new()
+            .hardware_len(8)
+            .protocol_len(16)
+            .sender_hardware_bytes(sender_hw.clone())
+            .sender_protocol_bytes(sender_pa.clone())
+            .target_hardware_bytes(target_hw.clone())
+            .target_protocol_bytes(target_pa.clone());
+
+        let frame = Ethernet::new().src(src_mac()) / arp;
+        let compiled = frame.compile().expect("matching lengths must compile");
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, compiled.as_bytes()).unwrap();
+        let decoded_arp = decoded.layer::<Arp>().unwrap();
+        assert_eq!(decoded_arp.hardware_len_value(), 8);
+        assert_eq!(decoded_arp.protocol_len_value(), 16);
+        assert_eq!(decoded_arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(decoded_arp.target_protocol_bytes_value(), target_pa);
+    }
+
+    #[test]
+    fn arp_length_mismatch_on_protocol_field_returns_structured_error() {
+        // A length conflict on the protocol address field (not just the
+        // hardware field) is rejected with a structured error that names the
+        // failing field and the declared vs. supplied lengths. This guards
+        // against a validation gap that only checks one of the two length
+        // fields.
+        let packet = Packet::new().push(
+            Arp::new()
+                .protocol_len(6)
+                .sender_protocol_bytes(vec![192, 0, 2, 10]),
+        );
+        let err = packet.compile().unwrap_err();
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "arp.sender_protocol_addr");
+                assert_eq!(required, 6);
+                assert_eq!(available, 4);
+            }
+            other => panic!("expected a structured length error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arp_length_mismatch_on_target_field_returns_structured_error() {
+        // The conflict check covers the target address fields as well, so a
+        // target hardware byte vector that disagrees with the declared
+        // hardware length is rejected with the failing field named.
+        let packet = Packet::new().push(
+            Arp::new()
+                .hardware_len(6)
+                .target_hardware_bytes(vec![0xde, 0xad, 0xbe]),
+        );
+        let err = packet.compile().unwrap_err();
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "arp.target_hardware_addr");
+                assert_eq!(required, 6);
+                assert_eq!(available, 3);
+            }
+            other => panic!("expected a structured length error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arp_length_zero_length_addresses_compile_and_round_trip() {
+        // Zero-length addresses are valid generic-format ARP per the scope
+        // decision (target/arp-rfc/scope.md). An explicit zero length that
+        // agrees with empty byte vectors must not be flagged as a conflict,
+        // and the eight-byte fixed header round-trips byte-exact.
+        let arp = Arp::new()
+            .hardware_len(0)
+            .protocol_len(0)
+            .sender_hardware_bytes(Vec::new())
+            .sender_protocol_bytes(Vec::new())
+            .target_hardware_bytes(Vec::new())
+            .target_protocol_bytes(Vec::new());
+
+        let frame = Ethernet::new().src(src_mac()) / arp;
+        let compiled = frame.compile().expect("zero-length ARP must compile");
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, compiled.as_bytes()).unwrap();
+        let decoded_arp = decoded.layer::<Arp>().unwrap();
+        assert_eq!(decoded_arp.hardware_len_value(), 0);
+        assert_eq!(decoded_arp.protocol_len_value(), 0);
+        assert!(decoded_arp.sender_hardware_bytes_value().is_empty());
+        assert!(decoded_arp.target_protocol_bytes_value().is_empty());
+    }
+
+    #[test]
+    fn arp_length_zero_length_field_against_nonempty_bytes_is_a_conflict() {
+        // A zero-length field paired with a non-empty byte vector is still a
+        // conflict: zero-length is only valid when the bytes are also empty.
+        let packet = Packet::new().push(
+            Arp::new()
+                .protocol_len(0)
+                .sender_protocol_bytes(vec![0x01]),
+        );
+        let err = packet.compile().unwrap_err();
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "arp.sender_protocol_addr");
+                assert_eq!(required, 0);
+                assert_eq!(available, 1);
+            }
+            other => panic!("expected a structured length error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arp_length_maximum_u8_length_arithmetic_does_not_overflow() {
+        // The maximum representable ARP length is u8::MAX (255). A byte vector
+        // of exactly that width agrees with an explicit u8::MAX length and must
+        // compile; the encoded_len arithmetic (fixed header + len*2 + len*2)
+        // must not overflow. encoded_len reports 8 + 255*2 + 255*2 = 1028.
+        let max = u8::MAX;
+        let full = vec![0x5a_u8; max as usize];
+
+        let arp = Arp::new()
+            .hardware_len(max)
+            .protocol_len(max)
+            .sender_hardware_bytes(full.clone())
+            .sender_protocol_bytes(full.clone())
+            .target_hardware_bytes(full.clone())
+            .target_protocol_bytes(full.clone());
+
+        assert_eq!(arp.hardware_len_value(), max);
+        assert_eq!(arp.protocol_len_value(), max);
+
+        let frame = Ethernet::new().src(src_mac()) / arp;
+        let compiled = frame
+            .compile()
+            .expect("maximum-width ARP addresses must compile");
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, compiled.as_bytes()).unwrap();
+        let decoded_arp = decoded.layer::<Arp>().unwrap();
+        assert_eq!(decoded_arp.hardware_len_value(), max);
+        assert_eq!(decoded_arp.protocol_len_value(), max);
+        assert_eq!(decoded_arp.sender_hardware_bytes_value(), full);
+        assert_eq!(decoded_arp.target_protocol_bytes_value(), full);
+    }
+
+    #[test]
+    fn arp_length_oversized_byte_vector_saturates_then_conflicts() {
+        // A byte vector beyond the u8 length field saturates the auto-filled
+        // length to u8::MAX rather than wrapping, so the genuine mismatch
+        // (300 bytes vs. a 255 length ceiling) is caught by the conflict check
+        // at compile time instead of silently aliasing a small length.
+        let oversized = vec![0u8; 300];
+        let arp = Arp::new().sender_hardware(oversized);
+        assert_eq!(arp.hardware_len_value(), u8::MAX);
+
+        let err = (Ethernet::new().src(src_mac()) / arp)
+            .compile()
+            .unwrap_err();
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "arp.sender_hardware_addr");
+                assert_eq!(required, u8::MAX as usize);
+                assert_eq!(available, 300);
+            }
+            other => panic!("expected a structured length error, got {other:?}"),
+        }
     }
 
     #[test]
