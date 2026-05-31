@@ -590,6 +590,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "dns-edns-opt",
         "dns-repeat-transaction",
         "dhcp-discover-offer",
+        "dhcp-request-ack",
     }
 )
 
@@ -1099,11 +1100,13 @@ def _probe_plan_with_endpoint_addresses(
                 send["validation"] = send_validation
                 rewritten_sends.append(send)
             updated["sends"] = rewritten_sends
-    elif case_name == "dhcp-discover-offer":
-        # DHCP uses fixed privileged ports (client 68 -> server 67). The Offer
+    elif case_name in {"dhcp-discover-offer", "dhcp-request-ack"}:
+        # DHCP uses fixed privileged ports (client 68 -> server 67). The Offer/Ack
         # flows from the responder (target) back to the client (stimulus); the
         # server identifier names the responder, so it follows the target
-        # address onto the lab segment.
+        # address onto the lab segment. For a Request the client also names the
+        # chosen server (option 54), so the stimulus server identifier is
+        # rewritten to the target as well.
         source_port = int(updated.get("source_port", 68))
         destination_port = int(updated.get("destination_port", 67))
         updated["capture_filter"] = (
@@ -1111,6 +1114,8 @@ def _probe_plan_with_endpoint_addresses(
             f"and src port {destination_port} and dst port {source_port}"
         )
         updated["expected_server_identifier"] = target_ipv4
+        if "server_identifier" in updated:
+            updated["server_identifier"] = target_ipv4
         target_service = dict(
             json_object(updated.get("target_service", {}), "probe_plan.target_service")
         )
@@ -1262,7 +1267,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_DECODE_FAILED,
             FAILURE_TARGET_SETUP_FAILED,
         ]
-    if case_name == "dhcp-discover-offer":
+    if case_name in {"dhcp-discover-offer", "dhcp-request-ack"}:
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,

@@ -444,6 +444,7 @@ def dns_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
 _DHCP_RESPONDER_CASES: frozenset[str] = frozenset(
     {
         "dhcp-discover-offer",
+        "dhcp-request-ack",
     }
 )
 
