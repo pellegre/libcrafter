@@ -225,12 +225,15 @@ pub fn run_dhcp_live(
 /// Build the IPv4/UDP/BOOTP/DHCP stimulus packet with libcrafter.
 ///
 /// `dhcp-discover-offer` builds a Discover (message type 1); `dhcp-request-ack`
-/// builds a Request (message type 3) carrying the requested-IP option (50) and
-/// the chosen server-identifier option (54). The stimulus is sent from the DHCP
+/// builds a SELECTING-state Request (message type 3) carrying the requested-IP
+/// option (50) and the chosen server-identifier option (54);
+/// `dhcp-renewal-unicast-ack` builds a RENEWING-state Request (message type 3)
+/// that is unicast directly to the leasing server, setting `ciaddr` to the
+/// bound address and omitting options 50/54. The stimulus is sent from the DHCP
 /// client port (68) to the server port (67). `compile()` fills the BOOTP
 /// op/htype/hlen, magic cookie, lengths, and the UDP/IPv4 checksums; the
-/// caller-set client MAC, transaction id, requested IP, and server identifier
-/// survive untouched.
+/// caller-set client MAC, transaction id, ciaddr, requested IP, and server
+/// identifier survive untouched.
 pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let source: Ipv4Addr = required_str(plan.source_ipv4.as_deref(), "source_ipv4")?.parse()?;
     let destination: Ipv4Addr =
@@ -249,6 +252,33 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         let server_identifier: Ipv4Addr =
             required_str(plan.server_identifier.as_deref(), "server_identifier")?.parse()?;
         Dhcp::request(client_mac, requested_ip, server_identifier).transaction_id(transaction_id)
+    } else if plan.case == "dhcp-renewal-unicast-ack" {
+        // RFC 2131 section 4.3.6 (table 4) and section 4.4.5: a client in the
+        // RENEWING state unicasts its DHCPREQUEST directly to the server that
+        // leased its address. It fills `ciaddr` with the address it is already
+        // bound to, leaves the broadcast flag clear, and MUST NOT set the
+        // server-identifier option (54) or the requested-IP option (50) — the
+        // request is addressed to the one server, not broadcast to all servers.
+        // Build the Request shape directly (rather than `Dhcp::request`, which
+        // injects options 50/54) and set only the renewal-state fields: the
+        // bound `ciaddr` and the parameter request list (option 55) naming the
+        // configuration/lease options the unicast Ack confirms. `compile()`
+        // fills the BOOTP op/htype/hlen, magic cookie, and lengths; the
+        // caller-set ciaddr, client MAC, transaction id, and request list
+        // survive untouched.
+        let client_ciaddr: Ipv4Addr =
+            required_str(plan.client_ciaddr.as_deref(), "client_ciaddr")?.parse()?;
+        let requests = required_u8_list(
+            plan.parameter_request_list.as_deref(),
+            "parameter_request_list",
+        )?
+        .to_vec();
+        Dhcp::new()
+            .client_mac(client_mac)
+            .message_type(DhcpMessageType::Request)
+            .ciaddr(client_ciaddr)
+            .transaction_id(transaction_id)
+            .parameter_request_list(requests)
     } else if plan.case == "dhcp-client-identifier" {
         // RFC 2132 section 9.14: a client may identify itself with the client
         // identifier option (61) in addition to chaddr. The encoded option-61
@@ -1588,6 +1618,104 @@ mod tests {
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    fn renewal_plan() -> ProbePlan {
+        // RFC 2131 RENEWING state: the client is already bound to this address and
+        // unicasts its Request directly to the leasing server. It sets ciaddr,
+        // leaves the broadcast flag clear, and omits the requested-IP (50) and
+        // server-identifier (54) options. The server renews the same address.
+        let mut plan = base_plan("dhcp-renewal-unicast-ack");
+        plan.source_ipv4 = Some("10.64.0.10".to_string());
+        plan.destination_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
+        plan.source_port = Some(DHCP_CLIENT_PORT);
+        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
+        plan.transaction_id = Some(0x3903_f326);
+        plan.client_ciaddr = Some("198.51.100.42".to_string());
+        plan.parameter_request_list = Some(vec![1, 3, 6, 51, 58, 59]);
+        plan.expected_message_type_value = Some(DHCP_ACK);
+        plan.expected_yiaddr = Some("198.51.100.42".to_string());
+        plan.expected_server_identifier = Some("10.64.0.20".to_string());
+        plan.expected_subnet_mask = Some("255.255.255.0".to_string());
+        plan.expected_router_ipv4 = Some("10.64.0.1".to_string());
+        plan.expected_dns_ipv4 = Some("198.51.100.53".to_string());
+        plan.expected_lease_time = Some(3600);
+        plan.expected_renewal_time = Some(1800);
+        plan.expected_rebinding_time = Some(3150);
+        plan
+    }
+
+    #[test]
+    fn dhcp_renewal_compiles_with_ciaddr_and_no_request_or_server_options() {
+        let plan = renewal_plan();
+        let packet = dhcp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let dhcp = decoded.layer::<Dhcp>().unwrap();
+
+        // Client 68 -> server 67; a RENEWING-state Request.
+        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Request));
+        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        // The bound address is carried in ciaddr.
+        assert_eq!(
+            dhcp.client_ip_address_value(),
+            "198.51.100.42".parse::<Ipv4Addr>().unwrap()
+        );
+        // RFC 2131 section 4.3.6: RENEWING omits the requested-IP (50) and
+        // server-identifier (54) options; the request is addressed to the one
+        // server directly, not broadcast to all servers.
+        assert_eq!(dhcp.requested_ip_address_value(), None);
+        assert_eq!(dhcp.server_identifier_value(), None);
+        // The broadcast flag stays clear (unicast renewal).
+        assert_eq!(dhcp.flags_value() & 0x8000, 0);
+        // The parameter request list (option 55) names the options the Ack confirms.
+        assert_eq!(
+            dhcp.parameter_request_list_value(),
+            Some([1u8, 3, 6, 51, 58, 59].as_slice())
+        );
+        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+    }
+
+    #[test]
+    fn dhcp_renewal_requires_client_ciaddr() {
+        let mut plan = renewal_plan();
+        plan.client_ciaddr = None;
+        assert!(dhcp_packet(&plan).is_err());
+    }
+
+    #[test]
+    fn matching_renewal_ack_passes_validation() {
+        let plan = renewal_plan();
+        // The server renews the same address with a unicast Ack; reuse the
+        // request-ack Ack builder shape (yiaddr == bound address, opt 54, lease
+        // and configuration options).
+        let bytes = ack_packet(&plan).compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(
+            matches!(validation, CandidateValidation::Passed(_)),
+            "expected Passed, got {validation:?}"
+        );
+    }
+
+    #[test]
+    fn renewal_ack_with_wrong_yiaddr_is_wrong_payload() {
+        let mut plan = renewal_plan();
+        let bytes = ack_packet(&plan).compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        // The server renewed 198.51.100.42, but the plan now expects a different
+        // address: a payload mismatch on the renewed yiaddr.
+        plan.expected_yiaddr = Some("198.51.100.99".to_string());
         let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }

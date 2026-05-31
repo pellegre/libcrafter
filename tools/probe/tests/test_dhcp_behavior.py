@@ -90,6 +90,14 @@ def _dhcp_lease_time_plan(*, seed: int = 1025, sequence: int = 0) -> dict:
     )
 
 
+def _dhcp_renewal_unicast_ack_plan(*, seed: int = 1026, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dhcp-renewal-unicast-ack"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcp-renewal-unicast-ack"],
+        sequence=sequence,
+    )
+
+
 class DhcpDiscoverOfferPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct Discover stimulus and Offer contract."""
 
@@ -903,6 +911,174 @@ class DhcpLeaseTimeTest(unittest.TestCase):
                 self.assertIsInstance(target_service.get("lease_time"), int)
                 self.assertIsInstance(target_service.get("renewal_time"), int)
                 self.assertIsInstance(target_service.get("rebinding_time"), int)
+
+
+class DhcpRenewalUnicastAckPlanTest(unittest.TestCase):
+    """The plan carries a RENEWING-state unicast Request and a unicast Ack contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dhcp-renewal-unicast-ack", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dhcp-renewal-unicast-ack"],
+            planning._dhcp_renewal_unicast_ack_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _dhcp_renewal_unicast_ack_plan(), _dhcp_renewal_unicast_ack_plan()
+        )
+
+    def test_plan_carries_a_renewing_unicast_request_stimulus(self) -> None:
+        plan = _dhcp_renewal_unicast_ack_plan()
+
+        self.assertEqual(plan["case"], "dhcp-renewal-unicast-ack")
+        self.assertEqual(plan["stimulus"], "dhcp_request")
+        self.assertEqual(plan["expected_response"], "dhcp_ack")
+
+        # DHCP fixed ports: client 68 -> server 67.
+        self.assertEqual(plan["source_port"], 68)
+        self.assertEqual(plan["destination_port"], 67)
+
+        # A client hardware address in the RFC 7042 documentation MAC range and a
+        # 32-bit transaction id (xid).
+        mac = plan["client_mac"]
+        self.assertTrue(mac.startswith("00:00:5e:00:53:"))
+        self.assertIsInstance(plan["transaction_id"], int)
+        self.assertTrue(1 <= plan["transaction_id"] <= 0xFFFFFFFF)
+
+        # RENEWING state: the client carries its already-bound address in ciaddr
+        # (documentation space) and unicasts directly to the server. There is no
+        # broadcast flag and no requested-IP (50) or server-identifier (54)
+        # option in the stimulus.
+        bound = ipaddress.IPv4Address(plan["client_ciaddr"])
+        self.assertIn(bound, ipaddress.ip_network("198.51.100.0/24"))
+        self.assertEqual(plan["renewal_state"], "renewing")
+        self.assertTrue(plan["renewal_unicast"])
+        self.assertFalse(plan["broadcast"])
+        self.assertNotIn("requested_ipv4", plan)
+        self.assertNotIn("server_identifier", plan)
+
+        # The unicast destination is the server address, never the broadcast
+        # address 255.255.255.255.
+        self.assertEqual(plan["destination_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertNotEqual(plan["destination_ipv4"], "255.255.255.255")
+
+    def test_plan_ack_expectations(self) -> None:
+        plan = _dhcp_renewal_unicast_ack_plan()
+
+        # The renewed address equals the bound address and stays in documentation
+        # space; the server identifier is the responder address.
+        self.assertEqual(plan["expected_message_type"], "ack")
+        self.assertEqual(plan["expected_message_type_value"], 5)
+        self.assertEqual(plan["expected_yiaddr"], plan["client_ciaddr"])
+        renewed = ipaddress.IPv4Address(plan["expected_yiaddr"])
+        self.assertIn(renewed, ipaddress.ip_network("198.51.100.0/24"))
+        self.assertEqual(plan["expected_server_identifier"], plan["destination_ipv4"])
+
+        # Subnet/router/DNS configuration options the Ack confirms.
+        self.assertEqual(plan["expected_subnet_mask"], "255.255.255.0")
+        self.assertTrue(plan["expected_router_ipv4"])
+        dns = ipaddress.IPv4Address(plan["expected_dns_ipv4"])
+        self.assertIn(dns, ipaddress.ip_network("198.51.100.0/24"))
+
+        # Lease timing options: T1 < T2 < lease.
+        self.assertGreater(plan["expected_lease_time"], 0)
+        self.assertLess(plan["expected_renewal_time"], plan["expected_rebinding_time"])
+        self.assertLess(plan["expected_rebinding_time"], plan["expected_lease_time"])
+
+    def test_validation_contract_covers_unicast_ack_fields_and_direction(self) -> None:
+        plan = _dhcp_renewal_unicast_ack_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (Ack flows server -> client, 67 -> 68).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 67)
+        self.assertEqual(validation["destination_port"], 68)
+        self.assertEqual(validation["direction"], "server_to_client")
+        self.assertTrue(validation["renewal_unicast"])
+
+        # BOOTP reply opcode and the Ack message type.
+        self.assertEqual(validation["op_value"], 2)
+        self.assertEqual(validation["message_type_value"], 5)
+
+        # Identity: transaction id, client hardware address, and the bound
+        # address (ciaddr) the renewal Request carried.
+        self.assertEqual(validation["transaction_id"], plan["transaction_id"])
+        self.assertEqual(validation["client_hardware_address"], plan["client_mac"])
+        self.assertEqual(validation["client_ciaddr"], plan["client_ciaddr"])
+
+        # Renewed address, server identifier, configuration and lease options.
+        self.assertEqual(validation["yiaddr"], plan["expected_yiaddr"])
+        self.assertEqual(
+            validation["server_identifier"], plan["expected_server_identifier"]
+        )
+        self.assertEqual(validation["subnet_mask"], plan["expected_subnet_mask"])
+        self.assertEqual(validation["router_ipv4"], plan["expected_router_ipv4"])
+        self.assertEqual(validation["dns_ipv4"], plan["expected_dns_ipv4"])
+        self.assertEqual(validation["lease_time"], plan["expected_lease_time"])
+        self.assertEqual(validation["renewal_time"], plan["expected_renewal_time"])
+        self.assertEqual(validation["rebinding_time"], plan["expected_rebinding_time"])
+
+    def test_target_service_records_the_bound_address(self) -> None:
+        plan = _dhcp_renewal_unicast_ack_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["port"], 67)
+        self.assertEqual(target_service["client_port"], 68)
+        self.assertEqual(target_service["client_ciaddr"], plan["client_ciaddr"])
+        self.assertTrue(target_service["renewal_unicast"])
+
+    def test_capture_filter_matches_unicast_ack_direction(self) -> None:
+        plan = _dhcp_renewal_unicast_ack_plan()
+        self.assertIn("src port 67", plan["capture_filter"])
+        self.assertIn("dst port 68", plan["capture_filter"])
+        self.assertIn(
+            f"src host {plan['expected_reply_source_ipv4']}", plan["capture_filter"]
+        )
+
+
+class DhcpRenewalUnicastAckTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dhcp-renewal-unicast-ack",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1026,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dhcp-renewal-unicast-ack", planned)
+
+            # The endpoint produced a result for the focused case and it built
+            # the unicast renewal Request (a dry-run plan compiles the outgoing
+            # stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dhcp-renewal-unicast-ack"
+            ]
+            self.assertTrue(
+                results, "endpoint emitted no dhcp-renewal-unicast-ack result"
+            )
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                # The planned bound address (ciaddr) is visible in the dry-run
+                # metadata so the endpoint validates the renewal it built.
+                plan_view = metadata.get("probe_plan", {})
+                self.assertTrue(plan_view.get("client_ciaddr"))
 
 
 if __name__ == "__main__":

@@ -2345,6 +2345,146 @@ def _dhcp_request_ack_probe_plan(
     }
 
 
+def _dhcp_renewal_unicast_ack_probe_plan(
+    *,
+    case_name: str = "dhcp-renewal-unicast-ack",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dhcp-renewal-unicast-ack`` behavioral case.
+
+    The stimulus is a RENEWING-state BOOTP/DHCP Request (message type 3) built
+    by libcrafter and *unicast* directly to the leasing server. RFC 2131 section
+    4.3.6 (table 4) and section 4.4.5 say that a client in the RENEWING state
+    sends its DHCPREQUEST as a unicast to the server that leased its address: it
+    fills ``ciaddr`` with the address it is already bound to, leaves the
+    broadcast flag clear, and omits both the server-identifier option (54) and
+    the requested-IP option (50), because the request is addressed to the one
+    server directly rather than broadcast to all servers. This is the key
+    difference from the SELECTING-state ``dhcp-request-ack`` Request, which
+    broadcasts and names the chosen server and requested address in options.
+
+    The controlled responder answers with a *unicast* Ack (message type 5) that
+    renews the binding: the bound address in ``yiaddr`` (equal to the client's
+    ``ciaddr``), the server identifier (option 54), and the configuration/lease
+    options (subnet 1, router 3, DNS 6, lease 51, renewal 58, rebinding 59).
+
+    The validation contract covers the decoded UDP/BOOTP/DHCP response: the
+    BOOTP opcode (reply), message type Ack, the echoed transaction id and client
+    hardware address, the renewed address (yiaddr) matching the bound address,
+    the server identifier, the subnet/router/DNS and lease timing options, and
+    the response direction (server -> client over ports 67 -> 68). Addresses
+    stay in documentation space: the bound/renewed address is in
+    ``198.51.100.0/24`` and the lab transport uses the private endpoint pair,
+    where the destination is the *unicast* server address (never the broadcast
+    ``255.255.255.255``).
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    client_mac = dhcp_client_mac(profile, seed, sequence)
+    transaction_id = int.from_bytes(digest[0:4], "big") or 1
+    # DHCP uses fixed privileged ports: client 68 -> server 67.
+    source_port = 68
+    destination_port = 67
+    # The client is already bound to this address; it carries it in ``ciaddr``
+    # and the server renews the same address in the Ack ``yiaddr``.
+    bound_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
+    assigned_ipv4 = bound_ipv4
+    subnet_mask = "255.255.255.0"
+    server_identifier = target_ipv4
+    router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
+    dns_server_ipv4 = f"198.51.100.{1 + digest[6] % 250}"
+    lease_time = 3600 + 60 * (digest[5] % 60)
+    renewal_time = lease_time // 2
+    rebinding_time = (lease_time * 7) // 8
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dhcp_request",
+        "expected_response": "dhcp_ack",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "client_mac": client_mac,
+        "transaction_id": transaction_id,
+        # RENEWING state: the bound address is carried in ciaddr; no broadcast
+        # flag, no requested-IP (50) or server-identifier (54) options. The
+        # parameter request list (option 55) asks the server to return the
+        # subnet (1), router (3), DNS (6), lease (51), renewal T1 (58), and
+        # rebinding T2 (59) options the unicast Ack confirms.
+        "client_ciaddr": bound_ipv4,
+        "renewal_state": "renewing",
+        "renewal_unicast": True,
+        "broadcast": False,
+        "parameter_request_list": [1, 3, 6, 51, 58, 59],
+        "expected_message_type": "ack",
+        "expected_message_type_value": 5,
+        "expected_yiaddr": assigned_ipv4,
+        "expected_server_identifier": server_identifier,
+        "expected_subnet_mask": subnet_mask,
+        "expected_router_ipv4": router_ipv4,
+        "expected_dns_ipv4": dns_server_ipv4,
+        "expected_lease_time": lease_time,
+        "expected_renewal_time": renewal_time,
+        "expected_rebinding_time": rebinding_time,
+        "target_service": {
+            "required": True,
+            "kind": "dhcp-responder",
+            "port": destination_port,
+            "client_port": source_port,
+            "client_mac": client_mac,
+            "transaction_id": transaction_id,
+            "client_ciaddr": bound_ipv4,
+            "renewal_state": "renewing",
+            "renewal_unicast": True,
+            "yiaddr": assigned_ipv4,
+            "server_identifier": server_identifier,
+            "subnet_mask": subnet_mask,
+            "router_ipv4": router_ipv4,
+            "dns_ipv4": dns_server_ipv4,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "op": "reply",
+            "op_value": 2,
+            "message_type": "ack",
+            "message_type_value": 5,
+            "transaction_id": transaction_id,
+            "client_hardware_address": client_mac,
+            "client_ciaddr": bound_ipv4,
+            "renewal_unicast": True,
+            "yiaddr": assigned_ipv4,
+            "server_identifier": server_identifier,
+            "subnet_mask": subnet_mask,
+            "router_ipv4": router_ipv4,
+            "dns_ipv4": dns_server_ipv4,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+            "direction": "server_to_client",
+        },
+    }
+
+
 def _ttl_expired_probe_plan(
     *,
     case_name: str = "ttl-expired",
@@ -2532,6 +2672,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dhcp-hostname": _dhcp_hostname_probe_plan,
     "dhcp-parameter-request-list": _dhcp_parameter_request_list_probe_plan,
     "dhcp-lease-time": _dhcp_lease_time_probe_plan,
+    "dhcp-renewal-unicast-ack": _dhcp_renewal_unicast_ack_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }

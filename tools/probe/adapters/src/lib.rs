@@ -96,6 +96,7 @@ pub(crate) mod test_support {
             transaction_id: None,
             requested_ipv4: None,
             server_identifier: None,
+            client_ciaddr: None,
             client_identifier_hex: None,
             expected_client_identifier_hex: None,
             hostname: None,

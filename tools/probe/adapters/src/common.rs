@@ -196,6 +196,13 @@ pub struct ProbePlan {
     pub requested_ipv4: Option<String>,
     #[serde(default)]
     pub server_identifier: Option<String>,
+    // The address a bound client carries in `ciaddr` when it renews its lease.
+    // A RENEWING-state renewal Request (`dhcp-renewal-unicast-ack`) is unicast
+    // directly to the leasing server: it sets `ciaddr` to the address it already
+    // holds, leaves the broadcast flag clear, and omits the requested-IP (50) and
+    // server-identifier (54) options. Other DHCP cases leave it unset.
+    #[serde(default)]
+    pub client_ciaddr: Option<String>,
     // The DHCP client identifier (option 61, RFC 2132 section 9.14), carried as
     // the lowercase hex of the encoded option payload (type octet plus
     // identifier). `client_identifier_hex` is set on the stimulus Discover that
@@ -566,7 +573,8 @@ fn dispatch_case(
             | "dhcp-client-identifier"
             | "dhcp-hostname"
             | "dhcp-parameter-request-list"
-            | "dhcp-lease-time",
+            | "dhcp-lease-time"
+            | "dhcp-renewal-unicast-ack",
         ) => dhcp::run_dhcp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -575,7 +583,8 @@ fn dispatch_case(
             | "dhcp-client-identifier"
             | "dhcp-hostname"
             | "dhcp-parameter-request-list"
-            | "dhcp-lease-time",
+            | "dhcp-lease-time"
+            | "dhcp-renewal-unicast-ack",
         ) => dhcp::run_dhcp_live(request, plan),
         _ => {
             // DHCP, ARP, and UDP behavioral cases are wired into their modules
@@ -719,6 +728,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "transaction_id": plan.transaction_id,
         "requested_ipv4": plan.requested_ipv4,
         "server_identifier": plan.server_identifier,
+        "client_ciaddr": plan.client_ciaddr,
         "client_identifier_hex": plan.client_identifier_hex,
         "expected_client_identifier_hex": plan.expected_client_identifier_hex,
         "hostname": plan.hostname,
@@ -837,7 +847,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "dhcp-client-identifier"
         | "dhcp-hostname"
         | "dhcp-parameter-request-list"
-        | "dhcp-lease-time" => {
+        | "dhcp-lease-time"
+        | "dhcp-renewal-unicast-ack" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -877,6 +888,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-hostname" => "dhcp_offer",
             "dhcp-parameter-request-list" => "dhcp_offer",
             "dhcp-lease-time" => "dhcp_offer",
+            "dhcp-renewal-unicast-ack" => "dhcp_ack",
             _ => "unknown",
         })
 }
@@ -1087,6 +1099,27 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "server_identifier": plan.expected_server_identifier,
             "subnet_mask": plan.expected_subnet_mask,
             "router_ipv4": plan.expected_router_ipv4,
+            "lease_time": plan.expected_lease_time,
+            "renewal_time": plan.expected_renewal_time,
+            "rebinding_time": plan.expected_rebinding_time,
+        }),
+        "dhcp-renewal-unicast-ack" => json!({
+            "required": true,
+            "kind": "dhcp-responder",
+            "port": plan.destination_port,
+            "client_port": plan.source_port,
+            "client_mac": plan.client_mac,
+            "transaction_id": plan.transaction_id,
+            // RENEWING-state renewal: the client is already bound to this
+            // address (ciaddr) and unicasts the Request directly to the leasing
+            // server, which renews the same address in the Ack yiaddr.
+            "client_ciaddr": plan.client_ciaddr,
+            "renewal_unicast": true,
+            "yiaddr": plan.expected_yiaddr,
+            "server_identifier": plan.expected_server_identifier,
+            "subnet_mask": plan.expected_subnet_mask,
+            "router_ipv4": plan.expected_router_ipv4,
+            "dns_ipv4": plan.expected_dns_ipv4,
             "lease_time": plan.expected_lease_time,
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
