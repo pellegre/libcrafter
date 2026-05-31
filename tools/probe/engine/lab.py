@@ -25,6 +25,10 @@ PROBE_CAPABILITY_NAMES = (
     "tcp_closed_port",
     "dns_service",
     "controlled_router",
+    "arp_resolution",
+    "link_layer_send",
+    "link_layer_capture",
+    "broadcast",
 )
 
 
@@ -125,6 +129,10 @@ def probe_capabilities_from_lab_capabilities(
         "controlled_service",
     )
     controlled_router = _capability(substrate, "controlled_router")
+    link_layer_send = _capability(substrate, "link_layer_send")
+    link_layer_capture = _capability(substrate, "link_layer_capture")
+    broadcast = _capability(substrate, "broadcast")
+    arp_resolution = link_layer_send and link_layer_capture and broadcast
     derived_dry_run = (
         dry_run
         if dry_run is not None
@@ -145,6 +153,10 @@ def probe_capabilities_from_lab_capabilities(
         "tcp_closed_port": ipv4_unicast,
         "dns_service": ipv4_unicast and controlled_services,
         "controlled_router": controlled_router,
+        "link_layer_send": link_layer_send,
+        "link_layer_capture": link_layer_capture,
+        "broadcast": broadcast,
+        "arp_resolution": arp_resolution,
         "capability_names": list(PROBE_CAPABILITY_NAMES),
         "capability_sources": {
             "icmp_echo": ["ipv4_unicast"],
@@ -152,6 +164,14 @@ def probe_capabilities_from_lab_capabilities(
             "tcp_closed_port": ["ipv4_unicast"],
             "dns_service": ["ipv4_unicast", "controlled_services"],
             "controlled_router": ["controlled_router"],
+            "link_layer_send": ["link_layer_send"],
+            "link_layer_capture": ["link_layer_capture"],
+            "broadcast": ["broadcast"],
+            "arp_resolution": [
+                "link_layer_send",
+                "link_layer_capture",
+                "broadcast",
+            ],
         },
         "lab_capabilities": substrate,
     }
