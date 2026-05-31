@@ -2714,6 +2714,7 @@ mod ipv4_dhcp_live_endpoint {
 
 #[cfg(test)]
 mod l2_ipv4_root {
+    use super::materialize_core::build_packet;
     use super::*;
 
     #[test]
