@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from tools.wire.engine.model import EndpointManifest
 from tools.wire.engine.process import CommandResult
 from tools.wire.engine.providers import docker, resolve_provider
 from tools.wire.engine.providers.docker.constants import (
+    CONFIRMATION_ERROR,
     DOCKER_DEFAULT_IMAGE,
     DOCKER_DEFAULT_LAN_NETWORK,
     DOCKER_DEFAULT_PRIVATE_CIDR,
@@ -506,6 +508,340 @@ class DockerCreateEndpointDryRunTest(unittest.TestCase):
                         dry_run=True,
                         env={},
                     )
+
+
+class DockerCreateEndpointLivePrivateTest(unittest.TestCase):
+    def test_private_live_create_builds_private_endpoint_and_records_allocation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            runner = _DockerLivePrivateRunner(image_exists=False, network_exists=False)
+
+            with mock.patch(
+                "tools.wire.engine.providers.docker.create.free_localhost_tcp_port",
+                return_value=29222,
+            ):
+                output = docker.create_endpoint(
+                    provider="docker",
+                    exposure="private",
+                    role="oracle",
+                    private_group="pair-live",
+                    private_ip="10.79.0.42",
+                    dry_run=False,
+                    confirm_live_run=True,
+                    env={},
+                    command_runner=runner,
+                )
+            manifest_path = Path(str(output["manifest_path"]))
+            expected_manifest_path = (
+                Path(temp_dir)
+                / "wire-state"
+                / "endpoints"
+                / str(output["endpoint_id"])
+                / "endpoint.json"
+            )
+            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            allocation_state = output["metadata"]["allocation_state"]  # type: ignore[index]
+            record_path = Path(str(allocation_state["record_path"]))  # type: ignore[index]
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+
+        self.assertTrue(output["created"])
+        self.assertFalse(output["dry_run"])
+        self.assertEqual(output["status"], "active")
+        self.assertEqual(output["provider"], "docker")
+        self.assertEqual(output["exposure"], "private")
+        self.assertEqual(output["role"], "oracle")
+
+        self.assertEqual(
+            runner.calls_matching("docker", "image", "inspect"),
+            [
+                ("docker", "image", "inspect", DOCKER_DEFAULT_IMAGE),
+                ("docker", "image", "inspect", DOCKER_DEFAULT_IMAGE),
+            ],
+        )
+        build_calls = runner.calls_matching("docker", "build")
+        self.assertEqual(len(build_calls), 1)
+        self.assertIn(DOCKER_DEFAULT_IMAGE, build_calls[0])
+
+        network_name = "wire-private-pair-live"
+        network_inspects = runner.calls_matching("docker", "network", "inspect")
+        self.assertEqual(
+            network_inspects,
+            [
+                ("docker", "network", "inspect", network_name),
+                ("docker", "network", "inspect", network_name),
+            ],
+        )
+        network_create = runner.only_call_matching("docker", "network", "create")
+        self.assertIn("--driver", network_create)
+        self.assertIn("bridge", network_create)
+        self.assertIn("--internal", network_create)
+        self.assertIn("--subnet", network_create)
+        self.assertIn(DOCKER_DEFAULT_PRIVATE_CIDR, network_create)
+        self.assertIn(network_name, network_create)
+
+        run_argv = runner.only_call_matching("docker", "run")
+        self.assertIn("--detach", run_argv)
+        self.assertIn("--network", run_argv)
+        self.assertIn(network_name, run_argv)
+        self.assertIn("--ip", run_argv)
+        self.assertIn("10.79.0.42", run_argv)
+        self.assertIn("--mac-address", run_argv)
+        self.assertIn("--cap-drop", run_argv)
+        self.assertIn("ALL", run_argv)
+        self.assertEqual(_option_values(run_argv, "--cap-add"), ["NET_RAW", "NET_ADMIN"])
+        self.assertEqual(
+            _option_values(run_argv, "--security-opt"),
+            ["no-new-privileges"],
+        )
+        self.assertIn("--publish", run_argv)
+        self.assertIn("127.0.0.1:29222:22", run_argv)
+        self.assertNotIn("--privileged", run_argv)
+        self.assertNotIn("--network=host", run_argv)
+        self.assertNotIn("/var/run/docker.sock", " ".join(run_argv))
+
+        ssh_calls = [call for call in runner.calls if call and call[0] == "ssh"]
+        self.assertGreaterEqual(len(ssh_calls), 2)
+        self.assertIn("true", ssh_calls[0])
+        self.assertIn("__WIRE_IP_ADDR__", ssh_calls[-1][-1])
+
+        metadata = output["metadata"]  # type: ignore[assignment]
+        self.assertEqual(metadata["private_group"], "pair-live")  # type: ignore[index]
+        self.assertEqual(metadata["private_ip"], "10.79.0.42")  # type: ignore[index]
+        self.assertEqual(metadata["private_ip_source"], "requested")  # type: ignore[index]
+        self.assertEqual(metadata["docker_network"], network_name)  # type: ignore[index]
+        self.assertTrue(metadata["discovery"]["ssh_ready"])  # type: ignore[index]
+        self.assertTrue(metadata["discovery"]["interfaces"])  # type: ignore[index]
+
+        private_network = metadata["private_network"]  # type: ignore[index]
+        self.assertTrue(private_network["created"])  # type: ignore[index]
+        self.assertFalse(private_network["reused"])  # type: ignore[index]
+        self.assertTrue(private_network["internal"])  # type: ignore[index]
+        self.assertTrue(private_network["owned_by_provider"])  # type: ignore[index]
+        self.assertTrue(private_network["same_segment"])  # type: ignore[index]
+        self.assertTrue(private_network["l2_segment"])  # type: ignore[index]
+
+        docker_metadata = metadata["docker"]  # type: ignore[index]
+        security = docker_metadata["security"]  # type: ignore[index]
+        self.assertEqual(security["cap_drop"], ["ALL"])  # type: ignore[index]
+        self.assertEqual(security["cap_add"], ["NET_RAW", "NET_ADMIN"])  # type: ignore[index]
+        self.assertTrue(security["no_new_privileges"])  # type: ignore[index]
+        self.assertFalse(security["privileged"])  # type: ignore[index]
+        self.assertFalse(security["host_network"])  # type: ignore[index]
+        self.assertFalse(security["docker_socket_mounted"])  # type: ignore[index]
+
+        container = docker_metadata["container"]  # type: ignore[index]
+        self.assertTrue(container["created"])  # type: ignore[index]
+        self.assertEqual(container["container_id"], "container-private-1")  # type: ignore[index]
+        self.assertEqual(container["ssh"]["host"], "127.0.0.1")  # type: ignore[index]
+        self.assertEqual(container["ssh"]["host_port"], 29222)  # type: ignore[index]
+        self.assertEqual(container["ssh"]["publish"], "127.0.0.1:29222:22")  # type: ignore[index]
+        self.assertEqual(container["run_argv"], list(run_argv))  # type: ignore[index]
+
+        interfaces = output["interfaces"]  # type: ignore[assignment]
+        self.assertEqual(len(interfaces), 1)
+        self.assertEqual(interfaces[0]["name"], "eth0")
+        self.assertEqual(interfaces[0]["ipv4"], "10.79.0.42")
+        self.assertEqual(interfaces[0]["mac"], runner.private_mac)
+        self.assertEqual(interfaces[0]["provider_network_id"], network_name)
+        self.assertTrue(interfaces[0]["metadata"]["discovery_verified"])  # type: ignore[index]
+
+        self.assertEqual(manifest_path, expected_manifest_path)
+        self.assertEqual(manifest_data["status"], "active")
+        self.assertTrue(manifest_data["metadata"]["created"])
+
+        self.assertEqual(record["provider"], "docker")
+        self.assertEqual(record["group"], "pair-live")
+        self.assertEqual(record["private_cidr"], DOCKER_DEFAULT_PRIVATE_CIDR)
+        self.assertIn(output["endpoint_id"], record["allocated_endpoint_ids"])
+        self.assertIn("10.79.0.42", record["allocated_private_ipv4s"])
+        self.assertEqual(record["network_resource"]["network_name"], network_name)
+        self.assertEqual(record["network_resource"]["network_id"], "network-pair-live")
+
+    def test_private_live_create_can_reuse_existing_private_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            runner = _DockerLivePrivateRunner(image_exists=True, network_exists=True)
+
+            with mock.patch(
+                "tools.wire.engine.providers.docker.create.free_localhost_tcp_port",
+                return_value=29223,
+            ):
+                output = docker.create_endpoint(
+                    provider="docker",
+                    exposure="private",
+                    role="probe",
+                    private_group="pair-live",
+                    private_ip="10.79.0.43",
+                    dry_run=False,
+                    confirm_live_run=True,
+                    env={},
+                    command_runner=runner,
+                )
+
+        self.assertEqual(len(runner.calls_matching("docker", "image", "inspect")), 1)
+        self.assertEqual(runner.calls_matching("docker", "build"), [])
+        self.assertEqual(len(runner.calls_matching("docker", "network", "inspect")), 1)
+        self.assertEqual(runner.calls_matching("docker", "network", "create"), [])
+        private_network = output["metadata"]["private_network"]  # type: ignore[index]
+        self.assertFalse(private_network["created"])  # type: ignore[index]
+        self.assertTrue(private_network["reused"])  # type: ignore[index]
+
+    def test_private_live_create_requires_confirmation_before_provider_commands(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        def fake_runner(argv: Sequence[object], **_: object) -> CommandResult:
+            calls.append(tuple(str(part) for part in argv))
+            return _result(argv)
+
+        with self.assertRaisesRegex(PermissionError, CONFIRMATION_ERROR):
+            docker.create_endpoint(
+                provider="docker",
+                exposure="private",
+                role="oracle",
+                private_group="pair-live",
+                dry_run=False,
+                confirm_live_run=False,
+                env={},
+                command_runner=fake_runner,
+            )
+
+        self.assertEqual(calls, [])
+
+
+class _DockerLivePrivateRunner:
+    def __init__(self, *, image_exists: bool, network_exists: bool) -> None:
+        self.image_exists = image_exists
+        self.network_exists = network_exists
+        self.image_built = False
+        self.network_created = False
+        self.private_ip = "10.79.0.42"
+        self.private_mac = "02:42:0a:4f:00:2a"
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, argv: Sequence[object], **_: object) -> CommandResult:
+        parts = tuple(str(part) for part in argv)
+        self.calls.append(parts)
+
+        if parts and parts[0] == "ssh-keygen":
+            return _result(parts)
+
+        if parts[:3] == ("docker", "image", "inspect"):
+            if self.image_exists or self.image_built:
+                return _result(parts, stdout="[]\n")
+            return _result(parts, exit_code=1, stderr="No such image\n")
+
+        if parts[:2] == ("docker", "build"):
+            self.image_built = True
+            return _result(parts, stdout="built\n")
+
+        if parts[:3] == ("docker", "network", "inspect"):
+            if self.network_exists or self.network_created:
+                return _result(parts, stdout=_docker_private_network_inspect_stdout())
+            return _result(parts, exit_code=1, stderr="No such network\n")
+
+        if parts[:3] == ("docker", "network", "create"):
+            self.network_created = True
+            return _result(parts, stdout="network-pair-live\n")
+
+        if parts[:2] == ("docker", "run"):
+            self.private_ip = _option_values(parts, "--ip")[0]
+            self.private_mac = _option_values(parts, "--mac-address")[0]
+            return _result(parts, stdout="container-private-1\n")
+
+        if parts and parts[0] == "ssh":
+            command = parts[-1]
+            if command == "true":
+                return _result(parts)
+            if "__WIRE_IP_ADDR__" in command:
+                return _result(
+                    parts,
+                    stdout=_interface_discovery_stdout(
+                        private_ip=self.private_ip,
+                        private_mac=self.private_mac,
+                    ),
+                )
+            return _result(parts)
+
+        return _result(parts, exit_code=1, stderr=f"unexpected command: {parts!r}\n")
+
+    def calls_matching(self, *prefix: str) -> list[tuple[str, ...]]:
+        return [call for call in self.calls if call[: len(prefix)] == prefix]
+
+    def only_call_matching(self, *prefix: str) -> tuple[str, ...]:
+        calls = self.calls_matching(*prefix)
+        if len(calls) != 1:
+            raise AssertionError(f"expected one call matching {prefix!r}, got {calls!r}")
+        return calls[0]
+
+
+def _option_values(argv: Sequence[str], option: str) -> list[str]:
+    values: list[str] = []
+    for index, part in enumerate(argv):
+        if part == option and index + 1 < len(argv):
+            values.append(argv[index + 1])
+    return values
+
+
+def _docker_private_network_inspect_stdout() -> str:
+    labels = {
+        "org.libcrafter.wire.provider": "docker",
+        "org.libcrafter.wire.managed": "true",
+        "org.libcrafter.wire.private-group": "pair-live",
+        "org.libcrafter.wire.exposure": "private",
+    }
+    return json.dumps(
+        [
+            {
+                "Id": "network-pair-live",
+                "Name": "wire-private-pair-live",
+                "Driver": "bridge",
+                "Internal": True,
+                "Labels": labels,
+                "IPAM": {
+                    "Config": [
+                        {
+                            "Subnet": DOCKER_DEFAULT_PRIVATE_CIDR,
+                            "Gateway": "10.79.0.1",
+                        }
+                    ]
+                },
+            }
+        ]
+    )
+
+
+def _interface_discovery_stdout(*, private_ip: str, private_mac: str) -> str:
+    addresses = [
+        {
+            "ifindex": 2,
+            "ifname": "eth0",
+            "addr_info": [
+                {
+                    "family": "inet",
+                    "local": private_ip,
+                    "prefixlen": 24,
+                }
+            ],
+        }
+    ]
+    links = [
+        {
+            "ifindex": 2,
+            "ifname": "eth0",
+            "address": private_mac,
+            "operstate": "UP",
+            "mtu": 1500,
+        }
+    ]
+    routes = [{"dst": "1.1.1.1", "dev": "eth0", "gateway": "10.79.0.1"}]
+    return "\n".join(
+        [
+            "__WIRE_IP_ADDR__",
+            json.dumps(addresses),
+            "__WIRE_IP_LINK__",
+            json.dumps(links),
+            "__WIRE_IP_ROUTE__",
+            json.dumps(routes),
+        ]
+    )
 
 
 def _check(report: dict[str, object], name: str) -> dict[str, object]:
