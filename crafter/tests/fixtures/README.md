@@ -54,6 +54,9 @@ Valid byte fixtures cover:
   `ethernet-experimental-raw.bin`
 - Ethernet ARP request and reply: `arp-who-has.bin`,
   `ethernet-arp-reply.hex`
+- Ethernet nonstandard ARP (InfiniBand hardware type, IPv6 EtherType protocol
+  type, variable-length raw addresses, unknown numeric opcode):
+  `ethernet-arp-infiniband-ipv6-nonstandard.hex`
 - Ethernet VLAN IPv4 UDP payload: `ethernet-vlan-ipv4-udp-raw.bin`
 - Linux cooked ARP payload: `linux-sll-arp-who-has.hex`
 - null loopback IPv4 and IPv6 payloads:
@@ -79,7 +82,9 @@ IPv4 DNS response, IPv4 DHCP, and IPv6 fragment stacks.
 
 Pcap fixtures cover:
 
-- Ethernet link type with ARP request and reply records.
+- Ethernet link type with ARP request and reply records, plus a single-record
+  nonstandard ARP frame (`ethernet-arp-nonstandard.pcap`) exercising variable
+  address lengths and unknown codepoints.
 - RawIp link type with IPv4 and IPv6 packets.
 - LinuxSll link type with an ARP payload.
 - NullLoopback link type with an IPv4 UDP payload.

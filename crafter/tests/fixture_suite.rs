@@ -64,6 +64,7 @@ enum CoverageFamily {
     EthernetUnknownEthertype,
     EthernetArpRequest,
     EthernetArpReply,
+    EthernetArpNonstandard,
     VlanIpv4Udp,
     LinuxSllArp,
     NullLoopbackIpv4,
@@ -174,6 +175,17 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         expected_layers: &[ExpectedLayer::Ethernet, ExpectedLayer::Arp],
         preserve_exact_bytes: true,
         summary_path: Some("summaries/ethernet-arp-reply.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ethernet-arp-infiniband-ipv6-nonstandard",
+        path: "bytes/ethernet-arp-infiniband-ipv6-nonstandard.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ethernet-arp-infiniband-ipv6-nonstandard.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+        expected_layers: &[ExpectedLayer::Ethernet, ExpectedLayer::Arp],
+        preserve_exact_bytes: true,
+        summary_path: None,
     },
     ValidFixtureCase {
         name: "dhcp-offer-options",
@@ -561,6 +573,20 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
         ],
     },
     PcapFixtureCase {
+        name: "ethernet-arp-nonstandard",
+        path: "pcaps/ethernet-arp-nonstandard.pcap",
+        contents: fixture_bytes!("pcaps/ethernet-arp-nonstandard.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ethernet,
+        records: &[PcapFixtureRecord {
+            seconds: 50,
+            fractional: 5,
+            fixture_name: "ethernet-arp-infiniband-ipv6-nonstandard",
+        }],
+    },
+    PcapFixtureCase {
         name: "raw-ipv4-icmp-echo-request",
         path: "pcaps/raw-ipv4-icmp-echo-request.pcap",
         contents: fixture_bytes!("pcaps/raw-ipv4-icmp-echo-request.pcap"),
@@ -626,6 +652,10 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     ),
     (CoverageFamily::EthernetArpRequest, "Ethernet ARP request"),
     (CoverageFamily::EthernetArpReply, "Ethernet ARP reply"),
+    (
+        CoverageFamily::EthernetArpNonstandard,
+        "Ethernet nonstandard ARP (variable address lengths, unknown codepoints)",
+    ),
     (
         CoverageFamily::VlanIpv4Udp,
         "Ethernet VLAN IPv4 UDP payload",
@@ -718,6 +748,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "raw-hello-agents" => &[CoverageFamily::RawPayload],
         "arp-who-has" => &[CoverageFamily::EthernetArpRequest],
         "ethernet-arp-reply" => &[CoverageFamily::EthernetArpReply],
+        "ethernet-arp-infiniband-ipv6-nonstandard" => &[CoverageFamily::EthernetArpNonstandard],
         "dhcp-offer-options" => &[CoverageFamily::DhcpOptions],
         "dhcp-discover-options"
         | "dhcp-request-options"
@@ -1009,6 +1040,54 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]))
             );
             assert_eq!(arp.target_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 10)));
+        }
+        "ethernet-arp-infiniband-ipv6-nonstandard" => {
+            let ethernet = expect_layer::<Ethernet>(case, packet);
+            assert_eq!(
+                ethernet.source(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]))
+            );
+            assert_eq!(
+                ethernet.destination(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]))
+            );
+            assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_ARP));
+
+            let arp = expect_layer::<Arp>(case, packet);
+            // Nonstandard codepoints stay raw/numeric and round-trip exactly.
+            assert_eq!(arp.hardware_type_value(), ARP_HRD_INFINIBAND);
+            assert_eq!(arp.protocol_type_value(), 0x86dd);
+            assert_eq!(arp.hardware_len_value(), 8);
+            assert_eq!(arp.protocol_len_value(), 16);
+            assert_eq!(arp.opcode_value(), 1024);
+            // Variable-length raw addresses are preserved byte-exact.
+            assert_eq!(
+                arp.sender_hardware_bytes_value(),
+                vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x10, 0x11, 0x12]
+            );
+            assert_eq!(
+                arp.sender_protocol_bytes_value(),
+                vec![
+                    0x20, 0x01, 0x0d, 0xb8, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x10,
+                ]
+            );
+            assert_eq!(
+                arp.target_hardware_bytes_value(),
+                vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x20, 0x21, 0x22]
+            );
+            assert_eq!(
+                arp.target_protocol_bytes_value(),
+                vec![
+                    0x20, 0x01, 0x0d, 0xb8, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x20,
+                ]
+            );
+            // Typed views decline on nonstandard widths / unknown protocol type.
+            assert_eq!(arp.sender_mac(), None);
+            assert_eq!(arp.target_mac(), None);
+            assert_eq!(arp.sender_ipv4(), None);
+            assert_eq!(arp.target_ipv4(), None);
         }
         "linux-sll-arp-who-has" => {
             let linux_sll = expect_layer::<LinuxSll>(case, packet);
