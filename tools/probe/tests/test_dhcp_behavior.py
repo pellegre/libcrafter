@@ -74,6 +74,14 @@ def _dhcp_hostname_plan(*, seed: int = 1023, sequence: int = 0) -> dict:
     )
 
 
+def _dhcp_parameter_request_list_plan(*, seed: int = 1024, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dhcp-parameter-request-list"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcp-parameter-request-list"],
+        sequence=sequence,
+    )
+
+
 class DhcpDiscoverOfferPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct Discover stimulus and Offer contract."""
 
@@ -595,6 +603,160 @@ class DhcpHostnameTest(unittest.TestCase):
                 # dry-run metadata so the endpoint validates the option it built.
                 plan_view = metadata.get("probe_plan", {})
                 self.assertTrue(plan_view.get("hostname"))
+
+
+class DhcpParameterRequestListPlanTest(unittest.TestCase):
+    """The plan carries a Discover with a parameter request list (option 55)."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dhcp-parameter-request-list", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dhcp-parameter-request-list"],
+            planning._dhcp_parameter_request_list_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _dhcp_parameter_request_list_plan(), _dhcp_parameter_request_list_plan()
+        )
+
+    def test_plan_carries_a_discover_with_parameter_request_list(self) -> None:
+        plan = _dhcp_parameter_request_list_plan()
+
+        self.assertEqual(plan["case"], "dhcp-parameter-request-list")
+        self.assertEqual(plan["stimulus"], "dhcp_discover")
+        self.assertEqual(plan["expected_response"], "dhcp_offer")
+
+        # DHCP fixed ports: client 68 -> server 67.
+        self.assertEqual(plan["source_port"], 68)
+        self.assertEqual(plan["destination_port"], 67)
+
+        # A client hardware address in the RFC 7042 documentation MAC range and a
+        # 32-bit transaction id (xid).
+        mac = plan["client_mac"]
+        self.assertTrue(mac.startswith("00:00:5e:00:53:"))
+        self.assertIsInstance(plan["transaction_id"], int)
+        self.assertTrue(1 <= plan["transaction_id"] <= 0xFFFFFFFF)
+
+        # The parameter request list (option 55) names the option codes the client
+        # wants returned: subnet mask (1), router (3), DNS (6), lease (51),
+        # renewal T1 (58), and rebinding T2 (59).
+        request_list = plan["parameter_request_list"]
+        self.assertEqual(request_list, [1, 3, 6, 51, 58, 59])
+
+    def test_offer_expectations_return_the_requested_options(self) -> None:
+        plan = _dhcp_parameter_request_list_plan()
+
+        self.assertEqual(plan["expected_message_type"], "offer")
+        self.assertEqual(plan["expected_message_type_value"], 2)
+        offered = ipaddress.IPv4Address(plan["expected_yiaddr"])
+        self.assertIn(offered, ipaddress.ip_network("198.51.100.0/24"))
+        self.assertEqual(plan["expected_server_identifier"], plan["destination_ipv4"])
+
+        # Every option named in the request list is expected back with a value.
+        self.assertEqual(plan["expected_parameter_request_list"], [1, 3, 6, 51, 58, 59])
+        self.assertEqual(plan["expected_subnet_mask"], "255.255.255.0")
+        self.assertTrue(plan["expected_router_ipv4"])
+        dns = ipaddress.IPv4Address(plan["expected_dns_ipv4"])
+        self.assertIn(dns, ipaddress.ip_network("198.51.100.0/24"))
+
+        # Lease timing options: T1 < T2 < lease.
+        self.assertGreater(plan["expected_lease_time"], 0)
+        self.assertLess(plan["expected_renewal_time"], plan["expected_rebinding_time"])
+        self.assertLess(plan["expected_rebinding_time"], plan["expected_lease_time"])
+
+    def test_validation_contract_covers_requested_options(self) -> None:
+        plan = _dhcp_parameter_request_list_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (Offer flows server -> client, 67 -> 68).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 67)
+        self.assertEqual(validation["destination_port"], 68)
+        self.assertEqual(validation["direction"], "server_to_client")
+
+        # BOOTP reply opcode and the Offer message type.
+        self.assertEqual(validation["op_value"], 2)
+        self.assertEqual(validation["message_type_value"], 2)
+
+        # Identity: transaction id and client hardware address echoed.
+        self.assertEqual(validation["transaction_id"], plan["transaction_id"])
+        self.assertEqual(validation["client_hardware_address"], plan["client_mac"])
+
+        # The validation contract names the requested parameters and asserts each
+        # returned option value (subnet mask, router, DNS, lease, renewal, rebinding).
+        self.assertEqual(validation["requested_parameters"], [1, 3, 6, 51, 58, 59])
+        self.assertEqual(validation["subnet_mask"], plan["expected_subnet_mask"])
+        self.assertEqual(validation["router_ipv4"], plan["expected_router_ipv4"])
+        self.assertEqual(validation["dns_ipv4"], plan["expected_dns_ipv4"])
+        self.assertEqual(validation["lease_time"], plan["expected_lease_time"])
+        self.assertEqual(validation["renewal_time"], plan["expected_renewal_time"])
+        self.assertEqual(validation["rebinding_time"], plan["expected_rebinding_time"])
+
+    def test_target_service_records_the_parameter_request_list(self) -> None:
+        plan = _dhcp_parameter_request_list_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["port"], 67)
+        self.assertEqual(target_service["client_port"], 68)
+        self.assertEqual(
+            target_service["parameter_request_list"], plan["parameter_request_list"]
+        )
+        # The responder returns the requested configuration options.
+        self.assertEqual(target_service["subnet_mask"], plan["expected_subnet_mask"])
+        self.assertEqual(target_service["router_ipv4"], plan["expected_router_ipv4"])
+        self.assertEqual(target_service["dns_ipv4"], plan["expected_dns_ipv4"])
+
+    def test_capture_filter_matches_offer_direction(self) -> None:
+        plan = _dhcp_parameter_request_list_plan()
+        self.assertIn("src port 67", plan["capture_filter"])
+        self.assertIn("dst port 68", plan["capture_filter"])
+
+
+class DhcpParameterRequestListTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dhcp-parameter-request-list",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1024,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dhcp-parameter-request-list", planned)
+
+            # The endpoint produced a result for the focused case and it built
+            # the Discover (a dry-run plan compiles the outgoing stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dhcp-parameter-request-list"
+            ]
+            self.assertTrue(
+                results, "endpoint emitted no dhcp-parameter-request-list result"
+            )
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                # The planned outgoing parameter request list (option 55) is
+                # visible in the dry-run metadata so the endpoint validates the
+                # option list it built.
+                plan_view = metadata.get("probe_plan", {})
+                self.assertEqual(
+                    plan_view.get("parameter_request_list"), [1, 3, 6, 51, 58, 59]
+                )
 
 
 if __name__ == "__main__":

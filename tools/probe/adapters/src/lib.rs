@@ -100,6 +100,7 @@ pub(crate) mod test_support {
             expected_client_identifier_hex: None,
             hostname: None,
             expected_hostname: None,
+            parameter_request_list: None,
             expected_message_type_value: None,
             expected_yiaddr: None,
             expected_server_identifier: None,
