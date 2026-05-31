@@ -186,7 +186,7 @@ BEHAVIOR_DHCP_CASES: tuple[ProbeCase, ...] = (
         protocol="dhcp",
     ),
     _behavior_case(
-        name="dhcp-paramreq-options",
+        name="dhcp-parameter-request-list",
         description=(
             "Send a Discover with a parameter request list and validate the "
             "requested options in the Offer."

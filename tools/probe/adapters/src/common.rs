@@ -214,6 +214,14 @@ pub struct ProbePlan {
     pub hostname: Option<String>,
     #[serde(default)]
     pub expected_hostname: Option<String>,
+    // The DHCP parameter request list (option 55, RFC 2132 section 9.8): the list
+    // of option codes the client asks the server to return. `parameter_request_list`
+    // is set on the stimulus Discover that names the wanted options
+    // (`dhcp-parameter-request-list`); the responder returns those options and the
+    // validator confirms the corresponding values. A case that does not name a
+    // parameter request list leaves it unset (the builders inject a default list).
+    #[serde(default)]
+    pub parameter_request_list: Option<Vec<u8>>,
     #[serde(default)]
     pub expected_message_type_value: Option<u8>,
     #[serde(default)]
@@ -553,11 +561,19 @@ fn dispatch_case(
         (RunMode::Live, "ttl-expired") => icmp::run_ttl_expired_live(request, plan),
         (
             RunMode::DryRun,
-            "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier" | "dhcp-hostname",
+            "dhcp-discover-offer"
+            | "dhcp-request-ack"
+            | "dhcp-client-identifier"
+            | "dhcp-hostname"
+            | "dhcp-parameter-request-list",
         ) => dhcp::run_dhcp_dry_run(request, plan),
         (
             RunMode::Live,
-            "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier" | "dhcp-hostname",
+            "dhcp-discover-offer"
+            | "dhcp-request-ack"
+            | "dhcp-client-identifier"
+            | "dhcp-hostname"
+            | "dhcp-parameter-request-list",
         ) => dhcp::run_dhcp_live(request, plan),
         _ => {
             // DHCP, ARP, and UDP behavioral cases are wired into their modules
@@ -705,6 +721,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_client_identifier_hex": plan.expected_client_identifier_hex,
         "hostname": plan.hostname,
         "expected_hostname": plan.expected_hostname,
+        "parameter_request_list": plan.parameter_request_list,
         "expected_message_type_value": plan.expected_message_type_value,
         "expected_yiaddr": plan.expected_yiaddr,
         "expected_server_identifier": plan.expected_server_identifier,
@@ -813,7 +830,11 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 .as_deref()
                 .unwrap_or("")
         ),
-        "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier" | "dhcp-hostname" => {
+        "dhcp-discover-offer"
+        | "dhcp-request-ack"
+        | "dhcp-client-identifier"
+        | "dhcp-hostname"
+        | "dhcp-parameter-request-list" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -851,6 +872,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-request-ack" => "dhcp_ack",
             "dhcp-client-identifier" => "dhcp_offer",
             "dhcp-hostname" => "dhcp_offer",
+            "dhcp-parameter-request-list" => "dhcp_offer",
             _ => "unknown",
         })
 }
@@ -1033,6 +1055,23 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
         }),
+        "dhcp-parameter-request-list" => json!({
+            "required": true,
+            "kind": "dhcp-responder",
+            "port": plan.destination_port,
+            "client_port": plan.source_port,
+            "client_mac": plan.client_mac,
+            "parameter_request_list": plan.parameter_request_list,
+            "transaction_id": plan.transaction_id,
+            "yiaddr": plan.expected_yiaddr,
+            "server_identifier": plan.expected_server_identifier,
+            "subnet_mask": plan.expected_subnet_mask,
+            "router_ipv4": plan.expected_router_ipv4,
+            "dns_ipv4": plan.expected_dns_ipv4,
+            "lease_time": plan.expected_lease_time,
+            "renewal_time": plan.expected_renewal_time,
+            "rebinding_time": plan.expected_rebinding_time,
+        }),
         _ => json!({}),
     }
 }
@@ -1109,6 +1148,12 @@ pub fn required_u16(value: Option<u16>, field: &str) -> ExampleResult<u16> {
 
 pub fn required_u32(value: Option<u32>, field: &str) -> ExampleResult<u32> {
     value.ok_or_else(|| format!("probe plan missing required field {field}").into())
+}
+
+pub fn required_u8_list<'a>(value: Option<&'a [u8]>, field: &str) -> ExampleResult<&'a [u8]> {
+    value
+        .filter(|item| !item.is_empty())
+        .ok_or_else(|| format!("probe plan missing required field {field}").into())
 }
 
 pub fn decode_hex(hex: &str) -> ExampleResult<Vec<u8>> {

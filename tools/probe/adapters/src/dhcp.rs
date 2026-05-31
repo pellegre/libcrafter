@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use crate::common::{
     capture_filter, decode_hex, decoded_packet_json, failed_outcome, hex_bytes, observed_response,
-    plan_json, required_str, required_u32, send_report_json, target_service_json,
+    plan_json, required_str, required_u32, required_u8_list, send_report_json, target_service_json,
     CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest,
     FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
@@ -270,6 +270,24 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         Dhcp::discover(client_mac)
             .transaction_id(transaction_id)
             .hostname(hostname)
+    } else if plan.case == "dhcp-parameter-request-list" {
+        // RFC 2132 section 9.8: the client names the option codes it wants the
+        // server to return in the parameter request list (option 55). The plan
+        // carries an explicit deterministic list, so build the Discover shape
+        // directly (rather than `Dhcp::discover`, which injects a default list)
+        // and set exactly the caller's codes. `compile()` fills the BOOTP
+        // op/htype/hlen, magic cookie, and lengths; the caller-set request list,
+        // client MAC, and transaction id survive untouched.
+        let requests = required_u8_list(
+            plan.parameter_request_list.as_deref(),
+            "parameter_request_list",
+        )?
+        .to_vec();
+        Dhcp::new()
+            .client_mac(client_mac)
+            .message_type(DhcpMessageType::Discover)
+            .transaction_id(transaction_id)
+            .parameter_request_list(requests)
     } else {
         // RFC 2131 section 4.1: a client that cannot receive unicast before its
         // address is configured sets the broadcast flag. The lab transport
@@ -1267,6 +1285,174 @@ mod tests {
         // The responder echoed the Discover's hostname, but the plan now expects
         // a different one: a payload mismatch on option 12.
         plan.expected_hostname = Some("other-host".to_string());
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    fn parameter_request_list_plan() -> ProbePlan {
+        // RFC 2132 section 9.8 parameter request list (option 55): subnet mask (1),
+        // router (3), DNS server (6), lease time (51), renewal T1 (58), and
+        // rebinding T2 (59). The responder returns those requested options and the
+        // validator confirms the corresponding values.
+        let mut plan = base_plan("dhcp-parameter-request-list");
+        plan.source_ipv4 = Some("10.64.0.10".to_string());
+        plan.destination_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
+        plan.source_port = Some(DHCP_CLIENT_PORT);
+        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
+        plan.parameter_request_list = Some(vec![1, 3, 6, 51, 58, 59]);
+        plan.transaction_id = Some(0x3903_f326);
+        plan.expected_message_type_value = Some(DHCP_OFFER);
+        plan.expected_yiaddr = Some("198.51.100.42".to_string());
+        plan.expected_server_identifier = Some("10.64.0.20".to_string());
+        plan.expected_subnet_mask = Some("255.255.255.0".to_string());
+        plan.expected_router_ipv4 = Some("10.64.0.1".to_string());
+        plan.expected_dns_ipv4 = Some("198.51.100.53".to_string());
+        plan.expected_lease_time = Some(3600);
+        plan.expected_renewal_time = Some(1800);
+        plan.expected_rebinding_time = Some(3150);
+        plan
+    }
+
+    /// Build the canonical Offer the controlled responder would unicast back,
+    /// returning exactly the options the parameter request list (option 55) named.
+    fn offer_with_requested_options_packet(plan: &ProbePlan) -> Packet {
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
+        let subnet_mask: Ipv4Addr = plan
+            .expected_subnet_mask
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let router: Ipv4Addr = plan
+            .expected_router_ipv4
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let dns: Ipv4Addr = plan.expected_dns_ipv4.as_deref().unwrap().parse().unwrap();
+        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .lease_time(plan.expected_lease_time.unwrap())
+            .renewal_time(plan.expected_renewal_time.unwrap())
+            .rebinding_time(plan.expected_rebinding_time.unwrap())
+            .subnet_mask(subnet_mask)
+            .router(vec![router])
+            .domain_name_server(vec![dns]);
+        Ipv4::new()
+            .src(
+                plan.expected_reply_source_ipv4
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Ipv4Addr>()
+                    .unwrap(),
+            )
+            .dst(
+                plan.expected_reply_destination_ipv4
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Ipv4Addr>()
+                    .unwrap(),
+            )
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp
+    }
+
+    #[test]
+    fn dhcp_discover_compiles_with_parameter_request_list() {
+        let plan = parameter_request_list_plan();
+        let packet = dhcp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let dhcp = decoded.layer::<Dhcp>().unwrap();
+
+        // Client 68 -> server 67; a Discover carrying chaddr plus option 55.
+        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        // The decoded parameter request list (option 55) is exactly the codes the
+        // plan named; the default list the discover builder injects is overridden.
+        assert_eq!(
+            dhcp.parameter_request_list_value(),
+            Some([1u8, 3, 6, 51, 58, 59].as_slice())
+        );
+        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+    }
+
+    #[test]
+    fn dhcp_parameter_request_list_requires_the_list() {
+        let mut plan = parameter_request_list_plan();
+        plan.parameter_request_list = None;
+        assert!(dhcp_packet(&plan).is_err());
+    }
+
+    #[test]
+    fn matching_offer_with_requested_options_passes_validation() {
+        let plan = parameter_request_list_plan();
+        let bytes = offer_with_requested_options_packet(&plan)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(
+            matches!(validation, CandidateValidation::Passed(_)),
+            "expected Passed, got {validation:?}"
+        );
+    }
+
+    #[test]
+    fn offer_missing_a_requested_option_is_wrong_payload() {
+        let plan = parameter_request_list_plan();
+        // An otherwise-correct Offer that omits the requested DNS server option (6)
+        // reaches the right peer but fails the contract.
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
+        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .lease_time(plan.expected_lease_time.unwrap())
+            .renewal_time(plan.expected_renewal_time.unwrap())
+            .rebinding_time(plan.expected_rebinding_time.unwrap())
+            .subnet_mask(
+                plan.expected_subnet_mask
+                    .as_deref()
+                    .unwrap()
+                    .parse()
+                    .unwrap(),
+            )
+            .router(vec![plan
+                .expected_router_ipv4
+                .as_deref()
+                .unwrap()
+                .parse()
+                .unwrap()]);
+        let packet = Ipv4::new()
+            .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
+            .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp;
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }

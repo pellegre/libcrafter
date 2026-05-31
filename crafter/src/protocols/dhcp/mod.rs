@@ -963,6 +963,18 @@ impl Dhcp {
         })
     }
 
+    /// Parameter request list option (option 55), when present.
+    ///
+    /// Source: RFC 2132 section 9.8. Returns the list of option codes the client
+    /// asked the server to return, in the order they appear in the option, so a
+    /// caller can confirm exactly which parameters a Discover/Request named.
+    pub fn parameter_request_list_value(&self) -> Option<&[u8]> {
+        self.options.iter().find_map(|option| match option {
+            DhcpOption::ParameterRequestList(requests) => Some(requests.as_slice()),
+            _ => None,
+        })
+    }
+
     /// RFC 2132 static routes (option 33), concatenated across areas.
     ///
     /// Source: RFC 2132 section 5.8. Reassembles the logical option payload from
@@ -1875,6 +1887,42 @@ mod dhcp_tests {
         assert_eq!(dhcp.requested_ip_address_value(), Some(requested));
         assert_eq!(dhcp.server_identifier_value(), Some(server));
         assert_eq!(dhcp.transaction_id_value(), 7);
+    }
+
+    #[test]
+    fn parameter_request_list_round_trips_through_encode_and_decode() {
+        // RFC 2132 section 9.8: a client names the option codes it wants returned
+        // in the parameter request list (option 55). A caller-set list overrides
+        // the default the Discover builder injects and survives compile()/decode.
+        let requests: Vec<u8> = vec![1, 3, 6, 51, 58, 59];
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::UNSPECIFIED)
+            .dst(Ipv4Addr::BROADCAST)
+            / Udp::dhcp_client()
+            / Dhcp::new()
+                .client_mac(mac())
+                .message_type(DhcpMessageType::Discover)
+                .xid(0x1234_5678)
+                .parameter_request_list(requests.clone()))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let dhcp = decoded.layer::<Dhcp>().unwrap();
+
+        assert_eq!(
+            dhcp.parameter_request_list_value(),
+            Some(requests.as_slice())
+        );
+    }
+
+    #[test]
+    fn discover_default_parameter_request_list_is_readable() {
+        // The Discover builder injects the default parameter request list, which
+        // the typed accessor surfaces without requiring the caller to set it.
+        let dhcp = Dhcp::discover(mac());
+        let requests = dhcp.parameter_request_list_value().unwrap();
+        assert!(!requests.is_empty());
     }
 }
 
