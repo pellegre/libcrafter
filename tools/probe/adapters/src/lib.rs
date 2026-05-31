@@ -55,6 +55,7 @@ pub(crate) mod test_support {
             expected_answer_data: None,
             expected_answer_count: None,
             original_name: None,
+            absent_name: None,
             canonical_name: None,
             terminal_ipv4: None,
             expected_cname_answer: None,

@@ -117,6 +117,8 @@ pub struct ProbePlan {
     #[serde(default)]
     pub original_name: Option<String>,
     #[serde(default)]
+    pub absent_name: Option<String>,
+    #[serde(default)]
     pub canonical_name: Option<String>,
     #[serde(default)]
     pub terminal_ipv4: Option<String>,
@@ -363,11 +365,12 @@ fn dispatch_case(
         (RunMode::Live, "tcp-syn-open" | "tcp-syn-closed") => tcp::run_tcp_live(request, plan),
         (
             RunMode::DryRun,
-            "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain",
+            "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain",
         ) => dns::run_dns_dry_run(request, plan),
-        (RunMode::Live, "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain") => {
-            dns::run_dns_live(request, plan)
-        }
+        (
+            RunMode::Live,
+            "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain",
+        ) => dns::run_dns_live(request, plan),
         (RunMode::DryRun, "ttl-expired") => icmp::run_ttl_expired_dry_run(request, plan),
         (RunMode::Live, "ttl-expired") => icmp::run_ttl_expired_live(request, plan),
         _ => {
@@ -477,6 +480,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_answer_data": plan.expected_answer_data,
         "expected_answer_count": plan.expected_answer_count,
         "original_name": plan.original_name,
+        "absent_name": plan.absent_name,
         "canonical_name": plan.canonical_name,
         "terminal_ipv4": plan.terminal_ipv4,
         "expected_response_code": plan.expected_response_code,
@@ -555,15 +559,17 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
             plan.destination_port.unwrap_or(0),
             plan.source_port.unwrap_or(0),
         ),
-        "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" => format!(
-            "udp and src host {} and dst host {} and src port {} and dst port {}",
-            plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
-            plan.expected_reply_destination_ipv4
-                .as_deref()
-                .unwrap_or(""),
-            plan.destination_port.unwrap_or(0),
-            plan.source_port.unwrap_or(0),
-        ),
+        "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" | "dns-nxdomain" => {
+            format!(
+                "udp and src host {} and dst host {} and src port {} and dst port {}",
+                plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+                plan.expected_reply_destination_ipv4
+                    .as_deref()
+                    .unwrap_or(""),
+                plan.destination_port.unwrap_or(0),
+                plan.source_port.unwrap_or(0),
+            )
+        }
         "ttl-expired" => format!(
             "icmp and src host {} and dst host {}",
             plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -582,9 +588,8 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "icmp-echo" => "icmp_echo_reply",
             "tcp-syn-open" => "tcp_syn_ack",
             "tcp-syn-closed" => "tcp_rst",
-            "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain" => {
-                "dns_response"
-            }
+            "dns-query" | "dns-a-success" | "dns-aaaa-success" | "dns-cname-chain"
+            | "dns-nxdomain" => "dns_response",
             "ttl-expired" => "icmp_ttl_expired",
             _ => "unknown",
         })
@@ -622,6 +627,15 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "terminal_ipv4": plan.terminal_ipv4,
                 "expected_answer_count": plan.expected_answer_count,
             },
+        }),
+        "dns-nxdomain" => json!({
+            "required": true,
+            "kind": "udp-dns-responder",
+            "port": plan.destination_port,
+            "query_name": plan.query_name,
+            "query_type": plan.query_type,
+            "absent": true,
+            "expected_response_code": plan.expected_response_code,
         }),
         _ => json!({}),
     }

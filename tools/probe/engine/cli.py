@@ -582,6 +582,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "dns-a-success",
         "dns-aaaa-success",
         "dns-cname-chain",
+        "dns-nxdomain",
     }
 )
 
@@ -1035,7 +1036,7 @@ def _probe_plan_with_endpoint_addresses(
             }
         )
         updated["stimulus_rst_guard"] = rst_guard
-    elif case_name in {"dns-query", "dns-aaaa-success", "dns-cname-chain"}:
+    elif case_name in {"dns-query", "dns-aaaa-success", "dns-cname-chain", "dns-nxdomain"}:
         source_port = int(updated.get("source_port", 0))
         destination_port = int(updated.get("destination_port", 53))
         updated["capture_filter"] = (
@@ -1167,7 +1168,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_DECODE_FAILED,
             FAILURE_TARGET_SETUP_FAILED,
         ]
-    if case_name in {"dns-query", "dns-aaaa-success", "dns-cname-chain"}:
+    if case_name in {"dns-query", "dns-aaaa-success", "dns-cname-chain", "dns-nxdomain"}:
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,
