@@ -3110,7 +3110,14 @@ def _live_provider_execute(
                 output_dir=local_direction_dir,
                 label=f"receiver-{receiver.role}",
             )
-            time.sleep(_live_receiver_startup_grace_seconds(args.provider))
+            _wait_for_receiver_ready(
+                wire,
+                endpoint_id=receiver.endpoint_id,
+                remote_artifact_root=remote_artifact_root,
+                direction=direction,
+                output_dir=local_direction_dir,
+                provider=args.provider,
+            )
             sender_execution = _run_wire_endpoint_batch(
                 wire=wire,
                 endpoint_id=sender.endpoint_id,
@@ -3497,6 +3504,49 @@ def _live_provider_execute(
             print(f"error: {error}", file=sys.stderr)
         print(f"reproduce: {_live_reproduction_command(args)}", file=sys.stderr)
     return 0 if status == "passed" else 1
+
+
+def _wait_for_receiver_ready(
+    wire,
+    *,
+    endpoint_id: str,
+    remote_artifact_root: str,
+    direction: str,
+    output_dir: Path,
+    provider: str,
+) -> None:
+    """Block until the receiver signals its live capture is open.
+
+    The receiver writes a ``receiver-ready-<direction>`` marker once its
+    capture socket is listening. Waiting for that marker (instead of a fixed
+    sleep) removes the send/receive race where the sender's burst is gone
+    before the receiver is ready. Falls back to the fixed settle window if the
+    marker never appears, so a missing marker degrades rather than hangs.
+    """
+    marker = posixpath.join(remote_artifact_root, f"receiver-ready-{direction}")
+    settle_seconds = _live_receiver_startup_grace_seconds(provider)
+    poll_seconds = int(settle_seconds) + 60
+    wait_script = (
+        f"for _ in $(seq 1 {poll_seconds}); do "
+        f"[ -f {shlex.quote(marker)} ] && exit 0; sleep 1; done; exit 1"
+    )
+    try:
+        record = _run_wire_command(
+            wire.exec(
+                endpoint_id,
+                ["bash", "-lc", wait_script],
+                timeout=poll_seconds + 30,
+            ),
+            output_dir=output_dir,
+            label=f"await-receiver-ready-{direction}",
+        )
+    except Exception:  # pragma: no cover - defensive; degrade to fixed settle
+        record = {"exit_code": 1}
+    if record.get("exit_code") == 0:
+        # Small cushion so the BPF program is fully attached before sending.
+        time.sleep(2)
+    else:
+        time.sleep(settle_seconds)
 
 
 def _run_wire_command(response, *, output_dir: Path, label: str) -> JSONObject:
@@ -4160,7 +4210,7 @@ def _live_endpoint_timeout_for_count(packet_count: int) -> int:
     # receiver times out observing zero packets even though the exchange is fine.
     return max(
         60,
-        min(300, int(LIVE_CAPTURE_SETTLE_SECONDS) + 30 + int(packet_count)),
+        min(300, int(LIVE_VM_RECEIVER_STARTUP_GRACE_SECONDS) + 30 + int(packet_count)),
     )
 
 
