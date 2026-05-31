@@ -24,11 +24,17 @@ PROBE_CAPABILITY_NAMES = (
     "tcp_open_port",
     "tcp_closed_port",
     "dns_service",
+    "dhcp_service",
+    "udp_service",
+    "privileged_udp_port",
     "controlled_router",
     "arp_resolution",
+    "link_layer_arp",
     "link_layer_send",
     "link_layer_capture",
     "broadcast",
+    "provider_mac",
+    "repeated_response",
 )
 
 
@@ -132,7 +138,19 @@ def probe_capabilities_from_lab_capabilities(
     link_layer_send = _capability(substrate, "link_layer_send")
     link_layer_capture = _capability(substrate, "link_layer_capture")
     broadcast = _capability(substrate, "broadcast")
+    provider_mac = _capability(substrate, "provider_mac_known", "provider_mac")
     arp_resolution = link_layer_send and link_layer_capture and broadcast
+    link_layer_arp = arp_resolution and provider_mac
+    dhcp_service = (
+        ipv4_unicast
+        and controlled_services
+        and link_layer_send
+        and link_layer_capture
+        and broadcast
+    )
+    udp_service = ipv4_unicast and controlled_services
+    privileged_udp_port = ipv4_unicast and controlled_services
+    repeated_response = ipv4_unicast and controlled_services
     derived_dry_run = (
         dry_run
         if dry_run is not None
@@ -152,26 +170,49 @@ def probe_capabilities_from_lab_capabilities(
         "tcp_open_port": ipv4_unicast and controlled_services,
         "tcp_closed_port": ipv4_unicast,
         "dns_service": ipv4_unicast and controlled_services,
+        "dhcp_service": dhcp_service,
+        "udp_service": udp_service,
+        "privileged_udp_port": privileged_udp_port,
         "controlled_router": controlled_router,
         "link_layer_send": link_layer_send,
         "link_layer_capture": link_layer_capture,
         "broadcast": broadcast,
+        "provider_mac": provider_mac,
         "arp_resolution": arp_resolution,
+        "link_layer_arp": link_layer_arp,
+        "repeated_response": repeated_response,
         "capability_names": list(PROBE_CAPABILITY_NAMES),
         "capability_sources": {
             "icmp_echo": ["ipv4_unicast"],
             "tcp_open_port": ["ipv4_unicast", "controlled_services"],
             "tcp_closed_port": ["ipv4_unicast"],
             "dns_service": ["ipv4_unicast", "controlled_services"],
+            "dhcp_service": [
+                "ipv4_unicast",
+                "controlled_services",
+                "link_layer_send",
+                "link_layer_capture",
+                "broadcast",
+            ],
+            "udp_service": ["ipv4_unicast", "controlled_services"],
+            "privileged_udp_port": ["ipv4_unicast", "controlled_services"],
             "controlled_router": ["controlled_router"],
             "link_layer_send": ["link_layer_send"],
             "link_layer_capture": ["link_layer_capture"],
             "broadcast": ["broadcast"],
+            "provider_mac": ["provider_mac_known"],
             "arp_resolution": [
                 "link_layer_send",
                 "link_layer_capture",
                 "broadcast",
             ],
+            "link_layer_arp": [
+                "link_layer_send",
+                "link_layer_capture",
+                "broadcast",
+                "provider_mac_known",
+            ],
+            "repeated_response": ["ipv4_unicast", "controlled_services"],
         },
         "lab_capabilities": substrate,
     }
