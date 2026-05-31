@@ -43,7 +43,7 @@ are flagged as conservative assumptions for maintainer review.
 | Decode of any structurally valid header, including unknown HRD/PRO/OP and unknown address families | RFC 826 generic format | Covered. Decode splits address fields by HLN/PLN and stores every field verbatim, so unknown codepoints round-trip. |
 | Trailing bytes after a complete ARP body remain observable | RFC 826 (fixed body length) | Covered. Decode appends remaining bytes as `Raw`. |
 | Structured errors for truncated header or address fields, no silent panic | RFC 826 (header/address layout) | Covered. `buffer_too_short("arp header", 8, len)` and `buffer_too_short("arp addresses", total_len, len)`; HLN/PLN are widened to `usize` before doubling so there is no arithmetic overflow. |
-| Explicit address bytes conflicting with explicit HLN/PLN fail at compile time | RFC 826 (HLN/PLN govern address length) | Covered. `validate_lengths()` returns `invalid_field_value("arp.<field>", ...)` for any user-set address whose byte length disagrees with the length field. |
+| Explicit address bytes conflicting with explicit HLN/PLN fail at compile time | RFC 826 (HLN/PLN govern address length) | Covered. `validate_lengths()` returns `CrafterError::BufferTooShort { context: "arp.<field>", required, available }` for any user-set address whose byte length disagrees with the length field; `required`/`available` are bounded `u8` widths, so the check cannot overflow even at `u8::MAX`. |
 | Summary, inspection, and show expose ARP detail | crate inspectable-surface requirement | Covered. `summary()` shows op + psrc/pdst; `inspection_fields()` shows HRD, PRO, HLN, PLN, OP, and all four addresses (MAC/IPv4 formatted when applicable, hex otherwise). |
 | Reply matching and reply filters are correct and degrade conservatively | RFC 826 request/reply semantics | Covered. `arp_reply_matches` matches by address bytes; `arp_filter` adds host terms only for 4-byte IPv4 addresses and otherwise degrades to bare `arp`. |
 
@@ -96,6 +96,116 @@ The Ethernet/IPv4 defaults remain protocol-correct.
 | Gratuitous / probe / conflict-detection ARP | RFC 5227 | Expressed through the base builder by setting explicit sender/target fields; no dedicated constructor and no new opcode (RFC 5227 reuses REQUEST/REPLY). |
 | MARS operations | arp-parameters-1 (no RFC) | Deferred; not named because no RFC document backs them in the manifest. |
 
+## Examples
+
+ARP composes through the same `Packet` surface as every other layer. The
+typed helpers cover the common Ethernet/IPv4 case; raw byte setters and length
+overrides cover everything else.
+
+Standard Ethernet/IPv4 request and reply:
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+let me = MacAddr::from([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+
+// who-has: broadcast request for the gateway's MAC.
+let request = Ethernet::new()
+    .src(me)
+    .dst(MacAddr::BROADCAST)
+    .ethertype(ETHERTYPE_ARP)
+    / Arp::who_has(
+        Ipv4Addr::new(192, 0, 2, 10),  // sender protocol address
+        Ipv4Addr::new(192, 0, 2, 1),   // target protocol address
+        me,                            // sender hardware address
+    );
+
+// is-at: the matching reply.
+let reply = Arp::is_at(
+    Ipv4Addr::new(192, 0, 2, 1),
+    MacAddr::from([0x02, 0x00, 0x5e, 0x00, 0x53, 0xff]),
+    Ipv4Addr::new(192, 0, 2, 10),
+    me,
+);
+
+let bytes = request.compile()?;
+println!("{}", request.summary());
+println!("{}", reply.summary());
+```
+
+Named operation codepoints and the raw `opcode(u16)` escape hatch coexist;
+unknown numeric values are never rejected and round-trip byte-for-byte:
+
+```rust
+use crafter::prelude::*;
+
+// Named ARP-family codepoint (data only, no extension behavior).
+let inverse = Arp::new().operation(ArpOperation::InArpRequest);
+
+// Arbitrary numeric opcode stays usable and visible.
+let exotic = Arp::new().opcode(0x0fa0);
+assert_eq!(exotic.opcode_value(), 0x0fa0);
+```
+
+Nonstandard hardware/protocol families use the generic raw setters; the matching
+length field auto-fills from the byte count unless set explicitly, and any
+deliberate length mismatch is honored until compile-time validation:
+
+```rust
+use crafter::prelude::*;
+
+let nonstandard = Arp::new()
+    .hardware_type(ARP_HRD_INFINIBAND)
+    .protocol_type(ETHERTYPE_IPV6)
+    .opcode(1)
+    .sender_hardware([0u8; 8])   // HLN auto-fills to 8
+    .sender_protocol([0u8; 16])  // PLN auto-fills to 16
+    .target_hardware([0xffu8; 8])
+    .target_protocol([0u8; 16]);
+
+// Typed accessors decline on mismatched widths; raw views stay visible.
+assert!(nonstandard.sender_mac().is_none());
+assert_eq!(nonstandard.sender_hardware_bytes_value().len(), 8);
+```
+
+Decode any structurally valid ARP frame; unknown codepoints and address
+families are preserved, trailing bytes surface as `Raw`, and truncation returns
+a structured `BufferTooShort`:
+
+```rust
+use crafter::prelude::*;
+
+match Packet::decode_from_link(LinkType::Ethernet, frame) {
+    Ok(packet) => println!("{}", packet.show()),
+    Err(CrafterError::BufferTooShort { context, required, available }) => {
+        eprintln!("decode_error context={context} required={required} available={available}");
+    }
+    Err(error) => eprintln!("decode_error {error}"),
+}
+```
+
+See `crafter/examples/arp_who_has.rs` for a runnable dry-run example that builds
+a who-has frame, inspects the operation/type/length fields, derives the reply
+filter, and prints a link-layer dry-run send plan without transmitting.
+
+## Limitations
+
+`crafter`'s ARP support is a wire-level primitive, not an ARP engine. In
+addition to the intentional gaps below:
+
+- ARP-family operations (RARP/DRARP/InARP/ARP-NAK/MAPOS) are named codepoints
+  only. There are no extension-specific message bodies, state machines, or host
+  workflows; they ride the unmodified RFC 826 header.
+- Hardware and protocol types are exposed as raw `u16` with known-value labels.
+  There is no curated, exhaustive Ethertype or hardware-type enumeration.
+- RFC 5227 gratuitous/probe/announcement packets are expressed by setting
+  explicit sender/target fields on the base builder; there is no dedicated
+  constructor and no new opcode.
+- Live ARP is L2-only and runs exclusively through provider-backed QEMU or
+  VirtualBox lab sessions, never through privileged raw sends from the developer
+  host.
+
 ## Offline coverage
 
 Offline (no privileges, no live traffic) is the default validation path.
@@ -104,10 +214,10 @@ Offline (no privileges, no live traffic) is the default validation path.
 | --- | --- |
 | Golden-byte round trip for Ethernet/IPv4 request and reply | Covered by `crafter` unit tests and the fixture suite. |
 | Decode round trip exposing IPv4 and MAC fields | Covered. |
-| Compile-time rejection of inconsistent address lengths | Covered for typed setters; raw `*_bytes`-vs-length conflict is part of the planned coverage. |
-| Nonstandard structurally valid ARP (unknown HRD/PRO/OP, variable/zero-length addresses) decode and summary | Planned coverage: byte/value preservation and sensible summary asserted by tests and oracle data cases. |
-| Malformed input structured errors (short header, truncated addresses) | Covered by the decode corpus (`short-arp-header`, `truncated-arp-addresses`). |
-| Oracle layer spec / stacks / fixtures modeling codepoints, variable address lengths, malformed cases, and live eligibility from data | Planned coverage: extend `tools/oracle/specs/layers/arp.yaml`, stacks, and fixtures beyond the current IPv4/Ethernet request/reply shape. |
+| Compile-time rejection of inconsistent address lengths | Covered. Both typed setters and raw `*_bytes`-vs-length conflicts fail with the structured `BufferTooShort` error above, including the zero-vs-nonempty and `u8::MAX` boundary cases. |
+| Nonstandard structurally valid ARP (unknown HRD/PRO/OP, variable/zero-length addresses) decode and summary | Covered. Unit tests and bounded property tests assert byte/value preservation; typed accessors decline (`None`) on mismatched widths while raw `*_bytes` views stay visible, and `summary()`/`inspection_fields()` render unknown codepoints numerically. |
+| Malformed input structured errors (short header, truncated addresses) | Covered by the decode corpus (`short-arp-header`, `truncated-arp-addresses`, and the four `truncated-arp-*-address` rows), each asserting `BufferTooShort` with `context`, `required`, and `available`. |
+| Oracle layer spec / stacks / fixtures modeling codepoints, variable address lengths, malformed cases, and live eligibility from data | Covered. `tools/oracle/specs/layers/arp.yaml`, `stacks.yaml`, and the fixture catalog model the full header, codepoint domains, variable/zero-length address byte vectors, and L2 live eligibility; ARP rides the generic `_requires_l2` gate so link-rooted plans stay wire-ineligible. |
 
 ## Pcap coverage
 
@@ -115,8 +225,8 @@ Offline (no privileges, no live traffic) is the default validation path.
 | --- | --- |
 | Ethernet ARP request/reply pcap round trip | Covered (`pcaps/ethernet-arp-request-reply.pcap`). |
 | Linux cooked capture (SLL) ARP pcap round trip | Covered (`pcaps/linux-sll-arp-who-has.pcap`). |
-| BPF filter selecting ARP (e.g. `icmp or arp`) | Covered by pcap tests. |
-| Nonstandard / variable-length ARP pcap fixtures | Planned coverage where structurally meaningful. |
+| BPF filter selecting ARP (e.g. `icmp or arp`) | Covered by pcap tests (`read_pcap_filtered` selecting `arp` from a mixed capture). |
+| Nonstandard / variable-length ARP pcap fixtures | Covered (`pcaps/ethernet-arp-nonstandard.pcap`: InfiniBand HRD, IPv6 Ethertype, HLN=8/PLN=16 raw addresses, unknown opcode), write→read→write byte-stable. |
 
 ## Live QEMU coverage
 

@@ -37,6 +37,86 @@ Use documentation addresses such as `192.0.2.0/24`, `198.51.100.0/24`, and
 `2001:db8::/32` in examples and tests. Do not use real targets in generated
 defaults.
 
+## Build ARP
+
+ARP is a link-layer (L2) protocol, so wrap the `Arp` layer in an `Ethernet`
+frame with `ETHERTYPE_ARP`. The `who_has` / `is_at` helpers cover the common
+Ethernet/IPv4 request and reply; `compile()` fills the protocol-correct HRD,
+PRO, HLN, PLN, and operation defaults. Use RFC 7042 documentation MAC space
+(`00:00:5e:00:53:00`–`ff`) and documentation IPv4 for generated defaults.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+let me = MacAddr::from([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+
+let request = Ethernet::new()
+    .src(me)
+    .dst(MacAddr::BROADCAST)
+    .ethertype(ETHERTYPE_ARP)
+    / Arp::who_has(
+        Ipv4Addr::new(192, 0, 2, 10),
+        Ipv4Addr::new(192, 0, 2, 1),
+        me,
+    );
+
+println!("{}", request.summary());
+```
+
+Named operation codepoints (`ArpOperation`) coexist with the raw `opcode(u16)`
+escape hatch, and unknown numeric values round-trip byte-for-byte. ARP-family
+opcodes (RARP/DRARP/InARP/ARP-NAK/MAPOS) are named codepoints only — there is no
+extension-specific behavior, so do not build tools that assume one. For
+nonstandard hardware/protocol families, use the generic raw setters
+(`sender_hardware`/`target_hardware`/`sender_protocol`/`target_protocol`); the
+matching length field auto-fills from the byte count unless set explicitly, and
+a deliberate length mismatch is honored until it fails `compile()` with a
+structured `BufferTooShort`.
+
+```rust
+use crafter::prelude::*;
+
+let exotic = Arp::new()
+    .hardware_type(ARP_HRD_INFINIBAND)
+    .protocol_type(ETHERTYPE_IPV6)
+    .opcode(1)
+    .sender_hardware([0u8; 8])
+    .target_protocol([0u8; 16]);
+
+assert!(exotic.sender_mac().is_none());            // typed view declines
+assert_eq!(exotic.sender_hardware_bytes_value().len(), 8); // raw view stays
+```
+
+ARP dry-run sends use the link-layer plan; never send raw ARP from the
+developer host. Reserve the live path for a disposable lab (see Live-Lab
+Sending below):
+
+```rust
+use crafter::prelude::*;
+
+let plan = request.send_dry_run(
+    SendOptions::new()
+        .iface("dry-run0")
+        .link_layer(),
+)?;
+
+println!("target={:?}", plan.target());
+println!("filter={}", reply_filter(&request).unwrap_or_default());
+println!("{}", plan.compiled_packet().hexdump());
+```
+
+`reply_filter` emits BPF host terms only for standard 4-byte IPv4 addresses and
+degrades to a bare `arp` filter for variable-length or non-IPv4 forms, so
+generated matchers stay correct on nonstandard ARP.
+
+Live ARP validation is L2-only and must run through provider-backed QEMU or
+VirtualBox lab sessions with `link_layer_send` + `link_layer_capture`
+capability checks, protected confirmation, artifact collection, and teardown.
+When authorization or VM prerequisites are absent, plan with `--dry-run` and
+record a skip artifact rather than faking a live run. The user-facing coverage
+boundary lives in [`docs/arp-rfc-coverage.md`](../../docs/arp-rfc-coverage.md).
+
 ## Decode Bytes
 
 Pick the decode entrypoint from the context that produced the bytes. Link-layer
