@@ -31,7 +31,14 @@ from tools.oracle.engine.live import (
     validate_live_endpoint_batch_contract,
 )
 from tools.oracle.engine.model import DecodedModel, PacketPlan, read_json
+from tools.oracle.engine.providers import DOCKER_LIVE_PROVIDER_ADAPTER
 from tools.oracle.engine.providers import hetzner as hetzner_provider
+from tools.oracle.engine.providers.docker import (
+    LIBCRAFTER_PRIVATE_ADDRESS as DOCKER_LIBCRAFTER_PRIVATE_ADDRESS,
+    ORACLE_PRIVATE_GROUP as DOCKER_ORACLE_PRIVATE_GROUP,
+    PRIVATE_NETWORK_CIDR as DOCKER_PRIVATE_NETWORK_CIDR,
+    REFERENCE_PRIVATE_ADDRESS as DOCKER_REFERENCE_PRIVATE_ADDRESS,
+)
 from tools.oracle.engine.providers.hetzner import ORACLE_PRIVATE_GROUP
 from tools.oracle.engine.providers.hetzner import PRIVATE_NETWORK_CIDR as HETZNER_PRIVATE_NETWORK_CIDR
 from tools.oracle.engine.providers.qemu import (
@@ -55,7 +62,10 @@ from tools.oracle.engine.providers.registry import (
 
 class LiveProviderRegistryTest(unittest.TestCase):
     def test_hetzner_provider_is_registered(self) -> None:
-        self.assertEqual(registered_provider_names(), ("hetzner", "qemu", "virtualbox"))
+        self.assertEqual(
+            registered_provider_names(),
+            ("docker", "hetzner", "qemu", "virtualbox"),
+        )
 
         adapter = resolve_live_provider("hetzner")
 
@@ -67,6 +77,23 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(
             adapter.wire_environment(),
             {"HETZNER_PRIVATE_CIDR": HETZNER_PRIVATE_NETWORK_CIDR},
+        )
+
+    def test_docker_provider_is_registered(self) -> None:
+        adapter = resolve_live_provider("docker")
+
+        self.assertIs(adapter, DOCKER_LIVE_PROVIDER_ADAPTER)
+        self.assertEqual(adapter.name, "docker")
+        self.assertEqual(adapter.wire_provider, "docker")
+        self.assertEqual(adapter.wire_exposure, "private")
+        self.assertEqual(adapter.endpoint_roles, ("libcrafter", "reference_backend"))
+        self.assertEqual(adapter.private_group, DOCKER_ORACLE_PRIVATE_GROUP)
+        self.assertEqual(
+            dict(adapter.endpoint_private_ips),
+            {
+                "libcrafter": DOCKER_LIBCRAFTER_PRIVATE_ADDRESS,
+                "reference_backend": DOCKER_REFERENCE_PRIVATE_ADDRESS,
+            },
         )
 
     def test_qemu_provider_is_registered(self) -> None:
@@ -106,6 +133,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             resolve_live_provider("not-a-provider")
 
         message = str(error.exception)
+        self.assertIn("docker", message)
         self.assertIn("not-a-provider", message)
         self.assertIn("hetzner", message)
         self.assertIn("qemu", message)
@@ -200,6 +228,80 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertIn("qemu", doctor.argv)
         self.assertIn("--exposure", doctor.argv)
         self.assertIn("private", doctor.argv)
+
+    def test_docker_adapter_exposes_report_plans(self) -> None:
+        adapter = resolve_live_provider("docker")
+
+        capabilities = adapter.default_provider_capabilities(dry_run=True)
+        infrastructure = adapter.planned_infrastructure(dry_run=True)
+        exchange_metadata = adapter.packet_exchange_metadata(dry_run=True)
+        endpoints = adapter.endpoints(dry_run=True)
+        workflow = adapter.provider_workflow(dry_run=True)
+        bootstrap = _endpoint_bootstrap_plan(adapter, dry_run=True)
+
+        self.assertEqual(capabilities["provider"], "docker")
+        self.assertTrue(capabilities["ipv4_unicast"])
+        self.assertTrue(capabilities["link_layer_send"])
+        self.assertTrue(capabilities["link_layer_capture"])
+        self.assertTrue(capabilities["broadcast"])
+        self.assertTrue(capabilities["provider_mac_known"])
+        self.assertTrue(capabilities["controlled_services"])
+        self.assertFalse(capabilities["controlled_router"])
+        self.assertFalse(capabilities["wire_policy"]["transit_decrements_ipv4_ttl"])
+        self.assertEqual(infrastructure["provider"], "docker")
+        self.assertEqual(infrastructure["wire_provider"], "docker")
+        self.assertEqual(infrastructure["wire_exposure"], "private")
+        self.assertEqual(infrastructure["network"]["private_group"], DOCKER_ORACLE_PRIVATE_GROUP)
+        self.assertEqual(infrastructure["network"]["private_cidr"], DOCKER_PRIVATE_NETWORK_CIDR)
+        self.assertTrue(infrastructure["container_defaults"]["cap_drop_all"])
+        self.assertTrue(infrastructure["container_defaults"]["no_new_privileges"])
+        self.assertEqual(
+            infrastructure["container_defaults"]["capabilities"],
+            ["NET_RAW", "NET_ADMIN"],
+        )
+        self.assertEqual(
+            infrastructure["container_defaults"]["ssh_transport"],
+            "localhost-port-forward",
+        )
+        self.assertEqual(exchange_metadata["provider"], "docker")
+        self.assertEqual(exchange_metadata["wire_provider"], "docker")
+        self.assertEqual(exchange_metadata["wire_exposure"], "private")
+        self.assertEqual(
+            exchange_metadata["endpoint_roles"],
+            ["libcrafter", "reference_backend"],
+        )
+        self.assertEqual(exchange_metadata["private_group"], DOCKER_ORACLE_PRIVATE_GROUP)
+        self.assertTrue(exchange_metadata["isolated_network"])
+        self.assertTrue(exchange_metadata["private_network"])
+        self.assertEqual(exchange_metadata["private_network_cidr"], DOCKER_PRIVATE_NETWORK_CIDR)
+        self.assertEqual(exchange_metadata["packet_exchange_network"], "private")
+        self.assertEqual(set(endpoints), {"libcrafter", "reference_backend"})
+        self.assertEqual(endpoints["libcrafter"].address, DOCKER_LIBCRAFTER_PRIVATE_ADDRESS)
+        self.assertEqual(endpoints["reference_backend"].address, DOCKER_REFERENCE_PRIVATE_ADDRESS)
+        self.assertTrue(all(endpoint.metadata["private_network"] for endpoint in endpoints.values()))
+        self.assertTrue(adapter.validate_provider_workflow(workflow, dry_run=True).passed)
+        self.assertTrue(
+            _validate_endpoint_bootstrap(adapter, bootstrap, dry_run=True).passed,
+        )
+        self.assertEqual(
+            {command.role for command in bootstrap},
+            {"libcrafter", "reference_backend"},
+        )
+
+        workflow_purposes = {command.purpose for command in workflow}
+        self.assertIn(adapter.artifact_collection_purpose, workflow_purposes)
+        self.assertIn(adapter.teardown_purpose, workflow_purposes)
+        doctor = next(command for command in workflow if command.purpose == "check-docker-provider")
+        self.assertIn("--provider", doctor.argv)
+        self.assertIn("docker", doctor.argv)
+        self.assertIn("--exposure", doctor.argv)
+        self.assertIn("private", doctor.argv)
+        create_commands = [command for command in workflow if command.metadata.get("operation") == "create"]
+        self.assertEqual(len(create_commands), 2)
+        for command in create_commands:
+            self.assertIn("--private-group", command.argv)
+            self.assertIn(DOCKER_ORACLE_PRIVATE_GROUP, command.argv)
+            self.assertIn("--private-ip", command.argv)
 
     def test_virtualbox_adapter_exposes_report_plans(self) -> None:
         adapter = resolve_live_provider("virtualbox")
@@ -415,6 +517,58 @@ class LiveProviderRegistryTest(unittest.TestCase):
             QEMU_REFERENCE_PRIVATE_ADDRESS,
         )
 
+    def test_docker_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
+        adapter = resolve_live_provider("docker")
+        client = _FakeWireClient()
+
+        plan = adapter.wire_endpoint_plan(dry_run=True, client=client)
+
+        self.assertEqual(plan["provider"], "docker")
+        self.assertEqual(plan["wire_provider"], "docker")
+        self.assertEqual(plan["exposure"], "private")
+        self.assertEqual(plan["wire_exposure"], "private")
+        self.assertEqual(plan["private_group"], DOCKER_ORACLE_PRIVATE_GROUP)
+        self.assertEqual(plan["created_endpoint_ids"], [])
+        self.assertEqual(set(plan["live_endpoints"]), {"libcrafter", "reference_backend"})
+        self.assertEqual(
+            [(call["provider"], call["exposure"], call["role"]) for call in client.calls],
+            [
+                ("docker", "private", "libcrafter"),
+                ("docker", "private", "reference_backend"),
+            ],
+        )
+        self.assertEqual(
+            [call["private_group"] for call in client.calls],
+            [DOCKER_ORACLE_PRIVATE_GROUP, DOCKER_ORACLE_PRIVATE_GROUP],
+        )
+        self.assertEqual(
+            [call["private_ip"] for call in client.calls],
+            [DOCKER_LIBCRAFTER_PRIVATE_ADDRESS, DOCKER_REFERENCE_PRIVATE_ADDRESS],
+        )
+        self.assertTrue(all(call["dry_run"] for call in client.calls))
+        self.assertFalse(any(call["confirm_live_run"] for call in client.calls))
+        self.assertEqual(
+            plan["live_endpoints"]["libcrafter"].address,
+            DOCKER_LIBCRAFTER_PRIVATE_ADDRESS,
+        )
+        self.assertEqual(
+            plan["live_endpoints"]["reference_backend"].address,
+            DOCKER_REFERENCE_PRIVATE_ADDRESS,
+        )
+        self.assertEqual(
+            plan["live_endpoints"]["libcrafter"].metadata["peer_address"],
+            DOCKER_REFERENCE_PRIVATE_ADDRESS,
+        )
+        self.assertEqual(
+            plan["live_endpoints"]["libcrafter"].metadata["private_group"],
+            DOCKER_ORACLE_PRIVATE_GROUP,
+        )
+        self.assertTrue(plan["live_endpoints"]["libcrafter"].metadata["private_network"])
+        self.assertEqual(
+            plan["live_endpoints"]["libcrafter"].metadata["container_runtime"],
+            "docker",
+        )
+
     def test_virtualbox_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
         adapter = resolve_live_provider("virtualbox")
         client = _FakeWireClient()
@@ -606,11 +760,13 @@ class LiveProviderRegistryTest(unittest.TestCase):
         parser = cli.build_parser()
 
         local_args = parser.parse_args(["live", "--provider", "local-dry-run"])
+        docker_args = parser.parse_args(["live", "--provider", "docker"])
         hetzner_args = parser.parse_args(["live", "--provider", "hetzner"])
         qemu_args = parser.parse_args(["live", "--provider", "qemu"])
         virtualbox_args = parser.parse_args(["live", "--provider", "virtualbox"])
 
         self.assertEqual(local_args.provider, "local-dry-run")
+        self.assertEqual(docker_args.provider, "docker")
         self.assertEqual(hetzner_args.provider, "hetzner")
         self.assertEqual(qemu_args.provider, "qemu")
         self.assertEqual(virtualbox_args.provider, "virtualbox")
@@ -621,7 +777,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             parser.parse_args(["live", "--provider", "not-a-provider"])
 
     def test_live_dispatch_resolves_registered_provider_adapter(self) -> None:
-        for provider in ("hetzner", "qemu", "virtualbox"):
+        for provider in ("docker", "hetzner", "qemu", "virtualbox"):
             args = _live_args(provider)
             seen: dict[str, object] = {}
 

@@ -55,6 +55,40 @@ class LiveProviderMatrixTest(unittest.TestCase):
         self.assertEqual(summary["lab_session"]["roles"], ["libcrafter", "reference_backend"])
         self.assertEqual(summary["lab_session"]["validation_count"], 2)
 
+    def test_validate_live_report_accepts_docker_adapter_owned_metadata(self) -> None:
+        adapter = resolve_live_provider("docker")
+        corpus_path = Path("/tmp/libcrafter-corpus/plans.json")
+        report = _live_report(
+            provider="docker",
+            wire_provider=adapter.wire_provider,
+            wire_exposure=adapter.wire_exposure,
+            endpoint_roles=list(adapter.endpoint_roles),
+            corpus_path=corpus_path,
+        )
+
+        summary = validate_live_report(
+            report,
+            provider="docker",
+            adapter=adapter,
+            corpus_id="corpus-v1-test",
+            corpus_path=corpus_path,
+            report_path=Path("/tmp/docker/live/report.json"),
+        )
+
+        self.assertEqual(summary["provider"], "docker")
+        self.assertEqual(summary["wire_provider"], "docker")
+        self.assertEqual(summary["wire_exposure"], "private")
+        self.assertEqual(summary["endpoint_roles"], ["libcrafter", "reference_backend"])
+        self.assertTrue(summary["no_live_packets_sent"])
+        self.assertEqual(summary["lifecycle"]["endpoint_bootstrap_count"], 2)
+        self.assertEqual(summary["lifecycle"]["lab_provider_workflow_count"], 2)
+        self.assertEqual(summary["lifecycle"]["command_record_count"], 2)
+        self.assertEqual(summary["lab_session"]["provider"], "docker")
+        self.assertEqual(summary["lab_session"]["wire_provider"], "docker")
+        self.assertEqual(summary["lab_session"]["wire_exposure"], "private")
+        self.assertEqual(summary["lab_session"]["roles"], ["libcrafter", "reference_backend"])
+        self.assertEqual(summary["lab_session"]["validation_count"], 2)
+
     def test_validate_real_live_report_preserves_vm_lifecycle(self) -> None:
         adapter = resolve_live_provider("qemu")
         corpus_path = Path("/tmp/libcrafter-corpus/plans.json")
