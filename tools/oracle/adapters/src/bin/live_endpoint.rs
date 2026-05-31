@@ -934,11 +934,28 @@ fn decoded_model(
     let mut fields = Map::new();
     let mut layers = Vec::new();
     let mut summaries = Vec::new();
+    let mut payload_bytes = Vec::new();
+    let mut payload_seen = false;
 
     for layer in packet.iter() {
         let name = normalize_layer_name(layer.name());
-        layers.push(Value::String(name.to_string()));
         summaries.push(Value::String(layer.summary()));
+        if name == "payload" {
+            if let Some(bytes) = payload_bytes_from_layer(layer)? {
+                if !payload_seen {
+                    layers.push(Value::String(name.to_string()));
+                    payload_seen = true;
+                }
+                payload_bytes.extend_from_slice(&bytes);
+                fields.insert(
+                    name.to_string(),
+                    Value::Object(payload_fields_from_bytes(&payload_bytes)),
+                );
+                continue;
+            }
+        }
+
+        layers.push(Value::String(name.to_string()));
         let layer_fields = if let Some(fields) = typed_layer_fields(layer, name) {
             fields
         } else {
@@ -1087,6 +1104,7 @@ fn normalize_layer_name(name: &str) -> &str {
         "UDP" => "udp",
         "Udp" => "udp",
         "IcmpAddressMask" => "payload",
+        "IcmpQuotedIpv4" => "payload",
         "IcmpTimestamp" => "payload",
         "Raw" => "payload",
         value => value,
@@ -1099,7 +1117,6 @@ fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value
             .as_any()
             .downcast_ref::<Ethernet>()
             .map(ethernet_fields),
-        "payload" => typed_body_payload_fields(layer),
         "ipv6" => layer.as_any().downcast_ref::<Ipv6>().map(ipv6_fields),
         "tcp" => layer.as_any().downcast_ref::<Tcp>().map(tcp_fields),
         "icmp" => layer.as_any().downcast_ref::<Icmp>().map(icmp_fields),
@@ -1124,18 +1141,25 @@ fn ethernet_fields(layer: &Ethernet) -> Map<String, Value> {
     fields
 }
 
-fn typed_body_payload_fields(layer: &dyn Layer) -> Option<Map<String, Value>> {
+fn payload_bytes_from_layer(layer: &dyn Layer) -> ExampleResult<Option<Vec<u8>>> {
+    if let Some(raw) = layer.as_any().downcast_ref::<Raw>() {
+        return Ok(Some(raw.as_bytes().to_vec()));
+    }
+    if let Some(quoted) = layer.as_any().downcast_ref::<IcmpQuotedIpv4>() {
+        let compiled = quoted.datagram().compile()?;
+        return Ok(Some(compiled.as_bytes().to_vec()));
+    }
     if let Some(mask) = layer.as_any().downcast_ref::<IcmpAddressMask>() {
-        return Some(payload_fields_from_bytes(&mask.mask_octets()));
+        return Ok(Some(mask.mask_octets().to_vec()));
     }
     if let Some(timestamp) = layer.as_any().downcast_ref::<IcmpTimestamp>() {
         let mut bytes = Vec::with_capacity(12);
         bytes.extend_from_slice(&timestamp.originate_value().to_be_bytes());
         bytes.extend_from_slice(&timestamp.receive_value().to_be_bytes());
         bytes.extend_from_slice(&timestamp.transmit_value().to_be_bytes());
-        return Some(payload_fields_from_bytes(&bytes));
+        return Ok(Some(bytes));
     }
-    None
+    Ok(None)
 }
 
 fn payload_fields_from_bytes(bytes: &[u8]) -> Map<String, Value> {
@@ -2950,6 +2974,39 @@ mod l2_ipv4_root {
         );
         assert_eq!(model["fields"]["payload"]["length"], json!(12));
         assert!(model["fields"].get("IcmpTimestamp").is_none());
+    }
+
+    #[test]
+    fn decoded_quoted_ipv4_extension_body_normalizes_as_payload() {
+        let body_hex = concat!(
+            "45000028424200004011b464c000020ac00002149c40003500140000",
+            "71756f7465642d7175657279",
+            "2000000000080100000010ff"
+        );
+        let packet = Ipv4::new()
+            .src_str("10.42.19.10")
+            .expect("valid source")
+            .dst_str("10.42.19.20")
+            .expect("valid destination")
+            .id(1)
+            .ttl(64)
+            .protocol(IPPROTO_ICMP)
+            / Icmp::destination_unreachable()
+            / Raw::from_bytes(decode_hex(body_hex).expect("body hex decodes"));
+        let compiled = packet.compile().expect("packet compiles");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("packet decodes");
+        let model = decoded_model(&decoded, Some("l3:ipv4"), compiled.as_bytes(), vec![])
+            .expect("model builds");
+
+        assert_eq!(
+            model["layers"],
+            json!(["ipv4", "icmp", "payload"]),
+            "typed quoted datagram and extension tail should compare as flat payload"
+        );
+        assert_eq!(model["fields"]["payload"]["hex"], json!(body_hex));
+        assert_eq!(model["fields"]["payload"]["length"], json!(52));
+        assert!(model["fields"].get("IcmpQuotedIpv4").is_none());
     }
 
     #[test]
