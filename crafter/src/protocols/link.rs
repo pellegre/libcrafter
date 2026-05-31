@@ -277,6 +277,25 @@ pub fn arp_hardware_type_label(hardware_type: u16) -> Option<&'static str> {
     }
 }
 
+/// Short label for a known ARP protocol type, or `None` for unknown values.
+///
+/// This is a data-only lookup over the source-backed protocol-type codepoints.
+/// The ARP protocol-type field shares the EtherType space (IANA registry
+/// arp-parameters-3, administered per RFC 5342), and that sub-registry returned
+/// no records of its own in the manifest build, so the only source-backed known
+/// value is the IPv4 default ([`ARP_PRO_IPV4`] = [`ETHERTYPE_IPV4`])
+/// (`target/arp-rfc/scope.md`, assumption 3). It never blocks or rewrites any
+/// value: unknown numeric protocol types simply return `None` and remain usable
+/// through [`Arp::protocol_type`]. Mirrors the [`arp_hardware_type_label`] shape
+/// so summaries and generated tools can recognize a protocol type without
+/// narrowing the packet model.
+pub fn arp_protocol_type_label(protocol_type: u16) -> Option<&'static str> {
+    match protocol_type {
+        ARP_PRO_IPV4 => Some("ipv4"),
+        _ => None,
+    }
+}
+
 /// ARP operation value.
 ///
 /// Source-backed known operation codepoints from IANA registry
@@ -589,6 +608,16 @@ impl Arp {
     /// Protocol type value.
     pub fn protocol_type_value(&self) -> u16 {
         value_or_copy(&self.protocol_type, ETHERTYPE_IPV4)
+    }
+
+    /// Short label for this packet's protocol type, or `None` if it is not a
+    /// known source-backed codepoint. The ARP protocol-type field shares the
+    /// EtherType space (IANA arp-parameters-3), so the only source-backed known
+    /// value is the IPv4 default. Unknown numeric protocol types stay intact and
+    /// usable; this only reports whether a name exists. See
+    /// [`arp_protocol_type_label`].
+    pub fn protocol_type_label(&self) -> Option<&'static str> {
+        arp_protocol_type_label(self.protocol_type_value())
     }
 
     /// Hardware address length.
@@ -1791,8 +1820,57 @@ mod arp {
     fn arp_hardware_type_label_reexported_through_prelude() {
         use crate::prelude::{arp_hardware_type_label, ARP_HRD_INFINIBAND};
 
-        assert_eq!(arp_hardware_type_label(ARP_HRD_INFINIBAND), Some("infiniband"));
+        assert_eq!(
+            arp_hardware_type_label(ARP_HRD_INFINIBAND),
+            Some("infiniband")
+        );
         assert_eq!(arp_hardware_type_label(0x4242), None);
+    }
+
+    #[test]
+    fn arp_protocol_type_label_known_source_backed_codepoint() {
+        use super::{arp_protocol_type_label, ARP_PRO_IPV4, ETHERTYPE_IPV4};
+
+        // The only source-backed known protocol type is IPv4: arp-parameters-3
+        // shares the EtherType space and returned no records of its own
+        // (scope.md assumption 3). ARP_PRO_IPV4 == ETHERTYPE_IPV4.
+        assert_eq!(ARP_PRO_IPV4, ETHERTYPE_IPV4);
+        assert_eq!(arp_protocol_type_label(ARP_PRO_IPV4), Some("ipv4"));
+
+        // The label is reachable from a built packet's accessor, and the raw
+        // u16 setter preserves the value intact.
+        let arp = Arp::new().protocol_type(ARP_PRO_IPV4);
+        assert_eq!(arp.protocol_type_value(), ARP_PRO_IPV4);
+        assert_eq!(arp.protocol_type_label(), Some("ipv4"));
+
+        // The default protocol type (unset) is still IPv4 and labels as such.
+        let default_arp = Arp::new();
+        assert_eq!(default_arp.protocol_type_value(), ETHERTYPE_IPV4);
+        assert_eq!(default_arp.protocol_type_label(), Some("ipv4"));
+    }
+
+    #[test]
+    fn arp_protocol_type_unknown_values_stay_raw_and_unlabeled() {
+        use super::arp_protocol_type_label;
+
+        // Non-IPv4 protocol identifiers (e.g. IPv6's EtherType, experimental or
+        // arbitrary values) are not narrowed: the lookup returns None but the
+        // raw protocol_type(u16) setter round-trips the value byte-exact.
+        for unknown in [0_u16, 0x0805, 0x86dd, 0x1234, 65535] {
+            assert_eq!(arp_protocol_type_label(unknown), None);
+
+            let arp = Arp::new().protocol_type(unknown);
+            assert_eq!(arp.protocol_type_value(), unknown);
+            assert_eq!(arp.protocol_type_label(), None);
+        }
+    }
+
+    #[test]
+    fn arp_protocol_type_label_reexported_through_prelude() {
+        use crate::prelude::{arp_protocol_type_label, ARP_PRO_IPV4};
+
+        assert_eq!(arp_protocol_type_label(ARP_PRO_IPV4), Some("ipv4"));
+        assert_eq!(arp_protocol_type_label(0x4242), None);
     }
 }
 
