@@ -706,6 +706,208 @@ class DockerCreateEndpointLivePrivateTest(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class DockerCreateEndpointLiveNatL3Test(unittest.TestCase):
+    def test_lan_and_wan_live_create_use_configured_networks_and_l3_only_capabilities(
+        self,
+    ) -> None:
+        cases = {
+            "lan": {
+                "role": "probe",
+                "port": 29322,
+                "container_id": "container-lan-1",
+                "env": {DOCKER_LAN_NETWORK_ENV: "wire-lan-live"},
+                "network_key": "lan_network",
+                "network_name": "wire-lan-live",
+                "expected_flag": "nat_backed_l3_lan",
+                "negative_l2_flag": "true_lan_l2",
+                "discovered_ipv4": "172.20.0.11",
+                "discovered_mac": "02:42:ac:14:00:0b",
+            },
+            "wan": {
+                "role": "client",
+                "port": 29323,
+                "container_id": "container-wan-1",
+                "env": {DOCKER_WAN_NETWORK_ENV: "wire-wan-live"},
+                "network_key": "wan_network",
+                "network_name": "wire-wan-live",
+                "expected_flag": "nat_backed_l3_egress",
+                "negative_l2_flag": "wan_l2",
+                "discovered_ipv4": "172.21.0.12",
+                "discovered_mac": "02:42:ac:15:00:0c",
+            },
+        }
+
+        for exposure, case in cases.items():
+            with self.subTest(exposure=exposure):
+                with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+                    runner = _DockerLiveNatL3Runner(
+                        container_id=str(case["container_id"]),
+                        discovered_ipv4=str(case["discovered_ipv4"]),
+                        discovered_mac=str(case["discovered_mac"]),
+                    )
+
+                    with mock.patch(
+                        "tools.wire.engine.providers.docker.create.free_localhost_tcp_port",
+                        return_value=case["port"],
+                    ):
+                        output = docker.create_endpoint(
+                            provider="docker",
+                            exposure=exposure,
+                            role=str(case["role"]),
+                            dry_run=False,
+                            confirm_live_run=True,
+                            env=case["env"],  # type: ignore[arg-type]
+                            command_runner=runner,
+                        )
+
+                self.assertTrue(output["created"])
+                self.assertFalse(output["dry_run"])
+                self.assertEqual(output["status"], "active")
+                self.assertEqual(output["provider"], "docker")
+                self.assertEqual(output["exposure"], exposure)
+                self.assertEqual(output["role"], case["role"])
+
+                self.assertEqual(
+                    runner.calls_matching("docker", "image", "inspect"),
+                    [("docker", "image", "inspect", DOCKER_DEFAULT_IMAGE)],
+                )
+                self.assertEqual(runner.calls_matching("docker", "build"), [])
+                self.assertEqual(runner.calls_matching("docker", "network", "create"), [])
+
+                run_argv = runner.only_call_matching("docker", "run")
+                self.assertIn("--detach", run_argv)
+                self.assertEqual(_option_values(run_argv, "--network"), [case["network_name"]])
+                self.assertNotIn("--network=host", run_argv)
+                self.assertNotIn("host", _option_values(run_argv, "--network"))
+                self.assertEqual(_option_values(run_argv, "--cap-drop"), ["ALL"])
+                self.assertEqual(_option_values(run_argv, "--cap-add"), ["NET_RAW"])
+                self.assertNotIn("NET_ADMIN", _option_values(run_argv, "--cap-add"))
+                self.assertEqual(
+                    _option_values(run_argv, "--security-opt"),
+                    ["no-new-privileges"],
+                )
+                self.assertEqual(
+                    _option_values(run_argv, "--publish"),
+                    [f"127.0.0.1:{case['port']}:22"],
+                )
+                self.assertNotIn("--privileged", run_argv)
+                self.assertNotIn("/var/run/docker.sock", " ".join(run_argv))
+
+                ssh = output["ssh"]  # type: ignore[assignment]
+                self.assertEqual(ssh["host"], "127.0.0.1")  # type: ignore[index]
+                self.assertEqual(ssh["port"], case["port"])  # type: ignore[index]
+                self.assertEqual(ssh["metadata"]["host"], "127.0.0.1")  # type: ignore[index]
+                self.assertEqual(ssh["metadata"]["host_port"], case["port"])  # type: ignore[index]
+                self.assertEqual(ssh["metadata"]["guest_port"], 22)  # type: ignore[index]
+
+                metadata = output["metadata"]  # type: ignore[assignment]
+                self.assertEqual(metadata["docker_network"], case["network_name"])  # type: ignore[index]
+                self.assertEqual(metadata["docker_network_source"], "env")  # type: ignore[index]
+                self.assertTrue(metadata["discovery"]["ssh_ready"])  # type: ignore[index]
+                self.assertTrue(metadata["discovery"]["interfaces"])  # type: ignore[index]
+                self.assertTrue(metadata["discovery"]["ipv4"])  # type: ignore[index]
+
+                capabilities = metadata["capabilities"]  # type: ignore[index]
+                _assert_nat_l3_capabilities(
+                    self,
+                    capabilities,  # type: ignore[arg-type]
+                    exposure=exposure,
+                    expected_flag=str(case["expected_flag"]),
+                    expected_l2_false_flag=str(case["negative_l2_flag"]),
+                )
+
+                docker_metadata = metadata["docker"]  # type: ignore[index]
+                security = docker_metadata["security"]  # type: ignore[index]
+                self.assertEqual(security["cap_drop"], ["ALL"])  # type: ignore[index]
+                self.assertEqual(security["cap_add"], ["NET_RAW"])  # type: ignore[index]
+                self.assertTrue(security["net_raw_only"])  # type: ignore[index]
+                self.assertFalse(security["net_admin"])  # type: ignore[index]
+                self.assertTrue(security["no_new_privileges"])  # type: ignore[index]
+                self.assertFalse(security["host_network"])  # type: ignore[index]
+                self.assertFalse(security["privileged"])  # type: ignore[index]
+                self.assertFalse(security["docker_socket_mounted"])  # type: ignore[index]
+                self.assertFalse(security["link_layer_fidelity"])  # type: ignore[index]
+                self.assertFalse(security["broadcast"])  # type: ignore[index]
+                self.assertFalse(security["controlled_router"])  # type: ignore[index]
+                self.assertFalse(security["public_inbound_reachability"])  # type: ignore[index]
+
+                container = docker_metadata["container"]  # type: ignore[index]
+                self.assertTrue(container["created"])  # type: ignore[index]
+                self.assertEqual(container["container_id"], case["container_id"])  # type: ignore[index]
+                self.assertEqual(container["network"], case["network_name"])  # type: ignore[index]
+                self.assertEqual(container["docker_network"], case["network_name"])  # type: ignore[index]
+                self.assertEqual(container["ssh"]["host"], "127.0.0.1")  # type: ignore[index]
+                self.assertEqual(container["ssh"]["host_port"], case["port"])  # type: ignore[index]
+                self.assertEqual(
+                    container["ssh"]["publish"],  # type: ignore[index]
+                    f"127.0.0.1:{case['port']}:22",
+                )
+                self.assertFalse(
+                    container["ssh"]["public_inbound_reachability"]  # type: ignore[index]
+                )
+                self.assertEqual(container["run_argv"], list(run_argv))  # type: ignore[index]
+
+                network = metadata[case["network_key"]]  # type: ignore[index]
+                self.assertEqual(network["network_name"], case["network_name"])  # type: ignore[index]
+                self.assertEqual(network["configured_network"], case["network_name"])  # type: ignore[index]
+                self.assertEqual(network["source"], "env")  # type: ignore[index]
+                self.assertFalse(network["planned"])  # type: ignore[index]
+                self.assertFalse(network["created"])  # type: ignore[index]
+                self.assertTrue(network["reused"])  # type: ignore[index]
+                self.assertFalse(network["owned_by_provider"])  # type: ignore[index]
+                self.assertFalse(network["cleanup"])  # type: ignore[index]
+                self.assertFalse(network["l2"])  # type: ignore[index]
+                self.assertFalse(network["broadcast"])  # type: ignore[index]
+                self.assertFalse(network["controlled_router"])  # type: ignore[index]
+                self.assertFalse(network["public_inbound_reachability"])  # type: ignore[index]
+                self.assertEqual(network["docker_capabilities"], ["NET_RAW"])  # type: ignore[index]
+
+                interfaces = output["interfaces"]  # type: ignore[assignment]
+                self.assertEqual(len(interfaces), 1)
+                interface = interfaces[0]
+                self.assertEqual(interface["name"], "eth0")
+                self.assertEqual(interface["exposure"], exposure)
+                self.assertEqual(interface["ipv4"], case["discovered_ipv4"])
+                self.assertEqual(interface["mac"], case["discovered_mac"])
+                self.assertEqual(interface["provider_network_id"], case["network_name"])
+                interface_metadata = interface["metadata"]
+                self.assertEqual(
+                    interface_metadata["network_name"],  # type: ignore[index]
+                    case["network_name"],
+                )
+                self.assertEqual(
+                    interface_metadata["docker_network"],  # type: ignore[index]
+                    case["network_name"],
+                )
+                self.assertEqual(
+                    interface_metadata["discovered_ipv4"],  # type: ignore[index]
+                    case["discovered_ipv4"],
+                )
+                self.assertEqual(
+                    interface_metadata["docker_network_address"]["ipv4"],  # type: ignore[index]
+                    case["discovered_ipv4"],
+                )
+                self.assertEqual(
+                    interface_metadata["address_source"],  # type: ignore[index]
+                    "docker-network-discovery",
+                )
+                self.assertTrue(
+                    interface_metadata["discovered_from_docker_network"]  # type: ignore[index]
+                )
+                self.assertFalse(interface_metadata["link_layer_send"])  # type: ignore[index]
+                self.assertFalse(interface_metadata["link_layer_capture"])  # type: ignore[index]
+                self.assertFalse(interface_metadata["provider_mac_known"])  # type: ignore[index]
+                self.assertFalse(interface_metadata["broadcast"])  # type: ignore[index]
+                self.assertFalse(interface_metadata["controlled_router"])  # type: ignore[index]
+                self.assertFalse(
+                    interface_metadata["public_inbound_reachability"]  # type: ignore[index]
+                )
+                self.assertFalse(interface_metadata[case["negative_l2_flag"]])  # type: ignore[index]
+
+                resources = _resources_by_name(output)
+                self.assertFalse(resources[case["network_name"]]["cleanup"])  # type: ignore[index]
+
+
 class _DockerLivePrivateRunner:
     def __init__(self, *, image_exists: bool, network_exists: bool) -> None:
         self.image_exists = image_exists
@@ -756,6 +958,58 @@ class _DockerLivePrivateRunner:
                     stdout=_interface_discovery_stdout(
                         private_ip=self.private_ip,
                         private_mac=self.private_mac,
+                    ),
+                )
+            return _result(parts)
+
+        return _result(parts, exit_code=1, stderr=f"unexpected command: {parts!r}\n")
+
+    def calls_matching(self, *prefix: str) -> list[tuple[str, ...]]:
+        return [call for call in self.calls if call[: len(prefix)] == prefix]
+
+    def only_call_matching(self, *prefix: str) -> tuple[str, ...]:
+        calls = self.calls_matching(*prefix)
+        if len(calls) != 1:
+            raise AssertionError(f"expected one call matching {prefix!r}, got {calls!r}")
+        return calls[0]
+
+
+class _DockerLiveNatL3Runner:
+    def __init__(
+        self,
+        *,
+        container_id: str,
+        discovered_ipv4: str,
+        discovered_mac: str,
+    ) -> None:
+        self.container_id = container_id
+        self.discovered_ipv4 = discovered_ipv4
+        self.discovered_mac = discovered_mac
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, argv: Sequence[object], **_: object) -> CommandResult:
+        parts = tuple(str(part) for part in argv)
+        self.calls.append(parts)
+
+        if parts and parts[0] == "ssh-keygen":
+            return _result(parts)
+
+        if parts[:3] == ("docker", "image", "inspect"):
+            return _result(parts, stdout="[]\n")
+
+        if parts[:2] == ("docker", "run"):
+            return _result(parts, stdout=f"{self.container_id}\n")
+
+        if parts and parts[0] == "ssh":
+            command = parts[-1]
+            if command == "true":
+                return _result(parts)
+            if "__WIRE_IP_ADDR__" in command:
+                return _result(
+                    parts,
+                    stdout=_interface_discovery_stdout(
+                        private_ip=self.discovered_ipv4,
+                        private_mac=self.discovered_mac,
                     ),
                 )
             return _result(parts)
