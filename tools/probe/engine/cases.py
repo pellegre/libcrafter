@@ -232,7 +232,7 @@ BEHAVIOR_DHCP_CASES: tuple[ProbeCase, ...] = (
         protocol="dhcp",
     ),
     _behavior_case(
-        name="dhcp-repeated-discover",
+        name="dhcp-rapid-repeat",
         description=(
             "Send repeated Discovers and validate each independently decoded Offer."
         ),

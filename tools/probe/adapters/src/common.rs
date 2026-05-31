@@ -265,6 +265,61 @@ pub struct ProbePlan {
     pub expected_renewal_time: Option<u32>,
     #[serde(default)]
     pub expected_rebinding_time: Option<u32>,
+    // Multi-send DHCP behavioral case fields (`dhcp-rapid-repeat`). The plan
+    // carries a `dhcp_sends` array (one entry per Discover->Offer send), each with
+    // its own distinct transaction id, client identity (chaddr), and offered
+    // address, so the DHCP dispatch can build/send two Discovers and validate two
+    // independently-decoded Offers. Single-send DHCP cases leave this unset.
+    #[serde(default)]
+    pub dhcp_sends: Option<Vec<DhcpSend>>,
+}
+
+/// One send of a multi-send DHCP probe case (`dhcp-rapid-repeat`).
+///
+/// Each send carries its own transaction id (xid), client hardware address
+/// (chaddr), source/destination ports, offered address (yiaddr), server
+/// identifier, lease timing options, and per-send capture filter/peer
+/// expectations so the stimulus endpoint can build/send/capture/decode each
+/// Discover independently and match every Offer back to *its* send by the echoed
+/// transaction id — never confusing two Offers.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DhcpSend {
+    #[serde(default)]
+    pub index: Option<usize>,
+    #[serde(default)]
+    pub source_ipv4: Option<String>,
+    #[serde(default)]
+    pub destination_ipv4: Option<String>,
+    #[serde(default)]
+    pub expected_reply_source_ipv4: Option<String>,
+    #[serde(default)]
+    pub expected_reply_destination_ipv4: Option<String>,
+    #[serde(default)]
+    pub source_port: Option<u16>,
+    #[serde(default)]
+    pub destination_port: Option<u16>,
+    #[serde(default)]
+    pub client_mac: Option<String>,
+    #[serde(default)]
+    pub transaction_id: Option<u32>,
+    #[serde(default)]
+    pub expected_message_type_value: Option<u8>,
+    #[serde(default)]
+    pub expected_yiaddr: Option<String>,
+    #[serde(default)]
+    pub expected_server_identifier: Option<String>,
+    #[serde(default)]
+    pub expected_subnet_mask: Option<String>,
+    #[serde(default)]
+    pub expected_router_ipv4: Option<String>,
+    #[serde(default)]
+    pub expected_lease_time: Option<u32>,
+    #[serde(default)]
+    pub expected_renewal_time: Option<u32>,
+    #[serde(default)]
+    pub expected_rebinding_time: Option<u32>,
+    #[serde(default)]
+    pub capture_filter: Option<String>,
 }
 
 /// One send of a multi-send DNS probe case (`dns-repeat-transaction`).
@@ -594,7 +649,8 @@ fn dispatch_case(
             | "dhcp-lease-time"
             | "dhcp-renewal-unicast-ack"
             | "dhcp-inform-ack"
-            | "dhcp-request-nak",
+            | "dhcp-request-nak"
+            | "dhcp-rapid-repeat",
         ) => dhcp::run_dhcp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -606,7 +662,8 @@ fn dispatch_case(
             | "dhcp-lease-time"
             | "dhcp-renewal-unicast-ack"
             | "dhcp-inform-ack"
-            | "dhcp-request-nak",
+            | "dhcp-request-nak"
+            | "dhcp-rapid-repeat",
         ) => dhcp::run_dhcp_live(request, plan),
         _ => {
             // DHCP, ARP, and UDP behavioral cases are wired into their modules
@@ -746,6 +803,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_embedded_prefix_length": plan.expected_embedded_prefix_length,
         "send_count": plan.send_count,
         "sends": dns::sends_json(plan.sends.as_deref()),
+        "dhcp_sends": dhcp::sends_json(plan.dhcp_sends.as_deref()),
         "client_mac": plan.client_mac,
         "transaction_id": plan.transaction_id,
         "requested_ipv4": plan.requested_ipv4,
@@ -875,7 +933,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "dhcp-lease-time"
         | "dhcp-renewal-unicast-ack"
         | "dhcp-inform-ack"
-        | "dhcp-request-nak" => {
+        | "dhcp-request-nak"
+        | "dhcp-rapid-repeat" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -918,6 +977,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-renewal-unicast-ack" => "dhcp_ack",
             "dhcp-inform-ack" => "dhcp_ack",
             "dhcp-request-nak" => "dhcp_nak",
+            "dhcp-rapid-repeat" => "dhcp_offer",
             _ => "unknown",
         })
 }
@@ -1192,6 +1252,27 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "no_lease_time": plan.expected_no_lease_time,
             "server_identifier": plan.expected_server_identifier,
             "message": plan.expected_message,
+        }),
+        "dhcp-rapid-repeat" => json!({
+            "required": true,
+            "kind": "dhcp-responder",
+            "port": plan.destination_port,
+            "client_port": plan.source_port,
+            "client_mac": plan.client_mac,
+            "transaction_id": plan.transaction_id,
+            "yiaddr": plan.expected_yiaddr,
+            "server_identifier": plan.expected_server_identifier,
+            "subnet_mask": plan.expected_subnet_mask,
+            "router_ipv4": plan.expected_router_ipv4,
+            "lease_time": plan.expected_lease_time,
+            "renewal_time": plan.expected_renewal_time,
+            "rebinding_time": plan.expected_rebinding_time,
+            // The responder answers each repeated Discover with its own Offer
+            // keyed by the per-send xid/chaddr, so each decoded Offer is matched
+            // back to its Discover and carries its own offered address.
+            "rapid_repeat": {
+                "sends": dhcp::repeat_sends_json(plan.dhcp_sends.as_deref()),
+            },
         }),
         _ => json!({}),
     }

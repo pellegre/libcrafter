@@ -1999,6 +1999,269 @@ def _dhcp_discover_offer_probe_plan(
     }
 
 
+def _dhcp_rapid_repeat_send(
+    *,
+    profile: str,
+    seed: int,
+    sequence: int,
+    digest: bytes,
+    index: int,
+    stimulus_ipv4: str,
+    target_ipv4: str,
+    transaction_id: int,
+    client_mac: str,
+    source_port: int,
+    destination_port: int,
+    offered_ipv4: str,
+    subnet_mask: str,
+    server_identifier: str,
+    router_ipv4: str,
+    lease_time: int,
+    renewal_time: int,
+    rebinding_time: int,
+) -> JSONObject:
+    """Build one of the two Discover->Offer sends for ``dhcp-rapid-repeat``.
+
+    Each send owns a distinct deterministic transaction id (xid) AND a distinct
+    deterministic client identity (the ``chaddr`` client MAC), so the controlled
+    responder answers each Discover with its own Offer keyed by xid/chaddr and
+    the validator matches every decoded Offer back to *its* Discover by the
+    echoed transaction id. Each send also carries its own deterministic offered
+    address (``yiaddr``) so the two Offers are recognizably different and a
+    response is never confused with the sibling send's Offer. The per-send
+    capture filter and full validation contract (BOOTP reply, message type Offer,
+    echoed xid/chaddr, offered address, server identifier, lease/renewal/rebinding
+    options, server -> client direction over ports 67 -> 68) round-trip through
+    libcrafter decode for this send alone.
+    """
+
+    return {
+        "index": index,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "client_mac": client_mac,
+        "transaction_id": transaction_id,
+        "expected_message_type": "offer",
+        "expected_message_type_value": 2,
+        "expected_yiaddr": offered_ipv4,
+        "expected_server_identifier": server_identifier,
+        "expected_subnet_mask": subnet_mask,
+        "expected_router_ipv4": router_ipv4,
+        "expected_lease_time": lease_time,
+        "expected_renewal_time": renewal_time,
+        "expected_rebinding_time": rebinding_time,
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "target_service": {
+            "required": True,
+            "kind": "dhcp-responder",
+            "port": destination_port,
+            "client_port": source_port,
+            "client_mac": client_mac,
+            "transaction_id": transaction_id,
+            "yiaddr": offered_ipv4,
+            "server_identifier": server_identifier,
+            "subnet_mask": subnet_mask,
+            "router_ipv4": router_ipv4,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+        },
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "op": "reply",
+            "op_value": 2,
+            "message_type": "offer",
+            "message_type_value": 2,
+            "transaction_id": transaction_id,
+            "client_hardware_address": client_mac,
+            "yiaddr": offered_ipv4,
+            "server_identifier": server_identifier,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+            "direction": "server_to_client",
+        },
+    }
+
+
+def _dhcp_rapid_repeat_probe_plan(
+    *,
+    case_name: str = "dhcp-rapid-repeat",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dhcp-rapid-repeat`` behavioral case.
+
+    Two BOOTP/DHCP Discovers (message type 1) built by libcrafter and sent in
+    quick succession from the DHCP client port (68) to the server port (67)
+    against a controlled DHCP responder on a private L2 lab segment. Unlike the
+    single-send ``dhcp-discover-offer`` case, the two Discovers carry *distinct*
+    deterministic transaction ids (xids) and *distinct* deterministic client
+    identities (``chaddr`` client MACs), so the responder returns one Offer per
+    Discover (each keyed by its xid/chaddr) and the endpoint must receive two
+    Offers, decode each independently, and match every Offer back to *its*
+    Discover by the echoed transaction id — never confusing the two Offers.
+
+    The plan carries a ``dhcp_sends`` array (one entry per send) plus the
+    conventional single-send top-level fields (mirroring the first send) so the
+    generic plan echo and any single-send consumer keep working unchanged; the
+    DHCP dispatch detects ``dhcp_sends`` and drives both sends. Addresses stay in
+    documentation space: each offered address is in ``198.51.100.0/24`` and the
+    lab transport uses the private endpoint pair.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    # DHCP uses fixed privileged ports: client 68 -> server 67.
+    source_port = 68
+    destination_port = 67
+    subnet_mask = "255.255.255.0"
+    server_identifier = target_ipv4
+    router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
+    base_client_mac = dhcp_client_mac(profile, seed, sequence)
+
+    # Two distinct deterministic transaction ids: the case point is that the two
+    # Discovers are independently identifiable. Derive each from a different slice
+    # of the digest and keep them distinct.
+    first_xid = int.from_bytes(digest[0:4], "big") or 1
+    second_xid = int.from_bytes(digest[4:8], "big") or 2
+    if second_xid == first_xid:
+        second_xid = (first_xid ^ 0xFFFFFFFF) or (first_xid + 1)
+    transaction_ids = (first_xid, second_xid)
+
+    # Two distinct deterministic client identities (chaddr). The shared client MAC
+    # derives from the documentation MAC block (RFC 7042 00:00:5e:00:53:00-ff);
+    # vary the final octet per send so each Discover names a distinct client and
+    # the responder keys its Offer to that client.
+    mac_prefix = base_client_mac.rsplit(":", 1)[0]
+    first_mac_octet = digest[8]
+    second_mac_octet = digest[9]
+    if second_mac_octet == first_mac_octet:
+        second_mac_octet = (first_mac_octet + 1) & 0xFF
+    client_macs = (
+        f"{mac_prefix}:{first_mac_octet:02x}",
+        f"{mac_prefix}:{second_mac_octet:02x}",
+    )
+
+    # Two distinct deterministic offered addresses in documentation space so each
+    # Offer carries a recognizably different yiaddr.
+    first_offer_host = 1 + digest[10] % 250
+    second_offer_host = 1 + digest[11] % 250
+    if second_offer_host == first_offer_host:
+        second_offer_host = 1 + (first_offer_host % 250)
+    offered_ipv4s = (
+        f"198.51.100.{first_offer_host}",
+        f"198.51.100.{second_offer_host}",
+    )
+
+    # One shared deterministic lease schedule across both sends (the lease timing
+    # is not the case variable; the per-send identity is).
+    lease_time = 3600 + 60 * (digest[12] % 60)
+    renewal_time = lease_time // 2
+    rebinding_time = (lease_time * 7) // 8
+
+    sends = [
+        _dhcp_rapid_repeat_send(
+            profile=profile,
+            seed=seed,
+            sequence=sequence,
+            digest=digest,
+            index=index,
+            stimulus_ipv4=stimulus_ipv4,
+            target_ipv4=target_ipv4,
+            transaction_id=transaction_ids[index],
+            client_mac=client_macs[index],
+            source_port=source_port,
+            destination_port=destination_port,
+            offered_ipv4=offered_ipv4s[index],
+            subnet_mask=subnet_mask,
+            server_identifier=server_identifier,
+            router_ipv4=router_ipv4,
+            lease_time=lease_time,
+            renewal_time=renewal_time,
+            rebinding_time=rebinding_time,
+        )
+        for index in range(2)
+    ]
+    first = sends[0]
+
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dhcp_discover",
+        "expected_response": "dhcp_offer",
+        # Conventional single-send top-level fields mirror the first send so the
+        # generic plan echo / capture filter / single-send consumers keep working.
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "client_mac": first["client_mac"],
+        "transaction_id": first["transaction_id"],
+        "expected_message_type": "offer",
+        "expected_message_type_value": 2,
+        "expected_yiaddr": first["expected_yiaddr"],
+        "expected_server_identifier": server_identifier,
+        "expected_subnet_mask": subnet_mask,
+        "expected_router_ipv4": router_ipv4,
+        "expected_lease_time": lease_time,
+        "expected_renewal_time": renewal_time,
+        "expected_rebinding_time": rebinding_time,
+        # The rapid-repeat contract: two independent Discover->Offer sends, each
+        # with its own deterministic xid, client identity, and offered address,
+        # validated separately.
+        "send_count": len(sends),
+        "dhcp_sends": sends,
+        "target_service": {
+            "required": True,
+            "kind": "dhcp-responder",
+            "port": destination_port,
+            "client_port": source_port,
+            "client_mac": first["client_mac"],
+            "transaction_id": first["transaction_id"],
+            "yiaddr": first["expected_yiaddr"],
+            "server_identifier": server_identifier,
+            "subnet_mask": subnet_mask,
+            "router_ipv4": router_ipv4,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+            "rapid_repeat": {
+                "sends": [
+                    {
+                        "transaction_id": send["transaction_id"],
+                        "client_mac": send["client_mac"],
+                        "yiaddr": send["expected_yiaddr"],
+                    }
+                    for send in sends
+                ],
+            },
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": first["validation"],
+    }
+
+
 def _dhcp_client_identifier_probe_plan(
     *,
     case_name: str = "dhcp-client-identifier",
@@ -2935,6 +3198,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dhcp-renewal-unicast-ack": _dhcp_renewal_unicast_ack_probe_plan,
     "dhcp-inform-ack": _dhcp_inform_ack_probe_plan,
     "dhcp-request-nak": _dhcp_request_nak_probe_plan,
+    "dhcp-rapid-repeat": _dhcp_rapid_repeat_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }
