@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import unittest
 
-from tools.oracle.engine.backends.scapy import dns_raw, packets
+from tools.oracle.engine.backends.scapy import dns_raw, normalize, packets
 from tools.oracle.engine.generator import _dns_compressed_names_raw_spec
 
 try:  # pragma: no cover - import guard
@@ -132,7 +132,10 @@ class EdnsOptionPacketTest(unittest.TestCase):
         # The DO bit is the top bit of the OPT TTL "z" field.
         self.assertEqual(opt.z & 0x8000, 0x8000)
         self.assertEqual(opt.rdata[0].optcode, 10)
-        self.assertEqual(bytes(opt.rdata[0].optdata), bytes.fromhex("0011223344556677"))
+        self.assertEqual(
+            normalize._dns_edns_option_data(opt.rdata[0]),
+            bytes.fromhex("0011223344556677"),
+        )
 
     @unittest.skipUnless(_SCAPY_AVAILABLE, "scapy not importable")
     def test_opt_option_tlv_bytes_are_deterministic(self) -> None:

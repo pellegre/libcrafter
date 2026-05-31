@@ -17,6 +17,7 @@ from tools.oracle.engine.generator import (
     DHCP_OPTION_MATRIX_TOKENS,
     generate_plans,
 )
+from tools.oracle.engine.backends.scapy import normalize
 from tools.oracle.engine.model import PacketPlan
 
 
@@ -283,6 +284,36 @@ class ScapyIpv4DhcpMaterializationTest(unittest.TestCase):
         self.assertEqual(dhcp.get("hardware_length"), 6)
         self.assertEqual(dhcp.get("magic_cookie"), _DHCP_MAGIC_COOKIE)
         self.assertGreaterEqual(dhcp.get("option_count"), 1)
+
+
+class DhcpOptionNormalizeTest(unittest.TestCase):
+    def test_dhcp_option_decode_stops_at_end_before_udp_surplus(self) -> None:
+        option_region_hex = (
+            "350101ff"
+            "307501040405a0050505dc0206060102030407060a0b0c0d"
+        )
+
+        options = normalize._decode_dhcp_option_tlvs(option_region_hex)
+
+        self.assertEqual(
+            options,
+            [
+                {"code": 53, "payload_hex": "01"},
+                {"code": 255, "payload_hex": ""},
+            ],
+        )
+
+    def test_dhcp_option_details_surface_message_type_before_udp_surplus(self) -> None:
+        output: dict[str, object] = {}
+        option_region_hex = (
+            "350101ff"
+            "307501040405a0050505dc0206060102030407060a0b0c0d"
+        )
+
+        normalize._apply_dhcp_option_details(output, option_region_hex)
+
+        self.assertEqual(output["message_type"], 1)
+        self.assertEqual(output["option_count"], 2)
 
 
 class DhcpOptionMatrixGeneratorTest(unittest.TestCase):

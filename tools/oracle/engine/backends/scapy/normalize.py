@@ -899,9 +899,12 @@ def _decode_dhcp_option_tlvs(option_region_hex: str) -> list[JSONObject] | None:
     while index < length:
         code = raw[index]
         index += 1
-        if code in {_DHCP_OPTION_PAD, _DHCP_OPTION_END}:
+        if code == _DHCP_OPTION_PAD:
             options.append({"code": code, "payload_hex": ""})
             continue
+        if code == _DHCP_OPTION_END:
+            options.append({"code": code, "payload_hex": ""})
+            break
         if index >= length:
             return None
         option_length = raw[index]
