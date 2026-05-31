@@ -592,6 +592,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "dhcp-discover-offer",
         "dhcp-request-ack",
         "dhcp-client-identifier",
+        "dhcp-hostname",
     }
 )
 
@@ -1105,15 +1106,16 @@ def _probe_plan_with_endpoint_addresses(
         "dhcp-discover-offer",
         "dhcp-request-ack",
         "dhcp-client-identifier",
+        "dhcp-hostname",
     }:
         # DHCP uses fixed privileged ports (client 68 -> server 67). The Offer/Ack
         # flows from the responder (target) back to the client (stimulus); the
         # server identifier names the responder, so it follows the target
         # address onto the lab segment. For a Request the client also names the
         # chosen server (option 54), so the stimulus server identifier is
-        # rewritten to the target as well. The client identifier (option 61) is
-        # an opaque identity that carries no IP, so it stays unchanged across the
-        # lab-segment rewrite.
+        # rewritten to the target as well. The client identifier (option 61) and
+        # the hostname (option 12) are opaque identities that carry no IP, so they
+        # stay unchanged across the lab-segment rewrite.
         source_port = int(updated.get("source_port", 68))
         destination_port = int(updated.get("destination_port", 67))
         updated["capture_filter"] = (
@@ -1278,6 +1280,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "dhcp-discover-offer",
         "dhcp-request-ack",
         "dhcp-client-identifier",
+        "dhcp-hostname",
     }:
         return [
             FAILURE_TIMEOUT,

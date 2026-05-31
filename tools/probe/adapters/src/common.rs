@@ -206,6 +206,14 @@ pub struct ProbePlan {
     pub client_identifier_hex: Option<String>,
     #[serde(default)]
     pub expected_client_identifier_hex: Option<String>,
+    // The DHCP hostname (option 12, RFC 2132 section 3.14), a string option.
+    // `hostname` is set on the stimulus Discover that names itself with option 12
+    // (`dhcp-hostname`); `expected_hostname` is the value the responder must echo
+    // back in its Offer. A case that does not name a hostname leaves both unset.
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[serde(default)]
+    pub expected_hostname: Option<String>,
     #[serde(default)]
     pub expected_message_type_value: Option<u8>,
     #[serde(default)]
@@ -545,11 +553,12 @@ fn dispatch_case(
         (RunMode::Live, "ttl-expired") => icmp::run_ttl_expired_live(request, plan),
         (
             RunMode::DryRun,
-            "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier",
+            "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier" | "dhcp-hostname",
         ) => dhcp::run_dhcp_dry_run(request, plan),
-        (RunMode::Live, "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier") => {
-            dhcp::run_dhcp_live(request, plan)
-        }
+        (
+            RunMode::Live,
+            "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier" | "dhcp-hostname",
+        ) => dhcp::run_dhcp_live(request, plan),
         _ => {
             // DHCP, ARP, and UDP behavioral cases are wired into their modules
             // (`dhcp`, `arp`, `udp`) by later steps; until then they fall
@@ -694,6 +703,8 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "server_identifier": plan.server_identifier,
         "client_identifier_hex": plan.client_identifier_hex,
         "expected_client_identifier_hex": plan.expected_client_identifier_hex,
+        "hostname": plan.hostname,
+        "expected_hostname": plan.expected_hostname,
         "expected_message_type_value": plan.expected_message_type_value,
         "expected_yiaddr": plan.expected_yiaddr,
         "expected_server_identifier": plan.expected_server_identifier,
@@ -802,15 +813,17 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 .as_deref()
                 .unwrap_or("")
         ),
-        "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier" => format!(
-            "udp and src host {} and dst host {} and src port {} and dst port {}",
-            plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
-            plan.expected_reply_destination_ipv4
-                .as_deref()
-                .unwrap_or(""),
-            plan.destination_port.unwrap_or(DHCP_SERVER_PORT),
-            plan.source_port.unwrap_or(DHCP_CLIENT_PORT),
-        ),
+        "dhcp-discover-offer" | "dhcp-request-ack" | "dhcp-client-identifier" | "dhcp-hostname" => {
+            format!(
+                "udp and src host {} and dst host {} and src port {} and dst port {}",
+                plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+                plan.expected_reply_destination_ipv4
+                    .as_deref()
+                    .unwrap_or(""),
+                plan.destination_port.unwrap_or(DHCP_SERVER_PORT),
+                plan.source_port.unwrap_or(DHCP_CLIENT_PORT),
+            )
+        }
         _ => String::new(),
     }
 }
@@ -837,6 +850,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-discover-offer" => "dhcp_offer",
             "dhcp-request-ack" => "dhcp_ack",
             "dhcp-client-identifier" => "dhcp_offer",
+            "dhcp-hostname" => "dhcp_offer",
             _ => "unknown",
         })
 }
@@ -994,6 +1008,22 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
             "client_identifier_hex": plan.client_identifier_hex,
+            "transaction_id": plan.transaction_id,
+            "yiaddr": plan.expected_yiaddr,
+            "server_identifier": plan.expected_server_identifier,
+            "subnet_mask": plan.expected_subnet_mask,
+            "router_ipv4": plan.expected_router_ipv4,
+            "lease_time": plan.expected_lease_time,
+            "renewal_time": plan.expected_renewal_time,
+            "rebinding_time": plan.expected_rebinding_time,
+        }),
+        "dhcp-hostname" => json!({
+            "required": true,
+            "kind": "dhcp-responder",
+            "port": plan.destination_port,
+            "client_port": plan.source_port,
+            "client_mac": plan.client_mac,
+            "hostname": plan.hostname,
             "transaction_id": plan.transaction_id,
             "yiaddr": plan.expected_yiaddr,
             "server_identifier": plan.expected_server_identifier,

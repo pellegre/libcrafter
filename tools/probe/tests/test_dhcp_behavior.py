@@ -66,6 +66,14 @@ def _dhcp_client_identifier_plan(*, seed: int = 1022, sequence: int = 0) -> dict
     )
 
 
+def _dhcp_hostname_plan(*, seed: int = 1023, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dhcp-hostname"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcp-hostname"],
+        sequence=sequence,
+    )
+
+
 class DhcpDiscoverOfferPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct Discover stimulus and Offer contract."""
 
@@ -468,6 +476,125 @@ class DhcpClientIdentifierTest(unittest.TestCase):
                 self.assertTrue(metadata.get("dry_run"))
                 # A planned dry-run carries the compiled stimulus packet bytes.
                 self.assertTrue(metadata.get("sent_raw_hex"))
+
+
+class DhcpHostnamePlanTest(unittest.TestCase):
+    """The plan carries a Discover with a hostname (option 12) and an echo contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dhcp-hostname", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dhcp-hostname"],
+            planning._dhcp_hostname_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dhcp_hostname_plan(), _dhcp_hostname_plan())
+
+    def test_plan_carries_a_discover_with_hostname(self) -> None:
+        plan = _dhcp_hostname_plan()
+
+        self.assertEqual(plan["case"], "dhcp-hostname")
+        self.assertEqual(plan["stimulus"], "dhcp_discover")
+        self.assertEqual(plan["expected_response"], "dhcp_offer")
+
+        # DHCP fixed ports: client 68 -> server 67.
+        self.assertEqual(plan["source_port"], 68)
+        self.assertEqual(plan["destination_port"], 67)
+
+        # A client hardware address in the RFC 7042 documentation MAC range, a
+        # 32-bit transaction id (xid), and a non-empty hostname string (option 12).
+        mac = plan["client_mac"]
+        self.assertTrue(mac.startswith("00:00:5e:00:53:"))
+        self.assertIsInstance(plan["transaction_id"], int)
+        self.assertTrue(1 <= plan["transaction_id"] <= 0xFFFFFFFF)
+
+        hostname = plan["hostname"]
+        self.assertIsInstance(hostname, str)
+        self.assertTrue(hostname)
+
+    def test_offer_expectations_echo_the_hostname(self) -> None:
+        plan = _dhcp_hostname_plan()
+
+        self.assertEqual(plan["expected_message_type"], "offer")
+        self.assertEqual(plan["expected_message_type_value"], 2)
+        offered = ipaddress.IPv4Address(plan["expected_yiaddr"])
+        self.assertIn(offered, ipaddress.ip_network("198.51.100.0/24"))
+        self.assertEqual(plan["expected_server_identifier"], plan["destination_ipv4"])
+        # The responder echoes back the same hostname (option 12).
+        self.assertEqual(plan["expected_hostname"], plan["hostname"])
+
+    def test_validation_contract_covers_hostname(self) -> None:
+        plan = _dhcp_hostname_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (Offer flows server -> client, 67 -> 68).
+        self.assertEqual(validation["source_port"], 67)
+        self.assertEqual(validation["destination_port"], 68)
+        self.assertEqual(validation["direction"], "server_to_client")
+
+        # Identity: transaction id, client hardware address, and the echoed
+        # hostname (option 12).
+        self.assertEqual(validation["transaction_id"], plan["transaction_id"])
+        self.assertEqual(validation["client_hardware_address"], plan["client_mac"])
+        self.assertEqual(validation["hostname"], plan["hostname"])
+
+        # Offered address and server identifier.
+        self.assertEqual(validation["yiaddr"], plan["expected_yiaddr"])
+        self.assertEqual(
+            validation["server_identifier"], plan["expected_server_identifier"]
+        )
+
+    def test_target_service_records_the_hostname(self) -> None:
+        plan = _dhcp_hostname_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["port"], 67)
+        self.assertEqual(target_service["client_port"], 68)
+        self.assertEqual(target_service["hostname"], plan["hostname"])
+
+    def test_capture_filter_matches_offer_direction(self) -> None:
+        plan = _dhcp_hostname_plan()
+        self.assertIn("src port 67", plan["capture_filter"])
+        self.assertIn("dst port 68", plan["capture_filter"])
+
+
+class DhcpHostnameTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dhcp-hostname",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1023,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dhcp-hostname", planned)
+
+            # The endpoint produced a result for the focused case and it built
+            # the Discover (a dry-run plan compiles the outgoing stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dhcp-hostname"
+            ]
+            self.assertTrue(results, "endpoint emitted no dhcp-hostname result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                # The planned outgoing hostname option (12) is visible in the
+                # dry-run metadata so the endpoint validates the option it built.
+                plan_view = metadata.get("probe_plan", {})
+                self.assertTrue(plan_view.get("hostname"))
 
 
 if __name__ == "__main__":

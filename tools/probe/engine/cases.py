@@ -178,7 +178,7 @@ BEHAVIOR_DHCP_CASES: tuple[ProbeCase, ...] = (
         protocol="dhcp",
     ),
     _behavior_case(
-        name="dhcp-hostname-offer",
+        name="dhcp-hostname",
         description="Send a Discover with a hostname option and validate the Offer.",
         stimulus="dhcp_discover",
         expected_response="dhcp_offer",

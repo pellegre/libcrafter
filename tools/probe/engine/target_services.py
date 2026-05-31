@@ -446,6 +446,7 @@ _DHCP_RESPONDER_CASES: frozenset[str] = frozenset(
         "dhcp-discover-offer",
         "dhcp-request-ack",
         "dhcp-client-identifier",
+        "dhcp-hostname",
     }
 )
 
