@@ -439,9 +439,9 @@ mod reply_matching {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use crate::{
-        Arp, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, DnsRecord, Icmp, Icmpv6, IntoPacket,
-        Ipv4, Ipv6, MacAddr, Packet, Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK, TCP_FLAG_RST,
-        TCP_FLAG_SYN,
+        Arp, ArpOperation, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, DnsRecord, Icmp,
+        Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Packet, Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK,
+        TCP_FLAG_RST, TCP_FLAG_SYN,
     };
 
     use crate::net::{reply_matches, ReplyMatcher};
@@ -465,6 +465,142 @@ mod reply_matching {
         .into_packet();
 
         assert!(reply_matches(&request, &reply));
+    }
+
+    /// Standard Ethernet/IPv4 request -> reply still pairs by reversed protocol
+    /// addresses and the responder's hardware address (RFC 826).
+    #[test]
+    fn arp_reply_matches_standard_request_and_reply() {
+        let requester = MacAddr::new([0x02, 0, 0, 0, 0, 1]);
+        let responder = MacAddr::new([0x02, 0, 0, 0, 0, 2]);
+        let request = Arp::who_has(
+            Ipv4Addr::new(192, 0, 2, 10),
+            Ipv4Addr::new(192, 0, 2, 1),
+            requester,
+        )
+        .into_packet();
+        let reply = Arp::is_at(
+            Ipv4Addr::new(192, 0, 2, 1),
+            responder,
+            Ipv4Addr::new(192, 0, 2, 10),
+            requester,
+        )
+        .into_packet();
+
+        assert!(reply_matches(&request, &reply));
+    }
+
+    /// Two requests, or a reply paired against a reply, never match: the
+    /// candidate must carry the reply opcode and the request the request opcode.
+    #[test]
+    fn arp_reply_matches_rejects_request_against_request() {
+        let requester = MacAddr::new([0x02, 0, 0, 0, 0, 1]);
+        let request = Arp::who_has(
+            Ipv4Addr::new(192, 0, 2, 10),
+            Ipv4Addr::new(192, 0, 2, 1),
+            requester,
+        )
+        .into_packet();
+
+        // The same request echoed back is not a reply.
+        assert!(!reply_matches(&request, &request));
+    }
+
+    /// A reply for a different target address must not pair with the request.
+    #[test]
+    fn arp_reply_matches_rejects_mismatched_addresses() {
+        let requester = MacAddr::new([0x02, 0, 0, 0, 0, 1]);
+        let responder = MacAddr::new([0x02, 0, 0, 0, 0, 2]);
+        let request = Arp::who_has(
+            Ipv4Addr::new(192, 0, 2, 10),
+            Ipv4Addr::new(192, 0, 2, 1),
+            requester,
+        )
+        .into_packet();
+        let reply = Arp::is_at(
+            Ipv4Addr::new(192, 0, 2, 99),
+            responder,
+            Ipv4Addr::new(192, 0, 2, 10),
+            requester,
+        )
+        .into_packet();
+
+        assert!(!reply_matches(&request, &reply));
+    }
+
+    /// Extension/ARP-family opcodes are codepoint-only in scope (no defined
+    /// request/reply exchange), so they must not be treated as base ARP replies
+    /// even when the protocol addresses line up exactly.
+    #[test]
+    fn arp_reply_matches_rejects_extension_opcodes() {
+        let requester = MacAddr::new([0x02, 0, 0, 0, 0, 1]);
+        let responder = MacAddr::new([0x02, 0, 0, 0, 0, 2]);
+
+        // Extension/unknown opcodes that must never pair as a base ARP exchange.
+        let request_opcodes = [
+            ArpOperation::RarpRequest.opcode(),
+            ArpOperation::DrarpRequest.opcode(),
+            ArpOperation::InArpRequest.opcode(),
+            0x0fa0, // unknown numeric opcode
+        ];
+        let reply_opcodes = [
+            ArpOperation::RarpReply.opcode(),
+            ArpOperation::DrarpReply.opcode(),
+            ArpOperation::InArpReply.opcode(),
+            ArpOperation::ArpNak.opcode(),
+            ArpOperation::MaposUnarp.opcode(),
+            0x0fa1, // unknown numeric opcode
+        ];
+
+        let arp_with_opcode = |opcode: u16| {
+            Arp::new()
+                .opcode(opcode)
+                .sender_hardware_addr(requester)
+                .sender_protocol_addr(Ipv4Addr::new(192, 0, 2, 10))
+                .target_hardware_addr(responder)
+                .target_protocol_addr(Ipv4Addr::new(192, 0, 2, 1))
+                .into_packet()
+        };
+        let arp_reversed = |opcode: u16| {
+            Arp::new()
+                .opcode(opcode)
+                .sender_hardware_addr(responder)
+                .sender_protocol_addr(Ipv4Addr::new(192, 0, 2, 1))
+                .target_hardware_addr(requester)
+                .target_protocol_addr(Ipv4Addr::new(192, 0, 2, 10))
+                .into_packet()
+        };
+
+        // Reversed addresses alone are not enough; an extension opcode on either
+        // side keeps the exchange from matching.
+        for request_op in request_opcodes {
+            let request = arp_with_opcode(request_op);
+            for reply_op in reply_opcodes {
+                let reply = arp_reversed(reply_op);
+                assert!(
+                    !reply_matches(&request, &reply),
+                    "extension opcodes {request_op:#06x}/{reply_op:#06x} must not pair"
+                );
+            }
+            // Even paired against a genuine base reply, an extension request
+            // never qualifies as a base ARP request.
+            let base_reply = arp_reversed(ArpOperation::Reply.opcode());
+            assert!(
+                !reply_matches(&request, &base_reply),
+                "extension request {request_op:#06x} must not pair with a base reply"
+            );
+        }
+
+        // A genuine base request paired against an extension reply must also be
+        // rejected.
+        let base_request = arp_with_opcode(ArpOperation::Request.opcode());
+        for reply_op in reply_opcodes {
+            let reply = arp_reversed(reply_op);
+            assert!(
+                !reply_matches(&base_request, &reply),
+                "base request paired with extension reply {reply_op:#06x} must not match"
+            );
+        }
     }
 
     #[test]
