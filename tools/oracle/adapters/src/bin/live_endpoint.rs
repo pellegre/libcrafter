@@ -1,3 +1,11 @@
+// Packet building now flows through the shared `materialize_core` module (see
+// `prepare_packets`), so the per-layer builders below are superseded and only a
+// subset of the leaf helpers remain in use by the sender/receiver/decoder. The
+// builders are kept as the colocated source for those helpers pending a follow-up
+// that extracts the shared helpers into `materialize_core`; allow the dead ones
+// here rather than splitting the file mid-fix.
+#![allow(dead_code)]
+
 use crafter::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -5,10 +13,16 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{self, Read};
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
+
+// Shared packet/DNS materializer — the exact code the offline `materialize_plans`
+// bin uses — so the live endpoint builds packets identically and never drifts
+// behind the offline materializer.
+#[path = "../materialize_core.rs"]
+mod materialize_core;
 
 type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -229,7 +243,7 @@ fn prepare_packets(plans: &[Value]) -> ExampleResult<Vec<PreparedPacket>> {
     plans
         .iter()
         .map(|plan| {
-            let packet = build_packet(plan)?;
+            let packet = materialize_core::build_packet(plan)?;
             let compiled = packet.compile()?;
             Ok(PreparedPacket {
                 index: packet_index(plan)?,
@@ -277,7 +291,7 @@ fn run_sender(
             common_send_mode(prepared)?,
         ),
     };
-    let mut send_options = SendOptions::new().iface(request.interface.clone());
+    let mut send_options = SendOptions::new().iface(resolve_live_interface(request));
     send_options = match send_mode {
         SendMode::Auto => send_options,
         SendMode::NetworkLayer => send_options.network_layer(),
@@ -419,7 +433,13 @@ fn run_receiver(
 
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let capture_filter = live_capture_filter(request);
-    let mut sniffer = Sniffer::interface(request.interface.clone())
+    // Nonblocking capture is required for the wall-clock timeout to be honored.
+    // In blocking mode libpcap's read timeout does not fire on Linux when zero
+    // matching packets arrive, so `next_packet` blocks indefinitely and the
+    // receiver never reaches its deadline — hanging the whole live exchange.
+    // Nonblocking reads let `Capture::next_packet` re-check the deadline between
+    // polls and always return at `timeout`, emitting a (possibly empty) capture.
+    let mut sniffer = Sniffer::interface(resolve_live_interface(request))
         .timeout(timeout)
         .nonblock()
         .count(prepared.len().max(1));
@@ -750,6 +770,48 @@ fn address_text<'a>(addresses: &'a Value, key: &str) -> Option<&'a str> {
         .get(key)?
         .as_str()
         .filter(|value| !value.is_empty())
+}
+
+/// Resolve the real OS network device for live send/capture.
+///
+/// The orchestrator passes a logical interface name (for example "private"),
+/// which is not an actual device on the endpoint. Capture is interface-bound,
+/// so the receiver must sniff the device attached to the exchange network.
+///
+/// Resolve the device that *owns the local address* first. Providers such as
+/// Hetzner configure the private NIC with a `/32` host address plus a separate
+/// route to the subnet, so subnet matching on the peer address misses it and
+/// `interface_for` falls back to the public default interface — which never
+/// observes the private-network traffic, leaving the receiver capturing zero
+/// packets. The interface holding the local address is unambiguously the one
+/// attached to that network. Fall back to route-style resolution toward the
+/// peer (then the local address), and finally to the configured name.
+fn resolve_live_interface(request: &EndpointRequest) -> String {
+    let table = crafter::interfaces();
+    for family in ["ipv4", "ipv6"] {
+        if let Some(local) = address_text(&request.local_addresses, family) {
+            if let Ok(addr) = IpAddr::from_str(local) {
+                if let Some(info) = table.iter().find(|info| match addr {
+                    IpAddr::V4(v4) => info.ipv4_addresses().contains(&v4),
+                    IpAddr::V6(v6) => info.ipv6_addresses().contains(&v6),
+                }) {
+                    return info.name().to_string();
+                }
+            }
+        }
+    }
+    for addresses in [&request.peer_addresses, &request.local_addresses] {
+        for family in ["ipv4", "ipv6"] {
+            if let Some(text) = address_text(addresses, family) {
+                if let Ok(addr) = IpAddr::from_str(text) {
+                    if let Ok(info) = crafter::interface_for(addr) {
+                        return info.name().to_string();
+                    }
+                }
+            }
+        }
+    }
+    request.interface.clone()
 }
 
 fn ethernet_wrap_packet(packet: Packet, source: MacAddr, destination: MacAddr) -> Packet {
@@ -1339,43 +1401,11 @@ fn protocol_number(value: &str) -> ExampleResult<u64> {
     u64_text(value)
 }
 
-fn build_packet(plan: &Value) -> ExampleResult<Packet> {
-    let stack = string_array(plan.get("stack")).ok_or("packet plan stack must be an array")?;
-    let mut packet = Packet::new();
-
-    for raw_layer in stack {
-        let layer = canonical_layer(&raw_layer);
-        let piece = build_layer(plan, &layer)?;
-        packet.push_box_mut(piece);
-    }
-
-    Ok(packet)
-}
-
-fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
-    match layer {
-        "payload" | "raw" => Ok(Box::new(Raw::from_bytes(payload_bytes(plan)?))),
-        "ethernet" => Ok(Box::new(ethernet_layer(plan)?)),
-        "ipv4" => Ok(Box::new(ipv4_layer(plan)?)),
-        "ipv6" => Ok(Box::new(ipv6_layer(plan)?)),
-        "udp" => Ok(Box::new(udp_layer(plan)?)),
-        "tcp" => Ok(Box::new(tcp_layer(plan)?)),
-        "icmp" => Ok(Box::new(icmp_layer(plan)?)),
-        "icmpv6" => Ok(Box::new(icmpv6_layer(plan)?)),
-        "dns" => Ok(Box::new(dns_layer(plan)?)),
-        "dhcp" => Ok(Box::new(dhcp_layer(plan)?)),
-        _ => Err(format!("unsupported libcrafter live materialization layer: {layer}").into()),
-    }
-}
-
-fn ethernet_layer(plan: &Value) -> ExampleResult<Ethernet> {
-    let fields = layer_fields(plan, "ethernet")?;
-    Ok(Ethernet::new()
-        .src_str(text_required(fields, &["src"])?)?
-        .dst_str(text_required(fields, &["dst"])?)?
-        .ethertype(ethertype_value(required(fields, &["ethertype", "type"])?)?))
-}
-
+// NOTE: packet building now goes through the shared `materialize_core` module
+// (see prepare_packets). The per-layer builders below are retained only for the
+// helper functions they share with the sender/receiver/decoder; the layer
+// builders themselves are superseded by materialize_core and are not called.
+#[allow(dead_code)]
 fn ipv4_layer(plan: &Value) -> ExampleResult<Ipv4> {
     let fields = layer_fields(plan, "ipv4")?;
     let mut layer = Ipv4::new()
