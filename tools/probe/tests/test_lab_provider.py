@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import unittest
 
 from tools.lab.engine.model import LabEndpoint, LabRole, LabSession
+from tools.lab.engine.providers.docker import DOCKER_LAB_PROVIDER_ADAPTER
 from tools.probe.engine.lab import (
     LOCAL_DRY_RUN_PROVIDER,
     PROBE_CAPABILITY_NAMES,
@@ -33,6 +34,16 @@ class _ProviderCase:
 
 
 PROVIDER_CASES = (
+    _ProviderCase(
+        provider="docker",
+        exposure="private",
+        stimulus_ipv4="10.79.0.10",
+        target_ipv4="10.79.0.20",
+        private_network=True,
+        bridged_lan=False,
+        private_group="probe-smoke-seed-1",
+        interface="private",
+    ),
     _ProviderCase(
         provider="hetzner",
         exposure="private",
@@ -68,11 +79,15 @@ PROVIDER_CASES = (
 
 class ProbeLabProviderBoundaryTest(unittest.TestCase):
     def test_probe_provider_names_expose_local_and_lab_providers(self) -> None:
-        self.assertEqual(probe_lab_provider_names(), ("hetzner", "qemu", "virtualbox"))
+        self.assertEqual(
+            probe_lab_provider_names(),
+            ("docker", "hetzner", "qemu", "virtualbox"),
+        )
         self.assertEqual(
             probe_provider_names(),
-            ("hetzner", LOCAL_DRY_RUN_PROVIDER, "qemu", "virtualbox"),
+            ("docker", "hetzner", LOCAL_DRY_RUN_PROVIDER, "qemu", "virtualbox"),
         )
+        self.assertIs(resolve_probe_lab_provider("docker"), DOCKER_LAB_PROVIDER_ADAPTER)
 
         for case in PROVIDER_CASES:
             with self.subTest(provider=case.provider):
@@ -109,6 +124,34 @@ class ProbeLabProviderBoundaryTest(unittest.TestCase):
                 self.assertEqual(lab_capabilities["provider"], case.provider)
                 self.assertTrue(lab_capabilities["ipv4_unicast"])
                 self.assertFalse(lab_capabilities["controlled_router"])
+
+    def test_docker_private_lab_capabilities_drive_probe_cases(self) -> None:
+        capabilities = probe_capabilities_for_provider("docker", dry_run=True)
+
+        for key in (
+            "ipv4_unicast",
+            "controlled_services",
+            "icmp_echo",
+            "tcp_open_port",
+            "tcp_closed_port",
+            "dns_service",
+            "link_layer_send",
+            "link_layer_capture",
+            "broadcast",
+            "arp_resolution",
+        ):
+            with self.subTest(capability=key):
+                self.assertTrue(capabilities[key])
+
+        self.assertFalse(capabilities["controlled_router"])
+        self.assertEqual(capabilities["lab_provider"], "docker")
+        self.assertEqual(capabilities["lab_capabilities"]["provider"], "docker")
+        self.assertTrue(capabilities["lab_capabilities"]["provider_mac_known"])
+        self.assertTrue(capabilities["lab_capabilities"]["controlled_services"])
+        self.assertNotIn("docker/lan", probe_provider_names())
+        self.assertNotIn("docker/wan", probe_provider_names())
+        self.assertNotIn("lan", capabilities["capability_names"])
+        self.assertNotIn("wan", capabilities["capability_names"])
 
     def test_local_dry_run_capabilities_use_same_derivation(self) -> None:
         capabilities = probe_capabilities_for_provider(
