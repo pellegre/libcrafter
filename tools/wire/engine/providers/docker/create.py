@@ -164,6 +164,14 @@ def create_endpoint(
             env=environ,
             command_runner=command_runner,
         )
+    if exposure == EXPOSURE_LAN:
+        return _create_live_lan_endpoint(
+            provider=provider,
+            exposure=exposure,
+            role=role,
+            env=environ,
+            command_runner=command_runner,
+        )
     raise NotImplementedError(
         f"real docker create-endpoint is not implemented for {exposure}"
     )
@@ -229,6 +237,75 @@ def _create_live_private_endpoint(
         created_at=created_at,
         extra_metadata=_metadata_mapping(private_plan.get("extra_metadata")),
         discovery_prefer_public_or_default=False,
+    )
+    return _docker_live_output(manifest)
+
+
+def _create_live_lan_endpoint(
+    *,
+    provider: str,
+    exposure: str,
+    role: str,
+    env: Mapping[str, str],
+    command_runner: DockerRunner,
+) -> dict[str, object]:
+    endpoint_id = docker_endpoint_id(
+        provider=provider,
+        exposure=exposure,
+        role=role,
+    )
+    created_at = utc_now()
+    docker_command = requested_docker_command(env)
+    lan_network_name, lan_network_source = _requested_lan_network(env)
+    lan_network = _live_configured_nat_l3_network_metadata(
+        _lan_network_metadata(
+            network_name=lan_network_name,
+            network_source=lan_network_source,
+            docker_command=docker_command,
+        )
+    )
+    network_resource = docker_network_resource(
+        None,
+        name=lan_network_name,
+        cleanup=False,
+        metadata=lan_network,
+    )
+    capabilities = _nat_l3_capabilities_metadata(
+        provider=provider,
+        exposure=exposure,
+        dry_run=False,
+    )
+    security = _docker_nat_l3_security_flags(
+        exposure=exposure,
+        network_name=lan_network_name,
+    )
+    manifest = _create_live_container_endpoint(
+        provider=provider,
+        exposure=exposure,
+        role=role,
+        env=env,
+        command_runner=command_runner,
+        network_name=lan_network_name,
+        network_args=["--network", lan_network_name],
+        network_resources=[network_resource],
+        security=security,
+        capabilities=capabilities,
+        planned_interfaces=[_lan_interface(lan_network=lan_network)],
+        endpoint_id=endpoint_id,
+        created_at=created_at,
+        extra_metadata={
+            "lan": lan_network,
+            "lan_network": lan_network,
+            "docker_network": lan_network_name,
+            "docker_network_source": lan_network_source,
+            "nat_backed_l3_lan": True,
+            "true_lan_l2": False,
+            "docker": {
+                "network": lan_network,
+                "lan_network": lan_network,
+            },
+        },
+        require_discovered_ipv4=True,
     )
     return _docker_live_output(manifest)
 
@@ -918,6 +995,7 @@ def _create_live_container_endpoint(
     ssh_wait_timeout: float = DOCKER_SSH_WAIT_TIMEOUT,
     ssh_wait_interval: float = DOCKER_SSH_WAIT_INTERVAL,
     discovery_prefer_public_or_default: bool = True,
+    require_discovered_ipv4: bool = False,
 ) -> EndpointManifest:
     """Create one live Docker container after exposure-specific networking is ready."""
 
@@ -1143,6 +1221,10 @@ def _create_live_container_endpoint(
     )
     if not active_interfaces:
         raise RuntimeError("Docker interface discovery did not find any interfaces")
+    if require_discovered_ipv4 and not any(
+        interface.ipv4 is not None for interface in active_interfaces
+    ):
+        raise RuntimeError("Docker interface discovery did not find an IPv4 address")
 
     manifest = EndpointManifest(
         endpoint_id=endpoint_id,
@@ -1176,6 +1258,7 @@ def _create_live_container_endpoint(
                 "ssh_ready": True,
                 "interfaces": True,
                 "interface_count": len(discovered_interfaces),
+                "ipv4": any(interface.ipv4 is not None for interface in active_interfaces),
             },
         ),
     )
@@ -2257,6 +2340,22 @@ def _requested_wan_network(env: Mapping[str, str]) -> tuple[str, str]:
     return DOCKER_DEFAULT_WAN_NETWORK, "default"
 
 
+def _live_configured_nat_l3_network_metadata(
+    network_metadata: Mapping[str, object],
+) -> dict[str, object]:
+    metadata = dict(network_metadata)
+    metadata.update(
+        {
+            "planned": False,
+            "created": False,
+            "reused": True,
+            "owned_by_provider": False,
+            "cleanup": False,
+        }
+    )
+    return metadata
+
+
 def _lan_network_metadata(
     *,
     network_name: str,
@@ -2285,9 +2384,11 @@ def _lan_network_metadata(
         "reachability": "nat-backed-l3-lan",
         "nat": True,
         "nat_backed_l3": True,
+        "nat_backed_l3_lan": True,
         "ipv4_unicast": True,
         "l3": True,
         "l2": False,
+        "true_lan_l2": False,
         "same_segment": False,
         "same_segment_l2": False,
         "physical_lan_l2": False,
@@ -2363,6 +2464,7 @@ def _lan_interface(*, lan_network: Mapping[str, object]) -> NetworkInterface:
             "network_name": network_name,
             "network": dict(lan_network),
             "nat_backed_l3": True,
+            "nat_backed_l3_lan": True,
             "ipv4_unicast": True,
             "link_layer_send": False,
             "link_layer_capture": False,
@@ -2371,6 +2473,7 @@ def _lan_interface(*, lan_network: Mapping[str, object]) -> NetworkInterface:
             "broadcast": False,
             "controlled_router": False,
             "public_inbound_reachability": False,
+            "true_lan_l2": False,
             "physical_lan_l2": False,
             "arp_injection": False,
         },
@@ -2643,6 +2746,8 @@ def _nat_l3_capabilities_metadata(
     else:
         semantics = "NAT-backed L3 reachability from Docker bridge routing to LAN targets"
         exposure_metadata = {
+            "nat_backed_l3_lan": True,
+            "true_lan_l2": False,
             "physical_lan_l2": False,
             "arp_injection": False,
         }
