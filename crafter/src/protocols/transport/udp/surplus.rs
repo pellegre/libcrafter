@@ -1,8 +1,6 @@
 use crate::checksum::{crc32c, internet_checksum_chunks};
 use crate::error::{CrafterError, Result};
-use crate::packet::{Layer, LayerContext, Packet, Raw};
-use crate::protocols::dhcp::Dhcp;
-use crate::protocols::dns::Dns;
+use crate::packet::{Layer, LayerContext, Packet};
 use crate::protocols::ip::Ipv4;
 use crate::protocols::ipv6::Ipv6;
 
@@ -11,6 +9,7 @@ use super::constants::{
     UDP_OPTION_APC, UDP_OPTION_APC_LEN, UDP_OPTION_CHECKSUM_LEN, UDP_OPTION_FRAG,
     UDP_OPTION_SHORT_HEADER_LEN,
 };
+use super::datagram::{is_current_udp_surplus_layer, is_udp_application_layer};
 use super::option::{
     encode_udp_options, udp_option_is_malformed_apc, udp_option_is_malformed_frag,
     udp_options_inspection_summary, UdpOption, UdpOptionIter, UdpOptionKindClass,
@@ -536,17 +535,6 @@ fn udp_user_payload_bytes_before_options(ctx: LayerContext<'_>) -> Result<Vec<u8
     }
 
     Ok(payload)
-}
-
-pub(super) fn is_udp_application_layer(layer: &dyn Layer) -> bool {
-    layer.as_any().is::<Dns>() || layer.as_any().is::<Dhcp>()
-}
-
-pub(super) fn is_current_udp_surplus_layer(
-    layer: &dyn Layer,
-    seen_application_layer: bool,
-) -> bool {
-    layer.as_any().is::<UdpOptions>() || (seen_application_layer && layer.as_any().is::<Raw>())
 }
 
 impl Layer for UdpOptions {
