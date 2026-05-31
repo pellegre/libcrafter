@@ -172,6 +172,14 @@ def create_endpoint(
             env=environ,
             command_runner=command_runner,
         )
+    if exposure == EXPOSURE_WAN:
+        return _create_live_wan_endpoint(
+            provider=provider,
+            exposure=exposure,
+            role=role,
+            env=environ,
+            command_runner=command_runner,
+        )
     raise NotImplementedError(
         f"real docker create-endpoint is not implemented for {exposure}"
     )
@@ -303,6 +311,79 @@ def _create_live_lan_endpoint(
             "docker": {
                 "network": lan_network,
                 "lan_network": lan_network,
+            },
+        },
+        require_discovered_ipv4=True,
+    )
+    return _docker_live_output(manifest)
+
+
+def _create_live_wan_endpoint(
+    *,
+    provider: str,
+    exposure: str,
+    role: str,
+    env: Mapping[str, str],
+    command_runner: DockerRunner,
+) -> dict[str, object]:
+    endpoint_id = docker_endpoint_id(
+        provider=provider,
+        exposure=exposure,
+        role=role,
+    )
+    created_at = utc_now()
+    docker_command = requested_docker_command(env)
+    wan_network_name, wan_network_source = _requested_wan_network(env)
+    wan_network = _live_configured_nat_l3_network_metadata(
+        _wan_network_metadata(
+            network_name=wan_network_name,
+            network_source=wan_network_source,
+            docker_command=docker_command,
+        )
+    )
+    network_resource = docker_network_resource(
+        None,
+        name=wan_network_name,
+        cleanup=False,
+        metadata=wan_network,
+    )
+    capabilities = _nat_l3_capabilities_metadata(
+        provider=provider,
+        exposure=exposure,
+        dry_run=False,
+    )
+    security = _docker_nat_l3_security_flags(
+        exposure=exposure,
+        network_name=wan_network_name,
+    )
+    manifest = _create_live_container_endpoint(
+        provider=provider,
+        exposure=exposure,
+        role=role,
+        env=env,
+        command_runner=command_runner,
+        network_name=wan_network_name,
+        network_args=["--network", wan_network_name],
+        network_resources=[network_resource],
+        security=security,
+        capabilities=capabilities,
+        planned_interfaces=[_wan_interface(wan_network=wan_network)],
+        endpoint_id=endpoint_id,
+        created_at=created_at,
+        extra_metadata={
+            "wan": wan_network,
+            "wan_network": wan_network,
+            "docker_network": wan_network_name,
+            "docker_network_source": wan_network_source,
+            "nat_backed_l3_egress": True,
+            "public_inbound": False,
+            "public_inbound_reachability": False,
+            "wan_l2": False,
+            "link_layer_fidelity": False,
+            "broadcast": False,
+            "docker": {
+                "network": wan_network,
+                "wan_network": wan_network,
             },
         },
         require_discovered_ipv4=True,
