@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .create import create_endpoint
+from .destroy import destroy_endpoint
 from .doctor import doctor
 from .constants import (
     CONFIRMATION_ERROR,
@@ -30,6 +31,7 @@ from .constants import (
 __all__ = [
     "CONFIRMATION_ERROR",
     "create_endpoint",
+    "destroy_endpoint",
     "DOCKER_COMMAND",
     "DOCKER_COMMAND_ENV",
     "DOCKER_DEFAULT_IMAGE",
