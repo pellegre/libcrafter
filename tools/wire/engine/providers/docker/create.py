@@ -25,6 +25,8 @@ from ...state import (
     ensure_endpoint_dirs,
     planned_private_group_record,
     private_group_path,
+    read_private_group_record,
+    update_private_group_allocation,
     write_endpoint_manifest,
 )
 from ..vm import (
@@ -53,12 +55,21 @@ from .constants import (
     DockerRunner,
 )
 from .resources import (
+    DOCKER_LABEL_EXPOSURE,
+    DOCKER_LABEL_MANAGED,
+    DOCKER_LABEL_PRIVATE_GROUP,
+    DOCKER_LABEL_PROVIDER,
+    DOCKER_MANAGED_LABEL_VALUE,
+    allocate_private_ipv4,
     deterministic_private_mac,
     docker_argv,
     docker_container_name,
     docker_container_resource,
     docker_endpoint_id,
     docker_image_resource,
+    docker_inspect_id,
+    docker_inspect_labels,
+    docker_inspect_name,
     docker_label_args,
     docker_labels,
     docker_local_file_resource,
@@ -69,6 +80,7 @@ from .resources import (
     ensure_docker_image,
     free_localhost_tcp_port,
     parse_private_cidr,
+    parse_single_docker_inspect_output,
     plan_docker_image,
     planned_docker_endpoint_id,
     private_gateway_ipv4,
@@ -89,6 +101,8 @@ DOCKER_SSH_WAIT_TIMEOUT = 300
 DOCKER_SSH_WAIT_INTERVAL = 5
 DOCKER_CONTAINER_COMMAND_LOG_NAME = "docker-container-commands.json"
 DOCKER_CONTAINER_CREATE_TIMEOUT = 120
+DOCKER_NETWORK_INSPECT_TIMEOUT = 30
+DOCKER_NETWORK_CREATE_TIMEOUT = 60
 
 
 def create_endpoint(
@@ -1532,6 +1546,12 @@ def _string_sequence(value: object, name: str) -> list[str]:
     return output
 
 
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
 def _validate_create_request(
     exposure: str,
     role: str,
@@ -1569,12 +1589,10 @@ def _private_network_metadata(
 ) -> dict[str, object]:
     network = parse_private_cidr(private_cidr)
     network_name = docker_private_network_name(private_group)
-    labels = docker_labels(
-        exposure=exposure,
-        role=role,
+    labels = _private_network_labels(
+        provider=provider,
         private_group=private_group,
         created_at=PLANNED_CREATED_AT,
-        provider=provider,
     )
     create_argv = docker_argv(
         "network",
@@ -1588,6 +1606,7 @@ def _private_network_metadata(
         network_name,
         docker_command=docker_command,
     )
+    _ = (exposure, role)
     return {
         "planned": True,
         "type": "docker-private-network",
@@ -1604,6 +1623,431 @@ def _private_network_metadata(
         "labels": labels,
         "create_argv": create_argv,
     }
+
+
+def _prepare_live_private_network(
+    *,
+    provider: str,
+    exposure: str,
+    role: str,
+    private_group: str,
+    endpoint_id: str,
+    private_cidr: str,
+    requested_private_ip: str | None,
+    env: Mapping[str, str],
+    docker_command: str,
+    command_runner: DockerRunner,
+    created_at: str,
+) -> dict[str, object]:
+    """Create/reuse a private bridge and reserve this endpoint's private address."""
+
+    if exposure != EXPOSURE_PRIVATE:
+        raise ValueError("live private network setup is only valid for private exposure")
+    private_cidr = str(parse_private_cidr(private_cidr))
+    private_network = _ensure_live_private_network(
+        provider=provider,
+        private_group=private_group,
+        private_cidr=private_cidr,
+        env=env,
+        docker_command=docker_command,
+        command_runner=command_runner,
+        created_at=created_at,
+    )
+    private_ipv4, ipv4_source = _allocate_live_private_ipv4(
+        provider=provider,
+        private_group=private_group,
+        private_cidr=private_cidr,
+        requested_private_ip=requested_private_ip,
+    )
+    private_mac = deterministic_private_mac(
+        private_group=private_group,
+        endpoint_id=endpoint_id,
+    )
+    private_group_record = update_private_group_allocation(
+        provider=provider,
+        group=private_group,
+        endpoint_id=endpoint_id,
+        private_ipv4=private_ipv4,
+        private_cidr=private_cidr,
+        network_resource=private_network,
+    )
+    allocation_state = _private_allocation_state(
+        provider=provider,
+        private_group=private_group,
+        endpoint_id=endpoint_id,
+        private_ipv4=private_ipv4,
+        private_mac=private_mac,
+        private_cidr=private_cidr,
+        private_group_record=private_group_record.to_dict(),
+        ipv4_source=ipv4_source,
+    )
+    private_network = {
+        **private_network,
+        "allocation_state": allocation_state,
+        "allocation": allocation_state,
+    }
+    network_name = str(private_network["network_name"])
+    network_id = str(private_network["network_id"])
+    network_resource = docker_network_resource(
+        network_id,
+        name=network_name,
+        private_group=private_group,
+        cidr=private_cidr,
+        metadata=private_network,
+    )
+    network_args = [
+        "--network",
+        network_name,
+        "--ip",
+        private_ipv4,
+        "--mac-address",
+        private_mac,
+    ]
+    planned_interface = _private_interface(
+        network_name=network_name,
+        private_group=private_group,
+        private_cidr=private_cidr,
+        private_ipv4=private_ipv4,
+        private_mac=private_mac,
+        ipv4_source=ipv4_source,
+        requested_private_ip=requested_private_ip,
+    )
+    extra_metadata = {
+        "private": private_network,
+        "private_network": private_network,
+        "private_group": private_group,
+        "private_group_record": private_group_record.to_dict(),
+        "private_ip": private_ipv4,
+        "private_ip_source": ipv4_source,
+        "private_mac": private_mac,
+        "allocation_state": allocation_state,
+        "docker": {
+            "private_network": private_network,
+            "private_allocation": allocation_state,
+        },
+    }
+    _ = role
+    return {
+        "network_name": network_name,
+        "network_id": network_id,
+        "network_args": network_args,
+        "network_resources": [network_resource],
+        "planned_interfaces": [planned_interface],
+        "private_network": private_network,
+        "private_group_record": private_group_record.to_dict(),
+        "allocation_state": allocation_state,
+        "private_ipv4": private_ipv4,
+        "private_mac": private_mac,
+        "extra_metadata": extra_metadata,
+    }
+
+
+def _ensure_live_private_network(
+    *,
+    provider: str,
+    private_group: str,
+    private_cidr: str,
+    env: Mapping[str, str],
+    docker_command: str,
+    command_runner: DockerRunner,
+    created_at: str,
+) -> dict[str, object]:
+    """Create or reuse the internal Docker bridge for one private group."""
+
+    private_cidr = str(parse_private_cidr(private_cidr))
+    _validate_private_group_record(
+        provider=provider,
+        private_group=private_group,
+        private_cidr=private_cidr,
+    )
+    network_name = docker_private_network_name(private_group)
+    labels = _private_network_labels(
+        provider=provider,
+        private_group=private_group,
+        created_at=created_at,
+    )
+    inspect_argv = docker_argv(
+        "network",
+        "inspect",
+        network_name,
+        docker_command=docker_command,
+    )
+    create_argv = docker_argv(
+        "network",
+        "create",
+        "--driver",
+        "bridge",
+        "--internal",
+        "--subnet",
+        private_cidr,
+        *docker_label_args(labels),
+        network_name,
+        docker_command=docker_command,
+    )
+
+    inspect_result = command_runner(
+        inspect_argv,
+        env=env,
+        timeout=DOCKER_NETWORK_INSPECT_TIMEOUT,
+    )
+    created = False
+    if not inspect_result.ok:
+        _run_docker(
+            create_argv,
+            runner=command_runner,
+            env=env,
+            timeout=DOCKER_NETWORK_CREATE_TIMEOUT,
+        )
+        created = True
+        inspect_result = _run_docker(
+            inspect_argv,
+            runner=command_runner,
+            env=env,
+            timeout=DOCKER_NETWORK_INSPECT_TIMEOUT,
+        )
+
+    network_record = parse_single_docker_inspect_output(
+        inspect_result,
+        context=f"Docker network inspect {network_name!r}",
+    )
+    _validate_live_private_network(
+        network_record,
+        provider=provider,
+        private_group=private_group,
+        private_cidr=private_cidr,
+        network_name=network_name,
+    )
+    return _live_private_network_metadata(
+        network_record,
+        provider=provider,
+        private_group=private_group,
+        private_cidr=private_cidr,
+        network_name=network_name,
+        labels=labels,
+        created=created,
+        inspect_argv=inspect_argv,
+        create_argv=create_argv,
+    )
+
+
+def _private_network_labels(
+    *,
+    provider: str,
+    private_group: str,
+    created_at: str,
+) -> dict[str, str]:
+    return docker_labels(
+        exposure=EXPOSURE_PRIVATE,
+        private_group=private_group,
+        created_at=created_at,
+        provider=provider,
+    )
+
+
+def _validate_private_group_record(
+    *,
+    provider: str,
+    private_group: str,
+    private_cidr: str,
+) -> None:
+    try:
+        record = read_private_group_record(provider, private_group)
+    except FileNotFoundError:
+        return
+    recorded_cidr = str(parse_private_cidr(record.private_cidr))
+    if recorded_cidr != private_cidr:
+        raise ValueError(
+            f"private group {private_group!r} is already recorded with CIDR "
+            f"{recorded_cidr}, not {private_cidr}"
+        )
+
+
+def _allocate_live_private_ipv4(
+    *,
+    provider: str,
+    private_group: str,
+    private_cidr: str,
+    requested_private_ip: str | None,
+) -> tuple[str, str]:
+    try:
+        record = read_private_group_record(provider, private_group)
+        allocated_private_ipv4s = record.allocated_private_ipv4s
+    except FileNotFoundError:
+        allocated_private_ipv4s = []
+    private_ipv4 = allocate_private_ipv4(
+        private_cidr,
+        allocated_private_ipv4s=allocated_private_ipv4s,
+        requested_private_ip=requested_private_ip,
+    )
+    return private_ipv4, "requested" if requested_private_ip is not None else "allocated"
+
+
+def _validate_live_private_network(
+    network_record: Mapping[str, object],
+    *,
+    provider: str,
+    private_group: str,
+    private_cidr: str,
+    network_name: str,
+) -> None:
+    actual_name = docker_inspect_name(network_record)
+    if actual_name is not None and actual_name != network_name:
+        raise RuntimeError(
+            f"Docker private network {network_name!r} resolved to unexpected "
+            f"network {actual_name!r}"
+        )
+    driver = network_record.get("Driver")
+    if driver != "bridge":
+        raise RuntimeError(
+            f"Docker private network {network_name!r} must use bridge driver, got {driver!r}"
+        )
+    if network_record.get("Internal") is not True:
+        raise RuntimeError(f"Docker private network {network_name!r} must be internal")
+
+    actual_labels = docker_inspect_labels(network_record)
+    required_labels = {
+        DOCKER_LABEL_PROVIDER: provider,
+        DOCKER_LABEL_MANAGED: DOCKER_MANAGED_LABEL_VALUE,
+        DOCKER_LABEL_PRIVATE_GROUP: private_group,
+        DOCKER_LABEL_EXPOSURE: EXPOSURE_PRIVATE,
+    }
+    for key, expected in required_labels.items():
+        actual = actual_labels.get(key)
+        if actual != expected:
+            raise RuntimeError(
+                f"Docker private network {network_name!r} has incompatible label "
+                f"{key}={actual!r}; expected {expected!r}"
+            )
+
+    expected_cidr = str(parse_private_cidr(private_cidr))
+    actual_cidrs = _docker_network_subnets(network_record)
+    if expected_cidr not in actual_cidrs:
+        raise RuntimeError(
+            f"Docker private network {network_name!r} has CIDRs {actual_cidrs}, "
+            f"not {expected_cidr}"
+        )
+
+
+def _live_private_network_metadata(
+    network_record: Mapping[str, object],
+    *,
+    provider: str,
+    private_group: str,
+    private_cidr: str,
+    network_name: str,
+    labels: Mapping[str, object],
+    created: bool,
+    inspect_argv: Sequence[object],
+    create_argv: Sequence[object],
+) -> dict[str, object]:
+    network_id = docker_inspect_id(network_record) or network_name
+    ipam_config = _docker_network_ipam_config(network_record)
+    return {
+        "planned": False,
+        "type": "docker-private-network",
+        "provider": provider,
+        "driver": "bridge",
+        "internal": True,
+        "isolation": "internal-bridge",
+        "isolated": True,
+        "owned_by_provider": True,
+        "cleanup": True,
+        "shared_private_group": True,
+        "remove_when_unallocated": True,
+        "created": created,
+        "reused": not created,
+        "network_id": network_id,
+        "network_name": network_name,
+        "private_group": private_group,
+        "cidr": private_cidr,
+        "private_cidr": private_cidr,
+        "gateway_ipv4": _docker_network_gateway(network_record, private_cidr),
+        "same_segment": True,
+        "l2_segment": True,
+        "controlled_router": False,
+        "labels": dict(labels),
+        "inspect_labels": docker_inspect_labels(network_record),
+        "ipam": {"config": ipam_config},
+        "subnets": _docker_network_subnets(network_record),
+        "inspect_argv": list(inspect_argv),
+        "create_argv": list(create_argv),
+    }
+
+
+def _private_allocation_state(
+    *,
+    provider: str,
+    private_group: str,
+    endpoint_id: str,
+    private_ipv4: str,
+    private_mac: str,
+    private_cidr: str,
+    private_group_record: Mapping[str, object],
+    ipv4_source: str,
+) -> dict[str, object]:
+    return {
+        "provider": provider,
+        "private_group": private_group,
+        "private_cidr": private_cidr,
+        "endpoint_id": endpoint_id,
+        "private_ipv4": private_ipv4,
+        "private_mac": private_mac,
+        "private_ipv4_source": ipv4_source,
+        "record_path": str(private_group_path(provider, private_group)),
+        "record": dict(private_group_record),
+        "allocated_endpoint_ids": list(
+            _string_list(private_group_record.get("allocated_endpoint_ids", []))
+        ),
+        "allocated_private_ipv4s": list(
+            _string_list(private_group_record.get("allocated_private_ipv4s", []))
+        ),
+    }
+
+
+def _docker_network_ipam_config(
+    network_record: Mapping[str, object],
+) -> list[dict[str, object]]:
+    ipam = network_record.get("IPAM")
+    if not isinstance(ipam, Mapping):
+        return []
+    config = ipam.get("Config")
+    if not isinstance(config, Sequence) or isinstance(config, (str, bytes)):
+        return []
+    return [dict(item) for item in config if isinstance(item, Mapping)]
+
+
+def _docker_network_subnets(network_record: Mapping[str, object]) -> list[str]:
+    subnets: list[str] = []
+    for item in _docker_network_ipam_config(network_record):
+        subnet = item.get("Subnet")
+        if not isinstance(subnet, str) or subnet == "":
+            continue
+        try:
+            subnets.append(str(parse_private_cidr(subnet)))
+        except ValueError:
+            continue
+    return subnets
+
+
+def _docker_network_gateway(
+    network_record: Mapping[str, object],
+    private_cidr: str,
+) -> str:
+    expected_cidr = str(parse_private_cidr(private_cidr))
+    for item in _docker_network_ipam_config(network_record):
+        subnet = item.get("Subnet")
+        if not isinstance(subnet, str):
+            continue
+        try:
+            cidr = str(parse_private_cidr(subnet))
+        except ValueError:
+            continue
+        if cidr != expected_cidr:
+            continue
+        gateway = item.get("Gateway")
+        if isinstance(gateway, str) and gateway:
+            return gateway
+    return str(private_gateway_ipv4(private_cidr))
 
 
 def _planned_private_ipv4(
