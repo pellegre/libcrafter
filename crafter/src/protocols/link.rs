@@ -1641,7 +1641,7 @@ mod ethernet {
 
 #[cfg(test)]
 mod arp {
-    use super::{Arp, ArpOperation, Ethernet};
+    use super::{Arp, ArpOperation, Ethernet, ETHERTYPE_ARP};
     use crate::{CrafterError, LinkType, MacAddr, Packet};
     use core::net::Ipv4Addr;
 
@@ -2403,6 +2403,319 @@ mod arp {
         assert_eq!(decoded_arp.opcode_value(), 0x1234);
         assert_eq!(decoded_arp.hardware_type_value(), super::ARP_HRD_ATM);
         assert_eq!(decoded_arp.protocol_type_value(), 0x0805);
+    }
+
+    #[test]
+    fn arp_decode_variable_hardware_length_preserves_bytes() {
+        // A nonstandard 8-octet hardware address with a standard 4-octet IPv4
+        // protocol address is structurally valid generic-format ARP. Decode
+        // splits the four address fields by HLN/PLN and preserves the exact
+        // bytes. The wider hardware address is not a MAC, so sender_mac() and
+        // target_mac() report None while the raw byte accessors stay exact.
+        let sender_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x10, 0xaa, 0xbb];
+        let target_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x20, 0xcc, 0xdd];
+        let sender_pa = vec![192, 0, 2, 10];
+        let target_pa = vec![192, 0, 2, 1];
+
+        let mut bytes = vec![
+            0x00, 0x20, // HRD = 32 (InfiniBand)
+            0x08, 0x00, // PRO = IPv4
+            0x08, // HLN = 8
+            0x04, // PLN = 4
+            0x00, 0x01, // OP = request
+        ];
+        bytes.extend_from_slice(&sender_hw);
+        bytes.extend_from_slice(&sender_pa);
+        bytes.extend_from_slice(&target_hw);
+        bytes.extend_from_slice(&target_pa);
+
+        let arp = decode_arp_layer(&bytes);
+
+        assert_eq!(arp.hardware_type_value(), super::ARP_HRD_INFINIBAND);
+        assert_eq!(arp.protocol_type_value(), super::ETHERTYPE_IPV4);
+        assert_eq!(arp.hardware_len_value(), 8);
+        assert_eq!(arp.protocol_len_value(), 4);
+        assert_eq!(arp.opcode_value(), ArpOperation::Request as u16);
+        assert_eq!(arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(arp.target_hardware_bytes_value(), target_hw);
+        assert_eq!(arp.sender_protocol_bytes_value(), sender_pa);
+        assert_eq!(arp.target_protocol_bytes_value(), target_pa);
+
+        // Eight-octet hardware addresses are not MACs.
+        assert_eq!(arp.sender_mac(), None);
+        assert_eq!(arp.target_mac(), None);
+        // The protocol is IPv4 with a four-octet address, so the IPv4 typed
+        // accessors still resolve.
+        assert_eq!(arp.sender_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 10)));
+        assert_eq!(arp.target_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 1)));
+
+        // The decoded packet re-compiles to the exact input bytes.
+        let frame = Ethernet::new().src(src_mac()) / arp;
+        let recompiled = Packet::decode_from_link(LinkType::Ethernet, frame.compile().unwrap().as_bytes())
+            .unwrap();
+        assert_eq!(
+            recompiled.layer::<Arp>().unwrap().sender_hardware_bytes_value(),
+            sender_hw
+        );
+    }
+
+    #[test]
+    fn arp_decode_variable_protocol_length_preserves_bytes() {
+        // A standard 6-octet MAC with a nonstandard 16-octet protocol address
+        // (e.g. an IPv6-sized payload) under an unknown protocol type. Decode
+        // splits by HLN/PLN and preserves exact bytes; the wide protocol field
+        // is not IPv4 so sender_ipv4()/target_ipv4() report None.
+        let sender_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x10];
+        let target_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x20];
+        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+
+        let mut bytes = vec![
+            0x00, 0x01, // HRD = Ethernet
+            0x86, 0xdd, // PRO = IPv6 EtherType (not IPv4)
+            0x06, // HLN = 6
+            0x10, // PLN = 16
+            0x00, 0x02, // OP = reply
+        ];
+        bytes.extend_from_slice(&sender_hw);
+        bytes.extend_from_slice(&sender_pa);
+        bytes.extend_from_slice(&target_hw);
+        bytes.extend_from_slice(&target_pa);
+
+        let arp = decode_arp_layer(&bytes);
+
+        assert_eq!(arp.hardware_len_value(), 6);
+        assert_eq!(arp.protocol_len_value(), 16);
+        assert_eq!(arp.protocol_type_value(), 0x86dd);
+        assert_eq!(arp.sender_protocol_bytes_value(), sender_pa);
+        assert_eq!(arp.target_protocol_bytes_value(), target_pa);
+
+        // Six-octet hardware addresses are valid MACs.
+        assert_eq!(arp.sender_mac().map(|m| m.octets().to_vec()), Some(sender_hw));
+        assert_eq!(arp.target_mac().map(|m| m.octets().to_vec()), Some(target_hw));
+        // The protocol type is not IPv4 (and the address is 16 octets), so the
+        // typed IPv4 accessors decline.
+        assert_eq!(arp.sender_ipv4(), None);
+        assert_eq!(arp.target_ipv4(), None);
+    }
+
+    #[test]
+    fn arp_decode_unknown_type_combination_preserves_fields() {
+        // A fully nonstandard packet: unknown hardware type, unknown protocol
+        // type, unknown operation, and matching nonstandard address lengths.
+        // Decode must accept it structurally, preserve every field and address
+        // byte, and decline both typed accessor families.
+        let sender_hw = vec![0xde, 0xad, 0xbe];
+        let target_hw = vec![0xca, 0xfe, 0x99];
+        let sender_pa = vec![0x11, 0x22];
+        let target_pa = vec![0x33, 0x44];
+
+        let mut bytes = vec![
+            0xab, 0xcd, // HRD = 0xabcd (unknown)
+            0x12, 0x34, // PRO = 0x1234 (unknown)
+            0x03, // HLN = 3
+            0x02, // PLN = 2
+            0x04, 0x00, // OP = 1024 (unknown numeric)
+        ];
+        bytes.extend_from_slice(&sender_hw);
+        bytes.extend_from_slice(&sender_pa);
+        bytes.extend_from_slice(&target_hw);
+        bytes.extend_from_slice(&target_pa);
+
+        let arp = decode_arp_layer(&bytes);
+
+        assert_eq!(arp.hardware_type_value(), 0xabcd);
+        assert_eq!(arp.protocol_type_value(), 0x1234);
+        assert_eq!(arp.hardware_len_value(), 3);
+        assert_eq!(arp.protocol_len_value(), 2);
+        assert_eq!(arp.opcode_value(), 1024);
+        assert_eq!(arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(arp.target_hardware_bytes_value(), target_hw);
+        assert_eq!(arp.sender_protocol_bytes_value(), sender_pa);
+        assert_eq!(arp.target_protocol_bytes_value(), target_pa);
+
+        // Neither typed accessor family matches a 3-octet hardware address or a
+        // non-IPv4 2-octet protocol address.
+        assert_eq!(arp.sender_mac(), None);
+        assert_eq!(arp.target_mac(), None);
+        assert_eq!(arp.sender_ipv4(), None);
+        assert_eq!(arp.target_ipv4(), None);
+        // The unknown operation has no named label.
+        assert_eq!(ArpOperation::from_opcode(1024), None);
+    }
+
+    #[test]
+    fn arp_decode_zero_length_addresses_does_not_overflow() {
+        // Zero-length hardware and protocol fields are valid generic-format ARP
+        // and decode to the bare eight-byte fixed header. The address-split
+        // arithmetic must not over-read or panic on empty fields.
+        let bytes = vec![
+            0x00, 0x01, // HRD
+            0x08, 0x00, // PRO
+            0x00, // HLN = 0
+            0x00, // PLN = 0
+            0x00, 0x01, // OP
+        ];
+
+        let arp = decode_arp_layer(&bytes);
+
+        assert_eq!(arp.hardware_len_value(), 0);
+        assert_eq!(arp.protocol_len_value(), 0);
+        assert!(arp.sender_hardware_bytes_value().is_empty());
+        assert!(arp.sender_protocol_bytes_value().is_empty());
+        assert!(arp.target_hardware_bytes_value().is_empty());
+        assert!(arp.target_protocol_bytes_value().is_empty());
+        // Empty hardware/protocol fields are neither a MAC nor an IPv4 address.
+        assert_eq!(arp.sender_mac(), None);
+        assert_eq!(arp.sender_ipv4(), None);
+    }
+
+    #[test]
+    fn arp_decode_truncated_header_returns_structured_error() {
+        // A buffer shorter than the eight-byte fixed header fails with a
+        // structured BufferTooShort naming the failing context and the
+        // required/available byte counts, never a panic.
+        let bytes = [0x00, 0x01, 0x08, 0x00, 0x06]; // 5 bytes, header needs 8
+        let err = Packet::decode_from_link(LinkType::Ethernet, arp_frame(&bytes)).unwrap_err();
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "arp header");
+                assert_eq!(required, 8);
+                assert_eq!(available, 5);
+            }
+            other => panic!("expected a structured truncation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arp_decode_truncated_address_fields_returns_structured_error() {
+        // A complete fixed header declaring 6/4 address lengths but with the
+        // address bytes truncated fails with a BufferTooShort naming the
+        // address context and the required vs. available lengths.
+        let bytes = vec![
+            0x00, 0x01, // HRD
+            0x08, 0x00, // PRO
+            0x06, // HLN = 6
+            0x04, // PLN = 4
+            0x00, 0x01, // OP
+            0xaa, 0xbb, 0xcc, // only 3 of the 20 declared address bytes
+        ];
+        let err = Packet::decode_from_link(LinkType::Ethernet, arp_frame(&bytes)).unwrap_err();
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "arp addresses");
+                // Fixed header (8) + 6*2 + 4*2 = 28 required; 11 available.
+                assert_eq!(required, 28);
+                assert_eq!(available, 11);
+            }
+            other => panic!("expected a structured truncation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arp_variable_lengths_decode_round_trips_byte_exact() {
+        // An end-to-end variable-length round trip: build a nonstandard
+        // 8-octet-hardware / 16-octet-protocol ARP through the raw byte
+        // builders, compile inside an Ethernet frame, decode, and confirm every
+        // field and byte survives the split-by-length decode path unchanged.
+        let sender_hw = vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11];
+        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01];
+        let target_hw = vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+
+        let arp = Arp::new()
+            .hardware_type(super::ARP_HRD_INFINIBAND)
+            .protocol_type(0x86dd)
+            .opcode(0x0fa0)
+            .sender_hardware(sender_hw.clone())
+            .sender_protocol(sender_pa.clone())
+            .target_hardware(target_hw.clone())
+            .target_protocol(target_pa.clone());
+
+        let frame = Ethernet::new().src(src_mac()) / arp;
+        let bytes = frame.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &bytes).unwrap();
+        let decoded_arp = decoded.layer::<Arp>().unwrap();
+
+        assert_eq!(decoded_arp.hardware_type_value(), super::ARP_HRD_INFINIBAND);
+        assert_eq!(decoded_arp.protocol_type_value(), 0x86dd);
+        assert_eq!(decoded_arp.hardware_len_value(), 8);
+        assert_eq!(decoded_arp.protocol_len_value(), 16);
+        assert_eq!(decoded_arp.opcode_value(), 0x0fa0);
+        assert_eq!(decoded_arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(decoded_arp.sender_protocol_bytes_value(), sender_pa);
+        assert_eq!(decoded_arp.target_hardware_bytes_value(), target_hw);
+        assert_eq!(decoded_arp.target_protocol_bytes_value(), target_pa);
+
+        // Nonstandard widths decline the typed accessors.
+        assert_eq!(decoded_arp.sender_mac(), None);
+        assert_eq!(decoded_arp.target_mac(), None);
+        assert_eq!(decoded_arp.sender_ipv4(), None);
+        assert_eq!(decoded_arp.target_ipv4(), None);
+
+        // The full frame re-compiles to the identical bytes.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
+    }
+
+    #[test]
+    fn arp_variable_zero_protocol_length_with_ipv4_type_returns_none() {
+        // sender_ipv4()/target_ipv4() must key off BOTH the protocol type and a
+        // four-octet length. An IPv4 protocol type with a zero-length address
+        // is not a valid IPv4 address, so the typed accessor declines even
+        // though the protocol type matches.
+        let bytes = vec![
+            0x00, 0x01, // HRD = Ethernet
+            0x08, 0x00, // PRO = IPv4
+            0x06, // HLN = 6
+            0x00, // PLN = 0
+            0x00, 0x01, // OP
+            0x00, 0x00, 0x5e, 0x00, 0x53, 0x10, // sender hardware (6 octets)
+            // sender protocol: 0 octets
+            0x00, 0x00, 0x5e, 0x00, 0x53, 0x20, // target hardware (6 octets)
+            // target protocol: 0 octets
+        ];
+
+        let arp = decode_arp_layer(&bytes);
+
+        assert_eq!(arp.protocol_type_value(), super::ETHERTYPE_IPV4);
+        assert_eq!(arp.protocol_len_value(), 0);
+        // MACs still resolve, but the IPv4 accessors decline on a zero-length
+        // protocol address.
+        assert!(arp.sender_mac().is_some());
+        assert_eq!(arp.sender_ipv4(), None);
+        assert_eq!(arp.target_ipv4(), None);
+    }
+
+    /// Decode a bare ARP body inside an Ethernet frame and return the `Arp`
+    /// layer, panicking on any decode error. Centralizes the variable-length
+    /// decode assertions so each test reads as data plus expectations.
+    fn decode_arp_layer(body: &[u8]) -> Arp {
+        let frame = arp_frame(body);
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &frame)
+            .expect("structurally valid ARP body must decode");
+        decoded
+            .layer::<Arp>()
+            .expect("decoded packet must carry an Arp layer")
+            .clone()
+    }
+
+    /// Wrap an ARP body in a minimal Ethernet header (broadcast dst, the test
+    /// source MAC, EtherType 0x0806) so it decodes through the link root.
+    fn arp_frame(body: &[u8]) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(14 + body.len());
+        frame.extend_from_slice(&MacAddr::BROADCAST.octets());
+        frame.extend_from_slice(&src_mac().octets());
+        frame.extend_from_slice(&ETHERTYPE_ARP.to_be_bytes());
+        frame.extend_from_slice(body);
+        frame
     }
 }
 
