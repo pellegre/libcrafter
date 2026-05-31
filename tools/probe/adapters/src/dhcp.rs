@@ -18,7 +18,7 @@ use std::time::Duration;
 use crate::common::{
     capture_filter, decode_hex, decoded_packet_json, failed_outcome, hex_bytes, observed_response,
     plan_json, required_str, required_u32, required_u8_list, send_report_json, target_service_json,
-    CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest,
+    CandidateValidation, DhcpSend, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest,
     FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 
@@ -29,6 +29,9 @@ pub fn run_dhcp_dry_run(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
+    if let Some(sends) = plan.dhcp_sends.as_deref() {
+        return run_dhcp_multi_send_dry_run(request, plan, sends);
+    }
     let packet = dhcp_packet(plan)?;
     let report = SocketSender::new(
         SendOptions::new()
@@ -79,6 +82,9 @@ pub fn run_dhcp_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
+    if let Some(sends) = plan.dhcp_sends.as_deref() {
+        return run_dhcp_multi_send_live(request, plan, sends);
+    }
     let packet = dhcp_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer = match Sniffer::interface(request.interface.clone())
@@ -220,6 +226,345 @@ pub fn run_dhcp_live(
         sent,
         false,
     ))
+}
+
+/// Derive a single-send `ProbePlan` for one entry of a multi-send DHCP case's
+/// `dhcp_sends` array. The derived plan reuses the parent's case and shared
+/// fields but overrides the per-send transaction id, client identity (chaddr),
+/// source/destination ports, peer addresses, offered address, server identifier,
+/// lease timing options, and capture filter so the existing single-send builders
+/// (`dhcp_packet`, `validate_dhcp_candidate`) operate on exactly this one
+/// Discover and its own expected Offer.
+fn send_as_plan(parent: &ProbePlan, send: &DhcpSend) -> ProbePlan {
+    let mut derived = parent.clone();
+    // This send is a single, self-contained Discover->Offer exchange; clear the
+    // multi-send markers so the single-send build/validate path runs against just
+    // this send.
+    derived.dhcp_sends = None;
+    derived.send_count = None;
+    if let Some(value) = send.source_ipv4.clone() {
+        derived.source_ipv4 = Some(value);
+    }
+    if let Some(value) = send.destination_ipv4.clone() {
+        derived.destination_ipv4 = Some(value);
+    }
+    if let Some(value) = send.expected_reply_source_ipv4.clone() {
+        derived.expected_reply_source_ipv4 = Some(value);
+    }
+    if let Some(value) = send.expected_reply_destination_ipv4.clone() {
+        derived.expected_reply_destination_ipv4 = Some(value);
+    }
+    if let Some(value) = send.source_port {
+        derived.source_port = Some(value);
+    }
+    if let Some(value) = send.destination_port {
+        derived.destination_port = Some(value);
+    }
+    if let Some(value) = send.client_mac.clone() {
+        derived.client_mac = Some(value);
+    }
+    if let Some(value) = send.transaction_id {
+        derived.transaction_id = Some(value);
+    }
+    if let Some(value) = send.expected_message_type_value {
+        derived.expected_message_type_value = Some(value);
+    }
+    if let Some(value) = send.expected_yiaddr.clone() {
+        derived.expected_yiaddr = Some(value);
+    }
+    if let Some(value) = send.expected_server_identifier.clone() {
+        derived.expected_server_identifier = Some(value);
+    }
+    if let Some(value) = send.expected_subnet_mask.clone() {
+        derived.expected_subnet_mask = Some(value);
+    }
+    if let Some(value) = send.expected_router_ipv4.clone() {
+        derived.expected_router_ipv4 = Some(value);
+    }
+    if let Some(value) = send.expected_lease_time {
+        derived.expected_lease_time = Some(value);
+    }
+    if let Some(value) = send.expected_renewal_time {
+        derived.expected_renewal_time = Some(value);
+    }
+    if let Some(value) = send.expected_rebinding_time {
+        derived.expected_rebinding_time = Some(value);
+    }
+    derived
+}
+
+/// Dry-run a multi-send DHCP case (`dhcp-rapid-repeat`): compile every per-send
+/// Discover with libcrafter and emit one planned send and one expected Offer per
+/// send. No traffic leaves the host. The output carries a `planned_sends` array
+/// (one entry per build) and a top-level `send_count` so an inspector sees two
+/// planned sends and two expected responses.
+fn run_dhcp_multi_send_dry_run(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sends: &[DhcpSend],
+) -> ExampleResult<ProbeOutcome> {
+    let mut planned_sends = Vec::with_capacity(sends.len());
+    for (offset, send) in sends.iter().enumerate() {
+        let send_plan = send_as_plan(plan, send);
+        let packet = dhcp_packet(&send_plan)?;
+        let report = SocketSender::new(
+            SendOptions::new()
+                .iface(request.interface.clone())
+                .network_layer()
+                .dry_run(),
+        )
+        .send(&packet)?;
+        let sent_raw_hex = hex_bytes(report.plan().bytes());
+        planned_sends.push(json!({
+            "index": send.index.unwrap_or(offset),
+            "transaction_id": send_plan.transaction_id,
+            "client_mac": send_plan.client_mac,
+            "source_port": send_plan.source_port,
+            "destination_port": send_plan.destination_port,
+            "expected_yiaddr": send_plan.expected_yiaddr,
+            "send_report": send_report_json(&report),
+            "sent_raw_hex": sent_raw_hex,
+            "capture_filter": capture_filter(&send_plan),
+            "expected_response": dhcp_expected_response_json(&send_plan),
+        }));
+    }
+    let expected_responses: Vec<Value> = planned_sends
+        .iter()
+        .filter_map(|entry| entry.get("expected_response").cloned())
+        .collect();
+    let observed = observed_response(
+        plan,
+        false,
+        None,
+        json!({}),
+        json!({
+            "planned_only": true,
+            "send_count": planned_sends.len(),
+            "planned_sends": planned_sends,
+            "expected_responses": expected_responses,
+            "target_service": target_service_json(plan),
+        }),
+    );
+    let result = json!({
+        "case": plan.case,
+        "sequence": plan.sequence,
+        "status": "planned",
+        "endpoint_role": "stimulus",
+        "passed": null,
+        "observed_response": observed,
+        "metadata": {
+            "dry_run": true,
+            "probe_plan": plan_json(plan),
+            "planned_only": true,
+            "send_count": planned_sends.len(),
+            "planned_sends": planned_sends,
+            "expected_responses": expected_responses,
+            "target_service": target_service_json(plan),
+        }
+    });
+    Ok(ProbeOutcome {
+        result,
+        observed_response: observed,
+        sent: false,
+        received: false,
+    })
+}
+
+/// Live multi-send DHCP case (`dhcp-rapid-repeat`): build and send every per-send
+/// libcrafter Discover, capture the Offers, decode each, and validate every Offer
+/// against *its* send's transaction id (xid), client identity (chaddr), and
+/// offered address. Each send opens its own capture filtered to the client port,
+/// so two Offers that share the lab transport are never confused — every Offer is
+/// matched to the Discover that produced it by the echoed xid. The case passes
+/// only when every send validates.
+fn run_dhcp_multi_send_live(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sends: &[DhcpSend],
+) -> ExampleResult<ProbeOutcome> {
+    let mut send_results = Vec::with_capacity(sends.len());
+    let mut all_passed = true;
+    let mut any_sent = false;
+    let mut any_received = false;
+    let mut failure_reason: Option<&'static str> = None;
+    let mut errors: Vec<String> = Vec::new();
+
+    for (offset, send) in sends.iter().enumerate() {
+        let send_plan = send_as_plan(plan, send);
+        let outcome = run_dhcp_live(request, &send_plan)?;
+        any_sent |= outcome.sent;
+        any_received |= outcome.received;
+        let status = outcome
+            .result
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("failed");
+        if status != "passed" {
+            all_passed = false;
+            let reason = outcome
+                .result
+                .get("metadata")
+                .and_then(|metadata| metadata.get("failure_reason"))
+                .and_then(Value::as_str);
+            if let Some(reason) = reason {
+                failure_reason.get_or_insert(static_failure_reason(reason));
+                errors.push(format!(
+                    "send {} (xid {:?}) failed: {reason}",
+                    send.index.unwrap_or(offset),
+                    send_plan.transaction_id,
+                ));
+            }
+        }
+        send_results.push(json!({
+            "index": send.index.unwrap_or(offset),
+            "transaction_id": send_plan.transaction_id,
+            "client_mac": send_plan.client_mac,
+            "expected_yiaddr": send_plan.expected_yiaddr,
+            "status": status,
+            "result": outcome.result,
+        }));
+    }
+
+    let summary = json!({
+        "send_count": sends.len(),
+        "send_results": send_results,
+    });
+
+    if all_passed {
+        let observed = observed_response(
+            plan,
+            true,
+            None,
+            summary.clone(),
+            json!({
+                "capture_filter": capture_filter(plan),
+                "send_count": sends.len(),
+            }),
+        );
+        let result = json!({
+            "case": plan.case,
+            "sequence": plan.sequence,
+            "status": "passed",
+            "endpoint_role": "stimulus",
+            "passed": true,
+            "observed_response": observed,
+            "metadata": {
+                "dry_run": false,
+                "probe_plan": plan_json(plan),
+                "send_count": sends.len(),
+                "send_results": observed["decoded"]["send_results"].clone(),
+            }
+        });
+        return Ok(ProbeOutcome {
+            result,
+            observed_response: observed,
+            sent: any_sent,
+            received: any_received,
+        });
+    }
+
+    Ok(failed_outcome(
+        plan,
+        failure_reason.unwrap_or(FAILURE_WRONG_PAYLOAD),
+        if errors.is_empty() {
+            vec!["one or more rapid-repeat sends failed validation".to_string()]
+        } else {
+            errors
+        },
+        Some(summary),
+        any_sent,
+        any_received,
+    ))
+}
+
+/// Map a failure-reason string (as it appears in a per-send result) back to the
+/// crate's `'static` failure-reason constants so the aggregate failure uses a
+/// stable reason.
+fn static_failure_reason(reason: &str) -> &'static str {
+    match reason {
+        FAILURE_TIMEOUT => FAILURE_TIMEOUT,
+        FAILURE_WRONG_PEER => FAILURE_WRONG_PEER,
+        FAILURE_DECODE_FAILED => FAILURE_DECODE_FAILED,
+        _ => FAILURE_WRONG_PAYLOAD,
+    }
+}
+
+/// JSON view of one send's expected Offer (peer/ports, transaction id, message
+/// type, offered address, server identifier, and lease options) for the dry-run
+/// report.
+fn dhcp_expected_response_json(send_plan: &ProbePlan) -> Value {
+    json!({
+        "source_ipv4": send_plan.expected_reply_source_ipv4,
+        "destination_ipv4": send_plan.expected_reply_destination_ipv4,
+        "source_port": send_plan.destination_port,
+        "destination_port": send_plan.source_port,
+        "op_value": 2,
+        "message_type_value": send_plan.expected_message_type_value.unwrap_or(DHCP_OFFER),
+        "transaction_id": send_plan.transaction_id,
+        "client_hardware_address": send_plan.client_mac,
+        "yiaddr": send_plan.expected_yiaddr,
+        "server_identifier": send_plan.expected_server_identifier,
+        "lease_time": send_plan.expected_lease_time,
+        "renewal_time": send_plan.expected_renewal_time,
+        "rebinding_time": send_plan.expected_rebinding_time,
+        "direction": "server_to_client",
+    })
+}
+
+/// JSON view of a plan's `dhcp_sends` array for the plan echo. `None` renders
+/// null.
+pub fn sends_json(sends: Option<&[DhcpSend]>) -> Value {
+    match sends {
+        Some(sends) => Value::Array(
+            sends
+                .iter()
+                .map(|send| {
+                    json!({
+                        "index": send.index,
+                        "source_ipv4": send.source_ipv4,
+                        "destination_ipv4": send.destination_ipv4,
+                        "expected_reply_source_ipv4": send.expected_reply_source_ipv4,
+                        "expected_reply_destination_ipv4": send.expected_reply_destination_ipv4,
+                        "source_port": send.source_port,
+                        "destination_port": send.destination_port,
+                        "client_mac": send.client_mac,
+                        "transaction_id": send.transaction_id,
+                        "expected_message_type_value": send.expected_message_type_value,
+                        "expected_yiaddr": send.expected_yiaddr,
+                        "expected_server_identifier": send.expected_server_identifier,
+                        "expected_subnet_mask": send.expected_subnet_mask,
+                        "expected_router_ipv4": send.expected_router_ipv4,
+                        "expected_lease_time": send.expected_lease_time,
+                        "expected_renewal_time": send.expected_renewal_time,
+                        "expected_rebinding_time": send.expected_rebinding_time,
+                        "capture_filter": send.capture_filter,
+                    })
+                })
+                .collect(),
+        ),
+        None => Value::Null,
+    }
+}
+
+/// JSON view of a plan's `dhcp_sends` for the responder's `rapid_repeat`
+/// descriptor: the per-send transaction id, client MAC, and offered address the
+/// responder keys each Offer to.
+pub fn repeat_sends_json(sends: Option<&[DhcpSend]>) -> Value {
+    match sends {
+        Some(sends) => Value::Array(
+            sends
+                .iter()
+                .map(|send| {
+                    json!({
+                        "transaction_id": send.transaction_id,
+                        "client_mac": send.client_mac,
+                        "yiaddr": send.expected_yiaddr,
+                    })
+                })
+                .collect(),
+        ),
+        None => Value::Null,
+    }
 }
 
 /// Build the IPv4/UDP/BOOTP/DHCP stimulus packet with libcrafter.
@@ -2247,5 +2592,142 @@ mod tests {
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPeer(_)));
+    }
+
+    /// Build one `DhcpSend` for a `dhcp-rapid-repeat` plan with a distinct
+    /// transaction id, client identity (chaddr), and offered address.
+    fn rapid_repeat_send(
+        index: usize,
+        transaction_id: u32,
+        client_mac: &str,
+        offered: &str,
+    ) -> DhcpSend {
+        DhcpSend {
+            index: Some(index),
+            source_ipv4: Some("10.64.0.10".to_string()),
+            destination_ipv4: Some("10.64.0.20".to_string()),
+            expected_reply_source_ipv4: Some("10.64.0.20".to_string()),
+            expected_reply_destination_ipv4: Some("10.64.0.10".to_string()),
+            source_port: Some(DHCP_CLIENT_PORT),
+            destination_port: Some(DHCP_SERVER_PORT),
+            client_mac: Some(client_mac.to_string()),
+            transaction_id: Some(transaction_id),
+            expected_message_type_value: Some(DHCP_OFFER),
+            expected_yiaddr: Some(offered.to_string()),
+            expected_server_identifier: Some("10.64.0.20".to_string()),
+            expected_subnet_mask: Some("255.255.255.0".to_string()),
+            expected_router_ipv4: None,
+            expected_lease_time: Some(3600),
+            expected_renewal_time: Some(1800),
+            expected_rebinding_time: Some(3150),
+            capture_filter: Some(
+                "udp and src host 10.64.0.20 and dst host 10.64.0.10 \
+                 and src port 67 and dst port 68"
+                    .to_string(),
+            ),
+        }
+    }
+
+    /// A `dhcp-rapid-repeat` plan carrying two Discover->Offer sends with
+    /// distinct xids, client identities, and offered addresses.
+    fn rapid_repeat_plan() -> ProbePlan {
+        let sends = vec![
+            rapid_repeat_send(0, 0x3903_f326, "00:00:5e:00:53:2a", "198.51.100.42"),
+            rapid_repeat_send(1, 0x7c4e_1b09, "00:00:5e:00:53:7f", "198.51.100.77"),
+        ];
+        let mut plan = base_plan("dhcp-rapid-repeat");
+        // Top-level fields mirror the first send so single-send consumers keep
+        // working; the dispatch detects `dhcp_sends` and drives both sends.
+        plan.source_ipv4 = Some("10.64.0.10".to_string());
+        plan.destination_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
+        plan.source_port = Some(DHCP_CLIENT_PORT);
+        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.client_mac = sends[0].client_mac.clone();
+        plan.transaction_id = sends[0].transaction_id;
+        plan.expected_message_type_value = Some(DHCP_OFFER);
+        plan.expected_yiaddr = sends[0].expected_yiaddr.clone();
+        plan.expected_server_identifier = Some("10.64.0.20".to_string());
+        plan.expected_subnet_mask = Some("255.255.255.0".to_string());
+        plan.expected_lease_time = Some(3600);
+        plan.expected_renewal_time = Some(1800);
+        plan.expected_rebinding_time = Some(3150);
+        plan.send_count = Some(sends.len());
+        plan.dhcp_sends = Some(sends);
+        plan
+    }
+
+    #[test]
+    fn rapid_repeat_sends_build_distinct_discovers() {
+        let plan = rapid_repeat_plan();
+        let sends = plan.dhcp_sends.clone().unwrap();
+        assert_eq!(sends.len(), 2);
+
+        let first = send_as_plan(&plan, &sends[0]);
+        let second = send_as_plan(&plan, &sends[1]);
+        // The two derived single-send plans carry distinct identities (the case
+        // point: two independently identifiable Discovers).
+        assert_ne!(first.transaction_id, second.transaction_id);
+        assert_ne!(first.client_mac, second.client_mac);
+        assert_ne!(first.expected_yiaddr, second.expected_yiaddr);
+        // Each derived plan compiles into a real Discover with its own xid/chaddr.
+        let first_packet = dhcp_packet(&first).unwrap();
+        let second_packet = dhcp_packet(&second).unwrap();
+        let first_dhcp = first_packet.layer::<Dhcp>().unwrap();
+        let second_dhcp = second_packet.layer::<Dhcp>().unwrap();
+        assert_eq!(first_dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(second_dhcp.transaction_id_value(), 0x7c4e_1b09);
+        assert_eq!(
+            first_dhcp.message_type_value().map(DhcpMessageType::code),
+            Some(1)
+        );
+        assert_eq!(
+            second_dhcp.message_type_value().map(DhcpMessageType::code),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn rapid_repeat_each_offer_validates_against_its_own_send() {
+        let plan = rapid_repeat_plan();
+        let sends = plan.dhcp_sends.clone().unwrap();
+        for send in &sends {
+            let send_plan = send_as_plan(&plan, send);
+            // The responder's Offer for this Discover, keyed to its xid/chaddr.
+            let bytes = offer_packet(&send_plan)
+                .compile()
+                .unwrap()
+                .as_bytes()
+                .to_vec();
+            let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+            let validation = validate_dhcp_candidate(&send_plan, &decoded, &bytes).unwrap();
+            assert!(
+                matches!(validation, CandidateValidation::Passed(_)),
+                "expected Passed for send {:?}, got {validation:?}",
+                send.index
+            );
+        }
+    }
+
+    #[test]
+    fn rapid_repeat_offer_for_wrong_send_is_wrong_payload() {
+        let plan = rapid_repeat_plan();
+        let sends = plan.dhcp_sends.clone().unwrap();
+        // The second send's Offer (its xid/chaddr/yiaddr) must NOT validate
+        // against the first send's contract: the two Offers are never confused.
+        let second_plan = send_as_plan(&plan, &sends[1]);
+        let bytes = offer_packet(&second_plan)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let first_plan = send_as_plan(&plan, &sends[0]);
+        let validation = validate_dhcp_candidate(&first_plan, &decoded, &bytes).unwrap();
+        assert!(
+            matches!(validation, CandidateValidation::WrongPayload(_)),
+            "expected WrongPayload matching the second Offer against the first send, got {validation:?}"
+        );
     }
 }

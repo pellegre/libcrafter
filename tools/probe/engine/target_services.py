@@ -452,6 +452,7 @@ _DHCP_RESPONDER_CASES: frozenset[str] = frozenset(
         "dhcp-renewal-unicast-ack",
         "dhcp-inform-ack",
         "dhcp-request-nak",
+        "dhcp-rapid-repeat",
     }
 )
 

@@ -114,6 +114,14 @@ def _dhcp_request_nak_plan(*, seed: int = 1028, sequence: int = 0) -> dict:
     )
 
 
+def _dhcp_rapid_repeat_plan(*, seed: int = 1029, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dhcp-rapid-repeat"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcp-rapid-repeat"],
+        sequence=sequence,
+    )
+
+
 class DhcpDiscoverOfferPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct Discover stimulus and Offer contract."""
 
@@ -1416,6 +1424,128 @@ class DhcpRequestNakTest(unittest.TestCase):
                 self.assertTrue(plan_view.get("expected_yiaddr_zero"))
                 self.assertTrue(plan_view.get("expected_no_lease_time"))
                 self.assertTrue(plan_view.get("expected_message"))
+
+
+class DhcpRapidRepeatPlanTest(unittest.TestCase):
+    """The plan carries two Discover->Offer sends with distinct identities."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dhcp-rapid-repeat", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dhcp-rapid-repeat"],
+            planning._dhcp_rapid_repeat_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dhcp_rapid_repeat_plan(), _dhcp_rapid_repeat_plan())
+
+    def test_plan_carries_two_sends_with_distinct_xids_and_clients(self) -> None:
+        plan = _dhcp_rapid_repeat_plan()
+
+        self.assertEqual(plan["case"], "dhcp-rapid-repeat")
+        self.assertEqual(plan["stimulus"], "dhcp_discover")
+        self.assertEqual(plan["expected_response"], "dhcp_offer")
+
+        sends = plan["dhcp_sends"]
+        self.assertEqual(plan["send_count"], 2)
+        self.assertEqual(len(sends), 2)
+
+        first, second = sends
+        # The case point: two independently identifiable Discovers. Distinct
+        # transaction ids AND distinct client identities (chaddr).
+        self.assertNotEqual(first["transaction_id"], second["transaction_id"])
+        self.assertNotEqual(first["client_mac"], second["client_mac"])
+        # Each Offer carries its own recognizably different offered address.
+        self.assertNotEqual(first["expected_yiaddr"], second["expected_yiaddr"])
+        for send in sends:
+            # DHCP fixed privileged ports: client 68 -> server 67.
+            self.assertEqual(send["source_port"], 68)
+            self.assertEqual(send["destination_port"], 67)
+            self.assertEqual(send["expected_message_type_value"], 2)
+            # Offered address stays in documentation space (198.51.100.0/24).
+            offered = ipaddress.ip_address(send["expected_yiaddr"])
+            self.assertIn(offered, ipaddress.ip_network("198.51.100.0/24"))
+            # Client MAC stays in the RFC 7042 documentation block.
+            self.assertTrue(send["client_mac"].startswith("00:00:5e:00:53:"))
+
+    def test_each_send_validation_matches_its_own_xid_chaddr_and_yiaddr(self) -> None:
+        plan = _dhcp_rapid_repeat_plan()
+        for send in plan["dhcp_sends"]:
+            validation = send["validation"]
+            # Each Offer is matched back to its Discover by the echoed xid/chaddr.
+            self.assertEqual(validation["transaction_id"], send["transaction_id"])
+            self.assertEqual(
+                validation["client_hardware_address"], send["client_mac"]
+            )
+            self.assertEqual(validation["yiaddr"], send["expected_yiaddr"])
+            self.assertEqual(validation["message_type_value"], 2)
+            self.assertEqual(validation["op_value"], 2)
+            self.assertEqual(validation["direction"], "server_to_client")
+            # The Offer flows server -> client over ports 67 -> 68.
+            self.assertEqual(validation["source_port"], send["destination_port"])
+            self.assertEqual(validation["destination_port"], send["source_port"])
+
+    def test_target_service_describes_per_send_offers(self) -> None:
+        plan = _dhcp_rapid_repeat_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "dhcp-responder")
+        repeat_sends = target_service["rapid_repeat"]["sends"]
+        self.assertEqual(len(repeat_sends), 2)
+        # The responder keys one Offer per (xid, chaddr) so each Discover gets its
+        # own Offer with its own offered address.
+        xids = {entry["transaction_id"] for entry in repeat_sends}
+        macs = {entry["client_mac"] for entry in repeat_sends}
+        offers = {entry["yiaddr"] for entry in repeat_sends}
+        self.assertEqual(len(xids), 2)
+        self.assertEqual(len(macs), 2)
+        self.assertEqual(len(offers), 2)
+
+
+class DhcpRapidRepeatTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dhcp-rapid-repeat",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1029,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dhcp-rapid-repeat", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dhcp-rapid-repeat"
+            ]
+            self.assertTrue(results, "endpoint emitted no dhcp-rapid-repeat result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # The dry-run shows TWO planned sends and TWO expected responses.
+                self.assertEqual(metadata.get("send_count"), 2)
+                planned_sends = metadata.get("planned_sends", [])
+                expected_responses = metadata.get("expected_responses", [])
+                self.assertEqual(len(planned_sends), 2)
+                self.assertEqual(len(expected_responses), 2)
+                # Each planned send compiled its own Discover stimulus bytes and
+                # carries its own distinct transaction id.
+                xids = set()
+                for send in planned_sends:
+                    self.assertTrue(send.get("sent_raw_hex"))
+                    xids.add(send.get("transaction_id"))
+                self.assertEqual(len(xids), 2)
+                # Each expected response is an Offer matched to its send's xid.
+                for expected in expected_responses:
+                    self.assertEqual(expected.get("message_type_value"), 2)
+                    self.assertEqual(expected.get("direction"), "server_to_client")
 
 
 if __name__ == "__main__":

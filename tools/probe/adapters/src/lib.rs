@@ -114,6 +114,7 @@ pub(crate) mod test_support {
             expected_lease_time: None,
             expected_renewal_time: None,
             expected_rebinding_time: None,
+            dhcp_sends: None,
         }
     }
 }
