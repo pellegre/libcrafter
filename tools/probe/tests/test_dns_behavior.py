@@ -73,6 +73,14 @@ def _dns_nxdomain_plan(*, seed: int = 1013, sequence: int = 0) -> dict:
     )
 
 
+def _dns_nodata_plan(*, seed: int = 1014, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["dns-nodata"]),
+        case=planning.PROBE_CASE_BY_NAME["dns-nodata"],
+        sequence=sequence,
+    )
+
+
 class DnsASuccessPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct A query/answer contract."""
 
@@ -542,6 +550,125 @@ class DnsNxdomainTest(unittest.TestCase):
                 if result.get("case") == "dns-nxdomain"
             ]
             self.assertTrue(results, "endpoint emitted no dns-nxdomain result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus packet bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+
+class DnsNodataPlanTest(unittest.TestCase):
+    """The plan carries an RFC-correct NODATA (NOERROR, no answer) contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("dns-nodata", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["dns-nodata"],
+            planning._dns_nodata_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_dns_nodata_plan(), _dns_nodata_plan())
+
+    def test_plan_carries_a_present_name_absent_type_contract(self) -> None:
+        plan = _dns_nodata_plan()
+
+        self.assertEqual(plan["case"], "dns-nodata")
+        self.assertEqual(plan["stimulus"], "dns_query")
+        self.assertEqual(plan["expected_response"], "dns_response")
+
+        # Query id, source port, target port 53, query name, and QTYPE A.
+        self.assertIsInstance(plan["query_id"], int)
+        self.assertTrue(1 <= plan["query_id"] <= 0xFFFF)
+        self.assertIsInstance(plan["source_port"], int)
+        self.assertNotEqual(plan["source_port"], 53)
+        self.assertEqual(plan["destination_port"], 53)
+        self.assertTrue(plan["query_name"].endswith("."))
+        self.assertEqual(plan["query_type"], "A")
+        self.assertEqual(plan["query_type_value"], 1)
+        self.assertEqual(plan["query_class_value"], 1)
+
+        # The queried name EXISTS, but only under a different type (AAAA); the
+        # A query therefore yields NODATA: rcode 0 (NOERROR), zero answers, no
+        # answer data. This is behaviorally distinct from NXDOMAIN (rcode 3).
+        self.assertEqual(plan["present_name"], plan["query_name"])
+        self.assertEqual(plan["present_type"], "AAAA")
+        self.assertEqual(plan["present_type_value"], 28)
+        self.assertNotEqual(plan["present_type_value"], plan["query_type_value"])
+        self.assertEqual(plan["expected_response_code"], 0)
+        self.assertEqual(plan["expected_answer_count"], 0)
+        self.assertNotIn("expected_answer_data", plan)
+        self.assertIn("qr", plan["expected_response_flags"])
+
+    def test_validation_contract_covers_id_qr_noerror_question_zero_answers(self) -> None:
+        plan = _dns_nodata_plan()
+        validation = plan["validation"]
+
+        # Peer addresses and ports (response flows target -> stimulus).
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"], plan["expected_reply_destination_ipv4"]
+        )
+        self.assertEqual(validation["source_port"], 53)
+        self.assertEqual(validation["destination_port"], plan["source_port"])
+
+        # Transaction id, QR flag, and rcode NOERROR (0) — NOT NXDOMAIN.
+        self.assertEqual(validation["query_id"], plan["query_id"])
+        self.assertTrue(validation["qr"])
+        self.assertEqual(validation["response_code"], 0)
+
+        # The original question is preserved (the present name, QTYPE A, class IN).
+        question = validation["question"]
+        self.assertEqual(question["name"], plan["query_name"])
+        self.assertEqual(question["type"], "A")
+        self.assertEqual(question["class"], "IN")
+
+        # NODATA carries no answer: the answer count is exactly zero, and the
+        # contract does not assert any answer record.
+        self.assertEqual(validation["answer_count"], 0)
+        self.assertNotIn("answer", validation)
+
+    def test_target_service_marks_the_name_nodata(self) -> None:
+        target_service = _dns_nodata_plan()["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-dns-responder")
+        self.assertEqual(target_service["port"], 53)
+        self.assertEqual(target_service["query_type"], "A")
+        # The responder registers the name under its present type and answers
+        # NOERROR/NODATA (rcode 0) for the queried type.
+        self.assertTrue(target_service["nodata"])
+        self.assertEqual(target_service["present_type"], "AAAA")
+        self.assertEqual(target_service["present_type_value"], 28)
+        self.assertEqual(target_service["expected_response_code"], 0)
+
+
+class DnsNodataTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "dns-nodata",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1014,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("dns-nodata", planned)
+
+            # The endpoint produced a result for the focused case and it built
+            # the A query for the present name (a dry-run plan compiles the
+            # outgoing stimulus packet).
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "dns-nodata"
+            ]
+            self.assertTrue(results, "endpoint emitted no dns-nodata result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))

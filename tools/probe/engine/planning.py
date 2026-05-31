@@ -716,6 +716,104 @@ def _dns_nxdomain_probe_plan(
     }
 
 
+def _dns_nodata_probe_plan(
+    *,
+    case_name: str = "dns-nodata",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dns-nodata`` behavioral case.
+
+    An A (QTYPE 1) query for a name that *exists* in the controlled zone but only
+    under a different record type (AAAA/28). The responder therefore returns a
+    NODATA answer: rcode 0 (NOERROR) — not 3 (NXDOMAIN) — with the original
+    question echoed and an empty answer section (ancount 0). This is behaviorally
+    distinct from NXDOMAIN: the name is present, only the requested type is
+    absent. The validation contract asserts the transaction id, QR flag, rcode 0
+    (NOERROR), the preserved question (name/type/class), an answer count of zero,
+    plus the peer addresses and ports. ``target_service`` registers the name
+    under its present type and marks it ``nodata`` so the responder answers
+    NODATA for the queried type without falling into the NXDOMAIN path.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    destination_port = 53
+    query_name = dns_query_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    # The name exists, but only under AAAA (type 28); the A query has no record.
+    present_type = "AAAA"
+    present_type_value = 28
+    expected_answer_count = 0
+    expected_response_code = 0
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": "A",
+        "query_type_value": 1,
+        "query_class": "IN",
+        "query_class_value": 1,
+        # NODATA carries no answer for the queried type, even though the name
+        # exists. The expected answer count is zero and the rcode is 0 (NOERROR).
+        # The legacy ``expected_answer_*`` fields are intentionally omitted so the
+        # endpoint does not look for an answer record.
+        "present_name": query_name,
+        "present_type": present_type,
+        "present_type_value": present_type_value,
+        "expected_answer_count": expected_answer_count,
+        "expected_response_code": expected_response_code,
+        "expected_response_flags": ["qr"],
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": "A",
+            "nodata": True,
+            "present_type": present_type,
+            "present_type_value": present_type_value,
+            "expected_response_code": expected_response_code,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": expected_response_code,
+            "question": {
+                "name": query_name,
+                "type": "A",
+                "type_value": 1,
+                "class": "IN",
+                "class_value": 1,
+            },
+            "answer_count": expected_answer_count,
+        },
+    }
+
+
 def dns_canonical_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
     """Return the deterministic canonical (CNAME target) name for a chain case.
 
@@ -925,6 +1023,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-aaaa-success": _dns_aaaa_success_probe_plan,
     "dns-cname-chain": _dns_cname_chain_probe_plan,
     "dns-nxdomain": _dns_nxdomain_probe_plan,
+    "dns-nodata": _dns_nodata_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }

@@ -831,4 +831,116 @@ mod tests {
             other => panic!("expected WrongPayload for wrong rcode, got {other:?}"),
         }
     }
+
+    /// Build the IPv4/UDP/DNS NODATA response a controlled responder emits when
+    /// the name exists but the queried type is absent: QR set, rcode 0
+    /// (NOERROR), the original question echoed, and an empty answer section.
+    fn nodata_response_bytes(query_name: &str, query_id: u16) -> Vec<u8> {
+        let dns = Dns::query(query_name, DNS_TYPE_A)
+            .id(query_id)
+            .response(true);
+        (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .expect("nodata response compiles")
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn nodata_plan(query_name: &str) -> ProbePlan {
+        let mut plan = base_plan("dns-nodata");
+        plan.source_ipv4 = Some("10.77.0.10".to_string());
+        plan.destination_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.77.0.10".to_string());
+        plan.source_port = Some(40000);
+        plan.destination_port = Some(53);
+        plan.query_id = Some(0x73a1);
+        plan.query_name = Some(query_name.to_string());
+        plan.query_type = Some("A".to_string());
+        plan.query_type_value = Some(DNS_TYPE_A);
+        plan.query_class_value = Some(DNS_CLASS_IN);
+        plan.present_name = Some(query_name.to_string());
+        plan.present_type = Some("AAAA".to_string());
+        plan.present_type_value = Some(DNS_TYPE_AAAA);
+        plan.expected_answer_count = Some(0);
+        plan.expected_response_code = Some(0);
+        plan
+    }
+
+    #[test]
+    fn nodata_response_validates_noerror_empty_answer() {
+        let query = "probe-1014-0-nodata00bb.behavior.libcrafter.test.";
+        let raw = nodata_response_bytes(query, 0x73a1);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+
+        // The crate decodes the NODATA response: QR set, rcode 0 (NOERROR), no
+        // answers, the original question preserved.
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        assert!(dns.is_response());
+        assert_eq!(dns.rcode_value(), 0);
+        assert_eq!(dns.answers().len(), 0);
+        assert_eq!(dns.questions().first().unwrap().name(), query);
+
+        let plan = nodata_plan(query);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed for nodata, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nodata_with_answer_fails_payload() {
+        let query = "probe-1014-0-nodata00bb.behavior.libcrafter.test.";
+        // A responder that wrongly returns an A answer for the queried type must
+        // not pass the NODATA contract: the answer count is non-zero.
+        let dns = Dns::query(query, DNS_TYPE_A)
+            .id(0x73a1)
+            .response(true)
+            .answer(DnsRecord::a(query, Ipv4Addr::new(203, 0, 113, 7), 60));
+        let raw = (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = nodata_plan(query);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for nodata with answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nxdomain_rcode_fails_nodata() {
+        let query = "probe-1014-0-nodata00bb.behavior.libcrafter.test.";
+        // NXDOMAIN (rcode 3) is the absent-name case, not NODATA (the name
+        // exists). A NODATA plan must reject an rcode-3 response.
+        let dns = Dns::query(query, DNS_TYPE_A)
+            .id(0x73a1)
+            .response(true)
+            .rcode(DNS_RCODE_NXDOMAIN);
+        let raw = (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = nodata_plan(query);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for nxdomain rcode, got {other:?}"),
+        }
+    }
 }
