@@ -1724,6 +1724,128 @@ def _dhcp_discover_offer_probe_plan(
     }
 
 
+def _dhcp_request_ack_probe_plan(
+    *,
+    case_name: str = "dhcp-request-ack",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dhcp-request-ack`` behavioral case.
+
+    The stimulus is a BOOTP/DHCP Request (message type 3) built by libcrafter
+    and sent from the DHCP client port (68) to the server port (67) against a
+    controlled DHCP responder on a private L2 lab segment. The Request names the
+    address the client wants to commit in the requested-IP option (50) and the
+    chosen server in the server-identifier option (54), echoing the transaction
+    id (xid) and client hardware address (chaddr) from the prior Discover/Offer
+    exchange. The responder answers with an Ack (message type 5) that commits the
+    binding: the assigned address in ``yiaddr``, the server identifier (option
+    54), and the configuration/lease options (subnet 1, router 3, DNS 6, lease
+    51, renewal 58, rebinding 59).
+
+    The validation contract covers the decoded UDP/BOOTP/DHCP response: the
+    BOOTP opcode (reply), message type Ack, the echoed transaction id and client
+    hardware address, the assigned address (yiaddr), the server identifier, the
+    subnet mask, router, DNS, and lease timing options, and the response
+    direction (server -> client over ports 67 -> 68). Addresses stay in
+    documentation space: the assigned/requested address is in ``198.51.100.0/24``
+    and the lab transport uses the private endpoint pair.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    client_mac = dhcp_client_mac(profile, seed, sequence)
+    transaction_id = int.from_bytes(digest[0:4], "big") or 1
+    # DHCP uses fixed privileged ports: client 68 -> server 67.
+    source_port = 68
+    destination_port = 67
+    # The client requests the address it was previously offered; the responder
+    # commits the same address in the Ack ``yiaddr``.
+    assigned_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
+    requested_ipv4 = assigned_ipv4
+    subnet_mask = "255.255.255.0"
+    server_identifier = target_ipv4
+    router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
+    # A DNS server option (6) the responder hands back in documentation space.
+    dns_server_ipv4 = f"198.51.100.{1 + digest[6] % 250}"
+    lease_time = 3600 + 60 * (digest[5] % 60)
+    renewal_time = lease_time // 2
+    rebinding_time = (lease_time * 7) // 8
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dhcp_request",
+        "expected_response": "dhcp_ack",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "client_mac": client_mac,
+        "transaction_id": transaction_id,
+        "requested_ipv4": requested_ipv4,
+        "server_identifier": server_identifier,
+        "expected_message_type": "ack",
+        "expected_message_type_value": 5,
+        "expected_yiaddr": assigned_ipv4,
+        "expected_server_identifier": server_identifier,
+        "expected_subnet_mask": subnet_mask,
+        "expected_router_ipv4": router_ipv4,
+        "expected_dns_ipv4": dns_server_ipv4,
+        "expected_lease_time": lease_time,
+        "expected_renewal_time": renewal_time,
+        "expected_rebinding_time": rebinding_time,
+        "target_service": {
+            "required": True,
+            "kind": "dhcp-responder",
+            "port": destination_port,
+            "client_port": source_port,
+            "client_mac": client_mac,
+            "transaction_id": transaction_id,
+            "requested_ipv4": requested_ipv4,
+            "server_identifier": server_identifier,
+            "yiaddr": assigned_ipv4,
+            "subnet_mask": subnet_mask,
+            "router_ipv4": router_ipv4,
+            "dns_ipv4": dns_server_ipv4,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "op": "reply",
+            "op_value": 2,
+            "message_type": "ack",
+            "message_type_value": 5,
+            "transaction_id": transaction_id,
+            "client_hardware_address": client_mac,
+            "yiaddr": assigned_ipv4,
+            "server_identifier": server_identifier,
+            "subnet_mask": subnet_mask,
+            "router_ipv4": router_ipv4,
+            "dns_ipv4": dns_server_ipv4,
+            "lease_time": lease_time,
+            "renewal_time": renewal_time,
+            "rebinding_time": rebinding_time,
+            "direction": "server_to_client",
+        },
+    }
+
+
 def _ttl_expired_probe_plan(
     *,
     case_name: str = "ttl-expired",
@@ -1906,6 +2028,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-edns-opt": _dns_edns_opt_probe_plan,
     "dns-repeat-transaction": _dns_repeat_transaction_probe_plan,
     "dhcp-discover-offer": _dhcp_discover_offer_probe_plan,
+    "dhcp-request-ack": _dhcp_request_ack_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }
