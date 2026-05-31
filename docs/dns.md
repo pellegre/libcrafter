@@ -266,7 +266,7 @@ These are explicitly out of scope for the current DNS wire work:
 
 ## Validation coverage
 
-The DNS wire layer is validated against a reference backend (Scapy) through the
+The DNS wire layer is validated against the oracle reference backend through the
 `tools/oracle/` boundary. The suite validates packet construction, decode, and
 capture behavior, not DNS client, resolver, or server semantics. All cases use
 documentation address space and reserved names; offline is the default path and
@@ -301,7 +301,7 @@ a normalized-model comparison instead:
 - Compressed names compare as the normalized decoded model: libcrafter
   re-encodes names uncompressed, so the decoded `DnsName` agrees while the wire
   bytes intentionally differ from the compressed reference input.
-- SVCB/HTTPS RDATA is supplied as Scapy-owned raw bytes, because the reference
+- SVCB/HTTPS RDATA is supplied as backend-owned raw bytes, because the reference
   backend's high-level SvcParam encoder re-interprets known keys; the crate
   keeps each SvcParamValue opaque.
 - `\DDD` name escapes are flattened to literal text by the reference high-level

@@ -58,7 +58,7 @@ cargo test -p crafter --test resilience malformed_corpus_reports_structured_erro
 
 ### DNS Coverage
 
-The DNS family has an extensive Scapy-backed suite that validates packet
+The DNS family has an extensive reference-backed oracle suite that validates packet
 construction, decode, and capture behavior, not DNS client, resolver, or server
 semantics. It covers every implemented DNS group: header (id, QR, AA/TC/RD/RA/
 AD/CD flags, opcodes, rcodes, raw flags, section counts), names and compression,
@@ -70,23 +70,23 @@ Reproduce the DNS coverage offline, in pcap, and as a live dry-run; offline is
 the default and the others reuse the same case contract:
 
 ```sh
-tools/oracle/run offline --backend scapy --family dns --profile ci --seed 3001 --count 50
-tools/oracle/run pcap --backend scapy --family dns --profile ci --seed 3002 --count 50
-tools/oracle/run live --backend scapy --provider hetzner --dry-run --family dns --profile ci --seed 3003 --count 50 --direction live_exchange
+tools/oracle/run offline --family dns --profile ci --seed 3001 --count 50
+tools/oracle/run pcap --family dns --profile ci --seed 3002 --count 50
+tools/oracle/run live --provider hetzner --dry-run --family dns --profile ci --seed 3003 --count 50 --direction live_exchange
 tools/oracle/run specs suite --family dns --run
 ```
 
 Real packet exchange is opt-in and gated behind the protected provider workflow:
 
 ```sh
-tools/oracle/run live --backend scapy --provider hetzner --confirm-live-run --family dns --profile ci --count 50 --direction live_exchange
+tools/oracle/run live --provider hetzner --confirm-live-run --family dns --profile ci --count 50 --direction live_exchange
 ```
 
 A few DNS features are not strict-byte comparable and use raw bytes or a
 normalized decoded-model comparison: compressed names compare as the normalized
 model (libcrafter re-encodes uncompressed); SVCB/HTTPS RDATA is supplied as
-Scapy-owned raw bytes because the high-level SvcParam encoder re-interprets known
-keys; `\DDD` name escapes are flattened by the high-level encode; and malformed
+backend-owned raw bytes because the high-level SvcParam encoder re-interprets
+known keys; `\DDD` name escapes are flattened by the high-level encode; and malformed
 inputs are covered by the crate corpus and `resilience.rs`, not an offline oracle
 comparison. See [DNS wire coverage](dns.md) for the per-record contract.
 
@@ -112,16 +112,16 @@ unknown SAFE/UNSAFE preservation. Use a UDP-filtered corpus when changing
 `Udp`, `UdpOptions`, `UdpOption`, or oracle UDP option normalization:
 
 ```sh
-tools/oracle/run offline --backend scapy --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-offline
-tools/oracle/run offline --backend scapy --direction reference_to_libcrafter --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-reference-to-libcrafter
-tools/oracle/run offline --backend scapy --direction libcrafter_to_reference --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-libcrafter-to-reference
+tools/oracle/run offline --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-offline
+tools/oracle/run offline --direction reference_to_libcrafter --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-reference-to-libcrafter
+tools/oracle/run offline --direction libcrafter_to_reference --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-libcrafter-to-reference
 ```
 
 Pcap mode checks that the same UDP surplus bytes survive classic pcap
 write/read and raw-link normalization:
 
 ```sh
-tools/oracle/run pcap --backend scapy --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-pcap
+tools/oracle/run pcap --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-pcap
 cargo test -p crafter --test fixture_suite udp_options
 ```
 
@@ -131,8 +131,8 @@ provider matrix records provider-specific skips for cases such as IPv6
 zero-checksum status or DHCP-style L2 broadcast requirements:
 
 ```sh
-tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-local-dry-run
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 9868 --count 20 --dry-run --out target/oracle/udp-options-live-dry-run-matrix
+tools/oracle/run live --provider local-dry-run --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-local-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile smoke --seed 9868 --count 20 --dry-run --out target/oracle/udp-options-live-dry-run-matrix
 ```
 
 ## Live Validation

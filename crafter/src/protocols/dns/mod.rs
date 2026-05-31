@@ -732,7 +732,7 @@ mod dns_tests {
         // uncompressed on recompile, so the decoded DNS-name model is preserved
         // while the recompiled wire bytes intentionally differ from the
         // compressed input (the deterministic uncompressed encoder owns output
-        // form). This mirrors the Scapy-backed `dns-compressed-names` oracle case.
+        // form). This mirrors the reference-backed `dns-compressed-names` oracle case.
         let message: &[u8] = &[
             // Header: id=0x1234, flags=0x8180 (response, RD, RA), qd=1, an=3.
             0x12, 0x34, 0x81, 0x80, 0x00, 0x01, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00,
@@ -838,7 +838,7 @@ mod dns_tests {
     fn name_records_round_trip_through_a_compiled_packet() {
         // NS, CNAME, and PTR all carry their RDATA as a single nested
         // <domain-name>, so all three map to DnsRecordData::Name. This mirrors
-        // the Scapy-backed `dns-name-records` oracle case: an authoritative
+        // the reference-backed `dns-name-records` oracle case: an authoritative
         // response with one NS answer, one CNAME answer, and one PTR answer,
         // plus a root-adjacent target so a one-label-from-root name is
         // exercised. The whole message must survive build -> compile -> decode

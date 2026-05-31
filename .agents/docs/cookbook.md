@@ -369,10 +369,10 @@ For UDP options, keep generated-tool validation offline or dry-run unless a
 human has explicitly authorized a disposable provider endpoint:
 
 ```sh
-tools/oracle/run offline --backend scapy --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-agent-offline
-tools/oracle/run pcap --backend scapy --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-agent-pcap
-tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-agent-live-local-dry-run
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --backend scapy --profile smoke --seed 9868 --count 20 --dry-run --out target/oracle/udp-options-agent-live-dry-run-matrix
+tools/oracle/run offline --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-agent-offline
+tools/oracle/run pcap --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-agent-pcap
+tools/oracle/run live --provider local-dry-run --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-agent-live-local-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile smoke --seed 9868 --count 20 --dry-run --out target/oracle/udp-options-agent-live-dry-run-matrix
 ```
 
 Live validation routes through a provider. Use `local-dry-run` for agent and CI
@@ -388,8 +388,8 @@ provider disposable:
 
 ```sh
 if [ "${LIBCRAFTER_RUN_LIVE_UDP_OPTIONS:-0}" = "1" ]; then
-  tools/oracle/run live --backend scapy --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction reference_to_libcrafter --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-scapy-to-libcrafter
-  tools/oracle/run live --backend scapy --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction libcrafter_to_reference --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-libcrafter-to-scapy
+  tools/oracle/run live --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction reference_to_libcrafter --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-reference-to-libcrafter
+  tools/oracle/run live --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction libcrafter_to_reference --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-libcrafter-to-reference
 else
   echo "set LIBCRAFTER_RUN_LIVE_UDP_OPTIONS=1 to run guarded live UDP option validation"
 fi
