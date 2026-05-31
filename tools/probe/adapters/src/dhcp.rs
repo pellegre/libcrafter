@@ -243,10 +243,13 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let client_mac: MacAddr = required_str(plan.client_mac.as_deref(), "client_mac")?.parse()?;
     let transaction_id = required_u32(plan.transaction_id, "transaction_id")?;
 
-    let dhcp = if plan.case == "dhcp-request-ack" {
+    let dhcp = if plan.case == "dhcp-request-ack" || plan.case == "dhcp-request-nak" {
         // RFC 2131 section 4.3.2: a DHCPREQUEST in response to a DHCPOFFER names
         // the address it wants to commit in the requested-IP option (50) and the
-        // chosen server in the server-identifier option (54), echoing the xid.
+        // chosen server in the server-identifier option (54), echoing the xid. The
+        // `dhcp-request-nak` stimulus is the same SELECTING/INIT-REBOOT-style
+        // Request shape, except the requested-IP names an address outside the
+        // responder's served pool, which the server refuses with a DHCPNAK.
         let requested_ip: Ipv4Addr =
             required_str(plan.requested_ipv4.as_deref(), "requested_ipv4")?.parse()?;
         let server_identifier: Ipv4Addr =
@@ -553,6 +556,21 @@ pub fn validate_dhcp_candidate(
         })),
     }
 
+    // DHCP message (option 56) returned by the responder when the plan names it
+    // (RFC 2132 section 9.9). A DHCPNAK MAY carry a text message explaining the
+    // refusal; the decoded string option must match the planned message exactly so
+    // the option-56 text round-trips through libcrafter encode and decode.
+    if let Some(expected_message) = plan.expected_message.as_deref() {
+        match dhcp.message_value() {
+            Some(actual) if actual == expected_message => {}
+            actual => mismatches.push(json!({
+                "field": "dhcp.message",
+                "expected": expected_message,
+                "actual": actual,
+            })),
+        }
+    }
+
     // Client identifier (option 61) echoed by the responder when the plan names
     // it (RFC 2132 section 9.14; RFC 6842 makes echoing a MUST). Compare the
     // re-encoded decoded identifier against the planned option-61 payload so the
@@ -719,6 +737,7 @@ pub fn dhcp_json(dhcp: &Dhcp) -> Value {
             .and_then(|identifier| identifier.ok())
             .map(|identifier| hex_bytes(&identifier.encode())),
         "host_name": dhcp.host_name_value(),
+        "message": dhcp.message_value(),
         "subnet_mask": dhcp.subnet_mask_value().map(|address| address.to_string()),
         "routers": dhcp
             .routers()
@@ -1992,6 +2011,207 @@ mod tests {
             .transaction_id(plan.transaction_id.unwrap())
             .subnet_mask("255.255.255.0".parse().unwrap())
             .router(vec!["10.64.0.1".parse().unwrap()]);
+        let packet = Ipv4::new()
+            .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
+            .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp;
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    fn nak_plan() -> ProbePlan {
+        // RFC 2131 section 4.3.2: the client asks (option 50) for an address the
+        // server cannot grant (here a 192.0.2.0/24 address outside the served
+        // 198.51.100.0/24 pool) and names the chosen server (option 54). The server
+        // refuses with a DHCPNAK (type 6) that carries no allocation (yiaddr
+        // 0.0.0.0), no lease (no option 51), the server identifier (54), and an
+        // optional message (option 56) per RFC 2132 section 9.9.
+        let mut plan = base_plan("dhcp-request-nak");
+        plan.source_ipv4 = Some("10.64.0.10".to_string());
+        plan.destination_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
+        plan.source_port = Some(DHCP_CLIENT_PORT);
+        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
+        plan.transaction_id = Some(0x3903_f326);
+        plan.requested_ipv4 = Some("192.0.2.42".to_string());
+        plan.server_identifier = Some("10.64.0.20".to_string());
+        plan.expected_message_type_value = Some(DHCP_NAK);
+        plan.expected_yiaddr_zero = Some(true);
+        plan.expected_no_lease_time = Some(true);
+        plan.expected_server_identifier = Some("10.64.0.20".to_string());
+        plan.expected_message =
+            Some("requested address 192.0.2.42 is not on this network".to_string());
+        plan
+    }
+
+    /// Build the canonical Nak the controlled responder would unicast back: a
+    /// BOOTP reply refusing the request, with no allocated address (yiaddr
+    /// 0.0.0.0), no lease, the server identifier (54), and the message (56).
+    fn nak_packet(plan: &ProbePlan) -> Packet {
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let dhcp = Dhcp::nak(client_mac, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .message(plan.expected_message.as_deref().unwrap().to_string());
+        Ipv4::new()
+            .src(
+                plan.expected_reply_source_ipv4
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Ipv4Addr>()
+                    .unwrap(),
+            )
+            .dst(
+                plan.expected_reply_destination_ipv4
+                    .as_deref()
+                    .unwrap()
+                    .parse::<Ipv4Addr>()
+                    .unwrap(),
+            )
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp
+    }
+
+    #[test]
+    fn dhcp_request_nak_stimulus_compiles_with_invalid_requested_ip() {
+        let plan = nak_plan();
+        let packet = dhcp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let dhcp = decoded.layer::<Dhcp>().unwrap();
+
+        // Client 68 -> server 67; a SELECTING-style Request carrying the invalid
+        // requested IP (option 50) and the chosen server (option 54).
+        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Request));
+        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(
+            dhcp.requested_ip_address_value(),
+            Some("192.0.2.42".parse().unwrap())
+        );
+        assert_eq!(
+            dhcp.server_identifier_value(),
+            Some("10.64.0.20".parse().unwrap())
+        );
+        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+    }
+
+    #[test]
+    fn matching_nak_passes_validation() {
+        let plan = nak_plan();
+        let bytes = nak_packet(&plan).compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        // The Nak refuses the request: message type 6, no allocation, no lease, the
+        // server identifier (54), and the message (56) decode as planned.
+        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Nak));
+        assert_eq!(dhcp.your_ip_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(dhcp.lease_time_value(), None);
+        assert_eq!(
+            dhcp.message_value(),
+            Some("requested address 192.0.2.42 is not on this network")
+        );
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(
+            matches!(validation, CandidateValidation::Passed(_)),
+            "expected Passed, got {validation:?}"
+        );
+    }
+
+    #[test]
+    fn ack_instead_of_nak_is_wrong_payload() {
+        let plan = nak_plan();
+        // A server that wrongly grants the (invalid) request with an Ack reaches the
+        // right peer but fails the Nak contract (wrong message type, allocates an
+        // address, grants a lease).
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let dhcp = Dhcp::ack(client_mac, "192.0.2.42".parse().unwrap(), server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .lease_time(3600);
+        let packet = Ipv4::new()
+            .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
+            .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp;
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    #[test]
+    fn nak_missing_message_is_wrong_payload() {
+        let plan = nak_plan();
+        // A Nak that omits the message option (56) the plan requires reaches the
+        // right peer but fails the contract.
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let dhcp =
+            Dhcp::nak(client_mac, server_identifier).transaction_id(plan.transaction_id.unwrap());
+        let packet = Ipv4::new()
+            .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
+            .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / dhcp;
+        let bytes = packet.compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    #[test]
+    fn nak_with_wrong_message_is_wrong_payload() {
+        let mut plan = nak_plan();
+        let bytes = nak_packet(&plan).compile().unwrap().as_bytes().to_vec();
+        let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
+        // The responder returned its message, but the plan now expects different
+        // text: a payload mismatch on option 56.
+        plan.expected_message = Some("some other reason".to_string());
+        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    #[test]
+    fn nak_that_allocates_an_address_is_wrong_payload() {
+        let plan = nak_plan();
+        // RFC 2131 section 4.3.2: a DHCPNAK allocates no address. A Nak with a
+        // non-zero yiaddr reaches the right peer but violates the invariant.
+        let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
+        let server_identifier: Ipv4Addr = plan
+            .expected_server_identifier
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let dhcp = Dhcp::nak(client_mac, server_identifier)
+            .transaction_id(plan.transaction_id.unwrap())
+            .yiaddr("192.0.2.42".parse().unwrap())
+            .message(plan.expected_message.as_deref().unwrap().to_string());
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())

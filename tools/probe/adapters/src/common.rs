@@ -246,6 +246,13 @@ pub struct ProbePlan {
     pub expected_no_lease_time: Option<bool>,
     #[serde(default)]
     pub expected_server_identifier: Option<String>,
+    // RFC 2132 section 9.9: the optional DHCP message option (56), a text status
+    // message a server includes in a DHCPNAK (or DHCPDECLINE) to explain the
+    // refusal. `expected_message` is the text the responder must return in the Nak
+    // (`dhcp-request-nak`); a case that does not name a message leaves it unset and
+    // the validator skips the option-56 text check.
+    #[serde(default)]
+    pub expected_message: Option<String>,
     #[serde(default)]
     pub expected_subnet_mask: Option<String>,
     #[serde(default)]
@@ -586,7 +593,8 @@ fn dispatch_case(
             | "dhcp-parameter-request-list"
             | "dhcp-lease-time"
             | "dhcp-renewal-unicast-ack"
-            | "dhcp-inform-ack",
+            | "dhcp-inform-ack"
+            | "dhcp-request-nak",
         ) => dhcp::run_dhcp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -597,7 +605,8 @@ fn dispatch_case(
             | "dhcp-parameter-request-list"
             | "dhcp-lease-time"
             | "dhcp-renewal-unicast-ack"
-            | "dhcp-inform-ack",
+            | "dhcp-inform-ack"
+            | "dhcp-request-nak",
         ) => dhcp::run_dhcp_live(request, plan),
         _ => {
             // DHCP, ARP, and UDP behavioral cases are wired into their modules
@@ -752,6 +761,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_yiaddr_zero": plan.expected_yiaddr_zero,
         "expected_no_lease_time": plan.expected_no_lease_time,
         "expected_server_identifier": plan.expected_server_identifier,
+        "expected_message": plan.expected_message,
         "expected_subnet_mask": plan.expected_subnet_mask,
         "expected_router_ipv4": plan.expected_router_ipv4,
         "expected_dns_ipv4": plan.expected_dns_ipv4,
@@ -864,7 +874,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "dhcp-parameter-request-list"
         | "dhcp-lease-time"
         | "dhcp-renewal-unicast-ack"
-        | "dhcp-inform-ack" => {
+        | "dhcp-inform-ack"
+        | "dhcp-request-nak" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -906,6 +917,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-lease-time" => "dhcp_offer",
             "dhcp-renewal-unicast-ack" => "dhcp_ack",
             "dhcp-inform-ack" => "dhcp_ack",
+            "dhcp-request-nak" => "dhcp_nak",
             _ => "unknown",
         })
 }
@@ -1161,6 +1173,25 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "subnet_mask": plan.expected_subnet_mask,
             "router_ipv4": plan.expected_router_ipv4,
             "dns_ipv4": plan.expected_dns_ipv4,
+        }),
+        "dhcp-request-nak" => json!({
+            "required": true,
+            "kind": "dhcp-responder",
+            "port": plan.destination_port,
+            "client_port": plan.source_port,
+            "client_mac": plan.client_mac,
+            "transaction_id": plan.transaction_id,
+            // The client requests an address outside the served pool (option 50),
+            // so the responder refuses with a DHCPNAK rather than committing a
+            // binding. RFC 2131 section 4.3.2: the Nak allocates no address
+            // (yiaddr 0.0.0.0) and grants no lease (no option 51); it names the
+            // server in option 54 and MAY carry a message (option 56).
+            "requested_ipv4": plan.requested_ipv4,
+            "nak": true,
+            "yiaddr_zero": plan.expected_yiaddr_zero,
+            "no_lease_time": plan.expected_no_lease_time,
+            "server_identifier": plan.expected_server_identifier,
+            "message": plan.expected_message,
         }),
         _ => json!({}),
     }
