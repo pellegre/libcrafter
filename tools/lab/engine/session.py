@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+import time
 
 from . import wire_client
 from .model import (
@@ -160,6 +161,8 @@ def cleanup_created_endpoints(
     remote_artifact_root: str | None = None,
     endpoint_roles: Mapping[str, str] | None = None,
     command_records: Sequence[LabCommandPlan] = (),
+    destroy_attempts: int = 3,
+    destroy_retry_delay_seconds: float = 2.0,
 ) -> LabCleanupResult:
     """Collect artifacts and destroy created endpoints without raising on failures."""
 
@@ -197,25 +200,42 @@ def cleanup_created_endpoints(
 
     for endpoint_id in reversed(tracked_endpoint_ids):
         role = role_map.get(endpoint_id)
-        try:
-            response = wire.destroy(endpoint_id)
-        except Exception as exc:  # pragma: no cover - concrete clients vary.
-            teardown_attempts.append(_exception_attempt(endpoint_id, role, "destroy", exc))
-            errors.append(f"endpoint teardown failed for {endpoint_id}: {exc}")
-            continue
-        teardown_attempts.append(_response_attempt(endpoint_id, role, "destroy", response))
-        updated_command_records.append(
-            _response_command_plan(
-                response,
-                purpose=f"destroy endpoint {endpoint_id}",
-                role=role,
-                fallback_operation="wire.destroy",
-                fallback_argv=["tools/wire/run", "destroy-endpoint", endpoint_id, "--json"],
-                live_mutation=True,
-            )
-        )
-        if not bool(getattr(response, "ok", False)):
-            errors.append(_response_error(endpoint_id, "endpoint teardown", response))
+        destroy_error: str | None = None
+        for attempt_index in range(max(1, destroy_attempts)):
+            try:
+                response = wire.destroy(endpoint_id)
+            except Exception as exc:  # pragma: no cover - concrete clients vary.
+                teardown_attempts.append(
+                    _exception_attempt(endpoint_id, role, "destroy", exc)
+                )
+                destroy_error = f"endpoint teardown failed for {endpoint_id}: {exc}"
+            else:
+                teardown_attempts.append(
+                    _response_attempt(endpoint_id, role, "destroy", response)
+                )
+                updated_command_records.append(
+                    _response_command_plan(
+                        response,
+                        purpose=f"destroy endpoint {endpoint_id}",
+                        role=role,
+                        fallback_operation="wire.destroy",
+                        fallback_argv=[
+                            "tools/wire/run",
+                            "destroy-endpoint",
+                            endpoint_id,
+                            "--json",
+                        ],
+                        live_mutation=True,
+                    )
+                )
+                if bool(getattr(response, "ok", False)):
+                    destroy_error = None
+                    break
+                destroy_error = _response_error(endpoint_id, "endpoint teardown", response)
+            if attempt_index + 1 < max(1, destroy_attempts):
+                time.sleep(destroy_retry_delay_seconds)
+        if destroy_error is not None:
+            errors.append(destroy_error)
 
     cleanup_state = _cleanup_state(
         endpoint_ids=tracked_endpoint_ids,

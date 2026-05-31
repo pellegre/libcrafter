@@ -105,6 +105,7 @@ class LabCleanupTest(unittest.TestCase):
                 "endpoint-stimulus": "stimulus",
                 "endpoint-target": "target",
             },
+            destroy_retry_delay_seconds=0,
         )
 
         self.assertEqual(
@@ -114,7 +115,10 @@ class LabCleanupTest(unittest.TestCase):
                 ("endpoint-target", "/opt/libcrafter-lab/lab-cleanup/artifacts"),
             ],
         )
-        self.assertEqual(client.destroy_calls, ["endpoint-target", "endpoint-stimulus"])
+        self.assertEqual(
+            client.destroy_calls,
+            ["endpoint-target", "endpoint-target", "endpoint-target", "endpoint-stimulus"],
+        )
         self.assertEqual(result.cleanup_state["status"], "failed")
         self.assertEqual(
             result.cleanup_state["destroy_endpoint_ids"],
@@ -124,7 +128,30 @@ class LabCleanupTest(unittest.TestCase):
             "endpoint teardown failed for endpoint-target: destroy failed",
             result.cleanup_state["errors"],
         )
-        self.assertEqual(len(result.command_records), 4)
+        self.assertEqual(len(result.command_records), 6)
+
+    def test_cleanup_retries_destroy_until_success(self) -> None:
+        client = _FakeCleanupWireClient()
+        client.destroy_failure_sequences["endpoint-target"] = ["destroy busy", None]
+
+        result = cleanup_created_endpoints(
+            ["endpoint-stimulus", "endpoint-target"],
+            client=client,
+            remote_artifact_root="/opt/libcrafter-lab/lab-cleanup/artifacts",
+            endpoint_roles={
+                "endpoint-stimulus": "stimulus",
+                "endpoint-target": "target",
+            },
+            destroy_retry_delay_seconds=0,
+        )
+
+        self.assertEqual(
+            client.destroy_calls,
+            ["endpoint-target", "endpoint-target", "endpoint-stimulus"],
+        )
+        self.assertEqual(result.cleanup_state["status"], "completed")
+        self.assertEqual(result.cleanup_state["errors"], [])
+        self.assertEqual(len(result.command_records), 5)
 
 
 class _FailingCreateAdapter:
@@ -154,6 +181,7 @@ class _FakeCleanupWireClient:
         self.destroy_calls: list[str] = []
         self.collect_failures: dict[str, str] = {}
         self.destroy_failures: dict[str, str] = {}
+        self.destroy_failure_sequences: dict[str, list[str | None]] = {}
 
     def collect_artifacts(
         self,
@@ -174,6 +202,18 @@ class _FakeCleanupWireClient:
 
     def destroy(self, endpoint_id: str) -> "_FakeWireResponse":
         self.destroy_calls.append(endpoint_id)
+        sequence = self.destroy_failure_sequences.get(endpoint_id)
+        if sequence:
+            error = sequence.pop(0)
+            if error is None:
+                return _FakeWireResponse(operation="destroy", endpoint_id=endpoint_id)
+            return _FakeWireResponse(
+                operation="destroy",
+                endpoint_id=endpoint_id,
+                ok=False,
+                exit_code=38,
+                error=error,
+            )
         error = self.destroy_failures.get(endpoint_id)
         if error is not None:
             return _FakeWireResponse(
