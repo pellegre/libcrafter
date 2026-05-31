@@ -915,6 +915,125 @@ def _dns_txt_answer_probe_plan(
     }
 
 
+def _dns_mx_answer_probe_plan(
+    *,
+    case_name: str = "dns-mx-answer",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dns-mx-answer`` behavioral case.
+
+    An MX (QTYPE 15) query against the controlled UDP DNS responder on port 53.
+    The single answer carries structured MX RDATA: a 16-bit preference followed
+    by the exchange ``<domain-name>`` (encoded uncompressed so the wire rdlength
+    is ``2 + encoded-name length``). The case exercises composite RDATA decoding
+    where a numeric field and a domain name share one record. The validation
+    contract covers the transaction id, QR, rcode, question (name/type/class),
+    and the MX answer (name/type 15/class, the decoded preference and exchange
+    name, and the TTL) plus peer addresses and ports.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    destination_port = 53
+    query_name = dns_query_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    exchange_name = dns_exchange_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    # The preference is a 16-bit field; keep it deterministic and non-zero so the
+    # encoded/decoded value is unambiguous.
+    mx_preference = 1 + int.from_bytes(digest[8:10], "big") % 0xFFFE
+    answer_ttl = 60 + digest[9] % 180
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": "MX",
+        "query_type_value": 15,
+        "query_class": "IN",
+        "query_class_value": 1,
+        "expected_answer_name": query_name,
+        "expected_answer_type": "MX",
+        "expected_answer_type_value": 15,
+        "expected_answer_class": "IN",
+        "expected_answer_class_value": 1,
+        # The MX RDATA is a preference + exchange domain name. The endpoint
+        # compares the decoded structured fields against these.
+        "expected_mx_preference": mx_preference,
+        "expected_mx_exchange": exchange_name,
+        "expected_response_code": 0,
+        "expected_response_flags": ["qr", "aa"],
+        "answer_ttl": answer_ttl,
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": "MX",
+            "mx_preference": mx_preference,
+            "mx_exchange": exchange_name,
+            "answer_ttl": answer_ttl,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": 0,
+            "question": {
+                "name": query_name,
+                "type": "MX",
+                "type_value": 15,
+                "class": "IN",
+                "class_value": 1,
+            },
+            "answer": {
+                "name": query_name,
+                "type": "MX",
+                "type_value": 15,
+                "class": "IN",
+                "class_value": 1,
+                "preference": mx_preference,
+                "exchange": exchange_name,
+                "ttl": answer_ttl,
+            },
+        },
+    }
+
+
+def dns_exchange_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
+    """Return the deterministic MX exchange (mail server) domain name.
+
+    The exchange shares the controlled ``libcrafter.test.`` suffix as the queried
+    name but uses a distinct ``mail-`` label so the MX RDATA points at a separate
+    owner name. Stable per (case, profile, seed, sequence).
+    """
+
+    label = dns_label(profile)
+    suffix = digest.hex()[12:22]
+    return f"mail-{seed}-{sequence}-{suffix}.{label}.libcrafter.test."
+
+
 def dns_txt_strings(*, profile: str, seed: int, sequence: int, digest: bytes) -> list[str]:
     """Return the deterministic TXT character-strings for a TXT-answer case.
 
@@ -1143,6 +1262,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-nxdomain": _dns_nxdomain_probe_plan,
     "dns-nodata": _dns_nodata_probe_plan,
     "dns-txt-answer": _dns_txt_answer_probe_plan,
+    "dns-mx-answer": _dns_mx_answer_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }
