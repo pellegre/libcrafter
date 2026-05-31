@@ -102,7 +102,7 @@ BEHAVIOR_DNS_CASES: tuple[ProbeCase, ...] = (
         protocol="dns",
     ),
     _behavior_case(
-        name="dns-txt",
+        name="dns-txt-answer",
         description="Send a TXT query and validate the TXT answer.",
         stimulus="dns_query",
         expected_response="dns_response",

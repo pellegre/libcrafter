@@ -814,6 +814,124 @@ def _dns_nodata_probe_plan(
     }
 
 
+def _dns_txt_answer_probe_plan(
+    *,
+    case_name: str = "dns-txt-answer",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``dns-txt-answer`` behavioral case.
+
+    A TXT (QTYPE 16) query against the controlled UDP DNS responder on port 53.
+    The answer carries one or more deterministic DNS character-strings (each a
+    length-prefixed byte string, 1 length octet + up to 255 bytes) so the case
+    exercises variable-length RDATA: string-length encoding on the wire and the
+    decoded RDATA character-string list. The validation contract covers the
+    transaction id, QR, rcode, question (name/type/class), and the TXT answer
+    (name/type/class, the full ordered list of character-strings, and the TTL)
+    plus peer addresses and ports.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    query_id = int.from_bytes(digest[0:2], "big") or 1
+    source_port = 40000 + int.from_bytes(digest[2:4], "big") % 20000
+    destination_port = 53
+    query_name = dns_query_name(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    txt_strings = dns_txt_strings(profile=profile, seed=seed, sequence=sequence, digest=digest)
+    answer_ttl = 60 + digest[9] % 180
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "dns_query",
+        "expected_response": "dns_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "query_id": query_id,
+        "query_name": query_name,
+        "query_type": "TXT",
+        "query_type_value": 16,
+        "query_class": "IN",
+        "query_class_value": 1,
+        "expected_answer_name": query_name,
+        "expected_answer_type": "TXT",
+        "expected_answer_type_value": 16,
+        "expected_answer_class": "IN",
+        "expected_answer_class_value": 1,
+        # The TXT RDATA is a list of character-strings. ``expected_txt_strings``
+        # is the ordered, deterministic content the responder emits and the
+        # endpoint compares the decoded character-string list against.
+        "expected_txt_strings": txt_strings,
+        "expected_response_code": 0,
+        "expected_response_flags": ["qr", "aa"],
+        "answer_ttl": answer_ttl,
+        "target_service": {
+            "required": True,
+            "kind": "udp-dns-responder",
+            "port": destination_port,
+            "query_name": query_name,
+            "query_type": "TXT",
+            "txt_strings": txt_strings,
+            "answer_ttl": answer_ttl,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "query_id": query_id,
+            "qr": True,
+            "response_code": 0,
+            "question": {
+                "name": query_name,
+                "type": "TXT",
+                "type_value": 16,
+                "class": "IN",
+                "class_value": 1,
+            },
+            "answer": {
+                "name": query_name,
+                "type": "TXT",
+                "type_value": 16,
+                "class": "IN",
+                "class_value": 1,
+                "txt_strings": txt_strings,
+                "ttl": answer_ttl,
+            },
+        },
+    }
+
+
+def dns_txt_strings(*, profile: str, seed: int, sequence: int, digest: bytes) -> list[str]:
+    """Return the deterministic TXT character-strings for a TXT-answer case.
+
+    Two character-strings are returned so the case exercises a multi-string TXT
+    RDATA (each string is length-prefixed on the wire). The content is stable per
+    (case, profile, seed, sequence) and stays within the controlled
+    ``libcrafter.test`` namespace; each string is well under the 255-octet
+    per-character-string limit.
+    """
+
+    label = dns_label(profile)
+    return [
+        f"libcrafter-probe-txt={label}-{seed}-{sequence}",
+        f"v=libcrafter1 id={digest.hex()[:16]}",
+    ]
+
+
 def dns_canonical_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
     """Return the deterministic canonical (CNAME target) name for a chain case.
 
@@ -1024,6 +1142,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "dns-cname-chain": _dns_cname_chain_probe_plan,
     "dns-nxdomain": _dns_nxdomain_probe_plan,
     "dns-nodata": _dns_nodata_probe_plan,
+    "dns-txt-answer": _dns_txt_answer_probe_plan,
     "ttl-expired": _ttl_expired_probe_plan,
     "arp-resolution": _arp_resolution_probe_plan,
 }

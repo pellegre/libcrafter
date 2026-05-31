@@ -10,6 +10,11 @@
 //! module per protocol family: [`icmp`], [`tcp`], [`dns`], [`udp`], [`dhcp`],
 //! and [`arp`]. The binary is a thin wrapper that calls [`common::run`].
 
+// The `plan_json` builder serializes the full probe-plan contract through a
+// single `json!` literal; the field count pushes the macro past serde_json's
+// default recursion limit, so raise it for the crate.
+#![recursion_limit = "256"]
+
 pub mod arp;
 pub mod common;
 pub mod dhcp;
@@ -53,6 +58,7 @@ pub(crate) mod test_support {
             expected_answer_type: None,
             expected_answer_type_value: None,
             expected_answer_data: None,
+            expected_txt_strings: None,
             expected_answer_count: None,
             original_name: None,
             absent_name: None,

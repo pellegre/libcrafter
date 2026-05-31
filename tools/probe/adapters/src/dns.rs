@@ -382,6 +382,53 @@ pub fn validate_dns_candidate(
         }
     }
 
+    // TXT answers carry variable-length RDATA: a list of DNS character-strings.
+    // The contract validates the answer owner name, type (16), class, the full
+    // ordered list of decoded character-strings, and the TTL. Comparing the whole
+    // list (not just "any string matches") is what exercises the string-length
+    // encoding/decoding and preserves ordering.
+    if let Some(expected_txt) = plan.expected_txt_strings.as_ref() {
+        let expected_answer_name = canonical_dns_name(required_str(
+            plan.expected_answer_name.as_deref(),
+            "expected_answer_name",
+        )?);
+        let expected_answer_type = plan.expected_answer_type_value.unwrap_or(DNS_TYPE_TXT);
+        let expected_answer_class = plan.query_class_value.unwrap_or(DNS_CLASS_IN);
+        let expected_strings: Vec<Vec<u8>> = expected_txt
+            .iter()
+            .map(|value| value.as_bytes().to_vec())
+            .collect();
+        let matching_answer = dns.answers().iter().find(|answer| {
+            answer.name() == expected_answer_name
+                && answer.record_type() == expected_answer_type
+                && answer.class() == expected_answer_class
+                && dns_txt_strings(answer.data()).as_deref() == Some(expected_strings.as_slice())
+        });
+        match matching_answer {
+            Some(answer) => {
+                if let Some(expected_ttl) = plan.answer_ttl {
+                    if answer.ttl() != expected_ttl {
+                        mismatches.push(json!({
+                            "field": "dns.answer.ttl",
+                            "expected": expected_ttl,
+                            "actual": answer.ttl(),
+                        }));
+                    }
+                }
+            }
+            None => mismatches.push(json!({
+                "field": "dns.answer",
+                "expected": {
+                    "name": expected_answer_name,
+                    "type": expected_answer_type,
+                    "class": expected_answer_class,
+                    "txt_strings": expected_txt,
+                },
+                "actual": dns_answers_json(dns),
+            })),
+        }
+    }
+
     // Multi-answer chain cases (the CNAME chain) additionally require a specific
     // non-terminal answer (the CNAME whose RDATA is the canonical domain name)
     // and an exact answer count, so a response that decoded the terminal A but
@@ -456,6 +503,7 @@ pub fn dns_type_value(plan: &ProbePlan) -> ExampleResult<u16> {
     {
         "A" => Ok(DNS_TYPE_A),
         "AAAA" => Ok(DNS_TYPE_AAAA),
+        "TXT" => Ok(DNS_TYPE_TXT),
         other => Err(format!("unsupported DNS query type: {other}").into()),
     }
 }
@@ -466,6 +514,16 @@ pub fn canonical_dns_name(name: &str) -> String {
         ".".to_string()
     } else {
         format!("{trimmed}.")
+    }
+}
+
+/// Return the ordered TXT character-strings when `data` is a TXT RDATA, or
+/// `None` for any other record data. Used by the TXT answer contract to compare
+/// the full decoded character-string list (not just a single string).
+pub fn dns_txt_strings(data: &DnsRecordData) -> Option<Vec<Vec<u8>>> {
+    match data {
+        DnsRecordData::Txt(strings) => Some(strings.clone()),
+        _ => None,
     }
 }
 
@@ -916,6 +974,128 @@ mod tests {
             CandidateValidation::WrongPayload(_) => {}
             other => panic!("expected WrongPayload for nodata with answer, got {other:?}"),
         }
+    }
+
+    /// Build the IPv4/UDP/DNS TXT response a controlled responder emits: QR set,
+    /// rcode 0, the original question echoed, and a single TXT answer whose RDATA
+    /// is the ordered list of DNS character-strings.
+    fn txt_response_bytes(query_name: &str, strings: &[&str], ttl: u32, query_id: u16) -> Vec<u8> {
+        let txt = DnsRecordData::Txt(strings.iter().map(|s| s.as_bytes().to_vec()).collect());
+        let dns = Dns::query(query_name, DNS_TYPE_TXT)
+            .id(query_id)
+            .response(true)
+            .answer(DnsRecord::new(
+                query_name,
+                DNS_TYPE_TXT,
+                DNS_CLASS_IN,
+                ttl,
+                txt,
+            ));
+        (Ipv4::new()
+            .src(Ipv4Addr::new(10, 77, 0, 20))
+            .dst(Ipv4Addr::new(10, 77, 0, 10))
+            / Udp::new().sport(53).dport(40000)
+            / dns)
+            .compile()
+            .expect("txt response compiles")
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn txt_plan(query_name: &str, strings: &[&str], ttl: u32) -> ProbePlan {
+        let mut plan = base_plan("dns-txt-answer");
+        plan.source_ipv4 = Some("10.77.0.10".to_string());
+        plan.destination_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_source_ipv4 = Some("10.77.0.20".to_string());
+        plan.expected_reply_destination_ipv4 = Some("10.77.0.10".to_string());
+        plan.source_port = Some(40000);
+        plan.destination_port = Some(53);
+        plan.query_id = Some(0x515a);
+        plan.query_name = Some(query_name.to_string());
+        plan.query_type = Some("TXT".to_string());
+        plan.query_type_value = Some(DNS_TYPE_TXT);
+        plan.query_class_value = Some(DNS_CLASS_IN);
+        plan.expected_answer_name = Some(query_name.to_string());
+        plan.expected_answer_type = Some("TXT".to_string());
+        plan.expected_answer_type_value = Some(DNS_TYPE_TXT);
+        plan.expected_txt_strings = Some(strings.iter().map(|s| s.to_string()).collect());
+        plan.answer_ttl = Some(ttl);
+        plan.expected_response_code = Some(0);
+        plan
+    }
+
+    #[test]
+    fn txt_response_validates_multi_string_answer() {
+        let query = "probe-1015-0-txt000abcd.behavior.libcrafter.test.";
+        let strings = [
+            "libcrafter-probe-txt=behavior-1015-0",
+            "v=libcrafter1 id=deadbeef",
+        ];
+        let raw = txt_response_bytes(query, &strings, 120, 0x515a);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+
+        // The crate decodes the TXT RDATA as an ordered character-string list.
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        assert_eq!(dns.answers().len(), 1);
+        let answer = &dns.answers()[0];
+        assert_eq!(answer.record_type(), DNS_TYPE_TXT);
+        match answer.data() {
+            DnsRecordData::Txt(decoded) => {
+                let decoded: Vec<String> = decoded
+                    .iter()
+                    .map(|bytes| String::from_utf8(bytes.clone()).unwrap())
+                    .collect();
+                assert_eq!(decoded, strings.to_vec());
+            }
+            other => panic!("expected TXT rdata, got {other:?}"),
+        }
+
+        let plan = txt_plan(query, &strings, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed for txt answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn txt_wrong_string_content_fails_payload() {
+        let query = "probe-1015-0-txt000abcd.behavior.libcrafter.test.";
+        let strings = ["expected-one", "expected-two"];
+        // The responder returns different content than the plan expects.
+        let raw = txt_response_bytes(query, &["expected-one", "WRONG-two"], 120, 0x515a);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = txt_plan(query, &strings, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong txt content, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn txt_wrong_ttl_fails_payload() {
+        let query = "probe-1015-0-txt000abcd.behavior.libcrafter.test.";
+        let strings = ["one", "two"];
+        // Correct strings but a TTL that does not match the contract.
+        let raw = txt_response_bytes(query, &strings, 999, 0x515a);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
+        let plan = txt_plan(query, &strings, 120);
+        match validate_dns_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload for wrong txt ttl, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn txt_response_dns_packet_builds_txt_query() {
+        let query = "probe-1015-0-txt000abcd.behavior.libcrafter.test.";
+        let plan = txt_plan(query, &["one", "two"], 120);
+        let packet = dns_packet(&plan).unwrap();
+        let dns = packet.layer::<Dns>().expect("dns layer present");
+        assert_eq!(
+            dns.questions().first().unwrap().question_type(),
+            DNS_TYPE_TXT
+        );
+        assert_eq!(dns.id_value(), 0x515a);
     }
 
     #[test]
