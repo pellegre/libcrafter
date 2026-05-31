@@ -97,7 +97,7 @@ class OracleBootstrapTest(unittest.TestCase):
                 self.assertNotIn("rm -rf /root/libcrafter", command[2])
 
     def test_private_provider_bootstrap_configures_requested_private_ipv4(self) -> None:
-        for provider in ("hetzner", "qemu"):
+        for provider in PROVIDERS:
             adapter = resolve_live_provider(provider)
             endpoints = adapter.endpoints(dry_run=True)
             with self.subTest(provider=provider):
@@ -116,7 +116,7 @@ class OracleBootstrapTest(unittest.TestCase):
                 self.assertIn("LIBCRAFTER_PRIVATE_CIDR=", script)
                 self.assertIn("private-interface.env", script)
 
-    def test_lan_provider_bootstrap_does_not_configure_private_ipv4(self) -> None:
+    def test_non_private_topology_bootstrap_does_not_configure_private_ipv4(self) -> None:
         adapter = resolve_live_provider("virtualbox")
         endpoints = adapter.endpoints(dry_run=True)
 
@@ -126,7 +126,10 @@ class OracleBootstrapTest(unittest.TestCase):
             peer=endpoints["reference_backend"],
             remote_archive="/tmp/repo.tar.gz",
             remote_dir="/root/libcrafter",
-            topology_metadata=_endpoint_bootstrap_topology(adapter),
+            topology_metadata={
+                "private_network": False,
+                "bridged_lan": True,
+            },
         )
 
         self.assertNotIn("configure_private_ipv4", command[2])
