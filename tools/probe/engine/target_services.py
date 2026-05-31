@@ -1,0 +1,821 @@
+"""Probe target service planning, setup scripts, and cleanup.
+
+The probe target endpoint exposes controlled, disposable services and kernel
+behavior the stimulus endpoint exercises. This module owns:
+
+- the dry-run/live ``target_service_setup`` plan,
+- typed service descriptors for the DNS responder, DHCP responder, UDP
+  responder, ARP alias/sysctl setup, and closed UDP port validation,
+- the deterministic, artifact-producing setup script for the live target,
+- the cleanup script invocation that tears those services down.
+
+Keeping the target-service surface here lets the behavior suite grow DNS, DHCP,
+UDP, and ARP target setup in one place without enlarging the CLI orchestration
+module. The lab-wire transport helpers stay in :mod:`cli`; the wire setup and
+cleanup entry points accept them so this module has no import cycle with the
+CLI.
+
+The service descriptors are pure, deterministic data: each describes one
+controlled service the live setup script must stand up (or one piece of kernel
+state it must verify) and the cleanup commands that dispose of it. They make the
+target contract inspectable from agent code and from dry-run reports without
+running anything.
+"""
+
+from __future__ import annotations
+
+import json
+import posixpath
+import shlex
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .capabilities import (
+    SKIP_REQUIRES_CONTROLLED_ROUTER,
+    SKIP_REQUIRES_CONTROLLED_SERVICE,
+    SKIP_REQUIRES_LINK_LAYER,
+)
+from .lab import TARGET_ROLE
+from .model import JSONObject, JSONValue, json_object
+
+
+# A lab-wire helper that resolves an endpoint mapping to its endpoint ID.
+EndpointIdResolver = Callable[..., str]
+# A lab-wire helper that resolves an endpoint mapping to its bind IPv4 address.
+EndpointIpv4Resolver = Callable[..., str]
+# A lab-wire helper that runs a wire command response and records its artifacts.
+WireCommandRunner = Callable[..., JSONObject]
+
+
+# --------------------------------------------------------------------------- #
+# Typed service descriptors
+# --------------------------------------------------------------------------- #
+#
+# Each descriptor is a deterministic, inspectable plan for one controlled
+# target service or one piece of verified kernel state. They are the typed
+# contract the live setup script renders and the dry-run report advertises.
+
+
+@dataclass(frozen=True, slots=True)
+class TargetServiceDescriptor:
+    """A controlled, disposable service the target endpoint stands up.
+
+    ``setup_commands`` and ``cleanup_commands`` are deterministic shell
+    fragments; ``artifacts`` lists the relative artifact paths the running
+    service produces so the live path can collect inspectable evidence.
+    """
+
+    name: str
+    protocol: str
+    purpose: str
+    bind_ipv4: str
+    source_ipv4: str
+    port: int | None = None
+    requires: list[str] = field(default_factory=list)
+    setup_commands: list[str] = field(default_factory=list)
+    cleanup_commands: list[str] = field(default_factory=list)
+    artifacts: list[str] = field(default_factory=list)
+    metadata: JSONObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class KernelStateDescriptor:
+    """A piece of target kernel state the setup verifies or configures.
+
+    Used for closed UDP/TCP port validation, ARP alias addresses, and ARP
+    sysctl tuning. ``verify_commands`` assert preconditions; ``setup_commands``
+    apply state; ``cleanup_commands`` restore it.
+    """
+
+    name: str
+    purpose: str
+    bind_ipv4: str
+    source_ipv4: str
+    port: int | None = None
+    verify_commands: list[str] = field(default_factory=list)
+    setup_commands: list[str] = field(default_factory=list)
+    cleanup_commands: list[str] = field(default_factory=list)
+    metadata: JSONObject = field(default_factory=dict)
+
+
+def dns_responder_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    port: int,
+    artifact_root: str,
+) -> TargetServiceDescriptor:
+    """Describe the controlled UDP DNS responder bound to the target address."""
+
+    return TargetServiceDescriptor(
+        name="dns-responder",
+        protocol="udp",
+        purpose="dns-query",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        port=port,
+        requires=["python3", SKIP_REQUIRES_CONTROLLED_SERVICE],
+        setup_commands=[
+            f"check udp port {bind_ipv4}:{port} is free",
+            f"start dns-responder.py on {bind_ipv4}:{port}",
+        ],
+        cleanup_commands=[
+            f"kill dns-responder on {bind_ipv4}:{port}",
+        ],
+        artifacts=[
+            posixpath.join(artifact_root, f"dns-responder-{port}.stdout.txt"),
+            posixpath.join(artifact_root, f"dns-responder-{port}.stderr.txt"),
+            posixpath.join(artifact_root, f"dns-responder-{port}.pid"),
+        ],
+        metadata={"runtime": "python3", "deterministic": True},
+    )
+
+
+def dhcp_responder_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    port: int,
+    artifact_root: str,
+) -> TargetServiceDescriptor:
+    """Describe the controlled DHCP/BOOTP responder on a private L2 segment.
+
+    DHCP requires link-layer broadcast on a private lab network, so the
+    descriptor records the link-layer requirement that gates it.
+    """
+
+    return TargetServiceDescriptor(
+        name="dhcp-responder",
+        protocol="udp",
+        purpose="dhcp",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        port=port,
+        requires=["python3", SKIP_REQUIRES_LINK_LAYER, SKIP_REQUIRES_CONTROLLED_SERVICE],
+        setup_commands=[
+            f"check udp port {bind_ipv4}:{port} is free",
+            f"start dhcp-responder.py on {bind_ipv4}:{port}",
+        ],
+        cleanup_commands=[
+            f"kill dhcp-responder on {bind_ipv4}:{port}",
+        ],
+        artifacts=[
+            posixpath.join(artifact_root, f"dhcp-responder-{port}.stdout.txt"),
+            posixpath.join(artifact_root, f"dhcp-responder-{port}.stderr.txt"),
+            posixpath.join(artifact_root, f"dhcp-responder-{port}.pid"),
+        ],
+        metadata={"runtime": "python3", "deterministic": True, "layer": "link"},
+    )
+
+
+def udp_responder_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    port: int,
+    artifact_root: str,
+) -> TargetServiceDescriptor:
+    """Describe the controlled UDP echo/transform responder."""
+
+    return TargetServiceDescriptor(
+        name="udp-responder",
+        protocol="udp",
+        purpose="udp-echo",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        port=port,
+        requires=["python3", SKIP_REQUIRES_CONTROLLED_SERVICE],
+        setup_commands=[
+            f"check udp port {bind_ipv4}:{port} is free",
+            f"start udp-responder.py on {bind_ipv4}:{port}",
+        ],
+        cleanup_commands=[
+            f"kill udp-responder on {bind_ipv4}:{port}",
+        ],
+        artifacts=[
+            posixpath.join(artifact_root, f"udp-responder-{port}.stdout.txt"),
+            posixpath.join(artifact_root, f"udp-responder-{port}.stderr.txt"),
+            posixpath.join(artifact_root, f"udp-responder-{port}.pid"),
+        ],
+        metadata={"runtime": "python3", "deterministic": True},
+    )
+
+
+def closed_udp_port_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    port: int,
+) -> KernelStateDescriptor:
+    """Describe a closed UDP port whose kernel emits ICMP port-unreachable."""
+
+    return KernelStateDescriptor(
+        name="closed-udp-port",
+        purpose="udp-port-unreachable",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        port=port,
+        verify_commands=[
+            f"check udp port {bind_ipv4}:{port} is free",
+        ],
+        metadata={"expects": "icmp_port_unreachable", "deterministic": True},
+    )
+
+
+def arp_alias_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    alias_ipv4: str,
+    interface: str,
+) -> KernelStateDescriptor:
+    """Describe an ARP alias address added to the target interface."""
+
+    quoted_alias = shlex.quote(f"{alias_ipv4}/32")
+    quoted_iface = shlex.quote(interface)
+    return KernelStateDescriptor(
+        name="arp-alias",
+        purpose="arp-alias-address",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        setup_commands=[
+            f"ip addr add {quoted_alias} dev {quoted_iface}",
+        ],
+        cleanup_commands=[
+            f"ip addr del {quoted_alias} dev {quoted_iface} || true",
+        ],
+        metadata={
+            "alias_ipv4": alias_ipv4,
+            "interface": interface,
+            "layer": "link",
+            "deterministic": True,
+        },
+    )
+
+
+def arp_sysctl_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    interface: str,
+) -> KernelStateDescriptor:
+    """Describe ARP sysctl tuning and neighbor-cache flush for the target."""
+
+    quoted_iface = shlex.quote(interface)
+    arp_ignore = f"net.ipv4.conf.{interface}.arp_ignore"
+    arp_announce = f"net.ipv4.conf.{interface}.arp_announce"
+    return KernelStateDescriptor(
+        name="arp-sysctl",
+        purpose="arp-neighbor-setup",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        setup_commands=[
+            f"sysctl -w {shlex.quote(arp_ignore + '=0')}",
+            f"sysctl -w {shlex.quote(arp_announce + '=0')}",
+            f"ip neigh flush dev {quoted_iface} || true",
+        ],
+        cleanup_commands=[
+            f"ip neigh flush dev {quoted_iface} || true",
+        ],
+        metadata={"interface": interface, "layer": "link", "deterministic": True},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Target service setup plan (dry-run + live shape)
+# --------------------------------------------------------------------------- #
+
+
+def target_service_setup_plan(
+    *,
+    probe_plans: Sequence[JSONObject],
+    dry_run: bool,
+) -> JSONObject:
+    """Return the ``target_service_setup`` plan for a probe run.
+
+    The shape is the stable contract consumed by the dry-run report and the
+    live target setup. ``starts_services`` is only true on a live run that has
+    at least one service to stand up; dry-run never starts services.
+    """
+
+    tcp_open_plans = plans_by_destination_port(
+        plan for plan in probe_plans if plan.get("case") == "tcp-syn-open"
+    )
+    tcp_closed_plans = plans_by_destination_port(
+        plan for plan in probe_plans if plan.get("case") == "tcp-syn-closed"
+    )
+    dns_plans = dns_probe_plans(probe_plans)
+    dns_plans_by_port = plans_by_destination_port(dns_plans)
+    return {
+        "role": "target",
+        "planned": True,
+        "starts_services": not dry_run and bool(tcp_open_plans or dns_plans_by_port),
+        "dry_run_starts_services": False,
+        "services": [
+            *[
+                {
+                    "name": "tcp-open-listener",
+                    "protocol": "tcp",
+                    "port": port,
+                    "purpose": "tcp-syn-open",
+                    "deterministic": True,
+                    **target_service_address_fields(plan),
+                }
+                for port, plan in tcp_open_plans.items()
+            ],
+            *[
+                {
+                    "name": "dns-responder",
+                    "protocol": "udp",
+                    "port": port,
+                    "purpose": "dns-query",
+                    "deterministic": True,
+                    "query_count": sum(
+                        1
+                        for plan in dns_plans
+                        if int(plan.get("destination_port", 0)) == port
+                    ),
+                    **target_service_address_fields(plan),
+                    "log_paths": [
+                        f"live-artifacts/probe/target-services/dns-responder-{port}.stdout.txt",
+                        f"live-artifacts/probe/target-services/dns-responder-{port}.stderr.txt",
+                    ],
+                }
+                for port, plan in dns_plans_by_port.items()
+            ],
+        ],
+        "closed_tcp_ports": [
+            {
+                "port": port,
+                "state": "verified-unbound" if not dry_run else "planned-unbound",
+                "purpose": "tcp-syn-closed",
+                "deterministic": True,
+                **target_service_address_fields(plan),
+            }
+            for port, plan in tcp_closed_plans.items()
+        ],
+        "controlled_router": {
+            "available": False,
+            "skip_reason": SKIP_REQUIRES_CONTROLLED_ROUTER,
+        },
+    }
+
+
+def plans_by_destination_port(plans: Iterable[JSONObject]) -> dict[int, JSONObject]:
+    """Map each plan's destination port to the first plan that used it."""
+
+    by_port: dict[int, JSONObject] = {}
+    for plan in plans:
+        port = int(plan["destination_port"])
+        by_port.setdefault(port, plan)
+    return by_port
+
+
+def target_service_address_fields(plan: Mapping[str, JSONValue]) -> JSONObject:
+    """Return the bind/source IPv4 fields for a plan's target service."""
+
+    target_service = _json_mapping(
+        plan.get("target_service", {}),
+        "probe_plan.target_service",
+    )
+    bind_ipv4 = _string_or(
+        target_service.get("bind_ipv4"),
+        _string_or(plan.get("destination_ipv4"), ""),
+    )
+    source_ipv4 = _string_or(
+        target_service.get("source_ipv4"),
+        _string_or(plan.get("source_ipv4"), ""),
+    )
+    fields: JSONObject = {}
+    if bind_ipv4:
+        fields["bind_ipv4"] = bind_ipv4
+    if source_ipv4:
+        fields["source_ipv4"] = source_ipv4
+    return fields
+
+
+# --------------------------------------------------------------------------- #
+# Plan filters and small helpers
+# --------------------------------------------------------------------------- #
+
+
+def tcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the TCP-SYN probe plans (open and closed) in order."""
+
+    return [
+        plan
+        for plan in probe_plans
+        if str(plan.get("case", "")).startswith("tcp-syn-")
+    ]
+
+
+def dns_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the DNS-query probe plans in order."""
+
+    return [plan for plan in probe_plans if plan.get("case") == "dns-query"]
+
+
+def dedupe_ints(values: Iterable[int]) -> list[int]:
+    """Return the integer sequence with duplicates removed, order preserved."""
+
+    return list(dict.fromkeys(values))
+
+
+def _string_or(value: object, default: str) -> str:
+    return value if isinstance(value, str) and value else default
+
+
+def _json_mapping(value: object, name: str) -> JSONObject:
+    if isinstance(value, Mapping):
+        return json_object(value, name)
+    return {}
+
+
+# --------------------------------------------------------------------------- #
+# Live target setup / cleanup over the lab-wire transport
+# --------------------------------------------------------------------------- #
+
+
+def prepare_wire_probe_target(
+    *,
+    wire: object,
+    target_endpoint: Mapping[str, JSONValue],
+    artifact_root: str,
+    probe_plans: Sequence[JSONObject],
+    output_dir: Path,
+    endpoint_id_resolver: EndpointIdResolver,
+    endpoint_ipv4_resolver: EndpointIpv4Resolver,
+    run_wire_command: WireCommandRunner,
+) -> JSONObject | None:
+    """Stand up controlled target services for a live probe run.
+
+    Returns ``None`` when no target service is required. The lab-wire transport
+    helpers are injected so this module stays free of an import cycle with the
+    CLI orchestration module.
+    """
+
+    tcp_plans = tcp_probe_plans(probe_plans)
+    dns_plans = dns_probe_plans(probe_plans)
+    if not tcp_plans and not dns_plans:
+        return None
+    endpoint_id = endpoint_id_resolver(target_endpoint, role=TARGET_ROLE)
+    bind_ipv4 = endpoint_ipv4_resolver(target_endpoint, role=TARGET_ROLE)
+    open_ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in tcp_plans
+        if plan.get("case") == "tcp-syn-open"
+    )
+    closed_ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in tcp_plans
+        if plan.get("case") == "tcp-syn-closed"
+    )
+    script = target_service_setup_script(
+        artifact_root=artifact_root,
+        bind_ipv4=bind_ipv4,
+        open_ports=open_ports,
+        closed_ports=closed_ports,
+        dns_plans=dns_plans,
+    )
+    return run_wire_command(
+        wire.exec(endpoint_id, ["bash", "-lc", script], timeout=60),
+        output_dir=output_dir,
+        label="probe-target-setup",
+    )
+
+
+def cleanup_wire_probe_target(
+    *,
+    wire: object,
+    target_endpoint: Mapping[str, JSONValue],
+    artifact_root: str,
+    output_dir: Path,
+    endpoint_id_resolver: EndpointIdResolver,
+    run_wire_command: WireCommandRunner,
+) -> JSONObject:
+    """Run the disposable target cleanup script over the lab-wire transport."""
+
+    endpoint_id = endpoint_id_resolver(target_endpoint, role=TARGET_ROLE)
+    cleanup_script = posixpath.join(artifact_root, "cleanup.sh")
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            f"if [ -x {shlex.quote(cleanup_script)} ]; then {shlex.quote(cleanup_script)}; fi",
+        ]
+    )
+    return run_wire_command(
+        wire.exec(endpoint_id, ["bash", "-lc", script], timeout=60),
+        output_dir=output_dir,
+        label="probe-target-cleanup",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Deterministic, artifact-producing setup script
+# --------------------------------------------------------------------------- #
+
+
+def target_service_setup_script(
+    *,
+    artifact_root: str,
+    bind_ipv4: str,
+    open_ports: Sequence[int],
+    closed_ports: Sequence[int],
+    dns_plans: Sequence[JSONObject],
+) -> str:
+    """Render the deterministic target setup script.
+
+    The script verifies closed ports, starts TCP listeners and the DNS
+    responder, records a cleanup script, and writes per-service artifacts so
+    the live run is inspectable.
+    """
+
+    dns_plan_json = json.dumps(list(dns_plans), sort_keys=True)
+    dns_ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in dns_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
+    lines = [
+        "set -euo pipefail",
+        f"artifact_root={shlex.quote(artifact_root)}",
+        f"tcp_bind_ipv4={shlex.quote(bind_ipv4)}",
+        f"dns_bind_ipv4={shlex.quote(bind_ipv4)}",
+        'mkdir -p "$artifact_root"',
+        'cleanup="$artifact_root/cleanup.sh"',
+        ': > "$cleanup"',
+        'chmod 700 "$cleanup"',
+        "check_port_free() {",
+        "  python3 - \"$1\" \"$2\" <<'PY'",
+        "import socket",
+        "import sys",
+        "bind_ip = sys.argv[1]",
+        "port = int(sys.argv[2])",
+        "sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)",
+        "try:",
+        "    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+        "    sock.bind((bind_ip, port))",
+        "except OSError as exc:",
+        "    print(f'tcp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
+        "    sys.exit(1)",
+        "finally:",
+        "    sock.close()",
+        "PY",
+        "}",
+    ]
+    for port in dns_ports:
+        lines.extend(
+            [
+                "python3 - \"$dns_bind_ipv4\" \"$1\" <<'PY'".replace("$1", str(port)),
+                "import socket",
+                "import sys",
+                "bind_ip = sys.argv[1]",
+                "port = int(sys.argv[2])",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+                "try:",
+                "    sock.bind((bind_ip, port))",
+                "except OSError as exc:",
+                "    print(f'udp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
+                "    sys.exit(1)",
+                "finally:",
+                "    sock.close()",
+                "PY",
+            ]
+        )
+    for port in closed_ports:
+        lines.append(f"check_port_free \"$tcp_bind_ipv4\" {port}")
+        lines.append(f"echo closed_port_{port}=free")
+    for port in open_ports:
+        listener_path = posixpath.join(artifact_root, f"tcp-listener-{port}.py")
+        stdout_path = posixpath.join(artifact_root, f"tcp-listener-{port}.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, f"tcp-listener-{port}.stderr.txt")
+        pid_path = posixpath.join(artifact_root, f"tcp-listener-{port}.pid")
+        lines.extend(
+            [
+                f"check_port_free \"$tcp_bind_ipv4\" {port}",
+                f"cat > {shlex.quote(listener_path)} <<'PY'",
+                "import signal",
+                "import socket",
+                "import sys",
+                "",
+                "stop = False",
+                "",
+                "def handle_stop(_signum, _frame):",
+                "    global stop",
+                "    stop = True",
+                "",
+                "signal.signal(signal.SIGTERM, handle_stop)",
+                "signal.signal(signal.SIGINT, handle_stop)",
+                "bind_ip = sys.argv[1]",
+                "port = int(sys.argv[2])",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)",
+                "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+                "sock.bind((bind_ip, port))",
+                "sock.listen(128)",
+                "sock.settimeout(1.0)",
+                "print(f'listening on {bind_ip}:{port}', flush=True)",
+                "while not stop:",
+                "    try:",
+                "        conn, _addr = sock.accept()",
+                "    except socket.timeout:",
+                "        continue",
+                "    conn.close()",
+                "sock.close()",
+                "PY",
+                (
+                    f"python3 {shlex.quote(listener_path)} \"$tcp_bind_ipv4\" {port} "
+                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.5",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                f"  echo listener_{port}=failed >&2",
+                "  exit 73",
+                "fi",
+                f"echo listener_{port}=running",
+            ]
+        )
+    if dns_ports:
+        zone_path = posixpath.join(artifact_root, "dns-zone.json")
+        service_path = posixpath.join(artifact_root, "dns-responder.py")
+        lines.extend(
+            [
+                f"cat > {shlex.quote(zone_path)} <<'JSON'",
+                dns_plan_json,
+                "JSON",
+                f"cat > {shlex.quote(service_path)} <<'PY'",
+                "import ipaddress",
+                "import json",
+                "import signal",
+                "import socket",
+                "import struct",
+                "import sys",
+                "import time",
+                "",
+                "stop = False",
+                "",
+                "def handle_stop(_signum, _frame):",
+                "    global stop",
+                "    stop = True",
+                "",
+                "signal.signal(signal.SIGTERM, handle_stop)",
+                "signal.signal(signal.SIGINT, handle_stop)",
+                "",
+                "zone_path, bind_ip, port_text = sys.argv[1:4]",
+                "port = int(port_text)",
+                "plans = json.load(open(zone_path, encoding='utf-8'))",
+                "records = {}",
+                "for plan in plans:",
+                "    name = str(plan['query_name']).lower().rstrip('.') + '.'",
+                "    qtype = int(plan['query_type_value'])",
+                "    records[(name, qtype)] = {",
+                "        'answer_data': str(plan['expected_answer_data']),",
+                "        'ttl': int(plan.get('answer_ttl', 60)),",
+                "    }",
+                "",
+                "def read_name(message, offset):",
+                "    labels = []",
+                "    jumped = False",
+                "    consumed = 0",
+                "    seen = set()",
+                "    while True:",
+                "        if offset >= len(message):",
+                "            raise ValueError('name offset out of range')",
+                "        length = message[offset]",
+                "        if length & 0xc0 == 0xc0:",
+                "            if offset + 1 >= len(message):",
+                "                raise ValueError('truncated compression pointer')",
+                "            pointer = ((length & 0x3f) << 8) | message[offset + 1]",
+                "            if pointer in seen:",
+                "                raise ValueError('compression pointer loop')",
+                "            seen.add(pointer)",
+                "            if not jumped:",
+                "                consumed += 2",
+                "            offset = pointer",
+                "            jumped = True",
+                "            continue",
+                "        offset += 1",
+                "        if not jumped:",
+                "            consumed += 1",
+                "        if length == 0:",
+                "            return '.'.join(labels).lower() + '.', consumed",
+                "        if length & 0xc0:",
+                "            raise ValueError('unsupported dns label kind')",
+                "        label = message[offset:offset + length]",
+                "        if len(label) != length:",
+                "            raise ValueError('truncated dns label')",
+                "        labels.append(label.decode('ascii'))",
+                "        offset += length",
+                "        if not jumped:",
+                "            consumed += length",
+                "",
+                "def encode_name(name):",
+                "    out = bytearray()",
+                "    for label in name.rstrip('.').split('.'):",
+                "        raw = label.encode('ascii')",
+                "        out.append(len(raw))",
+                "        out.extend(raw)",
+                "    out.append(0)",
+                "    return bytes(out)",
+                "",
+                "def response_for(query):",
+                "    if len(query) < 12:",
+                "        raise ValueError('query shorter than dns header')",
+                "    txid, flags, qdcount, _ancount, _nscount, _arcount = struct.unpack('!HHHHHH', query[:12])",
+                "    if qdcount < 1:",
+                "        raise ValueError('query has no question')",
+                "    name, consumed = read_name(query, 12)",
+                "    question_end = 12 + consumed + 4",
+                "    if question_end > len(query):",
+                "        raise ValueError('truncated dns question')",
+                "    qtype, qclass = struct.unpack('!HH', query[12 + consumed:question_end])",
+                "    question = query[12:question_end]",
+                "    record = records.get((name, qtype))",
+                "    rd = flags & 0x0100",
+                "    if record is None or qclass != 1:",
+                "        header = struct.pack('!HHHHHH', txid, 0x8000 | rd | 3, 1, 0, 0, 0)",
+                "        return header + question, {'name': name, 'qtype': qtype, 'rcode': 3}",
+                "    if qtype == 1:",
+                "        rdata = ipaddress.IPv4Address(record['answer_data']).packed",
+                "    elif qtype == 28:",
+                "        rdata = ipaddress.IPv6Address(record['answer_data']).packed",
+                "    else:",
+                "        raise ValueError(f'unsupported qtype {qtype}')",
+                "    answer = b'\\xc0\\x0c' + struct.pack('!HHIH', qtype, 1, record['ttl'], len(rdata)) + rdata",
+                "    header = struct.pack('!HHHHHH', txid, 0x8000 | rd | 0x0400 | 0x0080, 1, 1, 0, 0)",
+                "    return header + question + answer, {'name': name, 'qtype': qtype, 'rcode': 0}",
+                "",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+                "sock.bind((bind_ip, port))",
+                "sock.settimeout(1.0)",
+                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port}), flush=True)",
+                "while not stop:",
+                "    try:",
+                "        data, addr = sock.recvfrom(4096)",
+                "    except socket.timeout:",
+                "        continue",
+                "    try:",
+                "        response, meta = response_for(data)",
+                "        sock.sendto(response, addr)",
+                "        meta.update({'event': 'answered', 'client': addr[0], 'client_port': addr[1]})",
+                "        print(json.dumps(meta, sort_keys=True), flush=True)",
+                "    except Exception as exc:",
+                "        print(json.dumps({'event': 'error', 'error': str(exc)}), file=sys.stderr, flush=True)",
+                "sock.close()",
+                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
+                "PY",
+            ]
+        )
+    for port in dns_ports:
+        stdout_path = posixpath.join(artifact_root, f"dns-responder-{port}.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, f"dns-responder-{port}.stderr.txt")
+        pid_path = posixpath.join(artifact_root, f"dns-responder-{port}.pid")
+        lines.extend(
+            [
+                (
+                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'dns-responder.py'))} "
+                    f"{shlex.quote(posixpath.join(artifact_root, 'dns-zone.json'))} "
+                    f"\"$dns_bind_ipv4\" {port} "
+                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.5",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                f"  echo dns_responder_{port}=failed >&2",
+                "  exit 73",
+                "fi",
+                f"echo dns_responder_{port}=running",
+            ]
+        )
+    lines.append("echo target_service_setup=ok")
+    return "\n".join(lines)
+
+
+__all__ = [
+    "KernelStateDescriptor",
+    "TargetServiceDescriptor",
+    "arp_alias_descriptor",
+    "arp_sysctl_descriptor",
+    "cleanup_wire_probe_target",
+    "closed_udp_port_descriptor",
+    "dedupe_ints",
+    "dhcp_responder_descriptor",
+    "dns_probe_plans",
+    "dns_responder_descriptor",
+    "plans_by_destination_port",
+    "prepare_wire_probe_target",
+    "target_service_address_fields",
+    "target_service_setup_plan",
+    "target_service_setup_script",
+    "tcp_probe_plans",
+    "udp_responder_descriptor",
+]
