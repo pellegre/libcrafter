@@ -3300,6 +3300,205 @@ mod arp {
 
         assert_eq!(decoded.compile().unwrap().as_bytes(), frame.as_bytes());
     }
+
+    #[test]
+    fn arp_variable_length_nonstandard_hardware_and_protocol_build_compile_decode_inspect() {
+        // Verify the generic ARP model end to end, independent of the oracle
+        // generator: build an ARP with BOTH a nonstandard hardware length
+        // (8 octets) AND a nonstandard protocol length (16 octets) through the
+        // raw byte builders, compile it inside an Ethernet frame, decode it back
+        // through the link root, and inspect the result. Because neither width
+        // matches the standard 6-octet MAC / 4-octet IPv4 form, the typed
+        // accessors must all decline (`None`) while the raw byte accessors
+        // preserve every input octet exactly.
+        //
+        // Addresses use documentation space only: RFC 7042 MAC OUI
+        // 00:00:5e:00:53:xx padded to 8 octets and RFC 3849 2001:db8:: payloads.
+        let sender_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x10, 0xaa, 0xbb];
+        let target_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x20, 0xcc, 0xdd];
+        let sender_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+        ];
+        let target_pa = vec![
+            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+        ];
+
+        // The raw builders auto-fill the matching length fields from the byte
+        // counts, so HLN/PLN follow the nonstandard widths without an explicit
+        // length setter.
+        let arp = Arp::new()
+            .hardware_type(super::ARP_HRD_INFINIBAND)
+            .protocol_type(0x86dd)
+            .operation(ArpOperation::Request)
+            .sender_hardware(sender_hw.clone())
+            .sender_protocol(sender_pa.clone())
+            .target_hardware(target_hw.clone())
+            .target_protocol(target_pa.clone());
+
+        assert_eq!(arp.hardware_len_value(), 8);
+        assert_eq!(arp.protocol_len_value(), 16);
+
+        // Compile inside an Ethernet frame (the ARP link root) and decode back.
+        let frame = (Ethernet::new().src(src_mac()).dst(MacAddr::BROADCAST) / arp)
+            .compile()
+            .expect("nonstandard variable-length ARP must compile");
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, frame.as_bytes())
+            .expect("nonstandard variable-length ARP must decode");
+        let decoded_arp = decoded
+            .layer::<Arp>()
+            .expect("decoded packet must carry an Arp layer");
+
+        // The fixed header and both nonstandard lengths survive the decode.
+        assert_eq!(decoded_arp.hardware_type_value(), super::ARP_HRD_INFINIBAND);
+        assert_eq!(decoded_arp.protocol_type_value(), 0x86dd);
+        assert_eq!(decoded_arp.hardware_len_value(), 8);
+        assert_eq!(decoded_arp.protocol_len_value(), 16);
+        assert_eq!(decoded_arp.opcode_value(), ArpOperation::Request as u16);
+
+        // Raw accessors preserve every input byte exactly across the round trip.
+        assert_eq!(decoded_arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(decoded_arp.sender_protocol_bytes_value(), sender_pa);
+        assert_eq!(decoded_arp.target_hardware_bytes_value(), target_hw);
+        assert_eq!(decoded_arp.target_protocol_bytes_value(), target_pa);
+
+        // Neither typed accessor family matches these nonstandard widths, so
+        // every one declines rather than inventing an address.
+        assert_eq!(decoded_arp.sender_mac(), None);
+        assert_eq!(decoded_arp.target_mac(), None);
+        assert_eq!(decoded_arp.sender_ipv4(), None);
+        assert_eq!(decoded_arp.target_ipv4(), None);
+
+        // Inspection keeps the nonstandard bytes visible: the typed *_addr
+        // views fall back to raw hex and the explicit *_bytes views agree.
+        assert_eq!(inspection_value(decoded_arp, "hardware_len"), "8");
+        assert_eq!(inspection_value(decoded_arp, "protocol_len"), "16");
+        assert_eq!(
+            inspection_value(decoded_arp, "sender_hardware_addr"),
+            "00 00 5e 00 53 10 aa bb"
+        );
+        assert_eq!(
+            inspection_value(decoded_arp, "sender_hardware_bytes"),
+            "00 00 5e 00 53 10 aa bb"
+        );
+        assert_eq!(
+            inspection_value(decoded_arp, "target_protocol_bytes"),
+            "20 01 0d b8 00 00 00 00 00 00 00 00 00 00 00 02"
+        );
+
+        // The decoded stack recompiles to the identical frame bytes.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), frame.as_bytes());
+    }
+
+    #[test]
+    fn arp_variable_length_explicit_lengths_with_ipv4_type_decline_typed_ipv4() {
+        // A second variable-length case anchored on an EXPLICIT length setter:
+        // an IPv4 protocol type carried over a deliberately nonstandard 2-octet
+        // protocol address and a 3-octet hardware address. Decode splits by the
+        // honored HLN/PLN and preserves the bytes, but because the widths do not
+        // match standard MAC/IPv4 the typed accessors decline even though the
+        // protocol type is IPv4 -- the typed IPv4 view keys off BOTH the type
+        // and a four-octet length.
+        let sender_hw = vec![0xde, 0xad, 0xbe];
+        let target_hw = vec![0xca, 0xfe, 0x99];
+        let sender_pa = vec![0xc0, 0x00]; // 192.0 -- truncated, only 2 octets
+        let target_pa = vec![0x02, 0x01];
+
+        let arp = Arp::new()
+            .protocol_type(super::ETHERTYPE_IPV4)
+            .hardware_len(3)
+            .protocol_len(2)
+            .operation(ArpOperation::Request)
+            .sender_hardware(sender_hw.clone())
+            .sender_protocol(sender_pa.clone())
+            .target_hardware(target_hw.clone())
+            .target_protocol(target_pa.clone());
+
+        let frame = (Ethernet::new().src(src_mac()).dst(MacAddr::BROADCAST) / arp)
+            .compile()
+            .expect("explicit nonstandard lengths must compile");
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, frame.as_bytes())
+            .expect("explicit nonstandard lengths must decode");
+        let decoded_arp = decoded
+            .layer::<Arp>()
+            .expect("decoded packet must carry an Arp layer");
+
+        assert_eq!(decoded_arp.protocol_type_value(), super::ETHERTYPE_IPV4);
+        assert_eq!(decoded_arp.hardware_len_value(), 3);
+        assert_eq!(decoded_arp.protocol_len_value(), 2);
+
+        // Raw accessors preserve the exact bytes...
+        assert_eq!(decoded_arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(decoded_arp.sender_protocol_bytes_value(), sender_pa);
+        assert_eq!(decoded_arp.target_hardware_bytes_value(), target_hw);
+        assert_eq!(decoded_arp.target_protocol_bytes_value(), target_pa);
+
+        // ...while every typed accessor declines: 3-octet hardware is not a MAC,
+        // and a 2-octet protocol address is not an IPv4 address even under the
+        // IPv4 protocol type.
+        assert_eq!(decoded_arp.sender_mac(), None);
+        assert_eq!(decoded_arp.target_mac(), None);
+        assert_eq!(decoded_arp.sender_ipv4(), None);
+        assert_eq!(decoded_arp.target_ipv4(), None);
+
+        assert_eq!(decoded.compile().unwrap().as_bytes(), frame.as_bytes());
+    }
+
+    #[test]
+    fn arp_raw_address_nonstandard_lengths_round_trip_byte_exact_and_decline_typed() {
+        // A raw-address-focused variable-length case (named for the
+        // arp_raw_address filter): build with the canonical raw byte setters at
+        // nonstandard widths, compile, decode, and confirm the raw byte
+        // accessors round-trip byte-exact while the typed MAC/IPv4 accessors
+        // return None. This proves the raw byte path -- not the convenience
+        // MAC/IPv4 helpers -- is the generic backbone of the model.
+        //
+        // Documentation address space only: RFC 7042 MAC OUI extended to 7
+        // octets, RFC 3849 2001:db8:: protocol payloads at 5 octets.
+        let sender_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x30, 0x77];
+        let target_hw = vec![0x00, 0x00, 0x5e, 0x00, 0x53, 0x40, 0x88];
+        let sender_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0x05];
+        let target_pa = vec![0x20, 0x01, 0x0d, 0xb8, 0x06];
+
+        let arp = Arp::new()
+            .hardware_type(super::ARP_HRD_ATM)
+            .protocol_type(0x86dd)
+            .opcode(0x0fa0) // unknown numeric opcode, preserved as-is
+            .sender_hardware_bytes(sender_hw.clone())
+            .target_hardware_bytes(target_hw.clone())
+            .sender_protocol_bytes(sender_pa.clone())
+            .target_protocol_bytes(target_pa.clone())
+            .hardware_len(7)
+            .protocol_len(5);
+
+        let frame = (Ethernet::new().src(src_mac()).dst(MacAddr::BROADCAST) / arp)
+            .compile()
+            .expect("raw nonstandard-length ARP must compile");
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, frame.as_bytes())
+            .expect("raw nonstandard-length ARP must decode");
+        let decoded_arp = decoded
+            .layer::<Arp>()
+            .expect("decoded packet must carry an Arp layer");
+
+        assert_eq!(decoded_arp.hardware_type_value(), super::ARP_HRD_ATM);
+        assert_eq!(decoded_arp.protocol_type_value(), 0x86dd);
+        assert_eq!(decoded_arp.hardware_len_value(), 7);
+        assert_eq!(decoded_arp.protocol_len_value(), 5);
+        assert_eq!(decoded_arp.opcode_value(), 0x0fa0);
+
+        // Raw byte accessors preserve every octet.
+        assert_eq!(decoded_arp.sender_hardware_bytes_value(), sender_hw);
+        assert_eq!(decoded_arp.target_hardware_bytes_value(), target_hw);
+        assert_eq!(decoded_arp.sender_protocol_bytes_value(), sender_pa);
+        assert_eq!(decoded_arp.target_protocol_bytes_value(), target_pa);
+
+        // Typed accessors decline the nonstandard widths.
+        assert_eq!(decoded_arp.sender_mac(), None);
+        assert_eq!(decoded_arp.target_mac(), None);
+        assert_eq!(decoded_arp.sender_ipv4(), None);
+        assert_eq!(decoded_arp.target_ipv4(), None);
+
+        assert_eq!(decoded.compile().unwrap().as_bytes(), frame.as_bytes());
+    }
 }
 
 #[cfg(test)]
