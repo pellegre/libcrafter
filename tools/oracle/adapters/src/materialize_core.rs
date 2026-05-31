@@ -795,11 +795,58 @@ fn icmp_layer(plan: &Value) -> ExampleResult<Icmp> {
     let mut layer = Icmp::new()
         .type_(icmp_type(required(fields, &["type"])?, false)?)
         .code(u8_value(required(fields, &["code"])?)?);
-    if let Some(value) = optional(fields, &["id", "identifier"]) {
-        layer = layer.id(u16_value(value)?);
+    let has_rest_of_header = if let Some(value) = optional(fields, &["rest_of_header"]) {
+        layer = layer.rest_of_header(fixed_4_bytes(value, "icmp.rest_of_header")?);
+        true
+    } else {
+        false
+    };
+    if !has_rest_of_header {
+        if let Some(value) = optional(fields, &["id", "identifier"]) {
+            layer = layer.id(u16_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["seq", "sequence"]) {
+            layer = layer.seq(u16_value(value)?);
+        }
     }
-    if let Some(value) = optional(fields, &["seq", "sequence"]) {
-        layer = layer.seq(u16_value(value)?);
+    if let Some(value) = optional(fields, &["pointer"]) {
+        layer = layer.pointer(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["gateway"]) {
+        layer = layer.gateway(ipv4_text(value)?);
+    }
+    if let Some(value) = optional(fields, &["length", "len"]) {
+        layer = layer.length(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["next_hop_mtu", "mtu_next_hop", "mtu"]) {
+        layer = layer.mtu_next_hop(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["num_addrs", "router_num_addrs"]) {
+        layer = layer.num_addrs(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["addr_entry_size", "router_address_entry_size"]) {
+        layer = layer.addr_entry_size(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["lifetime", "router_lifetime"]) {
+        layer = layer.lifetime(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_flags"]) {
+        layer = layer.extended_flags(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_l_bit", "l_bit"]) {
+        layer = layer.extended_l_bit(bool_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_state"]) {
+        layer = layer.extended_state(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_active"]) {
+        layer = layer.extended_active(bool_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_ipv4"]) {
+        layer = layer.extended_ipv4(bool_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["extended_ipv6"]) {
+        layer = layer.extended_ipv6(bool_value(value)?);
     }
     if let Some(value) = optional(fields, &["checksum", "chksum"]) {
         layer = layer.chksum(u16_value(value)?);
@@ -1471,13 +1518,90 @@ fn parse_ipv4_list(value: &str) -> ExampleResult<Vec<Ipv4Addr>> {
 
 fn payload_bytes(plan: &Value) -> ExampleResult<Vec<u8>> {
     let fields = layer_fields(plan, "payload")?;
-    if let Some(value) = optional(fields, &["hex", "bytes_hex"]) {
-        return decode_hex(text_value(value)?);
+    let mut bytes = if let Some(value) = optional(fields, &["hex", "bytes_hex"]) {
+        decode_hex(text_value(value)?)?
+    } else if let Some(value) = optional(fields, &["text", "value"]) {
+        text_value(value)?.as_bytes().to_vec()
+    } else {
+        return Err(
+            "payload materialization requires bytes in hex, bytes_hex, text, or value".into(),
+        );
+    };
+
+    let mut prefix = icmp_payload_prefix_bytes(plan)?;
+    if prefix.is_empty() {
+        Ok(bytes)
+    } else {
+        prefix.append(&mut bytes);
+        Ok(prefix)
     }
-    if let Some(value) = optional(fields, &["text", "value"]) {
-        return Ok(text_value(value)?.as_bytes().to_vec());
+}
+
+fn icmp_payload_prefix_bytes(plan: &Value) -> ExampleResult<Vec<u8>> {
+    let Some(fields) = optional_layer_fields(plan, "icmp")? else {
+        return Ok(Vec::new());
+    };
+
+    let mut bytes = Vec::new();
+    if let Some(value) = optional(fields, &["type"]) {
+        match icmp_type(value, false)? {
+            ICMP_TIMESTAMP | ICMP_TIMESTAMP_REPLY => {
+                bytes.extend_from_slice(
+                    &optional(fields, &["originate_timestamp"])
+                        .map(u32_value)
+                        .transpose()?
+                        .unwrap_or(0)
+                        .to_be_bytes(),
+                );
+                bytes.extend_from_slice(
+                    &optional(fields, &["receive_timestamp"])
+                        .map(u32_value)
+                        .transpose()?
+                        .unwrap_or(0)
+                        .to_be_bytes(),
+                );
+                bytes.extend_from_slice(
+                    &optional(fields, &["transmit_timestamp"])
+                        .map(u32_value)
+                        .transpose()?
+                        .unwrap_or(0)
+                        .to_be_bytes(),
+                );
+            }
+            ICMP_ADDRESS_MASK_REQUEST | ICMP_ADDRESS_MASK_REPLY => {
+                if let Some(value) = optional(fields, &["address_mask"]) {
+                    bytes.extend_from_slice(&ipv4_text(value)?.octets());
+                }
+            }
+            _ => {}
+        }
     }
-    Err("payload materialization requires bytes in hex, bytes_hex, text, or value".into())
+
+    if let Some(value) = optional(fields, &["embedded_header"]) {
+        bytes.extend_from_slice(&option_bytes(value)?);
+    }
+    if let Some(value) = optional(fields, &["router_addresses"]) {
+        bytes.extend_from_slice(&router_address_bytes(value)?);
+    }
+    if let Some(value) = optional(fields, &["extension_bytes"]) {
+        bytes.extend_from_slice(&option_bytes(value)?);
+    }
+
+    Ok(bytes)
+}
+
+fn router_address_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    for entry in array_values(value)? {
+        let object = entry
+            .as_object()
+            .ok_or_else(|| format!("router address entry must be an object, got {entry:?}"))?;
+        let address = ipv4_text(required(object, &["address", "rdata"])?)?;
+        let preference = u32_value(required(object, &["preference"])?)?;
+        bytes.extend_from_slice(&address.octets());
+        bytes.extend_from_slice(&preference.to_be_bytes());
+    }
+    Ok(bytes)
 }
 
 fn layer_fields<'a>(plan: &'a Value, layer: &str) -> ExampleResult<&'a Map<String, Value>> {
@@ -1533,6 +1657,23 @@ fn optional<'a>(fields: &'a Map<String, Value>, names: &[&str]) -> Option<&'a Va
         }
     }
     None
+}
+
+fn optional_layer_fields<'a>(
+    plan: &'a Value,
+    layer: &str,
+) -> ExampleResult<Option<&'a Map<String, Value>>> {
+    let Some(fields) = plan.get("fields").and_then(Value::as_object) else {
+        return Ok(None);
+    };
+    fields
+        .get(layer)
+        .map(|value| {
+            value
+                .as_object()
+                .ok_or_else(|| format!("{layer} fields must be an object").into())
+        })
+        .transpose()
 }
 
 fn text_required<'a>(fields: &'a Map<String, Value>, names: &[&str]) -> ExampleResult<&'a str> {
@@ -1637,7 +1778,7 @@ fn ip_protocol(value: &Value) -> ExampleResult<u8> {
             "icmp" => Ok(IPPROTO_ICMP),
             "tcp" => Ok(IPPROTO_TCP),
             "udp" => Ok(IPPROTO_UDP),
-            "unknown" => Ok(253),
+            "payload" | "raw" | "unknown" => Ok(253),
             _ => u8_text(text),
         };
     }
@@ -1755,6 +1896,33 @@ fn icmp_type(value: &Value, ipv6: bool) -> ExampleResult<u8> {
             } else {
                 ICMP_TIME_EXCEEDED
             }),
+            "source-quench" if !ipv6 => Ok(ICMP_SOURCE_QUENCH),
+            "redirect" if !ipv6 => Ok(ICMP_REDIRECT),
+            "router-advertisement" if !ipv6 => Ok(ICMP_ROUTER_ADVERTISEMENT),
+            "router-solicitation" if !ipv6 => Ok(ICMP_ROUTER_SOLICITATION),
+            "timestamp" if !ipv6 => Ok(ICMP_TIMESTAMP),
+            "timestamp-reply" if !ipv6 => Ok(ICMP_TIMESTAMP_REPLY),
+            "information-request" if !ipv6 => Ok(ICMP_INFORMATION_REQUEST),
+            "information-reply" if !ipv6 => Ok(ICMP_INFORMATION_REPLY),
+            "address-mask-request" if !ipv6 => Ok(ICMP_ADDRESS_MASK_REQUEST),
+            "address-mask-reply" if !ipv6 => Ok(ICMP_ADDRESS_MASK_REPLY),
+            "alternate-host-address" if !ipv6 => Ok(ICMP_ALTERNATE_HOST_ADDRESS),
+            "traceroute" if !ipv6 => Ok(ICMP_TRACEROUTE),
+            "datagram-conversion-error" if !ipv6 => Ok(ICMP_DATAGRAM_CONVERSION_ERROR),
+            "mobile-host-redirect" if !ipv6 => Ok(ICMP_MOBILE_HOST_REDIRECT),
+            "ipv6-where-are-you" if !ipv6 => Ok(ICMP_IPV6_WHERE_ARE_YOU),
+            "ipv6-i-am-here" if !ipv6 => Ok(ICMP_IPV6_I_AM_HERE),
+            "mobile-registration-request" if !ipv6 => Ok(ICMP_MOBILE_REGISTRATION_REQUEST),
+            "mobile-registration-reply" if !ipv6 => Ok(ICMP_MOBILE_REGISTRATION_REPLY),
+            "domain-name-request" if !ipv6 => Ok(ICMP_DOMAIN_NAME_REQUEST),
+            "domain-name-reply" if !ipv6 => Ok(ICMP_DOMAIN_NAME_REPLY),
+            "skip" if !ipv6 => Ok(ICMP_SKIP),
+            "photuris" if !ipv6 => Ok(ICMP_PHOTURIS),
+            "seamoby-experimental" if !ipv6 => Ok(ICMP_SEAMOBY_EXPERIMENTAL),
+            "extended-echo-request" if !ipv6 => Ok(ICMP_EXTENDED_ECHO_REQUEST),
+            "extended-echo-reply" if !ipv6 => Ok(ICMP_EXTENDED_ECHO_REPLY),
+            "experiment-1" if !ipv6 => Ok(ICMP_EXPERIMENTAL_253),
+            "experiment-2" if !ipv6 => Ok(ICMP_EXPERIMENTAL_254),
             _ => u8_text(text),
         };
     }
@@ -1889,6 +2057,17 @@ fn dhcp_flags(value: &Value) -> ExampleResult<u16> {
 
 fn option_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
     bytes_value(value).map_err(|_| format!("unsupported option bytes value: {value:?}").into())
+}
+
+fn fixed_4_bytes(value: &Value, field: &str) -> ExampleResult<[u8; 4]> {
+    let bytes = option_bytes(value)?;
+    Ok(bytes.try_into().map_err(|bytes: Vec<u8>| {
+        format!("{field} must contain exactly 4 bytes, got {}", bytes.len())
+    })?)
+}
+
+fn ipv4_text(value: &Value) -> ExampleResult<Ipv4Addr> {
+    Ok(Ipv4Addr::from_str(text_value(value)?)?)
 }
 
 fn bytes_value(value: &Value) -> ExampleResult<Vec<u8>> {
