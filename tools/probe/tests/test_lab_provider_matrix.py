@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from tools.probe.engine import cli
+from tools.probe.engine import cases, cli
 from tools.probe.engine.lab import probe_lab_provider_names
 from tools.probe.engine.model import ProbeReport, ProbeRunRequest
 
@@ -220,7 +220,7 @@ def _ttl_expired_dry_run_report(
         case_names=["ttl-expired"],
         dry_run=True,
     )
-    selected_cases = cli._selected_cases(request.case_names)
+    selected_cases = cases.selected_cases(request.case_names)
     planned_cases = cli._planned_cases(
         selected_cases,
         seed=request.seed,

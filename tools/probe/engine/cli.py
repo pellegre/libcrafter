@@ -24,6 +24,13 @@ from tools.lab.engine import session as lab_session_state
 from tools.lab.engine import wire_client as lab_wire_client
 
 from . import bootstrap as probe_bootstrap
+from .cases import (
+    ENDPOINT_ROLES as _ENDPOINT_ROLES,
+    PROBE_CASES as _PROBE_CASES,
+    PROBE_CASE_BY_NAME as _PROBE_CASE_BY_NAME,
+    case_name_filters as _case_name_filters,
+    selected_cases as _selected_cases,
+)
 from .lab import (
     LOCAL_DRY_RUN_PROVIDER,
     PROBE_LAB_ROLES,
@@ -37,7 +44,6 @@ from .lab import (
     resolve_probe_lab_provider,
 )
 from .model import (
-    EndpointRole,
     JSONObject,
     JSONValue,
     ObservedResponse,
@@ -67,90 +73,6 @@ FAILURE_WRONG_PAYLOAD = "wrong_payload"
 FAILURE_WRONG_FLAGS = "wrong_flags"
 FAILURE_DECODE_FAILED = "decode_failed"
 FAILURE_TARGET_SETUP_FAILED = "target_setup_failed"
-
-
-_PROBE_CASES: tuple[ProbeCase, ...] = (
-    ProbeCase(
-        name="icmp-echo",
-        description="Send ICMP echo request and validate echo reply from peer kernel.",
-        stimulus="icmp_echo_request",
-        expected_response="icmp_echo_reply",
-        required_capabilities=["icmp_echo"],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "icmp", "service": "kernel"},
-    ),
-    ProbeCase(
-        name="tcp-syn-open",
-        description="Send TCP SYN to controlled listener and validate SYN/ACK.",
-        stimulus="tcp_syn",
-        expected_response="tcp_syn_ack",
-        required_capabilities=["tcp_open_port"],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "tcp", "service": "controlled_listener"},
-    ),
-    ProbeCase(
-        name="tcp-syn-closed",
-        description="Send TCP SYN to closed port and validate RST response.",
-        stimulus="tcp_syn",
-        expected_response="tcp_rst",
-        required_capabilities=["tcp_closed_port"],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "tcp", "service": "kernel"},
-    ),
-    ProbeCase(
-        name="dns-query",
-        description="Send DNS query to controlled DNS service and validate matching reply.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=["dns_service"],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "dns", "service": "controlled_dns"},
-    ),
-    ProbeCase(
-        name="ttl-expired",
-        description="Send low-TTL packet and validate ICMP TTL-expired from controlled hop.",
-        stimulus="low_ttl_probe",
-        expected_response="icmp_ttl_expired",
-        required_capabilities=["controlled_router"],
-        endpoint_roles=["stimulus", "router"],
-        metadata={"protocol": "icmp", "service": "controlled_router"},
-    ),
-    ProbeCase(
-        name="arp-resolution",
-        description=(
-            "Broadcast an ARP who-has request on the lab segment and validate the "
-            "target's unicast is-at reply."
-        ),
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=[
-            "arp_resolution",
-            "link_layer_send",
-            "link_layer_capture",
-            "broadcast",
-        ],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "arp", "service": "kernel", "layer": "link"},
-    ),
-)
-_PROBE_CASE_BY_NAME = {case.name: case for case in _PROBE_CASES}
-_ENDPOINT_ROLES: tuple[EndpointRole, ...] = (
-    EndpointRole(
-        role="stimulus",
-        responsibilities=["send_probe", "capture_response", "validate_response"],
-        capabilities=["raw_send", "packet_capture"],
-    ),
-    EndpointRole(
-        role="target",
-        responsibilities=["expose_kernel_behavior", "run_controlled_services"],
-        capabilities=["kernel_reply", "tcp_listener", "dns_service"],
-    ),
-    EndpointRole(
-        role="router",
-        responsibilities=["emit_ttl_expired"],
-        capabilities=["controlled_router"],
-    ),
-)
 
 
 def _positive_int(value: str) -> int:
@@ -278,30 +200,6 @@ def _request_from_args(args: argparse.Namespace) -> ProbeRunRequest:
         out=args.out,
         metadata=metadata,
     )
-
-
-def _case_name_filters(values: Sequence[str] | None) -> list[str]:
-    if not values:
-        return []
-    names: list[str] = []
-    for value in values:
-        for raw_name in value.split(","):
-            name = raw_name.strip()
-            if name:
-                names.append(name)
-    return list(dict.fromkeys(names))
-
-
-def _selected_cases(case_names: Sequence[str]) -> list[ProbeCase]:
-    if not case_names:
-        return list(_PROBE_CASES)
-    unknown = [name for name in case_names if name not in _PROBE_CASE_BY_NAME]
-    if unknown:
-        available = ", ".join(sorted(_PROBE_CASE_BY_NAME))
-        raise ValueError(
-            f"unknown probe case {unknown[0]!r}; available cases: {available}"
-        )
-    return [_PROBE_CASE_BY_NAME[name] for name in case_names]
 
 
 def _planned_cases(

@@ -12,6 +12,7 @@ from unittest import mock
 
 from tools.lab.engine.model import LabCommandPlan, LabEndpoint, LabRole, LabSession
 from tools.lab.engine.repo import RepoBootstrapCommand, RepoBootstrapContext
+from tools.probe.engine import cases as probe_cases
 from tools.probe.engine import cli
 from tools.probe.engine.model import ProbeRunRequest
 
@@ -244,7 +245,7 @@ def _request_cases_and_plans(
         dry_run=False,
         confirm_live_run=True,
     )
-    cases = [cli._PROBE_CASE_BY_NAME["icmp-echo"]]
+    cases = [probe_cases.PROBE_CASE_BY_NAME["icmp-echo"]]
     plans = cli._probe_plans_for_cases(request, cases)
     return request, cases, plans
 

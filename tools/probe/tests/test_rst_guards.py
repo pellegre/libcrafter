@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.probe.engine import cli
+from tools.probe.engine import cases, cli
 from tools.probe.engine.lab import probe_address_context_from_lab_session
 from tools.probe.engine.model import ProbeRunRequest
 
@@ -182,7 +182,7 @@ def _request(*, provider: str) -> ProbeRunRequest:
 def _plans(request: ProbeRunRequest) -> list[dict[str, object]]:
     return cli._probe_plans_for_cases(
         request,
-        [cli._PROBE_CASE_BY_NAME["tcp-syn-closed"]],
+        [cases.PROBE_CASE_BY_NAME["tcp-syn-closed"]],
     )
 
 
