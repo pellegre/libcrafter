@@ -9,6 +9,7 @@ layers:
 directions:
   - reference_to_libcrafter
   - libcrafter_to_reference
+  - live_exchange
 strict_bytes: true
 malformed: false
 
@@ -67,8 +68,8 @@ backend_support:
       - ICMPExtensionHeader
       - ICMPExtensionMPLS
   libcrafter:
-    status: partial
+    status: supported
     notes:
       - The libcrafter_to_reference vectors (crafter-icmpv4-errors-extensions) are typed and pass byte-for-byte; they quote the original IPv4 datagram as IcmpQuotedIpv4, type RFC 1191 next-hop MTU, and decode RFC 4884/4950 extension and MPLS objects.
-      - The reference_to_libcrafter generator path is still partial because the seeded ICMP error sampler emits a flat ipv4/icmp/payload stack rather than a structured quoted datagram; scapy and libcrafter normalize that opaque tail differently, so it is not yet a byte-equal generator case.
-      - RFC 5837 interface information objects are typed by libcrafter; the reference backend has no native object class, so they are validated libcrafter-side and remain raw-compatible against the reference.
+      - The reference_to_libcrafter generator path now emits structured error packets - an outer IPv4 header, the ICMP error header, a quoted (embedded) IPv4 datagram prefix (the embedded_header field), and deterministic quoted payload bytes - and the live_exchange direction is available at root l2:ipv4. The quoted datagram bytes round-trip byte-for-byte; the oracle compares ICMP error bodies at the backend-neutral flat model (a single trailing payload after the ICMP fixed header), so the libcrafter decode collapses its typed IcmpQuotedIpv4 tail to the same flat payload the Scapy reference normalize produces.
+      - Extension-only error behaviors (RFC 4884/4950 MPLS, RFC 5837 interface information) keep the flat raw-compatible extension_bytes body; the reference backend has no native object class for RFC 5837 interface information objects, so those are validated libcrafter-side and remain raw-compatible against the reference.

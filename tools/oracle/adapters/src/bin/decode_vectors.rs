@@ -1,5 +1,5 @@
 use crafter::core::{
-    Arp, Dhcp, Dns, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
+    Arp, Dhcp, Dns, Ethernet, Icmp, IcmpQuotedIpv4, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
     Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LinkType,
     LinuxSll, NetworkLayer, NullLoopback, Packet, Raw, Tcp, Udp, UdpChecksumStatus, UdpOption,
     UdpOptionStatus, UdpOptions, Vlan, DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE,
@@ -225,7 +225,8 @@ fn normalize_packet(
     let mut native_layers = Vec::with_capacity(packet_layers.len());
     let mut udp_checksum_status = None;
 
-    for layer in packet_layers {
+    for layer in &packet_layers {
+        let layer = *layer;
         let layer_name = normalized_layer_name(layer);
         let layer_fields =
             normalized_layer_fields(layer, udp_layout.as_ref(), source_bytes.as_deref());
@@ -236,11 +237,20 @@ fn normalize_packet(
         let key = field_key(&fields, &layer_name);
         fields.insert(key, layer_fields);
         native_layers.push(json!({
-            "fields": inspection_fields(layer),
+            "fields": inspection_fields(*layer),
             "name": layer.name(),
             "summary": layer.summary()
         }));
     }
+
+    // Canonicalize a typed ICMPv4 error body to the backend-neutral flat model:
+    // libcrafter decodes the quoted original datagram into an IcmpQuotedIpv4
+    // layer (plus any extension and trailing layers), but the oracle compares
+    // ICMP error bodies as a single trailing payload after the ICMP fixed
+    // header, exactly as the Scapy reference normalize does. Collapse everything
+    // after the ICMP header into one payload carrying the verbatim body bytes so
+    // both backends report the same model without weakening the byte compare.
+    collapse_icmp_quoted_body(&packet_layers, &source_hex, &mut layers, &mut fields);
 
     DecodedModel {
         backend: BACKEND_NAME,
@@ -264,6 +274,95 @@ fn normalize_packet(
             }
             metadata
         },
+    }
+}
+
+/// Collapse a typed ICMPv4 error body (IcmpQuotedIpv4 plus any extension and
+/// trailing layers) into a single flat `payload` after the ICMP layer.
+///
+/// The oracle compares ICMPv4 error messages at the backend-neutral flat model
+/// (`ipv4` / `icmp` / `payload`), matching the Scapy reference normalize, which
+/// keeps everything after the eight-byte ICMP fixed header as one trailing
+/// payload. libcrafter's richer decode types the quoted original datagram as an
+/// `IcmpQuotedIpv4` layer; this rewrites that tail to the flat payload using the
+/// verbatim body bytes so the byte compare stays exact and both backends agree
+/// on the decoded model. Only applies to single-IPv4-header ICMP error stacks
+/// that actually quoted a datagram; all other shapes are left untouched.
+fn collapse_icmp_quoted_body(
+    packet_layers: &[&dyn Layer],
+    source_hex: &str,
+    layers: &mut Vec<String>,
+    fields: &mut BTreeMap<String, BTreeMap<String, Value>>,
+) {
+    // Only collapse when libcrafter typed a quoted IPv4 datagram in the body.
+    if !packet_layers
+        .iter()
+        .any(|layer| layer.as_any().is::<IcmpQuotedIpv4>())
+    {
+        return;
+    }
+    let icmp_index = match packet_layers
+        .iter()
+        .position(|layer| layer.as_any().is::<Icmp>())
+    {
+        Some(index) => index,
+        None => return,
+    };
+    // The flat model is `ipv4` / `icmp` / `payload`; only the canonical
+    // single-IPv4-header error stack is collapsed here.
+    if icmp_index != 1 || !packet_layers[0].as_any().is::<Ipv4>() {
+        return;
+    }
+
+    let source = match decode_hex(source_hex) {
+        Ok(bytes) => bytes,
+        Err(_) => return,
+    };
+    if source.is_empty() {
+        return;
+    }
+    let ipv4_header_len = ((source[0] & 0x0f) as usize) * 4;
+    let body_offset = ipv4_header_len + 8;
+    if body_offset > source.len() {
+        return;
+    }
+    let body = &source[body_offset..];
+
+    // Drop every normalized layer/field after the ICMP layer and replace the
+    // tail with a single payload carrying the verbatim ICMP body bytes.
+    for offset in (icmp_index + 1)..layers.len() {
+        let key = field_key_at(layers, offset);
+        fields.remove(&key);
+    }
+    layers.truncate(icmp_index + 1);
+
+    if !body.is_empty() {
+        layers.push("payload".to_string());
+        let key = field_key(fields, "payload");
+        fields.insert(
+            key,
+            map([
+                ("hex", json!(hex_bytes(body))),
+                ("length", json!(body.len())),
+                ("ascii", json!(String::from_utf8_lossy(body).into_owned())),
+            ]),
+        );
+    }
+}
+
+/// Recompute the normalized field-map key for the layer at `index`, mirroring
+/// `field_key`: the first occurrence of a layer name uses the bare name, later
+/// occurrences use `name#N` (1-based occurrence count).
+fn field_key_at(layers: &[String], index: usize) -> String {
+    let layer_name = &layers[index];
+    let occurrence = layers[..=index]
+        .iter()
+        .filter(|name| *name == layer_name)
+        .count();
+    if occurrence == 1 {
+        layer_name.clone()
+    } else {
+        format!("{layer_name}#{occurrence}")
     }
 }
 
