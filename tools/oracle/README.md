@@ -237,6 +237,34 @@ read `HETZNER_API_TOKEN`/`HCLOUD_TOKEN`, and report
 `wire_eligible`, `wire_skipped`, and `wire_skip_reasons` so the byte-policy
 gating is inspectable.
 
+## ICMPv4 Live Matrix
+
+The ICMPv4 live matrix targets the `l2:ipv4` root with the `icmpv4_live`
+feature. It validates packet write/parse parity between libcrafter and Scapy
+over a real Hetzner private network, not kernel ICMP behavior; the root is
+IPv4-rooted, so comparison canonicalizes to the IPv4 header and Ethernet fields
+do not affect ICMP pass/fail. Use the offline and dry-run paths for planning;
+they need no credential:
+
+```sh
+tools/oracle/run offline --backend scapy --root l2:ipv4 --feature icmpv4_live --profile smoke --seed 22 --count 20 --out target/oracle/icmp-live/offline
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --root l2:ipv4 --feature icmpv4_live --profile smoke --seed 70 --count 40 --out target/oracle/icmp-live/dry
+```
+
+Real Hetzner exchange requires `--confirm-live-run` and a credential in the
+environment (`HETZNER_API_TOKEN`, or `HCLOUD_TOKEN`); never store the value in a
+tracked file:
+
+```sh
+tools/oracle/run live --backend scapy --provider hetzner --confirm-live-run --root l2:ipv4 --feature icmpv4_live --profile smoke --seed 71 --count 60 --out target/oracle/icmp-live/full-matrix
+```
+
+Artifacts land under the requested `--out` directory (for example
+`target/oracle/icmp-live/<step>/live/report.json`). Each `run live` invocation
+mints a unique per-run private group, so concurrent runs never share a Hetzner
+network; set `ORACLE_LIVE_PRIVATE_GROUP` only to coordinate or reproduce a
+specific run.
+
 ## Artifacts And Reproduction
 
 Oracle artifacts default below `target/oracle/`:
