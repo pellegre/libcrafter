@@ -125,14 +125,21 @@ fn dhcp_filter() -> String {
 }
 
 fn arp_filter(arp: &Arp) -> String {
-    let mut terms = vec!["arp".to_string()];
-    if let Some(target) = arp.target_ipv4() {
-        terms.push(format!("src host {target}"));
+    // A standard Ethernet/IPv4 ARP request asks for the target's hardware
+    // address; the reply comes back from that target (now the sender) to the
+    // original requester. So `src host <target>` and `dst host <requester>`
+    // narrow the capture to the expected reply. Both clauses are only valid
+    // when both protocol addresses are genuine IPv4 (protocol type 0x0800,
+    // protocol length 4); `sender_ipv4()`/`target_ipv4()` return `None`
+    // otherwise. For non-IPv4 or variable protocol-length ARP we deliberately
+    // fall back to a bare `arp` filter rather than emit a misleading or
+    // half-populated host clause.
+    match (arp.target_ipv4(), arp.sender_ipv4()) {
+        (Some(target), Some(sender)) => {
+            format!("arp and src host {target} and dst host {sender}")
+        }
+        _ => "arp".to_string(),
     }
-    if let Some(sender) = arp.sender_ipv4() {
-        terms.push(format!("dst host {sender}"));
-    }
-    terms.join(" and ")
 }
 
 fn protocol_filter(protocol: &str, packet: &Packet) -> String {
