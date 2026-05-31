@@ -9,10 +9,11 @@ from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
 
 from ...model import ArtifactPath, EndpointManifest, EndpointSSHInfo, NetworkInterface
-from ...process import run_command
+from ...process import CommandResult, run_command
 from ...registry import validate_request
+from ...ssh import ensure_known_hosts_file, wait_for_ssh
 from ...state import endpoint_layout, planned_private_group_record, private_group_path
-from ..vm import public_key_path
+from ..vm import ensure_endpoint_ssh_key, public_key_path
 from .constants import (
     CONFIRMATION_ERROR,
     DOCKER_DEFAULT_LAN_NETWORK,
@@ -60,6 +61,8 @@ DEFAULT_PRIVATE_GROUP = "default"
 DOCKER_PRIVATE_INTERFACE = "eth0"
 DOCKER_LAN_INTERFACE = "eth0"
 DOCKER_WAN_INTERFACE = "eth0"
+DOCKER_SSH_WAIT_TIMEOUT = 300
+DOCKER_SSH_WAIT_INTERVAL = 5
 
 
 def create_endpoint(
@@ -736,6 +739,51 @@ def _planned_wan_endpoint_manifest(
     return output
 
 
+def _ensure_docker_ssh_material(
+    *,
+    endpoint_id: str,
+    private_key_path: str | Path,
+    known_hosts_path: str | Path,
+    command_runner: DockerRunner = run_command,
+) -> tuple[Path, Path, Path]:
+    """Ensure Docker endpoint SSH files exist and return their paths."""
+
+    private_key, public_key = ensure_endpoint_ssh_key(
+        private_key_path,
+        endpoint_id,
+        runner=command_runner,
+    )
+    known_hosts = ensure_known_hosts_file(known_hosts_path)
+    return private_key, public_key, known_hosts
+
+
+def _wait_for_docker_ssh(
+    *,
+    private_key_path: str | Path,
+    known_hosts_path: str | Path,
+    ssh_port: int,
+    command_runner: DockerRunner = run_command,
+    wait_timeout: float = DOCKER_SSH_WAIT_TIMEOUT,
+    interval: float = DOCKER_SSH_WAIT_INTERVAL,
+) -> CommandResult:
+    """Wait for the Docker endpoint SSH server on the forwarded localhost port."""
+
+    known_hosts = ensure_known_hosts_file(known_hosts_path)
+    try:
+        return wait_for_ssh(
+            host=DOCKER_SSH_HOST,
+            user=DOCKER_SSH_USER,
+            identity_file=private_key_path,
+            known_hosts=known_hosts,
+            port=ssh_port,
+            wait_timeout=wait_timeout,
+            interval=interval,
+            runner=command_runner,
+        )
+    except TimeoutError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
 def _validate_create_request(
     exposure: str,
     role: str,
@@ -1083,11 +1131,7 @@ def _container_metadata(
         "--security-opt",
         "no-new-privileges",
         "--mount",
-        (
-            "type=bind,"
-            f"source={authorized_key_source},"
-            f"target={AUTHORIZED_KEY_TARGET},readonly"
-        ),
+        _authorized_key_mount_spec(authorized_key_source),
         *docker_label_args(labels),
         image_tag,
         docker_command=docker_command,
@@ -1153,11 +1197,7 @@ def _nat_l3_container_metadata(
         "--security-opt",
         "no-new-privileges",
         "--mount",
-        (
-            "type=bind,"
-            f"source={authorized_key_source},"
-            f"target={AUTHORIZED_KEY_TARGET},readonly"
-        ),
+        _authorized_key_mount_spec(authorized_key_source),
         *docker_label_args(labels),
         image_tag,
         docker_command=docker_command,
@@ -1191,6 +1231,19 @@ def _nat_l3_container_metadata(
         "security": dict(security),
         "run_argv": run_argv,
     }
+
+
+def _authorized_key_mount_spec(
+    authorized_key_source: str | Path,
+    *,
+    target: str = AUTHORIZED_KEY_TARGET,
+) -> str:
+    source = Path(authorized_key_source).expanduser().resolve(strict=False)
+    if str(source) == "":
+        raise ValueError("authorized_key_source must be a non-empty path")
+    if not isinstance(target, str) or target == "":
+        raise ValueError("target must be a non-empty string")
+    return f"type=bind,source={source},target={target},readonly"
 
 
 def _docker_private_security_flags() -> dict[str, object]:
