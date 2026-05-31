@@ -599,24 +599,33 @@ def _resolve_capture_interface(request: JSONObject, scapy_all: Any) -> str:
 
     configured = request.get("interface")
     configured = configured if isinstance(configured, str) and configured else None
-    try:
-        ifaces = scapy_all.conf.ifaces
-        devices = list(ifaces.values())
-    except Exception:
-        devices = []
-    if configured and any(getattr(device, "name", None) == configured for device in devices):
+    def _device_names() -> list[str | None]:
+        try:
+            return [getattr(device, "name", None) for device in scapy_all.conf.ifaces.values()]
+        except Exception:
+            return []
+
+    if configured and configured in _device_names():
         return configured
     local_ipv4 = _address_value(request, "local_addresses", "ipv4")
     if local_ipv4:
-        for device in devices:
-            device_name = getattr(device, "name", None)
-            if not device_name:
-                continue
+        deadline = time.monotonic() + 40.0
+        while True:
+            for device_name in _device_names():
+                if not device_name:
+                    continue
+                try:
+                    if scapy_all.get_if_addr(device_name) == local_ipv4:
+                        return device_name
+                except Exception:
+                    continue
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.5)
             try:
-                if scapy_all.get_if_addr(device_name) == local_ipv4:
-                    return device_name
+                scapy_all.conf.ifaces.reload()
             except Exception:
-                continue
+                pass
     peer = request.get("peer_addresses")
     peer_ipv4 = None
     if isinstance(peer, Mapping):

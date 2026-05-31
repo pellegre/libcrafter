@@ -784,20 +784,35 @@ fn address_text<'a>(addresses: &'a Value, key: &str) -> Option<&'a str> {
 /// `interface_for` falls back to the public default interface — which never
 /// observes the private-network traffic, leaving the receiver capturing zero
 /// packets. The interface holding the local address is unambiguously the one
-/// attached to that network. Fall back to route-style resolution toward the
-/// peer (then the local address), and finally to the configured name.
+/// attached to that network. Freshly provisioned private NIC addresses can take
+/// several seconds to appear, so poll for the local address before falling back
+/// to route-style resolution toward the peer (then the local address), and
+/// finally to the configured name.
 fn resolve_live_interface(request: &EndpointRequest) -> String {
-    let table = crafter::interfaces();
+    let mut local_targets = Vec::new();
     for family in ["ipv4", "ipv6"] {
         if let Some(local) = address_text(&request.local_addresses, family) {
             if let Ok(addr) = IpAddr::from_str(local) {
-                if let Some(info) = table.iter().find(|info| match addr {
-                    IpAddr::V4(v4) => info.ipv4_addresses().contains(&v4),
-                    IpAddr::V6(v6) => info.ipv6_addresses().contains(&v6),
+                local_targets.push(addr);
+            }
+        }
+    }
+    if !local_targets.is_empty() {
+        let deadline = std::time::Instant::now() + Duration::from_secs(40);
+        loop {
+            let table = crafter::interfaces();
+            for target in &local_targets {
+                if let Some(info) = table.iter().find(|info| match target {
+                    IpAddr::V4(v4) => info.ipv4_addresses().contains(v4),
+                    IpAddr::V6(v6) => info.ipv6_addresses().contains(v6),
                 }) {
                     return info.name().to_string();
                 }
             }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
         }
     }
     for addresses in [&request.peer_addresses, &request.local_addresses] {
