@@ -67,6 +67,7 @@ VBOX_CPUS = "2"
 VBOX_NAT_ADAPTER = 1
 VBOX_LAN_ADAPTER = 2
 VBOX_PRIVATE_ADAPTER = 2
+VBOX_PRIVATE_PROMISCUOUS_MODE = "allow-all"
 VBOX_PRIVATE_GUEST_IFACE = "wirepriv0"
 VBOX_SSH_HOST = "127.0.0.1"
 VBOX_SSH_GUEST_PORT = 22
@@ -228,6 +229,9 @@ def _planned_endpoint_manifest(
                 "bridge_selection": bridge["selection"],
                 "bridge_env": bridge["env"],
                 "private_network": private_network,
+                "private_promiscuous_mode": (
+                    VBOX_PRIVATE_PROMISCUOUS_MODE if private_network is not None else None
+                ),
             },
             **artifacts.to_manifest_metadata(),
         },
@@ -700,6 +704,8 @@ def _virtualbox_boot_commands(
                 _private_network_name(private_network),
                 "--macaddress2",
                 _virtualbox_mac_arg(private_mac),
+                "--nic-promisc2",
+                VBOX_PRIVATE_PROMISCUOUS_MODE,
             ]
         )
     commands.extend(
@@ -814,6 +820,7 @@ def _planned_interfaces(
                     "type": "virtualbox-internal-network",
                     "adapter": VBOX_PRIVATE_ADAPTER,
                     "network": "internal",
+                    "promiscuous_mode": VBOX_PRIVATE_PROMISCUOUS_MODE,
                     "private_group": private_group,
                     "private_ip": private_ip,
                     "private_cidr": private_cidr,
@@ -937,6 +944,7 @@ def _private_interface(
             "type": "virtualbox-internal-network",
             "adapter": VBOX_PRIVATE_ADAPTER,
             "network": "internal",
+            "promiscuous_mode": VBOX_PRIVATE_PROMISCUOUS_MODE,
             "private_group": private_group,
             "private_ip": private_ipv4,
             "network_resource": dict(private_network or {}),
@@ -1059,6 +1067,9 @@ def _virtualbox_manifest_metadata(
         "private_network": private_network,
         "private_ip": private_ipv4,
         "private_mac": private_mac,
+        "private_promiscuous_mode": (
+            VBOX_PRIVATE_PROMISCUOUS_MODE if private_network is not None else None
+        ),
         "command_log_path": str(command_log_path),
     }
     metadata: dict[str, object] = {

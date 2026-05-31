@@ -12,6 +12,7 @@ from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+import tools.wire.engine.providers.virtualbox.create as virtualbox_create
 from tools.wire.engine import cli as wire_cli
 from tools.wire.engine.model import (
     EndpointManifest,
@@ -184,8 +185,30 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
             interfaces["wirepriv0"]["metadata"]["type"],
             "virtualbox-internal-network",
         )
+        self.assertEqual(interfaces["wirepriv0"]["metadata"]["promiscuous_mode"], "allow-all")
+        self.assertEqual(
+            output["metadata"]["virtualbox"]["private_promiscuous_mode"],  # type: ignore[index]
+            "allow-all",
+        )
         self.assertTrue(output["metadata"]["virtualbox"]["private_network"]["isolated"])  # type: ignore[index]
         self.assertIsNone(output["metadata"]["virtualbox"]["bridge_interface"])  # type: ignore[index]
+
+    def test_private_boot_commands_allow_promiscuous_internal_network(self) -> None:
+        commands = virtualbox_create._virtualbox_boot_commands(
+            exposure="private",
+            vm_name="wire-virtualbox-private-test",
+            bridge_name=None,
+            ssh_port=25222,
+            disk_path=Path("/tmp/disk.vdi"),
+            seed_iso_path=Path("/tmp/seed.iso"),
+            private_network={"network_name": "libcrafter-private-test"},
+            private_mac="08:00:27:12:34:56",
+        )
+
+        private_nic = next(command for command in commands if "--nic2" in command)
+        self.assertIn("--nic-promisc2", private_nic)
+        promisc_index = private_nic.index("--nic-promisc2")
+        self.assertEqual(private_nic[promisc_index + 1], "allow-all")
 
     def test_dry_run_rejects_private_group_and_ip(self) -> None:
         with self.assertRaisesRegex(ValueError, "--private-group"):
