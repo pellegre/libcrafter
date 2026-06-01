@@ -4489,6 +4489,41 @@ def _udp_echo_short_probe_plan(
     )
 
 
+def _udp_echo_binary_probe_plan(
+    *,
+    case_name: str = "udp-echo-binary",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan a binary UDP payload echoed by a controlled UDP responder."""
+
+    digest = deterministic_bytes("udp-echo-binary-payload", profile, seed, sequence)
+    payload = bytes(
+        [
+            0x00,
+            digest[0],
+            0x7F,
+            0x80,
+            digest[1],
+            0xFF,
+            digest[2],
+            0x00,
+            digest[3],
+            0xC3,
+            digest[4],
+            0xFE,
+        ]
+    )
+    return _udp_echo_probe_plan(
+        case_name=case_name,
+        profile=profile,
+        seed=seed,
+        sequence=sequence,
+        payload=payload,
+    )
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
@@ -4532,6 +4567,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "arp-broadcast-filtered-capture": _arp_broadcast_filtered_capture_probe_plan,
     "udp-echo-empty": _udp_echo_empty_probe_plan,
     "udp-echo-short": _udp_echo_short_probe_plan,
+    "udp-echo-binary": _udp_echo_binary_probe_plan,
 }
 
 

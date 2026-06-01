@@ -1,8 +1,9 @@
 //! UDP behavioral probe cases.
 //!
-//! `udp-echo-empty` and `udp-echo-short` send IPv4/UDP datagrams to a
-//! controlled target-side UDP echo responder, then validate the decoded UDP
-//! response's peer tuple, length, checksum status, and exact echoed payload.
+//! `udp-echo-empty`, `udp-echo-short`, and `udp-echo-binary` send IPv4/UDP
+//! datagrams to a controlled target-side UDP echo responder, then validate the
+//! decoded UDP response's peer tuple, length, checksum status, and exact echoed
+//! payload.
 
 use crafter::prelude::*;
 use serde_json::json;
@@ -424,6 +425,13 @@ mod tests {
         echo_plan("udp-echo-short", b"udp-echo:1234abcd")
     }
 
+    fn binary_echo_plan() -> ProbePlan {
+        echo_plan(
+            "udp-echo-binary",
+            &[0x00, 0x42, 0x7f, 0x80, 0xa5, 0xff, 0x01, 0x00, 0xc3, 0xfe],
+        )
+    }
+
     #[test]
     fn udp_echo_empty_packet_has_no_payload_and_udp_length_eight() {
         let packet = udp_packet(&empty_echo_plan()).unwrap();
@@ -476,6 +484,45 @@ mod tests {
             .dst("192.0.2.10".parse::<Ipv4Addr>().unwrap())
             / Udp::new().source_port(30000).destination_port(46000)
             / Raw::from("udp-echo:1234abcd"))
+        .compile()
+        .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, response.as_bytes()).unwrap();
+
+        let validation = validate_udp_candidate(&plan, &decoded, response.as_bytes()).unwrap();
+        assert!(matches!(validation, CandidateValidation::Passed(_)));
+    }
+
+    #[test]
+    fn udp_echo_binary_packet_carries_zero_and_high_bit_payload() {
+        let plan = binary_echo_plan();
+        let expected_payload = decode_hex(plan.payload_hex.as_deref().unwrap()).unwrap();
+        let packet = udp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let payload = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(udp.source_port_value(), 46000);
+        assert_eq!(udp.destination_port_value(), 30000);
+        assert_eq!(
+            udp.length_value(),
+            Some((8 + expected_payload.len()) as u16)
+        );
+        assert!(udp.checksum_value().is_some());
+        assert_eq!(payload.as_bytes(), expected_payload.as_slice());
+        assert!(payload.as_bytes().contains(&0x00));
+        assert!(payload.as_bytes().iter().any(|byte| *byte >= 0x80));
+    }
+
+    #[test]
+    fn validate_udp_candidate_accepts_binary_echo_response() {
+        let plan = binary_echo_plan();
+        let payload = decode_hex(plan.payload_hex.as_deref().unwrap()).unwrap();
+        let response = (Ipv4::new()
+            .src("192.0.2.20".parse::<Ipv4Addr>().unwrap())
+            .dst("192.0.2.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().source_port(30000).destination_port(46000)
+            / Raw::from_bytes(payload))
         .compile()
         .unwrap();
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, response.as_bytes()).unwrap();
