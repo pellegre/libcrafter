@@ -309,6 +309,14 @@ pub struct ProbePlan {
     // unset.
     #[serde(default)]
     pub alias_ipv4: Option<String>,
+    // Alternate sender protocol address ARP behavioral case field
+    // (`arp-spa-variation`). The who-has carries an *alternate* sender protocol
+    // address (SPA), distinct from the stimulus endpoint's primary IPv4 (it is
+    // also carried in `sender_protocol_addr`). For live execution the target
+    // kernel may need this configured as a secondary sender address so it accepts
+    // and answers the request. Other ARP cases leave this unset.
+    #[serde(default)]
+    pub alt_sender_ipv4: Option<String>,
     // Multi-send ARP behavioral case fields (`arp-repeat-two-replies`). The plan
     // carries an `arp_sends` array (one entry per who-has -> is-at send), each
     // with its own sender/target hardware/protocol address, Ethernet framing,
@@ -805,7 +813,8 @@ fn dispatch_case(
             | "arp-unicast-request-reply"
             | "arp-padding-reply"
             | "arp-cache-flush-reply"
-            | "arp-mac-validation",
+            | "arp-mac-validation"
+            | "arp-spa-variation",
         ) => arp::run_arp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -816,7 +825,8 @@ fn dispatch_case(
             | "arp-unicast-request-reply"
             | "arp-padding-reply"
             | "arp-cache-flush-reply"
-            | "arp-mac-validation",
+            | "arp-mac-validation"
+            | "arp-spa-variation",
         ) => arp::run_arp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -988,6 +998,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "target_hardware_addr": plan.target_hardware_addr,
         "target_protocol_addr": plan.target_protocol_addr,
         "alias_ipv4": plan.alias_ipv4,
+        "alt_sender_ipv4": plan.alt_sender_ipv4,
         "ethernet_source": plan.ethernet_source,
         "ethernet_destination": plan.ethernet_destination,
         "ethernet_min_frame_len": plan.ethernet_min_frame_len,
@@ -1512,6 +1523,30 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 .alias_ipv4
                 .clone()
                 .or_else(|| plan.target_protocol_addr.clone()),
+            "arp_sysctls": true,
+            "neighbor_cache_flush": true,
+        }),
+        "arp-spa-variation" => json!({
+            "required": true,
+            // ARP relies primarily on the target kernel answering who-has for its
+            // own configured address; setup tunes ARP sysctls and flushes the
+            // neighbor cache (no listening daemon). The who-has carries an
+            // ALTERNATE sender protocol address (SPA); for live execution the
+            // kernel may need that SPA configured as a secondary sender address so
+            // it accepts/answers the request, so the target service records the
+            // alternate SPA (added during setup, removed during cleanup).
+            "kind": "arp-kernel",
+            "layer": "link",
+            "target_protocol_addr": plan.target_protocol_addr,
+            "target_hardware_addr": plan
+                .validation
+                .as_ref()
+                .and_then(|validation| validation.sender_hardware_addr.clone()),
+            "alt_sender_address": true,
+            "alt_sender_ipv4": plan
+                .alt_sender_ipv4
+                .clone()
+                .or_else(|| plan.sender_protocol_addr.clone()),
             "arp_sysctls": true,
             "neighbor_cache_flush": true,
         }),

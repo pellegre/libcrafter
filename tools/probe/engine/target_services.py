@@ -479,6 +479,7 @@ _ARP_KERNEL_CASES: frozenset[str] = frozenset(
         "arp-unicast-request-reply",
         "arp-cache-flush-reply",
         "arp-mac-validation",
+        "arp-spa-variation",
     }
 )
 

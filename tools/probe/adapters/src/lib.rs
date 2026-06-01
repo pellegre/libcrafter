@@ -127,6 +127,7 @@ pub(crate) mod test_support {
             ethernet_destination: None,
             validation: None,
             alias_ipv4: None,
+            alt_sender_ipv4: None,
             arp_sends: None,
             ethernet_min_frame_len: None,
             expected_request_frame_len: None,
