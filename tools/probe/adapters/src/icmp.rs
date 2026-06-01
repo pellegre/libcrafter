@@ -579,7 +579,7 @@ pub fn validate_ttl_expired_candidate(
         }));
     }
 
-    let embedded = raw_payload(packet);
+    let embedded = icmp_embedded_payload(packet)?;
     if !embedded.starts_with(expected_embedded_prefix) {
         payload_mismatches.push(json!({
             "field": "icmp.embedded_prefix",
@@ -596,6 +596,17 @@ pub fn validate_ttl_expired_candidate(
     }
 
     Ok(CandidateValidation::Passed(decoded))
+}
+
+fn icmp_embedded_payload(packet: &Packet) -> ExampleResult<Vec<u8>> {
+    if let Some(raw) = packet.layer::<Raw>() {
+        return Ok(raw.as_bytes().to_vec());
+    }
+    if let Some(quoted) = packet.layer::<IcmpQuotedIpv4>() {
+        let compiled = quoted.datagram().compile()?;
+        return Ok(compiled.as_bytes().to_vec());
+    }
+    Ok(Vec::new())
 }
 
 pub fn icmp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
