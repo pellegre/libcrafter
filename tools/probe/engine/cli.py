@@ -602,6 +602,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "arp-basic-who-has",
         "arp-repeat-two-replies",
         "arp-source-address-preserved",
+        "arp-alias-address-reply",
     }
 )
 
@@ -995,6 +996,31 @@ def _stimulus_endpoint_request_metadata(
     return output
 
 
+def _lab_arp_alias_ipv4(target_ipv4: str, source_ipv4: str) -> str:
+    """Derive a deterministic secondary IPv4 alias host on the lab segment.
+
+    ``arp-alias-address-reply`` configures the target kernel to answer ARP for a
+    *secondary* address added to the private interface, distinct from both the
+    target endpoint's primary IPv4 (``target_ipv4``) and the stimulus endpoint
+    (``source_ipv4``). The alias must therefore be a different host in the same
+    /24 lab subnet as the target. The host octet is derived deterministically
+    from the target's last octet and kept clear of the source/target hosts, the
+    network (0), broadcast (255), and the conventional router (1).
+    """
+
+    octets = target_ipv4.split(".")
+    if len(octets) != 4:
+        raise ValueError(f"unexpected lab target IPv4 {target_ipv4!r}")
+    prefix = ".".join(octets[:3])
+    target_host = int(octets[3])
+    source_host = int(source_ipv4.split(".")[3]) if source_ipv4.count(".") == 3 else -1
+    reserved = {0, 1, 255, target_host, source_host}
+    host = (target_host + 7) % 256
+    while host in reserved:
+        host = (host + 1) % 256
+    return f"{prefix}.{host}"
+
+
 def _probe_plan_with_endpoint_addresses(
     plan: JSONObject,
     *,
@@ -1211,6 +1237,7 @@ def _probe_plan_with_endpoint_addresses(
         "arp-basic-who-has",
         "arp-repeat-two-replies",
         "arp-source-address-preserved",
+        "arp-alias-address-reply",
     }:
         # ARP rides Ethernet directly (no IP/UDP), so the lab rewrite touches the
         # ARP protocol addresses rather than transport IPs: the stimulus resolves
@@ -1222,27 +1249,52 @@ def _probe_plan_with_endpoint_addresses(
         # no host/IP terms to rewrite. ARP carries no transport source/destination
         # IPv4 to overwrite, so this branch returns directly rather than falling
         # into the shared IP-layer validation tail.
+        #
+        # arp-alias-address-reply is the exception: the kernel answers for a
+        # *configured secondary* IPv4 alias, not its primary on-segment address.
+        # The resolved target protocol address (and the expected reply sender
+        # protocol address) is therefore a distinct alias host in the lab subnet,
+        # derived deterministically from the target endpoint's IPv4 and threaded
+        # into the target_service setup/cleanup (alias add/del) and the expected
+        # reply sender-proto.
+        is_alias_case = case_name == "arp-alias-address-reply"
+        resolved_ipv4 = (
+            _lab_arp_alias_ipv4(target_ipv4, source_ipv4)
+            if is_alias_case
+            else target_ipv4
+        )
         updated["source_ipv4"] = source_ipv4
-        updated["destination_ipv4"] = target_ipv4
-        updated["expected_reply_source_ipv4"] = target_ipv4
+        updated["destination_ipv4"] = resolved_ipv4
+        updated["expected_reply_source_ipv4"] = resolved_ipv4
         updated["expected_reply_destination_ipv4"] = source_ipv4
         updated["sender_protocol_addr"] = source_ipv4
-        updated["target_protocol_addr"] = target_ipv4
+        updated["target_protocol_addr"] = resolved_ipv4
+        if is_alias_case:
+            updated["alias_ipv4"] = resolved_ipv4
         target_service = dict(
             json_object(updated.get("target_service", {}), "probe_plan.target_service")
         )
         target_service.update(
             {
+                # The kernel's primary on-segment address is the endpoint IPv4; the
+                # alias is added on top of it, so the interface still binds the
+                # endpoint address.
                 "bind_ipv4": target_ipv4,
                 "source_ipv4": source_ipv4,
-                "target_protocol_addr": target_ipv4,
+                "target_protocol_addr": resolved_ipv4,
             }
         )
+        if is_alias_case:
+            # Target setup adds the secondary alias to the private interface (and
+            # removes it during cleanup); rewrite the alias onto the lab segment so
+            # the live setup configures the on-segment alias the who-has resolves.
+            target_service["alias_ipv4"] = resolved_ipv4
+            target_service["alias_address"] = True
         updated["target_service"] = target_service
         arp_validation = dict(
             json_object(updated.get("validation", {}), "probe_plan.validation")
         )
-        arp_validation["sender_protocol_addr"] = target_ipv4
+        arp_validation["sender_protocol_addr"] = resolved_ipv4
         arp_validation["target_protocol_addr"] = source_ipv4
         updated["validation"] = arp_validation
         # arp-repeat-two-replies carries a per-send array: rewrite each who-has
@@ -1270,11 +1322,14 @@ def _probe_plan_with_endpoint_addresses(
                 send["validation"] = send_validation
                 rewritten_arp_sends.append(send)
             updated["arp_sends"] = rewritten_arp_sends
-        updated["live_address_rewrite"] = {
+        live_rewrite: JSONObject = {
             "source": rewrite_source,
             "stimulus_ipv4": source_ipv4,
             "target_ipv4": target_ipv4,
         }
+        if is_alias_case:
+            live_rewrite["alias_ipv4"] = resolved_ipv4
+        updated["live_address_rewrite"] = live_rewrite
         return updated
     validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
     validation["source_ipv4"] = (
@@ -1436,6 +1491,17 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PEER,
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
+        ]
+    if case_name == "arp-alias-address-reply":
+        # The alias case adds (and removes) a secondary IPv4 on the target
+        # interface as part of target setup, so an alias add/del failure is a
+        # distinct failure mode on top of the shared ARP reasons.
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_DECODE_FAILED,
+            FAILURE_TARGET_SETUP_FAILED,
         ]
     if case_name in {
         "arp-resolution",
