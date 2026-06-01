@@ -52,6 +52,10 @@ pub fn run_arp_dry_run(
     )
     .send(&packet)?;
     let sent_raw_hex = hex_bytes(report.plan().bytes());
+    // Record the compiled on-wire frame length so a padded who-has
+    // (`arp-padding-reply`) is inspectable: the endpoint reports the sent frame
+    // length and how it compares to the plan's expected request frame length.
+    let sent_frame_len = report.plan().bytes().len();
     let observed = observed_response(
         plan,
         false,
@@ -61,6 +65,9 @@ pub fn run_arp_dry_run(
             "planned_only": true,
             "send_report": send_report_json(&report),
             "sent_raw_hex": sent_raw_hex,
+            "sent_frame_len": sent_frame_len,
+            "expected_request_frame_len": plan.expected_request_frame_len,
+            "ethernet_min_frame_len": plan.ethernet_min_frame_len,
             "capture_filter": capture_filter(plan),
             "target_service": target_service_json(plan),
         }),
@@ -77,6 +84,9 @@ pub fn run_arp_dry_run(
             "probe_plan": plan_json(plan),
             "planned_only": true,
             "sent_raw_hex": sent_raw_hex,
+            "sent_frame_len": sent_frame_len,
+            "expected_request_frame_len": plan.expected_request_frame_len,
+            "ethernet_min_frame_len": plan.ethernet_min_frame_len,
             "capture_filter": capture_filter(plan),
             "target_service": target_service_json(plan),
         }
@@ -158,6 +168,10 @@ pub fn run_arp_live(
             CandidateValidation::Ignore => {}
             CandidateValidation::Passed(decoded) => {
                 let raw_hex = hex_bytes(captured.data());
+                // Record the compiled request frame length so a padded who-has
+                // (`arp-padding-reply`) reports the sent frame length alongside
+                // the decoded reply.
+                let sent_frame_len = send_report.plan().bytes().len();
                 let observed = observed_response(
                     plan,
                     true,
@@ -165,6 +179,9 @@ pub fn run_arp_live(
                     decoded.clone(),
                     json!({
                         "send_report": send_report_json(&send_report),
+                        "sent_frame_len": sent_frame_len,
+                        "expected_request_frame_len": plan.expected_request_frame_len,
+                        "ethernet_min_frame_len": plan.ethernet_min_frame_len,
                         "capture_filter": capture_filter(plan),
                     }),
                 );
@@ -179,6 +196,9 @@ pub fn run_arp_live(
                         "dry_run": false,
                         "probe_plan": plan_json(plan),
                         "raw_hex": raw_hex,
+                        "sent_frame_len": sent_frame_len,
+                        "expected_request_frame_len": plan.expected_request_frame_len,
+                        "ethernet_min_frame_len": plan.ethernet_min_frame_len,
                         "decoded": decoded,
                     }
                 });
@@ -576,6 +596,13 @@ pub fn arp_validation_json(validation: Option<&ArpValidation>) -> Value {
 /// Ethernet framing survive untouched. The Ethernet destination defaults to the
 /// broadcast address (a who-has is broadcast to the segment) unless the plan
 /// overrides it.
+///
+/// When the plan sets `ethernet_min_frame_len`, the frame is padded with
+/// trailing zero bytes up to that length by appending a [`Raw`] layer after the
+/// ARP layer (an Ethernet/ARP frame is 42 bytes — 14-byte header + 28-byte ARP
+/// payload — below the classic 60-byte sans-FCS minimum). The padding is an
+/// honored override: `compile()` preserves it untouched, and the peer's reply
+/// decodes the trailing padding back to a `Raw` layer.
 pub fn arp_who_has_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let sender_protocol_addr: Ipv4Addr =
         required_str(plan.sender_protocol_addr.as_deref(), "sender_protocol_addr")?.parse()?;
@@ -596,7 +623,21 @@ pub fn arp_who_has_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         target_protocol_addr,
         sender_hardware_addr,
     );
-    Ok(Ethernet::with_addresses(ethernet_source, ethernet_destination) / arp)
+    let mut packet = Ethernet::with_addresses(ethernet_source, ethernet_destination) / arp;
+
+    if let Some(min_frame_len) = plan.ethernet_min_frame_len {
+        // Compile the unpadded frame to learn its on-wire length, then append a
+        // deterministic run of trailing zero bytes to reach the minimum. The
+        // padding rides as a `Raw` layer after ARP so the agent-set padding is
+        // honored and `compile()` leaves it untouched.
+        let base_len = packet.compile()?.into_bytes().len();
+        if min_frame_len > base_len {
+            let pad = vec![0u8; min_frame_len - base_len];
+            packet = packet / Raw::from_bytes(&pad);
+        }
+    }
+
+    Ok(packet)
 }
 
 /// Validate one captured candidate against the ARP who-has -> is-at contract.
@@ -1107,6 +1148,76 @@ mod tests {
     #[test]
     fn unicast_is_at_reply_passes_validation() {
         let plan = unicast_plan();
+        let raw = is_at_frame(&plan);
+        let packet = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
+        match validate_arp_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed, got {other:?}"),
+        }
+    }
+
+    /// Build an `arp-padding-reply` plan: an ordinary broadcast who-has whose
+    /// Ethernet frame is padded up to the 60-byte (sans FCS) minimum with
+    /// trailing zero bytes.
+    fn padding_plan() -> ProbePlan {
+        let mut plan = who_has_plan();
+        plan.case = "arp-padding-reply".to_string();
+        plan.ethernet_min_frame_len = Some(60);
+        plan.expected_request_frame_len = Some(60);
+        plan
+    }
+
+    #[test]
+    fn padding_who_has_is_padded_up_to_the_minimum_frame_length() {
+        let plan = padding_plan();
+        let packet = arp_who_has_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap().into_bytes();
+
+        // The unpadded Ethernet/ARP frame is 42 bytes; the padded frame reaches
+        // the 60-byte minimum the plan requested (the honored override survives
+        // compile()).
+        assert_eq!(bytes.len(), 60);
+        // compile() still fills the ARP ethertype, and the trailing bytes after
+        // the 42-byte Ethernet/ARP frame are the zero padding.
+        assert_eq!(&bytes[12..14], &ETHERTYPE_ARP.to_be_bytes());
+        assert!(bytes[42..].iter().all(|byte| *byte == 0));
+
+        // The padding rides as a trailing Raw layer (an honored payload), and the
+        // ARP layer is still an ordinary broadcast who-has.
+        let raw = packet.layer::<Raw>().expect("trailing padding Raw layer");
+        assert_eq!(raw.as_bytes().len(), 18);
+        assert!(raw.as_bytes().iter().all(|byte| *byte == 0));
+        let arp = packet.layer::<Arp>().expect("arp layer");
+        assert_eq!(arp.opcode_value(), u16::from(ArpOperation::Request));
+        assert_eq!(arp.target_ipv4().unwrap().to_string(), "10.64.0.20");
+        let ethernet = packet.layer::<Ethernet>().expect("ethernet layer");
+        assert_eq!(ethernet.destination().unwrap().to_string(), BROADCAST_MAC);
+    }
+
+    #[test]
+    fn padded_who_has_decodes_back_with_padding_preserved_as_raw() {
+        // A padded request frame round-trips: decoding the compiled padded frame
+        // recovers the ARP layer and the trailing zero padding as a Raw layer
+        // (decode preserves the set padding bytes, never dropping them).
+        let plan = padding_plan();
+        let packet = arp_who_has_packet(&plan).unwrap();
+        let wire = packet.compile().unwrap().into_bytes();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &wire).unwrap();
+
+        let arp = decoded.layer::<Arp>().expect("decoded arp layer");
+        assert_eq!(arp.opcode_value(), u16::from(ArpOperation::Request));
+        assert_eq!(arp.sender_ipv4().unwrap().to_string(), "10.64.0.10");
+        assert_eq!(arp.target_ipv4().unwrap().to_string(), "10.64.0.20");
+        let raw = decoded.layer::<Raw>().expect("decoded padding Raw layer");
+        assert_eq!(raw.as_bytes().len(), 18);
+        assert!(raw.as_bytes().iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn padded_request_still_validates_the_is_at_reply() {
+        // The point of the case: even with a padded request, the target's is-at
+        // reply decodes and validates against the standard contract.
+        let plan = padding_plan();
         let raw = is_at_frame(&plan);
         let packet = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
         match validate_arp_candidate(&plan, &packet, &raw).unwrap() {
