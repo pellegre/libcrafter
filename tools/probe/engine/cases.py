@@ -25,6 +25,10 @@ _DNS_CAPABILITIES = ["dns_service"]
 _DHCP_CAPABILITIES = ["dhcp_service"]
 _UDP_CAPABILITIES = ["udp_service"]
 _UDP_LARGE_CAPABILITIES = [*_UDP_CAPABILITIES, "udp_large_payload"]
+_UDP_ZERO_CHECKSUM_IPV4_CAPABILITIES = [
+    *_UDP_CAPABILITIES,
+    "udp_ipv4_zero_checksum",
+]
 _ARP_CAPABILITIES = [
     "arp_resolution",
     "link_layer_send",
@@ -429,14 +433,14 @@ BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
         protocol="udp",
     ),
     _behavior_case(
-        name="udp-zero-checksum",
+        name="udp-zero-checksum-ipv4",
         description=(
             "Send an IPv4 zero-checksum datagram and validate the response where the "
             "kernel accepts it."
         ),
         stimulus="udp_datagram",
         expected_response="udp_response",
-        required_capabilities=_UDP_CAPABILITIES,
+        required_capabilities=_UDP_ZERO_CHECKSUM_IPV4_CAPABILITIES,
         protocol="udp",
     ),
     _behavior_case(

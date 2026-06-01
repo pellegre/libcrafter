@@ -4,7 +4,9 @@
 //! `udp-source-port-reflection`, and `udp-multi-shot-order` send IPv4/UDP
 //! datagrams to a controlled target-side UDP echo responder, then validate the
 //! decoded UDP response's peer tuple, length, checksum status, and exact echoed
-//! payload. `udp-closed-port-icmp` sends a UDP datagram to a verified-unbound
+//! payload. `udp-zero-checksum-ipv4` uses the same echo path but explicitly sets
+//! the outgoing IPv4 UDP checksum to zero so compile() override preservation is
+//! tested. `udp-closed-port-icmp` sends a UDP datagram to a verified-unbound
 //! target port and validates the kernel ICMP destination-unreachable /
 //! port-unreachable response plus the embedded original IPv4/UDP prefix.
 
@@ -790,10 +792,15 @@ pub fn udp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         .as_deref()
         .ok_or_else(|| "probe plan missing required field payload_hex".to_string())?;
     let payload = decode_hex(payload_hex)?;
-    let packet = Ipv4::new().src(source).dst(destination)
-        / Udp::new()
-            .source_port(source_port)
-            .destination_port(destination_port);
+    let udp = Udp::new()
+        .source_port(source_port)
+        .destination_port(destination_port);
+    let udp = if let Some(checksum) = plan.stimulus_udp_checksum {
+        udp.checksum(checksum)
+    } else {
+        udp
+    };
+    let packet = Ipv4::new().src(source).dst(destination) / udp;
     if payload.is_empty() {
         Ok(packet)
     } else {
@@ -1014,6 +1021,16 @@ mod tests {
         plan
     }
 
+    fn zero_checksum_ipv4_plan() -> ProbePlan {
+        let mut plan = echo_plan("udp-zero-checksum-ipv4", b"udp-zero-checksum-ipv4:1234abcd");
+        plan.stimulus_udp_checksum = Some(0);
+        plan.stimulus_udp_checksum_override = Some(true);
+        plan.stimulus_udp_checksum_policy = Some("ipv4_zero_checksum_override".to_string());
+        plan.expected_udp_checksum_statuses =
+            Some(vec!["valid".to_string(), "ipv4_no_checksum".to_string()]);
+        plan
+    }
+
     #[test]
     fn udp_echo_empty_packet_has_no_payload_and_udp_length_eight() {
         let packet = udp_packet(&empty_echo_plan()).unwrap();
@@ -1204,5 +1221,28 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(validation, CandidateValidation::Passed(_)));
+    }
+
+    #[test]
+    fn udp_zero_checksum_ipv4_packet_preserves_zero_checksum_override() {
+        let packet = udp_packet(&zero_checksum_ipv4_plan()).unwrap();
+        let bytes = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let payload = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(udp.source_port_value(), 46000);
+        assert_eq!(udp.destination_port_value(), 30000);
+        assert_eq!(udp.length_value(), Some(39));
+        assert_eq!(udp.checksum_value(), Some(0));
+        assert_eq!(
+            checksum_status_name(udp.checksum_status()),
+            "ipv4_no_checksum"
+        );
+        assert_eq!(
+            u16::from_be_bytes([bytes.as_bytes()[26], bytes.as_bytes()[27]]),
+            0
+        );
+        assert_eq!(payload.as_bytes(), b"udp-zero-checksum-ipv4:1234abcd");
     }
 }

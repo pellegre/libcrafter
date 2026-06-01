@@ -616,6 +616,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "udp-source-port-reflection",
         "udp-multi-shot-order",
         "udp-closed-port-icmp",
+        "udp-zero-checksum-ipv4",
     }
 )
 
@@ -1254,6 +1255,7 @@ def _probe_plan_with_endpoint_addresses(
         "udp-source-port-reflection",
         "udp-multi-shot-order",
         "udp-closed-port-icmp",
+        "udp-zero-checksum-ipv4",
     }:
         source_port = int(updated.get("source_port", 0))
         destination_port = int(updated.get("destination_port", 0))
@@ -1701,6 +1703,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "udp-source-port-reflection",
         "udp-multi-shot-order",
         "udp-closed-port-icmp",
+        "udp-zero-checksum-ipv4",
     }:
         return [
             FAILURE_TIMEOUT,

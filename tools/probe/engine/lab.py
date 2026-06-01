@@ -28,6 +28,7 @@ PROBE_CAPABILITY_NAMES = (
     "dhcp_service",
     "udp_service",
     "udp_large_payload",
+    "udp_ipv4_zero_checksum",
     "privileged_udp_port",
     "controlled_router",
     "arp_resolution",
@@ -162,6 +163,11 @@ def probe_capabilities_from_lab_capabilities(
         advertised_udp_safe_payload is None
         or advertised_udp_safe_payload >= UDP_ECHO_LARGE_PAYLOAD_LENGTH
     )
+    udp_ipv4_zero_checksum = udp_service and _capability_default_true(
+        substrate,
+        "udp_ipv4_zero_checksum",
+        "ipv4_udp_zero_checksum",
+    )
     privileged_udp_port = ipv4_unicast and controlled_services
     repeated_response = ipv4_unicast and controlled_services
     derived_dry_run = (
@@ -186,6 +192,7 @@ def probe_capabilities_from_lab_capabilities(
         "dhcp_service": dhcp_service,
         "udp_service": udp_service,
         "udp_large_payload": udp_large_payload,
+        "udp_ipv4_zero_checksum": udp_ipv4_zero_checksum,
         "privileged_udp_port": privileged_udp_port,
         "controlled_router": controlled_router,
         "link_layer_send": link_layer_send,
@@ -213,6 +220,11 @@ def probe_capabilities_from_lab_capabilities(
                 "ipv4_unicast",
                 "controlled_services",
                 "udp_safe_payload_size",
+            ],
+            "udp_ipv4_zero_checksum": [
+                "ipv4_unicast",
+                "controlled_services",
+                "udp_ipv4_zero_checksum",
             ],
             "privileged_udp_port": ["ipv4_unicast", "controlled_services"],
             "controlled_router": ["controlled_router"],
@@ -304,6 +316,16 @@ def _optional_positive_int(
         if isinstance(value, int) and not isinstance(value, bool) and value > 0:
             return value
     return None
+
+
+def _capability_default_true(
+    capabilities: Mapping[str, JSONValue],
+    *names: str,
+) -> bool:
+    for name in names:
+        if name in capabilities:
+            return capabilities.get(name) is True
+    return True
 
 
 def _endpoints_by_role(session: LabSession) -> dict[str, LabEndpoint]:
