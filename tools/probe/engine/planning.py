@@ -3823,6 +3823,130 @@ def _arp_padding_reply_probe_plan(
     }
 
 
+def _arp_cache_flush_reply_probe_plan(
+    *,
+    case_name: str = "arp-cache-flush-reply",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``arp-cache-flush-reply`` behavioral case.
+
+    A who-has request (operation 1) resolving the target endpoint's IPv4 address,
+    answered by the target kernel with a unicast is-at reply (operation 2), made
+    reproducible by an explicit *pre-stimulus neighbor-cache flush*. Provider VMs
+    can carry neighbor state across packets in a session: a target that already
+    holds a fresh entry for the querier (or that the querier already resolved) can
+    short-circuit a clean who-has -> is-at exchange. The point of this case is
+    therefore controlled cache cleanup: the target setup flushes the relevant
+    neighbor entries *before* the stimulus who-has is sent, so the request
+    triggers a fresh resolution, and cleanup leaves neighbor state in the normal
+    provider-controlled (flushed) state.
+
+    The wire shape mirrors ``arp-basic-who-has`` (ARP rides Ethernet directly, no
+    IP/UDP; documentation MACs; broadcast who-has; ARP-answering target kernel;
+    same is-at validation contract). The behavioral distinction lives entirely in
+    the target service: a ``flush_neighbor`` marker plus the explicit
+    ``neighbor_flush_commands`` (setup, run before the stimulus) and
+    ``neighbor_flush_cleanup_commands`` (cleanup, leaving state normal) so the
+    dry-run target_service plan surfaces the cleanup contract rather than just the
+    implicit sysctl flush every ARP case already carries.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    stimulus_mac = deterministic_documentation_mac(profile, seed, sequence, role="stimulus")
+    target_mac = deterministic_documentation_mac(profile, seed, sequence, role="target")
+    broadcast_mac = "ff:ff:ff:ff:ff:ff"
+    zero_mac = "00:00:00:00:00:00"
+    # The target/stimulus host flushes the relevant neighbor entries before the
+    # who-has so resolution starts cold. The interface is rewritten onto the lab
+    # segment in the live path; the descriptor below documents the deterministic
+    # flush/cleanup contract the dry-run target_service plan surfaces.
+    flush_interface = "eth0"
+    flush_commands = [
+        f"ip neigh flush dev {flush_interface} || true",
+        f"ip neigh del {stimulus_ipv4} dev {flush_interface} || true",
+    ]
+    flush_cleanup_commands = [
+        f"ip neigh flush dev {flush_interface} || true",
+    ]
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "arp_who_has",
+        "expected_response": "arp_is_at",
+        # ARP rides Ethernet directly; these are link-layer documentation values.
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": stimulus_ipv4,
+        "target_hardware_addr": zero_mac,
+        "target_protocol_addr": target_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        # The behavioral distinction surfaced at the top level (mirrored into the
+        # target_service below) so the stimulus endpoint reads it via the flattened
+        # plan fields: an explicit pre-stimulus neighbor flush.
+        "flush_neighbor": True,
+        "neighbor_flush_interface": flush_interface,
+        "neighbor_flush_commands": flush_commands,
+        "neighbor_flush_cleanup_commands": flush_cleanup_commands,
+        # ARP cannot be selected by host/IP BPF; match on the protocol + opcode.
+        "capture_filter": "arp and arp[6:2] = 2",
+        "target_service": {
+            "required": True,
+            "kind": "arp-kernel",
+            "layer": "link",
+            "target_protocol_addr": target_ipv4,
+            "target_hardware_addr": target_mac,
+            "arp_sysctls": True,
+            "neighbor_cache_flush": True,
+            # The behavioral distinction: an explicit pre-stimulus neighbor flush
+            # (setup) and a cleanup that leaves neighbor state in a normal,
+            # provider-controlled (flushed) state.
+            "flush_neighbor": True,
+            "neighbor_flush_interface": flush_interface,
+            "neighbor_flush_commands": flush_commands,
+            "neighbor_flush_cleanup_commands": flush_cleanup_commands,
+        },
+        "validation": {
+            "ethertype": 0x0806,
+            "operation": 2,
+            "operation_label": "reply",
+            "sender_hardware_addr": target_mac,
+            "sender_protocol_addr": target_ipv4,
+            "target_hardware_addr": stimulus_mac,
+            "target_protocol_addr": stimulus_ipv4,
+            "ethernet_source": target_mac,
+            "ethernet_destination": stimulus_mac,
+        },
+        "wire_requirements": {
+            "requires_link_layer_send": True,
+            "requires_link_layer_capture": True,
+            "requires_broadcast": True,
+            "note": (
+                "ARP resolution is L2 broadcast/unicast traffic; it runs only on a "
+                "provider-backed lab segment, never from privileged host raw sends."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 def deterministic_documentation_mac(
     profile: str,
     seed: int,
@@ -3920,6 +4044,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "arp-alias-address-reply": _arp_alias_address_reply_probe_plan,
     "arp-unicast-request-reply": _arp_unicast_request_reply_probe_plan,
     "arp-padding-reply": _arp_padding_reply_probe_plan,
+    "arp-cache-flush-reply": _arp_cache_flush_reply_probe_plan,
 }
 
 

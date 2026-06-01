@@ -477,6 +477,7 @@ _ARP_KERNEL_CASES: frozenset[str] = frozenset(
         "arp-source-address-preserved",
         "arp-alias-address-reply",
         "arp-unicast-request-reply",
+        "arp-cache-flush-reply",
     }
 )
 
