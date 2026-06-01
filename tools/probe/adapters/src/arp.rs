@@ -70,6 +70,8 @@ pub fn run_arp_dry_run(
             "ethernet_min_frame_len": plan.ethernet_min_frame_len,
             "capture_filter": capture_filter(plan),
             "target_service": target_service_json(plan),
+            "ignore_unmatched_arp_replies": plan.ignore_unmatched_arp_replies,
+            "decoy_arp_event": plan.decoy_arp_event,
         }),
     );
     let result = json!({
@@ -89,6 +91,8 @@ pub fn run_arp_dry_run(
             "ethernet_min_frame_len": plan.ethernet_min_frame_len,
             "capture_filter": capture_filter(plan),
             "target_service": target_service_json(plan),
+            "ignore_unmatched_arp_replies": plan.ignore_unmatched_arp_replies,
+            "decoy_arp_event": plan.decoy_arp_event,
         }
     });
     Ok(ProbeOutcome {
@@ -183,6 +187,7 @@ pub fn run_arp_live(
                         "expected_request_frame_len": plan.expected_request_frame_len,
                         "ethernet_min_frame_len": plan.ethernet_min_frame_len,
                         "capture_filter": capture_filter(plan),
+                        "ignore_unmatched_arp_replies": plan.ignore_unmatched_arp_replies,
                     }),
                 );
                 let result = json!({
@@ -688,6 +693,9 @@ pub fn validate_arp_candidate(
         })),
     }
     if !peer_mismatches.is_empty() {
+        if plan.ignore_unmatched_arp_replies.unwrap_or(false) {
+            return Ok(CandidateValidation::Ignore);
+        }
         return Ok(CandidateValidation::WrongPeer(json!({
             "packet": decoded,
             "mismatches": peer_mismatches,
@@ -949,6 +957,32 @@ mod tests {
         match validate_arp_candidate(&plan, &decoded, &raw).unwrap() {
             CandidateValidation::WrongPeer(_) => {}
             other => panic!("expected WrongPeer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn filtered_capture_ignores_reply_for_another_querier() {
+        let mut plan = who_has_plan();
+        plan.case = "arp-broadcast-filtered-capture".to_string();
+        plan.ignore_unmatched_arp_replies = Some(true);
+        // The filtered-capture case may see unrelated ARP is-at replies from
+        // target setup. A reply addressed to another protocol address should be
+        // ignored, not treated as the matching response.
+        let resolved_mac: MacAddr = "00:00:5e:00:53:14".parse().unwrap();
+        let arp = Arp::is_at(
+            "10.64.0.20".parse().unwrap(),
+            resolved_mac,
+            "10.64.0.99".parse().unwrap(),
+            "00:00:5e:00:53:63".parse().unwrap(),
+        );
+        let packet =
+            Ethernet::with_addresses(resolved_mac, "00:00:5e:00:53:63".parse().unwrap()) / arp;
+        let raw = packet.compile().unwrap().into_bytes();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
+
+        match validate_arp_candidate(&plan, &decoded, &raw).unwrap() {
+            CandidateValidation::Ignore => {}
+            other => panic!("expected Ignore, got {other:?}"),
         }
     }
 

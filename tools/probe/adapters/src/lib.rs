@@ -135,6 +135,8 @@ pub(crate) mod test_support {
             neighbor_flush_interface: None,
             neighbor_flush_commands: None,
             neighbor_flush_cleanup_commands: None,
+            ignore_unmatched_arp_replies: None,
+            decoy_arp_event: None,
         }
     }
 }
