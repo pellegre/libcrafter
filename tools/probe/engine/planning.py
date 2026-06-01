@@ -4372,6 +4372,83 @@ def deterministic_arp_alt_sender_ipv4(profile: str, seed: int, sequence: int) ->
     return f"10.{second}.{third}.{host}"
 
 
+def _udp_echo_empty_probe_plan(
+    *,
+    case_name: str = "udp-echo-empty",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan an empty UDP datagram echoed by a controlled UDP responder."""
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    source_port = 46000 + int.from_bytes(digest[0:2], "big") % 8000
+    destination_port = 30000 + int.from_bytes(digest[2:4], "big") % 8000
+    payload_hex = ""
+    expected_udp_length = 8
+    checksum_statuses = ["valid", "ipv4_no_checksum"]
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "udp_datagram",
+        "expected_response": "udp_response",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "payload_hex": payload_hex,
+        "payload_length": 0,
+        "expected_payload_hex": payload_hex,
+        "expected_payload_length": 0,
+        "expected_udp_length": expected_udp_length,
+        "expected_udp_checksum_present": True,
+        "expected_udp_checksum_statuses": checksum_statuses,
+        "target_service": {
+            "required": True,
+            "kind": "udp-responder",
+            "mode": "echo",
+            "port": destination_port,
+            "bind_ipv4": target_ipv4,
+            "source_ipv4": stimulus_ipv4,
+            "payload_hex": payload_hex,
+            "payload_length": 0,
+            "deterministic": True,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "payload_hex": payload_hex,
+            "payload_length": 0,
+            "udp_length": expected_udp_length,
+            "checksum_present": True,
+            "checksum_statuses": checksum_statuses,
+        },
+        "wire_requirements": {
+            "requires_udp_service": True,
+            "requires_ipv4_unicast": True,
+            "requires_controlled_service": True,
+            "note": (
+                "UDP echo behavior runs against a controlled responder on the "
+                "target endpoint, never a public service."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
@@ -4413,6 +4490,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "arp-mac-validation": _arp_mac_validation_probe_plan,
     "arp-spa-variation": _arp_spa_variation_probe_plan,
     "arp-broadcast-filtered-capture": _arp_broadcast_filtered_capture_probe_plan,
+    "udp-echo-empty": _udp_echo_empty_probe_plan,
 }
 
 

@@ -609,6 +609,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "arp-mac-validation",
         "arp-spa-variation",
         "arp-broadcast-filtered-capture",
+        "udp-echo-empty",
     }
 )
 
@@ -1239,6 +1240,30 @@ def _probe_plan_with_endpoint_addresses(
         )
         dhcp_validation["server_identifier"] = target_ipv4
         updated["validation"] = dhcp_validation
+    elif case_name == "udp-echo-empty":
+        source_port = int(updated.get("source_port", 0))
+        destination_port = int(updated.get("destination_port", 0))
+        updated["capture_filter"] = (
+            f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        )
+        target_service = dict(
+            json_object(updated.get("target_service", {}), "probe_plan.target_service")
+        )
+        target_service.update(
+            {
+                "bind_ipv4": target_ipv4,
+                "port": destination_port,
+                "source_ipv4": source_ipv4,
+            }
+        )
+        updated["target_service"] = target_service
+        udp_validation = dict(
+            json_object(updated.get("validation", {}), "probe_plan.validation")
+        )
+        udp_validation["source_ipv4"] = target_ipv4
+        udp_validation["destination_ipv4"] = source_ipv4
+        updated["validation"] = udp_validation
     elif case_name in {
         "arp-basic-who-has",
         "arp-repeat-two-replies",
@@ -1622,6 +1647,14 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PEER,
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
+        ]
+    if case_name == "udp-echo-empty":
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_DECODE_FAILED,
+            FAILURE_TARGET_SETUP_FAILED,
         ]
     return []
 

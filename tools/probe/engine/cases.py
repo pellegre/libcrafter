@@ -371,7 +371,7 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
 # against controlled UDP services bound to the target address).
 BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
-        name="udp-empty-echo",
+        name="udp-echo-empty",
         description="Echo an empty payload and validate the echoed response.",
         stimulus="udp_datagram",
         expected_response="udp_response",

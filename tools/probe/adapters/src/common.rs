@@ -16,7 +16,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use crate::{arp, dhcp, dns, icmp, tcp};
+use crate::{arp, dhcp, dns, icmp, tcp, udp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -76,6 +76,18 @@ pub struct ProbePlan {
     pub sequence_number: Option<u16>,
     #[serde(default)]
     pub payload_hex: Option<String>,
+    #[serde(default)]
+    pub payload_length: Option<usize>,
+    #[serde(default)]
+    pub expected_payload_hex: Option<String>,
+    #[serde(default)]
+    pub expected_payload_length: Option<usize>,
+    #[serde(default)]
+    pub expected_udp_length: Option<u16>,
+    #[serde(default)]
+    pub expected_udp_checksum_present: Option<bool>,
+    #[serde(default)]
+    pub expected_udp_checksum_statuses: Option<Vec<String>>,
     #[serde(default)]
     pub source_ipv4: Option<String>,
     #[serde(default)]
@@ -840,6 +852,8 @@ fn dispatch_case(
             | "arp-spa-variation"
             | "arp-broadcast-filtered-capture",
         ) => arp::run_arp_live(request, plan),
+        (RunMode::DryRun, "udp-echo-empty") => udp::run_udp_dry_run(request, plan),
+        (RunMode::Live, "udp-echo-empty") => udp::run_udp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
             // modules (`arp`, `udp`) by later steps; until then they fall
@@ -926,6 +940,12 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "identifier": plan.identifier,
         "sequence_number": plan.sequence_number,
         "payload_hex": plan.payload_hex,
+        "payload_length": plan.payload_length,
+        "expected_payload_hex": plan.expected_payload_hex,
+        "expected_payload_length": plan.expected_payload_length,
+        "expected_udp_length": plan.expected_udp_length,
+        "expected_udp_checksum_present": plan.expected_udp_checksum_present,
+        "expected_udp_checksum_statuses": plan.expected_udp_checksum_statuses,
         "source_ipv4": plan.source_ipv4,
         "destination_ipv4": plan.destination_ipv4,
         "expected_reply_source_ipv4": plan.expected_reply_source_ipv4,
@@ -1018,11 +1038,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "ethernet_min_frame_len": plan.ethernet_min_frame_len,
         "expected_request_frame_len": plan.expected_request_frame_len,
         "arp_sends": arp::sends_json(plan.arp_sends.as_deref()),
-        // Echo the ARP is-at validation contract so the expected-reply shape
-        // (including the source-address preservation contract: the reply's TARGET
-        // HW/proto equal the request's SENDER HW/proto) is inspectable from the
-        // plan echo. Non-ARP cases leave `validation` unset, so this renders null.
-        "validation": arp::arp_validation_json(plan.validation.as_ref()),
+        "validation": validation_json(plan),
         "target_service": target_service_json(plan),
         "capture_filter": capture_filter(plan),
     })
@@ -1073,6 +1089,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
             "dport": layer.destination_port_value(),
             "length": layer.length_value(),
             "checksum": layer.checksum_value(),
+            "checksum_status": udp::checksum_status_name(layer.checksum_status()),
         })),
         "dns": dns.map(dns::dns_json),
         "dhcp": dhcp.map(dhcp::dhcp_json),
@@ -1150,6 +1167,17 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 plan.source_port.unwrap_or(DHCP_CLIENT_PORT),
             )
         }
+        "udp-echo-empty" => {
+            format!(
+                "udp and src host {} and dst host {} and src port {} and dst port {}",
+                plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+                plan.expected_reply_destination_ipv4
+                    .as_deref()
+                    .unwrap_or(""),
+                plan.destination_port.unwrap_or(0),
+                plan.source_port.unwrap_or(0),
+            )
+        }
         // ARP rides Ethernet directly and cannot be selected by host/IP BPF, so
         // match on the protocol plus the reply opcode (ARP byte 6:2 == 2).
         "arp-basic-who-has"
@@ -1194,6 +1222,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-inform-ack" => "dhcp_ack",
             "dhcp-request-nak" => "dhcp_nak",
             "dhcp-rapid-repeat" => "dhcp_offer",
+            "udp-echo-empty" => "udp_response",
             "arp-basic-who-has"
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
@@ -1499,6 +1528,18 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "sends": dhcp::repeat_sends_json(plan.dhcp_sends.as_deref()),
             },
         }),
+        "udp-echo-empty" => json!({
+            "required": true,
+            "kind": "udp-responder",
+            "mode": "echo",
+            "port": plan.destination_port,
+            "payload_hex": plan.payload_hex,
+            "payload_length": plan.payload_length,
+            "expected_payload_hex": plan.expected_payload_hex,
+            "expected_payload_length": plan.expected_payload_length,
+            "expected_udp_length": plan.expected_udp_length,
+            "checksum_statuses": plan.expected_udp_checksum_statuses,
+        }),
         "arp-basic-who-has"
         | "arp-source-address-preserved"
         | "arp-unicast-request-reply"
@@ -1630,6 +1671,30 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "neighbor_flush_cleanup_commands": plan.neighbor_flush_cleanup_commands,
         }),
         _ => json!({}),
+    }
+}
+
+pub fn validation_json(plan: &ProbePlan) -> Value {
+    match plan.case.as_str() {
+        "udp-echo-empty" => json!({
+            "source_ipv4": plan.expected_reply_source_ipv4,
+            "destination_ipv4": plan.expected_reply_destination_ipv4,
+            "source_port": plan.destination_port,
+            "destination_port": plan.source_port,
+            "payload_hex": plan.expected_payload_hex,
+            "payload_length": plan.expected_payload_length,
+            "udp_length": plan.expected_udp_length,
+            "checksum_present": plan.expected_udp_checksum_present,
+            "checksum_statuses": plan.expected_udp_checksum_statuses,
+        }),
+        _ => {
+            // Echo the ARP is-at validation contract so the expected-reply shape
+            // (including the source-address preservation contract: the reply's
+            // TARGET HW/proto equal the request's SENDER HW/proto) is inspectable
+            // from the plan echo. Non-ARP cases leave `validation` unset, so this
+            // renders null.
+            arp::arp_validation_json(plan.validation.as_ref())
+        }
     }
 }
 
