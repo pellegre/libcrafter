@@ -488,11 +488,13 @@ def dhcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
 
 
 # Probe cases that drive the controlled UDP echo/transform responder. The empty
-# echo case is the baseline service behavior; later UDP cases reuse the same
-# responder descriptor when they need a target-side UDP service.
+# echo case is the zero-payload baseline; the short echo case is the first
+# non-empty service-response baseline. Later UDP cases reuse the same responder
+# descriptor when they need a target-side UDP service.
 _UDP_RESPONDER_CASES: frozenset[str] = frozenset(
     {
         "udp-echo-empty",
+        "udp-echo-short",
     }
 )
 

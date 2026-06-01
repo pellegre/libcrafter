@@ -4372,21 +4372,23 @@ def deterministic_arp_alt_sender_ipv4(profile: str, seed: int, sequence: int) ->
     return f"10.{second}.{third}.{host}"
 
 
-def _udp_echo_empty_probe_plan(
+def _udp_echo_probe_plan(
     *,
-    case_name: str = "udp-echo-empty",
+    case_name: str,
     profile: str,
     seed: int,
     sequence: int,
+    payload: bytes,
 ) -> JSONObject:
-    """Plan an empty UDP datagram echoed by a controlled UDP responder."""
+    """Plan a UDP datagram echoed by a controlled UDP responder."""
 
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     source_port = 46000 + int.from_bytes(digest[0:2], "big") % 8000
     destination_port = 30000 + int.from_bytes(digest[2:4], "big") % 8000
-    payload_hex = ""
-    expected_udp_length = 8
+    payload_hex = payload.hex()
+    payload_length = len(payload)
+    expected_udp_length = 8 + payload_length
     checksum_statuses = ["valid", "ipv4_no_checksum"]
     return {
         "schema_version": 1,
@@ -4404,9 +4406,9 @@ def _udp_echo_empty_probe_plan(
         "source_port": source_port,
         "destination_port": destination_port,
         "payload_hex": payload_hex,
-        "payload_length": 0,
+        "payload_length": payload_length,
         "expected_payload_hex": payload_hex,
-        "expected_payload_length": 0,
+        "expected_payload_length": payload_length,
         "expected_udp_length": expected_udp_length,
         "expected_udp_checksum_present": True,
         "expected_udp_checksum_statuses": checksum_statuses,
@@ -4418,7 +4420,7 @@ def _udp_echo_empty_probe_plan(
             "bind_ipv4": target_ipv4,
             "source_ipv4": stimulus_ipv4,
             "payload_hex": payload_hex,
-            "payload_length": 0,
+            "payload_length": payload_length,
             "deterministic": True,
         },
         "capture_filter": (
@@ -4431,7 +4433,7 @@ def _udp_echo_empty_probe_plan(
             "source_port": destination_port,
             "destination_port": source_port,
             "payload_hex": payload_hex,
-            "payload_length": 0,
+            "payload_length": payload_length,
             "udp_length": expected_udp_length,
             "checksum_present": True,
             "checksum_statuses": checksum_statuses,
@@ -4447,6 +4449,44 @@ def _udp_echo_empty_probe_plan(
         },
         "digest_hex": digest.hex()[:16],
     }
+
+
+def _udp_echo_empty_probe_plan(
+    *,
+    case_name: str = "udp-echo-empty",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan an empty UDP datagram echoed by a controlled UDP responder."""
+
+    return _udp_echo_probe_plan(
+        case_name=case_name,
+        profile=profile,
+        seed=seed,
+        sequence=sequence,
+        payload=b"",
+    )
+
+
+def _udp_echo_short_probe_plan(
+    *,
+    case_name: str = "udp-echo-short",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan a short ASCII UDP payload echoed by a controlled UDP responder."""
+
+    digest = deterministic_bytes("udp-echo-short-payload", profile, seed, sequence)
+    payload = f"udp-echo:{digest.hex()[:8]}".encode("ascii")
+    return _udp_echo_probe_plan(
+        case_name=case_name,
+        profile=profile,
+        seed=seed,
+        sequence=sequence,
+        payload=payload,
+    )
 
 
 # Registry of per-case plan builders. The dispatcher in
@@ -4491,6 +4531,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "arp-spa-variation": _arp_spa_variation_probe_plan,
     "arp-broadcast-filtered-capture": _arp_broadcast_filtered_capture_probe_plan,
     "udp-echo-empty": _udp_echo_empty_probe_plan,
+    "udp-echo-short": _udp_echo_short_probe_plan,
 }
 
 
