@@ -761,12 +761,14 @@ fn dispatch_case(
             | "dhcp-request-nak"
             | "dhcp-rapid-repeat",
         ) => dhcp::run_dhcp_live(request, plan),
-        (RunMode::DryRun, "arp-basic-who-has" | "arp-repeat-two-replies") => {
-            arp::run_arp_dry_run(request, plan)
-        }
-        (RunMode::Live, "arp-basic-who-has" | "arp-repeat-two-replies") => {
-            arp::run_arp_live(request, plan)
-        }
+        (
+            RunMode::DryRun,
+            "arp-basic-who-has" | "arp-repeat-two-replies" | "arp-source-address-preserved",
+        ) => arp::run_arp_dry_run(request, plan),
+        (
+            RunMode::Live,
+            "arp-basic-who-has" | "arp-repeat-two-replies" | "arp-source-address-preserved",
+        ) => arp::run_arp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
             // modules (`arp`, `udp`) by later steps; until then they fall
@@ -939,6 +941,11 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "ethernet_source": plan.ethernet_source,
         "ethernet_destination": plan.ethernet_destination,
         "arp_sends": arp::sends_json(plan.arp_sends.as_deref()),
+        // Echo the ARP is-at validation contract so the expected-reply shape
+        // (including the source-address preservation contract: the reply's TARGET
+        // HW/proto equal the request's SENDER HW/proto) is inspectable from the
+        // plan echo. Non-ARP cases leave `validation` unset, so this renders null.
+        "validation": arp::arp_validation_json(plan.validation.as_ref()),
         "target_service": target_service_json(plan),
         "capture_filter": capture_filter(plan),
     })
@@ -1068,7 +1075,9 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         }
         // ARP rides Ethernet directly and cannot be selected by host/IP BPF, so
         // match on the protocol plus the reply opcode (ARP byte 6:2 == 2).
-        "arp-basic-who-has" | "arp-repeat-two-replies" => "arp and arp[6:2] = 2".to_string(),
+        "arp-basic-who-has" | "arp-repeat-two-replies" | "arp-source-address-preserved" => {
+            "arp and arp[6:2] = 2".to_string()
+        }
         _ => String::new(),
     }
 }
@@ -1102,7 +1111,9 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-inform-ack" => "dhcp_ack",
             "dhcp-request-nak" => "dhcp_nak",
             "dhcp-rapid-repeat" => "dhcp_offer",
-            "arp-basic-who-has" | "arp-repeat-two-replies" => "arp_is_at",
+            "arp-basic-who-has" | "arp-repeat-two-replies" | "arp-source-address-preserved" => {
+                "arp_is_at"
+            }
             _ => "unknown",
         })
 }
@@ -1399,7 +1410,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "sends": dhcp::repeat_sends_json(plan.dhcp_sends.as_deref()),
             },
         }),
-        "arp-basic-who-has" => json!({
+        "arp-basic-who-has" | "arp-source-address-preserved" => json!({
             "required": true,
             // ARP relies primarily on the target kernel answering who-has for
             // its own configured address; setup tunes ARP sysctls and flushes

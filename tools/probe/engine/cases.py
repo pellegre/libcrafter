@@ -266,8 +266,11 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
         metadata={"layer": "link"},
     ),
     _behavior_case(
-        name="arp-preserve-sender-pa",
-        description="Validate that the reply preserves the sender protocol address.",
+        name="arp-source-address-preserved",
+        description=(
+            "Validate that the reply is addressed to the request's sender "
+            "hardware/protocol address."
+        ),
         stimulus="arp_who_has",
         expected_response="arp_is_at",
         required_capabilities=_ARP_CAPABILITIES,
