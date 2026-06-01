@@ -4380,6 +4380,10 @@ UDP_ECHO_LARGE_MAX_PAYLOAD_LENGTH = (
     - UDP_ECHO_LARGE_IPV4_HEADER_LENGTH
     - UDP_ECHO_LARGE_UDP_HEADER_LENGTH
 )
+UDP_LENGTH_BOUNDARY_PAYLOAD_MARGIN = 1
+UDP_LENGTH_BOUNDARY_PAYLOAD_LENGTH = (
+    UDP_ECHO_LARGE_MAX_PAYLOAD_LENGTH - UDP_LENGTH_BOUNDARY_PAYLOAD_MARGIN
+)
 
 
 def _deterministic_udp_payload(
@@ -4599,6 +4603,65 @@ def _udp_echo_large_probe_plan(
         payload=payload,
         payload_metadata=payload_metadata,
     )
+
+
+def _udp_length_boundary_echo_probe_plan(
+    *,
+    case_name: str = "udp-length-boundary-echo",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan a UDP echo payload one byte below the IPv4 packet safety limit."""
+
+    if UDP_LENGTH_BOUNDARY_PAYLOAD_LENGTH >= UDP_ECHO_LARGE_MAX_PAYLOAD_LENGTH:
+        raise ValueError("boundary UDP echo payload must stay below the safety limit")
+    payload = _deterministic_udp_payload(
+        label="udp-length-boundary-echo-payload",
+        profile=profile,
+        seed=seed,
+        sequence=sequence,
+        length=UDP_LENGTH_BOUNDARY_PAYLOAD_LENGTH,
+    )
+    expected_ipv4_total_length = (
+        UDP_ECHO_LARGE_IPV4_HEADER_LENGTH
+        + UDP_ECHO_LARGE_UDP_HEADER_LENGTH
+        + UDP_LENGTH_BOUNDARY_PAYLOAD_LENGTH
+    )
+    payload_metadata: JSONObject = {
+        "payload_size_policy": "near_boundary_non_fragmenting",
+        "payload_boundary_margin": UDP_LENGTH_BOUNDARY_PAYLOAD_MARGIN,
+        "payload_mtu_safety_limit": UDP_ECHO_LARGE_IPV4_PACKET_SAFETY_LIMIT,
+        "payload_mtu_header_overhead": (
+            UDP_ECHO_LARGE_IPV4_HEADER_LENGTH + UDP_ECHO_LARGE_UDP_HEADER_LENGTH
+        ),
+        "max_non_fragmenting_payload_length": UDP_ECHO_LARGE_MAX_PAYLOAD_LENGTH,
+        "expected_ipv4_total_length": expected_ipv4_total_length,
+    }
+    plan = _udp_echo_probe_plan(
+        case_name=case_name,
+        profile=profile,
+        seed=seed,
+        sequence=sequence,
+        payload=payload,
+        payload_metadata=payload_metadata,
+    )
+    wire_requirements = json_object(
+        plan["wire_requirements"],
+        "udp_length_boundary.wire_requirements",
+    )
+    wire_requirements.update(
+        {
+            "requires_udp_large_payload": True,
+            "note": (
+                "UDP length-boundary behavior sends one datagram just below "
+                "the configured IPv4 no-fragment safety limit through a "
+                "controlled echo responder."
+            ),
+        }
+    )
+    plan["wire_requirements"] = wire_requirements
+    return plan
 
 
 def _udp_source_port_reflection_probe_plan(
@@ -5086,6 +5149,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "udp-echo-short": _udp_echo_short_probe_plan,
     "udp-echo-binary": _udp_echo_binary_probe_plan,
     "udp-echo-large": _udp_echo_large_probe_plan,
+    "udp-length-boundary-echo": _udp_length_boundary_echo_probe_plan,
     "udp-source-port-reflection": _udp_source_port_reflection_probe_plan,
     "udp-multi-shot-order": _udp_multi_shot_order_probe_plan,
     "udp-closed-port-icmp": _udp_closed_port_icmp_probe_plan,
