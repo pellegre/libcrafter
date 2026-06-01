@@ -3618,6 +3618,119 @@ def _arp_alias_address_reply_probe_plan(
     }
 
 
+def _arp_spa_variation_probe_plan(
+    *,
+    case_name: str = "arp-spa-variation",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``arp-spa-variation`` behavioral case.
+
+    A who-has request (operation 1) whose *sender protocol address* (SPA) is an
+    **alternate** address, distinct from the stimulus endpoint's primary IPv4,
+    answered by the target kernel with a unicast is-at reply (operation 2). The
+    point of this case is that ARP field handling and reply matching must not
+    assume a single hard-coded source address: a generated tool that sends from a
+    configured or alias source address still gets a reply, and the target
+    addresses the reply back to exactly that planned SPA (reply target protocol
+    address == the alternate SPA) and the planned sender hardware address (reply
+    target hardware address == the probe MAC).
+
+    The plan shape mirrors ``arp-basic-who-has`` (ARP rides Ethernet directly, no
+    IP/UDP; documentation MACs; broadcast who-has; ARP-answering target kernel),
+    but the request's sender protocol address is the alternate SPA rather than the
+    endpoint's primary IPv4. The SPA is a single source of truth: the request's
+    ``sender_protocol_addr`` and the validation contract's expected reply
+    ``target_protocol_addr`` are the same alternate address. For live execution
+    the target kernel may need that SPA configured as a secondary sender address
+    so it accepts and answers the request; the target service records the
+    alternate SPA (``alt_sender_ipv4`` / ``alt_sender_address``) so target setup
+    can add (and cleanup remove) the secondary sender address. The endpoint pair's
+    primary stimulus IPv4 stays the on-segment endpoint address (``source_ipv4``).
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    alt_sender_ipv4 = deterministic_arp_alt_sender_ipv4(profile, seed, sequence)
+    stimulus_mac = deterministic_documentation_mac(profile, seed, sequence, role="stimulus")
+    target_mac = deterministic_documentation_mac(profile, seed, sequence, role="target")
+    broadcast_mac = "ff:ff:ff:ff:ff:ff"
+    zero_mac = "00:00:00:00:00:00"
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "arp_who_has",
+        "expected_response": "arp_is_at",
+        # ARP rides Ethernet directly; these are link-layer documentation values.
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        # The request's SENDER protocol address is the ALTERNATE SPA (distinct from
+        # the endpoint's primary IPv4); the reply must be addressed back to it.
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": alt_sender_ipv4,
+        "target_hardware_addr": zero_mac,
+        "target_protocol_addr": target_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "alt_sender_ipv4": alt_sender_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": alt_sender_ipv4,
+        # ARP cannot be selected by host/IP BPF; match on the protocol + opcode.
+        "capture_filter": "arp and arp[6:2] = 2",
+        "target_service": {
+            "required": True,
+            "kind": "arp-kernel",
+            "layer": "link",
+            "target_protocol_addr": target_ipv4,
+            "target_hardware_addr": target_mac,
+            # For live execution the kernel may need the alternate SPA configured as
+            # a secondary sender address so it accepts/answers the who-has; record it
+            # so target setup adds (and cleanup removes) the secondary address.
+            "alt_sender_ipv4": alt_sender_ipv4,
+            "alt_sender_address": True,
+            "arp_sysctls": True,
+            "neighbor_cache_flush": True,
+        },
+        "validation": {
+            "ethertype": 0x0806,
+            "operation": 2,
+            "operation_label": "reply",
+            # Reply SENDER fields == the target endpoint's own HW/proto.
+            "sender_hardware_addr": target_mac,
+            "sender_protocol_addr": target_ipv4,
+            # Reply TARGET fields == the request's SENDER HW + the ALTERNATE SPA: the
+            # target addresses the reply back to the planned sender hardware and the
+            # planned alternate sender protocol address.
+            "target_hardware_addr": stimulus_mac,
+            "target_protocol_addr": alt_sender_ipv4,
+            "ethernet_source": target_mac,
+            "ethernet_destination": stimulus_mac,
+        },
+        "wire_requirements": {
+            "requires_link_layer_send": True,
+            "requires_link_layer_capture": True,
+            "requires_broadcast": True,
+            "note": (
+                "ARP resolution is L2 broadcast/unicast traffic; it runs only on a "
+                "provider-backed lab segment, never from privileged host raw sends."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 def _arp_unicast_request_reply_probe_plan(
     *,
     case_name: str = "arp-unicast-request-reply",
@@ -4116,6 +4229,30 @@ def deterministic_arp_alias_ipv4(profile: str, seed: int, sequence: int) -> str:
     return f"10.{second}.{third}.{host}"
 
 
+def deterministic_arp_alt_sender_ipv4(profile: str, seed: int, sequence: int) -> str:
+    """Return a deterministic *alternate* sender protocol address (SPA).
+
+    The SPA rides the same /24 lab segment as the endpoint pair from
+    :func:`deterministic_ipv4_pair` (``10.{second}.{third}.10`` /
+    ``10.{second}.{third}.20``) but is a *distinct* host from both endpoints so
+    the case proves a who-has from an alternate sender address is still answered.
+    The host octet is derived from a dedicated digest and kept clear of the
+    ``.10``/``.20`` endpoint hosts, any configured alias host, the ``.1`` router,
+    broadcast, and the network address.
+    """
+
+    digest = deterministic_bytes("endpoint-addresses", profile, seed, sequence)
+    second = 64 + digest[0] % 64
+    third = digest[1]
+    alias_host = int(deterministic_arp_alias_ipv4(profile, seed, sequence).split(".")[3])
+    spa_digest = deterministic_bytes("arp-alt-sender-host", profile, seed, sequence)
+    reserved = {0, 1, 10, 20, 255, alias_host}
+    host = 2 + spa_digest[0] % 252
+    while host in reserved:
+        host = 2 + (host - 1) % 252
+    return f"10.{second}.{third}.{host}"
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
@@ -4155,6 +4292,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "arp-padding-reply": _arp_padding_reply_probe_plan,
     "arp-cache-flush-reply": _arp_cache_flush_reply_probe_plan,
     "arp-mac-validation": _arp_mac_validation_probe_plan,
+    "arp-spa-variation": _arp_spa_variation_probe_plan,
 }
 
 

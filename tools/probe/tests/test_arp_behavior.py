@@ -1608,5 +1608,209 @@ class ArpMacValidationTest(unittest.TestCase):
             )
 
 
+def _arp_spa_variation_plan(*, seed: int = 1038, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["arp-spa-variation"]),
+        case=planning.PROBE_CASE_BY_NAME["arp-spa-variation"],
+        sequence=sequence,
+    )
+
+
+class ArpSpaVariationPlanTest(unittest.TestCase):
+    """A who-has from an alternate sender protocol address still gets a reply."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("arp-spa-variation", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["arp-spa-variation"],
+            planning._arp_spa_variation_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_arp_spa_variation_plan(), _arp_spa_variation_plan())
+
+    def test_who_has_carries_an_alternate_sender_protocol_address(self) -> None:
+        plan = _arp_spa_variation_plan()
+
+        self.assertEqual(plan["case"], "arp-spa-variation")
+        self.assertEqual(plan["stimulus"], "arp_who_has")
+        self.assertEqual(plan["expected_response"], "arp_is_at")
+        self.assertEqual(plan["operation"], 1)
+        self.assertEqual(plan["operation_label"], "request")
+
+        # The whole point of the case: the request's SENDER protocol address is an
+        # ALTERNATE SPA, distinct from the stimulus endpoint's primary IPv4.
+        alt_spa = plan["alt_sender_ipv4"]
+        endpoint_pair = planning.deterministic_ipv4_pair("behavior", 1038, 0)
+        primary_source, primary_target = endpoint_pair
+        self.assertEqual(plan["sender_protocol_addr"], alt_spa)
+        self.assertNotEqual(alt_spa, primary_source)
+        self.assertNotEqual(alt_spa, primary_target)
+        # The SPA stays on the same /24 lab segment as the endpoint pair.
+        self.assertEqual(
+            ipaddress.ip_network(f"{alt_spa}/24", strict=False),
+            ipaddress.ip_network(f"{primary_source}/24", strict=False),
+        )
+        # The primary stimulus IPv4 is unchanged (the endpoint address).
+        self.assertEqual(plan["source_ipv4"], primary_source)
+
+        # The who-has is otherwise an ordinary broadcast request carrying a
+        # documentation sender MAC; the target hardware address is all-zero.
+        self.assertTrue(_is_documentation_mac(plan["sender_hardware_addr"]))
+        self.assertEqual(plan["target_hardware_addr"], "00:00:00:00:00:00")
+        self.assertEqual(plan["ethernet_source"], plan["sender_hardware_addr"])
+        self.assertEqual(plan["ethernet_destination"], "ff:ff:ff:ff:ff:ff")
+        self.assertEqual(plan["target_protocol_addr"], plan["destination_ipv4"])
+
+    def test_validation_addresses_reply_to_the_alternate_spa(self) -> None:
+        plan = _arp_spa_variation_plan()
+        validation = plan["validation"]
+        alt_spa = plan["alt_sender_ipv4"]
+
+        self.assertEqual(validation["operation"], 2)
+        self.assertEqual(validation["operation_label"], "reply")
+
+        # The reply's SENDER fields are the target endpoint's own HW/proto.
+        self.assertTrue(_is_documentation_mac(validation["sender_hardware_addr"]))
+        self.assertEqual(
+            validation["sender_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertNotEqual(
+            validation["sender_hardware_addr"], plan["sender_hardware_addr"]
+        )
+
+        # The behavioral assertion: the reply is addressed to the PLANNED sender
+        # hardware address and the PLANNED alternate SPA (the request's sender
+        # protocol address), not to a hard-coded source.
+        self.assertEqual(
+            validation["target_hardware_addr"], plan["sender_hardware_addr"]
+        )
+        self.assertEqual(validation["target_protocol_addr"], alt_spa)
+        self.assertEqual(
+            validation["target_protocol_addr"], plan["sender_protocol_addr"]
+        )
+
+        # The unicast reply's Ethernet framing: resolved target MAC -> querier MAC.
+        self.assertEqual(
+            validation["ethernet_source"], validation["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["ethernet_destination"], plan["sender_hardware_addr"]
+        )
+
+    def test_target_service_records_the_secondary_sender_address(self) -> None:
+        plan = _arp_spa_variation_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "arp-kernel")
+        self.assertEqual(target_service["layer"], "link")
+        self.assertEqual(
+            target_service["target_protocol_addr"], plan["target_protocol_addr"]
+        )
+        # The alternate SPA may be configured as a secondary sender address so the
+        # kernel accepts the reply addressed to it.
+        self.assertTrue(target_service["alt_sender_address"])
+        self.assertEqual(
+            target_service["alt_sender_ipv4"], plan["alt_sender_ipv4"]
+        )
+        self.assertTrue(target_service["arp_sysctls"])
+        self.assertTrue(target_service["neighbor_cache_flush"])
+
+    def test_case_is_in_the_arp_kernel_target_service_group(self) -> None:
+        self.assertIn("arp-spa-variation", target_services._ARP_KERNEL_CASES)
+
+    def test_wire_requirements_gate_on_link_layer(self) -> None:
+        plan = _arp_spa_variation_plan()
+        requirements = plan["wire_requirements"]
+        self.assertTrue(requirements["requires_link_layer_send"])
+        self.assertTrue(requirements["requires_link_layer_capture"])
+        self.assertTrue(requirements["requires_broadcast"])
+
+
+class ArpSpaVariationTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "arp-spa-variation",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1038,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("arp-spa-variation", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "arp-spa-variation"
+            ]
+            self.assertTrue(results, "endpoint emitted no arp-spa-variation result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus frame bytes: an
+                # Ethernet/ARP broadcast who-has request (opcode 1).
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                frame = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertGreaterEqual(len(frame), 14 + 28)
+                self.assertEqual(frame[0:6], b"\xff\xff\xff\xff\xff\xff")
+                self.assertEqual(frame[12:14], (0x0806).to_bytes(2, "big"))
+                self.assertEqual(frame[20:22], (1).to_bytes(2, "big"))
+
+                # The probe plan echoed back carries the alternate SPA: the request
+                # sender protocol address is the alternate SPA (distinct from the
+                # lab-rewritten primary stimulus IPv4), and the expected reply is
+                # addressed back to that SPA.
+                plan = metadata.get("probe_plan", {})
+                alt_spa = plan.get("alt_sender_ipv4")
+                self.assertTrue(alt_spa)
+                self.assertEqual(plan.get("sender_protocol_addr"), alt_spa)
+                self.assertNotEqual(alt_spa, plan.get("source_ipv4"))
+                validation = plan.get("validation", {})
+                self.assertEqual(validation.get("operation"), 2)
+                self.assertEqual(validation.get("target_protocol_addr"), alt_spa)
+
+                # The ARP sender protocol address compiled into the frame is the
+                # alternate SPA (bytes 28:32 of the frame: 14 Ethernet + 14 into the
+                # 28-byte ARP payload, i.e. arp[14:18] = sender protocol address).
+                expected_spa = bytes(int(part) for part in alt_spa.split("."))
+                self.assertEqual(frame[28:32], expected_spa)
+
+                # The target service records the secondary sender address marker
+                # and the alternate SPA.
+                target_service = metadata.get("target_service", {})
+                self.assertTrue(target_service.get("alt_sender_address"))
+                self.assertEqual(target_service.get("alt_sender_ipv4"), alt_spa)
+
+    def test_provider_without_link_layer_skips(self) -> None:
+        # Hetzner cannot provide L2/broadcast/provider-MAC, so the case skips with
+        # a stable capability reason rather than planning a stimulus.
+        if not probe_acceptance.probe_run_available():
+            self.skipTest("probe runner requires uv on PATH")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "hetzner"
+            report_path = probe_acceptance._run_probe_dry_run(
+                "arp-spa-variation",
+                out_dir=out_dir,
+                provider="hetzner",
+                profile="behavior",
+                seed=1038,
+                count=1,
+                timeout_seconds=600,
+            )
+            report = probe_acceptance._load_json(report_path)
+            skips = report.get("skips", [])
+            arp_skips = [
+                skip for skip in skips if skip.get("case") == "arp-spa-variation"
+            ]
+            self.assertTrue(arp_skips, "expected arp-spa-variation to skip on hetzner")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -344,7 +344,7 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
         metadata={"layer": "link"},
     ),
     _behavior_case(
-        name="arp-alt-sender-pa",
+        name="arp-spa-variation",
         description="Send a request from an alternate sender protocol address and validate the reply.",
         stimulus="arp_who_has",
         expected_response="arp_is_at",

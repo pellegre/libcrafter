@@ -607,6 +607,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "arp-padding-reply",
         "arp-cache-flush-reply",
         "arp-mac-validation",
+        "arp-spa-variation",
     }
 )
 
@@ -1246,6 +1247,7 @@ def _probe_plan_with_endpoint_addresses(
         "arp-padding-reply",
         "arp-cache-flush-reply",
         "arp-mac-validation",
+        "arp-spa-variation",
     }:
         # ARP rides Ethernet directly (no IP/UDP), so the lab rewrite touches the
         # ARP protocol addresses rather than transport IPs: the stimulus resolves
@@ -1266,19 +1268,34 @@ def _probe_plan_with_endpoint_addresses(
         # into the target_service setup/cleanup (alias add/del) and the expected
         # reply sender-proto.
         is_alias_case = case_name == "arp-alias-address-reply"
+        is_spa_case = case_name == "arp-spa-variation"
         resolved_ipv4 = (
             _lab_arp_alias_ipv4(target_ipv4, source_ipv4)
             if is_alias_case
             else target_ipv4
         )
+        # arp-spa-variation is the sender-side exception: the who-has carries an
+        # ALTERNATE sender protocol address (SPA), distinct from the stimulus
+        # endpoint's primary on-segment IPv4 (``source_ipv4``). The SPA is a single
+        # source of truth: the request's sender_protocol_addr and the expected
+        # reply target_protocol_addr are both the alternate SPA. Derive it as a
+        # distinct host on the lab segment (reuse the alias-style host derivation,
+        # which already avoids the source/target/router/broadcast hosts).
+        sender_proto = (
+            _lab_arp_alias_ipv4(source_ipv4, target_ipv4)
+            if is_spa_case
+            else source_ipv4
+        )
         updated["source_ipv4"] = source_ipv4
         updated["destination_ipv4"] = resolved_ipv4
         updated["expected_reply_source_ipv4"] = resolved_ipv4
-        updated["expected_reply_destination_ipv4"] = source_ipv4
-        updated["sender_protocol_addr"] = source_ipv4
+        updated["expected_reply_destination_ipv4"] = sender_proto
+        updated["sender_protocol_addr"] = sender_proto
         updated["target_protocol_addr"] = resolved_ipv4
         if is_alias_case:
             updated["alias_ipv4"] = resolved_ipv4
+        if is_spa_case:
+            updated["alt_sender_ipv4"] = sender_proto
         target_service = dict(
             json_object(updated.get("target_service", {}), "probe_plan.target_service")
         )
@@ -1298,12 +1315,21 @@ def _probe_plan_with_endpoint_addresses(
             # the live setup configures the on-segment alias the who-has resolves.
             target_service["alias_ipv4"] = resolved_ipv4
             target_service["alias_address"] = True
+        if is_spa_case:
+            # For live execution the target kernel may need the alternate SPA
+            # configured as a secondary sender address so it accepts/answers the
+            # who-has; thread the on-segment SPA into the target service so setup
+            # adds (and cleanup removes) the secondary sender address.
+            target_service["alt_sender_ipv4"] = sender_proto
+            target_service["alt_sender_address"] = True
         updated["target_service"] = target_service
         arp_validation = dict(
             json_object(updated.get("validation", {}), "probe_plan.validation")
         )
         arp_validation["sender_protocol_addr"] = resolved_ipv4
-        arp_validation["target_protocol_addr"] = source_ipv4
+        # The reply is addressed back to the request's sender protocol address: the
+        # alternate SPA for arp-spa-variation, the stimulus IPv4 otherwise.
+        arp_validation["target_protocol_addr"] = sender_proto
         updated["validation"] = arp_validation
         if case_name == "arp-unicast-request-reply":
             # The unicast case sends the request directly to the known target MAC
@@ -1535,12 +1561,17 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
         ]
-    if case_name in {"arp-alias-address-reply", "arp-cache-flush-reply"}:
+    if case_name in {
+        "arp-alias-address-reply",
+        "arp-cache-flush-reply",
+        "arp-spa-variation",
+    }:
         # The alias case adds (and removes) a secondary IPv4 on the target
         # interface as part of target setup; the cache-flush case flushes the
-        # neighbor cache before the stimulus as part of target setup. Either
-        # setup step failing is a distinct failure mode on top of the shared ARP
-        # reasons.
+        # neighbor cache before the stimulus as part of target setup; the
+        # spa-variation case may configure a secondary *sender* IPv4 so the kernel
+        # accepts the reply addressed to the alternate SPA. Either setup step
+        # failing is a distinct failure mode on top of the shared ARP reasons.
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,
