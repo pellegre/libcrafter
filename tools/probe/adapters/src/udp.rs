@@ -1,15 +1,15 @@
 //! UDP behavioral probe cases.
 //!
 //! `udp-echo-empty`, `udp-echo-short`, `udp-echo-binary`, `udp-echo-large`,
-//! `udp-source-port-reflection`, and `udp-multi-shot-order` send IPv4/UDP
-//! datagrams to a controlled target-side UDP echo responder, then validate the
-//! decoded UDP response's peer tuple, length, checksum status, and exact echoed
-//! payload. `udp-zero-checksum-ipv4` uses the same echo path but explicitly sets
-//! the outgoing IPv4 UDP checksum to zero so compile() override preservation is
-//! tested. `udp-options-surplus-echo` appends deterministic UDP surplus/options
-//! after the conventional payload length and validates the service still echoes
-//! that payload where the provider supports delivery. `udp-closed-port-icmp`
-//! sends a UDP datagram to a verified-unbound
+//! `udp-length-boundary-echo`, `udp-source-port-reflection`, and
+//! `udp-multi-shot-order` send IPv4/UDP datagrams to a controlled target-side
+//! UDP echo responder, then validate the decoded UDP response's peer tuple,
+//! length, checksum status, and exact echoed payload. `udp-zero-checksum-ipv4`
+//! uses the same echo path but explicitly sets the outgoing IPv4 UDP checksum to
+//! zero so compile() override preservation is tested. `udp-options-surplus-echo`
+//! appends deterministic UDP surplus/options after the conventional payload
+//! length and validates the service still echoes that payload where the provider
+//! supports delivery. `udp-closed-port-icmp` sends a UDP datagram to a verified-unbound
 //! target port and validates the kernel ICMP destination-unreachable /
 //! port-unreachable response plus the embedded original IPv4/UDP prefix.
 
@@ -1068,6 +1068,15 @@ mod tests {
         echo_plan("udp-echo-large", &payload)
     }
 
+    fn length_boundary_echo_plan() -> ProbePlan {
+        let payload = (0..1371)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let mut plan = echo_plan("udp-length-boundary-echo", &payload);
+        plan.expected_ipv4_total_length = Some(1399);
+        plan
+    }
+
     fn source_port_reflection_plan() -> ProbePlan {
         let mut plan = echo_plan("udp-source-port-reflection", b"udp-source-port:1234abcd");
         plan.source_port = Some(62044);
@@ -1224,6 +1233,49 @@ mod tests {
         assert_eq!(udp.length_value(), Some(1208));
         assert_eq!(payload.as_bytes(), expected_payload.as_slice());
         assert!(udp.checksum_value().is_some());
+    }
+
+    #[test]
+    fn udp_length_boundary_packet_sets_udp_length_below_safety_limit() {
+        let plan = length_boundary_echo_plan();
+        let expected_payload = decode_hex(plan.payload_hex.as_deref().unwrap()).unwrap();
+        let packet = udp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let payload = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(expected_payload.len(), 1371);
+        assert_eq!(bytes.as_bytes().len(), 1399);
+        assert!(bytes.as_bytes().len() < 1400);
+        assert_eq!(
+            u16::from_be_bytes([bytes.as_bytes()[2], bytes.as_bytes()[3]]),
+            1399
+        );
+        assert_eq!(
+            u16::from_be_bytes([bytes.as_bytes()[24], bytes.as_bytes()[25]]),
+            1379
+        );
+        assert_eq!(udp.length_value(), Some(1379));
+        assert_eq!(payload.as_bytes(), expected_payload.as_slice());
+        assert!(udp.checksum_value().is_some());
+    }
+
+    #[test]
+    fn validate_udp_candidate_accepts_length_boundary_echo_response() {
+        let plan = length_boundary_echo_plan();
+        let payload = decode_hex(plan.payload_hex.as_deref().unwrap()).unwrap();
+        let response = (Ipv4::new()
+            .src("192.0.2.20".parse::<Ipv4Addr>().unwrap())
+            .dst("192.0.2.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().source_port(30000).destination_port(46000)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, response.as_bytes()).unwrap();
+
+        let validation = validate_udp_candidate(&plan, &decoded, response.as_bytes()).unwrap();
+        assert!(matches!(validation, CandidateValidation::Passed(_)));
     }
 
     #[test]

@@ -22,10 +22,13 @@ checksum is explicitly overridden to zero, then keeps the ordinary payload and
 peer tuple validation for responses accepted by the provider kernel.
 ``udp-options-surplus-echo`` sends the same controlled echo payload shape with
 deterministic UDP surplus/options after the UDP payload length and records the
-sent raw bytes, UDP length, surplus length, and option summary. The stimulus
-endpoint decodes each response with libcrafter and validates the peer addresses,
-ports, UDP length, checksum status, exact payload, or ICMP embedded prefix
-depending on the case.
+sent raw bytes, UDP length, surplus length, and option summary.
+``udp-length-boundary-echo`` sends a deterministic payload one byte below the
+configured no-fragment safety limit so the raw UDP length field and decoded
+response contract are checked near the boundary. The stimulus endpoint decodes
+each response with libcrafter and validates the peer addresses, ports, UDP
+length, checksum status, exact payload, or ICMP embedded prefix depending on the
+case.
 """
 
 from __future__ import annotations
@@ -126,6 +129,14 @@ def _udp_options_surplus_echo_plan(*, seed: int = 1048, sequence: int = 0) -> di
     return planning.probe_plan_for_case(
         request=_request(seed=seed, case_names=["udp-options-surplus-echo"]),
         case=planning.PROBE_CASE_BY_NAME["udp-options-surplus-echo"],
+        sequence=sequence,
+    )
+
+
+def _udp_length_boundary_echo_plan(*, seed: int = 1049, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["udp-length-boundary-echo"]),
+        case=planning.PROBE_CASE_BY_NAME["udp-length-boundary-echo"],
         sequence=sequence,
     )
 
@@ -1287,6 +1298,151 @@ class UdpOptionsSurplusEchoTest(unittest.TestCase):
                     decoded["udp_options"]["summary"],
                     probe_plan["expected_udp_options_summary"],
                 )
+
+
+class UdpLengthBoundaryEchoTest(unittest.TestCase):
+    """Focused coverage for the near-boundary non-fragmenting UDP echo case."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("udp-length-boundary-echo", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["udp-length-boundary-echo"],
+            planning._udp_length_boundary_echo_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _udp_length_boundary_echo_plan(),
+            _udp_length_boundary_echo_plan(),
+        )
+
+    def test_plan_carries_near_boundary_payload_echo_contract(self) -> None:
+        plan = _udp_length_boundary_echo_plan()
+        payload = bytes.fromhex(plan["payload_hex"])
+        header_overhead = (
+            planning.UDP_ECHO_LARGE_IPV4_HEADER_LENGTH
+            + planning.UDP_ECHO_LARGE_UDP_HEADER_LENGTH
+        )
+
+        self.assertEqual(plan["case"], "udp-length-boundary-echo")
+        self.assertEqual(plan["stimulus"], "udp_datagram")
+        self.assertEqual(plan["expected_response"], "udp_response")
+        self.assertEqual(len(payload), planning.UDP_LENGTH_BOUNDARY_PAYLOAD_LENGTH)
+        self.assertEqual(
+            plan["payload_length"],
+            planning.UDP_ECHO_LARGE_MAX_PAYLOAD_LENGTH - 1,
+        )
+        self.assertEqual(plan["payload_boundary_margin"], 1)
+        self.assertEqual(plan["expected_payload_hex"], plan["payload_hex"])
+        self.assertEqual(plan["expected_payload_length"], len(payload))
+        self.assertEqual(plan["expected_udp_length"], 8 + len(payload))
+        self.assertEqual(
+            plan["expected_ipv4_total_length"],
+            planning.UDP_ECHO_LARGE_IPV4_PACKET_SAFETY_LIMIT - 1,
+        )
+        self.assertEqual(
+            plan["expected_ipv4_total_length"],
+            plan["payload_length"] + header_overhead,
+        )
+        self.assertLess(
+            plan["expected_ipv4_total_length"],
+            planning.UDP_ECHO_LARGE_IPV4_PACKET_SAFETY_LIMIT,
+        )
+        self.assertEqual(plan["payload_size_policy"], "near_boundary_non_fragmenting")
+        self.assertTrue(plan["expected_udp_checksum_present"])
+        self.assertEqual(
+            plan["expected_udp_checksum_statuses"],
+            ["valid", "ipv4_no_checksum"],
+        )
+
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-responder")
+        self.assertEqual(target_service["mode"], "echo")
+        self.assertEqual(target_service["payload_hex"], plan["payload_hex"])
+        self.assertEqual(target_service["payload_length"], plan["payload_length"])
+        self.assertEqual(
+            target_service["expected_ipv4_total_length"],
+            plan["expected_ipv4_total_length"],
+        )
+        self.assertIn("udp-length-boundary-echo", target_services._UDP_RESPONDER_CASES)
+        self.assertIn(
+            "udp_large_payload",
+            planning.PROBE_CASE_BY_NAME["udp-length-boundary-echo"].required_capabilities,
+        )
+
+        validation = plan["validation"]
+        self.assertEqual(validation["payload_hex"], plan["payload_hex"])
+        self.assertEqual(validation["payload_length"], plan["payload_length"])
+        self.assertEqual(validation["udp_length"], plan["expected_udp_length"])
+        self.assertEqual(
+            validation["expected_ipv4_total_length"],
+            plan["expected_ipv4_total_length"],
+        )
+        self.assertTrue(plan["wire_requirements"]["requires_udp_large_payload"])
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "udp-length-boundary-echo",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1049,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("udp-length-boundary-echo", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "udp-length-boundary-echo"
+            ]
+            self.assertTrue(results, "endpoint emitted no udp-length-boundary-echo result")
+            for result in results:
+                self.assertEqual(result.get("status"), "planned")
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+                probe_plan = metadata["probe_plan"]
+                payload = bytes.fromhex(probe_plan["payload_hex"])
+                sent = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertEqual(len(payload), planning.UDP_LENGTH_BOUNDARY_PAYLOAD_LENGTH)
+                self.assertEqual(len(sent), probe_plan["expected_ipv4_total_length"])
+                self.assertEqual(
+                    len(sent),
+                    planning.UDP_ECHO_LARGE_IPV4_PACKET_SAFETY_LIMIT - 1,
+                )
+                self.assertEqual(sent[9], 17)
+                self.assertEqual(
+                    int.from_bytes(sent[2:4], "big"),
+                    probe_plan["expected_ipv4_total_length"],
+                )
+                self.assertEqual(
+                    int.from_bytes(sent[20:22], "big"),
+                    probe_plan["source_port"],
+                )
+                self.assertEqual(
+                    int.from_bytes(sent[22:24], "big"),
+                    probe_plan["destination_port"],
+                )
+                self.assertEqual(
+                    int.from_bytes(sent[24:26], "big"),
+                    probe_plan["expected_udp_length"],
+                )
+                self.assertEqual(sent[28:], payload)
+                self.assertNotEqual(int.from_bytes(sent[26:28], "big"), 0)
+
+                decoded = metadata["sent_decoded"]
+                self.assertEqual(decoded["udp"]["sport"], probe_plan["source_port"])
+                self.assertEqual(decoded["udp"]["dport"], probe_plan["destination_port"])
+                self.assertEqual(decoded["udp"]["length"], probe_plan["expected_udp_length"])
+                self.assertEqual(decoded["udp"]["checksum_status"], "valid")
+                self.assertEqual(decoded["payload_hex"], probe_plan["payload_hex"])
 
 
 if __name__ == "__main__":

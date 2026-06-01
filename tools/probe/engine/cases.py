@@ -463,7 +463,7 @@ BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
         description="Echo a near-length-boundary payload and validate the response.",
         stimulus="udp_datagram",
         expected_response="udp_response",
-        required_capabilities=_UDP_CAPABILITIES,
+        required_capabilities=_UDP_LARGE_CAPABILITIES,
         protocol="udp",
     ),
 )
