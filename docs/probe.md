@@ -44,6 +44,8 @@ modes.
 
 ## Cases
 
+### Smoke Profile
+
 The smoke profile currently samples these cases:
 
 - `icmp-echo`: send an ICMP echo request and validate the echo reply from the
@@ -65,6 +67,139 @@ sessions advertise IPv4 unicast, link-layer send and capture, broadcast,
 provider MAC knowledge, and controlled services; they do not advertise IPv6 or
 a controlled router.
 
+### Behavior Profile
+
+The `behavior` profile is the full DNS/DHCP/ARP/UDP behavioral suite. It
+selects forty cases in deterministic DNS, DHCP, ARP, UDP order and defaults
+`--count` to all forty cases when no explicit count is supplied:
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --case dns-a-success
+```
+
+DNS behavior cases use a controlled UDP DNS responder and validate decoded UDP
+and DNS responses for peer addresses, ports, transaction id, flags, questions,
+answer content, negative codes, EDNS metadata, and transaction-id/source-port
+matching:
+
+- `dns-a-success`
+- `dns-aaaa-success`
+- `dns-cname-chain`
+- `dns-nxdomain`
+- `dns-nodata`
+- `dns-txt-answer`
+- `dns-mx-answer`
+- `dns-srv-answer`
+- `dns-edns-opt`
+- `dns-repeat-transaction`
+
+DHCP behavior cases use a controlled DHCP/BOOTP responder on a private
+link-layer segment and validate decoded UDP, BOOTP, and DHCP responses for
+message type, transaction id, client identity, address assignment, server
+identifier, lease/configuration options, and response direction:
+
+- `dhcp-discover-offer`
+- `dhcp-request-ack`
+- `dhcp-client-identifier`
+- `dhcp-hostname`
+- `dhcp-parameter-request-list`
+- `dhcp-lease-time`
+- `dhcp-renewal-unicast-ack`
+- `dhcp-inform-ack`
+- `dhcp-request-nak`
+- `dhcp-rapid-repeat`
+
+ARP behavior cases use a private link-layer segment and validate decoded
+Ethernet and ARP replies from the target kernel, including sender preservation,
+alias handling, padding, neighbor-cache setup, provider MAC matching, and
+filtered capture:
+
+- `arp-basic-who-has`
+- `arp-repeat-two-replies`
+- `arp-source-address-preserved`
+- `arp-alias-address-reply`
+- `arp-unicast-request-reply`
+- `arp-padding-reply`
+- `arp-cache-flush-reply`
+- `arp-mac-validation`
+- `arp-spa-variation`
+- `arp-broadcast-filtered-capture`
+
+UDP behavior cases use controlled UDP services or target kernel ICMP behavior
+and validate decoded UDP or ICMP responses for peer addresses, ports, payload,
+ordering, checksum status, and surplus option handling:
+
+- `udp-echo-empty`
+- `udp-echo-short`
+- `udp-echo-binary`
+- `udp-echo-large`
+- `udp-source-port-reflection`
+- `udp-multi-shot-order`
+- `udp-closed-port-icmp`
+- `udp-zero-checksum-ipv4`
+- `udp-options-surplus-echo`
+- `udp-length-boundary-echo`
+
+## Provider Capabilities
+
+The probe runner derives provider capabilities from the lab provider and stores
+them in reports. Capability checks are the only way a supported behavioral case
+becomes a skip. A case that can run on the provider but emits the wrong packet,
+receives an undecodable response, or fails validation remains a failure so
+libcrafter or probe infrastructure can be fixed.
+
+DNS and UDP behavior cases need IPv4 unicast and controlled services. Large UDP
+payload cases also require the provider's advertised safe payload size to cover
+the planned datagram, while zero-checksum and surplus-option cases require the
+matching provider capabilities. DHCP cases need IPv4 unicast, controlled
+services, link-layer send/capture, and broadcast. ARP cases need link-layer
+send/capture and broadcast; `arp-unicast-request-reply` and
+`arp-mac-validation` also need provider MAC metadata.
+
+Expected provider behavior:
+
+- Hetzner plans IPv4 unicast DNS and UDP service cases, and skips DHCP and ARP
+  link-layer cases with stable capability reasons.
+- QEMU and VirtualBox private lab sessions are expected to plan the full
+  behavior suite when local VM prerequisites are available.
+- Docker private sessions advertise IPv4 unicast, link-layer send/capture,
+  broadcast, provider MAC knowledge, and controlled services, but no IPv6 or
+  controlled router.
+- Any provider missing link-layer send/capture, broadcast, provider MAC
+  metadata, controlled services, or UDP payload/option support reports a
+  stable capability skip instead of a failure.
+
+Run the dry-run provider matrix to compare planning and skip reasons across
+providers without live traffic:
+
+```sh
+python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/provider-matrix
+```
+
+## Target Services
+
+Probe owns target workload setup after `tools/lab` has created, connected, and
+described the disposable endpoints. The target service plan is included in
+dry-run reports and rendered into the live setup script only after
+`--confirm-live-run`.
+
+Controlled target behavior is intentionally local to the lab segment:
+
+- DNS uses a generated Python UDP responder bound to the target endpoint.
+- DHCP uses a generated responder scoped to the planned DHCP contracts, not a
+  general DHCP server.
+- UDP uses generated echo/transform responders for service cases.
+- Closed UDP port behavior relies on the target kernel's ICMP port-unreachable
+  response.
+- ARP relies on the target kernel, with probe-owned setup for aliases, sysctls,
+  neighbor-cache flushes, alternate sender addresses, and decoy events where a
+  case needs them.
+
+Dry-runs never start services or send packets. Live runs run setup and cleanup
+on disposable lab endpoints and collect responder stdout, stderr, pid files,
+packet artifacts, and report JSON under the configured output directory.
+
 ## Protected Lab Runs
 
 Real probe runs use a two-endpoint lab session. Run local static checks and
@@ -76,6 +211,8 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider docker --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40
+python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/provider-matrix
 tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider virtualbox --dry-run --profile smoke --seed 1 --role stimulus --role target --json
