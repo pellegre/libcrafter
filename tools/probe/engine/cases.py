@@ -20,9 +20,11 @@ from .model import EndpointRole, JSONObject, ProbeCase
 # behavior-suite cases skip with stable reasons on providers that cannot support
 # them. Full per-case stimulus/validation wiring lands in the later per-case
 # steps; here the cases route through the planned-only dispatcher fallback.
+UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 _DNS_CAPABILITIES = ["dns_service"]
 _DHCP_CAPABILITIES = ["dhcp_service"]
 _UDP_CAPABILITIES = ["udp_service"]
+_UDP_LARGE_CAPABILITIES = [*_UDP_CAPABILITIES, "udp_large_payload"]
 _ARP_CAPABILITIES = [
     "arp_resolution",
     "link_layer_send",
@@ -395,11 +397,11 @@ BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
         protocol="udp",
     ),
     _behavior_case(
-        name="udp-large-nofragment-echo",
+        name="udp-echo-large",
         description="Echo a large non-fragmenting payload and validate the response.",
         stimulus="udp_datagram",
         expected_response="udp_response",
-        required_capabilities=_UDP_CAPABILITIES,
+        required_capabilities=_UDP_LARGE_CAPABILITIES,
         protocol="udp",
     ),
     _behavior_case(

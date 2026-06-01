@@ -1,9 +1,9 @@
 //! UDP behavioral probe cases.
 //!
-//! `udp-echo-empty`, `udp-echo-short`, and `udp-echo-binary` send IPv4/UDP
-//! datagrams to a controlled target-side UDP echo responder, then validate the
-//! decoded UDP response's peer tuple, length, checksum status, and exact echoed
-//! payload.
+//! `udp-echo-empty`, `udp-echo-short`, `udp-echo-binary`, and `udp-echo-large`
+//! send IPv4/UDP datagrams to a controlled target-side UDP echo responder, then
+//! validate the decoded UDP response's peer tuple, length, checksum status, and
+//! exact echoed payload.
 
 use crafter::prelude::*;
 use serde_json::json;
@@ -432,6 +432,13 @@ mod tests {
         )
     }
 
+    fn large_echo_plan() -> ProbePlan {
+        let payload = (0..1200)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        echo_plan("udp-echo-large", &payload)
+    }
+
     #[test]
     fn udp_echo_empty_packet_has_no_payload_and_udp_length_eight() {
         let packet = udp_packet(&empty_echo_plan()).unwrap();
@@ -529,6 +536,24 @@ mod tests {
 
         let validation = validate_udp_candidate(&plan, &decoded, response.as_bytes()).unwrap();
         assert!(matches!(validation, CandidateValidation::Passed(_)));
+    }
+
+    #[test]
+    fn udp_echo_large_packet_stays_under_private_mtu_safety_limit() {
+        let plan = large_echo_plan();
+        let expected_payload = decode_hex(plan.payload_hex.as_deref().unwrap()).unwrap();
+        let packet = udp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let payload = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(expected_payload.len(), 1200);
+        assert_eq!(bytes.as_bytes().len(), 1228);
+        assert!(bytes.as_bytes().len() < 1400);
+        assert_eq!(udp.length_value(), Some(1208));
+        assert_eq!(payload.as_bytes(), expected_payload.as_slice());
+        assert!(udp.checksum_value().is_some());
     }
 
     #[test]

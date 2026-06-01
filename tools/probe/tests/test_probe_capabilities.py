@@ -55,6 +55,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         for name in (
             "dhcp_service",
             "udp_service",
+            "udp_large_payload",
             "privileged_udp_port",
             "link_layer_arp",
             "provider_mac",
@@ -73,6 +74,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "dns_service",
             "dhcp_service",
             "udp_service",
+            "udp_large_payload",
             "privileged_udp_port",
             "arp_resolution",
             "link_layer_arp",
@@ -93,6 +95,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         for granted in (
             "dns_service",
             "udp_service",
+            "udp_large_payload",
             "privileged_udp_port",
             "repeated_response",
         ):
@@ -120,6 +123,20 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         self.assertIs(derived["arp_resolution"], True)
         self.assertIs(derived["link_layer_arp"], False)
         self.assertIs(derived["provider_mac"], False)
+
+    def test_advertised_small_udp_payload_limit_disables_large_echo(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["udp_safe_payload_size"] = 1199
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["udp_service"], True)
+        self.assertIs(derived["udp_large_payload"], False)
+        self.assertEqual(derived["udp_safe_payload_size"], 1199)
 
 
 class ProbeMissingCapabilityTest(unittest.TestCase):
@@ -153,6 +170,25 @@ class ProbeMissingCapabilityTest(unittest.TestCase):
         )
 
         self.assertEqual(capabilities.missing_capabilities(case, derived), [])
+
+    def test_udp_echo_large_skips_when_payload_limit_is_too_small(self) -> None:
+        case = cases.PROBE_CASE_BY_NAME["udp-echo-large"]
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["udp_safe_payload_size"] = 1199
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertEqual(
+            capabilities.missing_capabilities(case, derived),
+            ["udp_large_payload"],
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(case, "udp_large_payload"),
+            capabilities.SKIP_CAPABILITY_UNAVAILABLE,
+        )
 
 
 class ProbeSkipReasonTest(unittest.TestCase):

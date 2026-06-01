@@ -496,6 +496,7 @@ _UDP_RESPONDER_CASES: frozenset[str] = frozenset(
         "udp-echo-empty",
         "udp-echo-short",
         "udp-echo-binary",
+        "udp-echo-large",
     }
 )
 
