@@ -29,6 +29,14 @@ _ARP_CAPABILITIES = [
     "link_layer_capture",
     "broadcast",
 ]
+# A unicast ARP request is addressed to the *target MAC* rather than the
+# broadcast address, so it can only be built once the target's MAC is known. A
+# provider that cannot supply target-MAC metadata (``provider_mac``) must skip
+# the unicast case with the stable ``requires_provider_mac`` reason.
+_ARP_UNICAST_CAPABILITIES = [
+    *_ARP_CAPABILITIES,
+    "provider_mac",
+]
 
 
 def _behavior_case(
@@ -287,11 +295,14 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
         metadata={"layer": "link"},
     ),
     _behavior_case(
-        name="arp-unicast-request",
-        description="Send a unicast ARP request and validate the reply.",
+        name="arp-unicast-request-reply",
+        description=(
+            "Send the ARP request to the known target MAC (not broadcast) and "
+            "validate the reply."
+        ),
         stimulus="arp_who_has",
         expected_response="arp_is_at",
-        required_capabilities=_ARP_CAPABILITIES,
+        required_capabilities=_ARP_UNICAST_CAPABILITIES,
         protocol="arp",
         metadata={"layer": "link"},
     ),

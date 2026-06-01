@@ -603,6 +603,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "arp-repeat-two-replies",
         "arp-source-address-preserved",
         "arp-alias-address-reply",
+        "arp-unicast-request-reply",
     }
 )
 
@@ -1238,6 +1239,7 @@ def _probe_plan_with_endpoint_addresses(
         "arp-repeat-two-replies",
         "arp-source-address-preserved",
         "arp-alias-address-reply",
+        "arp-unicast-request-reply",
     }:
         # ARP rides Ethernet directly (no IP/UDP), so the lab rewrite touches the
         # ARP protocol addresses rather than transport IPs: the stimulus resolves
@@ -1297,6 +1299,16 @@ def _probe_plan_with_endpoint_addresses(
         arp_validation["sender_protocol_addr"] = resolved_ipv4
         arp_validation["target_protocol_addr"] = source_ipv4
         updated["validation"] = arp_validation
+        if case_name == "arp-unicast-request-reply":
+            # The unicast case sends the request directly to the known target MAC
+            # rather than the broadcast address. Pin the request's Ethernet
+            # destination to the target endpoint's hardware address (the resolved
+            # target MAC the reply also carries) so the request stays unicast and
+            # the target MAC remains a single source of truth across the request
+            # frame, the target service, and the is-at validation contract.
+            target_mac = target_service.get("target_hardware_addr")
+            if isinstance(target_mac, str) and target_mac:
+                updated["ethernet_destination"] = target_mac
         # arp-repeat-two-replies carries a per-send array: rewrite each who-has
         # send's ARP protocol addresses and is-at validation contract onto the lab
         # segment so every send resolves the same target and each decoded is-at
@@ -1508,6 +1520,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "arp-basic-who-has",
         "arp-repeat-two-replies",
         "arp-source-address-preserved",
+        "arp-unicast-request-reply",
     }:
         return [
             FAILURE_TIMEOUT,

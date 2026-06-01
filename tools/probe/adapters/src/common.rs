@@ -773,14 +773,16 @@ fn dispatch_case(
             "arp-basic-who-has"
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
-            | "arp-alias-address-reply",
+            | "arp-alias-address-reply"
+            | "arp-unicast-request-reply",
         ) => arp::run_arp_dry_run(request, plan),
         (
             RunMode::Live,
             "arp-basic-who-has"
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
-            | "arp-alias-address-reply",
+            | "arp-alias-address-reply"
+            | "arp-unicast-request-reply",
         ) => arp::run_arp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -1092,7 +1094,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         "arp-basic-who-has"
         | "arp-repeat-two-replies"
         | "arp-source-address-preserved"
-        | "arp-alias-address-reply" => "arp and arp[6:2] = 2".to_string(),
+        | "arp-alias-address-reply"
+        | "arp-unicast-request-reply" => "arp and arp[6:2] = 2".to_string(),
         _ => String::new(),
     }
 }
@@ -1129,7 +1132,8 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "arp-basic-who-has"
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
-            | "arp-alias-address-reply" => "arp_is_at",
+            | "arp-alias-address-reply"
+            | "arp-unicast-request-reply" => "arp_is_at",
             _ => "unknown",
         })
 }
@@ -1426,21 +1430,23 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "sends": dhcp::repeat_sends_json(plan.dhcp_sends.as_deref()),
             },
         }),
-        "arp-basic-who-has" | "arp-source-address-preserved" => json!({
-            "required": true,
-            // ARP relies primarily on the target kernel answering who-has for
-            // its own configured address; setup tunes ARP sysctls and flushes
-            // the neighbor cache (no listening daemon).
-            "kind": "arp-kernel",
-            "layer": "link",
-            "target_protocol_addr": plan.target_protocol_addr,
-            "target_hardware_addr": plan
-                .validation
-                .as_ref()
-                .and_then(|validation| validation.sender_hardware_addr.clone()),
-            "arp_sysctls": true,
-            "neighbor_cache_flush": true,
-        }),
+        "arp-basic-who-has" | "arp-source-address-preserved" | "arp-unicast-request-reply" => {
+            json!({
+                "required": true,
+                // ARP relies primarily on the target kernel answering who-has for
+                // its own configured address; setup tunes ARP sysctls and flushes
+                // the neighbor cache (no listening daemon).
+                "kind": "arp-kernel",
+                "layer": "link",
+                "target_protocol_addr": plan.target_protocol_addr,
+                "target_hardware_addr": plan
+                    .validation
+                    .as_ref()
+                    .and_then(|validation| validation.sender_hardware_addr.clone()),
+                "arp_sysctls": true,
+                "neighbor_cache_flush": true,
+            })
+        }
         "arp-alias-address-reply" => json!({
             "required": true,
             // Target setup adds (and cleanup removes) a deterministic secondary

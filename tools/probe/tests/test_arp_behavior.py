@@ -807,5 +807,211 @@ class ArpAliasAddressReplyTest(unittest.TestCase):
             )
 
 
+def _arp_unicast_request_reply_plan(*, seed: int = 1034, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["arp-unicast-request-reply"]),
+        case=planning.PROBE_CASE_BY_NAME["arp-unicast-request-reply"],
+        sequence=sequence,
+    )
+
+
+class ArpUnicastRequestReplyPlanTest(unittest.TestCase):
+    """The request is sent unicast to the known target MAC, not broadcast."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("arp-unicast-request-reply", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["arp-unicast-request-reply"],
+            planning._arp_unicast_request_reply_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _arp_unicast_request_reply_plan(),
+            _arp_unicast_request_reply_plan(),
+        )
+
+    def test_request_is_addressed_unicast_to_the_target_mac(self) -> None:
+        plan = _arp_unicast_request_reply_plan()
+
+        self.assertEqual(plan["case"], "arp-unicast-request-reply")
+        self.assertEqual(plan["stimulus"], "arp_who_has")
+        self.assertEqual(plan["expected_response"], "arp_is_at")
+        self.assertEqual(plan["operation"], 1)
+        self.assertEqual(plan["operation_label"], "request")
+
+        # The whole point of the case: the request's Ethernet destination is the
+        # KNOWN target MAC, NOT the broadcast address.
+        target_mac = plan["target_service"]["target_hardware_addr"]
+        self.assertTrue(_is_documentation_mac(target_mac))
+        self.assertEqual(plan["ethernet_destination"], target_mac)
+        self.assertNotEqual(plan["ethernet_destination"], "ff:ff:ff:ff:ff:ff")
+        self.assertTrue(plan["request_is_unicast"])
+
+        # The Ethernet destination is the same target MAC the reply resolves to.
+        self.assertEqual(
+            plan["ethernet_destination"],
+            plan["validation"]["sender_hardware_addr"],
+        )
+
+        # The ARP layer is otherwise an ordinary who-has: documentation sender
+        # MAC, all-zero target hardware, target protocol = the target IPv4.
+        self.assertTrue(_is_documentation_mac(plan["sender_hardware_addr"]))
+        self.assertEqual(plan["ethernet_source"], plan["sender_hardware_addr"])
+        self.assertEqual(plan["target_hardware_addr"], "00:00:00:00:00:00")
+        self.assertEqual(plan["sender_protocol_addr"], plan["source_ipv4"])
+        self.assertEqual(plan["target_protocol_addr"], plan["destination_ipv4"])
+
+    def test_validation_contract_covers_is_at_fields(self) -> None:
+        plan = _arp_unicast_request_reply_plan()
+        validation = plan["validation"]
+
+        self.assertEqual(validation["ethertype"], 0x0806)
+        self.assertEqual(validation["operation"], 2)
+        self.assertEqual(validation["operation_label"], "reply")
+
+        # The reply resolves the target: sender HW/proto = the target MAC/IPv4.
+        self.assertTrue(_is_documentation_mac(validation["sender_hardware_addr"]))
+        self.assertEqual(
+            validation["sender_protocol_addr"], plan["target_protocol_addr"]
+        )
+
+        # The reply is addressed back to the original querier.
+        self.assertEqual(
+            validation["target_hardware_addr"], plan["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["target_protocol_addr"], plan["sender_protocol_addr"]
+        )
+
+        # The unicast reply's Ethernet framing: resolved target MAC -> querier MAC.
+        self.assertEqual(
+            validation["ethernet_source"], validation["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["ethernet_destination"], plan["sender_hardware_addr"]
+        )
+
+        # The resolved MAC is distinct from the querier MAC.
+        self.assertNotEqual(
+            validation["sender_hardware_addr"], plan["sender_hardware_addr"]
+        )
+
+    def test_plan_requires_provider_mac_knowledge(self) -> None:
+        # A unicast request cannot be addressed without the target's MAC, so the
+        # case requires provider-MAC knowledge: the wire requirements flag it and
+        # the catalog case lists the provider_mac capability so MAC-less providers
+        # skip with the stable requires_provider_mac reason.
+        plan = _arp_unicast_request_reply_plan()
+        requirements = plan["wire_requirements"]
+        self.assertTrue(requirements["requires_link_layer_send"])
+        self.assertTrue(requirements["requires_link_layer_capture"])
+        self.assertTrue(requirements["requires_provider_mac"])
+        self.assertIn(
+            "provider_mac",
+            planning.PROBE_CASE_BY_NAME["arp-unicast-request-reply"].required_capabilities,
+        )
+
+    def test_target_service_is_the_arp_answering_kernel(self) -> None:
+        plan = _arp_unicast_request_reply_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "arp-kernel")
+        self.assertEqual(target_service["layer"], "link")
+        self.assertEqual(
+            target_service["target_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertTrue(target_service["arp_sysctls"])
+        self.assertTrue(target_service["neighbor_cache_flush"])
+
+
+class ArpUnicastRequestReplyTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "arp-unicast-request-reply",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1034,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("arp-unicast-request-reply", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "arp-unicast-request-reply"
+            ]
+            self.assertTrue(
+                results, "endpoint emitted no arp-unicast-request-reply result"
+            )
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus frame bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                # The compiled who-has frame is an Ethernet/ARP UNICAST request:
+                # the Ethernet destination is the target MAC (NOT broadcast) and
+                # the ethertype is ARP (0x0806). The first 14 octets are the
+                # Ethernet header.
+                frame = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertGreaterEqual(len(frame), 14 + 28)
+                self.assertNotEqual(frame[0:6], b"\xff\xff\xff\xff\xff\xff")
+                self.assertEqual(frame[12:14], (0x0806).to_bytes(2, "big"))
+                # ARP opcode (frame[20:22]) is the who-has request (1).
+                self.assertEqual(frame[20:22], (1).to_bytes(2, "big"))
+
+                # The Ethernet destination of the request is exactly the target
+                # MAC the reply also resolves to.
+                plan = metadata.get("probe_plan", {})
+                target_mac = (
+                    plan.get("target_service", {}).get("target_hardware_addr")
+                )
+                self.assertTrue(target_mac)
+                expected_dst = bytes(
+                    int(octet, 16) for octet in target_mac.split(":")
+                )
+                self.assertEqual(frame[0:6], expected_dst)
+                self.assertEqual(plan.get("ethernet_destination"), target_mac)
+                self.assertEqual(
+                    plan.get("validation", {}).get("sender_hardware_addr"),
+                    target_mac,
+                )
+
+    def test_provider_without_provider_mac_skips(self) -> None:
+        # Hetzner cannot provide L2/broadcast/provider-MAC, so the case skips with
+        # a stable capability reason rather than planning a unicast stimulus.
+        if not probe_acceptance.probe_run_available():
+            self.skipTest("probe runner requires uv on PATH")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "hetzner"
+            report_path = probe_acceptance._run_probe_dry_run(
+                "arp-unicast-request-reply",
+                out_dir=out_dir,
+                provider="hetzner",
+                profile="behavior",
+                seed=1034,
+                count=1,
+                timeout_seconds=600,
+            )
+            report = probe_acceptance._load_json(report_path)
+            skips = report.get("skips", [])
+            arp_skips = [
+                skip
+                for skip in skips
+                if skip.get("case") == "arp-unicast-request-reply"
+            ]
+            self.assertTrue(
+                arp_skips,
+                "expected arp-unicast-request-reply to skip on hetzner",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

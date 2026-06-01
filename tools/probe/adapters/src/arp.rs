@@ -1063,6 +1063,58 @@ mod tests {
         }
     }
 
+    /// Build an `arp-unicast-request-reply` plan: an ordinary who-has whose
+    /// Ethernet destination is the *known target MAC* rather than the broadcast
+    /// address. The target endpoint MAC is the resolved address the is-at reply
+    /// also carries (`validation.sender_hardware_addr`).
+    fn unicast_plan() -> ProbePlan {
+        let mut plan = who_has_plan();
+        plan.case = "arp-unicast-request-reply".to_string();
+        // The unicast difference: the request is addressed directly to the known
+        // target MAC, not broadcast.
+        plan.ethernet_destination = Some("00:00:5e:00:53:14".to_string());
+        plan
+    }
+
+    #[test]
+    fn unicast_who_has_targets_the_known_target_mac_not_broadcast() {
+        let plan = unicast_plan();
+        let packet = arp_who_has_packet(&plan).unwrap();
+
+        let ethernet = packet.layer::<Ethernet>().expect("ethernet layer");
+        // The Ethernet destination is the known target MAC, NOT broadcast.
+        let target_mac = plan
+            .validation
+            .as_ref()
+            .unwrap()
+            .sender_hardware_addr
+            .clone()
+            .unwrap();
+        assert_eq!(ethernet.destination().unwrap().to_string(), target_mac);
+        assert_ne!(ethernet.destination().unwrap().to_string(), BROADCAST_MAC);
+        assert_eq!(ethernet.source().unwrap().to_string(), "00:00:5e:00:53:0a");
+
+        // compile() still fills the ARP ethertype; the ARP layer is a normal
+        // who-has request (operation 1) resolving the target IPv4.
+        let bytes = packet.compile().unwrap().into_bytes();
+        assert_eq!(&bytes[12..14], &ETHERTYPE_ARP.to_be_bytes());
+        let arp = packet.layer::<Arp>().expect("arp layer");
+        assert_eq!(arp.opcode_value(), u16::from(ArpOperation::Request));
+        assert_eq!(arp.target_ipv4().unwrap().to_string(), "10.64.0.20");
+        assert_eq!(arp.target_mac().unwrap(), MacAddr::ZERO);
+    }
+
+    #[test]
+    fn unicast_is_at_reply_passes_validation() {
+        let plan = unicast_plan();
+        let raw = is_at_frame(&plan);
+        let packet = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
+        match validate_arp_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed, got {other:?}"),
+        }
+    }
+
     #[test]
     fn both_repeated_sends_resolve_the_same_target_and_pass_validation() {
         let parent = repeat_plan();
