@@ -4,7 +4,9 @@
 //! `udp-source-port-reflection`, and `udp-multi-shot-order` send IPv4/UDP
 //! datagrams to a controlled target-side UDP echo responder, then validate the
 //! decoded UDP response's peer tuple, length, checksum status, and exact echoed
-//! payload.
+//! payload. `udp-closed-port-icmp` sends a UDP datagram to a verified-unbound
+//! target port and validates the kernel ICMP destination-unreachable /
+//! port-unreachable response plus the embedded original IPv4/UDP prefix.
 
 use crafter::prelude::*;
 use serde_json::{json, Value};
@@ -17,11 +19,15 @@ use crate::common::{
     CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest, UdpSend,
     FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
+use crate::icmp;
 
 pub fn run_udp_dry_run(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
+    if plan.case == "udp-closed-port-icmp" {
+        return run_udp_closed_port_dry_run(request, plan);
+    }
     if let Some(sends) = plan.udp_sends.as_deref() {
         return run_udp_multi_send_dry_run(request, plan, sends);
     }
@@ -80,6 +86,9 @@ pub fn run_udp_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
+    if plan.case == "udp-closed-port-icmp" {
+        return run_udp_closed_port_live(request, plan);
+    }
     if let Some(sends) = plan.udp_sends.as_deref() {
         return run_udp_multi_send_live(request, plan, sends);
     }
@@ -220,6 +229,226 @@ pub fn run_udp_live(
         Some(json!({
             "send_report": send_report_json(&send_report),
             "capture_filter": capture_filter(plan),
+        })),
+        sent,
+        false,
+    ))
+}
+
+fn run_udp_closed_port_dry_run(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+) -> ExampleResult<ProbeOutcome> {
+    let packet = udp_packet(plan)?;
+    let report = SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .dry_run(),
+    )
+    .send(&packet)?;
+    let sent_raw = report.plan().bytes();
+    let sent_raw_hex = hex_bytes(sent_raw);
+    let sent_decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, sent_raw)
+        .map(|packet| decoded_packet_json(&packet, sent_raw))?;
+    let embedded_prefix = icmp::expected_embedded_prefix(plan, sent_raw)?;
+    let observed = observed_response(
+        plan,
+        false,
+        None,
+        json!({}),
+        json!({
+            "planned_only": true,
+            "send_report": send_report_json(&report),
+            "sent_raw_hex": sent_raw_hex,
+            "sent_decoded": sent_decoded,
+            "capture_filter": capture_filter(plan),
+            "target_service": target_service_json(plan),
+            "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
+        }),
+    );
+    let result = json!({
+        "case": plan.case,
+        "sequence": plan.sequence,
+        "status": "planned",
+        "endpoint_role": "stimulus",
+        "passed": null,
+        "observed_response": observed,
+        "metadata": {
+            "dry_run": true,
+            "probe_plan": plan_json(plan),
+            "planned_only": true,
+            "sent_raw_hex": sent_raw_hex,
+            "sent_decoded": sent_decoded,
+            "capture_filter": capture_filter(plan),
+            "target_service": target_service_json(plan),
+            "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
+        }
+    });
+    Ok(ProbeOutcome {
+        result,
+        observed_response: observed,
+        sent: false,
+        received: false,
+    })
+}
+
+fn run_udp_closed_port_live(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+) -> ExampleResult<ProbeOutcome> {
+    let packet = udp_packet(plan)?;
+    let timeout = Duration::from_secs(request.timeout_seconds.max(1));
+    let mut sniffer = match Sniffer::interface(request.interface.clone())
+        .timeout(timeout)
+        .count(64)
+        .filter(capture_filter(plan))
+        .nonblock()
+        .open()
+    {
+        Ok(sniffer) => sniffer,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("capture open failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
+    let send_report = match SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .live(),
+    )
+    .send(&packet)
+    {
+        Ok(report) => report,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("send failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
+
+    let sent = send_report.bytes_sent() > 0;
+    let embedded_prefix = icmp::expected_embedded_prefix(plan, send_report.plan().bytes())?;
+    let mut wrong_peer = None;
+    let mut wrong_payload = None;
+    while let Some(captured) = match sniffer.next_packet() {
+        Ok(packet) => packet,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("capture decode failed: {err}")],
+                Some(send_report_json(&send_report)),
+                sent,
+                false,
+            ));
+        }
+    } {
+        match icmp::validate_ttl_expired_candidate(
+            plan,
+            captured.packet(),
+            captured.data(),
+            &embedded_prefix,
+        )? {
+            CandidateValidation::Ignore => {}
+            CandidateValidation::Passed(decoded) => {
+                let raw_hex = hex_bytes(captured.data());
+                let observed = observed_response(
+                    plan,
+                    true,
+                    Some(raw_hex.clone()),
+                    decoded.clone(),
+                    json!({
+                        "send_report": send_report_json(&send_report),
+                        "capture_filter": capture_filter(plan),
+                        "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
+                    }),
+                );
+                let result = json!({
+                    "case": plan.case,
+                    "sequence": plan.sequence,
+                    "status": "passed",
+                    "endpoint_role": "stimulus",
+                    "passed": true,
+                    "observed_response": observed,
+                    "metadata": {
+                        "dry_run": false,
+                        "probe_plan": plan_json(plan),
+                        "raw_hex": raw_hex,
+                        "decoded": decoded,
+                    }
+                });
+                return Ok(ProbeOutcome {
+                    result,
+                    observed_response: observed,
+                    sent,
+                    received: true,
+                });
+            }
+            CandidateValidation::WrongPeer(decoded) => {
+                wrong_peer = Some(decoded);
+            }
+            CandidateValidation::WrongPayload(decoded) => {
+                wrong_payload = Some(decoded);
+            }
+        }
+    }
+
+    if let Some(decoded) = wrong_payload {
+        return Ok(failed_outcome(
+            plan,
+            FAILURE_WRONG_PAYLOAD,
+            vec![
+                "captured ICMP port unreachable did not include the expected embedded UDP packet prefix"
+                    .to_string(),
+            ],
+            Some(json!({
+                "send_report": send_report_json(&send_report),
+                "decoded": decoded,
+                "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
+            })),
+            sent,
+            true,
+        ));
+    }
+
+    if let Some(decoded) = wrong_peer {
+        return Ok(failed_outcome(
+            plan,
+            FAILURE_WRONG_PEER,
+            vec![
+                "captured ICMP port unreachable did not match expected target or destination"
+                    .to_string(),
+            ],
+            Some(json!({
+                "send_report": send_report_json(&send_report),
+                "decoded": decoded,
+            })),
+            sent,
+            true,
+        ));
+    }
+
+    Ok(failed_outcome(
+        plan,
+        FAILURE_TIMEOUT,
+        vec!["timed out waiting for ICMP port unreachable".to_string()],
+        Some(json!({
+            "send_report": send_report_json(&send_report),
+            "capture_filter": capture_filter(plan),
+            "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
         })),
         sent,
         false,
@@ -776,6 +1005,15 @@ mod tests {
         plan
     }
 
+    fn closed_port_plan() -> ProbePlan {
+        let mut plan = echo_plan("udp-closed-port-icmp", b"udp-closed-port-icmp:1234abcd");
+        plan.expected_response = Some("icmp_port_unreachable".to_string());
+        plan.expected_icmp_type = Some(ICMP_DESTINATION_UNREACHABLE);
+        plan.expected_icmp_code = Some(3);
+        plan.expected_embedded_prefix_length = Some(28);
+        plan
+    }
+
     #[test]
     fn udp_echo_empty_packet_has_no_payload_and_udp_length_eight() {
         let packet = udp_packet(&empty_echo_plan()).unwrap();
@@ -923,5 +1161,48 @@ mod tests {
 
         let validation = validate_udp_candidate(&plan, &decoded, response.as_bytes()).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
+    }
+
+    #[test]
+    fn udp_closed_port_packet_carries_udp_payload_prefix() {
+        let plan = closed_port_plan();
+        let packet = udp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let payload = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(udp.source_port_value(), 46000);
+        assert_eq!(udp.destination_port_value(), 30000);
+        assert_eq!(udp.length_value(), Some(37));
+        assert_eq!(payload.as_bytes(), b"udp-closed-port-icmp:1234abcd");
+        assert_eq!(
+            icmp::expected_embedded_prefix(&plan, bytes.as_bytes()).unwrap(),
+            bytes.as_bytes()[..28].to_vec()
+        );
+    }
+
+    #[test]
+    fn udp_closed_port_accepts_icmp_port_unreachable_embedded_prefix() {
+        let plan = closed_port_plan();
+        let sent = udp_packet(&plan).unwrap().compile().unwrap();
+        let embedded_prefix = icmp::expected_embedded_prefix(&plan, sent.as_bytes()).unwrap();
+        let response = (Ipv4::new()
+            .src("192.0.2.20".parse::<Ipv4Addr>().unwrap())
+            .dst("192.0.2.10".parse::<Ipv4Addr>().unwrap())
+            / Icmp::destination_unreachable().code(3)
+            / Raw::from_bytes(embedded_prefix.clone()))
+        .compile()
+        .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, response.as_bytes()).unwrap();
+
+        let validation = icmp::validate_ttl_expired_candidate(
+            &plan,
+            &decoded,
+            response.as_bytes(),
+            &embedded_prefix,
+        )
+        .unwrap();
+        assert!(matches!(validation, CandidateValidation::Passed(_)));
     }
 }

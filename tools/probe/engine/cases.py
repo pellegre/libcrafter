@@ -421,7 +421,7 @@ BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
         protocol="udp",
     ),
     _behavior_case(
-        name="udp-closed-port-unreachable",
+        name="udp-closed-port-icmp",
         description="Send to a closed port and validate an ICMP port unreachable.",
         stimulus="udp_datagram",
         expected_response="icmp_port_unreachable",

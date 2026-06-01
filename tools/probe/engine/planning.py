@@ -4796,6 +4796,93 @@ def _udp_multi_shot_order_probe_plan(
     }
 
 
+def _udp_closed_port_icmp_probe_plan(
+    *,
+    case_name: str = "udp-closed-port-icmp",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan a UDP datagram whose closed target port triggers ICMP port-unreachable."""
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    source_port = 47000 + int.from_bytes(digest[0:2], "big") % 7000
+    destination_port = 38000 + int.from_bytes(digest[2:4], "big") % 7000
+    payload = (
+        f"udp-closed-port-icmp:{profile}:{seed}:{sequence}:"
+        f"{digest.hex()[:16]}"
+    ).encode("ascii")
+    payload_hex = payload.hex()
+    payload_length = len(payload)
+    embedded_prefix_length = 28
+    expected_udp_length = 8 + payload_length
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "udp_datagram",
+        "expected_response": "icmp_port_unreachable",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "payload_hex": payload_hex,
+        "payload_length": payload_length,
+        "expected_payload_hex": payload_hex,
+        "expected_payload_length": payload_length,
+        "expected_udp_length": expected_udp_length,
+        "expected_icmp_type": 3,
+        "expected_icmp_code": 3,
+        "expected_embedded_prefix_length": embedded_prefix_length,
+        "target_service": {
+            "required": False,
+            "kind": "closed-udp-port",
+            "port": destination_port,
+            "bind_ipv4": target_ipv4,
+            "source_ipv4": stimulus_ipv4,
+            "state": "planned-unbound",
+            "expects": "icmp_port_unreachable",
+            "deterministic": True,
+        },
+        "capture_filter": (
+            f"icmp and src host {target_ipv4} and dst host {stimulus_ipv4}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "icmp_type": 3,
+            "icmp_code": 3,
+            "embedded_prefix": {
+                "source": "stimulus_sent_bytes",
+                "length": embedded_prefix_length,
+                "meaning": "original IPv4 header plus first eight bytes of UDP datagram",
+            },
+            "embedded_udp": {
+                "source_port": source_port,
+                "destination_port": destination_port,
+                "udp_length": expected_udp_length,
+            },
+        },
+        "wire_requirements": {
+            "requires_ipv4_unicast": True,
+            "requires_closed_udp_port": True,
+            "requires_no_udp_service": True,
+            "note": (
+                "UDP closed-port behavior is target kernel ICMP generation. "
+                "Target setup verifies the UDP port is unbound and starts no "
+                "responder."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
@@ -4843,6 +4930,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "udp-echo-large": _udp_echo_large_probe_plan,
     "udp-source-port-reflection": _udp_source_port_reflection_probe_plan,
     "udp-multi-shot-order": _udp_multi_shot_order_probe_plan,
+    "udp-closed-port-icmp": _udp_closed_port_icmp_probe_plan,
 }
 
 

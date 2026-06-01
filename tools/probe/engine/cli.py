@@ -615,6 +615,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "udp-echo-large",
         "udp-source-port-reflection",
         "udp-multi-shot-order",
+        "udp-closed-port-icmp",
     }
 )
 
@@ -1252,13 +1253,19 @@ def _probe_plan_with_endpoint_addresses(
         "udp-echo-large",
         "udp-source-port-reflection",
         "udp-multi-shot-order",
+        "udp-closed-port-icmp",
     }:
         source_port = int(updated.get("source_port", 0))
         destination_port = int(updated.get("destination_port", 0))
-        updated["capture_filter"] = (
-            f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        )
+        if case_name == "udp-closed-port-icmp":
+            updated["capture_filter"] = (
+                f"icmp and src host {target_ipv4} and dst host {source_ipv4}"
+            )
+        else:
+            updated["capture_filter"] = (
+                f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+                f"and src port {destination_port} and dst port {source_port}"
+            )
         target_service = dict(
             json_object(updated.get("target_service", {}), "probe_plan.target_service")
         )
@@ -1693,6 +1700,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "udp-echo-large",
         "udp-source-port-reflection",
         "udp-multi-shot-order",
+        "udp-closed-port-icmp",
     }:
         return [
             FAILURE_TIMEOUT,
