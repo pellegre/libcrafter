@@ -915,7 +915,8 @@ fn dispatch_case(
             | "udp-echo-binary"
             | "udp-echo-large"
             | "udp-source-port-reflection"
-            | "udp-multi-shot-order",
+            | "udp-multi-shot-order"
+            | "udp-closed-port-icmp",
         ) => udp::run_udp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -924,7 +925,8 @@ fn dispatch_case(
             | "udp-echo-binary"
             | "udp-echo-large"
             | "udp-source-port-reflection"
-            | "udp-multi-shot-order",
+            | "udp-multi-shot-order"
+            | "udp-closed-port-icmp",
         ) => udp::run_udp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -1258,6 +1260,13 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 plan.source_port.unwrap_or(0),
             )
         }
+        "udp-closed-port-icmp" => format!(
+            "icmp and src host {} and dst host {}",
+            plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+            plan.expected_reply_destination_ipv4
+                .as_deref()
+                .unwrap_or("")
+        ),
         // ARP rides Ethernet directly and cannot be selected by host/IP BPF, so
         // match on the protocol plus the reply opcode (ARP byte 6:2 == 2).
         "arp-basic-who-has"
@@ -1308,6 +1317,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "udp-echo-large"
             | "udp-source-port-reflection"
             | "udp-multi-shot-order" => "udp_response",
+            "udp-closed-port-icmp" => "icmp_port_unreachable",
             "arp-basic-who-has"
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
@@ -1633,6 +1643,16 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "send_count": plan.send_count,
             "ordered_payloads": udp::ordered_sends_json(plan.udp_sends.as_deref()),
         }),
+        "udp-closed-port-icmp" => json!({
+            "required": false,
+            "kind": "closed-udp-port",
+            "port": plan.destination_port,
+            "state": "planned-unbound",
+            "expects": "icmp_port_unreachable",
+            "expected_icmp_type": plan.expected_icmp_type,
+            "expected_icmp_code": plan.expected_icmp_code,
+            "expected_embedded_prefix_length": plan.expected_embedded_prefix_length,
+        }),
         "arp-basic-who-has"
         | "arp-source-address-preserved"
         | "arp-unicast-request-reply"
@@ -1785,6 +1805,22 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
             "udp_length": plan.expected_udp_length,
             "checksum_present": plan.expected_udp_checksum_present,
             "checksum_statuses": plan.expected_udp_checksum_statuses,
+        }),
+        "udp-closed-port-icmp" => json!({
+            "source_ipv4": plan.expected_reply_source_ipv4,
+            "destination_ipv4": plan.expected_reply_destination_ipv4,
+            "icmp_type": plan.expected_icmp_type,
+            "icmp_code": plan.expected_icmp_code,
+            "embedded_prefix": {
+                "source": "stimulus_sent_bytes",
+                "length": plan.expected_embedded_prefix_length,
+                "meaning": "original IPv4 header plus first eight bytes of UDP datagram",
+            },
+            "embedded_udp": {
+                "source_port": plan.source_port,
+                "destination_port": plan.destination_port,
+                "udp_length": plan.expected_udp_length,
+            },
         }),
         _ => {
             // Echo the ARP is-at validation contract so the expected-reply shape

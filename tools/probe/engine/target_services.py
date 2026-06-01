@@ -309,6 +309,8 @@ def target_service_setup_plan(
     dns_plans_by_port = plans_by_destination_port(dns_plans)
     udp_plans = udp_probe_plans(probe_plans)
     udp_plans_by_port = plans_by_destination_port(udp_plans)
+    closed_udp_plans = closed_udp_probe_plans(probe_plans)
+    closed_udp_plans_by_port = plans_by_destination_port(closed_udp_plans)
     return {
         "role": "target",
         "planned": True,
@@ -378,6 +380,17 @@ def target_service_setup_plan(
                 **target_service_address_fields(plan),
             }
             for port, plan in tcp_closed_plans.items()
+        ],
+        "closed_udp_ports": [
+            {
+                "port": port,
+                "state": "verified-unbound" if not dry_run else "planned-unbound",
+                "purpose": "udp-closed-port-icmp",
+                "expects": "icmp_port_unreachable",
+                "deterministic": True,
+                **target_service_address_fields(plan),
+            }
+            for port, plan in closed_udp_plans_by_port.items()
         ],
         "controlled_router": {
             "available": False,
@@ -506,10 +519,21 @@ _UDP_RESPONDER_CASES: frozenset[str] = frozenset(
 )
 
 
+_UDP_CLOSED_PORT_CASES: frozenset[str] = frozenset({"udp-closed-port-icmp"})
+
+
 def udp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     """Return the UDP responder probe plans in order."""
 
     return [plan for plan in probe_plans if plan.get("case") in _UDP_RESPONDER_CASES]
+
+
+def closed_udp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return UDP plans that require the target kernel's closed-port behavior."""
+
+    return [
+        plan for plan in probe_plans if plan.get("case") in _UDP_CLOSED_PORT_CASES
+    ]
 
 
 # Probe cases whose target is primarily the kernel answering ARP who-has on a
@@ -582,7 +606,8 @@ def prepare_wire_probe_target(
     tcp_plans = tcp_probe_plans(probe_plans)
     dns_plans = dns_probe_plans(probe_plans)
     udp_plans = udp_probe_plans(probe_plans)
-    if not tcp_plans and not dns_plans and not udp_plans:
+    closed_udp_plans = closed_udp_probe_plans(probe_plans)
+    if not tcp_plans and not dns_plans and not udp_plans and not closed_udp_plans:
         return None
     endpoint_id = endpoint_id_resolver(target_endpoint, role=TARGET_ROLE)
     bind_ipv4 = endpoint_ipv4_resolver(target_endpoint, role=TARGET_ROLE)
@@ -596,6 +621,9 @@ def prepare_wire_probe_target(
         for plan in tcp_plans
         if plan.get("case") == "tcp-syn-closed"
     )
+    closed_udp_ports = dedupe_ints(
+        int(plan["destination_port"]) for plan in closed_udp_plans
+    )
     script = target_service_setup_script(
         artifact_root=artifact_root,
         bind_ipv4=bind_ipv4,
@@ -603,6 +631,7 @@ def prepare_wire_probe_target(
         closed_ports=closed_ports,
         dns_plans=dns_plans,
         udp_plans=udp_plans,
+        closed_udp_ports=closed_udp_ports,
     )
     return run_wire_command(
         wire.exec(endpoint_id, ["bash", "-lc", script], timeout=60),
@@ -650,6 +679,7 @@ def target_service_setup_script(
     closed_ports: Sequence[int],
     dns_plans: Sequence[JSONObject],
     udp_plans: Sequence[JSONObject] = (),
+    closed_udp_ports: Sequence[int] = (),
 ) -> str:
     """Render the deterministic target setup script.
 
@@ -735,6 +765,9 @@ def target_service_setup_script(
     for port in closed_ports:
         lines.append(f"check_port_free \"$tcp_bind_ipv4\" {port}")
         lines.append(f"echo closed_port_{port}=free")
+    for port in closed_udp_ports:
+        lines.append(f"check_udp_port_free \"$udp_bind_ipv4\" {port}")
+        lines.append(f"echo closed_udp_port_{port}=free")
     for port in open_ports:
         listener_path = posixpath.join(artifact_root, f"tcp-listener-{port}.py")
         stdout_path = posixpath.join(artifact_root, f"tcp-listener-{port}.stdout.txt")
@@ -1236,6 +1269,7 @@ __all__ = [
     "arp_probe_plans",
     "arp_sysctl_descriptor",
     "cleanup_wire_probe_target",
+    "closed_udp_probe_plans",
     "closed_udp_port_descriptor",
     "dedupe_ints",
     "dhcp_probe_plans",

@@ -14,9 +14,12 @@ so JSON artifacts and validation stay byte-oriented. ``udp-echo-large`` uses a
 limit. ``udp-source-port-reflection`` pins a deterministic high stimulus source
 port and validates the echoed response is addressed back to that exact port.
 ``udp-multi-shot-order`` sends three ordered payload markers through the same
-echo responder. The stimulus endpoint decodes each echoed UDP response with
-libcrafter and validates the peer addresses, ports, UDP length, checksum status,
-and exact payload.
+echo responder. ``udp-closed-port-icmp`` sends a UDP datagram to an unbound
+target port and validates the decoded ICMP destination-unreachable /
+port-unreachable response plus its embedded original IPv4/UDP prefix. The
+stimulus endpoint decodes each response with libcrafter and validates the peer
+addresses, ports, UDP length, checksum status, exact payload, or ICMP embedded
+prefix depending on the case.
 """
 
 from __future__ import annotations
@@ -93,6 +96,14 @@ def _udp_multi_shot_order_plan(*, seed: int = 1045, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
         request=_request(seed=seed, case_names=["udp-multi-shot-order"]),
         case=planning.PROBE_CASE_BY_NAME["udp-multi-shot-order"],
+        sequence=sequence,
+    )
+
+
+def _udp_closed_port_icmp_plan(*, seed: int = 1046, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["udp-closed-port-icmp"]),
+        case=planning.PROBE_CASE_BY_NAME["udp-closed-port-icmp"],
         sequence=sequence,
     )
 
@@ -791,6 +802,174 @@ class UdpMultiShotOrderTest(unittest.TestCase):
                     [response["sequence_marker"] for response in expected_responses],
                     markers,
                 )
+
+
+class UdpClosedPortIcmpTest(unittest.TestCase):
+    """Focused coverage for UDP closed-port ICMP behavior."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("udp-closed-port-icmp", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["udp-closed-port-icmp"],
+            planning._udp_closed_port_icmp_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_udp_closed_port_icmp_plan(), _udp_closed_port_icmp_plan())
+
+    def test_plan_carries_udp_stimulus_and_icmp_port_unreachable_contract(self) -> None:
+        plan = _udp_closed_port_icmp_plan()
+        payload = bytes.fromhex(plan["payload_hex"])
+
+        self.assertEqual(plan["case"], "udp-closed-port-icmp")
+        self.assertEqual(plan["stimulus"], "udp_datagram")
+        self.assertEqual(plan["expected_response"], "icmp_port_unreachable")
+        ipaddress.IPv4Address(plan["source_ipv4"])
+        ipaddress.IPv4Address(plan["destination_ipv4"])
+        self.assertNotEqual(plan["source_ipv4"], plan["destination_ipv4"])
+        self.assertIsInstance(plan["source_port"], int)
+        self.assertIsInstance(plan["destination_port"], int)
+        self.assertNotEqual(plan["source_port"], plan["destination_port"])
+
+        self.assertTrue(payload.startswith(b"udp-closed-port-icmp:"))
+        self.assertEqual(plan["payload_length"], len(payload))
+        self.assertEqual(plan["expected_payload_hex"], plan["payload_hex"])
+        self.assertEqual(plan["expected_payload_length"], len(payload))
+        self.assertEqual(plan["expected_udp_length"], 8 + len(payload))
+        self.assertEqual(plan["expected_icmp_type"], 3)
+        self.assertEqual(plan["expected_icmp_code"], 3)
+        self.assertEqual(plan["expected_embedded_prefix_length"], 28)
+
+    def test_capture_filter_matches_icmp_reply_direction(self) -> None:
+        plan = _udp_closed_port_icmp_plan()
+
+        self.assertIn("icmp", plan["capture_filter"])
+        self.assertIn(f"src host {plan['expected_reply_source_ipv4']}", plan["capture_filter"])
+        self.assertIn(
+            f"dst host {plan['expected_reply_destination_ipv4']}",
+            plan["capture_filter"],
+        )
+        self.assertNotIn("udp", plan["capture_filter"])
+
+    def test_target_setup_verifies_udp_port_is_unbound(self) -> None:
+        plan = _udp_closed_port_icmp_plan()
+        target_service = plan["target_service"]
+
+        self.assertFalse(target_service["required"])
+        self.assertEqual(target_service["kind"], "closed-udp-port")
+        self.assertEqual(target_service["port"], plan["destination_port"])
+        self.assertEqual(target_service["state"], "planned-unbound")
+        self.assertEqual(target_service["expects"], "icmp_port_unreachable")
+        self.assertIn("udp-closed-port-icmp", target_services._UDP_CLOSED_PORT_CASES)
+
+        setup = target_services.target_service_setup_plan(
+            probe_plans=[plan],
+            dry_run=True,
+        )
+        self.assertFalse(setup["starts_services"])
+        self.assertEqual(setup["services"], [])
+        self.assertEqual(len(setup["closed_udp_ports"]), 1)
+        closed = setup["closed_udp_ports"][0]
+        self.assertEqual(closed["port"], plan["destination_port"])
+        self.assertEqual(closed["state"], "planned-unbound")
+        self.assertEqual(closed["purpose"], "udp-closed-port-icmp")
+        self.assertEqual(closed["expects"], "icmp_port_unreachable")
+
+        script = target_services.target_service_setup_script(
+            artifact_root="/root/libcrafter/artifacts/probe/target-services",
+            bind_ipv4=plan["destination_ipv4"],
+            open_ports=[],
+            closed_ports=[],
+            dns_plans=[],
+            closed_udp_ports=[plan["destination_port"]],
+        )
+        self.assertIn(
+            f'check_udp_port_free "$udp_bind_ipv4" {plan["destination_port"]}',
+            script,
+        )
+        self.assertIn(f'echo closed_udp_port_{plan["destination_port"]}=free', script)
+        self.assertNotIn("udp_responder", script)
+
+    def test_validation_contract_covers_icmp_and_embedded_udp_prefix(self) -> None:
+        plan = _udp_closed_port_icmp_plan()
+        validation = plan["validation"]
+
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"],
+            plan["expected_reply_destination_ipv4"],
+        )
+        self.assertEqual(validation["icmp_type"], 3)
+        self.assertEqual(validation["icmp_code"], 3)
+        self.assertEqual(validation["embedded_prefix"]["source"], "stimulus_sent_bytes")
+        self.assertEqual(validation["embedded_prefix"]["length"], 28)
+        self.assertEqual(validation["embedded_udp"]["source_port"], plan["source_port"])
+        self.assertEqual(
+            validation["embedded_udp"]["destination_port"],
+            plan["destination_port"],
+        )
+        self.assertEqual(validation["embedded_udp"]["udp_length"], plan["expected_udp_length"])
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "udp-closed-port-icmp",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1046,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("udp-closed-port-icmp", planned)
+            target_setup = outcome.report.get("metadata", {}).get("target_service_setup", {})
+            closed_udp_ports = target_setup.get("closed_udp_ports", [])
+            self.assertTrue(closed_udp_ports)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "udp-closed-port-icmp"
+            ]
+            self.assertTrue(results, "endpoint emitted no udp-closed-port-icmp result")
+            for result in results:
+                self.assertEqual(result.get("status"), "planned")
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                self.assertTrue(metadata.get("expected_embedded_prefix_hex"))
+
+                probe_plan = metadata["probe_plan"]
+                payload = bytes.fromhex(probe_plan["payload_hex"])
+                sent = bytes.fromhex(metadata["sent_raw_hex"])
+                embedded_prefix = bytes.fromhex(metadata["expected_embedded_prefix_hex"])
+
+                self.assertEqual(embedded_prefix, sent[:28])
+                self.assertEqual(sent[9], 17)
+                self.assertEqual(int.from_bytes(sent[2:4], "big"), 28 + len(payload))
+                self.assertEqual(int.from_bytes(sent[20:22], "big"), probe_plan["source_port"])
+                self.assertEqual(
+                    int.from_bytes(sent[22:24], "big"),
+                    probe_plan["destination_port"],
+                )
+                self.assertEqual(int.from_bytes(sent[24:26], "big"), 8 + len(payload))
+                self.assertEqual(sent[28:], payload)
+
+                self.assertIn("icmp", metadata["capture_filter"])
+                self.assertEqual(metadata["target_service"]["kind"], "closed-udp-port")
+                self.assertEqual(
+                    metadata["target_service"]["port"],
+                    probe_plan["destination_port"],
+                )
+
+                decoded = metadata["sent_decoded"]
+                self.assertEqual(decoded["udp"]["sport"], probe_plan["source_port"])
+                self.assertEqual(decoded["udp"]["dport"], probe_plan["destination_port"])
+                self.assertEqual(decoded["udp"]["length"], 8 + len(payload))
+                self.assertEqual(decoded["udp"]["checksum_status"], "valid")
+                self.assertEqual(decoded["payload_hex"], probe_plan["payload_hex"])
 
 
 if __name__ == "__main__":
