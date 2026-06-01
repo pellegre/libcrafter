@@ -219,6 +219,9 @@ def lab_endpoint_live_report(
                 target_endpoint.get("address"),
                 first_plan_address(probe_plans, "destination_ipv4", "192.0.2.20"),
             )
+            source_mac = string_or(stimulus_endpoint.get("mac"), "")
+            target_mac = string_or(target_endpoint.get("mac"), "")
+            target_interface = string_or(target_endpoint.get("interface"), "")
             interface = string_or(
                 stimulus_endpoint.get("interface"),
                 probe_interface(request.provider, dry_run=False),
@@ -228,6 +231,9 @@ def lab_endpoint_live_report(
                     plan,
                     source_ipv4=source_ipv4,
                     target_ipv4=target_ipv4,
+                    source_mac=source_mac or None,
+                    target_mac=target_mac or None,
+                    target_interface=target_interface or None,
                 )
                 for plan in probe_plans
             ]
@@ -752,6 +758,7 @@ def prepare_wire_probe_target(
         output_dir=output_dir,
         endpoint_id_resolver=lab_endpoint_id,
         endpoint_ipv4_resolver=lab_endpoint_ipv4,
+        endpoint_interface_resolver=lab_endpoint_interface,
         run_wire_command=run_lab_wire_command,
     )
 

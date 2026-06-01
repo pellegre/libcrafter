@@ -102,6 +102,18 @@ tools/probe/run --provider virtualbox --confirm-live-run --profile smoke --seed 
 tools/probe/run --provider docker --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
+The full DNS/DHCP/ARP/UDP behavior suite has a guarded command path. It runs a
+live provider only when `LIBCRAFTER_PROBE_LIVE_PROVIDER` is set; otherwise it
+keeps the default dry-run boundary:
+
+```sh
+if [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ]; then
+  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile behavior --seed 1051 --count 40 --out target/probe/acceptance/51-live-behavior-suite
+else
+  tools/probe/run --provider qemu --dry-run --profile behavior --seed 1051 --count 40 --out target/probe/acceptance/51-live-behavior-suite-dry-run
+fi
+```
+
 The probe runner uses `tools/lab` to create both endpoints, transfer and unpack
 the repository, run probe-owned bootstrap hooks, collect artifacts, and clean
 up endpoint resources. Probe keeps ownership of target service setup, temporary

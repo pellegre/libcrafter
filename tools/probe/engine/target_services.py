@@ -44,6 +44,8 @@ from .model import JSONObject, JSONValue, json_object
 EndpointIdResolver = Callable[..., str]
 # A lab-wire helper that resolves an endpoint mapping to its bind IPv4 address.
 EndpointIpv4Resolver = Callable[..., str]
+# A lab-wire helper that resolves an endpoint mapping to its packet interface.
+EndpointInterfaceResolver = Callable[..., str]
 # A lab-wire helper that runs a wire command response and records its artifacts.
 WireCommandRunner = Callable[..., JSONObject]
 
@@ -307,15 +309,20 @@ def target_service_setup_plan(
     )
     dns_plans = dns_probe_plans(probe_plans)
     dns_plans_by_port = plans_by_destination_port(dns_plans)
+    dhcp_plans = dhcp_probe_plans(probe_plans)
+    dhcp_plans_by_port = plans_by_destination_port(dhcp_plans)
     udp_plans = udp_probe_plans(probe_plans)
     udp_plans_by_port = plans_by_destination_port(udp_plans)
     closed_udp_plans = closed_udp_probe_plans(probe_plans)
     closed_udp_plans_by_port = plans_by_destination_port(closed_udp_plans)
+    arp_plans = arp_probe_plans(probe_plans)
     return {
         "role": "target",
         "planned": True,
         "starts_services": not dry_run
-        and bool(tcp_open_plans or dns_plans_by_port or udp_plans_by_port),
+        and bool(
+            tcp_open_plans or dns_plans_by_port or dhcp_plans_by_port or udp_plans_by_port
+        ),
         "dry_run_starts_services": False,
         "services": [
             *[
@@ -348,6 +355,26 @@ def target_service_setup_plan(
                     ],
                 }
                 for port, plan in dns_plans_by_port.items()
+            ],
+            *[
+                {
+                    "name": "dhcp-responder",
+                    "protocol": "udp",
+                    "port": port,
+                    "purpose": "dhcp",
+                    "deterministic": True,
+                    "request_count": sum(
+                        probe_plan_send_count(plan)
+                        for plan in dhcp_plans
+                        if int(plan.get("destination_port", 0)) == port
+                    ),
+                    **target_service_address_fields(plan),
+                    "log_paths": [
+                        f"live-artifacts/probe/target-services/dhcp-responder-{port}.stdout.txt",
+                        f"live-artifacts/probe/target-services/dhcp-responder-{port}.stderr.txt",
+                    ],
+                }
+                for port, plan in dhcp_plans_by_port.items()
             ],
             *[
                 {
@@ -396,6 +423,10 @@ def target_service_setup_plan(
             "available": False,
             "skip_reason": SKIP_REQUIRES_CONTROLLED_ROUTER,
         },
+        "arp_kernel_state": arp_kernel_state_plan(
+            probe_plans=arp_plans,
+            dry_run=dry_run,
+        ),
     }
 
 
@@ -430,6 +461,78 @@ def target_service_address_fields(plan: Mapping[str, JSONValue]) -> JSONObject:
     if source_ipv4:
         fields["source_ipv4"] = source_ipv4
     return fields
+
+
+def probe_plan_send_count(plan: Mapping[str, JSONValue]) -> int:
+    """Return the number of endpoint sends represented by a probe plan."""
+
+    for key in ("sends", "dhcp_sends", "arp_sends", "udp_sends"):
+        value = plan.get(key)
+        if isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            return len(value)
+    raw_count = plan.get("send_count")
+    if isinstance(raw_count, int) and raw_count > 0:
+        return raw_count
+    return 1
+
+
+def arp_kernel_state_plan(
+    *,
+    probe_plans: Sequence[JSONObject],
+    dry_run: bool,
+) -> JSONObject:
+    """Return the inspectable ARP kernel setup contract for planned ARP cases."""
+
+    if not probe_plans:
+        return {
+            "planned": False,
+            "state": "not-required",
+            "cases": [],
+            "alias_addresses": [],
+            "alt_sender_addresses": [],
+            "decoy_events": [],
+        }
+
+    alias_addresses: list[str] = []
+    alt_sender_addresses: list[str] = []
+    decoy_events: list[JSONObject] = []
+    interfaces: list[str] = []
+    for plan in probe_plans:
+        service = _json_mapping(
+            plan.get("target_service", {}),
+            "probe_plan.target_service",
+        )
+        alias_ipv4 = _string_or(service.get("alias_ipv4"), "")
+        if alias_ipv4:
+            alias_addresses.append(alias_ipv4)
+        alt_sender_ipv4 = _string_or(service.get("alt_sender_ipv4"), "")
+        if alt_sender_ipv4:
+            alt_sender_addresses.append(alt_sender_ipv4)
+        decoy = service.get("decoy_arp_event")
+        if isinstance(decoy, Mapping):
+            decoy_events.append(json_object(decoy, "probe_plan.decoy_arp_event"))
+        interface = _string_or(service.get("interface"), "")
+        if not interface:
+            interface = _string_or(service.get("neighbor_flush_interface"), "")
+        if interface:
+            interfaces.append(interface)
+
+    state = "planned" if dry_run else "configured"
+    return {
+        "planned": True,
+        "state": state,
+        "case_count": len(probe_plans),
+        "cases": [str(plan.get("case", "")) for plan in probe_plans],
+        "requires_link_layer": True,
+        "arp_sysctls": True,
+        "neighbor_cache_flush": True,
+        "interfaces": list(dict.fromkeys(interfaces)),
+        "alias_addresses": list(dict.fromkeys(alias_addresses)),
+        "alt_sender_addresses": list(dict.fromkeys(alt_sender_addresses)),
+        "decoy_events": decoy_events,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -555,6 +658,7 @@ _ARP_KERNEL_CASES: frozenset[str] = frozenset(
         "arp-source-address-preserved",
         "arp-alias-address-reply",
         "arp-unicast-request-reply",
+        "arp-padding-reply",
         "arp-cache-flush-reply",
         "arp-mac-validation",
         "arp-spa-variation",
@@ -567,6 +671,37 @@ def arp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     """Return the ARP probe plans in order."""
 
     return [plan for plan in probe_plans if plan.get("case") in _ARP_KERNEL_CASES]
+
+
+def arp_extra_addresses(probe_plans: Sequence[JSONObject]) -> list[str]:
+    """Return secondary IPv4 addresses that ARP live setup must add."""
+
+    addresses: list[str] = []
+    for plan in probe_plans:
+        service = _json_mapping(
+            plan.get("target_service", {}),
+            "probe_plan.target_service",
+        )
+        for key in ("alias_ipv4", "alt_sender_ipv4"):
+            value = _string_or(service.get(key), "")
+            if value:
+                addresses.append(value)
+    return list(dict.fromkeys(addresses))
+
+
+def arp_decoy_events(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return ARP decoy events that live setup should emit during capture."""
+
+    events: list[JSONObject] = []
+    for plan in probe_plans:
+        service = _json_mapping(
+            plan.get("target_service", {}),
+            "probe_plan.target_service",
+        )
+        event = service.get("decoy_arp_event")
+        if isinstance(event, Mapping):
+            events.append(json_object(event, "probe_plan.decoy_arp_event"))
+    return events
 
 
 def dedupe_ints(values: Iterable[int]) -> list[int]:
@@ -599,6 +734,7 @@ def prepare_wire_probe_target(
     output_dir: Path,
     endpoint_id_resolver: EndpointIdResolver,
     endpoint_ipv4_resolver: EndpointIpv4Resolver,
+    endpoint_interface_resolver: EndpointInterfaceResolver,
     run_wire_command: WireCommandRunner,
 ) -> JSONObject | None:
     """Stand up controlled target services for a live probe run.
@@ -610,12 +746,22 @@ def prepare_wire_probe_target(
 
     tcp_plans = tcp_probe_plans(probe_plans)
     dns_plans = dns_probe_plans(probe_plans)
+    dhcp_plans = dhcp_probe_plans(probe_plans)
+    arp_plans = arp_probe_plans(probe_plans)
     udp_plans = udp_probe_plans(probe_plans)
     closed_udp_plans = closed_udp_probe_plans(probe_plans)
-    if not tcp_plans and not dns_plans and not udp_plans and not closed_udp_plans:
+    if (
+        not tcp_plans
+        and not dns_plans
+        and not dhcp_plans
+        and not arp_plans
+        and not udp_plans
+        and not closed_udp_plans
+    ):
         return None
     endpoint_id = endpoint_id_resolver(target_endpoint, role=TARGET_ROLE)
     bind_ipv4 = endpoint_ipv4_resolver(target_endpoint, role=TARGET_ROLE)
+    target_interface = endpoint_interface_resolver(target_endpoint, role=TARGET_ROLE)
     open_ports = dedupe_ints(
         int(plan["destination_port"])
         for plan in tcp_plans
@@ -635,8 +781,11 @@ def prepare_wire_probe_target(
         open_ports=open_ports,
         closed_ports=closed_ports,
         dns_plans=dns_plans,
+        dhcp_plans=dhcp_plans,
+        arp_plans=arp_plans,
         udp_plans=udp_plans,
         closed_udp_ports=closed_udp_ports,
+        target_interface=target_interface,
     )
     return run_wire_command(
         wire.exec(endpoint_id, ["bash", "-lc", script], timeout=60),
@@ -683,8 +832,11 @@ def target_service_setup_script(
     open_ports: Sequence[int],
     closed_ports: Sequence[int],
     dns_plans: Sequence[JSONObject],
+    dhcp_plans: Sequence[JSONObject] = (),
+    arp_plans: Sequence[JSONObject] = (),
     udp_plans: Sequence[JSONObject] = (),
     closed_udp_ports: Sequence[int] = (),
+    target_interface: str = "",
 ) -> str:
     """Render the deterministic target setup script.
 
@@ -694,11 +846,22 @@ def target_service_setup_script(
     """
 
     dns_plan_json = json.dumps(list(dns_plans), sort_keys=True)
+    dhcp_plan_json = json.dumps(list(dhcp_plans), sort_keys=True)
+    arp_decoy_events_json = json.dumps(
+        arp_decoy_events(arp_plans),
+        sort_keys=True,
+    )
     dns_ports = dedupe_ints(
         int(plan["destination_port"])
         for plan in dns_plans
         if isinstance(plan.get("destination_port"), int)
     )
+    dhcp_ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in dhcp_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
+    arp_addresses = arp_extra_addresses(arp_plans)
     udp_ports = dedupe_ints(
         int(plan["destination_port"])
         for plan in udp_plans
@@ -709,7 +872,9 @@ def target_service_setup_script(
         f"artifact_root={shlex.quote(artifact_root)}",
         f"tcp_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"dns_bind_ipv4={shlex.quote(bind_ipv4)}",
+        f"dhcp_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"udp_bind_ipv4={shlex.quote(bind_ipv4)}",
+        f"target_interface={shlex.quote(target_interface)}",
         'mkdir -p "$artifact_root"',
         'cleanup="$artifact_root/cleanup.sh"',
         ': > "$cleanup"',
@@ -752,6 +917,25 @@ def target_service_setup_script(
         lines.extend(
             [
                 "python3 - \"$dns_bind_ipv4\" \"$1\" <<'PY'".replace("$1", str(port)),
+                "import socket",
+                "import sys",
+                "bind_ip = sys.argv[1]",
+                "port = int(sys.argv[2])",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+                "try:",
+                "    sock.bind((bind_ip, port))",
+                "except OSError as exc:",
+                "    print(f'udp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
+                "    sys.exit(1)",
+                "finally:",
+                "    sock.close()",
+                "PY",
+            ]
+        )
+    for port in dhcp_ports:
+        lines.extend(
+            [
+                "python3 - \"$dhcp_bind_ipv4\" \"$1\" <<'PY'".replace("$1", str(port)),
                 "import socket",
                 "import sys",
                 "bind_ip = sys.argv[1]",
@@ -1200,6 +1384,213 @@ def target_service_setup_script(
                 f"echo dns_responder_{port}=running",
             ]
         )
+    if dhcp_ports:
+        plan_path = posixpath.join(artifact_root, "dhcp-plans.json")
+        service_path = posixpath.join(artifact_root, "dhcp-responder.py")
+        lines.extend(
+            [
+                f"cat > {shlex.quote(plan_path)} <<'JSON'",
+                dhcp_plan_json,
+                "JSON",
+                f"cat > {shlex.quote(service_path)} <<'PY'",
+                "import ipaddress",
+                "import json",
+                "import signal",
+                "import socket",
+                "import struct",
+                "import sys",
+                "import time",
+                "",
+                "stop = False",
+                "",
+                "def handle_stop(_signum, _frame):",
+                "    global stop",
+                "    stop = True",
+                "",
+                "signal.signal(signal.SIGTERM, handle_stop)",
+                "signal.signal(signal.SIGINT, handle_stop)",
+                "",
+                "plan_path, bind_ip, port_text = sys.argv[1:4]",
+                "port = int(port_text)",
+                "plans = json.load(open(plan_path, encoding='utf-8'))",
+                "entries = {}",
+                "entries_by_xid = {}",
+                "",
+                "def mac_normal(value):",
+                "    return str(value or '').lower()",
+                "",
+                "def mac_bytes(value):",
+                "    return bytes(int(part, 16) for part in mac_normal(value).split(':'))",
+                "",
+                "def ip_bytes(value):",
+                "    return ipaddress.IPv4Address(str(value)).packed",
+                "",
+                "def opt_u8(code, value):",
+                "    return bytes([code, 1, int(value) & 0xff])",
+                "",
+                "def opt_u32(code, value):",
+                "    return bytes([code, 4]) + struct.pack('!I', int(value) & 0xffffffff)",
+                "",
+                "def opt_ip(code, value):",
+                "    return bytes([code, 4]) + ip_bytes(value)",
+                "",
+                "def opt_bytes(code, data):",
+                "    return bytes([code, len(data)]) + data",
+                "",
+                "def opt_text(code, value):",
+                "    raw = str(value).encode('utf-8')",
+                "    if len(raw) > 255:",
+                "        raise ValueError(f'dhcp option {code} text is too long')",
+                "    return opt_bytes(code, raw)",
+                "",
+                "def entry_from(raw, parent=None):",
+                "    parent = parent or {}",
+                "    xid = int(raw.get('transaction_id') or parent.get('transaction_id'))",
+                "    client_mac = mac_normal(raw.get('client_mac') or parent.get('client_mac'))",
+                "    message_type = int(",
+                "        raw.get('expected_message_type_value')",
+                "        or parent.get('expected_message_type_value')",
+                "        or (6 if raw.get('expected_message') or raw.get('message') else 2)",
+                "    )",
+                "    yiaddr = '0.0.0.0' if (raw.get('expected_yiaddr_zero') or raw.get('yiaddr_zero')) else str(",
+                "        raw.get('expected_yiaddr') or raw.get('yiaddr') or parent.get('expected_yiaddr') or '0.0.0.0'",
+                "    )",
+                "    return {",
+                "        'transaction_id': xid,",
+                "        'client_mac': client_mac,",
+                "        'message_type': message_type,",
+                "        'yiaddr': yiaddr,",
+                "        'server_identifier': str(",
+                "            raw.get('expected_server_identifier')",
+                "            or raw.get('server_identifier')",
+                "            or parent.get('expected_server_identifier')",
+                "            or bind_ip",
+                "        ),",
+                "        'subnet_mask': raw.get('expected_subnet_mask') or raw.get('subnet_mask') or parent.get('expected_subnet_mask'),",
+                "        'router_ipv4': raw.get('expected_router_ipv4') or raw.get('router_ipv4') or parent.get('expected_router_ipv4'),",
+                "        'dns_ipv4': raw.get('expected_dns_ipv4') or raw.get('dns_ipv4') or parent.get('expected_dns_ipv4'),",
+                "        'lease_time': raw.get('expected_lease_time') or raw.get('lease_time') or parent.get('expected_lease_time'),",
+                "        'renewal_time': raw.get('expected_renewal_time') or raw.get('renewal_time') or parent.get('expected_renewal_time'),",
+                "        'rebinding_time': raw.get('expected_rebinding_time') or raw.get('rebinding_time') or parent.get('expected_rebinding_time'),",
+                "        'no_lease_time': bool(raw.get('expected_no_lease_time') or raw.get('no_lease_time')),",
+                "        'client_identifier_hex': raw.get('expected_client_identifier_hex') or raw.get('client_identifier_hex') or parent.get('expected_client_identifier_hex'),",
+                "        'hostname': raw.get('expected_hostname') or raw.get('hostname') or parent.get('expected_hostname'),",
+                "        'message': raw.get('expected_message') or raw.get('message') or parent.get('expected_message'),",
+                "    }",
+                "",
+                "def register(raw, parent=None):",
+                "    entry = entry_from(raw, parent)",
+                "    key = (entry['transaction_id'], entry['client_mac'])",
+                "    entries[key] = entry",
+                "    entries_by_xid.setdefault(entry['transaction_id'], entry)",
+                "",
+                "for plan in plans:",
+                "    register(plan)",
+                "    sends = plan.get('dhcp_sends')",
+                "    if isinstance(sends, list):",
+                "        for send in sends:",
+                "            register(send, plan)",
+                "",
+                "def response_for(request):",
+                "    if len(request) < 240:",
+                "        raise ValueError('dhcp request shorter than bootp header')",
+                "    xid = struct.unpack('!I', request[4:8])[0]",
+                "    chaddr = request[28:44]",
+                "    client_mac = ':'.join(f'{octet:02x}' for octet in chaddr[:6])",
+                "    entry = entries.get((xid, client_mac)) or entries_by_xid.get(xid)",
+                "    if entry is None:",
+                "        raise ValueError(f'no planned dhcp response for xid {xid} client {client_mac}')",
+                "    server_ip = ip_bytes(entry['server_identifier'])",
+                "    yiaddr = ip_bytes(entry['yiaddr'])",
+                "    ciaddr = request[12:16]",
+                "    header = struct.pack(",
+                "        '!BBBBIHH4s4s4s4s16s64s128s',",
+                "        2,",
+                "        1,",
+                "        6,",
+                "        0,",
+                "        xid,",
+                "        0,",
+                "        0,",
+                "        ciaddr,",
+                "        yiaddr,",
+                "        server_ip,",
+                "        b'\\x00' * 4,",
+                "        chaddr,",
+                "        b'\\x00' * 64,",
+                "        b'\\x00' * 128,",
+                "    )",
+                "    options = bytearray(b'\\x63\\x82\\x53\\x63')",
+                "    options.extend(opt_u8(53, entry['message_type']))",
+                "    options.extend(opt_ip(54, entry['server_identifier']))",
+                "    if entry.get('subnet_mask'):",
+                "        options.extend(opt_ip(1, entry['subnet_mask']))",
+                "    if entry.get('router_ipv4'):",
+                "        options.extend(opt_ip(3, entry['router_ipv4']))",
+                "    if entry.get('dns_ipv4'):",
+                "        options.extend(opt_ip(6, entry['dns_ipv4']))",
+                "    if entry.get('lease_time') is not None and not entry.get('no_lease_time'):",
+                "        options.extend(opt_u32(51, entry['lease_time']))",
+                "    if entry.get('renewal_time') is not None:",
+                "        options.extend(opt_u32(58, entry['renewal_time']))",
+                "    if entry.get('rebinding_time') is not None:",
+                "        options.extend(opt_u32(59, entry['rebinding_time']))",
+                "    if entry.get('client_identifier_hex'):",
+                "        options.extend(opt_bytes(61, bytes.fromhex(str(entry['client_identifier_hex']))))",
+                "    if entry.get('hostname'):",
+                "        options.extend(opt_text(12, entry['hostname']))",
+                "    if entry.get('message'):",
+                "        options.extend(opt_text(56, entry['message']))",
+                "    options.append(255)",
+                "    return header + bytes(options), entry",
+                "",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+                "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+                "sock.bind((bind_ip, port))",
+                "sock.settimeout(1.0)",
+                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port, 'planned_responses': len(entries)}), flush=True)",
+                "while not stop:",
+                "    try:",
+                "        data, addr = sock.recvfrom(4096)",
+                "    except socket.timeout:",
+                "        continue",
+                "    try:",
+                "        response, entry = response_for(data)",
+                "        sock.sendto(response, (addr[0], 68))",
+                "        print(json.dumps({'event': 'answered', 'client': addr[0], 'client_port': addr[1], 'transaction_id': entry['transaction_id'], 'message_type': entry['message_type']}, sort_keys=True), flush=True)",
+                "    except Exception as exc:",
+                "        print(json.dumps({'event': 'error', 'client': addr[0], 'error': str(exc)}), file=sys.stderr, flush=True)",
+                "sock.close()",
+                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
+                "PY",
+            ]
+        )
+    for port in dhcp_ports:
+        stdout_path = posixpath.join(artifact_root, f"dhcp-responder-{port}.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, f"dhcp-responder-{port}.stderr.txt")
+        pid_path = posixpath.join(artifact_root, f"dhcp-responder-{port}.pid")
+        lines.extend(
+            [
+                f"check_udp_port_free \"$dhcp_bind_ipv4\" {port}",
+                (
+                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'dhcp-responder.py'))} "
+                    f"{shlex.quote(posixpath.join(artifact_root, 'dhcp-plans.json'))} "
+                    f"\"$dhcp_bind_ipv4\" {port} "
+                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.5",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                f"  echo dhcp_responder_{port}=failed >&2",
+                "  exit 73",
+                "fi",
+                f"echo dhcp_responder_{port}=running",
+            ]
+        )
     if udp_ports:
         service_path = posixpath.join(artifact_root, "udp-responder.py")
         lines.extend(
@@ -1263,6 +1654,135 @@ def target_service_setup_script(
                 f"echo udp_responder_{port}=running",
             ]
         )
+    if arp_plans:
+        lines.extend(
+            [
+                'if [ -z "$target_interface" ]; then',
+                "  echo arp_target_interface=missing >&2",
+                "  exit 73",
+                "fi",
+                'ip link show dev "$target_interface" >/dev/null',
+                'printf \'%s\\n\' "ip neigh flush dev $target_interface || true" >> "$cleanup"',
+                'for key in arp_ignore arp_announce; do',
+                '  sysctl_name="net.ipv4.conf.${target_interface}.${key}"',
+                '  before_path="$artifact_root/arp-${key}.before"',
+                '  sysctl -n "$sysctl_name" > "$before_path" 2>/dev/null || true',
+                '  before_value=""',
+                '  if [ -s "$before_path" ]; then before_value="$(cat "$before_path")"; fi',
+                '  if [ -n "$before_value" ]; then',
+                '    printf \'%s\\n\' "sysctl -w ${sysctl_name}=${before_value} >/dev/null 2>&1 || true" >> "$cleanup"',
+                "  fi",
+                '  sysctl -w "${sysctl_name}=0"',
+                "done",
+                'ip neigh flush dev "$target_interface" || true',
+                "echo arp_kernel_state=configured",
+            ]
+        )
+        for address in arp_addresses:
+            quoted_address = shlex.quote(address)
+            lines.extend(
+                [
+                    (
+                        "if ! ip -4 addr show dev \"$target_interface\" "
+                        f"| grep -Fq {shlex.quote(address + '/32')}; then"
+                    ),
+                    f"  ip addr add {quoted_address}/32 dev \"$target_interface\"",
+                    "fi",
+                    (
+                        f"printf '%s\\n' \"ip addr del {quoted_address}/32 dev "
+                        "$target_interface 2>/dev/null || true\" >> \"$cleanup\""
+                    ),
+                    f"echo arp_extra_address_{address}=configured",
+                ]
+            )
+        if arp_decoy_events_json != "[]":
+            decoy_path = posixpath.join(artifact_root, "arp-decoy-events.json")
+            decoy_script = posixpath.join(artifact_root, "arp-decoy-emitter.py")
+            stdout_path = posixpath.join(artifact_root, "arp-decoy-emitter.stdout.txt")
+            stderr_path = posixpath.join(artifact_root, "arp-decoy-emitter.stderr.txt")
+            pid_path = posixpath.join(artifact_root, "arp-decoy-emitter.pid")
+            lines.extend(
+                [
+                    f"cat > {shlex.quote(decoy_path)} <<'JSON'",
+                    arp_decoy_events_json,
+                    "JSON",
+                    f"cat > {shlex.quote(decoy_script)} <<'PY'",
+                    "import ipaddress",
+                    "import json",
+                    "import signal",
+                    "import socket",
+                    "import struct",
+                    "import sys",
+                    "import time",
+                    "",
+                    "stop = False",
+                    "",
+                    "def handle_stop(_signum, _frame):",
+                    "    global stop",
+                    "    stop = True",
+                    "",
+                    "signal.signal(signal.SIGTERM, handle_stop)",
+                    "signal.signal(signal.SIGINT, handle_stop)",
+                    "",
+                    "events_path, iface = sys.argv[1:3]",
+                    "events = json.load(open(events_path, encoding='utf-8'))",
+                    "",
+                    "def mac_bytes(value):",
+                    "    return bytes(int(part, 16) for part in str(value).split(':'))",
+                    "",
+                    "def ip_bytes(value):",
+                    "    return ipaddress.IPv4Address(str(value)).packed",
+                    "",
+                    "def frame(event):",
+                    "    ethernet_dst = mac_bytes(event['ethernet_destination'])",
+                    "    ethernet_src = mac_bytes(event['ethernet_source'])",
+                    "    sender_hw = mac_bytes(event['sender_hardware_addr'])",
+                    "    target_hw = mac_bytes(event['target_hardware_addr'])",
+                    "    arp = struct.pack(",
+                    "        '!HHBBH6s4s6s4s',",
+                    "        1,",
+                    "        0x0800,",
+                    "        6,",
+                    "        4,",
+                    "        int(event.get('operation', 2)),",
+                    "        sender_hw,",
+                    "        ip_bytes(event['sender_protocol_addr']),",
+                    "        target_hw,",
+                    "        ip_bytes(event['target_protocol_addr']),",
+                    "    )",
+                    "    return ethernet_dst + ethernet_src + struct.pack('!H', 0x0806) + arp",
+                    "",
+                    "frames = [(event, frame(event)) for event in events if event.get('present', True)]",
+                    "sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)",
+                    "sock.bind((iface, 0))",
+                    "deadline = time.time() + 30.0",
+                    "print(json.dumps({'event': 'listening', 'interface': iface, 'decoy_count': len(frames)}), flush=True)",
+                    "while not stop and time.time() < deadline:",
+                    "    for event, raw in frames:",
+                    "        sock.send(raw)",
+                    "        print(json.dumps({'event': 'sent', 'sender_protocol_addr': event.get('sender_protocol_addr'), 'target_protocol_addr': event.get('target_protocol_addr')}, sort_keys=True), flush=True)",
+                    "    time.sleep(0.25)",
+                    "sock.close()",
+                    "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
+                    "PY",
+                    (
+                        f"python3 {shlex.quote(decoy_script)} {shlex.quote(decoy_path)} "
+                        f"\"$target_interface\" >{shlex.quote(stdout_path)} "
+                        f"2>{shlex.quote(stderr_path)} &"
+                    ),
+                    "pid=$!",
+                    f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                    "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                    f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                    "sleep 0.2",
+                    "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                    f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                    "  echo arp_decoy_emitter=failed >&2",
+                    "  exit 73",
+                    "fi",
+                    "echo arp_decoy_emitter=running",
+                ]
+            )
     lines.append("echo target_service_setup=ok")
     return "\n".join(lines)
 
@@ -1271,6 +1791,9 @@ __all__ = [
     "KernelStateDescriptor",
     "TargetServiceDescriptor",
     "arp_alias_descriptor",
+    "arp_decoy_events",
+    "arp_extra_addresses",
+    "arp_kernel_state_plan",
     "arp_probe_plans",
     "arp_sysctl_descriptor",
     "cleanup_wire_probe_target",

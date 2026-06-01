@@ -1042,6 +1042,9 @@ def _probe_plan_with_endpoint_addresses(
     *,
     source_ipv4: str,
     target_ipv4: str,
+    source_mac: str | None = None,
+    target_mac: str | None = None,
+    target_interface: str | None = None,
     rewrite_source: str = "wire_endpoint_plan",
 ) -> JSONObject:
     if plan.get("case") not in _STIMULUS_ENDPOINT_CASES:
@@ -1348,6 +1351,9 @@ def _probe_plan_with_endpoint_addresses(
         is_alias_case = case_name == "arp-alias-address-reply"
         is_spa_case = case_name == "arp-spa-variation"
         is_filtered_capture_case = case_name == "arp-broadcast-filtered-capture"
+        resolved_source_mac = _string_or(source_mac, "")
+        resolved_target_mac = _string_or(target_mac, "")
+        resolved_target_interface = _string_or(target_interface, "")
         resolved_ipv4 = (
             _lab_arp_alias_ipv4(target_ipv4, source_ipv4)
             if is_alias_case
@@ -1371,6 +1377,11 @@ def _probe_plan_with_endpoint_addresses(
         updated["expected_reply_destination_ipv4"] = sender_proto
         updated["sender_protocol_addr"] = sender_proto
         updated["target_protocol_addr"] = resolved_ipv4
+        if resolved_source_mac:
+            updated["sender_hardware_addr"] = resolved_source_mac
+            updated["ethernet_source"] = resolved_source_mac
+        if resolved_target_mac and case_name == "arp-unicast-request-reply":
+            updated["ethernet_destination"] = resolved_target_mac
         if is_alias_case:
             updated["alias_ipv4"] = resolved_ipv4
         if is_spa_case:
@@ -1388,6 +1399,21 @@ def _probe_plan_with_endpoint_addresses(
                 "target_protocol_addr": resolved_ipv4,
             }
         )
+        if resolved_target_mac:
+            target_service["target_hardware_addr"] = resolved_target_mac
+            repeat = target_service.get("repeat")
+            if isinstance(repeat, dict) and isinstance(repeat.get("sends"), list):
+                repeat["sends"] = [
+                    {
+                        **json_object(send, "probe_plan.target_service.repeat.send"),
+                        "sender_hardware_addr": resolved_target_mac,
+                    }
+                    for send in repeat["sends"]
+                    if isinstance(send, Mapping)
+                ]
+                target_service["repeat"] = repeat
+        if resolved_target_interface:
+            target_service["interface"] = resolved_target_interface
         if is_alias_case:
             # Target setup adds the secondary alias to the private interface (and
             # removes it during cleanup); rewrite the alias onto the lab segment so
@@ -1409,6 +1435,12 @@ def _probe_plan_with_endpoint_addresses(
                 event = dict(json_object(raw_event, "probe_plan.decoy_arp_event"))
                 event["sender_protocol_addr"] = decoy_sender_ipv4
                 event["target_protocol_addr"] = decoy_target_ipv4
+                if resolved_target_mac:
+                    event["ethernet_source"] = resolved_target_mac
+                    event["sender_hardware_addr"] = resolved_target_mac
+                if resolved_source_mac:
+                    event["ethernet_destination"] = resolved_source_mac
+                    event["target_hardware_addr"] = resolved_source_mac
                 return event
 
             if isinstance(updated.get("decoy_arp_event"), dict):
@@ -1424,6 +1456,14 @@ def _probe_plan_with_endpoint_addresses(
         # The reply is addressed back to the request's sender protocol address: the
         # alternate SPA for arp-spa-variation, the stimulus IPv4 otherwise.
         arp_validation["target_protocol_addr"] = sender_proto
+        if resolved_target_mac:
+            arp_validation["sender_hardware_addr"] = resolved_target_mac
+            arp_validation["ethernet_source"] = resolved_target_mac
+            if "provider_mac" in arp_validation:
+                arp_validation["provider_mac"] = resolved_target_mac
+        if resolved_source_mac:
+            arp_validation["target_hardware_addr"] = resolved_source_mac
+            arp_validation["ethernet_destination"] = resolved_source_mac
         updated["validation"] = arp_validation
         if case_name == "arp-unicast-request-reply":
             # The unicast case sends the request directly to the known target MAC
@@ -1447,18 +1487,36 @@ def _probe_plan_with_endpoint_addresses(
             def _rewrite_flush(commands: object) -> object:
                 if not isinstance(commands, list):
                     return commands
-                return [
+                rewritten = [
                     command.replace(doc_stimulus_ipv4, source_ipv4)
                     if isinstance(command, str) and doc_stimulus_ipv4
                     else command
                     for command in commands
                 ]
+                if resolved_target_interface:
+                    old_interface = _string_or(
+                        updated.get("neighbor_flush_interface"),
+                        _string_or(target_service.get("neighbor_flush_interface"), "eth0"),
+                    )
+                    rewritten = [
+                        command.replace(
+                            f" dev {old_interface}",
+                            f" dev {resolved_target_interface}",
+                        )
+                        if isinstance(command, str)
+                        else command
+                        for command in rewritten
+                    ]
+                return rewritten
 
             for key in ("neighbor_flush_commands", "neighbor_flush_cleanup_commands"):
                 if key in updated:
                     updated[key] = _rewrite_flush(updated[key])
                 if key in target_service:
                     target_service[key] = _rewrite_flush(target_service[key])
+            if resolved_target_interface:
+                updated["neighbor_flush_interface"] = resolved_target_interface
+                target_service["neighbor_flush_interface"] = resolved_target_interface
             updated["target_service"] = target_service
         # arp-repeat-two-replies carries a per-send array: rewrite each who-has
         # send's ARP protocol addresses and is-at validation contract onto the lab
@@ -1477,11 +1535,20 @@ def _probe_plan_with_endpoint_addresses(
                 send["expected_reply_destination_ipv4"] = source_ipv4
                 send["sender_protocol_addr"] = source_ipv4
                 send["target_protocol_addr"] = target_ipv4
+                if resolved_source_mac:
+                    send["sender_hardware_addr"] = resolved_source_mac
+                    send["ethernet_source"] = resolved_source_mac
                 send_validation = dict(
                     json_object(send.get("validation", {}), "probe_plan.arp_send.validation")
                 )
                 send_validation["sender_protocol_addr"] = target_ipv4
                 send_validation["target_protocol_addr"] = source_ipv4
+                if resolved_target_mac:
+                    send_validation["sender_hardware_addr"] = resolved_target_mac
+                    send_validation["ethernet_source"] = resolved_target_mac
+                if resolved_source_mac:
+                    send_validation["target_hardware_addr"] = resolved_source_mac
+                    send_validation["ethernet_destination"] = resolved_source_mac
                 send["validation"] = send_validation
                 rewritten_arp_sends.append(send)
             updated["arp_sends"] = rewritten_arp_sends
