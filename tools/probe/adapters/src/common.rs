@@ -804,7 +804,8 @@ fn dispatch_case(
             | "arp-alias-address-reply"
             | "arp-unicast-request-reply"
             | "arp-padding-reply"
-            | "arp-cache-flush-reply",
+            | "arp-cache-flush-reply"
+            | "arp-mac-validation",
         ) => arp::run_arp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -814,7 +815,8 @@ fn dispatch_case(
             | "arp-alias-address-reply"
             | "arp-unicast-request-reply"
             | "arp-padding-reply"
-            | "arp-cache-flush-reply",
+            | "arp-cache-flush-reply"
+            | "arp-mac-validation",
         ) => arp::run_arp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -1131,7 +1133,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "arp-alias-address-reply"
         | "arp-unicast-request-reply"
         | "arp-padding-reply"
-        | "arp-cache-flush-reply" => "arp and arp[6:2] = 2".to_string(),
+        | "arp-cache-flush-reply"
+        | "arp-mac-validation" => "arp and arp[6:2] = 2".to_string(),
         _ => String::new(),
     }
 }
@@ -1171,7 +1174,8 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "arp-alias-address-reply"
             | "arp-unicast-request-reply"
             | "arp-padding-reply"
-            | "arp-cache-flush-reply" => "arp_is_at",
+            | "arp-cache-flush-reply"
+            | "arp-mac-validation" => "arp_is_at",
             _ => "unknown",
         })
 }
@@ -1471,7 +1475,8 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         "arp-basic-who-has"
         | "arp-source-address-preserved"
         | "arp-unicast-request-reply"
-        | "arp-padding-reply" => {
+        | "arp-padding-reply"
+        | "arp-mac-validation" => {
             json!({
                 "required": true,
                 // ARP relies primarily on the target kernel answering who-has for

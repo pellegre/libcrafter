@@ -29,14 +29,18 @@ _ARP_CAPABILITIES = [
     "link_layer_capture",
     "broadcast",
 ]
-# A unicast ARP request is addressed to the *target MAC* rather than the
-# broadcast address, so it can only be built once the target's MAC is known. A
-# provider that cannot supply target-MAC metadata (``provider_mac``) must skip
-# the unicast case with the stable ``requires_provider_mac`` reason.
-_ARP_UNICAST_CAPABILITIES = [
+# Some ARP cases need the *target MAC* (provider metadata): a unicast request is
+# addressed to it rather than the broadcast address, and the MAC-validation case
+# ties the decoded reply to it. Either way the case can only run once the
+# target's MAC is known, so it adds ``provider_mac`` to the base ARP
+# capabilities. A provider that cannot supply target-MAC metadata must skip with
+# the stable ``requires_provider_mac`` reason.
+_ARP_PROVIDER_MAC_CAPABILITIES = [
     *_ARP_CAPABILITIES,
     "provider_mac",
 ]
+# Backwards-compatible alias: the unicast case introduced this list.
+_ARP_UNICAST_CAPABILITIES = _ARP_PROVIDER_MAC_CAPABILITIES
 
 
 def _behavior_case(
@@ -325,11 +329,17 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
         metadata={"layer": "link"},
     ),
     _behavior_case(
-        name="arp-reply-mac-matches",
-        description="Validate that the reply sender MAC matches the target MAC.",
+        name="arp-mac-validation",
+        description=(
+            "Validate that the reply Ethernet source and ARP sender hardware "
+            "address both equal the target endpoint MAC."
+        ),
         stimulus="arp_who_has",
         expected_response="arp_is_at",
-        required_capabilities=_ARP_CAPABILITIES,
+        # The reply is validated against the target endpoint's MAC (provider
+        # metadata), so the case requires provider_mac: MAC-less providers skip
+        # with the stable requires_provider_mac reason.
+        required_capabilities=_ARP_PROVIDER_MAC_CAPABILITIES,
         protocol="arp",
         metadata={"layer": "link"},
     ),

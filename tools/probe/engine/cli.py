@@ -606,6 +606,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "arp-unicast-request-reply",
         "arp-padding-reply",
         "arp-cache-flush-reply",
+        "arp-mac-validation",
     }
 )
 
@@ -1244,6 +1245,7 @@ def _probe_plan_with_endpoint_addresses(
         "arp-unicast-request-reply",
         "arp-padding-reply",
         "arp-cache-flush-reply",
+        "arp-mac-validation",
     }:
         # ARP rides Ethernet directly (no IP/UDP), so the lab rewrite touches the
         # ARP protocol addresses rather than transport IPs: the stimulus resolves
@@ -1553,6 +1555,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "arp-source-address-preserved",
         "arp-unicast-request-reply",
         "arp-padding-reply",
+        "arp-mac-validation",
     }:
         return [
             FAILURE_TIMEOUT,
