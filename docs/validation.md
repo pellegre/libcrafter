@@ -9,6 +9,48 @@ Oracle answers this question: given one packet plan, do libcrafter and a
 reference backend agree on the emitted bytes and parsed model? Kernel and
 service behavior checks belong to [probe validation](probe.md).
 
+Probe answers a different question: given a packet built by libcrafter and sent
+inside a disposable lab session, does the peer kernel or controlled service
+respond as expected, and can libcrafter decode and validate that response? Keep
+those behavioral checks in `tools/probe/`; they are not oracle packet
+equivalence cases.
+
+The probe `behavior` profile is the full DNS/DHCP/ARP/UDP peer-response suite:
+forty deterministic cases, ten per protocol, with dry-run plans that expose the
+stimulus, expected response, provider requirements, target setup, and validation
+contract. DNS and UDP use controlled target services plus decoded UDP/DNS or
+UDP/ICMP validation. DHCP uses a controlled DHCP/BOOTP responder on a private
+link-layer segment. ARP uses target kernel behavior on a link-layer-capable
+segment with setup for aliases, cache flushes, padding, provider MAC checks,
+and filtered captures.
+
+Run probe behavior validation through the dry-run path first:
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/behavior-dry-run
+python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/provider-matrix
+```
+
+Live probe behavior runs stay behind explicit confirmation and disposable lab
+sessions. The guarded workflow keeps dry-run as the default when no live
+provider is selected:
+
+```sh
+if [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ]; then
+  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile behavior --seed 1051 --count 40 --out target/probe/acceptance/51-live-behavior-suite
+else
+  tools/probe/run --provider qemu --dry-run --profile behavior --seed 1051 --count 40 --out target/probe/acceptance/51-live-behavior-suite-dry-run
+fi
+```
+
+Provider capability skips are part of the probe contract. Hetzner can plan
+IPv4 unicast DNS and UDP service cases but skips DHCP and ARP link-layer cases.
+QEMU, VirtualBox, and Docker private sessions can plan the full private-lab
+behavior suite when local prerequisites are available. A provider skip must
+come from a missing declared capability; a supported case that fails to build,
+send, capture, decode, or validate is a failure to fix in libcrafter or probe
+infrastructure.
+
 ## Corpus Generation
 
 Corpus generation writes the ordered packet plans shared by validation modes:
@@ -270,6 +312,8 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run-qemu
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run-virtualbox
 tools/probe/run --provider docker --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run-docker
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/final-behavior-dry-run
+python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/final-provider-matrix
 ```
 
 Oracle artifacts default below `target/oracle/`, with mode-specific reports
