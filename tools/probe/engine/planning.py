@@ -3947,6 +3947,115 @@ def _arp_cache_flush_reply_probe_plan(
     }
 
 
+def _arp_mac_validation_probe_plan(
+    *,
+    case_name: str = "arp-mac-validation",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``arp-mac-validation`` behavioral case.
+
+    A broadcast ARP who-has request (operation 1) resolving the target endpoint's
+    IPv4 address, answered by the target kernel with a unicast is-at reply
+    (operation 2). The wire shape is identical to ``arp-basic-who-has`` (ARP rides
+    Ethernet directly, no IP/UDP; documentation MACs; broadcast who-has;
+    ARP-answering target kernel). The behavioral point is the *validation*: the
+    reply must be tied to the intended target endpoint, not merely to any is-at on
+    the segment. The validation contract therefore asserts that **both** the
+    decoded reply's Ethernet source **and** its ARP sender hardware address equal
+    the target endpoint's MAC (the address the live path threads in from provider
+    metadata; here the deterministic documentation ``target_mac`` stands in for
+    it). The MAC is the single source of truth: the reply sender hardware address,
+    the reply Ethernet source, and the target kernel's configured hardware address
+    are all the same target MAC.
+
+    Because the validation pins the reply to the target endpoint's MAC, the case
+    requires ``provider_mac`` (set on the catalog case and flagged in the wire
+    requirements); a provider that cannot supply target-MAC metadata skips with
+    the stable ``requires_provider_mac`` reason.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    stimulus_mac = deterministic_documentation_mac(profile, seed, sequence, role="stimulus")
+    target_mac = deterministic_documentation_mac(profile, seed, sequence, role="target")
+    broadcast_mac = "ff:ff:ff:ff:ff:ff"
+    zero_mac = "00:00:00:00:00:00"
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "arp_who_has",
+        "expected_response": "arp_is_at",
+        # ARP rides Ethernet directly; these are link-layer documentation values.
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": stimulus_ipv4,
+        "target_hardware_addr": zero_mac,
+        "target_protocol_addr": target_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        # ARP cannot be selected by host/IP BPF; match on the protocol + opcode.
+        "capture_filter": "arp and arp[6:2] = 2",
+        "target_service": {
+            "required": True,
+            "kind": "arp-kernel",
+            "layer": "link",
+            # The target kernel answers ARP who-has for its own configured
+            # address; setup tunes ARP sysctls and flushes the neighbor cache. The
+            # configured hardware address is the target endpoint MAC the reply
+            # sender hardware address and Ethernet source are validated against.
+            "target_protocol_addr": target_ipv4,
+            "target_hardware_addr": target_mac,
+            "arp_sysctls": True,
+            "neighbor_cache_flush": True,
+        },
+        "validation": {
+            "ethertype": 0x0806,
+            "operation": 2,
+            "operation_label": "reply",
+            # The reply must be tied to the target endpoint: BOTH the ARP sender
+            # hardware address and the Ethernet source equal the target MAC.
+            "sender_hardware_addr": target_mac,
+            "sender_protocol_addr": target_ipv4,
+            "target_hardware_addr": stimulus_mac,
+            "target_protocol_addr": stimulus_ipv4,
+            "ethernet_source": target_mac,
+            "ethernet_destination": stimulus_mac,
+            # The single source of truth the reply sender HW and Ethernet source
+            # are both asserted against (the target endpoint's MAC).
+            "provider_mac": target_mac,
+        },
+        "wire_requirements": {
+            "requires_link_layer_send": True,
+            "requires_link_layer_capture": True,
+            "requires_broadcast": True,
+            # The reply is validated against the target endpoint's MAC, so
+            # target-MAC metadata is mandatory; providers without it skip.
+            "requires_provider_mac": True,
+            "note": (
+                "ARP resolution is L2 broadcast/unicast traffic; it runs only on a "
+                "provider-backed lab segment, never from privileged host raw sends."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 def deterministic_documentation_mac(
     profile: str,
     seed: int,
@@ -4045,6 +4154,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "arp-unicast-request-reply": _arp_unicast_request_reply_probe_plan,
     "arp-padding-reply": _arp_padding_reply_probe_plan,
     "arp-cache-flush-reply": _arp_cache_flush_reply_probe_plan,
+    "arp-mac-validation": _arp_mac_validation_probe_plan,
 }
 
 

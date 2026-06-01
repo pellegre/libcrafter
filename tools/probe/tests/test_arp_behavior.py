@@ -1389,5 +1389,224 @@ class ArpCacheFlushReplyTest(unittest.TestCase):
             )
 
 
+def _arp_mac_validation_plan(*, seed: int = 1037, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["arp-mac-validation"]),
+        case=planning.PROBE_CASE_BY_NAME["arp-mac-validation"],
+        sequence=sequence,
+    )
+
+
+class ArpMacValidationPlanTest(unittest.TestCase):
+    """The reply is tied to the target endpoint MAC (Ethernet src + ARP sender HW)."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("arp-mac-validation", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["arp-mac-validation"],
+            planning._arp_mac_validation_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _arp_mac_validation_plan(),
+            _arp_mac_validation_plan(),
+        )
+
+    def test_plan_carries_a_broadcast_who_has_stimulus(self) -> None:
+        plan = _arp_mac_validation_plan()
+
+        self.assertEqual(plan["case"], "arp-mac-validation")
+        self.assertEqual(plan["stimulus"], "arp_who_has")
+        self.assertEqual(plan["expected_response"], "arp_is_at")
+        self.assertEqual(plan["operation"], 1)
+        self.assertEqual(plan["operation_label"], "request")
+        self.assertEqual(plan["ethertype"], 0x0806)
+
+        # The stimulus is an ordinary broadcast who-has (same shape as basic).
+        self.assertTrue(_is_documentation_mac(plan["sender_hardware_addr"]))
+        self.assertEqual(plan["target_hardware_addr"], "00:00:00:00:00:00")
+        self.assertEqual(plan["ethernet_source"], plan["sender_hardware_addr"])
+        self.assertEqual(plan["ethernet_destination"], "ff:ff:ff:ff:ff:ff")
+        self.assertEqual(plan["sender_protocol_addr"], plan["source_ipv4"])
+        self.assertEqual(plan["target_protocol_addr"], plan["destination_ipv4"])
+
+    def test_validation_pins_reply_to_the_target_endpoint_mac(self) -> None:
+        plan = _arp_mac_validation_plan()
+        validation = plan["validation"]
+        target_mac = plan["target_service"]["target_hardware_addr"]
+
+        self.assertEqual(validation["ethertype"], 0x0806)
+        self.assertEqual(validation["operation"], 2)
+        self.assertEqual(validation["operation_label"], "reply")
+
+        # The whole point of the case: BOTH the reply's Ethernet source and its
+        # ARP sender hardware address equal the target endpoint MAC (provider
+        # metadata; here the deterministic documentation target MAC).
+        self.assertTrue(_is_documentation_mac(target_mac))
+        self.assertEqual(validation["sender_hardware_addr"], target_mac)
+        self.assertEqual(validation["ethernet_source"], target_mac)
+        # The single source of truth marker matches both.
+        self.assertEqual(validation.get("provider_mac"), target_mac)
+
+        # The MAC is distinct from the querier's own MAC, so the assertion
+        # actually ties the reply to the target rather than to any reply.
+        self.assertNotEqual(validation["sender_hardware_addr"], plan["sender_hardware_addr"])
+
+        # The reply is otherwise an ordinary is-at addressed back to the querier.
+        self.assertEqual(validation["sender_protocol_addr"], plan["target_protocol_addr"])
+        self.assertEqual(validation["target_hardware_addr"], plan["sender_hardware_addr"])
+        self.assertEqual(validation["target_protocol_addr"], plan["sender_protocol_addr"])
+        self.assertEqual(validation["ethernet_destination"], plan["sender_hardware_addr"])
+
+    def test_plan_requires_provider_mac_knowledge(self) -> None:
+        # The reply is validated against the target endpoint's MAC, so the case
+        # requires provider-MAC knowledge: the wire requirements flag it and the
+        # catalog case lists the provider_mac capability so MAC-less providers
+        # skip with the stable requires_provider_mac reason.
+        plan = _arp_mac_validation_plan()
+        requirements = plan["wire_requirements"]
+        self.assertTrue(requirements["requires_link_layer_send"])
+        self.assertTrue(requirements["requires_link_layer_capture"])
+        self.assertTrue(requirements["requires_provider_mac"])
+        self.assertIn(
+            "provider_mac",
+            planning.PROBE_CASE_BY_NAME["arp-mac-validation"].required_capabilities,
+        )
+
+    def test_target_service_is_the_arp_answering_kernel(self) -> None:
+        plan = _arp_mac_validation_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "arp-kernel")
+        self.assertEqual(target_service["layer"], "link")
+        self.assertEqual(
+            target_service["target_protocol_addr"], plan["target_protocol_addr"]
+        )
+        # The configured target hardware address is the MAC the reply is tied to.
+        self.assertEqual(
+            target_service["target_hardware_addr"],
+            plan["validation"]["sender_hardware_addr"],
+        )
+        self.assertTrue(target_service["arp_sysctls"])
+        self.assertTrue(target_service["neighbor_cache_flush"])
+
+    def test_case_is_in_the_arp_kernel_target_service_group(self) -> None:
+        self.assertIn(
+            "arp-mac-validation", target_services._ARP_KERNEL_CASES
+        )
+
+
+class ArpMacValidationTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "arp-mac-validation",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1037,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("arp-mac-validation", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "arp-mac-validation"
+            ]
+            self.assertTrue(results, "endpoint emitted no arp-mac-validation result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus frame bytes: an
+                # Ethernet/ARP broadcast who-has request (opcode 1).
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                frame = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertGreaterEqual(len(frame), 14 + 28)
+                self.assertEqual(frame[0:6], b"\xff\xff\xff\xff\xff\xff")
+                self.assertEqual(frame[12:14], (0x0806).to_bytes(2, "big"))
+                # ARP opcode (frame[20:22]) is the who-has request (1).
+                self.assertEqual(frame[20:22], (1).to_bytes(2, "big"))
+
+                # The probe plan echoed back pins BOTH the reply's Ethernet source
+                # and ARP sender hardware address to the target endpoint MAC (the
+                # target kernel's configured hardware address).
+                plan = metadata.get("probe_plan", {})
+                target_mac = plan.get("target_service", {}).get("target_hardware_addr")
+                self.assertTrue(target_mac)
+                self.assertTrue(_is_documentation_mac(target_mac))
+                validation = plan.get("validation", {})
+                self.assertEqual(validation.get("operation"), 2)
+                self.assertEqual(validation.get("sender_hardware_addr"), target_mac)
+                self.assertEqual(validation.get("ethernet_source"), target_mac)
+                # The MAC the reply is tied to is distinct from the querier MAC.
+                self.assertNotEqual(
+                    validation.get("sender_hardware_addr"),
+                    plan.get("sender_hardware_addr"),
+                )
+
+    def test_case_requires_provider_mac_and_skips_when_only_mac_is_missing(self) -> None:
+        # The behavioral requirement: a provider that supports the link layer but
+        # cannot supply target-MAC metadata skips with the stable
+        # requires_provider_mac reason. Derive such a substrate (link-layer
+        # capable, provider_mac_known False) and assert the case is missing only
+        # the provider_mac capability and maps to requires_provider_mac.
+        from tools.probe.engine import capabilities, lab
+
+        mac_less = lab.probe_capabilities_from_lab_capabilities(
+            "qemu",
+            {
+                "provider": "qemu",
+                "ipv4_unicast": True,
+                "controlled_services": True,
+                "link_layer_send": True,
+                "link_layer_capture": True,
+                "broadcast": True,
+                "provider_mac_known": False,
+            },
+            dry_run=True,
+        )
+        case = planning.PROBE_CASE_BY_NAME["arp-mac-validation"]
+        missing = capabilities.missing_capabilities(case, mac_less)
+        self.assertEqual(missing, ["provider_mac"])
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(case, missing[0]),
+            capabilities.SKIP_REQUIRES_PROVIDER_MAC,
+        )
+
+    def test_provider_without_link_layer_skips(self) -> None:
+        # Hetzner cannot provide L2/broadcast/provider-MAC, so the case skips with
+        # a stable capability reason rather than planning a stimulus.
+        if not probe_acceptance.probe_run_available():
+            self.skipTest("probe runner requires uv on PATH")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "hetzner"
+            report_path = probe_acceptance._run_probe_dry_run(
+                "arp-mac-validation",
+                out_dir=out_dir,
+                provider="hetzner",
+                profile="behavior",
+                seed=1037,
+                count=1,
+                timeout_seconds=600,
+            )
+            report = probe_acceptance._load_json(report_path)
+            skips = report.get("skips", [])
+            arp_skips = [
+                skip
+                for skip in skips
+                if skip.get("case") == "arp-mac-validation"
+            ]
+            self.assertTrue(
+                arp_skips, "expected arp-mac-validation to skip on hetzner"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
