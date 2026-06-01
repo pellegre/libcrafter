@@ -56,6 +56,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "dhcp_service",
             "udp_service",
             "udp_large_payload",
+            "udp_ipv4_zero_checksum",
             "privileged_udp_port",
             "link_layer_arp",
             "provider_mac",
@@ -75,6 +76,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "dhcp_service",
             "udp_service",
             "udp_large_payload",
+            "udp_ipv4_zero_checksum",
             "privileged_udp_port",
             "arp_resolution",
             "link_layer_arp",
@@ -96,6 +98,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "dns_service",
             "udp_service",
             "udp_large_payload",
+            "udp_ipv4_zero_checksum",
             "privileged_udp_port",
             "repeated_response",
         ):
@@ -137,6 +140,19 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         self.assertIs(derived["udp_service"], True)
         self.assertIs(derived["udp_large_payload"], False)
         self.assertEqual(derived["udp_safe_payload_size"], 1199)
+
+    def test_explicit_udp_zero_checksum_denial_disables_that_case(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["udp_ipv4_zero_checksum"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["udp_service"], True)
+        self.assertIs(derived["udp_ipv4_zero_checksum"], False)
 
 
 class ProbeMissingCapabilityTest(unittest.TestCase):
@@ -187,6 +203,28 @@ class ProbeMissingCapabilityTest(unittest.TestCase):
         )
         self.assertEqual(
             capabilities.skip_reason_for_missing_capability(case, "udp_large_payload"),
+            capabilities.SKIP_CAPABILITY_UNAVAILABLE,
+        )
+
+    def test_udp_zero_checksum_skips_when_provider_denies_capability(self) -> None:
+        case = cases.PROBE_CASE_BY_NAME["udp-zero-checksum-ipv4"]
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["udp_ipv4_zero_checksum"] = False
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertEqual(
+            capabilities.missing_capabilities(case, derived),
+            ["udp_ipv4_zero_checksum"],
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(
+                case,
+                "udp_ipv4_zero_checksum",
+            ),
             capabilities.SKIP_CAPABILITY_UNAVAILABLE,
         )
 

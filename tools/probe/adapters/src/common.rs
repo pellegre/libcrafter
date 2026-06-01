@@ -89,6 +89,12 @@ pub struct ProbePlan {
     #[serde(default)]
     pub expected_udp_checksum_statuses: Option<Vec<String>>,
     #[serde(default)]
+    pub stimulus_udp_checksum: Option<u16>,
+    #[serde(default)]
+    pub stimulus_udp_checksum_override: Option<bool>,
+    #[serde(default)]
+    pub stimulus_udp_checksum_policy: Option<String>,
+    #[serde(default)]
     pub sequence_marker: Option<String>,
     #[serde(default)]
     pub sequence_markers: Option<Vec<String>>,
@@ -916,7 +922,8 @@ fn dispatch_case(
             | "udp-echo-large"
             | "udp-source-port-reflection"
             | "udp-multi-shot-order"
-            | "udp-closed-port-icmp",
+            | "udp-closed-port-icmp"
+            | "udp-zero-checksum-ipv4",
         ) => udp::run_udp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -926,7 +933,8 @@ fn dispatch_case(
             | "udp-echo-large"
             | "udp-source-port-reflection"
             | "udp-multi-shot-order"
-            | "udp-closed-port-icmp",
+            | "udp-closed-port-icmp"
+            | "udp-zero-checksum-ipv4",
         ) => udp::run_udp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -1020,6 +1028,9 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_udp_length": plan.expected_udp_length,
         "expected_udp_checksum_present": plan.expected_udp_checksum_present,
         "expected_udp_checksum_statuses": plan.expected_udp_checksum_statuses,
+        "stimulus_udp_checksum": plan.stimulus_udp_checksum,
+        "stimulus_udp_checksum_override": plan.stimulus_udp_checksum_override,
+        "stimulus_udp_checksum_policy": plan.stimulus_udp_checksum_policy,
         "sequence_marker": plan.sequence_marker,
         "sequence_markers": plan.sequence_markers,
         "source_ipv4": plan.source_ipv4,
@@ -1249,7 +1260,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "udp-echo-binary"
         | "udp-echo-large"
         | "udp-source-port-reflection"
-        | "udp-multi-shot-order" => {
+        | "udp-multi-shot-order"
+        | "udp-zero-checksum-ipv4" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -1316,7 +1328,8 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "udp-echo-binary"
             | "udp-echo-large"
             | "udp-source-port-reflection"
-            | "udp-multi-shot-order" => "udp_response",
+            | "udp-multi-shot-order"
+            | "udp-zero-checksum-ipv4" => "udp_response",
             "udp-closed-port-icmp" => "icmp_port_unreachable",
             "arp-basic-who-has"
             | "arp-repeat-two-replies"
@@ -1628,7 +1641,8 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         | "udp-echo-binary"
         | "udp-echo-large"
         | "udp-source-port-reflection"
-        | "udp-multi-shot-order" => json!({
+        | "udp-multi-shot-order"
+        | "udp-zero-checksum-ipv4" => json!({
             "required": true,
             "kind": "udp-responder",
             "mode": "echo",
@@ -1639,6 +1653,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "expected_payload_length": plan.expected_payload_length,
             "expected_udp_length": plan.expected_udp_length,
             "checksum_statuses": plan.expected_udp_checksum_statuses,
+            "stimulus_udp_checksum": plan.stimulus_udp_checksum,
+            "stimulus_udp_checksum_override": plan.stimulus_udp_checksum_override,
+            "stimulus_udp_checksum_policy": plan.stimulus_udp_checksum_policy,
             "multi_shot_order": plan.udp_sends.is_some(),
             "send_count": plan.send_count,
             "ordered_payloads": udp::ordered_sends_json(plan.udp_sends.as_deref()),
@@ -1794,7 +1811,8 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
         | "udp-echo-binary"
         | "udp-echo-large"
         | "udp-source-port-reflection"
-        | "udp-multi-shot-order" => json!({
+        | "udp-multi-shot-order"
+        | "udp-zero-checksum-ipv4" => json!({
             "source_ipv4": plan.expected_reply_source_ipv4,
             "destination_ipv4": plan.expected_reply_destination_ipv4,
             "source_port": plan.destination_port,
@@ -1805,6 +1823,9 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
             "udp_length": plan.expected_udp_length,
             "checksum_present": plan.expected_udp_checksum_present,
             "checksum_statuses": plan.expected_udp_checksum_statuses,
+            "stimulus_udp_checksum": plan.stimulus_udp_checksum,
+            "stimulus_udp_checksum_override": plan.stimulus_udp_checksum_override,
+            "stimulus_udp_checksum_policy": plan.stimulus_udp_checksum_policy,
         }),
         "udp-closed-port-icmp" => json!({
             "source_ipv4": plan.expected_reply_source_ipv4,

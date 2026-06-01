@@ -18,7 +18,7 @@ import hashlib
 from collections.abc import Callable, Sequence
 
 from .cases import PROBE_CASE_BY_NAME, UDP_ECHO_LARGE_PAYLOAD_LENGTH
-from .model import JSONObject, ProbeCase, ProbeRunRequest
+from .model import JSONObject, ProbeCase, ProbeRunRequest, json_object
 
 
 # A plan builder takes the deterministic planning inputs (profile, seed,
@@ -4883,6 +4883,59 @@ def _udp_closed_port_icmp_probe_plan(
     }
 
 
+def _udp_zero_checksum_ipv4_probe_plan(
+    *,
+    case_name: str = "udp-zero-checksum-ipv4",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan an IPv4 UDP datagram with an explicit zero checksum override."""
+
+    digest = deterministic_bytes("udp-zero-checksum-ipv4-payload", profile, seed, sequence)
+    payload = f"udp-zero-checksum-ipv4:{digest.hex()[:12]}".encode("ascii")
+    plan = _udp_echo_probe_plan(
+        case_name=case_name,
+        profile=profile,
+        seed=seed,
+        sequence=sequence,
+        payload=payload,
+    )
+    checksum_metadata: JSONObject = {
+        "stimulus_udp_checksum": 0,
+        "stimulus_udp_checksum_override": True,
+        "stimulus_udp_checksum_policy": "ipv4_zero_checksum_override",
+    }
+    plan.update(checksum_metadata)
+    target_service = json_object(plan["target_service"], "udp_zero_checksum.target_service")
+    target_service.update(
+        {
+            **checksum_metadata,
+            "kernel_acceptance": "provider_dependent",
+        }
+    )
+    plan["target_service"] = target_service
+    validation = json_object(plan["validation"], "udp_zero_checksum.validation")
+    validation.update(checksum_metadata)
+    plan["validation"] = validation
+    wire_requirements = json_object(
+        plan["wire_requirements"],
+        "udp_zero_checksum.wire_requirements",
+    )
+    wire_requirements.update(
+        {
+            "requires_udp_ipv4_zero_checksum": True,
+            "note": (
+                "IPv4 permits UDP checksum zero. The stimulus intentionally "
+                "sets checksum 0; providers that drop such datagrams must "
+                "skip via the udp_ipv4_zero_checksum capability."
+            ),
+        }
+    )
+    plan["wire_requirements"] = wire_requirements
+    return plan
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
@@ -4931,6 +4984,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "udp-source-port-reflection": _udp_source_port_reflection_probe_plan,
     "udp-multi-shot-order": _udp_multi_shot_order_probe_plan,
     "udp-closed-port-icmp": _udp_closed_port_icmp_probe_plan,
+    "udp-zero-checksum-ipv4": _udp_zero_checksum_ipv4_probe_plan,
 }
 
 

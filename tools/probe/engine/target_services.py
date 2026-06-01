@@ -505,8 +505,8 @@ def dhcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
 # application bytes over the same service-response path. Source-port reflection
 # reuses the same echo responder and tightens the stimulus-side port contract.
 # Multi-shot order drives the same responder with an ordered per-send payload
-# sequence. Later UDP cases reuse the same responder descriptor when they need a
-# target-side UDP service.
+# sequence. The IPv4 zero-checksum case uses the same responder, while the
+# provider/kernel acceptance is surfaced through a case capability.
 _UDP_RESPONDER_CASES: frozenset[str] = frozenset(
     {
         "udp-echo-empty",
@@ -515,6 +515,7 @@ _UDP_RESPONDER_CASES: frozenset[str] = frozenset(
         "udp-echo-large",
         "udp-source-port-reflection",
         "udp-multi-shot-order",
+        "udp-zero-checksum-ipv4",
     }
 )
 

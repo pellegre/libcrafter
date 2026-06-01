@@ -16,7 +16,10 @@ port and validates the echoed response is addressed back to that exact port.
 ``udp-multi-shot-order`` sends three ordered payload markers through the same
 echo responder. ``udp-closed-port-icmp`` sends a UDP datagram to an unbound
 target port and validates the decoded ICMP destination-unreachable /
-port-unreachable response plus its embedded original IPv4/UDP prefix. The
+port-unreachable response plus its embedded original IPv4/UDP prefix.
+``udp-zero-checksum-ipv4`` sends a controlled echo stimulus whose IPv4 UDP
+checksum is explicitly overridden to zero, then keeps the ordinary payload and
+peer tuple validation for responses accepted by the provider kernel. The
 stimulus endpoint decodes each response with libcrafter and validates the peer
 addresses, ports, UDP length, checksum status, exact payload, or ICMP embedded
 prefix depending on the case.
@@ -104,6 +107,14 @@ def _udp_closed_port_icmp_plan(*, seed: int = 1046, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
         request=_request(seed=seed, case_names=["udp-closed-port-icmp"]),
         case=planning.PROBE_CASE_BY_NAME["udp-closed-port-icmp"],
+        sequence=sequence,
+    )
+
+
+def _udp_zero_checksum_ipv4_plan(*, seed: int = 1047, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["udp-zero-checksum-ipv4"]),
+        case=planning.PROBE_CASE_BY_NAME["udp-zero-checksum-ipv4"],
         sequence=sequence,
     )
 
@@ -969,6 +980,133 @@ class UdpClosedPortIcmpTest(unittest.TestCase):
                 self.assertEqual(decoded["udp"]["dport"], probe_plan["destination_port"])
                 self.assertEqual(decoded["udp"]["length"], 8 + len(payload))
                 self.assertEqual(decoded["udp"]["checksum_status"], "valid")
+                self.assertEqual(decoded["payload_hex"], probe_plan["payload_hex"])
+
+
+class UdpZeroChecksumIpv4Test(unittest.TestCase):
+    """Focused coverage for IPv4 UDP zero-checksum override behavior."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("udp-zero-checksum-ipv4", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["udp-zero-checksum-ipv4"],
+            planning._udp_zero_checksum_ipv4_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_udp_zero_checksum_ipv4_plan(), _udp_zero_checksum_ipv4_plan())
+
+    def test_plan_carries_zero_checksum_override_and_echo_contract(self) -> None:
+        plan = _udp_zero_checksum_ipv4_plan()
+        payload = bytes.fromhex(plan["payload_hex"])
+
+        self.assertEqual(plan["case"], "udp-zero-checksum-ipv4")
+        self.assertEqual(plan["stimulus"], "udp_datagram")
+        self.assertEqual(plan["expected_response"], "udp_response")
+        self.assertTrue(payload.startswith(b"udp-zero-checksum-ipv4:"))
+        self.assertEqual(plan["payload_length"], len(payload))
+        self.assertEqual(plan["expected_payload_hex"], plan["payload_hex"])
+        self.assertEqual(plan["expected_payload_length"], len(payload))
+        self.assertEqual(plan["expected_udp_length"], 8 + len(payload))
+        self.assertEqual(plan["stimulus_udp_checksum"], 0)
+        self.assertTrue(plan["stimulus_udp_checksum_override"])
+        self.assertEqual(
+            plan["stimulus_udp_checksum_policy"],
+            "ipv4_zero_checksum_override",
+        )
+        self.assertEqual(
+            plan["expected_udp_checksum_statuses"],
+            ["valid", "ipv4_no_checksum"],
+        )
+
+        self.assertIn("udp-zero-checksum-ipv4", target_services._UDP_RESPONDER_CASES)
+        self.assertIn(
+            "udp_ipv4_zero_checksum",
+            planning.PROBE_CASE_BY_NAME["udp-zero-checksum-ipv4"].required_capabilities,
+        )
+
+    def test_target_service_and_validation_surface_kernel_dependent_acceptance(self) -> None:
+        plan = _udp_zero_checksum_ipv4_plan()
+        target_service = plan["target_service"]
+
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-responder")
+        self.assertEqual(target_service["mode"], "echo")
+        self.assertEqual(target_service["port"], plan["destination_port"])
+        self.assertEqual(target_service["payload_hex"], plan["payload_hex"])
+        self.assertEqual(target_service["stimulus_udp_checksum"], 0)
+        self.assertTrue(target_service["stimulus_udp_checksum_override"])
+        self.assertEqual(target_service["kernel_acceptance"], "provider_dependent")
+
+        validation = plan["validation"]
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"],
+            plan["expected_reply_destination_ipv4"],
+        )
+        self.assertEqual(validation["source_port"], plan["destination_port"])
+        self.assertEqual(validation["destination_port"], plan["source_port"])
+        self.assertEqual(validation["payload_hex"], plan["payload_hex"])
+        self.assertEqual(validation["payload_length"], plan["payload_length"])
+        self.assertEqual(validation["udp_length"], plan["expected_udp_length"])
+        self.assertEqual(validation["checksum_statuses"], ["valid", "ipv4_no_checksum"])
+        self.assertEqual(validation["stimulus_udp_checksum"], 0)
+        self.assertTrue(plan["wire_requirements"]["requires_udp_ipv4_zero_checksum"])
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "udp-zero-checksum-ipv4",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1047,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("udp-zero-checksum-ipv4", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "udp-zero-checksum-ipv4"
+            ]
+            self.assertTrue(results, "endpoint emitted no udp-zero-checksum-ipv4 result")
+            for result in results:
+                self.assertEqual(result.get("status"), "planned")
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+                probe_plan = metadata["probe_plan"]
+                payload = bytes.fromhex(probe_plan["payload_hex"])
+                sent = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertEqual(len(sent), 28 + len(payload))
+                self.assertEqual(sent[9], 17)
+                self.assertEqual(int.from_bytes(sent[2:4], "big"), 28 + len(payload))
+                self.assertEqual(int.from_bytes(sent[20:22], "big"), probe_plan["source_port"])
+                self.assertEqual(
+                    int.from_bytes(sent[22:24], "big"),
+                    probe_plan["destination_port"],
+                )
+                self.assertEqual(int.from_bytes(sent[24:26], "big"), 8 + len(payload))
+                self.assertEqual(int.from_bytes(sent[26:28], "big"), 0)
+                self.assertEqual(sent[28:], payload)
+                self.assertEqual(probe_plan["stimulus_udp_checksum"], 0)
+                self.assertTrue(probe_plan["stimulus_udp_checksum_override"])
+
+                self.assertEqual(
+                    metadata["target_service"]["stimulus_udp_checksum"],
+                    0,
+                )
+                decoded = metadata["sent_decoded"]
+                self.assertEqual(decoded["udp"]["sport"], probe_plan["source_port"])
+                self.assertEqual(decoded["udp"]["dport"], probe_plan["destination_port"])
+                self.assertEqual(decoded["udp"]["length"], 8 + len(payload))
+                self.assertEqual(decoded["udp"]["checksum"], 0)
+                self.assertEqual(decoded["udp"]["checksum_status"], "ipv4_no_checksum")
                 self.assertEqual(decoded["payload_hex"], probe_plan["payload_hex"])
 
 
