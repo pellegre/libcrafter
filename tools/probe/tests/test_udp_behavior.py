@@ -5,10 +5,11 @@ Each test asserts the deterministic plan shape its case produces and, when the
 probe planner dry-run and the Rust ``stimulus_endpoint`` dry-run via the shared
 :mod:`tools.probe.tests.probe_acceptance` harness.
 
-``udp-echo-empty`` is the baseline UDP behavioral check: an IPv4/UDP datagram
-with zero payload bytes sent to a controlled target-side UDP echo responder. The
+``udp-echo-empty`` is the zero-payload UDP behavioral check. ``udp-echo-short``
+is the first service-response check with application bytes: a deterministic
+short ASCII payload sent to a controlled target-side UDP echo responder. The
 stimulus endpoint decodes the echoed UDP response with libcrafter and validates
-the peer addresses, ports, UDP length, checksum status, and empty payload.
+the peer addresses, ports, UDP length, checksum status, and exact payload.
 """
 
 from __future__ import annotations
@@ -45,6 +46,14 @@ def _udp_echo_empty_plan(*, seed: int = 1040, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
         request=_request(seed=seed),
         case=planning.PROBE_CASE_BY_NAME["udp-echo-empty"],
+        sequence=sequence,
+    )
+
+
+def _udp_echo_short_plan(*, seed: int = 1041, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["udp-echo-short"]),
+        case=planning.PROBE_CASE_BY_NAME["udp-echo-short"],
         sequence=sequence,
     )
 
@@ -172,6 +181,140 @@ class UdpEchoEmptyTest(unittest.TestCase):
                 self.assertEqual(decoded["udp"]["length"], 8)
                 self.assertEqual(decoded["udp"]["checksum_status"], "valid")
                 self.assertEqual(decoded["payload_hex"], "")
+
+
+class UdpEchoShortPlanTest(unittest.TestCase):
+    """The plan carries a short ASCII UDP stimulus and exact echo contract."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("udp-echo-short", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["udp-echo-short"],
+            planning._udp_echo_short_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_udp_echo_short_plan(), _udp_echo_short_plan())
+
+    def test_plan_carries_short_ascii_udp_datagram_stimulus(self) -> None:
+        plan = _udp_echo_short_plan()
+        payload = bytes.fromhex(plan["payload_hex"])
+
+        self.assertEqual(plan["case"], "udp-echo-short")
+        self.assertEqual(plan["stimulus"], "udp_datagram")
+        self.assertEqual(plan["expected_response"], "udp_response")
+        ipaddress.IPv4Address(plan["source_ipv4"])
+        ipaddress.IPv4Address(plan["destination_ipv4"])
+        self.assertNotEqual(plan["source_ipv4"], plan["destination_ipv4"])
+
+        self.assertIsInstance(plan["source_port"], int)
+        self.assertIsInstance(plan["destination_port"], int)
+        self.assertNotEqual(plan["source_port"], plan["destination_port"])
+        self.assertGreater(len(payload), 0)
+        self.assertLessEqual(len(payload), 32)
+        payload_text = payload.decode("ascii")
+        self.assertEqual(payload_text.encode("ascii"), payload)
+        self.assertTrue(payload.startswith(b"udp-echo:"))
+        self.assertEqual(plan["payload_length"], len(payload))
+        self.assertEqual(plan["expected_payload_hex"], plan["payload_hex"])
+        self.assertEqual(plan["expected_payload_length"], len(payload))
+        self.assertEqual(plan["expected_udp_length"], 8 + len(payload))
+        self.assertTrue(plan["expected_udp_checksum_present"])
+        self.assertEqual(
+            plan["expected_udp_checksum_statuses"],
+            ["valid", "ipv4_no_checksum"],
+        )
+
+    def test_capture_filter_matches_echo_direction(self) -> None:
+        plan = _udp_echo_short_plan()
+
+        self.assertIn("udp", plan["capture_filter"])
+        self.assertIn(f"src host {plan['expected_reply_source_ipv4']}", plan["capture_filter"])
+        self.assertIn(
+            f"dst host {plan['expected_reply_destination_ipv4']}",
+            plan["capture_filter"],
+        )
+        self.assertIn(f"src port {plan['destination_port']}", plan["capture_filter"])
+        self.assertIn(f"dst port {plan['source_port']}", plan["capture_filter"])
+
+    def test_target_service_is_controlled_udp_echo_responder(self) -> None:
+        plan = _udp_echo_short_plan()
+        target_service = plan["target_service"]
+
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-responder")
+        self.assertEqual(target_service["mode"], "echo")
+        self.assertEqual(target_service["port"], plan["destination_port"])
+        self.assertEqual(target_service["payload_hex"], plan["payload_hex"])
+        self.assertEqual(target_service["payload_length"], plan["payload_length"])
+        self.assertTrue(target_service["deterministic"])
+
+    def test_validation_contract_covers_exact_short_echo_response(self) -> None:
+        plan = _udp_echo_short_plan()
+        validation = plan["validation"]
+
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"],
+            plan["expected_reply_destination_ipv4"],
+        )
+        self.assertEqual(validation["source_port"], plan["destination_port"])
+        self.assertEqual(validation["destination_port"], plan["source_port"])
+        self.assertEqual(validation["payload_hex"], plan["payload_hex"])
+        self.assertEqual(validation["payload_length"], plan["payload_length"])
+        self.assertEqual(validation["udp_length"], plan["expected_udp_length"])
+        self.assertTrue(validation["checksum_present"])
+        self.assertEqual(validation["checksum_statuses"], ["valid", "ipv4_no_checksum"])
+
+    def test_case_is_in_the_udp_responder_target_service_group(self) -> None:
+        self.assertIn("udp-echo-short", target_services._UDP_RESPONDER_CASES)
+
+
+class UdpEchoShortTest(unittest.TestCase):
+    """End-to-end focused acceptance for the short ASCII echo case."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "udp-echo-short",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1041,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("udp-echo-short", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "udp-echo-short"
+            ]
+            self.assertTrue(results, "endpoint emitted no udp-echo-short result")
+            for result in results:
+                self.assertEqual(result.get("status"), "planned")
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+                probe_plan = metadata["probe_plan"]
+                payload = bytes.fromhex(probe_plan["payload_hex"])
+                sent = bytes.fromhex(metadata["sent_raw_hex"])
+                # IPv4 header (20 bytes) + UDP header (8 bytes) + exact payload.
+                self.assertEqual(len(sent), 28 + len(payload))
+                self.assertEqual(sent[9], 17)
+                self.assertEqual(int.from_bytes(sent[2:4], "big"), 28 + len(payload))
+                self.assertEqual(int.from_bytes(sent[24:26], "big"), 8 + len(payload))
+                self.assertEqual(sent[28:], payload)
+                self.assertNotEqual(int.from_bytes(sent[26:28], "big"), 0)
+
+                decoded = metadata["sent_decoded"]
+                self.assertEqual(decoded["udp"]["length"], 8 + len(payload))
+                self.assertEqual(decoded["udp"]["checksum_status"], "valid")
+                self.assertEqual(decoded["payload_hex"], probe_plan["payload_hex"])
 
 
 if __name__ == "__main__":

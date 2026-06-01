@@ -610,6 +610,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "arp-spa-variation",
         "arp-broadcast-filtered-capture",
         "udp-echo-empty",
+        "udp-echo-short",
     }
 )
 
@@ -1240,7 +1241,7 @@ def _probe_plan_with_endpoint_addresses(
         )
         dhcp_validation["server_identifier"] = target_ipv4
         updated["validation"] = dhcp_validation
-    elif case_name == "udp-echo-empty":
+    elif case_name in {"udp-echo-empty", "udp-echo-short"}:
         source_port = int(updated.get("source_port", 0))
         destination_port = int(updated.get("destination_port", 0))
         updated["capture_filter"] = (
@@ -1648,7 +1649,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
         ]
-    if case_name == "udp-echo-empty":
+    if case_name in {"udp-echo-empty", "udp-echo-short"}:
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,

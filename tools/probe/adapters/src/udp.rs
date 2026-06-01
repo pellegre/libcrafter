@@ -1,8 +1,8 @@
 //! UDP behavioral probe cases.
 //!
-//! `udp-echo-empty` sends an IPv4/UDP datagram with no application payload to a
-//! controlled target-side UDP echo responder, then validates the decoded UDP
-//! response's peer tuple, length, checksum status, and empty payload.
+//! `udp-echo-empty` and `udp-echo-short` send IPv4/UDP datagrams to a
+//! controlled target-side UDP echo responder, then validate the decoded UDP
+//! response's peer tuple, length, checksum status, and exact echoed payload.
 
 use crafter::prelude::*;
 use serde_json::json;
@@ -398,22 +398,30 @@ mod tests {
     use super::*;
     use crate::test_support::base_plan;
 
-    fn empty_echo_plan() -> ProbePlan {
-        let mut plan = base_plan("udp-echo-empty");
+    fn echo_plan(case_name: &str, payload: &[u8]) -> ProbePlan {
+        let mut plan = base_plan(case_name);
         plan.source_ipv4 = Some("192.0.2.10".to_string());
         plan.destination_ipv4 = Some("192.0.2.20".to_string());
         plan.expected_reply_source_ipv4 = Some("192.0.2.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("192.0.2.10".to_string());
         plan.source_port = Some(46000);
         plan.destination_port = Some(30000);
-        plan.payload_hex = Some(String::new());
-        plan.payload_length = Some(0);
-        plan.expected_payload_hex = Some(String::new());
-        plan.expected_payload_length = Some(0);
-        plan.expected_udp_length = Some(8);
+        plan.payload_hex = Some(hex_bytes(payload));
+        plan.payload_length = Some(payload.len());
+        plan.expected_payload_hex = Some(hex_bytes(payload));
+        plan.expected_payload_length = Some(payload.len());
+        plan.expected_udp_length = Some((8 + payload.len()) as u16);
         plan.expected_udp_checksum_present = Some(true);
         plan.expected_udp_checksum_statuses = Some(vec!["valid".to_string()]);
         plan
+    }
+
+    fn empty_echo_plan() -> ProbePlan {
+        echo_plan("udp-echo-empty", &[])
+    }
+
+    fn short_echo_plan() -> ProbePlan {
+        echo_plan("udp-echo-short", b"udp-echo:1234abcd")
     }
 
     #[test]
@@ -437,6 +445,37 @@ mod tests {
             .src("192.0.2.20".parse::<Ipv4Addr>().unwrap())
             .dst("192.0.2.10".parse::<Ipv4Addr>().unwrap())
             / Udp::new().source_port(30000).destination_port(46000))
+        .compile()
+        .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, response.as_bytes()).unwrap();
+
+        let validation = validate_udp_candidate(&plan, &decoded, response.as_bytes()).unwrap();
+        assert!(matches!(validation, CandidateValidation::Passed(_)));
+    }
+
+    #[test]
+    fn udp_echo_short_packet_carries_ascii_payload_and_udp_length() {
+        let packet = udp_packet(&short_echo_plan()).unwrap();
+        let bytes = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+        let payload = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(udp.source_port_value(), 46000);
+        assert_eq!(udp.destination_port_value(), 30000);
+        assert_eq!(udp.length_value(), Some(25));
+        assert!(udp.checksum_value().is_some());
+        assert_eq!(payload.as_bytes(), b"udp-echo:1234abcd");
+    }
+
+    #[test]
+    fn validate_udp_candidate_accepts_short_echo_response() {
+        let plan = short_echo_plan();
+        let response = (Ipv4::new()
+            .src("192.0.2.20".parse::<Ipv4Addr>().unwrap())
+            .dst("192.0.2.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().source_port(30000).destination_port(46000)
+            / Raw::from("udp-echo:1234abcd"))
         .compile()
         .unwrap();
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, response.as_bytes()).unwrap();
