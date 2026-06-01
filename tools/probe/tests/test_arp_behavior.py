@@ -413,5 +413,193 @@ class ArpRepeatTwoRepliesTest(unittest.TestCase):
             )
 
 
+def _arp_source_address_preserved_plan(*, seed: int = 1032, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["arp-source-address-preserved"]),
+        case=planning.PROBE_CASE_BY_NAME["arp-source-address-preserved"],
+        sequence=sequence,
+    )
+
+
+class ArpSourceAddressPreservedPlanTest(unittest.TestCase):
+    """The reply must be addressed back to the request's sender HW/proto."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("arp-source-address-preserved", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["arp-source-address-preserved"],
+            planning._arp_source_address_preserved_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _arp_source_address_preserved_plan(),
+            _arp_source_address_preserved_plan(),
+        )
+
+    def test_request_uses_deterministic_sender_hw_and_proto(self) -> None:
+        plan = _arp_source_address_preserved_plan()
+
+        self.assertEqual(plan["case"], "arp-source-address-preserved")
+        self.assertEqual(plan["stimulus"], "arp_who_has")
+        self.assertEqual(plan["expected_response"], "arp_is_at")
+        self.assertEqual(plan["operation"], 1)
+
+        # The request carries deterministic sender hardware AND protocol
+        # addresses (the stimulus endpoint's own); the who-has leaves the target
+        # hardware address all-zero and is broadcast.
+        self.assertTrue(_is_documentation_mac(plan["sender_hardware_addr"]))
+        self.assertEqual(plan["sender_protocol_addr"], plan["source_ipv4"])
+        self.assertEqual(plan["target_hardware_addr"], "00:00:00:00:00:00")
+        self.assertEqual(plan["ethernet_source"], plan["sender_hardware_addr"])
+        self.assertEqual(plan["ethernet_destination"], "ff:ff:ff:ff:ff:ff")
+        self.assertEqual(plan["target_protocol_addr"], plan["destination_ipv4"])
+
+    def test_validation_preserves_request_sender_into_reply_target(self) -> None:
+        plan = _arp_source_address_preserved_plan()
+        validation = plan["validation"]
+
+        self.assertEqual(validation["operation"], 2)
+
+        # Preservation: the reply's TARGET hardware/protocol address equals the
+        # request's SENDER hardware/protocol address (the reply is addressed back
+        # to the requester).
+        self.assertEqual(
+            validation["target_hardware_addr"], plan["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["target_protocol_addr"], plan["sender_protocol_addr"]
+        )
+
+        # The reply's SENDER hardware/protocol address is the target endpoint's
+        # own MAC/IPv4 (the resolved address), distinct from the querier.
+        self.assertTrue(_is_documentation_mac(validation["sender_hardware_addr"]))
+        self.assertEqual(
+            validation["sender_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertNotEqual(
+            validation["sender_hardware_addr"], plan["sender_hardware_addr"]
+        )
+
+        # The unicast reply's Ethernet framing mirrors the swap: resolved target
+        # MAC -> the original querier MAC.
+        self.assertEqual(
+            validation["ethernet_source"], validation["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["ethernet_destination"], plan["sender_hardware_addr"]
+        )
+
+    def test_target_service_is_the_arp_answering_kernel(self) -> None:
+        plan = _arp_source_address_preserved_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "arp-kernel")
+        self.assertEqual(target_service["layer"], "link")
+        self.assertEqual(
+            target_service["target_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertTrue(target_service["arp_sysctls"])
+        self.assertTrue(target_service["neighbor_cache_flush"])
+
+    def test_wire_requirements_gate_on_link_layer(self) -> None:
+        plan = _arp_source_address_preserved_plan()
+        requirements = plan["wire_requirements"]
+        self.assertTrue(requirements["requires_link_layer_send"])
+        self.assertTrue(requirements["requires_link_layer_capture"])
+        self.assertTrue(requirements["requires_broadcast"])
+
+
+class ArpSourceAddressPreservedTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "arp-source-address-preserved",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1032,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("arp-source-address-preserved", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "arp-source-address-preserved"
+            ]
+            self.assertTrue(
+                results, "endpoint emitted no arp-source-address-preserved result"
+            )
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus frame bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                # The compiled who-has frame is an Ethernet/ARP broadcast request
+                # carrying the deterministic sender hardware/protocol address.
+                frame = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertGreaterEqual(len(frame), 14 + 28)
+                self.assertEqual(frame[0:6], b"\xff\xff\xff\xff\xff\xff")
+                self.assertEqual(frame[12:14], (0x0806).to_bytes(2, "big"))
+                # ARP opcode (frame[20:22]) is the who-has request (1).
+                self.assertEqual(frame[20:22], (1).to_bytes(2, "big"))
+
+                # The probe plan echoed back carries the preservation contract:
+                # the expected reply's TARGET HW/proto equal the request's SENDER
+                # HW/proto, and its SENDER HW/proto are the target endpoint's own.
+                plan = metadata.get("probe_plan", {})
+                validation = plan.get("validation", {})
+                self.assertEqual(
+                    validation.get("target_hardware_addr"),
+                    plan.get("sender_hardware_addr"),
+                )
+                self.assertEqual(
+                    validation.get("target_protocol_addr"),
+                    plan.get("sender_protocol_addr"),
+                )
+                self.assertEqual(
+                    validation.get("sender_protocol_addr"),
+                    plan.get("target_protocol_addr"),
+                )
+                self.assertNotEqual(
+                    validation.get("sender_hardware_addr"),
+                    plan.get("sender_hardware_addr"),
+                )
+
+    def test_provider_without_link_layer_skips(self) -> None:
+        # Hetzner cannot provide L2/broadcast/provider-MAC, so the case skips with
+        # a stable capability reason rather than planning a stimulus.
+        if not probe_acceptance.probe_run_available():
+            self.skipTest("probe runner requires uv on PATH")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "hetzner"
+            report_path = probe_acceptance._run_probe_dry_run(
+                "arp-source-address-preserved",
+                out_dir=out_dir,
+                provider="hetzner",
+                profile="behavior",
+                seed=1032,
+                count=1,
+                timeout_seconds=600,
+            )
+            report = probe_acceptance._load_json(report_path)
+            skips = report.get("skips", [])
+            arp_skips = [
+                skip
+                for skip in skips
+                if skip.get("case") == "arp-source-address-preserved"
+            ]
+            self.assertTrue(
+                arp_skips,
+                "expected arp-source-address-preserved to skip on hetzner",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

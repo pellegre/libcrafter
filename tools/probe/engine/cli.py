@@ -601,6 +601,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "dhcp-rapid-repeat",
         "arp-basic-who-has",
         "arp-repeat-two-replies",
+        "arp-source-address-preserved",
     }
 )
 
@@ -1206,7 +1207,11 @@ def _probe_plan_with_endpoint_addresses(
         )
         dhcp_validation["server_identifier"] = target_ipv4
         updated["validation"] = dhcp_validation
-    elif case_name in {"arp-basic-who-has", "arp-repeat-two-replies"}:
+    elif case_name in {
+        "arp-basic-who-has",
+        "arp-repeat-two-replies",
+        "arp-source-address-preserved",
+    }:
         # ARP rides Ethernet directly (no IP/UDP), so the lab rewrite touches the
         # ARP protocol addresses rather than transport IPs: the stimulus resolves
         # the target endpoint's IPv4 (target protocol address) from its own IPv4
@@ -1432,7 +1437,12 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
         ]
-    if case_name in {"arp-resolution", "arp-basic-who-has", "arp-repeat-two-replies"}:
+    if case_name in {
+        "arp-resolution",
+        "arp-basic-who-has",
+        "arp-repeat-two-replies",
+        "arp-source-address-preserved",
+    }:
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,

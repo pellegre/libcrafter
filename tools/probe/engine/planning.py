@@ -3412,6 +3412,107 @@ def _arp_repeat_two_replies_probe_plan(
     }
 
 
+def _arp_source_address_preserved_probe_plan(
+    *,
+    case_name: str = "arp-source-address-preserved",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``arp-source-address-preserved`` behavioral case.
+
+    A who-has request (operation 1) carrying *deterministic* sender hardware and
+    sender protocol addresses (the stimulus endpoint's own MAC/IPv4), answered by
+    the target kernel with a unicast is-at reply (operation 2). The point of this
+    case is address *preservation*: the reply must be addressed back to the
+    requester, so the reply's TARGET hardware/protocol address must equal the
+    request's SENDER hardware/protocol address, and the reply's SENDER
+    hardware/protocol address must be the target endpoint's own MAC/IPv4. This
+    catches mismatches in ARP field construction and parsing where a stack
+    mishandles the sender/target swap.
+
+    The plan shape mirrors ``arp-basic-who-has`` (ARP rides Ethernet directly, no
+    IP/UDP; documentation MACs; broadcast who-has; ARP-answering target kernel),
+    but the validation contract is the explicit preservation contract: its target
+    hardware/protocol fields are pinned to the *planned request* sender values so
+    the endpoint asserts the reply addresses the original requester, and its
+    sender hardware/protocol fields are pinned to the target endpoint's own
+    addresses.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    stimulus_mac = deterministic_documentation_mac(profile, seed, sequence, role="stimulus")
+    target_mac = deterministic_documentation_mac(profile, seed, sequence, role="target")
+    broadcast_mac = "ff:ff:ff:ff:ff:ff"
+    zero_mac = "00:00:00:00:00:00"
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "arp_who_has",
+        "expected_response": "arp_is_at",
+        # ARP rides Ethernet directly; these are link-layer documentation values.
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        # The request carries deterministic sender hardware AND protocol addresses
+        # (the stimulus endpoint's own); the preservation check asserts the reply
+        # is addressed back to exactly these.
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": stimulus_ipv4,
+        "target_hardware_addr": zero_mac,
+        "target_protocol_addr": target_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        # ARP cannot be selected by host/IP BPF; match on the protocol + opcode.
+        "capture_filter": "arp and arp[6:2] = 2",
+        "target_service": {
+            "required": True,
+            "kind": "arp-kernel",
+            "layer": "link",
+            "target_protocol_addr": target_ipv4,
+            "target_hardware_addr": target_mac,
+            "arp_sysctls": True,
+            "neighbor_cache_flush": True,
+        },
+        "validation": {
+            "ethertype": 0x0806,
+            "operation": 2,
+            "operation_label": "reply",
+            # Reply SENDER fields == the target endpoint's own HW/proto.
+            "sender_hardware_addr": target_mac,
+            "sender_protocol_addr": target_ipv4,
+            # Reply TARGET fields == the request's SENDER HW/proto (preserved).
+            "target_hardware_addr": stimulus_mac,
+            "target_protocol_addr": stimulus_ipv4,
+            "ethernet_source": target_mac,
+            "ethernet_destination": stimulus_mac,
+        },
+        "wire_requirements": {
+            "requires_link_layer_send": True,
+            "requires_link_layer_capture": True,
+            "requires_broadcast": True,
+            "note": (
+                "ARP resolution is L2 broadcast/unicast traffic; it runs only on a "
+                "provider-backed lab segment, never from privileged host raw sends."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 def deterministic_documentation_mac(
     profile: str,
     seed: int,
@@ -3482,6 +3583,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "arp-resolution": _arp_resolution_probe_plan,
     "arp-basic-who-has": _arp_basic_who_has_probe_plan,
     "arp-repeat-two-replies": _arp_repeat_two_replies_probe_plan,
+    "arp-source-address-preserved": _arp_source_address_preserved_probe_plan,
 }
 
 

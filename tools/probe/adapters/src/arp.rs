@@ -554,7 +554,7 @@ pub fn repeat_sends_json(sends: Option<&[ArpSend]>) -> Value {
 }
 
 /// JSON view of one is-at validation contract for the plan echo.
-fn arp_validation_json(validation: Option<&ArpValidation>) -> Value {
+pub fn arp_validation_json(validation: Option<&ArpValidation>) -> Value {
     match validation {
         Some(validation) => json!({
             "operation": validation.operation,
