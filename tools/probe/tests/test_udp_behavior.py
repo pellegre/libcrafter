@@ -12,9 +12,11 @@ short ASCII payload sent to a controlled target-side UDP echo responder.
 so JSON artifacts and validation stay byte-oriented. ``udp-echo-large`` uses a
 1200-byte deterministic payload that stays below the private-network MTU safety
 limit. ``udp-source-port-reflection`` pins a deterministic high stimulus source
-port and validates the echoed response is addressed back to that exact port. The
-stimulus endpoint decodes the echoed UDP response with libcrafter and validates
-the peer addresses, ports, UDP length, checksum status, and exact payload.
+port and validates the echoed response is addressed back to that exact port.
+``udp-multi-shot-order`` sends three ordered payload markers through the same
+echo responder. The stimulus endpoint decodes each echoed UDP response with
+libcrafter and validates the peer addresses, ports, UDP length, checksum status,
+and exact payload.
 """
 
 from __future__ import annotations
@@ -83,6 +85,14 @@ def _udp_source_port_reflection_plan(*, seed: int = 1044, sequence: int = 0) -> 
     return planning.probe_plan_for_case(
         request=_request(seed=seed, case_names=["udp-source-port-reflection"]),
         case=planning.PROBE_CASE_BY_NAME["udp-source-port-reflection"],
+        sequence=sequence,
+    )
+
+
+def _udp_multi_shot_order_plan(*, seed: int = 1045, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["udp-multi-shot-order"]),
+        case=planning.PROBE_CASE_BY_NAME["udp-multi-shot-order"],
         sequence=sequence,
     )
 
@@ -659,6 +669,128 @@ class UdpSourcePortReflectionTest(unittest.TestCase):
                 self.assertEqual(decoded["udp"]["length"], 8 + len(payload))
                 self.assertEqual(decoded["udp"]["checksum_status"], "valid")
                 self.assertEqual(decoded["payload_hex"], probe_plan["payload_hex"])
+
+
+class UdpMultiShotOrderTest(unittest.TestCase):
+    """Focused coverage for ordered multi-shot UDP echo validation."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("udp-multi-shot-order", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["udp-multi-shot-order"],
+            planning._udp_multi_shot_order_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_udp_multi_shot_order_plan(), _udp_multi_shot_order_plan())
+
+    def test_plan_carries_three_ordered_payload_markers(self) -> None:
+        plan = _udp_multi_shot_order_plan()
+
+        self.assertEqual(plan["case"], "udp-multi-shot-order")
+        self.assertEqual(plan["stimulus"], "udp_datagram")
+        self.assertEqual(plan["expected_response"], "udp_response")
+        self.assertTrue(plan["multi_shot_order"])
+        self.assertEqual(plan["send_count"], 3)
+
+        sends = plan["udp_sends"]
+        self.assertEqual(len(sends), 3)
+        self.assertEqual(plan["sequence_markers"], ["shot-00", "shot-01", "shot-02"])
+        self.assertEqual(plan["sequence_marker"], "shot-00")
+        self.assertEqual(plan["payload_hex"], sends[0]["payload_hex"])
+
+        payloads = []
+        for index, send in enumerate(sends):
+            marker = f"shot-{index:02d}"
+            payload = bytes.fromhex(send["payload_hex"])
+            payloads.append(payload)
+
+            self.assertEqual(send["index"], index)
+            self.assertEqual(send["sequence_marker"], marker)
+            self.assertIn(marker.encode("ascii"), payload)
+            self.assertTrue(payload.startswith(b"udp-multi-shot-order:"))
+            self.assertEqual(send["payload_length"], len(payload))
+            self.assertEqual(send["expected_payload_hex"], send["payload_hex"])
+            self.assertEqual(send["expected_payload_length"], len(payload))
+            self.assertEqual(send["expected_udp_length"], 8 + len(payload))
+            self.assertEqual(send["source_port"], plan["source_port"])
+            self.assertEqual(send["destination_port"], plan["destination_port"])
+
+            validation = send["validation"]
+            self.assertEqual(validation["sequence_marker"], marker)
+            self.assertEqual(validation["payload_hex"], send["payload_hex"])
+            self.assertEqual(validation["payload_length"], len(payload))
+            self.assertEqual(validation["udp_length"], 8 + len(payload))
+            self.assertEqual(validation["source_port"], send["destination_port"])
+            self.assertEqual(validation["destination_port"], send["source_port"])
+            self.assertEqual(validation["checksum_statuses"], ["valid", "ipv4_no_checksum"])
+
+        self.assertEqual(len({payload.hex() for payload in payloads}), 3)
+
+    def test_target_service_describes_ordered_payloads(self) -> None:
+        plan = _udp_multi_shot_order_plan()
+        target_service = plan["target_service"]
+
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-responder")
+        self.assertEqual(target_service["mode"], "echo")
+        self.assertEqual(target_service["port"], plan["destination_port"])
+        self.assertTrue(target_service["multi_shot_order"])
+        self.assertEqual(target_service["send_count"], 3)
+        self.assertEqual(target_service["sequence_markers"], plan["sequence_markers"])
+        self.assertEqual(len(target_service["ordered_payloads"]), 3)
+        self.assertIn("udp-multi-shot-order", target_services._UDP_RESPONDER_CASES)
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "udp-multi-shot-order",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1045,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("udp-multi-shot-order", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "udp-multi-shot-order"
+            ]
+            self.assertTrue(results, "endpoint emitted no udp-multi-shot-order result")
+            for result in results:
+                self.assertEqual(result.get("status"), "planned")
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                self.assertEqual(metadata.get("send_count"), 3)
+                planned_sends = metadata.get("planned_sends", [])
+                expected_responses = metadata.get("expected_responses", [])
+                self.assertEqual(len(planned_sends), 3)
+                self.assertEqual(len(expected_responses), 3)
+
+                markers = [send["sequence_marker"] for send in planned_sends]
+                self.assertEqual(markers, ["shot-00", "shot-01", "shot-02"])
+                payloads = []
+                for send in planned_sends:
+                    payload = bytes.fromhex(send["payload_hex"])
+                    payloads.append(payload)
+                    sent = bytes.fromhex(send["sent_raw_hex"])
+                    self.assertEqual(len(sent), 28 + len(payload))
+                    self.assertEqual(sent[9], 17)
+                    self.assertEqual(int.from_bytes(sent[2:4], "big"), 28 + len(payload))
+                    self.assertEqual(int.from_bytes(sent[24:26], "big"), 8 + len(payload))
+                    self.assertEqual(sent[28:], payload)
+                    self.assertIn(send["sequence_marker"].encode("ascii"), payload)
+
+                self.assertEqual(len({payload.hex() for payload in payloads}), 3)
+                self.assertEqual(
+                    [response["sequence_marker"] for response in expected_responses],
+                    markers,
+                )
 
 
 if __name__ == "__main__":

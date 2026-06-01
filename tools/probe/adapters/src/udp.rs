@@ -1,19 +1,20 @@
 //! UDP behavioral probe cases.
 //!
-//! `udp-echo-empty`, `udp-echo-short`, `udp-echo-binary`, `udp-echo-large`, and
-//! `udp-source-port-reflection` send IPv4/UDP datagrams to a controlled
-//! target-side UDP echo responder, then validate the decoded UDP response's peer
-//! tuple, length, checksum status, and exact echoed payload.
+//! `udp-echo-empty`, `udp-echo-short`, `udp-echo-binary`, `udp-echo-large`,
+//! `udp-source-port-reflection`, and `udp-multi-shot-order` send IPv4/UDP
+//! datagrams to a controlled target-side UDP echo responder, then validate the
+//! decoded UDP response's peer tuple, length, checksum status, and exact echoed
+//! payload.
 
 use crafter::prelude::*;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use crate::common::{
     capture_filter, decode_hex, decoded_packet_json, failed_outcome, hex_bytes, observed_response,
     plan_json, raw_payload, required_str, required_u16, send_report_json, target_service_json,
-    CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest,
+    CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest, UdpSend,
     FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 
@@ -21,6 +22,9 @@ pub fn run_udp_dry_run(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
+    if let Some(sends) = plan.udp_sends.as_deref() {
+        return run_udp_multi_send_dry_run(request, plan, sends);
+    }
     let packet = udp_packet(plan)?;
     let report = SocketSender::new(
         SendOptions::new()
@@ -76,6 +80,9 @@ pub fn run_udp_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
+    if let Some(sends) = plan.udp_sends.as_deref() {
+        return run_udp_multi_send_live(request, plan, sends);
+    }
     let packet = udp_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer = match Sniffer::interface(request.interface.clone())
@@ -217,6 +224,330 @@ pub fn run_udp_live(
         sent,
         false,
     ))
+}
+
+/// Derive a single-send `ProbePlan` for one entry of `udp_sends`.
+///
+/// The derived plan keeps the parent's case name but clears the multi-send
+/// marker and overrides the per-send tuple, sequence marker, payload, UDP length,
+/// and checksum contract. The existing single-send UDP builder and validator can
+/// then build, send, decode, and validate exactly this datagram.
+fn send_as_plan(parent: &ProbePlan, send: &UdpSend) -> ProbePlan {
+    let mut derived = parent.clone();
+    derived.udp_sends = None;
+    derived.send_count = None;
+    if let Some(value) = send.sequence_marker.clone() {
+        derived.sequence_marker = Some(value);
+    }
+    if let Some(value) = send.source_ipv4.clone() {
+        derived.source_ipv4 = Some(value);
+    }
+    if let Some(value) = send.destination_ipv4.clone() {
+        derived.destination_ipv4 = Some(value);
+    }
+    if let Some(value) = send.expected_reply_source_ipv4.clone() {
+        derived.expected_reply_source_ipv4 = Some(value);
+    }
+    if let Some(value) = send.expected_reply_destination_ipv4.clone() {
+        derived.expected_reply_destination_ipv4 = Some(value);
+    }
+    if let Some(value) = send.source_port {
+        derived.source_port = Some(value);
+    }
+    if let Some(value) = send.destination_port {
+        derived.destination_port = Some(value);
+    }
+    if let Some(value) = send.payload_hex.clone() {
+        derived.payload_hex = Some(value);
+    }
+    if let Some(value) = send.payload_length {
+        derived.payload_length = Some(value);
+    }
+    if let Some(value) = send.expected_payload_hex.clone() {
+        derived.expected_payload_hex = Some(value);
+    }
+    if let Some(value) = send.expected_payload_length {
+        derived.expected_payload_length = Some(value);
+    }
+    if let Some(value) = send.expected_udp_length {
+        derived.expected_udp_length = Some(value);
+    }
+    if let Some(value) = send.expected_udp_checksum_present {
+        derived.expected_udp_checksum_present = Some(value);
+    }
+    if let Some(value) = send.expected_udp_checksum_statuses.clone() {
+        derived.expected_udp_checksum_statuses = Some(value);
+    }
+    derived
+}
+
+/// Dry-run a multi-shot UDP case: compile every ordered datagram with
+/// libcrafter and emit one planned send plus one expected response per marker.
+fn run_udp_multi_send_dry_run(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sends: &[UdpSend],
+) -> ExampleResult<ProbeOutcome> {
+    let mut planned_sends = Vec::with_capacity(sends.len());
+    for (offset, send) in sends.iter().enumerate() {
+        let send_plan = send_as_plan(plan, send);
+        let packet = udp_packet(&send_plan)?;
+        let report = SocketSender::new(
+            SendOptions::new()
+                .iface(request.interface.clone())
+                .network_layer()
+                .dry_run(),
+        )
+        .send(&packet)?;
+        let sent_raw = report.plan().bytes();
+        let sent_raw_hex = hex_bytes(sent_raw);
+        let sent_decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, sent_raw)
+            .map(|packet| decoded_packet_json(&packet, sent_raw))?;
+        planned_sends.push(json!({
+            "index": send.index.unwrap_or(offset),
+            "sequence_marker": send_plan.sequence_marker,
+            "source_port": send_plan.source_port,
+            "destination_port": send_plan.destination_port,
+            "payload_hex": send_plan.payload_hex,
+            "payload_length": send_plan.payload_length,
+            "send_report": send_report_json(&report),
+            "sent_raw_hex": sent_raw_hex,
+            "sent_decoded": sent_decoded,
+            "capture_filter": capture_filter(&send_plan),
+            "expected_response": udp_expected_response_json(&send_plan),
+        }));
+    }
+    let expected_responses: Vec<Value> = planned_sends
+        .iter()
+        .filter_map(|entry| entry.get("expected_response").cloned())
+        .collect();
+    let observed = observed_response(
+        plan,
+        false,
+        None,
+        json!({}),
+        json!({
+            "planned_only": true,
+            "send_count": planned_sends.len(),
+            "planned_sends": planned_sends,
+            "expected_responses": expected_responses,
+            "target_service": target_service_json(plan),
+        }),
+    );
+    let result = json!({
+        "case": plan.case,
+        "sequence": plan.sequence,
+        "status": "planned",
+        "endpoint_role": "stimulus",
+        "passed": null,
+        "observed_response": observed,
+        "metadata": {
+            "dry_run": true,
+            "probe_plan": plan_json(plan),
+            "planned_only": true,
+            "send_count": planned_sends.len(),
+            "planned_sends": planned_sends,
+            "expected_responses": expected_responses,
+            "target_service": target_service_json(plan),
+        }
+    });
+    Ok(ProbeOutcome {
+        result,
+        observed_response: observed,
+        sent: false,
+        received: false,
+    })
+}
+
+/// Live multi-shot UDP case: send every ordered datagram, capture one echo
+/// response per send, decode each response, and validate the peer tuple and
+/// payload marker against that send. The aggregate report records every
+/// observed response in send order.
+fn run_udp_multi_send_live(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sends: &[UdpSend],
+) -> ExampleResult<ProbeOutcome> {
+    let mut send_results = Vec::with_capacity(sends.len());
+    let mut all_passed = true;
+    let mut any_sent = false;
+    let mut any_received = false;
+    let mut failure_reason: Option<&'static str> = None;
+    let mut errors: Vec<String> = Vec::new();
+
+    for (offset, send) in sends.iter().enumerate() {
+        let send_plan = send_as_plan(plan, send);
+        let outcome = run_udp_live(request, &send_plan)?;
+        any_sent |= outcome.sent;
+        any_received |= outcome.received;
+        let status = outcome
+            .result
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("failed");
+        if status != "passed" {
+            all_passed = false;
+            let reason = outcome
+                .result
+                .get("metadata")
+                .and_then(|metadata| metadata.get("failure_reason"))
+                .and_then(Value::as_str);
+            if let Some(reason) = reason {
+                failure_reason.get_or_insert(static_failure_reason(reason));
+                errors.push(format!(
+                    "send {} ({:?}) failed: {reason}",
+                    send.index.unwrap_or(offset),
+                    send_plan.sequence_marker,
+                ));
+            }
+        }
+        let raw_hex = outcome
+            .observed_response
+            .get("raw_hex")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let decoded = outcome
+            .observed_response
+            .get("decoded")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        send_results.push(json!({
+            "index": send.index.unwrap_or(offset),
+            "sequence_marker": send_plan.sequence_marker,
+            "payload_hex": send_plan.expected_payload_hex,
+            "payload_length": send_plan.expected_payload_length,
+            "status": status,
+            "raw_hex": raw_hex,
+            "decoded": decoded,
+            "result": outcome.result,
+        }));
+    }
+
+    let summary = json!({
+        "send_count": sends.len(),
+        "send_results": send_results,
+    });
+
+    if all_passed {
+        let observed = observed_response(
+            plan,
+            true,
+            None,
+            summary.clone(),
+            json!({
+                "capture_filter": capture_filter(plan),
+                "send_count": sends.len(),
+            }),
+        );
+        let result = json!({
+            "case": plan.case,
+            "sequence": plan.sequence,
+            "status": "passed",
+            "endpoint_role": "stimulus",
+            "passed": true,
+            "observed_response": observed,
+            "metadata": {
+                "dry_run": false,
+                "probe_plan": plan_json(plan),
+                "send_count": sends.len(),
+                "send_results": observed["decoded"]["send_results"].clone(),
+            }
+        });
+        return Ok(ProbeOutcome {
+            result,
+            observed_response: observed,
+            sent: any_sent,
+            received: any_received,
+        });
+    }
+
+    Ok(failed_outcome(
+        plan,
+        failure_reason.unwrap_or(FAILURE_WRONG_PAYLOAD),
+        if errors.is_empty() {
+            vec!["one or more UDP multi-shot sends failed validation".to_string()]
+        } else {
+            errors
+        },
+        Some(summary),
+        any_sent,
+        any_received,
+    ))
+}
+
+fn static_failure_reason(reason: &str) -> &'static str {
+    match reason {
+        FAILURE_TIMEOUT => FAILURE_TIMEOUT,
+        FAILURE_WRONG_PEER => FAILURE_WRONG_PEER,
+        FAILURE_DECODE_FAILED => FAILURE_DECODE_FAILED,
+        _ => FAILURE_WRONG_PAYLOAD,
+    }
+}
+
+fn udp_expected_response_json(send_plan: &ProbePlan) -> Value {
+    json!({
+        "source_ipv4": send_plan.expected_reply_source_ipv4,
+        "destination_ipv4": send_plan.expected_reply_destination_ipv4,
+        "source_port": send_plan.destination_port,
+        "destination_port": send_plan.source_port,
+        "sequence_marker": send_plan.sequence_marker,
+        "payload_hex": send_plan.expected_payload_hex,
+        "payload_length": send_plan.expected_payload_length,
+        "udp_length": send_plan.expected_udp_length,
+        "checksum_present": send_plan.expected_udp_checksum_present,
+        "checksum_statuses": send_plan.expected_udp_checksum_statuses,
+    })
+}
+
+pub fn sends_json(sends: Option<&[UdpSend]>) -> Value {
+    match sends {
+        Some(sends) => Value::Array(
+            sends
+                .iter()
+                .map(|send| {
+                    json!({
+                        "index": send.index,
+                        "sequence_marker": send.sequence_marker,
+                        "source_ipv4": send.source_ipv4,
+                        "destination_ipv4": send.destination_ipv4,
+                        "expected_reply_source_ipv4": send.expected_reply_source_ipv4,
+                        "expected_reply_destination_ipv4": send.expected_reply_destination_ipv4,
+                        "source_port": send.source_port,
+                        "destination_port": send.destination_port,
+                        "payload_hex": send.payload_hex,
+                        "payload_length": send.payload_length,
+                        "expected_payload_hex": send.expected_payload_hex,
+                        "expected_payload_length": send.expected_payload_length,
+                        "expected_udp_length": send.expected_udp_length,
+                        "expected_udp_checksum_present": send.expected_udp_checksum_present,
+                        "expected_udp_checksum_statuses": send.expected_udp_checksum_statuses,
+                        "capture_filter": send.capture_filter,
+                        "validation": send.validation,
+                    })
+                })
+                .collect(),
+        ),
+        None => Value::Null,
+    }
+}
+
+pub fn ordered_sends_json(sends: Option<&[UdpSend]>) -> Value {
+    match sends {
+        Some(sends) => Value::Array(
+            sends
+                .iter()
+                .map(|send| {
+                    json!({
+                        "index": send.index,
+                        "sequence_marker": send.sequence_marker,
+                        "payload_hex": send.payload_hex,
+                        "payload_length": send.payload_length,
+                    })
+                })
+                .collect(),
+        ),
+        None => Value::Null,
+    }
 }
 
 pub fn udp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {

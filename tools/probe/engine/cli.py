@@ -614,6 +614,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "udp-echo-binary",
         "udp-echo-large",
         "udp-source-port-reflection",
+        "udp-multi-shot-order",
     }
 )
 
@@ -1250,6 +1251,7 @@ def _probe_plan_with_endpoint_addresses(
         "udp-echo-binary",
         "udp-echo-large",
         "udp-source-port-reflection",
+        "udp-multi-shot-order",
     }:
         source_port = int(updated.get("source_port", 0))
         destination_port = int(updated.get("destination_port", 0))
@@ -1274,6 +1276,32 @@ def _probe_plan_with_endpoint_addresses(
         udp_validation["source_ipv4"] = target_ipv4
         udp_validation["destination_ipv4"] = source_ipv4
         updated["validation"] = udp_validation
+        # udp-multi-shot-order carries a per-send array: rewrite each datagram's
+        # transport addresses, capture filter, and validation contract onto the
+        # lab segment while preserving the ordered payload markers.
+        udp_sends = updated.get("udp_sends")
+        if isinstance(udp_sends, list):
+            rewritten_udp_sends: list[JSONObject] = []
+            for raw_send in udp_sends:
+                send = dict(json_object(raw_send, "probe_plan.udp_send"))
+                send_source_port = int(send.get("source_port", source_port))
+                send_destination_port = int(send.get("destination_port", destination_port))
+                send["source_ipv4"] = source_ipv4
+                send["destination_ipv4"] = target_ipv4
+                send["expected_reply_source_ipv4"] = target_ipv4
+                send["expected_reply_destination_ipv4"] = source_ipv4
+                send["capture_filter"] = (
+                    f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+                    f"and src port {send_destination_port} and dst port {send_source_port}"
+                )
+                send_validation = dict(
+                    json_object(send.get("validation", {}), "probe_plan.udp_send.validation")
+                )
+                send_validation["source_ipv4"] = target_ipv4
+                send_validation["destination_ipv4"] = source_ipv4
+                send["validation"] = send_validation
+                rewritten_udp_sends.append(send)
+            updated["udp_sends"] = rewritten_udp_sends
     elif case_name in {
         "arp-basic-who-has",
         "arp-repeat-two-replies",
@@ -1664,6 +1692,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "udp-echo-binary",
         "udp-echo-large",
         "udp-source-port-reflection",
+        "udp-multi-shot-order",
     }:
         return [
             FAILURE_TIMEOUT,
