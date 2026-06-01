@@ -307,10 +307,13 @@ def target_service_setup_plan(
     )
     dns_plans = dns_probe_plans(probe_plans)
     dns_plans_by_port = plans_by_destination_port(dns_plans)
+    udp_plans = udp_probe_plans(probe_plans)
+    udp_plans_by_port = plans_by_destination_port(udp_plans)
     return {
         "role": "target",
         "planned": True,
-        "starts_services": not dry_run and bool(tcp_open_plans or dns_plans_by_port),
+        "starts_services": not dry_run
+        and bool(tcp_open_plans or dns_plans_by_port or udp_plans_by_port),
         "dry_run_starts_services": False,
         "services": [
             *[
@@ -343,6 +346,27 @@ def target_service_setup_plan(
                     ],
                 }
                 for port, plan in dns_plans_by_port.items()
+            ],
+            *[
+                {
+                    "name": "udp-responder",
+                    "protocol": "udp",
+                    "port": port,
+                    "purpose": "udp-echo",
+                    "deterministic": True,
+                    "echo": True,
+                    "payload_count": sum(
+                        1
+                        for plan in udp_plans
+                        if int(plan.get("destination_port", 0)) == port
+                    ),
+                    **target_service_address_fields(plan),
+                    "log_paths": [
+                        f"live-artifacts/probe/target-services/udp-responder-{port}.stdout.txt",
+                        f"live-artifacts/probe/target-services/udp-responder-{port}.stderr.txt",
+                    ],
+                }
+                for port, plan in udp_plans_by_port.items()
             ],
         ],
         "closed_tcp_ports": [
@@ -463,6 +487,22 @@ def dhcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     return [plan for plan in probe_plans if plan.get("case") in _DHCP_RESPONDER_CASES]
 
 
+# Probe cases that drive the controlled UDP echo/transform responder. The empty
+# echo case is the baseline service behavior; later UDP cases reuse the same
+# responder descriptor when they need a target-side UDP service.
+_UDP_RESPONDER_CASES: frozenset[str] = frozenset(
+    {
+        "udp-echo-empty",
+    }
+)
+
+
+def udp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the UDP responder probe plans in order."""
+
+    return [plan for plan in probe_plans if plan.get("case") in _UDP_RESPONDER_CASES]
+
+
 # Probe cases whose target is primarily the kernel answering ARP who-has on a
 # private L2 segment. ``arp-resolution`` is the legacy smoke case;
 # ``arp-basic-who-has`` is the baseline ARP behavioral case. Both rely on the
@@ -532,7 +572,8 @@ def prepare_wire_probe_target(
 
     tcp_plans = tcp_probe_plans(probe_plans)
     dns_plans = dns_probe_plans(probe_plans)
-    if not tcp_plans and not dns_plans:
+    udp_plans = udp_probe_plans(probe_plans)
+    if not tcp_plans and not dns_plans and not udp_plans:
         return None
     endpoint_id = endpoint_id_resolver(target_endpoint, role=TARGET_ROLE)
     bind_ipv4 = endpoint_ipv4_resolver(target_endpoint, role=TARGET_ROLE)
@@ -552,6 +593,7 @@ def prepare_wire_probe_target(
         open_ports=open_ports,
         closed_ports=closed_ports,
         dns_plans=dns_plans,
+        udp_plans=udp_plans,
     )
     return run_wire_command(
         wire.exec(endpoint_id, ["bash", "-lc", script], timeout=60),
@@ -598,6 +640,7 @@ def target_service_setup_script(
     open_ports: Sequence[int],
     closed_ports: Sequence[int],
     dns_plans: Sequence[JSONObject],
+    udp_plans: Sequence[JSONObject] = (),
 ) -> str:
     """Render the deterministic target setup script.
 
@@ -612,11 +655,17 @@ def target_service_setup_script(
         for plan in dns_plans
         if isinstance(plan.get("destination_port"), int)
     )
+    udp_ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in udp_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
     lines = [
         "set -euo pipefail",
         f"artifact_root={shlex.quote(artifact_root)}",
         f"tcp_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"dns_bind_ipv4={shlex.quote(bind_ipv4)}",
+        f"udp_bind_ipv4={shlex.quote(bind_ipv4)}",
         'mkdir -p "$artifact_root"',
         'cleanup="$artifact_root/cleanup.sh"',
         ': > "$cleanup"',
@@ -633,6 +682,22 @@ def target_service_setup_script(
         "    sock.bind((bind_ip, port))",
         "except OSError as exc:",
         "    print(f'tcp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
+        "    sys.exit(1)",
+        "finally:",
+        "    sock.close()",
+        "PY",
+        "}",
+        "check_udp_port_free() {",
+        "  python3 - \"$1\" \"$2\" <<'PY'",
+        "import socket",
+        "import sys",
+        "bind_ip = sys.argv[1]",
+        "port = int(sys.argv[2])",
+        "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+        "try:",
+        "    sock.bind((bind_ip, port))",
+        "except OSError as exc:",
+        "    print(f'udp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
         "    sys.exit(1)",
         "finally:",
         "    sock.close()",
@@ -1088,6 +1153,69 @@ def target_service_setup_script(
                 f"echo dns_responder_{port}=running",
             ]
         )
+    if udp_ports:
+        service_path = posixpath.join(artifact_root, "udp-responder.py")
+        lines.extend(
+            [
+                f"cat > {shlex.quote(service_path)} <<'PY'",
+                "import json",
+                "import signal",
+                "import socket",
+                "import sys",
+                "import time",
+                "",
+                "stop = False",
+                "",
+                "def handle_stop(_signum, _frame):",
+                "    global stop",
+                "    stop = True",
+                "",
+                "signal.signal(signal.SIGTERM, handle_stop)",
+                "signal.signal(signal.SIGINT, handle_stop)",
+                "",
+                "bind_ip, port_text = sys.argv[1:3]",
+                "port = int(port_text)",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+                "sock.bind((bind_ip, port))",
+                "sock.settimeout(1.0)",
+                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port}), flush=True)",
+                "while not stop:",
+                "    try:",
+                "        data, addr = sock.recvfrom(65535)",
+                "    except socket.timeout:",
+                "        continue",
+                "    sock.sendto(data, addr)",
+                "    print(json.dumps({'event': 'echoed', 'client': addr[0], 'client_port': addr[1], 'bytes': len(data)}, sort_keys=True), flush=True)",
+                "sock.close()",
+                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
+                "PY",
+            ]
+        )
+    for port in udp_ports:
+        stdout_path = posixpath.join(artifact_root, f"udp-responder-{port}.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, f"udp-responder-{port}.stderr.txt")
+        pid_path = posixpath.join(artifact_root, f"udp-responder-{port}.pid")
+        lines.extend(
+            [
+                f"check_udp_port_free \"$udp_bind_ipv4\" {port}",
+                (
+                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'udp-responder.py'))} "
+                    f"\"$udp_bind_ipv4\" {port} "
+                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.5",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                f"  echo udp_responder_{port}=failed >&2",
+                "  exit 73",
+                "fi",
+                f"echo udp_responder_{port}=running",
+            ]
+        )
     lines.append("echo target_service_setup=ok")
     return "\n".join(lines)
 
@@ -1111,5 +1239,6 @@ __all__ = [
     "target_service_setup_plan",
     "target_service_setup_script",
     "tcp_probe_plans",
+    "udp_probe_plans",
     "udp_responder_descriptor",
 ]
