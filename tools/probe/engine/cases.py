@@ -387,7 +387,7 @@ BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
         protocol="udp",
     ),
     _behavior_case(
-        name="udp-binary-echo",
+        name="udp-echo-binary",
         description="Echo a binary payload and validate the echoed response.",
         stimulus="udp_datagram",
         expected_response="udp_response",
