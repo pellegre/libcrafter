@@ -356,7 +356,7 @@ def target_service_setup_plan(
                     "deterministic": True,
                     "echo": True,
                     "payload_count": sum(
-                        1
+                        int(plan.get("send_count") or 1)
                         for plan in udp_plans
                         if int(plan.get("destination_port", 0)) == port
                     ),
@@ -491,7 +491,8 @@ def dhcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
 # echo case is the zero-payload baseline; the short and binary echo cases cover
 # application bytes over the same service-response path. Source-port reflection
 # reuses the same echo responder and tightens the stimulus-side port contract.
-# Later UDP cases reuse the same responder descriptor when they need a
+# Multi-shot order drives the same responder with an ordered per-send payload
+# sequence. Later UDP cases reuse the same responder descriptor when they need a
 # target-side UDP service.
 _UDP_RESPONDER_CASES: frozenset[str] = frozenset(
     {
@@ -500,6 +501,7 @@ _UDP_RESPONDER_CASES: frozenset[str] = frozenset(
         "udp-echo-binary",
         "udp-echo-large",
         "udp-source-port-reflection",
+        "udp-multi-shot-order",
     }
 )
 

@@ -89,6 +89,10 @@ pub struct ProbePlan {
     #[serde(default)]
     pub expected_udp_checksum_statuses: Option<Vec<String>>,
     #[serde(default)]
+    pub sequence_marker: Option<String>,
+    #[serde(default)]
+    pub sequence_markers: Option<Vec<String>>,
+    #[serde(default)]
     pub source_ipv4: Option<String>,
     #[serde(default)]
     pub destination_ipv4: Option<String>,
@@ -284,6 +288,13 @@ pub struct ProbePlan {
     // independently-decoded Offers. Single-send DHCP cases leave this unset.
     #[serde(default)]
     pub dhcp_sends: Option<Vec<DhcpSend>>,
+    // Multi-send UDP behavioral case fields (`udp-multi-shot-order`). The plan
+    // carries a `udp_sends` array (one entry per datagram), each with its own
+    // ordered sequence marker and payload while sharing the same peer tuple. The
+    // UDP dispatch builds/sends each datagram with libcrafter and validates each
+    // echoed response against its own payload marker in order.
+    #[serde(default)]
+    pub udp_sends: Option<Vec<UdpSend>>,
     // ARP behavioral case fields. ARP rides Ethernet directly (no IP/UDP), so
     // these are link-layer values: the stimulus builds an Ethernet/ARP who-has
     // from `sender_hardware_addr`/`sender_protocol_addr` for the target it wants
@@ -481,6 +492,51 @@ pub struct DhcpSend {
     pub expected_rebinding_time: Option<u32>,
     #[serde(default)]
     pub capture_filter: Option<String>,
+}
+
+/// One send of a multi-send UDP probe case (`udp-multi-shot-order`).
+///
+/// Each send carries the same UDP peer tuple but a distinct deterministic
+/// sequence marker embedded in the payload. The stimulus endpoint sends each
+/// datagram, captures one echo response, decodes it through libcrafter, and
+/// validates that the response's peer tuple and exact payload marker match the
+/// send it follows.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UdpSend {
+    #[serde(default)]
+    pub index: Option<usize>,
+    #[serde(default)]
+    pub sequence_marker: Option<String>,
+    #[serde(default)]
+    pub source_ipv4: Option<String>,
+    #[serde(default)]
+    pub destination_ipv4: Option<String>,
+    #[serde(default)]
+    pub expected_reply_source_ipv4: Option<String>,
+    #[serde(default)]
+    pub expected_reply_destination_ipv4: Option<String>,
+    #[serde(default)]
+    pub source_port: Option<u16>,
+    #[serde(default)]
+    pub destination_port: Option<u16>,
+    #[serde(default)]
+    pub payload_hex: Option<String>,
+    #[serde(default)]
+    pub payload_length: Option<usize>,
+    #[serde(default)]
+    pub expected_payload_hex: Option<String>,
+    #[serde(default)]
+    pub expected_payload_length: Option<usize>,
+    #[serde(default)]
+    pub expected_udp_length: Option<u16>,
+    #[serde(default)]
+    pub expected_udp_checksum_present: Option<bool>,
+    #[serde(default)]
+    pub expected_udp_checksum_statuses: Option<Vec<String>>,
+    #[serde(default)]
+    pub capture_filter: Option<String>,
+    #[serde(default)]
+    pub validation: Option<Value>,
 }
 
 /// One send of a multi-send DNS probe case (`dns-repeat-transaction`).
@@ -858,7 +914,8 @@ fn dispatch_case(
             | "udp-echo-short"
             | "udp-echo-binary"
             | "udp-echo-large"
-            | "udp-source-port-reflection",
+            | "udp-source-port-reflection"
+            | "udp-multi-shot-order",
         ) => udp::run_udp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -866,7 +923,8 @@ fn dispatch_case(
             | "udp-echo-short"
             | "udp-echo-binary"
             | "udp-echo-large"
-            | "udp-source-port-reflection",
+            | "udp-source-port-reflection"
+            | "udp-multi-shot-order",
         ) => udp::run_udp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -960,6 +1018,8 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_udp_length": plan.expected_udp_length,
         "expected_udp_checksum_present": plan.expected_udp_checksum_present,
         "expected_udp_checksum_statuses": plan.expected_udp_checksum_statuses,
+        "sequence_marker": plan.sequence_marker,
+        "sequence_markers": plan.sequence_markers,
         "source_ipv4": plan.source_ipv4,
         "destination_ipv4": plan.destination_ipv4,
         "expected_reply_source_ipv4": plan.expected_reply_source_ipv4,
@@ -1013,6 +1073,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "send_count": plan.send_count,
         "sends": dns::sends_json(plan.sends.as_deref()),
         "dhcp_sends": dhcp::sends_json(plan.dhcp_sends.as_deref()),
+        "udp_sends": udp::sends_json(plan.udp_sends.as_deref()),
         "client_mac": plan.client_mac,
         "transaction_id": plan.transaction_id,
         "requested_ipv4": plan.requested_ipv4,
@@ -1185,7 +1246,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "udp-echo-short"
         | "udp-echo-binary"
         | "udp-echo-large"
-        | "udp-source-port-reflection" => {
+        | "udp-source-port-reflection"
+        | "udp-multi-shot-order" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -1244,7 +1306,8 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "udp-echo-short"
             | "udp-echo-binary"
             | "udp-echo-large"
-            | "udp-source-port-reflection" => "udp_response",
+            | "udp-source-port-reflection"
+            | "udp-multi-shot-order" => "udp_response",
             "arp-basic-who-has"
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
@@ -1554,7 +1617,8 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         | "udp-echo-short"
         | "udp-echo-binary"
         | "udp-echo-large"
-        | "udp-source-port-reflection" => json!({
+        | "udp-source-port-reflection"
+        | "udp-multi-shot-order" => json!({
             "required": true,
             "kind": "udp-responder",
             "mode": "echo",
@@ -1565,6 +1629,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "expected_payload_length": plan.expected_payload_length,
             "expected_udp_length": plan.expected_udp_length,
             "checksum_statuses": plan.expected_udp_checksum_statuses,
+            "multi_shot_order": plan.udp_sends.is_some(),
+            "send_count": plan.send_count,
+            "ordered_payloads": udp::ordered_sends_json(plan.udp_sends.as_deref()),
         }),
         "arp-basic-who-has"
         | "arp-source-address-preserved"
@@ -1706,11 +1773,13 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
         | "udp-echo-short"
         | "udp-echo-binary"
         | "udp-echo-large"
-        | "udp-source-port-reflection" => json!({
+        | "udp-source-port-reflection"
+        | "udp-multi-shot-order" => json!({
             "source_ipv4": plan.expected_reply_source_ipv4,
             "destination_ipv4": plan.expected_reply_destination_ipv4,
             "source_port": plan.destination_port,
             "destination_port": plan.source_port,
+            "sequence_marker": plan.sequence_marker,
             "payload_hex": plan.expected_payload_hex,
             "payload_length": plan.expected_payload_length,
             "udp_length": plan.expected_udp_length,

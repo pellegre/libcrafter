@@ -4639,6 +4639,163 @@ def _udp_source_port_reflection_probe_plan(
     )
 
 
+def _udp_multi_shot_order_send(
+    *,
+    index: int,
+    source_ipv4: str,
+    target_ipv4: str,
+    source_port: int,
+    destination_port: int,
+    payload: bytes,
+    sequence_marker: str,
+    checksum_statuses: list[str],
+) -> JSONObject:
+    payload_hex = payload.hex()
+    payload_length = len(payload)
+    expected_udp_length = 8 + payload_length
+    return {
+        "index": index,
+        "sequence_marker": sequence_marker,
+        "source_ipv4": source_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": source_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "payload_hex": payload_hex,
+        "payload_length": payload_length,
+        "expected_payload_hex": payload_hex,
+        "expected_payload_length": payload_length,
+        "expected_udp_length": expected_udp_length,
+        "expected_udp_checksum_present": True,
+        "expected_udp_checksum_statuses": checksum_statuses,
+        "capture_filter": (
+            f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": source_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "sequence_marker": sequence_marker,
+            "payload_hex": payload_hex,
+            "payload_length": payload_length,
+            "udp_length": expected_udp_length,
+            "checksum_present": True,
+            "checksum_statuses": checksum_statuses,
+        },
+    }
+
+
+def _udp_multi_shot_order_probe_plan(
+    *,
+    case_name: str = "udp-multi-shot-order",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan three ordered UDP datagrams echoed by one controlled responder."""
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    source_port = 50000 + int.from_bytes(digest[0:2], "big") % 6000
+    destination_port = 32000 + int.from_bytes(digest[2:4], "big") % 6000
+    checksum_statuses = ["valid", "ipv4_no_checksum"]
+    sends = []
+    for index in range(3):
+        payload_digest = deterministic_bytes(
+            f"{case_name}:payload:{index}",
+            profile,
+            seed,
+            sequence,
+        )
+        sequence_marker = f"shot-{index:02d}"
+        payload = (
+            f"udp-multi-shot-order:{sequence_marker}:{payload_digest.hex()[:12]}"
+        ).encode("ascii")
+        sends.append(
+            _udp_multi_shot_order_send(
+                index=index,
+                source_ipv4=stimulus_ipv4,
+                target_ipv4=target_ipv4,
+                source_port=source_port,
+                destination_port=destination_port,
+                payload=payload,
+                sequence_marker=sequence_marker,
+                checksum_statuses=checksum_statuses,
+            )
+        )
+
+    first = sends[0]
+    sequence_markers = [str(send["sequence_marker"]) for send in sends]
+    ordered_payloads = [
+        {
+            "index": send["index"],
+            "sequence_marker": send["sequence_marker"],
+            "payload_hex": send["payload_hex"],
+            "payload_length": send["payload_length"],
+        }
+        for send in sends
+    ]
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "udp_datagram",
+        "expected_response": "udp_response",
+        # Conventional single-send top-level fields mirror the first datagram so
+        # the generic plan echo, capture filter, and single-send consumers keep
+        # working while the UDP dispatch detects `udp_sends` and drives all sends.
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "sequence_marker": first["sequence_marker"],
+        "sequence_markers": sequence_markers,
+        "payload_hex": first["payload_hex"],
+        "payload_length": first["payload_length"],
+        "expected_payload_hex": first["expected_payload_hex"],
+        "expected_payload_length": first["expected_payload_length"],
+        "expected_udp_length": first["expected_udp_length"],
+        "expected_udp_checksum_present": True,
+        "expected_udp_checksum_statuses": checksum_statuses,
+        "multi_shot_order": True,
+        "send_count": len(sends),
+        "udp_sends": sends,
+        "target_service": {
+            "required": True,
+            "kind": "udp-responder",
+            "mode": "echo",
+            "port": destination_port,
+            "bind_ipv4": target_ipv4,
+            "source_ipv4": stimulus_ipv4,
+            "multi_shot_order": True,
+            "send_count": len(sends),
+            "sequence_markers": sequence_markers,
+            "ordered_payloads": ordered_payloads,
+            "deterministic": True,
+        },
+        "capture_filter": first["capture_filter"],
+        "validation": first["validation"],
+        "wire_requirements": {
+            "requires_udp_service": True,
+            "requires_ipv4_unicast": True,
+            "requires_controlled_service": True,
+            "note": (
+                "UDP multi-shot order behavior runs against a controlled echo "
+                "responder on the target endpoint, never a public service."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
@@ -4685,6 +4842,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "udp-echo-binary": _udp_echo_binary_probe_plan,
     "udp-echo-large": _udp_echo_large_probe_plan,
     "udp-source-port-reflection": _udp_source_port_reflection_probe_plan,
+    "udp-multi-shot-order": _udp_multi_shot_order_probe_plan,
 }
 
 

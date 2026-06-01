@@ -413,7 +413,7 @@ BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
         protocol="udp",
     ),
     _behavior_case(
-        name="udp-multishot-ordered-echo",
+        name="udp-multi-shot-order",
         description="Send multiple datagrams and validate ordered echoed responses.",
         stimulus="udp_datagram",
         expected_response="udp_response",
