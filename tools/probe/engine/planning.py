@@ -4936,6 +4936,111 @@ def _udp_zero_checksum_ipv4_probe_plan(
     return plan
 
 
+def _udp_options_surplus_echo_probe_plan(
+    *,
+    case_name: str = "udp-options-surplus-echo",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan a UDP echo stimulus with deterministic UDP surplus option bytes."""
+
+    payload_digest = deterministic_bytes(
+        "udp-options-surplus-echo-payload",
+        profile,
+        seed,
+        sequence,
+    )
+    option_digest = deterministic_bytes(
+        "udp-options-surplus-echo-options",
+        profile,
+        seed,
+        sequence,
+    )
+    payload = f"udp-options-surplus-echo:{payload_digest.hex()[:12]}".encode("ascii")
+    mds_size = 1200 + option_digest[4] % 48
+    req_token = int.from_bytes(option_digest[0:4], "big")
+    req_token_bytes = req_token.to_bytes(4, "big")
+    # Option bytes after the UDP Option Checksum field. UdpOptions::from_bytes
+    # preserves this exact option stream while compile() adds the RFC surplus
+    # alignment and OCS envelope.
+    option_bytes = bytes(
+        [
+            0x01,  # NOP
+            0x04,  # MDS
+            0x04,
+            *mds_size.to_bytes(2, "big"),
+            0x06,  # REQ
+            0x06,
+            *req_token_bytes,
+            0x00,  # EOL
+        ]
+    )
+    option_summary = [
+        "NOP",
+        f"MDS(size={mds_size})",
+        f"REQ(token=0x{req_token:08x})",
+        "EOL",
+    ]
+    plan = _udp_echo_probe_plan(
+        case_name=case_name,
+        profile=profile,
+        seed=seed,
+        sequence=sequence,
+        payload=payload,
+    )
+    expected_udp_length = int(plan["expected_udp_length"])
+    surplus_alignment_length = (UDP_ECHO_LARGE_IPV4_HEADER_LENGTH + expected_udp_length) & 1
+    expected_surplus_length = surplus_alignment_length + 2 + len(option_bytes)
+    surplus_metadata: JSONObject = {
+        "udp_options_surplus": True,
+        "stimulus_udp_options_hex": option_bytes.hex(),
+        "stimulus_udp_options_policy": "deterministic_valid_surplus_options",
+        "expected_udp_options_hex": option_bytes.hex(),
+        "expected_udp_options_status": "valid",
+        "expected_udp_options_summary": option_summary,
+        "expected_udp_option_count": len(option_summary),
+        "expected_udp_surplus_alignment_length": surplus_alignment_length,
+        "expected_udp_surplus_length": expected_surplus_length,
+        "expected_ipv4_total_length": (
+            UDP_ECHO_LARGE_IPV4_HEADER_LENGTH
+            + expected_udp_length
+            + expected_surplus_length
+        ),
+    }
+    plan.update(surplus_metadata)
+    target_service = json_object(
+        plan["target_service"],
+        "udp_options_surplus.target_service",
+    )
+    target_service.update(
+        {
+            **surplus_metadata,
+            "kernel_acceptance": "provider_dependent",
+        }
+    )
+    plan["target_service"] = target_service
+    validation = json_object(plan["validation"], "udp_options_surplus.validation")
+    validation.update(surplus_metadata)
+    plan["validation"] = validation
+    wire_requirements = json_object(
+        plan["wire_requirements"],
+        "udp_options_surplus.wire_requirements",
+    )
+    wire_requirements.update(
+        {
+            "requires_udp_options_surplus": True,
+            "note": (
+                "UDP options are carried as surplus after the UDP payload length. "
+                "Providers that drop such datagrams must skip via the "
+                "udp_options_surplus capability."
+            ),
+        }
+    )
+    plan["wire_requirements"] = wire_requirements
+    return plan
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
@@ -4985,6 +5090,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "udp-multi-shot-order": _udp_multi_shot_order_probe_plan,
     "udp-closed-port-icmp": _udp_closed_port_icmp_probe_plan,
     "udp-zero-checksum-ipv4": _udp_zero_checksum_ipv4_probe_plan,
+    "udp-options-surplus-echo": _udp_options_surplus_echo_probe_plan,
 }
 
 

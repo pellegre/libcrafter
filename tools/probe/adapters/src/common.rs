@@ -95,6 +95,26 @@ pub struct ProbePlan {
     #[serde(default)]
     pub stimulus_udp_checksum_policy: Option<String>,
     #[serde(default)]
+    pub udp_options_surplus: Option<bool>,
+    #[serde(default)]
+    pub stimulus_udp_options_hex: Option<String>,
+    #[serde(default)]
+    pub stimulus_udp_options_policy: Option<String>,
+    #[serde(default)]
+    pub expected_udp_options_hex: Option<String>,
+    #[serde(default)]
+    pub expected_udp_options_status: Option<String>,
+    #[serde(default)]
+    pub expected_udp_options_summary: Option<Vec<String>>,
+    #[serde(default)]
+    pub expected_udp_option_count: Option<usize>,
+    #[serde(default)]
+    pub expected_udp_surplus_alignment_length: Option<usize>,
+    #[serde(default)]
+    pub expected_udp_surplus_length: Option<usize>,
+    #[serde(default)]
+    pub expected_ipv4_total_length: Option<usize>,
+    #[serde(default)]
     pub sequence_marker: Option<String>,
     #[serde(default)]
     pub sequence_markers: Option<Vec<String>>,
@@ -923,7 +943,8 @@ fn dispatch_case(
             | "udp-source-port-reflection"
             | "udp-multi-shot-order"
             | "udp-closed-port-icmp"
-            | "udp-zero-checksum-ipv4",
+            | "udp-zero-checksum-ipv4"
+            | "udp-options-surplus-echo",
         ) => udp::run_udp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -934,7 +955,8 @@ fn dispatch_case(
             | "udp-source-port-reflection"
             | "udp-multi-shot-order"
             | "udp-closed-port-icmp"
-            | "udp-zero-checksum-ipv4",
+            | "udp-zero-checksum-ipv4"
+            | "udp-options-surplus-echo",
         ) => udp::run_udp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -1031,6 +1053,16 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "stimulus_udp_checksum": plan.stimulus_udp_checksum,
         "stimulus_udp_checksum_override": plan.stimulus_udp_checksum_override,
         "stimulus_udp_checksum_policy": plan.stimulus_udp_checksum_policy,
+        "udp_options_surplus": plan.udp_options_surplus,
+        "stimulus_udp_options_hex": plan.stimulus_udp_options_hex,
+        "stimulus_udp_options_policy": plan.stimulus_udp_options_policy,
+        "expected_udp_options_hex": plan.expected_udp_options_hex,
+        "expected_udp_options_status": plan.expected_udp_options_status,
+        "expected_udp_options_summary": plan.expected_udp_options_summary,
+        "expected_udp_option_count": plan.expected_udp_option_count,
+        "expected_udp_surplus_alignment_length": plan.expected_udp_surplus_alignment_length,
+        "expected_udp_surplus_length": plan.expected_udp_surplus_length,
+        "expected_ipv4_total_length": plan.expected_ipv4_total_length,
         "sequence_marker": plan.sequence_marker,
         "sequence_markers": plan.sequence_markers,
         "source_ipv4": plan.source_ipv4,
@@ -1139,6 +1171,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let udp = packet.layer::<Udp>();
     let dns = packet.layer::<Dns>();
     let dhcp = packet.layer::<Dhcp>();
+    let udp_options = packet.layer::<UdpOptions>();
     let ethernet = packet.layer::<Ethernet>();
     let arp_layer = packet.layer::<Arp>();
     json!({
@@ -1179,6 +1212,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
             "checksum": layer.checksum_value(),
             "checksum_status": udp::checksum_status_name(layer.checksum_status()),
         })),
+        "udp_options": udp::udp_options_json(udp_options),
         "dns": dns.map(dns::dns_json),
         "dhcp": dhcp.map(dhcp::dhcp_json),
         "payload_hex": hex_bytes(raw_payload(packet)),
@@ -1261,7 +1295,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "udp-echo-large"
         | "udp-source-port-reflection"
         | "udp-multi-shot-order"
-        | "udp-zero-checksum-ipv4" => {
+        | "udp-zero-checksum-ipv4"
+        | "udp-options-surplus-echo" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -1329,7 +1364,8 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "udp-echo-large"
             | "udp-source-port-reflection"
             | "udp-multi-shot-order"
-            | "udp-zero-checksum-ipv4" => "udp_response",
+            | "udp-zero-checksum-ipv4"
+            | "udp-options-surplus-echo" => "udp_response",
             "udp-closed-port-icmp" => "icmp_port_unreachable",
             "arp-basic-who-has"
             | "arp-repeat-two-replies"
@@ -1642,7 +1678,8 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         | "udp-echo-large"
         | "udp-source-port-reflection"
         | "udp-multi-shot-order"
-        | "udp-zero-checksum-ipv4" => json!({
+        | "udp-zero-checksum-ipv4"
+        | "udp-options-surplus-echo" => json!({
             "required": true,
             "kind": "udp-responder",
             "mode": "echo",
@@ -1656,6 +1693,16 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "stimulus_udp_checksum": plan.stimulus_udp_checksum,
             "stimulus_udp_checksum_override": plan.stimulus_udp_checksum_override,
             "stimulus_udp_checksum_policy": plan.stimulus_udp_checksum_policy,
+            "udp_options_surplus": plan.udp_options_surplus,
+            "stimulus_udp_options_hex": plan.stimulus_udp_options_hex,
+            "stimulus_udp_options_policy": plan.stimulus_udp_options_policy,
+            "expected_udp_options_hex": plan.expected_udp_options_hex,
+            "expected_udp_options_status": plan.expected_udp_options_status,
+            "expected_udp_options_summary": plan.expected_udp_options_summary,
+            "expected_udp_option_count": plan.expected_udp_option_count,
+            "expected_udp_surplus_alignment_length": plan.expected_udp_surplus_alignment_length,
+            "expected_udp_surplus_length": plan.expected_udp_surplus_length,
+            "expected_ipv4_total_length": plan.expected_ipv4_total_length,
             "multi_shot_order": plan.udp_sends.is_some(),
             "send_count": plan.send_count,
             "ordered_payloads": udp::ordered_sends_json(plan.udp_sends.as_deref()),
@@ -1812,7 +1859,8 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
         | "udp-echo-large"
         | "udp-source-port-reflection"
         | "udp-multi-shot-order"
-        | "udp-zero-checksum-ipv4" => json!({
+        | "udp-zero-checksum-ipv4"
+        | "udp-options-surplus-echo" => json!({
             "source_ipv4": plan.expected_reply_source_ipv4,
             "destination_ipv4": plan.expected_reply_destination_ipv4,
             "source_port": plan.destination_port,
@@ -1826,6 +1874,16 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
             "stimulus_udp_checksum": plan.stimulus_udp_checksum,
             "stimulus_udp_checksum_override": plan.stimulus_udp_checksum_override,
             "stimulus_udp_checksum_policy": plan.stimulus_udp_checksum_policy,
+            "udp_options_surplus": plan.udp_options_surplus,
+            "stimulus_udp_options_hex": plan.stimulus_udp_options_hex,
+            "stimulus_udp_options_policy": plan.stimulus_udp_options_policy,
+            "expected_udp_options_hex": plan.expected_udp_options_hex,
+            "expected_udp_options_status": plan.expected_udp_options_status,
+            "expected_udp_options_summary": plan.expected_udp_options_summary,
+            "expected_udp_option_count": plan.expected_udp_option_count,
+            "expected_udp_surplus_alignment_length": plan.expected_udp_surplus_alignment_length,
+            "expected_udp_surplus_length": plan.expected_udp_surplus_length,
+            "expected_ipv4_total_length": plan.expected_ipv4_total_length,
         }),
         "udp-closed-port-icmp" => json!({
             "source_ipv4": plan.expected_reply_source_ipv4,

@@ -6,7 +6,10 @@
 //! decoded UDP response's peer tuple, length, checksum status, and exact echoed
 //! payload. `udp-zero-checksum-ipv4` uses the same echo path but explicitly sets
 //! the outgoing IPv4 UDP checksum to zero so compile() override preservation is
-//! tested. `udp-closed-port-icmp` sends a UDP datagram to a verified-unbound
+//! tested. `udp-options-surplus-echo` appends deterministic UDP surplus/options
+//! after the conventional payload length and validates the service still echoes
+//! that payload where the provider supports delivery. `udp-closed-port-icmp`
+//! sends a UDP datagram to a verified-unbound
 //! target port and validates the kernel ICMP destination-unreachable /
 //! port-unreachable response plus the embedded original IPv4/UDP prefix.
 
@@ -43,8 +46,13 @@ pub fn run_udp_dry_run(
     .send(&packet)?;
     let sent_raw = report.plan().bytes();
     let sent_raw_hex = hex_bytes(sent_raw);
-    let sent_decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, sent_raw)
-        .map(|packet| decoded_packet_json(&packet, sent_raw))?;
+    let sent_packet = Packet::decode_from_l3(NetworkLayer::Ipv4, sent_raw)?;
+    let sent_decoded = decoded_packet_json(&sent_packet, sent_raw);
+    let sent_udp_options = udp_options_json(sent_packet.layer::<UdpOptions>());
+    let sent_udp_surplus_length = sent_udp_options
+        .get("surplus_length")
+        .cloned()
+        .unwrap_or(Value::Null);
     let observed = observed_response(
         plan,
         false,
@@ -55,6 +63,8 @@ pub fn run_udp_dry_run(
             "send_report": send_report_json(&report),
             "sent_raw_hex": sent_raw_hex,
             "sent_decoded": sent_decoded,
+            "sent_udp_surplus_length": sent_udp_surplus_length,
+            "sent_udp_options": sent_udp_options,
             "capture_filter": capture_filter(plan),
             "target_service": target_service_json(plan),
         }),
@@ -72,6 +82,8 @@ pub fn run_udp_dry_run(
             "planned_only": true,
             "sent_raw_hex": sent_raw_hex,
             "sent_decoded": sent_decoded,
+            "sent_udp_surplus_length": sent_udp_surplus_length,
+            "sent_udp_options": sent_udp_options,
             "capture_filter": capture_filter(plan),
             "target_service": target_service_json(plan),
         }
@@ -781,6 +793,34 @@ pub fn ordered_sends_json(sends: Option<&[UdpSend]>) -> Value {
     }
 }
 
+pub fn udp_options_json(options: Option<&UdpOptions>) -> Value {
+    let Some(options) = options else {
+        return Value::Null;
+    };
+    let alignment = options.alignment_bytes();
+    let alignment_length = alignment.map_or(0, |bytes| bytes.len());
+    let option_checksum_length = if options.option_checksum_value().is_some() {
+        2
+    } else {
+        0
+    };
+    let summaries: Vec<String> = options
+        .options()
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+    json!({
+        "status": udp_option_status_name(options.status()),
+        "surplus_length": alignment_length + option_checksum_length + options.as_bytes().len(),
+        "alignment_hex": alignment.map(hex_bytes),
+        "alignment_length": alignment_length,
+        "option_checksum": options.option_checksum_value(),
+        "option_bytes_hex": hex_bytes(options.as_bytes()),
+        "option_count": options.options().len(),
+        "summary": summaries,
+    })
+}
+
 pub fn udp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let source: Ipv4Addr = required_str(plan.source_ipv4.as_deref(), "source_ipv4")?.parse()?;
     let destination: Ipv4Addr =
@@ -800,12 +840,15 @@ pub fn udp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     } else {
         udp
     };
-    let packet = Ipv4::new().src(source).dst(destination) / udp;
-    if payload.is_empty() {
-        Ok(packet)
-    } else {
-        Ok(packet / Raw::from_bytes(payload))
+    let mut packet = Ipv4::new().src(source).dst(destination) / udp;
+    if !payload.is_empty() {
+        packet = packet / Raw::from_bytes(payload);
     }
+    if let Some(options_hex) = plan.stimulus_udp_options_hex.as_deref() {
+        let options = decode_hex(options_hex)?;
+        packet = packet / UdpOptions::from_bytes(options);
+    }
+    Ok(packet)
 }
 
 pub fn validate_udp_candidate(
@@ -958,6 +1001,25 @@ pub const fn checksum_status_name(status: UdpChecksumStatus) -> &'static str {
         UdpChecksumStatus::Valid => "valid",
         UdpChecksumStatus::Invalid => "invalid",
         UdpChecksumStatus::Ipv6ZeroChecksum => "ipv6_zero_checksum",
+    }
+}
+
+pub const fn udp_option_status_name(status: UdpOptionStatus) -> &'static str {
+    match status {
+        UdpOptionStatus::NoSurplus => "no_surplus",
+        UdpOptionStatus::NotParsed => "not_parsed",
+        UdpOptionStatus::Valid => "valid",
+        UdpOptionStatus::Ignored => "ignored",
+        UdpOptionStatus::Malformed => "malformed",
+        UdpOptionStatus::MalformedEnvelope => "malformed_envelope",
+        UdpOptionStatus::NonzeroAfterEndOfList => "nonzero_after_end_of_list",
+        UdpOptionStatus::TooManyNoOperations => "too_many_no_operations",
+        UdpOptionStatus::Unsupported => "unsupported",
+        UdpOptionStatus::UnsupportedFragmentation => "unsupported_fragmentation",
+        UdpOptionStatus::UnknownSafe => "unknown_safe",
+        UdpOptionStatus::UnknownUnsafe => "unknown_unsafe",
+        UdpOptionStatus::OptionChecksumInvalid => "option_checksum_invalid",
+        UdpOptionStatus::AdditionalPayloadChecksumInvalid => "additional_payload_checksum_invalid",
     }
 }
 
