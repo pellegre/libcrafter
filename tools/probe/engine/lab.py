@@ -12,6 +12,7 @@ from tools.lab.engine.providers import (
     resolve_lab_provider,
 )
 
+from .cases import UDP_ECHO_LARGE_PAYLOAD_LENGTH
 from .model import JSONObject, JSONValue, json_object
 
 
@@ -26,6 +27,7 @@ PROBE_CAPABILITY_NAMES = (
     "dns_service",
     "dhcp_service",
     "udp_service",
+    "udp_large_payload",
     "privileged_udp_port",
     "controlled_router",
     "arp_resolution",
@@ -149,6 +151,17 @@ def probe_capabilities_from_lab_capabilities(
         and broadcast
     )
     udp_service = ipv4_unicast and controlled_services
+    advertised_udp_safe_payload = _optional_positive_int(
+        substrate,
+        "udp_safe_payload_size",
+        "safe_udp_payload_size",
+        "max_udp_payload_size",
+        "private_network_safe_udp_payload_size",
+    )
+    udp_large_payload = udp_service and (
+        advertised_udp_safe_payload is None
+        or advertised_udp_safe_payload >= UDP_ECHO_LARGE_PAYLOAD_LENGTH
+    )
     privileged_udp_port = ipv4_unicast and controlled_services
     repeated_response = ipv4_unicast and controlled_services
     derived_dry_run = (
@@ -172,6 +185,7 @@ def probe_capabilities_from_lab_capabilities(
         "dns_service": ipv4_unicast and controlled_services,
         "dhcp_service": dhcp_service,
         "udp_service": udp_service,
+        "udp_large_payload": udp_large_payload,
         "privileged_udp_port": privileged_udp_port,
         "controlled_router": controlled_router,
         "link_layer_send": link_layer_send,
@@ -195,6 +209,11 @@ def probe_capabilities_from_lab_capabilities(
                 "broadcast",
             ],
             "udp_service": ["ipv4_unicast", "controlled_services"],
+            "udp_large_payload": [
+                "ipv4_unicast",
+                "controlled_services",
+                "udp_safe_payload_size",
+            ],
             "privileged_udp_port": ["ipv4_unicast", "controlled_services"],
             "controlled_router": ["controlled_router"],
             "link_layer_send": ["link_layer_send"],
@@ -218,6 +237,8 @@ def probe_capabilities_from_lab_capabilities(
     }
     if derived_dry_run is not None:
         capabilities["dry_run"] = derived_dry_run
+    if advertised_udp_safe_payload is not None:
+        capabilities["udp_safe_payload_size"] = advertised_udp_safe_payload
     artifact = substrate.get("capability_report_artifact")
     if isinstance(artifact, str) and artifact:
         capabilities["capability_report_artifact"] = artifact
@@ -272,6 +293,17 @@ def probe_address_context_from_lab_session(
 
 def _capability(capabilities: Mapping[str, JSONValue], *names: str) -> bool:
     return any(capabilities.get(name) is True for name in names)
+
+
+def _optional_positive_int(
+    capabilities: Mapping[str, JSONValue],
+    *names: str,
+) -> int | None:
+    for name in names:
+        value = capabilities.get(name)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+    return None
 
 
 def _endpoints_by_role(session: LabSession) -> dict[str, LabEndpoint]:
@@ -370,6 +402,7 @@ __all__ = [
     "PROBE_LAB_ROLES",
     "STIMULUS_ROLE",
     "TARGET_ROLE",
+    "UDP_ECHO_LARGE_PAYLOAD_LENGTH",
     "UnknownProbeLabProviderError",
     "is_probe_lab_provider",
     "local_dry_run_probe_capabilities",

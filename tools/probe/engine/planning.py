@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Sequence
 
-from .cases import PROBE_CASE_BY_NAME
+from .cases import PROBE_CASE_BY_NAME, UDP_ECHO_LARGE_PAYLOAD_LENGTH
 from .model import JSONObject, ProbeCase, ProbeRunRequest
 
 
@@ -4372,6 +4372,39 @@ def deterministic_arp_alt_sender_ipv4(profile: str, seed: int, sequence: int) ->
     return f"10.{second}.{third}.{host}"
 
 
+UDP_ECHO_LARGE_IPV4_HEADER_LENGTH = 20
+UDP_ECHO_LARGE_UDP_HEADER_LENGTH = 8
+UDP_ECHO_LARGE_IPV4_PACKET_SAFETY_LIMIT = 1400
+UDP_ECHO_LARGE_MAX_PAYLOAD_LENGTH = (
+    UDP_ECHO_LARGE_IPV4_PACKET_SAFETY_LIMIT
+    - UDP_ECHO_LARGE_IPV4_HEADER_LENGTH
+    - UDP_ECHO_LARGE_UDP_HEADER_LENGTH
+)
+
+
+def _deterministic_udp_payload(
+    *,
+    label: str,
+    profile: str,
+    seed: int,
+    sequence: int,
+    length: int,
+) -> bytes:
+    payload = bytearray()
+    counter = 0
+    while len(payload) < length:
+        payload.extend(
+            deterministic_bytes(
+                f"{label}:{counter}",
+                profile,
+                seed,
+                sequence,
+            )
+        )
+        counter += 1
+    return bytes(payload[:length])
+
+
 def _udp_echo_probe_plan(
     *,
     case_name: str,
@@ -4379,6 +4412,7 @@ def _udp_echo_probe_plan(
     seed: int,
     sequence: int,
     payload: bytes,
+    payload_metadata: JSONObject | None = None,
 ) -> JSONObject:
     """Plan a UDP datagram echoed by a controlled UDP responder."""
 
@@ -4390,6 +4424,7 @@ def _udp_echo_probe_plan(
     payload_length = len(payload)
     expected_udp_length = 8 + payload_length
     checksum_statuses = ["valid", "ipv4_no_checksum"]
+    extra_payload_metadata = dict(payload_metadata or {})
     return {
         "schema_version": 1,
         "case": case_name,
@@ -4412,6 +4447,7 @@ def _udp_echo_probe_plan(
         "expected_udp_length": expected_udp_length,
         "expected_udp_checksum_present": True,
         "expected_udp_checksum_statuses": checksum_statuses,
+        **extra_payload_metadata,
         "target_service": {
             "required": True,
             "kind": "udp-responder",
@@ -4421,6 +4457,7 @@ def _udp_echo_probe_plan(
             "source_ipv4": stimulus_ipv4,
             "payload_hex": payload_hex,
             "payload_length": payload_length,
+            **extra_payload_metadata,
             "deterministic": True,
         },
         "capture_filter": (
@@ -4437,6 +4474,7 @@ def _udp_echo_probe_plan(
             "udp_length": expected_udp_length,
             "checksum_present": True,
             "checksum_statuses": checksum_statuses,
+            **extra_payload_metadata,
         },
         "wire_requirements": {
             "requires_udp_service": True,
@@ -4524,6 +4562,42 @@ def _udp_echo_binary_probe_plan(
     )
 
 
+def _udp_echo_large_probe_plan(
+    *,
+    case_name: str = "udp-echo-large",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan a large UDP payload that stays below the private-network MTU limit."""
+
+    if UDP_ECHO_LARGE_PAYLOAD_LENGTH > UDP_ECHO_LARGE_MAX_PAYLOAD_LENGTH:
+        raise ValueError("large UDP echo payload exceeds the MTU safety limit")
+    payload = _deterministic_udp_payload(
+        label="udp-echo-large-payload",
+        profile=profile,
+        seed=seed,
+        sequence=sequence,
+        length=UDP_ECHO_LARGE_PAYLOAD_LENGTH,
+    )
+    payload_metadata: JSONObject = {
+        "payload_size_policy": "large_non_fragmenting",
+        "payload_mtu_safety_limit": UDP_ECHO_LARGE_IPV4_PACKET_SAFETY_LIMIT,
+        "payload_mtu_header_overhead": (
+            UDP_ECHO_LARGE_IPV4_HEADER_LENGTH + UDP_ECHO_LARGE_UDP_HEADER_LENGTH
+        ),
+        "max_non_fragmenting_payload_length": UDP_ECHO_LARGE_MAX_PAYLOAD_LENGTH,
+    }
+    return _udp_echo_probe_plan(
+        case_name=case_name,
+        profile=profile,
+        seed=seed,
+        sequence=sequence,
+        payload=payload,
+        payload_metadata=payload_metadata,
+    )
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
@@ -4568,6 +4642,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "udp-echo-empty": _udp_echo_empty_probe_plan,
     "udp-echo-short": _udp_echo_short_probe_plan,
     "udp-echo-binary": _udp_echo_binary_probe_plan,
+    "udp-echo-large": _udp_echo_large_probe_plan,
 }
 
 
