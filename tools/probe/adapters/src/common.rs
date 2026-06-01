@@ -317,6 +317,18 @@ pub struct ProbePlan {
     // independently-decoded is-at replies. Single-send ARP cases leave this unset.
     #[serde(default)]
     pub arp_sends: Option<Vec<ArpSend>>,
+    // Ethernet-padding ARP behavioral case fields (`arp-padding-reply`). An
+    // Ethernet/ARP frame is 42 bytes (14-byte header + 28-byte ARP payload),
+    // below the 60-byte (sans FCS) Ethernet minimum; such frames are commonly
+    // padded with trailing zero bytes. When `ethernet_min_frame_len` is set, the
+    // who-has frame is padded up to that length with trailing zeros (an honored
+    // override `compile()` preserves), and the endpoint records the resulting
+    // sent frame length (`expected_request_frame_len`). Non-padded ARP cases
+    // leave these unset.
+    #[serde(default)]
+    pub ethernet_min_frame_len: Option<usize>,
+    #[serde(default)]
+    pub expected_request_frame_len: Option<usize>,
 }
 
 /// Validation contract for the ARP is-at reply (`arp-basic-who-has`).
@@ -774,7 +786,8 @@ fn dispatch_case(
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
             | "arp-alias-address-reply"
-            | "arp-unicast-request-reply",
+            | "arp-unicast-request-reply"
+            | "arp-padding-reply",
         ) => arp::run_arp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -782,7 +795,8 @@ fn dispatch_case(
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
             | "arp-alias-address-reply"
-            | "arp-unicast-request-reply",
+            | "arp-unicast-request-reply"
+            | "arp-padding-reply",
         ) => arp::run_arp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -956,6 +970,8 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "alias_ipv4": plan.alias_ipv4,
         "ethernet_source": plan.ethernet_source,
         "ethernet_destination": plan.ethernet_destination,
+        "ethernet_min_frame_len": plan.ethernet_min_frame_len,
+        "expected_request_frame_len": plan.expected_request_frame_len,
         "arp_sends": arp::sends_json(plan.arp_sends.as_deref()),
         // Echo the ARP is-at validation contract so the expected-reply shape
         // (including the source-address preservation contract: the reply's TARGET
@@ -1095,7 +1111,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "arp-repeat-two-replies"
         | "arp-source-address-preserved"
         | "arp-alias-address-reply"
-        | "arp-unicast-request-reply" => "arp and arp[6:2] = 2".to_string(),
+        | "arp-unicast-request-reply"
+        | "arp-padding-reply" => "arp and arp[6:2] = 2".to_string(),
         _ => String::new(),
     }
 }
@@ -1133,7 +1150,8 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
             | "arp-alias-address-reply"
-            | "arp-unicast-request-reply" => "arp_is_at",
+            | "arp-unicast-request-reply"
+            | "arp-padding-reply" => "arp_is_at",
             _ => "unknown",
         })
 }
@@ -1430,7 +1448,10 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "sends": dhcp::repeat_sends_json(plan.dhcp_sends.as_deref()),
             },
         }),
-        "arp-basic-who-has" | "arp-source-address-preserved" | "arp-unicast-request-reply" => {
+        "arp-basic-who-has"
+        | "arp-source-address-preserved"
+        | "arp-unicast-request-reply"
+        | "arp-padding-reply" => {
             json!({
                 "required": true,
                 // ARP relies primarily on the target kernel answering who-has for

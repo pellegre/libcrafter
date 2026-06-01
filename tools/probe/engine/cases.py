@@ -307,7 +307,7 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
         metadata={"layer": "link"},
     ),
     _behavior_case(
-        name="arp-padded-request",
+        name="arp-padding-reply",
         description="Send a request with Ethernet padding and validate the reply.",
         stimulus="arp_who_has",
         expected_response="arp_is_at",

@@ -1013,5 +1013,173 @@ class ArpUnicastRequestReplyTest(unittest.TestCase):
             )
 
 
+def _arp_padding_reply_plan(*, seed: int = 1035, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["arp-padding-reply"]),
+        case=planning.PROBE_CASE_BY_NAME["arp-padding-reply"],
+        sequence=sequence,
+    )
+
+
+class ArpPaddingReplyPlanTest(unittest.TestCase):
+    """The who-has frame is padded up to the Ethernet minimum frame length."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("arp-padding-reply", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["arp-padding-reply"],
+            planning._arp_padding_reply_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(_arp_padding_reply_plan(), _arp_padding_reply_plan())
+
+    def test_plan_carries_a_broadcast_who_has_with_padding_metadata(self) -> None:
+        plan = _arp_padding_reply_plan()
+
+        self.assertEqual(plan["case"], "arp-padding-reply")
+        self.assertEqual(plan["stimulus"], "arp_who_has")
+        self.assertEqual(plan["expected_response"], "arp_is_at")
+        self.assertEqual(plan["operation"], 1)
+        self.assertEqual(plan["operation_label"], "request")
+
+        # The request is an ordinary broadcast who-has carrying a documentation
+        # sender MAC; the who-has leaves the target hardware address all-zero.
+        self.assertTrue(_is_documentation_mac(plan["sender_hardware_addr"]))
+        self.assertEqual(plan["target_hardware_addr"], "00:00:00:00:00:00")
+        self.assertEqual(plan["ethernet_source"], plan["sender_hardware_addr"])
+        self.assertEqual(plan["ethernet_destination"], "ff:ff:ff:ff:ff:ff")
+        self.assertEqual(plan["sender_protocol_addr"], plan["source_ipv4"])
+        self.assertEqual(plan["target_protocol_addr"], plan["destination_ipv4"])
+
+        # The padding metadata: the frame is padded up to the 60-byte (sans FCS)
+        # Ethernet minimum, and the endpoint records the resulting frame length.
+        self.assertEqual(plan["ethernet_min_frame_len"], 60)
+        self.assertEqual(plan["expected_request_frame_len"], 60)
+
+    def test_validation_contract_covers_is_at_fields(self) -> None:
+        plan = _arp_padding_reply_plan()
+        validation = plan["validation"]
+
+        self.assertEqual(validation["ethertype"], 0x0806)
+        self.assertEqual(validation["operation"], 2)
+        self.assertEqual(validation["operation_label"], "reply")
+
+        # The reply resolves the target: sender HW/proto = the target MAC/IPv4.
+        self.assertTrue(_is_documentation_mac(validation["sender_hardware_addr"]))
+        self.assertEqual(
+            validation["sender_protocol_addr"], plan["target_protocol_addr"]
+        )
+        # The reply is addressed back to the original querier.
+        self.assertEqual(
+            validation["target_hardware_addr"], plan["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["target_protocol_addr"], plan["sender_protocol_addr"]
+        )
+        # The resolved MAC is distinct from the querier MAC.
+        self.assertNotEqual(
+            validation["sender_hardware_addr"], plan["sender_hardware_addr"]
+        )
+
+    def test_target_service_is_the_arp_answering_kernel(self) -> None:
+        plan = _arp_padding_reply_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "arp-kernel")
+        self.assertEqual(target_service["layer"], "link")
+        self.assertEqual(
+            target_service["target_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertTrue(target_service["arp_sysctls"])
+        self.assertTrue(target_service["neighbor_cache_flush"])
+
+    def test_wire_requirements_gate_on_link_layer(self) -> None:
+        plan = _arp_padding_reply_plan()
+        requirements = plan["wire_requirements"]
+        self.assertTrue(requirements["requires_link_layer_send"])
+        self.assertTrue(requirements["requires_link_layer_capture"])
+        self.assertTrue(requirements["requires_broadcast"])
+
+
+class ArpPaddingReplyTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "arp-padding-reply",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1035,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("arp-padding-reply", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "arp-padding-reply"
+            ]
+            self.assertTrue(results, "endpoint emitted no arp-padding-reply result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus frame bytes.
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+                # The endpoint records the sent frame length and the expected
+                # request frame length (the padded minimum) in metadata.
+                self.assertEqual(metadata.get("ethernet_min_frame_len"), 60)
+                self.assertEqual(metadata.get("expected_request_frame_len"), 60)
+                self.assertEqual(metadata.get("sent_frame_len"), 60)
+
+                # The compiled who-has frame is an Ethernet/ARP broadcast request
+                # PADDED up to the 60-byte minimum: 14-byte Ethernet header +
+                # 28-byte ARP payload + 18 trailing zero pad bytes.
+                frame = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertEqual(len(frame), 60)
+                self.assertEqual(frame[0:6], b"\xff\xff\xff\xff\xff\xff")
+                self.assertEqual(frame[12:14], (0x0806).to_bytes(2, "big"))
+                # ARP opcode (frame[20:22]) is the who-has request (1).
+                self.assertEqual(frame[20:22], (1).to_bytes(2, "big"))
+                # The trailing bytes after the 42-byte Ethernet/ARP frame are the
+                # zero padding the agent set (an honored override compile()
+                # preserved).
+                self.assertEqual(frame[42:], b"\x00" * 18)
+
+                # The plan echoed back carries the padding metadata.
+                plan = metadata.get("probe_plan", {})
+                self.assertEqual(plan.get("ethernet_min_frame_len"), 60)
+                self.assertEqual(plan.get("expected_request_frame_len"), 60)
+
+    def test_provider_without_link_layer_skips(self) -> None:
+        # Hetzner cannot provide L2/broadcast/provider-MAC, so the case skips with
+        # a stable capability reason rather than planning a stimulus.
+        if not probe_acceptance.probe_run_available():
+            self.skipTest("probe runner requires uv on PATH")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "hetzner"
+            report_path = probe_acceptance._run_probe_dry_run(
+                "arp-padding-reply",
+                out_dir=out_dir,
+                provider="hetzner",
+                profile="behavior",
+                seed=1035,
+                count=1,
+                timeout_seconds=600,
+            )
+            report = probe_acceptance._load_json(report_path)
+            skips = report.get("skips", [])
+            arp_skips = [
+                skip for skip in skips if skip.get("case") == "arp-padding-reply"
+            ]
+            self.assertTrue(arp_skips, "expected arp-padding-reply to skip on hetzner")
+
+
 if __name__ == "__main__":
     unittest.main()

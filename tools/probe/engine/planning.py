@@ -3720,6 +3720,109 @@ def _arp_unicast_request_reply_probe_plan(
     }
 
 
+def _arp_padding_reply_probe_plan(
+    *,
+    case_name: str = "arp-padding-reply",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``arp-padding-reply`` behavioral case.
+
+    An Ethernet frame carrying ARP has a 28-byte ARP payload; with the 14-byte
+    Ethernet header that is a 42-byte frame, below the 60-byte (sans FCS)
+    Ethernet minimum. Such short frames are commonly padded with trailing zero
+    bytes up to the minimum. This case sends an ordinary broadcast who-has
+    (operation 1) whose Ethernet frame is **deterministically padded** with
+    trailing zero bytes up to the 60-byte minimum (``ethernet_min_frame_len``),
+    so the stimulus exercises libcrafter's ability to emit the padded frame
+    (the padding is an honored override that ``compile()`` preserves) and still
+    parse the target's unicast is-at reply. The padding is carried as plan
+    metadata: ``ethernet_min_frame_len`` (the L2 minimum the frame is padded up
+    to) and ``expected_request_frame_len`` (the resulting sent frame length the
+    endpoint records). The is-at validation contract is the standard reply
+    contract (operation 2, resolved sender hardware/protocol address, the
+    original sender as the reply target, unicast Ethernet framing).
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    stimulus_mac = deterministic_documentation_mac(profile, seed, sequence, role="stimulus")
+    target_mac = deterministic_documentation_mac(profile, seed, sequence, role="target")
+    broadcast_mac = "ff:ff:ff:ff:ff:ff"
+    zero_mac = "00:00:00:00:00:00"
+    # The classic Ethernet minimum payload (sans 4-byte FCS) is 60 bytes; a
+    # 14-byte header + 28-byte ARP payload (42 bytes) is padded up to it.
+    min_frame_len = 60
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "arp_who_has",
+        "expected_response": "arp_is_at",
+        # ARP rides Ethernet directly; these are link-layer documentation values.
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": stimulus_ipv4,
+        "target_hardware_addr": zero_mac,
+        "target_protocol_addr": target_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        # Deterministic Ethernet padding: pad the frame up to the 60-byte
+        # minimum with trailing zero bytes. The endpoint records the resulting
+        # sent frame length so the padded send is inspectable.
+        "ethernet_min_frame_len": min_frame_len,
+        "expected_request_frame_len": min_frame_len,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        # ARP cannot be selected by host/IP BPF; match on the protocol + opcode.
+        "capture_filter": "arp and arp[6:2] = 2",
+        "target_service": {
+            "required": True,
+            "kind": "arp-kernel",
+            "layer": "link",
+            # The target kernel answers ARP who-has for its own configured
+            # address; setup tunes ARP sysctls and flushes the neighbor cache.
+            "target_protocol_addr": target_ipv4,
+            "target_hardware_addr": target_mac,
+            "arp_sysctls": True,
+            "neighbor_cache_flush": True,
+        },
+        "validation": {
+            "ethertype": 0x0806,
+            "operation": 2,
+            "operation_label": "reply",
+            "sender_hardware_addr": target_mac,
+            "sender_protocol_addr": target_ipv4,
+            "target_hardware_addr": stimulus_mac,
+            "target_protocol_addr": stimulus_ipv4,
+            "ethernet_source": target_mac,
+            "ethernet_destination": stimulus_mac,
+        },
+        "wire_requirements": {
+            "requires_link_layer_send": True,
+            "requires_link_layer_capture": True,
+            "requires_broadcast": True,
+            "note": (
+                "ARP resolution is L2 broadcast/unicast traffic; it runs only on a "
+                "provider-backed lab segment, never from privileged host raw sends."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 def deterministic_documentation_mac(
     profile: str,
     seed: int,
@@ -3816,6 +3919,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "arp-source-address-preserved": _arp_source_address_preserved_probe_plan,
     "arp-alias-address-reply": _arp_alias_address_reply_probe_plan,
     "arp-unicast-request-reply": _arp_unicast_request_reply_probe_plan,
+    "arp-padding-reply": _arp_padding_reply_probe_plan,
 }
 
 
