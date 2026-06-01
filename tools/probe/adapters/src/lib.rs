@@ -130,6 +130,10 @@ pub(crate) mod test_support {
             arp_sends: None,
             ethernet_min_frame_len: None,
             expected_request_frame_len: None,
+            flush_neighbor: None,
+            neighbor_flush_interface: None,
+            neighbor_flush_commands: None,
+            neighbor_flush_cleanup_commands: None,
         }
     }
 }

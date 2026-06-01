@@ -1181,5 +1181,213 @@ class ArpPaddingReplyTest(unittest.TestCase):
             self.assertTrue(arp_skips, "expected arp-padding-reply to skip on hetzner")
 
 
+def _arp_cache_flush_reply_plan(*, seed: int = 1036, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["arp-cache-flush-reply"]),
+        case=planning.PROBE_CASE_BY_NAME["arp-cache-flush-reply"],
+        sequence=sequence,
+    )
+
+
+class ArpCacheFlushReplyPlanTest(unittest.TestCase):
+    """The target setup flushes the neighbor cache before the stimulus who-has."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("arp-cache-flush-reply", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["arp-cache-flush-reply"],
+            planning._arp_cache_flush_reply_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _arp_cache_flush_reply_plan(), _arp_cache_flush_reply_plan()
+        )
+
+    def test_plan_carries_a_broadcast_who_has_stimulus(self) -> None:
+        plan = _arp_cache_flush_reply_plan()
+
+        self.assertEqual(plan["case"], "arp-cache-flush-reply")
+        self.assertEqual(plan["stimulus"], "arp_who_has")
+        self.assertEqual(plan["expected_response"], "arp_is_at")
+
+        # ARP rides Ethernet directly (no IP/UDP): ethertype 0x0806, IPv4/Ethernet
+        # hardware/protocol parameters, and the request operation (1).
+        self.assertEqual(plan["ethertype"], 0x0806)
+        self.assertEqual(plan["operation"], 1)
+        self.assertEqual(plan["operation_label"], "request")
+
+        # The request is a broadcast who-has carrying a documentation sender MAC.
+        self.assertTrue(_is_documentation_mac(plan["sender_hardware_addr"]))
+        self.assertEqual(plan["target_hardware_addr"], "00:00:00:00:00:00")
+        self.assertEqual(plan["ethernet_source"], plan["sender_hardware_addr"])
+        self.assertEqual(plan["ethernet_destination"], "ff:ff:ff:ff:ff:ff")
+        self.assertEqual(plan["sender_protocol_addr"], plan["source_ipv4"])
+        self.assertEqual(plan["target_protocol_addr"], plan["destination_ipv4"])
+
+    def test_validation_contract_covers_is_at_fields(self) -> None:
+        plan = _arp_cache_flush_reply_plan()
+        validation = plan["validation"]
+
+        # Same is-at contract as the basic case: a reply (operation 2) resolving
+        # the target MAC/IPv4 back to the original querier.
+        self.assertEqual(validation["ethertype"], 0x0806)
+        self.assertEqual(validation["operation"], 2)
+        self.assertEqual(validation["operation_label"], "reply")
+        self.assertTrue(_is_documentation_mac(validation["sender_hardware_addr"]))
+        self.assertEqual(
+            validation["sender_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertEqual(
+            validation["target_hardware_addr"], plan["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["target_protocol_addr"], plan["sender_protocol_addr"]
+        )
+        self.assertEqual(
+            validation["ethernet_source"], validation["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["ethernet_destination"], plan["sender_hardware_addr"]
+        )
+        self.assertNotEqual(
+            validation["sender_hardware_addr"], plan["sender_hardware_addr"]
+        )
+
+    def test_target_service_flushes_neighbor_cache_before_stimulus(self) -> None:
+        plan = _arp_cache_flush_reply_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "arp-kernel")
+        self.assertEqual(target_service["layer"], "link")
+        self.assertEqual(
+            target_service["target_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertTrue(target_service["arp_sysctls"])
+        self.assertTrue(target_service["neighbor_cache_flush"])
+
+        # The behavioral distinction: an explicit pre-stimulus neighbor flush
+        # marker plus the setup flush commands (run BEFORE the stimulus) and the
+        # cleanup commands (leaving neighbor state in a normal flushed state).
+        self.assertTrue(target_service["flush_neighbor"])
+        setup = target_service["neighbor_flush_commands"]
+        cleanup = target_service["neighbor_flush_cleanup_commands"]
+        self.assertTrue(setup, "expected pre-stimulus neighbor flush setup commands")
+        self.assertTrue(cleanup, "expected neighbor flush cleanup commands")
+        # The setup flushes the neighbor cache before the who-has is sent.
+        self.assertTrue(
+            any(command.startswith("ip neigh flush") for command in setup),
+            f"expected an `ip neigh flush` setup command, got {setup}",
+        )
+        # The cleanup leaves neighbor state in a normal (flushed) state.
+        self.assertTrue(
+            any(command.startswith("ip neigh flush") for command in cleanup),
+            f"expected an `ip neigh flush` cleanup command, got {cleanup}",
+        )
+
+        # The same flush contract is surfaced at the top level so the stimulus
+        # endpoint reads it through the flattened plan.
+        self.assertTrue(plan["flush_neighbor"])
+        self.assertEqual(plan["neighbor_flush_commands"], setup)
+        self.assertEqual(plan["neighbor_flush_cleanup_commands"], cleanup)
+
+    def test_wire_requirements_gate_on_link_layer(self) -> None:
+        plan = _arp_cache_flush_reply_plan()
+        requirements = plan["wire_requirements"]
+        self.assertTrue(requirements["requires_link_layer_send"])
+        self.assertTrue(requirements["requires_link_layer_capture"])
+        self.assertTrue(requirements["requires_broadcast"])
+
+
+class ArpCacheFlushReplyTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "arp-cache-flush-reply",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1036,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("arp-cache-flush-reply", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "arp-cache-flush-reply"
+            ]
+            self.assertTrue(
+                results, "endpoint emitted no arp-cache-flush-reply result"
+            )
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus frame bytes: an
+                # Ethernet/ARP broadcast who-has request (opcode 1).
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                frame = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertGreaterEqual(len(frame), 14 + 28)
+                self.assertEqual(frame[0:6], b"\xff\xff\xff\xff\xff\xff")
+                self.assertEqual(frame[12:14], (0x0806).to_bytes(2, "big"))
+                # ARP opcode (frame[20:22]) is the who-has request (1).
+                self.assertEqual(frame[20:22], (1).to_bytes(2, "big"))
+
+                # The probe plan echoed back validates a fresh is-at reply
+                # (operation 2) the same way the basic case does.
+                plan = metadata.get("probe_plan", {})
+                validation = plan.get("validation", {})
+                self.assertEqual(validation.get("operation"), 2)
+
+                # The endpoint's target service surfaces the explicit pre-stimulus
+                # neighbor flush (setup) and the cleanup that leaves neighbor state
+                # in a normal flushed state.
+                target_service = metadata.get("target_service", {})
+                self.assertEqual(target_service.get("kind"), "arp-kernel")
+                self.assertTrue(target_service.get("flush_neighbor"))
+                setup = target_service.get("neighbor_flush_commands") or []
+                cleanup = target_service.get("neighbor_flush_cleanup_commands") or []
+                self.assertTrue(
+                    any(str(c).startswith("ip neigh flush") for c in setup),
+                    f"expected a flush setup command in target service, got {setup}",
+                )
+                self.assertTrue(
+                    any(str(c).startswith("ip neigh flush") for c in cleanup),
+                    f"expected a flush cleanup command in target service, got {cleanup}",
+                )
+
+    def test_provider_without_link_layer_skips(self) -> None:
+        # Hetzner cannot provide L2/broadcast/provider-MAC, so the case skips with
+        # a stable capability reason rather than planning a stimulus.
+        if not probe_acceptance.probe_run_available():
+            self.skipTest("probe runner requires uv on PATH")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "hetzner"
+            report_path = probe_acceptance._run_probe_dry_run(
+                "arp-cache-flush-reply",
+                out_dir=out_dir,
+                provider="hetzner",
+                profile="behavior",
+                seed=1036,
+                count=1,
+                timeout_seconds=600,
+            )
+            report = probe_acceptance._load_json(report_path)
+            skips = report.get("skips", [])
+            arp_skips = [
+                skip
+                for skip in skips
+                if skip.get("case") == "arp-cache-flush-reply"
+            ]
+            self.assertTrue(
+                arp_skips, "expected arp-cache-flush-reply to skip on hetzner"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

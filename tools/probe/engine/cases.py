@@ -316,8 +316,8 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
         metadata={"layer": "link"},
     ),
     _behavior_case(
-        name="arp-after-cache-flush",
-        description="Validate a reply after a neighbor cache flush.",
+        name="arp-cache-flush-reply",
+        description="Flush the neighbor cache, then validate a fresh who-has reply.",
         stimulus="arp_who_has",
         expected_response="arp_is_at",
         required_capabilities=_ARP_CAPABILITIES,

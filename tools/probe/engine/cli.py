@@ -605,6 +605,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "arp-alias-address-reply",
         "arp-unicast-request-reply",
         "arp-padding-reply",
+        "arp-cache-flush-reply",
     }
 )
 
@@ -1242,6 +1243,7 @@ def _probe_plan_with_endpoint_addresses(
         "arp-alias-address-reply",
         "arp-unicast-request-reply",
         "arp-padding-reply",
+        "arp-cache-flush-reply",
     }:
         # ARP rides Ethernet directly (no IP/UDP), so the lab rewrite touches the
         # ARP protocol addresses rather than transport IPs: the stimulus resolves
@@ -1311,6 +1313,31 @@ def _probe_plan_with_endpoint_addresses(
             target_mac = target_service.get("target_hardware_addr")
             if isinstance(target_mac, str) and target_mac:
                 updated["ethernet_destination"] = target_mac
+        if case_name == "arp-cache-flush-reply":
+            # The cache-flush case carries an explicit pre-stimulus neighbor flush
+            # (a `flush_neighbor` marker plus the setup/cleanup `ip neigh` commands)
+            # both at the top level (read by the endpoint via the flattened plan)
+            # and mirrored into the target service. The documentation-space commands
+            # name the stimulus IPv4; rewrite that onto the lab segment so the live
+            # setup flushes the querier the on-segment who-has actually resolves.
+            doc_stimulus_ipv4 = str(plan.get("source_ipv4", ""))
+
+            def _rewrite_flush(commands: object) -> object:
+                if not isinstance(commands, list):
+                    return commands
+                return [
+                    command.replace(doc_stimulus_ipv4, source_ipv4)
+                    if isinstance(command, str) and doc_stimulus_ipv4
+                    else command
+                    for command in commands
+                ]
+
+            for key in ("neighbor_flush_commands", "neighbor_flush_cleanup_commands"):
+                if key in updated:
+                    updated[key] = _rewrite_flush(updated[key])
+                if key in target_service:
+                    target_service[key] = _rewrite_flush(target_service[key])
+            updated["target_service"] = target_service
         # arp-repeat-two-replies carries a per-send array: rewrite each who-has
         # send's ARP protocol addresses and is-at validation contract onto the lab
         # segment so every send resolves the same target and each decoded is-at
@@ -1506,10 +1533,12 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
         ]
-    if case_name == "arp-alias-address-reply":
+    if case_name in {"arp-alias-address-reply", "arp-cache-flush-reply"}:
         # The alias case adds (and removes) a secondary IPv4 on the target
-        # interface as part of target setup, so an alias add/del failure is a
-        # distinct failure mode on top of the shared ARP reasons.
+        # interface as part of target setup; the cache-flush case flushes the
+        # neighbor cache before the stimulus as part of target setup. Either
+        # setup step failing is a distinct failure mode on top of the shared ARP
+        # reasons.
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,

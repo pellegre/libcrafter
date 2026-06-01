@@ -329,6 +329,22 @@ pub struct ProbePlan {
     pub ethernet_min_frame_len: Option<usize>,
     #[serde(default)]
     pub expected_request_frame_len: Option<usize>,
+    // Neighbor-cache flush ARP behavioral case fields (`arp-cache-flush-reply`).
+    // Provider VMs can carry neighbor state across packets in a session, so the
+    // target setup flushes the relevant neighbor entries *before* the stimulus
+    // who-has (`neighbor_flush_commands`) and cleanup leaves neighbor state in a
+    // normal provider-controlled (flushed) state
+    // (`neighbor_flush_cleanup_commands`). `flush_neighbor` marks the case as
+    // requiring this explicit pre-stimulus flush. Other ARP cases leave these
+    // unset (they still carry the implicit `neighbor_cache_flush` sysctl flush).
+    #[serde(default)]
+    pub flush_neighbor: Option<bool>,
+    #[serde(default)]
+    pub neighbor_flush_interface: Option<String>,
+    #[serde(default)]
+    pub neighbor_flush_commands: Option<Vec<String>>,
+    #[serde(default)]
+    pub neighbor_flush_cleanup_commands: Option<Vec<String>>,
 }
 
 /// Validation contract for the ARP is-at reply (`arp-basic-who-has`).
@@ -787,7 +803,8 @@ fn dispatch_case(
             | "arp-source-address-preserved"
             | "arp-alias-address-reply"
             | "arp-unicast-request-reply"
-            | "arp-padding-reply",
+            | "arp-padding-reply"
+            | "arp-cache-flush-reply",
         ) => arp::run_arp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -796,7 +813,8 @@ fn dispatch_case(
             | "arp-source-address-preserved"
             | "arp-alias-address-reply"
             | "arp-unicast-request-reply"
-            | "arp-padding-reply",
+            | "arp-padding-reply"
+            | "arp-cache-flush-reply",
         ) => arp::run_arp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -1112,7 +1130,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "arp-source-address-preserved"
         | "arp-alias-address-reply"
         | "arp-unicast-request-reply"
-        | "arp-padding-reply" => "arp and arp[6:2] = 2".to_string(),
+        | "arp-padding-reply"
+        | "arp-cache-flush-reply" => "arp and arp[6:2] = 2".to_string(),
         _ => String::new(),
     }
 }
@@ -1151,7 +1170,8 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "arp-source-address-preserved"
             | "arp-alias-address-reply"
             | "arp-unicast-request-reply"
-            | "arp-padding-reply" => "arp_is_at",
+            | "arp-padding-reply"
+            | "arp-cache-flush-reply" => "arp_is_at",
             _ => "unknown",
         })
 }
@@ -1510,6 +1530,31 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "repeat": {
                 "sends": arp::repeat_sends_json(plan.arp_sends.as_deref()),
             },
+        }),
+        "arp-cache-flush-reply" => json!({
+            "required": true,
+            // ARP relies primarily on the target kernel answering who-has for its
+            // own configured address; setup tunes ARP sysctls and flushes the
+            // neighbor cache (no listening daemon).
+            "kind": "arp-kernel",
+            "layer": "link",
+            "target_protocol_addr": plan.target_protocol_addr,
+            "target_hardware_addr": plan
+                .validation
+                .as_ref()
+                .and_then(|validation| validation.sender_hardware_addr.clone()),
+            "arp_sysctls": true,
+            "neighbor_cache_flush": true,
+            // The behavioral distinction: the target setup flushes the relevant
+            // neighbor entries BEFORE the stimulus who-has so resolution starts
+            // cold, and cleanup leaves neighbor state in the normal,
+            // provider-controlled (flushed) state. Surface the explicit flush
+            // marker, interface, and setup/cleanup commands so the dry-run target
+            // service plan documents the cache-cleanup contract.
+            "flush_neighbor": plan.flush_neighbor.unwrap_or(true),
+            "neighbor_flush_interface": plan.neighbor_flush_interface,
+            "neighbor_flush_commands": plan.neighbor_flush_commands,
+            "neighbor_flush_cleanup_commands": plan.neighbor_flush_cleanup_commands,
         }),
         _ => json!({}),
     }
