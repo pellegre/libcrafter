@@ -1,9 +1,9 @@
 //! UDP behavioral probe cases.
 //!
-//! `udp-echo-empty`, `udp-echo-short`, `udp-echo-binary`, and `udp-echo-large`
-//! send IPv4/UDP datagrams to a controlled target-side UDP echo responder, then
-//! validate the decoded UDP response's peer tuple, length, checksum status, and
-//! exact echoed payload.
+//! `udp-echo-empty`, `udp-echo-short`, `udp-echo-binary`, `udp-echo-large`, and
+//! `udp-source-port-reflection` send IPv4/UDP datagrams to a controlled
+//! target-side UDP echo responder, then validate the decoded UDP response's peer
+//! tuple, length, checksum status, and exact echoed payload.
 
 use crafter::prelude::*;
 use serde_json::json;
@@ -439,6 +439,12 @@ mod tests {
         echo_plan("udp-echo-large", &payload)
     }
 
+    fn source_port_reflection_plan() -> ProbePlan {
+        let mut plan = echo_plan("udp-source-port-reflection", b"udp-source-port:1234abcd");
+        plan.source_port = Some(62044);
+        plan
+    }
+
     #[test]
     fn udp_echo_empty_packet_has_no_payload_and_udp_length_eight() {
         let packet = udp_packet(&empty_echo_plan()).unwrap();
@@ -536,6 +542,22 @@ mod tests {
 
         let validation = validate_udp_candidate(&plan, &decoded, response.as_bytes()).unwrap();
         assert!(matches!(validation, CandidateValidation::Passed(_)));
+    }
+
+    #[test]
+    fn validate_udp_candidate_rejects_wrong_reflected_destination_port() {
+        let plan = source_port_reflection_plan();
+        let response = (Ipv4::new()
+            .src("192.0.2.20".parse::<Ipv4Addr>().unwrap())
+            .dst("192.0.2.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().source_port(30000).destination_port(46000)
+            / Raw::from("udp-source-port:1234abcd"))
+        .compile()
+        .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, response.as_bytes()).unwrap();
+
+        let validation = validate_udp_candidate(&plan, &decoded, response.as_bytes()).unwrap();
+        assert!(matches!(validation, CandidateValidation::WrongPeer(_)));
     }
 
     #[test]

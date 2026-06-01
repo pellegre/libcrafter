@@ -613,6 +613,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "udp-echo-short",
         "udp-echo-binary",
         "udp-echo-large",
+        "udp-source-port-reflection",
     }
 )
 
@@ -1248,6 +1249,7 @@ def _probe_plan_with_endpoint_addresses(
         "udp-echo-short",
         "udp-echo-binary",
         "udp-echo-large",
+        "udp-source-port-reflection",
     }:
         source_port = int(updated.get("source_port", 0))
         destination_port = int(updated.get("destination_port", 0))
@@ -1661,6 +1663,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "udp-echo-short",
         "udp-echo-binary",
         "udp-echo-large",
+        "udp-source-port-reflection",
     }:
         return [
             FAILURE_TIMEOUT,

@@ -4413,12 +4413,15 @@ def _udp_echo_probe_plan(
     sequence: int,
     payload: bytes,
     payload_metadata: JSONObject | None = None,
+    source_port: int | None = None,
 ) -> JSONObject:
     """Plan a UDP datagram echoed by a controlled UDP responder."""
 
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
-    source_port = 46000 + int.from_bytes(digest[0:2], "big") % 8000
+    planned_source_port = source_port
+    if planned_source_port is None:
+        planned_source_port = 46000 + int.from_bytes(digest[0:2], "big") % 8000
     destination_port = 30000 + int.from_bytes(digest[2:4], "big") % 8000
     payload_hex = payload.hex()
     payload_length = len(payload)
@@ -4438,7 +4441,7 @@ def _udp_echo_probe_plan(
         "destination_ipv4": target_ipv4,
         "expected_reply_source_ipv4": target_ipv4,
         "expected_reply_destination_ipv4": stimulus_ipv4,
-        "source_port": source_port,
+        "source_port": planned_source_port,
         "destination_port": destination_port,
         "payload_hex": payload_hex,
         "payload_length": payload_length,
@@ -4462,13 +4465,13 @@ def _udp_echo_probe_plan(
         },
         "capture_filter": (
             f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
+            f"and src port {destination_port} and dst port {planned_source_port}"
         ),
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
             "source_port": destination_port,
-            "destination_port": source_port,
+            "destination_port": planned_source_port,
             "payload_hex": payload_hex,
             "payload_length": payload_length,
             "udp_length": expected_udp_length,
@@ -4598,6 +4601,44 @@ def _udp_echo_large_probe_plan(
     )
 
 
+def _udp_source_port_reflection_probe_plan(
+    *,
+    case_name: str = "udp-source-port-reflection",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan a UDP echo response that must target the stimulus source port."""
+
+    payload_digest = deterministic_bytes(
+        "udp-source-port-reflection-payload",
+        profile,
+        seed,
+        sequence,
+    )
+    port_digest = deterministic_bytes(
+        "udp-source-port-reflection-source-port",
+        profile,
+        seed,
+        sequence,
+    )
+    payload = f"udp-source-port:{payload_digest.hex()[:8]}".encode("ascii")
+    source_port = 60000 + int.from_bytes(port_digest[0:2], "big") % 4000
+    payload_metadata: JSONObject = {
+        "source_port_policy": "deterministic_high",
+        "source_port_reflection": True,
+    }
+    return _udp_echo_probe_plan(
+        case_name=case_name,
+        profile=profile,
+        seed=seed,
+        sequence=sequence,
+        payload=payload,
+        payload_metadata=payload_metadata,
+        source_port=source_port,
+    )
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
@@ -4643,6 +4684,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "udp-echo-short": _udp_echo_short_probe_plan,
     "udp-echo-binary": _udp_echo_binary_probe_plan,
     "udp-echo-large": _udp_echo_large_probe_plan,
+    "udp-source-port-reflection": _udp_source_port_reflection_probe_plan,
 }
 
 

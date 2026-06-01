@@ -854,11 +854,19 @@ fn dispatch_case(
         ) => arp::run_arp_live(request, plan),
         (
             RunMode::DryRun,
-            "udp-echo-empty" | "udp-echo-short" | "udp-echo-binary" | "udp-echo-large",
+            "udp-echo-empty"
+            | "udp-echo-short"
+            | "udp-echo-binary"
+            | "udp-echo-large"
+            | "udp-source-port-reflection",
         ) => udp::run_udp_dry_run(request, plan),
         (
             RunMode::Live,
-            "udp-echo-empty" | "udp-echo-short" | "udp-echo-binary" | "udp-echo-large",
+            "udp-echo-empty"
+            | "udp-echo-short"
+            | "udp-echo-binary"
+            | "udp-echo-large"
+            | "udp-source-port-reflection",
         ) => udp::run_udp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -1173,7 +1181,11 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 plan.source_port.unwrap_or(DHCP_CLIENT_PORT),
             )
         }
-        "udp-echo-empty" | "udp-echo-short" | "udp-echo-binary" | "udp-echo-large" => {
+        "udp-echo-empty"
+        | "udp-echo-short"
+        | "udp-echo-binary"
+        | "udp-echo-large"
+        | "udp-source-port-reflection" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -1228,9 +1240,11 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-inform-ack" => "dhcp_ack",
             "dhcp-request-nak" => "dhcp_nak",
             "dhcp-rapid-repeat" => "dhcp_offer",
-            "udp-echo-empty" | "udp-echo-short" | "udp-echo-binary" | "udp-echo-large" => {
-                "udp_response"
-            }
+            "udp-echo-empty"
+            | "udp-echo-short"
+            | "udp-echo-binary"
+            | "udp-echo-large"
+            | "udp-source-port-reflection" => "udp_response",
             "arp-basic-who-has"
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
@@ -1536,7 +1550,11 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "sends": dhcp::repeat_sends_json(plan.dhcp_sends.as_deref()),
             },
         }),
-        "udp-echo-empty" | "udp-echo-short" | "udp-echo-binary" | "udp-echo-large" => json!({
+        "udp-echo-empty"
+        | "udp-echo-short"
+        | "udp-echo-binary"
+        | "udp-echo-large"
+        | "udp-source-port-reflection" => json!({
             "required": true,
             "kind": "udp-responder",
             "mode": "echo",
@@ -1684,7 +1702,11 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
 
 pub fn validation_json(plan: &ProbePlan) -> Value {
     match plan.case.as_str() {
-        "udp-echo-empty" | "udp-echo-short" | "udp-echo-binary" | "udp-echo-large" => json!({
+        "udp-echo-empty"
+        | "udp-echo-short"
+        | "udp-echo-binary"
+        | "udp-echo-large"
+        | "udp-source-port-reflection" => json!({
             "source_ipv4": plan.expected_reply_source_ipv4,
             "destination_ipv4": plan.expected_reply_destination_ipv4,
             "source_port": plan.destination_port,
