@@ -353,6 +353,16 @@ pub struct ProbePlan {
     pub neighbor_flush_commands: Option<Vec<String>>,
     #[serde(default)]
     pub neighbor_flush_cleanup_commands: Option<Vec<String>>,
+    // Broadcast-filtered ARP behavioral case fields
+    // (`arp-broadcast-filtered-capture`). The capture filter intentionally
+    // admits all ARP replies, including an optional setup decoy event; the ARP
+    // module ignores replies whose decoded target protocol address is not the
+    // planned sender protocol address and only passes on the matching is-at
+    // contract.
+    #[serde(default)]
+    pub ignore_unmatched_arp_replies: Option<bool>,
+    #[serde(default)]
+    pub decoy_arp_event: Option<Value>,
 }
 
 /// Validation contract for the ARP is-at reply (`arp-basic-who-has`).
@@ -814,7 +824,8 @@ fn dispatch_case(
             | "arp-padding-reply"
             | "arp-cache-flush-reply"
             | "arp-mac-validation"
-            | "arp-spa-variation",
+            | "arp-spa-variation"
+            | "arp-broadcast-filtered-capture",
         ) => arp::run_arp_dry_run(request, plan),
         (
             RunMode::Live,
@@ -826,7 +837,8 @@ fn dispatch_case(
             | "arp-padding-reply"
             | "arp-cache-flush-reply"
             | "arp-mac-validation"
-            | "arp-spa-variation",
+            | "arp-spa-variation"
+            | "arp-broadcast-filtered-capture",
         ) => arp::run_arp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -999,6 +1011,8 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "target_protocol_addr": plan.target_protocol_addr,
         "alias_ipv4": plan.alias_ipv4,
         "alt_sender_ipv4": plan.alt_sender_ipv4,
+        "ignore_unmatched_arp_replies": plan.ignore_unmatched_arp_replies,
+        "decoy_arp_event": plan.decoy_arp_event,
         "ethernet_source": plan.ethernet_source,
         "ethernet_destination": plan.ethernet_destination,
         "ethernet_min_frame_len": plan.ethernet_min_frame_len,
@@ -1145,7 +1159,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "arp-unicast-request-reply"
         | "arp-padding-reply"
         | "arp-cache-flush-reply"
-        | "arp-mac-validation" => "arp and arp[6:2] = 2".to_string(),
+        | "arp-mac-validation"
+        | "arp-broadcast-filtered-capture" => "arp and arp[6:2] = 2".to_string(),
         _ => String::new(),
     }
 }
@@ -1186,7 +1201,8 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "arp-unicast-request-reply"
             | "arp-padding-reply"
             | "arp-cache-flush-reply"
-            | "arp-mac-validation" => "arp_is_at",
+            | "arp-mac-validation"
+            | "arp-broadcast-filtered-capture" => "arp_is_at",
             _ => "unknown",
         })
 }
@@ -1504,6 +1520,23 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "neighbor_cache_flush": true,
             })
         }
+        "arp-broadcast-filtered-capture" => json!({
+            "required": true,
+            // ARP relies primarily on the target kernel answering who-has for its
+            // own configured address; setup can also emit unrelated ARP replies.
+            // The capture remains broad, and the ARP module ignores decoded decoys
+            // that do not target the planned sender protocol address.
+            "kind": "arp-kernel",
+            "layer": "link",
+            "target_protocol_addr": plan.target_protocol_addr,
+            "target_hardware_addr": plan
+                .validation
+                .as_ref()
+                .and_then(|validation| validation.sender_hardware_addr.clone()),
+            "arp_sysctls": true,
+            "neighbor_cache_flush": true,
+            "decoy_arp_event": plan.decoy_arp_event,
+        }),
         "arp-alias-address-reply" => json!({
             "required": true,
             // Target setup adds (and cleanup removes) a deterministic secondary

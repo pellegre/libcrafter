@@ -1812,5 +1812,183 @@ class ArpSpaVariationTest(unittest.TestCase):
             self.assertTrue(arp_skips, "expected arp-spa-variation to skip on hetzner")
 
 
+def _arp_broadcast_filtered_capture_plan(
+    *, seed: int = 1039, sequence: int = 0
+) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["arp-broadcast-filtered-capture"]),
+        case=planning.PROBE_CASE_BY_NAME["arp-broadcast-filtered-capture"],
+        sequence=sequence,
+    )
+
+
+class ArpBroadcastFilteredCaptureTest(unittest.TestCase):
+    """A broad ARP capture ignores decoy setup replies and matches the target."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("arp-broadcast-filtered-capture", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["arp-broadcast-filtered-capture"],
+            planning._arp_broadcast_filtered_capture_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _arp_broadcast_filtered_capture_plan(),
+            _arp_broadcast_filtered_capture_plan(),
+        )
+
+    def test_plan_carries_primary_target_and_decoy_arp_event(self) -> None:
+        plan = _arp_broadcast_filtered_capture_plan()
+
+        self.assertEqual(plan["case"], "arp-broadcast-filtered-capture")
+        self.assertEqual(plan["stimulus"], "arp_who_has")
+        self.assertEqual(plan["expected_response"], "arp_is_at")
+        self.assertEqual(plan["capture_filter"], "arp and arp[6:2] = 2")
+        self.assertTrue(plan["ignore_unmatched_arp_replies"])
+
+        primary_target = plan["primary_target"]
+        self.assertEqual(
+            primary_target["target_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertEqual(
+            primary_target["target_hardware_addr"],
+            plan["validation"]["sender_hardware_addr"],
+        )
+
+        decoy = plan["decoy_arp_event"]
+        self.assertTrue(decoy["present"])
+        self.assertEqual(decoy["kind"], "arp-is-at")
+        self.assertEqual(decoy["operation"], 2)
+        self.assertEqual(decoy["expected_endpoint_action"], "ignore")
+        self.assertTrue(_is_documentation_mac(decoy["sender_hardware_addr"]))
+        self.assertTrue(_is_documentation_mac(decoy["target_hardware_addr"]))
+
+        # The decoy is deliberately unrelated to the planned exchange: it resolves
+        # a different sender protocol address and is addressed to a different
+        # target protocol address, so decoded-candidate matching must ignore it.
+        validation = plan["validation"]
+        self.assertNotEqual(
+            decoy["sender_protocol_addr"], validation["sender_protocol_addr"]
+        )
+        self.assertNotEqual(
+            decoy["target_protocol_addr"], validation["target_protocol_addr"]
+        )
+
+    def test_validation_contract_matches_the_planned_sender_context(self) -> None:
+        plan = _arp_broadcast_filtered_capture_plan()
+        validation = plan["validation"]
+
+        self.assertEqual(validation["operation"], 2)
+        self.assertEqual(validation["operation_label"], "reply")
+        self.assertEqual(
+            validation["sender_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertEqual(
+            validation["target_hardware_addr"], plan["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["target_protocol_addr"], plan["sender_protocol_addr"]
+        )
+        self.assertEqual(
+            validation["ethernet_source"], validation["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["ethernet_destination"], plan["sender_hardware_addr"]
+        )
+
+    def test_target_service_surfaces_the_decoy_setup_event(self) -> None:
+        plan = _arp_broadcast_filtered_capture_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "arp-kernel")
+        self.assertEqual(target_service["layer"], "link")
+        self.assertEqual(
+            target_service["target_protocol_addr"], plan["target_protocol_addr"]
+        )
+        self.assertEqual(
+            target_service["decoy_arp_event"], plan["decoy_arp_event"]
+        )
+        self.assertTrue(target_service["arp_sysctls"])
+        self.assertTrue(target_service["neighbor_cache_flush"])
+
+    def test_case_is_in_the_arp_kernel_target_service_group(self) -> None:
+        self.assertIn(
+            "arp-broadcast-filtered-capture", target_services._ARP_KERNEL_CASES
+        )
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "arp-broadcast-filtered-capture",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1039,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("arp-broadcast-filtered-capture", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "arp-broadcast-filtered-capture"
+            ]
+            self.assertTrue(
+                results, "endpoint emitted no arp-broadcast-filtered-capture result"
+            )
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                frame = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertGreaterEqual(len(frame), 14 + 28)
+                self.assertEqual(frame[0:6], b"\xff\xff\xff\xff\xff\xff")
+                self.assertEqual(frame[12:14], (0x0806).to_bytes(2, "big"))
+                self.assertEqual(frame[20:22], (1).to_bytes(2, "big"))
+
+                plan = metadata.get("probe_plan", {})
+                self.assertTrue(plan.get("ignore_unmatched_arp_replies"))
+                decoy = plan.get("decoy_arp_event", {})
+                self.assertEqual(decoy.get("expected_endpoint_action"), "ignore")
+                validation = plan.get("validation", {})
+                self.assertNotEqual(
+                    decoy.get("target_protocol_addr"),
+                    validation.get("target_protocol_addr"),
+                )
+                target_service = metadata.get("target_service", {})
+                self.assertEqual(target_service.get("decoy_arp_event"), decoy)
+
+    def test_provider_without_link_layer_skips(self) -> None:
+        # Hetzner cannot provide L2/broadcast/provider-MAC, so the case skips with
+        # a stable capability reason rather than planning a stimulus.
+        if not probe_acceptance.probe_run_available():
+            self.skipTest("probe runner requires uv on PATH")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "hetzner"
+            report_path = probe_acceptance._run_probe_dry_run(
+                "arp-broadcast-filtered-capture",
+                out_dir=out_dir,
+                provider="hetzner",
+                profile="behavior",
+                seed=1039,
+                count=1,
+                timeout_seconds=600,
+            )
+            report = probe_acceptance._load_json(report_path)
+            skips = report.get("skips", [])
+            arp_skips = [
+                skip
+                for skip in skips
+                if skip.get("case") == "arp-broadcast-filtered-capture"
+            ]
+            self.assertTrue(
+                arp_skips, "expected arp-broadcast-filtered-capture to skip on hetzner"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

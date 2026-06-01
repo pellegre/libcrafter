@@ -4169,6 +4169,125 @@ def _arp_mac_validation_probe_plan(
     }
 
 
+def _arp_broadcast_filtered_capture_probe_plan(
+    *,
+    case_name: str = "arp-broadcast-filtered-capture",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``arp-broadcast-filtered-capture`` behavioral case.
+
+    A broadcast who-has request (operation 1) resolves the target endpoint's IPv4
+    address, while the target setup may also emit an unrelated ARP is-at event on
+    the same segment. The capture filter intentionally stays broad (ARP replies:
+    ``arp and arp[6:2] = 2``), so the stimulus endpoint must decode every
+    captured ARP reply, ignore the setup decoy whose target protocol address is
+    not the planned querier address, and pass only when the decoded reply matches
+    the primary is-at validation contract.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    decoy_sender_ipv4 = deterministic_arp_alias_ipv4(profile, seed, sequence)
+    decoy_target_ipv4 = deterministic_arp_alt_sender_ipv4(profile, seed, sequence)
+    stimulus_mac = deterministic_documentation_mac(profile, seed, sequence, role="stimulus")
+    target_mac = deterministic_documentation_mac(profile, seed, sequence, role="target")
+    decoy_sender_mac = deterministic_documentation_mac(
+        profile, seed, sequence, role="decoy-sender"
+    )
+    decoy_target_mac = deterministic_documentation_mac(
+        profile, seed, sequence, role="decoy-target"
+    )
+    broadcast_mac = "ff:ff:ff:ff:ff:ff"
+    zero_mac = "00:00:00:00:00:00"
+    decoy_arp_event: JSONObject = {
+        "present": True,
+        "kind": "arp-is-at",
+        "setup_origin": "target",
+        "operation": 2,
+        "operation_label": "reply",
+        "sender_hardware_addr": decoy_sender_mac,
+        "sender_protocol_addr": decoy_sender_ipv4,
+        "target_hardware_addr": decoy_target_mac,
+        "target_protocol_addr": decoy_target_ipv4,
+        "ethernet_source": decoy_sender_mac,
+        "ethernet_destination": decoy_target_mac,
+        "expected_endpoint_action": "ignore",
+    }
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "arp_who_has",
+        "expected_response": "arp_is_at",
+        # ARP rides Ethernet directly; these are link-layer documentation values.
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": stimulus_ipv4,
+        "target_hardware_addr": zero_mac,
+        "target_protocol_addr": target_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "primary_target": {
+            "target_protocol_addr": target_ipv4,
+            "target_hardware_addr": target_mac,
+        },
+        # The capture stays broad enough to see unrelated is-at replies; decoded
+        # reply matching filters them by the validation target protocol address.
+        "capture_filter": "arp and arp[6:2] = 2",
+        "ignore_unmatched_arp_replies": True,
+        "decoy_arp_event": decoy_arp_event,
+        "target_service": {
+            "required": True,
+            "kind": "arp-kernel",
+            "layer": "link",
+            "target_protocol_addr": target_ipv4,
+            "target_hardware_addr": target_mac,
+            "arp_sysctls": True,
+            "neighbor_cache_flush": True,
+            # Setup may emit unrelated ARP traffic on shared/private segments.
+            # The endpoint should ignore this decoded decoy and keep waiting for
+            # the primary target reply.
+            "decoy_arp_event": decoy_arp_event,
+        },
+        "validation": {
+            "ethertype": 0x0806,
+            "operation": 2,
+            "operation_label": "reply",
+            "sender_hardware_addr": target_mac,
+            "sender_protocol_addr": target_ipv4,
+            "target_hardware_addr": stimulus_mac,
+            "target_protocol_addr": stimulus_ipv4,
+            "ethernet_source": target_mac,
+            "ethernet_destination": stimulus_mac,
+        },
+        "wire_requirements": {
+            "requires_link_layer_send": True,
+            "requires_link_layer_capture": True,
+            "requires_broadcast": True,
+            "note": (
+                "ARP resolution is L2 broadcast/unicast traffic; it runs only on a "
+                "provider-backed lab segment, never from privileged host raw sends."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 def deterministic_documentation_mac(
     profile: str,
     seed: int,
@@ -4293,6 +4412,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "arp-cache-flush-reply": _arp_cache_flush_reply_probe_plan,
     "arp-mac-validation": _arp_mac_validation_probe_plan,
     "arp-spa-variation": _arp_spa_variation_probe_plan,
+    "arp-broadcast-filtered-capture": _arp_broadcast_filtered_capture_probe_plan,
 }
 
 

@@ -608,6 +608,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "arp-cache-flush-reply",
         "arp-mac-validation",
         "arp-spa-variation",
+        "arp-broadcast-filtered-capture",
     }
 )
 
@@ -1248,6 +1249,7 @@ def _probe_plan_with_endpoint_addresses(
         "arp-cache-flush-reply",
         "arp-mac-validation",
         "arp-spa-variation",
+        "arp-broadcast-filtered-capture",
     }:
         # ARP rides Ethernet directly (no IP/UDP), so the lab rewrite touches the
         # ARP protocol addresses rather than transport IPs: the stimulus resolves
@@ -1269,6 +1271,7 @@ def _probe_plan_with_endpoint_addresses(
         # reply sender-proto.
         is_alias_case = case_name == "arp-alias-address-reply"
         is_spa_case = case_name == "arp-spa-variation"
+        is_filtered_capture_case = case_name == "arp-broadcast-filtered-capture"
         resolved_ipv4 = (
             _lab_arp_alias_ipv4(target_ipv4, source_ipv4)
             if is_alias_case
@@ -1322,6 +1325,21 @@ def _probe_plan_with_endpoint_addresses(
             # adds (and cleanup removes) the secondary sender address.
             target_service["alt_sender_ipv4"] = sender_proto
             target_service["alt_sender_address"] = True
+        if is_filtered_capture_case:
+            decoy_sender_ipv4 = _lab_arp_alias_ipv4(target_ipv4, source_ipv4)
+            decoy_target_ipv4 = _lab_arp_alias_ipv4(source_ipv4, target_ipv4)
+
+            def _rewrite_decoy_arp_event(raw_event: object) -> JSONObject:
+                event = dict(json_object(raw_event, "probe_plan.decoy_arp_event"))
+                event["sender_protocol_addr"] = decoy_sender_ipv4
+                event["target_protocol_addr"] = decoy_target_ipv4
+                return event
+
+            if isinstance(updated.get("decoy_arp_event"), dict):
+                updated["decoy_arp_event"] = _rewrite_decoy_arp_event(
+                    updated["decoy_arp_event"]
+                )
+            target_service["decoy_arp_event"] = updated.get("decoy_arp_event")
         updated["target_service"] = target_service
         arp_validation = dict(
             json_object(updated.get("validation", {}), "probe_plan.validation")
@@ -1398,6 +1416,15 @@ def _probe_plan_with_endpoint_addresses(
         }
         if is_alias_case:
             live_rewrite["alias_ipv4"] = resolved_ipv4
+        if is_filtered_capture_case:
+            decoy_arp_event = updated.get("decoy_arp_event")
+            if isinstance(decoy_arp_event, dict):
+                live_rewrite["decoy_sender_ipv4"] = decoy_arp_event.get(
+                    "sender_protocol_addr"
+                )
+                live_rewrite["decoy_target_ipv4"] = decoy_arp_event.get(
+                    "target_protocol_addr"
+                )
         updated["live_address_rewrite"] = live_rewrite
         return updated
     validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
@@ -1565,13 +1592,15 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         "arp-alias-address-reply",
         "arp-cache-flush-reply",
         "arp-spa-variation",
+        "arp-broadcast-filtered-capture",
     }:
         # The alias case adds (and removes) a secondary IPv4 on the target
         # interface as part of target setup; the cache-flush case flushes the
         # neighbor cache before the stimulus as part of target setup; the
         # spa-variation case may configure a secondary *sender* IPv4 so the kernel
-        # accepts the reply addressed to the alternate SPA. Either setup step
-        # failing is a distinct failure mode on top of the shared ARP reasons.
+        # accepts the reply addressed to the alternate SPA; the filtered-capture
+        # case may emit a decoy ARP setup event. Any setup step failing is a
+        # distinct failure mode on top of the shared ARP reasons.
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,

@@ -480,6 +480,7 @@ _ARP_KERNEL_CASES: frozenset[str] = frozenset(
         "arp-cache-flush-reply",
         "arp-mac-validation",
         "arp-spa-variation",
+        "arp-broadcast-filtered-capture",
     }
 )
 

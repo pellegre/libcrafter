@@ -353,8 +353,11 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
         metadata={"layer": "link"},
     ),
     _behavior_case(
-        name="arp-capture-filter-match",
-        description="Validate that capture filtering accepts only the matching target reply.",
+        name="arp-broadcast-filtered-capture",
+        description=(
+            "Capture ARP replies on a noisy segment and validate only the "
+            "matching target reply."
+        ),
         stimulus="arp_who_has",
         expected_response="arp_is_at",
         required_capabilities=_ARP_CAPABILITIES,
