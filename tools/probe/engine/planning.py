@@ -3513,6 +3513,111 @@ def _arp_source_address_preserved_probe_plan(
     }
 
 
+def _arp_alias_address_reply_probe_plan(
+    *,
+    case_name: str = "arp-alias-address-reply",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``arp-alias-address-reply`` behavioral case.
+
+    A who-has request (operation 1) resolving a *configured secondary IPv4 alias*
+    on the target interface, answered by the target kernel with a unicast is-at
+    reply (operation 2). The point of this case is target *interface preparation*:
+    the target setup adds a deterministic secondary IPv4 address (an alias,
+    distinct from the endpoint's primary IPv4) to the private interface before the
+    run and removes it during cleanup, and the case validates that the kernel
+    answers ARP for that alias. The validation contract therefore pins the reply's
+    SENDER protocol address to the alias (the resolved address) and the reply's
+    SENDER hardware address to the target endpoint's own MAC.
+
+    The plan shape mirrors ``arp-basic-who-has`` (ARP rides Ethernet directly, no
+    IP/UDP; documentation MACs; broadcast who-has), but the resolved target
+    protocol address is the alias rather than the endpoint's primary IPv4, and the
+    target service is an ``arp-kernel`` setup that adds/removes the alias (plus the
+    usual ARP sysctls and neighbor-cache flush).
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    alias_ipv4 = deterministic_arp_alias_ipv4(profile, seed, sequence)
+    stimulus_mac = deterministic_documentation_mac(profile, seed, sequence, role="stimulus")
+    target_mac = deterministic_documentation_mac(profile, seed, sequence, role="target")
+    broadcast_mac = "ff:ff:ff:ff:ff:ff"
+    zero_mac = "00:00:00:00:00:00"
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "arp_who_has",
+        "expected_response": "arp_is_at",
+        # ARP rides Ethernet directly; these are link-layer documentation values.
+        "ethertype": 0x0806,
+        "hardware_type": 1,
+        "protocol_type": 0x0800,
+        "hardware_length": 6,
+        "protocol_length": 4,
+        "operation": 1,
+        "operation_label": "request",
+        "sender_hardware_addr": stimulus_mac,
+        "sender_protocol_addr": stimulus_ipv4,
+        "target_hardware_addr": zero_mac,
+        # The who-has resolves the configured ALIAS address (not the endpoint's
+        # primary IPv4); the kernel answers for the secondary address it owns.
+        "target_protocol_addr": alias_ipv4,
+        "ethernet_source": stimulus_mac,
+        "ethernet_destination": broadcast_mac,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": alias_ipv4,
+        "alias_ipv4": alias_ipv4,
+        "expected_reply_source_ipv4": alias_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        # ARP cannot be selected by host/IP BPF; match on the protocol + opcode.
+        "capture_filter": "arp and arp[6:2] = 2",
+        "target_service": {
+            "required": True,
+            "kind": "arp-kernel",
+            "layer": "link",
+            # Target setup adds the secondary IPv4 alias to the private interface
+            # (and removes it during cleanup); the kernel then answers ARP for the
+            # alias. Setup also tunes ARP sysctls and flushes the neighbor cache.
+            "target_protocol_addr": alias_ipv4,
+            "target_hardware_addr": target_mac,
+            "alias_ipv4": alias_ipv4,
+            "alias_address": True,
+            "arp_sysctls": True,
+            "neighbor_cache_flush": True,
+        },
+        "validation": {
+            "ethertype": 0x0806,
+            "operation": 2,
+            "operation_label": "reply",
+            # Reply SENDER fields == the target endpoint's own HW + the ALIAS proto.
+            "sender_hardware_addr": target_mac,
+            "sender_protocol_addr": alias_ipv4,
+            # Reply TARGET fields == the request's SENDER HW/proto.
+            "target_hardware_addr": stimulus_mac,
+            "target_protocol_addr": stimulus_ipv4,
+            "ethernet_source": target_mac,
+            "ethernet_destination": stimulus_mac,
+        },
+        "wire_requirements": {
+            "requires_link_layer_send": True,
+            "requires_link_layer_capture": True,
+            "requires_broadcast": True,
+            "note": (
+                "ARP resolution is L2 broadcast/unicast traffic; it runs only on a "
+                "provider-backed lab segment, never from privileged host raw sends."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
 def deterministic_documentation_mac(
     profile: str,
     seed: int,
@@ -3550,6 +3655,29 @@ def deterministic_router_ipv4(profile: str, seed: int, sequence: int) -> str:
     return f"10.{second}.{third}.1"
 
 
+def deterministic_arp_alias_ipv4(profile: str, seed: int, sequence: int) -> str:
+    """Return a deterministic secondary IPv4 alias for the target interface.
+
+    The alias rides the same /24 lab segment as the endpoint pair from
+    :func:`deterministic_ipv4_pair` (``10.{second}.{third}.10`` /
+    ``10.{second}.{third}.20``) but resolves to a *distinct* host so the case
+    proves the target kernel answers ARP for a configured secondary address, not
+    just its primary. The host octet is derived from a dedicated digest and kept
+    clear of the ``.10``/``.20`` endpoint hosts, the ``.1`` router, broadcast, and
+    the network address.
+    """
+
+    digest = deterministic_bytes("endpoint-addresses", profile, seed, sequence)
+    second = 64 + digest[0] % 64
+    third = digest[1]
+    alias_digest = deterministic_bytes("arp-alias-host", profile, seed, sequence)
+    reserved = {0, 1, 10, 20, 255}
+    host = 2 + alias_digest[0] % 252
+    while host in reserved:
+        host = 2 + (host - 1) % 252
+    return f"10.{second}.{third}.{host}"
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
@@ -3584,6 +3712,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "arp-basic-who-has": _arp_basic_who_has_probe_plan,
     "arp-repeat-two-replies": _arp_repeat_two_replies_probe_plan,
     "arp-source-address-preserved": _arp_source_address_preserved_probe_plan,
+    "arp-alias-address-reply": _arp_alias_address_reply_probe_plan,
 }
 
 

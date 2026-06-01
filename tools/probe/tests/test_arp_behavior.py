@@ -23,6 +23,7 @@ import unittest
 from pathlib import Path
 
 from tools.probe.engine import planning
+from tools.probe.engine import target_services
 from tools.probe.engine.model import ProbeRunRequest
 from tools.probe.tests import probe_acceptance
 
@@ -598,6 +599,211 @@ class ArpSourceAddressPreservedTest(unittest.TestCase):
             self.assertTrue(
                 arp_skips,
                 "expected arp-source-address-preserved to skip on hetzner",
+            )
+
+
+def _arp_alias_address_reply_plan(*, seed: int = 1033, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["arp-alias-address-reply"]),
+        case=planning.PROBE_CASE_BY_NAME["arp-alias-address-reply"],
+        sequence=sequence,
+    )
+
+
+class ArpAliasAddressReplyPlanTest(unittest.TestCase):
+    """The target answers ARP for a configured secondary IPv4 alias."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("arp-alias-address-reply", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["arp-alias-address-reply"],
+            planning._arp_alias_address_reply_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _arp_alias_address_reply_plan(),
+            _arp_alias_address_reply_plan(),
+        )
+
+    def test_who_has_resolves_the_alias_not_the_primary(self) -> None:
+        plan = _arp_alias_address_reply_plan()
+
+        self.assertEqual(plan["case"], "arp-alias-address-reply")
+        self.assertEqual(plan["stimulus"], "arp_who_has")
+        self.assertEqual(plan["expected_response"], "arp_is_at")
+        self.assertEqual(plan["operation"], 1)
+
+        # The who-has resolves the configured alias address, which is a distinct
+        # host from the endpoint's primary IPv4 but rides the same /24 segment.
+        alias = plan["alias_ipv4"]
+        endpoint_pair = planning.deterministic_ipv4_pair("behavior", 1033, 0)
+        primary_target = endpoint_pair[1]
+        self.assertEqual(plan["target_protocol_addr"], alias)
+        self.assertEqual(plan["destination_ipv4"], alias)
+        self.assertNotEqual(alias, primary_target)
+        self.assertNotEqual(alias, plan["source_ipv4"])
+        # Same /24 lab segment as the endpoint pair.
+        self.assertEqual(
+            ipaddress.ip_network(f"{alias}/24", strict=False),
+            ipaddress.ip_network(f"{primary_target}/24", strict=False),
+        )
+
+        # The who-has is a broadcast request carrying a documentation sender MAC.
+        self.assertTrue(_is_documentation_mac(plan["sender_hardware_addr"]))
+        self.assertEqual(plan["target_hardware_addr"], "00:00:00:00:00:00")
+        self.assertEqual(plan["ethernet_destination"], "ff:ff:ff:ff:ff:ff")
+        self.assertEqual(plan["sender_protocol_addr"], plan["source_ipv4"])
+
+    def test_validation_pins_reply_sender_to_alias_and_target_mac(self) -> None:
+        plan = _arp_alias_address_reply_plan()
+        validation = plan["validation"]
+
+        self.assertEqual(validation["operation"], 2)
+        # The reply's SENDER protocol address is the alias (the resolved address).
+        self.assertEqual(validation["sender_protocol_addr"], plan["alias_ipv4"])
+        # The reply's SENDER hardware address is the target endpoint's own MAC.
+        self.assertTrue(_is_documentation_mac(validation["sender_hardware_addr"]))
+        self.assertEqual(
+            validation["sender_hardware_addr"],
+            plan["target_service"]["target_hardware_addr"],
+        )
+        # The reply is addressed back to the original querier.
+        self.assertEqual(
+            validation["target_hardware_addr"], plan["sender_hardware_addr"]
+        )
+        self.assertEqual(
+            validation["target_protocol_addr"], plan["sender_protocol_addr"]
+        )
+        # The resolved MAC is distinct from the querier MAC.
+        self.assertNotEqual(
+            validation["sender_hardware_addr"], plan["sender_hardware_addr"]
+        )
+
+    def test_target_service_adds_and_removes_the_alias(self) -> None:
+        plan = _arp_alias_address_reply_plan()
+        target_service = plan["target_service"]
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "arp-kernel")
+        self.assertEqual(target_service["layer"], "link")
+        self.assertTrue(target_service["alias_address"])
+        self.assertEqual(target_service["alias_ipv4"], plan["alias_ipv4"])
+        self.assertEqual(
+            target_service["target_protocol_addr"], plan["alias_ipv4"]
+        )
+        self.assertTrue(target_service["arp_sysctls"])
+        self.assertTrue(target_service["neighbor_cache_flush"])
+
+        # The typed kernel-state descriptor renders the alias add/del setup and
+        # cleanup commands so target preparation is reversible.
+        descriptor = target_services.arp_alias_descriptor(
+            bind_ipv4=plan["source_ipv4"],
+            source_ipv4=plan["source_ipv4"],
+            alias_ipv4=plan["alias_ipv4"],
+            interface="eth0",
+        )
+        self.assertTrue(
+            any(
+                command.startswith(f"ip addr add {plan['alias_ipv4']}/")
+                for command in descriptor.setup_commands
+            ),
+            f"expected an alias add command, got {descriptor.setup_commands}",
+        )
+        self.assertTrue(
+            any(
+                command.startswith(f"ip addr del {plan['alias_ipv4']}/")
+                for command in descriptor.cleanup_commands
+            ),
+            f"expected an alias del command, got {descriptor.cleanup_commands}",
+        )
+
+    def test_wire_requirements_gate_on_link_layer(self) -> None:
+        plan = _arp_alias_address_reply_plan()
+        requirements = plan["wire_requirements"]
+        self.assertTrue(requirements["requires_link_layer_send"])
+        self.assertTrue(requirements["requires_link_layer_capture"])
+        self.assertTrue(requirements["requires_broadcast"])
+
+
+class ArpAliasAddressReplyTest(unittest.TestCase):
+    """End-to-end focused acceptance through planner and stimulus endpoint."""
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "arp-alias-address-reply",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1033,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("arp-alias-address-reply", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "arp-alias-address-reply"
+            ]
+            self.assertTrue(
+                results, "endpoint emitted no arp-alias-address-reply result"
+            )
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                # A planned dry-run carries the compiled stimulus frame bytes: an
+                # Ethernet/ARP broadcast who-has request (opcode 1).
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                frame = bytes.fromhex(metadata["sent_raw_hex"])
+                self.assertGreaterEqual(len(frame), 14 + 28)
+                self.assertEqual(frame[0:6], b"\xff\xff\xff\xff\xff\xff")
+                self.assertEqual(frame[12:14], (0x0806).to_bytes(2, "big"))
+                self.assertEqual(frame[20:22], (1).to_bytes(2, "big"))
+
+                # The probe plan echoed back resolves the alias and pins the
+                # expected reply sender-proto to the alias.
+                plan = metadata.get("probe_plan", {})
+                alias = plan.get("alias_ipv4")
+                self.assertTrue(alias)
+                self.assertEqual(plan.get("target_protocol_addr"), alias)
+                validation = plan.get("validation", {})
+                self.assertEqual(validation.get("sender_protocol_addr"), alias)
+
+                # The target service adds the alias (alias_address marker + the
+                # alias IPv4 the kernel answers for).
+                target_service = metadata.get("target_service", {})
+                self.assertTrue(target_service.get("alias_address"))
+                self.assertEqual(target_service.get("alias_ipv4"), alias)
+
+    def test_provider_without_link_layer_skips(self) -> None:
+        # Hetzner cannot provide L2/broadcast/provider-MAC, so the case skips with
+        # a stable capability reason rather than planning a stimulus.
+        if not probe_acceptance.probe_run_available():
+            self.skipTest("probe runner requires uv on PATH")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "hetzner"
+            report_path = probe_acceptance._run_probe_dry_run(
+                "arp-alias-address-reply",
+                out_dir=out_dir,
+                provider="hetzner",
+                profile="behavior",
+                seed=1033,
+                count=1,
+                timeout_seconds=600,
+            )
+            report = probe_acceptance._load_json(report_path)
+            skips = report.get("skips", [])
+            arp_skips = [
+                skip
+                for skip in skips
+                if skip.get("case") == "arp-alias-address-reply"
+            ]
+            self.assertTrue(
+                arp_skips,
+                "expected arp-alias-address-reply to skip on hetzner",
             )
 
 

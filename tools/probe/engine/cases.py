@@ -278,7 +278,7 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
         metadata={"layer": "link"},
     ),
     _behavior_case(
-        name="arp-target-alias",
+        name="arp-alias-address-reply",
         description="Query a target alias address and validate the reply.",
         stimulus="arp_who_has",
         expected_response="arp_is_at",

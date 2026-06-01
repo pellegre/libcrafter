@@ -991,6 +991,78 @@ mod tests {
         assert_eq!(arp.target_ipv4().unwrap().to_string(), "10.64.0.20");
     }
 
+    /// Build an `arp-alias-address-reply` plan: the who-has resolves a *secondary*
+    /// alias address (distinct from the endpoint's primary IPv4) that the target
+    /// kernel answers for, and the is-at reply's sender protocol address is the
+    /// alias while its sender hardware address is the target endpoint's MAC.
+    fn alias_plan() -> ProbePlan {
+        let mut plan = base_plan("arp-alias-address-reply");
+        plan.sender_protocol_addr = Some("10.64.0.10".to_string());
+        // The who-has resolves the configured alias, not the endpoint's primary.
+        plan.target_protocol_addr = Some("10.64.0.27".to_string());
+        plan.alias_ipv4 = Some("10.64.0.27".to_string());
+        plan.sender_hardware_addr = Some("00:00:5e:00:53:0a".to_string());
+        plan.ethernet_source = Some("00:00:5e:00:53:0a".to_string());
+        plan.ethernet_destination = Some(BROADCAST_MAC.to_string());
+        plan.operation = Some(1);
+        plan.validation = Some(ArpValidation {
+            operation: Some(2),
+            // Reply sender HW is the target endpoint MAC; sender proto is the ALIAS.
+            sender_hardware_addr: Some("00:00:5e:00:53:14".to_string()),
+            sender_protocol_addr: Some("10.64.0.27".to_string()),
+            target_hardware_addr: Some("00:00:5e:00:53:0a".to_string()),
+            target_protocol_addr: Some("10.64.0.10".to_string()),
+            ethernet_source: Some("00:00:5e:00:53:14".to_string()),
+            ethernet_destination: Some("00:00:5e:00:53:0a".to_string()),
+        });
+        plan
+    }
+
+    #[test]
+    fn alias_who_has_resolves_the_alias_address() {
+        let plan = alias_plan();
+        let packet = arp_who_has_packet(&plan).unwrap();
+        let arp = packet.layer::<Arp>().expect("arp layer");
+        assert_eq!(arp.opcode_value(), u16::from(ArpOperation::Request));
+        // The who-has target protocol address is the configured alias, distinct
+        // from the stimulus sender protocol address.
+        assert_eq!(arp.target_ipv4().unwrap().to_string(), "10.64.0.27");
+        assert_eq!(arp.sender_ipv4().unwrap().to_string(), "10.64.0.10");
+    }
+
+    #[test]
+    fn alias_is_at_reply_with_alias_sender_proto_passes_validation() {
+        let plan = alias_plan();
+        let raw = is_at_frame(&plan);
+        let packet = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
+        match validate_arp_candidate(&plan, &packet, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alias_reply_for_the_primary_address_is_wrong_payload() {
+        // A reply addressed back to the querier but resolving the endpoint's
+        // PRIMARY address (not the alias) fails the alias is-at contract.
+        let plan = alias_plan();
+        let resolved_mac: MacAddr = "00:00:5e:00:53:14".parse().unwrap();
+        let arp = Arp::is_at(
+            "10.64.0.20".parse().unwrap(),
+            resolved_mac,
+            "10.64.0.10".parse().unwrap(),
+            "00:00:5e:00:53:0a".parse().unwrap(),
+        );
+        let packet =
+            Ethernet::with_addresses(resolved_mac, "00:00:5e:00:53:0a".parse().unwrap()) / arp;
+        let raw = packet.compile().unwrap().into_bytes();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
+        match validate_arp_candidate(&plan, &decoded, &raw).unwrap() {
+            CandidateValidation::WrongPayload(_) => {}
+            other => panic!("expected WrongPayload, got {other:?}"),
+        }
+    }
+
     #[test]
     fn both_repeated_sends_resolve_the_same_target_and_pass_validation() {
         let parent = repeat_plan();

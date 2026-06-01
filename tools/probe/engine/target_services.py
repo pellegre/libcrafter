@@ -475,6 +475,7 @@ _ARP_KERNEL_CASES: frozenset[str] = frozenset(
         "arp-basic-who-has",
         "arp-repeat-two-replies",
         "arp-source-address-preserved",
+        "arp-alias-address-reply",
     }
 )
 

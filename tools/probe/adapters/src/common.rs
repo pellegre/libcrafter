@@ -302,6 +302,13 @@ pub struct ProbePlan {
     pub ethernet_destination: Option<String>,
     #[serde(default)]
     pub validation: Option<ArpValidation>,
+    // ARP alias behavioral case field (`arp-alias-address-reply`). The target
+    // kernel answers ARP for a *configured secondary* IPv4 address (an alias)
+    // added to its interface during target setup; the who-has resolves this alias
+    // (it is also carried in `target_protocol_addr`). Non-alias cases leave this
+    // unset.
+    #[serde(default)]
+    pub alias_ipv4: Option<String>,
     // Multi-send ARP behavioral case fields (`arp-repeat-two-replies`). The plan
     // carries an `arp_sends` array (one entry per who-has -> is-at send), each
     // with its own sender/target hardware/protocol address, Ethernet framing,
@@ -763,11 +770,17 @@ fn dispatch_case(
         ) => dhcp::run_dhcp_live(request, plan),
         (
             RunMode::DryRun,
-            "arp-basic-who-has" | "arp-repeat-two-replies" | "arp-source-address-preserved",
+            "arp-basic-who-has"
+            | "arp-repeat-two-replies"
+            | "arp-source-address-preserved"
+            | "arp-alias-address-reply",
         ) => arp::run_arp_dry_run(request, plan),
         (
             RunMode::Live,
-            "arp-basic-who-has" | "arp-repeat-two-replies" | "arp-source-address-preserved",
+            "arp-basic-who-has"
+            | "arp-repeat-two-replies"
+            | "arp-source-address-preserved"
+            | "arp-alias-address-reply",
         ) => arp::run_arp_live(request, plan),
         _ => {
             // The remaining ARP and UDP behavioral cases are wired into their
@@ -938,6 +951,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "sender_protocol_addr": plan.sender_protocol_addr,
         "target_hardware_addr": plan.target_hardware_addr,
         "target_protocol_addr": plan.target_protocol_addr,
+        "alias_ipv4": plan.alias_ipv4,
         "ethernet_source": plan.ethernet_source,
         "ethernet_destination": plan.ethernet_destination,
         "arp_sends": arp::sends_json(plan.arp_sends.as_deref()),
@@ -1075,9 +1089,10 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         }
         // ARP rides Ethernet directly and cannot be selected by host/IP BPF, so
         // match on the protocol plus the reply opcode (ARP byte 6:2 == 2).
-        "arp-basic-who-has" | "arp-repeat-two-replies" | "arp-source-address-preserved" => {
-            "arp and arp[6:2] = 2".to_string()
-        }
+        "arp-basic-who-has"
+        | "arp-repeat-two-replies"
+        | "arp-source-address-preserved"
+        | "arp-alias-address-reply" => "arp and arp[6:2] = 2".to_string(),
         _ => String::new(),
     }
 }
@@ -1111,9 +1126,10 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcp-inform-ack" => "dhcp_ack",
             "dhcp-request-nak" => "dhcp_nak",
             "dhcp-rapid-repeat" => "dhcp_offer",
-            "arp-basic-who-has" | "arp-repeat-two-replies" | "arp-source-address-preserved" => {
-                "arp_is_at"
-            }
+            "arp-basic-who-has"
+            | "arp-repeat-two-replies"
+            | "arp-source-address-preserved"
+            | "arp-alias-address-reply" => "arp_is_at",
             _ => "unknown",
         })
 }
@@ -1422,6 +1438,28 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 .validation
                 .as_ref()
                 .and_then(|validation| validation.sender_hardware_addr.clone()),
+            "arp_sysctls": true,
+            "neighbor_cache_flush": true,
+        }),
+        "arp-alias-address-reply" => json!({
+            "required": true,
+            // Target setup adds (and cleanup removes) a deterministic secondary
+            // IPv4 alias on the private interface; the kernel then answers ARP for
+            // the alias. Setup also tunes ARP sysctls and flushes the neighbor
+            // cache (no listening daemon). The who-has resolves the alias, so the
+            // target protocol address is the alias rather than the primary IPv4.
+            "kind": "arp-kernel",
+            "layer": "link",
+            "target_protocol_addr": plan.target_protocol_addr,
+            "target_hardware_addr": plan
+                .validation
+                .as_ref()
+                .and_then(|validation| validation.sender_hardware_addr.clone()),
+            "alias_address": true,
+            "alias_ipv4": plan
+                .alias_ipv4
+                .clone()
+                .or_else(|| plan.target_protocol_addr.clone()),
             "arp_sysctls": true,
             "neighbor_cache_flush": true,
         }),
