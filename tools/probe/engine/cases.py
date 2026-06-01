@@ -29,6 +29,10 @@ _UDP_ZERO_CHECKSUM_IPV4_CAPABILITIES = [
     *_UDP_CAPABILITIES,
     "udp_ipv4_zero_checksum",
 ]
+_UDP_OPTIONS_SURPLUS_CAPABILITIES = [
+    *_UDP_CAPABILITIES,
+    "udp_options_surplus",
+]
 _ARP_CAPABILITIES = [
     "arp_resolution",
     "link_layer_send",
@@ -444,14 +448,14 @@ BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
         protocol="udp",
     ),
     _behavior_case(
-        name="udp-options-surplus",
+        name="udp-options-surplus-echo",
         description=(
             "Send a UDP options surplus datagram and validate the response where the "
             "kernel accepts it."
         ),
         stimulus="udp_datagram",
         expected_response="udp_response",
-        required_capabilities=_UDP_CAPABILITIES,
+        required_capabilities=_UDP_OPTIONS_SURPLUS_CAPABILITIES,
         protocol="udp",
     ),
     _behavior_case(

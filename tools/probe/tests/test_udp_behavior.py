@@ -19,10 +19,13 @@ target port and validates the decoded ICMP destination-unreachable /
 port-unreachable response plus its embedded original IPv4/UDP prefix.
 ``udp-zero-checksum-ipv4`` sends a controlled echo stimulus whose IPv4 UDP
 checksum is explicitly overridden to zero, then keeps the ordinary payload and
-peer tuple validation for responses accepted by the provider kernel. The
-stimulus endpoint decodes each response with libcrafter and validates the peer
-addresses, ports, UDP length, checksum status, exact payload, or ICMP embedded
-prefix depending on the case.
+peer tuple validation for responses accepted by the provider kernel.
+``udp-options-surplus-echo`` sends the same controlled echo payload shape with
+deterministic UDP surplus/options after the UDP payload length and records the
+sent raw bytes, UDP length, surplus length, and option summary. The stimulus
+endpoint decodes each response with libcrafter and validates the peer addresses,
+ports, UDP length, checksum status, exact payload, or ICMP embedded prefix
+depending on the case.
 """
 
 from __future__ import annotations
@@ -115,6 +118,14 @@ def _udp_zero_checksum_ipv4_plan(*, seed: int = 1047, sequence: int = 0) -> dict
     return planning.probe_plan_for_case(
         request=_request(seed=seed, case_names=["udp-zero-checksum-ipv4"]),
         case=planning.PROBE_CASE_BY_NAME["udp-zero-checksum-ipv4"],
+        sequence=sequence,
+    )
+
+
+def _udp_options_surplus_echo_plan(*, seed: int = 1048, sequence: int = 0) -> dict:
+    return planning.probe_plan_for_case(
+        request=_request(seed=seed, case_names=["udp-options-surplus-echo"]),
+        case=planning.PROBE_CASE_BY_NAME["udp-options-surplus-echo"],
         sequence=sequence,
     )
 
@@ -1108,6 +1119,174 @@ class UdpZeroChecksumIpv4Test(unittest.TestCase):
                 self.assertEqual(decoded["udp"]["checksum"], 0)
                 self.assertEqual(decoded["udp"]["checksum_status"], "ipv4_no_checksum")
                 self.assertEqual(decoded["payload_hex"], probe_plan["payload_hex"])
+
+
+class UdpOptionsSurplusEchoTest(unittest.TestCase):
+    """Focused coverage for UDP options surplus echo behavior."""
+
+    def test_plan_uses_dedicated_builder(self) -> None:
+        self.assertIn("udp-options-surplus-echo", planning.PLAN_BUILDERS)
+        self.assertIs(
+            planning.PLAN_BUILDERS["udp-options-surplus-echo"],
+            planning._udp_options_surplus_echo_probe_plan,
+        )
+
+    def test_plan_is_deterministic(self) -> None:
+        self.assertEqual(
+            _udp_options_surplus_echo_plan(),
+            _udp_options_surplus_echo_plan(),
+        )
+
+    def test_plan_carries_udp_surplus_options_and_echo_contract(self) -> None:
+        plan = _udp_options_surplus_echo_plan()
+        payload = bytes.fromhex(plan["payload_hex"])
+        option_bytes = bytes.fromhex(plan["stimulus_udp_options_hex"])
+
+        self.assertEqual(plan["case"], "udp-options-surplus-echo")
+        self.assertEqual(plan["stimulus"], "udp_datagram")
+        self.assertEqual(plan["expected_response"], "udp_response")
+        self.assertTrue(payload.startswith(b"udp-options-surplus-echo:"))
+        self.assertEqual(plan["payload_length"], len(payload))
+        self.assertEqual(plan["expected_payload_hex"], plan["payload_hex"])
+        self.assertEqual(plan["expected_payload_length"], len(payload))
+        self.assertEqual(plan["expected_udp_length"], 8 + len(payload))
+
+        self.assertTrue(plan["udp_options_surplus"])
+        self.assertEqual(plan["expected_udp_options_hex"], plan["stimulus_udp_options_hex"])
+        self.assertEqual(plan["stimulus_udp_options_policy"], "deterministic_valid_surplus_options")
+        self.assertEqual(plan["expected_udp_options_status"], "valid")
+        self.assertEqual(option_bytes[0], 1)
+        self.assertEqual(option_bytes[1], 4)
+        self.assertEqual(option_bytes[5], 6)
+        self.assertEqual(option_bytes[-1], 0)
+        self.assertEqual(plan["expected_udp_option_count"], 4)
+        self.assertEqual(len(plan["expected_udp_options_summary"]), 4)
+        self.assertEqual(plan["expected_udp_options_summary"][0], "NOP")
+        self.assertTrue(plan["expected_udp_options_summary"][1].startswith("MDS(size="))
+        self.assertTrue(plan["expected_udp_options_summary"][2].startswith("REQ(token=0x"))
+        self.assertEqual(plan["expected_udp_options_summary"][3], "EOL")
+        self.assertEqual(
+            plan["expected_udp_surplus_length"],
+            plan["expected_udp_surplus_alignment_length"] + 2 + len(option_bytes),
+        )
+        self.assertEqual(
+            plan["expected_ipv4_total_length"],
+            20 + plan["expected_udp_length"] + plan["expected_udp_surplus_length"],
+        )
+
+        self.assertIn("udp-options-surplus-echo", target_services._UDP_RESPONDER_CASES)
+        self.assertIn(
+            "udp_options_surplus",
+            planning.PROBE_CASE_BY_NAME["udp-options-surplus-echo"].required_capabilities,
+        )
+
+    def test_target_service_and_validation_surface_surplus_contract(self) -> None:
+        plan = _udp_options_surplus_echo_plan()
+        target_service = plan["target_service"]
+
+        self.assertTrue(target_service["required"])
+        self.assertEqual(target_service["kind"], "udp-responder")
+        self.assertEqual(target_service["mode"], "echo")
+        self.assertEqual(target_service["port"], plan["destination_port"])
+        self.assertEqual(target_service["payload_hex"], plan["payload_hex"])
+        self.assertTrue(target_service["udp_options_surplus"])
+        self.assertEqual(
+            target_service["stimulus_udp_options_hex"],
+            plan["stimulus_udp_options_hex"],
+        )
+        self.assertEqual(target_service["expected_udp_surplus_length"], plan["expected_udp_surplus_length"])
+        self.assertEqual(target_service["expected_udp_options_summary"], plan["expected_udp_options_summary"])
+        self.assertEqual(target_service["kernel_acceptance"], "provider_dependent")
+
+        validation = plan["validation"]
+        self.assertEqual(validation["source_ipv4"], plan["expected_reply_source_ipv4"])
+        self.assertEqual(
+            validation["destination_ipv4"],
+            plan["expected_reply_destination_ipv4"],
+        )
+        self.assertEqual(validation["source_port"], plan["destination_port"])
+        self.assertEqual(validation["destination_port"], plan["source_port"])
+        self.assertEqual(validation["payload_hex"], plan["payload_hex"])
+        self.assertEqual(validation["payload_length"], plan["payload_length"])
+        self.assertEqual(validation["udp_length"], plan["expected_udp_length"])
+        self.assertEqual(validation["expected_udp_options_status"], "valid")
+        self.assertEqual(validation["expected_udp_options_summary"], plan["expected_udp_options_summary"])
+        self.assertTrue(plan["wire_requirements"]["requires_udp_options_surplus"])
+
+    def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                "udp-options-surplus-echo",
+                out_dir=Path(temp_dir) / "harness",
+                provider="qemu",
+                profile="behavior",
+                seed=1048,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn("udp-options-surplus-echo", planned)
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == "udp-options-surplus-echo"
+            ]
+            self.assertTrue(results, "endpoint emitted no udp-options-surplus-echo result")
+            for result in results:
+                self.assertEqual(result.get("status"), "planned")
+                metadata = result.get("metadata", {})
+                self.assertTrue(metadata.get("dry_run"))
+                self.assertTrue(metadata.get("sent_raw_hex"))
+
+                probe_plan = metadata["probe_plan"]
+                payload = bytes.fromhex(probe_plan["payload_hex"])
+                option_bytes = bytes.fromhex(probe_plan["stimulus_udp_options_hex"])
+                sent = bytes.fromhex(metadata["sent_raw_hex"])
+                udp_length = 8 + len(payload)
+                surplus_start = 20 + udp_length
+                surplus = sent[surplus_start:]
+
+                self.assertEqual(len(sent), probe_plan["expected_ipv4_total_length"])
+                self.assertEqual(sent[9], 17)
+                self.assertEqual(
+                    int.from_bytes(sent[2:4], "big"),
+                    probe_plan["expected_ipv4_total_length"],
+                )
+                self.assertEqual(int.from_bytes(sent[20:22], "big"), probe_plan["source_port"])
+                self.assertEqual(
+                    int.from_bytes(sent[22:24], "big"),
+                    probe_plan["destination_port"],
+                )
+                self.assertEqual(int.from_bytes(sent[24:26], "big"), udp_length)
+                self.assertEqual(sent[28:surplus_start], payload)
+                self.assertEqual(len(surplus), probe_plan["expected_udp_surplus_length"])
+                self.assertEqual(
+                    len(surplus) - len(option_bytes) - 2,
+                    probe_plan["expected_udp_surplus_alignment_length"],
+                )
+                self.assertEqual(surplus[-len(option_bytes):], option_bytes)
+
+                self.assertEqual(metadata["sent_udp_surplus_length"], len(surplus))
+                sent_options = metadata["sent_udp_options"]
+                self.assertEqual(sent_options["status"], "valid")
+                self.assertEqual(sent_options["surplus_length"], len(surplus))
+                self.assertEqual(sent_options["option_bytes_hex"], probe_plan["stimulus_udp_options_hex"])
+                self.assertEqual(sent_options["option_count"], probe_plan["expected_udp_option_count"])
+                self.assertEqual(sent_options["summary"], probe_plan["expected_udp_options_summary"])
+
+                decoded = metadata["sent_decoded"]
+                self.assertEqual(decoded["udp"]["sport"], probe_plan["source_port"])
+                self.assertEqual(decoded["udp"]["dport"], probe_plan["destination_port"])
+                self.assertEqual(decoded["udp"]["length"], udp_length)
+                self.assertEqual(decoded["udp"]["checksum_status"], "valid")
+                self.assertEqual(decoded["payload_hex"], probe_plan["payload_hex"])
+                self.assertEqual(decoded["udp_options"]["surplus_length"], len(surplus))
+                self.assertEqual(
+                    decoded["udp_options"]["summary"],
+                    probe_plan["expected_udp_options_summary"],
+                )
 
 
 if __name__ == "__main__":

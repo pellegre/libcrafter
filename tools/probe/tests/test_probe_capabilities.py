@@ -57,6 +57,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "udp_service",
             "udp_large_payload",
             "udp_ipv4_zero_checksum",
+            "udp_options_surplus",
             "privileged_udp_port",
             "link_layer_arp",
             "provider_mac",
@@ -77,6 +78,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "udp_service",
             "udp_large_payload",
             "udp_ipv4_zero_checksum",
+            "udp_options_surplus",
             "privileged_udp_port",
             "arp_resolution",
             "link_layer_arp",
@@ -99,6 +101,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "udp_service",
             "udp_large_payload",
             "udp_ipv4_zero_checksum",
+            "udp_options_surplus",
             "privileged_udp_port",
             "repeated_response",
         ):
@@ -153,6 +156,19 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
 
         self.assertIs(derived["udp_service"], True)
         self.assertIs(derived["udp_ipv4_zero_checksum"], False)
+
+    def test_explicit_udp_options_surplus_denial_disables_that_case(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["udp_options_surplus"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["udp_service"], True)
+        self.assertIs(derived["udp_options_surplus"], False)
 
 
 class ProbeMissingCapabilityTest(unittest.TestCase):
@@ -224,6 +240,28 @@ class ProbeMissingCapabilityTest(unittest.TestCase):
             capabilities.skip_reason_for_missing_capability(
                 case,
                 "udp_ipv4_zero_checksum",
+            ),
+            capabilities.SKIP_CAPABILITY_UNAVAILABLE,
+        )
+
+    def test_udp_options_surplus_skips_when_provider_denies_capability(self) -> None:
+        case = cases.PROBE_CASE_BY_NAME["udp-options-surplus-echo"]
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["udp_options_surplus"] = False
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertEqual(
+            capabilities.missing_capabilities(case, derived),
+            ["udp_options_surplus"],
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(
+                case,
+                "udp_options_surplus",
             ),
             capabilities.SKIP_CAPABILITY_UNAVAILABLE,
         )

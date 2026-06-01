@@ -29,6 +29,7 @@ PROBE_CAPABILITY_NAMES = (
     "udp_service",
     "udp_large_payload",
     "udp_ipv4_zero_checksum",
+    "udp_options_surplus",
     "privileged_udp_port",
     "controlled_router",
     "arp_resolution",
@@ -168,6 +169,11 @@ def probe_capabilities_from_lab_capabilities(
         "udp_ipv4_zero_checksum",
         "ipv4_udp_zero_checksum",
     )
+    udp_options_surplus = udp_service and _capability_default_true(
+        substrate,
+        "udp_options_surplus",
+        "udp_surplus_options",
+    )
     privileged_udp_port = ipv4_unicast and controlled_services
     repeated_response = ipv4_unicast and controlled_services
     derived_dry_run = (
@@ -193,6 +199,7 @@ def probe_capabilities_from_lab_capabilities(
         "udp_service": udp_service,
         "udp_large_payload": udp_large_payload,
         "udp_ipv4_zero_checksum": udp_ipv4_zero_checksum,
+        "udp_options_surplus": udp_options_surplus,
         "privileged_udp_port": privileged_udp_port,
         "controlled_router": controlled_router,
         "link_layer_send": link_layer_send,
@@ -225,6 +232,11 @@ def probe_capabilities_from_lab_capabilities(
                 "ipv4_unicast",
                 "controlled_services",
                 "udp_ipv4_zero_checksum",
+            ],
+            "udp_options_surplus": [
+                "ipv4_unicast",
+                "controlled_services",
+                "udp_options_surplus",
             ],
             "privileged_udp_port": ["ipv4_unicast", "controlled_services"],
             "controlled_router": ["controlled_router"],
