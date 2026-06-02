@@ -84,8 +84,8 @@ pub use icmp::{
 pub use icmp::{
     IcmpExtension, IcmpExtensionInterfaceId, IcmpExtensionInterfaceInfo, IcmpExtensionMpls,
     IcmpExtensionObject, IcmpInterfaceIpAddress, IcmpKind, IcmpLayer, Icmpv4, Icmpv4AddressMask,
-    Icmpv4QuotedIp, Icmpv4RouterAdvertisementEntry, Icmpv4Timestamp, Icmpv6,
-    ICMPV6_DESTINATION_UNREACHABLE, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST,
+    Icmpv4QuotedIp, Icmpv4RouterAdvertisementEntry, Icmpv4Timestamp, Icmpv6, Icmpv6Body,
+    Icmpv6ErrorBody, ICMPV6_DESTINATION_UNREACHABLE, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST,
     ICMPV6_EXTENDED_ECHO_REPLY, ICMPV6_EXTENDED_ECHO_REQUEST, ICMPV6_INVERSE_ND_ADVERTISEMENT,
     ICMPV6_INVERSE_ND_SOLICITATION, ICMPV6_MLDV2_REPORT, ICMPV6_MULTICAST_LISTENER_DONE,
     ICMPV6_MULTICAST_LISTENER_QUERY, ICMPV6_MULTICAST_LISTENER_REPORT,

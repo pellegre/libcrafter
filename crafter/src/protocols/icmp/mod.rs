@@ -175,6 +175,10 @@ pub use self::shared::*;
 mod v6;
 pub(crate) use self::v6::append_icmpv6_packet;
 pub use self::v6::Icmpv6;
+// The typed ICMPv6 message-body model lives in `v6/body.rs`. Re-export it at the
+// `icmp` root so the `protocols::mod.rs` re-exports and the prelude surface it
+// alongside the `Icmpv6` header, the same way the ICMPv4 bodies are surfaced.
+pub use self::v6::{Icmpv6Body, Icmpv6ErrorBody};
 // The ICMPv6 (`ICMPV6_*`) codepoint constants live in `v6/constants.rs` and are
 // re-exported through `constants.rs` (which `pub use`s them), so the existing
 // `pub use self::constants::*;` above keeps `crate::protocols::icmp::ICMPV6_*`,

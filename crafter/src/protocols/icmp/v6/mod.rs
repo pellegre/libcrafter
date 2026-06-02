@@ -21,6 +21,14 @@ use crate::endian::read_u16_be;
 // which in turn re-exports `super::v6::constants::*`.
 pub(crate) mod constants;
 
+// The typed ICMPv6 message-body model ([`Icmpv6Body`] / [`Icmpv6ErrorBody`]),
+// dispatched by the `type` byte the way ICMPv4 dispatches its bodies. The
+// `Icmpv6` header below routes through it for classification, `summary()`, and
+// `show()`. Re-exported at the `icmp` root so it surfaces through
+// `protocols::mod.rs` and the prelude like the other ICMPv6 types.
+mod body;
+pub use self::body::{Icmpv6Body, Icmpv6ErrorBody};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icmpv6 {
     icmp_type: Field<u8>,
@@ -223,6 +231,19 @@ impl Icmpv6 {
         }
     }
 
+    /// The typed message body this header carries, dispatched by the ICMPv6
+    /// `type`.
+    ///
+    /// This is the ICMPv6 analogue of the ICMPv4 type-dispatched body model: it
+    /// classifies the message (echo / error / unknown) and surfaces the
+    /// type-specific rest-of-header fields as a typed [`Icmpv6Body`]. The body is
+    /// a view derived from the header's fields, so reading it never changes the
+    /// bytes the header emits; later steps grow it with the NDP, MLD,
+    /// node-information, and extended-echo families.
+    pub fn body(&self) -> Icmpv6Body {
+        Icmpv6Body::from_header(self)
+    }
+
     fn effective_rest_of_header(
         &self,
         ctx: Option<LayerContext<'_>>,
@@ -379,9 +400,11 @@ impl Layer for Icmpv6 {
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let body = self.body();
         vec![
             ("type", icmpv6_type_summary(self.icmp_type_value())),
             ("code", self.code_value().to_string()),
+            ("body", body.detail()),
             (
                 "checksum",
                 self.checksum_value()
@@ -483,8 +506,12 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
 
 #[cfg(test)]
 mod icmpv6 {
-    use super::{IcmpKind, Icmpv6};
-    use crate::protocols::icmp::ICMPV6_ECHO_REQUEST;
+    use super::{IcmpKind, Icmpv6, Icmpv6Body, Icmpv6ErrorBody};
+    use crate::packet::Layer;
+    use crate::protocols::icmp::{
+        ICMPV6_ECHO_REQUEST, ICMPV6_NEIGHBOR_SOLICITATION, ICMPV6_PACKET_TOO_BIG,
+        ICMPV6_PARAMETER_PROBLEM,
+    };
     use crate::{Ipv6, NetworkLayer, Packet, Raw};
     use core::net::Ipv6Addr;
 
@@ -546,5 +573,105 @@ mod icmpv6 {
             .compile()
             .unwrap();
         assert!(Packet::decode_from_l3(NetworkLayer::Ipv6, short.as_bytes()).is_err());
+    }
+
+    // The typed-body model classifies echo / error / unknown messages by type,
+    // surfacing the type-specific rest-of-header fields per variant.
+    #[test]
+    fn icmpv6_body_classifies_echo() {
+        let body = Icmpv6::echo_request().id(0x4242).seq(2).body();
+        assert_eq!(
+            body,
+            Icmpv6Body::Echo {
+                identifier: 0x4242,
+                sequence_number: 2,
+            }
+        );
+        assert_eq!(body.label(), "echo");
+    }
+
+    #[test]
+    fn icmpv6_body_classifies_errors() {
+        let du = Icmpv6::destination_unreachable().code(4).body();
+        assert_eq!(
+            du,
+            Icmpv6Body::Error(Icmpv6ErrorBody::DestinationUnreachable)
+        );
+        assert_eq!(du.label(), "error");
+        assert_eq!(
+            Icmpv6::packet_too_big().mtu(1280).body(),
+            Icmpv6Body::Error(Icmpv6ErrorBody::PacketTooBig { mtu: 1280 })
+        );
+        assert_eq!(
+            Icmpv6::time_exceeded().body(),
+            Icmpv6Body::Error(Icmpv6ErrorBody::TimeExceeded)
+        );
+        assert_eq!(
+            Icmpv6::new()
+                .icmp_type(ICMPV6_PARAMETER_PROBLEM)
+                .pointer(6)
+                .body(),
+            Icmpv6Body::Error(Icmpv6ErrorBody::ParameterProblem { pointer: 6 })
+        );
+    }
+
+    // An unrecognized type (here a Neighbor Solicitation, modeled in a later
+    // step) falls through to the extensible `Unknown` variant with its raw
+    // rest-of-header preserved.
+    #[test]
+    fn icmpv6_body_preserves_unknown_type() {
+        let icmpv6 = Icmpv6::new()
+            .icmp_type(ICMPV6_NEIGHBOR_SOLICITATION)
+            .rest_of_header([0xde, 0xad, 0xbe, 0xef]);
+        let body = icmpv6.body();
+        assert_eq!(
+            body,
+            Icmpv6Body::Unknown {
+                icmp_type: ICMPV6_NEIGHBOR_SOLICITATION,
+                rest_of_header: [0xde, 0xad, 0xbe, 0xef],
+            }
+        );
+        assert_eq!(body.label(), "unknown");
+    }
+
+    // The body model is a view over the header: it does not change the existing
+    // echo/error summary string (other tests and the oracle bind to it), and the
+    // body variant is surfaced through `show()`/inspection fields instead.
+    #[test]
+    fn icmpv6_summary_is_stable_and_show_reports_body() {
+        let echo = Icmpv6::echo_request().id(0x4242).seq(2);
+        assert_eq!(
+            echo.summary(),
+            "Icmpv6(type=echo-request(128), code=0, id=16962, seq=2)"
+        );
+        let echo_body = echo
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "body")
+            .map(|(_, value)| value)
+            .expect("show() exposes a body field");
+        assert_eq!(echo_body, "echo(id=0x4242, seq=2)");
+
+        let ptb = Icmpv6::packet_too_big().mtu(1280);
+        assert_eq!(
+            ptb.summary(),
+            "Icmpv6(type=packet-too-big(2), code=0, id=-, seq=-)"
+        );
+        let ptb_body = ptb
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "body")
+            .map(|(_, value)| value)
+            .expect("show() exposes a body field");
+        assert_eq!(ptb_body, "error(packet-too-big, mtu=1280)");
+
+        let unknown = Icmpv6::new().icmp_type(ICMPV6_PACKET_TOO_BIG ^ 0xff);
+        let unknown_body = unknown
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "body")
+            .map(|(_, value)| value)
+            .expect("show() exposes a body field");
+        assert!(unknown_body.starts_with("unknown(type="));
     }
 }
