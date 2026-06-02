@@ -94,6 +94,44 @@ mod tcp {
             .unwrap();
         assert!(Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).is_err());
     }
+
+    #[test]
+    fn tcp_accurate_ecn_flag_aliases_ns() {
+        use super::super::{TCP_FLAG_AE, TCP_FLAG_NS};
+
+        // RFC 9768 assigns the 0x100 control bit to AE (Accurate ECN); the
+        // older ECN-nonce `NS` name (deprecated by RFC 8311) remains a
+        // compatibility alias for the same bit. Both names must resolve to the
+        // same value. See docs/tcp-rfc-manifest.md.
+        assert_eq!(TCP_FLAG_AE, TCP_FLAG_NS);
+
+        // A segment built with the current `AE` name must serialize to the same
+        // bytes as one built with the legacy `NS` alias, since they set the same
+        // control bit.
+        let ae = (Ipv4::new().src(src()).dst(dst()).id(0x2225)
+            / Tcp::new()
+                .sport(40000)
+                .dport(80)
+                .seq(0x0a0b_0c0d)
+                .ack(0x0e0f_1011)
+                .flags(TCP_FLAG_AE | TCP_FLAG_SYN)
+                .window(65535)
+            / Raw::from("hi"))
+        .compile()
+        .unwrap();
+        let ns = (Ipv4::new().src(src()).dst(dst()).id(0x2225)
+            / Tcp::new()
+                .sport(40000)
+                .dport(80)
+                .seq(0x0a0b_0c0d)
+                .ack(0x0e0f_1011)
+                .flags(TCP_FLAG_NS | TCP_FLAG_SYN)
+                .window(65535)
+            / Raw::from("hi"))
+        .compile()
+        .unwrap();
+        assert_eq!(ae, ns);
+    }
 }
 
 mod tcp_options {
