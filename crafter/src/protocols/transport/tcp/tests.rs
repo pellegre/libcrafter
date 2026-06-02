@@ -280,6 +280,67 @@ mod option_classification {
     }
 }
 
+mod option_value_accessors {
+    use super::super::{TcpExtendedDataOffset, TcpOption, TcpSackBlock};
+
+    #[test]
+    fn tcp_option_value_accessors() {
+        // MSS.
+        let mss = TcpOption::mss(1460);
+        assert_eq!(mss.maximum_segment_size_value(), Some(1460));
+        assert_eq!(mss.window_scale_shift(), None);
+
+        // Window Scale.
+        let ws = TcpOption::window_scale(7);
+        assert_eq!(ws.window_scale_shift(), Some(7));
+        assert_eq!(ws.maximum_segment_size_value(), None);
+
+        // SACK Permitted.
+        let sack_permitted = TcpOption::sack_permitted();
+        assert!(sack_permitted.is_sack_permitted());
+        assert!(!mss.is_sack_permitted());
+        assert_eq!(sack_permitted.sack_blocks(), None);
+
+        // SACK blocks.
+        let blocks = vec![TcpSackBlock::new(10, 20), TcpSackBlock::new(30, 40)];
+        let sack = TcpOption::sack(blocks.clone());
+        assert_eq!(sack.sack_blocks(), Some(blocks.as_slice()));
+        assert!(!sack.is_sack_permitted());
+
+        // Timestamp.
+        let ts = TcpOption::timestamp(398_303_815, 12_345);
+        assert_eq!(ts.timestamp_values(), Some((398_303_815, 12_345)));
+        assert_eq!(mss.timestamp_values(), None);
+
+        // MPTCP subtype/data.
+        let mptcp = TcpOption::multipath_tcp(1, [0x13, 0xaa, 0xbb]);
+        assert_eq!(mptcp.mptcp_subtype(), Some(1));
+        assert_eq!(mptcp.mptcp_data(), Some(&[0x13u8, 0xaa, 0xbb][..]));
+        assert_eq!(mss.mptcp_subtype(), None);
+        assert_eq!(mss.mptcp_data(), None);
+
+        // EDO value.
+        let edo = TcpOption::extended_data_offset(9);
+        assert_eq!(
+            edo.extended_data_offset_value(),
+            Some(TcpExtendedDataOffset::HeaderLength { header_length: 9 })
+        );
+        assert_eq!(mss.extended_data_offset_value(), None);
+
+        // Fast Open cookie.
+        let fast_open = TcpOption::fast_open([0xca, 0xfe]);
+        assert_eq!(fast_open.fast_open_cookie(), Some(&[0xcau8, 0xfe][..]));
+        assert_eq!(mss.fast_open_cookie(), None);
+
+        // Generic kind/data.
+        let generic = TcpOption::generic(76, [0x55]);
+        assert_eq!(generic.generic_kind(), Some(76));
+        assert_eq!(generic.generic_data(), Some(&[0x55u8][..]));
+        assert_eq!(mss.generic_kind(), None);
+        assert_eq!(mss.generic_data(), None);
+    }
+}
+
 mod option_padding {
     use super::super::{Tcp, TcpOption};
     use crate::{IpProtocol, Ipv4, Ipv4Option, NetworkLayer, Packet, Raw};

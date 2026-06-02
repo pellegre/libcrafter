@@ -232,6 +232,111 @@ impl TcpOption {
         tcp_option_kind_is_experimental(self.kind())
     }
 
+    /// Return the Maximum Segment Size value, if this option is MSS.
+    ///
+    /// Backed by RFC 9293 and `docs/tcp-rfc-manifest.md`.
+    pub const fn maximum_segment_size_value(&self) -> Option<u16> {
+        match self {
+            Self::MaximumSegmentSize(mss) => Some(*mss),
+            _ => None,
+        }
+    }
+
+    /// Return the Window Scale shift count, if this option is Window Scale.
+    ///
+    /// Backed by RFC 7323 and `docs/tcp-rfc-manifest.md`.
+    pub const fn window_scale_shift(&self) -> Option<u8> {
+        match self {
+            Self::WindowScale(shift) => Some(*shift),
+            _ => None,
+        }
+    }
+
+    /// Return true when this option is the SACK Permitted option.
+    ///
+    /// Backed by RFC 2018 and `docs/tcp-rfc-manifest.md`.
+    pub const fn is_sack_permitted(&self) -> bool {
+        matches!(self, Self::SackPermitted)
+    }
+
+    /// Return the SACK blocks, if this option is a SACK option.
+    ///
+    /// Backed by RFC 2018 / RFC 2883 and `docs/tcp-rfc-manifest.md`.
+    pub fn sack_blocks(&self) -> Option<&[TcpSackBlock]> {
+        match self {
+            Self::Sack(blocks) => Some(blocks),
+            _ => None,
+        }
+    }
+
+    /// Return the Timestamp TSval and TSecr values, if this option is Timestamp.
+    ///
+    /// Backed by RFC 7323 and `docs/tcp-rfc-manifest.md`.
+    pub const fn timestamp_values(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Timestamp { value, echo_reply } => Some((*value, *echo_reply)),
+            _ => None,
+        }
+    }
+
+    /// Return the MPTCP subtype nibble, if this option is MPTCP.
+    ///
+    /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
+    pub const fn mptcp_subtype(&self) -> Option<u8> {
+        match self {
+            Self::MultipathTcp { subtype, .. } => Some(*subtype),
+            _ => None,
+        }
+    }
+
+    /// Return the MPTCP subtype-specific bytes (including the subtype byte), if
+    /// this option is MPTCP.
+    ///
+    /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
+    pub fn mptcp_data(&self) -> Option<&[u8]> {
+        match self {
+            Self::MultipathTcp { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Return the Extended Data Offset value, if this option is EDO.
+    ///
+    /// EDO is draft-status; see the EDO note in `docs/tcp-rfc-manifest.md`.
+    pub const fn extended_data_offset_value(&self) -> Option<TcpExtendedDataOffset> {
+        match self {
+            Self::ExtendedDataOffset(edo) => Some(*edo),
+            _ => None,
+        }
+    }
+
+    /// Return the TCP Fast Open cookie bytes, if this option is Fast Open.
+    ///
+    /// Backed by RFC 7413 and `docs/tcp-rfc-manifest.md`.
+    pub fn fast_open_cookie(&self) -> Option<&[u8]> {
+        match self {
+            Self::FastOpen(cookie) => Some(cookie),
+            _ => None,
+        }
+    }
+
+    /// Return the kind byte of a generic (unknown or caller-defined) option, if
+    /// this option is generic.
+    pub const fn generic_kind(&self) -> Option<u8> {
+        match self {
+            Self::Generic { kind, .. } => Some(*kind),
+            _ => None,
+        }
+    }
+
+    /// Return the payload bytes of a generic option, if this option is generic.
+    pub fn generic_data(&self) -> Option<&[u8]> {
+        match self {
+            Self::Generic { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+
     /// Encoded option length in bytes.
     pub fn encoded_len(&self) -> usize {
         match self {
