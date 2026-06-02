@@ -14,10 +14,26 @@ pub const TCP_OPTION_SACK_PERMITTED: u8 = 4;
 pub const TCP_OPTION_SACK: u8 = 5;
 /// TCP timestamp option kind.
 pub const TCP_OPTION_TIMESTAMP: u8 = 8;
-/// TCP MPTCP option kind.
+/// TCP MD5 Signature option kind (RFC 2385, obsoleted by RFC 5925/TCP-AO).
+pub const TCP_OPTION_MD5_SIGNATURE: u8 = 19;
+/// TCP User Timeout (UTO) option kind (RFC 5482).
+pub const TCP_OPTION_USER_TIMEOUT: u8 = 28;
+/// TCP Authentication Option (TCP-AO) kind (RFC 5925).
+pub const TCP_OPTION_TCP_AUTHENTICATION: u8 = 29;
+/// TCP MPTCP option kind (RFC 8684).
 pub const TCP_OPTION_MPTCP: u8 = 30;
-/// TCP Fast Open option kind.
+/// TCP Fast Open Cookie option kind (RFC 7413).
 pub const TCP_OPTION_FAST_OPEN: u8 = 34;
+/// TCP Encryption Negotiation Option (TCP-ENO) kind (RFC 8547).
+pub const TCP_OPTION_TCP_ENO: u8 = 69;
+/// TCP Accurate ECN Order 0 (AccECN0) option kind (RFC 9768).
+pub const TCP_OPTION_ACCURATE_ECN_ORDER_0: u8 = 172;
+/// TCP Accurate ECN Order 1 (AccECN1) option kind (RFC 9768).
+pub const TCP_OPTION_ACCURATE_ECN_ORDER_1: u8 = 174;
+/// TCP RFC 3692-style experimental option kind 1 (RFC 6994).
+pub const TCP_OPTION_EXPERIMENTAL_1: u8 = 253;
+/// TCP RFC 3692-style experimental option kind 2 (RFC 6994).
+pub const TCP_OPTION_EXPERIMENTAL_2: u8 = 254;
 /// TCP Extended Data Offset option kind.
 pub const TCP_OPTION_EDO: u8 = 237;
 
