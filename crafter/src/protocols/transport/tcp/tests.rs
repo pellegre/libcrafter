@@ -937,3 +937,87 @@ mod authentication_option {
         assert_eq!(TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN, 4);
     }
 }
+
+mod legacy_security_options {
+    use super::super::{Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_MD5_SIGNATURE};
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn tcp_legacy_security_options_preserve_bytes() {
+        // RFC 2385 defines the legacy TCP MD5 Signature option (kind 19): a
+        // fixed 18-byte option carrying a 16-byte MD5 digest. It was obsoleted by
+        // RFC 5925 (TCP-AO, kind 29) but still holds an IANA registry name.
+        // `crafter` preserves and classifies the option bytes; it implements no
+        // signing, key management, or signature validation. The digest bytes
+        // below are an arbitrary documentation-only example, never a real MD5.
+        assert_eq!(TCP_OPTION_MD5_SIGNATURE, 19);
+
+        // An arbitrary 16-byte "signature" that `crafter` must round-trip
+        // verbatim without interpreting or recomputing it.
+        let signature: Vec<u8> = (0u8..16).map(|i| i.wrapping_mul(17).wrapping_add(3)).collect();
+
+        // 1. The MD5 option is represented as a byte-preserving Generic option
+        //    (kind 19, no typed variant), and decoding the wire bytes yields an
+        //    inspectable option that exposes the signature bytes verbatim.
+        let option = TcpOption::generic(TCP_OPTION_MD5_SIGNATURE, signature.clone());
+        assert_eq!(option.kind(), TCP_OPTION_MD5_SIGNATURE);
+        assert_eq!(option.generic_kind(), Some(TCP_OPTION_MD5_SIGNATURE));
+        assert_eq!(option.generic_data(), Some(signature.as_slice()));
+        // The legacy MD5 kind still has an IANA registry assignment, so it must
+        // not be reported as Unassigned.
+        assert_eq!(option.kind_class(), TcpOptionKindClass::Assigned);
+        assert!(option.kind_is_assigned());
+        assert!(!option.kind_is_experimental());
+
+        // Wire bytes: kind, length (18 = 2 header + 16 signature), then the
+        // signature, preserved exactly.
+        let encoded = option.encode().unwrap();
+        assert_eq!(encoded.len(), 18);
+        assert_eq!(encoded[0], TCP_OPTION_MD5_SIGNATURE);
+        assert_eq!(encoded[1], 18);
+        assert_eq!(&encoded[2..], signature.as_slice());
+
+        // Decoding the raw option bytes produces an inspectable, byte-preserving
+        // representation that recompiles to the identical bytes.
+        let decoded = TcpOption::decode_all(&encoded).unwrap();
+        assert_eq!(decoded, vec![option.clone()]);
+        assert_eq!(decoded[0].generic_data(), Some(signature.as_slice()));
+        assert_eq!(decoded[0].encode().unwrap(), encoded);
+
+        // 2. A full TCP segment carrying the legacy MD5 option compiles, decodes
+        //    through the standard packet entrypoints, exposes the signature bytes
+        //    verbatim, and recompiles to the exact original wire bytes (the
+        //    signature is preserved, never recomputed or validated).
+        let tcp = Tcp::new()
+            .sport(50000)
+            .dport(179)
+            .tcp_option(TcpOption::generic(TCP_OPTION_MD5_SIGNATURE, signature.clone()))
+            .unwrap();
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
+
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
+        assert_eq!(
+            options[0],
+            TcpOption::Generic {
+                kind: TCP_OPTION_MD5_SIGNATURE,
+                data: signature.clone(),
+            }
+        );
+        assert_eq!(options[0].generic_data(), Some(signature.as_slice()));
+        assert_eq!(packet.compile().unwrap(), bytes);
+    }
+}
