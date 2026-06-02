@@ -4,10 +4,30 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 
 use super::constants::{
-    TCP_EDO_HEADER_AND_SEGMENT_LEN, TCP_EDO_HEADER_LEN, TCP_EDO_REQUEST_LEN, TCP_OPTION_EDO,
-    TCP_OPTION_EOL, TCP_OPTION_FAST_OPEN, TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP,
-    TCP_OPTION_SACK, TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TIMESTAMP, TCP_OPTION_WINDOW_SCALE,
+    TCP_EDO_HEADER_AND_SEGMENT_LEN, TCP_EDO_HEADER_LEN, TCP_EDO_REQUEST_LEN,
+    TCP_OPTION_ACCURATE_ECN_ORDER_0, TCP_OPTION_ACCURATE_ECN_ORDER_1, TCP_OPTION_EDO,
+    TCP_OPTION_EOL, TCP_OPTION_EXPERIMENTAL_1, TCP_OPTION_EXPERIMENTAL_2, TCP_OPTION_FAST_OPEN,
+    TCP_OPTION_MD5_SIGNATURE, TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK,
+    TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_ENO,
+    TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT, TCP_OPTION_WINDOW_SCALE,
 };
+
+/// IANA registry classification for a TCP option kind.
+///
+/// Backed by the IANA TCP Option Kind Numbers registry (under IANA TCP
+/// Parameters) and `docs/tcp-rfc-manifest.md`. Unknown, obsolete, reserved,
+/// and unassigned kinds stay inspectable through this classification rather
+/// than being silently discarded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TcpOptionKindClass {
+    /// Kind has a current IANA assignment (a name in the registry), whether or
+    /// not `crafter` models its payload as a typed option.
+    Assigned,
+    /// RFC 6994 / RFC 3692-style experimental kind (253 or 254).
+    Experimental,
+    /// Kind is unassigned in the current IANA registry.
+    Unassigned,
+}
 
 /// One SACK block carried by a TCP SACK option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -195,6 +215,21 @@ impl TcpOption {
             Self::FastOpen(_) => TCP_OPTION_FAST_OPEN,
             Self::Generic { kind, .. } => *kind,
         }
+    }
+
+    /// Return the IANA registry classification for this option's kind.
+    pub const fn kind_class(&self) -> TcpOptionKindClass {
+        tcp_option_kind_class(self.kind())
+    }
+
+    /// Return true when this option's kind is assigned by the IANA registry.
+    pub const fn kind_is_assigned(&self) -> bool {
+        tcp_option_kind_is_assigned(self.kind())
+    }
+
+    /// Return true when this option's kind is an RFC 6994 experimental kind.
+    pub const fn kind_is_experimental(&self) -> bool {
+        tcp_option_kind_is_experimental(self.kind())
     }
 
     /// Encoded option length in bytes.
@@ -477,4 +512,64 @@ fn validate_tcp_option_len(field: &'static str, actual: usize, expected: usize) 
         ));
     }
     Ok(())
+}
+
+/// Return the IANA registry classification for a TCP option kind.
+///
+/// The assigned set follows the IANA TCP Option Kind Numbers registry (under
+/// IANA TCP Parameters) and the kind table in `docs/tcp-rfc-manifest.md`:
+/// kinds 0-15, 18, 19, 27-30, 34, 69, 172, and 174 carry current registry
+/// names. Kinds 253 and 254 are the RFC 6994 / RFC 3692-style experimental
+/// kinds. Every other kind (for example the draft-only EDO kind 237) is
+/// unassigned in the current registry and stays inspectable as such.
+pub const fn tcp_option_kind_class(kind: u8) -> TcpOptionKindClass {
+    match kind {
+        TCP_OPTION_EXPERIMENTAL_1 | TCP_OPTION_EXPERIMENTAL_2 => TcpOptionKindClass::Experimental,
+        TCP_OPTION_EOL
+        | TCP_OPTION_NOP
+        | TCP_OPTION_MSS
+        | TCP_OPTION_WINDOW_SCALE
+        | TCP_OPTION_SACK_PERMITTED
+        | TCP_OPTION_SACK
+        // Echo / Echo Reply (RFC 1072, obsoleted by RFC 7323).
+        | 6
+        | 7
+        | TCP_OPTION_TIMESTAMP
+        // Partial Order Connection options (RFC 1693, RFC 6247).
+        | 9
+        | 10
+        // CC, CC.NEW, CC.ECHO (RFC 1644, RFC 6247).
+        | 11
+        | 12
+        | 13
+        // TCP Alternate Checksum Request / Data (RFC 1146, RFC 6247).
+        | 14
+        | 15
+        // Trailer Checksum (historic, Stev Knowles).
+        | 18
+        | TCP_OPTION_MD5_SIGNATURE
+        // Quick-Start Response (RFC 4782).
+        | 27
+        | TCP_OPTION_USER_TIMEOUT
+        | TCP_OPTION_TCP_AUTHENTICATION
+        | TCP_OPTION_MPTCP
+        | TCP_OPTION_FAST_OPEN
+        | TCP_OPTION_TCP_ENO
+        | TCP_OPTION_ACCURATE_ECN_ORDER_0
+        | TCP_OPTION_ACCURATE_ECN_ORDER_1 => TcpOptionKindClass::Assigned,
+        _ => TcpOptionKindClass::Unassigned,
+    }
+}
+
+/// Return true when a TCP option kind has a current IANA registry assignment.
+pub const fn tcp_option_kind_is_assigned(kind: u8) -> bool {
+    matches!(
+        tcp_option_kind_class(kind),
+        TcpOptionKindClass::Assigned | TcpOptionKindClass::Experimental
+    )
+}
+
+/// Return true when a TCP option kind is an RFC 6994 experimental kind.
+pub const fn tcp_option_kind_is_experimental(kind: u8) -> bool {
+    matches!(tcp_option_kind_class(kind), TcpOptionKindClass::Experimental)
 }

@@ -144,8 +144,10 @@ pub use link::{
     ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
 };
 pub use transport::{
+    tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
     udp_option_kind_class, udp_option_kind_is_unsafe, udp_option_kind_is_unsupported, Tcp,
-    TcpExtendedDataOffset, TcpOption, TcpOptionIter, TcpSackBlock, Udp, UdpChecksumStatus,
+    TcpExtendedDataOffset, TcpOption, TcpOptionIter, TcpOptionKindClass, TcpSackBlock, Udp,
+    UdpChecksumStatus,
     UdpOption, UdpOptionIter, UdpOptionKindClass, UdpOptionStatus, UdpOptions,
     TCP_EDO_HEADER_AND_SEGMENT_LEN, TCP_EDO_HEADER_LEN, TCP_EDO_REQUEST_LEN, TCP_FLAG_ACK,
     TCP_FLAG_CWR, TCP_FLAG_ECE, TCP_FLAG_FIN, TCP_FLAG_NS, TCP_FLAG_PSH, TCP_FLAG_RST,
