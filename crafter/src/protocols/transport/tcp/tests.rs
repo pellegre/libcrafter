@@ -610,3 +610,117 @@ mod option_errors {
         );
     }
 }
+
+mod experimental_exid_options {
+    use super::super::{
+        Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_EXPERIMENTAL_1, TCP_OPTION_EXPERIMENTAL_2,
+        TCP_OPTION_EXPERIMENTAL_MIN_LEN,
+    };
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn tcp_experimental_exid_options_roundtrip() {
+        // RFC 6994 experimental TCP options (kinds 253 and 254) carry a 16-bit
+        // Experiment Identifier (ExID) immediately after the length byte,
+        // followed by arbitrary experiment data. The ExID values used here are
+        // documentation-only examples, not registered IANA ExID assignments.
+        const EXID_A: u16 = 0xABCD;
+        const EXID_B: u16 = 0x0102;
+
+        // 1. Both experimental kinds encode the ExID then preserve the
+        //    experiment data, and decode back to the same typed option byte-for
+        //    byte.
+        for (kind, exid, data) in [
+            (TCP_OPTION_EXPERIMENTAL_1, EXID_A, vec![0xDE, 0xAD, 0xBE, 0xEF]),
+            (TCP_OPTION_EXPERIMENTAL_2, EXID_B, vec![0x11, 0x22]),
+            // Empty experiment data: the minimum-length (4-byte) experimental
+            // option carries only the ExID.
+            (TCP_OPTION_EXPERIMENTAL_1, EXID_B, Vec::new()),
+        ] {
+            let option = TcpOption::experimental(kind, exid, data.clone());
+            assert!(option.is_experimental());
+            assert_eq!(option.kind(), kind);
+            assert_eq!(option.experiment_id(), Some(exid));
+            assert_eq!(option.experiment_data(), Some(data.as_slice()));
+            assert_eq!(option.kind_class(), TcpOptionKindClass::Experimental);
+            assert!(option.kind_is_experimental());
+            assert!(option.kind_is_assigned());
+
+            // Encoded length is kind + length + 16-bit ExID + experiment data.
+            let encoded = option.encode().unwrap();
+            assert_eq!(encoded.len(), 4 + data.len());
+            assert_eq!(encoded[0], kind);
+            assert_eq!(encoded[1] as usize, 4 + data.len());
+            assert_eq!(&encoded[2..4], &exid.to_be_bytes());
+            assert_eq!(&encoded[4..], data.as_slice());
+
+            // Round-trip through decode preserves the typed representation.
+            let decoded = TcpOption::decode_all(&encoded).unwrap();
+            assert_eq!(decoded, vec![option.clone()]);
+            assert_eq!(decoded[0].encode().unwrap(), encoded);
+        }
+
+        // 2. The kind-1 and kind-2 convenience constructors select the right
+        //    experimental kind.
+        assert_eq!(
+            TcpOption::experimental_1(EXID_A, [0x01]).kind(),
+            TCP_OPTION_EXPERIMENTAL_1
+        );
+        assert_eq!(
+            TcpOption::experimental_2(EXID_A, [0x01]).kind(),
+            TCP_OPTION_EXPERIMENTAL_2
+        );
+
+        // 3. A full TCP segment carrying an experimental option compiles,
+        //    decodes, exposes the typed ExID + data, and recompiles to the exact
+        //    original wire bytes.
+        let tcp = Tcp::new()
+            .sport(44444)
+            .dport(443)
+            .tcp_option(TcpOption::experimental_1(EXID_A, [0xDE, 0xAD, 0xBE, 0xEF]))
+            .unwrap();
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
+        assert_eq!(
+            options[0],
+            TcpOption::Experimental {
+                kind: TCP_OPTION_EXPERIMENTAL_1,
+                experiment_id: EXID_A,
+                data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            }
+        );
+        assert_eq!(options[0].experiment_id(), Some(EXID_A));
+        assert_eq!(
+            options[0].experiment_data(),
+            Some(&[0xDEu8, 0xAD, 0xBE, 0xEF][..])
+        );
+        assert_eq!(decoded.compile().unwrap(), bytes);
+
+        // 4. An experimental option shorter than the 4-byte minimum (no room for
+        //    a full 16-bit ExID) decodes to a structured, contextful error
+        //    rather than a panic or a silent generic blob.
+        let too_short = TcpOption::decode_all(&[TCP_OPTION_EXPERIMENTAL_1, 3, 0x00]).unwrap_err();
+        assert!(
+            too_short
+                .to_string()
+                .contains("tcp.option.experimental.length"),
+            "experimental min-length error must carry context, got: {too_short}"
+        );
+        assert_eq!(TCP_OPTION_EXPERIMENTAL_MIN_LEN, 4);
+    }
+}
