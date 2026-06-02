@@ -355,6 +355,71 @@ mod option_padding {
     }
 
     #[test]
+    fn tcp_option_padding_semantics() {
+        // libcrafter's chosen TCP option padding behavior, asserted against the
+        // real compile/decode path:
+        //
+        // 1. compile() pads the TCP option area to the data-offset (32-bit
+        //    word) boundary with zero bytes. Because TCP_OPTION_EOL == 0, those
+        //    trailing pad bytes are End-of-Option-List (EOL) bytes.
+        // 2. decode preserves every padding byte in option_bytes().
+        // 3. TcpOptionIter stops at the first EOL byte (it yields one
+        //    EndOfList and then ends).
+        // 4. Recompiling a decoded segment round-trips the padding byte-for-byte.
+
+        // MSS (4 bytes) + Window Scale (3 bytes) = 7 option bytes. Padding to a
+        // 32-bit boundary needs one trailing zero/EOL byte (8 bytes total).
+        let mut tcp = Tcp::new();
+        tcp = tcp.tcp_option(TcpOption::mss(1460)).unwrap();
+        tcp = tcp.tcp_option(TcpOption::window_scale(7)).unwrap();
+
+        // Before compile, only the raw option bytes are stored (no padding yet).
+        assert_eq!(tcp.option_bytes(), &[2, 4, 0x05, 0xb4, 3, 3, 7]);
+
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp)
+            .compile()
+            .unwrap();
+
+        // (1) data offset reflects the padded header: 20 + 8 = 28 bytes => 7 words.
+        assert_eq!(bytes.as_bytes()[32] >> 4, 7);
+        // The option area is padded to the boundary with a zero/EOL byte.
+        assert_eq!(
+            &bytes.as_bytes()[40..48],
+            &[2, 4, 0x05, 0xb4, 3, 3, 7, 0]
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let decoded_tcp = decoded.layer::<Tcp>().unwrap();
+
+        // (2) decode keeps the padding byte in the raw option slice.
+        assert_eq!(
+            decoded_tcp.option_bytes(),
+            &[2, 4, 0x05, 0xb4, 3, 3, 7, 0]
+        );
+
+        // (3) the iterator stops at the EOL padding byte: it surfaces MSS,
+        // Window Scale, and a single EndOfList, then ends.
+        let parsed = decoded_tcp.parsed_options().unwrap();
+        assert_eq!(
+            parsed,
+            vec![
+                TcpOption::MaximumSegmentSize(1460),
+                TcpOption::WindowScale(7),
+                TcpOption::EndOfList,
+            ]
+        );
+        // The raw iterator yields exactly these three items and then None.
+        let mut iter = decoded_tcp.option_iter();
+        assert_eq!(iter.next().unwrap().unwrap(), TcpOption::MaximumSegmentSize(1460));
+        assert_eq!(iter.next().unwrap().unwrap(), TcpOption::WindowScale(7));
+        assert_eq!(iter.next().unwrap().unwrap(), TcpOption::EndOfList);
+        assert!(iter.next().is_none());
+
+        // (4) recompiling the decoded segment round-trips the padding exactly.
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
     fn option_padding_uses_eol_bytes_for_ipv4_and_tcp_alignment() {
         let ip = Ipv4::new()
             .src(src())
