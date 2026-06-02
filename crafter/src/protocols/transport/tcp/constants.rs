@@ -46,6 +46,12 @@ pub const TCP_OPTION_TCP_ENO_MIN_LEN: u8 = 2;
 pub const TCP_OPTION_ACCURATE_ECN_ORDER_0: u8 = 172;
 /// TCP Accurate ECN Order 1 (AccECN1) option kind (RFC 9768).
 pub const TCP_OPTION_ACCURATE_ECN_ORDER_1: u8 = 174;
+/// Minimum length byte of an RFC 9768 Accurate ECN (AccECN) option: the kind and
+/// length bytes alone, with no byte-counter fields. Real AccECN options carry
+/// one to three 24-bit ECN byte counters (RFC 9768 section 3.2.3.3), but the
+/// option framing permits the 2-byte header alone, and the counter fields are
+/// preserved verbatim by `crafter` rather than being interpreted.
+pub const TCP_OPTION_ACCURATE_ECN_MIN_LEN: u8 = 2;
 /// TCP RFC 3692-style experimental option kind 1 (RFC 6994).
 pub const TCP_OPTION_EXPERIMENTAL_1: u8 = 253;
 /// TCP RFC 3692-style experimental option kind 2 (RFC 6994).

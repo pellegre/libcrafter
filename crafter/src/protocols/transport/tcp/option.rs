@@ -5,12 +5,12 @@ use crate::error::{CrafterError, Result};
 
 use super::constants::{
     TCP_EDO_HEADER_AND_SEGMENT_LEN, TCP_EDO_HEADER_LEN, TCP_EDO_REQUEST_LEN,
-    TCP_OPTION_ACCURATE_ECN_ORDER_0, TCP_OPTION_ACCURATE_ECN_ORDER_1, TCP_OPTION_EDO,
-    TCP_OPTION_EOL, TCP_OPTION_EXPERIMENTAL_1, TCP_OPTION_EXPERIMENTAL_2,
-    TCP_OPTION_EXPERIMENTAL_MIN_LEN, TCP_OPTION_FAST_OPEN, TCP_OPTION_MD5_SIGNATURE,
-    TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK, TCP_OPTION_SACK_PERMITTED,
-    TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN, TCP_OPTION_TCP_ENO,
-    TCP_OPTION_TCP_ENO_MIN_LEN, TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT,
+    TCP_OPTION_ACCURATE_ECN_MIN_LEN, TCP_OPTION_ACCURATE_ECN_ORDER_0,
+    TCP_OPTION_ACCURATE_ECN_ORDER_1, TCP_OPTION_EDO, TCP_OPTION_EOL, TCP_OPTION_EXPERIMENTAL_1,
+    TCP_OPTION_EXPERIMENTAL_2, TCP_OPTION_EXPERIMENTAL_MIN_LEN, TCP_OPTION_FAST_OPEN,
+    TCP_OPTION_MD5_SIGNATURE, TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK,
+    TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN,
+    TCP_OPTION_TCP_ENO, TCP_OPTION_TCP_ENO_MIN_LEN, TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT,
     TCP_OPTION_USER_TIMEOUT_LEN, TCP_OPTION_WINDOW_SCALE,
 };
 
@@ -176,6 +176,34 @@ pub enum TcpOption {
         /// negotiates, or validates these bytes.
         suboptions: Vec<u8>,
     },
+    /// RFC 9768 Accurate ECN (AccECN) option, byte-preserving.
+    ///
+    /// AccECN defines two option kinds that differ only in the order in which
+    /// the ECN byte-counter fields appear on the wire: AccECN0
+    /// (`TCP_OPTION_ACCURATE_ECN_ORDER_0` = 172) and AccECN1
+    /// (`TCP_OPTION_ACCURATE_ECN_ORDER_1` = 174). Each option carries zero to
+    /// three 24-bit ECN byte counters after the kind/length header (RFC 9768
+    /// section 3.2.3.3). The two kinds let an endpoint hedge against middleboxes
+    /// that zero specific counter positions, so the *order* of the counters is
+    /// itself wire-significant and must be preserved.
+    ///
+    /// libcrafter only preserves the option `kind` (which encodes the order) and
+    /// the raw counter/payload bytes verbatim. The AccECN feedback algorithm,
+    /// the codepoint state machine, and any congestion-control reaction described
+    /// by RFC 9768 are *not* implemented: that behavior is out of scope for the
+    /// primitive packet layer. This variant only lets an AccECN segment be
+    /// constructed and inspected byte-for-byte; the counter bytes are stored
+    /// exactly as they appear on the wire and are never interpreted.
+    AccurateEcn {
+        /// AccECN option kind encoding the counter order:
+        /// `TCP_OPTION_ACCURATE_ECN_ORDER_0` (172, AccECN0) or
+        /// `TCP_OPTION_ACCURATE_ECN_ORDER_1` (174, AccECN1).
+        kind: u8,
+        /// Order-specific ECN byte-counter / payload bytes after the kind/length
+        /// header, preserved verbatim. The wire length is `2 + data.len()`.
+        /// libcrafter never parses or interprets these bytes.
+        data: Vec<u8>,
+    },
     /// Unknown or caller-defined option with a standard length byte.
     Generic {
         /// Raw option kind byte.
@@ -323,6 +351,38 @@ impl TcpOption {
         }
     }
 
+    /// Create an RFC 9768 Accurate ECN (AccECN) option for a specific AccECN
+    /// kind, preserving the order-specific counter/payload bytes only.
+    ///
+    /// `kind` selects the counter order and must be
+    /// `TCP_OPTION_ACCURATE_ECN_ORDER_0` (172, AccECN0) or
+    /// `TCP_OPTION_ACCURATE_ECN_ORDER_1` (174, AccECN1); other kinds round-trip
+    /// but are not classified as AccECN. `data` is the sequence of ECN
+    /// byte-counter / payload bytes carried after the kind/length header,
+    /// preserved verbatim. libcrafter does not parse, interpret, or react to the
+    /// counters, and it implements no AccECN feedback or congestion-control
+    /// behavior: that is out of scope for the primitive packet layer (see the
+    /// [`TcpOption::AccurateEcn`] documentation). The encoded option length is
+    /// `2 + data.len()`.
+    pub fn accurate_ecn(kind: u8, data: impl Into<Vec<u8>>) -> Self {
+        Self::AccurateEcn {
+            kind,
+            data: data.into(),
+        }
+    }
+
+    /// Create an RFC 9768 Accurate ECN option using the AccECN0 kind (172,
+    /// `TCP_OPTION_ACCURATE_ECN_ORDER_0`).
+    pub fn accurate_ecn_order_0(data: impl Into<Vec<u8>>) -> Self {
+        Self::accurate_ecn(TCP_OPTION_ACCURATE_ECN_ORDER_0, data)
+    }
+
+    /// Create an RFC 9768 Accurate ECN option using the AccECN1 kind (174,
+    /// `TCP_OPTION_ACCURATE_ECN_ORDER_1`).
+    pub fn accurate_ecn_order_1(data: impl Into<Vec<u8>>) -> Self {
+        Self::accurate_ecn(TCP_OPTION_ACCURATE_ECN_ORDER_1, data)
+    }
+
     /// Create a caller-defined option.
     pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
         Self::Generic {
@@ -348,6 +408,7 @@ impl TcpOption {
             Self::UserTimeout { .. } => TCP_OPTION_USER_TIMEOUT,
             Self::AuthenticationOption { .. } => TCP_OPTION_TCP_AUTHENTICATION,
             Self::TcpEno { .. } => TCP_OPTION_TCP_ENO,
+            Self::AccurateEcn { kind, .. } => *kind,
             Self::Generic { kind, .. } => *kind,
         }
     }
@@ -561,6 +622,55 @@ impl TcpOption {
         }
     }
 
+    /// Return the RFC 9768 Accurate ECN option kind encoding the counter order
+    /// (`TCP_OPTION_ACCURATE_ECN_ORDER_0` = 172 or
+    /// `TCP_OPTION_ACCURATE_ECN_ORDER_1` = 174), if this option is an AccECN
+    /// option.
+    ///
+    /// The kind byte is wire-significant because it selects the order in which
+    /// the ECN byte counters appear. Backed by RFC 9768 and
+    /// `docs/tcp-rfc-manifest.md`.
+    pub const fn accurate_ecn_order(&self) -> Option<u8> {
+        match self {
+            Self::AccurateEcn { kind, .. } => Some(*kind),
+            _ => None,
+        }
+    }
+
+    /// Return the preserved RFC 9768 Accurate ECN counter/payload bytes (after
+    /// the kind/length header), if this option is an AccECN option.
+    ///
+    /// The bytes are the verbatim wire counters; libcrafter never parses,
+    /// interprets, or reacts to them. Backed by RFC 9768 and
+    /// `docs/tcp-rfc-manifest.md`.
+    pub fn accurate_ecn_data(&self) -> Option<&[u8]> {
+        match self {
+            Self::AccurateEcn { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Return the RFC 9768 Accurate ECN option as an `(order_kind, data)` pair,
+    /// if this option is an AccECN option.
+    ///
+    /// `order_kind` is the AccECN0/AccECN1 kind encoding the counter order and
+    /// `data` is the verbatim counter/payload byte slice. Named with a `_value`
+    /// suffix to avoid colliding with the [`TcpOption::accurate_ecn`]
+    /// constructor. Backed by RFC 9768 and `docs/tcp-rfc-manifest.md`.
+    pub fn accurate_ecn_value(&self) -> Option<(u8, &[u8])> {
+        match self {
+            Self::AccurateEcn { kind, data } => Some((*kind, data)),
+            _ => None,
+        }
+    }
+
+    /// Return true when this option is an RFC 9768 Accurate ECN (AccECN) option.
+    ///
+    /// Backed by RFC 9768 and `docs/tcp-rfc-manifest.md`.
+    pub const fn is_accurate_ecn(&self) -> bool {
+        matches!(self, Self::AccurateEcn { .. })
+    }
+
     /// Return the kind byte of a generic (unknown or caller-defined) option, if
     /// this option is generic.
     pub const fn generic_kind(&self) -> Option<u8> {
@@ -598,6 +708,8 @@ impl TcpOption {
             }
             // kind, length, then the preserved suboption bytes.
             Self::TcpEno { suboptions } => TCP_OPTION_TCP_ENO_MIN_LEN as usize + suboptions.len(),
+            // kind, length, then the preserved order-specific counter bytes.
+            Self::AccurateEcn { data, .. } => TCP_OPTION_ACCURATE_ECN_MIN_LEN as usize + data.len(),
             Self::Generic { data, .. } => 2 + data.len(),
         }
     }
@@ -717,6 +829,20 @@ impl TcpOption {
                 // interpreted or negotiated.
                 bytes.extend_from_slice(&[TCP_OPTION_TCP_ENO, len as u8]);
                 bytes.extend_from_slice(suboptions);
+            }
+            Self::AccurateEcn { kind, data } => {
+                // RFC 9768 section 3.2.3.3: kind (172/174, encoding the counter
+                // order), length, then the order-specific ECN byte counters. The
+                // counter bytes are preserved verbatim and never interpreted; no
+                // AccECN feedback or congestion-control reaction is performed.
+                if *kind == TCP_OPTION_EOL || *kind == TCP_OPTION_NOP {
+                    return Err(CrafterError::invalid_field_value(
+                        "tcp.option.accurate_ecn.kind",
+                        "AccECN option kind must carry a length byte",
+                    ));
+                }
+                bytes.extend_from_slice(&[*kind, len as u8]);
+                bytes.extend_from_slice(data);
             }
             Self::Generic { kind, data } => {
                 if *kind == TCP_OPTION_EOL || *kind == TCP_OPTION_NOP {
@@ -859,6 +985,9 @@ fn decode_tcp_option(bytes: &[u8]) -> Result<TcpOption> {
         TCP_OPTION_USER_TIMEOUT => decode_tcp_user_timeout_option(data, bytes.len()),
         TCP_OPTION_TCP_AUTHENTICATION => decode_tcp_authentication_option(data, bytes.len()),
         TCP_OPTION_TCP_ENO => decode_tcp_eno_option(data, bytes.len()),
+        TCP_OPTION_ACCURATE_ECN_ORDER_0 | TCP_OPTION_ACCURATE_ECN_ORDER_1 => {
+            decode_tcp_accurate_ecn_option(kind, data, bytes.len())
+        }
         TCP_OPTION_EDO => decode_tcp_edo_option(data, bytes.len()),
         TCP_OPTION_FAST_OPEN => Ok(TcpOption::FastOpen(data.to_vec())),
         TCP_OPTION_EXPERIMENTAL_1 | TCP_OPTION_EXPERIMENTAL_2 => {
@@ -928,6 +1057,25 @@ fn decode_tcp_eno_option(data: &[u8], len: usize) -> Result<TcpOption> {
     }
     Ok(TcpOption::TcpEno {
         suboptions: data.to_vec(),
+    })
+}
+
+fn decode_tcp_accurate_ecn_option(kind: u8, data: &[u8], len: usize) -> Result<TcpOption> {
+    // RFC 9768 section 3.2.3.3: kind (172/174, encoding the counter order),
+    // length, then the order-specific ECN byte counters. The minimum length is 2
+    // bytes (the kind/length header) with no counters. libcrafter preserves the
+    // order (via the kind) and the counter bytes verbatim, without parsing,
+    // interpreting, or reacting to them; the AccECN feedback algorithm and any
+    // congestion-control reaction are out of scope.
+    if (len as u8) < TCP_OPTION_ACCURATE_ECN_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tcp.option.accurate_ecn.length",
+            "RFC 9768 AccECN option must be at least 2 bytes (kind, length)",
+        ));
+    }
+    Ok(TcpOption::AccurateEcn {
+        kind,
+        data: data.to_vec(),
     })
 }
 
