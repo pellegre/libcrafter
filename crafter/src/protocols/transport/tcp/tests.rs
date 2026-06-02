@@ -2359,3 +2359,175 @@ mod ipv6_fragment_adjacent {
         );
     }
 }
+
+mod header_error_context {
+    use super::super::Tcp;
+    use crate::error::CrafterError;
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    // Decode a raw TCP-over-IPv4 byte region (the `tcp` bytes are placed in the
+    // IPv4 payload verbatim via Raw, so the TCP header decoder sees exactly
+    // them) and return the structured error for the first malformed TCP header.
+    // Panics if the buffer decodes cleanly, because every input here is
+    // deliberately structurally malformed.
+    fn decode_tcp_header_error(tcp: impl AsRef<[u8]>) -> CrafterError {
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+            / Raw::from_bytes(tcp.as_ref().to_vec()))
+        .compile()
+        .expect("ipv4/raw frame must compile");
+        Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .expect_err("structurally malformed TCP header must not decode cleanly")
+    }
+
+    // Compile a TCP segment that the existing validation model rejects and
+    // return the structured error. Panics if it compiles, because every input
+    // here is a structurally-impossible header the validator must refuse.
+    fn compile_tcp_error(tcp: Tcp) -> CrafterError {
+        (Ipv4::new().src(src()).dst(dst()) / tcp / Raw::from("payload"))
+            .compile()
+            .expect_err("structurally invalid TCP header must not compile")
+    }
+
+    #[test]
+    fn tcp_header_errors_have_context() {
+        // Every structurally-impossible TCP header — whether caught on decode of
+        // a wire buffer or on compile/validate of a built segment — must surface
+        // a `CrafterError` whose context/field slot identifies the failing part
+        // of the header, so a generated tool can tell *which* field was wrong
+        // instead of log-fishing on a generic failure. The asserted tokens are
+        // the stable `context`/`field` slots carried by `CrafterError`. These
+        // mirror RFC 9293 section 3.1 (Data Offset minimum of 5 32-bit words,
+        // maximum header of 60 octets) and never panic on truncation.
+
+        // 1. Short header: fewer than the 20-byte fixed TCP header. Decode must
+        //    return a structured buffer-too-short error naming the tcp header,
+        //    with the RFC minimum and the available count, not a panic.
+        match decode_tcp_header_error([0u8; 19]) {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert!(
+                    context.contains("tcp") && context.contains("header"),
+                    "short header error must name the tcp header, got context {context:?}"
+                );
+                assert_eq!(required, 20, "short header must require the 20-byte minimum");
+                assert_eq!(available, 19, "short header must report the available bytes");
+            }
+            other => panic!("short TCP header expected a buffer-too-short error, got {other:?}"),
+        }
+
+        // 2. Data offset below 5 words: a full 20-byte buffer whose Data Offset
+        //    nibble claims a header shorter than the RFC minimum. Decode must
+        //    return a field error naming tcp.data_offset.
+        let mut below_min = [0u8; 20];
+        below_min[12] = 0x40; // data offset = 4 words (< 5)
+        match decode_tcp_header_error(below_min) {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(
+                    field, "tcp.data_offset",
+                    "below-minimum data offset must carry the tcp.data_offset field"
+                );
+            }
+            other => panic!("below-minimum data offset expected a field error, got {other:?}"),
+        }
+
+        // 3. Data offset larger than the available bytes: a 20-byte buffer whose
+        //    Data Offset claims a 60-byte header. Decode must return a
+        //    buffer-too-short error naming the tcp header, with the claimed
+        //    header length and the actual available count.
+        let mut overrun = [0u8; 20];
+        overrun[12] = 0xf0; // data offset = 15 words = 60 bytes claimed
+        match decode_tcp_header_error(overrun) {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert!(
+                    context.contains("tcp") && context.contains("header"),
+                    "data-offset overrun error must name the tcp header, got context {context:?}"
+                );
+                assert_eq!(required, 60, "overrun must require the claimed 60-byte header");
+                assert_eq!(available, 20, "overrun must report the available bytes");
+            }
+            other => panic!(
+                "data-offset overrun expected a buffer-too-short error, got {other:?}"
+            ),
+        }
+
+        // 4. Option space larger than allowed: a header carrying more than the
+        //    40-octet option budget (60-byte max header minus 20-byte fixed
+        //    header). Pin the data offset to 15 so the header-length bounds pass
+        //    and the dedicated option-space check is the one that fires; it must
+        //    name tcp.options.
+        let too_many_options = Tcp::new().data_offset(15).options(vec![1u8; 41]);
+        match compile_tcp_error(too_many_options) {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(
+                    field, "tcp.options",
+                    "oversized option space must carry the tcp.options field"
+                );
+            }
+            other => panic!("oversized option space expected a field error, got {other:?}"),
+        }
+
+        // 5. Reserved bits overflow: the model carries reserved in three bits, so
+        //    a value above 0x07 is structurally impossible and validate must
+        //    reject it naming tcp.reserved. (Decode masks reserved to three bits,
+        //    so this class is enforced on the build/validate side.)
+        let bad_reserved = Tcp::new().reserved(0x08);
+        match compile_tcp_error(bad_reserved) {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(
+                    field, "tcp.reserved",
+                    "reserved overflow must carry the tcp.reserved field"
+                );
+            }
+            other => panic!("reserved overflow expected a field error, got {other:?}"),
+        }
+
+        // 6. Flag overflow: the 9-bit flags field cannot exceed 0x1ff, so a
+        //    value above that is structurally impossible and validate must reject
+        //    it naming tcp.flags.
+        let bad_flags = Tcp::new().flags(0x0200);
+        match compile_tcp_error(bad_flags) {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(
+                    field, "tcp.flags",
+                    "flag overflow must carry the tcp.flags field"
+                );
+            }
+            other => panic!("flag overflow expected a field error, got {other:?}"),
+        }
+
+        // 7. Segment length overflow: header plus payload cannot exceed 65535
+        //    octets. A 0xffff-byte payload plus the 20-byte fixed header
+        //    overflows the 16-bit segment-length budget. Compile a bare
+        //    Tcp / Raw stack (no IPv4 wrapper) so the TCP segment-length check is
+        //    the one that fires rather than the enclosing IPv4 total-length
+        //    bound; validate must reject it naming tcp.length.
+        let oversize_segment = (Tcp::new() / Raw::from_bytes(vec![0u8; 0xffff]))
+            .compile()
+            .expect_err("segment exceeding 65535 octets must not compile");
+        match oversize_segment {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(
+                    field, "tcp.length",
+                    "segment length overflow must carry the tcp.length field"
+                );
+            }
+            other => panic!("segment length overflow expected a field error, got {other:?}"),
+        }
+    }
+}
