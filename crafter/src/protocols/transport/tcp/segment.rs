@@ -269,6 +269,69 @@ impl Tcp {
         self.set_ae(false).set_cwr(false).set_ece(false)
     }
 
+    /// Build a SYN segment shape: set exactly the SYN control bit.
+    ///
+    /// Sets the control bits to `SYN` only (RFC 9293 section 3.1), replacing
+    /// `Tcp::new()`'s default flag value rather than accumulating onto it. This
+    /// only stamps the predictable flag bits: ports, sequence number,
+    /// acknowledgment number, window, and options stay at their defaults and
+    /// remain configurable through the existing builder methods. It does not
+    /// infer network addresses, send traffic, or model connection state.
+    pub fn syn_segment(self) -> Self {
+        self.flags(TCP_FLAG_SYN)
+    }
+
+    /// Build a SYN+ACK segment shape: set exactly the SYN and ACK control bits.
+    ///
+    /// Sets the control bits to `SYN | ACK` only (RFC 9293 section 3.1),
+    /// replacing `Tcp::new()`'s default flag value rather than accumulating onto
+    /// it. This only stamps the predictable flag bits; ports, sequence number,
+    /// acknowledgment number, window, and options stay at their defaults and
+    /// remain configurable through the existing builder methods. It does not
+    /// infer network addresses, send traffic, or model connection state.
+    pub fn syn_ack_segment(self) -> Self {
+        self.flags(TCP_FLAG_SYN | super::flags::TCP_FLAG_ACK)
+    }
+
+    /// Build a pure-ACK segment shape: set exactly the ACK control bit.
+    ///
+    /// Sets the control bits to `ACK` only (RFC 9293 section 3.1), replacing
+    /// `Tcp::new()`'s default flag value rather than accumulating onto it. This
+    /// only stamps the predictable flag bits; ports, sequence number,
+    /// acknowledgment number, window, and options stay at their defaults and
+    /// remain configurable through the existing builder methods. It does not
+    /// infer network addresses, send traffic, or model connection state.
+    ///
+    /// Note this is distinct from [`Tcp::ack`], which sets the acknowledgment
+    /// *number* field, not the ACK control bit.
+    pub fn ack_segment(self) -> Self {
+        self.flags(super::flags::TCP_FLAG_ACK)
+    }
+
+    /// Build a RST+ACK segment shape: set exactly the RST and ACK control bits.
+    ///
+    /// Sets the control bits to `RST | ACK` only (RFC 9293 section 3.1),
+    /// replacing `Tcp::new()`'s default flag value rather than accumulating onto
+    /// it. This only stamps the predictable flag bits; ports, sequence number,
+    /// acknowledgment number, window, and options stay at their defaults and
+    /// remain configurable through the existing builder methods. It does not
+    /// infer network addresses, send traffic, or model connection state.
+    pub fn rst_ack_segment(self) -> Self {
+        self.flags(super::flags::TCP_FLAG_RST | super::flags::TCP_FLAG_ACK)
+    }
+
+    /// Build a FIN+ACK segment shape: set exactly the FIN and ACK control bits.
+    ///
+    /// Sets the control bits to `FIN | ACK` only (RFC 9293 section 3.1),
+    /// replacing `Tcp::new()`'s default flag value rather than accumulating onto
+    /// it. This only stamps the predictable flag bits; ports, sequence number,
+    /// acknowledgment number, window, and options stay at their defaults and
+    /// remain configurable through the existing builder methods. It does not
+    /// infer network addresses, send traffic, or model connection state.
+    pub fn fin_ack_segment(self) -> Self {
+        self.flags(TCP_FLAG_FIN | super::flags::TCP_FLAG_ACK)
+    }
+
     /// Set the receive window.
     pub fn window(mut self, window: u16) -> Self {
         self.window.set_user(window);
