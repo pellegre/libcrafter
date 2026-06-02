@@ -1500,3 +1500,115 @@ mod mptcp_accessors {
         assert_eq!(packet.compile().unwrap(), bytes);
     }
 }
+
+mod fast_open_helpers {
+    use super::super::{Tcp, TcpOption, TCP_OPTION_FAST_OPEN};
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn tcp_fast_open_helpers_roundtrip() {
+        // RFC 7413 defines two forms of the TCP Fast Open option (kind 34):
+        //   * a cookie REQUEST sent on the initial SYN, carrying an empty cookie,
+        //     so the on-wire option is just the kind and length bytes (length 2);
+        //   * a cookie-carrying option whose cookie is 4 to 16 bytes (even), so
+        //     the on-wire length is 2 + cookie_len.
+        // `crafter` preserves the cookie bytes verbatim and does not reject
+        // deliberately malformed lengths, so generated tools can build both well
+        // formed and intentionally invalid Fast Open options.
+
+        // 1. The cookie-request form carries an empty cookie. Encoded it is the
+        //    bare 2-byte option header (kind 34, length 2), and it reports itself
+        //    as a cookie request.
+        let request = TcpOption::fast_open_cookie_request();
+        assert_eq!(request.kind(), TCP_OPTION_FAST_OPEN);
+        assert_eq!(request.fast_open_cookie(), Some(&[][..]));
+        assert!(request.is_fast_open_cookie_request());
+        let encoded = request.encode().unwrap();
+        assert_eq!(encoded, vec![TCP_OPTION_FAST_OPEN, 2]);
+        // The request constructor is equivalent to an empty-cookie `fast_open`.
+        assert_eq!(request, TcpOption::fast_open([]));
+        // Round-trip through decode preserves the typed representation.
+        let decoded = TcpOption::decode_all(&encoded).unwrap();
+        assert_eq!(decoded, vec![request.clone()]);
+        assert_eq!(decoded[0].encode().unwrap(), encoded);
+        assert!(decoded[0].is_fast_open_cookie_request());
+
+        // 2. A non-empty cookie and the maximum valid cookie length per RFC 7413
+        //    (16 bytes) round-trip byte-for-byte, and are NOT classified as
+        //    cookie requests.
+        let max_cookie: Vec<u8> = (0u8..16).collect();
+        for cookie in [vec![0xCA, 0xFE, 0xBA, 0xBE], max_cookie.clone()] {
+            let option = TcpOption::fast_open(cookie.clone());
+            assert_eq!(option.kind(), TCP_OPTION_FAST_OPEN);
+            assert_eq!(option.fast_open_cookie(), Some(cookie.as_slice()));
+            assert!(!option.is_fast_open_cookie_request());
+
+            // Encoded length is kind + length + cookie bytes (2 + cookie_len).
+            let encoded = option.encode().unwrap();
+            assert_eq!(encoded.len(), 2 + cookie.len());
+            assert_eq!(encoded[0], TCP_OPTION_FAST_OPEN);
+            assert_eq!(encoded[1] as usize, 2 + cookie.len());
+            assert_eq!(&encoded[2..], cookie.as_slice());
+
+            // Round-trip through decode preserves the typed representation.
+            let decoded = TcpOption::decode_all(&encoded).unwrap();
+            assert_eq!(decoded, vec![option.clone()]);
+            assert_eq!(decoded[0].encode().unwrap(), encoded);
+            assert!(!decoded[0].is_fast_open_cookie_request());
+        }
+        // The maximum valid cookie is 16 bytes (RFC 7413 section 2).
+        assert_eq!(max_cookie.len(), 16);
+
+        // 3. Deliberately malformed cookie lengths (odd, and over the 16-byte
+        //    maximum) are preserved verbatim rather than rejected, so generated
+        //    tools can exercise a stack with invalid Fast Open options. The
+        //    cookie bytes round-trip exactly.
+        for cookie in [vec![0x01, 0x02, 0x03], (0u8..20).collect::<Vec<u8>>()] {
+            let option = TcpOption::fast_open(cookie.clone());
+            let encoded = option.encode().unwrap();
+            assert_eq!(encoded.len(), 2 + cookie.len());
+            let decoded = TcpOption::decode_all(&encoded).unwrap();
+            assert_eq!(decoded[0].fast_open_cookie(), Some(cookie.as_slice()));
+            assert_eq!(decoded[0].encode().unwrap(), encoded);
+        }
+
+        // 4. Full TCP segments carrying each form compile, decode, expose the
+        //    typed cookie, and recompile to the exact original wire bytes.
+        for option in [
+            TcpOption::fast_open_cookie_request(),
+            TcpOption::fast_open(max_cookie.clone()),
+        ] {
+            let expect_request = option.is_fast_open_cookie_request();
+            let expect_cookie = option.fast_open_cookie().map(<[u8]>::to_vec);
+            let tcp = Tcp::new()
+                .sport(44444)
+                .dport(443)
+                .tcp_option(option)
+                .unwrap();
+            let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+                / tcp
+                / Raw::from("payload"))
+            .compile()
+            .unwrap();
+
+            let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+            let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
+            assert_eq!(options[0].kind(), TCP_OPTION_FAST_OPEN);
+            assert_eq!(
+                options[0].fast_open_cookie(),
+                expect_cookie.as_deref()
+            );
+            assert_eq!(options[0].is_fast_open_cookie_request(), expect_request);
+            assert_eq!(packet.compile().unwrap(), bytes);
+        }
+    }
+}
