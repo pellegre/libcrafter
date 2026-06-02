@@ -1,10 +1,25 @@
-//! ICMPv6 layer (shared v6 type).
+//! ICMPv6 layer implementation.
 //!
-//! Split out of `mod.rs`: the shared `Icmpv6` type and its impls live
-//! here so the ICMPv4 code in `mod.rs` stays focused. Behavior is unchanged.
+//! Moved out of `icmp/icmpv6.rs` into the `icmp/v6/` subtree so ICMPv6 sits as a
+//! sibling of the ICMPv4 code in `icmp/v4/` under the shared core. This holds the
+//! [`Icmpv6`] header struct and its builder/decode/compile impls plus the ICMPv6
+//! (`ICMPV6_*`) codepoint constants (in `v6/constants.rs`). Shared compile/
+//! auto-fill helpers, the version-neutral [`IcmpKind`]/[`IcmpLayer`] contract,
+//! and the codepoint naming/predicate helpers are reached through the `icmp`
+//! module root (`use super::*;`), one level above which this file now lives.
+//! This is a pure internal move:
+//! `crate::protocols::icmp::Icmpv6`, the `protocols::mod.rs` re-exports, the
+//! registry IPv6 next-header 58 binding, and the prelude all keep resolving to
+//! the same names.
 
 use super::*;
 use crate::endian::read_u16_be;
+
+// The ICMPv6 (`ICMPV6_*`) codepoint constants used below live in
+// `v6/constants.rs`. They are reached through the `use super::*;` glob above:
+// `icmp/mod.rs` re-exports them at the root (`pub use self::constants::*;`),
+// which in turn re-exports `super::v6::constants::*`.
+pub(crate) mod constants;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icmpv6 {
