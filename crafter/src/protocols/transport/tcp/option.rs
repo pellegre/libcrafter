@@ -280,9 +280,24 @@ impl TcpOption {
         })
     }
 
-    /// Create a TCP Fast Open option.
+    /// Create a TCP Fast Open option carrying a cookie (RFC 7413 section 2).
+    ///
+    /// RFC 7413 defines the cookie as 4 to 16 bytes, even-length; the on-wire
+    /// option length is `2 + cookie.len()`. `crafter` preserves the cookie bytes
+    /// verbatim, including deliberately malformed lengths, so the cookie is not
+    /// rewritten or rejected here. Use [`Self::fast_open_cookie_request`] for the
+    /// empty cookie-request form sent on the initial SYN.
     pub fn fast_open(cookie: impl Into<Vec<u8>>) -> Self {
         Self::FastOpen(cookie.into())
+    }
+
+    /// Create a TCP Fast Open cookie REQUEST option (RFC 7413 section 3).
+    ///
+    /// The cookie-request form carries an empty cookie, so the on-wire option is
+    /// just the kind and length bytes (length byte `2`). A client sends this on
+    /// the initial SYN to ask the server for a Fast Open cookie.
+    pub fn fast_open_cookie_request() -> Self {
+        Self::FastOpen(Vec::new())
     }
 
     /// Create an RFC 6994 experimental option for a specific experimental kind.
@@ -581,6 +596,14 @@ impl TcpOption {
             Self::FastOpen(cookie) => Some(cookie),
             _ => None,
         }
+    }
+
+    /// Return `true` when this option is a TCP Fast Open cookie REQUEST: a Fast
+    /// Open option carrying an empty (zero-length) cookie (RFC 7413 section 3).
+    ///
+    /// Backed by RFC 7413 and `docs/tcp-rfc-manifest.md`.
+    pub fn is_fast_open_cookie_request(&self) -> bool {
+        matches!(self, Self::FastOpen(cookie) if cookie.is_empty())
     }
 
     /// Return the RFC 6994 Experiment Identifier (ExID), if this option is an
