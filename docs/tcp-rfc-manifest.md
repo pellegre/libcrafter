@@ -363,3 +363,12 @@ fuzzer, or a packet-analyzer workflow. TCP-AO and TCP-ENO bytes are preserved
 for inspection and round-trip only; `crafter` does not compute MACs, derive
 keys, or negotiate encryption. MPTCP subtype bytes are preserved and the subtype
 is parsed, but `crafter` does not run multipath connection logic.
+
+MPTCP behavior and policy are explicitly out of scope: `crafter` implements no
+MPTCP connection recovery, subflow management, path management, or reaction to a
+reset. For the `MP_TCPRST` subtype (RFC 8684 §3.6) `crafter` only exposes the
+8-bit Reason code as inspectable data — the `MPTCP_TCPRST_REASON_*` constants and
+the byte-preserving `TcpOption::mptcp_tcprst_reason` accessor name the wire value
+without acting on it. Deciding whether to tear down a subflow, fall back to
+regular TCP, or recover the connection in response to an `MP_TCPRST` reason is
+the responsibility of a generated tool, not the crate.

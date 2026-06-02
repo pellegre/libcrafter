@@ -478,6 +478,45 @@ fn tcp_mptcp_subtype_constants_are_public() {
 }
 
 #[test]
+fn tcp_mptcp_tcprst_reason_constants_are_public() {
+    // The MP_TCPRST Reason Codes (RFC 8684 section 3.6 / IANA "MPTCP MP_TCPRST
+    // Reason Codes" registry) are exposed as inspectable packet data through the
+    // same public path the other newer TCP option constants use:
+    // crafter::protocols::transport. They name the wire value only; crafter
+    // implements no MPTCP connection recovery or subflow policy.
+    use crafter::protocols::transport::{
+        MPTCP_TCPRST_REASON_ADMINISTRATIVELY_PROHIBITED, MPTCP_TCPRST_REASON_LACK_OF_RESOURCES,
+        MPTCP_TCPRST_REASON_MIDDLEBOX_INTERFERENCE, MPTCP_TCPRST_REASON_MPTCP_SPECIFIC,
+        MPTCP_TCPRST_REASON_TOO_MUCH_OUTSTANDING_DATA, MPTCP_TCPRST_REASON_UNACCEPTABLE_PERFORMANCE,
+        MPTCP_TCPRST_REASON_UNSPECIFIED,
+    };
+
+    // RFC 8684 section 3.6 reason code values, 0x00..=0x06.
+    assert_eq!(MPTCP_TCPRST_REASON_UNSPECIFIED, 0x00);
+    assert_eq!(MPTCP_TCPRST_REASON_MPTCP_SPECIFIC, 0x01);
+    assert_eq!(MPTCP_TCPRST_REASON_LACK_OF_RESOURCES, 0x02);
+    assert_eq!(MPTCP_TCPRST_REASON_ADMINISTRATIVELY_PROHIBITED, 0x03);
+    assert_eq!(MPTCP_TCPRST_REASON_TOO_MUCH_OUTSTANDING_DATA, 0x04);
+    assert_eq!(MPTCP_TCPRST_REASON_UNACCEPTABLE_PERFORMANCE, 0x05);
+    assert_eq!(MPTCP_TCPRST_REASON_MIDDLEBOX_INTERFERENCE, 0x06);
+
+    // The byte-preserving accessor reads the Reason byte from a generic MP_TCPRST
+    // option without acting on it, and ignores non-MP_TCPRST MPTCP options.
+    use crafter::protocols::transport::{TcpOption, MPTCP_SUBTYPE_TCPRST};
+    let tcprst = TcpOption::multipath_tcp(
+        MPTCP_SUBTYPE_TCPRST,
+        vec![0x00, MPTCP_TCPRST_REASON_ADMINISTRATIVELY_PROHIBITED],
+    );
+    assert_eq!(
+        tcprst.mptcp_tcprst_reason(),
+        Some(MPTCP_TCPRST_REASON_ADMINISTRATIVELY_PROHIBITED)
+    );
+
+    let dss = TcpOption::multipath_tcp(crafter::protocols::transport::MPTCP_SUBTYPE_DSS, vec![0x00]);
+    assert_eq!(dss.mptcp_tcprst_reason(), None);
+}
+
+#[test]
 fn udp_dhcp_helpers_compile_expected_ports() -> crafter::Result<()> {
     let client = (Udp::dhcp_client() / Raw::from("discover")).compile()?;
     let server = (Udp::dhcp_server() / Raw::from("offer")).compile()?;
