@@ -8,6 +8,15 @@ pub const TCP_OPTION_NOP: u8 = 1;
 pub const TCP_OPTION_MSS: u8 = 2;
 /// TCP window scale option kind.
 pub const TCP_OPTION_WINDOW_SCALE: u8 = 3;
+/// Maximum valid TCP Window Scale shift count (RFC 7323 section 2.3).
+///
+/// RFC 7323 caps the shift at 14, limiting the largest advertised window to
+/// 2^30 so the scaled offered window stays below 2^32 (RFC 7323 section 2.3,
+/// "the maximum scale exponent is limited to 14"). `crafter` exposes this as a
+/// validity reference only: deliberately out-of-range shifts can still be
+/// constructed and encoded for stack testing (see
+/// [`valid_window_scale`](super::option::valid_window_scale)).
+pub const TCP_WINDOW_SCALE_MAX_SHIFT: u8 = 14;
 /// TCP SACK-permitted option kind.
 pub const TCP_OPTION_SACK_PERMITTED: u8 = 4;
 /// TCP SACK option kind.

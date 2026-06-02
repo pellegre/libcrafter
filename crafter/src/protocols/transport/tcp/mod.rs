@@ -21,7 +21,7 @@ pub use self::constants::{
     TCP_OPTION_MD5_SIGNATURE, TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK,
     TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN,
     TCP_OPTION_TCP_ENO, TCP_OPTION_TCP_ENO_MIN_LEN, TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT,
-    TCP_OPTION_USER_TIMEOUT_LEN, TCP_OPTION_WINDOW_SCALE,
+    TCP_OPTION_USER_TIMEOUT_LEN, TCP_OPTION_WINDOW_SCALE, TCP_WINDOW_SCALE_MAX_SHIFT,
 };
 pub(crate) use self::decode::append_tcp_packet_with_registry;
 pub use self::flags::{
@@ -30,7 +30,8 @@ pub use self::flags::{
 };
 pub use self::option::{
     tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
-    TcpExtendedDataOffset, TcpOption, TcpOptionIter, TcpOptionKindClass, TcpSackBlock,
+    valid_window_scale, TcpExtendedDataOffset, TcpOption, TcpOptionIter, TcpOptionKindClass,
+    TcpSackBlock,
 };
 pub use self::segment::Tcp;
 

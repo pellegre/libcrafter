@@ -6,7 +6,8 @@ mod udp;
 
 pub(crate) use self::tcp::append_tcp_packet_with_registry;
 pub use self::tcp::{
-    tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental, Tcp,
+    tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
+    valid_window_scale, Tcp,
     TcpExtendedDataOffset, TcpOption, TcpOptionIter, TcpOptionKindClass, TcpSackBlock,
     MPTCP_SUBTYPE_ADD_ADDR, MPTCP_SUBTYPE_DSS, MPTCP_SUBTYPE_MP_CAPABLE,
     MPTCP_SUBTYPE_MP_EXPERIMENTAL, MPTCP_SUBTYPE_MP_FAIL, MPTCP_SUBTYPE_MP_FASTCLOSE,
@@ -25,7 +26,7 @@ pub use self::tcp::{
     TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TCP_AUTHENTICATION,
     TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN, TCP_OPTION_TCP_ENO, TCP_OPTION_TCP_ENO_MIN_LEN,
     TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT, TCP_OPTION_USER_TIMEOUT_LEN,
-    TCP_OPTION_WINDOW_SCALE,
+    TCP_OPTION_WINDOW_SCALE, TCP_WINDOW_SCALE_MAX_SHIFT,
 };
 pub(crate) use self::udp::append_udp_packet_with_registry;
 pub use self::udp::{
