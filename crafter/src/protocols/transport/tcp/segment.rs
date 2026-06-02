@@ -13,7 +13,7 @@ use super::constants::{
     TCP_MAX_DATA_OFFSET, TCP_MAX_FLAGS, TCP_MAX_HEADER_LEN, TCP_MAX_RESERVED, TCP_MIN_HEADER_LEN,
 };
 use super::flags::{flags_summary, TCP_FLAG_FIN, TCP_FLAG_SYN};
-use super::option::{validate_tcp_options, TcpOption, TcpOptionIter};
+use super::option::{tcp_option_kind_name, validate_tcp_options, TcpOption, TcpOptionIter};
 use super::sizing::{padded_options_len, sequence_space_len};
 
 /// Transmission Control Protocol header.
@@ -493,6 +493,43 @@ impl Tcp {
         TcpOption::decode_all(&self.options)
     }
 
+    /// Concise, source-backed summary of the options present, for inspection.
+    ///
+    /// Each decoded option is rendered as its short registry name and numeric
+    /// kind (for example `MSS(2)`, `WScale(3)`, `opt(200)`), joined with `,`.
+    /// Decoding stops at the End-of-Option-List marker. If the option region is
+    /// structurally malformed (an unbuildable length the builder would have
+    /// rejected) the already-decoded prefix is shown followed by `?`, so
+    /// `show()` stays inspectable and never panics. Returns `"none"` when there
+    /// are no options. The exact bytes remain available verbatim through
+    /// [`Tcp::option_bytes`] and the `options` inspection field.
+    fn options_summary(&self) -> String {
+        if self.options.is_empty() {
+            return "none".to_string();
+        }
+
+        let mut names = Vec::new();
+        for option in TcpOptionIter::new(&self.options) {
+            match option {
+                Ok(TcpOption::EndOfList) => break,
+                Ok(option) => {
+                    let kind = option.kind();
+                    names.push(format!("{}({})", tcp_option_kind_name(kind), kind));
+                }
+                Err(_) => {
+                    names.push("?".to_string());
+                    break;
+                }
+            }
+        }
+
+        if names.is_empty() {
+            "none".to_string()
+        } else {
+            names.join(",")
+        }
+    }
+
     fn effective_data_offset(&self) -> u8 {
         self.data_offset
             .value()
@@ -612,6 +649,7 @@ impl Layer for Tcp {
                 format!("0x{:08x}", self.acknowledgment_number_value()),
             ),
             ("data_offset", self.data_offset_value().to_string()),
+            ("header_len", self.effective_header_len().to_string()),
             ("reserved", self.reserved_value().to_string()),
             ("flags", flags_summary(self.flags_value())),
             ("window", self.window_value().to_string()),
@@ -622,6 +660,8 @@ impl Layer for Tcp {
                     .unwrap_or_else(|| "auto".to_string()),
             ),
             ("urgent_pointer", self.urgent_pointer_value().to_string()),
+            ("option_len", self.options.len().to_string()),
+            ("option_summary", self.options_summary()),
             ("options", hex_bytes(&self.options)),
         ]
     }

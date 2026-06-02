@@ -433,6 +433,14 @@ impl TcpOption {
         tcp_option_kind_class(self.kind())
     }
 
+    /// Return a short, source-backed display name for this option's kind.
+    ///
+    /// This is the same registry-backed token used by TCP `summary()`/`show()`
+    /// inspection; see [`tcp_option_kind_name`].
+    pub const fn kind_name(&self) -> &'static str {
+        tcp_option_kind_name(self.kind())
+    }
+
     /// Return true when this option's kind is assigned by the IANA registry.
     pub const fn kind_is_assigned(&self) -> bool {
         tcp_option_kind_is_assigned(self.kind())
@@ -1397,6 +1405,36 @@ pub const fn tcp_option_kind_class(kind: u8) -> TcpOptionKindClass {
         | TCP_OPTION_ACCURATE_ECN_ORDER_0
         | TCP_OPTION_ACCURATE_ECN_ORDER_1 => TcpOptionKindClass::Assigned,
         _ => TcpOptionKindClass::Unassigned,
+    }
+}
+
+/// Return a short, source-backed display name for a TCP option kind.
+///
+/// Names follow the IANA TCP Option Kind Numbers registry (under IANA TCP
+/// Parameters) and `docs/tcp-rfc-manifest.md`. Assigned-but-unmodeled and
+/// unassigned kinds return the generic `"opt"` token so the caller can still
+/// pair the name with the numeric kind and registry class for inspection. This
+/// is a display helper for `summary()`/`show()` only; it performs no
+/// classification decision (use [`tcp_option_kind_class`] for that).
+pub const fn tcp_option_kind_name(kind: u8) -> &'static str {
+    match kind {
+        TCP_OPTION_EOL => "EOL",
+        TCP_OPTION_NOP => "NOP",
+        TCP_OPTION_MSS => "MSS",
+        TCP_OPTION_WINDOW_SCALE => "WScale",
+        TCP_OPTION_SACK_PERMITTED => "SAckOK",
+        TCP_OPTION_SACK => "SAck",
+        TCP_OPTION_TIMESTAMP => "TS",
+        TCP_OPTION_MD5_SIGNATURE => "Md5",
+        TCP_OPTION_USER_TIMEOUT => "UTO",
+        TCP_OPTION_TCP_AUTHENTICATION => "AO",
+        TCP_OPTION_MPTCP => "MPTCP",
+        TCP_OPTION_FAST_OPEN => "FastOpen",
+        TCP_OPTION_TCP_ENO => "ENO",
+        TCP_OPTION_ACCURATE_ECN_ORDER_0 | TCP_OPTION_ACCURATE_ECN_ORDER_1 => "AccECN",
+        TCP_OPTION_EDO => "EDO",
+        TCP_OPTION_EXPERIMENTAL_1 | TCP_OPTION_EXPERIMENTAL_2 => "Exp",
+        _ => "opt",
     }
 }
 
