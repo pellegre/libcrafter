@@ -218,6 +218,68 @@ mod tcp_options {
     }
 }
 
+mod option_classification {
+    use super::super::{
+        tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
+        TcpOption, TcpOptionKindClass, TCP_OPTION_EOL, TCP_OPTION_EXPERIMENTAL_1,
+        TCP_OPTION_EXPERIMENTAL_2, TCP_OPTION_MSS, TCP_OPTION_NOP,
+    };
+
+    #[test]
+    fn tcp_option_kind_classification() {
+        // Assigned base/standard kinds.
+        assert_eq!(
+            tcp_option_kind_class(TCP_OPTION_EOL),
+            TcpOptionKindClass::Assigned
+        );
+        assert_eq!(
+            tcp_option_kind_class(TCP_OPTION_NOP),
+            TcpOptionKindClass::Assigned
+        );
+        assert_eq!(
+            tcp_option_kind_class(TCP_OPTION_MSS),
+            TcpOptionKindClass::Assigned
+        );
+        assert!(tcp_option_kind_is_assigned(TCP_OPTION_MSS));
+        assert!(!tcp_option_kind_is_experimental(TCP_OPTION_MSS));
+
+        // RFC 6994 experimental kinds 253 and 254.
+        assert_eq!(
+            tcp_option_kind_class(TCP_OPTION_EXPERIMENTAL_1),
+            TcpOptionKindClass::Experimental
+        );
+        assert_eq!(
+            tcp_option_kind_class(TCP_OPTION_EXPERIMENTAL_2),
+            TcpOptionKindClass::Experimental
+        );
+        assert!(tcp_option_kind_is_experimental(TCP_OPTION_EXPERIMENTAL_1));
+        assert!(tcp_option_kind_is_experimental(TCP_OPTION_EXPERIMENTAL_2));
+        // Experimental kinds are still assigned by IANA.
+        assert!(tcp_option_kind_is_assigned(TCP_OPTION_EXPERIMENTAL_1));
+
+        // An unassigned kind (16 is unassigned in the IANA registry, as is the
+        // draft-only EDO kind 237).
+        assert_eq!(
+            tcp_option_kind_class(16),
+            TcpOptionKindClass::Unassigned
+        );
+        assert_eq!(
+            tcp_option_kind_class(237),
+            TcpOptionKindClass::Unassigned
+        );
+        assert!(!tcp_option_kind_is_assigned(16));
+        assert!(!tcp_option_kind_is_experimental(16));
+
+        // The classification is reachable from a typed option value too.
+        assert_eq!(
+            TcpOption::mss(1460).kind_class(),
+            TcpOptionKindClass::Assigned
+        );
+        assert!(TcpOption::generic(253, [0x00, 0x01]).kind_is_experimental());
+        assert!(!TcpOption::generic(16, []).kind_is_assigned());
+    }
+}
+
 mod option_padding {
     use super::super::{Tcp, TcpOption};
     use crate::{IpProtocol, Ipv4, Ipv4Option, NetworkLayer, Packet, Raw};
