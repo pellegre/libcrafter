@@ -23,6 +23,10 @@ pub const TCP_OPTION_USER_TIMEOUT: u8 = 28;
 pub const TCP_OPTION_USER_TIMEOUT_LEN: u8 = 4;
 /// TCP Authentication Option (TCP-AO) kind (RFC 5925).
 pub const TCP_OPTION_TCP_AUTHENTICATION: u8 = 29;
+/// Minimum length byte of an RFC 5925 TCP Authentication Option: kind, length,
+/// KeyID, and RNextKeyID with an empty MAC field. Real deployments carry a
+/// non-empty MAC, but the wire format permits the 4-byte header alone.
+pub const TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN: u8 = 4;
 /// TCP MPTCP option kind (RFC 8684).
 pub const TCP_OPTION_MPTCP: u8 = 30;
 /// TCP Fast Open Cookie option kind (RFC 7413).
