@@ -84,7 +84,7 @@ impl Icmpv4 {
     /// Create a timestamp request (RFC 792, type 13).
     ///
     /// The fixed header carries the identifier and sequence number; the three
-    /// 32-bit timestamps live in a separate [`IcmpTimestamp`] body layer.
+    /// 32-bit timestamps live in a separate [`Icmpv4Timestamp`] body layer.
     pub fn timestamp_request() -> Self {
         Self::new().icmp_type(ICMP_TIMESTAMP)
     }
@@ -114,7 +114,7 @@ impl Icmpv4 {
     ///
     /// Deprecated by RFC 6918, but still constructible. The fixed header carries
     /// the identifier and sequence number; the 32-bit address mask lives in a
-    /// separate [`IcmpAddressMask`] body layer (RFC 950 sets it to zero in a
+    /// separate [`Icmpv4AddressMask`] body layer (RFC 950 sets it to zero in a
     /// request).
     pub fn address_mask_request() -> Self {
         Self::new().icmp_type(ICMP_ADDRESS_MASK_REQUEST)
@@ -123,7 +123,7 @@ impl Icmpv4 {
     /// Create an address mask reply (RFC 950, type 18).
     ///
     /// Deprecated by RFC 6918, but still constructible. The replying gateway
-    /// sets the [`IcmpAddressMask`] body to the subnet/network mask.
+    /// sets the [`Icmpv4AddressMask`] body to the subnet/network mask.
     pub fn address_mask_reply() -> Self {
         Self::new().icmp_type(ICMP_ADDRESS_MASK_REPLY)
     }
@@ -132,7 +132,7 @@ impl Icmpv4 {
     ///
     /// The fixed header's rest-of-header carries Num Addrs (byte 0), Addr Entry
     /// Size (byte 1), and Lifetime (bytes 2-3); the advertised router addresses
-    /// and preference levels live in following [`IcmpRouterAdvertisementEntry`]
+    /// and preference levels live in following [`Icmpv4RouterAdvertisementEntry`]
     /// layers. Num Addrs and Addr Entry Size are auto-filled from those entries
     /// at compile time unless the caller pins them.
     pub fn router_advertisement() -> Self {
@@ -405,7 +405,7 @@ impl Icmpv4 {
     /// Set the RFC 1256 router advertisement Num Addrs field explicitly.
     ///
     /// When unset, compilation counts the following
-    /// [`IcmpRouterAdvertisementEntry`] layers.
+    /// [`Icmpv4RouterAdvertisementEntry`] layers.
     pub fn num_addrs(mut self, num_addrs: u8) -> Self {
         self.num_addrs.set_user(num_addrs);
         self

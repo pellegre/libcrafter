@@ -22,7 +22,7 @@ fn main() -> ExampleResult<()> {
     // single-label MPLS extension object (RFC 4884 framing, RFC 4950 object).
     let packet = Ipv4::new().src(src).dst(dst)
         / Icmpv4::time_exceeded().code(ICMP_CODE_TIME_EXCEEDED_TTL)
-        / IcmpQuotedIpv4::new(offending)
+        / Icmpv4QuotedIp::new(offending)
         / IcmpExtension::new()
         / IcmpExtensionObject::new()
         / IcmpExtensionMpls::new().label(16000).exp(0).ttl(64);
@@ -52,7 +52,7 @@ fn main() -> ExampleResult<()> {
     );
     println!(
         "quoted datagram present: {}",
-        decoded.layer::<IcmpQuotedIpv4>().is_some()
+        decoded.layer::<Icmpv4QuotedIp>().is_some()
     );
     println!(
         "mpls label/ttl/bottom: {} / {} / {}",

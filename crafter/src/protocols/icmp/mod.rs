@@ -9,10 +9,10 @@
 //! deprecated and experimental legacy types. Data that follows the fixed header
 //! is modeled as its own typed body or extension layer composed with `/`:
 //!
-//! - [`IcmpQuotedIpv4`] — the quoted original datagram in an ICMPv4 error.
-//! - [`IcmpTimestamp`] — RFC 792 originate/receive/transmit timestamps.
-//! - [`IcmpAddressMask`] — the RFC 950 address mask.
-//! - [`IcmpRouterAdvertisementEntry`] — one RFC 1256 advertised router entry.
+//! - [`Icmpv4QuotedIp`] — the quoted original datagram in an ICMPv4 error.
+//! - [`Icmpv4Timestamp`] — RFC 792 originate/receive/transmit timestamps.
+//! - [`Icmpv4AddressMask`] — the RFC 950 address mask.
+//! - [`Icmpv4RouterAdvertisementEntry`] — one RFC 1256 advertised router entry.
 //! - [`IcmpExtension`] + [`IcmpExtensionObject`] — RFC 4884 multi-part framing
 //!   and a generic extension object, with typed object bodies for RFC 4950 MPLS
 //!   ([`IcmpExtensionMpls`]), RFC 5837 interface information
@@ -50,17 +50,17 @@
 //! let packet = Ipv4::new()
 //!     .src(Ipv4Addr::new(192, 0, 2, 10))
 //!     .dst(Ipv4Addr::new(198, 51, 100, 20))
-//!     / Icmp::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
-//!     / IcmpQuotedIpv4::new(offending);
+//!     / Icmpv4::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
+//!     / Icmpv4QuotedIp::new(offending);
 //!
 //! // compile() auto-fills the ICMP checksum and IPv4 length/protocol.
 //! let bytes = packet.compile()?;
 //!
 //! // decode_from_l3 recovers the typed header and quoted datagram.
 //! let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
-//! let icmp = decoded.layer::<Icmp>().expect("icmp header");
+//! let icmp = decoded.layer::<Icmpv4>().expect("icmp header");
 //! assert_eq!(icmp.icmp_type_value(), ICMP_DESTINATION_UNREACHABLE);
-//! let quote = decoded.layer::<IcmpQuotedIpv4>().expect("quoted datagram");
+//! let quote = decoded.layer::<Icmpv4QuotedIp>().expect("quoted datagram");
 //! assert!(quote.quoted_layer::<Ipv4>().is_some());
 //! # Ok(())
 //! # }
@@ -197,11 +197,18 @@ pub use self::v4::Icmpv4;
 /// [`Icmpv4`] name.
 #[deprecated(since = "2.1.0", note = "renamed to Icmpv4; use the v4-explicit name")]
 pub type Icmp = Icmpv4;
-// The ICMPv4 message bodies (`IcmpQuotedIpv4`, `IcmpTimestamp`,
-// `IcmpAddressMask`, `IcmpRouterAdvertisementEntry`) moved into
-// `v4/bodies.rs`; re-export them at the `icmp` root so the `protocols::mod.rs`
-// names and the prelude keep resolving to the same types (renames are a later
-// step).
+// The ICMPv4 message bodies live in `v4/bodies.rs` under the explicit
+// `Icmpv4*` names. Re-export the canonical names at the `icmp` root so the
+// `protocols::mod.rs` names and the prelude resolve to them.
+pub use self::v4::{
+    Icmpv4AddressMask, Icmpv4QuotedIp, Icmpv4RouterAdvertisementEntry, Icmpv4Timestamp,
+};
+// Re-export the deprecated `Icmp*` body aliases separately so the
+// `#[allow(deprecated)]` scope stays narrow: only these aliases are exempt from
+// the deprecation warning, while the rest of the icmp surface keeps full lint
+// coverage. Kept for one minor cycle so downstream code that imported the old
+// names keeps compiling (with a deprecation warning).
+#[allow(deprecated)]
 pub use self::v4::{IcmpAddressMask, IcmpQuotedIpv4, IcmpRouterAdvertisementEntry, IcmpTimestamp};
 // The ICMPv4 (`ICMP_*`) codepoint constants live in `v4/constants.rs` and are
 // re-exported through `constants.rs` (which `pub use`s them), so the existing
@@ -221,7 +228,7 @@ fn router_advertisement_entry_count(ctx: LayerContext<'_>) -> usize {
     ctx.packet()
         .iter()
         .skip(ctx.index() + 1)
-        .take_while(|layer| layer.as_any().is::<IcmpRouterAdvertisementEntry>())
+        .take_while(|layer| layer.as_any().is::<Icmpv4RouterAdvertisementEntry>())
         .count()
 }
 

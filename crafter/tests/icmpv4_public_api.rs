@@ -73,7 +73,7 @@ fn icmpv4_public_api_error_quotes_original_datagram() -> crafter::Result<()> {
 
     let packet = ipv4()
         / Icmpv4::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
-        / IcmpQuotedIpv4::new(quoted);
+        / Icmpv4QuotedIp::new(quoted);
     let compiled = packet.compile()?;
 
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
@@ -81,7 +81,7 @@ fn icmpv4_public_api_error_quotes_original_datagram() -> crafter::Result<()> {
     assert_eq!(icmp.icmp_type_value(), ICMP_DESTINATION_UNREACHABLE);
     assert_eq!(icmp.code_value(), ICMP_CODE_DU_PORT_UNREACHABLE);
 
-    let quote = decoded.layer::<IcmpQuotedIpv4>().expect("quoted datagram");
+    let quote = decoded.layer::<Icmpv4QuotedIp>().expect("quoted datagram");
     let quoted_ip = quote.quoted_layer::<Ipv4>().expect("quoted ipv4 header");
     assert_eq!(quoted_ip.source(), DOC_DST);
     Ok(())
@@ -91,11 +91,11 @@ fn icmpv4_public_api_error_quotes_original_datagram() -> crafter::Result<()> {
 fn icmpv4_public_api_timestamp_body_roundtrip() -> crafter::Result<()> {
     let packet = ipv4()
         / Icmpv4::timestamp_request().id(9).seq(1)
-        / IcmpTimestamp::new().originate(0x0001_0203);
+        / Icmpv4Timestamp::new().originate(0x0001_0203);
     let compiled = packet.compile()?;
 
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
-    let ts = decoded.layer::<IcmpTimestamp>().expect("timestamp body");
+    let ts = decoded.layer::<Icmpv4Timestamp>().expect("timestamp body");
     assert_eq!(ts.originate_value(), 0x0001_0203);
     assert_eq!(ts.receive_value(), 0);
     Ok(())
@@ -105,12 +105,12 @@ fn icmpv4_public_api_timestamp_body_roundtrip() -> crafter::Result<()> {
 fn icmpv4_public_api_address_mask_body_roundtrip() -> crafter::Result<()> {
     let mask = Ipv4Addr::new(255, 255, 255, 0);
     let packet =
-        ipv4() / Icmpv4::address_mask_reply().id(3).seq(1) / IcmpAddressMask::new().mask(mask);
+        ipv4() / Icmpv4::address_mask_reply().id(3).seq(1) / Icmpv4AddressMask::new().mask(mask);
     let compiled = packet.compile()?;
 
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
     let body = decoded
-        .layer::<IcmpAddressMask>()
+        .layer::<Icmpv4AddressMask>()
         .expect("address mask body");
     assert_eq!(body.mask_value(), mask);
     Ok(())
@@ -121,7 +121,7 @@ fn icmpv4_public_api_router_advertisement_entries() -> crafter::Result<()> {
     let router = Ipv4Addr::new(192, 0, 2, 1);
     let packet = ipv4()
         / Icmpv4::router_advertisement().lifetime(1800)
-        / IcmpRouterAdvertisementEntry::new()
+        / Icmpv4RouterAdvertisementEntry::new()
             .router_address(router)
             .preference_level(10);
     let compiled = packet.compile()?;
@@ -133,7 +133,7 @@ fn icmpv4_public_api_router_advertisement_entries() -> crafter::Result<()> {
     assert_eq!(icmp.num_addrs_value(), Some(1));
 
     let entry = decoded
-        .layer::<IcmpRouterAdvertisementEntry>()
+        .layer::<Icmpv4RouterAdvertisementEntry>()
         .expect("router entry");
     assert_eq!(entry.router_address_value(), router);
     assert_eq!(entry.preference_level_value(), 10);
@@ -146,7 +146,7 @@ fn icmpv4_public_api_rfc4884_mpls_extension_roundtrip() -> crafter::Result<()> {
 
     let packet = ipv4()
         / Icmpv4::time_exceeded().code(ICMP_CODE_TIME_EXCEEDED_TTL)
-        / IcmpQuotedIpv4::new(quoted)
+        / Icmpv4QuotedIp::new(quoted)
         / IcmpExtension::new()
         / IcmpExtensionObject::new()
         / IcmpExtensionMpls::new().label(16000).ttl(64);

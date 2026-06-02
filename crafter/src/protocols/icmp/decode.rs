@@ -37,12 +37,12 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
     }
 
     // RFC 792 error messages quote the original datagram after the fixed
-    // header. Type it as an `IcmpQuotedIpv4` layer when the quote begins with a
+    // header. Type it as an `Icmpv4QuotedIp` layer when the quote begins with a
     // parseable IPv4 header; anything left over (or an unparseable quote)
     // stays raw-compatible so the bytes are never dropped.
     if icmpv4_type_is_error(icmp_type) {
         if let Some((quoted, consumed)) = decode_quoted_ipv4(payload) {
-            packet = packet.push(IcmpQuotedIpv4 { datagram: quoted });
+            packet = packet.push(Icmpv4QuotedIp { datagram: quoted });
             let trailing = &payload[consumed..];
             if trailing.is_empty() {
                 return Ok(packet);
@@ -92,7 +92,7 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
         let originate = read_u32_be(&payload[0..4])?;
         let receive = read_u32_be(&payload[4..8])?;
         let transmit = read_u32_be(&payload[8..12])?;
-        packet = packet.push(IcmpTimestamp {
+        packet = packet.push(Icmpv4Timestamp {
             originate: Field::user(originate),
             receive: Field::user(receive),
             transmit: Field::user(transmit),
@@ -110,7 +110,7 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
     ) && payload.len() == ICMP_ADDRESS_MASK_BODY_LEN
     {
         let mask = Ipv4Addr::from(copy_array_4(&payload[0..4]));
-        packet = packet.push(IcmpAddressMask {
+        packet = packet.push(Icmpv4AddressMask {
             mask: Field::user(mask),
         });
         return Ok(packet);
@@ -130,7 +130,7 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
         for chunk in payload.chunks_exact(ICMP_ROUTER_ADVERTISEMENT_ENTRY_LEN) {
             let router_address = Ipv4Addr::from(copy_array_4(&chunk[0..4]));
             let preference_level = read_u32_be(&chunk[4..8])? as i32;
-            packet = packet.push(IcmpRouterAdvertisementEntry {
+            packet = packet.push(Icmpv4RouterAdvertisementEntry {
                 router_address: Field::user(router_address),
                 preference_level: Field::user(preference_level),
             });
@@ -569,7 +569,7 @@ mod ping_roundtrip {
 #[cfg(test)]
 mod icmpv4_rfc792_errors {
     use super::{
-        icmpv4_code_summary, icmpv4_type_is_deprecated, IcmpQuotedIpv4, Icmpv4,
+        icmpv4_code_summary, icmpv4_type_is_deprecated, Icmpv4, Icmpv4QuotedIp,
         ICMP_CODE_DU_FRAGMENTATION_NEEDED, ICMP_CODE_DU_PORT_UNREACHABLE,
         ICMP_CODE_PARAMETER_PROBLEM_POINTER, ICMP_CODE_REDIRECT_HOST,
         ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY, ICMP_DESTINATION_UNREACHABLE,
@@ -614,7 +614,7 @@ mod icmpv4_rfc792_errors {
         ] {
             let packet = Ipv4::new().src(src()).dst(dst())
                 / Icmpv4::new().icmp_type(icmp_type).code(code)
-                / IcmpQuotedIpv4::new(quoted_udp());
+                / Icmpv4QuotedIp::new(quoted_udp());
             let compiled = packet.compile().unwrap();
             assert_eq!(compiled.as_bytes()[20], icmp_type);
             assert_eq!(compiled.as_bytes()[21], code);
@@ -624,7 +624,7 @@ mod icmpv4_rfc792_errors {
             assert_eq!(icmp.icmp_type_value(), icmp_type);
             assert_eq!(icmp.code_value(), code);
 
-            let quoted = decoded.layer::<IcmpQuotedIpv4>().unwrap();
+            let quoted = decoded.layer::<Icmpv4QuotedIp>().unwrap();
             let inner = quoted.quoted_layer::<Ipv4>().unwrap();
             assert_eq!(inner.source(), Ipv4Addr::new(192, 0, 2, 1));
             assert_eq!(inner.destination(), Ipv4Addr::new(198, 51, 100, 1));
@@ -666,7 +666,7 @@ mod icmpv4_rfc792_errors {
                 .icmp_type(ICMP_REDIRECT)
                 .code(ICMP_CODE_REDIRECT_HOST)
                 .gateway(gateway)
-            / IcmpQuotedIpv4::new(quoted_udp());
+            / Icmpv4QuotedIp::new(quoted_udp());
         let compiled = packet.compile().unwrap();
         // Rest-of-header (ICMP bytes 4..8) holds the gateway address.
         assert_eq!(&compiled.as_bytes()[24..28], &gateway.octets());
@@ -675,7 +675,7 @@ mod icmpv4_rfc792_errors {
         let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(icmp.gateway_value(), Some(gateway));
         assert_eq!(icmp.code_value(), ICMP_CODE_REDIRECT_HOST);
-        assert!(decoded.layer::<IcmpQuotedIpv4>().is_some());
+        assert!(decoded.layer::<Icmpv4QuotedIp>().is_some());
         assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
     }
 
@@ -685,7 +685,7 @@ mod icmpv4_rfc792_errors {
     fn icmpv4_rfc792_errors_parameter_problem_pointer_roundtrip() {
         let packet = Ipv4::new().src(src()).dst(dst())
             / Icmpv4::new().icmp_type(ICMP_PARAMETER_PROBLEM).pointer(12)
-            / IcmpQuotedIpv4::new(quoted_udp());
+            / Icmpv4QuotedIp::new(quoted_udp());
         let compiled = packet.compile().unwrap();
         assert_eq!(compiled.as_bytes()[24], 12);
 
@@ -701,14 +701,14 @@ mod icmpv4_rfc792_errors {
 
         let packet = Ipv4::new().src(src()).dst(dst())
             / Icmpv4::new().icmp_type(ICMP_SOURCE_QUENCH)
-            / IcmpQuotedIpv4::new(quoted_udp());
+            / Icmpv4QuotedIp::new(quoted_udp());
         let compiled = packet.compile().unwrap();
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
         assert_eq!(
             decoded.layer::<Icmpv4>().unwrap().icmp_type_value(),
             ICMP_SOURCE_QUENCH
         );
-        assert!(decoded.layer::<IcmpQuotedIpv4>().is_some());
+        assert!(decoded.layer::<Icmpv4QuotedIp>().is_some());
     }
 
     // RFC 1191: destination unreachable code 4 (fragmentation needed) carries an
@@ -720,7 +720,7 @@ mod icmpv4_rfc792_errors {
                 .icmp_type(ICMP_DESTINATION_UNREACHABLE)
                 .code(ICMP_CODE_DU_FRAGMENTATION_NEEDED)
                 .mtu_next_hop(1492)
-            / IcmpQuotedIpv4::new(quoted_udp());
+            / Icmpv4QuotedIp::new(quoted_udp());
         let compiled = packet.compile().unwrap();
         // ICMP rest-of-header: bytes 4..6 unused (RFC 4884 length byte aside),
         // bytes 6..8 are the next-hop MTU. Byte index 24 is rest-of-header[0].
@@ -760,7 +760,7 @@ mod icmpv4_rfc792_errors {
         let compiled = packet.compile().unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-        let quoted = decoded.layer::<IcmpQuotedIpv4>().unwrap();
+        let quoted = decoded.layer::<Icmpv4QuotedIp>().unwrap();
         let inner = quoted.quoted_layer::<Ipv4>().unwrap();
         assert_eq!(inner.source(), Ipv4Addr::new(192, 0, 2, 1));
         // The truncated UDP header could not be fully decoded, so it stays raw.
@@ -781,11 +781,11 @@ mod icmpv4_rfc792_errors {
             / Raw::from("opaque-upper-layer");
         let packet = Ipv4::new().src(src()).dst(dst())
             / Icmpv4::new().icmp_type(ICMP_DESTINATION_UNREACHABLE)
-            / IcmpQuotedIpv4::new(quoted);
+            / Icmpv4QuotedIp::new(quoted);
         let compiled = packet.compile().unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-        let quoted = decoded.layer::<IcmpQuotedIpv4>().unwrap();
+        let quoted = decoded.layer::<Icmpv4QuotedIp>().unwrap();
         let inner = quoted.quoted_layer::<Ipv4>().unwrap();
         assert_eq!(inner.protocol_value(), 254);
         assert_eq!(
@@ -806,7 +806,7 @@ mod icmpv4_rfc792_errors {
         let compiled = packet.compile().unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-        assert!(decoded.layer::<IcmpQuotedIpv4>().is_none());
+        assert!(decoded.layer::<Icmpv4QuotedIp>().is_none());
         assert_eq!(
             decoded.layer::<Raw>().unwrap().as_bytes(),
             &[0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66]
@@ -825,7 +825,7 @@ mod icmpv4_rfc792_errors {
                 .code(0)
                 .checksum(0xbeef)
                 .rest_of_header(raw_rest)
-            / IcmpQuotedIpv4::new(quoted_udp());
+            / Icmpv4QuotedIp::new(quoted_udp());
         let compiled = packet.compile().unwrap();
 
         // The intentionally wrong checksum is honored verbatim.
@@ -837,7 +837,7 @@ mod icmpv4_rfc792_errors {
     // The quoted layer summary keeps the nested datagram inspectable.
     #[test]
     fn icmpv4_rfc792_errors_quoted_layer_summary_is_inspectable() {
-        let quoted = IcmpQuotedIpv4::new(quoted_udp());
+        let quoted = Icmpv4QuotedIp::new(quoted_udp());
         let summary = quoted.summary();
         assert!(summary.starts_with("IcmpQuotedIpv4("));
         assert!(summary.contains("Ipv4"));

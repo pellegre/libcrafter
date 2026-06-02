@@ -72,13 +72,13 @@ pub use protocols::{
     DhcpRelayVendorSpecific, DhcpReplayDetectionMethod, DhcpState, DhcpStaticRoute, DhcpStatusCode,
     DhcpStatusCodeOption, DhcpUserClass, DhcpVendorClassData, DhcpVendorIdentifyingOption,
     DhcpVendorSuboption, DhcpVssInfo, Dns, DnsName, DnsQuestion, DnsRecord, DnsRecordData,
-    DnsTypeBitmaps, Dot1Q, EdnsOption, Ethernet, IcmpAddressMask, IcmpExtension,
-    IcmpExtensionInterfaceId, IcmpExtensionInterfaceInfo, IcmpExtensionMpls, IcmpExtensionObject,
-    IcmpTimestamp, Icmpv4, Icmpv6, IpProtocol, Ipv4, Ipv4Option, Ipv4OptionIter,
-    Ipv4RouteOptionKind, Ipv6, Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6RoutingHeader,
-    Ipv6SegmentRoutingHeader, LinuxSll, NullByteOrder, NullLoopback, OptionOverload, SipServers,
-    SvcParam, SvcParams, Tcp, TcpExtendedDataOffset, TcpOption, TcpOptionIter,
-    TcpOptionKindClass, TcpSackBlock, Udp,
+    DnsTypeBitmaps, Dot1Q, EdnsOption, Ethernet, IcmpExtension, IcmpExtensionInterfaceId,
+    IcmpExtensionInterfaceInfo, IcmpExtensionMpls, IcmpExtensionObject, IcmpInterfaceIpAddress,
+    IcmpKind, IcmpLayer, Icmpv4, Icmpv4AddressMask, Icmpv4QuotedIp, Icmpv4RouterAdvertisementEntry,
+    Icmpv4Timestamp, Icmpv6, IpProtocol, Ipv4, Ipv4Option, Ipv4OptionIter, Ipv4RouteOptionKind,
+    Ipv6, Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader,
+    LinuxSll, NullByteOrder, NullLoopback, OptionOverload, SipServers, SvcParam, SvcParams, Tcp,
+    TcpExtendedDataOffset, TcpOption, TcpOptionIter, TcpOptionKindClass, TcpSackBlock, Udp,
     UdpChecksumStatus, UdpOption, UdpOptionIter, UdpOptionKindClass, UdpOptionStatus, UdpOptions,
     Vlan, ARP_HRD_ATM, ARP_HRD_ETHERNET, ARP_HRD_FIBRE_CHANNEL, ARP_HRD_IEEE_802,
     ARP_HRD_INFINIBAND, ARP_HRD_MAPOS, ARP_OP_ARP_NAK, ARP_OP_DRARP_ERROR, ARP_OP_DRARP_REPLY,
@@ -189,10 +189,13 @@ pub use protocols::{
     UDP_OPTION_UNASSIGNED_SAFE_END, UDP_OPTION_UNASSIGNED_SAFE_START,
     UDP_OPTION_UNASSIGNED_UNSAFE_END, UDP_OPTION_UNASSIGNED_UNSAFE_START,
 };
-// The deprecated `Icmp` alias (renamed to `Icmpv4`) is re-exported separately so
-// the `#[allow(deprecated)]` exemption stays scoped to just this alias.
+// The deprecated `Icmp*` aliases (renamed to the explicit `Icmpv4*` names) are
+// re-exported separately so the `#[allow(deprecated)]` exemption stays scoped to
+// just these aliases.
 #[allow(deprecated)]
-pub use protocols::Icmp;
+pub use protocols::{
+    Icmp, IcmpAddressMask, IcmpQuotedIpv4, IcmpRouterAdvertisementEntry, IcmpTimestamp,
+};
 pub use registry::{
     EthertypeBindingContext, Ipv4ProtocolBindingContext, Ipv6NextHeaderBindingContext,
     ProtocolRegistry, TcpBindingContext, UdpBindingContext,
@@ -241,10 +244,10 @@ pub mod core {
         DhcpStaticRoute, DhcpStatusCode, DhcpStatusCodeOption, DhcpUserClass, DhcpVendorClassData,
         DhcpVendorIdentifyingOption, DhcpVendorSuboption, DhcpVssInfo, Dns, DnsName, DnsQuestion,
         DnsRecord, DnsRecordData, DnsTypeBitmaps, Dot1Q, EdnsOption, Ethernet,
-        EthertypeBindingContext, Field, FieldState, IcmpAddressMask, IcmpExtension,
-        IcmpExtensionInterfaceId, IcmpExtensionInterfaceInfo, IcmpExtensionMpls,
-        IcmpExtensionObject, IcmpInterfaceIpAddress, IcmpKind, IcmpLayer, IcmpQuotedIpv4,
-        IcmpRouterAdvertisementEntry, IcmpTimestamp, Icmpv4, Icmpv6, IntoPacket, IpProtocol, Ipv4,
+        EthertypeBindingContext, Field, FieldState, IcmpExtension, IcmpExtensionInterfaceId,
+        IcmpExtensionInterfaceInfo, IcmpExtensionMpls, IcmpExtensionObject, IcmpInterfaceIpAddress,
+        IcmpKind, IcmpLayer, Icmpv4, Icmpv4AddressMask, Icmpv4QuotedIp,
+        Icmpv4RouterAdvertisementEntry, Icmpv4Timestamp, Icmpv6, IntoPacket, IpProtocol, Ipv4,
         Ipv4Option, Ipv4OptionIter, Ipv4ProtocolBindingContext, Ipv4RouteOptionKind, Ipv6,
         Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6NextHeaderBindingContext,
         Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LayerContext, LinkType, LinuxSll,
@@ -362,11 +365,13 @@ pub mod core {
         UDP_OPTION_UNASSIGNED_SAFE_END, UDP_OPTION_UNASSIGNED_SAFE_START,
         UDP_OPTION_UNASSIGNED_UNSAFE_END, UDP_OPTION_UNASSIGNED_UNSAFE_START,
     };
-    // The deprecated `Icmp` alias (renamed to `Icmpv4`) is re-exported separately
-    // so the `#[allow(deprecated)]` exemption stays scoped to just this alias; the
-    // prelude picks it up through `pub use crate::core::*`.
+    // The deprecated `Icmp*` aliases (renamed to the explicit `Icmpv4*` names) are
+    // re-exported separately so the `#[allow(deprecated)]` exemption stays scoped to
+    // just these aliases; the prelude picks them up through `pub use crate::core::*`.
     #[allow(deprecated)]
-    pub use crate::Icmp;
+    pub use crate::{
+        Icmp, IcmpAddressMask, IcmpQuotedIpv4, IcmpRouterAdvertisementEntry, IcmpTimestamp,
+    };
 }
 
 /// Common imports for generated packet tools and examples.
