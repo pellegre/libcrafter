@@ -4,7 +4,7 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 
 use super::constants::{
-    TCP_EDO_HEADER_AND_SEGMENT_LEN, TCP_EDO_HEADER_LEN, TCP_EDO_REQUEST_LEN,
+    MPTCP_SUBTYPE_TCPRST, TCP_EDO_HEADER_AND_SEGMENT_LEN, TCP_EDO_HEADER_LEN, TCP_EDO_REQUEST_LEN,
     TCP_OPTION_ACCURATE_ECN_MIN_LEN, TCP_OPTION_ACCURATE_ECN_ORDER_0,
     TCP_OPTION_ACCURATE_ECN_ORDER_1, TCP_OPTION_EDO, TCP_OPTION_EOL, TCP_OPTION_EXPERIMENTAL_1,
     TCP_OPTION_EXPERIMENTAL_2, TCP_OPTION_EXPERIMENTAL_MIN_LEN, TCP_OPTION_FAST_OPEN,
@@ -536,6 +536,28 @@ impl TcpOption {
         match self {
             Self::MultipathTcp { data, .. } => {
                 Some(data.split_first().map_or(&[][..], |(_, rest)| rest))
+            }
+            _ => None,
+        }
+    }
+
+    /// Return the raw MP_TCPRST Reason byte, if this option is an MPTCP
+    /// `MP_TCPRST` (subtype [`MPTCP_SUBTYPE_TCPRST`]) carrying one.
+    ///
+    /// RFC 8684 section 3.6 lays out the `MP_TCPRST` option as the subtype/flags
+    /// byte followed by an 8-bit Reason code. This accessor returns that Reason
+    /// byte verbatim without interpreting it; compare it against the
+    /// `MPTCP_TCPRST_REASON_*` constants for inspection. It returns `None` when
+    /// the option is not MPTCP, is not the `MP_TCPRST` subtype, or is truncated
+    /// before the Reason byte. `crafter` exposes the Reason code only as
+    /// inspectable data; it implements no MPTCP connection recovery or subflow
+    /// policy in response to it.
+    ///
+    /// Backed by RFC 8684 section 3.6 and `docs/tcp-rfc-manifest.md`.
+    pub fn mptcp_tcprst_reason(&self) -> Option<u8> {
+        match self {
+            Self::MultipathTcp { subtype, data } if *subtype == MPTCP_SUBTYPE_TCPRST => {
+                data.get(1).copied()
             }
             _ => None,
         }
