@@ -132,6 +132,75 @@ mod tcp {
         .unwrap();
         assert_eq!(ae, ns);
     }
+
+    #[test]
+    fn tcp_ecn_flag_helpers_preserve_raw_flags() {
+        use super::super::{TCP_FLAG_AE, TCP_FLAG_CWR, TCP_FLAG_ECE, TCP_FLAG_URG};
+
+        // The ECN helpers (set_cwr/set_ece/set_ae, ecn_setup_syn,
+        // accurate_ecn_setup, clear_ecn) are thin convenience wrappers over the
+        // raw flag escape hatches `flags()` and `flag()`. They must compose with
+        // raw flag control and must not disturb unrelated bits. Classic ECN
+        // (CWR/ECE) is RFC 3168; the AE bit is RFC 9768. See
+        // docs/tcp-rfc-manifest.md.
+
+        // Starting from a raw flag word, the ECN setters only touch their own
+        // bit and preserve every explicitly-set raw flag (here SYN | ACK | URG).
+        let base = TCP_FLAG_SYN | TCP_FLAG_ACK | TCP_FLAG_URG;
+        let with_ecn = Tcp::new().flags(base).set_cwr(true).set_ece(true).set_ae(true);
+        assert_eq!(
+            with_ecn.flags_value(),
+            base | TCP_FLAG_CWR | TCP_FLAG_ECE | TCP_FLAG_AE
+        );
+        assert!(with_ecn.has_flag(TCP_FLAG_URG));
+        assert!(with_ecn.has_flag(TCP_FLAG_SYN));
+
+        // The setters clear their own bit without disturbing the rest.
+        let cleared = with_ecn.clone().set_cwr(false).set_ece(false).set_ae(false);
+        assert_eq!(cleared.flags_value(), base);
+        // clear_ecn is equivalent and also leaves the raw flags intact.
+        assert_eq!(
+            Tcp::new().flags(base | TCP_FLAG_CWR | TCP_FLAG_ECE | TCP_FLAG_AE)
+                .clear_ecn()
+                .flags_value(),
+            base
+        );
+
+        // The combination helpers compose on top of raw flags: an ECN-setup SYN
+        // sets ECE | CWR (RFC 3168 §6.1.1) without clobbering the raw SYN bit set
+        // via flags().
+        let setup = Tcp::new().flags(TCP_FLAG_SYN).ecn_setup_syn();
+        assert_eq!(
+            setup.flags_value(),
+            TCP_FLAG_SYN | TCP_FLAG_ECE | TCP_FLAG_CWR
+        );
+        // The AccECN setup adds the AE bit (RFC 9768) to the classic pair.
+        let accecn = Tcp::new().flags(TCP_FLAG_SYN).accurate_ecn_setup();
+        assert_eq!(
+            accecn.flags_value(),
+            TCP_FLAG_SYN | TCP_FLAG_AE | TCP_FLAG_CWR | TCP_FLAG_ECE
+        );
+
+        // The raw escape hatches still win when used after a helper: an explicit
+        // deliberate (malformed) value set via flags() replaces helper-set bits
+        // wholesale, proving the helpers do not lock out raw control.
+        let raw_override = Tcp::new().set_cwr(true).set_ece(true).flags(0x000);
+        assert_eq!(raw_override.flags_value(), 0x000);
+
+        // And flag() composes the other direction: a helper-set ECN bit survives
+        // an unrelated raw flag() toggle, and the helper does not re-clear a bit
+        // the raw escape hatch deliberately set. Start from an explicit empty
+        // flag word so the default SYN bit does not enter the comparison.
+        let mixed = Tcp::new()
+            .flags(0x000)
+            .set_ece(true)
+            .flag(TCP_FLAG_CWR, true)
+            .set_ae(true);
+        assert_eq!(
+            mixed.flags_value(),
+            TCP_FLAG_ECE | TCP_FLAG_CWR | TCP_FLAG_AE
+        );
+    }
 }
 
 mod tcp_options {

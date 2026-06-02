@@ -204,6 +204,71 @@ impl Tcp {
         self.flag(super::flags::TCP_FLAG_NS, true)
     }
 
+    /// Set or clear the CWR (Congestion Window Reduced) flag.
+    ///
+    /// Classic ECN control bit per RFC 3168. This is a thin convenience over the
+    /// raw [`Tcp::flag`] escape hatch and preserves every other flag bit; it does
+    /// not refuse malformed ECN combinations.
+    pub fn set_cwr(self, enabled: bool) -> Self {
+        self.flag(super::flags::TCP_FLAG_CWR, enabled)
+    }
+
+    /// Set or clear the ECE (ECN-Echo) flag.
+    ///
+    /// Classic ECN control bit per RFC 3168. This is a thin convenience over the
+    /// raw [`Tcp::flag`] escape hatch and preserves every other flag bit; it does
+    /// not refuse malformed ECN combinations.
+    pub fn set_ece(self, enabled: bool) -> Self {
+        self.flag(super::flags::TCP_FLAG_ECE, enabled)
+    }
+
+    /// Set the AE (Accurate ECN) flag.
+    ///
+    /// Sets the `0x100` control bit assigned by RFC 9768 to AE (Accurate ECN);
+    /// see [`crate::TCP_FLAG_AE`]. This is a thin convenience over the raw
+    /// [`Tcp::flag`] escape hatch and preserves every other flag bit.
+    pub fn ae(self) -> Self {
+        self.flag(super::flags::TCP_FLAG_AE, true)
+    }
+
+    /// Set or clear the AE (Accurate ECN) flag.
+    ///
+    /// Accurate ECN control bit per RFC 9768, occupying the `0x100` position
+    /// historically exported as `NS`. This is a thin convenience over the raw
+    /// [`Tcp::flag`] escape hatch and preserves every other flag bit; it does not
+    /// refuse malformed ECN combinations.
+    pub fn set_ae(self, enabled: bool) -> Self {
+        self.flag(super::flags::TCP_FLAG_AE, enabled)
+    }
+
+    /// Set the classic ECN-setup SYN flag combination (ECE and CWR).
+    ///
+    /// RFC 3168 §6.1.1 marks an ECN-capable SYN by setting both ECE and CWR.
+    /// This sets those two bits and leaves all other flags (including SYN, which
+    /// the caller is expected to set) untouched. It does not refuse malformed
+    /// combinations.
+    pub fn ecn_setup_syn(self) -> Self {
+        self.set_ece(true).set_cwr(true)
+    }
+
+    /// Set the AccECN-setup feedback bits (AE, CWR, and ECE) on a SYN exchange.
+    ///
+    /// RFC 9768 carries a three-bit feedback codepoint in AE, CWR, and ECE on
+    /// the SYN exchange. This sets all three bits and leaves every other flag
+    /// untouched. It does not refuse malformed combinations.
+    pub fn accurate_ecn_setup(self) -> Self {
+        self.set_ae(true).set_cwr(true).set_ece(true)
+    }
+
+    /// Clear the classic and Accurate ECN flags (AE, CWR, and ECE).
+    ///
+    /// Clears the `0x100` AE bit (RFC 9768) and the classic CWR and ECE bits
+    /// (RFC 3168) while preserving every other flag bit. This is a thin
+    /// convenience over the raw [`Tcp::flag`] escape hatch.
+    pub fn clear_ecn(self) -> Self {
+        self.set_ae(false).set_cwr(false).set_ece(false)
+    }
+
     /// Set the receive window.
     pub fn window(mut self, window: u16) -> Self {
         self.window.set_user(window);
