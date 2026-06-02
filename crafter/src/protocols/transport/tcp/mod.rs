@@ -14,8 +14,8 @@ pub use self::constants::{
 };
 pub(crate) use self::decode::append_tcp_packet_with_registry;
 pub use self::flags::{
-    TCP_FLAG_ACK, TCP_FLAG_CWR, TCP_FLAG_ECE, TCP_FLAG_FIN, TCP_FLAG_NS, TCP_FLAG_PSH,
-    TCP_FLAG_RST, TCP_FLAG_SYN, TCP_FLAG_URG,
+    TCP_FLAG_ACK, TCP_FLAG_AE, TCP_FLAG_CWR, TCP_FLAG_ECE, TCP_FLAG_FIN, TCP_FLAG_NS,
+    TCP_FLAG_PSH, TCP_FLAG_RST, TCP_FLAG_SYN, TCP_FLAG_URG,
 };
 pub use self::option::{TcpExtendedDataOffset, TcpOption, TcpOptionIter, TcpSackBlock};
 pub use self::segment::Tcp;
