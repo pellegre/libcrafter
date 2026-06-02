@@ -17,7 +17,7 @@ fn main() -> ExampleResult<()> {
         .dst(remote_ipv4())
         .id(0x3001)
         .dont_fragment(true)
-        / Icmp::echo_request().id(0x4242).seq(7)
+        / Icmpv4::echo_request().id(0x4242).seq(7)
         / Raw::from("send-recv");
     let report = packet.send_recv_report(
         SendRecv::new()

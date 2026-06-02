@@ -15,7 +15,7 @@ fn main() -> ExampleResult<()> {
         .dst(remote_ipv4())
         .id(0x1234)
         .dont_fragment(true)
-        / Icmp::echo_request().id(0x4242).seq(1)
+        / Icmpv4::echo_request().id(0x4242).seq(1)
         / Raw::from("send-plan");
     let plan = packet.send_dry_run(SendOptions::new().iface(EXAMPLE_IFACE).network_layer())?;
 

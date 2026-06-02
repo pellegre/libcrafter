@@ -5,7 +5,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crafter::core::{
     decode_dns_name, scan_dhcp_option_segments, Arp, CrafterError, Dhcp, DhcpOption,
-    DhcpOptionArea, Dns, Ethernet, Icmp, Icmpv6, IpProtocol, Ipv4, Ipv4Option, Ipv6, LinkType,
+    DhcpOptionArea, Dns, Ethernet, Icmpv4, Icmpv6, IpProtocol, Ipv4, Ipv4Option, Ipv6, LinkType,
     LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
     Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
     TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
@@ -1144,7 +1144,7 @@ fn roundtrip_curated_protocol_families_compile_decode_compile() {
             PacketDecodeTarget::Link(LinkType::NullLoopback),
             NullLoopback::ipv4()
                 / Ipv4::with_addresses(Ipv4Addr::LOCALHOST, Ipv4Addr::LOCALHOST)
-                / Icmp::echo_request().identifier(7).sequence_number(9)
+                / Icmpv4::echo_request().identifier(7).sequence_number(9)
                 / Raw::from("null-icmp"),
         ),
         (

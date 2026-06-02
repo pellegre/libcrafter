@@ -11,10 +11,10 @@ fn main() -> ExampleResult<()> {
     }
 
     let icmp_request = Ipv4::new().src(local_ipv4()).dst(remote_ipv4()).id(0x4001)
-        / Icmp::echo_request().id(0x4242).seq(1)
+        / Icmpv4::echo_request().id(0x4242).seq(1)
         / Raw::from("icmp");
     let icmp_reply = Ipv4::new().src(remote_ipv4()).dst(local_ipv4()).id(0x4002)
-        / Icmp::echo_reply().id(0x4242).seq(1)
+        / Icmpv4::echo_reply().id(0x4242).seq(1)
         / Raw::from("icmp");
 
     let tcp_request = Ipv4::new().src(local_ipv4()).dst(remote_ipv4()).id(0x4003)

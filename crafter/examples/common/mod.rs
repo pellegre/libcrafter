@@ -288,7 +288,7 @@ pub fn ensure_parent(path: &Path) -> ExampleResult<()> {
 
 pub fn example_ipv4_icmp_packet(src: Ipv4Addr, dst: Ipv4Addr, payload: &str) -> Packet {
     Ipv4::new().src(src).dst(dst).id(0x1234).dont_fragment(true)
-        / Icmp::echo_request().id(0x4242).seq(1)
+        / Icmpv4::echo_request().id(0x4242).seq(1)
         / Raw::from(payload)
 }
 

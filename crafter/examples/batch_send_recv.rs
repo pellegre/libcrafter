@@ -17,7 +17,7 @@ fn main() -> ExampleResult<()> {
 
     let packets = vec![
         Ipv4::new().src(local_ipv4()).dst(remote_ipv4()).id(0x6001)
-            / Icmp::echo_request().id(1).seq(1)
+            / Icmpv4::echo_request().id(1).seq(1)
             / Raw::from("ipv4"),
         Ipv6::new().src(local_ipv6()).dst(remote_ipv6())
             / Icmpv6::echo_request().id(2).seq(1)

@@ -166,7 +166,7 @@ mod interface_helpers {
 mod send_plan {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    use crate::{Ethernet, Icmp, Ipv4, Ipv6, NetworkLayer, Packet, Raw, Tcp, Udp};
+    use crate::{Ethernet, Icmpv4, Ipv4, Ipv6, NetworkLayer, Packet, Raw, Tcp, Udp};
 
     use crate::net::{PacketSendExt, SendMode, SendOptions, SendTarget, SocketSender};
 
@@ -236,8 +236,9 @@ mod send_plan {
 
     #[test]
     fn socket_sender_dry_run_returns_report_without_transmitting() {
-        let packet =
-            Ethernet::new() / Ipv4::new().dst(Ipv4Addr::new(203, 0, 113, 1)) / Icmp::echo_request();
+        let packet = Ethernet::new()
+            / Ipv4::new().dst(Ipv4Addr::new(203, 0, 113, 1))
+            / Icmpv4::echo_request();
         let report = SocketSender::dry_run("eth0").send(&packet).unwrap();
 
         assert!(report.is_dry_run());
@@ -340,7 +341,7 @@ mod send_recv_filters {
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::time::Duration;
 
-    use crate::{Arp, Dns, Icmp, Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Tcp, Udp};
+    use crate::{Arp, Dns, Icmpv4, Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Tcp, Udp};
 
     use crate::net::{PacketSendRecvExt, SendRecv};
 
@@ -349,7 +350,7 @@ mod send_recv_filters {
         let packet = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 10))
             .dst(Ipv4Addr::new(198, 51, 100, 20))
-            / Icmp::echo_request().id(7).seq(9);
+            / Icmpv4::echo_request().id(7).seq(9);
 
         assert_eq!(
             packet.reply_filter().unwrap(),
@@ -487,7 +488,7 @@ mod reply_matching {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use crate::{
-        Arp, ArpOperation, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, DnsRecord, Icmp,
+        Arp, ArpOperation, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, DnsRecord, Icmpv4,
         Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Packet, Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK,
         TCP_FLAG_RST, TCP_FLAG_SYN,
     };
@@ -656,12 +657,12 @@ mod reply_matching {
         let request = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 10))
             .dst(Ipv4Addr::new(198, 51, 100, 20))
-            / Icmp::echo_request().id(7).seq(9)
+            / Icmpv4::echo_request().id(7).seq(9)
             / Raw::from("hello");
         let reply = Ipv4::new()
             .src(Ipv4Addr::new(198, 51, 100, 20))
             .dst(Ipv4Addr::new(192, 0, 2, 10))
-            / Icmp::echo_reply().id(7).seq(9)
+            / Icmpv4::echo_reply().id(7).seq(9)
             / Raw::from("hello");
         let decoded_reply = Packet::decode_from_l3(
             crate::NetworkLayer::Ipv4,
@@ -677,11 +678,11 @@ mod reply_matching {
         let request = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 10))
             .dst(Ipv4Addr::new(198, 51, 100, 20))
-            / Icmp::echo_request().id(7).seq(9);
+            / Icmpv4::echo_request().id(7).seq(9);
         let reply = Ipv4::new()
             .src(Ipv4Addr::new(198, 51, 100, 20))
             .dst(Ipv4Addr::new(192, 0, 2, 10))
-            / Icmp::echo_reply().id(7).seq(10);
+            / Icmpv4::echo_reply().id(7).seq(10);
 
         assert!(!reply_matches(&request, &reply));
     }
@@ -1086,7 +1087,7 @@ mod batch_send_recv {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use crate::{Icmp, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Icmpv4, Ipv4, NetworkLayer, Packet, Raw};
 
     use crate::net::{BatchSendRecv, PacketBatchSendRecvExt};
 
@@ -1094,7 +1095,7 @@ mod batch_send_recv {
         Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 10))
             .dst(Ipv4Addr::new(198, 51, 100, 20))
-            / Icmp::echo_request().id(0x4242).seq(sequence)
+            / Icmpv4::echo_request().id(0x4242).seq(sequence)
             / Raw::from_bytes(sequence.to_be_bytes())
     }
 
@@ -1102,7 +1103,7 @@ mod batch_send_recv {
         let packet = Ipv4::new()
             .src(Ipv4Addr::new(198, 51, 100, 20))
             .dst(Ipv4Addr::new(192, 0, 2, 10))
-            / Icmp::echo_reply().id(0x4242).seq(sequence)
+            / Icmpv4::echo_reply().id(0x4242).seq(sequence)
             / Raw::from_bytes(sequence.to_be_bytes());
 
         Packet::decode_from_l3(NetworkLayer::Ipv4, packet.compile().unwrap().as_bytes()).unwrap()
@@ -1163,7 +1164,7 @@ mod batch_send_recv {
                 .unwrap()
                 .reply()
                 .unwrap()
-                .layer::<Icmp>()
+                .layer::<Icmpv4>()
                 .unwrap()
                 .sequence_number_value(),
             Some(1)
@@ -1175,7 +1176,7 @@ mod batch_send_recv {
                 .unwrap()
                 .reply()
                 .unwrap()
-                .layer::<Icmp>()
+                .layer::<Icmpv4>()
                 .unwrap()
                 .sequence_number_value(),
             Some(3)
@@ -1188,7 +1189,7 @@ mod send_recv_wire_endpoint {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use crate::{Icmp, Ipv4};
+    use crate::{Icmpv4, Ipv4};
 
     use crate::net::{PacketSendRecvExt, SendRecv};
 
@@ -1198,7 +1199,7 @@ mod send_recv_wire_endpoint {
         let request = Ipv4::new()
             .src(Ipv4Addr::LOCALHOST)
             .dst(Ipv4Addr::LOCALHOST)
-            / Icmp::echo_request();
+            / Icmpv4::echo_request();
 
         let reply = request
             .send_recv(

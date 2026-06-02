@@ -327,7 +327,7 @@ fn decode_icmp_extension_objects(mut bytes: &[u8]) -> Option<Vec<Box<dyn Layer>>
     Some(objects)
 }
 
-fn decode_icmp_parts(bytes: &[u8]) -> Result<(Icmp, &[u8])> {
+fn decode_icmp_parts(bytes: &[u8]) -> Result<(Icmpv4, &[u8])> {
     if bytes.len() < ICMP_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "icmp header",
@@ -352,7 +352,7 @@ fn decode_icmp_parts(bytes: &[u8]) -> Result<(Icmp, &[u8])> {
     } else {
         field_from_echo(icmp_type, &rest, 2, is_query_v4)
     };
-    let icmp = Icmp {
+    let icmp = Icmpv4 {
         icmp_type: Field::user(icmp_type),
         code: Field::user(bytes[1]),
         checksum: Field::user(read_u16_be(&bytes[2..4])?),
@@ -407,7 +407,7 @@ fn decode_icmp_parts(bytes: &[u8]) -> Result<(Icmp, &[u8])> {
 #[cfg(test)]
 mod icmp_tests {
     use super::{
-        Icmp, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpKind, ICMP_ECHO_REQUEST,
+        IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpKind, Icmpv4, ICMP_ECHO_REQUEST,
         ICMP_TIME_EXCEEDED,
     };
     use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
@@ -430,7 +430,7 @@ mod icmp_tests {
             .dst(dst())
             .id(0x1234)
             .dont_fragment(true)
-            / Icmp::echo_request().id(0x4242).seq(1)
+            / Icmpv4::echo_request().id(0x4242).seq(1)
             / Raw::from("libcrafter-icmp");
         let bytes = packet.compile().unwrap();
 
@@ -442,7 +442,7 @@ mod icmp_tests {
     #[test]
     fn icmp_decode_from_ipv4_exposes_echo_fields_and_payload() {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, IPV4_ICMP_FIXTURE).unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         let raw = decoded.layer::<Raw>().unwrap();
 
         assert_eq!(icmp.kind_value(), Some(IcmpKind::EchoRequest));
@@ -457,7 +457,7 @@ mod icmp_tests {
     #[test]
     fn icmp_explicit_checksum_is_preserved() {
         let bytes = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::echo_request().id(7).seq(8).checksum(0x1111)
+            / Icmpv4::echo_request().id(7).seq(8).checksum(0x1111)
             / Raw::from("abc"))
         .compile()
         .unwrap();
@@ -468,7 +468,7 @@ mod icmp_tests {
     #[test]
     fn icmp_time_exceeded_autofills_length_and_extension_objects() {
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded().code(0)
+            / Icmpv4::time_exceeded().code(0)
             / (Ipv4::new()
                 .src(Ipv4Addr::new(5, 6, 7, 8))
                 .dst(Ipv4Addr::new(10, 11, 12, 13))
@@ -510,7 +510,7 @@ mod icmp_tests {
 
 #[cfg(test)]
 mod ping_roundtrip {
-    use super::{Icmp, IcmpKind, IcmpLayer, Icmpv6};
+    use super::{IcmpKind, IcmpLayer, Icmpv4, Icmpv6};
     use crate::{Ipv4, Ipv6, NetworkLayer, Packet, Raw};
     use core::net::{Ipv4Addr, Ipv6Addr};
 
@@ -526,10 +526,10 @@ mod ping_roundtrip {
         let src = Ipv4Addr::new(192, 0, 2, 10);
         let dst = Ipv4Addr::new(198, 51, 100, 20);
         let request = Ipv4::new().src(src).dst(dst)
-            / Icmp::echo_request().id(0x7777).seq(9)
+            / Icmpv4::echo_request().id(0x7777).seq(9)
             / Raw::from("ping");
         let reply = Ipv4::new().src(dst).dst(src)
-            / Icmp::echo_reply().id(0x7777).seq(9)
+            / Icmpv4::echo_reply().id(0x7777).seq(9)
             / Raw::from("ping");
 
         let decoded_request =
@@ -538,8 +538,8 @@ mod ping_roundtrip {
             Packet::decode_from_l3(NetworkLayer::Ipv4, reply.compile().unwrap()).unwrap();
 
         assert!(echo_reply_matches(
-            decoded_request.layer::<Icmp>().unwrap(),
-            decoded_reply.layer::<Icmp>().unwrap()
+            decoded_request.layer::<Icmpv4>().unwrap(),
+            decoded_reply.layer::<Icmpv4>().unwrap()
         ));
     }
 
@@ -569,7 +569,7 @@ mod ping_roundtrip {
 #[cfg(test)]
 mod icmpv4_rfc792_errors {
     use super::{
-        icmpv4_code_summary, icmpv4_type_is_deprecated, Icmp, IcmpQuotedIpv4,
+        icmpv4_code_summary, icmpv4_type_is_deprecated, IcmpQuotedIpv4, Icmpv4,
         ICMP_CODE_DU_FRAGMENTATION_NEEDED, ICMP_CODE_DU_PORT_UNREACHABLE,
         ICMP_CODE_PARAMETER_PROBLEM_POINTER, ICMP_CODE_REDIRECT_HOST,
         ICMP_CODE_TIME_EXCEEDED_FRAGMENT_REASSEMBLY, ICMP_DESTINATION_UNREACHABLE,
@@ -613,14 +613,14 @@ mod icmpv4_rfc792_errors {
             (ICMP_PARAMETER_PROBLEM, ICMP_CODE_PARAMETER_PROBLEM_POINTER),
         ] {
             let packet = Ipv4::new().src(src()).dst(dst())
-                / Icmp::new().icmp_type(icmp_type).code(code)
+                / Icmpv4::new().icmp_type(icmp_type).code(code)
                 / IcmpQuotedIpv4::new(quoted_udp());
             let compiled = packet.compile().unwrap();
             assert_eq!(compiled.as_bytes()[20], icmp_type);
             assert_eq!(compiled.as_bytes()[21], code);
 
             let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-            let icmp = decoded.layer::<Icmp>().unwrap();
+            let icmp = decoded.layer::<Icmpv4>().unwrap();
             assert_eq!(icmp.icmp_type_value(), icmp_type);
             assert_eq!(icmp.code_value(), code);
 
@@ -662,7 +662,7 @@ mod icmpv4_rfc792_errors {
     fn icmpv4_rfc792_errors_redirect_gateway_and_quote_roundtrip() {
         let gateway = Ipv4Addr::new(192, 0, 2, 254);
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::new()
+            / Icmpv4::new()
                 .icmp_type(ICMP_REDIRECT)
                 .code(ICMP_CODE_REDIRECT_HOST)
                 .gateway(gateway)
@@ -672,7 +672,7 @@ mod icmpv4_rfc792_errors {
         assert_eq!(&compiled.as_bytes()[24..28], &gateway.octets());
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(icmp.gateway_value(), Some(gateway));
         assert_eq!(icmp.code_value(), ICMP_CODE_REDIRECT_HOST);
         assert!(decoded.layer::<IcmpQuotedIpv4>().is_some());
@@ -684,13 +684,13 @@ mod icmpv4_rfc792_errors {
     #[test]
     fn icmpv4_rfc792_errors_parameter_problem_pointer_roundtrip() {
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::new().icmp_type(ICMP_PARAMETER_PROBLEM).pointer(12)
+            / Icmpv4::new().icmp_type(ICMP_PARAMETER_PROBLEM).pointer(12)
             / IcmpQuotedIpv4::new(quoted_udp());
         let compiled = packet.compile().unwrap();
         assert_eq!(compiled.as_bytes()[24], 12);
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-        assert_eq!(decoded.layer::<Icmp>().unwrap().pointer_value(), Some(12));
+        assert_eq!(decoded.layer::<Icmpv4>().unwrap().pointer_value(), Some(12));
     }
 
     // Source quench (type 4) is deprecated by RFC 6633 but still constructible
@@ -700,12 +700,12 @@ mod icmpv4_rfc792_errors {
         assert!(icmpv4_type_is_deprecated(ICMP_SOURCE_QUENCH));
 
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::new().icmp_type(ICMP_SOURCE_QUENCH)
+            / Icmpv4::new().icmp_type(ICMP_SOURCE_QUENCH)
             / IcmpQuotedIpv4::new(quoted_udp());
         let compiled = packet.compile().unwrap();
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
         assert_eq!(
-            decoded.layer::<Icmp>().unwrap().icmp_type_value(),
+            decoded.layer::<Icmpv4>().unwrap().icmp_type_value(),
             ICMP_SOURCE_QUENCH
         );
         assert!(decoded.layer::<IcmpQuotedIpv4>().is_some());
@@ -716,7 +716,7 @@ mod icmpv4_rfc792_errors {
     #[test]
     fn icmpv4_rfc792_errors_rfc1191_next_hop_mtu_roundtrips() {
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::new()
+            / Icmpv4::new()
                 .icmp_type(ICMP_DESTINATION_UNREACHABLE)
                 .code(ICMP_CODE_DU_FRAGMENTATION_NEEDED)
                 .mtu_next_hop(1492)
@@ -730,7 +730,7 @@ mod icmpv4_rfc792_errors {
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
         assert_eq!(
-            decoded.layer::<Icmp>().unwrap().mtu_next_hop_value(),
+            decoded.layer::<Icmpv4>().unwrap().mtu_next_hop_value(),
             Some(1492)
         );
     }
@@ -755,7 +755,7 @@ mod icmpv4_rfc792_errors {
         quote.truncate(20 + 8); // IPv4 header (20) + 64 bits of original data.
 
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::new().icmp_type(ICMP_TIME_EXCEEDED)
+            / Icmpv4::new().icmp_type(ICMP_TIME_EXCEEDED)
             / Raw::from_bytes(&quote);
         let compiled = packet.compile().unwrap();
 
@@ -780,7 +780,7 @@ mod icmpv4_rfc792_errors {
             .protocol(254)
             / Raw::from("opaque-upper-layer");
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::new().icmp_type(ICMP_DESTINATION_UNREACHABLE)
+            / Icmpv4::new().icmp_type(ICMP_DESTINATION_UNREACHABLE)
             / IcmpQuotedIpv4::new(quoted);
         let compiled = packet.compile().unwrap();
 
@@ -801,7 +801,7 @@ mod icmpv4_rfc792_errors {
     #[test]
     fn icmpv4_rfc792_errors_non_ipv4_quote_stays_raw() {
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::new().icmp_type(ICMP_DESTINATION_UNREACHABLE)
+            / Icmpv4::new().icmp_type(ICMP_DESTINATION_UNREACHABLE)
             / Raw::from_bytes([0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
         let compiled = packet.compile().unwrap();
 
@@ -820,7 +820,7 @@ mod icmpv4_rfc792_errors {
     fn icmpv4_rfc792_errors_explicit_malformed_overrides_are_preserved() {
         let raw_rest = [0xde, 0xad, 0xbe, 0xef];
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::new()
+            / Icmpv4::new()
                 .icmp_type(ICMP_TIME_EXCEEDED)
                 .code(0)
                 .checksum(0xbeef)

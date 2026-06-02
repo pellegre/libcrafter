@@ -1351,7 +1351,7 @@ pub(crate) fn decode_interface_id(c_type: u8, body: &[u8]) -> Option<IcmpExtensi
 #[cfg(test)]
 mod icmpv4_rfc4884_extensions {
     use super::{
-        Icmp, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpQuotedIpv4,
+        IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpQuotedIpv4, Icmpv4,
         ICMP_EXTENSION_HEADER_LEN, ICMP_PARAMETER_PROBLEM, ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM,
     };
     use crate::checksum::verify_internet_checksum;
@@ -1388,7 +1388,7 @@ mod icmpv4_rfc4884_extensions {
     #[test]
     fn icmpv4_rfc4884_extensions_autofills_length_field() {
         let bytes = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1405,7 +1405,7 @@ mod icmpv4_rfc4884_extensions {
     #[test]
     fn icmpv4_rfc4884_extensions_length_is_zero_without_extensions() {
         let bytes = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp()))
         .compile()
         .unwrap();
@@ -1423,7 +1423,7 @@ mod icmpv4_rfc4884_extensions {
         let quote_len = quoted_udp().encoded_len();
         assert!(quote_len < ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM);
         let short = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::destination_unreachable()
+            / Icmpv4::destination_unreachable()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new())
         .compile()
@@ -1448,7 +1448,7 @@ mod icmpv4_rfc4884_extensions {
             / Udp::new().sport(40000).dport(53)
             / Raw::from_bytes(vec![0xab; 105]); // 20 + 8 + 105 = 133 bytes
         let long = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(long_quote)
             / IcmpExtension::new())
         .compile()
@@ -1467,7 +1467,7 @@ mod icmpv4_rfc4884_extensions {
     #[test]
     fn icmpv4_rfc4884_extensions_autofills_extension_checksum() {
         let bytes = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1487,7 +1487,7 @@ mod icmpv4_rfc4884_extensions {
     #[test]
     fn icmpv4_rfc4884_extensions_explicit_malformed_checksum_is_preserved() {
         let bytes = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new().checksum(0xdead)
             / IcmpExtensionObject::new()
@@ -1516,7 +1516,7 @@ mod icmpv4_rfc4884_extensions {
     fn icmpv4_rfc4884_extensions_generic_unknown_object_roundtrip() {
         let payload = [0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::new().icmp_type(ICMP_PARAMETER_PROBLEM)
+            / Icmpv4::new().icmp_type(ICMP_PARAMETER_PROBLEM)
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new().class_num(200).c_type(7)
@@ -1535,12 +1535,12 @@ mod icmpv4_rfc4884_extensions {
         assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
     }
 
-    // A complete RFC 4884 packet decodes into typed Icmp, quoted datagram,
+    // A complete RFC 4884 packet decodes into typed Icmpv4, quoted datagram,
     // extension header, and extension object layers.
     #[test]
     fn icmpv4_rfc4884_extensions_decode_splits_typed_layers() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1552,7 +1552,7 @@ mod icmpv4_rfc4884_extensions {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
 
         // The ICMP header and quoted datagram are typed.
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(icmp.length_value(), Some(32));
         let quoted = decoded.layer::<IcmpQuotedIpv4>().unwrap();
         assert_eq!(
@@ -1582,7 +1582,7 @@ mod icmpv4_rfc4884_extensions {
     #[test]
     fn icmpv4_rfc4884_extensions_ambiguous_data_stays_raw() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1612,7 +1612,7 @@ mod icmpv4_rfc4884_extensions {
 #[cfg(test)]
 mod icmpv4_rfc4950_mpls {
     use super::{
-        Icmp, IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpQuotedIpv4,
+        IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpQuotedIpv4, Icmpv4,
         ICMP_EXTENSION_CLASS_MPLS, ICMP_EXTENSION_CTYPE_MPLS_INCOMING,
         ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM,
     };
@@ -1652,7 +1652,7 @@ mod icmpv4_rfc4950_mpls {
     #[test]
     fn icmpv4_rfc4950_mpls_single_label_encode_decode() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1698,7 +1698,7 @@ mod icmpv4_rfc4950_mpls {
     #[test]
     fn icmpv4_rfc4950_mpls_multi_label_encode_decode() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1737,7 +1737,7 @@ mod icmpv4_rfc4950_mpls {
     #[test]
     fn icmpv4_rfc4950_mpls_bottom_of_stack_autofill() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1760,7 +1760,7 @@ mod icmpv4_rfc4950_mpls {
     #[test]
     fn icmpv4_rfc4950_mpls_explicit_bottom_of_stack_override() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1794,7 +1794,7 @@ mod icmpv4_rfc4950_mpls {
     #[test]
     fn icmpv4_rfc4950_mpls_invalid_field_bounds() {
         let too_large_label = Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1802,7 +1802,7 @@ mod icmpv4_rfc4950_mpls {
         assert!(too_large_label.compile().is_err());
 
         let too_large_exp = Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1815,7 +1815,7 @@ mod icmpv4_rfc4950_mpls {
     #[test]
     fn icmpv4_rfc4950_mpls_byte_for_byte_roundtrip() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::destination_unreachable()
+            / Icmpv4::destination_unreachable()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1839,7 +1839,7 @@ mod icmpv4_rfc4950_mpls {
         // Build a valid two-entry MPLS object, then truncate the object so its
         // body holds one full entry plus two stray octets (a partial entry).
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1884,10 +1884,10 @@ mod icmpv4_rfc4950_mpls {
 #[cfg(test)]
 mod icmpv4_rfc5837_interface_info {
     use super::{
-        Icmp, IcmpExtension, IcmpExtensionInterfaceInfo, IcmpExtensionObject,
-        IcmpInterfaceIpAddress, IcmpQuotedIpv4, ICMP_EXTENSION_CLASS_INTERFACE_INFO,
-        ICMP_INTERFACE_CTYPE_IFINDEX, ICMP_INTERFACE_CTYPE_IP_ADDRESS, ICMP_INTERFACE_CTYPE_MTU,
-        ICMP_INTERFACE_CTYPE_NAME, ICMP_INTERFACE_ROLE_NEXT_HOP, ICMP_INTERFACE_ROLE_OUTGOING,
+        IcmpExtension, IcmpExtensionInterfaceInfo, IcmpExtensionObject, IcmpInterfaceIpAddress,
+        IcmpQuotedIpv4, Icmpv4, ICMP_EXTENSION_CLASS_INTERFACE_INFO, ICMP_INTERFACE_CTYPE_IFINDEX,
+        ICMP_INTERFACE_CTYPE_IP_ADDRESS, ICMP_INTERFACE_CTYPE_MTU, ICMP_INTERFACE_CTYPE_NAME,
+        ICMP_INTERFACE_ROLE_NEXT_HOP, ICMP_INTERFACE_ROLE_OUTGOING,
         ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM,
     };
     use crate::checksum::verify_internet_checksum;
@@ -1930,7 +1930,7 @@ mod icmpv4_rfc5837_interface_info {
             .name("eth0")
             .mtu(1500);
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1970,7 +1970,7 @@ mod icmpv4_rfc5837_interface_info {
     #[test]
     fn icmpv4_rfc5837_interface_info_ifindex_only() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -1993,7 +1993,7 @@ mod icmpv4_rfc5837_interface_info {
     fn icmpv4_rfc5837_interface_info_ipv6_address_subobject() {
         let addr = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x1234);
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -2017,7 +2017,7 @@ mod icmpv4_rfc5837_interface_info {
         // "eth0" is 4 octets; with the length octet the sub-object is 5 octets,
         // padded up to 8.
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -2051,7 +2051,7 @@ mod icmpv4_rfc5837_interface_info {
     #[test]
     fn icmpv4_rfc5837_interface_info_length_autofill() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -2074,7 +2074,7 @@ mod icmpv4_rfc5837_interface_info {
     #[test]
     fn icmpv4_rfc5837_interface_info_explicit_length_override() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new().length(99)
@@ -2098,7 +2098,7 @@ mod icmpv4_rfc5837_interface_info {
     #[test]
     fn icmpv4_rfc5837_interface_info_extension_checksum() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -2128,7 +2128,7 @@ mod icmpv4_rfc5837_interface_info {
     #[test]
     fn icmpv4_rfc5837_interface_info_unknown_class_stays_raw() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new().class_num(200).c_type(0x0f)
@@ -2152,7 +2152,7 @@ mod icmpv4_rfc5837_interface_info {
         // Class 2, C-Type with the MTU presence bit set, but only two body octets
         // (an MTU needs four). The object is otherwise well-formed.
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded()
+            / Icmpv4::time_exceeded()
             / IcmpQuotedIpv4::new(quoted_udp())
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
@@ -2191,7 +2191,7 @@ mod icmpv4_rfc5837_interface_info {
 #[cfg(test)]
 mod icmpv4_rfc8335_extended_echo {
     use super::{
-        Icmp, IcmpExtension, IcmpExtensionInterfaceId, IcmpExtensionObject,
+        IcmpExtension, IcmpExtensionInterfaceId, IcmpExtensionObject, Icmpv4,
         ICMP_CODE_EXTENDED_ECHO_REPLY_MALFORMED_QUERY,
         ICMP_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES, ICMP_CODE_EXTENDED_ECHO_REPLY_NO_ERROR,
         ICMP_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_INTERFACE,
@@ -2220,7 +2220,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_request_compile_decode() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request().id(0x1234).seq(7)
+            / Icmpv4::extended_echo_request().id(0x1234).seq(7)
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
             / IcmpExtensionInterfaceId::by_index(42))
@@ -2250,7 +2250,7 @@ mod icmpv4_rfc8335_extended_echo {
         );
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(icmp.icmp_type_value(), ICMP_EXTENDED_ECHO_REQUEST);
         assert_eq!(icmp.identifier_value(), Some(0x1234));
         assert_eq!(icmp.sequence_number_value(), Some(7));
@@ -2267,7 +2267,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_request_by_name() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request().id(1).seq(1)
+            / Icmpv4::extended_echo_request().id(1).seq(1)
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
             / IcmpExtensionInterfaceId::by_name("eth0"))
@@ -2291,7 +2291,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_request_by_name_padding() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request()
+            / Icmpv4::extended_echo_request()
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
             / IcmpExtensionInterfaceId::by_name("e0"))
@@ -2315,7 +2315,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_request_by_ipv4_address() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request()
+            / Icmpv4::extended_echo_request()
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
             / IcmpExtensionInterfaceId::by_ipv4(Ipv4Addr::new(192, 0, 2, 99)))
@@ -2344,7 +2344,7 @@ mod icmpv4_rfc8335_extended_echo {
     fn icmpv4_rfc8335_extended_echo_request_by_ipv6_address() {
         let addr = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x99);
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request()
+            / Icmpv4::extended_echo_request()
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
             / IcmpExtensionInterfaceId::by_ipv6(addr))
@@ -2367,7 +2367,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_request_l_bit() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request()
+            / Icmpv4::extended_echo_request()
                 .id(9)
                 .seq(3)
                 .extended_l_bit(true)
@@ -2382,7 +2382,7 @@ mod icmpv4_rfc8335_extended_echo {
         assert_eq!(bytes[27], 0x01);
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(icmp.extended_l_bit_value(), Some(true));
         // Reply-only accessors are not meaningful on a request.
         assert_eq!(icmp.extended_state_value(), None);
@@ -2415,7 +2415,7 @@ mod icmpv4_rfc8335_extended_echo {
         ];
         for (code, name) in codes {
             let compiled = (Ipv4::new().src(src()).dst(dst())
-                / Icmp::extended_echo_reply().id(0xabcd).seq(5).code(code))
+                / Icmpv4::extended_echo_reply().id(0xabcd).seq(5).code(code))
             .compile()
             .unwrap();
 
@@ -2424,7 +2424,7 @@ mod icmpv4_rfc8335_extended_echo {
             assert_eq!(bytes[21], code);
 
             let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
-            let icmp = decoded.layer::<Icmp>().unwrap();
+            let icmp = decoded.layer::<Icmpv4>().unwrap();
             assert_eq!(icmp.code_value(), code);
             assert_eq!(icmp.identifier_value(), Some(0xabcd));
             assert_eq!(icmp.sequence_number_value(), Some(5));
@@ -2441,7 +2441,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_reply_flags() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_reply()
+            / Icmpv4::extended_echo_reply()
                 .code(ICMP_CODE_EXTENDED_ECHO_REPLY_NO_ERROR)
                 .extended_state(super::ICMP_EXTENDED_ECHO_REPLY_STATE_REACHABLE)
                 .extended_active(true)
@@ -2455,7 +2455,7 @@ mod icmpv4_rfc8335_extended_echo {
         assert_eq!(bytes[27], 0x40 | 0x04 | 0x02);
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(
             icmp.extended_state_value(),
             Some(super::ICMP_EXTENDED_ECHO_REPLY_STATE_REACHABLE)
@@ -2473,7 +2473,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_reply_trailing_payload_stays_raw() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_reply().code(ICMP_CODE_EXTENDED_ECHO_REPLY_NO_ERROR)
+            / Icmpv4::extended_echo_reply().code(ICMP_CODE_EXTENDED_ECHO_REPLY_NO_ERROR)
             / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]))
         .compile()
         .unwrap();
@@ -2490,7 +2490,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_exactly_one_object_default() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request()
+            / Icmpv4::extended_echo_request()
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
             / IcmpExtensionInterfaceId::by_index(3))
@@ -2516,7 +2516,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_malformed_object_count_preserved() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request()
+            / Icmpv4::extended_echo_request()
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
             / IcmpExtensionInterfaceId::by_index(1)
@@ -2542,7 +2542,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_unknown_object_falls_back_to_raw() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request()
+            / Icmpv4::extended_echo_request()
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
                 .class_num(ICMP_EXTENSION_CLASS_INTERFACE_ID)
@@ -2565,7 +2565,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_checksum_roundtrip() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request().id(0x55aa).seq(2)
+            / Icmpv4::extended_echo_request().id(0x55aa).seq(2)
             / IcmpExtension::new()
             / IcmpExtensionObject::new()
             / IcmpExtensionInterfaceId::by_name("wlan0"))
@@ -2590,7 +2590,7 @@ mod icmpv4_rfc8335_extended_echo {
     #[test]
     fn icmpv4_rfc8335_extended_echo_explicit_flag_byte_preserved() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::extended_echo_request()
+            / Icmpv4::extended_echo_request()
                 .id(1)
                 .seq(1)
                 .extended_flags(0xfe)
@@ -2604,7 +2604,7 @@ mod icmpv4_rfc8335_extended_echo {
         assert_eq!(compiled.as_bytes()[27], 0xfe);
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(icmp.extended_flags_value(), Some(0xfe));
         assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
     }

@@ -3,8 +3,8 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use crate::{
-    CompiledPacket, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6, Layer, LinkType, NetworkLayer, Packet, Tcp,
-    Udp, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
+    CompiledPacket, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6, Layer, LinkType, NetworkLayer, Packet,
+    Tcp, Udp, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
 };
 use pnet_datalink::{self as datalink, Channel, ChannelType};
 use pnet_packet::ip::IpNextHeaderProtocol;
@@ -486,7 +486,7 @@ fn ipv6_next_header(packet: &Packet, ipv6: &Ipv6) -> u8 {
 }
 
 fn layer_protocol(layer: &dyn Layer) -> u8 {
-    if layer.as_any().is::<Icmp>() {
+    if layer.as_any().is::<Icmpv4>() {
         IPPROTO_ICMP
     } else if layer.as_any().is::<Icmpv6>() {
         IPPROTO_ICMPV6

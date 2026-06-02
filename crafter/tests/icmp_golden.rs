@@ -31,7 +31,11 @@ fn ipv4() -> Ipv4 {
 }
 
 fn ipv6() -> Ipv6 {
-    Ipv6::new().src(DOC_V6_SRC).dst(DOC_V6_DST).fl(0x12345).hlim(64)
+    Ipv6::new()
+        .src(DOC_V6_SRC)
+        .dst(DOC_V6_DST)
+        .fl(0x12345)
+        .hlim(64)
 }
 
 /// Decode an L3 buffer back into typed layers, recompile, and assert the bytes
@@ -83,7 +87,7 @@ const GOLDEN_V4_ROUTER_ADVERTISEMENT: &str =
 const GOLDEN_V4_RFC4884_MPLS: &str = "450000a81111000040017cf2c000020ac63364140b00e14b002000004500001c3333000040115b4cc6336414c000020a04d2003500080e85000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000d9ce0008010103e80140";
 
 fn build_v4_echo_request() -> Packet {
-    ipv4() / Icmp::echo_request().id(0x4242).seq(7) / Raw::from("ping")
+    ipv4() / Icmpv4::echo_request().id(0x4242).seq(7) / Raw::from("ping")
 }
 
 fn build_v4_dest_unreach_quoted() -> Packet {
@@ -91,35 +95,33 @@ fn build_v4_dest_unreach_quoted() -> Packet {
         / Udp::new().sport(40000).dport(53)
         / Raw::from("query");
     ipv4()
-        / Icmp::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
+        / Icmpv4::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
         / IcmpQuotedIpv4::new(quoted)
 }
 
 fn build_v4_timestamp() -> Packet {
-    ipv4()
-        / Icmp::timestamp_request().id(9).seq(1)
-        / IcmpTimestamp::new().originate(0x0001_0203)
+    ipv4() / Icmpv4::timestamp_request().id(9).seq(1) / IcmpTimestamp::new().originate(0x0001_0203)
 }
 
 fn build_v4_address_mask() -> Packet {
     let mask = Ipv4Addr::new(255, 255, 255, 0);
-    ipv4() / Icmp::address_mask_reply().id(3).seq(1) / IcmpAddressMask::new().mask(mask)
+    ipv4() / Icmpv4::address_mask_reply().id(3).seq(1) / IcmpAddressMask::new().mask(mask)
 }
 
 fn build_v4_router_advertisement() -> Packet {
     let router = Ipv4Addr::new(192, 0, 2, 1);
     ipv4()
-        / Icmp::router_advertisement().lifetime(1800)
+        / Icmpv4::router_advertisement().lifetime(1800)
         / IcmpRouterAdvertisementEntry::new()
             .router_address(router)
             .preference_level(10)
 }
 
 fn build_v4_rfc4884_mpls() -> Packet {
-    let quoted = Ipv4::new().src(DOC_V4_DST).dst(DOC_V4_SRC).id(0x3333)
-        / Udp::new().sport(1234).dport(53);
+    let quoted =
+        Ipv4::new().src(DOC_V4_DST).dst(DOC_V4_SRC).id(0x3333) / Udp::new().sport(1234).dport(53);
     ipv4()
-        / Icmp::time_exceeded().code(ICMP_CODE_TIME_EXCEEDED_TTL)
+        / Icmpv4::time_exceeded().code(ICMP_CODE_TIME_EXCEEDED_TTL)
         / IcmpQuotedIpv4::new(quoted)
         / IcmpExtension::new()
         / IcmpExtensionObject::new()

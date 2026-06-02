@@ -1,9 +1,9 @@
 use std::net::Ipv4Addr;
 
 use crate::{
-    Arp, ArpOperation, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, Icmp, Icmpv6, Ipv4, Ipv6,
-    Packet, Tcp, Udp, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT, ICMPV6_ECHO_REPLY,
-    ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
+    Arp, ArpOperation, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, Icmpv4, Icmpv6, Ipv4,
+    Ipv6, Packet, Tcp, Udp, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
+    ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
 };
 
 pub struct ReplyMatcher {
@@ -60,7 +60,7 @@ fn request_reply_filter(packet: &Packet) -> Option<String> {
     if let Some(arp) = packet.layer::<Arp>() {
         return Some(arp_filter(arp));
     }
-    if packet.layer::<Icmp>().is_some() {
+    if packet.layer::<Icmpv4>().is_some() {
         return Some(protocol_filter("icmp", packet));
     }
     if packet.layer::<Icmpv6>().is_some() {
@@ -201,10 +201,10 @@ fn arp_reply_matches(request: &Packet, candidate: &Packet) -> bool {
 }
 
 fn icmp_reply_matches(request: &Packet, candidate: &Packet) -> bool {
-    let Some(request_icmp) = request.layer::<Icmp>() else {
+    let Some(request_icmp) = request.layer::<Icmpv4>() else {
         return false;
     };
-    let Some(candidate_icmp) = candidate.layer::<Icmp>() else {
+    let Some(candidate_icmp) = candidate.layer::<Icmpv4>() else {
         return false;
     };
 

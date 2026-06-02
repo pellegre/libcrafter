@@ -14,7 +14,7 @@ fn main() -> ExampleResult<()> {
         .src(local_ipv4())
         .dst(remote_ipv4())
         .protocol(IPPROTO_ICMP)
-        / Icmp::echo_request().id(0x2202).seq(1)
+        / Icmpv4::echo_request().id(0x2202).seq(1)
         / Raw::from("inspect")
         / Raw::from(" me");
 

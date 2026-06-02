@@ -73,10 +73,15 @@ pub use dns::{
     DNS_TYPE_NS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_NSEC3PARAM, DNS_TYPE_OPT, DNS_TYPE_PTR,
     DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, DNS_TYPE_TLSA, DNS_TYPE_TXT,
 };
+// Re-export the deprecated `Icmp` alias separately so the `#[allow(deprecated)]`
+// scope stays narrow: only this alias is exempt from the deprecation warning,
+// while the rest of the icmp surface keeps full lint coverage.
+#[allow(deprecated)]
+pub use icmp::Icmp;
 pub use icmp::{
-    Icmp, IcmpAddressMask, IcmpExtension, IcmpExtensionInterfaceId, IcmpExtensionInterfaceInfo,
+    IcmpAddressMask, IcmpExtension, IcmpExtensionInterfaceId, IcmpExtensionInterfaceInfo,
     IcmpExtensionMpls, IcmpExtensionObject, IcmpInterfaceIpAddress, IcmpKind, IcmpLayer,
-    IcmpQuotedIpv4, IcmpRouterAdvertisementEntry, IcmpTimestamp, Icmpv6,
+    IcmpQuotedIpv4, IcmpRouterAdvertisementEntry, IcmpTimestamp, Icmpv4, Icmpv6,
     ICMPV6_DESTINATION_UNREACHABLE, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMPV6_PACKET_TOO_BIG,
     ICMPV6_PARAMETER_PROBLEM, ICMPV6_TIME_EXCEEDED, ICMP_ADDRESS_MASK_REPLY,
     ICMP_ADDRESS_MASK_REQUEST, ICMP_ALTERNATE_HOST_ADDRESS, ICMP_CODE_DU_COMM_ADMIN_PROHIBITED,
