@@ -454,3 +454,76 @@ mod option_padding {
         );
     }
 }
+
+mod option_errors {
+    use super::super::TcpOption;
+
+    // Decode a raw TCP option byte slice and return the rendered error string
+    // for the first malformed option. Panics if the slice decodes cleanly,
+    // because every input here is deliberately malformed.
+    fn decode_error(bytes: &[u8]) -> String {
+        TcpOption::decode_all(bytes)
+            .expect_err("malformed TCP options must not decode cleanly")
+            .to_string()
+    }
+
+    #[test]
+    fn tcp_option_malformed_lengths_have_context() {
+        // Every malformed-length decode path must surface a structured error
+        // whose context identifies the failing option, so generated tools can
+        // tell which option was wrong instead of log-fishing. The asserted
+        // substrings are the stable `context`/`field` slots carried by
+        // `CrafterError` and rendered through its `Display`.
+
+        // 1. Length underflow: an option length byte below the two-byte
+        //    minimum. The trailing zero keeps this from being an overrun so the
+        //    `< 2` path (not the buffer check) is exercised.
+        let underflow = decode_error(&[super::super::TCP_OPTION_MSS, 1, 0, 0]);
+        assert!(
+            underflow.contains("tcp.option.length"),
+            "length underflow error must carry tcp.option.length context, got: {underflow}"
+        );
+
+        // 2. Fixed-length mismatch: MSS declares length 3 but MSS is fixed at 4
+        //    bytes. The trailing padding byte keeps the declared length inside
+        //    the buffer so the fixed-length validator runs.
+        let mss_mismatch = decode_error(&[super::super::TCP_OPTION_MSS, 3, 0, 0]);
+        assert!(
+            mss_mismatch.contains("tcp.option.mss"),
+            "MSS fixed-length mismatch must carry tcp.option.mss context, got: {mss_mismatch}"
+        );
+
+        // A second fixed-length option: Timestamp is fixed at 10 bytes.
+        let timestamp_mismatch =
+            decode_error(&[super::super::TCP_OPTION_TIMESTAMP, 4, 0, 0]);
+        assert!(
+            timestamp_mismatch.contains("tcp.option.timestamp"),
+            "timestamp fixed-length mismatch must carry tcp.option.timestamp context, got: {timestamp_mismatch}"
+        );
+
+        // 3. Overrun beyond available bytes: MSS declares length 5 but only 4
+        //    option bytes are present.
+        let overrun = decode_error(&[super::super::TCP_OPTION_MSS, 5, 0x05, 0xb4]);
+        assert!(
+            overrun.contains("tcp option"),
+            "option overrun must carry the tcp option buffer context, got: {overrun}"
+        );
+
+        // 4. Invalid semantic length: SACK declares a length that fits in the
+        //    buffer and is >= 2 but does not frame a whole number of 8-byte
+        //    SACK blocks.
+        let sack_semantic = decode_error(&[super::super::TCP_OPTION_SACK, 4, 0, 0]);
+        assert!(
+            sack_semantic.contains("tcp.option.sack"),
+            "SACK semantic-length error must carry tcp.option.sack context, got: {sack_semantic}"
+        );
+
+        // A second semantic-length path: EDO must be 2, 4, or 6 bytes; a
+        // declared length of 5 is structurally valid but semantically invalid.
+        let edo_semantic = decode_error(&[super::super::TCP_OPTION_EDO, 5, 0, 0, 0]);
+        assert!(
+            edo_semantic.contains("tcp.option.edo"),
+            "EDO semantic-length error must carry tcp.option.edo context, got: {edo_semantic}"
+        );
+    }
+}
