@@ -83,6 +83,8 @@ class TargetServiceScriptTest(unittest.TestCase):
         self.assertIn('check_port_free "$tcp_bind_ipv4" 19872', script)
         self.assertIn("echo listener_19872=running", script)
         self.assertIn("echo dns_responder_53=running", script)
+        self.assertIn("answer_data = record.get('answer_data')", script)
+        self.assertNotIn("answer_data = record['answer_data']", script)
         # The setup is artifact-producing: it records a disposable cleanup script.
         self.assertIn('cleanup="$artifact_root/cleanup.sh"', script)
         self.assertIn("echo target_service_setup=ok", script)

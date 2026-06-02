@@ -917,6 +917,11 @@ def _stimulus_endpoint_request_object(
         interface=interface,
         dry_run=dry_run,
     )
+    provider_capabilities = _probe_capabilities_for_request(request, dry_run=dry_run)
+    wire_policy = _json_mapping(
+        provider_capabilities.get("wire_policy", {}),
+        "provider_capabilities.wire_policy",
+    )
     return {
         "schema_version": 1,
         "provider": request.provider,
@@ -938,6 +943,8 @@ def _stimulus_endpoint_request_object(
             "planned_only": dry_run,
             "case_count": len(probe_plans),
             "stimulus_endpoint": endpoint_metadata,
+            "provider_capabilities": provider_capabilities,
+            "wire_policy": wire_policy,
             "failure_reasons_by_case": {
                 str(plan.get("case", "")): _failure_reasons_for_case(
                     str(plan.get("case", ""))

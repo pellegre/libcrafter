@@ -14,6 +14,7 @@ from tools.lab.engine.model import LabCommandPlan, LabEndpoint, LabRole, LabSess
 from tools.lab.engine.repo import RepoBootstrapCommand, RepoBootstrapContext
 from tools.probe.engine import cases as probe_cases
 from tools.probe.engine import cli
+from tools.probe.engine import live as probe_live
 from tools.probe.engine.model import ProbeRunRequest
 
 
@@ -108,6 +109,89 @@ class ProbeLabLiveReportTest(unittest.TestCase):
         self.assertIn("upload", fake_wire.operations)
         self.assertIn("download", fake_wire.operations)
 
+    def test_lab_endpoint_live_report_accepts_pretty_endpoint_json(self) -> None:
+        request, cases, plans = _request_cases_and_plans("qemu")
+        fake_wire = _FakeWire(stimulus_stdout=_stimulus_response_stdout(pretty=True))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "report.json"
+
+            with (
+                mock.patch.object(cli.lab_wire_client, "WireClient", return_value=fake_wire),
+                mock.patch.object(
+                    cli.lab_session_state,
+                    "create_session",
+                    side_effect=self._create_session,
+                ),
+                mock.patch.object(
+                    cli.lab_session_state,
+                    "cleanup_lab_session",
+                    side_effect=self._cleanup_session,
+                ),
+                mock.patch.object(cli.lab_session_state, "write_session_manifest"),
+                mock.patch.object(
+                    cli.lab_repo,
+                    "create_repository_archive",
+                    side_effect=_create_archive,
+                ),
+                mock.patch.object(
+                    cli.lab_repo,
+                    "bootstrap_lab_session",
+                    side_effect=_bootstrap_session,
+                ),
+            ):
+                report = cli._lab_endpoint_live_report(
+                    request=request,
+                    selected_cases=cases,
+                    planned_cases=cases,
+                    probe_plans=plans,
+                    report_path=report_path,
+                )
+
+        self.assertEqual(report.status, cli.STATUS_PASSED)
+        self.assertEqual(report.metadata["failed_count"], 0)
+        self.assertEqual(report.metadata["observed_count"], 1)
+        self.assertEqual(report.results[0].metadata["failure_reason"], None)
+
+    def test_arp_spa_variation_allows_batched_target_sender_addresses(self) -> None:
+        plans = [
+            {
+                "case": "arp-alias-address-reply",
+                "destination_ipv4": "10.77.0.20",
+                "target_service": {
+                    "bind_ipv4": "10.77.0.20",
+                    "target_protocol_addr": "10.77.0.27",
+                    "alias_ipv4": "10.77.0.27",
+                },
+                "validation": {
+                    "sender_protocol_addr": "10.77.0.27",
+                    "target_protocol_addr": "10.77.0.10",
+                },
+            },
+            {
+                "case": "arp-spa-variation",
+                "destination_ipv4": "10.77.0.20",
+                "target_service": {
+                    "bind_ipv4": "10.77.0.20",
+                    "target_protocol_addr": "10.77.0.20",
+                    "alt_sender_ipv4": "10.77.0.17",
+                },
+                "validation": {
+                    "sender_protocol_addr": "10.77.0.20",
+                    "target_protocol_addr": "10.77.0.17",
+                },
+            },
+        ]
+
+        rewritten = probe_live.plans_with_arp_sender_protocol_candidates(plans)
+        validation = rewritten[1]["validation"]
+
+        self.assertEqual(
+            validation["sender_protocol_addrs"],
+            ["10.77.0.20", "10.77.0.27", "10.77.0.17"],
+        )
+        self.assertNotIn("sender_protocol_addrs", plans[1]["validation"])
+
     def _create_session(
         self,
         _adapter: object,
@@ -179,8 +263,9 @@ class _FakeWireResponse:
 
 
 class _FakeWire:
-    def __init__(self) -> None:
+    def __init__(self, *, stimulus_stdout: str | None = None) -> None:
         self.operations: list[str] = []
+        self.stimulus_stdout = stimulus_stdout or _stimulus_response_stdout()
 
     def exec(
         self,
@@ -196,21 +281,7 @@ class _FakeWire:
             return _FakeWireResponse(
                 "exec",
                 endpoint_id,
-                stdout=json.dumps(
-                    {
-                        "results": [
-                            {
-                                "case": "icmp-echo",
-                                "sequence": 0,
-                                "status": "passed",
-                                "endpoint_role": "stimulus",
-                                "passed": True,
-                            }
-                        ],
-                        "artifacts": [],
-                        "artifact_paths": [],
-                    }
-                ),
+                stdout=self.stimulus_stdout,
             )
         return _FakeWireResponse("exec", endpoint_id)
 
@@ -248,6 +319,34 @@ def _request_cases_and_plans(
     cases = [probe_cases.PROBE_CASE_BY_NAME["icmp-echo"]]
     plans = cli._probe_plans_for_cases(request, cases)
     return request, cases, plans
+
+
+def _stimulus_response_stdout(*, pretty: bool = False) -> str:
+    response = {
+        "results": [
+            {
+                "case": "icmp-echo",
+                "sequence": 0,
+                "status": "passed",
+                "endpoint_role": "stimulus",
+                "passed": True,
+                "metadata": {"failure_reason": None},
+                "observed_response": {
+                    "case": "icmp-echo",
+                    "sequence": 0,
+                    "endpoint_role": "stimulus",
+                    "observed": True,
+                    "response_type": "icmp_echo_reply",
+                    "decoded": {
+                        "payload_hex": "ab" * 512,
+                    },
+                },
+            }
+        ],
+        "artifacts": [],
+        "artifact_paths": [],
+    }
+    return json.dumps(response, indent=2 if pretty else None)
 
 
 def _fake_session() -> LabSession:

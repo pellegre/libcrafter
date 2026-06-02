@@ -430,6 +430,8 @@ pub struct ArpValidation {
     #[serde(default)]
     pub sender_protocol_addr: Option<String>,
     #[serde(default)]
+    pub sender_protocol_addrs: Option<Vec<String>>,
+    #[serde(default)]
     pub target_hardware_addr: Option<String>,
     #[serde(default)]
     pub target_protocol_addr: Option<String>,
