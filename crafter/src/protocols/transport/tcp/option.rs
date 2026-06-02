@@ -480,6 +480,79 @@ impl TcpOption {
         }
     }
 
+    /// Return the number of SACK blocks, if this option is a SACK option.
+    ///
+    /// Backed by RFC 2018 and `docs/tcp-rfc-manifest.md`.
+    pub fn sack_block_count(&self) -> Option<usize> {
+        self.sack_blocks().map(<[TcpSackBlock]>::len)
+    }
+
+    /// Return the first SACK block, if this option is a SACK option with at
+    /// least one block.
+    ///
+    /// Under RFC 2883 D-SACK semantics, the first block carries the
+    /// duplicate-range report when one is present; see
+    /// [`is_potential_dsack_first_block`](Self::is_potential_dsack_first_block).
+    ///
+    /// Backed by RFC 2018 / RFC 2883 and `docs/tcp-rfc-manifest.md`.
+    pub fn first_sack_block(&self) -> Option<TcpSackBlock> {
+        self.sack_blocks().and_then(|blocks| blocks.first().copied())
+    }
+
+    /// Return the SACK blocks after the first one, if this option is a SACK
+    /// option. The slice is empty when there is one block or none.
+    ///
+    /// Under RFC 2883 D-SACK semantics, when the first block reports a
+    /// duplicate range, these remaining blocks carry the ordinary (RFC 2018)
+    /// SACK report.
+    ///
+    /// Backed by RFC 2018 / RFC 2883 and `docs/tcp-rfc-manifest.md`.
+    pub fn remaining_sack_blocks(&self) -> Option<&[TcpSackBlock]> {
+        self.sack_blocks()
+            .map(|blocks| blocks.get(1..).unwrap_or(&[]))
+    }
+
+    /// Return whether the first SACK block looks like a D-SACK block per
+    /// RFC 2883, given the cumulative acknowledgment number the receiver has
+    /// already advanced past.
+    ///
+    /// RFC 2883 reuses the RFC 2018 SACK wire format: a D-SACK report is a
+    /// reinterpretation of SACK block ordering, not a new option. The first
+    /// SACK block reports a *duplicate* (already-received) range when either of
+    /// the two D-SACK rules holds:
+    ///
+    /// * the first block is below the cumulative ACK (its right edge is at or
+    ///   below the cumulative ACK the receiver has acknowledged), or
+    /// * the first block is a subset of (contained within) the second SACK
+    ///   block.
+    ///
+    /// This helper only inspects the supplied range context; it does not track
+    /// connection state. It returns `None` when this option is not a SACK
+    /// option or carries no blocks, and `Some(false)` when the first block does
+    /// not match either D-SACK rule. Sequence comparisons use serial-number
+    /// arithmetic (RFC 1982 / RFC 9293) so they are correct across the 32-bit
+    /// wrap.
+    ///
+    /// Backed by RFC 2883 (section 4) and `docs/tcp-rfc-manifest.md`.
+    pub fn is_potential_dsack_first_block(&self, cumulative_ack: u32) -> Option<bool> {
+        let blocks = self.sack_blocks()?;
+        let first = blocks.first()?;
+
+        // Rule 1: the first block is at or below the cumulative ACK, i.e. it
+        // covers data the receiver has already acknowledged. Serial comparison
+        // (RFC 1982) keeps this correct across sequence-number wrap.
+        let below_cumulative_ack = serial_le(first.right_edge, cumulative_ack);
+
+        // Rule 2: the first block is a subset of the second SACK block, i.e.
+        // the second block already covers everything the first block reports.
+        let subset_of_second = blocks.get(1).is_some_and(|second| {
+            serial_le(second.left_edge, first.left_edge)
+                && serial_le(first.right_edge, second.right_edge)
+        });
+
+        Some(below_cumulative_ack || subset_of_second)
+    }
+
     /// Return the Timestamp TSval and TSecr values, if this option is Timestamp.
     ///
     /// Backed by RFC 7323 and `docs/tcp-rfc-manifest.md`.
@@ -1167,6 +1240,15 @@ fn decode_tcp_accurate_ecn_option(kind: u8, data: &[u8], len: usize) -> Result<T
         kind,
         data: data.to_vec(),
     })
+}
+
+/// Return `a <= b` under 32-bit serial-number arithmetic (RFC 1982 / RFC 9293).
+///
+/// Used by the D-SACK first-block heuristic so sequence-number comparisons stay
+/// correct across the 32-bit wraparound.
+fn serial_le(a: u32, b: u32) -> bool {
+    // `a <= b` iff `b - a` (mod 2^32) is in the lower half of the number space.
+    b.wrapping_sub(a) < 0x8000_0000
 }
 
 fn decode_tcp_sack_option(data: &[u8], len: usize) -> Result<TcpOption> {

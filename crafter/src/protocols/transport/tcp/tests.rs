@@ -1612,3 +1612,100 @@ mod fast_open_helpers {
         }
     }
 }
+
+mod sack_dsack_accessors {
+    use super::super::{TcpOption, TcpSackBlock, TCP_OPTION_SACK};
+
+    #[test]
+    fn tcp_sack_dsack_accessors() {
+        // RFC 2018 defines the SACK option (kind 5) as a list of 8-byte
+        // {left_edge, right_edge} blocks. RFC 2883 reuses the exact same wire
+        // format for D-SACK: a D-SACK report is a reinterpretation of SACK block
+        // *ordering*, where the first block reports an already-received
+        // (duplicate) range. The accessors under test never change the wire
+        // bytes; they only inspect the parsed block list.
+
+        // Non-SACK options report None from every SACK accessor, so callers can
+        // distinguish "not a SACK option" from "an empty SACK option".
+        let not_sack = TcpOption::sack_permitted();
+        assert_eq!(not_sack.sack_blocks(), None);
+        assert_eq!(not_sack.sack_block_count(), None);
+        assert_eq!(not_sack.first_sack_block(), None);
+        assert_eq!(not_sack.remaining_sack_blocks(), None);
+        assert_eq!(not_sack.is_potential_dsack_first_block(1000), None);
+
+        // 1. One-block SACK. The single block is the first block, there are no
+        //    remaining blocks, and the count is one.
+        let one = TcpOption::sack(vec![TcpSackBlock::new(1000, 2000)]);
+        assert_eq!(one.sack_block_count(), Some(1));
+        assert_eq!(one.first_sack_block(), Some(TcpSackBlock::new(1000, 2000)));
+        assert_eq!(one.remaining_sack_blocks(), Some(&[][..]));
+        assert_eq!(one.sack_blocks(), Some(&[TcpSackBlock::new(1000, 2000)][..]));
+
+        // A single block whose right edge is at or below the cumulative ACK is a
+        // D-SACK report per RFC 2883 rule (1): it covers data the receiver has
+        // already acknowledged.
+        assert_eq!(one.is_potential_dsack_first_block(2000), Some(true));
+        assert_eq!(one.is_potential_dsack_first_block(2500), Some(true));
+        // A single block strictly above the cumulative ACK is an ordinary
+        // RFC 2018 SACK block, not D-SACK.
+        assert_eq!(one.is_potential_dsack_first_block(1000), Some(false));
+        assert_eq!(one.is_potential_dsack_first_block(500), Some(false));
+
+        // 2. Multi-block SACK. The first/remaining split is exact.
+        let first = TcpSackBlock::new(1000, 1500);
+        let second = TcpSackBlock::new(900, 2000);
+        let third = TcpSackBlock::new(3000, 4000);
+        let multi = TcpOption::sack(vec![first, second, third]);
+        assert_eq!(multi.sack_block_count(), Some(3));
+        assert_eq!(multi.first_sack_block(), Some(first));
+        assert_eq!(multi.remaining_sack_blocks(), Some(&[second, third][..]));
+
+        // RFC 2883 rule (2): the first block is a subset of (contained within)
+        // the second block, so it reports a duplicate range even though it is
+        // above the cumulative ACK. Here [1000,1500) is inside [900,2000).
+        assert_eq!(multi.is_potential_dsack_first_block(500), Some(true));
+
+        // When the first block is neither below the cumulative ACK nor a subset
+        // of the second block, it is an ordinary RFC 2018 first block.
+        let ordinary = TcpOption::sack(vec![
+            TcpSackBlock::new(5000, 6000),
+            TcpSackBlock::new(7000, 8000),
+        ]);
+        assert_eq!(ordinary.is_potential_dsack_first_block(4000), Some(false));
+        // ...but rule (1) still fires for the same blocks once the cumulative
+        // ACK advances past the first block's right edge.
+        assert_eq!(ordinary.is_potential_dsack_first_block(6000), Some(true));
+
+        // Serial-number arithmetic (RFC 1982 / RFC 9293) keeps the comparisons
+        // correct across the 32-bit sequence-number wrap. A block just below the
+        // wrap with a cumulative ACK just above it is still D-SACK by rule (1).
+        let wrapped = TcpOption::sack(vec![TcpSackBlock::new(
+            0xFFFF_F000,
+            0xFFFF_FF00,
+        )]);
+        assert_eq!(wrapped.is_potential_dsack_first_block(0x0000_0100), Some(true));
+
+        // 3. Malformed SACK lengths surface a structured decode error rather
+        //    than panicking or silently dropping the option. A SACK payload must
+        //    be one or more whole 8-byte blocks (on-wire length 2 + 8*n).
+        //    Length 4 declares a SACK that cannot hold a full block.
+        let short = TcpOption::decode_all(&[TCP_OPTION_SACK, 4, 0, 0])
+            .expect_err("a SACK option too short for a block must not decode cleanly")
+            .to_string();
+        assert!(
+            short.contains("tcp.option.sack"),
+            "malformed SACK length must carry tcp.option.sack context, got: {short}"
+        );
+        // A length that is not 2 + a multiple of 8 (here 12 = 2 + 10) is also
+        // rejected: 10 payload bytes are not a whole number of 8-byte blocks.
+        let unaligned = [TCP_OPTION_SACK, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let unaligned_err = TcpOption::decode_all(&unaligned)
+            .expect_err("a SACK option with a non-block-aligned length must not decode cleanly")
+            .to_string();
+        assert!(
+            unaligned_err.contains("tcp.option.sack"),
+            "non-block-aligned SACK length must carry tcp.option.sack context, got: {unaligned_err}"
+        );
+    }
+}
