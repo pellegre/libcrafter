@@ -2531,3 +2531,114 @@ mod header_error_context {
         }
     }
 }
+
+mod inspection_fields {
+    use super::super::{Tcp, TcpOption, TCP_FLAG_ACK, TCP_FLAG_SYN};
+    use crate::packet::Layer;
+
+    // Build a TCP segment carrying a representative typed option set: MSS,
+    // Window Scale, SACK-permitted, plus an unassigned/private kind so the
+    // classified summary exercises both registry-named and generic tokens.
+    fn segment_with_options() -> Tcp {
+        let mut options = Vec::new();
+        options.extend(TcpOption::maximum_segment_size(1460).encode().unwrap());
+        options.extend(TcpOption::window_scale(7).encode().unwrap());
+        options.extend(TcpOption::sack_permitted().encode().unwrap());
+        // Unassigned/private kind 200, length 3, one payload byte -> classified
+        // as the generic "opt" token paired with its numeric kind.
+        options.extend([200u8, 3, 0xab]);
+        Tcp::new()
+            .sport(44444)
+            .dport(443)
+            .flags(TCP_FLAG_SYN | TCP_FLAG_ACK)
+            .options(options)
+    }
+
+    fn field<'a>(fields: &'a [(&'static str, String)], name: &str) -> &'a str {
+        fields
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.as_str())
+            .unwrap_or_else(|| panic!("TCP inspection must expose a {name:?} field; got {fields:?}"))
+    }
+
+    #[test]
+    fn tcp_inspection_fields_include_options_and_header_len() {
+        // Step 37 enriches TCP `summary()`/`show()` inspection while keeping the
+        // one-line `summary()` short and stable. The `show()`-backed
+        // `inspection_fields()` must now expose, in addition to the existing
+        // ports/sequence/flags/checksum/urgent-pointer/raw-options fields:
+        //  - the header length in bytes (data offset times four),
+        //  - the option region length in bytes,
+        //  - a concise classified option summary (registry names + kinds), and
+        //  - current IANA flag names,
+        // while still preserving the raw option bytes verbatim for exact
+        // inspection. See docs/tcp-rfc-manifest.md for the option/flag names.
+        let tcp = segment_with_options();
+        let fields = tcp.inspection_fields();
+
+        // Header length is the effective data offset expressed in bytes: the
+        // 20-byte fixed header plus the options padded to a 32-bit boundary.
+        // MSS(4) + WScale(3) + SAckOK(2) + opt200(3) = 12 option bytes -> padded
+        // to 12, so the header is 20 + 12 = 32 bytes.
+        assert_eq!(
+            tcp.option_bytes().len(),
+            12,
+            "test fixture option region must be 12 bytes"
+        );
+        assert_eq!(
+            field(&fields, "header_len"),
+            "32",
+            "header_len must report the data offset in bytes (20 fixed + padded options)"
+        );
+
+        // Option length is the raw option-region byte count.
+        assert_eq!(
+            field(&fields, "option_len"),
+            "12",
+            "option_len must report the option-region byte count"
+        );
+
+        // Classified option summary names each present option by its short
+        // source-backed registry name and numeric kind; the unassigned kind 200
+        // falls back to the generic "opt" token.
+        let summary = field(&fields, "option_summary");
+        assert!(
+            summary.contains("MSS(2)"),
+            "option summary must classify MSS, got {summary:?}"
+        );
+        assert!(
+            summary.contains("WScale(3)"),
+            "option summary must classify Window Scale, got {summary:?}"
+        );
+        assert!(
+            summary.contains("SAckOK(4)"),
+            "option summary must classify SACK-permitted, got {summary:?}"
+        );
+        assert!(
+            summary.contains("opt(200)"),
+            "option summary must classify the unassigned kind 200 generically, got {summary:?}"
+        );
+
+        // Current IANA flag names: SYN|ACK is set, and the field uses the
+        // registry flag names (no raw numeric flags here).
+        let flags = field(&fields, "flags");
+        assert!(
+            flags.contains("SYN") && flags.contains("ACK"),
+            "flags field must use current IANA flag names, got {flags:?}"
+        );
+
+        // The raw option bytes must still be present verbatim for exact
+        // inspection: the `options` hex field encodes the full option region.
+        let raw = field(&fields, "options");
+        let expected_hex: String = tcp
+            .option_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert!(
+            raw.replace(' ', "").contains(&expected_hex),
+            "options field must preserve the raw option bytes, got {raw:?}"
+        );
+    }
+}
