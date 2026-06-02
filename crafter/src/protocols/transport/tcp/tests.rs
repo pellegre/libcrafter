@@ -938,6 +938,108 @@ mod authentication_option {
     }
 }
 
+mod tcp_eno_option {
+    use super::super::{
+        Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_TCP_ENO, TCP_OPTION_TCP_ENO_MIN_LEN,
+    };
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn tcp_eno_option_preserves_suboptions() {
+        // RFC 8547 section 4: the TCP Encryption Negotiation Option (TCP-ENO,
+        // kind 69) carries a sequence of suboption bytes after the kind/length
+        // header. libcrafter only preserves the raw suboption bytes; it never
+        // negotiates, parses, or validates them, and implements no TCP-ENO
+        // handshake or tcpcrypt session behavior (RFC 8548) -- that is out of
+        // scope for the primitive packet layer. The suboption bytes below are
+        // documentation-only examples, not real negotiated specs.
+
+        // 1. Several suboption sequences encode the option and decode back
+        //    byte-for-byte, preserving the suboption bytes verbatim.
+        for suboptions in [
+            // A couple of global-byte suboptions (the high bit / byte values
+            // here are illustrative only).
+            vec![0x01u8, 0x02, 0x21, 0x22],
+            // A single suboption byte.
+            vec![0xA5u8],
+            // The minimum (empty) suboption sequence: the 2-byte option header
+            // alone.
+            Vec::new(),
+        ] {
+            let option = TcpOption::tcp_eno(suboptions.clone());
+            assert_eq!(option.kind(), TCP_OPTION_TCP_ENO);
+            assert_eq!(option.tcp_eno_suboptions(), Some(suboptions.as_slice()));
+            // TCP-ENO (kind 69) has a current IANA registry assignment.
+            assert_eq!(option.kind_class(), TcpOptionKindClass::Assigned);
+            assert!(option.kind_is_assigned());
+            assert!(!option.kind_is_experimental());
+
+            // Encoded wire bytes: kind, length, then the suboption sequence.
+            let encoded = option.encode().unwrap();
+            assert_eq!(encoded.len(), 2 + suboptions.len());
+            assert_eq!(encoded[0], TCP_OPTION_TCP_ENO);
+            assert_eq!(encoded[1] as usize, 2 + suboptions.len());
+            assert_eq!(&encoded[2..], suboptions.as_slice());
+
+            // Round-trip through decode preserves the typed representation and
+            // the exact suboption bytes.
+            let decoded = TcpOption::decode_all(&encoded).unwrap();
+            assert_eq!(decoded, vec![option.clone()]);
+            assert_eq!(decoded[0].tcp_eno_suboptions(), Some(suboptions.as_slice()));
+            assert_eq!(decoded[0].encode().unwrap(), encoded);
+        }
+
+        // 2. A non-TCP-ENO option returns None from the suboptions accessor.
+        assert_eq!(TcpOption::mss(1460).tcp_eno_suboptions(), None);
+
+        // 3. A full TCP segment carrying a TCP-ENO option compiles, decodes,
+        //    exposes the typed suboption bytes, and recompiles to the exact
+        //    original wire bytes (the suboptions are preserved, not negotiated).
+        let suboptions = vec![0x00u8, 0x01, 0x82, 0x83];
+        let tcp = Tcp::new()
+            .sport(45678)
+            .dport(443)
+            .tcp_option(TcpOption::tcp_eno(suboptions.clone()))
+            .unwrap();
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
+        assert_eq!(
+            options[0],
+            TcpOption::TcpEno {
+                suboptions: suboptions.clone(),
+            }
+        );
+        assert_eq!(options[0].tcp_eno_suboptions(), Some(suboptions.as_slice()));
+        assert_eq!(decoded.compile().unwrap(), bytes);
+
+        // 4. A TCP-ENO option shorter than the 2-byte minimum decodes to a
+        //    structured, contextful error rather than a panic or a silent blob.
+        //    (A standalone kind byte with no length byte is below the minimum
+        //    framing.)
+        let too_short = TcpOption::decode_all(&[TCP_OPTION_TCP_ENO, 1]).unwrap_err();
+        assert!(
+            too_short.to_string().contains("tcp.option.length"),
+            "TCP-ENO underflow error must carry context, got: {too_short}"
+        );
+        assert_eq!(TCP_OPTION_TCP_ENO_MIN_LEN, 2);
+    }
+}
+
 mod legacy_security_options {
     use super::super::{Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_MD5_SIGNATURE};
     use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
