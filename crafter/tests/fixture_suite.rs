@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsName,
-    DnsRecord, DnsRecordData, EdnsOption, Ethernet, Icmp, IcmpKind, Icmpv6, Ipv4, Ipv4Option, Ipv6,
-    Ipv6FragmentHeader, Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder,
+    DnsRecord, DnsRecordData, EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4, Ipv4Option,
+    Ipv6, Ipv6FragmentHeader, Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder,
     NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp,
     UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND,
     BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
@@ -1145,7 +1145,7 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
                 let _ = expect_layer::<Ipv6FragmentHeader>(case, packet);
             }
             ExpectedLayer::Icmp => {
-                let _ = expect_layer::<Icmp>(case, packet);
+                let _ = expect_layer::<Icmpv4>(case, packet);
             }
             ExpectedLayer::Icmpv6 => {
                 let _ = expect_layer::<Icmpv6>(case, packet);
@@ -1370,7 +1370,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert!(ipv4.is_dont_fragment());
             assert_eq!(ipv4.protocol_value(), IPPROTO_ICMP);
 
-            let icmp = expect_layer::<Icmp>(case, packet);
+            let icmp = expect_layer::<Icmpv4>(case, packet);
             assert_eq!(icmp.icmp_type_value(), ICMP_ECHO_REQUEST);
             assert_eq!(icmp.kind_value(), Some(IcmpKind::EchoRequest));
             assert_eq!(icmp.identifier_value(), Some(0x4242));
@@ -1387,7 +1387,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(ipv4.identification_value(), 0x2255);
             assert_eq!(ipv4.protocol_value(), IPPROTO_ICMP);
 
-            let icmp = expect_layer::<Icmp>(case, packet);
+            let icmp = expect_layer::<Icmpv4>(case, packet);
             assert_eq!(icmp.icmp_type_value(), ICMP_DESTINATION_UNREACHABLE);
             assert_eq!(icmp.kind_value(), Some(IcmpKind::DestinationUnreachable));
             assert_eq!(icmp.code_value(), 3);

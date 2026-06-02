@@ -22,7 +22,7 @@ fn main() -> ExampleResult<()> {
     let icmp_seq = parse_u16_arg("--seq", 1)?;
 
     let packet = Ipv4::new().src(src).dst(dst).id(0x4001).dont_fragment(true)
-        / Icmp::echo_request().id(icmp_id).seq(icmp_seq)
+        / Icmpv4::echo_request().id(icmp_id).seq(icmp_seq)
         / Raw::from("network-ping");
     let report = packet.send_recv_report(send_recv_options(&iface, live, false))?;
 

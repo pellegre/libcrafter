@@ -21,7 +21,7 @@ fn main() -> ExampleResult<()> {
     // Time-exceeded (type 11, code 0) error carrying the quoted datagram and a
     // single-label MPLS extension object (RFC 4884 framing, RFC 4950 object).
     let packet = Ipv4::new().src(src).dst(dst)
-        / Icmp::time_exceeded().code(ICMP_CODE_TIME_EXCEEDED_TTL)
+        / Icmpv4::time_exceeded().code(ICMP_CODE_TIME_EXCEEDED_TTL)
         / IcmpQuotedIpv4::new(offending)
         / IcmpExtension::new()
         / IcmpExtensionObject::new()
@@ -34,8 +34,8 @@ fn main() -> ExampleResult<()> {
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
 
     let icmp = decoded
-        .layer::<Icmp>()
-        .expect("decoded ICMPv4 error should contain Icmp");
+        .layer::<Icmpv4>()
+        .expect("decoded ICMPv4 error should contain Icmpv4");
     let mpls = decoded
         .layer::<IcmpExtensionMpls>()
         .expect("decoded packet should contain the MPLS extension object");

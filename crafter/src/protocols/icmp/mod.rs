@@ -189,7 +189,14 @@ mod decode;
 pub(crate) use self::decode::append_icmp_packet;
 
 mod v4;
-pub use self::v4::Icmp;
+pub use self::v4::Icmpv4;
+/// Deprecated alias for the ICMPv4 layer struct, renamed to [`Icmpv4`].
+///
+/// Kept for one minor cycle so downstream code that imported `Icmp` keeps
+/// compiling (with a deprecation warning). Prefer the version-explicit
+/// [`Icmpv4`] name.
+#[deprecated(since = "2.1.0", note = "renamed to Icmpv4; use the v4-explicit name")]
+pub type Icmp = Icmpv4;
 // The ICMPv4 message bodies (`IcmpQuotedIpv4`, `IcmpTimestamp`,
 // `IcmpAddressMask`, `IcmpRouterAdvertisementEntry`) moved into
 // `v4/bodies.rs`; re-export them at the `icmp` root so the `protocols::mod.rs`
@@ -293,7 +300,7 @@ fn preceding_icmp_original_datagram_len(ctx: LayerContext<'_>) -> Option<usize> 
         .packet()
         .get(icmp_index)?
         .as_any()
-        .downcast_ref::<Icmp>()?;
+        .downcast_ref::<Icmpv4>()?;
     let icmp_ctx = LayerContext::new(ctx.packet(), icmp_index);
     let words = icmp
         .effective_extension_length(Some(icmp_ctx), ICMP_EXTENSION_OBJECT_LEN)
@@ -306,7 +313,7 @@ fn preceding_icmp_index(ctx: LayerContext<'_>) -> Option<usize> {
     (0..ctx.index()).rev().find(|&index| {
         ctx.packet()
             .get(index)
-            .is_some_and(|layer| layer.as_any().is::<Icmp>())
+            .is_some_and(|layer| layer.as_any().is::<Icmpv4>())
     })
 }
 

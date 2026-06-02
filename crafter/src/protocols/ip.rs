@@ -10,7 +10,7 @@ use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
-use crate::protocols::icmp::Icmp;
+use crate::protocols::icmp::Icmpv4;
 use crate::protocols::transport::{Tcp, Udp};
 use crate::registry::ProtocolRegistry;
 
@@ -1122,7 +1122,7 @@ fn layer_ipv4_protocol(layer: &dyn Layer) -> Option<u8> {
         Some(IPPROTO_TCP)
     } else if layer.as_any().is::<Udp>() {
         Some(IPPROTO_UDP)
-    } else if layer.as_any().is::<Icmp>() {
+    } else if layer.as_any().is::<Icmpv4>() {
         Some(IPPROTO_ICMP)
     } else {
         None
@@ -1281,7 +1281,7 @@ mod ipv4 {
     use super::{
         IpProtocol, Ipv4, IPPROTO_ICMP, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
     };
-    use crate::{Icmp, LinkType, NetworkLayer, Packet, Raw};
+    use crate::{Icmpv4, LinkType, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("bytes/ipv4-icmp-echo-request.bin");
@@ -1311,7 +1311,7 @@ mod ipv4 {
     fn ipv4_decode_exposes_header_fields_and_preserves_payload() {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, IPV4_ICMP_FIXTURE).unwrap();
         let ipv4 = decoded.layer::<Ipv4>().unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         let raw = decoded.layer::<Raw>().unwrap();
 
         assert_eq!(ipv4.version_value(), 4);

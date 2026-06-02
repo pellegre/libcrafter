@@ -1,14 +1,13 @@
 //! ICMPv4 layer implementation.
 //!
 //! Moved out of `icmp/mod.rs` into the `icmp/v4/` subtree so ICMPv4 and ICMPv6
-//! sit as siblings under the shared core. This holds the [`Icmp`] header struct
-//! and its builder/decode/compile impls plus the ICMPv4 (`ICMP_*`) codepoint
-//! constants. Shared compile/auto-fill helpers, the version-neutral
+//! sit as siblings under the shared core. This holds the [`Icmpv4`] header
+//! struct and its builder/decode/compile impls plus the ICMPv4 (`ICMP_*`)
+//! codepoint constants. Shared compile/auto-fill helpers, the version-neutral
 //! [`IcmpKind`]/[`IcmpLayer`] contract, the typed body layers, and the RFC 4884
-//! extension framework are reached through `use super::*;`. This is a pure
-//! internal move: `crate::protocols::icmp::Icmp`, the `protocols::mod.rs`
-//! re-exports, and the prelude all keep resolving to the same names. [`Icmp`] is
-//! renamed to `Icmpv4` in a later step; this step only relocates the code.
+//! extension framework are reached through `use super::*;`. The struct was
+//! renamed from `Icmp` to [`Icmpv4`]; a `#[deprecated]` `Icmp` type alias is
+//! kept at the `icmp` module root so existing downstream code keeps compiling.
 
 use super::*;
 
@@ -24,7 +23,7 @@ pub use self::bodies::*;
 /// stays at the module root for now) can construct the header from wire bytes.
 /// They remain invisible to downstream crates, so the public API is unchanged.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Icmp {
+pub struct Icmpv4 {
     pub(crate) icmp_type: Field<u8>,
     pub(crate) code: Field<u8>,
     pub(crate) checksum: Field<u16>,
@@ -41,7 +40,7 @@ pub struct Icmp {
     pub(crate) extended_flags: Field<u8>,
 }
 
-impl Icmp {
+impl Icmpv4 {
     /// Create an ICMP echo-request header with deterministic defaults.
     pub fn new() -> Self {
         Self {
@@ -911,31 +910,31 @@ impl Icmp {
     }
 }
 
-impl Default for Icmp {
+impl Default for Icmpv4 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl IcmpLayer for Icmp {
+impl IcmpLayer for Icmpv4 {
     fn icmp_type_value(&self) -> u8 {
-        Icmp::icmp_type_value(self)
+        Icmpv4::icmp_type_value(self)
     }
 
     fn code_value(&self) -> u8 {
-        Icmp::code_value(self)
+        Icmpv4::code_value(self)
     }
 
     fn checksum_value(&self) -> Option<u16> {
-        Icmp::checksum_value(self)
+        Icmpv4::checksum_value(self)
     }
 
     fn identifier_value(&self) -> Option<u16> {
-        Icmp::identifier_value(self)
+        Icmpv4::identifier_value(self)
     }
 
     fn sequence_number_value(&self) -> Option<u16> {
-        Icmp::sequence_number_value(self)
+        Icmpv4::sequence_number_value(self)
     }
 
     fn kind(&self) -> Option<IcmpKind> {
@@ -943,7 +942,7 @@ impl IcmpLayer for Icmp {
     }
 }
 
-impl Layer for Icmp {
+impl Layer for Icmpv4 {
     fn name(&self) -> &'static str {
         "Icmp"
     }
@@ -1069,14 +1068,14 @@ impl Layer for Icmp {
         Ok(())
     }
 
-    impl_layer_object!(Icmp);
+    impl_layer_object!(Icmpv4);
 }
 
-impl_layer_div!(Icmp);
+impl_layer_div!(Icmpv4);
 
 #[cfg(test)]
 mod icmpv4_header_model {
-    use super::{Icmp, IcmpKind, ICMP_ECHO_REQUEST, ICMP_REDIRECT, ICMP_TIME_EXCEEDED};
+    use super::{IcmpKind, Icmpv4, ICMP_ECHO_REQUEST, ICMP_REDIRECT, ICMP_TIME_EXCEEDED};
     use crate::packet::Layer;
     use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
     use core::net::Ipv4Addr;
@@ -1096,7 +1095,7 @@ mod icmpv4_header_model {
     fn icmpv4_header_model_raw_rest_of_header_is_preserved() {
         let raw = [0xde, 0xad, 0xbe, 0xef];
         let bytes = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::new().icmp_type(99).code(7).rest_of_header(raw)
+            / Icmpv4::new().icmp_type(99).code(7).rest_of_header(raw)
             / Raw::from("body"))
         .compile()
         .unwrap();
@@ -1115,7 +1114,7 @@ mod icmpv4_header_model {
     fn icmpv4_header_model_raw_rest_survives_typed_constructor() {
         let raw = [0xaa, 0xbb, 0xcc, 0xdd];
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::time_exceeded().rest_of_header(raw)
+            / Icmpv4::time_exceeded().rest_of_header(raw)
             / (Ipv4::new()
                 .src(Ipv4Addr::new(192, 0, 2, 1))
                 .dst(Ipv4Addr::new(198, 51, 100, 1))
@@ -1136,7 +1135,7 @@ mod icmpv4_header_model {
     fn icmpv4_header_model_user_typed_field_overrides_raw_rest() {
         let raw = [0x00, 0x00, 0x00, 0x00];
         let bytes = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::echo_request()
+            / Icmpv4::echo_request()
                 .rest_of_header(raw)
                 .id(0x1234)
                 .seq(0x5678)
@@ -1154,7 +1153,7 @@ mod icmpv4_header_model {
     #[test]
     fn icmpv4_header_model_explicit_checksum_is_preserved() {
         let bytes = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::echo_request().id(7).seq(8).checksum(0xbeef)
+            / Icmpv4::echo_request().id(7).seq(8).checksum(0xbeef)
             / Raw::from("abc"))
         .compile()
         .unwrap();
@@ -1169,12 +1168,12 @@ mod icmpv4_header_model {
     fn icmpv4_header_model_unknown_type_roundtrip() {
         let raw = [0x01, 0x02, 0x03, 0x04];
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::new().icmp_type(200).code(13).rest_of_header(raw)
+            / Icmpv4::new().icmp_type(200).code(13).rest_of_header(raw)
             / Raw::from("payload");
         let compiled = packet.compile().unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(icmp.icmp_type_value(), 200);
         assert_eq!(icmp.code_value(), 13);
         assert_eq!(icmp.rest_of_header_value(), raw);
@@ -1193,16 +1192,16 @@ mod icmpv4_header_model {
     #[test]
     fn icmpv4_header_model_summary_is_stable() {
         assert_eq!(
-            Icmp::echo_request().id(0x4242).seq(1).summary(),
+            Icmpv4::echo_request().id(0x4242).seq(1).summary(),
             "Icmp(type=echo-request(8), code=0, id=16962, seq=1)"
         );
         assert_eq!(
-            Icmp::new().icmp_type(ICMP_REDIRECT).code(1).summary(),
+            Icmpv4::new().icmp_type(ICMP_REDIRECT).code(1).summary(),
             "Icmp(type=redirect(5), code=redirect-host(1), id=-, seq=-)"
         );
         // Unknown type falls back to the bare number and reports no echo fields.
         assert_eq!(
-            Icmp::new().icmp_type(200).code(13).summary(),
+            Icmpv4::new().icmp_type(200).code(13).summary(),
             "Icmp(type=200, code=13, id=-, seq=-)"
         );
     }
@@ -1212,7 +1211,7 @@ mod icmpv4_header_model {
     #[test]
     fn icmpv4_header_model_echo_compatibility_is_intact() {
         let packet = Ipv4::new().src(src()).dst(dst())
-            / Icmp::echo_request().id(0x4242).seq(1)
+            / Icmpv4::echo_request().id(0x4242).seq(1)
             / Raw::from("libcrafter-icmp");
         let compiled = packet.compile().unwrap();
 
@@ -1221,7 +1220,7 @@ mod icmpv4_header_model {
         assert_eq!(&compiled.as_bytes()[26..28], &1u16.to_be_bytes());
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(icmp.kind_value(), Some(IcmpKind::EchoRequest));
         assert_eq!(icmp.identifier_value(), Some(0x4242));
         assert_eq!(icmp.sequence_number_value(), Some(1));
@@ -1233,7 +1232,7 @@ mod icmpv4_header_model {
     #[test]
     fn icmpv4_header_model_redirect_gateway_fills_rest() {
         let gateway = Ipv4Addr::new(192, 0, 2, 254);
-        let icmp = Icmp::new().icmp_type(ICMP_REDIRECT).gateway(gateway);
+        let icmp = Icmpv4::new().icmp_type(ICMP_REDIRECT).gateway(gateway);
         assert_eq!(icmp.gateway_value(), Some(gateway));
         assert_eq!(icmp.rest_of_header_value(), gateway.octets());
     }
@@ -1242,7 +1241,7 @@ mod icmpv4_header_model {
 #[cfg(test)]
 mod icmpv4_legacy_assigned_types {
     use super::{
-        icmpv4_code_summary, icmpv4_type_is_deprecated, icmpv4_type_summary, Icmp,
+        icmpv4_code_summary, icmpv4_type_is_deprecated, icmpv4_type_summary, Icmpv4,
         ICMP_CODE_PHOTURIS_BAD_SPI, ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION,
         ICMP_DATAGRAM_CONVERSION_ERROR, ICMP_DOMAIN_NAME_REPLY, ICMP_DOMAIN_NAME_REQUEST,
         ICMP_EXPERIMENTAL_253, ICMP_EXPERIMENTAL_254, ICMP_IPV6_I_AM_HERE, ICMP_IPV6_WHERE_ARE_YOU,
@@ -1266,30 +1265,30 @@ mod icmpv4_legacy_assigned_types {
     // trailing raw body survives compilation untouched.
     #[test]
     fn icmpv4_legacy_assigned_types_constructors_set_assigned_types() {
-        let cases: &[(Icmp, u8)] = &[
-            (Icmp::traceroute(), ICMP_TRACEROUTE),
+        let cases: &[(Icmpv4, u8)] = &[
+            (Icmpv4::traceroute(), ICMP_TRACEROUTE),
             (
-                Icmp::datagram_conversion_error(),
+                Icmpv4::datagram_conversion_error(),
                 ICMP_DATAGRAM_CONVERSION_ERROR,
             ),
-            (Icmp::mobile_host_redirect(), ICMP_MOBILE_HOST_REDIRECT),
-            (Icmp::ipv6_where_are_you(), ICMP_IPV6_WHERE_ARE_YOU),
-            (Icmp::ipv6_i_am_here(), ICMP_IPV6_I_AM_HERE),
+            (Icmpv4::mobile_host_redirect(), ICMP_MOBILE_HOST_REDIRECT),
+            (Icmpv4::ipv6_where_are_you(), ICMP_IPV6_WHERE_ARE_YOU),
+            (Icmpv4::ipv6_i_am_here(), ICMP_IPV6_I_AM_HERE),
             (
-                Icmp::mobile_registration_request(),
+                Icmpv4::mobile_registration_request(),
                 ICMP_MOBILE_REGISTRATION_REQUEST,
             ),
             (
-                Icmp::mobile_registration_reply(),
+                Icmpv4::mobile_registration_reply(),
                 ICMP_MOBILE_REGISTRATION_REPLY,
             ),
-            (Icmp::domain_name_request(), ICMP_DOMAIN_NAME_REQUEST),
-            (Icmp::domain_name_reply(), ICMP_DOMAIN_NAME_REPLY),
-            (Icmp::skip(), ICMP_SKIP),
-            (Icmp::photuris(), ICMP_PHOTURIS),
-            (Icmp::seamoby_experimental(), ICMP_SEAMOBY_EXPERIMENTAL),
-            (Icmp::experiment_1(), ICMP_EXPERIMENTAL_253),
-            (Icmp::experiment_2(), ICMP_EXPERIMENTAL_254),
+            (Icmpv4::domain_name_request(), ICMP_DOMAIN_NAME_REQUEST),
+            (Icmpv4::domain_name_reply(), ICMP_DOMAIN_NAME_REPLY),
+            (Icmpv4::skip(), ICMP_SKIP),
+            (Icmpv4::photuris(), ICMP_PHOTURIS),
+            (Icmpv4::seamoby_experimental(), ICMP_SEAMOBY_EXPERIMENTAL),
+            (Icmpv4::experiment_1(), ICMP_EXPERIMENTAL_253),
+            (Icmpv4::experiment_2(), ICMP_EXPERIMENTAL_254),
         ];
 
         for (icmp, expected_type) in cases {
@@ -1318,7 +1317,7 @@ mod icmpv4_legacy_assigned_types {
         assert_eq!(ICMP_CODE_PHOTURIS_BAD_SPI, 0);
         assert_eq!(ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION, 5);
 
-        let icmp = Icmp::photuris().code(ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION);
+        let icmp = Icmpv4::photuris().code(ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION);
         assert_eq!(icmp.icmp_type_value(), ICMP_PHOTURIS);
         assert_eq!(icmp.code_value(), ICMP_CODE_PHOTURIS_NEED_AUTHORIZATION);
         assert_eq!(icmpv4_type_summary(ICMP_PHOTURIS), "photuris(40)");
@@ -1338,17 +1337,17 @@ mod icmpv4_legacy_assigned_types {
     fn icmpv4_legacy_assigned_types_experiment_and_reserved_roundtrip() {
         for (icmp, expected_type, name) in [
             (
-                Icmp::experiment_1(),
+                Icmpv4::experiment_1(),
                 ICMP_EXPERIMENTAL_253,
                 "experiment-1(253)",
             ),
             (
-                Icmp::experiment_2(),
+                Icmpv4::experiment_2(),
                 ICMP_EXPERIMENTAL_254,
                 "experiment-2(254)",
             ),
             (
-                Icmp::new().icmp_type(ICMP_RESERVED_255),
+                Icmpv4::new().icmp_type(ICMP_RESERVED_255),
                 ICMP_RESERVED_255,
                 "reserved(255)",
             ),
@@ -1359,7 +1358,7 @@ mod icmpv4_legacy_assigned_types {
                 .compile()
                 .unwrap();
             let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-            let icmp = decoded.layer::<Icmp>().unwrap();
+            let icmp = decoded.layer::<Icmpv4>().unwrap();
             assert_eq!(icmp.icmp_type_value(), expected_type);
             let raw = decoded.layer::<Raw>().unwrap();
             assert_eq!(raw.as_bytes(), b"xprmnt");
@@ -1373,7 +1372,7 @@ mod icmpv4_legacy_assigned_types {
     #[test]
     fn icmpv4_legacy_assigned_types_unknown_type_falls_back_and_roundtrips() {
         let compiled = (Ipv4::new().src(src()).dst(dst())
-            / Icmp::new()
+            / Icmpv4::new()
                 .icmp_type(200)
                 .code(77)
                 .rest_of_header([0x11, 0x22, 0x33, 0x44])
@@ -1385,7 +1384,7 @@ mod icmpv4_legacy_assigned_types {
         assert_eq!(compiled.as_bytes()[21], 77);
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(icmp.icmp_type_value(), 200);
         assert_eq!(icmp.code_value(), 77);
         assert_eq!(icmp.rest_of_header_value(), [0x11, 0x22, 0x33, 0x44]);
@@ -1425,7 +1424,7 @@ mod icmpv4_legacy_assigned_types {
     #[test]
     fn icmpv4_legacy_assigned_types_byte_for_byte_decode_compile_preservation() {
         let compiled = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Icmp)
-            / Icmp::datagram_conversion_error()
+            / Icmpv4::datagram_conversion_error()
                 .code(1)
                 .rest_of_header([0x00, 0x00, 0x00, 0x18])
             / Raw::from_bytes([0xca, 0xfe, 0xba, 0xbe, 0x01, 0x02, 0x03, 0x04]))
@@ -1433,7 +1432,7 @@ mod icmpv4_legacy_assigned_types {
         .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
-        let icmp = decoded.layer::<Icmp>().unwrap();
+        let icmp = decoded.layer::<Icmpv4>().unwrap();
         assert_eq!(icmp.icmp_type_value(), ICMP_DATAGRAM_CONVERSION_ERROR);
         assert_eq!(icmp.code_value(), 1);
         let raw = decoded.layer::<Raw>().unwrap();
