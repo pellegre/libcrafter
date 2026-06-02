@@ -2252,3 +2252,110 @@ mod checksum_with_options {
         assert_ne!(0xbeef, v4_auto);
     }
 }
+
+mod ipv6_fragment_adjacent {
+    use super::super::Tcp;
+    use crate::checksum::ipv6_pseudo_header_checksum;
+    use crate::{Ipv6, Ipv6FragmentHeader, NetworkLayer, Packet, Raw, IPPROTO_TCP};
+    use core::net::Ipv6Addr;
+
+    fn src() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1)
+    }
+
+    fn dst() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 2)
+    }
+
+    /// Documents and pins TCP's behavior at the boundary of IPv6 fragment
+    /// headers. This is fragmentation-ADJACENT: the crate never reassembles.
+    ///
+    /// Two rules are asserted:
+    ///
+    /// 1. An IPv6 INITIAL fragment (fragment offset 0, more-fragments set)
+    ///    carries the start of the TCP header, so the decoder runs the normal
+    ///    TCP decode through the fragment header. The Tcp layer is present and
+    ///    its checksum is filled from the IPv6 pseudo-header context, i.e. the
+    ///    enclosing network layer still supplies checksum context across the
+    ///    fragment header.
+    ///
+    /// 2. A NON-INITIAL IPv6 fragment (fragment offset > 0) does not begin with
+    ///    a TCP header even though the fragment header names TCP as its
+    ///    next-header. The decoder must NOT attempt TCP decode; the remaining
+    ///    bytes are preserved verbatim as a trailing `Raw` layer. The decoded
+    ///    stack therefore ends in `Raw`, never `Tcp`.
+    #[test]
+    fn tcp_ipv6_fragment_adjacent_decode_rules() {
+        // --- Rule 1: initial fragment carries TCP and keeps checksum context.
+        let initial = Ipv6::new().src(src()).dst(dst()).hlim(64)
+            / Ipv6FragmentHeader::new()
+                .identification(0x0102_0304)
+                .more_fragments(true)
+            / Tcp::new().sport(44444).dport(80).seq(0x1111_2222)
+            / Raw::from_bytes([0xaa, 0xbb, 0xcc]);
+        let initial_bytes = initial.compile().unwrap();
+        let raw = initial_bytes.as_bytes();
+
+        // IPv6 next-header is the fragment header, whose inner next-header is TCP.
+        assert_eq!(raw[6], crate::IPPROTO_IPV6_FRAGMENT);
+        assert_eq!(raw[40], IPPROTO_TCP);
+
+        // The TCP segment begins after the 40-byte IPv6 header + 8-byte
+        // fragment header. compile() must have filled the TCP checksum from the
+        // IPv6 pseudo-header context, proving checksum context is preserved
+        // across the fragment header for an initial fragment.
+        let tcp_segment = &raw[48..];
+        let mut zeroed = tcp_segment.to_vec();
+        zeroed[16] = 0;
+        zeroed[17] = 0;
+        let filled = u16::from_be_bytes([tcp_segment[16], tcp_segment[17]]);
+        assert_ne!(filled, 0, "initial-fragment TCP checksum must be auto-filled");
+        assert_eq!(
+            filled,
+            ipv6_pseudo_header_checksum(src(), dst(), IPPROTO_TCP, &zeroed),
+            "initial IPv6 fragment must preserve IPv6 pseudo-header checksum context for TCP",
+        );
+
+        // And decode reaches the TCP layer through the fragment header.
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, raw).unwrap();
+        let tcp = decoded
+            .layer::<Tcp>()
+            .expect("initial IPv6 fragment must decode the Tcp layer");
+        assert_eq!(tcp.source_port_value(), 44444);
+        assert_eq!(tcp.destination_port_value(), 80);
+        assert!(decoded.layer::<Ipv6FragmentHeader>().is_some());
+
+        // --- Rule 2: non-initial fragment with TCP next-header stays Raw.
+        // Build a non-initial fragment (offset > 0) whose fragment header names
+        // TCP. The payload bytes are NOT a TCP header start, so TCP decode must
+        // not be attempted; the remaining bytes survive as a trailing Raw layer.
+        let non_initial = (Ipv6::new().src(src()).dst(dst()).hlim(64)
+            / Ipv6FragmentHeader::new()
+                .nh(IPPROTO_TCP)
+                .fragment_offset(3)
+                .identification(0x0102_0304)
+            / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef, 0x00, 0x11]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, non_initial.as_bytes()).unwrap();
+
+        // No TCP decode was attempted across a non-initial fragment.
+        assert!(
+            decoded.layer::<Tcp>().is_none(),
+            "non-initial IPv6 fragment must not decode a Tcp layer",
+        );
+        // The remaining bytes are preserved verbatim as Raw.
+        assert_eq!(
+            decoded.layer::<Raw>().unwrap().as_bytes(),
+            &[0xde, 0xad, 0xbe, 0xef, 0x00, 0x11],
+        );
+        // The decoded stack ends in Raw, not Tcp.
+        let last = decoded.get(decoded.len() - 1).unwrap();
+        assert_eq!(
+            last.name(),
+            "Raw",
+            "non-initial IPv6 fragment stack must end in a Raw layer, not Tcp",
+        );
+    }
+}
