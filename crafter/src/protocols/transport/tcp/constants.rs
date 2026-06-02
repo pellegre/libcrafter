@@ -34,6 +34,71 @@ pub const TCP_OPTION_TCP_AUTHENTICATION: u8 = 29;
 pub const TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN: u8 = 4;
 /// TCP MPTCP option kind (RFC 8684).
 pub const TCP_OPTION_MPTCP: u8 = 30;
+
+// Multipath TCP (MPTCP) option subtypes.
+//
+// RFC 8684 section 3 encodes the MPTCP message type in the high 4 bits of the
+// byte that follows the option kind and length. The IANA "MPTCP Option
+// Subtypes" registry (defined by RFC 8684, obsoleting RFC 6824) assigns the
+// 4-bit subtype values below. `crafter` preserves MPTCP subtype-specific bytes
+// generically via `TcpOption::MultipathTcp`; these constants make the subtype
+// nibble inspectable without modeling MPTCP connection state.
+
+/// MPTCP subtype `MP_CAPABLE` (RFC 8684 section 3.1, IANA MPTCP Option
+/// Subtypes registry).
+pub const MPTCP_SUBTYPE_MP_CAPABLE: u8 = 0x0;
+/// MPTCP subtype `MP_JOIN` (RFC 8684 section 3.2, IANA MPTCP Option Subtypes
+/// registry).
+pub const MPTCP_SUBTYPE_MP_JOIN: u8 = 0x1;
+/// MPTCP subtype `DSS` (Data Sequence Signal) (RFC 8684 section 3.3, IANA MPTCP
+/// Option Subtypes registry).
+pub const MPTCP_SUBTYPE_DSS: u8 = 0x2;
+/// MPTCP subtype `ADD_ADDR` (RFC 8684 section 3.4.1, IANA MPTCP Option Subtypes
+/// registry).
+pub const MPTCP_SUBTYPE_ADD_ADDR: u8 = 0x3;
+/// MPTCP subtype `REMOVE_ADDR` (RFC 8684 section 3.4.2, IANA MPTCP Option
+/// Subtypes registry).
+pub const MPTCP_SUBTYPE_REMOVE_ADDR: u8 = 0x4;
+/// MPTCP subtype `MP_PRIO` (RFC 8684 section 3.3.8, IANA MPTCP Option Subtypes
+/// registry).
+pub const MPTCP_SUBTYPE_MP_PRIO: u8 = 0x5;
+/// MPTCP subtype `MP_FAIL` (RFC 8684 section 3.7, IANA MPTCP Option Subtypes
+/// registry).
+pub const MPTCP_SUBTYPE_MP_FAIL: u8 = 0x6;
+/// MPTCP subtype `MP_FASTCLOSE` (RFC 8684 section 3.5, IANA MPTCP Option
+/// Subtypes registry).
+pub const MPTCP_SUBTYPE_MP_FASTCLOSE: u8 = 0x7;
+/// MPTCP subtype `MP_TCPRST` (RFC 8684 section 3.6, IANA MPTCP Option Subtypes
+/// registry).
+///
+/// The IANA registry spells this subtype `MP_TCPRST`; `crafter` exports it as
+/// `MPTCP_SUBTYPE_TCPRST`.
+pub const MPTCP_SUBTYPE_TCPRST: u8 = 0x8;
+/// MPTCP subtype `0xf`, reserved for Private Use / experimentation by the IANA
+/// MPTCP Option Subtypes registry (RFC 8684 section 8). No standardized message
+/// is assigned to this value.
+pub const MPTCP_SUBTYPE_MP_EXPERIMENTAL: u8 = 0xf;
+
+// MP_TCPRST reason codes.
+//
+// RFC 8684 section 3.6 carries an 8-bit Reason code in the MP_TCPRST subtype
+// option and defines the IANA "MPTCP MP_TCPRST Reason Codes" registry. These
+// constants make that byte inspectable; `crafter` does not act on the reason.
+
+/// MP_TCPRST reason `0x00`: unspecified error (RFC 8684 section 3.6).
+pub const MPTCP_TCPRST_REASON_UNSPECIFIED: u8 = 0x00;
+/// MP_TCPRST reason `0x01`: MPTCP-specific error (RFC 8684 section 3.6).
+pub const MPTCP_TCPRST_REASON_MPTCP_SPECIFIC: u8 = 0x01;
+/// MP_TCPRST reason `0x02`: lack of resources (RFC 8684 section 3.6).
+pub const MPTCP_TCPRST_REASON_LACK_OF_RESOURCES: u8 = 0x02;
+/// MP_TCPRST reason `0x03`: administratively prohibited (RFC 8684 section 3.6).
+pub const MPTCP_TCPRST_REASON_ADMINISTRATIVELY_PROHIBITED: u8 = 0x03;
+/// MP_TCPRST reason `0x04`: too much outstanding data (RFC 8684 section 3.6).
+pub const MPTCP_TCPRST_REASON_TOO_MUCH_OUTSTANDING_DATA: u8 = 0x04;
+/// MP_TCPRST reason `0x05`: unacceptable performance (RFC 8684 section 3.6).
+pub const MPTCP_TCPRST_REASON_UNACCEPTABLE_PERFORMANCE: u8 = 0x05;
+/// MP_TCPRST reason `0x06`: middlebox interference (RFC 8684 section 3.6).
+pub const MPTCP_TCPRST_REASON_MIDDLEBOX_INTERFERENCE: u8 = 0x06;
 /// TCP Fast Open Cookie option kind (RFC 7413).
 pub const TCP_OPTION_FAST_OPEN: u8 = 34;
 /// TCP Encryption Negotiation Option (TCP-ENO) kind (RFC 8547).
