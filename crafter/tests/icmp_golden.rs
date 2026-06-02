@@ -96,23 +96,25 @@ fn build_v4_dest_unreach_quoted() -> Packet {
         / Raw::from("query");
     ipv4()
         / Icmpv4::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
-        / IcmpQuotedIpv4::new(quoted)
+        / Icmpv4QuotedIp::new(quoted)
 }
 
 fn build_v4_timestamp() -> Packet {
-    ipv4() / Icmpv4::timestamp_request().id(9).seq(1) / IcmpTimestamp::new().originate(0x0001_0203)
+    ipv4()
+        / Icmpv4::timestamp_request().id(9).seq(1)
+        / Icmpv4Timestamp::new().originate(0x0001_0203)
 }
 
 fn build_v4_address_mask() -> Packet {
     let mask = Ipv4Addr::new(255, 255, 255, 0);
-    ipv4() / Icmpv4::address_mask_reply().id(3).seq(1) / IcmpAddressMask::new().mask(mask)
+    ipv4() / Icmpv4::address_mask_reply().id(3).seq(1) / Icmpv4AddressMask::new().mask(mask)
 }
 
 fn build_v4_router_advertisement() -> Packet {
     let router = Ipv4Addr::new(192, 0, 2, 1);
     ipv4()
         / Icmpv4::router_advertisement().lifetime(1800)
-        / IcmpRouterAdvertisementEntry::new()
+        / Icmpv4RouterAdvertisementEntry::new()
             .router_address(router)
             .preference_level(10)
 }
@@ -122,7 +124,7 @@ fn build_v4_rfc4884_mpls() -> Packet {
         Ipv4::new().src(DOC_V4_DST).dst(DOC_V4_SRC).id(0x3333) / Udp::new().sport(1234).dport(53);
     ipv4()
         / Icmpv4::time_exceeded().code(ICMP_CODE_TIME_EXCEEDED_TTL)
-        / IcmpQuotedIpv4::new(quoted)
+        / Icmpv4QuotedIp::new(quoted)
         / IcmpExtension::new()
         / IcmpExtensionObject::new()
         / IcmpExtensionMpls::new().label(16000).ttl(64)

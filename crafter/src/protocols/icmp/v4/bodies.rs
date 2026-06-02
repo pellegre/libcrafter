@@ -1,13 +1,14 @@
 //! Typed ICMPv4 body layers that follow the fixed eight-byte header.
 //!
 //! Relocated out of `icmp/mod.rs` into the `icmp/v4/` subtree so the
-//! version-specific ICMPv4 message bodies sit alongside the [`Icmp`] header
-//! under `v4/`. Nothing here changes wire behavior, defaults, or the public API
-//! surface: the body type names ([`IcmpQuotedIpv4`], [`IcmpTimestamp`],
-//! [`IcmpAddressMask`], [`IcmpRouterAdvertisementEntry`]) and their exported
-//! identity are unchanged, and `icmp/mod.rs` re-exports them so the
-//! `protocols::mod.rs` names and the prelude keep resolving. Renames happen in a
-//! later step. Shared compile/auto-fill helpers, the version-neutral
+//! version-specific ICMPv4 message bodies sit alongside the [`Icmpv4`] header
+//! under `v4/`. The body type names follow the explicit version convention
+//! ([`Icmpv4QuotedIp`], [`Icmpv4Timestamp`], [`Icmpv4AddressMask`],
+//! [`Icmpv4RouterAdvertisementEntry`]); each keeps a `#[deprecated]` alias under
+//! its old `Icmp*` name so downstream code keeps compiling within the 2.x line.
+//! Nothing here changes wire behavior or defaults, and `icmp/mod.rs` re-exports
+//! both the new names and the aliases so the `protocols::mod.rs` names and the
+//! prelude keep resolving. Shared compile/auto-fill helpers, the version-neutral
 //! [`IcmpKind`]/[`IcmpLayer`] contract, and the codepoints are reached through
 //! `use super::*;` (which itself globs the shared `icmp` root).
 
@@ -38,14 +39,18 @@ const ICMP_ROUTER_ADVERTISEMENT_ENTRY_LEN: usize = 8;
 /// and a non-IPv4 quote leaves the bytes as a plain `Raw` payload instead of
 /// producing this layer.
 #[derive(Debug, Clone)]
-pub struct IcmpQuotedIpv4 {
+pub struct Icmpv4QuotedIp {
     // `pub(crate)` so the ICMPv4 decode path in `icmp/decode.rs` (which stays at
     // the module root) can construct the body from wire bytes. Invisible to
     // downstream crates, so the public API is unchanged.
     pub(crate) datagram: Packet,
 }
 
-impl IcmpQuotedIpv4 {
+/// Deprecated alias for the quoted-datagram body, renamed to [`Icmpv4QuotedIp`].
+#[deprecated(since = "2.1.0", note = "renamed to Icmpv4QuotedIp")]
+pub type IcmpQuotedIpv4 = Icmpv4QuotedIp;
+
+impl Icmpv4QuotedIp {
     /// Wrap a quoted original datagram built from typed packet layers.
     pub fn new(datagram: impl IntoPacket) -> Self {
         Self {
@@ -72,7 +77,7 @@ impl IcmpQuotedIpv4 {
     }
 }
 
-impl PartialEq for IcmpQuotedIpv4 {
+impl PartialEq for Icmpv4QuotedIp {
     fn eq(&self, other: &Self) -> bool {
         // Layers are not directly comparable through trait objects, so compare
         // the compiled byte image. Quoted datagrams decode every field as
@@ -84,7 +89,7 @@ impl PartialEq for IcmpQuotedIpv4 {
     }
 }
 
-impl Layer for IcmpQuotedIpv4 {
+impl Layer for Icmpv4QuotedIp {
     fn name(&self) -> &'static str {
         "IcmpQuotedIpv4"
     }
@@ -108,10 +113,10 @@ impl Layer for IcmpQuotedIpv4 {
         self.datagram.compile_into(out)
     }
 
-    impl_layer_object!(IcmpQuotedIpv4);
+    impl_layer_object!(Icmpv4QuotedIp);
 }
 
-impl_layer_div!(IcmpQuotedIpv4);
+impl_layer_div!(Icmpv4QuotedIp);
 
 /// RFC 792 timestamp message body.
 ///
@@ -127,14 +132,18 @@ impl_layer_div!(IcmpQuotedIpv4);
 /// (a short or oversized trailing region) are not forced into this layer on
 /// decode; they remain a [`Raw`] payload so the bytes are never lost.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IcmpTimestamp {
+pub struct Icmpv4Timestamp {
     // `pub(crate)` so `icmp/decode.rs` can construct the body from wire bytes.
     pub(crate) originate: Field<u32>,
     pub(crate) receive: Field<u32>,
     pub(crate) transmit: Field<u32>,
 }
 
-impl IcmpTimestamp {
+/// Deprecated alias for the timestamp body, renamed to [`Icmpv4Timestamp`].
+#[deprecated(since = "2.1.0", note = "renamed to Icmpv4Timestamp")]
+pub type IcmpTimestamp = Icmpv4Timestamp;
+
+impl Icmpv4Timestamp {
     /// Create a timestamp body with all three timestamps defaulted to zero.
     pub fn new() -> Self {
         Self {
@@ -178,13 +187,13 @@ impl IcmpTimestamp {
     }
 }
 
-impl Default for IcmpTimestamp {
+impl Default for Icmpv4Timestamp {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Layer for IcmpTimestamp {
+impl Layer for Icmpv4Timestamp {
     fn name(&self) -> &'static str {
         "IcmpTimestamp"
     }
@@ -217,10 +226,10 @@ impl Layer for IcmpTimestamp {
         Ok(())
     }
 
-    impl_layer_object!(IcmpTimestamp);
+    impl_layer_object!(Icmpv4Timestamp);
 }
 
-impl_layer_div!(IcmpTimestamp);
+impl_layer_div!(Icmpv4Timestamp);
 
 /// RFC 950 address mask message body.
 ///
@@ -232,18 +241,22 @@ impl_layer_div!(IcmpTimestamp);
 ///
 /// Both messages are deprecated by RFC 6918 but remain constructible and
 /// decodable. The mask is modeled as an [`Ipv4Addr`] for convenience while the
-/// raw four bytes stay inspectable through [`IcmpAddressMask::mask_octets`].
+/// raw four bytes stay inspectable through [`Icmpv4AddressMask::mask_octets`].
 ///
 /// This layer always encodes exactly four bytes. A trailing region that is not
 /// exactly four bytes is not forced into this layer on decode; it stays a
 /// [`Raw`] payload so the bytes are never lost.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IcmpAddressMask {
+pub struct Icmpv4AddressMask {
     // `pub(crate)` so `icmp/decode.rs` can construct the body from wire bytes.
     pub(crate) mask: Field<Ipv4Addr>,
 }
 
-impl IcmpAddressMask {
+/// Deprecated alias for the address-mask body, renamed to [`Icmpv4AddressMask`].
+#[deprecated(since = "2.1.0", note = "renamed to Icmpv4AddressMask")]
+pub type IcmpAddressMask = Icmpv4AddressMask;
+
+impl Icmpv4AddressMask {
     /// Create an address mask body defaulting to the all-zero mask RFC 950
     /// specifies for a request.
     pub fn new() -> Self {
@@ -279,13 +292,13 @@ impl IcmpAddressMask {
     }
 }
 
-impl Default for IcmpAddressMask {
+impl Default for Icmpv4AddressMask {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Layer for IcmpAddressMask {
+impl Layer for Icmpv4AddressMask {
     fn name(&self) -> &'static str {
         "IcmpAddressMask"
     }
@@ -310,10 +323,10 @@ impl Layer for IcmpAddressMask {
         Ok(())
     }
 
-    impl_layer_object!(IcmpAddressMask);
+    impl_layer_object!(Icmpv4AddressMask);
 }
 
-impl_layer_div!(IcmpAddressMask);
+impl_layer_div!(Icmpv4AddressMask);
 
 /// RFC 1256 router advertisement entry.
 ///
@@ -325,17 +338,22 @@ impl_layer_div!(IcmpAddressMask);
 ///
 /// This layer always encodes exactly eight bytes. The router address is modeled
 /// as an [`Ipv4Addr`] for convenience while the raw four address bytes stay
-/// inspectable through [`IcmpRouterAdvertisementEntry::router_address_octets`].
+/// inspectable through [`Icmpv4RouterAdvertisementEntry::router_address_octets`].
 /// The preference level is exposed as a raw `i32` so the full signed range,
 /// including the reserved "do not use" value, survives untouched.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IcmpRouterAdvertisementEntry {
+pub struct Icmpv4RouterAdvertisementEntry {
     // `pub(crate)` so `icmp/decode.rs` can construct the body from wire bytes.
     pub(crate) router_address: Field<Ipv4Addr>,
     pub(crate) preference_level: Field<i32>,
 }
 
-impl IcmpRouterAdvertisementEntry {
+/// Deprecated alias for the router advertisement entry, renamed to
+/// [`Icmpv4RouterAdvertisementEntry`].
+#[deprecated(since = "2.1.0", note = "renamed to Icmpv4RouterAdvertisementEntry")]
+pub type IcmpRouterAdvertisementEntry = Icmpv4RouterAdvertisementEntry;
+
+impl Icmpv4RouterAdvertisementEntry {
     /// Create a router advertisement entry defaulting to the unspecified
     /// address and a zero preference level.
     pub fn new() -> Self {
@@ -378,13 +396,13 @@ impl IcmpRouterAdvertisementEntry {
     }
 }
 
-impl Default for IcmpRouterAdvertisementEntry {
+impl Default for Icmpv4RouterAdvertisementEntry {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Layer for IcmpRouterAdvertisementEntry {
+impl Layer for Icmpv4RouterAdvertisementEntry {
     fn name(&self) -> &'static str {
         "IcmpRouterAdvertisementEntry"
     }
@@ -421,7 +439,7 @@ impl Layer for IcmpRouterAdvertisementEntry {
         Ok(())
     }
 
-    impl_layer_object!(IcmpRouterAdvertisementEntry);
+    impl_layer_object!(Icmpv4RouterAdvertisementEntry);
 }
 
-impl_layer_div!(IcmpRouterAdvertisementEntry);
+impl_layer_div!(Icmpv4RouterAdvertisementEntry);
