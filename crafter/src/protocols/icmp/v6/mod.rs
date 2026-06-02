@@ -29,6 +29,21 @@ pub(crate) mod constants;
 mod body;
 pub use self::body::{Icmpv6Body, Icmpv6ErrorBody};
 
+// ICMPv6-specific message bodies (Neighbor Discovery, MLD, node information,
+// extended echo) live under `v6/message/`. This step adds the shared Neighbor
+// Discovery option TLV framework ([`NdpOption`] / [`NdpOptions`] and the
+// `NDP_OPT_*` codepoints) per RFC 4861 section 4.6; later steps grow the
+// concrete message bodies. Re-exported at the `icmp` root (and onward through
+// `protocols::mod.rs` and the prelude) like the other ICMPv6 types.
+mod message;
+pub use self::message::ndp_option::{
+    ndp_option_type_is_known, ndp_option_type_name, NdpOption, NdpOptions, NDP_OPTION_HEADER_LEN,
+    NDP_OPTION_LENGTH_UNIT, NDP_OPT_CAPTIVE_PORTAL, NDP_OPT_DNSSL, NDP_OPT_MTU, NDP_OPT_NONCE,
+    NDP_OPT_PREF64, NDP_OPT_PREFIX_INFORMATION, NDP_OPT_RA_FLAGS_EXTENSION, NDP_OPT_RDNSS,
+    NDP_OPT_REDIRECTED_HEADER, NDP_OPT_ROUTE_INFORMATION, NDP_OPT_SOURCE_LINK_LAYER_ADDR,
+    NDP_OPT_TARGET_LINK_LAYER_ADDR,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icmpv6 {
     icmp_type: Field<u8>,
