@@ -354,6 +354,21 @@ fragments as raw and must not attempt TCP decode without the initial TCP header.
 This is consistent with the scope exclusion: `crafter` does not reassemble IPv6
 fragments; it only avoids misparsing a fragment that has no TCP header.
 
+Modeled behavior (decode rules):
+
+- An IPv6 INITIAL fragment (fragment offset 0, more-fragments set) carries the
+  start of the TCP header, so decode runs through the Fragment header, the Tcp
+  layer is present, and the IPv6 pseudo-header still supplies TCP checksum
+  context.
+- A non-initial IPv6 fragment with TCP next-header is preserved as Raw; this is
+  fragmentation-adjacent behavior, not reassembly support. The decoded stack
+  ends in a `Raw` layer and no TCP decode is attempted, because a non-initial
+  fragment does not begin with a TCP header.
+
+These two rules are pinned by the `tcp_ipv6_fragment_adjacent_decode_rules`
+unit test in `crafter/src/protocols/transport/tcp/tests.rs`. They document and
+test the boundary only; `crafter` still performs no IPv6 reassembly.
+
 ## Explicit Exclusions
 
 `crafter` does not implement, and this manifest does not authorize, a TCP
