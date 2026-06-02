@@ -488,10 +488,55 @@ impl TcpOption {
     /// Return the MPTCP subtype-specific bytes (including the subtype byte), if
     /// this option is MPTCP.
     ///
+    /// The first returned byte packs the subtype in its high nibble and a
+    /// subtype-specific nibble (flags for several subtypes) in its low nibble;
+    /// see [`mptcp_flags`](Self::mptcp_flags) and
+    /// [`mptcp_subtype_data`](Self::mptcp_subtype_data) for the split views.
+    ///
     /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
     pub fn mptcp_data(&self) -> Option<&[u8]> {
         match self {
             Self::MultipathTcp { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Return true when this option is a generic MPTCP option.
+    ///
+    /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
+    pub const fn is_multipath_tcp(&self) -> bool {
+        matches!(self, Self::MultipathTcp { .. })
+    }
+
+    /// Return the MPTCP flags nibble (low four bits of the first subtype byte),
+    /// if this option is MPTCP and carries at least the subtype byte.
+    ///
+    /// RFC 8684 packs the subtype in the high nibble of the byte after the
+    /// option length and reserves the low nibble for subtype-specific use
+    /// (flags for MP_CAPABLE, MP_JOIN, and others). This accessor exposes that
+    /// nibble generically without interpreting any particular subtype layout.
+    ///
+    /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
+    pub fn mptcp_flags(&self) -> Option<u8> {
+        match self {
+            Self::MultipathTcp { data, .. } => data.first().map(|first| first & 0x0f),
+            _ => None,
+        }
+    }
+
+    /// Return the raw MPTCP subtype payload bytes that follow the first
+    /// subtype/flags byte, if this option is MPTCP.
+    ///
+    /// This is [`mptcp_data`](Self::mptcp_data) with the leading subtype/flags
+    /// byte stripped, leaving the subtype-specific payload verbatim. Returns an
+    /// empty slice when the option carries only the subtype byte.
+    ///
+    /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
+    pub fn mptcp_subtype_data(&self) -> Option<&[u8]> {
+        match self {
+            Self::MultipathTcp { data, .. } => {
+                Some(data.split_first().map_or(&[][..], |(_, rest)| rest))
+            }
             _ => None,
         }
     }

@@ -1377,3 +1377,126 @@ mod accurate_ecn_options {
         assert_eq!(TCP_OPTION_ACCURATE_ECN_MIN_LEN, 2);
     }
 }
+
+mod mptcp_accessors {
+    use super::super::{
+        Tcp, TcpOption, TCP_OPTION_MPTCP, MPTCP_SUBTYPE_DSS, MPTCP_SUBTYPE_MP_CAPABLE,
+        MPTCP_SUBTYPE_MP_JOIN,
+    };
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn tcp_mptcp_accessors_preserve_generic_bytes() {
+        // RFC 8684 section 3 packs the MPTCP subtype in the high nibble of the
+        // byte that follows the option kind/length header and reserves the low
+        // nibble for subtype-specific use (flags for several subtypes). libcrafter
+        // preserves these bytes generically -- it never interprets a particular
+        // subtype layout and implements no MPTCP state. The accessors below only
+        // expose the generically meaningful slices: the subtype nibble, the flags
+        // nibble, the subtype-specific payload, and the full subtype data. The
+        // byte values are documentation-style sample encodings, not captured
+        // MPTCP signalling.
+        //
+        // Each case is (subtype, flags nibble, payload-after-first-byte). The
+        // first wire byte is (subtype << 4) | flags; `data` is that byte followed
+        // by the payload.
+        let cases: [(u8, u8, &[u8]); 3] = [
+            // MP_CAPABLE with no flags and a key-shaped payload.
+            (MPTCP_SUBTYPE_MP_CAPABLE, 0x0, &[0x01, 0xaa, 0xbb, 0xcc]),
+            // MP_JOIN with a flags nibble set and a token-shaped payload.
+            (MPTCP_SUBTYPE_MP_JOIN, 0x5, &[0xde, 0xad, 0xbe, 0xef]),
+            // DSS carrying only the subtype/flags byte (empty payload).
+            (MPTCP_SUBTYPE_DSS, 0x3, &[]),
+        ];
+
+        for (subtype, flags, payload) in cases {
+            // `data` is the bytes after the kind/length header, including the
+            // first subtype/flags byte, exactly as the generic variant stores it.
+            let first = (subtype << 4) | (flags & 0x0f);
+            let mut data = vec![first];
+            data.extend_from_slice(payload);
+
+            let option = TcpOption::multipath_tcp(subtype, data.clone());
+            assert_eq!(option.kind(), TCP_OPTION_MPTCP);
+            assert!(option.is_multipath_tcp());
+
+            // Accessors expose the generically meaningful views.
+            assert_eq!(option.mptcp_subtype(), Some(subtype));
+            assert_eq!(option.mptcp_flags(), Some(flags));
+            assert_eq!(option.mptcp_data(), Some(data.as_slice()));
+            assert_eq!(option.mptcp_subtype_data(), Some(payload));
+
+            // Encoded wire bytes: kind, length, the subtype/flags byte rebuilt
+            // from the subtype nibble plus the preserved low nibble, then the
+            // payload verbatim. The encode preserves the bytes byte-for-byte.
+            let encoded = option.encode().unwrap();
+            assert_eq!(encoded.len(), 2 + data.len());
+            assert_eq!(encoded[0], TCP_OPTION_MPTCP);
+            assert_eq!(encoded[1] as usize, 2 + data.len());
+            assert_eq!(encoded[2], first);
+            assert_eq!(&encoded[2..], data.as_slice());
+
+            // Round-trip through decode preserves the typed representation, the
+            // subtype, and the exact subtype data -- byte-for-byte.
+            let decoded = TcpOption::decode_all(&encoded).unwrap();
+            assert_eq!(decoded, vec![option.clone()]);
+            assert_eq!(decoded[0].mptcp_subtype(), Some(subtype));
+            assert_eq!(decoded[0].mptcp_flags(), Some(flags));
+            assert_eq!(decoded[0].mptcp_data(), Some(data.as_slice()));
+            assert_eq!(decoded[0].mptcp_subtype_data(), Some(payload));
+            assert_eq!(decoded[0].encode().unwrap(), encoded);
+        }
+
+        // A non-MPTCP option returns None from every MPTCP accessor.
+        let mss = TcpOption::mss(1460);
+        assert!(!mss.is_multipath_tcp());
+        assert_eq!(mss.mptcp_subtype(), None);
+        assert_eq!(mss.mptcp_flags(), None);
+        assert_eq!(mss.mptcp_data(), None);
+        assert_eq!(mss.mptcp_subtype_data(), None);
+
+        // A full TCP segment carrying a generic MP_JOIN MPTCP option compiles,
+        // decodes through the standard packet entrypoints, exposes the typed
+        // subtype/flags/payload, and recompiles to the exact original wire bytes.
+        let subtype = MPTCP_SUBTYPE_MP_JOIN;
+        let flags = 0x1u8;
+        let payload: &[u8] = &[0x12, 0x34, 0x56, 0x78];
+        let mut data = vec![(subtype << 4) | flags];
+        data.extend_from_slice(payload);
+
+        let tcp = Tcp::new()
+            .sport(40000)
+            .dport(443)
+            .tcp_option(TcpOption::multipath_tcp(subtype, data.clone()))
+            .unwrap();
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
+
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
+        assert_eq!(
+            options[0],
+            TcpOption::MultipathTcp {
+                subtype,
+                data: data.clone(),
+            }
+        );
+        assert_eq!(options[0].mptcp_subtype(), Some(subtype));
+        assert_eq!(options[0].mptcp_flags(), Some(flags));
+        assert_eq!(options[0].mptcp_data(), Some(data.as_slice()));
+        assert_eq!(options[0].mptcp_subtype_data(), Some(payload));
+        assert_eq!(packet.compile().unwrap(), bytes);
+    }
+}
