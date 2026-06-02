@@ -61,6 +61,11 @@ PROVIDER_CAPABILITY_NAMES = (
     "controlled_services",
     "controlled_router",
 )
+HETZNER_WIRE_POLICY: JSONObject = {
+    "ipv4_header_mutable": True,
+    "l3_send_adds_link_layer_metadata": True,
+    "transit_decrements_ipv4_ttl": True,
+}
 
 
 def hetzner_credentials_available(env: Mapping[str, str] | None = None) -> bool:
@@ -111,6 +116,7 @@ def hetzner_default_provider_capabilities(
         "controlled_router": False,
         "blocked_udp_ports": [67, 68],
         "capability_report_artifact": CAPABILITY_REPORT_ARTIFACT,
+        "wire_policy": dict(HETZNER_WIRE_POLICY),
         "checks": {
             "ipv4_unicast": {
                 "status": "planned" if dry_run else "default",
@@ -180,7 +186,10 @@ def normalize_hetzner_provider_capabilities(
         dry_run=dry_run,
         source=source,
         capability_names=PROVIDER_CAPABILITY_NAMES,
-        defaults={"live_packet_exchange": True},
+        defaults={
+            "live_packet_exchange": True,
+            "wire_policy": dict(HETZNER_WIRE_POLICY),
+        },
     )
 
 

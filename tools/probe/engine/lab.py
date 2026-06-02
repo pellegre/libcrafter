@@ -259,6 +259,12 @@ def probe_capabilities_from_lab_capabilities(
         },
         "lab_capabilities": substrate,
     }
+    wire_policy = substrate.get("wire_policy")
+    if isinstance(wire_policy, Mapping):
+        capabilities["wire_policy"] = json_object(
+            wire_policy,
+            "lab_capabilities.wire_policy",
+        )
     if derived_dry_run is not None:
         capabilities["dry_run"] = derived_dry_run
     if advertised_udp_safe_payload is not None:

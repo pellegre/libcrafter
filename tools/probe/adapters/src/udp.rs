@@ -265,7 +265,7 @@ fn run_udp_closed_port_dry_run(
     let sent_raw_hex = hex_bytes(sent_raw);
     let sent_decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, sent_raw)
         .map(|packet| decoded_packet_json(&packet, sent_raw))?;
-    let embedded_prefix = icmp::expected_embedded_prefix(plan, sent_raw)?;
+    let embedded_prefix = expected_closed_port_embedded_prefix(request, plan, sent_raw)?;
     let observed = observed_response(
         plan,
         false,
@@ -354,7 +354,8 @@ fn run_udp_closed_port_live(
     };
 
     let sent = send_report.bytes_sent() > 0;
-    let embedded_prefix = icmp::expected_embedded_prefix(plan, send_report.plan().bytes())?;
+    let embedded_prefix =
+        expected_closed_port_embedded_prefix(request, plan, send_report.plan().bytes())?;
     let mut wrong_peer = None;
     let mut wrong_payload = None;
     while let Some(captured) = match sniffer.next_packet() {
@@ -927,14 +928,14 @@ pub fn validate_udp_candidate(
         .or(plan.payload_hex.as_deref())
         .unwrap_or("");
     let expected_payload = decode_hex(expected_payload_hex)?;
-    let actual_payload = raw_payload(packet);
+    let actual_payload = udp_user_payload(packet, raw);
     let mut mismatches = Vec::new();
 
-    if actual_payload != expected_payload.as_slice() {
+    if actual_payload.as_slice() != expected_payload.as_slice() {
         mismatches.push(json!({
             "field": "udp.payload",
             "expected": hex_bytes(&expected_payload),
-            "actual": hex_bytes(actual_payload),
+            "actual": hex_bytes(&actual_payload),
         }));
     }
 
@@ -994,6 +995,38 @@ pub fn validate_udp_candidate(
     }
 }
 
+fn udp_user_payload(packet: &Packet, raw: &[u8]) -> Vec<u8> {
+    let fallback = || raw_payload(packet).to_vec();
+    let l3_offset = if packet.layer::<Ethernet>().is_some() && raw.len() >= 14 {
+        14
+    } else {
+        0
+    };
+    if raw.len() < l3_offset + 20 {
+        return fallback();
+    }
+    let first = raw[l3_offset];
+    let version = first >> 4;
+    let header_len = ((first & 0x0f) as usize) * 4;
+    if version != 4 || header_len < 20 || raw.len() < l3_offset + header_len {
+        return fallback();
+    }
+    let total_length = u16::from_be_bytes([raw[l3_offset + 2], raw[l3_offset + 3]]) as usize;
+    if total_length < header_len || raw.len() < l3_offset + total_length {
+        return fallback();
+    }
+    let udp_offset = l3_offset + header_len;
+    let ip_end = l3_offset + total_length;
+    if raw.len() < udp_offset + 8 || udp_offset + 8 > ip_end {
+        return fallback();
+    }
+    let udp_length = u16::from_be_bytes([raw[udp_offset + 4], raw[udp_offset + 5]]) as usize;
+    if udp_length < 8 || udp_offset + udp_length > ip_end {
+        return fallback();
+    }
+    raw[udp_offset + 8..udp_offset + udp_length].to_vec()
+}
+
 pub const fn checksum_status_name(status: UdpChecksumStatus) -> &'static str {
     match status {
         UdpChecksumStatus::NotChecked => "not_checked",
@@ -1002,6 +1035,60 @@ pub const fn checksum_status_name(status: UdpChecksumStatus) -> &'static str {
         UdpChecksumStatus::Invalid => "invalid",
         UdpChecksumStatus::Ipv6ZeroChecksum => "ipv6_zero_checksum",
     }
+}
+
+fn expected_closed_port_embedded_prefix(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sent_raw: &[u8],
+) -> ExampleResult<Vec<u8>> {
+    let mut prefix = icmp::expected_embedded_prefix(plan, sent_raw)?;
+    if wire_policy_bool(request, "transit_decrements_ipv4_ttl") {
+        decrement_ipv4_ttl_and_update_checksum(&mut prefix);
+    }
+    Ok(prefix)
+}
+
+fn wire_policy_bool(request: &StimulusEndpointRequest, key: &str) -> bool {
+    request
+        .metadata
+        .get("wire_policy")
+        .and_then(Value::as_object)
+        .and_then(|policy| policy.get(key))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn decrement_ipv4_ttl_and_update_checksum(prefix: &mut [u8]) {
+    if prefix.len() < 20 {
+        return;
+    }
+    let header_len = ((prefix[0] & 0x0f) as usize) * 4;
+    if header_len < 20 || prefix.len() < header_len || prefix[8] == 0 {
+        return;
+    }
+    prefix[8] = prefix[8].saturating_sub(1);
+    prefix[10] = 0;
+    prefix[11] = 0;
+    let checksum = ipv4_header_checksum(&prefix[..header_len]);
+    prefix[10] = (checksum >> 8) as u8;
+    prefix[11] = checksum as u8;
+}
+
+fn ipv4_header_checksum(header: &[u8]) -> u16 {
+    let mut sum: u32 = 0;
+    for chunk in header.chunks(2) {
+        let word = if chunk.len() == 2 {
+            u16::from_be_bytes([chunk[0], chunk[1]]) as u32
+        } else {
+            (chunk[0] as u32) << 8
+        };
+        sum = sum.wrapping_add(word);
+    }
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    !(sum as u16)
 }
 
 pub const fn udp_option_status_name(status: UdpOptionStatus) -> &'static str {
@@ -1059,6 +1146,53 @@ mod tests {
             "udp-echo-binary",
             &[0x00, 0x42, 0x7f, 0x80, 0xa5, 0xff, 0x01, 0x00, 0xc3, 0xfe],
         )
+    }
+
+    fn closed_port_request(metadata: Value) -> StimulusEndpointRequest {
+        StimulusEndpointRequest {
+            provider: "hetzner".to_string(),
+            profile: "behavior".to_string(),
+            seed: 1052,
+            endpoint_role: "stimulus".to_string(),
+            interface: "enp7s0".to_string(),
+            local_ipv4: "10.0.25.10".to_string(),
+            peer_ipv4: "10.0.25.20".to_string(),
+            timeout_seconds: 3,
+            probe_plans: Vec::new(),
+            artifact_paths: Value::Null,
+            metadata,
+        }
+    }
+
+    #[test]
+    fn closed_port_embedded_prefix_is_strict_without_wire_policy() {
+        let mut plan = base_plan("udp-closed-port-icmp");
+        plan.expected_embedded_prefix_length = Some(28);
+        let request = closed_port_request(json!({}));
+        let sent = decode_hex("45000052000100004011347d0a00190a0a001914cd3eaed8003ea765").unwrap();
+
+        let prefix = expected_closed_port_embedded_prefix(&request, &plan, &sent).unwrap();
+
+        assert_eq!(prefix, sent);
+    }
+
+    #[test]
+    fn closed_port_embedded_prefix_honors_transit_ttl_policy() {
+        let mut plan = base_plan("udp-closed-port-icmp");
+        plan.expected_embedded_prefix_length = Some(28);
+        let request = closed_port_request(json!({
+            "wire_policy": {
+                "transit_decrements_ipv4_ttl": true
+            }
+        }));
+        let sent = decode_hex("45000052000100004011347d0a00190a0a001914cd3eaed8003ea765").unwrap();
+
+        let prefix = expected_closed_port_embedded_prefix(&request, &plan, &sent).unwrap();
+
+        assert_eq!(
+            hex_bytes(&prefix),
+            "45000052000100003f11357d0a00190a0a001914cd3eaed8003ea765"
+        );
     }
 
     fn large_echo_plan() -> ProbePlan {
@@ -1128,6 +1262,28 @@ mod tests {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, response.as_bytes()).unwrap();
 
         let validation = validate_udp_candidate(&plan, &decoded, response.as_bytes()).unwrap();
+        assert!(matches!(validation, CandidateValidation::Passed(_)));
+    }
+
+    #[test]
+    fn validate_udp_candidate_ignores_link_padding_after_empty_echo() {
+        let plan = empty_echo_plan();
+        let response = (Ethernet::with_addresses(
+            "00:00:5e:00:53:14".parse().unwrap(),
+            "00:00:5e:00:53:0a".parse().unwrap(),
+        ) / Ipv4::new()
+            .src("192.0.2.20".parse::<Ipv4Addr>().unwrap())
+            .dst("192.0.2.10".parse::<Ipv4Addr>().unwrap())
+            / Udp::new().source_port(30000).destination_port(46000))
+        .compile()
+        .unwrap();
+        let mut raw = response.into_bytes();
+        raw.extend_from_slice(&[0u8; 18]);
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
+
+        assert_eq!(decoded.layer::<Udp>().unwrap().length_value(), Some(8));
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[0u8; 18]);
+        let validation = validate_udp_candidate(&plan, &decoded, &raw).unwrap();
         assert!(matches!(validation, CandidateValidation::Passed(_)));
     }
 

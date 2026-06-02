@@ -585,6 +585,7 @@ pub fn arp_validation_json(validation: Option<&ArpValidation>) -> Value {
             "operation": validation.operation,
             "sender_hardware_addr": validation.sender_hardware_addr,
             "sender_protocol_addr": validation.sender_protocol_addr,
+            "sender_protocol_addrs": validation.sender_protocol_addrs,
             "target_hardware_addr": validation.target_hardware_addr,
             "target_protocol_addr": validation.target_protocol_addr,
             "ethernet_source": validation.ethernet_source,
@@ -737,25 +738,33 @@ pub fn validate_arp_candidate(
         })),
     }
 
-    // Sender protocol address: the resolved target IPv4.
-    let expected_sender_protocol: Ipv4Addr = required_str(
-        validation.sender_protocol_addr.as_deref(),
-        "validation.sender_protocol_addr",
-    )?
-    .parse()?;
+    // Sender protocol address: usually the resolved target IPv4. Live lab setup
+    // can configure secondary IPv4s for sibling ARP cases in one full-suite run;
+    // Linux may use one of those local addresses in an is-at reply while still
+    // addressing the reply to the planned querier SPA.
+    let expected_sender_protocols = expected_sender_protocol_addrs(validation)?;
     match arp.sender_ipv4() {
         Some(actual) => {
-            if actual != expected_sender_protocol {
+            if !expected_sender_protocols
+                .iter()
+                .any(|expected| actual == *expected)
+            {
                 mismatches.push(json!({
                     "field": "arp.sender_protocol_addr",
-                    "expected": expected_sender_protocol.to_string(),
+                    "expected": expected_sender_protocols
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
                     "actual": actual.to_string(),
                 }));
             }
         }
         None => mismatches.push(json!({
             "field": "arp.sender_protocol_addr",
-            "expected": expected_sender_protocol.to_string(),
+            "expected": expected_sender_protocols
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
             "actual": hex_bytes(&arp.sender_protocol_bytes_value()),
         })),
     }
@@ -826,6 +835,25 @@ pub fn validate_arp_candidate(
     }
 }
 
+fn expected_sender_protocol_addrs(validation: &ArpValidation) -> ExampleResult<Vec<Ipv4Addr>> {
+    let mut values = Vec::new();
+    if let Some(addrs) = validation.sender_protocol_addrs.as_ref() {
+        for value in addrs {
+            values.push(value.parse()?);
+        }
+    }
+    if values.is_empty() {
+        values.push(
+            required_str(
+                validation.sender_protocol_addr.as_deref(),
+                "validation.sender_protocol_addr",
+            )?
+            .parse()?,
+        );
+    }
+    Ok(values)
+}
+
 /// Render a decoded ARP layer to JSON for the observed-response artifact.
 pub fn arp_json(arp: &Arp) -> Value {
     json!({
@@ -864,6 +892,7 @@ mod tests {
             operation: Some(2),
             sender_hardware_addr: Some("00:00:5e:00:53:14".to_string()),
             sender_protocol_addr: Some("10.64.0.20".to_string()),
+            sender_protocol_addrs: None,
             target_hardware_addr: Some("00:00:5e:00:53:0a".to_string()),
             target_protocol_addr: Some("10.64.0.10".to_string()),
             ethernet_source: Some("00:00:5e:00:53:14".to_string()),
@@ -1011,6 +1040,36 @@ mod tests {
     }
 
     #[test]
+    fn reply_with_allowed_secondary_sender_protocol_passes_validation() {
+        let mut plan = who_has_plan();
+        plan.case = "arp-spa-variation".to_string();
+        plan.sender_protocol_addr = Some("10.64.0.17".to_string());
+        plan.validation.as_mut().unwrap().target_protocol_addr = Some("10.64.0.17".to_string());
+        plan.validation.as_mut().unwrap().sender_protocol_addrs = Some(vec![
+            "10.64.0.20".to_string(),
+            "10.64.0.27".to_string(),
+            "10.64.0.17".to_string(),
+        ]);
+
+        let resolved_mac: MacAddr = "00:00:5e:00:53:14".parse().unwrap();
+        let querier_mac: MacAddr = "00:00:5e:00:53:0a".parse().unwrap();
+        let arp = Arp::is_at(
+            "10.64.0.27".parse().unwrap(),
+            resolved_mac,
+            "10.64.0.17".parse().unwrap(),
+            querier_mac,
+        );
+        let packet = Ethernet::with_addresses(resolved_mac, querier_mac) / arp;
+        let raw = packet.compile().unwrap().into_bytes();
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
+
+        match validate_arp_candidate(&plan, &decoded, &raw).unwrap() {
+            CandidateValidation::Passed(_) => {}
+            other => panic!("expected Passed, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn missing_validation_contract_is_an_error() {
         let mut plan = who_has_plan();
         plan.validation = None;
@@ -1085,6 +1144,7 @@ mod tests {
             // Reply sender HW is the target endpoint MAC; sender proto is the ALIAS.
             sender_hardware_addr: Some("00:00:5e:00:53:14".to_string()),
             sender_protocol_addr: Some("10.64.0.27".to_string()),
+            sender_protocol_addrs: None,
             target_hardware_addr: Some("00:00:5e:00:53:0a".to_string()),
             target_protocol_addr: Some("10.64.0.10".to_string()),
             ethernet_source: Some("00:00:5e:00:53:14".to_string()),

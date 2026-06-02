@@ -110,6 +110,56 @@ def wire_command_failed(command: Mapping[str, JSONValue]) -> bool:
     return False
 
 
+def plans_with_arp_sender_protocol_candidates(
+    probe_plans: Sequence[JSONObject],
+) -> list[JSONObject]:
+    """Make batched live ARP validation explicit about local sender IP choices.
+
+    Full-suite target setup batches every ARP case onto one VM. Some cases add
+    secondary IPv4 addresses to the target interface; Linux may use any matching
+    local address as the ARP reply sender protocol while still replying to the
+    planned querier SPA. The SPA-variation assertion is about the reply target
+    protocol, so keep the possible sender protocol values explicit in its plan.
+    """
+
+    target_sender_protocols: list[str] = []
+    for plan in probe_plans:
+        service = json_mapping(
+            plan.get("target_service", {}),
+            "probe_plan.target_service",
+        )
+        for key in (
+            "bind_ipv4",
+            "target_protocol_addr",
+            "alias_ipv4",
+            "alt_sender_ipv4",
+        ):
+            value = string_or(service.get(key), "")
+            if value:
+                target_sender_protocols.append(value)
+        destination = string_or(plan.get("destination_ipv4"), "")
+        if destination:
+            target_sender_protocols.append(destination)
+    target_sender_protocols = dedupe_strings(target_sender_protocols)
+
+    rewritten: list[JSONObject] = []
+    for plan in probe_plans:
+        if plan.get("case") != "arp-spa-variation":
+            rewritten.append(dict(plan))
+            continue
+        updated = dict(plan)
+        validation = dict(
+            json_mapping(updated.get("validation", {}), "probe_plan.validation")
+        )
+        canonical = string_or(validation.get("sender_protocol_addr"), "")
+        candidates = dedupe_strings([canonical, *target_sender_protocols])
+        if candidates:
+            validation["sender_protocol_addrs"] = candidates
+            updated["validation"] = validation
+        rewritten.append(updated)
+    return rewritten
+
+
 # --------------------------------------------------------------------------- #
 # Lab endpoint live report
 # --------------------------------------------------------------------------- #
@@ -237,6 +287,7 @@ def lab_endpoint_live_report(
                 )
                 for plan in probe_plans
             ]
+            all_live_plans = plans_with_arp_sender_protocol_candidates(all_live_plans)
             live_plans = [
                 plan
                 for plan in all_live_plans
@@ -882,7 +933,11 @@ def existing_paths_from_stdout(stdout: str) -> list[str]:
         if not value or "=" in value:
             continue
         path = Path(value)
-        if path.exists():
+        try:
+            exists = path.exists()
+        except OSError:
+            continue
+        if exists:
             paths.append(str(path))
     return dedupe_paths(paths)
 
