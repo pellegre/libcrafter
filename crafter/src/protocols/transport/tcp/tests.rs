@@ -724,3 +724,102 @@ mod experimental_exid_options {
         assert_eq!(TCP_OPTION_EXPERIMENTAL_MIN_LEN, 4);
     }
 }
+
+mod user_timeout_option {
+    use super::super::{
+        Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_USER_TIMEOUT, TCP_OPTION_USER_TIMEOUT_LEN,
+    };
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn tcp_user_timeout_option_roundtrip() {
+        // RFC 5482 section 3: the User Timeout option (kind 28, length 4) carries
+        // a single 16-bit field whose most-significant bit is the Granularity (G)
+        // flag and whose remaining 15 bits are the User Timeout value. The values
+        // below are documentation-only examples.
+
+        // 1. Both granularity settings encode the G flag in the top bit and the
+        //    15-bit value in the remaining bits, and decode back byte-for-byte.
+        for (granularity, value) in [
+            (false, 0x0000_u16),
+            (false, 0x1234_u16),
+            (true, 0x0001_u16),
+            // Maximum 15-bit value with the granularity flag set.
+            (true, 0x7fff_u16),
+        ] {
+            let option = TcpOption::user_timeout(granularity, value);
+            assert_eq!(option.kind(), TCP_OPTION_USER_TIMEOUT);
+            assert_eq!(option.user_timeout_value(), Some((granularity, value)));
+            assert_eq!(option.kind_class(), TcpOptionKindClass::Assigned);
+            assert!(option.kind_is_assigned());
+
+            // Encoded wire bytes: kind, length 4, then the 16-bit field with the
+            // G flag in the most-significant bit.
+            let encoded = option.encode().unwrap();
+            let expected_field = ((granularity as u16) << 15) | (value & 0x7fff);
+            assert_eq!(encoded.len(), TCP_OPTION_USER_TIMEOUT_LEN as usize);
+            assert_eq!(encoded[0], TCP_OPTION_USER_TIMEOUT);
+            assert_eq!(encoded[1], TCP_OPTION_USER_TIMEOUT_LEN);
+            assert_eq!(&encoded[2..4], &expected_field.to_be_bytes());
+
+            // Round-trip through decode preserves the typed representation.
+            let decoded = TcpOption::decode_all(&encoded).unwrap();
+            assert_eq!(decoded, vec![option.clone()]);
+            assert_eq!(decoded[0].encode().unwrap(), encoded);
+        }
+
+        // 2. Only the low 15 bits of the value are wire-significant; a value with
+        //    its top bit set does not leak into the Granularity flag.
+        let masked = TcpOption::user_timeout(false, 0xffff);
+        let masked_encoded = masked.encode().unwrap();
+        assert_eq!(&masked_encoded[2..4], &0x7fff_u16.to_be_bytes());
+        assert_eq!(
+            TcpOption::decode_all(&masked_encoded).unwrap()[0].user_timeout_value(),
+            Some((false, 0x7fff))
+        );
+
+        // 3. A full TCP segment carrying the User Timeout option compiles,
+        //    decodes, exposes the typed granularity + value, and recompiles to
+        //    the exact original wire bytes.
+        let tcp = Tcp::new()
+            .sport(33333)
+            .dport(80)
+            .tcp_option(TcpOption::user_timeout(true, 0x0240))
+            .unwrap();
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
+        assert_eq!(
+            options[0],
+            TcpOption::UserTimeout {
+                granularity: true,
+                value: 0x0240,
+            }
+        );
+        assert_eq!(options[0].user_timeout_value(), Some((true, 0x0240)));
+        assert_eq!(decoded.compile().unwrap(), bytes);
+
+        // 4. A User Timeout option with the wrong fixed length decodes to a
+        //    structured, contextful error rather than a panic or silent blob.
+        let wrong_len = TcpOption::decode_all(&[TCP_OPTION_USER_TIMEOUT, 3, 0x00]).unwrap_err();
+        assert!(
+            wrong_len.to_string().contains("tcp.option.user_timeout"),
+            "User Timeout fixed-length error must carry context, got: {wrong_len}"
+        );
+        assert_eq!(TCP_OPTION_USER_TIMEOUT_LEN, 4);
+    }
+}

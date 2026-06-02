@@ -18,6 +18,9 @@ pub const TCP_OPTION_TIMESTAMP: u8 = 8;
 pub const TCP_OPTION_MD5_SIGNATURE: u8 = 19;
 /// TCP User Timeout (UTO) option kind (RFC 5482).
 pub const TCP_OPTION_USER_TIMEOUT: u8 = 28;
+/// Fixed length byte of an RFC 5482 User Timeout option: kind, length, and a
+/// 16-bit field carrying the 1-bit Granularity flag and 15-bit timeout value.
+pub const TCP_OPTION_USER_TIMEOUT_LEN: u8 = 4;
 /// TCP Authentication Option (TCP-AO) kind (RFC 5925).
 pub const TCP_OPTION_TCP_AUTHENTICATION: u8 = 29;
 /// TCP MPTCP option kind (RFC 8684).
