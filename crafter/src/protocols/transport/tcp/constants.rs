@@ -34,6 +34,9 @@ pub const TCP_OPTION_ACCURATE_ECN_ORDER_1: u8 = 174;
 pub const TCP_OPTION_EXPERIMENTAL_1: u8 = 253;
 /// TCP RFC 3692-style experimental option kind 2 (RFC 6994).
 pub const TCP_OPTION_EXPERIMENTAL_2: u8 = 254;
+/// Minimum length byte of an RFC 6994 experimental option: kind, length, and a
+/// 16-bit Experiment Identifier (ExID) with no experiment data.
+pub const TCP_OPTION_EXPERIMENTAL_MIN_LEN: u8 = 4;
 /// TCP Extended Data Offset option kind.
 pub const TCP_OPTION_EDO: u8 = 237;
 

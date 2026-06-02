@@ -6,10 +6,11 @@ use crate::error::{CrafterError, Result};
 use super::constants::{
     TCP_EDO_HEADER_AND_SEGMENT_LEN, TCP_EDO_HEADER_LEN, TCP_EDO_REQUEST_LEN,
     TCP_OPTION_ACCURATE_ECN_ORDER_0, TCP_OPTION_ACCURATE_ECN_ORDER_1, TCP_OPTION_EDO,
-    TCP_OPTION_EOL, TCP_OPTION_EXPERIMENTAL_1, TCP_OPTION_EXPERIMENTAL_2, TCP_OPTION_FAST_OPEN,
-    TCP_OPTION_MD5_SIGNATURE, TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK,
-    TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_ENO,
-    TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT, TCP_OPTION_WINDOW_SCALE,
+    TCP_OPTION_EOL, TCP_OPTION_EXPERIMENTAL_1, TCP_OPTION_EXPERIMENTAL_2,
+    TCP_OPTION_EXPERIMENTAL_MIN_LEN, TCP_OPTION_FAST_OPEN, TCP_OPTION_MD5_SIGNATURE,
+    TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK, TCP_OPTION_SACK_PERMITTED,
+    TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_ENO, TCP_OPTION_TIMESTAMP,
+    TCP_OPTION_USER_TIMEOUT, TCP_OPTION_WINDOW_SCALE,
 };
 
 /// IANA registry classification for a TCP option kind.
@@ -111,6 +112,19 @@ pub enum TcpOption {
     ExtendedDataOffset(TcpExtendedDataOffset),
     /// TCP Fast Open cookie bytes.
     FastOpen(Vec<u8>),
+    /// RFC 6994 experimental option carrying a 16-bit Experiment Identifier
+    /// (ExID) followed by arbitrary experiment data, for experimental option
+    /// kinds 253 and 254.
+    Experimental {
+        /// Experimental option kind (`TCP_OPTION_EXPERIMENTAL_1` = 253 or
+        /// `TCP_OPTION_EXPERIMENTAL_2` = 254).
+        kind: u8,
+        /// 16-bit Experiment Identifier (ExID) that distinguishes co-existing
+        /// experiments sharing the same option kind.
+        experiment_id: u16,
+        /// Experiment data bytes after the ExID, preserved verbatim.
+        data: Vec<u8>,
+    },
     /// Unknown or caller-defined option with a standard length byte.
     Generic {
         /// Raw option kind byte.
@@ -192,6 +206,30 @@ impl TcpOption {
         Self::FastOpen(cookie.into())
     }
 
+    /// Create an RFC 6994 experimental option for a specific experimental kind.
+    ///
+    /// `kind` must be `TCP_OPTION_EXPERIMENTAL_1` (253) or
+    /// `TCP_OPTION_EXPERIMENTAL_2` (254); other kinds round-trip but are not
+    /// classified as experimental. The 16-bit `experiment_id` (ExID) is encoded
+    /// immediately after the length byte, followed by `data` verbatim.
+    pub fn experimental(kind: u8, experiment_id: u16, data: impl Into<Vec<u8>>) -> Self {
+        Self::Experimental {
+            kind,
+            experiment_id,
+            data: data.into(),
+        }
+    }
+
+    /// Create an RFC 6994 experimental option using experimental kind 253.
+    pub fn experimental_1(experiment_id: u16, data: impl Into<Vec<u8>>) -> Self {
+        Self::experimental(TCP_OPTION_EXPERIMENTAL_1, experiment_id, data)
+    }
+
+    /// Create an RFC 6994 experimental option using experimental kind 254.
+    pub fn experimental_2(experiment_id: u16, data: impl Into<Vec<u8>>) -> Self {
+        Self::experimental(TCP_OPTION_EXPERIMENTAL_2, experiment_id, data)
+    }
+
     /// Create a caller-defined option.
     pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
         Self::Generic {
@@ -213,6 +251,7 @@ impl TcpOption {
             Self::MultipathTcp { .. } => TCP_OPTION_MPTCP,
             Self::ExtendedDataOffset(_) => TCP_OPTION_EDO,
             Self::FastOpen(_) => TCP_OPTION_FAST_OPEN,
+            Self::Experimental { kind, .. } => *kind,
             Self::Generic { kind, .. } => *kind,
         }
     }
@@ -320,6 +359,35 @@ impl TcpOption {
         }
     }
 
+    /// Return the RFC 6994 Experiment Identifier (ExID), if this option is an
+    /// experimental option.
+    ///
+    /// Backed by RFC 6994 and `docs/tcp-rfc-manifest.md`.
+    pub const fn experiment_id(&self) -> Option<u16> {
+        match self {
+            Self::Experimental { experiment_id, .. } => Some(*experiment_id),
+            _ => None,
+        }
+    }
+
+    /// Return the RFC 6994 experiment data bytes (after the 16-bit ExID), if
+    /// this option is an experimental option.
+    ///
+    /// Backed by RFC 6994 and `docs/tcp-rfc-manifest.md`.
+    pub fn experiment_data(&self) -> Option<&[u8]> {
+        match self {
+            Self::Experimental { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Return true when this option is an RFC 6994 experimental option.
+    ///
+    /// Backed by RFC 6994 and `docs/tcp-rfc-manifest.md`.
+    pub const fn is_experimental(&self) -> bool {
+        matches!(self, Self::Experimental { .. })
+    }
+
     /// Return the kind byte of a generic (unknown or caller-defined) option, if
     /// this option is generic.
     pub const fn generic_kind(&self) -> Option<u8> {
@@ -349,6 +417,7 @@ impl TcpOption {
             Self::MultipathTcp { data, .. } => 2 + data.len().max(1),
             Self::ExtendedDataOffset(edo) => edo.option_len() as usize,
             Self::FastOpen(cookie) => 2 + cookie.len(),
+            Self::Experimental { data, .. } => 4 + data.len(),
             Self::Generic { data, .. } => 2 + data.len(),
         }
     }
@@ -423,6 +492,21 @@ impl TcpOption {
             Self::FastOpen(cookie) => {
                 bytes.extend_from_slice(&[TCP_OPTION_FAST_OPEN, len as u8]);
                 bytes.extend_from_slice(cookie);
+            }
+            Self::Experimental {
+                kind,
+                experiment_id,
+                data,
+            } => {
+                if *kind == TCP_OPTION_EOL || *kind == TCP_OPTION_NOP {
+                    return Err(CrafterError::invalid_field_value(
+                        "tcp.option.experimental.kind",
+                        "experimental option kind must carry a length byte",
+                    ));
+                }
+                bytes.extend_from_slice(&[*kind, len as u8]);
+                bytes.extend_from_slice(&experiment_id.to_be_bytes());
+                bytes.extend_from_slice(data);
             }
             Self::Generic { kind, data } => {
                 if *kind == TCP_OPTION_EOL || *kind == TCP_OPTION_NOP {
@@ -564,11 +648,28 @@ fn decode_tcp_option(bytes: &[u8]) -> Result<TcpOption> {
         }
         TCP_OPTION_EDO => decode_tcp_edo_option(data, bytes.len()),
         TCP_OPTION_FAST_OPEN => Ok(TcpOption::FastOpen(data.to_vec())),
+        TCP_OPTION_EXPERIMENTAL_1 | TCP_OPTION_EXPERIMENTAL_2 => {
+            decode_tcp_experimental_option(kind, data, bytes.len())
+        }
         _ => Ok(TcpOption::Generic {
             kind,
             data: data.to_vec(),
         }),
     }
+}
+
+fn decode_tcp_experimental_option(kind: u8, data: &[u8], len: usize) -> Result<TcpOption> {
+    if (len as u8) < TCP_OPTION_EXPERIMENTAL_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tcp.option.experimental.length",
+            "RFC 6994 experimental option must be at least 4 bytes (kind, length, 16-bit ExID)",
+        ));
+    }
+    Ok(TcpOption::Experimental {
+        kind,
+        experiment_id: read_u16_be(&data[0..2])?,
+        data: data[2..].to_vec(),
+    })
 }
 
 fn decode_tcp_sack_option(data: &[u8], len: usize) -> Result<TcpOption> {
