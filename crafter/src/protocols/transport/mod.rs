@@ -6,10 +6,12 @@ mod udp;
 
 pub(crate) use self::tcp::append_tcp_packet_with_registry;
 pub use self::tcp::{
-    tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
-    valid_window_scale, Tcp,
-    TcpExtendedDataOffset, TcpOption, TcpOptionIter, TcpOptionKindClass, TcpSackBlock,
-    MPTCP_SUBTYPE_ADD_ADDR, MPTCP_SUBTYPE_DSS, MPTCP_SUBTYPE_MP_CAPABLE,
+    effective_mss, effective_mss_ipv4, effective_mss_ipv6, max_tcp_payload, option_budget,
+    remaining_option_budget, tcp_header_len, tcp_option_kind_class, tcp_option_kind_is_assigned,
+    tcp_option_kind_is_experimental, valid_window_scale, Tcp, TcpExtendedDataOffset, TcpOption,
+    TcpOptionIter, TcpOptionKindClass, TcpSackBlock, IPV4_HEADER_LEN_FOR_MSS,
+    IPV6_HEADER_LEN_FOR_MSS, IPV6_MINIMUM_MTU, TCP_DEFAULT_IPV4_MSS, TCP_FIXED_HEADER_LEN,
+    TCP_MAX_OPTION_BYTES, MPTCP_SUBTYPE_ADD_ADDR, MPTCP_SUBTYPE_DSS, MPTCP_SUBTYPE_MP_CAPABLE,
     MPTCP_SUBTYPE_MP_EXPERIMENTAL, MPTCP_SUBTYPE_MP_FAIL, MPTCP_SUBTYPE_MP_FASTCLOSE,
     MPTCP_SUBTYPE_MP_JOIN, MPTCP_SUBTYPE_MP_PRIO, MPTCP_SUBTYPE_REMOVE_ADDR, MPTCP_SUBTYPE_TCPRST,
     MPTCP_TCPRST_REASON_ADMINISTRATIVELY_PROHIBITED, MPTCP_TCPRST_REASON_LACK_OF_RESOURCES,
