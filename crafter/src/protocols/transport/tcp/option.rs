@@ -912,6 +912,13 @@ fn validate_tcp_option_len(field: &'static str, actual: usize, expected: usize) 
 /// names. Kinds 253 and 254 are the RFC 6994 / RFC 3692-style experimental
 /// kinds. Every other kind (for example the draft-only EDO kind 237) is
 /// unassigned in the current registry and stays inspectable as such.
+///
+/// Legacy security option: the MD5 Signature kind (`TCP_OPTION_MD5_SIGNATURE` =
+/// 19, the `Md5` option of RFC 2385, obsoleted by RFC 5925/TCP-AO) is reported
+/// as `Assigned` and preserved through the generic representation. `crafter`
+/// performs no signing, key management, or signature validation for this legacy
+/// option; it only classifies and round-trips its bytes (see the "Legacy
+/// Security Options" note in `docs/tcp-rfc-manifest.md`).
 pub const fn tcp_option_kind_class(kind: u8) -> TcpOptionKindClass {
     match kind {
         TCP_OPTION_EXPERIMENTAL_1 | TCP_OPTION_EXPERIMENTAL_2 => TcpOptionKindClass::Experimental,

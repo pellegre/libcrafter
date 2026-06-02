@@ -15,6 +15,11 @@ pub const TCP_OPTION_SACK: u8 = 5;
 /// TCP timestamp option kind.
 pub const TCP_OPTION_TIMESTAMP: u8 = 8;
 /// TCP MD5 Signature option kind (RFC 2385, obsoleted by RFC 5925/TCP-AO).
+///
+/// This is a legacy security option. `crafter` preserves and classifies its
+/// bytes for inspection and round-trip; it implements no signing, key
+/// management, or signature validation. See the "Legacy Security Options" note
+/// in `docs/tcp-rfc-manifest.md`.
 pub const TCP_OPTION_MD5_SIGNATURE: u8 = 19;
 /// TCP User Timeout (UTO) option kind (RFC 5482).
 pub const TCP_OPTION_USER_TIMEOUT: u8 = 28;

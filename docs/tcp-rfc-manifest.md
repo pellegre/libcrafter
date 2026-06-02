@@ -278,6 +278,25 @@ octets, and the value (RFC 9293 §3.1). Kinds 253 and 254 additionally carry a
 16-bit ExID immediately after the length byte (RFC 6994), which must not be
 confused with generic experiment payload once typed ExID support exists.
 
+## Legacy Security Options
+
+The IANA TCP Option Kind Numbers registry still records obsolete security
+options. The TCP MD5 Signature option (kind 19, the `Md5` option of RFC 2385) is
+the notable legacy entry: it carried a per-segment MD5 digest of the segment,
+pseudo-header, and a shared key, and was obsoleted by RFC 5925 (TCP-AO, kind
+29). `crafter` treats these as legacy options that remain inspectable:
+
+- The kind constant `TCP_OPTION_MD5_SIGNATURE = 19` is exported and the kind is
+  classified as `Assigned` (it still holds a registry name), so a segment using
+  it round-trips as a recognized legacy option rather than an unknown blob.
+- The option bytes are preserved verbatim through the generic representation.
+  `crafter` performs no MD5 signing, key management, or signature validation:
+  operational security policy for this legacy option is out of scope for the
+  primitive packet layer, exactly as for TCP-AO (kind 29).
+
+This keeps obsolete security options buildable and inspectable for testing a
+stack without turning `crafter` into a TCP security implementation.
+
 ## Accurate ECN And The AE Bit
 
 RFC 9768 defines AccECN, which provides more granular ECN feedback than classic
