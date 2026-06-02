@@ -1123,3 +1123,150 @@ mod legacy_security_options {
         assert_eq!(packet.compile().unwrap(), bytes);
     }
 }
+
+mod accurate_ecn_options {
+    use super::super::{
+        Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_ACCURATE_ECN_MIN_LEN,
+        TCP_OPTION_ACCURATE_ECN_ORDER_0, TCP_OPTION_ACCURATE_ECN_ORDER_1,
+    };
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn tcp_accurate_ecn_options_roundtrip() {
+        // RFC 9768 section 3.2.3.3: the Accurate ECN (AccECN) option carries zero
+        // to three 24-bit ECN byte counters after the kind/length header. Two
+        // option kinds -- AccECN0 (172) and AccECN1 (174) -- encode the same
+        // counters in a different ORDER so an endpoint can hedge against
+        // middleboxes that zero specific counter positions. libcrafter preserves
+        // the order (the kind) and the raw counter bytes verbatim; it never parses
+        // the counters and implements no AccECN feedback or congestion-control
+        // reaction -- that is out of scope for the primitive packet layer. The
+        // counter bytes below are documentation-only manifest-style sample
+        // encodings, not measured congestion feedback.
+
+        // Manifest-backed sample encodings: for each AccECN order kind, several
+        // counter payloads (including the empty payload, a single 24-bit counter,
+        // and the full three-counter payload) round-trip byte-for-byte.
+        for kind in [
+            TCP_OPTION_ACCURATE_ECN_ORDER_0,
+            TCP_OPTION_ACCURATE_ECN_ORDER_1,
+        ] {
+            for data in [
+                // Empty: the 2-byte option header alone (no counter fields).
+                Vec::new(),
+                // One 24-bit ECN byte counter (illustrative value).
+                vec![0x00u8, 0x12, 0x34],
+                // Two 24-bit counters.
+                vec![0x00u8, 0x12, 0x34, 0x00, 0xAB, 0xCD],
+                // Three 24-bit counters: the full AccECN payload (9 counter bytes).
+                vec![0x01u8, 0x02, 0x03, 0x11, 0x22, 0x33, 0xFE, 0xDC, 0xBA],
+            ] {
+                let option = TcpOption::accurate_ecn(kind, data.clone());
+                assert_eq!(option.kind(), kind);
+                // The kind encodes the wire-significant counter order; both the
+                // order accessor and the raw counter accessor expose it.
+                assert_eq!(option.accurate_ecn_order(), Some(kind));
+                assert_eq!(option.accurate_ecn_data(), Some(data.as_slice()));
+                assert_eq!(option.accurate_ecn_value(), Some((kind, data.as_slice())));
+                assert!(option.is_accurate_ecn());
+                // AccECN kinds 172/174 have current IANA registry assignments and
+                // must classify distinctly from generic private/unassigned data.
+                assert_eq!(option.kind_class(), TcpOptionKindClass::Assigned);
+                assert!(option.kind_is_assigned());
+                assert!(!option.kind_is_experimental());
+
+                // Encoded wire bytes: kind, length, then the order-specific
+                // counter bytes preserved verbatim.
+                let encoded = option.encode().unwrap();
+                assert_eq!(encoded.len(), 2 + data.len());
+                assert_eq!(encoded[0], kind);
+                assert_eq!(encoded[1] as usize, 2 + data.len());
+                assert_eq!(&encoded[2..], data.as_slice());
+
+                // Round-trip through decode preserves the typed representation,
+                // the order (kind), and the exact counter bytes.
+                let decoded = TcpOption::decode_all(&encoded).unwrap();
+                assert_eq!(decoded, vec![option.clone()]);
+                assert_eq!(decoded[0].accurate_ecn_order(), Some(kind));
+                assert_eq!(decoded[0].accurate_ecn_data(), Some(data.as_slice()));
+                assert_eq!(decoded[0].encode().unwrap(), encoded);
+            }
+        }
+
+        // The convenience order constructors select the matching kind.
+        assert_eq!(
+            TcpOption::accurate_ecn_order_0(vec![0xAAu8]).accurate_ecn_order(),
+            Some(TCP_OPTION_ACCURATE_ECN_ORDER_0)
+        );
+        assert_eq!(
+            TcpOption::accurate_ecn_order_1(vec![0xBBu8]).accurate_ecn_order(),
+            Some(TCP_OPTION_ACCURATE_ECN_ORDER_1)
+        );
+
+        // AccECN0 and AccECN1 with the same counter bytes are distinct options:
+        // the order (kind) is preserved, not normalized away.
+        let counters = vec![0x00u8, 0x12, 0x34, 0x00, 0xAB, 0xCD];
+        let order0 = TcpOption::accurate_ecn_order_0(counters.clone());
+        let order1 = TcpOption::accurate_ecn_order_1(counters.clone());
+        assert_ne!(order0, order1);
+        assert_ne!(order0.encode().unwrap(), order1.encode().unwrap());
+
+        // A non-AccECN option returns None from the AccECN accessors.
+        assert_eq!(TcpOption::mss(1460).accurate_ecn_order(), None);
+        assert_eq!(TcpOption::mss(1460).accurate_ecn_data(), None);
+        assert_eq!(TcpOption::mss(1460).accurate_ecn_value(), None);
+        assert!(!TcpOption::mss(1460).is_accurate_ecn());
+
+        // A full TCP segment carrying an AccECN1 option compiles, decodes through
+        // the standard packet entrypoints, exposes the typed order and counter
+        // bytes, and recompiles to the exact original wire bytes.
+        let counters = vec![0x00u8, 0x10, 0x20, 0x00, 0x30, 0x40, 0x00, 0x50, 0x60];
+        let tcp = Tcp::new()
+            .sport(40000)
+            .dport(443)
+            .tcp_option(TcpOption::accurate_ecn_order_1(counters.clone()))
+            .unwrap();
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
+
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
+        assert_eq!(
+            options[0],
+            TcpOption::AccurateEcn {
+                kind: TCP_OPTION_ACCURATE_ECN_ORDER_1,
+                data: counters.clone(),
+            }
+        );
+        assert_eq!(
+            options[0].accurate_ecn_order(),
+            Some(TCP_OPTION_ACCURATE_ECN_ORDER_1)
+        );
+        assert_eq!(options[0].accurate_ecn_data(), Some(counters.as_slice()));
+        assert_eq!(packet.compile().unwrap(), bytes);
+
+        // An AccECN option shorter than the 2-byte minimum decodes to a
+        // structured, contextful error rather than a panic or silent blob. (A
+        // standalone kind byte with a length byte below the 2-byte framing
+        // minimum is rejected by the option iterator with option-length context.)
+        let too_short =
+            TcpOption::decode_all(&[TCP_OPTION_ACCURATE_ECN_ORDER_0, 1]).unwrap_err();
+        assert!(
+            too_short.to_string().contains("tcp.option.length"),
+            "AccECN underflow error must carry context, got: {too_short}"
+        );
+        assert_eq!(TCP_OPTION_ACCURATE_ECN_MIN_LEN, 2);
+    }
+}
