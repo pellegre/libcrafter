@@ -2074,3 +2074,181 @@ mod common_segment_builders {
         assert_eq!(late_shape.source_port_value(), 1234);
     }
 }
+
+mod checksum_with_options {
+    use super::super::{Tcp, TcpOption, TcpSackBlock, TCP_FLAG_ACK, TCP_FLAG_SYN};
+    use crate::{Ipv4, Ipv6, Raw, IPPROTO_TCP};
+    use core::net::{Ipv4Addr, Ipv6Addr};
+
+    fn v4_src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn v4_dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    fn v6_src() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1)
+    }
+
+    fn v6_dst() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 2)
+    }
+
+    /// Independent RFC 1071 one's-complement sum over big-endian 16-bit words.
+    ///
+    /// This is hand-rolled in the test so the recomputed checksum does not lean
+    /// on the same code path `compile()` uses to fill the TCP checksum. A
+    /// trailing odd byte is treated as the high byte of the final word.
+    fn ones_complement(words: &[u8]) -> u32 {
+        let mut sum = 0u32;
+        let mut i = 0;
+        while i + 1 < words.len() {
+            sum += u16::from_be_bytes([words[i], words[i + 1]]) as u32;
+            i += 2;
+        }
+        if i < words.len() {
+            sum += (words[i] as u32) << 8;
+        }
+        sum
+    }
+
+    fn fold(mut sum: u32) -> u16 {
+        while (sum >> 16) != 0 {
+            sum = (sum & 0xffff) + (sum >> 16);
+        }
+        sum as u16
+    }
+
+    /// Standard internet checksum over an already-summed partial value.
+    fn finalize(sum: u32) -> u16 {
+        !fold(sum)
+    }
+
+    /// Independently compute the TCP checksum over an IPv4 pseudo-header and the
+    /// exact compiled TCP segment (header + options + padding + payload) with the
+    /// checksum field zeroed.
+    fn expected_ipv4_checksum(src: Ipv4Addr, dst: Ipv4Addr, tcp_segment: &[u8]) -> u16 {
+        let mut zeroed = tcp_segment.to_vec();
+        zeroed[16] = 0;
+        zeroed[17] = 0;
+
+        let mut pseudo = Vec::new();
+        pseudo.extend_from_slice(&src.octets());
+        pseudo.extend_from_slice(&dst.octets());
+        pseudo.push(0);
+        pseudo.push(IPPROTO_TCP);
+        pseudo.extend_from_slice(&(zeroed.len() as u16).to_be_bytes());
+
+        let mut sum = ones_complement(&pseudo);
+        sum += ones_complement(&zeroed);
+        finalize(sum)
+    }
+
+    /// Independently compute the TCP checksum over an IPv6 pseudo-header and the
+    /// exact compiled TCP segment with the checksum field zeroed.
+    fn expected_ipv6_checksum(src: Ipv6Addr, dst: Ipv6Addr, tcp_segment: &[u8]) -> u16 {
+        let mut zeroed = tcp_segment.to_vec();
+        zeroed[16] = 0;
+        zeroed[17] = 0;
+
+        let mut pseudo = Vec::new();
+        pseudo.extend_from_slice(&src.octets());
+        pseudo.extend_from_slice(&dst.octets());
+        pseudo.extend_from_slice(&(zeroed.len() as u32).to_be_bytes());
+        pseudo.extend_from_slice(&[0, 0, 0, IPPROTO_TCP]);
+
+        let mut sum = ones_complement(&pseudo);
+        sum += ones_complement(&zeroed);
+        finalize(sum)
+    }
+
+    /// Build a TCP segment carrying several options so the encoded option region
+    /// is not a whole number of 32-bit words on its own and forces `compile()`
+    /// to pad the header. MSS (4) + SACK-permitted (2) + window scale (3) +
+    /// timestamp (10) + SACK with one block (10) = 29 option bytes, which pads
+    /// to 32 bytes and a data offset of 13 words.
+    fn tcp_with_options() -> Tcp {
+        Tcp::new()
+            .sport(44444)
+            .dport(80)
+            .seq(0x0102_0304)
+            .ack(0x0506_0708)
+            .flags(TCP_FLAG_SYN | TCP_FLAG_ACK)
+            .window(64240)
+            .tcp_option(TcpOption::mss(1460))
+            .unwrap()
+            .tcp_option(TcpOption::sack_permitted())
+            .unwrap()
+            .tcp_option(TcpOption::window_scale(7))
+            .unwrap()
+            .tcp_option(TcpOption::timestamp(398_303_815, 12_345))
+            .unwrap()
+            .tcp_option(TcpOption::sack(vec![TcpSackBlock::new(0x1000, 0x2000)]))
+            .unwrap()
+    }
+
+    #[test]
+    fn tcp_checksum_includes_options_padding_and_payload() {
+        // Odd-length payload (5 bytes) so the segment exercises the RFC 1071
+        // odd-trailing-byte rule on top of padded option bytes.
+        let payload = [0xaa, 0xbb, 0xcc, 0xdd, 0xee];
+
+        // --- IPv4 context -------------------------------------------------
+        let v4_packet = Ipv4::new().src(v4_src()).dst(v4_dst()).id(0x2223)
+            / tcp_with_options()
+            / Raw::from_bytes(payload);
+        let v4_bytes = v4_packet.compile().unwrap();
+        let v4_segment = &v4_bytes.as_bytes()[20..];
+
+        // The multiple options must have produced a non-trivial, padded data
+        // offset (13 32-bit words = 52-byte header) rather than the bare 5.
+        assert_eq!(v4_segment[12] >> 4, 13);
+
+        let v4_auto = u16::from_be_bytes([v4_segment[16], v4_segment[17]]);
+        assert_eq!(
+            v4_auto,
+            expected_ipv4_checksum(v4_src(), v4_dst(), v4_segment),
+            "IPv4 auto-filled TCP checksum must cover header, options, padding, and odd payload",
+        );
+
+        // --- IPv6 context -------------------------------------------------
+        let v6_packet = Ipv6::new().src(v6_src()).dst(v6_dst()).hlim(64)
+            / tcp_with_options()
+            / Raw::from_bytes(payload);
+        let v6_bytes = v6_packet.compile().unwrap();
+        let v6_segment = &v6_bytes.as_bytes()[40..];
+
+        assert_eq!(v6_segment[12] >> 4, 13);
+
+        let v6_auto = u16::from_be_bytes([v6_segment[16], v6_segment[17]]);
+        assert_eq!(
+            v6_auto,
+            expected_ipv6_checksum(v6_src(), v6_dst(), v6_segment),
+            "IPv6 auto-filled TCP checksum must cover header, options, padding, and odd payload",
+        );
+
+        // The IPv4 and IPv6 segments share identical TCP bytes except the
+        // checksum, so a differing pseudo-header must yield a differing
+        // checksum; this guards against the recomputation accidentally
+        // ignoring the pseudo-header.
+        assert_ne!(v4_auto, v6_auto);
+
+        // --- Explicit override still wins --------------------------------
+        // A user-set checksum survives compile() untouched even with the same
+        // rich options and odd payload, rather than being recomputed.
+        let overridden = Ipv4::new().src(v4_src()).dst(v4_dst()).id(0x2223)
+            / tcp_with_options().checksum(0xbeef)
+            / Raw::from_bytes(payload);
+        let overridden_bytes = overridden.compile().unwrap();
+        let overridden_segment = &overridden_bytes.as_bytes()[20..];
+        assert_eq!(
+            u16::from_be_bytes([overridden_segment[16], overridden_segment[17]]),
+            0xbeef,
+            "explicit TCP checksum must override auto-fill even with options and odd payload",
+        );
+        // And it must differ from the value compile() would have computed.
+        assert_ne!(0xbeef, v4_auto);
+    }
+}
