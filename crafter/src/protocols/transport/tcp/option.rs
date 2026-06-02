@@ -9,8 +9,9 @@ use super::constants::{
     TCP_OPTION_EOL, TCP_OPTION_EXPERIMENTAL_1, TCP_OPTION_EXPERIMENTAL_2,
     TCP_OPTION_EXPERIMENTAL_MIN_LEN, TCP_OPTION_FAST_OPEN, TCP_OPTION_MD5_SIGNATURE,
     TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK, TCP_OPTION_SACK_PERMITTED,
-    TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_ENO, TCP_OPTION_TIMESTAMP,
-    TCP_OPTION_USER_TIMEOUT, TCP_OPTION_USER_TIMEOUT_LEN, TCP_OPTION_WINDOW_SCALE,
+    TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN, TCP_OPTION_TCP_ENO,
+    TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT, TCP_OPTION_USER_TIMEOUT_LEN,
+    TCP_OPTION_WINDOW_SCALE,
 };
 
 /// IANA registry classification for a TCP option kind.
@@ -135,6 +136,28 @@ pub enum TcpOption {
         /// the high bit holds the Granularity flag.
         value: u16,
     },
+    /// RFC 5925 TCP Authentication Option (TCP-AO), byte-preserving.
+    ///
+    /// This option carries a per-segment Message Authentication Code (MAC). The
+    /// MAC computation, master key tuples, traffic-key derivation, and key
+    /// rollover described by RFC 5925 and RFC 5926 are *not* implemented here:
+    /// authentication computation is out of scope for libcrafter's primitive
+    /// packet layer. This variant only preserves the wire bytes (`key_id`,
+    /// `rnext_key_id`, and the `mac` bytes) so a TCP-AO segment can be
+    /// constructed and inspected verbatim. The MAC bytes are stored exactly as
+    /// they appear on the wire and are never recomputed.
+    AuthenticationOption {
+        /// KeyID identifying the MAC key (and KDF) used to authenticate this
+        /// segment for the send direction (RFC 5925 section 2.2).
+        key_id: u8,
+        /// RNextKeyID requesting the key the sender wishes to receive on
+        /// subsequent segments (RFC 5925 section 2.2).
+        rnext_key_id: u8,
+        /// Message Authentication Code bytes, preserved verbatim. The wire
+        /// length is `4 + mac.len()` (kind, length, KeyID, RNextKeyID, MAC).
+        /// libcrafter never computes or validates these bytes.
+        mac: Vec<u8>,
+    },
     /// Unknown or caller-defined option with a standard length byte.
     Generic {
         /// Raw option kind byte.
@@ -251,6 +274,22 @@ impl TcpOption {
         Self::UserTimeout { granularity, value }
     }
 
+    /// Create an RFC 5925 TCP Authentication Option (TCP-AO), preserving the
+    /// wire bytes only.
+    ///
+    /// `key_id` is the KeyID, `rnext_key_id` is the RNextKeyID, and `mac` is the
+    /// Message Authentication Code carried verbatim. libcrafter does not compute
+    /// or validate the MAC: authentication computation is out of scope for the
+    /// primitive packet layer (see the [`TcpOption::AuthenticationOption`]
+    /// documentation). The encoded option length is `4 + mac.len()`.
+    pub fn tcp_authentication(key_id: u8, rnext_key_id: u8, mac: impl Into<Vec<u8>>) -> Self {
+        Self::AuthenticationOption {
+            key_id,
+            rnext_key_id,
+            mac: mac.into(),
+        }
+    }
+
     /// Create a caller-defined option.
     pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
         Self::Generic {
@@ -274,6 +313,7 @@ impl TcpOption {
             Self::FastOpen(_) => TCP_OPTION_FAST_OPEN,
             Self::Experimental { kind, .. } => *kind,
             Self::UserTimeout { .. } => TCP_OPTION_USER_TIMEOUT,
+            Self::AuthenticationOption { .. } => TCP_OPTION_TCP_AUTHENTICATION,
             Self::Generic { kind, .. } => *kind,
         }
     }
@@ -422,6 +462,57 @@ impl TcpOption {
         }
     }
 
+    /// Return the RFC 5925 TCP Authentication Option fields as a
+    /// `(key_id, rnext_key_id, mac)` tuple, if this option is a TCP-AO option.
+    ///
+    /// The MAC bytes are returned exactly as preserved on the wire; libcrafter
+    /// never computes or validates them. Named with a `_value` suffix to avoid
+    /// colliding with the [`TcpOption::tcp_authentication`] constructor. Backed
+    /// by RFC 5925 and `docs/tcp-rfc-manifest.md`.
+    pub fn tcp_authentication_value(&self) -> Option<(u8, u8, &[u8])> {
+        match self {
+            Self::AuthenticationOption {
+                key_id,
+                rnext_key_id,
+                mac,
+            } => Some((*key_id, *rnext_key_id, mac)),
+            _ => None,
+        }
+    }
+
+    /// Return the TCP-AO KeyID, if this option is a TCP Authentication Option.
+    ///
+    /// Backed by RFC 5925 and `docs/tcp-rfc-manifest.md`.
+    pub const fn key_id(&self) -> Option<u8> {
+        match self {
+            Self::AuthenticationOption { key_id, .. } => Some(*key_id),
+            _ => None,
+        }
+    }
+
+    /// Return the TCP-AO RNextKeyID, if this option is a TCP Authentication
+    /// Option.
+    ///
+    /// Backed by RFC 5925 and `docs/tcp-rfc-manifest.md`.
+    pub const fn rnext_key_id(&self) -> Option<u8> {
+        match self {
+            Self::AuthenticationOption { rnext_key_id, .. } => Some(*rnext_key_id),
+            _ => None,
+        }
+    }
+
+    /// Return the preserved TCP-AO Message Authentication Code bytes, if this
+    /// option is a TCP Authentication Option.
+    ///
+    /// The bytes are the verbatim wire MAC; libcrafter never computes or
+    /// validates them. Backed by RFC 5925 and `docs/tcp-rfc-manifest.md`.
+    pub fn authentication_mac(&self) -> Option<&[u8]> {
+        match self {
+            Self::AuthenticationOption { mac, .. } => Some(mac),
+            _ => None,
+        }
+    }
+
     /// Return the kind byte of a generic (unknown or caller-defined) option, if
     /// this option is generic.
     pub const fn generic_kind(&self) -> Option<u8> {
@@ -453,6 +544,10 @@ impl TcpOption {
             Self::FastOpen(cookie) => 2 + cookie.len(),
             Self::Experimental { data, .. } => 4 + data.len(),
             Self::UserTimeout { .. } => TCP_OPTION_USER_TIMEOUT_LEN as usize,
+            // kind, length, KeyID, RNextKeyID, then the preserved MAC bytes.
+            Self::AuthenticationOption { mac, .. } => {
+                TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN as usize + mac.len()
+            }
             Self::Generic { data, .. } => 2 + data.len(),
         }
     }
@@ -550,6 +645,21 @@ impl TcpOption {
                 let field = ((*granularity as u16) << 15) | (value & 0x7fff);
                 bytes.extend_from_slice(&[TCP_OPTION_USER_TIMEOUT, TCP_OPTION_USER_TIMEOUT_LEN]);
                 bytes.extend_from_slice(&field.to_be_bytes());
+            }
+            Self::AuthenticationOption {
+                key_id,
+                rnext_key_id,
+                mac,
+            } => {
+                // RFC 5925 section 2.2: kind, length, KeyID, RNextKeyID, then the
+                // MAC. The MAC bytes are preserved verbatim and never recomputed.
+                bytes.extend_from_slice(&[
+                    TCP_OPTION_TCP_AUTHENTICATION,
+                    len as u8,
+                    *key_id,
+                    *rnext_key_id,
+                ]);
+                bytes.extend_from_slice(mac);
             }
             Self::Generic { kind, data } => {
                 if *kind == TCP_OPTION_EOL || *kind == TCP_OPTION_NOP {
@@ -690,6 +800,7 @@ fn decode_tcp_option(bytes: &[u8]) -> Result<TcpOption> {
             })
         }
         TCP_OPTION_USER_TIMEOUT => decode_tcp_user_timeout_option(data, bytes.len()),
+        TCP_OPTION_TCP_AUTHENTICATION => decode_tcp_authentication_option(data, bytes.len()),
         TCP_OPTION_EDO => decode_tcp_edo_option(data, bytes.len()),
         TCP_OPTION_FAST_OPEN => Ok(TcpOption::FastOpen(data.to_vec())),
         TCP_OPTION_EXPERIMENTAL_1 | TCP_OPTION_EXPERIMENTAL_2 => {
@@ -724,6 +835,24 @@ fn decode_tcp_user_timeout_option(data: &[u8], len: usize) -> Result<TcpOption> 
     Ok(TcpOption::UserTimeout {
         granularity: field & 0x8000 != 0,
         value: field & 0x7fff,
+    })
+}
+
+fn decode_tcp_authentication_option(data: &[u8], len: usize) -> Result<TcpOption> {
+    // RFC 5925 section 2.2: kind, length, KeyID, RNextKeyID, then the MAC. The
+    // minimum length is 4 bytes (the two id bytes plus the kind/length header)
+    // for an empty MAC; libcrafter preserves the MAC bytes without computing or
+    // validating them.
+    if (len as u8) < TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tcp.option.authentication.length",
+            "RFC 5925 TCP-AO option must be at least 4 bytes (kind, length, KeyID, RNextKeyID)",
+        ));
+    }
+    Ok(TcpOption::AuthenticationOption {
+        key_id: data[0],
+        rnext_key_id: data[1],
+        mac: data[2..].to_vec(),
     })
 }
 

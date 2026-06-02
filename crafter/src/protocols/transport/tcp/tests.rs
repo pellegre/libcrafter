@@ -823,3 +823,117 @@ mod user_timeout_option {
         assert_eq!(TCP_OPTION_USER_TIMEOUT_LEN, 4);
     }
 }
+
+mod authentication_option {
+    use super::super::{
+        Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_TCP_AUTHENTICATION,
+        TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN,
+    };
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn tcp_authentication_option_preserves_mac_bytes() {
+        // RFC 5925 section 2.2: the TCP Authentication Option (TCP-AO, kind 29)
+        // carries a KeyID, an RNextKeyID, and a Message Authentication Code
+        // (MAC). libcrafter only preserves the wire bytes; it never computes or
+        // validates the MAC (authentication is out of scope for the primitive
+        // packet layer). The KeyID/RNextKeyID and MAC values below are
+        // documentation-only examples.
+        const KEY_ID: u8 = 0x2A;
+        const RNEXT_KEY_ID: u8 = 0x05;
+
+        // 1. Several MAC lengths encode KeyID + RNextKeyID + MAC and decode back
+        //    byte-for-byte, preserving the MAC bytes verbatim.
+        for mac in [
+            // A 12-byte MAC, the truncation length of HMAC-SHA-1-96 / AES-128-CMAC-96.
+            vec![
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+            ],
+            // A single MAC byte.
+            vec![0xFF],
+            // The minimum (empty) MAC: the 4-byte option header alone.
+            Vec::new(),
+        ] {
+            let option = TcpOption::tcp_authentication(KEY_ID, RNEXT_KEY_ID, mac.clone());
+            assert_eq!(option.kind(), TCP_OPTION_TCP_AUTHENTICATION);
+            assert_eq!(option.key_id(), Some(KEY_ID));
+            assert_eq!(option.rnext_key_id(), Some(RNEXT_KEY_ID));
+            assert_eq!(option.authentication_mac(), Some(mac.as_slice()));
+            assert_eq!(
+                option.tcp_authentication_value(),
+                Some((KEY_ID, RNEXT_KEY_ID, mac.as_slice()))
+            );
+            // TCP-AO (kind 29) has a current IANA registry assignment.
+            assert_eq!(option.kind_class(), TcpOptionKindClass::Assigned);
+            assert!(option.kind_is_assigned());
+
+            // Encoded wire bytes: kind, length, KeyID, RNextKeyID, then the MAC.
+            let encoded = option.encode().unwrap();
+            assert_eq!(encoded.len(), 4 + mac.len());
+            assert_eq!(encoded[0], TCP_OPTION_TCP_AUTHENTICATION);
+            assert_eq!(encoded[1] as usize, 4 + mac.len());
+            assert_eq!(encoded[2], KEY_ID);
+            assert_eq!(encoded[3], RNEXT_KEY_ID);
+            assert_eq!(&encoded[4..], mac.as_slice());
+
+            // Round-trip through decode preserves the typed representation and
+            // the exact MAC bytes.
+            let decoded = TcpOption::decode_all(&encoded).unwrap();
+            assert_eq!(decoded, vec![option.clone()]);
+            assert_eq!(decoded[0].authentication_mac(), Some(mac.as_slice()));
+            assert_eq!(decoded[0].encode().unwrap(), encoded);
+        }
+
+        // 2. A full TCP segment carrying a TCP-AO option compiles, decodes,
+        //    exposes the typed KeyID/RNextKeyID/MAC, and recompiles to the exact
+        //    original wire bytes (the MAC is preserved, not recomputed).
+        let mac = vec![
+            0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x11, 0x22, 0x33,
+        ];
+        let tcp = Tcp::new()
+            .sport(55555)
+            .dport(179)
+            .tcp_option(TcpOption::tcp_authentication(KEY_ID, RNEXT_KEY_ID, mac.clone()))
+            .unwrap();
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
+        assert_eq!(
+            options[0],
+            TcpOption::AuthenticationOption {
+                key_id: KEY_ID,
+                rnext_key_id: RNEXT_KEY_ID,
+                mac: mac.clone(),
+            }
+        );
+        assert_eq!(options[0].authentication_mac(), Some(mac.as_slice()));
+        assert_eq!(decoded.compile().unwrap(), bytes);
+
+        // 3. A TCP-AO option shorter than the 4-byte minimum (no room for both
+        //    the KeyID and RNextKeyID) decodes to a structured, contextful error
+        //    rather than a panic or a silent generic blob.
+        let too_short =
+            TcpOption::decode_all(&[TCP_OPTION_TCP_AUTHENTICATION, 3, 0x00]).unwrap_err();
+        assert!(
+            too_short
+                .to_string()
+                .contains("tcp.option.authentication.length"),
+            "TCP-AO min-length error must carry context, got: {too_short}"
+        );
+        assert_eq!(TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN, 4);
+    }
+}
