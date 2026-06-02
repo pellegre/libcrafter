@@ -10,8 +10,8 @@ use super::constants::{
     TCP_OPTION_EXPERIMENTAL_MIN_LEN, TCP_OPTION_FAST_OPEN, TCP_OPTION_MD5_SIGNATURE,
     TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK, TCP_OPTION_SACK_PERMITTED,
     TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN, TCP_OPTION_TCP_ENO,
-    TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT, TCP_OPTION_USER_TIMEOUT_LEN,
-    TCP_OPTION_WINDOW_SCALE,
+    TCP_OPTION_TCP_ENO_MIN_LEN, TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT,
+    TCP_OPTION_USER_TIMEOUT_LEN, TCP_OPTION_WINDOW_SCALE,
 };
 
 /// IANA registry classification for a TCP option kind.
@@ -158,6 +158,24 @@ pub enum TcpOption {
         /// libcrafter never computes or validates these bytes.
         mac: Vec<u8>,
     },
+    /// RFC 8547 TCP Encryption Negotiation Option (TCP-ENO), byte-preserving.
+    ///
+    /// TCP-ENO (kind 69) carries a sequence of suboption bytes after the
+    /// kind/length header. Each suboption is one or more bytes encoding a
+    /// negotiated TCP encryption spec (a "global" suboption byte plus optional
+    /// non-global suboption data, per RFC 8547 section 4). The TCP-ENO
+    /// negotiation handshake, the tcpcrypt session protocol of RFC 8548, and any
+    /// negotiated encryption are *not* implemented here: session behavior is out
+    /// of scope for libcrafter's primitive packet layer. This variant only
+    /// preserves the raw suboption bytes so a TCP-ENO segment can be constructed
+    /// and inspected verbatim. The suboption bytes are stored exactly as they
+    /// appear on the wire and are never interpreted.
+    TcpEno {
+        /// Raw suboption bytes after the kind/length header, preserved verbatim.
+        /// The wire length is `2 + suboptions.len()`. libcrafter never parses,
+        /// negotiates, or validates these bytes.
+        suboptions: Vec<u8>,
+    },
     /// Unknown or caller-defined option with a standard length byte.
     Generic {
         /// Raw option kind byte.
@@ -290,6 +308,21 @@ impl TcpOption {
         }
     }
 
+    /// Create an RFC 8547 TCP Encryption Negotiation Option (TCP-ENO),
+    /// preserving the raw suboption bytes only.
+    ///
+    /// `suboptions` is the sequence of suboption bytes carried after the
+    /// kind/length header, preserved verbatim. libcrafter does not negotiate,
+    /// parse, or validate the suboptions, and it implements no TCP-ENO handshake
+    /// or tcpcrypt session behavior: encryption negotiation is out of scope for
+    /// the primitive packet layer (see the [`TcpOption::TcpEno`] documentation).
+    /// The encoded option length is `2 + suboptions.len()`.
+    pub fn tcp_eno(suboptions: impl Into<Vec<u8>>) -> Self {
+        Self::TcpEno {
+            suboptions: suboptions.into(),
+        }
+    }
+
     /// Create a caller-defined option.
     pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
         Self::Generic {
@@ -314,6 +347,7 @@ impl TcpOption {
             Self::Experimental { kind, .. } => *kind,
             Self::UserTimeout { .. } => TCP_OPTION_USER_TIMEOUT,
             Self::AuthenticationOption { .. } => TCP_OPTION_TCP_AUTHENTICATION,
+            Self::TcpEno { .. } => TCP_OPTION_TCP_ENO,
             Self::Generic { kind, .. } => *kind,
         }
     }
@@ -513,6 +547,20 @@ impl TcpOption {
         }
     }
 
+    /// Return the preserved RFC 8547 TCP-ENO suboption bytes, if this option is
+    /// a TCP-ENO option.
+    ///
+    /// The bytes are the verbatim wire suboption sequence; libcrafter never
+    /// negotiates, parses, or validates them. Named with a `_suboptions` suffix
+    /// to avoid colliding with the [`TcpOption::tcp_eno`] constructor. Backed by
+    /// RFC 8547 and `docs/tcp-rfc-manifest.md`.
+    pub fn tcp_eno_suboptions(&self) -> Option<&[u8]> {
+        match self {
+            Self::TcpEno { suboptions } => Some(suboptions),
+            _ => None,
+        }
+    }
+
     /// Return the kind byte of a generic (unknown or caller-defined) option, if
     /// this option is generic.
     pub const fn generic_kind(&self) -> Option<u8> {
@@ -548,6 +596,8 @@ impl TcpOption {
             Self::AuthenticationOption { mac, .. } => {
                 TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN as usize + mac.len()
             }
+            // kind, length, then the preserved suboption bytes.
+            Self::TcpEno { suboptions } => TCP_OPTION_TCP_ENO_MIN_LEN as usize + suboptions.len(),
             Self::Generic { data, .. } => 2 + data.len(),
         }
     }
@@ -660,6 +710,13 @@ impl TcpOption {
                     *rnext_key_id,
                 ]);
                 bytes.extend_from_slice(mac);
+            }
+            Self::TcpEno { suboptions } => {
+                // RFC 8547 section 4: kind, length, then the suboption sequence.
+                // The suboption bytes are preserved verbatim and never
+                // interpreted or negotiated.
+                bytes.extend_from_slice(&[TCP_OPTION_TCP_ENO, len as u8]);
+                bytes.extend_from_slice(suboptions);
             }
             Self::Generic { kind, data } => {
                 if *kind == TCP_OPTION_EOL || *kind == TCP_OPTION_NOP {
@@ -801,6 +858,7 @@ fn decode_tcp_option(bytes: &[u8]) -> Result<TcpOption> {
         }
         TCP_OPTION_USER_TIMEOUT => decode_tcp_user_timeout_option(data, bytes.len()),
         TCP_OPTION_TCP_AUTHENTICATION => decode_tcp_authentication_option(data, bytes.len()),
+        TCP_OPTION_TCP_ENO => decode_tcp_eno_option(data, bytes.len()),
         TCP_OPTION_EDO => decode_tcp_edo_option(data, bytes.len()),
         TCP_OPTION_FAST_OPEN => Ok(TcpOption::FastOpen(data.to_vec())),
         TCP_OPTION_EXPERIMENTAL_1 | TCP_OPTION_EXPERIMENTAL_2 => {
@@ -853,6 +911,23 @@ fn decode_tcp_authentication_option(data: &[u8], len: usize) -> Result<TcpOption
         key_id: data[0],
         rnext_key_id: data[1],
         mac: data[2..].to_vec(),
+    })
+}
+
+fn decode_tcp_eno_option(data: &[u8], len: usize) -> Result<TcpOption> {
+    // RFC 8547 section 4: kind, length, then a sequence of suboption bytes. The
+    // minimum length is 2 bytes (the kind/length header) for an empty suboption
+    // sequence. libcrafter preserves the suboption bytes without negotiating,
+    // parsing, or validating them; the TCP-ENO handshake and tcpcrypt session
+    // behavior are out of scope.
+    if (len as u8) < TCP_OPTION_TCP_ENO_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tcp.option.eno.length",
+            "RFC 8547 TCP-ENO option must be at least 2 bytes (kind, length)",
+        ));
+    }
+    Ok(TcpOption::TcpEno {
+        suboptions: data.to_vec(),
     })
 }
 

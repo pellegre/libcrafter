@@ -98,7 +98,11 @@ itself dictate a field encoding that `crafter` serializes.
   https://www.rfc-editor.org/rfc/rfc8547.html
 - **RFC 8548 — Cryptographic Protection of TCP Streams (tcpcrypt)** defines the
   tcpcrypt protocol that runs over TCP-ENO and its associated registries.
-  Source: https://www.rfc-editor.org/rfc/rfc8548.html
+  `crafter` does not implement tcpcrypt: the tcpcrypt session protocol, key
+  exchange, session caching, and any negotiated encryption are out of scope.
+  The TCP-ENO option (kind 69) only preserves its raw suboption bytes for
+  inspection and round-trip. Source:
+  https://www.rfc-editor.org/rfc/rfc8548.html
 - **RFC 8684 — TCP Extensions for Multipath Operation with Multiple Addresses
   (MPTCP v1)** defines the MPTCP option (kind 30) and the 4-bit subtype field
   that selects MP_CAPABLE, MP_JOIN, DSS, ADD_ADDR, REMOVE_ADDR, MP_PRIO,

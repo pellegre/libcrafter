@@ -38,6 +38,10 @@ pub const TCP_OPTION_MPTCP: u8 = 30;
 pub const TCP_OPTION_FAST_OPEN: u8 = 34;
 /// TCP Encryption Negotiation Option (TCP-ENO) kind (RFC 8547).
 pub const TCP_OPTION_TCP_ENO: u8 = 69;
+/// Minimum length byte of an RFC 8547 TCP-ENO option: the kind and length bytes
+/// alone, with an empty suboption sequence. Real negotiations carry one or more
+/// suboption bytes, but the option framing permits the 2-byte header alone.
+pub const TCP_OPTION_TCP_ENO_MIN_LEN: u8 = 2;
 /// TCP Accurate ECN Order 0 (AccECN0) option kind (RFC 9768).
 pub const TCP_OPTION_ACCURATE_ECN_ORDER_0: u8 = 172;
 /// TCP Accurate ECN Order 1 (AccECN1) option kind (RFC 9768).
