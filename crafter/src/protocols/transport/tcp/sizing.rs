@@ -20,6 +20,7 @@ use super::constants::{
     IPV4_HEADER_LEN_FOR_MSS, IPV6_HEADER_LEN_FOR_MSS, IPV6_MINIMUM_MTU, TCP_DEFAULT_IPV4_MSS,
     TCP_FIXED_HEADER_LEN, TCP_MAX_OPTION_BYTES,
 };
+use super::flags::{TCP_FLAG_FIN, TCP_FLAG_SYN};
 
 /// Round a raw TCP option-byte count up to the next 32-bit boundary.
 ///
@@ -156,4 +157,44 @@ pub const fn effective_mss(is_ipv6: bool, path_mtu: Option<usize>) -> u16 {
     } else {
         effective_mss_ipv4(path_mtu)
     }
+}
+
+/// True when the SYN control bit is set in `flags`.
+///
+/// SYN occupies one octet of TCP sequence space (RFC 9293 section 3.4): the
+/// sequence number of a SYN is the ISN, and the first data octet is ISN+1. This
+/// is a pure flag predicate used by [`sequence_space_len`]; it models no
+/// connection state.
+pub const fn has_syn(flags: u16) -> bool {
+    flags & TCP_FLAG_SYN != 0
+}
+
+/// True when the FIN control bit is set in `flags`.
+///
+/// FIN occupies one octet of TCP sequence space (RFC 9293 section 3.4): a FIN
+/// is acknowledged like a data octet, so it advances the sequence number by one.
+/// This is a pure flag predicate used by [`sequence_space_len`]; it models no
+/// connection state.
+pub const fn has_fin(flags: u16) -> bool {
+    flags & TCP_FLAG_FIN != 0
+}
+
+/// Length of a TCP segment in *sequence space*, in octets.
+///
+/// TCP sequence numbers count payload octets plus the SYN and FIN control bits
+/// (RFC 9293 section 3.4 "Sequence Numbers"): every payload octet consumes one
+/// sequence number, a SYN consumes one, and a FIN consumes one. A pure ACK with
+/// no payload and neither SYN nor FIN consumes zero sequence space.
+///
+/// `sequence_space_len = payload_len + (SYN ? 1 : 0) + (FIN ? 1 : 0)`
+///
+/// This is a pure helper for packet builders that need to compute the next
+/// expected sequence/acknowledgment number for a crafted reply. It does **not**
+/// implement a TCP state machine, retransmission, or reassembly; the caller
+/// supplies `flags` and `payload_len` and decides how to use the result. Uses
+/// saturating addition so the value never wraps a `u32`.
+pub const fn sequence_space_len(flags: u16, payload_len: u32) -> u32 {
+    let syn = if has_syn(flags) { 1 } else { 0 };
+    let fin = if has_fin(flags) { 1 } else { 0 };
+    payload_len.saturating_add(syn).saturating_add(fin)
 }

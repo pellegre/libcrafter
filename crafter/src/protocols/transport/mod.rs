@@ -6,8 +6,9 @@ mod udp;
 
 pub(crate) use self::tcp::append_tcp_packet_with_registry;
 pub use self::tcp::{
-    effective_mss, effective_mss_ipv4, effective_mss_ipv6, max_tcp_payload, option_budget,
-    remaining_option_budget, tcp_header_len, tcp_option_kind_class, tcp_option_kind_is_assigned,
+    effective_mss, effective_mss_ipv4, effective_mss_ipv6, has_fin, has_syn, max_tcp_payload,
+    option_budget, remaining_option_budget, sequence_space_len, tcp_header_len,
+    tcp_option_kind_class, tcp_option_kind_is_assigned,
     tcp_option_kind_is_experimental, valid_window_scale, Tcp, TcpExtendedDataOffset, TcpOption,
     TcpOptionIter, TcpOptionKindClass, TcpSackBlock, IPV4_HEADER_LEN_FOR_MSS,
     IPV6_HEADER_LEN_FOR_MSS, IPV6_MINIMUM_MTU, TCP_DEFAULT_IPV4_MSS, TCP_FIXED_HEADER_LEN,
