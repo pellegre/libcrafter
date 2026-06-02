@@ -1799,3 +1799,105 @@ mod timestamp_window_scale_helpers {
         assert_eq!(ts_decoded[0].timestamp_echo_reply(), Some(tsecr));
     }
 }
+
+mod mss_sizing_helpers {
+    use super::super::{
+        effective_mss, effective_mss_ipv4, effective_mss_ipv6, max_tcp_payload, option_budget,
+        remaining_option_budget, tcp_header_len, IPV4_HEADER_LEN_FOR_MSS, IPV6_HEADER_LEN_FOR_MSS,
+        IPV6_MINIMUM_MTU, TCP_DEFAULT_IPV4_MSS, TCP_FIXED_HEADER_LEN, TCP_MAX_OPTION_BYTES,
+    };
+
+    #[test]
+    fn tcp_mss_sizing_helpers() {
+        // These helpers are pure sizing/guidance functions. They never probe a
+        // path MTU, fragment, or reassemble (RFC 1191 / RFC 8201 / RFC 8899 are
+        // guidance only; the caller supplies the path MTU). They size correct
+        // TCP segments from manifest-backed constants
+        // (docs/tcp-rfc-manifest.md, "Segment Sizing And Fragmentation-Adjacent
+        // Guidance").
+
+        // --- TCP header length from option bytes (RFC 9293 section 3.1). ---
+        // No options -> the 20-octet fixed header.
+        assert_eq!(TCP_FIXED_HEADER_LEN, 20);
+        assert_eq!(tcp_header_len(0), 20);
+        // Options pad up to a 32-bit boundary before being added.
+        assert_eq!(tcp_header_len(1), 24);
+        assert_eq!(tcp_header_len(4), 24);
+        assert_eq!(tcp_header_len(5), 28);
+        // The full 40-octet option budget gives the 60-octet maximum header.
+        assert_eq!(tcp_header_len(40), 60);
+
+        // --- Option budget: the 40-octet Data Offset cap (RFC 9293 section
+        // 3.1). ---
+        assert_eq!(TCP_MAX_OPTION_BYTES, 40);
+        assert_eq!(option_budget(), 40);
+        // Remaining budget after consuming common SYN options:
+        // MSS(4) + SACK-Permitted(2) + Timestamps(10) + NOP(1) + Window
+        // Scale(3) = 20 used, 20 remaining under the 40-octet cap.
+        assert_eq!(remaining_option_budget(20), 20);
+        assert_eq!(remaining_option_budget(0), 40);
+        assert_eq!(remaining_option_budget(40), 0);
+        // Saturating: an over-budget used count clamps to 0, never wraps.
+        assert_eq!(remaining_option_budget(41), 0);
+        assert_eq!(remaining_option_budget(1000), 0);
+
+        // --- Maximum TCP payload from a caller-provided path MTU. ---
+        // Classic IPv4 Ethernet: 1500 - 20 (IPv4) - 20 (TCP, no options) = 1460.
+        assert_eq!(
+            max_tcp_payload(1500, IPV4_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN),
+            1460
+        );
+        // IPv6 Ethernet: 1500 - 40 (IPv6) - 20 (TCP) = 1440.
+        assert_eq!(
+            max_tcp_payload(1500, IPV6_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN),
+            1440
+        );
+        // With a 20-octet TCP options area the header is 40 octets:
+        // 1500 - 20 - 40 = 1440.
+        assert_eq!(max_tcp_payload(1500, IPV4_HEADER_LEN_FOR_MSS, 40), 1440);
+        // Saturating for a tiny MTU: headers exceed the MTU -> 0, never an
+        // underflow/panic.
+        assert_eq!(max_tcp_payload(20, IPV4_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN), 0);
+        assert_eq!(max_tcp_payload(0, IPV4_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN), 0);
+        // Exactly headers-sized MTU -> 0 payload, no underflow.
+        assert_eq!(max_tcp_payload(40, IPV4_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN), 0);
+
+        // --- Effective MSS guidance: IPv4 (RFC 9293 section 3.7.1, RFC 1122,
+        // RFC 879). ---
+        // Unknown path MTU falls back to the 536-octet default send MSS.
+        assert_eq!(TCP_DEFAULT_IPV4_MSS, 536);
+        assert_eq!(effective_mss_ipv4(None), 536);
+        // A standard 1500-octet path gives 1460.
+        assert_eq!(effective_mss_ipv4(Some(1500)), 1460);
+        // The classic 576-octet IPv4 minimum datagram derives the 536 default.
+        assert_eq!(effective_mss_ipv4(Some(576)), 536);
+        // An unusually small (but IPv4-legal) MTU never recommends below the
+        // 536-octet default.
+        assert_eq!(effective_mss_ipv4(Some(300)), 536);
+        // A very small MTU still floors at the default, never underflows.
+        assert_eq!(effective_mss_ipv4(Some(20)), 536);
+
+        // --- Effective MSS guidance: IPv6 (RFC 8200 section 5, RFC 8201). ---
+        // Unknown path MTU uses the 1280-octet IPv6 minimum:
+        // 1280 - 40 - 20 = 1220.
+        assert_eq!(IPV6_MINIMUM_MTU, 1280);
+        assert_eq!(effective_mss_ipv6(None), 1220);
+        // The 1280-octet minimum MTU explicitly gives the same 1220.
+        assert_eq!(effective_mss_ipv6(Some(1280)), 1220);
+        // A standard 1500-octet path gives 1440.
+        assert_eq!(effective_mss_ipv6(Some(1500)), 1440);
+        // An MTU below the IPv6 minimum is floored at 1280 first, never below
+        // the 1220 minimum-MTU MSS (no underflow for tiny inputs).
+        assert_eq!(effective_mss_ipv6(Some(500)), 1220);
+        assert_eq!(effective_mss_ipv6(Some(0)), 1220);
+
+        // --- Version-dispatching entry point agrees with the per-version
+        // helpers. ---
+        assert_eq!(effective_mss(false, None), effective_mss_ipv4(None));
+        assert_eq!(effective_mss(false, Some(1500)), effective_mss_ipv4(Some(1500)));
+        assert_eq!(effective_mss(true, None), effective_mss_ipv6(None));
+        assert_eq!(effective_mss(true, Some(1500)), effective_mss_ipv6(Some(1500)));
+        assert_eq!(effective_mss(true, None), 1220);
+        assert_eq!(effective_mss(false, None), 536);
+    }
+}

@@ -8,6 +8,10 @@ mod segment;
 mod sizing;
 
 pub use self::constants::{
+    IPV4_HEADER_LEN_FOR_MSS, IPV6_HEADER_LEN_FOR_MSS, IPV6_MINIMUM_MTU, TCP_DEFAULT_IPV4_MSS,
+    TCP_FIXED_HEADER_LEN, TCP_MAX_OPTION_BYTES,
+};
+pub use self::constants::{
     MPTCP_SUBTYPE_ADD_ADDR, MPTCP_SUBTYPE_DSS, MPTCP_SUBTYPE_MP_CAPABLE,
     MPTCP_SUBTYPE_MP_EXPERIMENTAL, MPTCP_SUBTYPE_MP_FAIL, MPTCP_SUBTYPE_MP_FASTCLOSE,
     MPTCP_SUBTYPE_MP_JOIN, MPTCP_SUBTYPE_MP_PRIO, MPTCP_SUBTYPE_REMOVE_ADDR, MPTCP_SUBTYPE_TCPRST,
@@ -34,6 +38,10 @@ pub use self::option::{
     TcpSackBlock,
 };
 pub use self::segment::Tcp;
+pub use self::sizing::{
+    effective_mss, effective_mss_ipv4, effective_mss_ipv6, max_tcp_payload, option_budget,
+    remaining_option_budget, tcp_header_len,
+};
 
 #[cfg(test)]
 mod tests;

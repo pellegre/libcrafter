@@ -148,3 +148,45 @@ pub(crate) const TCP_MAX_HEADER_LEN: usize = 60;
 pub(crate) const TCP_MAX_DATA_OFFSET: u8 = 15;
 pub(crate) const TCP_MAX_RESERVED: u8 = 0x07;
 pub(crate) const TCP_MAX_FLAGS: u16 = 0x01ff;
+
+/// Fixed TCP header length in octets, before any options (RFC 9293 section
+/// 3.1: Data Offset minimum of 5 32-bit words).
+pub const TCP_FIXED_HEADER_LEN: usize = 20;
+
+/// Maximum number of TCP option octets a TCP header can carry.
+///
+/// Data Offset is 4 bits, so the TCP header is at most 15 32-bit words
+/// (60 octets); subtracting the 20-octet fixed header leaves a 40-octet option
+/// budget (RFC 9293 section 3.1, "Data Offset"). This is the hard cap on the
+/// space shared by MSS, Window Scale, SACK-Permitted, Timestamps, and every
+/// other SYN-time option (see `docs/tcp-rfc-manifest.md`, "Segment Sizing And
+/// Fragmentation-Adjacent Guidance").
+pub const TCP_MAX_OPTION_BYTES: usize = 40;
+
+/// Default IPv4 TCP MSS in octets when the path MTU is unknown.
+///
+/// RFC 9293 section 3.7.1 sets the default send MSS to 536 octets when no MSS
+/// option is received and the path is unknown; this is the classic 576-octet
+/// IPv4 minimum datagram (RFC 1122 / RFC 879) minus the 20-octet IPv4 header
+/// and the 20-octet fixed TCP header (576 - 20 - 20 = 536). See
+/// `docs/tcp-rfc-manifest.md`, "Segment Sizing And Fragmentation-Adjacent
+/// Guidance".
+pub const TCP_DEFAULT_IPV4_MSS: u16 = 536;
+
+/// IPv6 minimum link MTU in octets (RFC 8200 section 5, RFC 8201).
+///
+/// Every IPv6 link must support an MTU of at least 1280 octets, which bounds
+/// the minimum IPv6 TCP payload-sizing guidance. See
+/// `docs/tcp-rfc-manifest.md`, "Segment Sizing And Fragmentation-Adjacent
+/// Guidance".
+pub const IPV6_MINIMUM_MTU: usize = 1280;
+
+/// Typical IPv4 header length in octets, used as the default IP header size in
+/// effective-MSS guidance when no options are present (RFC 9293 section 3.1
+/// neighbor IPv4 header, 20 octets).
+pub const IPV4_HEADER_LEN_FOR_MSS: usize = 20;
+
+/// Fixed IPv6 header length in octets, used as the default IP header size in
+/// effective-MSS guidance for IPv6 with no extension headers (RFC 8200 section
+/// 3, 40 octets).
+pub const IPV6_HEADER_LEN_FOR_MSS: usize = 40;
