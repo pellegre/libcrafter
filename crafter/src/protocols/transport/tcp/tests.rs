@@ -455,6 +455,89 @@ mod option_padding {
     }
 }
 
+mod unknown_option_roundtrip {
+    use super::super::{Tcp, TcpOption, TcpOptionKindClass};
+    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    #[test]
+    fn tcp_unknown_options_roundtrip_exact_bytes() {
+        // A TCP segment carrying several unknown option kinds, interleaved NOP
+        // padding, a terminating EOL, and trailing zero padding must decode into
+        // inspectable generic options and recompile to the exact original bytes.
+        //
+        // The raw option region is built to already sit on a 32-bit word
+        // boundary (12 bytes), so compile() adds no padding of its own and the
+        // recompiled bytes can be compared byte-for-byte:
+        //
+        //   [200, 4, 0xAA, 0xBB]  unknown kind 200, len 4 (2 data bytes)
+        //   [1]                   NOP padding
+        //   [222, 3, 0xCC]        unknown kind 222, len 3 (1 data byte)
+        //   [1]                   NOP padding
+        //   [0]                   EOL terminator
+        //   [0, 0]                trailing zero padding to the word boundary
+        let raw_options = [200u8, 4, 0xAA, 0xBB, 1, 222, 3, 0xCC, 1, 0, 0, 0];
+        assert_eq!(raw_options.len() % 4, 0);
+
+        let tcp = Tcp::new().sport(44444).dport(443).option(raw_options);
+
+        // Before compile the layer holds exactly the raw option bytes.
+        assert_eq!(tcp.option_bytes(), &raw_options);
+
+        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let decoded_tcp = decoded.layer::<Tcp>().unwrap();
+
+        // option_bytes() preserves the raw option region verbatim, including the
+        // NOP bytes, the EOL terminator, and the trailing zero padding.
+        assert_eq!(decoded_tcp.option_bytes(), &raw_options);
+
+        // The unknown kinds surface as inspectable Generic options carrying their
+        // raw payload bytes; the iterator stops at the EOL terminator.
+        let parsed = decoded_tcp.parsed_options().unwrap();
+        assert_eq!(
+            parsed,
+            vec![
+                TcpOption::Generic {
+                    kind: 200,
+                    data: vec![0xAA, 0xBB],
+                },
+                TcpOption::NoOperation,
+                TcpOption::Generic {
+                    kind: 222,
+                    data: vec![0xCC],
+                },
+                TcpOption::NoOperation,
+                TcpOption::EndOfList,
+            ]
+        );
+
+        // The generic options are classified as unknown (unassigned) IANA kinds
+        // rather than being confused with a typed option.
+        assert_eq!(parsed[0].generic_kind(), Some(200));
+        assert_eq!(parsed[0].generic_data(), Some(&[0xAAu8, 0xBB][..]));
+        assert_eq!(parsed[0].kind_class(), TcpOptionKindClass::Unassigned);
+        assert_eq!(parsed[2].generic_kind(), Some(222));
+        assert_eq!(parsed[2].generic_data(), Some(&[0xCCu8][..]));
+        assert_eq!(parsed[2].kind_class(), TcpOptionKindClass::Unassigned);
+
+        // Recompiling the decoded segment reproduces the original wire bytes
+        // exactly: unknown option kinds round-trip without losing any bytes.
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+}
+
 mod option_errors {
     use super::super::TcpOption;
 
