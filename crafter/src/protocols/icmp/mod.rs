@@ -179,6 +179,18 @@ pub use self::v6::Icmpv6;
 // `icmp` root so the `protocols::mod.rs` re-exports and the prelude surface it
 // alongside the `Icmpv6` header, the same way the ICMPv4 bodies are surfaced.
 pub use self::v6::{Icmpv6Body, Icmpv6ErrorBody};
+// The shared Neighbor Discovery option TLV framework lives in
+// `v6/message/ndp_option.rs` (RFC 4861 section 4.6). Re-export the option types,
+// the `NDP_OPT_*` codepoints, and the type-name helpers at the `icmp` root so
+// the `protocols::mod.rs` re-exports and the prelude surface them alongside the
+// `Icmpv6` header, like the other ICMPv6 types.
+pub use self::v6::{
+    ndp_option_type_is_known, ndp_option_type_name, NdpOption, NdpOptions, NDP_OPTION_HEADER_LEN,
+    NDP_OPTION_LENGTH_UNIT, NDP_OPT_CAPTIVE_PORTAL, NDP_OPT_DNSSL, NDP_OPT_MTU, NDP_OPT_NONCE,
+    NDP_OPT_PREF64, NDP_OPT_PREFIX_INFORMATION, NDP_OPT_RA_FLAGS_EXTENSION, NDP_OPT_RDNSS,
+    NDP_OPT_REDIRECTED_HEADER, NDP_OPT_ROUTE_INFORMATION, NDP_OPT_SOURCE_LINK_LAYER_ADDR,
+    NDP_OPT_TARGET_LINK_LAYER_ADDR,
+};
 // The ICMPv6 (`ICMPV6_*`) codepoint constants live in `v6/constants.rs` and are
 // re-exported through `constants.rs` (which `pub use`s them), so the existing
 // `pub use self::constants::*;` above keeps `crate::protocols::icmp::ICMPV6_*`,

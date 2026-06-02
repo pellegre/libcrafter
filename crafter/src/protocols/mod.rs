@@ -77,15 +77,12 @@ pub use dns::{
 // `#[allow(deprecated)]` scope stays narrow: only these aliases are exempt from
 // the deprecation warning, while the rest of the icmp surface keeps full lint
 // coverage.
-#[allow(deprecated)]
 pub use icmp::{
-    Icmp, IcmpAddressMask, IcmpQuotedIpv4, IcmpRouterAdvertisementEntry, IcmpTimestamp,
-};
-pub use icmp::{
-    IcmpExtension, IcmpExtensionInterfaceId, IcmpExtensionInterfaceInfo, IcmpExtensionMpls,
-    IcmpExtensionObject, IcmpInterfaceIpAddress, IcmpKind, IcmpLayer, Icmpv4, Icmpv4AddressMask,
-    Icmpv4QuotedIp, Icmpv4RouterAdvertisementEntry, Icmpv4Timestamp, Icmpv6, Icmpv6Body,
-    Icmpv6ErrorBody, ICMPV6_DESTINATION_UNREACHABLE, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST,
+    ndp_option_type_is_known, ndp_option_type_name, IcmpExtension, IcmpExtensionInterfaceId,
+    IcmpExtensionInterfaceInfo, IcmpExtensionMpls, IcmpExtensionObject, IcmpInterfaceIpAddress,
+    IcmpKind, IcmpLayer, Icmpv4, Icmpv4AddressMask, Icmpv4QuotedIp, Icmpv4RouterAdvertisementEntry,
+    Icmpv4Timestamp, Icmpv6, Icmpv6Body, Icmpv6ErrorBody, NdpOption, NdpOptions,
+    ICMPV6_DESTINATION_UNREACHABLE, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST,
     ICMPV6_EXTENDED_ECHO_REPLY, ICMPV6_EXTENDED_ECHO_REQUEST, ICMPV6_INVERSE_ND_ADVERTISEMENT,
     ICMPV6_INVERSE_ND_SOLICITATION, ICMPV6_MLDV2_REPORT, ICMPV6_MULTICAST_LISTENER_DONE,
     ICMPV6_MULTICAST_LISTENER_QUERY, ICMPV6_MULTICAST_LISTENER_REPORT,
@@ -134,6 +131,14 @@ pub use icmp::{
     ICMP_RESERVED_SECURITY, ICMP_ROUTER_ADVERTISEMENT, ICMP_ROUTER_ADVERTISEMENT_ENTRY_WORDS,
     ICMP_ROUTER_SOLICITATION, ICMP_SEAMOBY_EXPERIMENTAL, ICMP_SKIP, ICMP_SOURCE_QUENCH,
     ICMP_TIMESTAMP, ICMP_TIMESTAMP_REPLY, ICMP_TIME_EXCEEDED, ICMP_TRACEROUTE,
+    NDP_OPTION_HEADER_LEN, NDP_OPTION_LENGTH_UNIT, NDP_OPT_CAPTIVE_PORTAL, NDP_OPT_DNSSL,
+    NDP_OPT_MTU, NDP_OPT_NONCE, NDP_OPT_PREF64, NDP_OPT_PREFIX_INFORMATION,
+    NDP_OPT_RA_FLAGS_EXTENSION, NDP_OPT_RDNSS, NDP_OPT_REDIRECTED_HEADER,
+    NDP_OPT_ROUTE_INFORMATION, NDP_OPT_SOURCE_LINK_LAYER_ADDR, NDP_OPT_TARGET_LINK_LAYER_ADDR,
+};
+#[allow(deprecated)]
+pub use icmp::{
+    Icmp, IcmpAddressMask, IcmpQuotedIpv4, IcmpRouterAdvertisementEntry, IcmpTimestamp,
 };
 pub use ip::{
     IpProtocol, Ipv4, Ipv4Option, Ipv4OptionIter, Ipv4RouteOptionKind, IPPROTO_ICMP,
