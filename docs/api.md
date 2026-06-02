@@ -30,7 +30,7 @@ Generated tools should prefer explicit builders:
 ```rust
 let packet = Packet::new()
     .push(Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?)
-    .push(Icmp::echo_request().id(0x1234).seq(1))
+    .push(Icmpv4::echo_request().id(0x1234).seq(1))
     .push(Raw::from_bytes(b"HelloPing!\n"));
 
 let bytes = packet.compile()?;
@@ -41,7 +41,7 @@ Concise examples may use `/` composition:
 ```rust
 let packet =
     Ipv4::new().dst("198.51.100.20")?
-    / Icmp::echo_request().seq(1)
+    / Icmpv4::echo_request().seq(1)
     / Raw::from_bytes(b"HelloPing!\n");
 ```
 
@@ -375,7 +375,7 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | TCP | `Tcp` |
 | UDP | `Udp` |
 | UDP surplus options | `UdpOptions`, `UdpOption` |
-| ICMP | `Icmp` |
+| ICMPv4 | `Icmpv4` |
 | ICMPv6 | `Icmpv6` |
 | DNS | `Dns` |
 | DHCP | `Dhcp` |
@@ -385,31 +385,40 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 
 ## ICMPv4 Messages
 
-`Icmp` is the fixed ICMPv4 header and the front of an ICMPv4 packet. Data that
+`Icmpv4` is the fixed ICMPv4 header and the front of an ICMPv4 packet. Data that
 follows the fixed header is composed as its own typed body or extension layer
 with `/`, so the same `compile`, `decode_from_l3`, `summary`, and `show` surface
 applies to ICMPv4 as to every other protocol.
+
+`Icmp` is now a deprecated alias for `Icmpv4`; existing code that imports `Icmp`
+keeps compiling within the 2.x line with a deprecation warning that points at
+the v4-explicit name. The ICMPv4 body layers below renamed alongside it, each
+with a deprecated alias under its old name: `IcmpQuotedIpv4` → `Icmpv4QuotedIp`,
+`IcmpTimestamp` → `Icmpv4Timestamp`, `IcmpAddressMask` → `Icmpv4AddressMask`,
+`IcmpRouterAdvertisementEntry` → `Icmpv4RouterAdvertisementEntry`. The
+version-neutral types (`IcmpKind`, `IcmpLayer`, and the `IcmpExtension*` RFC 4884
+family) keep the `Icmp` prefix because they are shared by both ICMP versions.
 
 Typed constructors track the IANA ICMP Parameters registry:
 
 | Message family | Constructors |
 | --- | --- |
-| Echo (RFC 792) | `Icmp::echo_request()`, `Icmp::echo_reply()` |
-| Errors (RFC 792) | `Icmp::destination_unreachable()`, `Icmp::time_exceeded()`, plus `Icmp::new().type_(...)` for source quench, redirect, and parameter problem |
-| Timestamp / information (RFC 792) | `Icmp::timestamp_request()`, `Icmp::timestamp_reply()`, `Icmp::information_request()`, `Icmp::information_reply()` |
-| Address mask (RFC 950) | `Icmp::address_mask_request()`, `Icmp::address_mask_reply()` |
-| Router discovery (RFC 1256) | `Icmp::router_advertisement()`, `Icmp::router_solicitation()` |
-| Extended echo (RFC 8335) | `Icmp::extended_echo_request()`, `Icmp::extended_echo_reply()` |
-| Deprecated / experimental | By-name constructors such as `Icmp::traceroute()`, `Icmp::photuris()`, `Icmp::experiment_1()` |
+| Echo (RFC 792) | `Icmpv4::echo_request()`, `Icmpv4::echo_reply()` |
+| Errors (RFC 792) | `Icmpv4::destination_unreachable()`, `Icmpv4::time_exceeded()`, plus `Icmpv4::new().type_(...)` for source quench, redirect, and parameter problem |
+| Timestamp / information (RFC 792) | `Icmpv4::timestamp_request()`, `Icmpv4::timestamp_reply()`, `Icmpv4::information_request()`, `Icmpv4::information_reply()` |
+| Address mask (RFC 950) | `Icmpv4::address_mask_request()`, `Icmpv4::address_mask_reply()` |
+| Router discovery (RFC 1256) | `Icmpv4::router_advertisement()`, `Icmpv4::router_solicitation()` |
+| Extended echo (RFC 8335) | `Icmpv4::extended_echo_request()`, `Icmpv4::extended_echo_reply()` |
+| Deprecated / experimental | By-name constructors such as `Icmpv4::traceroute()`, `Icmpv4::photuris()`, `Icmpv4::experiment_1()` |
 
 The bytes after the fixed header are typed body and extension layers:
 
 | Layer | Carries |
 | --- | --- |
-| `IcmpQuotedIpv4` | The quoted original datagram in an ICMPv4 error message. |
-| `IcmpTimestamp` | RFC 792 originate, receive, and transmit timestamps. |
-| `IcmpAddressMask` | The RFC 950 address mask. |
-| `IcmpRouterAdvertisementEntry` | One RFC 1256 advertised router address and preference. |
+| `Icmpv4QuotedIp` | The quoted original datagram in an ICMPv4 error message. |
+| `Icmpv4Timestamp` | RFC 792 originate, receive, and transmit timestamps. |
+| `Icmpv4AddressMask` | The RFC 950 address mask. |
+| `Icmpv4RouterAdvertisementEntry` | One RFC 1256 advertised router address and preference. |
 | `IcmpExtension` / `IcmpExtensionObject` | RFC 4884 multi-part framing and a generic extension object. |
 | `IcmpExtensionMpls` | RFC 4950 MPLS label stack object body. |
 | `IcmpExtensionInterfaceInfo` | RFC 5837 interface information object body. |
@@ -425,8 +434,8 @@ let offending =
 
 let packet =
     Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?
-    / Icmp::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
-    / IcmpQuotedIpv4::new(offending);
+    / Icmpv4::destination_unreachable().code(ICMP_CODE_DU_PORT_UNREACHABLE)
+    / Icmpv4QuotedIp::new(offending);
 
 let bytes = packet.compile()?;
 ```
@@ -438,7 +447,7 @@ explicitly survives untouched, including intentionally invalid ones. The raw
 escape hatches keep malformed or not-yet-typed messages reachable:
 
 ```rust
-let icmp = Icmp::new()
+let icmp = Icmpv4::new()
     .type_(8)               // raw ICMP type
     .code(0)                // raw code
     .checksum(0xdead)       // explicit (here deliberately wrong) checksum
@@ -452,8 +461,8 @@ error instead of panicking.
 
 ```rust
 let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
-let icmp = decoded.layer::<Icmp>().ok_or("missing Icmp")?;
-let quote = decoded.layer::<IcmpQuotedIpv4>();
+let icmp = decoded.layer::<Icmpv4>().ok_or("missing Icmpv4")?;
+let quote = decoded.layer::<Icmpv4QuotedIp>();
 ```
 
 `summary` names the known type and code while keeping the raw numbers visible,
@@ -511,7 +520,7 @@ Agent-generated tools should prefer:
 - `?` propagation with concrete error types or `Box<dyn std::error::Error>`.
 - `packet.summary()` for compact output and `packet.show()` for detailed output.
 - Offline `compile`, decode, and pcap flows before live send flows.
-- Named protocol constructors such as `Icmp::echo_request()` and
+- Named protocol constructors such as `Icmpv4::echo_request()` and
   `Dns::query_a(name)`.
 
 Concise human examples may use `/`, but generated examples should keep the

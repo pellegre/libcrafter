@@ -1,5 +1,5 @@
 use crafter::core::{
-    Arp, Dhcp, Dns, Ethernet, Icmp, IcmpQuotedIpv4, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
+    Arp, Dhcp, Dns, Ethernet, Icmpv4, Icmpv4QuotedIp, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
     Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LinkType,
     LinuxSll, NetworkLayer, NullLoopback, Packet, Raw, Tcp, Udp, UdpChecksumStatus, UdpOption,
     UdpOptionStatus, UdpOptions, Vlan, DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE,
@@ -244,7 +244,7 @@ fn normalize_packet(
     }
 
     // Canonicalize a typed ICMPv4 error body to the backend-neutral flat model:
-    // libcrafter decodes the quoted original datagram into an IcmpQuotedIpv4
+    // libcrafter decodes the quoted original datagram into an Icmpv4QuotedIp
     // layer (plus any extension and trailing layers), but the oracle compares
     // ICMP error bodies as a single trailing payload after the ICMP fixed
     // header, exactly as the Scapy reference normalize does. Collapse everything
@@ -277,14 +277,14 @@ fn normalize_packet(
     }
 }
 
-/// Collapse a typed ICMPv4 error body (IcmpQuotedIpv4 plus any extension and
+/// Collapse a typed ICMPv4 error body (Icmpv4QuotedIp plus any extension and
 /// trailing layers) into a single flat `payload` after the ICMP layer.
 ///
 /// The oracle compares ICMPv4 error messages at the backend-neutral flat model
 /// (`ipv4` / `icmp` / `payload`), matching the Scapy reference normalize, which
 /// keeps everything after the eight-byte ICMP fixed header as one trailing
 /// payload. libcrafter's richer decode types the quoted original datagram as an
-/// `IcmpQuotedIpv4` layer; this rewrites that tail to the flat payload using the
+/// `Icmpv4QuotedIp` layer; this rewrites that tail to the flat payload using the
 /// verbatim body bytes so the byte compare stays exact and both backends agree
 /// on the decoded model. Only applies to single-IPv4-header ICMP error stacks
 /// that actually quoted a datagram; all other shapes are left untouched.
@@ -297,13 +297,13 @@ fn collapse_icmp_quoted_body(
     // Only collapse when libcrafter typed a quoted IPv4 datagram in the body.
     if !packet_layers
         .iter()
-        .any(|layer| layer.as_any().is::<IcmpQuotedIpv4>())
+        .any(|layer| layer.as_any().is::<Icmpv4QuotedIp>())
     {
         return;
     }
     let icmp_index = match packet_layers
         .iter()
-        .position(|layer| layer.as_any().is::<Icmp>())
+        .position(|layer| layer.as_any().is::<Icmpv4>())
     {
         Some(index) => index,
         None => return,
@@ -409,7 +409,7 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "UdpOptions"
     } else if layer.as_any().is::<Tcp>() {
         "tcp"
-    } else if layer.as_any().is::<Icmp>() {
+    } else if layer.as_any().is::<Icmpv4>() {
         "icmp"
     } else if layer.as_any().is::<Icmpv6>() {
         "icmpv6"
@@ -484,7 +484,7 @@ fn normalized_layer_fields(
     if let Some(layer) = layer.as_any().downcast_ref::<Tcp>() {
         return tcp_fields(layer);
     }
-    if let Some(layer) = layer.as_any().downcast_ref::<Icmp>() {
+    if let Some(layer) = layer.as_any().downcast_ref::<Icmpv4>() {
         return icmp_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Icmpv6>() {
@@ -822,7 +822,7 @@ fn tcp_fields(layer: &Tcp) -> BTreeMap<String, Value> {
     fields
 }
 
-fn icmp_fields(layer: &Icmp) -> BTreeMap<String, Value> {
+fn icmp_fields(layer: &Icmpv4) -> BTreeMap<String, Value> {
     let mut fields = map([
         ("type", json!(layer.icmp_type_value())),
         ("code", json!(layer.code_value())),

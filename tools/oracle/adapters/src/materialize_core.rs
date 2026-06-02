@@ -790,9 +790,9 @@ fn tcp_layer(plan: &Value) -> ExampleResult<Tcp> {
     Ok(layer)
 }
 
-fn icmp_layer(plan: &Value) -> ExampleResult<Icmp> {
+fn icmp_layer(plan: &Value) -> ExampleResult<Icmpv4> {
     let fields = layer_fields(plan, "icmp")?;
-    let mut layer = Icmp::new()
+    let mut layer = Icmpv4::new()
         .type_(icmp_type(required(fields, &["type"])?, false)?)
         .code(u8_value(required(fields, &["code"])?)?);
     let has_rest_of_header = if let Some(value) = optional(fields, &["rest_of_header"]) {

@@ -1477,7 +1477,7 @@ mod tests {
         let response = (Ipv4::new()
             .src("192.0.2.20".parse::<Ipv4Addr>().unwrap())
             .dst("192.0.2.10".parse::<Ipv4Addr>().unwrap())
-            / Icmp::destination_unreachable().code(3)
+            / Icmpv4::destination_unreachable().code(3)
             / Raw::from_bytes(embedded_prefix.clone()))
         .compile()
         .unwrap();

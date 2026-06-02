@@ -52,7 +52,7 @@ fn main() -> std::result::Result<(), Box<dyn Error>> {
     let payload = env_value("PAYLOAD", "docker-lan-icmp");
 
     let packet = Ipv4::new().src(src).dst(router).id(0x4001).dont_fragment(true)
-        / Icmp::echo_request().id(icmp_id).seq(icmp_seq)
+        / Icmpv4::echo_request().id(icmp_id).seq(icmp_seq)
         / Raw::from(payload.as_str());
 
     let report = packet.send_recv_report(
