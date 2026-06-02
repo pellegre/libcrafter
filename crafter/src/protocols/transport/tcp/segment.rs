@@ -12,9 +12,9 @@ use super::super::common::{
 use super::constants::{
     TCP_MAX_DATA_OFFSET, TCP_MAX_FLAGS, TCP_MAX_HEADER_LEN, TCP_MAX_RESERVED, TCP_MIN_HEADER_LEN,
 };
-use super::flags::{flags_summary, TCP_FLAG_SYN};
+use super::flags::{flags_summary, TCP_FLAG_FIN, TCP_FLAG_SYN};
 use super::option::{validate_tcp_options, TcpOption, TcpOptionIter};
-use super::sizing::padded_options_len;
+use super::sizing::{padded_options_len, sequence_space_len};
 
 /// Transmission Control Protocol header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,6 +364,40 @@ impl Tcp {
     /// Return true when a TCP flag is set.
     pub fn has_flag(&self, flag: u16) -> bool {
         self.flags_value() & flag != 0
+    }
+
+    /// True when this segment's SYN control bit is set.
+    ///
+    /// SYN consumes one octet of TCP sequence space (RFC 9293 section 3.4); see
+    /// [`Tcp::sequence_space_len`]. Reads the segment's own flag bits and does
+    /// not model any connection state.
+    pub fn has_syn(&self) -> bool {
+        self.has_flag(TCP_FLAG_SYN)
+    }
+
+    /// True when this segment's FIN control bit is set.
+    ///
+    /// FIN consumes one octet of TCP sequence space (RFC 9293 section 3.4); see
+    /// [`Tcp::sequence_space_len`]. Reads the segment's own flag bits and does
+    /// not model any connection state.
+    pub fn has_fin(&self) -> bool {
+        self.has_flag(TCP_FLAG_FIN)
+    }
+
+    /// Length of this segment in *sequence space*, in octets.
+    ///
+    /// Computes `payload_len + (SYN ? 1 : 0) + (FIN ? 1 : 0)` from the segment's
+    /// own flag bits (RFC 9293 section 3.4 "Sequence Numbers"): every payload
+    /// octet plus a SYN or FIN consumes one sequence number, and a pure ACK
+    /// consumes none. The caller supplies `payload_len` because the `Tcp` layer
+    /// holds only the header; the payload lives in following layers.
+    ///
+    /// This is the inspectable form of "how far does this segment advance the
+    /// sequence number?", letting a builder compute the acknowledgment number
+    /// for a crafted reply without a TCP state machine, retransmission, or
+    /// reassembly. Delegates to the free [`sequence_space_len`] helper.
+    pub fn sequence_space_len(&self, payload_len: u32) -> u32 {
+        sequence_space_len(self.flags_value(), payload_len)
     }
 
     /// Receive window value.

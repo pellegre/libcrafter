@@ -1901,3 +1901,84 @@ mod mss_sizing_helpers {
         assert_eq!(effective_mss(false, None), 536);
     }
 }
+
+mod sequence_space_helpers {
+    use super::super::{
+        has_fin, has_syn, sequence_space_len, Tcp, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_SYN,
+    };
+
+    #[test]
+    fn tcp_sequence_space_helpers() {
+        // TCP sequence numbers count payload octets plus the SYN and FIN
+        // control bits (RFC 9293 section 3.4 "Sequence Numbers"): each payload
+        // octet consumes one sequence number, SYN consumes one, FIN consumes
+        // one, and a pure ACK consumes none. These are pure helpers; they model
+        // no connection state, retransmission, or reassembly.
+
+        // --- Free flag predicates read the raw flag bits. ---
+        assert!(has_syn(TCP_FLAG_SYN));
+        assert!(has_syn(TCP_FLAG_SYN | TCP_FLAG_ACK));
+        assert!(!has_syn(TCP_FLAG_ACK));
+        assert!(!has_syn(TCP_FLAG_FIN));
+        assert!(has_fin(TCP_FLAG_FIN));
+        assert!(has_fin(TCP_FLAG_FIN | TCP_FLAG_ACK));
+        assert!(!has_fin(TCP_FLAG_ACK));
+        assert!(!has_fin(TCP_FLAG_SYN));
+
+        // --- Free sequence_space_len(flags, payload_len). ---
+        // Pure ACK with no payload consumes 0 sequence space.
+        assert_eq!(sequence_space_len(TCP_FLAG_ACK, 0), 0);
+        // SYN with no payload consumes 1.
+        assert_eq!(sequence_space_len(TCP_FLAG_SYN, 0), 1);
+        // FIN with no payload consumes 1.
+        assert_eq!(sequence_space_len(TCP_FLAG_FIN, 0), 1);
+        // Payload-only (pure ACK carrying data) consumes one per octet.
+        assert_eq!(sequence_space_len(TCP_FLAG_ACK, 100), 100);
+        // SYN + payload: payload octets plus the SYN octet.
+        assert_eq!(sequence_space_len(TCP_FLAG_SYN, 100), 101);
+        // FIN + payload: payload octets plus the FIN octet.
+        assert_eq!(
+            sequence_space_len(TCP_FLAG_FIN | TCP_FLAG_ACK, 50),
+            51
+        );
+        // SYN+FIN together (deliberately odd, still constructible) is +2.
+        assert_eq!(sequence_space_len(TCP_FLAG_SYN | TCP_FLAG_FIN, 0), 2);
+
+        // --- Method on Tcp uses the segment's own flags. ---
+        // Default Tcp::new() carries SYN.
+        let syn = Tcp::new();
+        assert!(syn.has_syn());
+        assert!(!syn.has_fin());
+        assert_eq!(syn.sequence_space_len(0), 1);
+        assert_eq!(syn.sequence_space_len(100), 101);
+
+        // A pure ACK: clear SYN, set ACK only.
+        let pure_ack = Tcp::new().flags(TCP_FLAG_ACK);
+        assert!(!pure_ack.has_syn());
+        assert!(!pure_ack.has_fin());
+        assert_eq!(pure_ack.sequence_space_len(0), 0);
+        // Payload-only consumes one per octet.
+        assert_eq!(pure_ack.sequence_space_len(512), 512);
+
+        // A FIN/ACK segment.
+        let fin = Tcp::new().flags(TCP_FLAG_FIN | TCP_FLAG_ACK);
+        assert!(!fin.has_syn());
+        assert!(fin.has_fin());
+        assert_eq!(fin.sequence_space_len(0), 1);
+        assert_eq!(fin.sequence_space_len(20), 21);
+
+        // The method agrees with the free function over the segment's flags.
+        let syn_ack = Tcp::new().flags(TCP_FLAG_SYN | TCP_FLAG_ACK);
+        assert_eq!(
+            syn_ack.sequence_space_len(7),
+            sequence_space_len(TCP_FLAG_SYN | TCP_FLAG_ACK, 7)
+        );
+
+        // Raw flag control is preserved: flags()/flag() still drive the
+        // predicates and the sequence-space length.
+        let raw = Tcp::new().flags(0).flag(TCP_FLAG_FIN, true);
+        assert!(raw.has_fin());
+        assert!(!raw.has_syn());
+        assert_eq!(raw.sequence_space_len(0), 1);
+    }
+}
