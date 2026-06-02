@@ -1,34 +1,18 @@
-//! ICMPv6 (`ICMPV6_*`) codepoint constants and the pure naming, summary, and
-//! predicate helpers that operate on ICMP codepoints.
+//! The pure naming, summary, and predicate helpers that operate on ICMP
+//! codepoints.
 //!
 //! Originally extracted verbatim from `icmp.rs`; nothing here changes wire
-//! behavior, defaults, or the public API surface. The ICMPv4 (`ICMP_*`)
-//! codepoint constants now live in `icmp/v4/constants.rs` and are imported back
-//! here for the shared helpers; the `ICMPV6_*` constants stay below.
+//! behavior, defaults, or the public API surface. The ICMPv4 (`ICMP_*`) and
+//! ICMPv6 (`ICMPV6_*`) codepoint constants now live in `icmp/v4/constants.rs`
+//! and `icmp/v6/constants.rs` respectively and are imported back here for the
+//! shared helpers below.
 
-// Re-export the ICMPv4 (`ICMP_*`) codepoints from the v4 subtree so the shared
-// helpers below resolve them and every module that globs `super::constants::*`
-// (and, through `icmp/mod.rs`, the crate root and prelude) keeps seeing the same
-// names after the internal move.
+// Re-export the ICMPv4 (`ICMP_*`) and ICMPv6 (`ICMPV6_*`) codepoints from the v4
+// and v6 subtrees so the shared helpers below resolve them and every module that
+// globs `super::constants::*` (and, through `icmp/mod.rs`, the crate root and
+// prelude) keeps seeing the same names after the internal move.
 pub use super::v4::constants::*;
-
-/// ICMPv6 destination unreachable type.
-pub const ICMPV6_DESTINATION_UNREACHABLE: u8 = 1;
-
-/// ICMPv6 packet-too-big type.
-pub const ICMPV6_PACKET_TOO_BIG: u8 = 2;
-
-/// ICMPv6 time exceeded type.
-pub const ICMPV6_TIME_EXCEEDED: u8 = 3;
-
-/// ICMPv6 parameter problem type.
-pub const ICMPV6_PARAMETER_PROBLEM: u8 = 4;
-
-/// ICMPv6 echo request type.
-pub const ICMPV6_ECHO_REQUEST: u8 = 128;
-
-/// ICMPv6 echo reply type.
-pub const ICMPV6_ECHO_REPLY: u8 = 129;
+pub use super::v6::constants::*;
 
 pub(crate) fn is_echo_v4(icmp_type: u8) -> bool {
     matches!(icmp_type, ICMP_ECHO_REQUEST | ICMP_ECHO_REPLY)

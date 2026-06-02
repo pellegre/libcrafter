@@ -166,9 +166,19 @@ macro_rules! impl_layer_div {
 mod shared;
 pub use self::shared::*;
 
-mod icmpv6;
-pub(crate) use self::icmpv6::append_icmpv6_packet;
-pub use self::icmpv6::Icmpv6;
+// `v6` is declared here, after the `impl_layer_object!` / `impl_layer_div!`
+// macros above, so the ICMPv6 layer it holds sits inside their textual macro
+// scope (it invokes both). The `Icmpv6` type and the `ICMPV6_*` codepoint
+// constants in `v6/constants.rs` are re-exported at the `icmp` root so the
+// `protocols::mod.rs` re-exports, the registry IPv6 next-header 58 binding, and
+// the prelude keep resolving to the same names.
+mod v6;
+pub(crate) use self::v6::append_icmpv6_packet;
+pub use self::v6::Icmpv6;
+// The ICMPv6 (`ICMPV6_*`) codepoint constants live in `v6/constants.rs` and are
+// re-exported through `constants.rs` (which `pub use`s them), so the existing
+// `pub use self::constants::*;` above keeps `crate::protocols::icmp::ICMPV6_*`,
+// the `protocols::mod.rs` re-exports, and the prelude resolving unchanged.
 
 // The RFC 4884 multi-part extension framework moved into `icmp/shared/`
 // (it is version-neutral and serves both ICMPv4 and ICMPv6 error messages).
