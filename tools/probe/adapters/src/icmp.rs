@@ -423,7 +423,7 @@ pub fn validate_icmp_candidate(
     packet: &Packet,
     raw: &[u8],
 ) -> ExampleResult<CandidateValidation> {
-    let Some(icmp) = packet.layer::<Icmp>() else {
+    let Some(icmp) = packet.layer::<Icmpv4>() else {
         return Ok(CandidateValidation::Ignore);
     };
     if icmp.icmp_type_value() != ICMP_ECHO_REPLY {
@@ -517,7 +517,7 @@ pub fn validate_ttl_expired_candidate(
     raw: &[u8],
     expected_embedded_prefix: &[u8],
 ) -> ExampleResult<CandidateValidation> {
-    let Some(icmp) = packet.layer::<Icmp>() else {
+    let Some(icmp) = packet.layer::<Icmpv4>() else {
         return Ok(CandidateValidation::Ignore);
     };
     let expected_type = plan.expected_icmp_type.unwrap_or(ICMP_TIME_EXCEEDED);
@@ -602,7 +602,7 @@ fn icmp_embedded_payload(packet: &Packet) -> ExampleResult<Vec<u8>> {
     if let Some(raw) = packet.layer::<Raw>() {
         return Ok(raw.as_bytes().to_vec());
     }
-    if let Some(quoted) = packet.layer::<IcmpQuotedIpv4>() {
+    if let Some(quoted) = packet.layer::<Icmpv4QuotedIp>() {
         let compiled = quoted.datagram().compile()?;
         return Ok(compiled.as_bytes().to_vec());
     }
@@ -617,7 +617,7 @@ pub fn icmp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let identifier = required_u16(plan.identifier, "identifier")?;
     let sequence_number = required_u16(plan.sequence_number, "sequence_number")?;
     Ok(Ipv4::new().src(source).dst(destination)
-        / Icmp::echo_request().id(identifier).seq(sequence_number)
+        / Icmpv4::echo_request().id(identifier).seq(sequence_number)
         / Raw::from_bytes(payload))
 }
 
@@ -632,7 +632,7 @@ pub fn ttl_expired_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         .src(source)
         .dst(destination)
         .ttl(plan.ttl.unwrap_or(1))
-        / Icmp::echo_request().id(identifier).seq(sequence_number)
+        / Icmpv4::echo_request().id(identifier).seq(sequence_number)
         / Raw::from_bytes(payload))
 }
 
@@ -674,7 +674,7 @@ mod tests {
         let packet = icmp_packet(&plan).unwrap();
         let bytes = packet.compile().unwrap();
         assert!(bytes.len() >= 28, "icmp packet too short: {}", bytes.len());
-        assert!(packet.layer::<Icmp>().is_some());
+        assert!(packet.layer::<Icmpv4>().is_some());
     }
 
     #[test]

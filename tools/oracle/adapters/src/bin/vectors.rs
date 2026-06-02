@@ -429,8 +429,8 @@ mod icmpv4_oracle {
             );
             // The ICMPv4 header is always typed.
             assert!(
-                decoded.layer::<Icmp>().is_some(),
-                "missing typed Icmp layer for {}",
+                decoded.layer::<Icmpv4>().is_some(),
+                "missing typed Icmpv4 layer for {}",
                 vector.name
             );
         }
@@ -454,7 +454,7 @@ mod icmpv4_oracle {
             let bytes = decode_hex(&vector.raw_hex);
             let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes).expect("decode error");
             let quoted = decoded
-                .layer::<IcmpQuotedIpv4>()
+                .layer::<Icmpv4QuotedIp>()
                 .unwrap_or_else(|| panic!("missing quoted datagram for {name}"));
             let inner = quoted
                 .quoted_layer::<Ipv4>()
@@ -506,7 +506,7 @@ mod icmpv4_oracle {
             .expect("missing legacy traceroute vector");
         let bytes = decode_hex(&vector.raw_hex);
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes).expect("decode legacy");
-        let icmp = decoded.layer::<Icmp>().expect("typed icmp header");
+        let icmp = decoded.layer::<Icmpv4>().expect("typed icmp header");
         assert_eq!(icmp.icmp_type_value(), ICMP_TRACEROUTE);
         assert_eq!(
             decoded.compile().expect("recompile").as_bytes(),

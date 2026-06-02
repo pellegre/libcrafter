@@ -1119,7 +1119,7 @@ fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value
             .map(ethernet_fields),
         "ipv6" => layer.as_any().downcast_ref::<Ipv6>().map(ipv6_fields),
         "tcp" => layer.as_any().downcast_ref::<Tcp>().map(tcp_fields),
-        "icmp" => layer.as_any().downcast_ref::<Icmp>().map(icmp_fields),
+        "icmp" => layer.as_any().downcast_ref::<Icmpv4>().map(icmp_fields),
         "icmpv6" => layer.as_any().downcast_ref::<Icmpv6>().map(icmpv6_fields),
         "dns" => layer.as_any().downcast_ref::<Dns>().map(dns_fields),
         "dhcp" => layer.as_any().downcast_ref::<Dhcp>().map(dhcp_fields),
@@ -1145,14 +1145,14 @@ fn payload_bytes_from_layer(layer: &dyn Layer) -> ExampleResult<Option<Vec<u8>>>
     if let Some(raw) = layer.as_any().downcast_ref::<Raw>() {
         return Ok(Some(raw.as_bytes().to_vec()));
     }
-    if let Some(quoted) = layer.as_any().downcast_ref::<IcmpQuotedIpv4>() {
+    if let Some(quoted) = layer.as_any().downcast_ref::<Icmpv4QuotedIp>() {
         let compiled = quoted.datagram().compile()?;
         return Ok(Some(compiled.as_bytes().to_vec()));
     }
-    if let Some(mask) = layer.as_any().downcast_ref::<IcmpAddressMask>() {
+    if let Some(mask) = layer.as_any().downcast_ref::<Icmpv4AddressMask>() {
         return Ok(Some(mask.mask_octets().to_vec()));
     }
-    if let Some(timestamp) = layer.as_any().downcast_ref::<IcmpTimestamp>() {
+    if let Some(timestamp) = layer.as_any().downcast_ref::<Icmpv4Timestamp>() {
         let mut bytes = Vec::with_capacity(12);
         bytes.extend_from_slice(&timestamp.originate_value().to_be_bytes());
         bytes.extend_from_slice(&timestamp.receive_value().to_be_bytes());
@@ -1220,7 +1220,7 @@ fn tcp_fields(layer: &Tcp) -> Map<String, Value> {
     fields
 }
 
-fn icmp_fields(layer: &Icmp) -> Map<String, Value> {
+fn icmp_fields(layer: &Icmpv4) -> Map<String, Value> {
     let mut fields = Map::new();
     fields.insert("type".to_string(), json!(layer.icmp_type_value()));
     fields.insert("code".to_string(), json!(layer.code_value()));
@@ -1557,9 +1557,9 @@ fn tcp_layer(plan: &Value) -> ExampleResult<Tcp> {
     Ok(layer)
 }
 
-fn icmp_layer(plan: &Value) -> ExampleResult<Icmp> {
+fn icmp_layer(plan: &Value) -> ExampleResult<Icmpv4> {
     let fields = layer_fields(plan, "icmp")?;
-    let mut layer = Icmp::new()
+    let mut layer = Icmpv4::new()
         .type_(icmp_type(required(fields, &["type"])?, false)?)
         .code(u8_value(required(fields, &["code"])?)?);
     let has_rest_of_header = if let Some(value) = optional(fields, &["rest_of_header"]) {
@@ -2964,8 +2964,8 @@ mod l2_ipv4_root {
             .id(1)
             .ttl(64)
             .protocol(IPPROTO_ICMP)
-            / Icmp::address_mask_reply().id(0x1111).seq(0x2222)
-            / IcmpAddressMask::new().mask(Ipv4Addr::new(255, 255, 255, 0));
+            / Icmpv4::address_mask_reply().id(0x1111).seq(0x2222)
+            / Icmpv4AddressMask::new().mask(Ipv4Addr::new(255, 255, 255, 0));
         let compiled = packet.compile().expect("packet compiles");
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
             .expect("packet decodes");
@@ -2991,8 +2991,8 @@ mod l2_ipv4_root {
             .id(1)
             .ttl(64)
             .protocol(IPPROTO_ICMP)
-            / Icmp::timestamp_request().id(0x1111).seq(0x2222)
-            / IcmpTimestamp::new()
+            / Icmpv4::timestamp_request().id(0x1111).seq(0x2222)
+            / Icmpv4Timestamp::new()
                 .originate(0x0102_0304)
                 .receive(0x0506_0708)
                 .transmit(0x090a_0b0c);
@@ -3029,7 +3029,7 @@ mod l2_ipv4_root {
             .id(1)
             .ttl(64)
             .protocol(IPPROTO_ICMP)
-            / Icmp::destination_unreachable()
+            / Icmpv4::destination_unreachable()
             / Raw::from_bytes(decode_hex(body_hex).expect("body hex decodes"));
         let compiled = packet.compile().expect("packet compiles");
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
@@ -3071,7 +3071,7 @@ mod l2_ipv4_root {
             .id(0x1234)
             .ttl(64)
             .protocol(IPPROTO_ICMP);
-        let icmp = Icmp::new()
+        let icmp = Icmpv4::new()
             .type_(ICMP_ECHO_REQUEST)
             .code(0)
             .id(0x4242)
@@ -3103,7 +3103,7 @@ mod l2_ipv4_root {
         assert!(slice.full_raw.len() > slice.comparable_raw.len());
         assert_eq!(slice.comparable_raw.first().map(|byte| byte >> 4), Some(4));
         assert!(slice.packet.layer::<Ipv4>().is_some());
-        assert!(slice.packet.layer::<Icmp>().is_some());
+        assert!(slice.packet.layer::<Icmpv4>().is_some());
         assert!(slice.packet.layer::<Ethernet>().is_none());
     }
 }

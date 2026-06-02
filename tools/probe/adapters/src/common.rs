@@ -1201,7 +1201,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
 
 pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let ipv4 = packet.layer::<Ipv4>();
-    let icmp = packet.layer::<Icmp>();
+    let icmp = packet.layer::<Icmpv4>();
     let tcp = packet.layer::<Tcp>();
     let udp = packet.layer::<Udp>();
     let dns = packet.layer::<Dns>();

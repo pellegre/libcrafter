@@ -1,5 +1,5 @@
 use crafter::core::{
-    Arp, Dhcp, Dns, Ethernet, Icmp, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
+    Arp, Dhcp, Dns, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
     Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LinuxSll,
     NullLoopback, Raw, Tcp, Udp, Vlan,
 };
@@ -401,7 +401,7 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "udp"
     } else if layer.as_any().is::<Tcp>() {
         "tcp"
-    } else if layer.as_any().is::<Icmp>() {
+    } else if layer.as_any().is::<Icmpv4>() {
         "icmp"
     } else if layer.as_any().is::<Icmpv6>() {
         "icmpv6"

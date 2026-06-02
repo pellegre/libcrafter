@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
         .dst(Ipv4Addr::new(198, 51, 100, 20))
-        / Icmp::echo_request().id(0x4242).seq(1)
+        / Icmpv4::echo_request().id(0x4242).seq(1)
         / Raw::from("agent-ping");
 
     let bytes = packet.compile()?;
@@ -626,7 +626,7 @@ let dst = Ipv4Addr::new(198, 51, 100, 20);
 let packets = (1..=4)
     .map(|ttl| {
         Ipv4::new().src(src).dst(dst).ttl(ttl)
-            / Icmp::echo_request().id(0x4242).seq(ttl as u16)
+            / Icmpv4::echo_request().id(0x4242).seq(ttl as u16)
     })
     .collect::<Vec<_>>();
 
