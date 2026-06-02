@@ -302,6 +302,141 @@ fn tcp_public_api_paths_are_usable() -> crafter::Result<()> {
 }
 
 #[test]
+fn tcp_option_constants_and_types_are_public() -> crafter::Result<()> {
+    // TCP option/types reach through prelude, core, root, protocols, and
+    // protocols::transport, mirroring the UDP public-api coverage.
+    let prelude_option: TcpOption = TcpOption::maximum_segment_size(1460);
+    let core_option = crafter::core::TcpOption::window_scale(7);
+    let root_option = crafter::TcpOption::sack_permitted();
+    let protocols_option = crafter::protocols::TcpOption::timestamp(0x1122_3344, 0x5566_7788);
+    let transport_option = crafter::protocols::transport::TcpOption::generic(0xfe, [0xaa, 0xbb]);
+
+    let prelude_sack: TcpSackBlock = TcpSackBlock::new(100, 200);
+    let core_sack = crafter::core::TcpSackBlock::new(300, 400);
+    let root_sack = crafter::TcpSackBlock::new(500, 600);
+    let protocols_sack = crafter::protocols::TcpSackBlock::new(700, 800);
+    let transport_sack = crafter::protocols::transport::TcpSackBlock::new(900, 1000);
+
+    let prelude_edo: TcpExtendedDataOffset = TcpExtendedDataOffset::Request;
+    let core_edo = crafter::core::TcpExtendedDataOffset::HeaderLength { header_length: 16 };
+    let root_edo = crafter::TcpExtendedDataOffset::HeaderAndSegmentLength {
+        header_length: 16,
+        segment_length: 1200,
+    };
+    let protocols_edo = crafter::protocols::TcpExtendedDataOffset::Request;
+    let transport_edo = crafter::protocols::transport::TcpExtendedDataOffset::Request;
+
+    let prelude_iter: TcpOptionIter = TcpOptionIter::new(&[TCP_OPTION_NOP, TCP_OPTION_EOL]);
+    let core_iter = crafter::core::TcpOptionIter::new(&[crafter::core::TCP_OPTION_NOP]);
+    let root_iter = crafter::TcpOptionIter::new(&[crafter::TCP_OPTION_NOP]);
+    let protocols_iter =
+        crafter::protocols::TcpOptionIter::new(&[crafter::protocols::TCP_OPTION_NOP]);
+    let transport_iter = crafter::protocols::transport::TcpOptionIter::new(&[
+        crafter::protocols::transport::TCP_OPTION_NOP,
+    ]);
+
+    // Existing TCP option constants through the same public paths.
+    assert_eq!(TCP_OPTION_EOL, 0);
+    assert_eq!(crafter::core::TCP_OPTION_NOP, 1);
+    assert_eq!(crafter::TCP_OPTION_MSS, 2);
+    assert_eq!(crafter::protocols::TCP_OPTION_WINDOW_SCALE, 3);
+    assert_eq!(crafter::protocols::transport::TCP_OPTION_SACK_PERMITTED, 4);
+    assert_eq!(crafter::TCP_OPTION_SACK, 5);
+    assert_eq!(crafter::core::TCP_OPTION_TIMESTAMP, 8);
+    assert_eq!(crafter::protocols::TCP_OPTION_MPTCP, 30);
+    assert_eq!(crafter::protocols::transport::TCP_OPTION_FAST_OPEN, 34);
+    assert_eq!(crafter::TCP_OPTION_EDO, 237);
+    assert_eq!(crafter::core::TCP_EDO_REQUEST_LEN, 2);
+    assert_eq!(crafter::protocols::TCP_EDO_HEADER_LEN, 4);
+    assert_eq!(crafter::protocols::transport::TCP_EDO_HEADER_AND_SEGMENT_LEN, 6);
+
+    // Existing TCP flag constants through the same public paths.
+    assert_eq!(TCP_FLAG_FIN, 0x001);
+    assert_eq!(crafter::core::TCP_FLAG_SYN, 0x002);
+    assert_eq!(crafter::TCP_FLAG_RST, 0x004);
+    assert_eq!(crafter::protocols::TCP_FLAG_PSH, 0x008);
+    assert_eq!(crafter::protocols::transport::TCP_FLAG_ACK, 0x010);
+    assert_eq!(crafter::TCP_FLAG_URG, 0x020);
+    assert_eq!(crafter::core::TCP_FLAG_ECE, 0x040);
+    assert_eq!(crafter::protocols::TCP_FLAG_CWR, 0x080);
+
+    // TCP_FLAG_NS stays as a compatibility alias for the 0x100 control bit.
+    assert_eq!(TCP_FLAG_NS, 0x100);
+    assert_eq!(crafter::core::TCP_FLAG_NS, 0x100);
+    assert_eq!(crafter::TCP_FLAG_NS, 0x100);
+    assert_eq!(crafter::protocols::TCP_FLAG_NS, 0x100);
+    assert_eq!(crafter::protocols::transport::TCP_FLAG_NS, 0x100);
+
+    // The new TCP_FLAG_AE compatibility alias shares the bit with TCP_FLAG_NS.
+    // It is exported through protocols::transport.
+    assert_eq!(crafter::protocols::transport::TCP_FLAG_AE, 0x100);
+    assert_eq!(
+        crafter::protocols::transport::TCP_FLAG_AE,
+        crafter::protocols::transport::TCP_FLAG_NS
+    );
+
+    assert_eq!(prelude_option.kind(), TCP_OPTION_MSS);
+    assert_eq!(core_option.kind(), crafter::core::TCP_OPTION_WINDOW_SCALE);
+    assert_eq!(root_option.kind(), crafter::TCP_OPTION_SACK_PERMITTED);
+    assert_eq!(protocols_option.kind(), crafter::protocols::TCP_OPTION_TIMESTAMP);
+    assert_eq!(transport_option.kind(), 0xfe);
+    assert_eq!(transport_option.encode()?, vec![0xfe, 4, 0xaa, 0xbb]);
+
+    assert_eq!(prelude_sack, TcpSackBlock::new(100, 200));
+    assert_eq!(core_sack.left_edge, 300);
+    assert_eq!(root_sack.right_edge, 600);
+    assert_eq!(protocols_sack.left_edge, 700);
+    assert_eq!(transport_sack.right_edge, 1000);
+
+    assert_eq!(prelude_edo.option_len(), crafter::TCP_EDO_REQUEST_LEN);
+    assert_eq!(core_edo.option_len(), crafter::TCP_EDO_HEADER_LEN);
+    assert_eq!(
+        root_edo.option_len(),
+        crafter::TCP_EDO_HEADER_AND_SEGMENT_LEN
+    );
+    assert_eq!(protocols_edo, TcpExtendedDataOffset::Request);
+    assert_eq!(transport_edo, TcpExtendedDataOffset::Request);
+
+    assert_eq!(
+        prelude_iter.collect::<crafter::Result<Vec<_>>>()?,
+        vec![TcpOption::NoOperation, TcpOption::EndOfList]
+    );
+    assert_eq!(
+        core_iter.collect::<crafter::Result<Vec<_>>>()?,
+        vec![TcpOption::NoOperation]
+    );
+    assert_eq!(
+        root_iter.collect::<crafter::Result<Vec<_>>>()?,
+        vec![TcpOption::NoOperation]
+    );
+    assert_eq!(
+        protocols_iter.collect::<crafter::Result<Vec<_>>>()?,
+        vec![TcpOption::NoOperation]
+    );
+    assert_eq!(
+        transport_iter.collect::<crafter::Result<Vec<_>>>()?,
+        vec![TcpOption::NoOperation]
+    );
+
+    // The Tcp layer accepts the option/flag constants and round-trips them.
+    let mss = TcpOption::maximum_segment_size(1460).encode()?;
+    let tcp: Tcp = Tcp::new()
+        .sport(40000)
+        .dport(80)
+        .flag(TCP_FLAG_SYN, true)
+        .flag(TCP_FLAG_NS, true)
+        .option(&mss);
+    assert_eq!(tcp.flags_value() & TCP_FLAG_SYN, TCP_FLAG_SYN);
+    assert_eq!(tcp.flags_value() & TCP_FLAG_NS, TCP_FLAG_NS);
+    assert_eq!(
+        tcp.option_iter().collect::<crafter::Result<Vec<_>>>()?,
+        vec![TcpOption::maximum_segment_size(1460)]
+    );
+
+    Ok(())
+}
+
+#[test]
 fn udp_dhcp_helpers_compile_expected_ports() -> crafter::Result<()> {
     let client = (Udp::dhcp_client() / Raw::from("discover")).compile()?;
     let server = (Udp::dhcp_server() / Raw::from("offer")).compile()?;
