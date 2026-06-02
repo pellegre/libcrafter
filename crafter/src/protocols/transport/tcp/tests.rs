@@ -1709,3 +1709,93 @@ mod sack_dsack_accessors {
         );
     }
 }
+
+mod timestamp_window_scale_helpers {
+    use super::super::{
+        valid_window_scale, TcpOption, TCP_OPTION_WINDOW_SCALE, TCP_WINDOW_SCALE_MAX_SHIFT,
+    };
+
+    #[test]
+    fn tcp_timestamp_window_scale_helpers() {
+        // RFC 7323 defines TCP Timestamps (kind 8: TSval + TSecr, two u32) and
+        // Window Scale (kind 3: a 1-byte shift count). The helpers under test
+        // expose those values and the RFC 7323 section 2.3 validity range
+        // (0..=14) for inspection; they never enforce PAWS, estimate RTT, or
+        // clamp a shift on encode.
+
+        // --- Window Scale validity, including boundaries. ---
+        // RFC 7323 section 2.3 caps the shift exponent at 14.
+        assert_eq!(TCP_WINDOW_SCALE_MAX_SHIFT, 14);
+        // Boundary 0 (no scaling) and boundary 14 (the maximum) are both valid.
+        assert!(valid_window_scale(0));
+        assert!(valid_window_scale(14));
+        // Mid-range values are valid.
+        assert!(valid_window_scale(7));
+        // Intentionally invalid shifts just past the cap and at the byte maximum
+        // report invalid without being rejected by the helper.
+        assert!(!valid_window_scale(15));
+        assert!(!valid_window_scale(255));
+
+        // The same validity guidance is reachable from an option value.
+        let ws_valid = TcpOption::window_scale(14);
+        assert_eq!(ws_valid.window_scale_shift(), Some(14));
+        assert_eq!(ws_valid.window_scale_shift_is_valid(), Some(true));
+
+        let ws_min = TcpOption::window_scale(0);
+        assert_eq!(ws_min.window_scale_shift(), Some(0));
+        assert_eq!(ws_min.window_scale_shift_is_valid(), Some(true));
+
+        // A non-Window-Scale option returns None from both accessors so callers
+        // can tell "not a window scale option" from "invalid shift".
+        let ts = TcpOption::timestamp(1, 2);
+        assert_eq!(ts.window_scale_shift(), None);
+        assert_eq!(ts.window_scale_shift_is_valid(), None);
+
+        // --- Deliberately malformed shift stays constructible and encodable. ---
+        // PRESERVE: a shift of 15 (one past the RFC cap) is out of range but must
+        // still build, encode byte-exact, and round-trip through decode so
+        // generated tools can exercise a stack with malformed Window Scale
+        // options. The helper reports it invalid; the wire bytes are untouched.
+        let ws_bad = TcpOption::window_scale(15);
+        assert_eq!(ws_bad.window_scale_shift(), Some(15));
+        assert_eq!(ws_bad.window_scale_shift_is_valid(), Some(false));
+        let encoded = ws_bad.encode().expect("window scale must always encode");
+        // kind, length 3, shift byte 15 — the shift is encoded verbatim, never
+        // clamped to 14.
+        assert_eq!(encoded, vec![TCP_OPTION_WINDOW_SCALE, 3, 15]);
+        let decoded = TcpOption::decode_all(&encoded).expect("window scale must decode");
+        assert_eq!(decoded, vec![TcpOption::window_scale(15)]);
+        assert_eq!(decoded[0].window_scale_shift(), Some(15));
+        assert_eq!(decoded[0].window_scale_shift_is_valid(), Some(false));
+
+        // A shift at the byte maximum (255) is also still constructible and
+        // encodes verbatim.
+        let ws_max_byte = TcpOption::window_scale(255);
+        assert_eq!(
+            ws_max_byte.encode().expect("encode"),
+            vec![TCP_OPTION_WINDOW_SCALE, 3, 255]
+        );
+
+        // --- Timestamp value round-trip. ---
+        let tsval = 0xDEAD_BEEF_u32;
+        let tsecr = 0x0102_0304_u32;
+        let ts = TcpOption::timestamp(tsval, tsecr);
+        // The pair accessor and the separate value/echo accessors agree.
+        assert_eq!(ts.timestamp_values(), Some((tsval, tsecr)));
+        assert_eq!(ts.timestamp_value(), Some(tsval));
+        assert_eq!(ts.timestamp_echo_reply(), Some(tsecr));
+        // A non-timestamp option returns None from the timestamp accessors.
+        assert_eq!(ws_valid.timestamp_values(), None);
+        assert_eq!(ws_valid.timestamp_value(), None);
+        assert_eq!(ws_valid.timestamp_echo_reply(), None);
+
+        // Round-trip the timestamp through encode/decode and confirm the two
+        // u32 fields survive byte-for-byte.
+        let ts_encoded = ts.encode().expect("timestamp must encode");
+        let ts_decoded = TcpOption::decode_all(&ts_encoded).expect("timestamp must decode");
+        assert_eq!(ts_decoded, vec![TcpOption::timestamp(tsval, tsecr)]);
+        assert_eq!(ts_decoded[0].timestamp_values(), Some((tsval, tsecr)));
+        assert_eq!(ts_decoded[0].timestamp_value(), Some(tsval));
+        assert_eq!(ts_decoded[0].timestamp_echo_reply(), Some(tsecr));
+    }
+}

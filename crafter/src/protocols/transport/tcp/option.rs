@@ -11,7 +11,7 @@ use super::constants::{
     TCP_OPTION_MD5_SIGNATURE, TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK,
     TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN,
     TCP_OPTION_TCP_ENO, TCP_OPTION_TCP_ENO_MIN_LEN, TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT,
-    TCP_OPTION_USER_TIMEOUT_LEN, TCP_OPTION_WINDOW_SCALE,
+    TCP_OPTION_USER_TIMEOUT_LEN, TCP_OPTION_WINDOW_SCALE, TCP_WINDOW_SCALE_MAX_SHIFT,
 };
 
 /// IANA registry classification for a TCP option kind.
@@ -463,6 +463,23 @@ impl TcpOption {
         }
     }
 
+    /// Return whether this option is a Window Scale option whose shift count is
+    /// within RFC 7323's valid range (`0..=14`).
+    ///
+    /// Returns `None` when this option is not a Window Scale option, `Some(true)`
+    /// when the shift is RFC-valid, and `Some(false)` when the shift exceeds the
+    /// RFC 7323 section 2.3 cap of 14. This is inspection-only guidance:
+    /// out-of-range shifts are still constructible and encodable for stack
+    /// testing (see [`valid_window_scale`]).
+    ///
+    /// Backed by RFC 7323 section 2.3 and `docs/tcp-rfc-manifest.md`.
+    pub const fn window_scale_shift_is_valid(&self) -> Option<bool> {
+        match self {
+            Self::WindowScale(shift) => Some(valid_window_scale(*shift)),
+            _ => None,
+        }
+    }
+
     /// Return true when this option is the SACK Permitted option.
     ///
     /// Backed by RFC 2018 and `docs/tcp-rfc-manifest.md`.
@@ -559,6 +576,36 @@ impl TcpOption {
     pub const fn timestamp_values(&self) -> Option<(u32, u32)> {
         match self {
             Self::Timestamp { value, echo_reply } => Some((*value, *echo_reply)),
+            _ => None,
+        }
+    }
+
+    /// Return the Timestamp Value (TSval) alone, if this option is Timestamp.
+    ///
+    /// TSval is the sender's current timestamp clock value (RFC 7323 section
+    /// 3.2). This is the first half of [`timestamp_values`](Self::timestamp_values).
+    ///
+    /// Backed by RFC 7323 section 3.2 and `docs/tcp-rfc-manifest.md`.
+    pub const fn timestamp_value(&self) -> Option<u32> {
+        match self {
+            Self::Timestamp { value, .. } => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Return the Timestamp Echo Reply (TSecr) alone, if this option is
+    /// Timestamp.
+    ///
+    /// TSecr echoes a TSval previously received from the peer; it is only valid
+    /// when the ACK bit is set (RFC 7323 section 3.2). This is the second half
+    /// of [`timestamp_values`](Self::timestamp_values). `crafter` exposes the
+    /// echo value as inspectable data only; it does not perform PAWS or RTT
+    /// estimation.
+    ///
+    /// Backed by RFC 7323 section 3.2 and `docs/tcp-rfc-manifest.md`.
+    pub const fn timestamp_echo_reply(&self) -> Option<u32> {
+        match self {
+            Self::Timestamp { echo_reply, .. } => Some(*echo_reply),
             _ => None,
         }
     }
@@ -1364,4 +1411,26 @@ pub const fn tcp_option_kind_is_assigned(kind: u8) -> bool {
 /// Return true when a TCP option kind is an RFC 6994 experimental kind.
 pub const fn tcp_option_kind_is_experimental(kind: u8) -> bool {
     matches!(tcp_option_kind_class(kind), TcpOptionKindClass::Experimental)
+}
+
+/// Return whether a TCP Window Scale shift count is within RFC 7323's valid
+/// range (`0..=14`).
+///
+/// RFC 7323 section 2.3 caps the shift exponent at 14
+/// ([`TCP_WINDOW_SCALE_MAX_SHIFT`](super::constants::TCP_WINDOW_SCALE_MAX_SHIFT)),
+/// keeping the largest scaled offered window below 2^32. A receiver that gets a
+/// larger shift is required to use 14 instead, but the value still appears on
+/// the wire verbatim.
+///
+/// This helper is validity *guidance* only. `crafter` never clamps or rejects a
+/// shift on encode: deliberately out-of-range shifts (for example 15 or 255)
+/// remain constructible via [`TcpOption::window_scale`] and round-trip
+/// byte-for-byte, so generated tools can exercise a stack with malformed Window
+/// Scale options. Use this function (or
+/// [`TcpOption::window_scale_shift_is_valid`]) to check a shift, not to gate
+/// construction.
+///
+/// Backed by RFC 7323 section 2.3 and `docs/tcp-rfc-manifest.md`.
+pub const fn valid_window_scale(shift: u8) -> bool {
+    shift <= TCP_WINDOW_SCALE_MAX_SHIFT
 }
