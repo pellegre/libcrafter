@@ -80,6 +80,9 @@ use crate::protocols::ip::IPPROTO_ICMPV6;
 mod constants;
 pub use self::constants::*;
 
+mod shared;
+pub use self::shared::*;
+
 // ICMPv4 type numbers from the IANA ICMP Parameters registry
 // (<https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml>).
 // Status annotations follow the registry: Deprecated values are marked in their
@@ -168,76 +171,6 @@ pub use self::extensions::*;
 
 mod decode;
 pub(crate) use self::decode::append_icmp_packet;
-
-/// ICMP message kind shared by IPv4 and IPv6 builders.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum IcmpKind {
-    /// Destination unreachable.
-    DestinationUnreachable,
-    /// Time exceeded.
-    TimeExceeded,
-    /// Parameter problem.
-    ParameterProblem,
-    /// Echo request.
-    EchoRequest,
-    /// Echo reply.
-    EchoReply,
-}
-
-impl IcmpKind {
-    /// ICMPv4 type value for this common kind.
-    pub const fn ipv4_type(self) -> u8 {
-        match self {
-            Self::DestinationUnreachable => ICMP_DESTINATION_UNREACHABLE,
-            Self::TimeExceeded => ICMP_TIME_EXCEEDED,
-            Self::ParameterProblem => ICMP_PARAMETER_PROBLEM,
-            Self::EchoRequest => ICMP_ECHO_REQUEST,
-            Self::EchoReply => ICMP_ECHO_REPLY,
-        }
-    }
-
-    /// ICMPv6 type value for this common kind.
-    pub const fn ipv6_type(self) -> u8 {
-        match self {
-            Self::DestinationUnreachable => ICMPV6_DESTINATION_UNREACHABLE,
-            Self::TimeExceeded => ICMPV6_TIME_EXCEEDED,
-            Self::ParameterProblem => ICMPV6_PARAMETER_PROBLEM,
-            Self::EchoRequest => ICMPV6_ECHO_REQUEST,
-            Self::EchoReply => ICMPV6_ECHO_REPLY,
-        }
-    }
-}
-
-/// Version-independent ICMP behavior used by ping-style tools.
-pub trait IcmpLayer: Layer {
-    /// Raw ICMP type value.
-    fn icmp_type_value(&self) -> u8;
-
-    /// Raw ICMP code value.
-    fn code_value(&self) -> u8;
-
-    /// Stored checksum value, when explicit or decoded.
-    fn checksum_value(&self) -> Option<u16>;
-
-    /// Echo identifier when this layer carries one.
-    fn identifier_value(&self) -> Option<u16>;
-
-    /// Echo sequence number when this layer carries one.
-    fn sequence_number_value(&self) -> Option<u16>;
-
-    /// Common message kind, when the type maps cleanly across ICMP versions.
-    fn kind(&self) -> Option<IcmpKind>;
-
-    /// Return true for echo requests.
-    fn is_echo_request(&self) -> bool {
-        self.kind() == Some(IcmpKind::EchoRequest)
-    }
-
-    /// Return true for echo replies.
-    fn is_echo_reply(&self) -> bool {
-        self.kind() == Some(IcmpKind::EchoReply)
-    }
-}
 
 /// Internet Control Message Protocol for IPv4.
 #[derive(Debug, Clone, PartialEq, Eq)]
