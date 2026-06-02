@@ -15,6 +15,9 @@ use super::*;
 pub(crate) mod constants;
 pub use self::constants::*;
 
+mod bodies;
+pub use self::bodies::*;
+
 /// Internet Control Message Protocol for IPv4.
 ///
 /// Fields are `pub(crate)` so the ICMPv4 decode path in `icmp/decode.rs` (which
