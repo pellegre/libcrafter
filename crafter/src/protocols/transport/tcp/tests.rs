@@ -1982,3 +1982,95 @@ mod sequence_space_helpers {
         assert_eq!(raw.sequence_space_len(0), 1);
     }
 }
+
+mod common_segment_builders {
+    use super::super::{
+        Tcp, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_RST, TCP_FLAG_SYN,
+    };
+
+    #[test]
+    fn tcp_common_segment_builders_compile_expected_flags() {
+        // Conservative builder shapes for common TCP control-bit combinations
+        // (RFC 9293 section 3.1). Each helper stamps EXACTLY the named control
+        // bits, replacing Tcp::new()'s default SYN flag rather than accumulating
+        // onto it. They build typed Tcp headers only: they do not infer network
+        // addresses, send traffic, or model connection state. Ports, sequence
+        // number, acknowledgment number, and window stay at their defaults and
+        // remain configurable through the existing builder methods.
+
+        // Confirm Tcp::new() defaults to SYN so the "replace, not accumulate"
+        // guarantee is observable: a helper that OR-ed onto the default would
+        // leak the SYN bit into ack_segment / rst_ack_segment / fin_ack_segment.
+        assert_eq!(Tcp::new().flags_value(), TCP_FLAG_SYN);
+
+        // Each builder produces exactly its named control-bit set.
+        assert_eq!(Tcp::new().syn_segment().flags_value(), TCP_FLAG_SYN);
+        assert_eq!(
+            Tcp::new().syn_ack_segment().flags_value(),
+            TCP_FLAG_SYN | TCP_FLAG_ACK
+        );
+        assert_eq!(Tcp::new().ack_segment().flags_value(), TCP_FLAG_ACK);
+        assert_eq!(
+            Tcp::new().rst_ack_segment().flags_value(),
+            TCP_FLAG_RST | TCP_FLAG_ACK
+        );
+        assert_eq!(
+            Tcp::new().fin_ack_segment().flags_value(),
+            TCP_FLAG_FIN | TCP_FLAG_ACK
+        );
+
+        // The pure-ACK and FIN/ACK shapes must NOT carry the default SYN bit
+        // (the accumulation-leak guard).
+        assert_eq!(Tcp::new().ack_segment().flags_value() & TCP_FLAG_SYN, 0);
+        assert_eq!(
+            Tcp::new().rst_ack_segment().flags_value() & TCP_FLAG_SYN,
+            0
+        );
+        assert_eq!(
+            Tcp::new().fin_ack_segment().flags_value() & TCP_FLAG_SYN,
+            0
+        );
+
+        // ack_segment sets the ACK control BIT and leaves the acknowledgment
+        // NUMBER field at its default, distinct from Tcp::ack() which sets the
+        // number. The two compose without interfering.
+        let pure_ack = Tcp::new().ack_segment();
+        assert_eq!(pure_ack.acknowledgment_number_value(), 0);
+        let acked = Tcp::new().ack_segment().ack(0x1234_5678);
+        assert_eq!(acked.flags_value(), TCP_FLAG_ACK);
+        assert_eq!(acked.acknowledgment_number_value(), 0x1234_5678);
+
+        // Ports, sequence number, and window remain at their defaults after a
+        // builder and stay configurable through the existing chaining methods.
+        let syn = Tcp::new().syn_segment();
+        assert_eq!(syn.source_port_value(), 20);
+        assert_eq!(syn.destination_port_value(), 80);
+        assert_eq!(syn.sequence_number_value(), 0);
+        assert_eq!(syn.window_value(), 8192);
+
+        let configured = Tcp::new()
+            .syn_ack_segment()
+            .sport(44444)
+            .dport(443)
+            .seq(0x0102_0304)
+            .ack(0x0506_0708)
+            .window(64240);
+        assert_eq!(configured.flags_value(), TCP_FLAG_SYN | TCP_FLAG_ACK);
+        assert_eq!(configured.source_port_value(), 44444);
+        assert_eq!(configured.destination_port_value(), 443);
+        assert_eq!(configured.sequence_number_value(), 0x0102_0304);
+        assert_eq!(configured.acknowledgment_number_value(), 0x0506_0708);
+        assert_eq!(configured.window_value(), 64240);
+
+        // The builders are order-independent with flag ordering relative to
+        // other setters: applying the shape after other fields still yields the
+        // exact control-bit set (it replaces, not merges).
+        let late_shape = Tcp::new()
+            .sport(1234)
+            .syn()
+            .ack_flag()
+            .fin_ack_segment();
+        assert_eq!(late_shape.flags_value(), TCP_FLAG_FIN | TCP_FLAG_ACK);
+        assert_eq!(late_shape.source_port_value(), 1234);
+    }
+}
