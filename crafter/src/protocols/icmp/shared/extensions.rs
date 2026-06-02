@@ -6,9 +6,11 @@
 //! extension header and generic extension object, plus the typed object bodies
 //! for RFC 4950 MPLS, RFC 5837 interface information, and RFC 8335 interface
 //! identification. Shared compile/auto-fill helpers and codepoints are reached
-//! through `use super::*;` and `use super::constants::*;`.
-use super::constants::*;
-use super::*;
+//! through the `icmp` module root (`use super::super::*;`) and its codepoint
+//! constants (`use super::super::constants::*;`); the file now lives under
+//! `icmp/shared/`, one level below that root.
+use super::super::constants::*;
+use super::super::*;
 
 /// RFC 4884 ICMP extension header.
 #[derive(Debug, Clone, PartialEq, Eq)]
