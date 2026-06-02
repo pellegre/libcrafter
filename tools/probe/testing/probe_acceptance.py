@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Repo root: tools/probe/tests/probe_acceptance.py -> parents[3] is the root.
+# Repo root: tools/probe/testing/probe_acceptance.py -> parents[3] is the root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROBE_RUN = REPO_ROOT / "tools" / "probe" / "run"
 

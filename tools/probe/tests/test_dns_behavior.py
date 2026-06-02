@@ -3,7 +3,7 @@
 Each test asserts the deterministic plan shape its case produces and, when the
 ``uv``/``cargo`` toolchains are available, drives the case end to end through the
 probe planner dry-run and the Rust ``stimulus_endpoint`` dry-run via the shared
-:mod:`tools.probe.tests.probe_acceptance` harness.
+:mod:`tools.probe.testing.probe_acceptance` harness.
 
 ``dns-a-success`` is the baseline DNS behavioral check: an A query against the
 controlled UDP DNS responder that receives and parses a matching IPv4 answer.
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from tools.probe.engine import planning
 from tools.probe.engine.model import ProbeRunRequest
-from tools.probe.tests import probe_acceptance
+from tools.probe.testing import probe_acceptance
 
 
 def _request(

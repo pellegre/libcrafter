@@ -2,7 +2,7 @@
 
 Drives one focused probe case end to end through the probe planner dry-run and
 the Rust ``stimulus_endpoint`` dry-run and asserts the stable request/response
-shape. The harness lives in :mod:`tools.probe.tests.probe_acceptance`; this
+shape. The harness lives in :mod:`tools.probe.testing.probe_acceptance`; this
 module is the parameterizable unit-test wrapper a per-case step reuses by
 pointing :data:`HARNESS_CASE` (or the ``PROBE_HARNESS_CASE`` env override) at
 the case under test.
@@ -19,13 +19,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.probe.tests import probe_acceptance
+from tools.probe.testing import probe_acceptance
 
 
 # The focused case this wrapper drives. ``dns-a-success`` is the first DNS
 # behavioral case; per-case steps re-run this wrapper against their own case by
 # overriding ``PROBE_HARNESS_CASE`` or importing
-# :func:`tools.probe.tests.probe_acceptance.assert_focused_case` directly.
+# :func:`tools.probe.testing.probe_acceptance.assert_focused_case` directly.
 HARNESS_CASE = os.environ.get("PROBE_HARNESS_CASE", "dns-a-success")
 
 
