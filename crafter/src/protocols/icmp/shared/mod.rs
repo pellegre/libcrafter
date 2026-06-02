@@ -17,6 +17,15 @@ use super::{
     ICMP_ECHO_REQUEST, ICMP_PARAMETER_PROBLEM, ICMP_TIME_EXCEEDED,
 };
 
+// The RFC 4884/4950/5837/8335 multi-part extension framework is version-neutral
+// (it attaches to both ICMPv4 and ICMPv6 error messages), so it lives in the
+// shared core. Re-export its public types here; the `icmp` root re-exports
+// `self::shared::*`, so the `protocols::mod.rs` names (`IcmpExtension`,
+// `IcmpExtensionObject`, `IcmpExtensionMpls`, `IcmpExtensionInterfaceInfo`,
+// `IcmpExtensionInterfaceId`, `IcmpInterfaceIpAddress`) keep resolving unchanged.
+mod extensions;
+pub use self::extensions::*;
+
 /// ICMP message kind shared by IPv4 and IPv6 builders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IcmpKind {

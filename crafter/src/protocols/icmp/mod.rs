@@ -80,9 +80,6 @@ use crate::protocols::ip::IPPROTO_ICMPV6;
 mod constants;
 pub use self::constants::*;
 
-mod shared;
-pub use self::shared::*;
-
 // ICMPv4 type numbers from the IANA ICMP Parameters registry
 // (<https://www.iana.org/assignments/icmp-parameters/icmp-parameters.xhtml>).
 // Status annotations follow the registry: Deprecated values are marked in their
@@ -162,12 +159,21 @@ macro_rules! impl_layer_div {
         }
     };
 }
+// `shared` is declared here, after the `impl_layer_object!` / `impl_layer_div!`
+// macros above, so its `extensions` submodule sits inside their textual macro
+// scope. The `pub use self::shared::*;` re-export surfaces the version-neutral
+// `IcmpKind`, `IcmpLayer`, and the RFC 4884 extension types at the `icmp` root.
+mod shared;
+pub use self::shared::*;
+
 mod icmpv6;
 pub(crate) use self::icmpv6::append_icmpv6_packet;
 pub use self::icmpv6::Icmpv6;
 
-mod extensions;
-pub use self::extensions::*;
+// The RFC 4884 multi-part extension framework moved into `icmp/shared/`
+// (it is version-neutral and serves both ICMPv4 and ICMPv6 error messages).
+// Its public types now surface through `pub use self::shared::*;` above, so the
+// `protocols::mod.rs` re-export names resolve unchanged.
 
 mod decode;
 pub(crate) use self::decode::append_icmp_packet;
