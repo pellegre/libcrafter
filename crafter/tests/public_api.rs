@@ -437,6 +437,47 @@ fn tcp_option_constants_and_types_are_public() -> crafter::Result<()> {
 }
 
 #[test]
+fn tcp_mptcp_subtype_constants_are_public() {
+    // The MPTCP subtype constants (RFC 8684 section 3 / IANA MPTCP Option
+    // Subtypes registry) are reachable through the same public path the other
+    // newer TCP option constants use: crafter::protocols::transport.
+    use crafter::protocols::transport::{
+        MPTCP_SUBTYPE_ADD_ADDR, MPTCP_SUBTYPE_DSS, MPTCP_SUBTYPE_MP_CAPABLE,
+        MPTCP_SUBTYPE_MP_EXPERIMENTAL, MPTCP_SUBTYPE_MP_FAIL, MPTCP_SUBTYPE_MP_FASTCLOSE,
+        MPTCP_SUBTYPE_MP_JOIN, MPTCP_SUBTYPE_MP_PRIO, MPTCP_SUBTYPE_REMOVE_ADDR,
+        MPTCP_SUBTYPE_TCPRST,
+    };
+
+    assert_eq!(MPTCP_SUBTYPE_MP_CAPABLE, 0x0);
+    assert_eq!(MPTCP_SUBTYPE_MP_JOIN, 0x1);
+    assert_eq!(MPTCP_SUBTYPE_DSS, 0x2);
+    assert_eq!(MPTCP_SUBTYPE_ADD_ADDR, 0x3);
+    assert_eq!(MPTCP_SUBTYPE_REMOVE_ADDR, 0x4);
+    assert_eq!(MPTCP_SUBTYPE_MP_PRIO, 0x5);
+    assert_eq!(MPTCP_SUBTYPE_MP_FAIL, 0x6);
+    assert_eq!(MPTCP_SUBTYPE_MP_FASTCLOSE, 0x7);
+    assert_eq!(MPTCP_SUBTYPE_TCPRST, 0x8);
+    assert_eq!(MPTCP_SUBTYPE_MP_EXPERIMENTAL, 0xf);
+
+    // The MP_TCPRST Reason Codes registry (RFC 8684 section 3.6) is exported on
+    // the same public path for byte inspection of the MP_TCPRST subtype.
+    use crafter::protocols::transport::{
+        MPTCP_TCPRST_REASON_ADMINISTRATIVELY_PROHIBITED, MPTCP_TCPRST_REASON_LACK_OF_RESOURCES,
+        MPTCP_TCPRST_REASON_MIDDLEBOX_INTERFERENCE, MPTCP_TCPRST_REASON_MPTCP_SPECIFIC,
+        MPTCP_TCPRST_REASON_TOO_MUCH_OUTSTANDING_DATA,
+        MPTCP_TCPRST_REASON_UNACCEPTABLE_PERFORMANCE, MPTCP_TCPRST_REASON_UNSPECIFIED,
+    };
+
+    assert_eq!(MPTCP_TCPRST_REASON_UNSPECIFIED, 0x00);
+    assert_eq!(MPTCP_TCPRST_REASON_MPTCP_SPECIFIC, 0x01);
+    assert_eq!(MPTCP_TCPRST_REASON_LACK_OF_RESOURCES, 0x02);
+    assert_eq!(MPTCP_TCPRST_REASON_ADMINISTRATIVELY_PROHIBITED, 0x03);
+    assert_eq!(MPTCP_TCPRST_REASON_TOO_MUCH_OUTSTANDING_DATA, 0x04);
+    assert_eq!(MPTCP_TCPRST_REASON_UNACCEPTABLE_PERFORMANCE, 0x05);
+    assert_eq!(MPTCP_TCPRST_REASON_MIDDLEBOX_INTERFERENCE, 0x06);
+}
+
+#[test]
 fn udp_dhcp_helpers_compile_expected_ports() -> crafter::Result<()> {
     let client = (Udp::dhcp_client() / Raw::from("discover")).compile()?;
     let server = (Udp::dhcp_server() / Raw::from("offer")).compile()?;
