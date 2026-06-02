@@ -10,7 +10,7 @@ use super::constants::{
     TCP_OPTION_EXPERIMENTAL_MIN_LEN, TCP_OPTION_FAST_OPEN, TCP_OPTION_MD5_SIGNATURE,
     TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK, TCP_OPTION_SACK_PERMITTED,
     TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_ENO, TCP_OPTION_TIMESTAMP,
-    TCP_OPTION_USER_TIMEOUT, TCP_OPTION_WINDOW_SCALE,
+    TCP_OPTION_USER_TIMEOUT, TCP_OPTION_USER_TIMEOUT_LEN, TCP_OPTION_WINDOW_SCALE,
 };
 
 /// IANA registry classification for a TCP option kind.
@@ -125,6 +125,16 @@ pub enum TcpOption {
         /// Experiment data bytes after the ExID, preserved verbatim.
         data: Vec<u8>,
     },
+    /// RFC 5482 User Timeout (UTO) option carrying a 1-bit Granularity (G) flag
+    /// and a 15-bit User Timeout value in a single 16-bit field.
+    UserTimeout {
+        /// Granularity (G) flag. `false` selects seconds, `true` selects
+        /// minutes per RFC 5482 section 3.
+        granularity: bool,
+        /// 15-bit User Timeout value. Only the low 15 bits are wire-significant;
+        /// the high bit holds the Granularity flag.
+        value: u16,
+    },
     /// Unknown or caller-defined option with a standard length byte.
     Generic {
         /// Raw option kind byte.
@@ -230,6 +240,17 @@ impl TcpOption {
         Self::experimental(TCP_OPTION_EXPERIMENTAL_2, experiment_id, data)
     }
 
+    /// Create an RFC 5482 User Timeout (UTO) option.
+    ///
+    /// `granularity` is the 1-bit Granularity (G) flag (`false` = seconds,
+    /// `true` = minutes per RFC 5482 section 3); `value` is the 15-bit User
+    /// Timeout value. Only the low 15 bits of `value` are wire-significant; any
+    /// higher bits are masked off on encode so the Granularity flag is the sole
+    /// occupant of the top bit.
+    pub const fn user_timeout(granularity: bool, value: u16) -> Self {
+        Self::UserTimeout { granularity, value }
+    }
+
     /// Create a caller-defined option.
     pub fn generic(kind: u8, data: impl Into<Vec<u8>>) -> Self {
         Self::Generic {
@@ -252,6 +273,7 @@ impl TcpOption {
             Self::ExtendedDataOffset(_) => TCP_OPTION_EDO,
             Self::FastOpen(_) => TCP_OPTION_FAST_OPEN,
             Self::Experimental { kind, .. } => *kind,
+            Self::UserTimeout { .. } => TCP_OPTION_USER_TIMEOUT,
             Self::Generic { kind, .. } => *kind,
         }
     }
@@ -388,6 +410,18 @@ impl TcpOption {
         matches!(self, Self::Experimental { .. })
     }
 
+    /// Return the RFC 5482 User Timeout as a `(granularity, value)` pair, if
+    /// this option is a User Timeout option.
+    ///
+    /// `granularity` is the Granularity (G) flag and `value` is the 15-bit User
+    /// Timeout value. Backed by RFC 5482 and `docs/tcp-rfc-manifest.md`.
+    pub const fn user_timeout_value(&self) -> Option<(bool, u16)> {
+        match self {
+            Self::UserTimeout { granularity, value } => Some((*granularity, *value)),
+            _ => None,
+        }
+    }
+
     /// Return the kind byte of a generic (unknown or caller-defined) option, if
     /// this option is generic.
     pub const fn generic_kind(&self) -> Option<u8> {
@@ -418,6 +452,7 @@ impl TcpOption {
             Self::ExtendedDataOffset(edo) => edo.option_len() as usize,
             Self::FastOpen(cookie) => 2 + cookie.len(),
             Self::Experimental { data, .. } => 4 + data.len(),
+            Self::UserTimeout { .. } => TCP_OPTION_USER_TIMEOUT_LEN as usize,
             Self::Generic { data, .. } => 2 + data.len(),
         }
     }
@@ -507,6 +542,14 @@ impl TcpOption {
                 bytes.extend_from_slice(&[*kind, len as u8]);
                 bytes.extend_from_slice(&experiment_id.to_be_bytes());
                 bytes.extend_from_slice(data);
+            }
+            Self::UserTimeout { granularity, value } => {
+                // RFC 5482 section 3: 16-bit field with the Granularity (G) flag
+                // in the most-significant bit and the 15-bit User Timeout value
+                // in the remaining bits.
+                let field = ((*granularity as u16) << 15) | (value & 0x7fff);
+                bytes.extend_from_slice(&[TCP_OPTION_USER_TIMEOUT, TCP_OPTION_USER_TIMEOUT_LEN]);
+                bytes.extend_from_slice(&field.to_be_bytes());
             }
             Self::Generic { kind, data } => {
                 if *kind == TCP_OPTION_EOL || *kind == TCP_OPTION_NOP {
@@ -646,6 +689,7 @@ fn decode_tcp_option(bytes: &[u8]) -> Result<TcpOption> {
                 data: data.to_vec(),
             })
         }
+        TCP_OPTION_USER_TIMEOUT => decode_tcp_user_timeout_option(data, bytes.len()),
         TCP_OPTION_EDO => decode_tcp_edo_option(data, bytes.len()),
         TCP_OPTION_FAST_OPEN => Ok(TcpOption::FastOpen(data.to_vec())),
         TCP_OPTION_EXPERIMENTAL_1 | TCP_OPTION_EXPERIMENTAL_2 => {
@@ -669,6 +713,17 @@ fn decode_tcp_experimental_option(kind: u8, data: &[u8], len: usize) -> Result<T
         kind,
         experiment_id: read_u16_be(&data[0..2])?,
         data: data[2..].to_vec(),
+    })
+}
+
+fn decode_tcp_user_timeout_option(data: &[u8], len: usize) -> Result<TcpOption> {
+    validate_tcp_option_len("tcp.option.user_timeout", len, TCP_OPTION_USER_TIMEOUT_LEN as usize)?;
+    // RFC 5482 section 3: the 16-bit field's most-significant bit is the
+    // Granularity (G) flag and the remaining 15 bits are the User Timeout value.
+    let field = read_u16_be(&data[0..2])?;
+    Ok(TcpOption::UserTimeout {
+        granularity: field & 0x8000 != 0,
+        value: field & 0x7fff,
     })
 }
 
