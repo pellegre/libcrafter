@@ -13,7 +13,7 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, Packet, Raw};
-use crate::protocols::ip::decode_quoted_ipv4;
+use crate::protocols::ipv4::decode_quoted_ipv4;
 
 /// Append a decoded ICMP packet to an existing packet stack.
 pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {

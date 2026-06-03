@@ -5,7 +5,7 @@ use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
 use crate::protocols::dhcp::{append_dhcp_packet, is_dhcp_port_pair, looks_like_dhcp_payload};
 use crate::protocols::dns::{append_dns_packet, DNS_PORT};
 use crate::protocols::icmp::{append_icmp_packet, append_icmpv6_packet};
-use crate::protocols::ip::{
+use crate::protocols::ipv4::{
     append_ipv4_packet_with_registry, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
 };
 use crate::protocols::ipv6::append_ipv6_packet_with_registry;

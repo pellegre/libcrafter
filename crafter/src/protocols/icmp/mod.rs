@@ -75,7 +75,7 @@ use crate::checksum::internet_checksum;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
-use crate::protocols::ip::IPPROTO_ICMPV6;
+use crate::protocols::ipv4::IPPROTO_ICMPV6;
 
 mod constants;
 pub use self::constants::*;

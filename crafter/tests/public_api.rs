@@ -26,6 +26,8 @@ fn ipv4_protocol_public_api_paths_are_usable() -> crafter::Result<()> {
     let core_protocol: crafter::core::Ipv4Protocol = crafter::core::Ipv4Protocol::Udp;
     let protocols_protocol: crafter::protocols::Ipv4Protocol =
         crafter::protocols::Ipv4Protocol::Icmpv6;
+    let ipv4_module_protocol: crafter::protocols::ipv4::Ipv4Protocol =
+        crafter::protocols::ipv4::Ipv4Protocol::Icmpv4;
 
     let prelude_packet =
         (Ipv4::new().ipv4_protocol(prelude_protocol) / Raw::from("prelude")).compile()?;
@@ -38,6 +40,10 @@ fn ipv4_protocol_public_api_paths_are_usable() -> crafter::Result<()> {
     let protocols_packet = (crafter::protocols::Ipv4::new().ipv4_protocol(protocols_protocol)
         / crafter::protocols::Raw::from("protocols"))
     .compile()?;
+    let ipv4_module_packet = (crafter::protocols::ipv4::Ipv4::new()
+        .ipv4_protocol(ipv4_module_protocol)
+        / crafter::protocols::Raw::from("ipv4-module"))
+    .compile()?;
 
     assert_eq!(u8::from(prelude_protocol), IPPROTO_ICMP);
     assert_eq!(u8::from(root_protocol), crafter::IPPROTO_TCP);
@@ -46,12 +52,20 @@ fn ipv4_protocol_public_api_paths_are_usable() -> crafter::Result<()> {
         u8::from(protocols_protocol),
         crafter::protocols::IPPROTO_ICMPV6
     );
+    assert_eq!(
+        u8::from(ipv4_module_protocol),
+        crafter::protocols::ipv4::IPPROTO_ICMP
+    );
     assert_eq!(prelude_packet.as_bytes()[9], IPPROTO_ICMP);
     assert_eq!(root_packet.as_bytes()[9], crafter::IPPROTO_TCP);
     assert_eq!(core_packet.as_bytes()[9], crafter::core::IPPROTO_UDP);
     assert_eq!(
         protocols_packet.as_bytes()[9],
         crafter::protocols::IPPROTO_ICMPV6
+    );
+    assert_eq!(
+        ipv4_module_packet.as_bytes()[9],
+        crafter::protocols::ipv4::IPPROTO_ICMP
     );
 
     Ok(())

@@ -10,7 +10,7 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
 use crate::protocols::icmp::Icmpv6;
-use crate::protocols::ip::{IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
+use crate::protocols::ipv4::{IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
 use crate::protocols::transport::{Tcp, Udp};
 use crate::registry::ProtocolRegistry;
 
