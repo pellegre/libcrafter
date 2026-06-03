@@ -149,7 +149,7 @@ VirtualBox providers are not part of version 2.0.0.
 | Layer | Coverage |
 | --- | --- |
 | Link | Ethernet, 802.1Q VLAN, Linux cooked capture, null/loopback |
-| Network and control | ARP, IPv4, IPv4 options, IPv6, IPv6 fragment headers, IPv6 routing headers, IPv6 mobile routing headers, IPv6 segment routing headers, ICMP, ICMPv6, ICMP extensions |
+| Network and control | ARP, IPv4, IPv4 options, IPv6, IPv6 fragment headers, IPv6 routing headers, IPv6 mobile routing headers, IPv6 segment routing headers, ICMPv4 (with `Icmp` deprecated alias), ICMP extensions (RFC 4884), ICMPv6 (echo and errors, IPv6 Neighbor Discovery (RFC 4861) with base and extension options, Multicast Listener Discovery v1/v2, Extended Echo, experimental Node Information) |
 | Transport | TCP, TCP options, UDP, UDP checksums |
 | Application and payload | DNS, DHCPv4 (option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication and leasequery packet fields), raw payloads |
 

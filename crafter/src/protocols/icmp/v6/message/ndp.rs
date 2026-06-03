@@ -46,6 +46,28 @@
 //! header `type` in `icmp/v6/mod.rs` and pushes the typed body, in lockstep with
 //! the `body.rs` classifier.
 //!
+//! ## IPv6 Hop Limit 255 is mandatory for NDP
+//!
+//! RFC 4861 section 11.2 requires every Neighbor Discovery message to be sent
+//! with an IPv6 **Hop Limit of 255**, and a conformant receiver silently
+//! discards an NDP message whose Hop Limit is not 255 (this prevents off-link
+//! spoofing). These builders return the `Icmpv6` header `/` body and do **not**
+//! own the enclosing [`Ipv6`](crate::protocols::Ipv6) layer, so — by the
+//! crate's honored-overrides rule — they cannot and do not set the Hop Limit
+//! for you. When composing an NDP packet the caller **must** set the IPv6 Hop
+//! Limit to 255:
+//!
+//! ```text
+//! Ipv6::new().src(...).dst(...).hop_limit(255)
+//!     / Icmpv6::neighbor_solicitation(target)
+//! ```
+//!
+//! A packet built without this still compiles and serializes (the crate emits
+//! exactly what you asked for), but real receivers drop it. This was observed
+//! against a live Linux kernel: a Neighbor Solicitation sent with the default
+//! Hop Limit (64) was counted but never answered, while the same frame with Hop
+//! Limit 255 was answered with a Neighbor Advertisement.
+//!
 //! Wire facts grounded against RFC 4861 (the local `rfc-protocol-spec` manifest
 //! cache is sparse for NDP, so the Router Solicitation format in section 4.1 and
 //! the Source Link-Layer Address option in section 4.6.1 were read directly from
