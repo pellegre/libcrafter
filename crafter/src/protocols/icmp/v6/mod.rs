@@ -65,6 +65,12 @@ pub use self::message::mld::{
     Mldv2Query, Mldv2Report, MulticastAddressRecord, MulticastListenerMessage, MulticastRecordType,
     MLDV2_QUERY_MIN_BODY_LEN, MLDV2_QUERY_QRV_MASK, MLDV2_QUERY_RESV_MASK, MLDV2_QUERY_S_FLAG,
 };
+// RFC 4620 Node Information Query (139) / Response (140), **experimental**: one
+// body type ([`NodeInformation`]) reused across both, carrying the Nonce + Data
+// (the Qtype/Flags live on the header rest-of-header). The builders live in
+// `message/node_info.rs` (an `impl Icmpv6`, like the NDP/MLD builders); re-export
+// the body type, the Qtype/Code constants, and the decoder so the `icmp` root
+// surfaces them and the decode dispatch below reaches them.
 pub(crate) use self::message::ndp::{
     decode_neighbor_advertisement, decode_neighbor_solicitation, decode_redirect,
     decode_router_advertisement, decode_router_solicitation,
@@ -91,6 +97,13 @@ pub use self::message::ndp_option::{
     NDP_RDNSS_ADDRESS_LEN, NDP_REDIRECTED_HEADER_RESERVED_LEN,
     NDP_ROUTE_INFORMATION_LEN_FULL_PREFIX, NDP_ROUTE_INFORMATION_LEN_HALF_PREFIX,
     NDP_ROUTE_INFORMATION_LEN_NO_PREFIX, NDP_ROUTE_LIFETIME_INFINITY,
+};
+pub(crate) use self::message::node_info::decode_node_information;
+pub use self::message::node_info::{
+    NodeInformation, NI_NONCE_LEN, NI_QTYPE_IPV4_ADDRESSES, NI_QTYPE_NODE_ADDRESSES,
+    NI_QTYPE_NODE_NAME, NI_QTYPE_NOOP, NI_QUERY_CODE_SUBJECT_IPV4, NI_QUERY_CODE_SUBJECT_IPV6,
+    NI_QUERY_CODE_SUBJECT_NAME, NI_RESPONSE_CODE_REFUSED, NI_RESPONSE_CODE_SUCCESS,
+    NI_RESPONSE_CODE_UNKNOWN_QTYPE,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -895,6 +908,19 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
     if icmp_type == ICMPV6_REDIRECT {
         if let Ok(redirect) = decode_redirect(payload) {
             return Ok(packet.push(redirect));
+        }
+    }
+
+    // RFC 4620 section 4 Node Information Query (139) / Response (140),
+    // **experimental**: the Qtype and Flags were decoded with the header above
+    // (they are the rest-of-header); the trailing body is the 8-byte Nonce
+    // followed by the variable Data field. The two types share one body shape
+    // (the `type` byte distinguishes Query from Response), so they share a
+    // decoder. A body too short for the fixed Nonce keeps the bytes as a single
+    // `Raw` payload (no panic, nothing dropped).
+    if icmp_type == ICMPV6_NODE_INFORMATION_QUERY || icmp_type == ICMPV6_NODE_INFORMATION_RESPONSE {
+        if let Ok(node_info) = decode_node_information(payload) {
+            return Ok(packet.push(node_info));
         }
     }
 

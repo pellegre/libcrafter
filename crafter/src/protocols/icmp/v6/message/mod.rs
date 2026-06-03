@@ -14,3 +14,4 @@ pub mod extended_echo;
 pub mod mld;
 pub mod ndp;
 pub mod ndp_option;
+pub mod node_info;

@@ -226,6 +226,17 @@ pub use self::v6::{
     Mldv2Query, Mldv2Report, MulticastAddressRecord, MulticastListenerMessage, MulticastRecordType,
     MLDV2_QUERY_MIN_BODY_LEN, MLDV2_QUERY_QRV_MASK, MLDV2_QUERY_RESV_MASK, MLDV2_QUERY_S_FLAG,
 };
+// The experimental RFC 4620 Node Information Query / Response body (types
+// 139/140) and its Qtype / Code constants live in `v6/message/node_info.rs`.
+// Re-export them at the `icmp` root so the `protocols::mod.rs` re-exports and the
+// prelude surface them alongside the `Icmpv6` header, like the other ICMPv6
+// message bodies.
+pub use self::v6::{
+    NodeInformation, NI_NONCE_LEN, NI_QTYPE_IPV4_ADDRESSES, NI_QTYPE_NODE_ADDRESSES,
+    NI_QTYPE_NODE_NAME, NI_QTYPE_NOOP, NI_QUERY_CODE_SUBJECT_IPV4, NI_QUERY_CODE_SUBJECT_IPV6,
+    NI_QUERY_CODE_SUBJECT_NAME, NI_RESPONSE_CODE_REFUSED, NI_RESPONSE_CODE_SUCCESS,
+    NI_RESPONSE_CODE_UNKNOWN_QTYPE,
+};
 // The RFC 8335 ICMPv6 extended echo (types 160/161) flag-byte masks, reply
 // codes, and State values live in `v6/message/extended_echo.rs`. Re-export them
 // at the `icmp` root so the `protocols::mod.rs` re-exports and the prelude
