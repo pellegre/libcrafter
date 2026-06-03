@@ -215,11 +215,17 @@ pub use self::v6::{
     ICMPV6_NA_FLAG_SOLICITED, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT, ICMPV6_RA_DEFAULT_ROUTER_LIFETIME,
     ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED, ICMPV6_RA_FLAG_OTHER,
 };
-// The MLDv1 message body (RFC 2710 section 3, types 130-132) lives in
-// `v6/message/mld.rs`. Re-export it at the `icmp` root so the
-// `protocols::mod.rs` re-exports and the prelude surface it alongside the
-// `Icmpv6` header, like the other ICMPv6 message bodies.
-pub use self::v6::MulticastListenerMessage;
+// The MLDv1 message body (RFC 2710 section 3, types 130-132) and the MLDv2
+// message bodies (RFC 3810: the type-143 Version 2 Report with its Multicast
+// Address Records, and the extended type-130 Query) live in
+// `v6/message/mld.rs`. Re-export them — and the MLDv2 record type and Query
+// flag/length constants — at the `icmp` root so the `protocols::mod.rs`
+// re-exports and the prelude surface them alongside the `Icmpv6` header, like the
+// other ICMPv6 message bodies.
+pub use self::v6::{
+    Mldv2Query, Mldv2Report, MulticastAddressRecord, MulticastListenerMessage, MulticastRecordType,
+    MLDV2_QUERY_MIN_BODY_LEN, MLDV2_QUERY_QRV_MASK, MLDV2_QUERY_RESV_MASK, MLDV2_QUERY_S_FLAG,
+};
 // The RFC 8335 ICMPv6 extended echo (types 160/161) flag-byte masks, reply
 // codes, and State values live in `v6/message/extended_echo.rs`. Re-export them
 // at the `icmp` root so the `protocols::mod.rs` re-exports and the prelude

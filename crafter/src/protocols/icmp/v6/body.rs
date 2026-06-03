@@ -95,6 +95,19 @@ pub enum Icmpv6Body {
         /// the first half of the rest-of-header.
         max_response_delay: u16,
     },
+    /// RFC 3810 section 5.2 MLDv2 Version 2 Multicast Listener Report (143): the
+    /// four rest-of-header bytes are a 16-bit Reserved field and the 16-bit Nr of
+    /// Mcast Address Records (M); the Multicast Address Records themselves ride in
+    /// a trailing [`Mldv2Report`](super::message::mld::Mldv2Report) layer (the way
+    /// an echo body's data rides in a trailing [`Raw`]). This header-derived view
+    /// surfaces the record count from the rest-of-header; the records are read
+    /// back from the decoded layer.
+    Mldv2Report {
+        /// The Nr of Mcast Address Records (M) field (RFC 3810 sec 5.2: the
+        /// second half of the rest-of-header). The records themselves live in the
+        /// trailing Mldv2Report layer.
+        number_of_records: u16,
+    },
     /// RFC 4861 section 4.1 Router Solicitation (133): the four rest-of-header
     /// bytes are an unused, send-as-zero Reserved field; the message's NDP
     /// options ride in a trailing
@@ -315,6 +328,13 @@ impl Icmpv6Body {
                 // MulticastListenerMessage layer.
                 max_response_delay: u16::from_be_bytes([rest_of_header[0], rest_of_header[1]]),
             },
+            ICMPV6_MLDV2_REPORT => Icmpv6Body::Mldv2Report {
+                // RFC 3810 sec 5.2: the rest-of-header is a 16-bit Reserved field
+                // (bytes 0..2) followed by the 16-bit Nr of Mcast Address Records
+                // (bytes 2..4). The records live in the trailing Mldv2Report
+                // layer, not in this header-derived view.
+                number_of_records: u16::from_be_bytes([rest_of_header[2], rest_of_header[3]]),
+            },
             ICMPV6_ROUTER_SOLICITATION => Icmpv6Body::RouterSolicitation {
                 // RFC 4861 sec 4.1: the rest-of-header is the 32-bit Reserved
                 // field. The options live in the trailing RouterSolicitation
@@ -410,6 +430,7 @@ impl Icmpv6Body {
             Icmpv6Body::MulticastListenerQuery { .. } => "multicast-listener-query",
             Icmpv6Body::MulticastListenerReport { .. } => "multicast-listener-report",
             Icmpv6Body::MulticastListenerDone { .. } => "multicast-listener-done",
+            Icmpv6Body::Mldv2Report { .. } => "mldv2-report",
             Icmpv6Body::RouterSolicitation { .. } => "router-solicitation",
             Icmpv6Body::RouterAdvertisement { .. } => "router-advertisement",
             Icmpv6Body::NeighborSolicitation { .. } => "neighbor-solicitation",
@@ -448,6 +469,9 @@ impl Icmpv6Body {
             }
             Icmpv6Body::MulticastListenerDone { max_response_delay } => {
                 format!("multicast-listener-done(max_response_delay={max_response_delay})")
+            }
+            Icmpv6Body::Mldv2Report { number_of_records } => {
+                format!("mldv2-report(records={number_of_records})")
             }
             Icmpv6Body::RouterSolicitation { reserved } => {
                 format!("router-solicitation(reserved=0x{reserved:08x})")
