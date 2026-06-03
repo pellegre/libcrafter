@@ -348,7 +348,10 @@ fn tcp_option_constants_and_types_are_public() -> crafter::Result<()> {
     assert_eq!(crafter::TCP_OPTION_EDO, 237);
     assert_eq!(crafter::core::TCP_EDO_REQUEST_LEN, 2);
     assert_eq!(crafter::protocols::TCP_EDO_HEADER_LEN, 4);
-    assert_eq!(crafter::protocols::transport::TCP_EDO_HEADER_AND_SEGMENT_LEN, 6);
+    assert_eq!(
+        crafter::protocols::transport::TCP_EDO_HEADER_AND_SEGMENT_LEN,
+        6
+    );
 
     // Existing TCP flag constants through the same public paths.
     assert_eq!(TCP_FLAG_FIN, 0x001);
@@ -378,7 +381,10 @@ fn tcp_option_constants_and_types_are_public() -> crafter::Result<()> {
     assert_eq!(prelude_option.kind(), TCP_OPTION_MSS);
     assert_eq!(core_option.kind(), crafter::core::TCP_OPTION_WINDOW_SCALE);
     assert_eq!(root_option.kind(), crafter::TCP_OPTION_SACK_PERMITTED);
-    assert_eq!(protocols_option.kind(), crafter::protocols::TCP_OPTION_TIMESTAMP);
+    assert_eq!(
+        protocols_option.kind(),
+        crafter::protocols::TCP_OPTION_TIMESTAMP
+    );
     assert_eq!(transport_option.kind(), 0xfe);
     assert_eq!(transport_option.encode()?, vec![0xfe, 4, 0xaa, 0xbb]);
 
@@ -437,6 +443,258 @@ fn tcp_option_constants_and_types_are_public() -> crafter::Result<()> {
 }
 
 #[test]
+fn tcp_new_option_kind_constants_are_public() {
+    // The newer IANA TCP option-kind constants (User Timeout, TCP-AO, MD5,
+    // TCP-ENO, Accurate ECN, RFC 6994 experimental ExID kinds) are exported on
+    // the same public path the other newer TCP option constants use:
+    // crafter::protocols::transport. They name the wire value only.
+    use crafter::protocols::transport::{
+        TCP_OPTION_ACCURATE_ECN_ORDER_0, TCP_OPTION_ACCURATE_ECN_ORDER_1,
+        TCP_OPTION_EXPERIMENTAL_1, TCP_OPTION_EXPERIMENTAL_2, TCP_OPTION_MD5_SIGNATURE,
+        TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_ENO, TCP_OPTION_USER_TIMEOUT,
+    };
+
+    assert_eq!(TCP_OPTION_MD5_SIGNATURE, 19);
+    assert_eq!(TCP_OPTION_USER_TIMEOUT, 28);
+    assert_eq!(TCP_OPTION_TCP_AUTHENTICATION, 29);
+    assert_eq!(TCP_OPTION_TCP_ENO, 69);
+    assert_eq!(TCP_OPTION_ACCURATE_ECN_ORDER_0, 172);
+    assert_eq!(TCP_OPTION_ACCURATE_ECN_ORDER_1, 174);
+    assert_eq!(TCP_OPTION_EXPERIMENTAL_1, 253);
+    assert_eq!(TCP_OPTION_EXPERIMENTAL_2, 254);
+
+    // The option-length minimum/fixed-length constants are reachable too.
+    use crafter::protocols::transport::{
+        TCP_OPTION_ACCURATE_ECN_MIN_LEN, TCP_OPTION_EXPERIMENTAL_MIN_LEN,
+        TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN, TCP_OPTION_TCP_ENO_MIN_LEN,
+        TCP_OPTION_USER_TIMEOUT_LEN,
+    };
+    assert_eq!(TCP_OPTION_USER_TIMEOUT_LEN, 4);
+    assert_eq!(TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN, 4);
+    assert_eq!(TCP_OPTION_TCP_ENO_MIN_LEN, 2);
+    assert_eq!(TCP_OPTION_ACCURATE_ECN_MIN_LEN, 2);
+    assert_eq!(TCP_OPTION_EXPERIMENTAL_MIN_LEN, 4);
+}
+
+#[test]
+fn tcp_option_kind_classification_helpers_are_public() {
+    // The TcpOptionKindClass enum and the kind-class helpers reach through
+    // prelude, core, root, protocols, and protocols::transport, mirroring the
+    // UDP classification coverage.
+    let prelude_class: TcpOptionKindClass = TcpOptionKindClass::Assigned;
+    let core_class: crafter::core::TcpOptionKindClass =
+        crafter::core::TcpOptionKindClass::Experimental;
+    let root_class: crafter::TcpOptionKindClass = crafter::TcpOptionKindClass::Unassigned;
+    let protocols_class: crafter::protocols::TcpOptionKindClass =
+        crafter::protocols::TcpOptionKindClass::Assigned;
+    let transport_class: crafter::protocols::transport::TcpOptionKindClass =
+        crafter::protocols::transport::TcpOptionKindClass::Experimental;
+
+    assert_eq!(prelude_class, TcpOptionKindClass::Assigned);
+    assert_eq!(core_class, crafter::core::TcpOptionKindClass::Experimental);
+    assert_eq!(root_class, crafter::TcpOptionKindClass::Unassigned);
+    assert_eq!(
+        protocols_class,
+        crafter::protocols::TcpOptionKindClass::Assigned
+    );
+    assert_eq!(
+        transport_class,
+        crafter::protocols::transport::TcpOptionKindClass::Experimental
+    );
+
+    // tcp_option_kind_class / _is_assigned / _is_experimental are exported on
+    // every path that exports TcpOption.
+    assert_eq!(
+        tcp_option_kind_class(TCP_OPTION_MSS),
+        TcpOptionKindClass::Assigned
+    );
+    assert_eq!(
+        crafter::core::tcp_option_kind_class(crafter::core::TCP_OPTION_NOP),
+        crafter::core::TcpOptionKindClass::Assigned
+    );
+    assert_eq!(
+        crafter::tcp_option_kind_class(crafter::protocols::transport::TCP_OPTION_EXPERIMENTAL_1),
+        crafter::TcpOptionKindClass::Experimental
+    );
+    assert_eq!(
+        crafter::protocols::tcp_option_kind_class(200),
+        crafter::protocols::TcpOptionKindClass::Unassigned
+    );
+    assert!(crafter::protocols::transport::tcp_option_kind_is_assigned(
+        crafter::protocols::transport::TCP_OPTION_USER_TIMEOUT
+    ));
+    assert!(crafter::tcp_option_kind_is_assigned(TCP_OPTION_MSS));
+    assert!(crafter::core::tcp_option_kind_is_experimental(
+        crafter::protocols::transport::TCP_OPTION_EXPERIMENTAL_2
+    ));
+    assert!(!crafter::protocols::tcp_option_kind_is_experimental(
+        TCP_OPTION_MSS
+    ));
+
+    // tcp_option_kind_name is the display helper; it is exported through
+    // crafter::protocols::transport alongside the newer TCP items.
+    assert_eq!(
+        crafter::protocols::transport::tcp_option_kind_name(
+            crafter::protocols::transport::TCP_OPTION_USER_TIMEOUT
+        ),
+        "UTO"
+    );
+    assert_eq!(
+        crafter::protocols::transport::tcp_option_kind_name(200),
+        "opt"
+    );
+}
+
+#[test]
+fn tcp_new_option_variants_are_public() -> crafter::Result<()> {
+    // The new typed TcpOption variants (User Timeout, TCP-AO, TCP-ENO, Accurate
+    // ECN, RFC 6994 experimental) are constructible and inspectable through the
+    // public TcpOption type on every path that exports it. Each is byte-preserving
+    // and round-trips through encode/decode.
+    let user_timeout: TcpOption = TcpOption::user_timeout(true, 240);
+    let authentication = crafter::core::TcpOption::tcp_authentication(1, 2, vec![0xaa, 0xbb, 0xcc]);
+    let eno = crafter::TcpOption::tcp_eno(vec![0x01, 0x02]);
+    let accurate_ecn = crafter::protocols::TcpOption::accurate_ecn_order_0(vec![0x11, 0x22, 0x33]);
+    let accurate_ecn_1 = crafter::protocols::transport::TcpOption::accurate_ecn_order_1(vec![0x44]);
+    let experimental =
+        crafter::protocols::transport::TcpOption::experimental_1(0x1234, vec![0x55, 0x66]);
+    let fast_open = TcpOption::fast_open(vec![0x01, 0x02, 0x03, 0x04]);
+    let fast_open_request = TcpOption::fast_open_cookie_request();
+    let mptcp = TcpOption::multipath_tcp(
+        crafter::protocols::transport::MPTCP_SUBTYPE_MP_CAPABLE,
+        vec![0x00, 0x01],
+    );
+
+    // Typed accessors read back the values byte-for-byte.
+    assert_eq!(user_timeout.user_timeout_value(), Some((true, 240)));
+    assert_eq!(
+        user_timeout.kind(),
+        crafter::protocols::transport::TCP_OPTION_USER_TIMEOUT
+    );
+    assert_eq!(
+        authentication.tcp_authentication_value(),
+        Some((1, 2, &[0xaa, 0xbb, 0xcc][..]))
+    );
+    assert_eq!(authentication.key_id(), Some(1));
+    assert_eq!(authentication.rnext_key_id(), Some(2));
+    assert_eq!(eno.tcp_eno_suboptions(), Some(&[0x01, 0x02][..]));
+    // accurate_ecn_order() returns the AccECN kind byte that encodes the counter
+    // order (172 for AccECN0, 174 for AccECN1).
+    assert_eq!(
+        accurate_ecn.accurate_ecn_order(),
+        Some(crafter::protocols::transport::TCP_OPTION_ACCURATE_ECN_ORDER_0)
+    );
+    assert_eq!(
+        accurate_ecn.accurate_ecn_data(),
+        Some(&[0x11, 0x22, 0x33][..])
+    );
+    assert!(accurate_ecn_1.is_accurate_ecn());
+    assert_eq!(
+        accurate_ecn_1.accurate_ecn_order(),
+        Some(crafter::protocols::transport::TCP_OPTION_ACCURATE_ECN_ORDER_1)
+    );
+    assert_eq!(experimental.experiment_id(), Some(0x1234));
+    assert_eq!(experimental.experiment_data(), Some(&[0x55, 0x66][..]));
+    assert!(experimental.is_experimental());
+    assert_eq!(
+        fast_open.fast_open_cookie(),
+        Some(&[0x01, 0x02, 0x03, 0x04][..])
+    );
+    assert!(fast_open_request.is_fast_open_cookie_request());
+    assert!(mptcp.is_multipath_tcp());
+    assert_eq!(
+        mptcp.mptcp_subtype(),
+        Some(crafter::protocols::transport::MPTCP_SUBTYPE_MP_CAPABLE)
+    );
+
+    // The kind_name display helper is reachable on the option itself.
+    assert_eq!(user_timeout.kind_name(), "UTO");
+    assert_eq!(eno.kind_name(), "ENO");
+
+    // Each variant round-trips byte-for-byte through encode then decode.
+    for option in [
+        user_timeout,
+        authentication,
+        eno,
+        accurate_ecn,
+        accurate_ecn_1,
+        experimental,
+        fast_open,
+        fast_open_request,
+        mptcp,
+    ] {
+        let encoded = option.encode()?;
+        let decoded = TcpOption::decode_all(&encoded)?;
+        assert_eq!(decoded, vec![option]);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn tcp_sizing_helpers_are_public() {
+    // The TCP segment sizing helpers are exported on the same public path the
+    // other newer TCP items use: crafter::protocols::transport. They are pure
+    // const helpers for packet builders and model no connection state.
+    use crafter::protocols::transport::{
+        effective_mss, effective_mss_ipv4, effective_mss_ipv6, has_fin, has_syn, max_tcp_payload,
+        option_budget, remaining_option_budget, sequence_space_len, tcp_header_len,
+        valid_window_scale,
+    };
+
+    // The sizing constants behind the helpers are reachable too.
+    use crafter::protocols::transport::{
+        IPV4_HEADER_LEN_FOR_MSS, IPV6_HEADER_LEN_FOR_MSS, IPV6_MINIMUM_MTU, TCP_DEFAULT_IPV4_MSS,
+        TCP_FIXED_HEADER_LEN, TCP_MAX_OPTION_BYTES, TCP_WINDOW_SCALE_MAX_SHIFT,
+    };
+
+    assert_eq!(TCP_FIXED_HEADER_LEN, 20);
+    assert_eq!(TCP_MAX_OPTION_BYTES, 40);
+    assert_eq!(TCP_DEFAULT_IPV4_MSS, 536);
+    assert_eq!(IPV6_MINIMUM_MTU, 1280);
+    assert_eq!(IPV4_HEADER_LEN_FOR_MSS, 20);
+    assert_eq!(IPV6_HEADER_LEN_FOR_MSS, 40);
+    assert_eq!(TCP_WINDOW_SCALE_MAX_SHIFT, 14);
+
+    // Header / option-budget helpers.
+    assert_eq!(tcp_header_len(0), 20);
+    assert_eq!(tcp_header_len(3), 24); // padded to the 32-bit boundary.
+    assert_eq!(option_budget(), 40);
+    assert_eq!(remaining_option_budget(12), 28);
+    assert_eq!(remaining_option_budget(100), 0); // saturates at zero.
+
+    // max_tcp_payload subtracts the IP and TCP headers from the path MTU.
+    assert_eq!(max_tcp_payload(1500, 20, 20), 1460);
+    assert_eq!(max_tcp_payload(40, 20, 20), 0); // saturates, never underflows.
+
+    // Effective MSS guidance for both IP versions.
+    assert_eq!(effective_mss_ipv4(None), 536);
+    assert_eq!(effective_mss_ipv4(Some(1500)), 1460);
+    assert_eq!(effective_mss_ipv6(None), 1220);
+    assert_eq!(effective_mss(false, Some(1500)), 1460);
+    assert_eq!(effective_mss(true, None), 1220);
+
+    // Sequence-space helpers.
+    assert!(has_syn(TCP_FLAG_SYN));
+    assert!(!has_syn(TCP_FLAG_ACK));
+    assert!(has_fin(TCP_FLAG_FIN));
+    assert_eq!(sequence_space_len(TCP_FLAG_SYN, 0), 1);
+    assert_eq!(sequence_space_len(TCP_FLAG_SYN | TCP_FLAG_FIN, 10), 12);
+    assert_eq!(sequence_space_len(TCP_FLAG_ACK, 5), 5);
+
+    // Window-scale validity guidance (RFC 7323 section 2.3).
+    assert!(valid_window_scale(0));
+    assert!(valid_window_scale(TCP_WINDOW_SCALE_MAX_SHIFT));
+    assert!(!valid_window_scale(15));
+
+    // The same helpers are also reachable as methods on the Tcp segment.
+    let tcp: Tcp = Tcp::new().flags(TCP_FLAG_SYN | TCP_FLAG_FIN);
+    assert!(tcp.has_syn());
+    assert!(tcp.has_fin());
+    assert_eq!(tcp.sequence_space_len(7), 9);
+}
+
+#[test]
 fn tcp_mptcp_subtype_constants_are_public() {
     // The MPTCP subtype constants (RFC 8684 section 3 / IANA MPTCP Option
     // Subtypes registry) are reachable through the same public path the other
@@ -487,8 +745,8 @@ fn tcp_mptcp_tcprst_reason_constants_are_public() {
     use crafter::protocols::transport::{
         MPTCP_TCPRST_REASON_ADMINISTRATIVELY_PROHIBITED, MPTCP_TCPRST_REASON_LACK_OF_RESOURCES,
         MPTCP_TCPRST_REASON_MIDDLEBOX_INTERFERENCE, MPTCP_TCPRST_REASON_MPTCP_SPECIFIC,
-        MPTCP_TCPRST_REASON_TOO_MUCH_OUTSTANDING_DATA, MPTCP_TCPRST_REASON_UNACCEPTABLE_PERFORMANCE,
-        MPTCP_TCPRST_REASON_UNSPECIFIED,
+        MPTCP_TCPRST_REASON_TOO_MUCH_OUTSTANDING_DATA,
+        MPTCP_TCPRST_REASON_UNACCEPTABLE_PERFORMANCE, MPTCP_TCPRST_REASON_UNSPECIFIED,
     };
 
     // RFC 8684 section 3.6 reason code values, 0x00..=0x06.
@@ -512,7 +770,8 @@ fn tcp_mptcp_tcprst_reason_constants_are_public() {
         Some(MPTCP_TCPRST_REASON_ADMINISTRATIVELY_PROHIBITED)
     );
 
-    let dss = TcpOption::multipath_tcp(crafter::protocols::transport::MPTCP_SUBTYPE_DSS, vec![0x00]);
+    let dss =
+        TcpOption::multipath_tcp(crafter::protocols::transport::MPTCP_SUBTYPE_DSS, vec![0x00]);
     assert_eq!(dss.mptcp_tcprst_reason(), None);
 }
 
