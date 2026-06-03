@@ -268,6 +268,16 @@ pub(crate) fn icmpv6_type_summary(icmp_type: u8) -> String {
         ICMPV6_PARAMETER_PROBLEM => "parameter-problem(4)".to_string(),
         ICMPV6_ECHO_REQUEST => "echo-request(128)".to_string(),
         ICMPV6_ECHO_REPLY => "echo-reply(129)".to_string(),
+        // IPv6 Neighbor Discovery message types (RFC 4861, types 133–137).
+        // Steps 16–20 model the bodies that ride under each of these; the
+        // readable summary name belongs with the type, so it is added here once
+        // and reused by every NDP message. The codepoint stays visible in
+        // parentheses, matching the echo/error rendering above.
+        ICMPV6_ROUTER_SOLICITATION => "router-solicitation(133)".to_string(),
+        ICMPV6_ROUTER_ADVERTISEMENT => "router-advertisement(134)".to_string(),
+        ICMPV6_NEIGHBOR_SOLICITATION => "neighbor-solicitation(135)".to_string(),
+        ICMPV6_NEIGHBOR_ADVERTISEMENT => "neighbor-advertisement(136)".to_string(),
+        ICMPV6_REDIRECT => "redirect(137)".to_string(),
         value => value.to_string(),
     }
 }

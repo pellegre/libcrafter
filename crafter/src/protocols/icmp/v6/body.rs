@@ -49,6 +49,18 @@ pub enum Icmpv6Body {
     /// type-specific fields are reported here, followed by the quoted packet
     /// that triggered the error (carried as trailing layers).
     Error(Icmpv6ErrorBody),
+    /// RFC 4861 section 4.1 Router Solicitation (133): the four rest-of-header
+    /// bytes are an unused, send-as-zero Reserved field; the message's NDP
+    /// options ride in a trailing
+    /// [`RouterSolicitation`](super::message::ndp::RouterSolicitation) layer (the
+    /// way an echo body's data rides in a trailing [`Raw`]). This variant is the
+    /// first NDP body; Router/Neighbor Advertisement, Neighbor Solicitation, and
+    /// Redirect (133–137) join it in later steps.
+    RouterSolicitation {
+        /// The 32-bit Reserved field from the rest-of-header (RFC 4861 sec 4.1:
+        /// sent as zero, preserved verbatim here so a non-zero value is visible).
+        reserved: u32,
+    },
     /// Any ICMPv6 `type` not yet modeled with a typed body. The four
     /// rest-of-header bytes are preserved verbatim and any trailing bytes stay a
     /// [`Raw`] payload, so unknown messages round-trip unchanged.
@@ -95,8 +107,10 @@ impl Icmpv6Body {
         let rest_of_header = header.rest_of_header_value();
         // extensible: NDP (133-137), MLD (130-132, 143), node information
         // (139/140), and extended echo (160/161) gain their own arms here in
-        // later steps. Until then they fall through to `Unknown`, preserving the
-        // raw rest-of-header so the messages still round-trip.
+        // later steps. Router Solicitation (133) is classified below; the
+        // remaining NDP types and the other families still fall through to
+        // `Unknown`, preserving the raw rest-of-header so the messages still
+        // round-trip.
         match icmp_type {
             ICMPV6_ECHO_REQUEST | ICMPV6_ECHO_REPLY => {
                 let identifier = u16::from_be_bytes([rest_of_header[0], rest_of_header[1]]);
@@ -116,6 +130,12 @@ impl Icmpv6Body {
             ICMPV6_PARAMETER_PROBLEM => Icmpv6Body::Error(Icmpv6ErrorBody::ParameterProblem {
                 pointer: u32::from_be_bytes(rest_of_header),
             }),
+            ICMPV6_ROUTER_SOLICITATION => Icmpv6Body::RouterSolicitation {
+                // RFC 4861 sec 4.1: the rest-of-header is the 32-bit Reserved
+                // field. The options live in the trailing RouterSolicitation
+                // layer, not in this header-derived view.
+                reserved: u32::from_be_bytes(rest_of_header),
+            },
             _ => Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,
@@ -129,6 +149,7 @@ impl Icmpv6Body {
         match self {
             Icmpv6Body::Echo { .. } => "echo",
             Icmpv6Body::Error(_) => "error",
+            Icmpv6Body::RouterSolicitation { .. } => "router-solicitation",
             Icmpv6Body::Unknown { .. } => "unknown",
         }
     }
@@ -152,6 +173,9 @@ impl Icmpv6Body {
                     format!("error(parameter-problem, pointer={pointer})")
                 }
             },
+            Icmpv6Body::RouterSolicitation { reserved } => {
+                format!("router-solicitation(reserved=0x{reserved:08x})")
+            }
             Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,

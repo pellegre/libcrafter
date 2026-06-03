@@ -6,7 +6,10 @@
 //! that compose under an `Icmpv6` header, mirroring the way ICMPv4 layers its
 //! timestamp / address-mask / quoted-IP bodies. It currently holds the shared
 //! Neighbor Discovery option TLV framework
-//! ([`ndp_option`]); the concrete NDP/MLD/node-info/extended-echo message bodies
-//! are added in later steps.
+//! ([`ndp_option`]) plus the first Neighbor Discovery message body, Router
+//! Solicitation ([`ndp`]); the remaining NDP/MLD/node-info/extended-echo
+//! message bodies are added in later steps following the pattern documented in
+//! [`ndp`].
 
+pub mod ndp;
 pub mod ndp_option;
