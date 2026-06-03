@@ -78,9 +78,16 @@ pub enum Icmpv6Body {
         /// The O (Other Configuration) flag — RFC 4861 sec 4.2 bit 0x40;
         /// RFC 4862 sec 5.2: other configuration is available via DHCPv6.
         other: bool,
-        /// The six Reserved flag bits (RFC 4861 sec 4.2: send-as-zero), preserved
-        /// verbatim so a non-zero value (or a later RFC 5175/4191 assignment) is
-        /// visible. These are the low six bits of the flags byte.
+        /// The Default Router Preference (Prf) — RFC 4191 sec 2.2 bits 0x18 of
+        /// the flags byte. RFC 4191 reassigned two of RFC 4861's send-as-zero
+        /// Reserved bits to this 2-bit preference; it is decoded here rather than
+        /// folded into [`reserved_flags`](Self::RouterAdvertisement::reserved_flags).
+        preference: Prf,
+        /// The remaining Reserved flag bits (RFC 4861 sec 4.2: send-as-zero),
+        /// preserved verbatim so a non-zero value (or a later RFC 5175 "H"
+        /// assignment at 0x20) is visible. This is the flags byte with M (0x80),
+        /// O (0x40), and the RFC 4191 Prf bits (0x18) masked out — i.e. the bits
+        /// 0x27 (the 0x20 "H" bit and the low three reserved bits).
         reserved_flags: u8,
         /// Router Lifetime in seconds (RFC 4861 sec 4.2: how long this router is
         /// a default router; 0 = not a default router).
@@ -212,15 +219,19 @@ impl Icmpv6Body {
             ICMPV6_ROUTER_ADVERTISEMENT => {
                 // RFC 4861 sec 4.2: rest-of-header = Cur Hop Limit (byte 0),
                 // flags byte (byte 1: 0x80 M, 0x40 O, low six bits Reserved),
-                // Router Lifetime (bytes 2..4). The Reachable-Time / Retrans-
-                // Timer words and options live in the trailing
-                // RouterAdvertisement layer, not in this header-derived view.
+                // Router Lifetime (bytes 2..4). RFC 4191 sec 2.2 reassigns bits
+                // 0x18 of the flags byte to the Default Router Preference (Prf);
+                // it is decoded here, and the remaining bits (0x27) stay in
+                // reserved_flags. The Reachable-Time / Retrans-Timer words and
+                // options live in the trailing RouterAdvertisement layer, not in
+                // this header-derived view.
                 let flags = rest_of_header[1];
                 Icmpv6Body::RouterAdvertisement {
                     cur_hop_limit: rest_of_header[0],
                     managed: flags & ICMPV6_RA_FLAG_MANAGED != 0,
                     other: flags & ICMPV6_RA_FLAG_OTHER != 0,
-                    reserved_flags: flags & ICMPV6_RA_FLAGS_RESERVED,
+                    preference: Prf::from_flag_byte(flags),
+                    reserved_flags: flags & ICMPV6_RA_FLAGS_RESERVED & !NDP_PRF_MASK,
                     router_lifetime: u16::from_be_bytes([rest_of_header[2], rest_of_header[3]]),
                 }
             }
@@ -299,11 +310,13 @@ impl Icmpv6Body {
                 cur_hop_limit,
                 managed,
                 other,
+                preference,
                 reserved_flags,
                 router_lifetime,
             } => format!(
                 "router-advertisement(cur_hop_limit={cur_hop_limit}, M={managed}, O={other}, \
-                 reserved_flags=0x{reserved_flags:02x}, router_lifetime={router_lifetime})"
+                 prf={preference:?}, reserved_flags=0x{reserved_flags:02x}, \
+                 router_lifetime={router_lifetime})"
             ),
             Icmpv6Body::NeighborSolicitation { reserved } => {
                 format!("neighbor-solicitation(reserved=0x{reserved:08x})")

@@ -185,7 +185,7 @@ pub use self::v6::{Icmpv6Body, Icmpv6ErrorBody};
 // the `protocols::mod.rs` re-exports and the prelude surface them alongside the
 // `Icmpv6` header, like the other ICMPv6 types.
 pub use self::v6::{
-    ndp_option_type_is_known, ndp_option_type_name, NdpOption, NdpOptions,
+    ndp_option_type_is_known, ndp_option_type_name, NdpOption, NdpOptions, Prf,
     NDP_LINK_LAYER_ADDR_ETHERNET_LEN, NDP_MTU_OPTION_LEN, NDP_MTU_OPTION_UNITS,
     NDP_OPTION_HEADER_LEN, NDP_OPTION_LENGTH_UNIT, NDP_OPT_CAPTIVE_PORTAL, NDP_OPT_DNSSL,
     NDP_OPT_MTU, NDP_OPT_NONCE, NDP_OPT_PREF64, NDP_OPT_PREFIX_INFORMATION,
@@ -193,7 +193,9 @@ pub use self::v6::{
     NDP_OPT_ROUTE_INFORMATION, NDP_OPT_SOURCE_LINK_LAYER_ADDR, NDP_OPT_TARGET_LINK_LAYER_ADDR,
     NDP_PREFIX_FLAGS_RESERVED, NDP_PREFIX_FLAG_AUTONOMOUS, NDP_PREFIX_FLAG_ON_LINK,
     NDP_PREFIX_INFORMATION_LEN, NDP_PREFIX_INFORMATION_UNITS, NDP_PREFIX_LIFETIME_INFINITY,
-    NDP_REDIRECTED_HEADER_RESERVED_LEN,
+    NDP_PRF_MASK, NDP_PRF_SHIFT, NDP_REDIRECTED_HEADER_RESERVED_LEN,
+    NDP_ROUTE_INFORMATION_LEN_FULL_PREFIX, NDP_ROUTE_INFORMATION_LEN_HALF_PREFIX,
+    NDP_ROUTE_INFORMATION_LEN_NO_PREFIX, NDP_ROUTE_LIFETIME_INFINITY,
 };
 // The Router Solicitation (RFC 4861 section 4.1), Router Advertisement
 // (RFC 4861 section 4.2), Neighbor Solicitation (RFC 4861 section 4.3), Neighbor

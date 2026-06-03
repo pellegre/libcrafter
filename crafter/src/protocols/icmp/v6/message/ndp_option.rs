@@ -147,6 +147,110 @@ pub const NDP_MTU_OPTION_UNITS: u8 = 1;
 /// sender and MUST be ignored by the receiver".
 pub const NDP_REDIRECTED_HEADER_RESERVED_LEN: usize = 6;
 
+/// Bit mask of the 2-bit Route Preference (Prf) field as it sits inside a flags
+/// byte (RFC 4191 sec 2.1 / sec 2.3: the two bits after the M/O/H flags, mask
+/// `0x18` = binary `00011000`). The same mask and 2-bit encoding apply to the
+/// Default Router Preference in the Router Advertisement flags byte and to the
+/// Prf field in the Route Information option's flags/reserved byte.
+pub const NDP_PRF_MASK: u8 = 0x18;
+
+/// Bit position (number of low bits below the field) of the 2-bit Route
+/// Preference (Prf) field inside a flags byte (RFC 4191: the field occupies bits
+/// 4..=3, so it is shifted left by 3).
+pub const NDP_PRF_SHIFT: u8 = 3;
+
+/// Total length, in octets, of a Route Information option whose `Length` field is
+/// 1 (RFC 4191 sec 2.3: no Prefix — Type, Length, Prefix Length, the flags byte,
+/// and the 4-byte Route Lifetime fill exactly one 8-octet unit).
+pub const NDP_ROUTE_INFORMATION_LEN_NO_PREFIX: usize = 8;
+
+/// Total length, in octets, of a Route Information option whose `Length` field is
+/// 2 (RFC 4191 sec 2.3: an 8-octet Prefix — the high 64 bits).
+pub const NDP_ROUTE_INFORMATION_LEN_HALF_PREFIX: usize = 16;
+
+/// Total length, in octets, of a Route Information option whose `Length` field is
+/// 3 (RFC 4191 sec 2.3: a 16-octet Prefix — the full 128-bit address).
+pub const NDP_ROUTE_INFORMATION_LEN_FULL_PREFIX: usize = 24;
+
+/// The Route Lifetime value (seconds) that RFC 4191 sec 2.3 defines as infinity
+/// (`0xffffffff`).
+pub const NDP_ROUTE_LIFETIME_INFINITY: u32 = 0xffff_ffff;
+
+/// IPv6 Route / Default Router Preference (Prf), RFC 4191 sections 2.1 and 2.3.
+///
+/// The preference is "encoded as a two-bit signed integer" and appears in two
+/// places with the same encoding: the Default Router Preference in the Router
+/// Advertisement flags byte (RFC 4191 sec 2.2, mask [`NDP_PRF_MASK`] = `0x18`)
+/// and the Route Preference in the Route Information option (RFC 4191 sec 2.3,
+/// same mask). The four 2-bit codepoints are (RFC 4191 sec 2.1):
+///
+/// ```text
+/// 01  High
+/// 00  Medium (default)
+/// 11  Low
+/// 10  Reserved - MUST NOT be sent
+/// ```
+///
+/// [`Prf::Reserved`] (`10`) "MUST NOT be sent" and, per RFC 4191 sec 2.1, a
+/// receiver "MUST treat a value of 10 as if it were 00 (Medium)". `crafter`
+/// preserves the wire value faithfully — it decodes `10` to [`Prf::Reserved`]
+/// rather than silently folding it to Medium — so an agent can both inspect a
+/// peer that sent the reserved value and emit it on purpose to exercise a stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Prf {
+    /// High preference (RFC 4191 sec 2.1: 2-bit value `01`).
+    High,
+    /// Medium preference — the default (RFC 4191 sec 2.1: 2-bit value `00`).
+    #[default]
+    Medium,
+    /// Low preference (RFC 4191 sec 2.1: 2-bit value `11`).
+    Low,
+    /// The reserved 2-bit value `10` (RFC 4191 sec 2.1: "MUST NOT be sent";
+    /// treated as Medium on receipt). Preserved verbatim so it round-trips.
+    Reserved,
+}
+
+impl Prf {
+    /// The 2-bit value (0..=3) for this preference (RFC 4191 sec 2.1).
+    ///
+    /// Returns the raw two-bit code, *not* the value shifted into the `0x18`
+    /// field position; see [`Prf::to_flag_bits`] for the in-byte placement.
+    pub const fn to_bits(self) -> u8 {
+        match self {
+            // RFC 4191 sec 2.1: 01 High, 00 Medium, 11 Low, 10 Reserved.
+            Prf::High => 0b01,
+            Prf::Medium => 0b00,
+            Prf::Low => 0b11,
+            Prf::Reserved => 0b10,
+        }
+    }
+
+    /// Decode a 2-bit value (only the low two bits are consulted) into a [`Prf`]
+    /// (RFC 4191 sec 2.1).
+    pub const fn from_bits(bits: u8) -> Self {
+        match bits & 0b11 {
+            0b01 => Prf::High,
+            0b00 => Prf::Medium,
+            0b11 => Prf::Low,
+            // 0b10
+            _ => Prf::Reserved,
+        }
+    }
+
+    /// Place this preference into its `0x18` field position within a flags byte
+    /// (RFC 4191 sec 2.2 / sec 2.3): the 2-bit value shifted left by
+    /// [`NDP_PRF_SHIFT`] and masked with [`NDP_PRF_MASK`].
+    pub const fn to_flag_bits(self) -> u8 {
+        (self.to_bits() << NDP_PRF_SHIFT) & NDP_PRF_MASK
+    }
+
+    /// Read the preference out of a flags byte (RFC 4191 sec 2.2 / sec 2.3):
+    /// extract the `0x18` field and decode it.
+    pub const fn from_flag_byte(flags: u8) -> Self {
+        Self::from_bits((flags & NDP_PRF_MASK) >> NDP_PRF_SHIFT)
+    }
+}
+
 /// Return the human-readable name for a recognized NDP option type, or `None`
 /// for an unassigned/unrecognized type.
 ///
@@ -547,6 +651,157 @@ impl NdpOption {
         self.value().get(NDP_REDIRECTED_HEADER_RESERVED_LEN..)
     }
 
+    /// Build a Route Information option (type 24) advertising a more-specific
+    /// route and its preference (RFC 4191 section 2.3).
+    ///
+    /// The number of 8-octet units the option occupies is chosen from
+    /// `prefix_len`, per RFC 4191 section 2.3 ("The Prefix field is 0, 8, or 16
+    /// octets depending on Length", and the Length field "is 1, 2, or 3 depending
+    /// on the Prefix Length"):
+    ///
+    /// - `prefix_len == 0` → `Length` 1, **no** Prefix octets (a default-route
+    ///   preference);
+    /// - `1..=64` → `Length` 2, the high **8** octets of the prefix;
+    /// - `65..=128` → `Length` 3, the full **16**-octet prefix.
+    ///
+    /// The encoded value (after the two-byte Type/Length header) is laid out per
+    /// RFC 4191 section 2.3:
+    ///
+    /// ```text
+    /// Prefix Length (1) | Resvd|Prf|Resvd (1) | Route Lifetime (4) | Prefix (0/8/16)
+    /// ```
+    ///
+    /// where the flags byte carries the [`Prf`] preference in bits `0x18`
+    /// ([`NDP_PRF_MASK`]) and all other bits Reserved (sent zero). The prefix is
+    /// truncated to the number of octets the chosen `Length` carries, so only the
+    /// leading bits that `prefix_len` covers are placed on the wire (RFC 4191
+    /// section 2.3: "The bits in the prefix after the prefix length are reserved
+    /// and MUST be initialized to zero by the sender and ignored by the
+    /// receiver"). `route_lifetime` is in seconds;
+    /// [`NDP_ROUTE_LIFETIME_INFINITY`] (`0xffffffff`) means infinity.
+    ///
+    /// This is a typed constructor over the framework: it produces a
+    /// [`NdpOption::Generic`] whose value bytes are the option fields, so it
+    /// round-trips through [`NdpOptions`] exactly like any other recognized
+    /// option, and [`NdpOption::route_prefix`] /
+    /// [`NdpOption::route_prefix_length`] / [`NdpOption::route_preference`] /
+    /// [`NdpOption::route_lifetime`] read each field back. To choose the encoded
+    /// `Length` (and therefore the carried prefix octets) independently of
+    /// `prefix_len`, or to set the Reserved bits on purpose, use
+    /// [`NdpOption::route_information_raw`].
+    pub fn route_information(
+        prefix: Ipv6Addr,
+        prefix_len: u8,
+        preference: Prf,
+        route_lifetime: u32,
+    ) -> Self {
+        // RFC 4191 sec 2.3: the Length field (and therefore the carried prefix
+        // octets) follows from the Prefix Length.
+        let prefix_octets = route_prefix_octets_for_len(prefix_len);
+        Self::route_information_raw(
+            prefix,
+            prefix_len,
+            preference.to_flag_bits(),
+            route_lifetime,
+            prefix_octets,
+        )
+    }
+
+    /// Build a Route Information option (type 24) with the full flags byte and an
+    /// explicit number of carried prefix octets (RFC 4191 section 2.3).
+    ///
+    /// This is the honored-overrides escape hatch behind
+    /// [`NdpOption::route_information`]: `flags` is written verbatim (so the Prf
+    /// bits *and* the Reserved bits — which RFC 4191 says to send as zero — survive
+    /// untouched, for a forward-compatible or deliberately malformed packet), and
+    /// `prefix_octets` selects exactly how many leading octets of `prefix` are
+    /// placed on the wire. `prefix_octets` is clamped to 16; passing 0, 8, or 16
+    /// yields the RFC 4191 section 2.3 `Length` 1/2/3 forms (the auto-filled
+    /// option `Length` rounds the whole option up to the 8-octet boundary). Any
+    /// carried prefix octets beyond `prefix_octets` are dropped; if `prefix_octets`
+    /// is not a multiple of 8, the framework's length auto-fill zero-pads the value
+    /// up to the next unit.
+    pub fn route_information_raw(
+        prefix: Ipv6Addr,
+        prefix_len: u8,
+        flags: u8,
+        route_lifetime: u32,
+        prefix_octets: usize,
+    ) -> Self {
+        // RFC 4191 sec 2.3 value layout (after the Type/Length header):
+        //   Prefix Length(1) | Resvd|Prf|Resvd(1) | Route Lifetime(4) | Prefix(0/8/16)
+        let carried = prefix_octets.min(16);
+        let mut value = Vec::with_capacity(6 + carried);
+        value.push(prefix_len);
+        value.push(flags);
+        value.extend_from_slice(&route_lifetime.to_be_bytes());
+        value.extend_from_slice(&prefix.octets()[..carried]);
+        Self::generic(NDP_OPT_ROUTE_INFORMATION, value)
+    }
+
+    /// Read the raw flags byte (`Resvd|Prf|Resvd`) of a Route Information option
+    /// (type 24), or `None` for any other option or a truncated value (RFC 4191
+    /// sec 2.3).
+    fn route_flags(&self) -> Option<u8> {
+        if self.option_type() != NDP_OPT_ROUTE_INFORMATION {
+            return None;
+        }
+        // value[1] is the flags byte (value[0] is Prefix Length).
+        self.value().get(1).copied()
+    }
+
+    /// Read the Prefix Length field (0..=128) of a Route Information option (type
+    /// 24), or `None` for any other option or a truncated value (RFC 4191 sec
+    /// 2.3).
+    pub fn route_prefix_length(&self) -> Option<u8> {
+        if self.option_type() != NDP_OPT_ROUTE_INFORMATION {
+            return None;
+        }
+        self.value().first().copied()
+    }
+
+    /// Read the Route Preference (Prf) of a Route Information option (type 24),
+    /// decoded from the `0x18` bits of the flags byte (RFC 4191 sec 2.3), or
+    /// `None` for any other option or a truncated value.
+    pub fn route_preference(&self) -> Option<Prf> {
+        self.route_flags().map(Prf::from_flag_byte)
+    }
+
+    /// Read the Route Lifetime (seconds; `0xffffffff` = infinity) of a Route
+    /// Information option (type 24), or `None` for any other option or a truncated
+    /// value (RFC 4191 sec 2.3).
+    pub fn route_lifetime(&self) -> Option<u32> {
+        if self.option_type() != NDP_OPT_ROUTE_INFORMATION {
+            return None;
+        }
+        let value = self.value();
+        let word = value.get(2..6)?;
+        Some(u32::from_be_bytes([word[0], word[1], word[2], word[3]]))
+    }
+
+    /// Read the Prefix carried by a Route Information option (type 24) as a full
+    /// 128-bit [`Ipv6Addr`], zero-extending the trailing octets that the option's
+    /// `Length` form did not carry (RFC 4191 sec 2.3: a Length-1 option carries no
+    /// prefix octets, Length-2 the high 8, Length-3 all 16).
+    ///
+    /// Returns `None` for any other option or a value too short to hold the
+    /// 6-octet fixed head (Prefix Length, flags, Route Lifetime). The carried
+    /// prefix octets are taken verbatim and the rest are zero — matching the wire,
+    /// where the bits beyond the prefix length are reserved and sent zero.
+    pub fn route_prefix(&self) -> Option<Ipv6Addr> {
+        if self.option_type() != NDP_OPT_ROUTE_INFORMATION {
+            return None;
+        }
+        let value = self.value();
+        // The prefix octets follow the 6-byte fixed head; there are 0, 8, or 16
+        // of them. Capture however many are present (up to 16) and zero-extend.
+        let carried = value.get(6..)?;
+        let take = carried.len().min(16);
+        let mut octets = [0u8; 16];
+        octets[..take].copy_from_slice(&carried[..take]);
+        Some(Ipv6Addr::from(octets))
+    }
+
     /// Pin the `Length` field (in units of 8 octets) to an explicit value.
     ///
     /// The pinned value is emitted verbatim by [`Self::encode`], even when it
@@ -834,6 +1089,25 @@ impl<'a> IntoIterator for &'a NdpOptions {
 
     fn into_iter(self) -> Self::IntoIter {
         self.options.iter()
+    }
+}
+
+/// Choose how many octets of the prefix a Route Information option carries from
+/// its Prefix Length, per RFC 4191 section 2.3 (the Length field "is 1, 2, or 3
+/// depending on the Prefix Length", carrying 0, 8, or 16 prefix octets):
+///
+/// - `0` → 0 octets (Length 1, no prefix);
+/// - `1..=64` → 8 octets (Length 2, the high 64 bits);
+/// - `65..=128` → 16 octets (Length 3, the full address).
+///
+/// A `prefix_len` above 128 is out of range; it is clamped to the 16-octet form
+/// (the most that can be carried) rather than rejected, so a deliberately
+/// out-of-range length still produces a well-formed option.
+fn route_prefix_octets_for_len(prefix_len: u8) -> usize {
+    match prefix_len {
+        0 => 0,
+        1..=64 => 8,
+        _ => 16,
     }
 }
 
@@ -1361,5 +1635,173 @@ mod tests {
         area.extend_from_slice(&[NDP_OPT_RDNSS, 5, 0, 0]);
         let err = NdpOptions::decode(&area).unwrap_err();
         assert!(matches!(err, CrafterError::BufferTooShort { .. }));
+    }
+
+    // RFC 4191 sec 2.1: the 2-bit Prf encoding round-trips to/from its raw value
+    // (01 High, 00 Medium, 11 Low, 10 Reserved) and to/from its `0x18` field
+    // position inside a flags byte.
+    #[test]
+    fn prf_encoding_round_trips() {
+        // Raw 2-bit values per RFC 4191 sec 2.1.
+        assert_eq!(Prf::High.to_bits(), 0b01);
+        assert_eq!(Prf::Medium.to_bits(), 0b00);
+        assert_eq!(Prf::Low.to_bits(), 0b11);
+        assert_eq!(Prf::Reserved.to_bits(), 0b10);
+        // Medium is the default (RFC 4191 sec 2.1).
+        assert_eq!(Prf::default(), Prf::Medium);
+
+        for prf in [Prf::High, Prf::Medium, Prf::Low, Prf::Reserved] {
+            // Raw value round-trips.
+            assert_eq!(Prf::from_bits(prf.to_bits()), prf);
+            // Field-position (0x18) round-trips, and the placed bits never
+            // escape the mask.
+            let flag_bits = prf.to_flag_bits();
+            assert_eq!(flag_bits & !NDP_PRF_MASK, 0, "Prf bits stay within 0x18");
+            assert_eq!(Prf::from_flag_byte(flag_bits), prf);
+            // Other bits in the flags byte are ignored when reading Prf back.
+            assert_eq!(Prf::from_flag_byte(flag_bits | !NDP_PRF_MASK), prf);
+        }
+
+        // Concrete placements: High=01 -> 0x08, Low=11 -> 0x18, Reserved=10 -> 0x10.
+        assert_eq!(Prf::High.to_flag_bits(), 0x08);
+        assert_eq!(Prf::Medium.to_flag_bits(), 0x00);
+        assert_eq!(Prf::Low.to_flag_bits(), 0x18);
+        assert_eq!(Prf::Reserved.to_flag_bits(), 0x10);
+    }
+
+    // RFC 4191 sec 2.3: a Route Information option (type 24) takes 1, 2, or 3
+    // 8-octet units depending on the Prefix Length, carrying 0, 8, or 16 prefix
+    // octets. Round-trip each form and assert the on-wire Length field, the
+    // carried prefix octets, and every typed accessor.
+    #[test]
+    fn route_information_round_trips_each_prefix_form() {
+        // (prefix, prefix_len, expected Length field, expected carried octets)
+        let cases = [
+            // Default-route preference: no prefix (RFC 4191 Length 1).
+            (Ipv6Addr::UNSPECIFIED, 0u8, 1u8, 0usize),
+            // 2001:db8::/32 -> high 8 octets (RFC 4191 Length 2).
+            (Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32, 2, 8),
+            // 2001:db8:1::/48 -> still the high 8 octets (Length 2).
+            (
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0001, 0, 0, 0, 0, 0),
+                48,
+                2,
+                8,
+            ),
+            // 2001:db8:1:2::/96 -> full 16 octets (RFC 4191 Length 3).
+            (
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0001, 0x0002, 0, 0, 0, 0),
+                96,
+                3,
+                16,
+            ),
+        ];
+
+        for (prefix, prefix_len, expected_length, expected_carried) in cases {
+            let opt = NdpOption::route_information(prefix, prefix_len, Prf::High, 1800);
+            assert_eq!(opt.option_type(), NDP_OPT_ROUTE_INFORMATION);
+            assert!(opt.is_known());
+            assert_eq!(opt.route_prefix_length(), Some(prefix_len));
+            assert_eq!(opt.route_preference(), Some(Prf::High));
+            assert_eq!(opt.route_lifetime(), Some(1800));
+
+            let bytes = opt.encode().unwrap();
+            assert_eq!(
+                bytes[0], NDP_OPT_ROUTE_INFORMATION,
+                "type 24 (prefix_len={prefix_len})"
+            );
+            assert_eq!(
+                bytes[1], expected_length,
+                "Length field in 8-octet units (prefix_len={prefix_len})"
+            );
+            assert_eq!(
+                bytes.len(),
+                expected_length as usize * NDP_OPTION_LENGTH_UNIT,
+                "encoded size matches Length (prefix_len={prefix_len})"
+            );
+            // Prefix Length byte, then the flags byte carrying Prf=High (0x08)
+            // and nothing else.
+            assert_eq!(bytes[2], prefix_len);
+            assert_eq!(bytes[3], Prf::High.to_flag_bits());
+            // Route Lifetime (big-endian).
+            assert_eq!(&bytes[4..8], &1800u32.to_be_bytes());
+            // The carried prefix octets are the leading octets of the prefix.
+            assert_eq!(
+                &bytes[8..8 + expected_carried],
+                &prefix.octets()[..expected_carried],
+                "carried prefix octets (prefix_len={prefix_len})"
+            );
+
+            let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+            assert_eq!(consumed, bytes.len());
+            assert_eq!(decoded.route_prefix_length(), Some(prefix_len));
+            assert_eq!(decoded.route_preference(), Some(Prf::High));
+            assert_eq!(decoded.route_lifetime(), Some(1800));
+            // The accessor zero-extends the carried octets back to a full address.
+            let mut expected_prefix = [0u8; 16];
+            expected_prefix[..expected_carried]
+                .copy_from_slice(&prefix.octets()[..expected_carried]);
+            assert_eq!(
+                decoded.route_prefix(),
+                Some(Ipv6Addr::from(expected_prefix))
+            );
+            // Re-encode reproduces the original bytes exactly.
+            assert_eq!(decoded.encode().unwrap(), bytes);
+        }
+    }
+
+    // RFC 4191 sec 2.3: every Prf value round-trips through a Route Information
+    // option's flags byte, leaving the other (Reserved) bits zero.
+    #[test]
+    fn route_information_round_trips_each_preference() {
+        let prefix = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0);
+        for prf in [Prf::High, Prf::Medium, Prf::Low, Prf::Reserved] {
+            let opt = NdpOption::route_information(prefix, 32, prf, NDP_ROUTE_LIFETIME_INFINITY);
+            let bytes = opt.encode().unwrap();
+            // The flags byte is exactly the Prf field; Reserved bits sent zero.
+            assert_eq!(bytes[3], prf.to_flag_bits());
+            assert_eq!(bytes[3] & !NDP_PRF_MASK, 0);
+
+            let (decoded, _) = NdpOption::decode_one(&bytes).unwrap();
+            assert_eq!(decoded.route_preference(), Some(prf), "Prf={prf:?}");
+            assert_eq!(
+                decoded.route_lifetime(),
+                Some(NDP_ROUTE_LIFETIME_INFINITY),
+                "infinity lifetime round-trips (Prf={prf:?})"
+            );
+        }
+    }
+
+    // The raw constructor honors an explicit flags byte (Prf + Reserved bits set
+    // on purpose) and an explicit carried-octet count (honored overrides).
+    #[test]
+    fn route_information_raw_preserves_reserved_and_explicit_octets() {
+        let prefix = Ipv6Addr::new(0x2001, 0x0db8, 0x0001, 0, 0, 0, 0, 0);
+        // Prf=Low plus every Reserved bit set; carry the full 16 octets even
+        // though a /48 would normally carry 8.
+        let flags = Prf::Low.to_flag_bits() | !NDP_PRF_MASK;
+        let opt = NdpOption::route_information_raw(prefix, 48, flags, 600, 16);
+        let bytes = opt.encode().unwrap();
+        // Length 3 (24 bytes) because 16 prefix octets were carried.
+        assert_eq!(bytes[1], 3);
+        assert_eq!(bytes.len(), NDP_ROUTE_INFORMATION_LEN_FULL_PREFIX);
+        // The full flags byte (Prf + Reserved bits) survives untouched.
+        assert_eq!(bytes[3], flags);
+
+        let (decoded, _) = NdpOption::decode_one(&bytes).unwrap();
+        // Prf still reads back as Low despite the Reserved bits being set.
+        assert_eq!(decoded.route_preference(), Some(Prf::Low));
+        // The full prefix round-trips because all 16 octets were carried.
+        assert_eq!(decoded.route_prefix(), Some(prefix));
+    }
+
+    // The Route Information accessors reject other option types (no false reads).
+    #[test]
+    fn route_information_accessors_reject_other_options() {
+        let mtu = NdpOption::mtu(1500);
+        assert_eq!(mtu.route_prefix_length(), None);
+        assert_eq!(mtu.route_preference(), None);
+        assert_eq!(mtu.route_lifetime(), None);
+        assert_eq!(mtu.route_prefix(), None);
     }
 }

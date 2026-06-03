@@ -52,7 +52,7 @@
 //! the authoritative RFC text); see the per-item citations below.
 
 use super::super::*;
-use super::ndp_option::NdpOptions;
+use super::ndp_option::{NdpOptions, Prf};
 
 /// Router Solicitation message body (RFC 4861 section 4.1).
 ///
@@ -439,15 +439,52 @@ impl Icmpv6 {
     /// `cur_hop_limit`, `managed` (the M / Managed Address Configuration flag),
     /// `other` (the O / Other Configuration flag), and `router_lifetime`
     /// (seconds) become the [`Icmpv6`] header rest-of-header (Cur Hop Limit /
-    /// flags / Router Lifetime). The six Reserved flag bits are sent zero; to set
-    /// them on purpose (a deliberately malformed packet, or a forward-compatible
-    /// RFC 5175/4191 bit), build the header rest-of-header directly with
-    /// [`Icmpv6::rest_of_header`] (the value survives `compile()` untouched). The
-    /// body carries the Reachable Time / Retrans Timer words and the options.
+    /// flags / Router Lifetime). The Default Router Preference (Prf) is the
+    /// default, Medium ([`Prf::Medium`], wire value 0); use
+    /// [`Icmpv6::router_advertisement_with_preference`] to set it. The remaining
+    /// Reserved flag bits are sent zero; to set them on purpose (a deliberately
+    /// malformed packet, or a forward-compatible RFC 5175 bit), build the header
+    /// rest-of-header directly with [`Icmpv6::rest_of_header`] (the value survives
+    /// `compile()` untouched). The body carries the Reachable Time / Retrans Timer
+    /// words and the options.
     pub fn router_advertisement_with(
         cur_hop_limit: u8,
         managed: bool,
         other: bool,
+        router_lifetime: u16,
+        body: RouterAdvertisement,
+    ) -> Packet {
+        Self::router_advertisement_with_preference(
+            cur_hop_limit,
+            managed,
+            other,
+            Prf::Medium,
+            router_lifetime,
+            body,
+        )
+    }
+
+    /// Build a Router Advertisement packet (RFC 4861 section 4.2) with an explicit
+    /// Default Router Preference (Prf), RFC 4191 section 2.2.
+    ///
+    /// This is [`Icmpv6::router_advertisement_with`] plus the RFC 4191 Default
+    /// Router Preference. The `preference` is encoded into bits `0x18`
+    /// ([`NDP_PRF_MASK`]) of the Router Advertisement flags byte — *without*
+    /// disturbing the M (0x80) and O (0x40) flags, which are still driven by
+    /// `managed` / `other`. The remaining Reserved bits (RFC 4861's send-as-zero
+    /// field, including the RFC 5175 "H" bit at 0x20) stay zero. A receiver of an
+    /// RFC 4191 RA reads the preference back through the decoded
+    /// [`Icmpv6Body::RouterAdvertisement`](super::super::Icmpv6Body::RouterAdvertisement)
+    /// `preference` field.
+    ///
+    /// [`Prf::Reserved`] (the 2-bit value `10`) "MUST NOT be sent" per RFC 4191
+    /// section 2.1; `crafter` still emits it faithfully so an agent can exercise a
+    /// peer's handling of the reserved value.
+    pub fn router_advertisement_with_preference(
+        cur_hop_limit: u8,
+        managed: bool,
+        other: bool,
+        preference: Prf,
         router_lifetime: u16,
         body: RouterAdvertisement,
     ) -> Packet {
@@ -458,6 +495,10 @@ impl Icmpv6 {
         if other {
             flags |= ICMPV6_RA_FLAG_OTHER;
         }
+        // RFC 4191 sec 2.2: the Default Router Preference occupies bits 0x18 of
+        // the flags byte, leaving M/O (0x80/0x40) and the other Reserved bits
+        // untouched.
+        flags |= preference.to_flag_bits();
         let rest = router_advertisement_rest_of_header(cur_hop_limit, flags, router_lifetime);
         Self::new()
             .icmp_type(ICMPV6_ROUTER_ADVERTISEMENT)
@@ -1413,6 +1454,7 @@ mod tests {
                 cur_hop_limit: 255,
                 managed: true,
                 other: true,
+                preference: Prf::Medium,
                 reserved_flags: 0,
                 router_lifetime: 1800,
             }
@@ -1502,12 +1544,63 @@ mod tests {
                 cur_hop_limit: 0x01,
                 managed: true,
                 other: true,
-                // The six reserved bits (0x3f) are preserved, not masked away.
-                reserved_flags: ICMPV6_RA_FLAGS_RESERVED,
+                // flags byte 0xff: M (0x80) | O (0x40) | the RFC 4191 Prf bits
+                // (0x18 = 0b11 = Low) | the remaining reserved bits (0x27). The
+                // Prf bits decode to Prf::Low and the reserved bits (0x27, the
+                // 0x20 "H" bit and the low three reserved bits) are preserved,
+                // not masked away.
+                preference: Prf::Low,
+                reserved_flags: ICMPV6_RA_FLAGS_RESERVED & !NDP_PRF_MASK,
                 router_lifetime: 0xffff,
             }
         );
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // RFC 4191 sec 2.2: the Default Router Preference (Prf) rides in bits 0x18 of
+    // the RA flags byte. Build an RA with each preference value and assert: the
+    // wire flags byte carries M/O plus exactly the Prf bits (nothing in the
+    // remaining reserved bits), the decoded body reports the right preference,
+    // and M/O and the reserved bits are unaffected.
+    #[test]
+    fn router_advertisement_default_router_preference_round_trips() {
+        for prf in [Prf::Medium, Prf::High, Prf::Low] {
+            // Set M=true, O=false to prove the Prf wiring leaves M/O alone.
+            let packet = Ipv6::new().src(link_local_src()).dst(all_routers())
+                / Icmpv6::router_advertisement_with_preference(
+                    64,
+                    true,
+                    false,
+                    prf,
+                    1800,
+                    RouterAdvertisement::new(),
+                );
+            let compiled = packet.compile().unwrap();
+            let bytes = compiled.as_bytes();
+
+            // The flags byte (rest-of-header byte 1, packet offset 45) is exactly
+            // M | Prf, with no stray reserved bits.
+            let expected_flags = ICMPV6_RA_FLAG_MANAGED | prf.to_flag_bits();
+            assert_eq!(bytes[45], expected_flags, "flags byte for {prf:?}");
+            assert_eq!(bytes[45] & ICMPV6_RA_FLAG_OTHER, 0, "O stays clear");
+
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+            assert_eq!(
+                decoded.layer::<Icmpv6>().unwrap().body(),
+                Icmpv6Body::RouterAdvertisement {
+                    cur_hop_limit: 64,
+                    managed: true,
+                    other: false,
+                    preference: prf,
+                    // The Prf bits were split out, so the remaining reserved bits
+                    // are zero — unaffected by setting the preference.
+                    reserved_flags: 0,
+                    router_lifetime: 1800,
+                },
+                "decoded preference and untouched M/O/reserved for {prf:?}"
+            );
+            assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+        }
     }
 
     // RFC 4861 sec 4.6.2 + 4.6.4: a Router Advertisement carrying a Prefix
@@ -1652,8 +1745,8 @@ mod tests {
             .expect("show() exposes a body field");
         assert_eq!(
             body_field,
-            "router-advertisement(cur_hop_limit=64, M=true, O=false, reserved_flags=0x00, \
-             router_lifetime=1800)"
+            "router-advertisement(cur_hop_limit=64, M=true, O=false, prf=Medium, \
+             reserved_flags=0x00, router_lifetime=1800)"
         );
     }
 
