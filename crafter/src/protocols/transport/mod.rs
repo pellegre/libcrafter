@@ -7,7 +7,7 @@ mod udp;
 pub(crate) use self::tcp::append_tcp_packet_with_registry;
 pub use self::tcp::{
     effective_mss, effective_mss_ipv4, effective_mss_ipv6, has_fin, has_syn, max_tcp_payload,
-    option_budget, remaining_option_budget, sequence_space_len, tcp_header_len,
+    option_budget, remaining_option_budget, sequence_space_len, tcp_header_len, TcpOptionBudget,
     tcp_option_kind_class, tcp_option_kind_is_assigned,
     tcp_option_kind_is_experimental, tcp_option_kind_name, valid_window_scale, Tcp,
     TcpExtendedDataOffset, TcpOption,

@@ -21,6 +21,7 @@ use super::constants::{
     TCP_FIXED_HEADER_LEN, TCP_MAX_OPTION_BYTES,
 };
 use super::flags::{TCP_FLAG_FIN, TCP_FLAG_SYN};
+use super::option::TcpOption;
 
 /// Round a raw TCP option-byte count up to the next 32-bit boundary.
 ///
@@ -65,6 +66,129 @@ pub const fn option_budget() -> usize {
 /// option layout.
 pub const fn remaining_option_budget(used: usize) -> usize {
     TCP_MAX_OPTION_BYTES.saturating_sub(used)
+}
+
+/// A pure report on whether a planned TCP option set fits the base TCP header.
+///
+/// The TCP Data Offset is 4 bits, capping the TCP header at 15 32-bit words —
+/// 60 octets total, of which 40 are available for options once the 20-octet
+/// fixed header is subtracted (RFC 9293 section 3.1). When the Extended Data
+/// Offset (EDO) experiment is not in use, that 40-octet ceiling is hard.
+///
+/// `TcpOptionBudget` lets a generated tool plan an option set *before* compiling
+/// a segment: it sums the encoded length of each [`TcpOption`] (plus any raw
+/// option byte counts the caller already knows about, e.g. pre-encoded bytes),
+/// reports how the padded header lands, how many option octets remain under the
+/// 40-octet cap, and whether the base TCP header limit is exceeded.
+///
+/// This is a pure report. It never drops, reorders, or rewrites options — the
+/// caller decides what to do when [`TcpOptionBudget::exceeds`] is `true`.
+/// Deliberately over-budget option sets stay constructible for stack testing.
+///
+/// ```rust
+/// use crafter::prelude::*;
+/// use crafter::protocols::transport::TcpOptionBudget;
+///
+/// // A common SYN option set: MSS + SACK-Permitted + Timestamps + Window Scale.
+/// let options = [
+///     TcpOption::maximum_segment_size(1460),
+///     TcpOption::sack_permitted(),
+///     TcpOption::timestamp(1, 0),
+///     TcpOption::window_scale(7),
+/// ];
+/// let budget = TcpOptionBudget::for_options(&options);
+/// assert!(budget.fits());
+/// assert!(budget.remaining() > 0);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TcpOptionBudget {
+    encoded_len: usize,
+    padded_header_len: usize,
+    remaining: usize,
+    fits: bool,
+}
+
+impl TcpOptionBudget {
+    /// Build a budget report from a set of [`TcpOption`] values.
+    ///
+    /// Sums each option's [`TcpOption::encoded_len`] and computes the fit status
+    /// against the 40-octet option budget / 60-octet base header limit
+    /// (RFC 9293 section 3.1). Equivalent to
+    /// [`TcpOptionBudget::for_options_with_extra`] with no extra raw bytes.
+    pub fn for_options(options: &[TcpOption]) -> Self {
+        Self::for_options_with_extra(options, 0)
+    }
+
+    /// Build a budget report from typed options plus already-known raw option
+    /// bytes.
+    ///
+    /// `extra_raw_bytes` accounts for option octets the caller has measured some
+    /// other way — for example a pre-encoded option region or padding bytes it
+    /// intends to add — so the total reflects the full planned option area. The
+    /// fit status is evaluated against the 40-octet Data Offset cap
+    /// (RFC 9293 section 3.1).
+    ///
+    /// This never drops options; an over-budget total simply reports
+    /// [`TcpOptionBudget::exceeds`] as `true` and saturates [`remaining`] at 0.
+    ///
+    /// [`remaining`]: TcpOptionBudget::remaining
+    pub fn for_options_with_extra(options: &[TcpOption], extra_raw_bytes: usize) -> Self {
+        let mut encoded_len = extra_raw_bytes;
+        for option in options {
+            encoded_len = encoded_len.saturating_add(option.encoded_len());
+        }
+        Self::from_encoded_len(encoded_len)
+    }
+
+    /// Build a budget report directly from a total encoded option-byte count.
+    ///
+    /// Useful when the caller has already summed raw option bytes and only needs
+    /// the padded header length, remaining budget, and fit status against the
+    /// 40-octet cap (RFC 9293 section 3.1).
+    pub const fn from_encoded_len(encoded_len: usize) -> Self {
+        Self {
+            encoded_len,
+            padded_header_len: tcp_header_len(encoded_len),
+            remaining: remaining_option_budget(encoded_len),
+            fits: encoded_len <= TCP_MAX_OPTION_BYTES,
+        }
+    }
+
+    /// Total encoded option bytes, before 32-bit padding.
+    pub const fn encoded_len(&self) -> usize {
+        self.encoded_len
+    }
+
+    /// TCP header length in octets once the option area is padded to a 32-bit
+    /// boundary (RFC 9293 section 3.1).
+    ///
+    /// For an option set that fits, this is at most the 60-octet base header
+    /// maximum; for an over-budget set it reports the padded length the options
+    /// would actually require, which a caller can compare against 60.
+    pub const fn padded_header_len(&self) -> usize {
+        self.padded_header_len
+    }
+
+    /// Remaining option octets under the 40-octet Data Offset cap
+    /// (RFC 9293 section 3.1).
+    ///
+    /// Saturates at 0: an over-budget option set reports 0 remaining, never a
+    /// negative or wrapped value.
+    pub const fn remaining(&self) -> usize {
+        self.remaining
+    }
+
+    /// True when the option set fits within the 40-octet option budget / 60-octet
+    /// base TCP header limit (RFC 9293 section 3.1).
+    pub const fn fits(&self) -> bool {
+        self.fits
+    }
+
+    /// True when the option set exceeds the base TCP header limit
+    /// (RFC 9293 section 3.1) — the inverse of [`TcpOptionBudget::fits`].
+    pub const fn exceeds(&self) -> bool {
+        !self.fits
+    }
 }
 
 /// Maximum TCP payload (user data) octets for a caller-provided path MTU.

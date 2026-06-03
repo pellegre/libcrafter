@@ -1983,6 +1983,94 @@ mod sequence_space_helpers {
     }
 }
 
+mod option_budget_builder {
+    use super::super::{
+        option_budget, remaining_option_budget, tcp_header_len, TcpOption, TcpOptionBudget,
+    };
+
+    #[test]
+    fn tcp_option_budget_reports_fit_status() {
+        // TcpOptionBudget is a pure report. The TCP Data Offset is 4 bits, so the
+        // base TCP header maxes at 60 octets (15 32-bit words), leaving 40 octets
+        // for options once the 20-octet fixed header is subtracted (RFC 9293
+        // section 3.1). The report sums each option's encoded_len(), pads the
+        // header to a 32-bit boundary, reports the remaining option budget, and
+        // says whether the base header limit is exceeded. It never drops options.
+
+        // --- A common SYN option set that fits. ---
+        // MSS(4) + SACK-Permitted(2) + Timestamps(10) + Window Scale(3) = 19
+        // encoded option octets, comfortably under the 40-octet cap.
+        let fitting = [
+            TcpOption::maximum_segment_size(1460),
+            TcpOption::sack_permitted(),
+            TcpOption::timestamp(1, 0),
+            TcpOption::window_scale(7),
+        ];
+        let encoded: usize = fitting.iter().map(|o| o.encoded_len()).sum();
+        assert_eq!(encoded, 19);
+
+        let budget = TcpOptionBudget::for_options(&fitting);
+        assert_eq!(budget.encoded_len(), 19);
+        // 19 option octets pad to 20, on top of the 20-octet fixed header = 40.
+        assert_eq!(budget.padded_header_len(), tcp_header_len(19));
+        assert_eq!(budget.padded_header_len(), 40);
+        // Remaining option budget is 40 - 19 = 21, and is strictly positive.
+        assert_eq!(budget.remaining(), remaining_option_budget(19));
+        assert_eq!(budget.remaining(), 21);
+        assert!(budget.remaining() > 0);
+        // It fits, so it does not exceed.
+        assert!(budget.fits());
+        assert!(!budget.exceeds());
+
+        // Exactly the 40-octet budget still fits (boundary case): pad a generic
+        // option's payload so encoded_len() lands on the cap exactly. A generic
+        // option encodes as 2 + data.len(), so 38 data octets = 40 total.
+        let exactly_full = [TcpOption::generic(222, vec![0u8; 38])];
+        let full_budget = TcpOptionBudget::for_options(&exactly_full);
+        assert_eq!(full_budget.encoded_len(), option_budget());
+        assert_eq!(full_budget.encoded_len(), 40);
+        assert_eq!(full_budget.remaining(), 0);
+        assert_eq!(full_budget.padded_header_len(), 60);
+        assert!(full_budget.fits());
+        assert!(!full_budget.exceeds());
+
+        // --- An over-budget option set. ---
+        // A generic option with a 40-octet payload encodes to 42 octets, two over
+        // the 40-octet cap.
+        let over = [TcpOption::generic(200, vec![0xab; 40])];
+        let over_budget = TcpOptionBudget::for_options(&over);
+        assert_eq!(over_budget.encoded_len(), 42);
+        // It exceeds the base TCP header limit.
+        assert!(over_budget.exceeds());
+        assert!(!over_budget.fits());
+        // Remaining saturates to 0, never a wrapped/negative value.
+        assert_eq!(over_budget.remaining(), 0);
+        // The padded header length the options would require: 20 + pad(42)=44 = 64,
+        // above the 60-octet base header maximum.
+        assert_eq!(over_budget.padded_header_len(), 64);
+        assert!(over_budget.padded_header_len() > 60);
+
+        // --- Extra raw option bytes count toward the total. ---
+        // The fitting set (19) plus 24 already-known raw option octets = 43,
+        // pushing the same typed options over the 40-octet cap without dropping
+        // anything.
+        let with_extra = TcpOptionBudget::for_options_with_extra(&fitting, 24);
+        assert_eq!(with_extra.encoded_len(), 43);
+        assert!(with_extra.exceeds());
+        assert_eq!(with_extra.remaining(), 0);
+
+        // --- Building straight from a raw encoded-byte total agrees. ---
+        let direct = TcpOptionBudget::from_encoded_len(19);
+        assert_eq!(direct, budget);
+        // An empty option set uses the full budget and the bare 20-octet header.
+        let empty = TcpOptionBudget::for_options(&[]);
+        assert_eq!(empty.encoded_len(), 0);
+        assert_eq!(empty.remaining(), option_budget());
+        assert_eq!(empty.padded_header_len(), 20);
+        assert!(empty.fits());
+    }
+}
+
 mod common_segment_builders {
     use super::super::{
         Tcp, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_RST, TCP_FLAG_SYN,
