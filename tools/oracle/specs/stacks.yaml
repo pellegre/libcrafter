@@ -203,6 +203,24 @@ stacks:
       - tcp-options
       - tcp-options-sack-blocks
       - tcp-options-mptcp-fastopen-edo-generic
+      - tcp-header-syn
+      - tcp-header-syn-ack
+      - tcp-header-rst-ack
+      - tcp-header-payload-ack
+      - tcp-header-ipv4-checksum
+      - tcp-header-explicit-checksum
+      - tcp-header-raw-payload
+      - tcp-header-invalid-data-offset
+  - name: ipv6_tcp_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - tcp
+      - payload
+    coverage_cases:
+      - tcp-header-syn-ack
+      - tcp-header-ipv6-checksum
+      - tcp-header-raw-payload
   - name: ipv4_icmp_payload
     root: "l3:ipv4"
     layers:

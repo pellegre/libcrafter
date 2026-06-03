@@ -190,6 +190,29 @@ tools/oracle/run specs suite --family dns --json
 tools/oracle/run specs suite --family dns --run
 ```
 
+## TCP Header Offline Suite
+
+Focused offline coverage of TCP header compile/decode behavior runs through the
+`tcp-header` profile, which narrows stack/case/feature selection to the
+`tcp_header` feature. A seeded run is deterministic for a given seed and proves
+Scapy/libcrafter agreement on SYN, SYN-ACK, RST-ACK, payload ACK, IPv4 and IPv6
+checksum contexts, an explicit checksum override (compile honors the set value),
+and raw payload preservation:
+
+```sh
+tools/oracle/run offline --profile tcp-header --seed 1 --count 10
+tools/oracle/run offline --profile tcp-header --seed 1 --count 30 --direction libcrafter_to_reference
+```
+
+The deliberately malformed `tcp-header-invalid-data-offset` case (a data offset
+of 15 with no option space) is declared coverage but carries
+`byte_policy: structured_error`, so it is excluded from the offline encode/decode
+sampling pathway: a data offset past the available bytes is a structured decode
+error (`BufferTooShort`/`InvalidFieldValue`), not a comparable packet. The
+crate's resilience and fixture suites assert that typed error directly (see
+`crafter/tests/fixtures/malformed/core-decode-corpus.hex` and
+`crafter/tests/resilience.rs`).
+
 ## DNS Pcap Suite
 
 Pcap validation round trips every representable DNS case through deterministic

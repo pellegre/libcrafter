@@ -1,0 +1,159 @@
+version: 1
+kind: feature
+name: tcp_header
+summary: TCP header control bits, data offset, checksum contexts, explicit checksum override, and raw payload preservation.
+
+# Offline TCP header compile/decode coverage. Every offline-sampled case is
+# materialized by both the Scapy reference backend and the libcrafter adapter
+# from the same packet plan, then decoded and compared octet-for-octet
+# (byte_policy: strict_bytes). The explicit-checksum case fixes the TCP checksum
+# to a constant so both backends emit the same override instead of a derived
+# value, exercising the "honored override" contract.
+#
+# The invalid-data-offset case is declared coverage but carries
+# byte_policy: structured_error: a data offset past the available bytes is a
+# structured decode error, not a comparable packet, so it is excluded from the
+# offline encode/decode sampling pathway (the oracle has no offline malformed
+# comparison path; see tools/oracle/engine/generator.py
+# _case_supported_in_direction). The crate's own resilience and fixture suites
+# assert the BufferTooShort / InvalidFieldValue structured errors for this shape
+# (see crafter/tests/fixtures/malformed/core-decode-corpus.hex and resilience).
+
+layers:
+  - tcp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  # Control-bit combinations. The behavior name is matched against the case id by
+  # the generator, which sets fields.tcp.flags (and, where relevant, the payload)
+  # for the selected case.
+  - name: syn
+    flags:
+      - syn
+  - name: syn-ack
+    flags:
+      - syn
+      - ack
+  - name: rst-ack
+    flags:
+      - rst
+      - ack
+  - name: payload-ack
+    flags:
+      - psh
+      - ack
+    checks:
+      - raw_payload_preserved
+  # Checksum behavior. The IPv4 and IPv6 contexts leave the TCP checksum unset so
+  # compile() derives it from the pseudo-header; the explicit case sets it.
+  - name: ipv4-checksum
+    flags:
+      - ack
+    checks:
+      - ipv4_pseudo_header_checksum
+  - name: ipv6-checksum
+    flags:
+      - ack
+    checks:
+      - ipv6_pseudo_header_checksum
+  - name: explicit-checksum
+    flags:
+      - ack
+    checks:
+      - explicit_checksum_preserved
+  # Raw payload preservation: an ACK segment carrying application bytes that must
+  # round-trip as a trailing Raw layer rather than being reinterpreted.
+  - name: raw-payload
+    flags:
+      - ack
+    checks:
+      - raw_payload_preserved
+  # Deliberately malformed header: a data offset that does not match the option
+  # space. Compared non-strict; the wrong value is preserved, not rewritten.
+  - name: invalid-data-offset
+    flags:
+      - syn
+    fields:
+      - data_offset
+
+coverage_cases:
+  - tcp-header-syn
+  - tcp-header-syn-ack
+  - tcp-header-rst-ack
+  - tcp-header-payload-ack
+  - tcp-header-ipv4-checksum
+  - tcp-header-ipv6-checksum
+  - tcp-header-explicit-checksum
+  - tcp-header-raw-payload
+  - tcp-header-invalid-data-offset
+
+supported_cases:
+  # Well-formed cases keep strict byte comparison in both offline directions.
+  - name: tcp-header-syn
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-header-syn-ack
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-header-rst-ack
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-header-payload-ack
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-header-ipv4-checksum
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-header-ipv6-checksum
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-header-explicit-checksum
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-header-raw-payload
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  # Deliberately malformed data offset (15 -> 60 declared header bytes with no
+  # option space). A data offset past the available bytes is a structured decode
+  # error rather than a comparable packet, so this case is excluded from offline
+  # encode/decode sampling (byte_policy: structured_error). It stays declared
+  # coverage; the crate's resilience/fixture suites assert the typed error.
+  - name: tcp-header-invalid-data-offset
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - TCP
+  libcrafter:
+    status: supported
+    notes:
+      - Control-bit, checksum-context, explicit-checksum-override, and raw-payload
+        cases compile to byte-identical TCP segments across both backends.
+      - The invalid-data-offset case preserves the deliberately wrong header
+        field rather than rewriting it, so it is compared on decoded structure
+        rather than on exact bytes.

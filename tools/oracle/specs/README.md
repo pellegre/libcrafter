@@ -57,6 +57,13 @@ backend-specific generation logic. The expected profiles are:
 - `wild`: common packet shapes and field values.
 - `boundary`: edge values, lengths, checksums, options, and limits.
 - `fuzz`: valid-weird and explicitly malformed behavior.
+- `tcp-header`: focused offline TCP header compile/decode coverage. It narrows
+  stack/case/feature selection to the `tcp_header` feature (SYN, SYN-ACK,
+  RST-ACK, payload ACK, IPv4/IPv6 checksum contexts, explicit checksum override,
+  and raw payload preservation). The deliberately malformed invalid-data-offset
+  case is declared coverage but carries `byte_policy: structured_error`, so it is
+  excluded from the offline encode/decode pathway (a data offset past the
+  available bytes is a structured decode error, not a comparable packet).
 
 ## Directions
 

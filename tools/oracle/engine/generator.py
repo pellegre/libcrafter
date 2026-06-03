@@ -718,6 +718,13 @@ class PacketGenerator:
                     continue
             if feature is None and case is None and self.profile == "smoke" and "dhcp" in stack_layers:
                 continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "tcp-header"
+                and not _has_tcp_header_case(coverage_cases)
+            ):
+                continue
             candidates.append(stack)
         return candidates
 
@@ -854,6 +861,11 @@ class PacketGenerator:
         direction: str,
     ) -> str:
         coverage_cases = _string_list(stack.get("coverage_cases", []), "stack.coverage_cases")
+        if feature is None and self.profile == "tcp-header":
+            # Focused profile: restrict the stack's own coverage cases to the
+            # tcp_header set so case selection never falls through to the other
+            # cases (ipv4-tcp-syn, tcp-options*) the IPv4/IPv6 TCP stacks declare.
+            coverage_cases = [case for case in coverage_cases if _has_tcp_header_case([case])]
         if feature is not None:
             feature_spec = self._feature_spec(feature)
             feature_cases = _string_list(feature_spec.get("coverage_cases"), "feature.coverage_cases")
@@ -882,6 +894,14 @@ class PacketGenerator:
             if weight > 0:
                 choices.append((stack_case, weight))
         stack_layers = _string_list(stack.get("layers"), "stack.layers")
+        # Focused tcp-header profile: select only from the stack's declared
+        # tcp-header coverage cases (filtered above) so an IPv4-checksum case is
+        # never drawn for the IPv6 stack and vice versa. The cross-feature case
+        # expansion below is intentionally skipped for this profile.
+        if feature is None and self.profile == "tcp-header":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
         for feature_name, feature_spec in self._matching_features_for_stack(
             stack=stack_layers,
             direction=direction,
@@ -963,6 +983,12 @@ class PacketGenerator:
         output: list[tuple[str, JSONObject]] = []
         for name, raw_feature in features.items():
             if not _auto_sample_feature(name):
+                continue
+            # The tcp-header profile is a focused offline run: only the
+            # tcp_header feature is auto-sampled so the seeded selection stays on
+            # the TCP header cases instead of mixing in tcp_options or other
+            # features that also ride the IPv4/IPv6 TCP stacks.
+            if self.profile == "tcp-header" and name != "tcp_header":
                 continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")
@@ -1172,6 +1198,14 @@ class PacketGenerator:
             return None
         case_id = _identifier_part(case)
         case_key = f"-{case_id}-"
+        if feature == "tcp_header":
+            # tcp_header cases are named tcp-header-<behavior>; match the behavior
+            # whose id is the exact case suffix so tcp-header-syn-ack selects the
+            # syn-ack behavior rather than the shorter syn substring match.
+            suffix = case_id[len("tcp-header-"):] if case_id.startswith("tcp-header-") else case_id
+            for name in names:
+                if _identifier_part(name) == suffix:
+                    return name
         for name in names:
             name_id = _identifier_part(name)
             if feature == "udp_options":
@@ -1205,6 +1239,13 @@ class PacketGenerator:
             if case == "tcp-all-flags-reserved-offset":
                 fields["tcp"]["flags"] = "all"
                 fields["tcp"]["reserved"] = 7
+        elif feature == "tcp_header" and "tcp" in fields:
+            self._apply_tcp_header_behavior(
+                fields,
+                feature=feature,
+                case=case,
+                behavior=behavior,
+            )
         elif feature == "ipv4_options" and "ipv4" in fields:
             fields["ipv4"]["options"] = {"hex": _ipv4_options_hex(case, behavior)}
             fields["ipv4"]["flags"] = "none"
@@ -1242,6 +1283,68 @@ class PacketGenerator:
             _apply_dhcp_behavior(fields["dhcp"], case=case, behavior=behavior)
         elif feature == "udp_options" and "udp" in fields:
             _apply_udp_options_behavior(fields, case=case, behavior=behavior)
+
+    def _apply_tcp_header_behavior(
+        self,
+        fields: dict[str, JSONObject],
+        *,
+        feature: str,
+        case: str,
+        behavior: str,
+    ) -> None:
+        """Populate one TCP header behavior for the tcp_header feature.
+
+        The control-bit set comes from the behavior's declared ``flags`` list so
+        SYN, SYN-ACK, RST-ACK, and payload/raw ACK cases set exactly the bits the
+        spec names. Per-case overrides fill the remaining header behaviors: an
+        explicit checksum override that compile() must honor, a deliberately
+        out-of-range data offset that decode preserves rather than rewriting, and
+        a deterministic application payload for the raw-payload-preservation
+        cases. Every value uses documentation-safe, seed-independent bytes so the
+        comparison stays deterministic.
+        """
+
+        tcp = fields["tcp"]
+        flags = self._tcp_header_behavior_flags(feature, behavior)
+        if flags:
+            tcp["flags"] = list(flags)
+
+        key = case.replace("_", "-")
+        if "explicit-checksum" in key:
+            # Honored override: fix the TCP checksum to a constant so both
+            # backends emit it verbatim instead of deriving from the pseudo
+            # header. Exercises the protocol-correct-defaults / honored-override
+            # contract for an intentionally non-derived value.
+            tcp["checksum"] = 0xBEEF
+        if "invalid-data-offset" in key:
+            # Deliberately malformed: a data offset of 15 (60 bytes) with no
+            # option space. compile() preserves the explicit value rather than
+            # rewriting it; compared non-strict (see supported_cases byte_policy).
+            tcp["data_offset"] = 15
+        if "payload-ack" in key or "raw-payload" in key:
+            # Raw payload preservation: a fixed application payload that must
+            # round-trip as a trailing Raw layer after the TCP header.
+            payload_hex = "7261772d7463702d7061796c6f6164"  # b"raw-tcp-payload"
+            fields["payload"] = {
+                "hex": payload_hex,
+                "length": len(payload_hex) // 2,
+            }
+
+    def _tcp_header_behavior_flags(self, feature: str, behavior: str) -> list[str]:
+        feature_spec = self._feature_spec(feature)
+        behaviors = _object_list(
+            feature_spec.get("behaviors", []), f"features.{feature}.behaviors"
+        )
+        for raw_behavior in behaviors:
+            if not isinstance(raw_behavior, Mapping):
+                continue
+            if raw_behavior.get("name") != behavior:
+                continue
+            return _string_list(
+                raw_behavior.get("flags", []),
+                f"features.{feature}.behaviors.{behavior}.flags",
+            )
+        return []
 
     def _apply_icmpv4_error_behavior(
         self,
@@ -3638,6 +3741,16 @@ def _udp_option_intent(key: str) -> list[JSONObject]:
 
 def _is_malformed_case_name(case: str) -> bool:
     return "malformed" in case.replace("_", "-")
+
+
+def _has_tcp_header_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains a tcp_header coverage case.
+
+    Used by the focused tcp-header profile to keep stack and case selection on
+    the ``tcp-header-*`` cases declared by the IPv4/IPv6 TCP stacks.
+    """
+
+    return any(case.replace("_", "-").startswith("tcp-header-") for case in cases)
 
 
 def _auto_sample_feature(feature: str) -> bool:

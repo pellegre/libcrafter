@@ -99,6 +99,32 @@ profiles:
       malformed: 8
       pcap: 1
       live: 0
+  # tcp-header: focused offline coverage of TCP header compile/decode behavior.
+  # The generator narrows stack/case/feature selection to the tcp_header feature
+  # when this profile is active (see tools/oracle/engine/generator.py), so a run
+  # such as `offline --profile tcp-header --seed 1 --count 10` deterministically
+  # samples only the TCP header cases: SYN, SYN-ACK, RST-ACK, payload ACK, IPv4
+  # and IPv6 checksum contexts, an explicit checksum override, an invalid data
+  # offset, and raw payload preservation. The ipv4/ipv6 weights keep both TCP
+  # stacks eligible; baseline/boundary/malformed keep the typed and edge cases
+  # sampled deterministically for a given seed.
+  - name: tcp-header
+    purpose: focused offline TCP header compile and decode behavior
+    default_count: 10
+    family_weights:
+      - name: ipv4
+        weight: 2
+      - name: ipv6
+        weight: 1
+    payload_length:
+      min: 0
+      max: 16
+    feature_weights:
+      baseline: 10
+      boundary: 6
+      malformed: 4
+      pcap: 0
+      live: 0
 
 backend_support:
   scapy:
