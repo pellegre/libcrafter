@@ -5,7 +5,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crafter::core::{
     decode_dns_name, scan_dhcp_option_segments, Arp, CrafterError, Dhcp, DhcpOption,
-    DhcpOptionArea, Dns, Ethernet, Icmpv4, Icmpv6, IpProtocol, Ipv4, Ipv4Option, Ipv6, LinkType,
+    DhcpOptionArea, Dns, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv4Protocol, Ipv6, LinkType,
     LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
     Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
     TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
@@ -1396,7 +1396,7 @@ proptest! {
     ) {
         let packet = Ethernet::with_addresses(MacAddr::new(src_mac), MacAddr::new(dst_mac))
             / Ipv4::with_addresses(Ipv4Addr::from(src_ip), Ipv4Addr::from(dst_ip))
-                .proto(IpProtocol::Tcp)
+                .ipv4_protocol(Ipv4Protocol::Tcp)
             / Tcp::new()
                 .source_port(safe_udp_port(sport))
                 .destination_port(safe_udp_port(dport))

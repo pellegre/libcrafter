@@ -67,7 +67,7 @@
 //! composing the enclosing IPv6 packet — a link-local source on the
 //! [`Ipv6`](crate::Ipv6) layer, a Hop Limit of 1, and the Hop-by-Hop Options
 //! header carrying the Router Alert option (next-header
-//! [`IpProtocol::HopByHop`](crate::IpProtocol::HopByHop), RFC 2711) — is the
+//! [`IPPROTO_IPV6_HOPOPTS`](crate::IPPROTO_IPV6_HOPOPTS), RFC 2711) — is the
 //! caller's responsibility, the same separation of concerns the NDP builders use
 //! (they leave the solicited-node multicast destination and link-local source to
 //! the caller). The crate's IPv6 extension-header builders compose ahead of the
@@ -194,7 +194,7 @@ impl Icmpv6 {
     /// Hop-by-Hop Options header. This builder produces only the ICMPv6 message
     /// body; set the link-local source / Hop Limit on the enclosing
     /// [`Ipv6`](crate::Ipv6) layer and compose the Hop-by-Hop Options header
-    /// (next-header [`IpProtocol::HopByHop`](crate::IpProtocol::HopByHop))
+    /// (next-header [`IPPROTO_IPV6_HOPOPTS`](crate::IPPROTO_IPV6_HOPOPTS))
     /// carrying the Router Alert option ahead of the ICMPv6 header with `/`.
     pub fn mld_query(multicast_address: Ipv6Addr, max_response_delay: u16) -> Packet {
         Self::mld_message(

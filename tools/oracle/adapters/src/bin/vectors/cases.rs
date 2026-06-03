@@ -817,10 +817,10 @@ fn crafter_ipv4_ttl_255() -> ExampleResult<Vector> {
 
 fn crafter_ipv4_options() -> ExampleResult<Vector> {
     let ip = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1247).ttl(60);
-    let ip = ip.ip_option(Ipv4Option::no_operation())?;
-    let ip = ip.ip_option(Ipv4Option::record_route(4, vec![GW_IPV4]))?;
-    let ip = ip.ip_option(Ipv4Option::generic(0x1e, [0xaa, 0xbb]))?;
-    let ip = ip.ip_option(Ipv4Option::end_of_list())?;
+    let ip = ip.ipv4_option(Ipv4Option::no_operation())?;
+    let ip = ip.ipv4_option(Ipv4Option::record_route(4, vec![GW_IPV4]))?;
+    let ip = ip.ipv4_option(Ipv4Option::generic(0x1e, [0xaa, 0xbb]))?;
+    let ip = ip.ipv4_option(Ipv4Option::end_of_list())?;
     let packet = ip.protocol(253) / Raw::from("ip-options");
     let compiled = packet.compile()?;
     let bytes = compiled.as_bytes();
@@ -854,9 +854,9 @@ fn crafter_ipv4_options() -> ExampleResult<Vector> {
 
 fn crafter_ipv4_source_route_traceroute() -> ExampleResult<Vector> {
     let ip = Ipv4::new().src(SRC_IPV4).dst(DST_IPV4).id(0x1248).ttl(62);
-    let ip = ip.ip_option(Ipv4Option::loose_source_route(4, vec![GW_IPV4]))?;
-    let ip = ip.ip_option(Ipv4Option::strict_source_route(4, vec![DST_IPV4]))?;
-    let ip = ip.ip_option(Ipv4Option::traceroute(0x1234, 1, 0xffff, SRC_IPV4))?;
+    let ip = ip.ipv4_option(Ipv4Option::loose_source_route(4, vec![GW_IPV4]))?;
+    let ip = ip.ipv4_option(Ipv4Option::strict_source_route(4, vec![DST_IPV4]))?;
+    let ip = ip.ipv4_option(Ipv4Option::traceroute(0x1234, 1, 0xffff, SRC_IPV4))?;
     let packet = ip.protocol(253) / Raw::from("srtrace");
     let compiled = packet.compile()?;
     let bytes = compiled.as_bytes();

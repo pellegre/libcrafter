@@ -1355,7 +1355,7 @@ mod icmpv4_rfc4884_extensions {
         ICMP_EXTENSION_HEADER_LEN, ICMP_PARAMETER_PROBLEM, ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM,
     };
     use crate::checksum::verify_internet_checksum;
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw, Udp};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1372,7 +1372,7 @@ mod icmpv4_rfc4884_extensions {
         Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(198, 51, 100, 1))
-            .proto(IpProtocol::Udp)
+            .ipv4_protocol(Ipv4Protocol::Udp)
             / Udp::new().sport(40000).dport(53)
             / Raw::from("query")
     }
@@ -1444,7 +1444,7 @@ mod icmpv4_rfc4884_extensions {
         let long_quote = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(198, 51, 100, 1))
-            .proto(IpProtocol::Udp)
+            .ipv4_protocol(Ipv4Protocol::Udp)
             / Udp::new().sport(40000).dport(53)
             / Raw::from_bytes(vec![0xab; 105]); // 20 + 8 + 105 = 133 bytes
         let long = (Ipv4::new().src(src()).dst(dst())
@@ -1616,7 +1616,7 @@ mod icmpv4_rfc4950_mpls {
         ICMP_EXTENSION_CLASS_MPLS, ICMP_EXTENSION_CTYPE_MPLS_INCOMING,
         ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM,
     };
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw, Udp};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1633,7 +1633,7 @@ mod icmpv4_rfc4950_mpls {
         Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(198, 51, 100, 1))
-            .proto(IpProtocol::Udp)
+            .ipv4_protocol(Ipv4Protocol::Udp)
             / Udp::new().sport(40000).dport(53)
             / Raw::from("query")
     }
@@ -1891,7 +1891,7 @@ mod icmpv4_rfc5837_interface_info {
         ICMP_RFC4884_MIN_ORIGINAL_DATAGRAM,
     };
     use crate::checksum::verify_internet_checksum;
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw, Udp};
     use core::net::{Ipv4Addr, Ipv6Addr};
 
     fn src() -> Ipv4Addr {
@@ -1906,7 +1906,7 @@ mod icmpv4_rfc5837_interface_info {
         Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(198, 51, 100, 1))
-            .proto(IpProtocol::Udp)
+            .ipv4_protocol(Ipv4Protocol::Udp)
             / Udp::new().sport(40000).dport(53)
             / Raw::from("query")
     }

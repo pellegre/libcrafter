@@ -1308,7 +1308,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod ipv4 {
     use super::{
-        IpProtocol, Ipv4, Ipv4Protocol, IPPROTO_ICMP, IPPROTO_ICMPV6, IPV4_FLAG_DONT_FRAGMENT,
+        Ipv4, Ipv4Protocol, IPPROTO_ICMP, IPPROTO_ICMPV6, IPV4_FLAG_DONT_FRAGMENT,
         IPV4_FLAG_MORE_FRAGMENTS,
     };
     use crate::{Icmpv4, LinkType, NetworkLayer, Packet, Raw};
@@ -1331,7 +1331,7 @@ mod ipv4 {
             .dst(dst())
             .id(0x1234)
             .dont_fragment(true)
-            .proto(IpProtocol::Icmp)
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
             / Raw::from_bytes(&IPV4_ICMP_FIXTURE[20..]);
 
         assert_eq!(packet.compile().unwrap().as_bytes(), IPV4_ICMP_FIXTURE);
@@ -1365,7 +1365,10 @@ mod ipv4 {
     fn ipv4_decode_from_ethernet_stack_autofills_link_ethertype() {
         let frame = crate::Ethernet::new()
             .src("02:00:5e:00:53:01".parse::<crate::MacAddr>().unwrap())
-            / (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Icmp)
+            / (Ipv4::new()
+                .src(src())
+                .dst(dst())
+                .ipv4_protocol(Ipv4Protocol::Icmpv4)
                 / Raw::from_bytes(&IPV4_ICMP_FIXTURE[20..]));
 
         let bytes = frame.compile().unwrap();
@@ -1387,7 +1390,7 @@ mod ipv4 {
             .dst(dst())
             .ttl(60)
             .id(0x1239)
-            .proto(IpProtocol::Icmp)
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
             .option([0x01])
             .option([0x07, 0x07, 0x04, 0xc0, 0x00, 0x02, 0x01])
             / Raw::from([0u8; 8]);
@@ -1465,7 +1468,7 @@ mod ipv4 {
 
 #[cfg(test)]
 mod ip_options {
-    use super::{IpProtocol, Ipv4, Ipv4Option, Ipv4RouteOptionKind, IPV4_OPTION_NOP};
+    use super::{Ipv4, Ipv4Option, Ipv4Protocol, Ipv4RouteOptionKind, IPV4_OPTION_NOP};
     use crate::{NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
@@ -1484,12 +1487,12 @@ mod ip_options {
             .src(src())
             .dst(dst())
             .id(0x4321)
-            .proto(IpProtocol::Icmp)
-            .ip_option(Ipv4Option::record_route(4, routes.clone()))
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
+            .ipv4_option(Ipv4Option::record_route(4, routes.clone()))
             .unwrap()
-            .ip_option(Ipv4Option::traceroute(0x1234, 1, 0xffff, src()))
+            .ipv4_option(Ipv4Option::traceroute(0x1234, 1, 0xffff, src()))
             .unwrap()
-            .ip_option(Ipv4Option::generic(8, [1, 1]))
+            .ipv4_option(Ipv4Option::generic(8, [1, 1]))
             .unwrap();
         let packet = ip / Raw::from_bytes([0u8; 8]);
         let bytes = packet.compile().unwrap();
@@ -1537,7 +1540,7 @@ mod ip_options {
 
 #[cfg(test)]
 mod ipv4_checksum {
-    use super::{IpProtocol, Ipv4};
+    use super::{Ipv4, Ipv4Protocol};
     use crate::{checksum::verify_internet_checksum, Raw};
     use core::net::Ipv4Addr;
 
@@ -1550,7 +1553,7 @@ mod ipv4_checksum {
             .dst(Ipv4Addr::new(198, 51, 100, 20))
             .id(0x1234)
             .dont_fragment(true)
-            .proto(IpProtocol::Icmp)
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
             / Raw::from_bytes(&IPV4_ICMP_FIXTURE[20..]);
         let bytes = packet.compile().unwrap();
 
@@ -1565,7 +1568,7 @@ mod ipv4_checksum {
             .dst(Ipv4Addr::new(198, 51, 100, 20))
             .id(0x1234)
             .dont_fragment(true)
-            .proto(IpProtocol::Icmp)
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
             .checksum(0x1111)
             / Raw::from_bytes(&IPV4_ICMP_FIXTURE[20..]))
         .compile()

@@ -22,13 +22,13 @@ fn main() -> ExampleResult<()> {
         .dst(dst)
         .id(0x4401)
         .dont_fragment(true)
-        .ip_option(Ipv4Option::record_route(
+        .ipv4_option(Ipv4Option::record_route(
             4,
             vec![intermediary_ipv4(), Ipv4Addr::UNSPECIFIED],
         ))?
-        .ip_option(Ipv4Option::traceroute(0x1001, 1, 0, src))?
-        .ip_option(Ipv4Option::no_operation())?
-        .ip_option(Ipv4Option::generic(0x9e, vec![0xaa, 0xbb, 0xcc, 0xdd]))?
+        .ipv4_option(Ipv4Option::traceroute(0x1001, 1, 0, src))?
+        .ipv4_option(Ipv4Option::no_operation())?
+        .ipv4_option(Ipv4Option::generic(0x9e, vec![0xaa, 0xbb, 0xcc, 0xdd]))?
         / Udp::new().sport(40000).dport(33434)
         / Raw::from("ipv4-options");
     let compiled = packet.compile()?;
