@@ -208,6 +208,32 @@ coverage_cases:
   - crafter-ndp-pref64
   - crafter-ndp-captive-portal
   - crafter-ndp-unknown-option
+  # Multicast Listener Discovery: MLDv1 (RFC 2710, types 130-132) and MLDv2
+  # (RFC 3810 / RFC 9777, type 143 report + the type-130 v2 query). Scapy 2.7
+  # carries native classes (ICMPv6MLQuery/MLReport/MLDone/MLQuery2/MLReport2/
+  # MLDMultAddrRec), so both interop directions are byte-proven in
+  # tools/oracle/specs/fixtures/scapy-cases.json. The primary correctness gate
+  # is the Rust integration test crafter/tests/icmpv6_ndp.rs.
+  - mldv1-general-query
+  - mldv1-report
+  - mldv1-done
+  - mldv2-report-two-records
+  - mldv2-general-query
+  - crafter-mldv1-general-query
+  - crafter-mldv1-report
+  - crafter-mldv1-done
+  - crafter-mldv2-report-two-records
+  - crafter-mldv2-general-query
+  # ICMPv6 Extended Echo (RFC 8335, types 160/161) and Node Information
+  # (RFC 4620, type 139, experimental). DOCUMENTED LIMITATION: scapy 2.5+/2.7
+  # has no native ICMPv6 extended-echo class, and libcrafter keeps the Node
+  # Information Data field opaque, so these carry no strict native-class
+  # byte-proof; their correctness is gated by the crafter/tests/icmpv6_ndp.rs
+  # round-trips and the extended_echo.rs / node_info.rs unit tests instead of
+  # failing the suite. Recorded in the case notes.
+  - icmpv6-extended-echo-request
+  - icmpv6-extended-echo-reply
+  - icmpv6-node-information-query
 
 backend_support:
   scapy:
@@ -233,6 +259,7 @@ backend_support:
       - ICMPv6MLReport
       - ICMPv6MLDone
       - ICMPv6MLReport2
+      - ICMPv6MLDMultAddrRec
       # Base NDP options (RFC 4861); see the ndp_options feature spec.
       - ICMPv6NDOptSrcLLAddr
       - ICMPv6NDOptDstLLAddr
@@ -290,6 +317,30 @@ backend_support:
         16-octet form (NdpOption::route_information_raw with prefix_octets=16)
         while the Rust round-trip uses the natural length-derived form (a /48
         prefix carries 8 octets, Length 2) — both are RFC 4191 section 2.3 valid.
+      - >-
+        Multicast Listener Discovery materializes natively: MLDv1 (RFC 2710,
+        types 130-132) via ICMPv6MLQuery / ICMPv6MLReport / ICMPv6MLDone and
+        MLDv2 (RFC 3810 / RFC 9777, type 143 report + the type-130 v2 query) via
+        ICMPv6MLReport2 (with ICMPv6MLDMultAddrRec records) / ICMPv6MLQuery2.
+        Each agrees with libcrafter byte-for-byte (the mldv1-general-query,
+        mldv1-report, mldv1-done, mldv2-report-two-records, mldv2-general-query
+        cases and their crafter-* mirrors, proved by scapy-2.7 materialization
+        diff). The MLDv2 query reuses type 130 with the MLDv1 query and is
+        selected by body length (the longer flags/QRV/QQIC/source run).
+      - >-
+        DOCUMENTED LIMITATION: scapy 2.5+/2.7 has NO native ICMPv6 class for the
+        RFC 8335 Extended Echo (types 160/161), so the icmpv6-extended-echo-request
+        / -reply cases carry no strict native-class byte-proof (they would decode
+        as a raw ICMPv6 type 160/161 payload); their correctness is gated by the
+        crafter/tests/icmpv6_ndp.rs round-trips and the extended_echo.rs unit
+        tests, mirroring the ICMPv4 extended-echo handling. Node Information
+        (RFC 4620, type 139, experimental) does have native scapy NIQuery*/NIReply*
+        classes, but libcrafter keeps its Data field opaque (the layout is
+        Qtype-dependent and the family is experimental), so the
+        icmpv6-node-information-query case asserts no strict typed-stack mapping
+        and is gated by the node_info.rs unit tests and the
+        crafter/tests/icmpv6_ndp.rs node-information round-trips. Both are recorded
+        here rather than failing the suite.
   libcrafter:
     status: partial
     encode: true
@@ -297,6 +348,11 @@ backend_support:
     notes:
       - ICMPv6 error matrix is planned coverage.
       - >-
-        NDP, MLD, and extended-echo emission is scaffolded only; libcrafter does
-        not yet emit these wire bytes, so they carry no coverage cases at this
-        step. Per-message coverage lands in the steps that implement the bytes.
+        NDP, MLD (MLDv1 + MLDv2), extended echo (RFC 8335, types 160/161), and
+        Node Information (RFC 4620, type 139) emission are implemented; libcrafter
+        emits these wire bytes and they round-trip through compile() /
+        decode_from_l3 (crafter/tests/icmpv6_ndp.rs). The offline/pcap corpus is
+        driven from stacks.yaml and does not auto-emit these families, so the
+        scapy-cases.json entries are a coverage manifest plus the byte-proof
+        (MLD, native scapy classes) or a documented scapy limitation (extended
+        echo and Node Information); the Rust round-trips are the executable gate.
