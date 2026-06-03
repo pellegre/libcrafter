@@ -35,7 +35,7 @@ pub use self::flags::{
 pub use self::option::{
     tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
     tcp_option_kind_name, valid_window_scale, TcpExtendedDataOffset, TcpOption, TcpOptionIter,
-    TcpOptionKindClass, TcpSackBlock,
+    TcpOptionKindClass, TcpSackBlock, TcpSynOptions,
 };
 pub use self::segment::Tcp;
 pub use self::sizing::{

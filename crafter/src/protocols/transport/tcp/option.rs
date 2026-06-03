@@ -13,6 +13,7 @@ use super::constants::{
     TCP_OPTION_TCP_ENO, TCP_OPTION_TCP_ENO_MIN_LEN, TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT,
     TCP_OPTION_USER_TIMEOUT_LEN, TCP_OPTION_WINDOW_SCALE, TCP_WINDOW_SCALE_MAX_SHIFT,
 };
+use super::sizing::TcpOptionBudget;
 
 /// IANA registry classification for a TCP option kind.
 ///
@@ -1117,6 +1118,202 @@ impl TcpOption {
     /// Decode all options from a raw TCP option byte slice.
     pub fn decode_all(bytes: &[u8]) -> Result<Vec<Self>> {
         TcpOptionIter::new(bytes).collect()
+    }
+}
+
+/// An ergonomic builder for a common TCP SYN option *profile*.
+///
+/// SYN segments routinely carry a recognizable set of options — Maximum Segment
+/// Size, Window Scale, SACK-Permitted, Timestamps, and increasingly TCP Fast
+/// Open, Multipath TCP, and Accurate ECN negotiation. `TcpSynOptions` lets a
+/// generated tool *opt into* each of those explicitly and then materialize the
+/// resulting [`TcpOption`] list, in the order they were requested.
+///
+/// This builder imposes no policy. It does not:
+///
+/// - infer or probe a path MTU (the caller supplies any MSS value),
+/// - model connection state, sequence numbers, or a handshake,
+/// - reorder, deduplicate, or auto-drop options to make them fit.
+///
+/// Every option in the profile is one the caller explicitly selected. To learn
+/// whether the selected set fits the 40-octet TCP option budget (RFC 9293
+/// section 3.1) the caller asks for [`TcpSynOptions::budget`] (a pure
+/// [`TcpOptionBudget`] report) and decides what to do when it
+/// [`exceeds`](TcpOptionBudget::exceeds) — the builder never decides for them.
+///
+/// Source anchors (see `docs/tcp-rfc-manifest.md`): RFC 9293 (base TCP and the
+/// option budget), RFC 7323 (Window Scale and Timestamps), RFC 2018
+/// (SACK-Permitted), RFC 7413 (Fast Open), RFC 8684 (Multipath TCP), RFC 9768
+/// (Accurate ECN option).
+///
+/// ```rust
+/// use crafter::prelude::*;
+/// use crafter::protocols::transport::TcpSynOptions;
+///
+/// // A typical Linux-style SYN profile, opted into one option at a time.
+/// let profile = TcpSynOptions::new()
+///     .mss(1460)
+///     .sack_permitted()
+///     .timestamp(0x0102_0304, 0)
+///     .window_scale(7);
+///
+/// // The profile reports whether it fits the 40-octet option budget; it never
+/// // drops options on its own.
+/// assert!(profile.budget().fits());
+///
+/// // Materialize the typed options to attach to a SYN segment.
+/// let options = profile.build();
+/// assert_eq!(options[0], TcpOption::maximum_segment_size(1460));
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TcpSynOptions {
+    options: Vec<TcpOption>,
+}
+
+impl TcpSynOptions {
+    /// Start an empty SYN option profile.
+    ///
+    /// No options are selected until the caller opts into them. An empty profile
+    /// produces an empty option list and a budget that uses the bare 20-octet
+    /// TCP header.
+    pub const fn new() -> Self {
+        Self {
+            options: Vec::new(),
+        }
+    }
+
+    /// Opt into a Maximum Segment Size option (RFC 9293 section 3.1, RFC 6691).
+    ///
+    /// The caller supplies the MSS value directly; `crafter` never infers it from
+    /// a path MTU. Sizing helpers such as
+    /// [`effective_mss`](super::sizing::effective_mss) can derive a value, but
+    /// calling them is the caller's explicit choice.
+    pub fn mss(mut self, mss: u16) -> Self {
+        self.options.push(TcpOption::maximum_segment_size(mss));
+        self
+    }
+
+    /// Opt into a Window Scale option (RFC 7323 section 2).
+    ///
+    /// `shift` is preserved verbatim, including values above the RFC 7323 maximum
+    /// of 14, so deliberately malformed profiles stay constructible. Use
+    /// [`valid_window_scale`] to check the shift first if desired.
+    pub fn window_scale(mut self, shift: u8) -> Self {
+        self.options.push(TcpOption::window_scale(shift));
+        self
+    }
+
+    /// Opt into a SACK-Permitted option (RFC 2018 section 2).
+    pub fn sack_permitted(mut self) -> Self {
+        self.options.push(TcpOption::sack_permitted());
+        self
+    }
+
+    /// Opt into a Timestamps option (RFC 7323 section 3) with the given TSval and
+    /// TSecr.
+    pub fn timestamp(mut self, tsval: u32, tsecr: u32) -> Self {
+        self.options.push(TcpOption::timestamp(tsval, tsecr));
+        self
+    }
+
+    /// Opt into a TCP Fast Open cookie-request option (RFC 7413 section 3).
+    ///
+    /// This is the empty-cookie form a client sends on its initial SYN to ask the
+    /// server for a Fast Open cookie. Use [`Self::fast_open_cookie`] to carry a
+    /// known cookie instead.
+    pub fn fast_open_cookie_request(mut self) -> Self {
+        self.options.push(TcpOption::fast_open_cookie_request());
+        self
+    }
+
+    /// Opt into a TCP Fast Open option carrying a known cookie (RFC 7413
+    /// section 2).
+    ///
+    /// The cookie bytes are preserved verbatim; `crafter` does not validate the
+    /// RFC 7413 4-to-16-byte even-length rule, so deliberately malformed cookies
+    /// stay constructible.
+    pub fn fast_open_cookie(mut self, cookie: impl Into<Vec<u8>>) -> Self {
+        self.options.push(TcpOption::fast_open(cookie));
+        self
+    }
+
+    /// Opt into a Multipath TCP option with an explicit subtype and
+    /// subtype-specific bytes (RFC 8684 section 3).
+    ///
+    /// On a SYN this is typically an `MP_CAPABLE` (subtype `0x0`); the builder
+    /// imposes no subtype and preserves `data` verbatim.
+    pub fn multipath_tcp(mut self, subtype: u8, data: impl Into<Vec<u8>>) -> Self {
+        self.options.push(TcpOption::multipath_tcp(subtype, data));
+        self
+    }
+
+    /// Opt into an Accurate ECN negotiation option (RFC 9768) with an explicit
+    /// order kind (`TCP_OPTION_ACCURATE_ECN_ORDER_0` 172 or
+    /// `TCP_OPTION_ACCURATE_ECN_ORDER_1` 174) and its counter bytes.
+    ///
+    /// The AccECN handshake also uses the AE/CWR/ECE header flags; those are set
+    /// on the [`Tcp`](super::segment::Tcp) segment, not in the option list. This
+    /// method only opts the AccECN *option* into the profile and preserves
+    /// `data` verbatim.
+    pub fn accurate_ecn(mut self, kind: u8, data: impl Into<Vec<u8>>) -> Self {
+        self.options.push(TcpOption::accurate_ecn(kind, data));
+        self
+    }
+
+    /// Opt into an arbitrary already-built [`TcpOption`].
+    ///
+    /// An escape hatch for options without a dedicated method (User Timeout,
+    /// TCP-AO, TCP-ENO, experimental ExID, generic/unknown kinds, and so on).
+    /// The option is appended verbatim in request order.
+    pub fn option(mut self, option: TcpOption) -> Self {
+        self.options.push(option);
+        self
+    }
+
+    /// The selected options as a read-only slice, in request order.
+    pub fn options(&self) -> &[TcpOption] {
+        &self.options
+    }
+
+    /// A pure budget report for the selected options against the 40-octet TCP
+    /// option budget (RFC 9293 section 3.1).
+    ///
+    /// This never drops options; an over-budget profile simply reports
+    /// [`TcpOptionBudget::exceeds`] as `true`. The caller decides what to do.
+    pub fn budget(&self) -> TcpOptionBudget {
+        TcpOptionBudget::for_options(&self.options)
+    }
+
+    /// True when the selected options fit the 40-octet TCP option budget
+    /// (RFC 9293 section 3.1). Convenience for `self.budget().fits()`.
+    pub fn fits(&self) -> bool {
+        self.budget().fits()
+    }
+
+    /// Materialize the selected options as a `Vec<TcpOption>`, in request order.
+    ///
+    /// The returned options are exactly what the caller opted into — no padding,
+    /// reordering, or dropping. Attach them to a SYN segment with
+    /// [`Tcp::tcp_option`](super::segment::Tcp::tcp_option) (per option) or
+    /// encode them with [`Self::build_bytes`].
+    pub fn build(&self) -> Vec<TcpOption> {
+        self.options.clone()
+    }
+
+    /// Encode the selected options to a raw TCP option byte vector, in request
+    /// order.
+    ///
+    /// Returns the concatenated wire encoding of every selected option with no
+    /// 32-bit boundary padding added — `compile()` pads the option area when the
+    /// bytes are placed on a segment. Fails with a structured error only if an
+    /// individual option cannot encode (for example a length that overflows the
+    /// one-byte length field).
+    pub fn build_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        for option in &self.options {
+            bytes.extend_from_slice(&option.encode()?);
+        }
+        Ok(bytes)
     }
 }
 

@@ -11,7 +11,7 @@ pub use self::tcp::{
     tcp_option_kind_class, tcp_option_kind_is_assigned,
     tcp_option_kind_is_experimental, tcp_option_kind_name, valid_window_scale, Tcp,
     TcpExtendedDataOffset, TcpOption,
-    TcpOptionIter, TcpOptionKindClass, TcpSackBlock, IPV4_HEADER_LEN_FOR_MSS,
+    TcpOptionIter, TcpOptionKindClass, TcpSackBlock, TcpSynOptions, IPV4_HEADER_LEN_FOR_MSS,
     IPV6_HEADER_LEN_FOR_MSS, IPV6_MINIMUM_MTU, TCP_DEFAULT_IPV4_MSS, TCP_FIXED_HEADER_LEN,
     TCP_MAX_OPTION_BYTES, MPTCP_SUBTYPE_ADD_ADDR, MPTCP_SUBTYPE_DSS, MPTCP_SUBTYPE_MP_CAPABLE,
     MPTCP_SUBTYPE_MP_EXPERIMENTAL, MPTCP_SUBTYPE_MP_FAIL, MPTCP_SUBTYPE_MP_FASTCLOSE,
