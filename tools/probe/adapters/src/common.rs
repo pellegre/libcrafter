@@ -137,6 +137,8 @@ pub struct ProbePlan {
     #[serde(default)]
     pub window: Option<u16>,
     #[serde(default)]
+    pub tcp_options: Option<Vec<TcpOptionSpec>>,
+    #[serde(default)]
     pub query_id: Option<u16>,
     #[serde(default)]
     pub query_name: Option<String>,
@@ -647,6 +649,30 @@ pub struct EdnsOptionExpectation {
     pub data_hex: String,
 }
 
+/// One representative TCP option the `tcp-syn-options` case materializes.
+///
+/// `kind` names the typed option the stimulus endpoint builds with the crafter
+/// `TcpOption` API (`mss`, `window_scale`, `sack_permitted`, `timestamp`,
+/// `nop`, `user_timeout`); the remaining fields carry that option's parameters.
+/// Materialized wire bytes are produced by libcrafter at send time, never
+/// hand-encoded in the probe plan.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TcpOptionSpec {
+    pub kind: String,
+    #[serde(default)]
+    pub mss: Option<u16>,
+    #[serde(default)]
+    pub window_scale_shift: Option<u8>,
+    #[serde(default)]
+    pub timestamp_value: Option<u32>,
+    #[serde(default)]
+    pub timestamp_echo_reply: Option<u32>,
+    #[serde(default)]
+    pub user_timeout_granularity: Option<bool>,
+    #[serde(default)]
+    pub user_timeout_value: Option<u16>,
+}
+
 #[derive(Debug)]
 pub struct ProbeOutcome {
     pub result: Value,
@@ -852,8 +878,12 @@ fn dispatch_case(
     match (mode, plan.case.as_str()) {
         (RunMode::DryRun, "icmp-echo") => icmp::run_icmp_dry_run(request, plan),
         (RunMode::Live, "icmp-echo") => icmp::run_icmp_live(request, plan),
-        (RunMode::DryRun, "tcp-syn-open" | "tcp-syn-closed") => tcp::run_tcp_dry_run(request, plan),
-        (RunMode::Live, "tcp-syn-open" | "tcp-syn-closed") => tcp::run_tcp_live(request, plan),
+        (RunMode::DryRun, "tcp-syn-open" | "tcp-syn-closed" | "tcp-syn-options") => {
+            tcp::run_tcp_dry_run(request, plan)
+        }
+        (RunMode::Live, "tcp-syn-open" | "tcp-syn-closed" | "tcp-syn-options") => {
+            tcp::run_tcp_live(request, plan)
+        }
         (
             RunMode::DryRun,
             "dns-query"
@@ -1079,6 +1109,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "tcp_sequence_number": plan.tcp_sequence_number,
         "expected_acknowledgment_number": plan.expected_acknowledgment_number,
         "window": plan.window,
+        "tcp_options": tcp::tcp_options_json(plan.tcp_options.as_deref()),
         "query_id": plan.query_id,
         "query_name": plan.query_name,
         "query_type": plan.query_type,
@@ -1236,7 +1267,7 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 .as_deref()
                 .unwrap_or("")
         ),
-        "tcp-syn-open" | "tcp-syn-closed" => format!(
+        "tcp-syn-open" | "tcp-syn-closed" | "tcp-syn-options" => format!(
             "tcp and src host {} and dst host {} and src port {} and dst port {}",
             plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
             plan.expected_reply_destination_ipv4
@@ -1339,7 +1370,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
         .as_deref()
         .unwrap_or(match plan.case.as_str() {
             "icmp-echo" => "icmp_echo_reply",
-            "tcp-syn-open" => "tcp_syn_ack",
+            "tcp-syn-open" | "tcp-syn-options" => "tcp_syn_ack",
             "tcp-syn-closed" => "tcp_rst",
             "dns-query"
             | "dns-a-success"
@@ -1388,7 +1419,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
 
 pub fn target_service_json(plan: &ProbePlan) -> Value {
     match plan.case.as_str() {
-        "tcp-syn-open" => json!({
+        "tcp-syn-open" | "tcp-syn-options" => json!({
             "required": true,
             "kind": "tcp-listener",
             "port": plan.destination_port,

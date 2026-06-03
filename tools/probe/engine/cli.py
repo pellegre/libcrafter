@@ -577,6 +577,7 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "icmp-echo",
         "tcp-syn-open",
         "tcp-syn-closed",
+        "tcp-syn-options",
         "dns-query",
         "ttl-expired",
         "dns-a-success",

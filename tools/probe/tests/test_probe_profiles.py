@@ -89,7 +89,45 @@ class ProbeProfileMembershipTest(unittest.TestCase):
         )
 
     def test_known_profiles_listed_sorted(self) -> None:
-        self.assertEqual(cases.known_profiles(), ("behavior", "smoke"))
+        self.assertEqual(cases.known_profiles(), ("behavior", "smoke", "tcp-smoke"))
+
+    def test_tcp_smoke_profile_selects_tcp_cases_with_options(self) -> None:
+        names = cases.profile_case_names("tcp-smoke")
+
+        self.assertEqual(
+            names,
+            ("tcp-syn-options", "tcp-syn-open", "tcp-syn-closed"),
+        )
+
+        selected = cases.profile_selected_cases("tcp-smoke", [])
+        self.assertEqual(
+            [case.name for case in selected],
+            ["tcp-syn-options", "tcp-syn-open", "tcp-syn-closed"],
+        )
+        # Every tcp-smoke case is a TCP case in the catalog.
+        for case in selected:
+            self.assertEqual(case.metadata.get("protocol"), "tcp")
+
+    def test_tcp_smoke_profile_default_count_is_legacy_five(self) -> None:
+        self.assertEqual(cases.profile_default_count("tcp-smoke"), 5)
+
+    def test_tcp_smoke_options_plan_materializes_typed_options(self) -> None:
+        plan = planning.probe_plan_for_case(
+            request=_request(profile="tcp-smoke", count=5),
+            case=cases.PROBE_CASE_BY_NAME["tcp-syn-options"],
+            sequence=0,
+        )
+
+        self.assertEqual(plan["expected_response"], "tcp_syn_ack")
+        self.assertEqual(plan["validation"]["flags"], ["syn", "ack"])
+        kinds = [option["kind"] for option in plan["tcp_options"]]
+        self.assertEqual(
+            kinds,
+            ["mss", "sack_permitted", "timestamp", "nop", "window_scale", "user_timeout"],
+        )
+        # Window-scale shift stays inside the RFC 7323 valid range.
+        window_scale = next(o for o in plan["tcp_options"] if o["kind"] == "window_scale")
+        self.assertLessEqual(window_scale["window_scale_shift"], 14)
 
 
 class ProbeProfileDefaultCountTest(unittest.TestCase):
