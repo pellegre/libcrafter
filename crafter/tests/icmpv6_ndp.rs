@@ -169,6 +169,9 @@ fn router_advertisement_round_trips_with_prefix_and_mtu() {
             cur_hop_limit: 64,
             managed: true,
             other: false,
+            // router_advertisement_with defaults the RFC 4191 Default Router
+            // Preference to Medium (wire value 0).
+            preference: Prf::Medium,
             reserved_flags: 0,
             router_lifetime: 1800,
         },
