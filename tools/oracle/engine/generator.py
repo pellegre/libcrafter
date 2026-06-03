@@ -732,6 +732,13 @@ class PacketGenerator:
                 and not _has_tcp_options_case(coverage_cases)
             ):
                 continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "tcp-smoke"
+                and not _has_tcp_smoke_case(coverage_cases)
+            ):
+                continue
             candidates.append(stack)
         return candidates
 
@@ -878,6 +885,11 @@ class PacketGenerator:
             # case selection never falls through to the broad option-list cases
             # (ipv4-tcp-syn, tcp-options, tcp-header-*) the TCP stacks declare.
             coverage_cases = [case for case in coverage_cases if _has_tcp_options_case([case])]
+        if feature is None and self.profile == "tcp-smoke":
+            # Representative TCP smoke set: restrict to the union of the focused
+            # tcp-header-* and tcp-option-* cases so case selection stays on TCP
+            # behavior and never falls through to unrelated cases.
+            coverage_cases = [case for case in coverage_cases if _has_tcp_smoke_case([case])]
         if feature is not None:
             feature_spec = self._feature_spec(feature)
             feature_cases = _string_list(feature_spec.get("coverage_cases"), "feature.coverage_cases")
@@ -918,6 +930,13 @@ class PacketGenerator:
         # The cross-feature case expansion below is skipped so only the focused
         # single-option cases are drawn.
         if feature is None and self.profile == "tcp-options":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        # tcp-smoke profile: select only from the union of the tcp-header-* and
+        # tcp-option-* coverage cases (filtered above) so the smoke run stays on
+        # TCP behavior. The cross-feature case expansion below is skipped.
+        if feature is None and self.profile == "tcp-smoke":
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1013,6 +1032,12 @@ class PacketGenerator:
             # tcp_options feature is auto-sampled so the seeded selection stays on
             # the focused single-option cases.
             if self.profile == "tcp-options" and name != "tcp_options":
+                continue
+            # The tcp-smoke profile is the representative TCP smoke run: both the
+            # tcp_header and tcp_options features are auto-sampled so the seeded
+            # selection materializes a mix of TCP header and TCP option cases
+            # without mixing in unrelated features.
+            if self.profile == "tcp-smoke" and name not in ("tcp_header", "tcp_options"):
                 continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")
@@ -3880,6 +3905,19 @@ def _has_tcp_options_case(cases: Sequence[str]) -> bool:
     """
 
     return any(case.replace("_", "-").startswith("tcp-option-") for case in cases)
+
+
+def _has_tcp_smoke_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains a TCP smoke coverage case.
+
+    The tcp-smoke profile is the representative TCP smoke set used by
+    provider-backed dry-run validation. It keeps stack and case selection on the
+    union of the focused ``tcp-header-*`` and ``tcp-option-*`` cases declared by
+    the IPv4/IPv6 TCP stacks, so a single small run materializes a mix of TCP
+    header and TCP option cases without falling through to unrelated stacks.
+    """
+
+    return _has_tcp_header_case(cases) or _has_tcp_options_case(cases)
 
 
 # Behavior names of the focused single-option tcp_options cases (tcp-option-*).

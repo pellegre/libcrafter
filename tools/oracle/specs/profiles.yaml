@@ -157,6 +157,34 @@ profiles:
       malformed: 4
       pcap: 0
       live: 0
+  # tcp-smoke: representative TCP smoke set for provider-backed dry-run
+  # validation. It is the TCP analogue of the focused tcp-header / tcp-options
+  # profiles, but it deliberately keeps BOTH the tcp_header and tcp_options
+  # features eligible so a single small run materializes a representative mix of
+  # TCP header and TCP option cases (see the tcp-smoke branches in
+  # tools/oracle/engine/generator.py). It exists so that
+  # `tools/oracle/run live --provider <p> --dry-run --profile tcp-smoke` can
+  # materialize a TCP packet plan WITHOUT any live traffic or credentials: the
+  # dry-run path only validates the orchestration plan and provider contract.
+  # The ipv4/ipv6 weights keep both TCP stacks eligible; baseline/boundary keep
+  # the typed cases sampled deterministically for a given seed.
+  - name: tcp-smoke
+    purpose: representative TCP smoke set for provider-backed dry-run validation
+    default_count: 10
+    family_weights:
+      - name: ipv4
+        weight: 2
+      - name: ipv6
+        weight: 1
+    payload_length:
+      min: 0
+      max: 16
+    feature_weights:
+      baseline: 10
+      boundary: 6
+      malformed: 0
+      pcap: 0
+      live: 0
 
 backend_support:
   scapy:
