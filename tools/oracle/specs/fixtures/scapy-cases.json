@@ -19,9 +19,11 @@
     ],
       "ipv6": [
         "2001:db8:1::10",
+        "2001:db8:2::",
         "2001:db8:2::20",
         "2001:db8:ffff::1",
         "2001:db8:ffff::2",
+        "64:ff9b::",
         "fe80::200:5eff:fe00:5301",
         "fe80::200:5eff:fe00:5302",
         "ff02::1",
@@ -959,6 +961,124 @@
       "strict_bytes": true,
       "status": "implemented",
       "notes": "libcrafter Icmpv6::redirect (RFC 4861 section 4.5) carrying a Target Link-Layer Address (section 4.6.1) and a Redirected Header option (section 4.6.3) decodes in Scapy as IPv6/ICMPv6ND_Redirect/ICMPv6NDOptDstLLAddr/ICMPv6NDOptRedirectedHdr with the same Reserved word, Target and Destination Addresses, link-layer address, and embedded redirected packet (zero-padded to the 8-octet boundary), byte-for-byte. Mirrors the scapy_to_libcrafter ndp-redirect case."
+    },
+    {
+      "name": "ndp-ra-route-rdnss-dnssl-mtu",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptRouteInfo",
+        "ICMPv6NDOptRDNSS",
+        "ICMPv6NDOptDNSSL",
+        "ICMPv6NDOptMTU"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4861 section 4.2 Router Advertisement (type 134, code 0) from a link-local router (fe80::/10) to the all-nodes multicast ff02::1, carrying the four standards-track NDP option extensions in order: Route Information (RFC 4191 section 2.3, prefix 2001:db8:2::/48 with Prf High and a 1800 s route lifetime), RDNSS (RFC 8106 section 5.1, server 2001:db8:ffff::1, lifetime 900 s), DNSSL (RFC 8106 section 5.2, search list example.com., lifetime 900 s), and MTU (RFC 4861 section 4.6.4, 1500). Cur Hop Limit 64, M/O clear, the six Reserved flag bits zero, Router Lifetime 1800 s, Reachable Time and Retrans Timer zero. Byte agreement proved by materializing the same stack in Scapy (ICMPv6ND_RA/ICMPv6NDOptRouteInfo/ICMPv6NDOptRDNSS/ICMPv6NDOptDNSSL/ICMPv6NDOptMTU, prf=0 per the ndp-router-advertisement note) and libcrafter and diffing the IPv6-level ICMPv6 bytes: identical (8600c1f4...05dc). One representational note: scapy's ICMPv6NDOptRouteInfo always emits the full 16 prefix octets (RFC 4191 Length 3), so the byte-proof pins libcrafter's Route Information to the same 16-octet form via Icmpv6 NdpOption::route_information_raw(prefix_octets=16); the crafter/tests/icmpv6_ndp.rs round-trip uses the natural length-derived form, where a /48 prefix carries 8 octets (Length 2) — both are RFC 4191 section 2.3 valid. The primary round-trip correctness gate is crafter/tests/icmpv6_ndp.rs::router_advertisement_round_trips_with_route_rdnss_dnssl_mtu."
+    },
+    {
+      "name": "crafter-ndp-ra-route-rdnss-dnssl-mtu",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptRouteInfo",
+        "ICMPv6NDOptRDNSS",
+        "ICMPv6NDOptDNSSL",
+        "ICMPv6NDOptMTU"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying Route Information (RFC 4191), RDNSS and DNSSL (RFC 8106), and MTU (RFC 4861) options decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptRouteInfo/ICMPv6NDOptRDNSS/ICMPv6NDOptDNSSL/ICMPv6NDOptMTU with the same flags, lifetimes, route preference and prefix, DNS server, search-list domain, and MTU, byte-for-byte, and the four-option order preserved. Mirrors the scapy_to_libcrafter ndp-ra-route-rdnss-dnssl-mtu case (Route Information pinned to the 16-octet/Length-3 form to match scapy's encoder; verified IPv6-level ICMPv6 bytes 8600c1f4...05dc)."
+    },
+    {
+      "name": "ndp-pref64",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptPREF64"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4861 section 4.2 Router Advertisement carrying a single PREF64 option (RFC 8781 section 4) that advertises the RFC 6052 Well-Known NAT64 prefix 64:ff9b::/96 with a Scaled Lifetime of 75 (units of 8 seconds) and PLC 0 (96-bit prefix). The option is exactly two 8-octet units (no padding). Byte agreement proved by materializing ICMPv6ND_RA/ICMPv6NDOptPREF64(scaledlifetime=75, plc=0, prefix=64:ff9b::) in Scapy and libcrafter NdpOption::pref64(75, 96, 64:ff9b::) and diffing the IPv6-level ICMPv6 bytes: identical (86005abb...0064ff9b...). The primary round-trip correctness gate is crafter/tests/icmpv6_ndp.rs::router_advertisement_round_trips_with_pref64."
+    },
+    {
+      "name": "crafter-ndp-pref64",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptPREF64"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying a PREF64 option (RFC 8781) decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptPREF64 with the same Scaled Lifetime, PLC, and high-96 NAT64 prefix, byte-for-byte. Mirrors the scapy_to_libcrafter ndp-pref64 case."
+    },
+    {
+      "name": "ndp-captive-portal",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptCaptivePortal"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4861 section 4.2 Router Advertisement carrying a single Captive Portal option (RFC 8910 section 2.3) whose URI is https://example.com/portal, NUL-padded to the 8-octet boundary (RFC 8910 section 2.3: the option is padded with NUL to a multiple of 8 bytes). Byte agreement proved by materializing ICMPv6ND_RA/ICMPv6NDOptCaptivePortal(URI=https://example.com/portal) in Scapy and libcrafter NdpOption::captive_portal(\"https://example.com/portal\") and diffing the IPv6-level ICMPv6 bytes: identical (86002d43...68747470733a2f2f6578616d706c652e636f6d2f706f7274616c00000000). The primary round-trip correctness gate is crafter/tests/icmpv6_ndp.rs::neighbor_solicitation_round_trips_with_captive_portal (the Rust case carries the same option on a Neighbor Solicitation to exercise it on a non-RA message)."
+    },
+    {
+      "name": "crafter-ndp-captive-portal",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptCaptivePortal"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying a Captive Portal option (RFC 8910) decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptCaptivePortal with the same URI (trailing NUL padding stripped on decode), byte-for-byte. Mirrors the scapy_to_libcrafter ndp-captive-portal case."
+    },
+    {
+      "name": "ndp-unknown-option",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptUnknown"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4861 section 4.2 Router Advertisement carrying one synthetic unknown NDP option (type 253, the RFC 4727 experimental option codepoint) with Length 1 (one 8-octet unit) and six value bytes deadbeefcafe. Per RFC 4861 section 4.6 and spec.md, an unknown option type is preserved as raw option bytes rather than rejected or remapped; libcrafter decodes it as NdpOption::Unknown and re-encodes it verbatim. Byte agreement proved by materializing ICMPv6ND_RA/ICMPv6NDOptUnknown(type=253, len=1, data=deadbeefcafe) in Scapy and libcrafter NdpOption::unknown(253, deadbeefcafe) and diffing the IPv6-level ICMPv6 bytes: identical (86001d7f...fd01deadbeefcafe). The primary round-trip correctness gate is crafter/tests/icmpv6_ndp.rs::router_advertisement_round_trips_with_unknown_option."
+    },
+    {
+      "name": "crafter-ndp-unknown-option",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptUnknown"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying a synthetic unknown NDP option (type 253) decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptUnknown with the same option type, length, and value bytes, byte-for-byte, proving unknown-option preservation through re-encode. Mirrors the scapy_to_libcrafter ndp-unknown-option case. Scapy lacks a native class for two of this effort's standards-track options — the Nonce option (RFC 3971, no ICMPv6NDOptNonce in scapy 2.5+) and the RA Flags Extension option (RFC 5175, no ICMPv6NDOptRAFlagsExt) — so those two options have no native-class byte-proof case; they are covered by the crafter/tests/icmpv6_ndp.rs round-trips and the unit tests in crafter/src/protocols/icmp/v6/message/ndp_option.rs, and on the wire they materialize as ICMPv6NDOptUnknown (type 14 / type 26) exactly like this case. This documented limitation is recorded here rather than failing the suite."
     },
     {
       "name": "dns-response-records",

@@ -1,5 +1,8 @@
 //! Round-trip integration coverage for the five IPv6 Neighbor Discovery (NDP)
-//! core messages (RFC 4861, types 133–137) and their base options.
+//! core messages (RFC 4861, types 133–137), their base options, and the
+//! standards-track NDP option extensions — Route Information (RFC 4191), RDNSS
+//! and DNSSL (RFC 8106), MTU (RFC 4861), PREF64 (RFC 8781), Captive Portal
+//! (RFC 8910) — plus unknown-option preservation.
 //!
 //! Each test builds an NDP message with [`crafter::prelude`] builders, wraps it
 //! in an [`Ipv6`] header, `compile()`s the packet, decodes the resulting bytes
@@ -360,4 +363,194 @@ fn neighbor_advertisement_reserved_override_survives() {
             reserved: 0x0000_000f,
         },
     );
+}
+
+// --- NDP option extensions (steps 22-24) -----------------------------------
+
+/// A documentation NAT64 prefix (`64:ff9b::/96`, the RFC 6052 Well-Known
+/// Prefix) advertised by PREF64.
+fn nat64_prefix() -> Ipv6Addr {
+    Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0)
+}
+
+/// A documentation recursive DNS server (`2001:db8:ffff::1`) for RDNSS.
+fn rdnss_server() -> Ipv6Addr {
+    Ipv6Addr::new(0x2001, 0x0db8, 0xffff, 0, 0, 0, 0, 1)
+}
+
+/// A documentation route prefix (`2001:db8:2::/48`) for Route Information.
+fn route_prefix() -> Ipv6Addr {
+    Ipv6Addr::new(0x2001, 0x0db8, 2, 0, 0, 0, 0, 0)
+}
+
+#[test]
+fn router_advertisement_round_trips_with_route_rdnss_dnssl_mtu() {
+    // The full DNS-and-routing SLAAC advertisement: Route Information
+    // (RFC 4191), RDNSS + DNSSL (RFC 8106), and MTU (RFC 4861), in that order,
+    // to prove every extension field and the option order round-trip together.
+    // The oracle's byte-proof (tools/oracle/specs/fixtures/scapy-cases.json:
+    // ndp-ra-route-rdnss-dnssl-mtu) materializes the same stack in scapy; that
+    // case pins the Route Information option to its 16-octet (Length 3) form to
+    // match scapy's encoder, whereas this round-trip uses the natural
+    // length-derived form (a /48 prefix carries 8 octets, Length 2).
+    let body = RouterAdvertisement::new()
+        .reachable_time(0)
+        .retrans_timer(0)
+        .option(NdpOption::route_information(
+            route_prefix(),
+            48,
+            Prf::High,
+            1800,
+        ))
+        .option(NdpOption::rdnss(900, &[rdnss_server()]))
+        .option(NdpOption::dnssl(900, &["example.com."]))
+        .option(NdpOption::mtu(1500));
+
+    let (_, decoded) = round_trip(
+        router_link_local(),
+        all_nodes(),
+        Icmpv6::router_advertisement_with(64, false, false, 1800, body),
+    );
+
+    assert_ndp_header(&decoded, ICMPV6_ROUTER_ADVERTISEMENT);
+
+    let ra = decoded
+        .layer::<RouterAdvertisement>()
+        .expect("typed Router Advertisement body");
+    let options = ra.options_ref();
+    assert_eq!(
+        options.len(),
+        4,
+        "Route Information + RDNSS + DNSSL + MTU options, in order",
+    );
+
+    // 1. Route Information (RFC 4191 section 2.3).
+    let ri = &options.options()[0];
+    assert_eq!(ri.option_type(), NDP_OPT_ROUTE_INFORMATION);
+    assert_eq!(ri.route_prefix_length(), Some(48));
+    assert_eq!(ri.route_preference(), Some(Prf::High));
+    assert_eq!(ri.route_lifetime(), Some(1800));
+    assert_eq!(ri.route_prefix(), Some(route_prefix()));
+
+    // 2. RDNSS (RFC 8106 section 5.1).
+    let rdnss = &options.options()[1];
+    assert_eq!(rdnss.option_type(), NDP_OPT_RDNSS);
+    assert_eq!(rdnss.rdnss_lifetime(), Some(900));
+    assert_eq!(rdnss.rdnss_servers(), Some(vec![rdnss_server()]));
+
+    // 3. DNSSL (RFC 8106 section 5.2).
+    let dnssl = &options.options()[2];
+    assert_eq!(dnssl.option_type(), NDP_OPT_DNSSL);
+    assert_eq!(dnssl.dnssl_lifetime(), Some(900));
+    assert_eq!(
+        dnssl.dnssl_domains(),
+        Some(vec!["example.com.".to_string()]),
+    );
+
+    // 4. MTU (RFC 4861 section 4.6.4).
+    let mtu = &options.options()[3];
+    assert_eq!(mtu.option_type(), NDP_OPT_MTU);
+    assert_eq!(mtu.mtu_value(), Some(1500));
+}
+
+#[test]
+fn router_advertisement_round_trips_with_pref64() {
+    // PREF64 (RFC 8781 section 4) advertising the RFC 6052 Well-Known NAT64
+    // prefix 64:ff9b::/96 with a scaled lifetime of 75 (units of 8 seconds).
+    let body = RouterAdvertisement::new()
+        .reachable_time(0)
+        .retrans_timer(0)
+        .option(NdpOption::pref64(75, 96, nat64_prefix()).expect("valid PREF64 prefix length"));
+
+    let (_, decoded) = round_trip(
+        router_link_local(),
+        all_nodes(),
+        Icmpv6::router_advertisement_with(64, false, false, 1800, body),
+    );
+
+    assert_ndp_header(&decoded, ICMPV6_ROUTER_ADVERTISEMENT);
+
+    let ra = decoded
+        .layer::<RouterAdvertisement>()
+        .expect("typed Router Advertisement body");
+    let options = ra.options_ref();
+    assert_eq!(options.len(), 1, "one PREF64 option");
+
+    let pref64 = &options.options()[0];
+    assert_eq!(pref64.option_type(), NDP_OPT_PREF64);
+    assert_eq!(pref64.pref64_scaled_lifetime(), Some(75));
+    assert_eq!(pref64.pref64_prefix_length(), Some(96));
+    assert_eq!(pref64.pref64_prefix(), Some(nat64_prefix()));
+}
+
+#[test]
+fn neighbor_solicitation_round_trips_with_captive_portal() {
+    // Captive Portal (RFC 8910 section 2.3) carried by a Neighbor Solicitation,
+    // exercising the option on a non-RA message. The URI is NUL-padded to the
+    // 8-octet boundary by the framework and stripped back on decode.
+    let uri = "https://example.com/portal";
+    let body = NeighborSolicitation::new(target_addr()).option(NdpOption::captive_portal(uri));
+
+    let (_, decoded) = round_trip(
+        host_link_local(),
+        solicited_node_multicast(),
+        Icmpv6::new()
+            .icmp_type(ICMPV6_NEIGHBOR_SOLICITATION)
+            .code(0)
+            / body,
+    );
+
+    assert_ndp_header(&decoded, ICMPV6_NEIGHBOR_SOLICITATION);
+
+    let ns = decoded
+        .layer::<NeighborSolicitation>()
+        .expect("typed Neighbor Solicitation body");
+    assert_eq!(ns.target_address_value(), target_addr());
+
+    let options = ns.options_ref();
+    assert_eq!(options.len(), 1, "one Captive Portal option");
+    let portal = &options.options()[0];
+    assert_eq!(portal.option_type(), NDP_OPT_CAPTIVE_PORTAL);
+    assert_eq!(portal.captive_portal_uri().as_deref(), Some(uri));
+}
+
+#[test]
+fn router_advertisement_round_trips_with_unknown_option() {
+    // An NDP message carrying a synthetic unknown option type (RFC 4727's
+    // experimental option codepoint 253) must round-trip verbatim: the option
+    // type, length, and value bytes survive build -> compile -> decode ->
+    // recompile unchanged, and the framework preserves it as an
+    // NdpOption::Unknown rather than rejecting or remapping it (spec.md edge
+    // case: "an NDP message with an unknown option type ... round-trips").
+    const UNKNOWN_OPT_TYPE: u8 = 253;
+    let value: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe];
+
+    let body = RouterAdvertisement::new()
+        .reachable_time(0)
+        .retrans_timer(0)
+        .option(NdpOption::unknown(UNKNOWN_OPT_TYPE, value.clone()));
+
+    let (_, decoded) = round_trip(
+        router_link_local(),
+        all_nodes(),
+        Icmpv6::router_advertisement_with(64, false, false, 1800, body),
+    );
+
+    assert_ndp_header(&decoded, ICMPV6_ROUTER_ADVERTISEMENT);
+
+    let ra = decoded
+        .layer::<RouterAdvertisement>()
+        .expect("typed Router Advertisement body");
+    let options = ra.options_ref();
+    assert_eq!(options.len(), 1, "one unknown option");
+
+    let unknown = &options.options()[0];
+    assert_eq!(unknown.option_type(), UNKNOWN_OPT_TYPE);
+    assert!(
+        matches!(unknown, NdpOption::Unknown { .. }),
+        "synthetic option type 253 is preserved as NdpOption::Unknown, got {unknown:?}",
+    );
+    // The 6 value bytes plus the 2-byte type/length header are exactly one
+    // 8-octet unit, so the value round-trips with no boundary padding.
+    assert_eq!(unknown.value(), value.as_slice());
 }
