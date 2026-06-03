@@ -1272,7 +1272,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod ipv4 {
+mod ipv4_tests {
     use super::{
         Ipv4, Ipv4Protocol, IPPROTO_ICMP, IPPROTO_ICMPV6, IPV4_FLAG_DONT_FRAGMENT,
         IPV4_FLAG_MORE_FRAGMENTS,
