@@ -211,6 +211,23 @@ stacks:
       - tcp-header-explicit-checksum
       - tcp-header-raw-payload
       - tcp-header-invalid-data-offset
+      # Focused single-option cases (tcp-options profile). The comparable kinds
+      # compare octet-for-octet; the structured_error kinds are declared
+      # coverage excluded from offline sampling.
+      - tcp-option-mss
+      - tcp-option-window-scale
+      - tcp-option-sack-permitted
+      - tcp-option-sack
+      - tcp-option-timestamp
+      - tcp-option-fast-open
+      - tcp-option-mptcp-generic
+      - tcp-option-unknown-generic
+      - tcp-option-user-timeout
+      - tcp-option-tcp-ao
+      - tcp-option-tcp-eno
+      - tcp-option-accurate-ecn
+      - tcp-option-experimental
+      - tcp-option-malformed-length
   - name: ipv6_tcp_payload
     root: "l3:ipv6"
     layers:
@@ -221,6 +238,22 @@ stacks:
       - tcp-header-syn-ack
       - tcp-header-ipv6-checksum
       - tcp-header-raw-payload
+      # Focused single-option cases also run over the IPv6 TCP stack so both
+      # families stay eligible under the tcp-options profile.
+      - tcp-option-mss
+      - tcp-option-window-scale
+      - tcp-option-sack-permitted
+      - tcp-option-sack
+      - tcp-option-timestamp
+      - tcp-option-fast-open
+      - tcp-option-mptcp-generic
+      - tcp-option-unknown-generic
+      - tcp-option-user-timeout
+      - tcp-option-tcp-ao
+      - tcp-option-tcp-eno
+      - tcp-option-accurate-ecn
+      - tcp-option-experimental
+      - tcp-option-malformed-length
   - name: ipv4_icmp_payload
     root: "l3:ipv4"
     layers:

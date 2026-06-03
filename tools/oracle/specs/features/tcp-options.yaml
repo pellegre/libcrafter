@@ -1,7 +1,36 @@
 version: 1
 kind: feature
 name: tcp_options
-summary: TCP option lists, data offset, reserved bits, and raw option preservation.
+summary: TCP option lists, data offset, reserved bits, raw option preservation, and per-option-kind encode/decode behavior.
+
+# Offline TCP option compile/decode coverage. The broad option-list cases
+# (tcp-options*, tcp-all-flags-reserved-offset) keep their existing behavior and
+# ride the wild/ci/boundary profiles. The focused single-option cases
+# (tcp-option-*) are sampled by the dedicated tcp-options profile (see
+# tools/oracle/specs/profiles.yaml and tools/oracle/engine/generator.py) and
+# split into two byte policies:
+#
+#   * Comparable kinds (MSS, Window Scale, SACK Permitted, SACK, Timestamp,
+#     Fast Open, MPTCP generic, and an unknown valid generic option). Both the
+#     Scapy reference backend and the libcrafter adapter materialize the same
+#     option region from one packet plan, then decode and compare it
+#     octet-for-octet (byte_policy: strict_bytes). Each focused case carries a
+#     single, self-consistent option whose declared length matches its data so
+#     Scapy emits the option bytes verbatim.
+#
+#   * Preserved-only kinds (User Timeout kind 28, TCP-AO kind 29, TCP-ENO
+#     kind 69, Accurate ECN kinds 172/174, and experimental ExID kinds
+#     253/254) plus the malformed-option-length case. The Scapy reference
+#     backend has no faithful native build/compare path for these kinds: it
+#     re-derives option length bytes and cannot round-trip the preserved wire
+#     form octet-for-octet, and there is no offline malformed comparison
+#     pathway (see tools/oracle/engine/generator.py
+#     _case_supported_in_direction). These cases therefore carry
+#     byte_policy: structured_error: declared coverage that is excluded from
+#     offline encode/decode sampling. The crate's own unit suite
+#     (crafter/src/protocols/transport/tcp/tests.rs), resilience suite, and
+#     fixtures assert that libcrafter preserves these option bytes and reports
+#     structured errors for malformed option lengths.
 
 layers:
   - tcp
@@ -12,6 +41,7 @@ strict_bytes: true
 malformed: false
 
 behaviors:
+  # Broad option-list behaviors (existing, wild/ci/boundary profiles).
   - name: common_options
     option_kinds:
       - eol
@@ -34,6 +64,53 @@ behaviors:
       - data_offset
       - reserved
       - flags
+  # Focused single-option behaviors. The behavior name's identifier is the exact
+  # case suffix (case ids are tcp-option-<behavior>), matched by the generator's
+  # tcp_options exact-suffix branch in _apply_tcp_options_behavior.
+  - name: mss
+    option_kinds:
+      - mss
+  - name: window-scale
+    option_kinds:
+      - window_scale
+  - name: sack-permitted
+    option_kinds:
+      - sack_permitted
+  - name: sack
+    option_kinds:
+      - sack
+  - name: timestamp
+    option_kinds:
+      - timestamp
+  - name: fast-open
+    option_kinds:
+      - fast_open
+  - name: mptcp-generic
+    option_kinds:
+      - mptcp
+  - name: unknown-generic
+    option_kinds:
+      - generic
+  # Preserved-only kinds: declared coverage, excluded from offline comparison
+  # (byte_policy: structured_error). Scapy cannot faithfully build/compare these.
+  - name: user-timeout
+    option_kinds:
+      - user_timeout
+  - name: tcp-ao
+    option_kinds:
+      - tcp_ao
+  - name: tcp-eno
+    option_kinds:
+      - tcp_eno
+  - name: accurate-ecn
+    option_kinds:
+      - accurate_ecn
+  - name: experimental
+    option_kinds:
+      - experimental
+  - name: malformed-length
+    option_kinds:
+      - malformed
 
 coverage_cases:
   - tcp-all-flags-reserved-offset
@@ -42,6 +119,97 @@ coverage_cases:
   - tcp-options-mptcp-fastopen-edo-generic
   - malformed-tcp-options
   - crafter-tcp-options
+  - tcp-option-mss
+  - tcp-option-window-scale
+  - tcp-option-sack-permitted
+  - tcp-option-sack
+  - tcp-option-timestamp
+  - tcp-option-fast-open
+  - tcp-option-mptcp-generic
+  - tcp-option-unknown-generic
+  - tcp-option-user-timeout
+  - tcp-option-tcp-ao
+  - tcp-option-tcp-eno
+  - tcp-option-accurate-ecn
+  - tcp-option-experimental
+  - tcp-option-malformed-length
+
+supported_cases:
+  # Comparable focused option cases keep strict byte comparison both directions.
+  - name: tcp-option-mss
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-option-window-scale
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-option-sack-permitted
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-option-sack
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-option-timestamp
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-option-fast-open
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-option-mptcp-generic
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: tcp-option-unknown-generic
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  # Preserved-only kinds and the malformed-length case: declared coverage with
+  # byte_policy: structured_error. Scapy cannot faithfully build/compare these,
+  # and there is no offline malformed comparison pathway, so they are excluded
+  # from offline encode/decode sampling. The crate suites assert the behavior.
+  - name: tcp-option-user-timeout
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: tcp-option-tcp-ao
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: tcp-option-tcp-eno
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: tcp-option-accurate-ecn
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: tcp-option-experimental
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: tcp-option-malformed-length
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
 
 backend_support:
   scapy:
@@ -51,4 +219,12 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Generic and advanced options may compare as opaque option bytes.
+      - Comparable option kinds (MSS, Window Scale, SACK Permitted, SACK,
+        Timestamp, Fast Open, MPTCP generic, and unknown valid generic) compile
+        to byte-identical option regions across both backends.
+      - "User Timeout, TCP-AO, TCP-ENO, Accurate ECN, and experimental ExID
+        options are preserved byte-for-byte by libcrafter, but Scapy has no
+        faithful native build/compare path, so these cases are declared coverage
+        excluded from offline comparison (byte_policy: structured_error)."
+      - Malformed option-length cases have no offline malformed comparison
+        pathway; the crate resilience and fixture suites assert the typed errors.

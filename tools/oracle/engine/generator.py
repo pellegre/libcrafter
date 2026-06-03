@@ -725,6 +725,13 @@ class PacketGenerator:
                 and not _has_tcp_header_case(coverage_cases)
             ):
                 continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "tcp-options"
+                and not _has_tcp_options_case(coverage_cases)
+            ):
+                continue
             candidates.append(stack)
         return candidates
 
@@ -866,6 +873,11 @@ class PacketGenerator:
             # tcp_header set so case selection never falls through to the other
             # cases (ipv4-tcp-syn, tcp-options*) the IPv4/IPv6 TCP stacks declare.
             coverage_cases = [case for case in coverage_cases if _has_tcp_header_case([case])]
+        if feature is None and self.profile == "tcp-options":
+            # Focused profile: restrict to the tcp-option-* single-option cases so
+            # case selection never falls through to the broad option-list cases
+            # (ipv4-tcp-syn, tcp-options, tcp-header-*) the TCP stacks declare.
+            coverage_cases = [case for case in coverage_cases if _has_tcp_options_case([case])]
         if feature is not None:
             feature_spec = self._feature_spec(feature)
             feature_cases = _string_list(feature_spec.get("coverage_cases"), "feature.coverage_cases")
@@ -899,6 +911,13 @@ class PacketGenerator:
         # never drawn for the IPv6 stack and vice versa. The cross-feature case
         # expansion below is intentionally skipped for this profile.
         if feature is None and self.profile == "tcp-header":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        # Focused tcp-options profile: same discipline for the tcp-option-* cases.
+        # The cross-feature case expansion below is skipped so only the focused
+        # single-option cases are drawn.
+        if feature is None and self.profile == "tcp-options":
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -989,6 +1008,11 @@ class PacketGenerator:
             # the TCP header cases instead of mixing in tcp_options or other
             # features that also ride the IPv4/IPv6 TCP stacks.
             if self.profile == "tcp-header" and name != "tcp_header":
+                continue
+            # The tcp-options profile is the analogous focused run: only the
+            # tcp_options feature is auto-sampled so the seeded selection stays on
+            # the focused single-option cases.
+            if self.profile == "tcp-options" and name != "tcp_options":
                 continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")
@@ -1206,6 +1230,20 @@ class PacketGenerator:
             for name in names:
                 if _identifier_part(name) == suffix:
                     return name
+        if feature == "tcp_options":
+            # Focused single-option cases are named tcp-option-<behavior>; match
+            # the behavior whose id is the exact case suffix so tcp-option-sack
+            # selects the sack behavior rather than the longer sack-permitted /
+            # advanced-generic substring matches. Broad option-list cases
+            # (tcp-options*, tcp-all-flags-reserved-offset) keep the existing
+            # substring matching below and never select a focused behavior.
+            if case_id.startswith("tcp-option-"):
+                suffix = case_id[len("tcp-option-"):]
+                for name in names:
+                    if _identifier_part(name) == suffix:
+                        return name
+            else:
+                names = [name for name in names if not _is_focused_tcp_option_behavior(name)]
         for name in names:
             name_id = _identifier_part(name)
             if feature == "udp_options":
@@ -1235,10 +1273,11 @@ class PacketGenerator:
         behavior: str,
     ) -> None:
         if feature == "tcp_options" and "tcp" in fields:
-            fields["tcp"]["options"] = {"hex": _tcp_options_hex(case, behavior)}
-            if case == "tcp-all-flags-reserved-offset":
-                fields["tcp"]["flags"] = "all"
-                fields["tcp"]["reserved"] = 7
+            self._apply_tcp_options_behavior(
+                fields,
+                case=case,
+                behavior=behavior,
+            )
         elif feature == "tcp_header" and "tcp" in fields:
             self._apply_tcp_header_behavior(
                 fields,
@@ -1345,6 +1384,41 @@ class PacketGenerator:
                 f"features.{feature}.behaviors.{behavior}.flags",
             )
         return []
+
+    def _apply_tcp_options_behavior(
+        self,
+        fields: dict[str, JSONObject],
+        *,
+        case: str,
+        behavior: str,
+    ) -> None:
+        """Populate one TCP option behavior for the tcp_options feature.
+
+        Broad option-list cases (tcp-options*, tcp-all-flags-reserved-offset)
+        keep their existing combined option region via ``_tcp_options_hex``. The
+        focused single-option cases (tcp-option-*) materialize exactly one option
+        kind via ``_tcp_option_case_hex``: the comparable kinds (MSS, Window
+        Scale, SACK Permitted, SACK, Timestamp, Fast Open, MPTCP generic, and an
+        unknown valid generic) emit a self-consistent option both backends build
+        byte-identically. The preserved-only kinds (User Timeout, TCP-AO,
+        TCP-ENO, Accurate ECN, experimental ExID) and the malformed-length case
+        carry byte_policy: structured_error and are excluded from offline
+        sampling (see _case_supported_in_direction), so they never reach this
+        materialization in an offline run; the option bytes are still defined
+        here so the spec's declared coverage stays reproducible and so the
+        libcrafter_to_reference and dry-plan paths can render them determinist
+        ically. Every value uses fixed, seed-independent bytes.
+        """
+
+        tcp = fields["tcp"]
+        case_id = _identifier_part(case)
+        if case_id.startswith("tcp-option-"):
+            tcp["options"] = {"hex": _tcp_option_case_hex(behavior)}
+            return
+        tcp["options"] = {"hex": _tcp_options_hex(case, behavior)}
+        if case == "tcp-all-flags-reserved-offset":
+            tcp["flags"] = "all"
+            tcp["reserved"] = 7
 
     def _apply_icmpv4_error_behavior(
         self,
@@ -2122,6 +2196,49 @@ def _tcp_options_hex(case: str, behavior: str) -> str:
     if "header-boundary" in key or "all-flags" in key:
         return "01010101"
     return "020405b4010303070402080a0102030405060708"
+
+
+# Per-behavior option region for the focused single-option tcp_options cases.
+# Each entry carries exactly one TCP option whose declared length byte matches
+# its data so the Scapy reference backend emits it verbatim (comparable cases)
+# or so libcrafter preserves the documented wire form (preserved-only cases).
+# Sources: RFC 9293 (base options/EOL/NOP), RFC 793/879 (MSS kind 2),
+# RFC 7323 (Window Scale kind 3, Timestamps kind 8), RFC 2018 (SACK Permitted
+# kind 4, SACK kind 5), RFC 7413 (Fast Open kind 34), RFC 8684 (MPTCP kind 30),
+# RFC 5482 (User Timeout kind 28), RFC 5925 (TCP-AO kind 29), RFC 8547
+# (TCP-ENO kind 69), RFC 9768 (Accurate ECN kinds 172/174), and RFC 6994
+# (experimental ExID kinds 253/254). See docs/tcp-rfc-manifest.md.
+_TCP_OPTION_CASE_HEX: dict[str, str] = {
+    # Comparable kinds: Scapy builds these byte-identically to libcrafter.
+    "mss": "020405b4",  # kind 2, len 4: MSS 1460
+    "window-scale": "030307",  # kind 3, len 3: shift 7
+    "sack-permitted": "0402",  # kind 4, len 2
+    "sack": "050a0000000100000002",  # kind 5, len 10: one SACK block
+    "timestamp": "080a0102030405060708",  # kind 8, len 10: TSval/TSecr
+    "fast-open": "2202",  # kind 34, len 2: Fast Open cookie request
+    "mptcp-generic": "1e040001",  # kind 30, len 4: MPTCP generic subtype
+    "unknown-generic": "c804aabb",  # kind 200, len 4: unknown valid generic
+    # Preserved-only kinds: declared coverage, byte_policy structured_error.
+    # Scapy has no faithful native build/compare path; libcrafter preserves
+    # these bytes verbatim (asserted by the crate suites).
+    "user-timeout": "1c0480e8",  # kind 28, len 4: G=1, value 0x00e8 (RFC 5482)
+    "tcp-ao": "1d0c01020304050607080910",  # kind 29, len 12: KeyID/RNext/MAC
+    "tcp-eno": "4504aabb",  # kind 69, len 4: ENO suboptions (RFC 8547)
+    "accurate-ecn": "ac0601020304",  # kind 172, len 6: AccECN order-0 counters
+    "experimental": "fd06f0010203",  # kind 253, len 6: ExID 0xf001 + data
+    # Malformed: a length byte below the two-octet minimum (kind 2, len 1).
+    # No offline malformed comparison pathway; the crate suites assert the error.
+    "malformed-length": "0201",
+}
+
+
+def _tcp_option_case_hex(behavior: str) -> str:
+    """Return the option region hex for one focused tcp_options behavior."""
+
+    key = _identifier_part(behavior)
+    if key not in _TCP_OPTION_CASE_HEX:
+        raise ValueError(f"spec error: no tcp option hex for behavior {behavior!r}")
+    return _TCP_OPTION_CASE_HEX[key]
 
 
 def _ipv4_options_hex(case: str, behavior: str) -> str:
@@ -3751,6 +3868,49 @@ def _has_tcp_header_case(cases: Sequence[str]) -> bool:
     """
 
     return any(case.replace("_", "-").startswith("tcp-header-") for case in cases)
+
+
+def _has_tcp_options_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains a focused tcp_options coverage case.
+
+    Used by the focused tcp-options profile to keep stack and case selection on
+    the ``tcp-option-*`` single-option cases declared by the IPv4/IPv6 TCP
+    stacks, rather than the broad ``tcp-options*`` option-list cases that ride
+    the wild/ci/boundary profiles.
+    """
+
+    return any(case.replace("_", "-").startswith("tcp-option-") for case in cases)
+
+
+# Behavior names of the focused single-option tcp_options cases (tcp-option-*).
+# These select exactly one option kind so they must not be matched against the
+# broad option-list cases (tcp-options*, tcp-all-flags-reserved-offset), which
+# keep their own common_options / sack_blocks / advanced_generic_options /
+# header_boundary behaviors.
+_FOCUSED_TCP_OPTION_BEHAVIORS = frozenset(
+    {
+        "mss",
+        "window-scale",
+        "sack-permitted",
+        "sack",
+        "timestamp",
+        "fast-open",
+        "mptcp-generic",
+        "unknown-generic",
+        "user-timeout",
+        "tcp-ao",
+        "tcp-eno",
+        "accurate-ecn",
+        "experimental",
+        "malformed-length",
+    }
+)
+
+
+def _is_focused_tcp_option_behavior(name: str) -> bool:
+    """Whether ``name`` is a focused single-option tcp_options behavior."""
+
+    return _identifier_part(name) in _FOCUSED_TCP_OPTION_BEHAVIORS
 
 
 def _auto_sample_feature(feature: str) -> bool:
