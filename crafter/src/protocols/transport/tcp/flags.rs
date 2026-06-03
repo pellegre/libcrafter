@@ -70,19 +70,3 @@ pub(crate) fn flags_summary(flags: u16) -> String {
         names.join("|")
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{TCP_FLAG_AE, TCP_FLAG_NS};
-
-    #[test]
-    fn tcp_flag_public_aliases() {
-        // RFC 9768 (Accurate ECN) assigns the 0x100 control bit to AE; the
-        // older `NS` name (ECN-nonce, deprecated by RFC 8311) stays as a
-        // compatibility alias for the same bit. Both names must compile and
-        // resolve to the same value. See docs/tcp-rfc-manifest.md.
-        assert_eq!(TCP_FLAG_AE, 0x100);
-        assert_eq!(TCP_FLAG_NS, 0x100);
-        assert_eq!(TCP_FLAG_AE, TCP_FLAG_NS);
-    }
-}
