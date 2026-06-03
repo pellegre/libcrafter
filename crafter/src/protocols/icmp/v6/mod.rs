@@ -36,9 +36,11 @@ pub use self::body::{Icmpv6Body, Icmpv6ErrorBody};
 // concrete message bodies. Re-exported at the `icmp` root (and onward through
 // `protocols::mod.rs` and the prelude) like the other ICMPv6 types.
 mod message;
-pub(crate) use self::message::ndp::{decode_router_advertisement, decode_router_solicitation};
+pub(crate) use self::message::ndp::{
+    decode_neighbor_solicitation, decode_router_advertisement, decode_router_solicitation,
+};
 pub use self::message::ndp::{
-    RouterAdvertisement, RouterSolicitation, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT,
+    NeighborSolicitation, RouterAdvertisement, RouterSolicitation, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT,
     ICMPV6_RA_DEFAULT_ROUTER_LIFETIME, ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED,
     ICMPV6_RA_FLAG_OTHER,
 };
@@ -552,6 +554,17 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
         }
     }
 
+    // RFC 4861 section 4.3 Neighbor Solicitation: the rest-of-header (the 32-bit
+    // Reserved field) was decoded with the header above; the trailing body is the
+    // 128-bit Target Address followed by the NDP option area. A body too short for
+    // the Target Address, or a malformed option area, keeps the bytes as a single
+    // `Raw` payload (no panic, nothing dropped).
+    if icmp_type == ICMPV6_NEIGHBOR_SOLICITATION {
+        if let Ok(ns) = decode_neighbor_solicitation(payload) {
+            return Ok(packet.push(ns));
+        }
+    }
+
     if !payload.is_empty() {
         packet = packet.push(Raw::from_bytes(payload));
     }
@@ -563,7 +576,7 @@ mod icmpv6 {
     use super::{IcmpKind, Icmpv6, Icmpv6Body, Icmpv6ErrorBody};
     use crate::packet::Layer;
     use crate::protocols::icmp::{
-        ICMPV6_ECHO_REQUEST, ICMPV6_NEIGHBOR_SOLICITATION, ICMPV6_PACKET_TOO_BIG,
+        ICMPV6_ECHO_REQUEST, ICMPV6_NEIGHBOR_ADVERTISEMENT, ICMPV6_PACKET_TOO_BIG,
         ICMPV6_PARAMETER_PROBLEM,
     };
     use crate::{Ipv6, NetworkLayer, Packet, Raw};
@@ -669,19 +682,19 @@ mod icmpv6 {
         );
     }
 
-    // An unrecognized type (here a Neighbor Solicitation, modeled in a later
+    // An unrecognized type (here a Neighbor Advertisement, modeled in a later
     // step) falls through to the extensible `Unknown` variant with its raw
     // rest-of-header preserved.
     #[test]
     fn icmpv6_body_preserves_unknown_type() {
         let icmpv6 = Icmpv6::new()
-            .icmp_type(ICMPV6_NEIGHBOR_SOLICITATION)
+            .icmp_type(ICMPV6_NEIGHBOR_ADVERTISEMENT)
             .rest_of_header([0xde, 0xad, 0xbe, 0xef]);
         let body = icmpv6.body();
         assert_eq!(
             body,
             Icmpv6Body::Unknown {
-                icmp_type: ICMPV6_NEIGHBOR_SOLICITATION,
+                icmp_type: ICMPV6_NEIGHBOR_ADVERTISEMENT,
                 rest_of_header: [0xde, 0xad, 0xbe, 0xef],
             }
         );

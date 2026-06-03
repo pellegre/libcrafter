@@ -494,6 +494,207 @@ pub(crate) fn decode_router_advertisement(bytes: &[u8]) -> Result<RouterAdvertis
     })
 }
 
+// --- Neighbor Solicitation (RFC 4861 section 4.3) --------------------------
+
+/// Width, in octets, of the Target Address that leads a Neighbor Solicitation
+/// body (RFC 4861 section 4.3: a 128-bit IPv6 address).
+const NS_TARGET_ADDRESS_LEN: usize = 16;
+
+/// Neighbor Solicitation message body (RFC 4861 section 4.3).
+///
+/// On the wire a Neighbor Solicitation is ICMPv6 `type` 135, `code` 0, a 32-bit
+/// Reserved field (RFC 4861 section 4.3: "This field is unused. It MUST be
+/// initialized to zero by the sender and MUST be ignored by the receiver."), a
+/// 128-bit Target Address — "The IP address of the target of the solicitation.
+/// It MUST NOT be a multicast address." — then zero or more options, commonly
+/// the Source Link-Layer Address option (RFC 4861 section 4.6.1).
+///
+/// Neighbor Solicitation is the IPv6 analogue of ARP "who-has": a host sends it
+/// to resolve a neighbor's link-layer address (the Target Address is the address
+/// being resolved, the solicited-node multicast `ff02::1:ffXX:XXXX` is the usual
+/// IPv6 destination) and as a Duplicate Address Detection (DAD) probe (RFC 4862
+/// section 5.4: the probe carries the tentative address as the Target Address and
+/// is sent from the unspecified source `::`, which per RFC 4861 section 4.3 means
+/// the Source Link-Layer Address option MUST NOT be present).
+///
+/// Following the NDP message pattern established by [`RouterSolicitation`], the
+/// 32-bit Reserved field is the [`Icmpv6`] header's four-byte rest-of-header
+/// (set on the header — not in this body — by [`Icmpv6::neighbor_solicitation`])
+/// so the split matches the wire layout and the way ICMPv4 keeps its
+/// rest-of-header fields on the header. This body carries exactly the part after
+/// the fixed 8-byte header: the 16-byte Target Address and the ordered
+/// [`NdpOptions`]. The header auto-fills the ICMPv6 checksum over the IPv6
+/// pseudo-header, covering this body's bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NeighborSolicitation {
+    // `pub(crate)` so the ICMPv6 decode path in `icmp/v6/mod.rs` can construct
+    // the body from wire bytes; the public surface is the builder/accessors.
+    pub(crate) target_address: core::net::Ipv6Addr,
+    pub(crate) options: NdpOptions,
+}
+
+impl NeighborSolicitation {
+    /// Create a Neighbor Solicitation body resolving `target_address` (the IPv6
+    /// address being resolved — RFC 4861 section 4.3 requires it MUST NOT be a
+    /// multicast address) with no options. Compose it under an [`Icmpv6`] header
+    /// (type 135, code 0) — or use [`Icmpv6::neighbor_solicitation`], which sets
+    /// the header type/code and zero Reserved word for you.
+    pub fn new(target_address: core::net::Ipv6Addr) -> Self {
+        Self {
+            target_address,
+            options: NdpOptions::new(),
+        }
+    }
+
+    /// Set the Target Address (RFC 4861 section 4.3: the address being resolved;
+    /// MUST NOT be a multicast address).
+    pub fn target_address(mut self, target_address: core::net::Ipv6Addr) -> Self {
+        self.target_address = target_address;
+        self
+    }
+
+    /// Append an NDP option (RFC 4861 section 4.6), preserving order.
+    ///
+    /// The common option on a Neighbor Solicitation is the Source Link-Layer
+    /// Address (RFC 4861 section 4.6.1); see
+    /// [`Icmpv6::neighbor_solicitation_with_source_link_layer`] for the shorthand,
+    /// or build one with [`NdpOption::source_link_layer_address`]. Note RFC 4861
+    /// section 4.3: this option MUST NOT be included when the source IP address is
+    /// the unspecified address (a DAD probe).
+    pub fn option(mut self, option: NdpOption) -> Self {
+        self.options.add(option);
+        self
+    }
+
+    /// Replace the whole ordered option list.
+    pub fn options(mut self, options: NdpOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// The Target Address field (the IPv6 address being resolved).
+    pub fn target_address_value(&self) -> core::net::Ipv6Addr {
+        self.target_address
+    }
+
+    /// The ordered NDP options carried after the Target Address.
+    pub fn options_ref(&self) -> &NdpOptions {
+        &self.options
+    }
+}
+
+impl Layer for NeighborSolicitation {
+    fn name(&self) -> &'static str {
+        "NeighborSolicitation"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "NeighborSolicitation(target={}, options={})",
+            self.target_address,
+            self.options.len()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("target_address", self.target_address.to_string()),
+            ("option_count", self.options.len().to_string()),
+        ];
+        for (index, option) in self.options.iter().enumerate() {
+            fields.push((option_field_name(index), option.to_string()));
+        }
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        NS_TARGET_ADDRESS_LEN + self.options.encoded_len().unwrap_or(0)
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.target_address.octets());
+        out.extend_from_slice(&self.options.encode()?);
+        Ok(())
+    }
+
+    impl_layer_object!(NeighborSolicitation);
+}
+
+impl_layer_div!(NeighborSolicitation);
+
+impl Icmpv6 {
+    /// Build a Neighbor Solicitation packet (RFC 4861 section 4.3) resolving
+    /// `target`.
+    ///
+    /// Returns a [`Packet`] composing the [`Icmpv6`] header (type 135, code 0, the
+    /// four-byte Reserved rest-of-header left zero per RFC 4861 section 4.3) with a
+    /// [`NeighborSolicitation`] body carrying `target` (the IPv6 address being
+    /// resolved — RFC 4861 section 4.3 requires it MUST NOT be a multicast
+    /// address) and no options. Attach a Source Link-Layer Address option with
+    /// [`Icmpv6::neighbor_solicitation_with_source_link_layer`], or build the body
+    /// explicitly. `compile()` auto-fills the ICMPv6 checksum over the IPv6
+    /// pseudo-header, covering the body's bytes.
+    ///
+    /// A Neighbor Solicitation sent from the unspecified source `::` (with no
+    /// Source Link-Layer Address option) is a Duplicate Address Detection probe
+    /// (RFC 4862 section 5.4); set the source on the enclosing [`Ipv6`](crate::Ipv6)
+    /// layer.
+    pub fn neighbor_solicitation(target: core::net::Ipv6Addr) -> Packet {
+        Self::neighbor_solicitation_body(NeighborSolicitation::new(target))
+    }
+
+    /// Build a Neighbor Solicitation packet resolving `target` and carrying a
+    /// Source Link-Layer Address option (RFC 4861 sections 4.3 and 4.6.1) with the
+    /// sender's MAC.
+    ///
+    /// This is the common address-resolution Neighbor Solicitation an Ethernet
+    /// host sends (RFC 4861 section 4.3: the Source Link-Layer Address option MUST
+    /// be included in multicast solicitations on link layers that have addresses).
+    /// Equivalent to [`Icmpv6::neighbor_solicitation`] with a single
+    /// [`NdpOption::source_link_layer_address`] option appended. Do **not** use
+    /// this for a DAD probe — RFC 4861 section 4.3 forbids the option when the
+    /// source is the unspecified address.
+    pub fn neighbor_solicitation_with_source_link_layer(
+        target: core::net::Ipv6Addr,
+        mac: crate::MacAddr,
+    ) -> Packet {
+        Self::neighbor_solicitation_body(
+            NeighborSolicitation::new(target).option(NdpOption::source_link_layer_address(mac)),
+        )
+    }
+
+    /// Compose the Neighbor Solicitation header (type 135, code 0, reserved word
+    /// zero) with a caller-built [`NeighborSolicitation`] body.
+    fn neighbor_solicitation_body(body: NeighborSolicitation) -> Packet {
+        Self::new().icmp_type(ICMPV6_NEIGHBOR_SOLICITATION).code(0) / body
+    }
+}
+
+/// Decode the body of an ICMPv6 Neighbor Solicitation: the 128-bit Target Address
+/// (RFC 4861 section 4.3) followed by the NDP option area. The 32-bit Reserved
+/// rest-of-header lives in the header and is decoded there.
+///
+/// Returns a structured [`CrafterError`] (never a panic) when the body is too
+/// short to hold the Target Address, or when an option is malformed (a zero
+/// length or an overrun); the option walk is delegated to [`NdpOptions::decode`].
+pub(crate) fn decode_neighbor_solicitation(bytes: &[u8]) -> Result<NeighborSolicitation> {
+    if bytes.len() < NS_TARGET_ADDRESS_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "icmpv6.neighbor_solicitation.target_address",
+            NS_TARGET_ADDRESS_LEN,
+            bytes.len(),
+        ));
+    }
+    let mut octets = [0u8; NS_TARGET_ADDRESS_LEN];
+    octets.copy_from_slice(&bytes[..NS_TARGET_ADDRESS_LEN]);
+    let target_address = core::net::Ipv6Addr::from(octets);
+    let options = NdpOptions::decode(&bytes[NS_TARGET_ADDRESS_LEN..])?;
+    Ok(NeighborSolicitation {
+        target_address,
+        options,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -968,5 +1169,202 @@ mod tests {
             "router-advertisement(cur_hop_limit=64, M=true, O=false, reserved_flags=0x00, \
              router_lifetime=1800)"
         );
+    }
+
+    // The address being resolved in the address-resolution and DAD tests: a
+    // documentation unicast address (RFC 3849 2001:db8::/32). RFC 4861 sec 4.3
+    // requires the Target Address MUST NOT be a multicast address.
+    fn doc_target() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0042)
+    }
+
+    // The solicited-node multicast address ff02::1:ff42:0042 derived from
+    // doc_target() (RFC 4861 sec 2: ff02::1:ffXX:XXXX, the low 24 bits of the
+    // target). This is the usual IPv6 *destination* of an address-resolution
+    // Neighbor Solicitation — the Target Address itself stays the unicast
+    // doc_target().
+    fn solicited_node_multicast() -> Ipv6Addr {
+        Ipv6Addr::new(0xff02, 0, 0, 0, 0, 1, 0xff42, 0x0042)
+    }
+
+    // RFC 4861 sec 4.3 + 4.6.1: an address-resolution Neighbor Solicitation
+    // (Target Address = the unicast address being resolved, carrying a Source
+    // Link-Layer Address option, sent to the solicited-node multicast) compiles to
+    // type 135 / code 0, a zero Reserved word, the 16-byte Target Address, and the
+    // SLLA option, and decodes back to the same fields with the checksum verifying
+    // over the IPv6 pseudo-header.
+    #[test]
+    fn neighbor_solicitation_with_slla_round_trips() {
+        let target = doc_target();
+        let packet = Ipv6::new()
+            .src(link_local_src())
+            .dst(solicited_node_multicast())
+            .hlim(255)
+            / Icmpv6::neighbor_solicitation_with_source_link_layer(target, doc_mac());
+        let compiled = packet.compile().unwrap();
+        let bytes = compiled.as_bytes();
+
+        // ICMPv6 starts at offset 40. type 135, code 0.
+        assert_eq!(bytes[40], ICMPV6_NEIGHBOR_SOLICITATION);
+        assert_eq!(bytes[41], 0, "code is 0");
+        // Reserved field (ICMPv6 rest-of-header, bytes 4..8) is zero.
+        assert_eq!(&bytes[44..48], &[0, 0, 0, 0]);
+        // Target Address: the 16 octets right after the fixed 8-byte header.
+        assert_eq!(&bytes[48..64], &target.octets());
+        // SLLA option follows the Target Address: type 1, length 1, 6-byte MAC.
+        assert_eq!(&bytes[64..66], &[NDP_OPT_SOURCE_LINK_LAYER_ADDR, 1]);
+        assert_eq!(&bytes[66..72], &doc_mac().octets());
+        // IPv6(40) + ICMPv6 header(8) + target(16) + one SLLA option(8) = 72 bytes.
+        assert_eq!(bytes.len(), 72);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+        let icmpv6 = decoded.layer::<Icmpv6>().unwrap();
+        assert_eq!(icmpv6.icmp_type_value(), ICMPV6_NEIGHBOR_SOLICITATION);
+        assert_eq!(icmpv6.code_value(), 0);
+        // The header classifies the message as a Neighbor Solicitation body with a
+        // zero Reserved field.
+        assert_eq!(
+            icmpv6.body(),
+            Icmpv6Body::NeighborSolicitation { reserved: 0 }
+        );
+
+        let ns = decoded.layer::<NeighborSolicitation>().unwrap();
+        assert_eq!(ns.target_address_value(), target);
+        assert_eq!(ns.options_ref().len(), 1);
+        let slla = &ns.options_ref().options()[0];
+        assert_eq!(slla.option_type(), NDP_OPT_SOURCE_LINK_LAYER_ADDR);
+        assert_eq!(slla.link_layer_address(), Some(doc_mac()));
+
+        // The whole packet round-trips byte-for-byte (checksum included).
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // RFC 4862 sec 5.4: a Duplicate Address Detection probe is a Neighbor
+    // Solicitation whose source IP is the unspecified address `::`, carrying the
+    // tentative address as the Target Address and — per RFC 4861 sec 4.3 — NO
+    // Source Link-Layer Address option. It is sent to the solicited-node multicast
+    // of the tentative address.
+    #[test]
+    fn dad_neighbor_solicitation_round_trips() {
+        let tentative = doc_target();
+        let packet = Ipv6::new()
+            .src(Ipv6Addr::UNSPECIFIED)
+            .dst(solicited_node_multicast())
+            .hlim(255)
+            / Icmpv6::neighbor_solicitation(tentative);
+        let compiled = packet.compile().unwrap();
+        let bytes = compiled.as_bytes();
+
+        // Source address (IPv6 header bytes 8..24) is the unspecified `::`.
+        assert_eq!(&bytes[8..24], &Ipv6Addr::UNSPECIFIED.octets());
+        assert_eq!(bytes[40], ICMPV6_NEIGHBOR_SOLICITATION);
+        assert_eq!(&bytes[44..48], &[0, 0, 0, 0], "reserved word is zero");
+        assert_eq!(&bytes[48..64], &tentative.octets());
+        // No options after the Target Address: header(8) + target(16) only.
+        assert_eq!(bytes.len(), 40 + 8 + 16);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+        assert_eq!(
+            decoded.layer::<Ipv6>().unwrap().source(),
+            Ipv6Addr::UNSPECIFIED
+        );
+        let ns = decoded.layer::<NeighborSolicitation>().unwrap();
+        assert_eq!(ns.target_address_value(), tentative);
+        assert!(
+            ns.options_ref().is_empty(),
+            "a DAD probe carries no Source Link-Layer Address option"
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // RFC 4861 sec 4.3 requires the Reserved field be sent as zero, but an agent
+    // can set it (via the header rest-of-header) to a deliberately non-zero value
+    // for a malformed-packet test; that value is honored verbatim through
+    // compile() and survives a decode round-trip in the header's typed body.
+    #[test]
+    fn neighbor_solicitation_explicit_reserved_is_preserved() {
+        let target = doc_target();
+        let packet = Ipv6::new()
+            .src(link_local_src())
+            .dst(solicited_node_multicast())
+            / (Icmpv6::new()
+                .icmp_type(ICMPV6_NEIGHBOR_SOLICITATION)
+                .code(0)
+                .rest_of_header([0xde, 0xad, 0xbe, 0xef])
+                / NeighborSolicitation::new(target));
+        let compiled = packet.compile().unwrap();
+        // The reserved word is the ICMPv6 rest-of-header (bytes 4..8).
+        assert_eq!(&compiled.as_bytes()[44..48], &[0xde, 0xad, 0xbe, 0xef]);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, compiled.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmpv6>().unwrap().body(),
+            Icmpv6Body::NeighborSolicitation {
+                reserved: 0xdead_beef
+            }
+        );
+        assert_eq!(
+            decoded
+                .layer::<NeighborSolicitation>()
+                .unwrap()
+                .target_address_value(),
+            target
+        );
+    }
+
+    // summary() / show(): the body layer summarizes its own fields (Target Address
+    // and option count), and the header's body-detail field reports the Neighbor
+    // Solicitation classification with its Reserved field.
+    #[test]
+    fn neighbor_solicitation_summary_and_show() {
+        let target = doc_target();
+        let body = NeighborSolicitation::new(target)
+            .option(NdpOption::source_link_layer_address(doc_mac()));
+        assert_eq!(
+            body.summary(),
+            format!("NeighborSolicitation(target={target}, options=1)")
+        );
+
+        let target_field = body
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "target_address")
+            .map(|(_, value)| value)
+            .expect("show() exposes the target address");
+        assert_eq!(target_field, target.to_string());
+
+        let option_field = body
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "option[0]")
+            .map(|(_, value)| value)
+            .expect("show() exposes the first option");
+        assert!(option_field.starts_with("Source Link-Layer Address"));
+
+        // The header summarizes from its type; the Neighbor Solicitation name
+        // comes from `icmpv6_type_summary`.
+        let header = Icmpv6::new()
+            .icmp_type(ICMPV6_NEIGHBOR_SOLICITATION)
+            .code(0);
+        assert_eq!(
+            header.summary(),
+            "Icmpv6(type=neighbor-solicitation(135), code=0, id=-, seq=-)"
+        );
+        let body_field = header
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "body")
+            .map(|(_, value)| value)
+            .expect("show() exposes a body field");
+        assert_eq!(body_field, "neighbor-solicitation(reserved=0x00000000)");
+    }
+
+    // A Neighbor Solicitation body truncated below the 16-byte Target Address
+    // surfaces a structured error from the decoder (never a panic); the decode
+    // dispatch then falls back to a single Raw payload so nothing is dropped.
+    #[test]
+    fn neighbor_solicitation_short_target_is_structured_error() {
+        let err = decode_neighbor_solicitation(&[0u8; 8]).unwrap_err();
+        assert!(matches!(err, CrafterError::BufferTooShort { .. }));
     }
 }
