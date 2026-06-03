@@ -29,7 +29,12 @@ Generated tools should prefer explicit builders:
 
 ```rust
 let packet = Packet::new()
-    .push(Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?)
+    .push(
+        Ipv4::new()
+            .src("192.0.2.10")?
+            .dst("198.51.100.20")?
+            .ipv4_protocol(Ipv4Protocol::Icmpv4),
+    )
     .push(Icmpv4::echo_request().id(0x1234).seq(1))
     .push(Raw::from_bytes(b"HelloPing!\n"));
 
@@ -41,9 +46,14 @@ Concise examples may use `/` composition:
 ```rust
 let packet =
     Ipv4::new().dst("198.51.100.20")?
+        .ipv4_protocol(Ipv4Protocol::Icmpv4)
     / Icmpv4::echo_request().seq(1)
     / Raw::from_bytes(b"HelloPing!\n");
 ```
+
+Use `Ipv4Protocol` for known IPv4 protocol-field values and
+`Ipv4::protocol(u8)` only when a tool deliberately needs an arbitrary raw
+protocol byte.
 
 ## Builder Conventions
 

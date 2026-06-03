@@ -2963,7 +2963,7 @@ mod l2_ipv4_root {
             .expect("valid destination")
             .id(1)
             .ttl(64)
-            .protocol(IPPROTO_ICMP)
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
             / Icmpv4::address_mask_reply().id(0x1111).seq(0x2222)
             / Icmpv4AddressMask::new().mask(Ipv4Addr::new(255, 255, 255, 0));
         let compiled = packet.compile().expect("packet compiles");
@@ -2990,7 +2990,7 @@ mod l2_ipv4_root {
             .expect("valid destination")
             .id(1)
             .ttl(64)
-            .protocol(IPPROTO_ICMP)
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
             / Icmpv4::timestamp_request().id(0x1111).seq(0x2222)
             / Icmpv4Timestamp::new()
                 .originate(0x0102_0304)
@@ -3028,7 +3028,7 @@ mod l2_ipv4_root {
             .expect("valid destination")
             .id(1)
             .ttl(64)
-            .protocol(IPPROTO_ICMP)
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
             / Icmpv4::destination_unreachable()
             / Raw::from_bytes(decode_hex(body_hex).expect("body hex decodes"));
         let compiled = packet.compile().expect("packet compiles");
@@ -3070,7 +3070,7 @@ mod l2_ipv4_root {
             .expect("valid documentation destination address")
             .id(0x1234)
             .ttl(64)
-            .protocol(IPPROTO_ICMP);
+            .ipv4_protocol(Ipv4Protocol::Icmpv4);
         let icmp = Icmpv4::new()
             .type_(ICMP_ECHO_REQUEST)
             .code(0)

@@ -3,8 +3,8 @@
 This directory contains user and contributor documentation for the Rust
 `crafter` crate and its validation workflow.
 
-- [API guide](api.md) summarizes the public crate, modules, packet composition
-  style, and helper APIs.
+- [API guide](api.md) summarizes the public crate, explicit IPv4/IPv6 packet
+  APIs, packet composition style, and helper APIs.
 - [DNS wire coverage](dns.md) describes the supported DNS wire-message
   primitives, planned typed records, and known deferrals.
 - [TCP wire coverage](tcp.md) describes the supported TCP segment construction,

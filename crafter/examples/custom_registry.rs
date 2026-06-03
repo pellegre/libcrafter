@@ -13,7 +13,7 @@ fn main() -> ExampleResult<()> {
     let packet = Ipv4::new()
         .src(local_ipv4())
         .dst(remote_ipv4())
-        .protocol(IPPROTO_UDP)
+        .ipv4_protocol(Ipv4Protocol::Udp)
         / Udp::new().sport(53000).dport(DNS_PORT)
         / Dns::a_query("example.com.").id(0x4242);
     let bytes = packet.compile()?;

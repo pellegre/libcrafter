@@ -2211,7 +2211,7 @@ mod dhcp_oracle_fixtures {
             / Ipv4::new()
                 .src(Ipv4Addr::new(192, 0, 2, 1))
                 .dst(Ipv4Addr::new(192, 0, 2, 2))
-                .protocol(IPPROTO_UDP)
+                .ipv4_protocol(Ipv4Protocol::Udp)
             / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
             / dhcp;
         packet

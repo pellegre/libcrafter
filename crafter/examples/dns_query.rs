@@ -28,7 +28,7 @@ fn main() -> ExampleResult<()> {
         .src(src)
         .dst(server)
         .id(0x5301)
-        .protocol(IPPROTO_UDP)
+        .ipv4_protocol(Ipv4Protocol::Udp)
         / Udp::new().sport(sport).dport(DNS_PORT)
         / Dns::query(name.clone(), question_type).id(0x1234);
     let report = query.send_recv_report(
@@ -72,7 +72,7 @@ fn main() -> ExampleResult<()> {
         .src(server)
         .dst(src)
         .id(0x5302)
-        .protocol(IPPROTO_UDP)
+        .ipv4_protocol(Ipv4Protocol::Udp)
         / Udp::new().sport(DNS_PORT).dport(sport)
         / Dns::query(name, question_type)
             .id(0x1234)
