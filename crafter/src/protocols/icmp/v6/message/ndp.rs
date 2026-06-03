@@ -695,6 +695,279 @@ pub(crate) fn decode_neighbor_solicitation(bytes: &[u8]) -> Result<NeighborSolic
     })
 }
 
+// --- Neighbor Advertisement (RFC 4861 section 4.4) -------------------------
+
+/// Width, in octets, of the Target Address that leads a Neighbor Advertisement
+/// body (RFC 4861 section 4.4: a 128-bit IPv6 address).
+const NA_TARGET_ADDRESS_LEN: usize = 16;
+
+/// Bit mask for the R (Router) flag in the first byte of the Neighbor
+/// Advertisement rest-of-header (RFC 4861 section 4.4: "the most significant
+/// bit"). Equivalently `0x80000000` in the 32-bit flags word. "When set, the
+/// R-bit indicates that the sender is a router."
+pub const ICMPV6_NA_FLAG_ROUTER: u8 = 0x80;
+
+/// Bit mask for the S (Solicited) flag in the first byte of the Neighbor
+/// Advertisement rest-of-header (RFC 4861 section 4.4: the second bit, 0x40).
+/// Equivalently `0x40000000` in the 32-bit flags word. "When set, the S-bit
+/// indicates that the advertisement was sent in response to a Neighbor
+/// Solicitation."
+pub const ICMPV6_NA_FLAG_SOLICITED: u8 = 0x40;
+
+/// Bit mask for the O (Override) flag in the first byte of the Neighbor
+/// Advertisement rest-of-header (RFC 4861 section 4.4: the third bit, 0x20).
+/// Equivalently `0x20000000` in the 32-bit flags word. "When set, the O-bit
+/// indicates that the advertisement should override an existing cache entry and
+/// update the cached link-layer address."
+pub const ICMPV6_NA_FLAG_OVERRIDE: u8 = 0x20;
+
+/// Mask of the 29 Reserved bits in the Neighbor Advertisement flags word
+/// (RFC 4861 section 4.4: "A 29-bit unused field. It MUST be initialized to zero
+/// by the sender and MUST be ignored by the receiver."). These bits are
+/// preserved verbatim through build/decode for forward-compatibility. The mask
+/// is the low 29 bits of the 32-bit rest-of-header word (the three high bits are
+/// the R/S/O flags).
+pub const ICMPV6_NA_FLAGS_RESERVED: u32 = 0x1fff_ffff;
+
+/// Neighbor Advertisement message body (RFC 4861 section 4.4).
+///
+/// On the wire a Neighbor Advertisement is ICMPv6 `type` 136, `code` 0, then a
+/// 32-bit flags word — R (Router, bit 0x80000000), S (Solicited, bit
+/// 0x40000000), O (Override, bit 0x20000000), and 29 Reserved bits ("MUST be
+/// initialized to zero by the sender and MUST be ignored by the receiver") — a
+/// 128-bit Target Address ("the Target Address field in the Neighbor
+/// Solicitation message that prompted this advertisement"; for an unsolicited
+/// advertisement, the address whose link-layer address changed), then zero or
+/// more options, commonly the Target Link-Layer Address option (RFC 4861 section
+/// 4.6.1).
+///
+/// Neighbor Advertisement is the IPv6 analogue of ARP "is-at": it answers a
+/// Neighbor Solicitation, carrying the responder's link-layer address in a Target
+/// Link-Layer Address option.
+///
+/// Following the NDP message pattern established by [`RouterSolicitation`], the
+/// 32-bit flags word (R/S/O plus the 29 Reserved bits) is the [`Icmpv6`]
+/// header's four-byte rest-of-header (set on the header — not in this body — by
+/// [`Icmpv6::neighbor_advertisement`]) so the split matches the wire layout and
+/// the way ICMPv4 keeps its rest-of-header fields on the header. This body carries
+/// exactly the part after the fixed 8-byte header: the 16-byte Target Address and
+/// the ordered [`NdpOptions`]. The header auto-fills the ICMPv6 checksum over the
+/// IPv6 pseudo-header, covering this body's bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NeighborAdvertisement {
+    // `pub(crate)` so the ICMPv6 decode path in `icmp/v6/mod.rs` can construct
+    // the body from wire bytes; the public surface is the builder/accessors.
+    pub(crate) target_address: core::net::Ipv6Addr,
+    pub(crate) options: NdpOptions,
+}
+
+impl NeighborAdvertisement {
+    /// Create a Neighbor Advertisement body whose Target Address is
+    /// `target_address` (RFC 4861 section 4.4: for a solicited advertisement, the
+    /// Target Address of the Neighbor Solicitation being answered; MUST NOT be a
+    /// multicast address) with no options. Compose it under an [`Icmpv6`] header
+    /// (type 136, code 0) — or use [`Icmpv6::neighbor_advertisement`], which sets
+    /// the header type/code and the R/S/O flags word for you.
+    pub fn new(target_address: core::net::Ipv6Addr) -> Self {
+        Self {
+            target_address,
+            options: NdpOptions::new(),
+        }
+    }
+
+    /// Set the Target Address (RFC 4861 section 4.4: the address whose link-layer
+    /// address this advertisement reports; MUST NOT be a multicast address).
+    pub fn target_address(mut self, target_address: core::net::Ipv6Addr) -> Self {
+        self.target_address = target_address;
+        self
+    }
+
+    /// Append an NDP option (RFC 4861 section 4.6), preserving order.
+    ///
+    /// The common option on a Neighbor Advertisement is the Target Link-Layer
+    /// Address (RFC 4861 section 4.6.1), which carries the responder's MAC; see
+    /// [`Icmpv6::neighbor_advertisement_with_target_link_layer`] for the shorthand,
+    /// or build one with [`NdpOption::target_link_layer_address`].
+    pub fn option(mut self, option: NdpOption) -> Self {
+        self.options.add(option);
+        self
+    }
+
+    /// Replace the whole ordered option list.
+    pub fn options(mut self, options: NdpOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// The Target Address field (the IPv6 address whose link-layer address this
+    /// advertisement reports).
+    pub fn target_address_value(&self) -> core::net::Ipv6Addr {
+        self.target_address
+    }
+
+    /// The ordered NDP options carried after the Target Address.
+    pub fn options_ref(&self) -> &NdpOptions {
+        &self.options
+    }
+}
+
+impl Layer for NeighborAdvertisement {
+    fn name(&self) -> &'static str {
+        "NeighborAdvertisement"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "NeighborAdvertisement(target={}, options={})",
+            self.target_address,
+            self.options.len()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("target_address", self.target_address.to_string()),
+            ("option_count", self.options.len().to_string()),
+        ];
+        for (index, option) in self.options.iter().enumerate() {
+            fields.push((option_field_name(index), option.to_string()));
+        }
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        NA_TARGET_ADDRESS_LEN + self.options.encoded_len().unwrap_or(0)
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.target_address.octets());
+        out.extend_from_slice(&self.options.encode()?);
+        Ok(())
+    }
+
+    impl_layer_object!(NeighborAdvertisement);
+}
+
+impl_layer_div!(NeighborAdvertisement);
+
+/// Pack the Neighbor Advertisement rest-of-header (RFC 4861 section 4.4): the
+/// 32-bit flags word with the R/S/O bits in the three most-significant bits and
+/// the 29 Reserved bits left zero (big-endian).
+fn neighbor_advertisement_rest_of_header(
+    router: bool,
+    solicited: bool,
+    override_flag: bool,
+) -> [u8; 4] {
+    let mut flags = 0u8;
+    if router {
+        flags |= ICMPV6_NA_FLAG_ROUTER;
+    }
+    if solicited {
+        flags |= ICMPV6_NA_FLAG_SOLICITED;
+    }
+    if override_flag {
+        flags |= ICMPV6_NA_FLAG_OVERRIDE;
+    }
+    // Flags occupy the top three bits of the first byte; the remaining 29 bits
+    // (the rest of byte 0 and bytes 1..4) are Reserved and sent as zero.
+    [flags, 0, 0, 0]
+}
+
+impl Icmpv6 {
+    /// Build a Neighbor Advertisement packet (RFC 4861 section 4.4) for `target`,
+    /// with the R/S/O flags clear and no options.
+    ///
+    /// Returns a [`Packet`] composing the [`Icmpv6`] header (type 136, code 0, the
+    /// four-byte flags rest-of-header with R/S/O clear and the 29 Reserved bits
+    /// zero) with a [`NeighborAdvertisement`] body carrying `target` (RFC 4861
+    /// section 4.4 requires the Target Address MUST NOT be a multicast address) and
+    /// no options. Set the flags with
+    /// [`Icmpv6::neighbor_advertisement_with`], attach a Target Link-Layer Address
+    /// option with [`Icmpv6::neighbor_advertisement_with_target_link_layer`], or
+    /// build the body explicitly. `compile()` auto-fills the ICMPv6 checksum over
+    /// the IPv6 pseudo-header, covering the body's bytes.
+    pub fn neighbor_advertisement(target: core::net::Ipv6Addr) -> Packet {
+        Self::neighbor_advertisement_with(false, false, false, NeighborAdvertisement::new(target))
+    }
+
+    /// Build a Neighbor Advertisement packet (RFC 4861 section 4.4) with explicit
+    /// R/S/O flags and a caller-built [`NeighborAdvertisement`] body.
+    ///
+    /// `router` (the R / Router flag — the sender is a router), `solicited` (the
+    /// S / Solicited flag — sent in response to a Neighbor Solicitation), and
+    /// `override_flag` (the O / Override flag — override an existing cache entry)
+    /// become the three most-significant bits of the [`Icmpv6`] header's four-byte
+    /// rest-of-header flags word; the 29 Reserved bits are sent zero. To set the
+    /// Reserved bits on purpose (a deliberately malformed packet), build the header
+    /// rest-of-header directly with [`Icmpv6::rest_of_header`] — the value survives
+    /// `compile()` untouched. The body carries the Target Address and any options.
+    pub fn neighbor_advertisement_with(
+        router: bool,
+        solicited: bool,
+        override_flag: bool,
+        body: NeighborAdvertisement,
+    ) -> Packet {
+        let rest = neighbor_advertisement_rest_of_header(router, solicited, override_flag);
+        Self::new()
+            .icmp_type(ICMPV6_NEIGHBOR_ADVERTISEMENT)
+            .code(0)
+            .rest_of_header(rest)
+            / body
+    }
+
+    /// Build a Neighbor Advertisement packet for `target` carrying a Target
+    /// Link-Layer Address option (RFC 4861 sections 4.4 and 4.6.1) with the
+    /// responder's MAC, and the R/S/O flags set as requested.
+    ///
+    /// This is the common "is-at" reply an Ethernet host sends to answer a Neighbor
+    /// Solicitation (RFC 4861 section 4.4: the Target Link-Layer Address option MUST
+    /// be included when responding to multicast solicitations on link layers that
+    /// have addresses). A solicited reply to a unicast neighbor typically sets
+    /// `solicited` and `override_flag`; set `router` when the sender is a router.
+    /// Equivalent to [`Icmpv6::neighbor_advertisement_with`] with a single
+    /// [`NdpOption::target_link_layer_address`] option appended.
+    pub fn neighbor_advertisement_with_target_link_layer(
+        target: core::net::Ipv6Addr,
+        mac: crate::MacAddr,
+        router: bool,
+        solicited: bool,
+        override_flag: bool,
+    ) -> Packet {
+        Self::neighbor_advertisement_with(
+            router,
+            solicited,
+            override_flag,
+            NeighborAdvertisement::new(target).option(NdpOption::target_link_layer_address(mac)),
+        )
+    }
+}
+
+/// Decode the body of an ICMPv6 Neighbor Advertisement: the 128-bit Target Address
+/// (RFC 4861 section 4.4) followed by the NDP option area. The 32-bit R/S/O flags
+/// word (and its 29 Reserved bits) is the header's rest-of-header and is decoded
+/// there.
+///
+/// Returns a structured [`CrafterError`] (never a panic) when the body is too
+/// short to hold the Target Address, or when an option is malformed (a zero
+/// length or an overrun); the option walk is delegated to [`NdpOptions::decode`].
+pub(crate) fn decode_neighbor_advertisement(bytes: &[u8]) -> Result<NeighborAdvertisement> {
+    if bytes.len() < NA_TARGET_ADDRESS_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "icmpv6.neighbor_advertisement.target_address",
+            NA_TARGET_ADDRESS_LEN,
+            bytes.len(),
+        ));
+    }
+    let mut octets = [0u8; NA_TARGET_ADDRESS_LEN];
+    octets.copy_from_slice(&bytes[..NA_TARGET_ADDRESS_LEN]);
+    let target_address = core::net::Ipv6Addr::from(octets);
+    let options = NdpOptions::decode(&bytes[NA_TARGET_ADDRESS_LEN..])?;
+    Ok(NeighborAdvertisement {
+        target_address,
+        options,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1365,6 +1638,280 @@ mod tests {
     #[test]
     fn neighbor_solicitation_short_target_is_structured_error() {
         let err = decode_neighbor_solicitation(&[0u8; 8]).unwrap_err();
+        assert!(matches!(err, CrafterError::BufferTooShort { .. }));
+    }
+
+    // RFC 4861 sec 4.4 + 4.6.1: a solicited "is-at" Neighbor Advertisement (Target
+    // Address = the unicast address being advertised, the S and O flags set,
+    // carrying a Target Link-Layer Address option with the responder's MAC)
+    // compiles to type 136 / code 0, the S|O flags word, the 16-byte Target
+    // Address, and the TLLA option, and decodes back to the same fields with the
+    // checksum verifying over the IPv6 pseudo-header.
+    #[test]
+    fn neighbor_advertisement_with_tlla_round_trips() {
+        use crate::protocols::icmp::NDP_OPT_TARGET_LINK_LAYER_ADDR;
+
+        let target = doc_target();
+        // A solicited unicast reply: S=1 (in response to a solicitation), O=1
+        // (override the cache), R=0 (the sender is a host, not a router).
+        let packet = Ipv6::new()
+            .src(link_local_src())
+            .dst(link_local_src())
+            .hlim(255)
+            / Icmpv6::neighbor_advertisement_with_target_link_layer(
+                target,
+                doc_mac(),
+                false,
+                true,
+                true,
+            );
+        let compiled = packet.compile().unwrap();
+        let bytes = compiled.as_bytes();
+
+        // ICMPv6 starts at offset 40. type 136, code 0.
+        assert_eq!(bytes[40], ICMPV6_NEIGHBOR_ADVERTISEMENT);
+        assert_eq!(bytes[41], 0, "code is 0");
+        // Flags word (ICMPv6 rest-of-header, bytes 4..8): R=0, S=1, O=1 in the top
+        // three bits of byte 0; the 29 reserved bits are zero.
+        assert_eq!(
+            bytes[44],
+            ICMPV6_NA_FLAG_SOLICITED | ICMPV6_NA_FLAG_OVERRIDE
+        );
+        assert_eq!(bytes[44], 0x60);
+        assert_eq!(&bytes[45..48], &[0, 0, 0], "29 reserved bits are zero");
+        // Target Address: the 16 octets right after the fixed 8-byte header.
+        assert_eq!(&bytes[48..64], &target.octets());
+        // TLLA option follows the Target Address: type 2, length 1, 6-byte MAC.
+        assert_eq!(&bytes[64..66], &[NDP_OPT_TARGET_LINK_LAYER_ADDR, 1]);
+        assert_eq!(&bytes[66..72], &doc_mac().octets());
+        // IPv6(40) + ICMPv6 header(8) + target(16) + one TLLA option(8) = 72 bytes.
+        assert_eq!(bytes.len(), 72);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+        let icmpv6 = decoded.layer::<Icmpv6>().unwrap();
+        assert_eq!(icmpv6.icmp_type_value(), ICMPV6_NEIGHBOR_ADVERTISEMENT);
+        assert_eq!(icmpv6.code_value(), 0);
+        // The header classifies the message as a Neighbor Advertisement body with
+        // S and O set, R clear, and no reserved bits.
+        assert_eq!(
+            icmpv6.body(),
+            Icmpv6Body::NeighborAdvertisement {
+                router: false,
+                solicited: true,
+                override_flag: true,
+                reserved: 0,
+            }
+        );
+
+        let na = decoded.layer::<NeighborAdvertisement>().unwrap();
+        assert_eq!(na.target_address_value(), target);
+        assert_eq!(na.options_ref().len(), 1);
+        let tlla = &na.options_ref().options()[0];
+        assert_eq!(tlla.option_type(), NDP_OPT_TARGET_LINK_LAYER_ADDR);
+        assert_eq!(tlla.link_layer_address(), Some(doc_mac()));
+
+        // The whole packet round-trips byte-for-byte (checksum included).
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // RFC 4861 sec 4.4: the R, S, and O flags are independent. Exercise every one
+    // of the 8 boundary combinations and assert each flag is reported
+    // independently from the decoded header, with the 29 reserved bits zero in
+    // every case.
+    #[test]
+    fn neighbor_advertisement_flag_combinations_are_independent() {
+        let target = doc_target();
+        for router in [false, true] {
+            for solicited in [false, true] {
+                for override_flag in [false, true] {
+                    let packet = Ipv6::new().src(link_local_src()).dst(link_local_src())
+                        / Icmpv6::neighbor_advertisement_with(
+                            router,
+                            solicited,
+                            override_flag,
+                            NeighborAdvertisement::new(target),
+                        );
+                    let compiled = packet.compile().unwrap();
+                    let bytes = compiled.as_bytes();
+
+                    // The flags byte (rest-of-header byte 0) carries exactly the
+                    // set bits in its top three bits.
+                    let mut expected = 0u8;
+                    if router {
+                        expected |= ICMPV6_NA_FLAG_ROUTER;
+                    }
+                    if solicited {
+                        expected |= ICMPV6_NA_FLAG_SOLICITED;
+                    }
+                    if override_flag {
+                        expected |= ICMPV6_NA_FLAG_OVERRIDE;
+                    }
+                    assert_eq!(
+                        bytes[44], expected,
+                        "R={router} S={solicited} O={override_flag}"
+                    );
+                    // The 29 reserved bits (rest of byte 0 plus bytes 1..4) stay 0.
+                    assert_eq!(bytes[44] & 0x1f, 0, "low five bits of byte 0 reserved");
+                    assert_eq!(&bytes[45..48], &[0, 0, 0]);
+
+                    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+                    match decoded.layer::<Icmpv6>().unwrap().body() {
+                        Icmpv6Body::NeighborAdvertisement {
+                            router: r,
+                            solicited: s,
+                            override_flag: o,
+                            reserved,
+                        } => {
+                            assert_eq!(r, router, "R decoded independently");
+                            assert_eq!(s, solicited, "S decoded independently");
+                            assert_eq!(o, override_flag, "O decoded independently");
+                            assert_eq!(reserved, 0, "no reserved bits set");
+                        }
+                        other => panic!("expected NeighborAdvertisement body, got {other:?}"),
+                    }
+                    // The Target Address survives the round trip too.
+                    assert_eq!(
+                        decoded
+                            .layer::<NeighborAdvertisement>()
+                            .unwrap()
+                            .target_address_value(),
+                        target
+                    );
+                    // Whole packet round-trips byte-for-byte (checksum included).
+                    assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+                }
+            }
+        }
+    }
+
+    // Honored overrides: an agent can set the 29 Reserved bits (RFC 4861 sec 4.4
+    // says send-as-zero) and any flag combination via the header rest-of-header,
+    // and the value survives compile() and decode unchanged. The reserved bits are
+    // surfaced in the typed body for inspection without masking the flag bits.
+    #[test]
+    fn neighbor_advertisement_reserved_bits_survive() {
+        let target = doc_target();
+        // flags word 0xff_ff_ff_ff: R=1, S=1, O=1, plus all 29 reserved bits set.
+        let packet = Ipv6::new().src(link_local_src()).dst(link_local_src())
+            / (Icmpv6::new()
+                .icmp_type(ICMPV6_NEIGHBOR_ADVERTISEMENT)
+                .code(0)
+                .rest_of_header([0xff, 0xff, 0xff, 0xff])
+                / NeighborAdvertisement::new(target));
+        let compiled = packet.compile().unwrap();
+        let bytes = compiled.as_bytes();
+        // The flags word survives verbatim.
+        assert_eq!(&bytes[44..48], &[0xff, 0xff, 0xff, 0xff]);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmpv6>().unwrap().body(),
+            Icmpv6Body::NeighborAdvertisement {
+                router: true,
+                solicited: true,
+                override_flag: true,
+                // The 29 reserved bits (0x1fffffff) are preserved, not masked away.
+                reserved: ICMPV6_NA_FLAGS_RESERVED,
+            }
+        );
+        assert_eq!(
+            decoded
+                .layer::<NeighborAdvertisement>()
+                .unwrap()
+                .target_address_value(),
+            target
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // The default builder leaves all three flags clear and carries no options:
+    // type 136, code 0, a zero flags word, the 16-byte Target Address, nothing
+    // after.
+    #[test]
+    fn neighbor_advertisement_defaults_are_documented() {
+        let target = doc_target();
+        let packet = Ipv6::new()
+            .src(link_local_src())
+            .dst(link_local_src())
+            .hlim(255)
+            / Icmpv6::neighbor_advertisement(target);
+        let bytes = packet.compile().unwrap();
+        let bytes = bytes.as_bytes();
+
+        assert_eq!(bytes[40], ICMPV6_NEIGHBOR_ADVERTISEMENT);
+        assert_eq!(bytes[41], 0, "code is 0");
+        assert_eq!(
+            &bytes[44..48],
+            &[0, 0, 0, 0],
+            "R/S/O and reserved all clear"
+        );
+        assert_eq!(&bytes[48..64], &target.octets());
+        // IPv6(40) + ICMPv6 header(8) + target(16), no options.
+        assert_eq!(bytes.len(), 40 + 8 + 16);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+        let na = decoded.layer::<NeighborAdvertisement>().unwrap();
+        assert_eq!(na.target_address_value(), target);
+        assert!(na.options_ref().is_empty());
+    }
+
+    // summary() / show(): the body layer summarizes its own fields (Target Address
+    // and option count), and the header's body-detail field reports the Neighbor
+    // Advertisement classification with its R/S/O flags and reserved bits.
+    #[test]
+    fn neighbor_advertisement_summary_and_show() {
+        let target = doc_target();
+        let body = NeighborAdvertisement::new(target)
+            .option(NdpOption::target_link_layer_address(doc_mac()));
+        assert_eq!(
+            body.summary(),
+            format!("NeighborAdvertisement(target={target}, options=1)")
+        );
+
+        let target_field = body
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "target_address")
+            .map(|(_, value)| value)
+            .expect("show() exposes the target address");
+        assert_eq!(target_field, target.to_string());
+
+        let option_field = body
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "option[0]")
+            .map(|(_, value)| value)
+            .expect("show() exposes the first option");
+        assert!(option_field.starts_with("Target Link-Layer Address"));
+
+        // The header summarizes from its type; the Neighbor Advertisement name
+        // comes from `icmpv6_type_summary`.
+        let header = Icmpv6::new()
+            .icmp_type(ICMPV6_NEIGHBOR_ADVERTISEMENT)
+            .code(0)
+            .rest_of_header(neighbor_advertisement_rest_of_header(false, true, true));
+        assert_eq!(
+            header.summary(),
+            "Icmpv6(type=neighbor-advertisement(136), code=0, id=-, seq=-)"
+        );
+        let body_field = header
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "body")
+            .map(|(_, value)| value)
+            .expect("show() exposes a body field");
+        assert_eq!(
+            body_field,
+            "neighbor-advertisement(R=false, S=true, O=true, reserved=0x00000000)"
+        );
+    }
+
+    // A Neighbor Advertisement body truncated below the 16-byte Target Address
+    // surfaces a structured error from the decoder (never a panic); the decode
+    // dispatch then falls back to a single Raw payload so nothing is dropped.
+    #[test]
+    fn neighbor_advertisement_short_target_is_structured_error() {
+        let err = decode_neighbor_advertisement(&[0u8; 8]).unwrap_err();
         assert!(matches!(err, CrafterError::BufferTooShort { .. }));
     }
 }

@@ -98,6 +98,29 @@ pub enum Icmpv6Body {
         /// sent as zero, preserved verbatim here so a non-zero value is visible).
         reserved: u32,
     },
+    /// RFC 4861 section 4.4 Neighbor Advertisement (136): the four rest-of-header
+    /// bytes are the R (Router) / S (Solicited) / O (Override) flags in the three
+    /// most-significant bits plus 29 Reserved bits; the 128-bit Target Address (the
+    /// address whose link-layer address is being reported) and the NDP options ride
+    /// in a trailing
+    /// [`NeighborAdvertisement`](super::message::ndp::NeighborAdvertisement) layer.
+    /// Neighbor Advertisement is the IPv6 analogue of ARP "is-at" and answers a
+    /// Neighbor Solicitation.
+    NeighborAdvertisement {
+        /// The R (Router) flag — RFC 4861 sec 4.4 bit 0x80000000: the sender is a
+        /// router.
+        router: bool,
+        /// The S (Solicited) flag — RFC 4861 sec 4.4 bit 0x40000000: the
+        /// advertisement was sent in response to a Neighbor Solicitation.
+        solicited: bool,
+        /// The O (Override) flag — RFC 4861 sec 4.4 bit 0x20000000: the
+        /// advertisement should override an existing cache entry.
+        override_flag: bool,
+        /// The 29 Reserved bits (RFC 4861 sec 4.4: send-as-zero), preserved
+        /// verbatim so a non-zero value is visible. These are the low 29 bits of
+        /// the 32-bit flags word.
+        reserved: u32,
+    },
     /// Any ICMPv6 `type` not yet modeled with a typed body. The four
     /// rest-of-header bytes are preserved verbatim and any trailing bytes stay a
     /// [`Raw`] payload, so unknown messages round-trip unchanged.
@@ -194,6 +217,20 @@ impl Icmpv6Body {
                 // NeighborSolicitation layer, not in this header-derived view.
                 reserved: u32::from_be_bytes(rest_of_header),
             },
+            ICMPV6_NEIGHBOR_ADVERTISEMENT => {
+                // RFC 4861 sec 4.4: rest-of-header = the 32-bit flags word. The
+                // three most-significant bits are R (0x80000000), S (0x40000000),
+                // O (0x20000000); the low 29 bits are Reserved (preserved). The
+                // Target Address and options live in the trailing
+                // NeighborAdvertisement layer, not in this header-derived view.
+                let flags = rest_of_header[0];
+                Icmpv6Body::NeighborAdvertisement {
+                    router: flags & ICMPV6_NA_FLAG_ROUTER != 0,
+                    solicited: flags & ICMPV6_NA_FLAG_SOLICITED != 0,
+                    override_flag: flags & ICMPV6_NA_FLAG_OVERRIDE != 0,
+                    reserved: u32::from_be_bytes(rest_of_header) & ICMPV6_NA_FLAGS_RESERVED,
+                }
+            }
             _ => Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,
@@ -210,6 +247,7 @@ impl Icmpv6Body {
             Icmpv6Body::RouterSolicitation { .. } => "router-solicitation",
             Icmpv6Body::RouterAdvertisement { .. } => "router-advertisement",
             Icmpv6Body::NeighborSolicitation { .. } => "neighbor-solicitation",
+            Icmpv6Body::NeighborAdvertisement { .. } => "neighbor-advertisement",
             Icmpv6Body::Unknown { .. } => "unknown",
         }
     }
@@ -249,6 +287,15 @@ impl Icmpv6Body {
             Icmpv6Body::NeighborSolicitation { reserved } => {
                 format!("neighbor-solicitation(reserved=0x{reserved:08x})")
             }
+            Icmpv6Body::NeighborAdvertisement {
+                router,
+                solicited,
+                override_flag,
+                reserved,
+            } => format!(
+                "neighbor-advertisement(R={router}, S={solicited}, O={override_flag}, \
+                 reserved=0x{reserved:08x})"
+            ),
             Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,
