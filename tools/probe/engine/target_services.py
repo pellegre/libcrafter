@@ -673,6 +673,30 @@ def arp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     return [plan for plan in probe_plans if plan.get("case") in _ARP_KERNEL_CASES]
 
 
+# Probe cases whose target is primarily the kernel answering IPv6 Neighbor
+# Discovery on a private L2 segment. ``ndp-neighbor-solicitation`` and
+# ``ndp-duplicate-address-detection`` rely on a bare kernel auto-answering /
+# defending a Neighbor Solicitation for an address it owns; the setup only needs
+# to make sure IPv6 is enabled on the private interface and the neighbor cache is
+# clean (no listening daemon). ``ndp-router-solicitation`` additionally needs the
+# target to act as an RA-emitting router (kernel RA via forwarding + accept_ra),
+# which the setup enables best-effort.
+_NDP_KERNEL_CASES: frozenset[str] = frozenset(
+    {
+        "ndp-neighbor-solicitation",
+        "ndp-router-solicitation",
+        "ndp-duplicate-address-detection",
+    }
+)
+_NDP_ROUTER_CASES: frozenset[str] = frozenset({"ndp-router-solicitation"})
+
+
+def ndp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the NDP probe plans in order."""
+
+    return [plan for plan in probe_plans if plan.get("case") in _NDP_KERNEL_CASES]
+
+
 def arp_extra_addresses(probe_plans: Sequence[JSONObject]) -> list[str]:
     """Return secondary IPv4 addresses that ARP live setup must add."""
 
@@ -748,6 +772,7 @@ def prepare_wire_probe_target(
     dns_plans = dns_probe_plans(probe_plans)
     dhcp_plans = dhcp_probe_plans(probe_plans)
     arp_plans = arp_probe_plans(probe_plans)
+    ndp_plans = ndp_probe_plans(probe_plans)
     udp_plans = udp_probe_plans(probe_plans)
     closed_udp_plans = closed_udp_probe_plans(probe_plans)
     if (
@@ -755,6 +780,7 @@ def prepare_wire_probe_target(
         and not dns_plans
         and not dhcp_plans
         and not arp_plans
+        and not ndp_plans
         and not udp_plans
         and not closed_udp_plans
     ):
@@ -783,6 +809,7 @@ def prepare_wire_probe_target(
         dns_plans=dns_plans,
         dhcp_plans=dhcp_plans,
         arp_plans=arp_plans,
+        ndp_plans=ndp_plans,
         udp_plans=udp_plans,
         closed_udp_ports=closed_udp_ports,
         target_interface=target_interface,
@@ -834,6 +861,7 @@ def target_service_setup_script(
     dns_plans: Sequence[JSONObject],
     dhcp_plans: Sequence[JSONObject] = (),
     arp_plans: Sequence[JSONObject] = (),
+    ndp_plans: Sequence[JSONObject] = (),
     udp_plans: Sequence[JSONObject] = (),
     closed_udp_ports: Sequence[int] = (),
     target_interface: str = "",
@@ -1787,8 +1815,88 @@ def target_service_setup_script(
                     "echo arp_decoy_emitter=running",
                 ]
             )
+    if ndp_plans:
+        wants_router = any(
+            str(plan.get("case", "")) in _NDP_ROUTER_CASES for plan in ndp_plans
+        )
+        lines.extend(_ndp_target_setup_lines(wants_router=wants_router))
     lines.append("echo target_service_setup=ok")
     return "\n".join(lines)
+
+
+def _ndp_target_setup_lines(*, wants_router: bool) -> list[str]:
+    """Render the NDP/IPv6 kernel setup block for the target setup script.
+
+    A bare Linux kernel already owns a modified-EUI-64 link-local address on
+    every IPv6-enabled interface and auto-answers a Neighbor Solicitation for it
+    (and defends it on Duplicate Address Detection), so the Neighbor Solicitation
+    and DAD cases need only that IPv6 is enabled on the private interface, that
+    the link-local has finished Duplicate Address Detection, and that the IPv6
+    neighbor cache is clean so the kernel re-answers. The Router Solicitation
+    case additionally needs the target to act as an RA-emitting router; the block
+    enables IPv6 forwarding and per-interface RA emission best-effort (a bare
+    kernel without forwarding does not answer a Router Solicitation). Every
+    sysctl change records its restore command into the cleanup script so the
+    disposable endpoint is returned to its prior state on teardown.
+    """
+
+    lines = [
+        'if [ -z "$target_interface" ]; then',
+        "  echo ndp_target_interface=missing >&2",
+        "  exit 73",
+        "fi",
+        'ip link show dev "$target_interface" >/dev/null',
+        # Enable IPv6 on the private interface and accept the kernel's link-local.
+        'for key in disable_ipv6 accept_dad; do',
+        '  sysctl_name="net.ipv6.conf.${target_interface}.${key}"',
+        '  before_path="$artifact_root/ndp-${key}.before"',
+        '  sysctl -n "$sysctl_name" > "$before_path" 2>/dev/null || true',
+        '  before_value=""',
+        '  if [ -s "$before_path" ]; then before_value="$(cat "$before_path")"; fi',
+        '  if [ -n "$before_value" ]; then',
+        '    printf \'%s\\n\' "sysctl -w ${sysctl_name}=${before_value} >/dev/null 2>&1 || true" >> "$cleanup"',
+        "  fi",
+        "done",
+        # disable_ipv6=0 keeps IPv6 on; accept_dad=1 lets the link-local finish DAD.
+        'sysctl -w "net.ipv6.conf.${target_interface}.disable_ipv6=0" >/dev/null 2>&1 || true',
+        'sysctl -w "net.ipv6.conf.${target_interface}.accept_dad=1" >/dev/null 2>&1 || true',
+        'ip link set dev "$target_interface" up || true',
+        # Give the kernel a moment to assign the link-local and finish DAD so it
+        # answers a solicitation for the address it owns.
+        'for _ in 1 2 3 4 5 6 7 8 9 10; do',
+        '  if ip -6 addr show dev "$target_interface" scope link | grep -q "inet6 fe80:"; then break; fi',
+        "  sleep 1",
+        "done",
+        'link_local="$(ip -6 addr show dev "$target_interface" scope link 2>/dev/null '
+        "| awk '/inet6 fe80:/ {print $2}' | head -1)\"",
+        'printf \'%s\\n\' "ip -6 neigh flush dev $target_interface || true" >> "$cleanup"',
+        'ip -6 neigh flush dev "$target_interface" 2>/dev/null || true',
+        'echo "ndp_link_local=${link_local:-none}"',
+        "echo ndp_kernel_state=configured",
+    ]
+    if wants_router:
+        lines.extend(
+            [
+                # Router Solicitation needs the target to emit Router
+                # Advertisements. Enable IPv6 forwarding so the kernel acts as a
+                # router; per-interface RA emission still depends on the kernel
+                # build, so this is best-effort and the case skips cleanly if no
+                # RA arrives.
+                'for key in forwarding; do',
+                '  sysctl_name="net.ipv6.conf.${target_interface}.${key}"',
+                '  before_path="$artifact_root/ndp-router-${key}.before"',
+                '  sysctl -n "$sysctl_name" > "$before_path" 2>/dev/null || true',
+                '  before_value=""',
+                '  if [ -s "$before_path" ]; then before_value="$(cat "$before_path")"; fi',
+                '  if [ -n "$before_value" ]; then',
+                '    printf \'%s\\n\' "sysctl -w ${sysctl_name}=${before_value} >/dev/null 2>&1 || true" >> "$cleanup"',
+                "  fi",
+                "done",
+                'sysctl -w "net.ipv6.conf.${target_interface}.forwarding=1" >/dev/null 2>&1 || true',
+                "echo ndp_router_state=configured",
+            ]
+        )
+    return lines
 
 
 __all__ = [

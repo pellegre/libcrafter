@@ -44,6 +44,14 @@ const NDP_ROUTER_ADVERTISEMENT_TYPE: u8 = 134;
 const NDP_NEIGHBOR_SOLICITATION_TYPE: u8 = 135;
 const NDP_NEIGHBOR_ADVERTISEMENT_TYPE: u8 = 136;
 
+/// IPv6 Hop Limit every Neighbor Discovery message must carry.
+///
+/// RFC 4861 sections 4.1-4.5 mandate Hop Limit 255 on the wire and section 11.2
+/// requires receivers to silently discard NDP messages whose Hop Limit is not
+/// 255. A real Linux kernel therefore drops a solicitation sent with the IPv6
+/// default Hop Limit (64) without answering, so the stimulus pins this value.
+const NDP_HOP_LIMIT: u8 = 255;
+
 pub fn run_ndp_dry_run(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
@@ -308,7 +316,14 @@ pub fn ndp_stimulus_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     // compose the IPv6 and Ethernet headers under it. Composing an `Ipv6` layer
     // with the ICMPv6 packet places ICMPv6 (next header 58) over IPv6, and the
     // Ethernet header carries the IPv6-multicast destination MAC.
-    let ipv6 = Ipv6::with_addresses(source_ipv6, destination_ipv6);
+    //
+    // RFC 4861 sections 4.1-4.5 require every Neighbor Discovery message to be
+    // sent with an IPv6 Hop Limit of 255, and section 11.2 requires a receiver to
+    // silently discard any NDP message whose Hop Limit is not 255 (the off-link
+    // spoofing defense). The IPv6 layer defaults to Hop Limit 64, so a real Linux
+    // kernel accepts the solicitation as well-formed but never answers it; pin
+    // the Hop Limit to 255 so the kernel actually emits the advertisement.
+    let ipv6 = Ipv6::with_addresses(source_ipv6, destination_ipv6).hop_limit(NDP_HOP_LIMIT);
     let packet =
         Ethernet::with_addresses(ethernet_source, ethernet_destination) / ipv6 / icmpv6_packet;
     Ok(packet)
@@ -478,7 +493,12 @@ fn validate_router_advertisement(
 ) {
     if let Some(icmpv6) = packet.layer::<Icmpv6>() {
         if let Icmpv6Body::RouterAdvertisement { managed, other, .. } = icmpv6.body() {
-            check_flag("ndp.ra.managed", validation.managed_flag, managed, mismatches);
+            check_flag(
+                "ndp.ra.managed",
+                validation.managed_flag,
+                managed,
+                mismatches,
+            );
             check_flag("ndp.ra.other", validation.other_flag, other, mismatches);
         } else {
             mismatches.push(json!({
@@ -564,7 +584,8 @@ mod tests {
 
     #[test]
     fn ipv6_multicast_maps_to_3333_ethernet() {
-        let mac = ipv6_multicast_ethernet_destination("ff02::1:ff95:d57f".parse().unwrap()).unwrap();
+        let mac =
+            ipv6_multicast_ethernet_destination("ff02::1:ff95:d57f".parse().unwrap()).unwrap();
         // RFC 2464: 33:33 plus the low four octets of the IPv6 multicast address.
         assert_eq!(mac.to_string(), "33:33:ff:95:d5:7f");
     }
@@ -580,6 +601,9 @@ mod tests {
         // 54 of the Ethernet frame) is the Neighbor Solicitation type.
         assert_eq!(&raw[12..14], &(0x86ddu16).to_be_bytes());
         assert_eq!(raw[14 + 6], 58, "ipv6 next header is icmpv6");
+        // RFC 4861 sections 4.3 / 11.2: the IPv6 Hop Limit (byte 7 of the IPv6
+        // header) MUST be 255 or a real kernel silently drops the solicitation.
+        assert_eq!(raw[14 + 7], NDP_HOP_LIMIT, "ndp hop limit must be 255");
         assert_eq!(raw[14 + 40], NDP_NEIGHBOR_SOLICITATION_TYPE);
         // The Ethernet destination is the solicited-node multicast 33:33 mapping.
         assert_eq!(&raw[0..2], &[0x33, 0x33]);
@@ -667,5 +691,71 @@ mod tests {
             matches!(outcome, CandidateValidation::WrongPayload(_)),
             "expected a wrong-flags advertisement to fail, got {outcome:?}"
         );
+    }
+
+    #[test]
+    fn validate_accepts_real_linux_kernel_neighbor_advertisement() {
+        // A Neighbor Advertisement captured live from a real Linux 6.8 kernel
+        // (in a QEMU lab guest) in response to the hop-limit-255 Neighbor
+        // Solicitation this adapter builds. The kernel formed its EUI-64
+        // link-local fe80::5054:ff:feaa:bbcc from MAC 52:54:00:aa:bb:cc, answered
+        // with R=0/S=1/O=1 and a Target Link-Layer Address option, and addressed
+        // the reply to the stimulus link-local fe80::5054:ff:fe11:2233. Pinning
+        // these real wire bytes guards that libcrafter decodes a genuine kernel
+        // NA and the validation contract accepts it.
+        let raw = hex_to_bytes(concat!(
+            "525400112233525400aabbcc86dd6000000000203aff",
+            "fe80000000000000505400fffeaabbcc",
+            "fe80000000000000505400fffe112233",
+            "8800822760000000",
+            "fe80000000000000505400fffeaabbcc",
+            "0201525400aabbcc",
+        ));
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &raw).unwrap();
+
+        let icmpv6 = decoded
+            .layer::<Icmpv6>()
+            .expect("captured frame decodes as ICMPv6");
+        assert_eq!(icmpv6.icmp_type_value(), NDP_NEIGHBOR_ADVERTISEMENT_TYPE);
+        assert!(matches!(
+            icmpv6.body(),
+            Icmpv6Body::NeighborAdvertisement {
+                router: false,
+                solicited: true,
+                override_flag: true,
+                ..
+            }
+        ));
+        let advertisement = decoded
+            .layer::<NeighborAdvertisement>()
+            .expect("NA body decodes");
+        assert_eq!(
+            advertisement.target_address_value(),
+            "fe80::5054:ff:feaa:bbcc".parse::<Ipv6Addr>().unwrap()
+        );
+        let tlla = advertisement
+            .options_ref()
+            .iter()
+            .find_map(|option| option.link_layer_address())
+            .expect("NA carries a target link-layer address option");
+        assert_eq!(tlla.to_string(), "52:54:00:aa:bb:cc");
+
+        let mut plan = neighbor_solicitation_plan();
+        plan.ndp_validation = Some(ndp_validation(
+            "fe80::5054:ff:feaa:bbcc",
+            "52:54:00:aa:bb:cc",
+        ));
+        let outcome = validate_ndp_candidate(&plan, &decoded, &raw).unwrap();
+        assert!(
+            matches!(outcome, CandidateValidation::Passed(_)),
+            "real kernel NA must pass the contract, got {outcome:?}"
+        );
+    }
+
+    fn hex_to_bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("valid hex"))
+            .collect()
     }
 }
