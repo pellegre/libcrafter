@@ -173,6 +173,164 @@ user data. Use `additional_payload_checksum_value(...)`,
 or explicit `Udp::checksum(...)` only when a test or generated tool is
 deliberately emitting fixed or malformed bytes.
 
+## Build TCP Segments
+
+Generated tools should build TCP segments with the typed `Tcp` builder and add
+options with `tcp_option(...)`. Each `tcp_option(...)` call encodes one
+`TcpOption` and returns `Result`, so option errors surface before `compile()`.
+`compile()` fills the unset data offset, pads options to a 32-bit boundary, and
+computes the checksum from the IPv4 or IPv6 pseudo-header — do not set those by
+hand unless a tool is intentionally emitting malformed bytes. The control-bit
+builders (`syn_segment`, `syn_ack_segment`, `ack_segment`, `rst_ack_segment`,
+`fin_ack_segment`) set the exact flag set, replacing the default SYN.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Tcp::new()
+            .sport(40000)
+            .dport(443)
+            .syn_segment()
+            .window(64240)
+            .tcp_option(TcpOption::maximum_segment_size(1460))?
+            .tcp_option(TcpOption::sack_permitted())?
+            .tcp_option(TcpOption::window_scale(7))?
+            .tcp_option(TcpOption::timestamp(0x0102_0304, 0))?;
+
+    let bytes = packet.compile()?;
+    println!("{}", packet.summary());
+    println!("{}", bytes.hexdump());
+    Ok(())
+}
+```
+
+Use the typed `TcpOption` constructors (`maximum_segment_size`,
+`window_scale`, `sack_permitted`, `timestamp`, `sack`, `user_timeout`,
+`fast_open`, `multipath_tcp`, and the experimental/AO/ENO/AccECN forms) so the
+option length and wire layout fill correctly. For an unknown or deliberately
+malformed kind, use `TcpOption::generic(kind, data)` or the raw
+`Tcp::option(bytes)` / `Tcp::options(bytes)` setters; decode still classifies
+the result with `TcpOptionKindClass` instead of discarding it.
+
+## Decode TCP Replies
+
+Decode a reply with the entrypoint that matches the bytes (`NetworkLayer::Ipv4`
+or `NetworkLayer::Ipv6` for raw IP sockets). Pull the `Tcp` layer with
+`layer::<Tcp>()`, read the control bits and ports with the typed accessors, and
+walk options with `parsed_options()`. Valid unknown options round-trip as typed
+data, and malformed headers or options surface as structured errors.
+
+```rust
+use crafter::prelude::*;
+
+fn inspect_reply(bytes: &[u8]) -> crafter::Result<()> {
+    let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+    println!("{}", packet.show());
+
+    if let Some(tcp) = packet.layer::<Tcp>() {
+        println!(
+            "tcp {} -> {} syn={} ack={}",
+            tcp.source_port_value(),
+            tcp.destination_port_value(),
+            tcp.has_flag(TCP_FLAG_SYN),
+            tcp.has_flag(TCP_FLAG_ACK),
+        );
+
+        for option in tcp.parsed_options()? {
+            if let Some(mss) = option.maximum_segment_size_value() {
+                println!("peer_mss={mss}");
+            }
+            if let Some(shift) = option.window_scale_shift() {
+                println!("peer_window_scale={shift}");
+            }
+            println!("option={} class={:?}", option.kind_name(), option.kind_class());
+        }
+    }
+
+    Ok(())
+}
+```
+
+## Size TCP Payloads
+
+`crafter` never discovers a path MTU; the caller supplies it. Use the pure
+sizing helpers to budget options and payload before building. They live on
+`crafter::protocols::transport` (the prelude already re-exports `Tcp`,
+`TcpOption`, and the classic option constants):
+
+```rust
+use crafter::prelude::*;
+use crafter::protocols::transport::{
+    effective_mss, max_tcp_payload, option_budget, remaining_option_budget, tcp_header_len,
+};
+
+fn budget(path_mtu: usize) {
+    // 40-octet option ceiling and what is left after MSS + SACK-OK + WScale.
+    let used = 4 + 2 + 3; // MSS(4) + SACK-Permitted(2) + Window Scale(3)
+    println!("option_budget={} remaining={}", option_budget(), remaining_option_budget(used));
+
+    // Largest user-data payload for this path MTU over IPv4 (20) + TCP header.
+    let header = tcp_header_len(used);
+    let payload = max_tcp_payload(path_mtu, 20, header);
+    println!("tcp_header_len={header} max_payload={payload}");
+
+    // Source-backed MSS guidance; `None` falls back to the RFC default.
+    println!("effective_mss_ipv4={}", effective_mss(false, Some(path_mtu)));
+    println!("effective_mss_ipv4_default={}", effective_mss(false, None));
+}
+```
+
+## Validate TCP: Dry-Run First, Provider Live Opt-In
+
+Dry-run is the default for TCP, exactly as for every other layer. `send_dry_run`
+compiles the segment, derives the send target, and returns a plan without
+transmitting. Use a documentation interface name (`dry-run0`) and documentation
+address space so nothing touches a real network:
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn plan_syn() -> Result<(), Box<dyn std::error::Error>> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Tcp::new().sport(40000).dport(443).syn_segment()
+            .tcp_option(TcpOption::maximum_segment_size(1460))?;
+
+    let plan = packet.send_dry_run(
+        SendOptions::new()
+            .iface("dry-run0")
+            .network_layer(),
+    )?;
+
+    println!("target={:?}", plan.target());
+    println!("{}", plan.compiled_packet().hexdump());
+    Ok(())
+}
+```
+
+Use `send_recv_report(...).dry_run()` (see `send_recv Matching` below) when the
+tool also needs the derived BPF reply filter without sending.
+
+Live TCP traffic is the opt-in path and must run from disposable infrastructure,
+never raw from the developer host. Start with a provider dry-run, then run the
+real provider only after explicit authorization, and destroy the resource after:
+
+```sh
+tools/live-lab/libcrafter-live-lab doctor --provider local-dry-run
+tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
+tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
+```
+
+Only inside that disposable provider host does live code add `.live()` to
+`SendOptions` (see `Live-Lab Sending`).
+
 ## Decode Bytes
 
 Pick the decode entrypoint from the context that produced the bytes. Link-layer
