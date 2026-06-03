@@ -86,13 +86,16 @@ Valid byte fixtures cover:
   `ipv6-icmp-echo-request.bin`, `ipv6-icmpv6-time-exceeded.hex`
 - IPv6 UDP, TCP, and fragment extension-header stacks:
   `ipv6-udp-raw.hex`, `ipv6-tcp-raw.hex`,
-  `ipv6-fragment-udp-raw.hex`
+  `ipv6-tcp-rich-options.hex` (MSS, Window Scale, SACK Permitted, Timestamp,
+  RFC 5482 User Timeout, and a classified Generic option, with IPv6
+  pseudo-header checksum), `ipv6-fragment-udp-raw.hex`
 - IPv6 UDP options surplus decode:
   `ipv6-udp-options-unknown-unsafe.hex`,
   `ipv6-udp-options-frag.hex`
 
 Summary fixtures cover representative raw, ARP, Linux cooked, IPv4 TCP options,
-IPv4 DNS response, IPv4 DHCP, UDP options, and IPv6 fragment stacks.
+IPv6 TCP options, IPv4 DNS response, IPv4 DHCP, UDP options, and IPv6 fragment
+stacks.
 
 Pcap fixtures cover:
 
