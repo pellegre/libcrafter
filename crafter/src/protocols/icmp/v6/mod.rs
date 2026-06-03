@@ -36,10 +36,13 @@ pub use self::body::{Icmpv6Body, Icmpv6ErrorBody};
 // concrete message bodies. Re-exported at the `icmp` root (and onward through
 // `protocols::mod.rs` and the prelude) like the other ICMPv6 types.
 mod message;
+pub(crate) use self::message::ndp::decode_router_solicitation;
+pub use self::message::ndp::RouterSolicitation;
 pub use self::message::ndp_option::{
-    ndp_option_type_is_known, ndp_option_type_name, NdpOption, NdpOptions, NDP_OPTION_HEADER_LEN,
-    NDP_OPTION_LENGTH_UNIT, NDP_OPT_CAPTIVE_PORTAL, NDP_OPT_DNSSL, NDP_OPT_MTU, NDP_OPT_NONCE,
-    NDP_OPT_PREF64, NDP_OPT_PREFIX_INFORMATION, NDP_OPT_RA_FLAGS_EXTENSION, NDP_OPT_RDNSS,
+    ndp_option_type_is_known, ndp_option_type_name, NdpOption, NdpOptions,
+    NDP_LINK_LAYER_ADDR_ETHERNET_LEN, NDP_OPTION_HEADER_LEN, NDP_OPTION_LENGTH_UNIT,
+    NDP_OPT_CAPTIVE_PORTAL, NDP_OPT_DNSSL, NDP_OPT_MTU, NDP_OPT_NONCE, NDP_OPT_PREF64,
+    NDP_OPT_PREFIX_INFORMATION, NDP_OPT_RA_FLAGS_EXTENSION, NDP_OPT_RDNSS,
     NDP_OPT_REDIRECTED_HEADER, NDP_OPT_ROUTE_INFORMATION, NDP_OPT_SOURCE_LINK_LAYER_ADDR,
     NDP_OPT_TARGET_LINK_LAYER_ADDR,
 };
@@ -512,7 +515,25 @@ fn decode_icmpv6_parts(bytes: &[u8]) -> Result<(Icmpv6, &[u8])> {
 /// Append a decoded ICMPv6 packet to an existing packet stack.
 pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (icmpv6, payload) = decode_icmpv6_parts(bytes)?;
+    let icmp_type = icmpv6.icmp_type_value();
     packet = packet.push(icmpv6);
+
+    // RFC 4861 Neighbor Discovery messages carry a typed body after the fixed
+    // header (for a Router Solicitation: the NDP option area; the 32-bit
+    // Reserved field is the header's rest-of-header, decoded with the header).
+    // Type the body whenever the header is a recognized NDP message and the
+    // option area parses defensibly — even when the area is empty, so a bare
+    // Router Solicitation still exposes its typed body. A malformed option area
+    // (a zero-length or overrunning option) keeps the bytes as a single `Raw`
+    // payload so nothing is dropped and decoding never panics. Later steps add
+    // the remaining NDP/MLD/extended-echo bodies here in lockstep with the
+    // `Icmpv6Body` classifier in `body.rs`.
+    if icmp_type == ICMPV6_ROUTER_SOLICITATION {
+        if let Ok(rs) = decode_router_solicitation(payload) {
+            return Ok(packet.push(rs));
+        }
+    }
+
     if !payload.is_empty() {
         packet = packet.push(Raw::from_bytes(payload));
     }

@@ -45,6 +45,7 @@
 use core::fmt;
 
 use crate::error::{CrafterError, Result};
+use crate::mac::MacAddr;
 
 // --- NDP option type codepoints (IANA "IPv6 Neighbor Discovery Option
 // Formats" registry) -------------------------------------------------------
@@ -93,6 +94,12 @@ pub const NDP_OPTION_LENGTH_UNIT: usize = 8;
 /// Width, in octets, of the Type/Length header that precedes every NDP option
 /// value (RFC 4861 sec 4.6).
 pub const NDP_OPTION_HEADER_LEN: usize = 2;
+
+/// Width, in octets, of an Ethernet / IEEE 802 (48-bit) link-layer address as
+/// carried in the Source/Target Link-Layer Address option value (RFC 4861 sec
+/// 4.6.1: for IEEE 802 addresses the option length is 1 — eight octets total —
+/// of which six are the link-layer address).
+pub const NDP_LINK_LAYER_ADDR_ETHERNET_LEN: usize = 6;
 
 /// Return the human-readable name for a recognized NDP option type, or `None`
 /// for an unassigned/unrecognized type.
@@ -185,6 +192,55 @@ impl NdpOption {
             ty,
             bytes: bytes.into(),
             length: None,
+        }
+    }
+
+    /// Build a Source Link-Layer Address option (type 1) carrying an Ethernet /
+    /// IEEE 802 (48-bit) MAC address.
+    ///
+    /// RFC 4861 section 4.6.1: the option contains the link-layer address of the
+    /// sender of the packet. For IEEE 802 addresses the option occupies one
+    /// 8-octet unit — a two-byte Type/Length header plus the six-byte address —
+    /// so the auto-filled length is 1. This is a typed constructor over the
+    /// framework: it produces a [`NdpOption::Generic`] whose six value bytes are
+    /// the MAC, so it round-trips through [`NdpOptions`] exactly like any other
+    /// recognized option, and [`NdpOption::link_layer_address`] reads it back.
+    pub fn source_link_layer_address(mac: MacAddr) -> Self {
+        Self::generic(NDP_OPT_SOURCE_LINK_LAYER_ADDR, mac.octets().to_vec())
+    }
+
+    /// Build a Target Link-Layer Address option (type 2) carrying an Ethernet /
+    /// IEEE 802 (48-bit) MAC address.
+    ///
+    /// RFC 4861 section 4.6.1: the option contains the link-layer address of the
+    /// target; it shares the Source Link-Layer Address layout and is used by
+    /// Neighbor and Router Advertisements (modeled in later steps). Provided here
+    /// alongside the source option so both link-layer-address codepoints share
+    /// one typed constructor/accessor pair.
+    pub fn target_link_layer_address(mac: MacAddr) -> Self {
+        Self::generic(NDP_OPT_TARGET_LINK_LAYER_ADDR, mac.octets().to_vec())
+    }
+
+    /// Read the Ethernet / IEEE 802 (48-bit) MAC carried by a Source (type 1) or
+    /// Target (type 2) Link-Layer Address option.
+    ///
+    /// Returns `None` when the option is not a link-layer-address option or when
+    /// its value does not hold a full six-byte IEEE 802 address (for example a
+    /// non-Ethernet link layer with a different address width, or a truncated
+    /// option). The first six value bytes are interpreted as the address, which
+    /// matches the RFC 4861 section 4.6.1 Ethernet layout (length 1, no padding).
+    pub fn link_layer_address(&self) -> Option<MacAddr> {
+        match self.option_type() {
+            NDP_OPT_SOURCE_LINK_LAYER_ADDR | NDP_OPT_TARGET_LINK_LAYER_ADDR => {
+                let value = self.value();
+                if value.len() < NDP_LINK_LAYER_ADDR_ETHERNET_LEN {
+                    return None;
+                }
+                let mut octets = [0u8; NDP_LINK_LAYER_ADDR_ETHERNET_LEN];
+                octets.copy_from_slice(&value[..NDP_LINK_LAYER_ADDR_ETHERNET_LEN]);
+                Some(MacAddr::new(octets))
+            }
+            _ => None,
         }
     }
 
@@ -518,6 +574,48 @@ mod tests {
         assert_eq!(NDP_OPT_DNSSL, 31);
         assert_eq!(NDP_OPT_CAPTIVE_PORTAL, 37);
         assert_eq!(NDP_OPT_PREF64, 38);
+    }
+
+    // RFC 4861 sec 4.6.1: the Source Link-Layer Address option (type 1) carries
+    // a 6-byte Ethernet MAC, occupies one 8-octet unit (length 1), and reads
+    // back through the typed accessor after a full encode/decode round-trip.
+    #[test]
+    fn source_link_layer_address_round_trips() {
+        // Documentation MAC (locally administered, RFC 7042 doc range).
+        let mac = MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+        let opt = NdpOption::source_link_layer_address(mac);
+        assert_eq!(opt.option_type(), NDP_OPT_SOURCE_LINK_LAYER_ADDR);
+        assert!(opt.is_known());
+        assert_eq!(opt.link_layer_address(), Some(mac));
+
+        let bytes = opt.encode().unwrap();
+        // type(1) + length(1=one 8-octet unit) + 6-byte MAC = 8 bytes, no padding.
+        assert_eq!(bytes.len(), 8);
+        assert_eq!(&bytes[0..2], &[NDP_OPT_SOURCE_LINK_LAYER_ADDR, 1]);
+        assert_eq!(&bytes[2..8], &mac.octets());
+
+        let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(consumed, 8);
+        assert_eq!(decoded.option_type(), NDP_OPT_SOURCE_LINK_LAYER_ADDR);
+        assert_eq!(decoded.link_layer_address(), Some(mac));
+        // Target Link-Layer Address (type 2) shares the layout.
+        let tlla = NdpOption::target_link_layer_address(mac);
+        assert_eq!(tlla.option_type(), NDP_OPT_TARGET_LINK_LAYER_ADDR);
+        assert_eq!(tlla.link_layer_address(), Some(mac));
+    }
+
+    #[test]
+    fn link_layer_address_accessor_rejects_other_options() {
+        // MTU (type 5) is not a link-layer-address option.
+        assert_eq!(
+            NdpOption::generic(NDP_OPT_MTU, [0, 0, 0, 0, 5, 0xdc]).link_layer_address(),
+            None
+        );
+        // A truncated type-1 option (fewer than 6 value bytes) yields None.
+        assert_eq!(
+            NdpOption::generic(NDP_OPT_SOURCE_LINK_LAYER_ADDR, [1, 2, 3]).link_layer_address(),
+            None
+        );
     }
 
     #[test]
