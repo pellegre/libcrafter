@@ -717,3 +717,375 @@ fn deferred_icmpv6_types_decode_to_unknown_raw_without_panic() {
         );
     }
 }
+
+// ===========================================================================
+// ICMPv6 Extended Echo Request / Reply (RFC 8335, types 160 / 161) and
+// Multicast Listener Discovery (MLDv1 RFC 2710 types 130-132, MLDv2 RFC 3810 /
+// RFC 9777 type 143 report + type 130 v2 query). These are the primary
+// executable round-trip gate for the families validated in oracle step 30.
+//
+// Reference (scapy) byte agreement: MLDv1 and MLDv2 have native scapy classes
+// (ICMPv6MLQuery / ICMPv6MLReport / ICMPv6MLDone / ICMPv6MLQuery2 /
+// ICMPv6MLReport2 / ICMPv6MLDMultAddrRec), and the oracle's MLD cases
+// (mldv1-general-query, mldv1-report, mldv1-done, mldv2-report-two-records,
+// mldv2-general-query in tools/oracle/specs/fixtures/scapy-cases.json) were
+// proved byte-identical against scapy 2.7 by materializing both sides and
+// diffing the IPv6-level ICMPv6 bytes. ICMPv6 Extended Echo (160/161) has NO
+// native scapy ICMPv6 class, so its correctness is gated by these Rust
+// round-trips and the per-module unit tests rather than a scapy byte-proof — a
+// documented limitation recorded in the oracle case notes.
+// ===========================================================================
+
+// --- ICMPv6 Extended Echo (RFC 8335, types 160 / 161) ----------------------
+
+#[test]
+fn extended_echo_request_with_interface_identification_round_trips() {
+    // RFC 8335 section 3 Extended Echo Request (type 160, code 0): the 16-bit
+    // Identifier, 8-bit Sequence Number, and the L (Local) bit ride the ICMPv6
+    // header rest-of-header; the body is an RFC 4884 ICMP Extension Structure
+    // carrying a single Interface Identification Object (class 3) naming the
+    // probed interface by ifIndex — exactly like the ICMPv4 extended echo.
+    let packet = Ipv6::new()
+        .src(host_link_local())
+        .dst(target_addr())
+        .hlim(64)
+        / Icmpv6::extended_echo_request()
+            .id(0x1234)
+            .seq(7)
+            .extended_l_bit(true)
+        / IcmpExtension::new()
+        / IcmpExtensionObject::new()
+        / IcmpExtensionInterfaceId::by_index(42);
+    let bytes = packet
+        .compile()
+        .expect("extended echo request compiles")
+        .as_bytes()
+        .to_vec();
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, &bytes)
+        .expect("extended echo request decodes from IPv6");
+    assert_eq!(
+        decoded.compile().expect("recompiles").as_bytes(),
+        bytes.as_slice(),
+        "build -> decode -> recompile must be byte-stable",
+    );
+
+    let icmpv6 = decoded
+        .layer::<Icmpv6>()
+        .expect("decoded packet has ICMPv6");
+    assert_eq!(
+        icmpv6.icmp_type_value(),
+        ICMPV6_EXTENDED_ECHO_REQUEST,
+        "type 160",
+    );
+    assert_eq!(icmpv6.code_value(), 0);
+    assert_eq!(icmpv6.identifier_value(), Some(0x1234));
+    assert_eq!(icmpv6.sequence_number_value(), Some(7));
+    assert_eq!(icmpv6.extended_l_bit_value(), Some(true), "L bit set");
+    assert_eq!(
+        icmpv6.body(),
+        Icmpv6Body::ExtendedEchoRequest {
+            identifier: 0x1234,
+            sequence_number: 7,
+            local: true,
+            reserved_flags: 0,
+        },
+    );
+
+    // The Interface Identification Object surfaces the ifIndex through the typed
+    // extension layer.
+    assert!(
+        decoded.layer::<IcmpExtension>().is_some(),
+        "RFC 4884 extension structure present",
+    );
+    let id = decoded
+        .layer::<IcmpExtensionInterfaceId>()
+        .expect("Interface Identification Object");
+    assert_eq!(id.index_value(), Some(42));
+}
+
+#[test]
+fn extended_echo_reply_with_state_round_trips() {
+    // RFC 8335 section 3 Extended Echo Reply (type 161): echoes the Identifier
+    // and Sequence Number; the Code reports the query result (0 No Error) and the
+    // flag byte packs the State (top 3 bits) plus the A/4/6 status bits. The reply
+    // carries no body of its own. Here: State Reachable, Active, IPv6 reachable.
+    let packet = Ipv6::new()
+        .src(target_addr())
+        .dst(host_link_local())
+        .hlim(64)
+        / Icmpv6::extended_echo_reply()
+            .id(0xabcd)
+            .seq(5)
+            .code(ICMPV6_CODE_EXTENDED_ECHO_REPLY_NO_ERROR)
+            .extended_state(ICMPV6_EXTENDED_ECHO_REPLY_STATE_REACHABLE)
+            .extended_active(true)
+            .extended_ipv4(false)
+            .extended_ipv6(true);
+    let bytes = packet
+        .compile()
+        .expect("extended echo reply compiles")
+        .as_bytes()
+        .to_vec();
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, &bytes)
+        .expect("extended echo reply decodes from IPv6");
+    assert_eq!(
+        decoded.compile().expect("recompiles").as_bytes(),
+        bytes.as_slice(),
+        "build -> decode -> recompile must be byte-stable",
+    );
+
+    let icmpv6 = decoded
+        .layer::<Icmpv6>()
+        .expect("decoded packet has ICMPv6");
+    assert_eq!(
+        icmpv6.icmp_type_value(),
+        ICMPV6_EXTENDED_ECHO_REPLY,
+        "type 161",
+    );
+    assert_eq!(
+        icmpv6.code_value(),
+        ICMPV6_CODE_EXTENDED_ECHO_REPLY_NO_ERROR
+    );
+    assert_eq!(icmpv6.identifier_value(), Some(0xabcd));
+    assert_eq!(icmpv6.sequence_number_value(), Some(5));
+    assert_eq!(
+        icmpv6.extended_state_value(),
+        Some(ICMPV6_EXTENDED_ECHO_REPLY_STATE_REACHABLE),
+    );
+    assert_eq!(icmpv6.extended_active_value(), Some(true));
+    assert_eq!(icmpv6.extended_ipv4_value(), Some(false));
+    assert_eq!(icmpv6.extended_ipv6_value(), Some(true));
+    assert_eq!(
+        icmpv6.body(),
+        Icmpv6Body::ExtendedEchoReply {
+            identifier: 0xabcd,
+            sequence_number: 5,
+            state: ICMPV6_EXTENDED_ECHO_REPLY_STATE_REACHABLE,
+            active: true,
+            ipv4: false,
+            ipv6: true,
+        },
+    );
+
+    // The reply has no extension structure of its own.
+    assert!(
+        decoded.layer::<IcmpExtension>().is_none(),
+        "an Extended Echo Reply carries no body",
+    );
+}
+
+// --- Multicast Listener Discovery v1 (RFC 2710, types 130-132) -------------
+
+/// A documentation-scope multicast group (`ff1e::db8:1`, admin-local scope; the
+/// embedded `db8` echoes the RFC 3849 documentation prefix as a mnemonic).
+fn mld_group() -> Ipv6Addr {
+    Ipv6Addr::new(0xff1e, 0, 0, 0, 0, 0, 0x0db8, 0x0001)
+}
+
+/// A second documentation-scope multicast group (`ff1e::db8:2`).
+fn mld_group2() -> Ipv6Addr {
+    Ipv6Addr::new(0xff1e, 0, 0, 0, 0, 0, 0x0db8, 0x0002)
+}
+
+/// A documentation source address (`2001:db8::101`) for MLDv2 source lists.
+fn mld_source1() -> Ipv6Addr {
+    Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0101)
+}
+
+/// A second documentation source address (`2001:db8::102`).
+fn mld_source2() -> Ipv6Addr {
+    Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0102)
+}
+
+/// Compile an `Ipv6` / MLD packet (hop limit 1, per RFC 2710 section 3), decode
+/// it back over IPv6, and assert the build -> decode -> recompile cycle is
+/// byte-stable. Returns the decoded packet for per-message field assertions.
+/// MLD's enclosing Hop-by-Hop Router Alert option (RFC 2711) is the caller's
+/// concern and is not needed to exercise the ICMPv6 message round-trip here.
+fn mld_round_trip(src: Ipv6Addr, dst: Ipv6Addr, payload: Packet) -> Packet {
+    let packet = Ipv6::new().src(src).dst(dst).hlim(1) / payload;
+    let bytes = packet
+        .compile()
+        .expect("MLD packet compiles")
+        .as_bytes()
+        .to_vec();
+
+    let decoded =
+        Packet::decode_from_l3(NetworkLayer::Ipv6, &bytes).expect("MLD packet decodes from IPv6");
+    assert_eq!(
+        decoded.compile().expect("recompiles").as_bytes(),
+        bytes.as_slice(),
+        "build -> decode -> recompile must be byte-stable",
+    );
+    decoded
+}
+
+#[test]
+fn mldv1_general_query_round_trips() {
+    // RFC 2710 section 3 General Query (type 130): the Multicast Address is the
+    // unspecified address (::), sent to the all-nodes multicast ff02::1, with a
+    // Maximum Response Delay in the rest-of-header.
+    let decoded = mld_round_trip(
+        host_link_local(),
+        all_nodes(),
+        Icmpv6::mld_general_query(10_000),
+    );
+
+    let icmpv6 = decoded
+        .layer::<Icmpv6>()
+        .expect("decoded packet has ICMPv6");
+    assert_eq!(icmpv6.icmp_type_value(), ICMPV6_MULTICAST_LISTENER_QUERY);
+    assert_eq!(icmpv6.code_value(), 0);
+    assert_eq!(
+        icmpv6.body(),
+        Icmpv6Body::MulticastListenerQuery {
+            max_response_delay: 10_000,
+        },
+    );
+
+    let mld = decoded
+        .layer::<MulticastListenerMessage>()
+        .expect("typed MLDv1 body");
+    assert_eq!(mld.multicast_address_value(), Ipv6Addr::UNSPECIFIED);
+}
+
+#[test]
+fn mldv1_report_round_trips() {
+    // RFC 2710 section 3 Report (type 131): announces the sender listens to a
+    // group; the Maximum Response Delay is meaningful only on a Query, so it is
+    // zero here.
+    let decoded = mld_round_trip(
+        host_link_local(),
+        mld_group(),
+        Icmpv6::mld_report(mld_group()),
+    );
+
+    let icmpv6 = decoded
+        .layer::<Icmpv6>()
+        .expect("decoded packet has ICMPv6");
+    assert_eq!(icmpv6.icmp_type_value(), ICMPV6_MULTICAST_LISTENER_REPORT);
+    assert_eq!(
+        icmpv6.body(),
+        Icmpv6Body::MulticastListenerReport {
+            max_response_delay: 0,
+        },
+    );
+
+    let mld = decoded
+        .layer::<MulticastListenerMessage>()
+        .expect("typed MLDv1 body");
+    assert_eq!(mld.multicast_address_value(), mld_group());
+}
+
+#[test]
+fn mldv1_done_round_trips() {
+    // RFC 2710 section 3 Done (type 132): announces the sender is ceasing to
+    // listen to a group (the multicast analogue of an IGMP Leave).
+    let decoded = mld_round_trip(
+        host_link_local(),
+        all_routers(),
+        Icmpv6::mld_done(mld_group()),
+    );
+
+    let icmpv6 = decoded
+        .layer::<Icmpv6>()
+        .expect("decoded packet has ICMPv6");
+    assert_eq!(icmpv6.icmp_type_value(), ICMPV6_MULTICAST_LISTENER_DONE);
+    assert_eq!(
+        icmpv6.body(),
+        Icmpv6Body::MulticastListenerDone {
+            max_response_delay: 0,
+        },
+    );
+
+    let mld = decoded
+        .layer::<MulticastListenerMessage>()
+        .expect("typed MLDv1 body");
+    assert_eq!(mld.multicast_address_value(), mld_group());
+}
+
+// --- Multicast Listener Discovery v2 (RFC 3810 / RFC 9777, type 143) --------
+
+#[test]
+fn mldv2_report_with_two_records_round_trips() {
+    // RFC 3810 section 5.2 Version 2 Report (type 143) with two Multicast Address
+    // Records: one MODE_IS_INCLUDE with two sources, one MODE_IS_EXCLUDE with no
+    // sources, sent to the all-MLDv2-routers multicast ff02::16. The record count
+    // (auto-filled), each record type, multicast address, and source list all
+    // round-trip. This is the spec.md edge case "an MLDv2 report with multiple
+    // multicast address records and source lists ... round-trips".
+    let include = MulticastAddressRecord::new(MulticastRecordType::ModeIsInclude, mld_group())
+        .source(mld_source1())
+        .source(mld_source2());
+    let exclude = MulticastAddressRecord::new(MulticastRecordType::ModeIsExclude, mld_group2());
+
+    let decoded = mld_round_trip(
+        host_link_local(),
+        Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x0016),
+        Icmpv6::mldv2_report(vec![include, exclude]),
+    );
+
+    let icmpv6 = decoded
+        .layer::<Icmpv6>()
+        .expect("decoded packet has ICMPv6");
+    assert_eq!(icmpv6.icmp_type_value(), ICMPV6_MLDV2_REPORT);
+    assert_eq!(icmpv6.code_value(), 0);
+    assert_eq!(
+        icmpv6.body(),
+        Icmpv6Body::Mldv2Report {
+            number_of_records: 2,
+        },
+    );
+
+    let report = decoded.layer::<Mldv2Report>().expect("typed MLDv2 report");
+    assert_eq!(report.number_of_records(), 2);
+    let records = report.records_ref();
+
+    // Record 0: MODE_IS_INCLUDE, group mld_group(), two sources in order.
+    assert_eq!(
+        records[0].record_type_value(),
+        MulticastRecordType::ModeIsInclude,
+    );
+    assert_eq!(records[0].multicast_address_value(), mld_group());
+    assert_eq!(records[0].number_of_sources(), 2);
+    assert_eq!(records[0].sources_ref(), &[mld_source1(), mld_source2()]);
+
+    // Record 1: MODE_IS_EXCLUDE, group mld_group2(), no sources.
+    assert_eq!(
+        records[1].record_type_value(),
+        MulticastRecordType::ModeIsExclude,
+    );
+    assert_eq!(records[1].multicast_address_value(), mld_group2());
+    assert_eq!(records[1].number_of_sources(), 0);
+    assert!(records[1].sources_ref().is_empty());
+}
+
+#[test]
+fn mldv2_general_query_round_trips() {
+    // RFC 3810 section 5.1 Version 2 General Query (type 130, the longer body
+    // shape) with QRV and QQIC set and no sources; it decodes as an MLDv2 Query,
+    // not an MLDv1 Query, even though both share type 130 (body-length seam).
+    let query = Mldv2Query::new(Ipv6Addr::UNSPECIFIED)
+        .querier_robustness(2)
+        .querier_query_interval_code(125);
+    let decoded = mld_round_trip(
+        host_link_local(),
+        all_nodes(),
+        Icmpv6::mldv2_query(10_000, query),
+    );
+
+    let icmpv6 = decoded
+        .layer::<Icmpv6>()
+        .expect("decoded packet has ICMPv6");
+    assert_eq!(icmpv6.icmp_type_value(), ICMPV6_MULTICAST_LISTENER_QUERY);
+
+    let query = decoded.layer::<Mldv2Query>().expect("typed MLDv2 query");
+    assert_eq!(query.multicast_address_value(), Ipv6Addr::UNSPECIFIED);
+    assert_eq!(query.querier_robustness_value(), 2);
+    assert_eq!(query.querier_query_interval_code_value(), 125);
+    assert!(query.number_of_sources() == 0);
+    // The longer body is an MLDv2 Query, not mis-decoded as an MLDv1 message.
+    assert!(decoded.layer::<MulticastListenerMessage>().is_none());
+}

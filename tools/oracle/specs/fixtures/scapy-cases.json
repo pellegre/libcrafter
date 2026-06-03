@@ -1081,6 +1081,175 @@
       "notes": "libcrafter Icmpv6::router_advertisement_with carrying a synthetic unknown NDP option (type 253) decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptUnknown with the same option type, length, and value bytes, byte-for-byte, proving unknown-option preservation through re-encode. Mirrors the scapy_to_libcrafter ndp-unknown-option case. Scapy lacks a native class for two of this effort's standards-track options — the Nonce option (RFC 3971, no ICMPv6NDOptNonce in scapy 2.5+) and the RA Flags Extension option (RFC 5175, no ICMPv6NDOptRAFlagsExt) — so those two options have no native-class byte-proof case; they are covered by the crafter/tests/icmpv6_ndp.rs round-trips and the unit tests in crafter/src/protocols/icmp/v6/message/ndp_option.rs, and on the wire they materialize as ICMPv6NDOptUnknown (type 14 / type 26) exactly like this case. This documented limitation is recorded here rather than failing the suite."
     },
     {
+      "name": "mldv1-general-query",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6MLQuery"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 2710 section 3 MLDv1 General Query (type 130, code 0) from a link-local source (fe80::/10) to the all-nodes multicast ff02::1, hop limit 1. The Multicast Address is the unspecified address (::) and the rest-of-header carries Maximum Response Delay 10000 ms and a zero Reserved field. Scapy materializes IPv6/ICMPv6MLQuery(mladdr='::', mrd=10000); libcrafter Icmpv6::mld_general_query(10000) decodes the typed MulticastListenerMessage body and the header-derived max_response_delay. Byte agreement proved by materializing the same stack in scapy 2.7 and libcrafter and diffing the IPv6-level ICMPv6 bytes: identical (820059082710000000000000000000000000000000000000). The primary round-trip correctness gate is crafter/tests/icmpv6_ndp.rs::mldv1_general_query_round_trips."
+    },
+    {
+      "name": "crafter-mldv1-general-query",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6MLQuery"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::mld_general_query (RFC 2710 section 3) over IPv6 from a link-local source to ff02::1 decodes in Scapy as IPv6/ICMPv6MLQuery with the same unspecified Multicast Address and Maximum Response Delay, byte-for-byte. Mirrors the scapy_to_libcrafter mldv1-general-query case (verified IPv6-level ICMPv6 bytes 820059082710...)."
+    },
+    {
+      "name": "mldv1-report",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6MLReport"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 2710 section 3 MLDv1 Multicast Listener Report (type 131, code 0) announcing that the link-local source listens to the documentation-scope group ff1e::db8:1, hop limit 1. The Maximum Response Delay is meaningful only on a Query, so it is sent zero (RFC 2710 section 3.3). Scapy materializes IPv6/ICMPv6MLReport(mladdr='ff1e::db8:1'); libcrafter Icmpv6::mld_report(ff1e::db8:1) decodes the typed MulticastListenerMessage body. Byte agreement proved against scapy 2.7 by materialization diff: identical (8300646c00000000ff1e000000000000000000000db80001). Primary correctness gate: crafter/tests/icmpv6_ndp.rs::mldv1_report_round_trips."
+    },
+    {
+      "name": "crafter-mldv1-report",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6MLReport"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::mld_report (RFC 2710 section 3) decodes in Scapy as IPv6/ICMPv6MLReport with the same group Multicast Address and zero Maximum Response Delay, byte-for-byte. Mirrors the scapy_to_libcrafter mldv1-report case."
+    },
+    {
+      "name": "mldv1-done",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6MLDone"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 2710 section 3 MLDv1 Multicast Listener Done (type 132, code 0) announcing that the link-local source is ceasing to listen to the documentation-scope group ff1e::db8:1 (the multicast analogue of an IGMP Leave), sent to the all-routers multicast ff02::2, hop limit 1. The Maximum Response Delay is zero. Scapy materializes IPv6/ICMPv6MLDone(mladdr='ff1e::db8:1'); libcrafter Icmpv6::mld_done(ff1e::db8:1) decodes the typed MulticastListenerMessage body. Byte agreement proved against scapy 2.7 by materialization diff: identical (8400713f00000000ff1e000000000000000000000db80001). Primary correctness gate: crafter/tests/icmpv6_ndp.rs::mldv1_done_round_trips."
+    },
+    {
+      "name": "crafter-mldv1-done",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6MLDone"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::mld_done (RFC 2710 section 3) decodes in Scapy as IPv6/ICMPv6MLDone with the same group Multicast Address and zero Maximum Response Delay, byte-for-byte. Mirrors the scapy_to_libcrafter mldv1-done case."
+    },
+    {
+      "name": "mldv2-report-two-records",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6MLReport2"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 3810 section 5.2 (IANA now cites RFC 9777) MLDv2 Version 2 Multicast Listener Report (type 143, code 0) with TWO Multicast Address Records: record 0 MODE_IS_INCLUDE (rtype 1) for group ff1e::db8:1 with two sources (2001:db8::101, 2001:db8::102) and record 1 MODE_IS_EXCLUDE (rtype 2) for group ff1e::db8:2 with no sources, sent from a link-local source to the all-MLDv2-routers multicast ff02::16, hop limit 1. The Nr of Mcast Address Records (2) and each record's Number of Sources are auto-filled. Scapy materializes IPv6/ICMPv6MLReport2(records=[ICMPv6MLDMultAddrRec(rtype=1, dst='ff1e::db8:1', sources=[...]), ICMPv6MLDMultAddrRec(rtype=2, dst='ff1e::db8:2')]); libcrafter Icmpv6::mldv2_report([...]) decodes the typed Mldv2Report body, the header-derived record count, and each MulticastAddressRecord (type, group, source list). Byte agreement proved against scapy 2.7 by materialization diff: identical (8f00f8a00000000201000002ff1e000000000000000000000db8000120010db800000000000000000000010120010db800000000000000000000010202000000ff1e000000000000000000000db80002). Exercises the spec.md edge case 'an MLDv2 report with multiple multicast address records and source lists round-trips'. Primary correctness gate: crafter/tests/icmpv6_ndp.rs::mldv2_report_with_two_records_round_trips."
+    },
+    {
+      "name": "crafter-mldv2-report-two-records",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6MLReport2"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::mldv2_report with two Multicast Address Records (MODE_IS_INCLUDE with two sources + MODE_IS_EXCLUDE with none, RFC 3810 section 5.2) decodes in Scapy as IPv6/ICMPv6MLReport2 with two ICMPv6MLDMultAddrRec records carrying the same record types, groups, and source lists, and the same auto-filled record/source counts, byte-for-byte. Mirrors the scapy_to_libcrafter mldv2-report-two-records case."
+    },
+    {
+      "name": "mldv2-general-query",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6MLQuery2"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 3810 section 5.1 MLDv2 Version 2 General Query (type 130, code 0 — the longer body shape that shares type 130 with the MLDv1 Query and is disambiguated by body length) with the unspecified Multicast Address (::), Maximum Response Code 10000, QRV 2, QQIC 125, and no sources, from a link-local source to ff02::1, hop limit 1. Scapy materializes IPv6/ICMPv6MLQuery2(mladdr='::', mrd=10000, QRV=2, QQIC=125); libcrafter Icmpv6::mldv2_query(10000, Mldv2Query::new(::).querier_robustness(2).querier_query_interval_code(125)) decodes the typed Mldv2Query body (NOT mis-decoded as MLDv1). Byte agreement proved against scapy 2.7 by materialization diff: identical (820056872710000000000000000000000000000000000000027d0000). Primary correctness gate: crafter/tests/icmpv6_ndp.rs::mldv2_general_query_round_trips."
+    },
+    {
+      "name": "crafter-mldv2-general-query",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6MLQuery2"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::mldv2_query (RFC 3810 section 5.1) decodes in Scapy as IPv6/ICMPv6MLQuery2 with the same Multicast Address, Maximum Response Code, QRV, QQIC, and (empty) source list, byte-for-byte, and is selected as the MLDv2 query (type 130 longer body) rather than the MLDv1 query. Mirrors the scapy_to_libcrafter mldv2-general-query case."
+    },
+    {
+      "name": "icmpv6-extended-echo-request",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "Raw"
+      ],
+      "strict_bytes": false,
+      "status": "documented-limitation",
+      "notes": "RFC 8335 ICMPv6 Extended Echo Request (type 160, code 0): the 16-bit Identifier, 8-bit Sequence Number, and L (Local) bit ride the ICMPv6 header rest-of-header, then an RFC 4884 ICMP Extension Structure carrying a single Interface Identification Object (class 3) names the probed interface by ifIndex — the exact byte layout of the ICMPv4 Extended Echo Request (already covered by icmpv4-extended-echo-request) with type 160 and an IPv6-pseudo-header checksum. DOCUMENTED LIMITATION: scapy 2.5+/2.7 has NO native ICMPv6 class for extended echo (no ICMPv6ExtEchoRequest), so there is no native-class scapy byte-proof or strict-bytes interop case for this family — it would decode as a raw ICMPv6 type 160 payload. Its correctness is gated instead by the Rust round-trip crafter/tests/icmpv6_ndp.rs::extended_echo_request_with_interface_identification_round_trips and the per-module unit tests in crafter/src/protocols/icmp/v6/message/extended_echo.rs (which assert the on-wire type/id/seq/flag byte and the embedded Interface Identification Object), mirroring how the ICMPv4 extended-echo case is byte-proven. Recorded here rather than failing the suite."
+    },
+    {
+      "name": "icmpv6-extended-echo-reply",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "Raw"
+      ],
+      "strict_bytes": false,
+      "status": "documented-limitation",
+      "notes": "RFC 8335 ICMPv6 Extended Echo Reply (type 161): echoes the Identifier and Sequence Number, the Code reports the query result (0-4), and the flag byte packs the State (top 3 bits) plus the A (Active), 4 (IPv4), and 6 (IPv6) status bits; the reply carries no body. DOCUMENTED LIMITATION: as with the request (icmpv6-extended-echo-request), scapy 2.5+/2.7 has no native ICMPv6 extended-echo class, so there is no native-class byte-proof; correctness is gated by the Rust round-trip crafter/tests/icmpv6_ndp.rs::extended_echo_reply_with_state_round_trips and the extended_echo.rs unit tests (which assert the State/A/4/6 flag byte and per-code round-trip). Recorded here rather than failing the suite."
+    },
+    {
+      "name": "icmpv6-node-information-query",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "Raw"
+      ],
+      "strict_bytes": false,
+      "status": "documented-limitation",
+      "notes": "RFC 4620 (EXPERIMENTAL) ICMPv6 Node Information Query (type 139): the Qtype and Flags ride the ICMPv6 header rest-of-header and the body carries an 8-byte Nonce plus opaque Data (the Subject, here a 128-bit IPv6 address for a Node Addresses query, Qtype 3). Scapy 2.7 does carry native Node Information classes (ICMPv6NIQueryName/ICMPv6NIQueryIPv6/ICMPv6NIQueryNOOP and the NIReply* set), but libcrafter intentionally keeps the Node Information Data field opaque (RFC 4620 leaves the Data layout Qtype-dependent and the family is experimental), so there is no field-by-field typed-stack mapping to scapy's class hierarchy; a strict typed-stack interop case is therefore not asserted here. Correctness is gated by the Rust round-trips crafter/tests/icmpv6_ndp.rs::node_information_query_round_trips and ::node_information_response_round_trips (build -> compile -> decode_from_l3 -> assert Qtype/Flags/Nonce/Data -> byte-stable recompile) and the node_info.rs unit tests. Recorded here as a documented limitation rather than failing the suite."
+    },
+    {
       "name": "dns-response-records",
       "family": "dns",
       "direction": "scapy_to_libcrafter",
