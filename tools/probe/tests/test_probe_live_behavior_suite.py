@@ -182,5 +182,110 @@ class BehaviorLiveRoutingTest(unittest.TestCase):
         self.assertEqual(validation["ethernet_destination"], "02:00:00:00:00:10")
 
 
+class NdpLiveRewriteTest(unittest.TestCase):
+    """The NDP/IPv6 address-rewrite branch resolves kernel-owned link-locals."""
+
+    def _ndp_plan(self, case: str) -> JSONObject:
+        _request, _selected, _planned, probe_plans = _planned_behavior(dry_run=False)
+        return next(plan for plan in probe_plans if plan["case"] == case)
+
+    def _rewrite(self, case: str) -> JSONObject:
+        return cli._probe_plan_with_endpoint_addresses(
+            self._ndp_plan(case),
+            source_ipv4="10.77.0.10",
+            target_ipv4="10.77.0.20",
+            source_mac="02:00:00:00:00:10",
+            target_mac="02:00:00:00:00:20",
+            target_interface="eth1",
+            rewrite_source="lab_session",
+        )
+
+    def test_eui64_link_local_matches_rfc4291(self) -> None:
+        # RFC 4291 Appendix A: MAC 00:00:5e:00:53:01 -> flip U/L bit (02:00:5e),
+        # insert ff:fe -> interface id 0200:5eff:fe00:5301 under fe80::/64.
+        self.assertEqual(
+            cli._eui64_link_local_ipv6("00:00:5e:00:53:01"),
+            "fe80::200:5eff:fe00:5301",
+        )
+
+    def test_neighbor_solicitation_targets_real_endpoint_link_local(self) -> None:
+        rewritten = self._rewrite("ndp-neighbor-solicitation")
+        target_ll = cli._eui64_link_local_ipv6("02:00:00:00:00:20")
+        source_ll = cli._eui64_link_local_ipv6("02:00:00:00:00:10")
+        solicited = cli._solicited_node_multicast(target_ll)
+        # The solicitation resolves the target kernel's own link-local address and
+        # is sent to its solicited-node multicast group (33:33 mapping handled by
+        # the Rust adapter) from the stimulus kernel's link-local.
+        self.assertEqual(rewritten["target_ipv6"], target_ll)
+        self.assertEqual(rewritten["source_ipv6"], source_ll)
+        self.assertEqual(rewritten["destination_ipv6"], solicited)
+        self.assertEqual(rewritten["solicited_node_multicast"], solicited)
+        self.assertEqual(rewritten["source_link_layer_addr"], "02:00:00:00:00:10")
+        self.assertEqual(rewritten["ethernet_source"], "02:00:00:00:00:10")
+        # NDP carries no IPv4 transport: the IPv4 fields must not leak in.
+        self.assertNotIn("source_ipv4", rewritten)
+        self.assertNotIn("destination_ipv4", rewritten)
+        # The advertisement validation checks the real target address and MAC.
+        for key in ("validation", "ndp_validation"):
+            contract = rewritten[key]
+            self.assertEqual(contract["target_ipv6"], target_ll)
+            self.assertEqual(contract["source_ipv6"], target_ll)
+            self.assertEqual(contract["target_link_layer_addr"], "02:00:00:00:00:20")
+            self.assertEqual(contract["destination_ipv6"], source_ll)
+        service = rewritten["target_service"]
+        self.assertEqual(service["target_ipv6"], target_ll)
+        self.assertEqual(service["target_hardware_addr"], "02:00:00:00:00:20")
+        self.assertEqual(service["interface"], "eth1")
+
+    def test_dad_solicitation_sources_from_unspecified(self) -> None:
+        rewritten = self._rewrite("ndp-duplicate-address-detection")
+        target_ll = cli._eui64_link_local_ipv6("02:00:00:00:00:20")
+        # RFC 4861 section 4.3 / RFC 4862: DAD sources from :: with no SLLA option
+        # and the defending NA is sent to all-nodes (ff02::1) with S clear.
+        self.assertEqual(rewritten["source_ipv6"], "::")
+        self.assertTrue(rewritten["omit_source_link_layer_addr"])
+        self.assertNotIn("source_link_layer_addr", rewritten)
+        self.assertEqual(rewritten["target_ipv6"], target_ll)
+        self.assertEqual(rewritten["expected_reply_destination_ipv6"], "ff02::1")
+        self.assertEqual(rewritten["ethernet_source"], "02:00:00:00:00:10")
+        contract = rewritten["ndp_validation"]
+        self.assertEqual(contract["target_ipv6"], target_ll)
+        self.assertEqual(contract["target_link_layer_addr"], "02:00:00:00:00:20")
+        self.assertEqual(contract["destination_ipv6"], "ff02::1")
+        self.assertIs(contract["solicited_flag"], False)
+        self.assertIs(contract["override_flag"], True)
+
+    def test_router_solicitation_keeps_all_routers_group(self) -> None:
+        rewritten = self._rewrite("ndp-router-solicitation")
+        router_ll = cli._eui64_link_local_ipv6("02:00:00:00:00:20")
+        source_ll = cli._eui64_link_local_ipv6("02:00:00:00:00:10")
+        # RS is sent from the stimulus link-local to the all-routers group; the RA
+        # is validated against the router target's link-local and MAC.
+        self.assertEqual(rewritten["source_ipv6"], source_ll)
+        self.assertEqual(rewritten["destination_ipv6"], "ff02::2")
+        self.assertEqual(rewritten["source_link_layer_addr"], "02:00:00:00:00:10")
+        contract = rewritten["ndp_validation"]
+        self.assertEqual(contract["source_ipv6"], router_ll)
+        self.assertEqual(contract["router_link_layer_addr"], "02:00:00:00:00:20")
+        service = rewritten["target_service"]
+        self.assertEqual(service["router_ipv6"], router_ll)
+        self.assertEqual(service["router_hardware_addr"], "02:00:00:00:00:20")
+
+    def test_dry_run_parity_preserves_documentation_link_locals(self) -> None:
+        plan = self._ndp_plan("ndp-neighbor-solicitation")
+        # Without the real lab MACs (dry-run parity), the deterministic
+        # documentation link-local addresses survive untouched.
+        rewritten = cli._probe_plan_with_endpoint_addresses(
+            plan,
+            source_ipv4="192.0.2.10",
+            target_ipv4="192.0.2.20",
+            rewrite_source="lab_session",
+        )
+        self.assertEqual(rewritten["source_ipv6"], plan["source_ipv6"])
+        self.assertEqual(rewritten["target_ipv6"], plan["target_ipv6"])
+        self.assertEqual(rewritten["destination_ipv6"], plan["destination_ipv6"])
+        self.assertNotIn("source_ipv4", rewritten)
+
+
 if __name__ == "__main__":
     unittest.main()
