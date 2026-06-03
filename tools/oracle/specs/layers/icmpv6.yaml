@@ -22,6 +22,109 @@ fields:
       - packet_too_big
       - time_exceeded
       - parameter_problem
+    codepoints:
+      # Existing RFC 4443 echo/error kinds keep their domains above; the kinds
+      # below are scaffolded here for the NDP/MLD/extended-echo coverage that
+      # lands in later steps (libcrafter does not emit these wire bytes yet, so
+      # no smoke coverage_case references them at this step).
+      - value: echo_request
+        name: echo_request
+        registry: icmpv6-parameters
+        source: RFC 4443
+        note: existing; type 128
+      - value: echo_reply
+        name: echo_reply
+        registry: icmpv6-parameters
+        source: RFC 4443
+        note: existing; type 129
+      - value: destination_unreachable
+        name: destination_unreachable
+        registry: icmpv6-parameters
+        source: RFC 4443
+        note: existing error; type 1
+      - value: packet_too_big
+        name: packet_too_big
+        registry: icmpv6-parameters
+        source: RFC 4443
+        note: existing error; type 2
+      - value: time_exceeded
+        name: time_exceeded
+        registry: icmpv6-parameters
+        source: RFC 4443
+        note: existing error; type 3
+      - value: parameter_problem
+        name: parameter_problem
+        registry: icmpv6-parameters
+        source: RFC 4443
+        note: existing error; type 4
+      - value: router_solicitation
+        name: router_solicitation
+        registry: icmpv6-parameters
+        source: RFC 4861
+        note: NDP RS; type 133; scaffolded for later steps
+      - value: router_advertisement
+        name: router_advertisement
+        registry: icmpv6-parameters
+        source: RFC 4861
+        note: NDP RA; type 134; carries ndp_options; scaffolded for later steps
+      - value: neighbor_solicitation
+        name: neighbor_solicitation
+        registry: icmpv6-parameters
+        source: RFC 4861
+        note: NDP NS; type 135; scaffolded for later steps
+      - value: neighbor_advertisement
+        name: neighbor_advertisement
+        registry: icmpv6-parameters
+        source: RFC 4861
+        note: NDP NA; type 136; R/S/O flags; scaffolded for later steps
+      - value: redirect
+        name: redirect
+        registry: icmpv6-parameters
+        source: RFC 4861
+        note: NDP Redirect; type 137; scaffolded for later steps
+      - value: mld_query
+        name: mld_query
+        registry: icmpv6-parameters
+        source: RFC 2710, RFC 3810
+        note: MLDv1/MLDv2 Multicast Listener Query; type 130; scaffolded
+      - value: mld_report
+        name: mld_report
+        registry: icmpv6-parameters
+        source: RFC 2710
+        note: MLDv1 Multicast Listener Report; type 131; scaffolded
+      - value: mld_done
+        name: mld_done
+        registry: icmpv6-parameters
+        source: RFC 2710
+        note: MLDv1 Multicast Listener Done; type 132; scaffolded
+      - value: mldv2_report
+        name: mldv2_report
+        registry: icmpv6-parameters
+        source: RFC 3810, RFC 9777
+        note: MLDv2 Multicast Listener Report; type 143; scaffolded
+      - value: extended_echo_request
+        name: extended_echo_request
+        registry: icmpv6-parameters
+        source: RFC 8335
+        note: Extended Echo Request; type 160; scaffolded for later steps
+      - value: extended_echo_reply
+        name: extended_echo_reply
+        registry: icmpv6-parameters
+        source: RFC 8335
+        note: Extended Echo Reply; type 161; scaffolded for later steps
+    unknown:
+      raw: true
+      note: >-
+        Unknown numeric ICMPv6 types decode with the fixed header intact and
+        preserve the remaining payload as Raw (see spec.md edge cases). No type
+        value is rejected or remapped.
+    note: >-
+      The smoke profile keeps the protocol-correct echo/error domains so the
+      existing ipv6-icmp / icmpv6-errors golden cases stay byte-stable. The
+      NDP (RFC 4861, types 133-137), MLD (RFC 2710 / RFC 3810, types 130-132 /
+      143), and extended-echo (RFC 8335, types 160/161) kinds are scaffolded as
+      recognized codepoints here; libcrafter does not yet emit their wire bytes,
+      so they gain coverage cases in the per-message steps that follow.
   - name: code
     type: uint8
     required: true
@@ -48,6 +151,25 @@ fields:
     required: false
     domains:
       - ipv6
+  - name: ndp_options
+    type: list
+    required: false
+    domains:
+      - deterministic
+    feature: ndp_options
+    note: >-
+      Ordered list of NDP option TLVs (RFC 4861 §4.6) carried by the NDP
+      message kinds (router_solicitation, router_advertisement,
+      neighbor_solicitation, neighbor_advertisement, redirect). Each option is
+      a 1-octet type, a 1-octet length expressed in units of 8 octets covering
+      the whole option (type/length header included, padded to the 8-octet
+      boundary), then the option value. Option order is preserved on decode and
+      re-encode, and unknown option types are preserved as raw option bytes
+      rather than rejected or remapped. The option-family detail (per-option
+      types, length-unit semantics, auto-fill, and unknown preservation) is
+      modeled in the ndp_options feature spec. This field is scaffolding:
+      libcrafter does not yet emit NDP option wire bytes, so no smoke
+      coverage_case references it at this step.
 
 coverage_cases:
   - ipv6-icmp
@@ -65,11 +187,42 @@ backend_support:
       - ICMPv6PacketTooBig
       - ICMPv6TimeExceeded
       - ICMPv6ParamProblem
+      # NDP / MLD scaffolding: Scapy materializes these natively; the backend
+      # mapping table (tools/oracle/engine/backends/scapy/packets.py) and
+      # normalizer are extended so cases can use them once libcrafter emits the
+      # bytes in later steps.
+      - ICMPv6ND_RS
+      - ICMPv6ND_RA
+      - ICMPv6ND_NS
+      - ICMPv6ND_NA
+      - ICMPv6ND_Redirect
+      - ICMPv6MLQuery
+      - ICMPv6MLQuery2
+      - ICMPv6MLReport
+      - ICMPv6MLDone
+      - ICMPv6MLReport2
+      # Base NDP options (RFC 4861); see the ndp_options feature spec.
+      - ICMPv6NDOptSrcLLAddr
+      - ICMPv6NDOptDstLLAddr
+      - ICMPv6NDOptPrefixInfo
+      - ICMPv6NDOptMTU
+      - ICMPv6NDOptRedirectedHdr
     encode: true
     decode: true
+    notes:
+      - Echo and the four RFC 4443 errors materialize and normalize today.
+      - >-
+        NDP (RFC 4861) and MLD (RFC 2710 / RFC 3810) kinds are scaffolded in the
+        backend type-mapping and normalization tables; extended-echo types
+        160/161 have no native Scapy ICMPv6 class, so the backend emits the
+        numeric type (raw-compatible), mirroring the ICMPv4 extended-echo path.
   libcrafter:
     status: partial
     encode: true
     decode: true
     notes:
       - ICMPv6 error matrix is planned coverage.
+      - >-
+        NDP, MLD, and extended-echo emission is scaffolded only; libcrafter does
+        not yet emit these wire bytes, so they carry no coverage cases at this
+        step. Per-message coverage lands in the steps that implement the bytes.

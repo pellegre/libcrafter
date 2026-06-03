@@ -1630,19 +1630,46 @@ def _icmp_type(value: object) -> object:
 def _icmpv6_class_name(value: object) -> str:
     if not isinstance(value, str):
         raise ValueError(f"unsupported Scapy icmpv6 type materialization: {value!r}")
-    class_names = {
-        "dest-unreach": "ICMPv6DestUnreach",
-        "destination-unreachable": "ICMPv6DestUnreach",
-        "echo-reply": "ICMPv6EchoReply",
-        "echo-request": "ICMPv6EchoRequest",
-        "packet-too-big": "ICMPv6PacketTooBig",
-        "parameter-problem": "ICMPv6ParamProblem",
-        "time-exceeded": "ICMPv6TimeExceeded",
-    }
-    class_name = class_names.get(value)
+    lowered = value.lower().replace("_", "-")
+    class_name = _ICMPV6_CLASS_NAMES.get(lowered)
     if class_name is None:
         raise ValueError(f"unsupported Scapy icmpv6 type materialization: {value!r}")
     return class_name
+
+
+# Mapping table from the normalized ICMPv6 `type` domain to the native Scapy
+# class that materializes it. Echo + the four RFC 4443 errors are live today;
+# the NDP (RFC 4861) and MLD (RFC 2710 / RFC 3810) kinds below are scaffolding —
+# Scapy has native classes for them, but libcrafter does not emit these wire
+# bytes yet, so no smoke coverage_case references them. The per-message steps
+# that add the bytes attach their cases and extend the body materialization
+# (target/dest addresses, NDP option lists) on top of this entry point.
+_ICMPV6_CLASS_NAMES: dict[str, str] = {
+    "dest-unreach": "ICMPv6DestUnreach",
+    "destination-unreachable": "ICMPv6DestUnreach",
+    "echo-reply": "ICMPv6EchoReply",
+    "echo-request": "ICMPv6EchoRequest",
+    "packet-too-big": "ICMPv6PacketTooBig",
+    "parameter-problem": "ICMPv6ParamProblem",
+    "time-exceeded": "ICMPv6TimeExceeded",
+    # NDP (RFC 4861) — scaffolded for later steps.
+    "router-solicitation": "ICMPv6ND_RS",
+    "router-advertisement": "ICMPv6ND_RA",
+    "neighbor-solicitation": "ICMPv6ND_NS",
+    "neighbor-advertisement": "ICMPv6ND_NA",
+    "redirect": "ICMPv6ND_Redirect",
+    # MLD (RFC 2710 / RFC 3810 / RFC 9777) — scaffolded for later steps. The
+    # type-130 query is MLDv1; the MLDv2 query (ICMPv6MLQuery2) shares the type
+    # and is selected by the per-message materializer when records are present.
+    "mld-query": "ICMPv6MLQuery",
+    "mld-report": "ICMPv6MLReport",
+    "mld-done": "ICMPv6MLDone",
+    "mldv2-report": "ICMPv6MLReport2",
+    # Extended echo (RFC 8335, types 160/161) has no native Scapy ICMPv6 class;
+    # the per-message materializer emits the numeric type (raw-compatible),
+    # mirroring the ICMPv4 extended-echo path, so it is intentionally absent
+    # from this native-class table.
+}
 
 
 def _tcp_flags(value: object) -> object:

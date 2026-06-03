@@ -1,0 +1,97 @@
+version: 1
+kind: feature
+name: ndp_options
+summary: >-
+  IPv6 Neighbor Discovery option TLVs (RFC 4861 §4.6) carried by the NDP
+  message kinds, with length expressed in 8-octet units, ordered preservation,
+  auto-filled length/padding, and raw preservation of unknown option types.
+
+layers:
+  - icmpv6
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+# NDP options share a uniform layout: 1-octet type, 1-octet length in units of
+# 8 octets covering the WHOLE option (type/length header included, padded to the
+# 8-octet boundary per RFC 4861 §4.6), then the option value. This mirrors the
+# option-family modeling used by tcp_options / udp_options: known option_kinds
+# are enumerated as behaviors; unknown types stay raw-preserving.
+#
+# SCAFFOLDING NOTE: libcrafter does not yet emit NDP option wire bytes (that
+# lands in the per-option steps 15-24). This spec defines the option family and
+# its semantics up front so the per-message steps can attach coverage cases
+# without re-deriving the framework. No new corpus case is introduced here; the
+# coverage_cases below reference the existing ICMPv6 cases so nothing dangles.
+
+behaviors:
+  - name: base_options
+    # RFC 4861 §4.6.1-4.6.5 base options.
+    option_kinds:
+      - source_link_layer_address   # opt 1
+      - target_link_layer_address   # opt 2
+      - prefix_information          # opt 3
+      - redirected_header           # opt 4
+      - mtu                         # opt 5
+  - name: standards_track_extensions
+    # Widely-deployed standards-track NDP option extensions (plan RFC grounding).
+    option_kinds:
+      - route_information           # opt 24, RFC 4191
+      - rdnss                       # opt 25, RFC 8106
+      - ra_flags_extension          # opt 26, RFC 5175
+      - dnssl                       # opt 31, RFC 8106
+      - captive_portal              # opt 37, RFC 8910
+      - pref64                      # opt 38, RFC 8781
+      - nonce                       # opt 14, RFC 3971 / RFC 7527
+  - name: ordering
+    checks:
+      - option_order_preserved
+  - name: length_autofill
+    checks:
+      - length_in_8_octet_units
+      - padded_to_8_octet_boundary
+      - honored_override_when_set
+  - name: unknown_preservation
+    option_kinds:
+      - unknown
+    checks:
+      - unknown_option_raw_preserved
+  - name: malformed_guard
+    # RFC 4861 §4.6: length == 0 or option running past the buffer must surface a
+    # structured error (context/required/available), never a panic. Covered by
+    # crafter resilience tests today; oracle malformed coverage lands with bytes.
+    checks:
+      - zero_length_rejected
+      - overrun_rejected
+
+coverage_cases:
+  - icmpv6-errors
+  - crafter-icmpv6-errors
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ICMPv6NDOptSrcLLAddr
+      - ICMPv6NDOptDstLLAddr
+      - ICMPv6NDOptPrefixInfo
+      - ICMPv6NDOptMTU
+      - ICMPv6NDOptRedirectedHdr
+      - ICMPv6NDOptRouteInfo
+      - ICMPv6NDOptRDNSS
+      - ICMPv6NDOptDNSSL
+      - ICMPv6NDOptEFA
+      - ICMPv6NDOptCaptivePortal
+      - ICMPv6NDOptPREF64
+      - ICMPv6NDOptUnknown
+    notes:
+      - Scapy materializes the base and standards-track NDP options natively (EFA covers the RFC 5175 RA Flags Extension); the backend mapping is scaffolded so cases can attach once libcrafter emits the bytes.
+      - The RFC 3971 / RFC 7527 Nonce option has no native Scapy class in this version; it materializes via ICMPv6NDOptUnknown as raw type/length/value bytes and round-trips raw-compatibly, like any unknown option type.
+      - Unknown option types are emitted as raw type/length/value bytes and round-trip raw-compatibly.
+  libcrafter:
+    status: partial
+    notes:
+      - The NDP option TLV framework (type, length-in-8-octet-units, ordered list, unknown preservation, auto-fill) exists in crafter (v6/message/ndp_option.rs) but is not yet wired into ICMPv6 message serialization; per-option coverage cases land in later steps.
