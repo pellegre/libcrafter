@@ -17,6 +17,33 @@ use super::option::{tcp_option_kind_name, validate_tcp_options, TcpOption, TcpOp
 use super::sizing::{padded_options_len, sequence_space_len};
 
 /// Transmission Control Protocol header.
+///
+/// `Tcp` is the front layer of every TCP segment. It composes with `/` like any
+/// other layer; `compile()` fills the data offset, option padding, and checksum
+/// (from the enclosing IPv4/IPv6 pseudo-header) that the caller left unset, while
+/// every value set explicitly survives untouched, including malformed ones.
+///
+/// ```rust
+/// use crafter::prelude::*;
+/// use std::net::Ipv4Addr;
+///
+/// # fn main() -> crafter::Result<()> {
+/// let packet = Ipv4::new()
+///     .src(Ipv4Addr::new(192, 0, 2, 10))
+///     .dst(Ipv4Addr::new(198, 51, 100, 20))
+///     / Tcp::new().sport(40000).dport(80).syn_segment()
+///     / Raw::from("hello");
+///
+/// // compile() auto-fills the TCP checksum, data offset, and IPv4 length.
+/// let bytes = packet.compile()?;
+///
+/// let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+/// let tcp = decoded.layer::<Tcp>().expect("tcp header");
+/// assert_eq!(tcp.destination_port_value(), 80);
+/// assert!(tcp.has_syn());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tcp {
     source_port: Field<u16>,
@@ -277,6 +304,33 @@ impl Tcp {
     /// acknowledgment number, window, and options stay at their defaults and
     /// remain configurable through the existing builder methods. It does not
     /// infer network addresses, send traffic, or model connection state.
+    ///
+    /// The sibling helpers [`Tcp::syn_ack_segment`], [`Tcp::ack_segment`],
+    /// [`Tcp::rst_ack_segment`], and [`Tcp::fin_ack_segment`] stamp the other
+    /// common flag combinations the same way. The example below also builds an
+    /// offline send plan with `send_dry_run`, which compiles and plans the
+    /// segment without opening a socket.
+    ///
+    /// ```rust
+    /// use crafter::prelude::*;
+    /// use std::net::Ipv4Addr;
+    ///
+    /// # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    /// let packet = Ipv4::new()
+    ///     .src(Ipv4Addr::new(192, 0, 2, 10))
+    ///     .dst(Ipv4Addr::new(198, 51, 100, 20))
+    ///     / Tcp::new().sport(40000).dport(443).syn_segment();
+    ///
+    /// let tcp = packet.layer::<Tcp>().expect("tcp header");
+    /// assert!(tcp.has_syn());
+    /// assert!(!tcp.has_flag(TCP_FLAG_ACK));
+    ///
+    /// // Offline send plan: no live socket, documentation interface name.
+    /// let plan = packet.send_dry_run(SendOptions::new().iface("dry-run0").network_layer())?;
+    /// assert!(!plan.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn syn_segment(self) -> Self {
         self.flags(TCP_FLAG_SYN)
     }

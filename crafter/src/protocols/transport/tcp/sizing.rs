@@ -77,6 +77,16 @@ pub const fn remaining_option_budget(used: usize) -> usize {
 /// Saturating: if the headers meet or exceed the path MTU the result is 0, never
 /// an underflow. This is a pure sizing helper and does not fragment, probe, or
 /// emit a segment.
+///
+/// ```rust
+/// use crafter::protocols::transport::{max_tcp_payload, option_budget, tcp_header_len};
+///
+/// // A 1500-octet path with a 20-octet IPv4 header and an options-laden
+/// // 60-octet TCP header leaves room for 1420 payload octets.
+/// let tcp_len = tcp_header_len(option_budget());
+/// assert_eq!(tcp_len, 60);
+/// assert_eq!(max_tcp_payload(1500, 20, tcp_len), 1420);
+/// ```
 pub const fn max_tcp_payload(
     path_mtu: usize,
     ip_header_len: usize,
@@ -151,6 +161,19 @@ pub const fn effective_mss_ipv6(path_mtu: Option<usize>) -> u16 {
 /// derived from the 1280-octet minimum MTU per RFC 8200 / RFC 8201). This is the
 /// single entry point a builder can call without branching on IP version
 /// itself.
+///
+/// ```rust
+/// use crafter::protocols::transport::effective_mss;
+///
+/// // A 1500-octet IPv4 path: 1500 - 20 (IPv4) - 20 (TCP) = 1460.
+/// assert_eq!(effective_mss(false, Some(1500)), 1460);
+///
+/// // Unknown IPv4 path MTU falls back to the RFC default send MSS of 536.
+/// assert_eq!(effective_mss(false, None), 536);
+///
+/// // Unknown IPv6 path MTU uses the 1280-octet minimum: 1280 - 40 - 20 = 1220.
+/// assert_eq!(effective_mss(true, None), 1220);
+/// ```
 pub const fn effective_mss(is_ipv6: bool, path_mtu: Option<usize>) -> u16 {
     if is_ipv6 {
         effective_mss_ipv6(path_mtu)
@@ -193,6 +216,17 @@ pub const fn has_fin(flags: u16) -> bool {
 /// implement a TCP state machine, retransmission, or reassembly; the caller
 /// supplies `flags` and `payload_len` and decides how to use the result. Uses
 /// saturating addition so the value never wraps a `u32`.
+///
+/// ```rust
+/// use crafter::prelude::*;
+/// use crafter::protocols::transport::sequence_space_len;
+///
+/// // A SYN with no payload consumes one octet of sequence space.
+/// assert_eq!(sequence_space_len(TCP_FLAG_SYN, 0), 1);
+///
+/// // A pure ACK carrying 100 payload octets consumes exactly 100.
+/// assert_eq!(sequence_space_len(TCP_FLAG_ACK, 100), 100);
+/// ```
 pub const fn sequence_space_len(flags: u16, payload_len: u32) -> u32 {
     let syn = if has_syn(flags) { 1 } else { 0 };
     let fin = if has_fin(flags) { 1 } else { 0 };

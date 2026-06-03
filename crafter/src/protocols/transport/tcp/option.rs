@@ -81,6 +81,43 @@ impl TcpExtendedDataOffset {
 }
 
 /// Parsed or constructible TCP option.
+///
+/// Typed constructors build the standardized options ([`TcpOption::maximum_segment_size`],
+/// [`TcpOption::window_scale`], [`TcpOption::sack_permitted`], [`TcpOption::timestamp`],
+/// and others); attach them to a segment with [`Tcp::tcp_option`](crate::Tcp::tcp_option),
+/// which appends the encoded bytes. Decoding preserves unknown and reserved kinds
+/// as inspectable [`TcpOption::Generic`] data rather than discarding them.
+///
+/// ```rust
+/// use crafter::prelude::*;
+/// use std::net::Ipv4Addr;
+///
+/// # fn main() -> crafter::Result<()> {
+/// let tcp = Tcp::new()
+///     .sport(40000)
+///     .dport(80)
+///     .syn_segment()
+///     .tcp_option(TcpOption::maximum_segment_size(1460))?
+///     .tcp_option(TcpOption::window_scale(7))?
+///     .tcp_option(TcpOption::sack_permitted())?;
+///
+/// let packet = Ipv4::new()
+///     .src(Ipv4Addr::new(192, 0, 2, 10))
+///     .dst(Ipv4Addr::new(198, 51, 100, 20))
+///     / tcp;
+///
+/// let bytes = packet.compile()?;
+/// let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+/// let tcp = decoded.layer::<Tcp>().expect("tcp header");
+///
+/// // The decoded options round-trip back to their typed values.
+/// let options = tcp.parsed_options()?;
+/// assert_eq!(options[0].maximum_segment_size_value(), Some(1460));
+/// assert_eq!(options[1].window_scale_shift(), Some(7));
+/// assert!(options[2].is_sack_permitted());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TcpOption {
     /// End of option list.
@@ -1369,6 +1406,22 @@ fn validate_tcp_option_len(field: &'static str, actual: usize, expected: usize) 
 /// performs no signing, key management, or signature validation for this legacy
 /// option; it only classifies and round-trips its bytes (see the "Legacy
 /// Security Options" note in `docs/tcp-rfc-manifest.md`).
+///
+/// ```rust
+/// use crafter::prelude::*;
+/// use crafter::protocols::transport::{tcp_option_kind_class, tcp_option_kind_name};
+///
+/// // A standardized option kind is Assigned and has a registry name.
+/// assert_eq!(tcp_option_kind_class(TCP_OPTION_MSS), TcpOptionKindClass::Assigned);
+/// assert_eq!(tcp_option_kind_name(TCP_OPTION_MSS), "MSS");
+///
+/// // Experimental kinds 253/254 classify separately from assigned kinds.
+/// assert_eq!(tcp_option_kind_class(253), TcpOptionKindClass::Experimental);
+///
+/// // An unassigned kind stays inspectable with a generic name.
+/// assert_eq!(tcp_option_kind_class(200), TcpOptionKindClass::Unassigned);
+/// assert_eq!(tcp_option_kind_name(200), "opt");
+/// ```
 pub const fn tcp_option_kind_class(kind: u8) -> TcpOptionKindClass {
     match kind {
         TCP_OPTION_EXPERIMENTAL_1 | TCP_OPTION_EXPERIMENTAL_2 => TcpOptionKindClass::Experimental,
