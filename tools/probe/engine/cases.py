@@ -15,11 +15,13 @@ from .model import EndpointRole, JSONObject, ProbeCase
 
 # Capabilities required by each behavioral protocol group. DNS and UDP need only
 # IPv4 unicast plus a controlled service; DHCP and ARP additionally need a
-# link-layer (Ethernet/broadcast) substrate. The capability names match the
-# probe capability derivation in :mod:`tools.probe.engine.lab`, so the
-# behavior-suite cases skip with stable reasons on providers that cannot support
-# them. Full per-case stimulus/validation wiring lands in the later per-case
-# steps; here the cases route through the planned-only dispatcher fallback.
+# link-layer (Ethernet/broadcast) substrate; NDP needs an IPv6 link-layer
+# multicast substrate (solicited-node / all-routers multicast, not broadcast).
+# The capability names match the probe capability derivation in
+# :mod:`tools.probe.engine.lab`, so the behavior-suite cases skip with stable
+# reasons on providers that cannot support them. Full per-case stimulus/
+# validation wiring lands in the later per-case steps; here the cases route
+# through the planned-only dispatcher fallback.
 UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 _DNS_CAPABILITIES = ["dns_service"]
 _DHCP_CAPABILITIES = ["dhcp_service"]
@@ -38,6 +40,20 @@ _ARP_CAPABILITIES = [
     "link_layer_send",
     "link_layer_capture",
     "broadcast",
+]
+# IPv6 Neighbor Discovery is the IPv6 analog of ARP. Unlike ARP (which rides
+# Ethernet broadcast), NDP rides ICMPv6 over IPv6 and addresses solicitations to
+# the solicited-node multicast group (and router solicitations to the
+# all-routers multicast group), so it needs an IPv6 link-layer multicast
+# substrate rather than broadcast. ``ipv6_multicast`` is derived in
+# :mod:`tools.probe.engine.lab` from the same link-layer send/capture substrate
+# ARP uses, so providers that carry same-segment multicast (QEMU, VirtualBox)
+# plan the cases while providers without an L2 segment (Hetzner) skip cleanly
+# with the stable ``requires_link_layer`` reason.
+_NDP_CAPABILITIES = [
+    "link_layer_send",
+    "link_layer_capture",
+    "ipv6_multicast",
 ]
 # Some ARP cases need the *target MAC* (provider metadata): a unicast request is
 # addressed to it rather than the broadcast address, and the MAC-validation case
@@ -377,6 +393,87 @@ BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
 )
 
 
+# NDP (IPv6 Neighbor Discovery, RFC 4861) behavioral cases. NDP is the IPv6
+# analog of ARP: a Neighbor Solicitation resolves an IPv6 address the way an ARP
+# who-has resolves an IPv4 address, and the target kernel answers a solicited
+# Neighbor Advertisement the way it answers an ARP is-at. The cases mirror the
+# ARP set's stimulus/expected_response/required_capabilities shape; the
+# ``layer`` metadata is ``network`` because NDP rides ICMPv6 over IPv6 (rather
+# than directly over Ethernet like ARP). Providers that lack an IPv6 multicast
+# link-layer substrate skip cleanly on ``_NDP_CAPABILITIES``.
+BEHAVIOR_NDP_CASES: tuple[ProbeCase, ...] = (
+    _behavior_case(
+        name="ndp-neighbor-solicitation",
+        description=(
+            "Send a Neighbor Solicitation (ICMPv6 type 135) to the target's "
+            "solicited-node multicast group and validate the kernel's solicited "
+            "Neighbor Advertisement (type 136)."
+        ),
+        # The kernel NA-for-NS exchange is the direct analog of ARP who-has/is-at
+        # and the single most reliable NDP behavior on a bare kernel: the target
+        # kernel auto-answers a solicitation for an address it owns. This is the
+        # PRIMARY reliable NDP case.
+        stimulus="ndp_neighbor_solicitation",
+        expected_response="ndp_neighbor_advertisement",
+        required_capabilities=_NDP_CAPABILITIES,
+        protocol="ndp",
+        metadata={"layer": "network"},
+    ),
+    _behavior_case(
+        name="ndp-router-solicitation",
+        description=(
+            "Send a Router Solicitation (ICMPv6 type 133) to the all-routers "
+            "multicast group and validate a Router Advertisement (type 134)."
+        ),
+        # A Router Advertisement only arrives when the target acts as a router and
+        # sends RAs (e.g. radvd / net.ipv6.conf.*.forwarding with RA emission). A
+        # bare kernel that is not configured as a router does not answer a Router
+        # Solicitation, so the live runners must configure the target as an
+        # RA-emitting router for this case or skip it; the plan/notes record that
+        # requirement. The dry-run plan is well-formed regardless.
+        stimulus="ndp_router_solicitation",
+        expected_response="ndp_router_advertisement",
+        required_capabilities=_NDP_CAPABILITIES,
+        protocol="ndp",
+        metadata={
+            "layer": "network",
+            "requires_router_target": True,
+            "notes": (
+                "Needs the target to act as a router and emit Router "
+                "Advertisements; a bare kernel does not answer a Router "
+                "Solicitation. Live runners configure an RA-emitting router or "
+                "skip this case."
+            ),
+        },
+    ),
+    _behavior_case(
+        name="ndp-duplicate-address-detection",
+        description=(
+            "Send a Duplicate Address Detection Neighbor Solicitation from the "
+            "unspecified source (::) for an address the target owns and validate "
+            "the target's defending Neighbor Advertisement."
+        ),
+        # DAD probe: RFC 4861 section 4.3 / RFC 4862 — the solicitation source is
+        # the unspecified address (::) and carries no Source Link-Layer Address
+        # option; the target, which owns the tentative address, defends it with a
+        # Neighbor Advertisement to the all-nodes multicast group.
+        stimulus="ndp_duplicate_address_detection",
+        expected_response="ndp_neighbor_advertisement",
+        required_capabilities=_NDP_CAPABILITIES,
+        protocol="ndp",
+        metadata={
+            "layer": "network",
+            "dad": True,
+            "notes": (
+                "Unspecified-source (::) DAD solicitation with no SLLA option; "
+                "the target defends an owned address with a Neighbor "
+                "Advertisement (RFC 4861 section 4.3 / RFC 4862)."
+            ),
+        },
+    ),
+)
+
+
 # Ten UDP behavioral cases (datagram echo/transform and kernel ICMP behavior
 # against controlled UDP services bound to the target address).
 BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
@@ -548,6 +645,7 @@ PROBE_CASES: tuple[ProbeCase, ...] = (
     *BEHAVIOR_DNS_CASES,
     *BEHAVIOR_DHCP_CASES,
     *BEHAVIOR_ARP_CASES,
+    *BEHAVIOR_NDP_CASES,
     *BEHAVIOR_UDP_CASES,
 )
 
@@ -644,7 +742,7 @@ _LEGACY_DEFAULT_COUNT = 5
 
 # The legacy ICMP/TCP/DNS/TTL/ARP cases the smoke profile samples. Pinning smoke
 # to this set keeps its selection unchanged now that the catalog also carries the
-# forty behavioral cases.
+# full behavioral case suite.
 SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "icmp-echo",
     "tcp-syn-open",
@@ -665,16 +763,17 @@ TCP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "tcp-syn-closed",
 )
 
-# The behavior profile selects the full DNS/DHCP/ARP/UDP behavioral catalog in a
-# stable deterministic order: each protocol group in declaration order, grouped
-# DNS -> DHCP -> ARP -> UDP. The default count covers all forty cases so a bare
-# ``--profile behavior`` plans the complete suite.
+# The behavior profile selects the full DNS/DHCP/ARP/NDP/UDP behavioral catalog
+# in a stable deterministic order: each protocol group in declaration order,
+# grouped DNS -> DHCP -> ARP -> NDP -> UDP. The default count covers every case
+# so a bare ``--profile behavior`` plans the complete suite.
 BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name
     for group in (
         BEHAVIOR_DNS_CASES,
         BEHAVIOR_DHCP_CASES,
         BEHAVIOR_ARP_CASES,
+        BEHAVIOR_NDP_CASES,
         BEHAVIOR_UDP_CASES,
     )
     for case in group
@@ -691,8 +790,8 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
-# behavior profile defaults to its full forty-case suite; every other profile
-# keeps the legacy default.
+# behavior profile defaults to its full case suite; every other profile keeps the
+# legacy default.
 _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     BEHAVIOR_PROFILE: len(BEHAVIOR_PROFILE_CASE_NAMES),
 }

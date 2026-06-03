@@ -16,7 +16,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use crate::{arp, dhcp, dns, icmp, tcp, udp};
+use crate::{arp, dhcp, dns, icmp, ndp, tcp, udp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -414,6 +414,88 @@ pub struct ProbePlan {
     pub ignore_unmatched_arp_replies: Option<bool>,
     #[serde(default)]
     pub decoy_arp_event: Option<Value>,
+    // NDP (IPv6 Neighbor Discovery, RFC 4861) behavioral case fields. NDP is the
+    // IPv6 analog of ARP but rides ICMPv6 over IPv6 (next header 58): the
+    // stimulus builds a Neighbor/Router Solicitation from `source_ipv6` to
+    // `destination_ipv6` (the solicited-node or all-routers multicast group)
+    // resolving `target_ipv6`, optionally carrying a Source Link-Layer Address
+    // option with `source_link_layer_addr`. The Duplicate Address Detection case
+    // sets the IPv6 source to the unspecified address (`::`) and omits the SLLA
+    // option (`omit_source_link_layer_addr`). The validation contract is carried
+    // in the typed `ndp_validation` object so the endpoint can confirm the
+    // decoded Neighbor/Router Advertisement type, flags, resolved target address,
+    // and link-layer option. Non-NDP cases leave these unset.
+    #[serde(default)]
+    pub ip_version: Option<u8>,
+    #[serde(default)]
+    pub icmpv6_type: Option<u8>,
+    #[serde(default)]
+    pub icmpv6_code: Option<u8>,
+    #[serde(default)]
+    pub source_ipv6: Option<String>,
+    #[serde(default)]
+    pub destination_ipv6: Option<String>,
+    #[serde(default)]
+    pub target_ipv6: Option<String>,
+    #[serde(default)]
+    pub solicited_node_multicast: Option<String>,
+    #[serde(default)]
+    pub all_routers_multicast: Option<String>,
+    #[serde(default)]
+    pub source_link_layer_addr: Option<String>,
+    #[serde(default)]
+    pub omit_source_link_layer_addr: Option<bool>,
+    #[serde(default)]
+    pub dad: Option<bool>,
+    #[serde(default)]
+    pub requires_router_target: Option<bool>,
+    #[serde(default)]
+    pub expected_reply_source_ipv6: Option<String>,
+    #[serde(default)]
+    pub expected_reply_destination_ipv6: Option<String>,
+    #[serde(default)]
+    pub ndp_validation: Option<NdpValidation>,
+}
+
+/// Validation contract for an NDP Neighbor/Router Advertisement reply.
+///
+/// The stimulus endpoint decodes the captured IPv6/ICMPv6 reply with libcrafter
+/// and asserts the ICMPv6 type (Neighbor Advertisement = 136 / Router
+/// Advertisement = 134), the NA R/S/O flags (or the RA managed/other flags), the
+/// resolved target address, the Target Link-Layer Address option MAC, and the
+/// reply source/destination addresses.
+///
+/// The planner emits this contract under the plan's `validation` key (the same
+/// key ARP uses); `ndp_validation` is the Rust alias that deserializes it for
+/// the NDP cases.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NdpValidation {
+    #[serde(default)]
+    pub icmpv6_type: Option<u8>,
+    #[serde(default)]
+    pub icmpv6_code: Option<u8>,
+    #[serde(default)]
+    pub response_label: Option<String>,
+    #[serde(default)]
+    pub router_flag: Option<bool>,
+    #[serde(default)]
+    pub solicited_flag: Option<bool>,
+    #[serde(default)]
+    pub override_flag: Option<bool>,
+    #[serde(default)]
+    pub managed_flag: Option<bool>,
+    #[serde(default)]
+    pub other_flag: Option<bool>,
+    #[serde(default)]
+    pub target_ipv6: Option<String>,
+    #[serde(default)]
+    pub target_link_layer_addr: Option<String>,
+    #[serde(default)]
+    pub router_link_layer_addr: Option<String>,
+    #[serde(default)]
+    pub source_ipv6: Option<String>,
+    #[serde(default)]
+    pub destination_ipv6: Option<String>,
 }
 
 /// Validation contract for the ARP is-at reply (`arp-basic-who-has`).
@@ -968,6 +1050,18 @@ fn dispatch_case(
         ) => arp::run_arp_live(request, plan),
         (
             RunMode::DryRun,
+            "ndp-neighbor-solicitation"
+            | "ndp-router-solicitation"
+            | "ndp-duplicate-address-detection",
+        ) => ndp::run_ndp_dry_run(request, plan),
+        (
+            RunMode::Live,
+            "ndp-neighbor-solicitation"
+            | "ndp-router-solicitation"
+            | "ndp-duplicate-address-detection",
+        ) => ndp::run_ndp_live(request, plan),
+        (
+            RunMode::DryRun,
             "udp-echo-empty"
             | "udp-echo-short"
             | "udp-echo-binary"
@@ -1072,7 +1166,7 @@ pub fn observed_response(
 }
 
 pub fn plan_json(plan: &ProbePlan) -> Value {
-    json!({
+    let mut value = json!({
         "case": plan.case,
         "sequence": plan.sequence,
         "identifier": plan.identifier,
@@ -1196,7 +1290,49 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "validation": validation_json(plan),
         "target_service": target_service_json(plan),
         "capture_filter": capture_filter(plan),
-    })
+    });
+    // The NDP (IPv6 Neighbor Discovery) plan fields are merged after the base
+    // object to keep the `json!` literal under serde_json's macro recursion
+    // limit. They render only for the NDP cases (every other case leaves them
+    // unset, so they serialize as null).
+    if let Value::Object(map) = &mut value {
+        map.insert("ip_version".into(), json!(plan.ip_version));
+        map.insert("icmpv6_type".into(), json!(plan.icmpv6_type));
+        map.insert("icmpv6_code".into(), json!(plan.icmpv6_code));
+        map.insert("source_ipv6".into(), json!(plan.source_ipv6));
+        map.insert("destination_ipv6".into(), json!(plan.destination_ipv6));
+        map.insert("target_ipv6".into(), json!(plan.target_ipv6));
+        map.insert(
+            "solicited_node_multicast".into(),
+            json!(plan.solicited_node_multicast),
+        );
+        map.insert(
+            "all_routers_multicast".into(),
+            json!(plan.all_routers_multicast),
+        );
+        map.insert(
+            "source_link_layer_addr".into(),
+            json!(plan.source_link_layer_addr),
+        );
+        map.insert(
+            "omit_source_link_layer_addr".into(),
+            json!(plan.omit_source_link_layer_addr),
+        );
+        map.insert("dad".into(), json!(plan.dad));
+        map.insert(
+            "requires_router_target".into(),
+            json!(plan.requires_router_target),
+        );
+        map.insert(
+            "expected_reply_source_ipv6".into(),
+            json!(plan.expected_reply_source_ipv6),
+        );
+        map.insert(
+            "expected_reply_destination_ipv6".into(),
+            json!(plan.expected_reply_destination_ipv6),
+        );
+    }
+    value
 }
 
 pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
@@ -1361,6 +1497,16 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "arp-cache-flush-reply"
         | "arp-mac-validation"
         | "arp-broadcast-filtered-capture" => "arp and arp[6:2] = 2".to_string(),
+        // NDP rides ICMPv6 over IPv6 and cannot be selected by a host BPF on the
+        // multicast group alone; match ICMPv6 plus the expected advertisement
+        // type. The ICMPv6 type byte of an IPv6 packet with no extension headers
+        // is at offset 40. A Router Solicitation expects a Router Advertisement
+        // (type 134); the Neighbor Solicitation and DAD cases expect a Neighbor
+        // Advertisement (type 136).
+        "ndp-router-solicitation" => "icmp6 and ip6[40] = 134".to_string(),
+        "ndp-neighbor-solicitation" | "ndp-duplicate-address-detection" => {
+            "icmp6 and ip6[40] = 136".to_string()
+        }
         _ => String::new(),
     }
 }
@@ -1413,6 +1559,10 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "arp-cache-flush-reply"
             | "arp-mac-validation"
             | "arp-broadcast-filtered-capture" => "arp_is_at",
+            "ndp-neighbor-solicitation" | "ndp-duplicate-address-detection" => {
+                "ndp_neighbor_advertisement"
+            }
+            "ndp-router-solicitation" => "ndp_router_advertisement",
             _ => "unknown",
         })
 }
@@ -1885,6 +2035,40 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "neighbor_flush_commands": plan.neighbor_flush_commands,
             "neighbor_flush_cleanup_commands": plan.neighbor_flush_cleanup_commands,
         }),
+        "ndp-neighbor-solicitation" | "ndp-duplicate-address-detection" => json!({
+            "required": true,
+            // The target kernel answers a Neighbor Solicitation for an address it
+            // owns (the IPv6 analog of the ARP-answering kernel); the DAD case has
+            // it defend a tentative address. Setup configures the link-local
+            // address and flushes the neighbor cache so the kernel re-answers.
+            "kind": "ndp-kernel",
+            "layer": "network",
+            "target_ipv6": plan.target_ipv6,
+            "target_hardware_addr": plan
+                .ndp_validation
+                .as_ref()
+                .and_then(|validation| validation.target_link_layer_addr.clone()),
+            "dad": plan.dad,
+            "ndp_sysctls": true,
+            "neighbor_cache_flush": true,
+        }),
+        "ndp-router-solicitation" => json!({
+            "required": true,
+            // A Router Advertisement requires the target to act as a router and
+            // emit RAs (radvd / kernel RA emission); a bare kernel does not answer
+            // a Router Solicitation, so live runners configure an RA-emitting
+            // router or skip the case.
+            "kind": "ndp-router",
+            "layer": "network",
+            "router_ipv6": plan.expected_reply_source_ipv6,
+            "router_hardware_addr": plan
+                .ndp_validation
+                .as_ref()
+                .and_then(|validation| validation.router_link_layer_addr.clone()),
+            "router_advertisements": true,
+            "requires_router_target": plan.requires_router_target.unwrap_or(true),
+            "ndp_sysctls": true,
+        }),
         _ => json!({}),
     }
 }
@@ -1940,6 +2124,15 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
                 "udp_length": plan.expected_udp_length,
             },
         }),
+        "ndp-neighbor-solicitation"
+        | "ndp-router-solicitation"
+        | "ndp-duplicate-address-detection" => {
+            // Echo the NDP Neighbor/Router Advertisement validation contract so
+            // the expected-reply shape (type, R/S/O or managed/other flags,
+            // resolved target address, link-layer option) is inspectable from the
+            // plan echo.
+            ndp::ndp_validation_json(plan.ndp_validation.as_ref())
+        }
         _ => {
             // Echo the ARP is-at validation contract so the expected-reply shape
             // (including the source-address preservation contract: the reply's
