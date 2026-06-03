@@ -86,6 +86,18 @@ pub enum Icmpv6Body {
         /// a default router; 0 = not a default router).
         router_lifetime: u16,
     },
+    /// RFC 4861 section 4.3 Neighbor Solicitation (135): the four rest-of-header
+    /// bytes are an unused, send-as-zero Reserved field; the 128-bit Target
+    /// Address (the IPv6 address being resolved) and the NDP options ride in a
+    /// trailing
+    /// [`NeighborSolicitation`](super::message::ndp::NeighborSolicitation) layer.
+    /// Neighbor Solicitation is the IPv6 analogue of ARP "who-has" and, when sent
+    /// from the unspecified source, a Duplicate Address Detection probe.
+    NeighborSolicitation {
+        /// The 32-bit Reserved field from the rest-of-header (RFC 4861 sec 4.3:
+        /// sent as zero, preserved verbatim here so a non-zero value is visible).
+        reserved: u32,
+    },
     /// Any ICMPv6 `type` not yet modeled with a typed body. The four
     /// rest-of-header bytes are preserved verbatim and any trailing bytes stay a
     /// [`Raw`] payload, so unknown messages round-trip unchanged.
@@ -176,6 +188,12 @@ impl Icmpv6Body {
                     router_lifetime: u16::from_be_bytes([rest_of_header[2], rest_of_header[3]]),
                 }
             }
+            ICMPV6_NEIGHBOR_SOLICITATION => Icmpv6Body::NeighborSolicitation {
+                // RFC 4861 sec 4.3: the rest-of-header is the 32-bit Reserved
+                // field. The Target Address and options live in the trailing
+                // NeighborSolicitation layer, not in this header-derived view.
+                reserved: u32::from_be_bytes(rest_of_header),
+            },
             _ => Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,
@@ -191,6 +209,7 @@ impl Icmpv6Body {
             Icmpv6Body::Error(_) => "error",
             Icmpv6Body::RouterSolicitation { .. } => "router-solicitation",
             Icmpv6Body::RouterAdvertisement { .. } => "router-advertisement",
+            Icmpv6Body::NeighborSolicitation { .. } => "neighbor-solicitation",
             Icmpv6Body::Unknown { .. } => "unknown",
         }
     }
@@ -227,6 +246,9 @@ impl Icmpv6Body {
                 "router-advertisement(cur_hop_limit={cur_hop_limit}, M={managed}, O={other}, \
                  reserved_flags=0x{reserved_flags:02x}, router_lifetime={router_lifetime})"
             ),
+            Icmpv6Body::NeighborSolicitation { reserved } => {
+                format!("neighbor-solicitation(reserved=0x{reserved:08x})")
+            }
             Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,
