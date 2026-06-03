@@ -13,6 +13,10 @@ This directory contains user and contributor documentation for the Rust
 - [ICMPv6 message coverage](icmpv6-coverage.md) lists the typed ICMPv6 message
   families and the deferred codepoints (Router Renumbering, Inverse Neighbor
   Discovery) preserved as unknown/`Raw`, with RFC references and reasons.
+- [ICMPv6 / NDP validation report](validation/icmpv6-ndp-report.md) records the
+  final validation run for the ICMPv6 / Neighbor Discovery effort: the gate,
+  tests, oracle, interop, provider dry-run matrix, and the QEMU / VirtualBox
+  live-run outcomes including the NDP hop-limit-255 defect found and fixed.
 - [Examples](examples.md) explains how to build and run the Rust examples.
 - [Oracle validation](validation.md) describes corpus, offline, pcap, and wire
   reference validation.

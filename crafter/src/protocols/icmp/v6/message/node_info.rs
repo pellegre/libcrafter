@@ -235,7 +235,7 @@ fn node_info_rest_of_header(qtype: u16, flags: u16) -> [u8; 4] {
 
 impl Icmpv6 {
     /// Build an ICMPv6 Node Information **Query** packet (RFC 4620 section 4,
-    /// type 139). **Experimental** — see the [module docs](self).
+    /// type 139). **Experimental** — see the module-level docs.
     ///
     /// `qtype` is the question (RFC 4620 section 4): [`NI_QTYPE_NOOP`],
     /// [`NI_QTYPE_NODE_NAME`], [`NI_QTYPE_NODE_ADDRESSES`], or
@@ -270,7 +270,7 @@ impl Icmpv6 {
     }
 
     /// Build an ICMPv6 Node Information **Response** packet (RFC 4620 section 4,
-    /// type 140). **Experimental** — see the [module docs](self).
+    /// type 140). **Experimental** — see the module-level docs.
     ///
     /// `qtype` echoes the Query's question (RFC 4620 section 4). `flags` is the
     /// Qtype-dependent 16-bit Flags field (e.g. the T bit, indicating an
