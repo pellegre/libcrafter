@@ -30,6 +30,44 @@ cargo run -p crafter --example send_plan
 cargo run -p crafter --example send_recv_icmp
 cargo run -p crafter --example batch_send_recv
 cargo run -p crafter --example dns_query -- --name example.com
+cargo run -p crafter --example tcp_options
+```
+
+## TCP Options Snippet
+
+The `tcp_options` example builds IPv4 TCP segments carrying the common typed
+options (MSS, Window Scale, SACK Permitted, Timestamps), SACK blocks, and
+Fast Open, then decodes each one and prints `summary()`, `show()`, and
+`hexdump()`. It stays offline: it ends with a `send_dry_run` plan over the
+documentation interface `dry-run0` instead of opening a live socket.
+
+```sh
+cargo build -p crafter --example tcp_options
+cargo run -p crafter --example tcp_options
+```
+
+```rust
+use crafter::prelude::*;
+
+fn main() -> crafter::Result<()> {
+    let tcp = Tcp::new()
+        .sport(41000)
+        .dport(443)
+        .seq(1)
+        .flags(TCP_FLAG_SYN)
+        .tcp_option(TcpOption::mss(1460))?
+        .tcp_option(TcpOption::window_scale(7))?
+        .tcp_option(TcpOption::sack_permitted())?
+        .tcp_option(TcpOption::timestamp(0x1020_3040, 0))?;
+
+    let packet = Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")? / tcp;
+
+    let bytes = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+    println!("{}", decoded.summary());
+    println!("{}", decoded.show());
+    Ok(())
+}
 ```
 
 ## UDP Options Snippet

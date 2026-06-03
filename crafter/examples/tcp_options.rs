@@ -1,6 +1,8 @@
 mod common;
 
-use common::{local_ipv4, parse_ipv4_arg, print_help_if_requested, remote_ipv4, ExampleResult};
+use common::{
+    local_ipv4, parse_ipv4_arg, print_help_if_requested, remote_ipv4, ExampleResult, EXAMPLE_IFACE,
+};
 use crafter::prelude::*;
 
 fn main() -> ExampleResult<()> {
@@ -15,12 +17,15 @@ fn main() -> ExampleResult<()> {
 
     println!("example: tcp_options");
     println!("mode: offline");
-    inspect_tcp_packet(
-        "mss window-scale sack-permitted timestamp",
-        &syn_options(src, dst)?,
-    )?;
+    let syn = syn_options(src, dst)?;
+    inspect_tcp_packet("mss window-scale sack-permitted timestamp", &syn)?;
     inspect_tcp_packet("sack blocks", &sack_blocks(src, dst)?)?;
     inspect_tcp_packet("fast-open generic padding", &misc_options(src, dst)?)?;
+
+    // Demonstrate an offline send plan. send_dry_run never opens a live socket;
+    // it compiles the packet and reports what a live send would do over the
+    // documentation interface, so this stays safe and deterministic.
+    dry_run_plan(&syn)?;
 
     Ok(())
 }
@@ -77,6 +82,7 @@ fn inspect_tcp_packet(label: &str, packet: &Packet) -> ExampleResult<()> {
     let options = tcp.parsed_options()?;
 
     println!("packet: {label}");
+    println!("summary: {}", packet.summary());
     println!("decoded summary: {}", decoded.summary());
     println!(
         "data offset: {} words ({} bytes)",
@@ -86,7 +92,19 @@ fn inspect_tcp_packet(label: &str, packet: &Packet) -> ExampleResult<()> {
     for (index, option) in options.iter().enumerate() {
         println!("tcp option {}: {:?}", index + 1, option);
     }
+    println!("show:\n{}", decoded.show());
     println!("hexdump:\n{}", compiled.hexdump());
+
+    Ok(())
+}
+
+fn dry_run_plan(packet: &Packet) -> ExampleResult<()> {
+    let plan = packet.send_dry_run(SendOptions::new().iface(EXAMPLE_IFACE).network_layer())?;
+
+    println!("dry-run plan");
+    println!("interface: {}", plan.interface());
+    println!("target: {:?}", plan.target());
+    println!("compiled bytes: {}", plan.len());
 
     Ok(())
 }
