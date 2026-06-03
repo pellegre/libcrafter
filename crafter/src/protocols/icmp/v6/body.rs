@@ -200,6 +200,40 @@ pub enum Icmpv6Body {
         /// sent as zero, preserved verbatim here so a non-zero value is visible).
         reserved: u32,
     },
+    /// RFC 4620 section 4 Node Information Query (139), **experimental**: the four
+    /// rest-of-header bytes are the 16-bit Qtype (the question being asked) and the
+    /// 16-bit Qtype-dependent Flags field; the 64-bit Nonce and the variable Data
+    /// (the Subject of the Query) ride in a trailing
+    /// [`NodeInformation`](super::message::node_info::NodeInformation) layer (the
+    /// way an echo body's data rides in a trailing [`Raw`]). RFC 4620 is an
+    /// Experimental RFC; this header-derived view surfaces the Qtype / Flags, and
+    /// the Nonce / Data are read back from the decoded layer.
+    NodeInformationQuery {
+        /// The Qtype field (RFC 4620 sec 4: `0` NOOP, `2` Node Name, `3` Node
+        /// Addresses, `4` IPv4 Addresses). This is the first half of the
+        /// rest-of-header.
+        qtype: u16,
+        /// The Qtype-dependent Flags field (RFC 4620 sec 4), preserved verbatim so
+        /// any flag combination — including reserved bits — is visible. This is
+        /// the second half of the rest-of-header.
+        flags: u16,
+    },
+    /// RFC 4620 section 4 Node Information Response (140), **experimental**: the
+    /// four rest-of-header bytes are the 16-bit Qtype (echoed from the Query) and
+    /// the 16-bit Qtype-dependent Flags field; the 64-bit Nonce (copied from the
+    /// Query) and the variable Data (the answer) ride in a trailing
+    /// [`NodeInformation`](super::message::node_info::NodeInformation) layer.
+    /// RFC 4620 is an Experimental RFC; the ICMPv6 Code (0 success, 1 refused, 2
+    /// unknown Qtype) distinguishes the result, and the Nonce / Data are read back
+    /// from the decoded layer.
+    NodeInformationResponse {
+        /// The Qtype field echoed from the Query (RFC 4620 sec 4). This is the
+        /// first half of the rest-of-header.
+        qtype: u16,
+        /// The Qtype-dependent Flags field (RFC 4620 sec 4), preserved verbatim.
+        /// This is the second half of the rest-of-header.
+        flags: u16,
+    },
     /// RFC 8335 section 3 Extended Echo Request (160): the rest-of-header is a
     /// 16-bit Identifier, an 8-bit Sequence Number, and a flag byte whose
     /// rightmost bit is the L (Local) bit (the probed interface resides on a proxy
@@ -387,6 +421,21 @@ impl Icmpv6Body {
                 // header-derived view.
                 reserved: u32::from_be_bytes(rest_of_header),
             },
+            ICMPV6_NODE_INFORMATION_QUERY => Icmpv6Body::NodeInformationQuery {
+                // RFC 4620 sec 4 (experimental): the rest-of-header is the 16-bit
+                // Qtype (bytes 0..2) and the 16-bit Flags (bytes 2..4). The Nonce
+                // and Data live in the trailing NodeInformation layer, not in this
+                // header-derived view.
+                qtype: u16::from_be_bytes([rest_of_header[0], rest_of_header[1]]),
+                flags: u16::from_be_bytes([rest_of_header[2], rest_of_header[3]]),
+            },
+            ICMPV6_NODE_INFORMATION_RESPONSE => Icmpv6Body::NodeInformationResponse {
+                // RFC 4620 sec 4 (experimental): same rest-of-header layout as the
+                // Query — the Qtype (echoed) and the Flags. The Nonce and Data
+                // (the answer) live in the trailing NodeInformation layer.
+                qtype: u16::from_be_bytes([rest_of_header[0], rest_of_header[1]]),
+                flags: u16::from_be_bytes([rest_of_header[2], rest_of_header[3]]),
+            },
             ICMPV6_EXTENDED_ECHO_REQUEST => {
                 // RFC 8335 sec 3: identifier (bytes 0..2), 8-bit sequence number
                 // (byte 2), flag byte (byte 3) with the L-bit at 0x01 and the
@@ -436,6 +485,8 @@ impl Icmpv6Body {
             Icmpv6Body::NeighborSolicitation { .. } => "neighbor-solicitation",
             Icmpv6Body::NeighborAdvertisement { .. } => "neighbor-advertisement",
             Icmpv6Body::Redirect { .. } => "redirect",
+            Icmpv6Body::NodeInformationQuery { .. } => "node-information-query",
+            Icmpv6Body::NodeInformationResponse { .. } => "node-information-response",
             Icmpv6Body::ExtendedEchoRequest { .. } => "extended-echo-request",
             Icmpv6Body::ExtendedEchoReply { .. } => "extended-echo-reply",
             Icmpv6Body::Unknown { .. } => "unknown",
@@ -502,6 +553,12 @@ impl Icmpv6Body {
             ),
             Icmpv6Body::Redirect { reserved } => {
                 format!("redirect(reserved=0x{reserved:08x})")
+            }
+            Icmpv6Body::NodeInformationQuery { qtype, flags } => {
+                format!("node-information-query(qtype={qtype}, flags=0x{flags:04x})")
+            }
+            Icmpv6Body::NodeInformationResponse { qtype, flags } => {
+                format!("node-information-response(qtype={qtype}, flags=0x{flags:04x})")
             }
             Icmpv6Body::ExtendedEchoRequest {
                 identifier,
