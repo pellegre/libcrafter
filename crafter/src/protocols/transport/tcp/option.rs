@@ -9,9 +9,10 @@ use super::constants::{
     TCP_OPTION_ACCURATE_ECN_ORDER_1, TCP_OPTION_EDO, TCP_OPTION_EOL, TCP_OPTION_EXPERIMENTAL_1,
     TCP_OPTION_EXPERIMENTAL_2, TCP_OPTION_EXPERIMENTAL_MIN_LEN, TCP_OPTION_FAST_OPEN,
     TCP_OPTION_MD5_SIGNATURE, TCP_OPTION_MPTCP, TCP_OPTION_MSS, TCP_OPTION_NOP, TCP_OPTION_SACK,
-    TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TCP_AUTHENTICATION, TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN,
-    TCP_OPTION_TCP_ENO, TCP_OPTION_TCP_ENO_MIN_LEN, TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT,
-    TCP_OPTION_USER_TIMEOUT_LEN, TCP_OPTION_WINDOW_SCALE, TCP_WINDOW_SCALE_MAX_SHIFT,
+    TCP_OPTION_SACK_PERMITTED, TCP_OPTION_TCP_AUTHENTICATION,
+    TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN, TCP_OPTION_TCP_ENO, TCP_OPTION_TCP_ENO_MIN_LEN,
+    TCP_OPTION_TIMESTAMP, TCP_OPTION_USER_TIMEOUT, TCP_OPTION_USER_TIMEOUT_LEN,
+    TCP_OPTION_WINDOW_SCALE, TCP_WINDOW_SCALE_MAX_SHIFT,
 };
 use super::sizing::TcpOptionBudget;
 
@@ -559,7 +560,8 @@ impl TcpOption {
     ///
     /// Backed by RFC 2018 / RFC 2883 and `docs/tcp-rfc-manifest.md`.
     pub fn first_sack_block(&self) -> Option<TcpSackBlock> {
-        self.sack_blocks().and_then(|blocks| blocks.first().copied())
+        self.sack_blocks()
+            .and_then(|blocks| blocks.first().copied())
     }
 
     /// Return the SACK blocks after the first one, if this option is a SACK
@@ -1467,7 +1469,11 @@ fn decode_tcp_experimental_option(kind: u8, data: &[u8], len: usize) -> Result<T
 }
 
 fn decode_tcp_user_timeout_option(data: &[u8], len: usize) -> Result<TcpOption> {
-    validate_tcp_option_len("tcp.option.user_timeout", len, TCP_OPTION_USER_TIMEOUT_LEN as usize)?;
+    validate_tcp_option_len(
+        "tcp.option.user_timeout",
+        len,
+        TCP_OPTION_USER_TIMEOUT_LEN as usize,
+    )?;
     // RFC 5482 section 3: the 16-bit field's most-significant bit is the
     // Granularity (G) flag and the remaining 15 bits are the User Timeout value.
     let field = read_u16_be(&data[0..2])?;
@@ -1698,7 +1704,10 @@ pub const fn tcp_option_kind_is_assigned(kind: u8) -> bool {
 
 /// Return true when a TCP option kind is an RFC 6994 experimental kind.
 pub const fn tcp_option_kind_is_experimental(kind: u8) -> bool {
-    matches!(tcp_option_kind_class(kind), TcpOptionKindClass::Experimental)
+    matches!(
+        tcp_option_kind_class(kind),
+        TcpOptionKindClass::Experimental
+    )
 }
 
 /// Return whether a TCP Window Scale shift count is within RFC 7323's valid
