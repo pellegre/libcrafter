@@ -13,7 +13,6 @@
 //! the same names.
 
 use super::*;
-use crate::endian::read_u16_be;
 
 // The ICMPv6 (`ICMPV6_*`) codepoint constants used below live in
 // `v6/constants.rs`. They are reached through the `use super::*;` glob above:
@@ -28,6 +27,16 @@ pub(crate) mod constants;
 // `protocols::mod.rs` and the prelude like the other ICMPv6 types.
 mod body;
 pub use self::body::{Icmpv6Body, Icmpv6ErrorBody};
+
+// The ICMPv6 decode path: the `type` byte → typed-body dispatch
+// ([`append_icmpv6_packet`] and its private header parser), the analogue of the
+// ICMPv4 decode in `icmp/decode.rs`. Kept in its own module so the dispatch sits
+// alongside the message bodies it routes to under `v6/`. Re-export
+// `append_icmpv6_packet` at this module level (and onward at the `icmp` root,
+// `pub(crate) use self::v6::append_icmpv6_packet;`) so the registry IPv6
+// next-header 58 binding in `crate::registry` keeps resolving to the same name.
+mod decode;
+pub(crate) use self::decode::append_icmpv6_packet;
 
 // ICMPv6-specific message bodies (Neighbor Discovery, MLD, node information,
 // extended echo) live under `v6/message/`. This step adds the shared Neighbor
@@ -739,215 +748,6 @@ impl Layer for Icmpv6 {
 }
 
 impl_layer_div!(Icmpv6);
-
-fn decode_icmpv6_parts(bytes: &[u8]) -> Result<(Icmpv6, &[u8])> {
-    if bytes.len() < ICMP_HEADER_LEN {
-        return Err(CrafterError::buffer_too_short(
-            "icmpv6 header",
-            ICMP_HEADER_LEN,
-            bytes.len(),
-        ));
-    }
-
-    let rest = copy_array_4(&bytes[4..8]);
-    let icmp_type = bytes[0];
-    let is_extended_echo = is_extended_echo_v6(icmp_type);
-    let icmpv6 = Icmpv6 {
-        icmp_type: Field::user(icmp_type),
-        code: Field::user(bytes[1]),
-        checksum: Field::user(read_u16_be(&bytes[2..4])?),
-        rest_of_header: Field::user(rest),
-        // RFC 8335 narrows the sequence number to a single octet (byte 2) and
-        // adds a flag byte (byte 3), but the identifier is still the 16-bit
-        // bytes 0..2, so the identifier field is shared with the echo families.
-        identifier: if is_echo_v6(icmp_type) || is_extended_echo {
-            Field::user(u16::from_be_bytes([rest[0], rest[1]]))
-        } else {
-            Field::unset()
-        },
-        sequence_number: if is_extended_echo {
-            // Zero-extend the 8-bit RFC 8335 sequence number into the low octet;
-            // the accessor/serialize path treat it as an 8-bit value for these
-            // types so the flag byte (byte 3) is never folded in.
-            Field::user(u16::from(rest[2]))
-        } else {
-            field_from_echo(icmp_type, &rest, 2, is_echo_v6)
-        },
-        length: if icmpv6_type_allows_extensions(icmp_type) {
-            Field::user(rest[0])
-        } else {
-            Field::unset()
-        },
-        mtu: if icmp_type == ICMPV6_PACKET_TOO_BIG {
-            Field::user(u32::from_be_bytes(rest))
-        } else {
-            Field::unset()
-        },
-        pointer: if icmp_type == ICMPV6_PARAMETER_PROBLEM {
-            Field::user(u32::from_be_bytes(rest))
-        } else {
-            Field::unset()
-        },
-        extended_flags: if is_extended_echo {
-            Field::user(rest[3])
-        } else {
-            Field::unset()
-        },
-    };
-
-    Ok((icmpv6, &bytes[ICMP_HEADER_LEN..]))
-}
-
-/// Append a decoded ICMPv6 packet to an existing packet stack.
-pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
-    let (icmpv6, payload) = decode_icmpv6_parts(bytes)?;
-    let icmp_type = icmpv6.icmp_type_value();
-    packet = packet.push(icmpv6);
-
-    // RFC 4861 Neighbor Discovery messages carry a typed body after the fixed
-    // header (for a Router Solicitation: the NDP option area; the 32-bit
-    // Reserved field is the header's rest-of-header, decoded with the header).
-    // Type the body whenever the header is a recognized NDP message and the
-    // option area parses defensibly — even when the area is empty, so a bare
-    // Router Solicitation still exposes its typed body. A malformed option area
-    // (a zero-length or overrunning option) keeps the bytes as a single `Raw`
-    // payload so nothing is dropped and decoding never panics. Later steps add
-    // the remaining NDP/MLD/extended-echo bodies here in lockstep with the
-    // `Icmpv6Body` classifier in `body.rs`.
-    // RFC 3810 section 5.1 MLDv2 Query: a type-130 message reuses the MLDv1 Query
-    // type byte but carries a longer body — the 16-byte Multicast Address plus a
-    // flags/QRV/QQIC/Number-of-Sources run and a Source Address list. The two
-    // versions are disambiguated by body length (the step-27/28 seam): an MLDv2
-    // Query body is at least `MLDV2_QUERY_MIN_BODY_LEN` (20) bytes, while an MLDv1
-    // Query body is *exactly* the 16-byte Multicast Address. Try the MLDv2-query
-    // decode first for a type-130 body that is long enough; an exactly-16-byte
-    // body skips it and falls to the MLDv1 decoder below. A malformed longer body
-    // (e.g. an over-stated Number of Sources) keeps the bytes as a single `Raw`
-    // payload (no panic, nothing dropped).
-    if icmp_type == ICMPV6_MULTICAST_LISTENER_QUERY && payload.len() >= MLDV2_QUERY_MIN_BODY_LEN {
-        if let Ok(query) = decode_mldv2_query(payload) {
-            return Ok(packet.push(query));
-        }
-    }
-
-    // RFC 2710 MLDv1 (types 130-132): the Maximum Response Delay and Reserved
-    // fields were decoded with the header above; the trailing body is the 16-byte
-    // Multicast Address. The three types share one body shape, so they share a
-    // decoder. The MLDv1 Query (130) is disambiguated from the MLDv2 Query
-    // (decoded just above) by body length: an MLDv1 body is *exactly* 16 bytes.
-    // `decode_multicast_listener_message` enforces the exact-16-byte shape, so a
-    // longer (MLDv2) type-130 body never reaches here.
-    if icmp_type == ICMPV6_MULTICAST_LISTENER_QUERY
-        || icmp_type == ICMPV6_MULTICAST_LISTENER_REPORT
-        || icmp_type == ICMPV6_MULTICAST_LISTENER_DONE
-    {
-        if let Ok(mld) = decode_multicast_listener_message(payload) {
-            return Ok(packet.push(mld));
-        }
-    }
-
-    // RFC 3810 section 5.2 MLDv2 Version 2 Report (type 143): the 16-bit Reserved
-    // field and the 16-bit Nr of Mcast Address Records were decoded with the
-    // header above; the trailing body is the list of Multicast Address Records.
-    // The record walk recovers the records from their own lengths, so a malformed
-    // record (a short fixed header, an over-stated Number of Sources, or an
-    // over-stated Aux Data Len) keeps the bytes as a single `Raw` payload (no
-    // panic, nothing dropped).
-    if icmp_type == ICMPV6_MLDV2_REPORT {
-        if let Ok(report) = decode_mldv2_report(payload) {
-            return Ok(packet.push(report));
-        }
-    }
-
-    if icmp_type == ICMPV6_ROUTER_SOLICITATION {
-        if let Ok(rs) = decode_router_solicitation(payload) {
-            return Ok(packet.push(rs));
-        }
-    }
-
-    // RFC 4861 section 4.2 Router Advertisement: the rest-of-header (Cur Hop
-    // Limit / M+O flags / Router Lifetime) was decoded with the header above;
-    // the trailing body is the Reachable-Time + Retrans-Timer words and the NDP
-    // option area. A body too short for the two timer words, or a malformed
-    // option area, keeps the bytes as a single `Raw` payload (no panic, nothing
-    // dropped).
-    if icmp_type == ICMPV6_ROUTER_ADVERTISEMENT {
-        if let Ok(ra) = decode_router_advertisement(payload) {
-            return Ok(packet.push(ra));
-        }
-    }
-
-    // RFC 4861 section 4.3 Neighbor Solicitation: the rest-of-header (the 32-bit
-    // Reserved field) was decoded with the header above; the trailing body is the
-    // 128-bit Target Address followed by the NDP option area. A body too short for
-    // the Target Address, or a malformed option area, keeps the bytes as a single
-    // `Raw` payload (no panic, nothing dropped).
-    if icmp_type == ICMPV6_NEIGHBOR_SOLICITATION {
-        if let Ok(ns) = decode_neighbor_solicitation(payload) {
-            return Ok(packet.push(ns));
-        }
-    }
-
-    // RFC 4861 section 4.4 Neighbor Advertisement: the rest-of-header (the 32-bit
-    // R/S/O flags word with its 29 Reserved bits) was decoded with the header
-    // above; the trailing body is the 128-bit Target Address followed by the NDP
-    // option area. A body too short for the Target Address, or a malformed option
-    // area, keeps the bytes as a single `Raw` payload (no panic, nothing dropped).
-    if icmp_type == ICMPV6_NEIGHBOR_ADVERTISEMENT {
-        if let Ok(na) = decode_neighbor_advertisement(payload) {
-            return Ok(packet.push(na));
-        }
-    }
-
-    // RFC 4861 section 4.5 Redirect: the rest-of-header (the 32-bit Reserved
-    // field) was decoded with the header above; the trailing body is the 128-bit
-    // Target Address, the 128-bit Destination Address, and the NDP option area
-    // (commonly a Target Link-Layer Address and a Redirected Header option). A
-    // body too short for both addresses, or a malformed option area, keeps the
-    // bytes as a single `Raw` payload (no panic, nothing dropped).
-    if icmp_type == ICMPV6_REDIRECT {
-        if let Ok(redirect) = decode_redirect(payload) {
-            return Ok(packet.push(redirect));
-        }
-    }
-
-    // RFC 4620 section 4 Node Information Query (139) / Response (140),
-    // **experimental**: the Qtype and Flags were decoded with the header above
-    // (they are the rest-of-header); the trailing body is the 8-byte Nonce
-    // followed by the variable Data field. The two types share one body shape
-    // (the `type` byte distinguishes Query from Response), so they share a
-    // decoder. A body too short for the fixed Nonce keeps the bytes as a single
-    // `Raw` payload (no panic, nothing dropped).
-    if icmp_type == ICMPV6_NODE_INFORMATION_QUERY || icmp_type == ICMPV6_NODE_INFORMATION_RESPONSE {
-        if let Ok(node_info) = decode_node_information(payload) {
-            return Ok(packet.push(node_info));
-        }
-    }
-
-    // RFC 8335 section 3 Extended Echo Request (160): the identifier / sequence /
-    // L-bit live in the rest-of-header (decoded with the header above); the
-    // trailing body is an RFC 4884 ICMP Extension Structure carrying a single
-    // Interface Identification Object, beginning immediately after the fixed
-    // header (no quoted datagram, no original-datagram padding). The structure is
-    // version-neutral, so the same decoder ICMPv4 uses (`icmp/decode.rs`) types
-    // it here. Anything that does not parse defensibly (bad version, bad
-    // checksum, impossible object lengths) stays a single `Raw` payload so the
-    // bytes survive and decoding never panics. The reply (161) carries no body of
-    // its own, so any trailing bytes on a reply fall through to the raw tail.
-    if icmp_type == ICMPV6_EXTENDED_ECHO_REQUEST {
-        if let Some(layers) = decode_extended_echo_extension(payload) {
-            for layer in layers {
-                packet = packet.push_box(layer);
-            }
-            return Ok(packet);
-        }
-    }
-
-    if !payload.is_empty() {
-        packet = packet.push(Raw::from_bytes(payload));
-    }
-    Ok(packet)
-}
 
 #[cfg(test)]
 mod icmpv6 {
