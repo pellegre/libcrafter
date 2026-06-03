@@ -823,6 +823,115 @@ mod tests {
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
     }
 
+    // RFC 4861 sec 4.6.2 + 4.6.4: a Router Advertisement carrying a Prefix
+    // Information option (doc prefix 2001:db8::/64) and an MTU option together,
+    // in arbitrary order, round-trips through compile()/decode preserving option
+    // order and every field. The packet also exercises the checksum over the
+    // larger option area.
+    #[test]
+    fn router_advertisement_with_prefix_and_mtu_round_trips() {
+        use crate::protocols::icmp::{NDP_OPT_MTU, NDP_OPT_PREFIX_INFORMATION};
+
+        // Documentation prefix (RFC 3849) 2001:db8::/64.
+        let prefix = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0);
+        // Deliberately put MTU *before* Prefix Information to prove arbitrary
+        // order survives.
+        let body = RouterAdvertisement::new()
+            .reachable_time(30_000)
+            .retrans_timer(1_000)
+            .options(NdpOptions::new().push(NdpOption::mtu(1500)).push(
+                NdpOption::prefix_information(prefix, 64, true, true, 2_592_000, 604_800),
+            ));
+        let packet = Ipv6::new()
+            .src(link_local_src())
+            .dst(all_routers())
+            .hlim(255)
+            / Icmpv6::router_advertisement_with(64, false, false, 1800, body);
+        let compiled = packet.compile().unwrap();
+        let bytes = compiled.as_bytes();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+        let ra = decoded.layer::<RouterAdvertisement>().unwrap();
+        assert_eq!(ra.reachable_time_value(), 30_000);
+        assert_eq!(ra.retrans_timer_value(), 1_000);
+        assert_eq!(ra.options_ref().len(), 2);
+
+        // Order is preserved: MTU first, Prefix Information second.
+        let opts = ra.options_ref().options();
+        assert_eq!(opts[0].option_type(), NDP_OPT_MTU);
+        assert_eq!(opts[0].mtu_value(), Some(1500));
+        assert_eq!(opts[1].option_type(), NDP_OPT_PREFIX_INFORMATION);
+        assert_eq!(opts[1].prefix(), Some(prefix));
+        assert_eq!(opts[1].prefix_length(), Some(64));
+        assert_eq!(opts[1].prefix_on_link(), Some(true));
+        assert_eq!(opts[1].prefix_autonomous(), Some(true));
+        assert_eq!(opts[1].prefix_valid_lifetime(), Some(2_592_000));
+        assert_eq!(opts[1].prefix_preferred_lifetime(), Some(604_800));
+
+        // Whole packet round-trips byte-for-byte (checksum over the IPv6
+        // pseudo-header includes both options).
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // L/A flag independence asserted end-to-end through a Router Advertisement:
+    // neither / L / A / both each decode independently from the carried Prefix
+    // Information option.
+    #[test]
+    fn router_advertisement_prefix_flag_independence() {
+        let prefix = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0);
+        for (on_link, autonomous) in [(false, false), (true, false), (false, true), (true, true)] {
+            let body = RouterAdvertisement::new().option(NdpOption::prefix_information(
+                prefix, 64, on_link, autonomous, 86_400, 14_400,
+            ));
+            let packet = Ipv6::new().src(link_local_src()).dst(all_routers())
+                / Icmpv6::router_advertisement_with(64, false, false, 1800, body);
+            let bytes = packet.compile().unwrap();
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+            let pi = &decoded
+                .layer::<RouterAdvertisement>()
+                .unwrap()
+                .options_ref()
+                .options()[0];
+            assert_eq!(
+                pi.prefix_on_link(),
+                Some(on_link),
+                "L independent (L={on_link} A={autonomous})"
+            );
+            assert_eq!(
+                pi.prefix_autonomous(),
+                Some(autonomous),
+                "A independent (L={on_link} A={autonomous})"
+            );
+            assert_eq!(pi.prefix_valid_lifetime(), Some(86_400));
+            assert_eq!(pi.prefix_preferred_lifetime(), Some(14_400));
+        }
+    }
+
+    // A deliberately-wrong option length on a Prefix Information option carried by
+    // a Router Advertisement survives compile() (honored overrides), so the
+    // emitted option-area Length byte stays the wrong value.
+    #[test]
+    fn router_advertisement_wrong_prefix_length_survives() {
+        let prefix = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0);
+        // Pin the Prefix Information length to 5 units (out of spec; real is 4).
+        let body = RouterAdvertisement::new()
+            .option(NdpOption::prefix_information(prefix, 64, true, false, 0, 0).length(5));
+        let packet = Ipv6::new().src(link_local_src()).dst(all_routers())
+            / Icmpv6::router_advertisement_with(64, false, false, 1800, body);
+        let compiled = packet.compile().unwrap();
+        let bytes = compiled.as_bytes();
+        // ICMPv6 at offset 40; header(8) + reachable(4) + retrans(4) = option area
+        // starts at offset 40+16 = 56. Option Length byte is at 56+1 = 57.
+        assert_eq!(
+            bytes[56],
+            crate::protocols::icmp::NDP_OPT_PREFIX_INFORMATION
+        );
+        assert_eq!(
+            bytes[57], 5,
+            "deliberately-wrong option length survives compile()"
+        );
+    }
+
     // summary() / show(): the body layer summarizes its own fields, and the
     // header's body-detail field reports the Router Advertisement classification.
     #[test]

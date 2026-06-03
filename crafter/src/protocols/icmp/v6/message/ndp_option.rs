@@ -43,6 +43,7 @@
 //! against the live IANA registry plus RFC 4861 section 4.6.)
 
 use core::fmt;
+use core::net::Ipv6Addr;
 
 use crate::error::{CrafterError, Result};
 use crate::mac::MacAddr;
@@ -100,6 +101,43 @@ pub const NDP_OPTION_HEADER_LEN: usize = 2;
 /// 4.6.1: for IEEE 802 addresses the option length is 1 — eight octets total —
 /// of which six are the link-layer address).
 pub const NDP_LINK_LAYER_ADDR_ETHERNET_LEN: usize = 6;
+
+/// Bit mask for the on-link (L) flag in the Prefix Information option flags
+/// octet (RFC 4861 sec 4.6.2: "the highest bit position", 0x80). When set, the
+/// prefix can be used for on-link determination.
+pub const NDP_PREFIX_FLAG_ON_LINK: u8 = 0x80;
+
+/// Bit mask for the autonomous address-configuration (A) flag in the Prefix
+/// Information option flags octet (RFC 4861 sec 4.6.2: "the next bit", 0x40).
+/// RFC 4862 sec 5.5.3: when set, the prefix can be used for stateless address
+/// autoconfiguration (SLAAC).
+pub const NDP_PREFIX_FLAG_AUTONOMOUS: u8 = 0x40;
+
+/// Mask of the six Reserved1 bits in the Prefix Information option flags octet
+/// (RFC 4861 sec 4.6.2: "Reserved1 — 6-bit unused field. It MUST be initialized
+/// to zero by the sender and MUST be ignored by the receiver."). Preserved
+/// verbatim through build/decode for forward-compatibility.
+pub const NDP_PREFIX_FLAGS_RESERVED: u8 = 0x3f;
+
+/// The Valid / Preferred Lifetime value (seconds) that RFC 4861 sec 4.6.2
+/// defines as infinity (`0xffffffff`).
+pub const NDP_PREFIX_LIFETIME_INFINITY: u32 = 0xffff_ffff;
+
+/// Total length, in octets, of a Prefix Information option (RFC 4861 sec 4.6.2:
+/// Length field 4, i.e. four 8-octet units = 32 bytes).
+pub const NDP_PREFIX_INFORMATION_LEN: usize = 32;
+
+/// The Prefix Information option `Length` field value, in 8-octet units
+/// (RFC 4861 sec 4.6.2: 4).
+pub const NDP_PREFIX_INFORMATION_UNITS: u8 = 4;
+
+/// Total length, in octets, of an MTU option (RFC 4861 sec 4.6.4: Length field
+/// 1, i.e. one 8-octet unit = 8 bytes).
+pub const NDP_MTU_OPTION_LEN: usize = 8;
+
+/// The MTU option `Length` field value, in 8-octet units (RFC 4861 sec 4.6.4:
+/// 1).
+pub const NDP_MTU_OPTION_UNITS: u8 = 1;
 
 /// Return the human-readable name for a recognized NDP option type, or `None`
 /// for an unassigned/unrecognized type.
@@ -242,6 +280,210 @@ impl NdpOption {
             }
             _ => None,
         }
+    }
+
+    /// Build a Prefix Information option (type 3) carrying an IPv6 prefix and the
+    /// SLAAC-relevant lifetimes and flags (RFC 4861 section 4.6.2).
+    ///
+    /// The 30-byte value (everything after the two-byte Type/Length header) is
+    /// laid out per RFC 4861 section 4.6.2:
+    ///
+    /// ```text
+    /// Prefix Length (1) | Flags (1: L|A|Reserved1) |
+    /// Valid Lifetime (4) | Preferred Lifetime (4) | Reserved2 (4) | Prefix (16)
+    /// ```
+    ///
+    /// With the two-byte header that is exactly 32 bytes — four 8-octet units —
+    /// so the auto-filled `Length` is 4 ([`NDP_PREFIX_INFORMATION_UNITS`]) and no
+    /// padding is needed. This is a typed constructor over the framework: it
+    /// produces a [`NdpOption::Generic`] whose value bytes are the option fields,
+    /// so it round-trips through [`NdpOptions`] exactly like any other recognized
+    /// option, and the [`NdpOption::prefix`] / [`NdpOption::prefix_length`] /
+    /// [`NdpOption::prefix_on_link`] / [`NdpOption::prefix_autonomous`] /
+    /// [`NdpOption::prefix_valid_lifetime`] /
+    /// [`NdpOption::prefix_preferred_lifetime`] accessors read each field back.
+    ///
+    /// `on_link` sets the L flag (RFC 4861 sec 4.6.2: prefix usable for on-link
+    /// determination); `autonomous` sets the A flag (RFC 4862 sec 5.5.3: prefix
+    /// usable for stateless address autoconfiguration). The two flags are
+    /// independent. The six Reserved1 bits and the 32-bit Reserved2 field are sent
+    /// zero; [`NdpOption::prefix_reserved1`] / [`NdpOption::prefix_reserved2`]
+    /// read them back, and [`NdpOption::prefix_information_raw`] sets them on
+    /// purpose. Lifetimes are in seconds; [`NDP_PREFIX_LIFETIME_INFINITY`]
+    /// (`0xffffffff`) means infinity.
+    pub fn prefix_information(
+        prefix: Ipv6Addr,
+        prefix_len: u8,
+        on_link: bool,
+        autonomous: bool,
+        valid_lifetime: u32,
+        preferred_lifetime: u32,
+    ) -> Self {
+        let mut flags = 0u8;
+        if on_link {
+            flags |= NDP_PREFIX_FLAG_ON_LINK;
+        }
+        if autonomous {
+            flags |= NDP_PREFIX_FLAG_AUTONOMOUS;
+        }
+        Self::prefix_information_raw(
+            prefix,
+            prefix_len,
+            flags,
+            valid_lifetime,
+            preferred_lifetime,
+            0,
+        )
+    }
+
+    /// Build a Prefix Information option (type 3) with the full flags octet and
+    /// Reserved2 field set explicitly (RFC 4861 section 4.6.2).
+    ///
+    /// This is the honored-overrides escape hatch behind
+    /// [`NdpOption::prefix_information`]: it writes the `flags` octet
+    /// (L | A | the six Reserved1 bits) and the 32-bit `reserved2` field verbatim,
+    /// so an agent can set the Reserved1 bits or Reserved2 — which RFC 4861 says to
+    /// send as zero — on purpose, for a forward-compatible or deliberately
+    /// malformed packet. Those values survive an encode/decode round-trip
+    /// untouched.
+    pub fn prefix_information_raw(
+        prefix: Ipv6Addr,
+        prefix_len: u8,
+        flags: u8,
+        valid_lifetime: u32,
+        preferred_lifetime: u32,
+        reserved2: u32,
+    ) -> Self {
+        // RFC 4861 sec 4.6.2 value layout (after the Type/Length header):
+        //   Prefix Length(1) Flags(1) Valid(4) Preferred(4) Reserved2(4) Prefix(16)
+        let mut value = Vec::with_capacity(NDP_PREFIX_INFORMATION_LEN - NDP_OPTION_HEADER_LEN);
+        value.push(prefix_len);
+        value.push(flags);
+        value.extend_from_slice(&valid_lifetime.to_be_bytes());
+        value.extend_from_slice(&preferred_lifetime.to_be_bytes());
+        value.extend_from_slice(&reserved2.to_be_bytes());
+        value.extend_from_slice(&prefix.octets());
+        Self::generic(NDP_OPT_PREFIX_INFORMATION, value)
+    }
+
+    /// Read the raw flags octet (L | A | Reserved1) of a Prefix Information
+    /// option (type 3), or `None` for any other option or a truncated value.
+    fn prefix_flags(&self) -> Option<u8> {
+        if self.option_type() != NDP_OPT_PREFIX_INFORMATION {
+            return None;
+        }
+        // value[1] is the flags octet (value[0] is Prefix Length).
+        self.value().get(1).copied()
+    }
+
+    /// Read the Prefix Length field (0..=128) of a Prefix Information option
+    /// (type 3), or `None` for any other option or a truncated value.
+    pub fn prefix_length(&self) -> Option<u8> {
+        if self.option_type() != NDP_OPT_PREFIX_INFORMATION {
+            return None;
+        }
+        self.value().first().copied()
+    }
+
+    /// Read the on-link (L) flag of a Prefix Information option (type 3), or
+    /// `None` for any other option or a truncated value (RFC 4861 sec 4.6.2).
+    pub fn prefix_on_link(&self) -> Option<bool> {
+        self.prefix_flags()
+            .map(|flags| flags & NDP_PREFIX_FLAG_ON_LINK != 0)
+    }
+
+    /// Read the autonomous address-configuration (A) flag of a Prefix Information
+    /// option (type 3), or `None` for any other option or a truncated value
+    /// (RFC 4861 sec 4.6.2 / RFC 4862 sec 5.5.3).
+    pub fn prefix_autonomous(&self) -> Option<bool> {
+        self.prefix_flags()
+            .map(|flags| flags & NDP_PREFIX_FLAG_AUTONOMOUS != 0)
+    }
+
+    /// Read the six Reserved1 bits (the low six bits of the flags octet) of a
+    /// Prefix Information option (type 3), preserved verbatim, or `None` for any
+    /// other option or a truncated value (RFC 4861 sec 4.6.2).
+    pub fn prefix_reserved1(&self) -> Option<u8> {
+        self.prefix_flags()
+            .map(|flags| flags & NDP_PREFIX_FLAGS_RESERVED)
+    }
+
+    /// Read the Valid Lifetime (seconds; `0xffffffff` = infinity) of a Prefix
+    /// Information option (type 3), or `None` for any other option or a truncated
+    /// value (RFC 4861 sec 4.6.2).
+    pub fn prefix_valid_lifetime(&self) -> Option<u32> {
+        self.prefix_u32_at(2)
+    }
+
+    /// Read the Preferred Lifetime (seconds; `0xffffffff` = infinity) of a Prefix
+    /// Information option (type 3), or `None` for any other option or a truncated
+    /// value (RFC 4861 sec 4.6.2).
+    pub fn prefix_preferred_lifetime(&self) -> Option<u32> {
+        self.prefix_u32_at(6)
+    }
+
+    /// Read the 32-bit Reserved2 field of a Prefix Information option (type 3),
+    /// preserved verbatim, or `None` for any other option or a truncated value
+    /// (RFC 4861 sec 4.6.2).
+    pub fn prefix_reserved2(&self) -> Option<u32> {
+        self.prefix_u32_at(10)
+    }
+
+    /// Read the Prefix (128-bit IPv6 address/prefix) of a Prefix Information
+    /// option (type 3), or `None` for any other option or a truncated value
+    /// (RFC 4861 sec 4.6.2).
+    pub fn prefix(&self) -> Option<Ipv6Addr> {
+        if self.option_type() != NDP_OPT_PREFIX_INFORMATION {
+            return None;
+        }
+        let value = self.value();
+        // Prefix occupies value bytes 14..30 (after PrefixLen, Flags, the two
+        // lifetimes, and Reserved2).
+        let prefix = value.get(14..30)?;
+        let mut octets = [0u8; 16];
+        octets.copy_from_slice(prefix);
+        Some(Ipv6Addr::from(octets))
+    }
+
+    /// Read a big-endian `u32` from offset `at` of a Prefix Information option's
+    /// value bytes, returning `None` when the option is not a Prefix Information
+    /// option or the value is too short.
+    fn prefix_u32_at(&self, at: usize) -> Option<u32> {
+        if self.option_type() != NDP_OPT_PREFIX_INFORMATION {
+            return None;
+        }
+        let value = self.value();
+        let word = value.get(at..at + 4)?;
+        Some(u32::from_be_bytes([word[0], word[1], word[2], word[3]]))
+    }
+
+    /// Build an MTU option (type 5) carrying the recommended link MTU
+    /// (RFC 4861 section 4.6.4).
+    ///
+    /// The 6-byte value (after the two-byte Type/Length header) is a 16-bit
+    /// Reserved field (sent zero) followed by the 32-bit MTU, giving exactly one
+    /// 8-octet unit — so the auto-filled `Length` is 1
+    /// ([`NDP_MTU_OPTION_UNITS`]). This is a typed constructor over the framework:
+    /// it produces a [`NdpOption::Generic`] and [`NdpOption::mtu_value`] reads the
+    /// MTU back.
+    pub fn mtu(mtu: u32) -> Self {
+        // RFC 4861 sec 4.6.4 value layout: Reserved(2, zero) || MTU(4).
+        let mut value = Vec::with_capacity(NDP_MTU_OPTION_LEN - NDP_OPTION_HEADER_LEN);
+        value.extend_from_slice(&[0u8, 0u8]);
+        value.extend_from_slice(&mtu.to_be_bytes());
+        Self::generic(NDP_OPT_MTU, value)
+    }
+
+    /// Read the MTU (octets) carried by an MTU option (type 5), or `None` for any
+    /// other option or a truncated value (RFC 4861 section 4.6.4).
+    pub fn mtu_value(&self) -> Option<u32> {
+        if self.option_type() != NDP_OPT_MTU {
+            return None;
+        }
+        let value = self.value();
+        // The MTU is the 32-bit field after the 16-bit Reserved field.
+        let word = value.get(2..6)?;
+        Some(u32::from_be_bytes([word[0], word[1], word[2], word[3]]))
     }
 
     /// Pin the `Length` field (in units of 8 octets) to an explicit value.
@@ -774,6 +1016,202 @@ mod tests {
 
         // And it surfaces through the option-area walk too.
         assert_eq!(NdpOptions::decode(&bytes).unwrap_err(), err);
+    }
+
+    // RFC 4861 sec 4.6.2: a Prefix Information option (type 3) carries the
+    // documentation prefix 2001:db8::/64, the L/A flags, and the two lifetimes;
+    // it occupies four 8-octet units (length 4 / 32 bytes) and every field reads
+    // back through the typed accessors after a full encode/decode round-trip.
+    #[test]
+    fn prefix_information_round_trips() {
+        // Documentation prefix (RFC 3849) 2001:db8::/64.
+        let prefix = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0);
+        let opt = NdpOption::prefix_information(
+            prefix, 64,        // prefix length
+            true,      // on-link (L)
+            true,      // autonomous (A)
+            2_592_000, // valid lifetime (30 days)
+            604_800,   // preferred lifetime (7 days)
+        );
+        assert_eq!(opt.option_type(), NDP_OPT_PREFIX_INFORMATION);
+        assert!(opt.is_known());
+        assert_eq!(opt.prefix_length(), Some(64));
+        assert_eq!(opt.prefix_on_link(), Some(true));
+        assert_eq!(opt.prefix_autonomous(), Some(true));
+        assert_eq!(opt.prefix_reserved1(), Some(0));
+        assert_eq!(opt.prefix_valid_lifetime(), Some(2_592_000));
+        assert_eq!(opt.prefix_preferred_lifetime(), Some(604_800));
+        assert_eq!(opt.prefix_reserved2(), Some(0));
+        assert_eq!(opt.prefix(), Some(prefix));
+
+        let bytes = opt.encode().unwrap();
+        // type(1) + length(1) + 30 value bytes = 32 bytes = four 8-octet units.
+        assert_eq!(bytes.len(), NDP_PREFIX_INFORMATION_LEN);
+        assert_eq!(
+            &bytes[0..2],
+            &[NDP_OPT_PREFIX_INFORMATION, NDP_PREFIX_INFORMATION_UNITS]
+        );
+        // Prefix Length, then the flags octet with both L and A set.
+        assert_eq!(bytes[2], 64);
+        assert_eq!(
+            bytes[3],
+            NDP_PREFIX_FLAG_ON_LINK | NDP_PREFIX_FLAG_AUTONOMOUS
+        );
+        // Valid / Preferred Lifetimes (big-endian).
+        assert_eq!(&bytes[4..8], &2_592_000u32.to_be_bytes());
+        assert_eq!(&bytes[8..12], &604_800u32.to_be_bytes());
+        // Reserved2 sent zero.
+        assert_eq!(&bytes[12..16], &[0, 0, 0, 0]);
+        // The 16-byte prefix.
+        assert_eq!(&bytes[16..32], &prefix.octets());
+
+        let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(consumed, NDP_PREFIX_INFORMATION_LEN);
+        assert_eq!(decoded.prefix_length(), Some(64));
+        assert_eq!(decoded.prefix_on_link(), Some(true));
+        assert_eq!(decoded.prefix_autonomous(), Some(true));
+        assert_eq!(decoded.prefix_valid_lifetime(), Some(2_592_000));
+        assert_eq!(decoded.prefix_preferred_lifetime(), Some(604_800));
+        assert_eq!(decoded.prefix(), Some(prefix));
+        // Re-encode reproduces the original bytes exactly.
+        assert_eq!(decoded.encode().unwrap(), bytes);
+    }
+
+    // RFC 4861 sec 4.6.2 / RFC 4862 sec 5.5.3: the L (on-link) and A (autonomous)
+    // flags are independent. Exercise every boundary combination (neither / L / A
+    // / both) and assert each flag reads back independently.
+    #[test]
+    fn prefix_information_flag_independence() {
+        let prefix = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0);
+        for (on_link, autonomous) in [(false, false), (true, false), (false, true), (true, true)] {
+            let opt = NdpOption::prefix_information(prefix, 64, on_link, autonomous, 0, 0);
+            // Round-trip through encode/decode and read the flags back.
+            let bytes = opt.encode().unwrap();
+            let (decoded, _) = NdpOption::decode_one(&bytes).unwrap();
+            assert_eq!(
+                decoded.prefix_on_link(),
+                Some(on_link),
+                "L read independently (L={on_link} A={autonomous})"
+            );
+            assert_eq!(
+                decoded.prefix_autonomous(),
+                Some(autonomous),
+                "A read independently (L={on_link} A={autonomous})"
+            );
+            // The flags octet carries exactly the set bits and nothing in the
+            // reserved field.
+            let mut expected = 0u8;
+            if on_link {
+                expected |= NDP_PREFIX_FLAG_ON_LINK;
+            }
+            if autonomous {
+                expected |= NDP_PREFIX_FLAG_AUTONOMOUS;
+            }
+            assert_eq!(bytes[3], expected);
+            assert_eq!(decoded.prefix_reserved1(), Some(0));
+        }
+    }
+
+    // The lifetimes round-trip the infinity sentinel (0xffffffff) and the
+    // Reserved1 / Reserved2 fields are preserved verbatim when set on purpose
+    // (honored overrides) via prefix_information_raw.
+    #[test]
+    fn prefix_information_reserved_and_infinity_preserved() {
+        let prefix = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0);
+        // flags = L | A | all six Reserved1 bits set; Reserved2 deliberately
+        // non-zero. Lifetimes are infinity.
+        let flags =
+            NDP_PREFIX_FLAG_ON_LINK | NDP_PREFIX_FLAG_AUTONOMOUS | NDP_PREFIX_FLAGS_RESERVED;
+        let opt = NdpOption::prefix_information_raw(
+            prefix,
+            128,
+            flags,
+            NDP_PREFIX_LIFETIME_INFINITY,
+            NDP_PREFIX_LIFETIME_INFINITY,
+            0xdead_beef,
+        );
+        let bytes = opt.encode().unwrap();
+        let (decoded, _) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(decoded.prefix_on_link(), Some(true));
+        assert_eq!(decoded.prefix_autonomous(), Some(true));
+        // The six Reserved1 bits survive untouched, not masked away.
+        assert_eq!(decoded.prefix_reserved1(), Some(NDP_PREFIX_FLAGS_RESERVED));
+        assert_eq!(
+            decoded.prefix_valid_lifetime(),
+            Some(NDP_PREFIX_LIFETIME_INFINITY)
+        );
+        assert_eq!(
+            decoded.prefix_preferred_lifetime(),
+            Some(NDP_PREFIX_LIFETIME_INFINITY)
+        );
+        assert_eq!(decoded.prefix_reserved2(), Some(0xdead_beef));
+        assert_eq!(decoded.prefix(), Some(prefix));
+    }
+
+    // The Prefix Information accessors reject other option types (no false reads).
+    #[test]
+    fn prefix_accessors_reject_other_options() {
+        let mtu = NdpOption::mtu(1500);
+        assert_eq!(mtu.prefix_length(), None);
+        assert_eq!(mtu.prefix_on_link(), None);
+        assert_eq!(mtu.prefix_autonomous(), None);
+        assert_eq!(mtu.prefix_valid_lifetime(), None);
+        assert_eq!(mtu.prefix(), None);
+    }
+
+    // RFC 4861 sec 4.6.4: an MTU option (type 5) carries a 16-bit Reserved field
+    // and a 32-bit MTU, occupies one 8-octet unit (length 1 / 8 bytes), and reads
+    // back through the typed accessor after a full encode/decode round-trip.
+    #[test]
+    fn mtu_option_round_trips() {
+        let opt = NdpOption::mtu(1500);
+        assert_eq!(opt.option_type(), NDP_OPT_MTU);
+        assert!(opt.is_known());
+        assert_eq!(opt.mtu_value(), Some(1500));
+
+        let bytes = opt.encode().unwrap();
+        // type(1) + length(1) + Reserved(2) + MTU(4) = 8 bytes = one 8-octet unit.
+        assert_eq!(bytes.len(), NDP_MTU_OPTION_LEN);
+        assert_eq!(&bytes[0..2], &[NDP_OPT_MTU, NDP_MTU_OPTION_UNITS]);
+        // Reserved field sent zero.
+        assert_eq!(&bytes[2..4], &[0, 0]);
+        assert_eq!(&bytes[4..8], &1500u32.to_be_bytes());
+
+        let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(consumed, NDP_MTU_OPTION_LEN);
+        assert_eq!(decoded.option_type(), NDP_OPT_MTU);
+        assert_eq!(decoded.mtu_value(), Some(1500));
+        // A jumbo MTU round-trips too.
+        assert_eq!(NdpOption::mtu(9000).mtu_value(), Some(9000));
+        // The accessor rejects other option types.
+        assert_eq!(NdpOption::generic(NDP_OPT_NONCE, []).mtu_value(), None);
+        assert_eq!(decoded.encode().unwrap(), bytes);
+    }
+
+    // A deliberately-wrong explicit length on a typed Prefix Information / MTU
+    // option survives encode untouched (honored overrides) — same rule as the
+    // generic options.
+    #[test]
+    fn typed_option_explicit_wrong_length_is_preserved() {
+        let prefix = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0);
+        // A Prefix Information option's real length is 4 units; pin it to 5 (an
+        // out-of-spec value). The encoder must emit length=5 untouched and pad to
+        // 40 bytes.
+        let wrong = NdpOption::prefix_information(prefix, 64, true, false, 0, 0).length(5);
+        assert_eq!(wrong.explicit_length(), Some(5));
+        let bytes = wrong.encode().unwrap();
+        assert_eq!(bytes[1], 5, "pinned length survives untouched");
+        assert_eq!(bytes.len(), 40, "pinned length drives the encoded size");
+        // The real prefix bytes are still present at the front; clearing the
+        // override returns to auto-fill (4 units).
+        assert_eq!(&bytes[16..32], &prefix.octets());
+        assert_eq!(wrong.clear_length().effective_length().unwrap(), 4);
+
+        // Likewise an MTU option pinned to a wrong length emits it verbatim.
+        let mtu_wrong = NdpOption::mtu(1500).length(2);
+        let mtu_bytes = mtu_wrong.encode().unwrap();
+        assert_eq!(mtu_bytes[1], 2);
+        assert_eq!(mtu_bytes.len(), 16);
     }
 
     // A trailing malformed option after a valid one still surfaces as an error,
