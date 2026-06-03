@@ -89,6 +89,30 @@ macro_rules! impl_layer_div {
 /// Common IPv4 protocol numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
+pub enum Ipv4Protocol {
+    /// IPv6 hop-by-hop option.
+    HopByHop = 0,
+    /// Internet Control Message Protocol for IPv4.
+    Icmpv4 = IPPROTO_ICMP,
+    /// Transmission Control Protocol.
+    Tcp = IPPROTO_TCP,
+    /// User Datagram Protocol.
+    Udp = IPPROTO_UDP,
+    /// IPv6 encapsulation.
+    Ipv6 = IPPROTO_IPV6,
+    /// ICMPv6.
+    Icmpv6 = IPPROTO_ICMPV6,
+}
+
+impl From<Ipv4Protocol> for u8 {
+    fn from(value: Ipv4Protocol) -> Self {
+        value as u8
+    }
+}
+
+/// Migration-only compatibility enum for the former generic IPv4 protocol selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum IpProtocol {
     /// IPv6 hop-by-hop option.
     HopByHop = 0,
@@ -521,7 +545,12 @@ impl Ipv4 {
         self
     }
 
-    /// Compatibility alias for a known protocol number.
+    /// Set a known IPv4 protocol number.
+    pub fn ipv4_protocol(self, protocol: Ipv4Protocol) -> Self {
+        self.protocol(protocol.into())
+    }
+
+    /// Migration-only compatibility alias for a known protocol number.
     pub fn proto(self, protocol: IpProtocol) -> Self {
         self.protocol(protocol.into())
     }
@@ -1279,7 +1308,8 @@ fn hex_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod ipv4 {
     use super::{
-        IpProtocol, Ipv4, IPPROTO_ICMP, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
+        IpProtocol, Ipv4, Ipv4Protocol, IPPROTO_ICMP, IPPROTO_ICMPV6, IPV4_FLAG_DONT_FRAGMENT,
+        IPV4_FLAG_MORE_FRAGMENTS,
     };
     use crate::{Icmpv4, LinkType, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
@@ -1416,6 +1446,20 @@ mod ipv4 {
             .more_fragments(true)
             .flags_value();
         assert_eq!(flags, IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS);
+    }
+
+    #[test]
+    fn ipv4_protocol_selector_sets_wire_value_and_raw_protocol_override_wins() {
+        let typed = (Ipv4::new().ipv4_protocol(Ipv4Protocol::Icmpv6) / Raw::from("typed"))
+            .compile()
+            .unwrap();
+        let raw = (Ipv4::new().ipv4_protocol(Ipv4Protocol::Tcp).protocol(253) / Raw::from("raw"))
+            .compile()
+            .unwrap();
+
+        assert_eq!(u8::from(Ipv4Protocol::Icmpv4), IPPROTO_ICMP);
+        assert_eq!(typed.as_bytes()[9], IPPROTO_ICMPV6);
+        assert_eq!(raw.as_bytes()[9], 253);
     }
 }
 

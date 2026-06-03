@@ -169,7 +169,7 @@ pub use icmp::{
     Icmp, IcmpAddressMask, IcmpQuotedIpv4, IcmpRouterAdvertisementEntry, IcmpTimestamp,
 };
 pub use ip::{
-    IpProtocol, Ipv4, Ipv4Option, Ipv4OptionIter, Ipv4RouteOptionKind, IPPROTO_ICMP,
+    IpProtocol, Ipv4, Ipv4Option, Ipv4OptionIter, Ipv4Protocol, Ipv4RouteOptionKind, IPPROTO_ICMP,
     IPPROTO_ICMPV6, IPPROTO_IPV6, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
     IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV4_OPTION_EOL, IPV4_OPTION_LOOSE_SOURCE_ROUTE,
     IPV4_OPTION_NOP, IPV4_OPTION_RECORD_ROUTE, IPV4_OPTION_STRICT_SOURCE_ROUTE,

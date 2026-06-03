@@ -20,6 +20,44 @@ fn prelude_builds_and_compiles_packet() -> crafter::Result<()> {
 }
 
 #[test]
+fn ipv4_protocol_public_api_paths_are_usable() -> crafter::Result<()> {
+    let prelude_protocol: Ipv4Protocol = Ipv4Protocol::Icmpv4;
+    let root_protocol: crafter::Ipv4Protocol = crafter::Ipv4Protocol::Tcp;
+    let core_protocol: crafter::core::Ipv4Protocol = crafter::core::Ipv4Protocol::Udp;
+    let protocols_protocol: crafter::protocols::Ipv4Protocol =
+        crafter::protocols::Ipv4Protocol::Icmpv6;
+
+    let prelude_packet =
+        (Ipv4::new().ipv4_protocol(prelude_protocol) / Raw::from("prelude")).compile()?;
+    let root_packet = (crafter::Ipv4::new().ipv4_protocol(root_protocol)
+        / crafter::Raw::from("root"))
+    .compile()?;
+    let core_packet = (crafter::core::Ipv4::new().ipv4_protocol(core_protocol)
+        / crafter::core::Raw::from("core"))
+    .compile()?;
+    let protocols_packet = (crafter::protocols::Ipv4::new().ipv4_protocol(protocols_protocol)
+        / crafter::protocols::Raw::from("protocols"))
+    .compile()?;
+
+    assert_eq!(u8::from(prelude_protocol), IPPROTO_ICMP);
+    assert_eq!(u8::from(root_protocol), crafter::IPPROTO_TCP);
+    assert_eq!(u8::from(core_protocol), crafter::core::IPPROTO_UDP);
+    assert_eq!(
+        u8::from(protocols_protocol),
+        crafter::protocols::IPPROTO_ICMPV6
+    );
+    assert_eq!(prelude_packet.as_bytes()[9], IPPROTO_ICMP);
+    assert_eq!(root_packet.as_bytes()[9], crafter::IPPROTO_TCP);
+    assert_eq!(core_packet.as_bytes()[9], crafter::core::IPPROTO_UDP);
+    assert_eq!(
+        protocols_packet.as_bytes()[9],
+        crafter::protocols::IPPROTO_ICMPV6
+    );
+
+    Ok(())
+}
+
+#[test]
 fn public_module_paths_expose_representative_items() -> crafter::Result<()> {
     let packet = crafter::core::Packet::from_layer(crafter::core::Raw::from("core"));
     assert_eq!(packet.compile()?.as_bytes(), b"core");
