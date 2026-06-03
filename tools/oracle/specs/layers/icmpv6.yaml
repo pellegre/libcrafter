@@ -176,6 +176,22 @@ coverage_cases:
   - ipv6-routing-icmpv6
   - icmpv6-errors
   - crafter-icmpv6-errors
+  # RFC 4861 Neighbor Discovery core messages (types 133-137) plus the base
+  # options carried by each (SLLA/TLLA opt 1/2, Prefix Information opt 3,
+  # Redirected Header opt 4, MTU opt 5). Both interop directions are covered in
+  # tools/oracle/specs/fixtures/scapy-cases.json against the scapy ICMPv6ND_*
+  # / ICMPv6NDOpt* reference; the primary round-trip correctness gate is the
+  # Rust integration test crafter/tests/icmpv6_ndp.rs.
+  - ndp-router-solicitation
+  - ndp-router-advertisement
+  - ndp-neighbor-solicitation
+  - ndp-neighbor-advertisement
+  - ndp-redirect
+  - crafter-ndp-router-solicitation
+  - crafter-ndp-router-advertisement
+  - crafter-ndp-neighbor-solicitation
+  - crafter-ndp-neighbor-advertisement
+  - crafter-ndp-redirect
 
 backend_support:
   scapy:
@@ -216,6 +232,18 @@ backend_support:
         backend type-mapping and normalization tables; extended-echo types
         160/161 have no native Scapy ICMPv6 class, so the backend emits the
         numeric type (raw-compatible), mirroring the ICMPv4 extended-echo path.
+      - >-
+        NDP core messages (types 133-137) and their base options (SLLA/TLLA,
+        Prefix Information, Redirected Header, MTU) materialize natively via
+        ICMPv6ND_RS/RA/NS/NA/Redirect + ICMPv6NDOptSrcLLAddr/DstLLAddr/PrefixInfo/
+        RedirectedHdr/MTU and agree with libcrafter byte-for-byte (the ndp-* and
+        crafter-ndp-* coverage cases). One quirk: scapy's ICMPv6ND_RA defaults the
+        RFC 4191 Default Router Preference (Prf) field, which occupies two of the
+        RFC 4861 send-as-zero Reserved flag bits, to a non-zero value; a strict
+        Router Advertisement comparison materializes the reference with prf=0 so
+        its flags byte matches libcrafter, which sends those Reserved bits zero
+        (an agent sets the RFC 4191 preference through the honored-override
+        rest-of-header). See the ndp-router-advertisement case note.
   libcrafter:
     status: partial
     encode: true

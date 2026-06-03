@@ -21,7 +21,13 @@
         "2001:db8:1::10",
         "2001:db8:2::20",
         "2001:db8:ffff::1",
-        "2001:db8:ffff::2"
+        "2001:db8:ffff::2",
+        "fe80::200:5eff:fe00:5301",
+        "fe80::200:5eff:fe00:5302",
+        "ff02::1",
+        "ff02::2",
+        "ff02::1:ff00:10",
+        "::"
     ],
     "dns_names": [
       "example.com.",
@@ -809,6 +815,150 @@
       "strict_bytes": true,
       "status": "planned",
       "notes": "IPv6 destination unreachable, packet-too-big, time exceeded, and parameter problem variants with quoted packets."
+    },
+    {
+      "name": "ndp-router-solicitation",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RS",
+        "ICMPv6NDOptSrcLLAddr"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4861 section 4.1 Router Solicitation (type 133, code 0) sent from a link-local source (fe80::/10) to the all-routers multicast ff02::2, carrying a Source Link-Layer Address option (section 4.6.1) with a documentation MAC. The 32-bit Reserved rest-of-header is sent zero. Scapy materializes IPv6/ICMPv6ND_RS/ICMPv6NDOptSrcLLAddr; libcrafter decodes the typed RouterSolicitation body and its NDP option list. The fixed 8-octet header plus the 8-octet SLLA option give strict byte agreement in both directions."
+    },
+    {
+      "name": "ndp-router-advertisement",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptPrefixInfo",
+        "ICMPv6NDOptMTU"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4861 section 4.2 Router Advertisement (type 134, code 0) from a link-local router (fe80::/10) to the all-nodes multicast ff02::1. The rest-of-header carries Cur Hop Limit 64, the M (Managed) flag set with O clear and the six Reserved flag bits zero, and Router Lifetime 1800 s; the body carries Reachable Time and Retrans Timer words and two options in order: Prefix Information (section 4.6.2, prefix 2001:db8:1::/64 with the L and A flags set, valid/preferred lifetimes) and MTU (section 4.6.4, 1500). Scapy materializes IPv6/ICMPv6ND_RA/ICMPv6NDOptPrefixInfo/ICMPv6NDOptMTU; libcrafter decodes the typed RouterAdvertisement body, the M/O flags from the header, and the ordered NDP option list. Both option types are fixed-width (PI 4 units, MTU 1 unit) so strict bytes hold in both directions. Scapy normalization quirk: scapy's ICMPv6ND_RA defaults the RFC 4191 Default Router Preference (Prf) field, which occupies two of RFC 4861's send-as-zero Reserved flag bits, to a non-zero value (prf=1 -> flags byte 0x08); the reference RA must be materialized with prf=0 so its flags byte (0x80, M only) matches libcrafter, which sends those Reserved bits zero per RFC 4861 section 4.2. With prf=0 the two stacks agree byte-for-byte (verified: IPv6-level ICMPv6 bytes 860003484080...05dc on both sides). An agent that wants the RFC 4191 preference sets the header rest-of-header explicitly via Icmpv6::rest_of_header (honored override)."
+    },
+    {
+      "name": "ndp-neighbor-solicitation",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_NS",
+        "ICMPv6NDOptSrcLLAddr"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4861 section 4.3 Neighbor Solicitation (type 135, code 0) resolving a documentation Target Address (2001:db8:1::10), sent from a link-local source (fe80::/10) to the solicited-node multicast ff02::1:ff00:10, carrying a Source Link-Layer Address option (section 4.6.1). The 32-bit Reserved rest-of-header is sent zero and the 128-bit Target Address leads the body. Scapy materializes IPv6/ICMPv6ND_NS/ICMPv6NDOptSrcLLAddr; libcrafter decodes the typed NeighborSolicitation body (target + options). Strict bytes in both directions. A DAD-form solicitation (source ::, no SLLA) is exercised by the Rust integration test crafter/tests/icmpv6_ndp.rs."
+    },
+    {
+      "name": "ndp-neighbor-advertisement",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_NA",
+        "ICMPv6NDOptDstLLAddr"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4861 section 4.4 Neighbor Advertisement (type 136, code 0) for a documentation Target Address (2001:db8:1::10) sent to a link-local host (fe80::/10), carrying a Target Link-Layer Address option (section 4.6.1). The rest-of-header flags word sets S (Solicited) and O (Override) with R (Router) clear and the 29 Reserved bits zero; the 128-bit Target Address leads the body. Scapy materializes IPv6/ICMPv6ND_NA/ICMPv6NDOptDstLLAddr; libcrafter decodes the typed NeighborAdvertisement body, reporting each R/S/O flag independently. Strict bytes in both directions."
+    },
+    {
+      "name": "ndp-redirect",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_Redirect",
+        "ICMPv6NDOptDstLLAddr",
+        "ICMPv6NDOptRedirectedHdr"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4861 section 4.5 Redirect (type 137, code 0) from a link-local router (fe80::/10) to a link-local host, advertising a better-first-hop Target Address and a Destination Address being redirected (both 128-bit fields lead the body), carrying a Target Link-Layer Address option (section 4.6.1) and a Redirected Header option (section 4.6.3) with an embedded sample packet, zero-padded to the 8-octet boundary. The 32-bit Reserved rest-of-header is sent zero. Scapy materializes IPv6/ICMPv6ND_Redirect/ICMPv6NDOptDstLLAddr/ICMPv6NDOptRedirectedHdr; libcrafter decodes the typed Redirect body (target + destination + options). Strict bytes in both directions."
+    },
+    {
+      "name": "crafter-ndp-router-solicitation",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RS",
+        "ICMPv6NDOptSrcLLAddr"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::router_solicitation_with_source_link_layer (RFC 4861 section 4.1) over IPv6 from a link-local source to ff02::2 decodes in Scapy as IPv6/ICMPv6ND_RS/ICMPv6NDOptSrcLLAddr with the same Reserved word and Source Link-Layer Address, byte-for-byte. Mirrors the scapy_to_libcrafter ndp-router-solicitation case."
+    },
+    {
+      "name": "crafter-ndp-router-advertisement",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptPrefixInfo",
+        "ICMPv6NDOptMTU"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying Prefix Information (RFC 4861 section 4.6.2) and MTU (section 4.6.4) options decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptPrefixInfo/ICMPv6NDOptMTU with the same Cur Hop Limit, M/O flags, Router Lifetime, Reachable Time, Retrans Timer, prefix/lifetimes, and MTU, byte-for-byte. Mirrors the scapy_to_libcrafter ndp-router-advertisement case and proves the option-ordering round-trip. Same RFC 4191 Prf normalization quirk as ndp-router-advertisement: libcrafter sends the RFC 4861 send-as-zero Reserved flag bits (which include the RFC 4191 Prf field) as zero, so the scapy reference must use prf=0 for a strict-byte comparison; the agreed IPv6-level ICMPv6 bytes are 860003484080...05dc."
+    },
+    {
+      "name": "crafter-ndp-neighbor-solicitation",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_NS",
+        "ICMPv6NDOptSrcLLAddr"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::neighbor_solicitation_with_source_link_layer (RFC 4861 section 4.3) resolving 2001:db8:1::10 toward the solicited-node multicast decodes in Scapy as IPv6/ICMPv6ND_NS/ICMPv6NDOptSrcLLAddr with the same Reserved word, Target Address, and Source Link-Layer Address, byte-for-byte. Mirrors the scapy_to_libcrafter ndp-neighbor-solicitation case."
+    },
+    {
+      "name": "crafter-ndp-neighbor-advertisement",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_NA",
+        "ICMPv6NDOptDstLLAddr"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::neighbor_advertisement_with_target_link_layer (RFC 4861 section 4.4) with S and O set and R clear decodes in Scapy as IPv6/ICMPv6ND_NA/ICMPv6NDOptDstLLAddr with the same R/S/O flags word, Target Address, and Target Link-Layer Address, byte-for-byte. Mirrors the scapy_to_libcrafter ndp-neighbor-advertisement case."
+    },
+    {
+      "name": "crafter-ndp-redirect",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_Redirect",
+        "ICMPv6NDOptDstLLAddr",
+        "ICMPv6NDOptRedirectedHdr"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::redirect (RFC 4861 section 4.5) carrying a Target Link-Layer Address (section 4.6.1) and a Redirected Header option (section 4.6.3) decodes in Scapy as IPv6/ICMPv6ND_Redirect/ICMPv6NDOptDstLLAddr/ICMPv6NDOptRedirectedHdr with the same Reserved word, Target and Destination Addresses, link-layer address, and embedded redirected packet (zero-padded to the 8-octet boundary), byte-for-byte. Mirrors the scapy_to_libcrafter ndp-redirect case."
     },
     {
       "name": "dns-response-records",
