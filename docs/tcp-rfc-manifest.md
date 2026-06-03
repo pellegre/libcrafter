@@ -317,14 +317,27 @@ to carry byte counters when the codepoint space is insufficient. `crafter` must:
 
 ## Extended Data Offset (EDO) Status Reconciliation
 
-`crafter` currently exports `TcpExtendedDataOffset` and the option kind constant
-`TCP_OPTION_EDO = 237`, modeling the TCP Extended Data Offset draft
-(draft-ietf-tcpm-tcp-edo). EDO is not an RFC-published assigned kind in the
-current IANA TCP Option Kind Numbers registry; kind 237 is unassigned there as
-of 2026-06-02. The plan treats EDO as source-status reconciliation: the existing
-public API is preserved and its draft (not RFC-published) status is documented
-here, and source-backed experimental ExID support (RFC 6994, kinds 253/254) is
-added rather than silently removing or redefining the exported EDO names.
+`crafter` currently exports `TcpExtendedDataOffset`, the option kind constant
+`TCP_OPTION_EDO = 237`, and the EDO length constants `TCP_EDO_REQUEST_LEN`,
+`TCP_EDO_HEADER_LEN`, and `TCP_EDO_HEADER_AND_SEGMENT_LEN`, modeling the TCP
+Extended Data Offset draft (draft-ietf-tcpm-tcp-edo). EDO is not an RFC-published
+assigned kind in the current IANA TCP Option Kind Numbers registry; kind 237 is
+unassigned there as of 2026-06-02, so `tcp_option_kind_class(237)` reports
+`Unassigned` while `tcp_option_kind_name(237)` keeps the `"EDO"` display token.
+
+Source status: EDO is draft-derived (draft status, not a current IANA Option-Kind
+assignment). The plan treats it as source-status reconciliation and preserves the
+existing EDO public API for **backward compatibility** rather than removing or
+redefining the exported names. The compatibility rationale is that generated
+tools and downstream code may already depend on `TcpExtendedDataOffset`, the
+`extended_data_offset*` constructors, the `extended_data_offset_value` accessor,
+and the `TCP_OPTION_EDO` / `TCP_EDO_*` constants; breaking them would violate the
+crate's public-API contract. The additive, source-backed **current** path is RFC
+6994 experimental ExID support (kinds 253/254, added in step 17): when an
+experimental option needs an on-wire codepoint, prefer the RFC 6994 experimental
+ExID options over the draft-derived EDO kind. The compatibility test
+`tcp_edo_compatibility_public_api` (tcp/tests.rs) proves the preserved EDO API
+still constructs, classifies, encodes, decodes, and round-trips byte-for-byte.
 
 ## Segment Sizing And Fragmentation-Adjacent Guidance (Documentation Only)
 

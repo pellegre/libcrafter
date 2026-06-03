@@ -2642,3 +2642,155 @@ mod inspection_fields {
         );
     }
 }
+
+mod edo_compatibility {
+    use super::super::{
+        tcp_option_kind_class, tcp_option_kind_name, Tcp, TcpExtendedDataOffset, TcpOption,
+        TcpOptionKindClass, TCP_EDO_HEADER_AND_SEGMENT_LEN, TCP_EDO_HEADER_LEN, TCP_EDO_REQUEST_LEN,
+        TCP_OPTION_EDO,
+    };
+    use crate::{Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 2)
+    }
+
+    // Step 51 proves the pre-existing TCP Extended Data Offset (EDO) public API
+    // still works and documents its source status. EDO is preserved for backward
+    // compatibility: option kind 237 is draft-derived and is NOT a current IANA
+    // Option-Kind assignment, so it classifies as Unassigned even though the
+    // typed API is retained. The source-backed additive current path is RFC 6994
+    // experimental ExID support (step 17). See docs/tcp-rfc-manifest.md and
+    // docs/tcp-implementation-inventory.md. This test only exercises the existing
+    // API; it must not require any new or redefined EDO symbol.
+    #[test]
+    fn tcp_edo_compatibility_public_api() {
+        // The EDO wire constants keep their documented values.
+        assert_eq!(TCP_OPTION_EDO, 237);
+        assert_eq!(TCP_EDO_REQUEST_LEN, 2);
+        assert_eq!(TCP_EDO_HEADER_LEN, 4);
+        assert_eq!(TCP_EDO_HEADER_AND_SEGMENT_LEN, 6);
+
+        // The `TcpExtendedDataOffset` enum and its `option_len()` accessor map
+        // each variant to its documented length byte.
+        assert_eq!(
+            TcpExtendedDataOffset::Request.option_len(),
+            TCP_EDO_REQUEST_LEN
+        );
+        assert_eq!(
+            TcpExtendedDataOffset::HeaderLength { header_length: 9 }.option_len(),
+            TCP_EDO_HEADER_LEN
+        );
+        assert_eq!(
+            TcpExtendedDataOffset::HeaderAndSegmentLength {
+                header_length: 9,
+                segment_length: 100
+            }
+            .option_len(),
+            TCP_EDO_HEADER_AND_SEGMENT_LEN
+        );
+
+        // The three EDO constructors wrap the matching `TcpExtendedDataOffset`
+        // variant, and the `extended_data_offset_value()` accessor returns it.
+        let request = TcpOption::extended_data_offset_request();
+        let header = TcpOption::extended_data_offset(9);
+        let header_and_segment = TcpOption::extended_data_offset_ext(9, 100);
+        assert_eq!(
+            request,
+            TcpOption::ExtendedDataOffset(TcpExtendedDataOffset::Request)
+        );
+        assert_eq!(
+            header,
+            TcpOption::ExtendedDataOffset(TcpExtendedDataOffset::HeaderLength { header_length: 9 })
+        );
+        assert_eq!(
+            header_and_segment,
+            TcpOption::ExtendedDataOffset(TcpExtendedDataOffset::HeaderAndSegmentLength {
+                header_length: 9,
+                segment_length: 100,
+            })
+        );
+        assert_eq!(
+            request.extended_data_offset_value(),
+            Some(TcpExtendedDataOffset::Request)
+        );
+        assert_eq!(
+            header.extended_data_offset_value(),
+            Some(TcpExtendedDataOffset::HeaderLength { header_length: 9 })
+        );
+        assert_eq!(
+            header_and_segment.extended_data_offset_value(),
+            Some(TcpExtendedDataOffset::HeaderAndSegmentLength {
+                header_length: 9,
+                segment_length: 100,
+            })
+        );
+        // A non-EDO option returns None from the accessor.
+        assert_eq!(TcpOption::sack_permitted().extended_data_offset_value(), None);
+
+        // Every EDO option carries kind 237 and is classified/named consistently
+        // through the public kind/classification helpers. EDO is preserved for
+        // backward compatibility and is NOT a current IANA assignment, so it
+        // classifies as Unassigned while keeping the "EDO" display name.
+        for option in [&request, &header, &header_and_segment] {
+            assert_eq!(option.kind(), TCP_OPTION_EDO);
+            assert_eq!(option.kind_class(), TcpOptionKindClass::Unassigned);
+            assert!(!option.kind_is_assigned());
+            assert!(!option.kind_is_experimental());
+            assert_eq!(option.kind_name(), "EDO");
+        }
+        assert_eq!(
+            tcp_option_kind_class(TCP_OPTION_EDO),
+            TcpOptionKindClass::Unassigned
+        );
+        assert_eq!(tcp_option_kind_name(TCP_OPTION_EDO), "EDO");
+
+        // Each variant encodes to the exact wire bytes (kind, length, payload)
+        // and decodes back through `TcpOption::decode_all` to an equal value.
+        let request_bytes = request.encode().unwrap();
+        let header_bytes = header.encode().unwrap();
+        let header_and_segment_bytes = header_and_segment.encode().unwrap();
+        assert_eq!(request_bytes, vec![TCP_OPTION_EDO, TCP_EDO_REQUEST_LEN]);
+        assert_eq!(
+            header_bytes,
+            vec![TCP_OPTION_EDO, TCP_EDO_HEADER_LEN, 0x00, 0x09]
+        );
+        assert_eq!(
+            header_and_segment_bytes,
+            vec![TCP_OPTION_EDO, TCP_EDO_HEADER_AND_SEGMENT_LEN, 0x00, 0x09, 0x00, 0x64]
+        );
+        assert_eq!(TcpOption::decode_all(&request_bytes).unwrap(), vec![request.clone()]);
+        assert_eq!(TcpOption::decode_all(&header_bytes).unwrap(), vec![header.clone()]);
+        assert_eq!(
+            TcpOption::decode_all(&header_and_segment_bytes).unwrap(),
+            vec![header_and_segment.clone()]
+        );
+
+        // Byte-exact round-trip through full packet compile()/decode: the EDO
+        // options survive untouched and the decoded packet recompiles to the
+        // identical bytes, proving the public EDO path is unbroken end to end.
+        let tcp = Tcp::new()
+            .sport(12345)
+            .dport(80)
+            .tcp_option(request.clone())
+            .unwrap()
+            .tcp_option(header.clone())
+            .unwrap()
+            .tcp_option(header_and_segment.clone())
+            .unwrap();
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x2237) / tcp / Raw::from("edo"))
+            .compile()
+            .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
+        assert_eq!(options[0], request);
+        assert_eq!(options[1], header);
+        assert_eq!(options[2], header_and_segment);
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+}
