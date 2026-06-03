@@ -47,6 +47,7 @@ use core::net::Ipv6Addr;
 
 use crate::error::{CrafterError, Result};
 use crate::mac::MacAddr;
+use crate::protocols::dns::{decode_dns_name_typed, DnsName};
 
 // --- NDP option type codepoints (IANA "IPv6 Neighbor Discovery Option
 // Formats" registry) -------------------------------------------------------
@@ -175,6 +176,30 @@ pub const NDP_ROUTE_INFORMATION_LEN_FULL_PREFIX: usize = 24;
 /// The Route Lifetime value (seconds) that RFC 4191 sec 2.3 defines as infinity
 /// (`0xffffffff`).
 pub const NDP_ROUTE_LIFETIME_INFINITY: u32 = 0xffff_ffff;
+
+/// Width, in octets, of the Reserved field that precedes the Lifetime in both
+/// the RDNSS (RFC 8106 sec 5.1) and DNSSL (RFC 8106 sec 5.2) options: a 16-bit
+/// field, "initialized to zero by the sender and ignored by the receiver".
+pub const NDP_DNS_RESERVED_LEN: usize = 2;
+
+/// Width, in octets, of an IPv6 address carried in the RDNSS option value
+/// (RFC 8106 sec 5.1: "One or more 128-bit IPv6 addresses").
+pub const NDP_RDNSS_ADDRESS_LEN: usize = 16;
+
+/// The RDNSS / DNSSL Lifetime value (seconds) that RFC 8106 (sec 5.1, sec 5.2)
+/// defines as infinity (`0xffffffff`). A value of zero means the addresses /
+/// domain names MUST no longer be used.
+pub const NDP_DNS_LIFETIME_INFINITY: u32 = 0xffff_ffff;
+
+/// The RDNSS option `Length` field value, in 8-octet units, for an option
+/// carrying `addresses` IPv6 addresses (RFC 8106 sec 5.1: "Length ... is in
+/// units of 8 octets. The minimum value is 3 if one IPv6 address is contained
+/// in the option" — i.e. `1 + 2 * n`, since the two-byte Type/Length header, the
+/// 2-byte Reserved field, and the 4-byte Lifetime fill the first 8-octet unit
+/// and each 16-byte address is two more units).
+pub const fn ndp_rdnss_length_units(addresses: usize) -> usize {
+    1 + 2 * addresses
+}
 
 /// IPv6 Route / Default Router Preference (Prf), RFC 4191 sections 2.1 and 2.3.
 ///
@@ -800,6 +825,207 @@ impl NdpOption {
         let mut octets = [0u8; 16];
         octets[..take].copy_from_slice(&carried[..take]);
         Some(Ipv6Addr::from(octets))
+    }
+
+    /// Build a Recursive DNS Server (RDNSS) option (type 25) advertising one or
+    /// more recursive DNS resolvers and the lifetime over which they may be used
+    /// (RFC 8106 section 5.1).
+    ///
+    /// The value (everything after the two-byte Type/Length header) is laid out
+    /// per RFC 8106 section 5.1:
+    ///
+    /// ```text
+    /// Reserved (2, sent zero) | Lifetime (4) | Address[0..n] (16 each)
+    /// ```
+    ///
+    /// With the two-byte header that is `8 + 16 * n` bytes — exactly `1 + 2 * n`
+    /// 8-octet units ([`ndp_rdnss_length_units`]) — so no padding is needed and
+    /// the framework's auto-fill produces the RFC's "minimum value is 3 if one
+    /// IPv6 address" length. `lifetime` is in seconds;
+    /// [`NDP_DNS_LIFETIME_INFINITY`] (`0xffffffff`) means infinity and a value of
+    /// zero means the addresses MUST no longer be used.
+    ///
+    /// This is a typed constructor over the framework: it produces a
+    /// [`NdpOption::Generic`] whose value bytes are the option fields, so it
+    /// round-trips through [`NdpOptions`] exactly like any other recognized
+    /// option, and [`NdpOption::rdnss_lifetime`] / [`NdpOption::rdnss_servers`]
+    /// read the fields back. RFC 8106 section 5.1 says the option SHOULD carry at
+    /// least one address, but `crafter` does not reject an empty list so an agent
+    /// can emit a deliberately malformed option to exercise a parser.
+    pub fn rdnss(lifetime: u32, servers: &[Ipv6Addr]) -> Self {
+        // RFC 8106 sec 5.1 value layout (after the Type/Length header):
+        //   Reserved(2, zero) || Lifetime(4) || Address(16) * n.
+        let mut value =
+            Vec::with_capacity(NDP_DNS_RESERVED_LEN + 4 + servers.len() * NDP_RDNSS_ADDRESS_LEN);
+        value.extend_from_slice(&[0u8; NDP_DNS_RESERVED_LEN]);
+        value.extend_from_slice(&lifetime.to_be_bytes());
+        for server in servers {
+            value.extend_from_slice(&server.octets());
+        }
+        Self::generic(NDP_OPT_RDNSS, value)
+    }
+
+    /// Read the Lifetime (seconds; `0xffffffff` = infinity, `0` = no longer use)
+    /// of an RDNSS option (type 25), or `None` for any other option or a value
+    /// too short to hold the Reserved + Lifetime head (RFC 8106 section 5.1).
+    pub fn rdnss_lifetime(&self) -> Option<u32> {
+        if self.option_type() != NDP_OPT_RDNSS {
+            return None;
+        }
+        // The Lifetime is the 32-bit field after the 16-bit Reserved field.
+        let word = self
+            .value()
+            .get(NDP_DNS_RESERVED_LEN..NDP_DNS_RESERVED_LEN + 4)?;
+        Some(u32::from_be_bytes([word[0], word[1], word[2], word[3]]))
+    }
+
+    /// Read the recursive DNS server addresses carried by an RDNSS option (type
+    /// 25), in order, or `None` for any other option (RFC 8106 section 5.1).
+    ///
+    /// Returns an empty `Vec` for a well-formed option that carries no addresses.
+    /// Any trailing bytes that do not form a complete 16-byte address (a
+    /// truncated or padded value) are ignored, so the accessor never panics on a
+    /// malformed option.
+    pub fn rdnss_servers(&self) -> Option<Vec<Ipv6Addr>> {
+        if self.option_type() != NDP_OPT_RDNSS {
+            return None;
+        }
+        let value = self.value();
+        // Addresses follow the 2-byte Reserved field and the 4-byte Lifetime.
+        let addresses = value.get(NDP_DNS_RESERVED_LEN + 4..)?;
+        let mut servers = Vec::with_capacity(addresses.len() / NDP_RDNSS_ADDRESS_LEN);
+        for chunk in addresses.chunks_exact(NDP_RDNSS_ADDRESS_LEN) {
+            let mut octets = [0u8; NDP_RDNSS_ADDRESS_LEN];
+            octets.copy_from_slice(chunk);
+            servers.push(Ipv6Addr::from(octets));
+        }
+        Some(servers)
+    }
+
+    /// Build a DNS Search List (DNSSL) option (type 31) advertising one or more
+    /// DNS search-list domain names and the lifetime over which they may be used
+    /// (RFC 8106 section 5.2).
+    ///
+    /// The value (everything after the two-byte Type/Length header) is laid out
+    /// per RFC 8106 section 5.2:
+    ///
+    /// ```text
+    /// Reserved (2, sent zero) | Lifetime (4) | Domain Names | zero padding
+    /// ```
+    ///
+    /// Each domain name is encoded with the crate's existing RFC 1035 Section 3.1
+    /// label codec ([`DnsName::encode_uncompressed`]) — length-prefixed labels
+    /// terminated by a zero-length (root) label, **without** compression pointers,
+    /// exactly as RFC 8106 section 5.2 requires ("MUST be encoded as described in
+    /// Section 3.1 of RFC 1035" and "MUST NOT be encoded in the compressed
+    /// form"). The concatenated names are then zero-padded so the whole value
+    /// reaches a multiple of 8 octets; the framework's [`Self::encode`] length
+    /// auto-fill performs that padding (the trailing zero octets are
+    /// indistinguishable from extra root labels, which RFC 8106 section 5.2 notes
+    /// a parser must tolerate). `lifetime` is in seconds;
+    /// [`NDP_DNS_LIFETIME_INFINITY`] (`0xffffffff`) means infinity and zero means
+    /// the domain names MUST no longer be used.
+    ///
+    /// This is a typed constructor over the framework: it produces a
+    /// [`NdpOption::Generic`] whose value bytes are the option fields, and
+    /// [`NdpOption::dnssl_lifetime`] / [`NdpOption::dnssl_domains`] read the
+    /// fields back. A domain string that does not parse as an RFC 1035 name (an
+    /// over-long label or name) is skipped rather than aborting the build, so the
+    /// infallible builder call sites keep composing; use
+    /// [`NdpOption::dnssl_checked`] when an encoding error is meaningful.
+    pub fn dnssl<S: AsRef<str>>(lifetime: u32, domains: &[S]) -> Self {
+        Self::dnssl_checked(lifetime, domains).unwrap_or_else(|_| {
+            // Fall back to a names-free option (Reserved + Lifetime only) when a
+            // domain fails to encode, mirroring the infallible-builder idiom the
+            // rest of the NDP option constructors use.
+            let mut value = Vec::with_capacity(NDP_DNS_RESERVED_LEN + 4);
+            value.extend_from_slice(&[0u8; NDP_DNS_RESERVED_LEN]);
+            value.extend_from_slice(&lifetime.to_be_bytes());
+            Self::generic(NDP_OPT_DNSSL, value)
+        })
+    }
+
+    /// Build a DNS Search List (DNSSL) option (type 31), surfacing an RFC 1035
+    /// name-encoding error instead of silently skipping the offending domain
+    /// (RFC 8106 section 5.2).
+    ///
+    /// This is the fallible form behind [`NdpOption::dnssl`]: each domain is
+    /// parsed and encoded with [`DnsName::encode_uncompressed`], and the first
+    /// label/name that violates the RFC 1035 length bounds returns a structured
+    /// [`CrafterError`].
+    pub fn dnssl_checked<S: AsRef<str>>(lifetime: u32, domains: &[S]) -> Result<Self> {
+        // RFC 8106 sec 5.2 value layout (after the Type/Length header):
+        //   Reserved(2, zero) || Lifetime(4) || encoded names || zero padding.
+        let mut value = Vec::with_capacity(NDP_DNS_RESERVED_LEN + 4 + domains.len() * 8);
+        value.extend_from_slice(&[0u8; NDP_DNS_RESERVED_LEN]);
+        value.extend_from_slice(&lifetime.to_be_bytes());
+        for domain in domains {
+            let name = DnsName::parse(domain.as_ref())?;
+            // Reuse the crate's RFC 1035 Section 3.1 label writer (uncompressed),
+            // not a hand-rolled encoder.
+            value.extend_from_slice(&name.encode_uncompressed()?);
+        }
+        // The 8-octet-boundary zero padding is applied by the framework's length
+        // auto-fill on encode; the in-memory value carries only the names.
+        Ok(Self::generic(NDP_OPT_DNSSL, value))
+    }
+
+    /// Read the Lifetime (seconds; `0xffffffff` = infinity, `0` = no longer use)
+    /// of a DNSSL option (type 31), or `None` for any other option or a value too
+    /// short to hold the Reserved + Lifetime head (RFC 8106 section 5.2).
+    pub fn dnssl_lifetime(&self) -> Option<u32> {
+        if self.option_type() != NDP_OPT_DNSSL {
+            return None;
+        }
+        let word = self
+            .value()
+            .get(NDP_DNS_RESERVED_LEN..NDP_DNS_RESERVED_LEN + 4)?;
+        Some(u32::from_be_bytes([word[0], word[1], word[2], word[3]]))
+    }
+
+    /// Read the DNS search-list domain names carried by a DNSSL option (type 31),
+    /// in order, as canonical trailing-dot presentation strings (RFC 8106 section
+    /// 5.2).
+    ///
+    /// Returns `None` for any other option. The names are decoded with the
+    /// crate's RFC 1035 Section 3.1 label codec
+    /// ([`crate::protocols::dns::decode_dns_name_typed`], no compression in this
+    /// context). Decoding stops at the trailing zero padding: RFC 8106 section
+    /// 5.2 pads the value to the 8-octet boundary with zero octets, which decode
+    /// as empty (root) names, so a zero-length name marks the end of the real
+    /// search list and is not reported. A name that runs past the option value
+    /// (a truncated/malformed option) ends the walk without a panic, returning the
+    /// names decoded so far.
+    pub fn dnssl_domains(&self) -> Option<Vec<String>> {
+        if self.option_type() != NDP_OPT_DNSSL {
+            return None;
+        }
+        let value = self.value();
+        // Names follow the 2-byte Reserved field and the 4-byte Lifetime.
+        let names_area = match value.get(NDP_DNS_RESERVED_LEN + 4..) {
+            Some(area) => area,
+            None => return Some(Vec::new()),
+        };
+        let mut domains = Vec::new();
+        let mut offset = 0usize;
+        while offset < names_area.len() {
+            // A zero octet is either an explicit root label terminating a name or
+            // the start of the 8-octet-boundary zero padding; either way the real
+            // search list has ended.
+            if names_area[offset] == 0 {
+                break;
+            }
+            match decode_dns_name_typed(names_area, offset) {
+                Ok((name, used)) if used > 0 => {
+                    domains.push(name.presentation().to_string());
+                    offset += used;
+                }
+                // A name that does not decode (truncation/overrun) or makes no
+                // progress ends the walk; never panic on a malformed option.
+                _ => break,
+            }
+        }
+        Some(domains)
     }
 
     /// Pin the `Length` field (in units of 8 octets) to an explicit value.
@@ -1803,5 +2029,196 @@ mod tests {
         assert_eq!(mtu.route_preference(), None);
         assert_eq!(mtu.route_lifetime(), None);
         assert_eq!(mtu.route_prefix(), None);
+    }
+
+    // RFC 8106 sec 5.1: an RDNSS option (type 25) carrying a single documentation
+    // resolver occupies 1 + 2*1 = 3 8-octet units (length 3 / 24 bytes) and the
+    // lifetime + address read back through the typed accessors after a full
+    // encode/decode round-trip.
+    #[test]
+    fn rdnss_single_server_round_trips() {
+        // Documentation resolver (RFC 3849) 2001:db8::1.
+        let server = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+        let opt = NdpOption::rdnss(1800, &[server]);
+        assert_eq!(opt.option_type(), NDP_OPT_RDNSS);
+        assert!(opt.is_known());
+        assert_eq!(opt.rdnss_lifetime(), Some(1800));
+        assert_eq!(opt.rdnss_servers(), Some(vec![server]));
+
+        let bytes = opt.encode().unwrap();
+        // RFC 8106 sec 5.1: Length = 1 + 2*n = 3 units = 24 bytes for one address.
+        assert_eq!(bytes[0], NDP_OPT_RDNSS);
+        assert_eq!(bytes[1] as usize, ndp_rdnss_length_units(1));
+        assert_eq!(bytes[1], 3);
+        assert_eq!(bytes.len(), 3 * NDP_OPTION_LENGTH_UNIT);
+        // Reserved field (2 bytes after the Type/Length header) sent zero.
+        assert_eq!(&bytes[2..4], &[0, 0]);
+        // Lifetime (big-endian), then the 16-byte address with no padding.
+        assert_eq!(&bytes[4..8], &1800u32.to_be_bytes());
+        assert_eq!(&bytes[8..24], &server.octets());
+
+        let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(decoded.rdnss_lifetime(), Some(1800));
+        assert_eq!(decoded.rdnss_servers(), Some(vec![server]));
+        // Re-encode reproduces the original bytes exactly.
+        assert_eq!(decoded.encode().unwrap(), bytes);
+    }
+
+    // RFC 8106 sec 5.1: an RDNSS option carrying two resolvers occupies
+    // 1 + 2*2 = 5 8-octet units (length 5 / 40 bytes); both addresses and the
+    // infinity-lifetime sentinel round-trip.
+    #[test]
+    fn rdnss_two_servers_round_trip() {
+        let servers = [
+            Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1),
+            Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 2),
+        ];
+        let opt = NdpOption::rdnss(NDP_DNS_LIFETIME_INFINITY, &servers);
+        let bytes = opt.encode().unwrap();
+        // Length = 1 + 2*2 = 5 units = 40 bytes.
+        assert_eq!(bytes[1] as usize, ndp_rdnss_length_units(2));
+        assert_eq!(bytes[1], 5);
+        assert_eq!(bytes.len(), 5 * NDP_OPTION_LENGTH_UNIT);
+        // The two addresses sit back-to-back after the 8-byte fixed head.
+        assert_eq!(&bytes[8..24], &servers[0].octets());
+        assert_eq!(&bytes[24..40], &servers[1].octets());
+
+        let (decoded, _) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(
+            decoded.rdnss_lifetime(),
+            Some(NDP_DNS_LIFETIME_INFINITY),
+            "infinity lifetime round-trips"
+        );
+        assert_eq!(decoded.rdnss_servers(), Some(servers.to_vec()));
+        assert_eq!(decoded.encode().unwrap(), bytes);
+    }
+
+    // The RDNSS accessors reject other option types (no false reads).
+    #[test]
+    fn rdnss_accessors_reject_other_options() {
+        let mtu = NdpOption::mtu(1500);
+        assert_eq!(mtu.rdnss_lifetime(), None);
+        assert_eq!(mtu.rdnss_servers(), None);
+    }
+
+    // RFC 8106 sec 5.2: a DNSSL option (type 31) carrying multiple search-list
+    // domains encodes each name with the crate's RFC 1035 Section 3.1 label codec
+    // (uncompressed), zero-pads the value to the 8-octet boundary, and reads the
+    // lifetime + domains back through the typed accessors after a round-trip.
+    #[test]
+    fn dnssl_multiple_domains_round_trip() {
+        // Documentation domains (RFC 2606 reserves example.com / example.net).
+        let domains = ["example.com", "example.net"];
+        let opt = NdpOption::dnssl(86_400, &domains);
+        assert_eq!(opt.option_type(), NDP_OPT_DNSSL);
+        assert!(opt.is_known());
+        assert_eq!(opt.dnssl_lifetime(), Some(86_400));
+        assert_eq!(
+            opt.dnssl_domains(),
+            Some(vec!["example.com.".to_string(), "example.net.".to_string()])
+        );
+
+        // The names in the in-memory value are exactly what the reused DNS
+        // encoder produces (proving reuse, not a hand-rolled label writer).
+        let mut expected_names = Vec::new();
+        for domain in domains {
+            expected_names.extend_from_slice(
+                &DnsName::parse(domain)
+                    .unwrap()
+                    .encode_uncompressed()
+                    .unwrap(),
+            );
+        }
+        // value = Reserved(2) + Lifetime(4) + the concatenated encoded names.
+        assert_eq!(
+            &opt.value()[NDP_DNS_RESERVED_LEN + 4..],
+            &expected_names[..]
+        );
+
+        let bytes = opt.encode().unwrap();
+        assert_eq!(bytes[0], NDP_OPT_DNSSL);
+        // The encoded option is a whole number of 8-octet units (RFC 8106 sec
+        // 5.2: padded to a multiple of 8 octets).
+        assert_eq!(bytes.len() % NDP_OPTION_LENGTH_UNIT, 0);
+        assert_eq!(bytes.len(), bytes[1] as usize * NDP_OPTION_LENGTH_UNIT);
+        // Reserved field sent zero, then the Lifetime.
+        assert_eq!(&bytes[2..4], &[0, 0]);
+        assert_eq!(&bytes[4..8], &86_400u32.to_be_bytes());
+
+        // Two 13-byte names (1+7 "example" + 1+3 "com"/"net" + root) = 26 bytes;
+        // with the 8-byte head the value is 34 bytes, which pads to 40 (5 units),
+        // so the last 6 octets are zero padding (RFC 8106 sec 5.2).
+        let names_len = expected_names.len();
+        assert_eq!(names_len, 26);
+        let padding = &bytes[8 + names_len..];
+        assert!(
+            !padding.is_empty(),
+            "the value is padded to the 8-octet boundary"
+        );
+        assert!(
+            padding.iter().all(|&b| b == 0),
+            "RFC 8106 sec 5.2 pads with zero octets, got {padding:?}"
+        );
+
+        let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(decoded.dnssl_lifetime(), Some(86_400));
+        // The zero padding decodes as the end of the search list, not extra
+        // empty domains.
+        assert_eq!(
+            decoded.dnssl_domains(),
+            Some(vec!["example.com.".to_string(), "example.net.".to_string()])
+        );
+        // Re-encode reproduces the original bytes exactly (padding included).
+        assert_eq!(decoded.encode().unwrap(), bytes);
+    }
+
+    // A single DNSSL domain still round-trips, and a subdomain label set encodes
+    // and decodes through the reused RFC 1035 codec.
+    #[test]
+    fn dnssl_single_and_subdomain_round_trip() {
+        let opt = NdpOption::dnssl(0, &["lab.example.org"]);
+        // A zero lifetime (RFC 8106 sec 5.2: "MUST no longer be used") round-trips.
+        assert_eq!(opt.dnssl_lifetime(), Some(0));
+        let bytes = opt.encode().unwrap();
+        let (decoded, _) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(
+            decoded.dnssl_domains(),
+            Some(vec!["lab.example.org.".to_string()])
+        );
+    }
+
+    // A deliberately-wrong explicit length on a typed RDNSS / DNSSL option
+    // survives encode untouched (honored overrides) — the same rule as the other
+    // typed options.
+    #[test]
+    fn dns_option_explicit_wrong_length_is_preserved() {
+        let server = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+        // An RDNSS option's real length is 3 units; pin it to 7 (an out-of-spec
+        // value). The encoder must emit length=7 untouched and pad to 56 bytes.
+        let wrong = NdpOption::rdnss(1800, &[server]).length(7);
+        assert_eq!(wrong.explicit_length(), Some(7));
+        let bytes = wrong.encode().unwrap();
+        assert_eq!(bytes[1], 7, "pinned length survives untouched");
+        assert_eq!(bytes.len(), 56, "pinned length drives the encoded size");
+        // The real address bytes are still present; clearing the override returns
+        // to auto-fill (3 units).
+        assert_eq!(&bytes[8..24], &server.octets());
+        assert_eq!(wrong.clear_length().effective_length().unwrap(), 3);
+
+        // Likewise a DNSSL option pinned to a wrong length emits it verbatim.
+        let dnssl_wrong = NdpOption::dnssl(60, &["example.com"]).length(1);
+        let dnssl_bytes = dnssl_wrong.encode().unwrap();
+        assert_eq!(dnssl_bytes[1], 1);
+        assert_eq!(dnssl_bytes.len(), 8);
+    }
+
+    // The DNSSL accessors reject other option types (no false reads).
+    #[test]
+    fn dnssl_accessors_reject_other_options() {
+        let mtu = NdpOption::mtu(1500);
+        assert_eq!(mtu.dnssl_lifetime(), None);
+        assert_eq!(mtu.dnssl_domains(), None);
     }
 }

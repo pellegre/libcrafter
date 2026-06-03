@@ -104,6 +104,23 @@ impl DnsName {
             + 1
     }
 
+    /// Encode this name to its uncompressed RFC 1035 Section 3.1 wire form: a
+    /// sequence of length-prefixed labels terminated by a zero-length (root)
+    /// label, with **no** compression pointers.
+    ///
+    /// This is the public, message-context-free entry point to the same label
+    /// writer the DNS record codec uses internally, so callers outside the DNS
+    /// module (for example the IPv6 Neighbor Discovery DNS Search List option,
+    /// RFC 8106 Section 5.2, which mandates the uncompressed RFC 1035 encoding)
+    /// can reuse it instead of re-implementing label encoding. Returns a
+    /// structured [`CrafterError`] when a label exceeds 63 octets or the encoded
+    /// name would exceed the 255-octet wire limit (RFC 1035 Section 2.3.4).
+    pub fn encode_uncompressed(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len());
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
     pub(super) fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
         let mut wire_len = 1usize;
         for label in &self.labels {
