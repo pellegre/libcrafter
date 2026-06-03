@@ -215,6 +215,23 @@ pub use self::v6::{
     ICMPV6_NA_FLAG_SOLICITED, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT, ICMPV6_RA_DEFAULT_ROUTER_LIFETIME,
     ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED, ICMPV6_RA_FLAG_OTHER,
 };
+// The RFC 8335 ICMPv6 extended echo (types 160/161) flag-byte masks, reply
+// codes, and State values live in `v6/message/extended_echo.rs`. Re-export them
+// at the `icmp` root so the `protocols::mod.rs` re-exports and the prelude
+// surface them alongside the `Icmpv6` header, like the other ICMPv6 codepoints
+// (the type constants `ICMPV6_EXTENDED_ECHO_REQUEST` / `_REPLY` already surface
+// through `v6/constants.rs`).
+pub use self::v6::{
+    ICMPV6_CODE_EXTENDED_ECHO_REPLY_MALFORMED_QUERY,
+    ICMPV6_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES, ICMPV6_CODE_EXTENDED_ECHO_REPLY_NO_ERROR,
+    ICMPV6_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_INTERFACE,
+    ICMPV6_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_TABLE_ENTRY, ICMPV6_EXTENDED_ECHO_REPLY_ACTIVE,
+    ICMPV6_EXTENDED_ECHO_REPLY_IPV4, ICMPV6_EXTENDED_ECHO_REPLY_IPV6,
+    ICMPV6_EXTENDED_ECHO_REPLY_STATE_DELAY, ICMPV6_EXTENDED_ECHO_REPLY_STATE_FAILED,
+    ICMPV6_EXTENDED_ECHO_REPLY_STATE_INCOMPLETE, ICMPV6_EXTENDED_ECHO_REPLY_STATE_PROBE,
+    ICMPV6_EXTENDED_ECHO_REPLY_STATE_REACHABLE, ICMPV6_EXTENDED_ECHO_REPLY_STATE_RESERVED,
+    ICMPV6_EXTENDED_ECHO_REPLY_STATE_STALE, ICMPV6_EXTENDED_ECHO_REQUEST_L_BIT,
+};
 // The ICMPv6 (`ICMPV6_*`) codepoint constants live in `v6/constants.rs` and are
 // re-exported through `constants.rs` (which `pub use`s them), so the existing
 // `pub use self::constants::*;` above keeps `crate::protocols::icmp::ICMPV6_*`,
@@ -227,6 +244,12 @@ pub use self::v6::{
 
 mod decode;
 pub(crate) use self::decode::append_icmp_packet;
+// The RFC 4884 extension-structure decoder for an RFC 8335 extended echo request
+// is version-neutral (the same structure rides under ICMPv4 type 42 and ICMPv6
+// type 160). Surface it at the `icmp` root so the ICMPv6 decode path in
+// `v6/mod.rs` (which reaches the root through `use super::*;`) reuses it without
+// duplicating the extension framework.
+pub(crate) use self::decode::decode_extended_echo_extension;
 
 mod v4;
 pub use self::v4::Icmpv4;

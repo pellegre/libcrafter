@@ -213,13 +213,18 @@ fn decode_icmp_extensions(
 /// request, which begins immediately after the fixed ICMP header (no quoted
 /// original datagram and no original-datagram padding).
 ///
+/// Shared by both ICMPv4 (type 42) and ICMPv6 (type 160) extended echo requests:
+/// RFC 8335 defines the same extension structure for both versions, so the
+/// ICMPv6 decode path in `icmp/v6/mod.rs` reuses this function rather than
+/// duplicating the extension framework.
+///
 /// Returns the typed [`IcmpExtension`] header and its objects (an
 /// [`IcmpExtensionInterfaceId`] for the standard single Interface Identification
 /// Object, or generic objects otherwise) when the structure parses defensibly.
 /// Returns `None` — so the caller keeps the payload as a single `Raw` body —
 /// when the payload is too short for the extension header, the version is not 2,
 /// the extension checksum does not verify, or an object length is impossible.
-fn decode_extended_echo_extension(payload: &[u8]) -> Option<Vec<Box<dyn Layer>>> {
+pub(crate) fn decode_extended_echo_extension(payload: &[u8]) -> Option<Vec<Box<dyn Layer>>> {
     if payload.len() < ICMP_EXTENSION_HEADER_LEN {
         return None;
     }

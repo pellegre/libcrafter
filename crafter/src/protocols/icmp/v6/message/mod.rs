@@ -4,12 +4,12 @@
 //!
 //! This subtree groups the version-6-specific message families as typed bodies
 //! that compose under an `Icmpv6` header, mirroring the way ICMPv4 layers its
-//! timestamp / address-mask / quoted-IP bodies. It currently holds the shared
-//! Neighbor Discovery option TLV framework
-//! ([`ndp_option`]) plus the first Neighbor Discovery message body, Router
-//! Solicitation ([`ndp`]); the remaining NDP/MLD/node-info/extended-echo
-//! message bodies are added in later steps following the pattern documented in
-//! [`ndp`].
+//! timestamp / address-mask / quoted-IP bodies. It holds the shared Neighbor
+//! Discovery option TLV framework ([`ndp_option`]), the Neighbor Discovery
+//! message bodies ([`ndp`]), and the RFC 8335 extended echo request / reply
+//! builders ([`extended_echo`]); the remaining MLD / node-info message bodies
+//! are added in later steps following the pattern documented in [`ndp`].
 
+pub mod extended_echo;
 pub mod ndp;
 pub mod ndp_option;

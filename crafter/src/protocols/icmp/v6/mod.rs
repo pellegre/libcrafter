@@ -36,6 +36,23 @@ pub use self::body::{Icmpv6Body, Icmpv6ErrorBody};
 // concrete message bodies. Re-exported at the `icmp` root (and onward through
 // `protocols::mod.rs` and the prelude) like the other ICMPv6 types.
 mod message;
+// RFC 8335 ICMPv6 extended echo (types 160/161). The builders live in
+// `message/extended_echo.rs` (an `impl Icmpv6` that sets the type/code, like the
+// NDP builders); the flag-byte masks, reply codes, and State values are
+// re-exported here so the header's own rest-of-header packing and the typed
+// flag accessors in this file resolve them, and so the `icmp` root surfaces them
+// like the other ICMPv6 codepoints.
+pub use self::message::extended_echo::{
+    ICMPV6_CODE_EXTENDED_ECHO_REPLY_MALFORMED_QUERY,
+    ICMPV6_CODE_EXTENDED_ECHO_REPLY_MULTIPLE_INTERFACES, ICMPV6_CODE_EXTENDED_ECHO_REPLY_NO_ERROR,
+    ICMPV6_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_INTERFACE,
+    ICMPV6_CODE_EXTENDED_ECHO_REPLY_NO_SUCH_TABLE_ENTRY, ICMPV6_EXTENDED_ECHO_REPLY_ACTIVE,
+    ICMPV6_EXTENDED_ECHO_REPLY_IPV4, ICMPV6_EXTENDED_ECHO_REPLY_IPV6,
+    ICMPV6_EXTENDED_ECHO_REPLY_STATE_DELAY, ICMPV6_EXTENDED_ECHO_REPLY_STATE_FAILED,
+    ICMPV6_EXTENDED_ECHO_REPLY_STATE_INCOMPLETE, ICMPV6_EXTENDED_ECHO_REPLY_STATE_PROBE,
+    ICMPV6_EXTENDED_ECHO_REPLY_STATE_REACHABLE, ICMPV6_EXTENDED_ECHO_REPLY_STATE_RESERVED,
+    ICMPV6_EXTENDED_ECHO_REPLY_STATE_STALE, ICMPV6_EXTENDED_ECHO_REQUEST_L_BIT,
+};
 pub(crate) use self::message::ndp::{
     decode_neighbor_advertisement, decode_neighbor_solicitation, decode_redirect,
     decode_router_advertisement, decode_router_solicitation,
@@ -75,6 +92,12 @@ pub struct Icmpv6 {
     length: Field<u8>,
     mtu: Field<u32>,
     pointer: Field<u32>,
+    // RFC 8335 extended echo flag byte (the fourth byte of the rest-of-header):
+    // the L-bit for an Extended Echo Request and the State/A/4/6 status bits for
+    // an Extended Echo Reply. Carried on the header (like the identifier and
+    // sequence number) because it lives in the fixed rest-of-header; the typed
+    // builders/accessors live in `message/extended_echo.rs`.
+    extended_flags: Field<u8>,
 }
 
 impl Icmpv6 {
@@ -90,6 +113,7 @@ impl Icmpv6 {
             length: Field::unset(),
             mtu: Field::unset(),
             pointer: Field::unset(),
+            extended_flags: Field::unset(),
         }
     }
 
@@ -203,6 +227,81 @@ impl Icmpv6 {
         self
     }
 
+    /// Set the raw RFC 8335 extended echo flag byte (the fourth byte of the
+    /// rest-of-header) explicitly.
+    ///
+    /// This is the escape hatch for crafting reserved bits and flag combinations
+    /// the typed builders do not expose; an explicit byte survives compilation
+    /// untouched. The typed setters ([`Icmpv6::extended_l_bit`],
+    /// [`Icmpv6::extended_state`], [`Icmpv6::extended_active`],
+    /// [`Icmpv6::extended_ipv4`], [`Icmpv6::extended_ipv6`]) build on it.
+    pub fn extended_flags(mut self, extended_flags: u8) -> Self {
+        self.extended_flags.set_user(extended_flags);
+        self
+    }
+
+    /// Set the RFC 8335 extended echo request L-bit (the probed interface is on
+    /// a proxy node).
+    ///
+    /// The L-bit is the rightmost bit of the request flag byte (RFC 8335 section
+    /// 3); the other seven Reserved bits are left untouched (use
+    /// [`Icmpv6::extended_flags`] to set Reserved bits deliberately).
+    pub fn extended_l_bit(mut self, set: bool) -> Self {
+        let base = self.extended_flags.value().copied().unwrap_or(0);
+        let value = if set {
+            base | ICMPV6_EXTENDED_ECHO_REQUEST_L_BIT
+        } else {
+            base & !ICMPV6_EXTENDED_ECHO_REQUEST_L_BIT
+        };
+        self.extended_flags.set_user(value);
+        self
+    }
+
+    /// Set the RFC 8335 extended echo reply State field (3 bits, occupying the
+    /// top of the reply flag byte).
+    pub fn extended_state(mut self, state: u8) -> Self {
+        let base = self.extended_flags.value().copied().unwrap_or(0);
+        let value = (base & 0x1f) | ((state & 0x07) << 5);
+        self.extended_flags.set_user(value);
+        self
+    }
+
+    /// Set the RFC 8335 extended echo reply Active (A) flag.
+    pub fn extended_active(mut self, set: bool) -> Self {
+        let base = self.extended_flags.value().copied().unwrap_or(0);
+        let value = if set {
+            base | ICMPV6_EXTENDED_ECHO_REPLY_ACTIVE
+        } else {
+            base & !ICMPV6_EXTENDED_ECHO_REPLY_ACTIVE
+        };
+        self.extended_flags.set_user(value);
+        self
+    }
+
+    /// Set the RFC 8335 extended echo reply IPv4 (4) flag.
+    pub fn extended_ipv4(mut self, set: bool) -> Self {
+        let base = self.extended_flags.value().copied().unwrap_or(0);
+        let value = if set {
+            base | ICMPV6_EXTENDED_ECHO_REPLY_IPV4
+        } else {
+            base & !ICMPV6_EXTENDED_ECHO_REPLY_IPV4
+        };
+        self.extended_flags.set_user(value);
+        self
+    }
+
+    /// Set the RFC 8335 extended echo reply IPv6 (6) flag.
+    pub fn extended_ipv6(mut self, set: bool) -> Self {
+        let base = self.extended_flags.value().copied().unwrap_or(0);
+        let value = if set {
+            base | ICMPV6_EXTENDED_ECHO_REPLY_IPV6
+        } else {
+            base & !ICMPV6_EXTENDED_ECHO_REPLY_IPV6
+        };
+        self.extended_flags.set_user(value);
+        self
+    }
+
     /// Raw ICMPv6 type value.
     pub fn icmp_type_value(&self) -> u8 {
         value_or_copy(&self.icmp_type, ICMPV6_ECHO_REQUEST)
@@ -218,9 +317,14 @@ impl Icmpv6 {
         self.checksum.value().copied()
     }
 
-    /// Echo identifier value when meaningful for the current type.
+    /// Identifier value when meaningful for the current type.
+    ///
+    /// Surfaced for the RFC 4443 echo messages and for the RFC 8335 extended echo
+    /// messages, both of which carry a 16-bit identifier in the first half of the
+    /// rest-of-header.
     pub fn identifier_value(&self) -> Option<u16> {
-        if is_echo_v6(self.icmp_type_value()) {
+        let icmp_type = self.icmp_type_value();
+        if is_echo_v6(icmp_type) || is_extended_echo_v6(icmp_type) {
             Some(value_or_u16_from_rest(
                 &self.identifier,
                 &self.rest_of_header,
@@ -231,9 +335,20 @@ impl Icmpv6 {
         }
     }
 
-    /// Echo sequence number when meaningful for the current type.
+    /// Sequence number when meaningful for the current type.
+    ///
+    /// Surfaced for the RFC 4443 echo messages as a 16-bit value, and for the
+    /// RFC 8335 extended echo messages as an 8-bit value (the third byte of the
+    /// rest-of-header, zero-extended here; the fourth byte is the flag byte).
     pub fn sequence_number_value(&self) -> Option<u16> {
-        if is_echo_v6(self.icmp_type_value()) {
+        let icmp_type = self.icmp_type_value();
+        if is_extended_echo_v6(icmp_type) {
+            Some(u16::from(value_or_u8_from_rest(
+                &self.extended_sequence_number_byte(),
+                &self.rest_of_header,
+                2,
+            )))
+        } else if is_echo_v6(icmp_type) {
             Some(value_or_u16_from_rest(
                 &self.sequence_number,
                 &self.rest_of_header,
@@ -252,6 +367,77 @@ impl Icmpv6 {
     /// RFC 4884 length field when explicit or decoded.
     pub fn length_value(&self) -> Option<u8> {
         self.length.value().copied()
+    }
+
+    /// RFC 8335 extended echo flag byte (the fourth byte of the rest-of-header)
+    /// when the type is an extended echo request or reply.
+    ///
+    /// The byte is surfaced verbatim so Reserved bits stay inspectable; the typed
+    /// accessors below interpret the individual flags.
+    pub fn extended_flags_value(&self) -> Option<u8> {
+        if is_extended_echo_v6(self.icmp_type_value()) {
+            Some(value_or_u8_from_rest(
+                &self.extended_flags,
+                &self.rest_of_header,
+                3,
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// RFC 8335 extended echo request L-bit when the type is an extended echo
+    /// request.
+    pub fn extended_l_bit_value(&self) -> Option<bool> {
+        if self.icmp_type_value() == ICMPV6_EXTENDED_ECHO_REQUEST {
+            self.extended_flags_value()
+                .map(|flags| flags & ICMPV6_EXTENDED_ECHO_REQUEST_L_BIT != 0)
+        } else {
+            None
+        }
+    }
+
+    /// RFC 8335 extended echo reply State field (3 bits) when the type is an
+    /// extended echo reply.
+    pub fn extended_state_value(&self) -> Option<u8> {
+        if self.icmp_type_value() == ICMPV6_EXTENDED_ECHO_REPLY {
+            self.extended_flags_value().map(|flags| (flags >> 5) & 0x07)
+        } else {
+            None
+        }
+    }
+
+    /// RFC 8335 extended echo reply Active (A) flag when the type is an extended
+    /// echo reply.
+    pub fn extended_active_value(&self) -> Option<bool> {
+        if self.icmp_type_value() == ICMPV6_EXTENDED_ECHO_REPLY {
+            self.extended_flags_value()
+                .map(|flags| flags & ICMPV6_EXTENDED_ECHO_REPLY_ACTIVE != 0)
+        } else {
+            None
+        }
+    }
+
+    /// RFC 8335 extended echo reply IPv4 (4) flag when the type is an extended
+    /// echo reply.
+    pub fn extended_ipv4_value(&self) -> Option<bool> {
+        if self.icmp_type_value() == ICMPV6_EXTENDED_ECHO_REPLY {
+            self.extended_flags_value()
+                .map(|flags| flags & ICMPV6_EXTENDED_ECHO_REPLY_IPV4 != 0)
+        } else {
+            None
+        }
+    }
+
+    /// RFC 8335 extended echo reply IPv6 (6) flag when the type is an extended
+    /// echo reply.
+    pub fn extended_ipv6_value(&self) -> Option<bool> {
+        if self.icmp_type_value() == ICMPV6_EXTENDED_ECHO_REPLY {
+            self.extended_flags_value()
+                .map(|flags| flags & ICMPV6_EXTENDED_ECHO_REPLY_IPV6 != 0)
+        } else {
+            None
+        }
     }
 
     /// Common ICMP kind, when the type is version-independent.
@@ -323,10 +509,48 @@ impl Icmpv6 {
                     }
                 }
             }
+            ICMPV6_EXTENDED_ECHO_REQUEST | ICMPV6_EXTENDED_ECHO_REPLY => {
+                // RFC 8335 section 3: identifier (bytes 0-1), an 8-bit sequence
+                // number (byte 2), and a flag byte (byte 3). The flag byte holds
+                // the L-bit for requests and State/A/4/6 for replies; the typed
+                // builders pre-pack it into `extended_flags`. This mirrors the
+                // ICMPv4 extended-echo rest-of-header layout exactly (the only
+                // wire difference is the type number and the IPv6-pseudo-header
+                // checksum, which `compile()` already handles).
+                if self.identifier.is_user_set() || !raw_is_user {
+                    let identifier =
+                        value_or_u16_from_rest(&self.identifier, &self.rest_of_header, 0);
+                    rest[..2].copy_from_slice(&identifier.to_be_bytes());
+                }
+                if self.sequence_number.is_user_set() || !raw_is_user {
+                    let sequence = value_or_u8_from_rest(
+                        &self.extended_sequence_number_byte(),
+                        &self.rest_of_header,
+                        2,
+                    );
+                    rest[2] = sequence;
+                }
+                if self.extended_flags.is_user_set() || !raw_is_user {
+                    if let Some(flags) = self.extended_flags.value().copied() {
+                        rest[3] = flags;
+                    }
+                }
+            }
             _ => {}
         }
 
         Ok(rest)
+    }
+
+    /// The RFC 8335 8-bit sequence number as a `Field<u8>` derived from the
+    /// 16-bit `sequence_number` field: a user-set sequence number contributes its
+    /// low octet, otherwise the field stays unset so the rest-of-header supplies
+    /// the byte. Mirrors the ICMPv4 `sequence_number_byte` helper.
+    fn extended_sequence_number_byte(&self) -> Field<u8> {
+        match self.sequence_number.value().copied() {
+            Some(value) => Field::user(value as u8),
+            None => Field::unset(),
+        }
     }
 
     /// RFC 4884 length byte that should override the raw rest-of-header.
@@ -502,13 +726,28 @@ fn decode_icmpv6_parts(bytes: &[u8]) -> Result<(Icmpv6, &[u8])> {
 
     let rest = copy_array_4(&bytes[4..8]);
     let icmp_type = bytes[0];
+    let is_extended_echo = is_extended_echo_v6(icmp_type);
     let icmpv6 = Icmpv6 {
         icmp_type: Field::user(icmp_type),
         code: Field::user(bytes[1]),
         checksum: Field::user(read_u16_be(&bytes[2..4])?),
         rest_of_header: Field::user(rest),
-        identifier: field_from_echo(icmp_type, &rest, 0, is_echo_v6),
-        sequence_number: field_from_echo(icmp_type, &rest, 2, is_echo_v6),
+        // RFC 8335 narrows the sequence number to a single octet (byte 2) and
+        // adds a flag byte (byte 3), but the identifier is still the 16-bit
+        // bytes 0..2, so the identifier field is shared with the echo families.
+        identifier: if is_echo_v6(icmp_type) || is_extended_echo {
+            Field::user(u16::from_be_bytes([rest[0], rest[1]]))
+        } else {
+            Field::unset()
+        },
+        sequence_number: if is_extended_echo {
+            // Zero-extend the 8-bit RFC 8335 sequence number into the low octet;
+            // the accessor/serialize path treat it as an 8-bit value for these
+            // types so the flag byte (byte 3) is never folded in.
+            Field::user(u16::from(rest[2]))
+        } else {
+            field_from_echo(icmp_type, &rest, 2, is_echo_v6)
+        },
         length: if icmpv6_type_allows_extensions(icmp_type) {
             Field::user(rest[0])
         } else {
@@ -521,6 +760,11 @@ fn decode_icmpv6_parts(bytes: &[u8]) -> Result<(Icmpv6, &[u8])> {
         },
         pointer: if icmp_type == ICMPV6_PARAMETER_PROBLEM {
             Field::user(u32::from_be_bytes(rest))
+        } else {
+            Field::unset()
+        },
+        extended_flags: if is_extended_echo {
+            Field::user(rest[3])
         } else {
             Field::unset()
         },
@@ -594,6 +838,25 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
     if icmp_type == ICMPV6_REDIRECT {
         if let Ok(redirect) = decode_redirect(payload) {
             return Ok(packet.push(redirect));
+        }
+    }
+
+    // RFC 8335 section 3 Extended Echo Request (160): the identifier / sequence /
+    // L-bit live in the rest-of-header (decoded with the header above); the
+    // trailing body is an RFC 4884 ICMP Extension Structure carrying a single
+    // Interface Identification Object, beginning immediately after the fixed
+    // header (no quoted datagram, no original-datagram padding). The structure is
+    // version-neutral, so the same decoder ICMPv4 uses (`icmp/decode.rs`) types
+    // it here. Anything that does not parse defensibly (bad version, bad
+    // checksum, impossible object lengths) stays a single `Raw` payload so the
+    // bytes survive and decoding never panics. The reply (161) carries no body of
+    // its own, so any trailing bytes on a reply fall through to the raw tail.
+    if icmp_type == ICMPV6_EXTENDED_ECHO_REQUEST {
+        if let Some(layers) = decode_extended_echo_extension(payload) {
+            for layer in layers {
+                packet = packet.push_box(layer);
+            }
+            return Ok(packet);
         }
     }
 
@@ -718,6 +981,47 @@ mod icmpv6 {
                 .body(),
             Icmpv6Body::Error(Icmpv6ErrorBody::ParameterProblem { pointer: 6 })
         );
+    }
+
+    // RFC 8335 extended echo request/reply bodies classify by type, surfacing the
+    // identifier / 8-bit sequence / flag-byte fields per variant.
+    #[test]
+    fn icmpv6_body_classifies_extended_echo() {
+        let request = Icmpv6::extended_echo_request()
+            .id(0x1234)
+            .seq(7)
+            .extended_l_bit(true)
+            .body();
+        assert_eq!(
+            request,
+            Icmpv6Body::ExtendedEchoRequest {
+                identifier: 0x1234,
+                sequence_number: 7,
+                local: true,
+                reserved_flags: 0,
+            }
+        );
+        assert_eq!(request.label(), "extended-echo-request");
+
+        let reply = Icmpv6::extended_echo_reply()
+            .id(0xabcd)
+            .seq(5)
+            .extended_state(2)
+            .extended_active(true)
+            .extended_ipv6(true)
+            .body();
+        assert_eq!(
+            reply,
+            Icmpv6Body::ExtendedEchoReply {
+                identifier: 0xabcd,
+                sequence_number: 5,
+                state: 2,
+                active: true,
+                ipv4: false,
+                ipv6: true,
+            }
+        );
+        assert_eq!(reply.label(), "extended-echo-reply");
     }
 
     // An unrecognized type (here type 200, which the IANA ICMPv6 registry leaves

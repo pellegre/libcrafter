@@ -43,6 +43,17 @@ pub(crate) fn is_echo_v6(icmp_type: u8) -> bool {
     matches!(icmp_type, ICMPV6_ECHO_REQUEST | ICMPV6_ECHO_REPLY)
 }
 
+/// True for the RFC 8335 ICMPv6 extended echo request/reply types (160/161),
+/// which carry a 16-bit identifier, an 8-bit sequence number, and a flag byte in
+/// the rest-of-header — the same fixed-header layout as the ICMPv4 extended echo
+/// (RFC 8335 section 3).
+pub(crate) fn is_extended_echo_v6(icmp_type: u8) -> bool {
+    matches!(
+        icmp_type,
+        ICMPV6_EXTENDED_ECHO_REQUEST | ICMPV6_EXTENDED_ECHO_REPLY
+    )
+}
+
 /// True for the RFC 8335 extended echo request/reply types, which carry a 16-bit
 /// identifier, an 8-bit sequence number, and a flag byte in the rest-of-header.
 pub(crate) fn is_extended_echo_v4(icmp_type: u8) -> bool {
@@ -278,6 +289,10 @@ pub(crate) fn icmpv6_type_summary(icmp_type: u8) -> String {
         ICMPV6_NEIGHBOR_SOLICITATION => "neighbor-solicitation(135)".to_string(),
         ICMPV6_NEIGHBOR_ADVERTISEMENT => "neighbor-advertisement(136)".to_string(),
         ICMPV6_REDIRECT => "redirect(137)".to_string(),
+        // RFC 8335 extended echo (types 160/161); mirrors the readable ICMPv4
+        // extended-echo names. The codepoint stays visible in parentheses.
+        ICMPV6_EXTENDED_ECHO_REQUEST => "extended-echo-request(160)".to_string(),
+        ICMPV6_EXTENDED_ECHO_REPLY => "extended-echo-reply(161)".to_string(),
         value => value.to_string(),
     }
 }
