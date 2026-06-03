@@ -192,6 +192,22 @@ coverage_cases:
   - crafter-ndp-neighbor-solicitation
   - crafter-ndp-neighbor-advertisement
   - crafter-ndp-redirect
+  # Standards-track NDP option extensions: Route Information (RFC 4191), RDNSS
+  # and DNSSL (RFC 8106), MTU (RFC 4861), PREF64 (RFC 8781), Captive Portal
+  # (RFC 8910), and unknown-option preservation (RFC 4861 section 4.6). Byte
+  # agreement with the scapy ICMPv6NDOpt* reference is proved in
+  # tools/oracle/specs/fixtures/scapy-cases.json; the Nonce (RFC 3971) and RA
+  # Flags Extension (RFC 5175) options have no native scapy class and are noted
+  # as a documented limitation there. The primary correctness gate is the Rust
+  # integration test crafter/tests/icmpv6_ndp.rs.
+  - ndp-ra-route-rdnss-dnssl-mtu
+  - ndp-pref64
+  - ndp-captive-portal
+  - ndp-unknown-option
+  - crafter-ndp-ra-route-rdnss-dnssl-mtu
+  - crafter-ndp-pref64
+  - crafter-ndp-captive-portal
+  - crafter-ndp-unknown-option
 
 backend_support:
   scapy:
@@ -223,6 +239,17 @@ backend_support:
       - ICMPv6NDOptPrefixInfo
       - ICMPv6NDOptMTU
       - ICMPv6NDOptRedirectedHdr
+      # Standards-track NDP option extensions with a native Scapy class
+      # (RFC 4191 / RFC 8106 / RFC 8781 / RFC 8910). The Nonce (RFC 3971) and RA
+      # Flags Extension (RFC 5175) options have NO native Scapy class in scapy
+      # 2.5+/2.7, so they materialize as ICMPv6NDOptUnknown; see the notes below
+      # and the crafter-ndp-unknown-option case for that documented limitation.
+      - ICMPv6NDOptRouteInfo
+      - ICMPv6NDOptRDNSS
+      - ICMPv6NDOptDNSSL
+      - ICMPv6NDOptPREF64
+      - ICMPv6NDOptCaptivePortal
+      - ICMPv6NDOptUnknown
     encode: true
     decode: true
     notes:
@@ -244,6 +271,25 @@ backend_support:
         its flags byte matches libcrafter, which sends those Reserved bits zero
         (an agent sets the RFC 4191 preference through the honored-override
         rest-of-header). See the ndp-router-advertisement case note.
+      - >-
+        The standards-track NDP option extensions Route Information (RFC 4191),
+        RDNSS and DNSSL (RFC 8106), PREF64 (RFC 8781), and Captive Portal
+        (RFC 8910) materialize natively via ICMPv6NDOptRouteInfo / RDNSS / DNSSL
+        / PREF64 / CaptivePortal and agree with libcrafter byte-for-byte (the
+        ndp-ra-route-rdnss-dnssl-mtu, ndp-pref64, ndp-captive-portal cases and
+        their crafter-* mirrors; an unknown option type round-trips via
+        ICMPv6NDOptUnknown in ndp-unknown-option). DOCUMENTED LIMITATION: scapy
+        2.5+/2.7 has no native class for the Nonce option (RFC 3971) or the RA
+        Flags Extension option (RFC 5175), so those two options carry no
+        native-class byte-proof case; on the wire they are ICMPv6NDOptUnknown
+        (type 14 / type 26) and their correctness is gated by the
+        crafter/tests/icmpv6_ndp.rs round-trips and the ndp_option.rs unit tests
+        instead of failing the suite. One representational note for Route
+        Information: scapy's ICMPv6NDOptRouteInfo always emits the full 16 prefix
+        octets (RFC 4191 Length 3), so the byte-proof pins libcrafter to the same
+        16-octet form (NdpOption::route_information_raw with prefix_octets=16)
+        while the Rust round-trip uses the natural length-derived form (a /48
+        prefix carries 8 octets, Length 2) — both are RFC 4191 section 2.3 valid.
   libcrafter:
     status: partial
     encode: true
