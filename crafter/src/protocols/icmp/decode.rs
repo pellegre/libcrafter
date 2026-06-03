@@ -415,7 +415,7 @@ mod icmp_tests {
         IcmpExtension, IcmpExtensionMpls, IcmpExtensionObject, IcmpKind, Icmpv4, ICMP_ECHO_REQUEST,
         ICMP_TIME_EXCEEDED,
     };
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw, Udp};
     use core::net::Ipv4Addr;
 
     const IPV4_ICMP_FIXTURE: &[u8] = fixture_bytes!("bytes/ipv4-icmp-echo-request.bin");
@@ -477,7 +477,7 @@ mod icmp_tests {
             / (Ipv4::new()
                 .src(Ipv4Addr::new(5, 6, 7, 8))
                 .dst(Ipv4Addr::new(10, 11, 12, 13))
-                .proto(IpProtocol::Udp)
+                .ipv4_protocol(Ipv4Protocol::Udp)
                 / Udp::new().sport(53).dport(1111)
                 / Raw::from("data"))
             / IcmpExtension::new()
@@ -506,7 +506,7 @@ mod icmp_tests {
 
     #[test]
     fn icmp_decode_rejects_short_inputs() {
-        let short = (Ipv4::new().proto(IpProtocol::Icmp) / Raw::from_bytes([0u8; 7]))
+        let short = (Ipv4::new().ipv4_protocol(Ipv4Protocol::Icmpv4) / Raw::from_bytes([0u8; 7]))
             .compile()
             .unwrap();
         assert!(Packet::decode_from_l3(NetworkLayer::Ipv4, short.as_bytes()).is_err());
@@ -581,7 +581,7 @@ mod icmpv4_rfc792_errors {
         ICMP_PARAMETER_PROBLEM, ICMP_REDIRECT, ICMP_SOURCE_QUENCH, ICMP_TIME_EXCEEDED,
     };
     use crate::packet::Layer;
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw, Udp};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -598,7 +598,7 @@ mod icmpv4_rfc792_errors {
         Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(198, 51, 100, 1))
-            .proto(IpProtocol::Udp)
+            .ipv4_protocol(Ipv4Protocol::Udp)
             / Udp::new().sport(40000).dport(53)
             / Raw::from("query")
     }
@@ -751,7 +751,7 @@ mod icmpv4_rfc792_errors {
         let original = (Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(198, 51, 100, 1))
-            .proto(IpProtocol::Udp)
+            .ipv4_protocol(Ipv4Protocol::Udp)
             / Udp::new().sport(40000).dport(53)
             / Raw::from("a-long-original-payload"))
         .compile()

@@ -3,7 +3,7 @@
 mod tcp {
     use super::super::{Tcp, TCP_FLAG_ACK, TCP_FLAG_SYN};
     use crate::checksum::ipv4_pseudo_header_checksum;
-    use crate::{IpProtocol, Ipv4, Packet, Raw, IPPROTO_TCP};
+    use crate::{Ipv4, Ipv4Protocol, Packet, Raw, IPPROTO_TCP};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -82,14 +82,14 @@ mod tcp {
 
     #[test]
     fn tcp_decode_rejects_short_and_malformed_inputs() {
-        let short = (Ipv4::new().proto(IpProtocol::Tcp) / Raw::from_bytes([0u8; 19]))
+        let short = (Ipv4::new().ipv4_protocol(Ipv4Protocol::Tcp) / Raw::from_bytes([0u8; 19]))
             .compile()
             .unwrap();
         assert!(Packet::decode_from_l3(crate::NetworkLayer::Ipv4, short.as_bytes()).is_err());
 
         let mut malformed = [0u8; 20];
         malformed[12] = 0x40;
-        let bytes = (Ipv4::new().proto(IpProtocol::Tcp) / Raw::from_bytes(malformed))
+        let bytes = (Ipv4::new().ipv4_protocol(Ipv4Protocol::Tcp) / Raw::from_bytes(malformed))
             .compile()
             .unwrap();
         assert!(Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).is_err());
@@ -225,7 +225,7 @@ mod tcp_options {
     use super::super::{
         Tcp, TcpExtendedDataOffset, TcpOption, TcpSackBlock, TCP_FLAG_ACK, TCP_FLAG_SYN,
     };
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -317,7 +317,7 @@ mod tcp_options {
         tcp[12] = 0x60;
         tcp[13] = TCP_FLAG_SYN as u8;
         tcp[20..24].copy_from_slice(&[2, 5, 0x05, 0xb4]);
-        let bytes = (Ipv4::new().proto(IpProtocol::Tcp) / Raw::from_bytes(tcp))
+        let bytes = (Ipv4::new().ipv4_protocol(Ipv4Protocol::Tcp) / Raw::from_bytes(tcp))
             .compile()
             .unwrap();
 
@@ -464,7 +464,7 @@ mod option_value_accessors {
 
 mod option_padding {
     use super::super::{Tcp, TcpOption};
-    use crate::{IpProtocol, Ipv4, Ipv4Option, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Option, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -497,7 +497,11 @@ mod option_padding {
         // Before compile, only the raw option bytes are stored (no padding yet).
         assert_eq!(tcp.option_bytes(), &[2, 4, 0x05, 0xb4, 3, 3, 7]);
 
-        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp)
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
+            / tcp)
             .compile()
             .unwrap();
 
@@ -543,7 +547,7 @@ mod option_padding {
             .src(src())
             .dst(dst())
             .protocol(0)
-            .ip_option(Ipv4Option::generic(8, [1]))
+            .ipv4_option(Ipv4Option::generic(8, [1]))
             .unwrap();
         let ip_bytes = (ip / Raw::from("x")).compile().unwrap();
         assert_eq!(ip_bytes.as_bytes()[0], 0x46);
@@ -562,7 +566,11 @@ mod option_padding {
         let mut tcp = Tcp::new();
         tcp = tcp.tcp_option(TcpOption::mss(1460)).unwrap();
         tcp = tcp.tcp_option(TcpOption::window_scale(7)).unwrap();
-        let tcp_bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp)
+        let tcp_bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
+            / tcp)
             .compile()
             .unwrap();
         assert_eq!(tcp_bytes.as_bytes()[32] >> 4, 7);
@@ -575,7 +583,7 @@ mod option_padding {
 
 mod unknown_option_roundtrip {
     use super::super::{Tcp, TcpOption, TcpOptionKindClass};
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -610,10 +618,14 @@ mod unknown_option_roundtrip {
         // Before compile the layer holds exactly the raw option bytes.
         assert_eq!(tcp.option_bytes(), &raw_options);
 
-        let bytes =
-            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
-                .compile()
-                .unwrap();
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let decoded_tcp = decoded.layer::<Tcp>().unwrap();
@@ -734,7 +746,7 @@ mod experimental_exid_options {
         Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_EXPERIMENTAL_1, TCP_OPTION_EXPERIMENTAL_2,
         TCP_OPTION_EXPERIMENTAL_MIN_LEN,
     };
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -810,10 +822,14 @@ mod experimental_exid_options {
             .dport(443)
             .tcp_option(TcpOption::experimental_1(EXID_A, [0xDE, 0xAD, 0xBE, 0xEF]))
             .unwrap();
-        let bytes =
-            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
-                .compile()
-                .unwrap();
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -850,7 +866,7 @@ mod user_timeout_option {
     use super::super::{
         Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_USER_TIMEOUT, TCP_OPTION_USER_TIMEOUT_LEN,
     };
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -916,10 +932,14 @@ mod user_timeout_option {
             .dport(80)
             .tcp_option(TcpOption::user_timeout(true, 0x0240))
             .unwrap();
-        let bytes =
-            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
-                .compile()
-                .unwrap();
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -949,7 +969,7 @@ mod authentication_option {
         Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_TCP_AUTHENTICATION,
         TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN,
     };
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1028,10 +1048,14 @@ mod authentication_option {
                 mac.clone(),
             ))
             .unwrap();
-        let bytes =
-            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
-                .compile()
-                .unwrap();
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1065,7 +1089,7 @@ mod tcp_eno_option {
     use super::super::{
         Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_TCP_ENO, TCP_OPTION_TCP_ENO_MIN_LEN,
     };
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1133,10 +1157,14 @@ mod tcp_eno_option {
             .dport(443)
             .tcp_option(TcpOption::tcp_eno(suboptions.clone()))
             .unwrap();
-        let bytes =
-            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
-                .compile()
-                .unwrap();
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1164,7 +1192,7 @@ mod tcp_eno_option {
 
 mod legacy_security_options {
     use super::super::{Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_MD5_SIGNATURE};
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1231,10 +1259,14 @@ mod legacy_security_options {
                 signature.clone(),
             ))
             .unwrap();
-        let bytes =
-            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
-                .compile()
-                .unwrap();
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
 
         let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1255,7 +1287,7 @@ mod accurate_ecn_options {
         Tcp, TcpOption, TcpOptionKindClass, TCP_OPTION_ACCURATE_ECN_MIN_LEN,
         TCP_OPTION_ACCURATE_ECN_ORDER_0, TCP_OPTION_ACCURATE_ECN_ORDER_1,
     };
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1361,10 +1393,14 @@ mod accurate_ecn_options {
             .dport(443)
             .tcp_option(TcpOption::accurate_ecn_order_1(counters.clone()))
             .unwrap();
-        let bytes =
-            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
-                .compile()
-                .unwrap();
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
 
         let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1400,7 +1436,7 @@ mod mptcp_accessors {
         Tcp, TcpOption, MPTCP_SUBTYPE_DSS, MPTCP_SUBTYPE_MP_CAPABLE, MPTCP_SUBTYPE_MP_JOIN,
         TCP_OPTION_MPTCP,
     };
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1495,10 +1531,14 @@ mod mptcp_accessors {
             .dport(443)
             .tcp_option(TcpOption::multipath_tcp(subtype, data.clone()))
             .unwrap();
-        let bytes =
-            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
-                .compile()
-                .unwrap();
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
+            / tcp
+            / Raw::from("payload"))
+        .compile()
+        .unwrap();
 
         let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1519,7 +1559,7 @@ mod mptcp_accessors {
 
 mod fast_open_helpers {
     use super::super::{Tcp, TcpOption, TCP_OPTION_FAST_OPEN};
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1610,7 +1650,10 @@ mod fast_open_helpers {
                 .dport(443)
                 .tcp_option(option)
                 .unwrap();
-            let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+            let bytes = (Ipv4::new()
+                .src(src())
+                .dst(dst())
+                .ipv4_protocol(Ipv4Protocol::Tcp)
                 / tcp
                 / Raw::from("payload"))
             .compile()
@@ -2470,7 +2513,7 @@ mod ipv6_fragment_adjacent {
 mod header_error_context {
     use super::super::Tcp;
     use crate::error::CrafterError;
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -2487,7 +2530,10 @@ mod header_error_context {
     // Panics if the buffer decodes cleanly, because every input here is
     // deliberately structurally malformed.
     fn decode_tcp_header_error(tcp: impl AsRef<[u8]>) -> CrafterError {
-        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Tcp)
             / Raw::from_bytes(tcp.as_ref().to_vec()))
         .compile()
         .expect("ipv4/raw frame must compile");

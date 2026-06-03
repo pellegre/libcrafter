@@ -1077,7 +1077,7 @@ impl_layer_div!(Icmpv4);
 mod icmpv4_header_model {
     use super::{IcmpKind, Icmpv4, ICMP_ECHO_REQUEST, ICMP_REDIRECT, ICMP_TIME_EXCEEDED};
     use crate::packet::Layer;
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw, Udp};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw, Udp};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1118,7 +1118,7 @@ mod icmpv4_header_model {
             / (Ipv4::new()
                 .src(Ipv4Addr::new(192, 0, 2, 1))
                 .dst(Ipv4Addr::new(198, 51, 100, 1))
-                .proto(IpProtocol::Udp)
+                .ipv4_protocol(Ipv4Protocol::Udp)
                 / Udp::new().sport(53).dport(1111)
                 / Raw::from("quoted"));
         let bytes = packet.compile().unwrap();
@@ -1249,7 +1249,7 @@ mod icmpv4_legacy_assigned_types {
         ICMP_MOBILE_REGISTRATION_REQUEST, ICMP_PHOTURIS, ICMP_RESERVED_255,
         ICMP_SEAMOBY_EXPERIMENTAL, ICMP_SKIP, ICMP_TRACEROUTE,
     };
-    use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4Protocol, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1423,7 +1423,10 @@ mod icmpv4_legacy_assigned_types {
     // typed beyond the fixed header.
     #[test]
     fn icmpv4_legacy_assigned_types_byte_for_byte_decode_compile_preservation() {
-        let compiled = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Icmp)
+        let compiled = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
             / Icmpv4::datagram_conversion_error()
                 .code(1)
                 .rest_of_header([0x00, 0x00, 0x00, 0x18])

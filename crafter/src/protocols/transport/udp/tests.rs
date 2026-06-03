@@ -19,7 +19,7 @@ use crate::checksum::{
     crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum,
 };
 use crate::{
-    Dhcp, DhcpMessageType, Dns, IpProtocol, Ipv4, Ipv6, Layer, LinkType, MacAddr, Packet, Raw,
+    Dhcp, DhcpMessageType, Dns, Ipv4, Ipv4Protocol, Ipv6, Layer, LinkType, MacAddr, Packet, Raw,
     DNS_PORT, DNS_TYPE_A, IPPROTO_UDP,
 };
 use core::net::{Ipv4Addr, Ipv6Addr};
@@ -301,7 +301,7 @@ fn ipv4_udp_with_raw_surplus(user_payload: &[u8], surplus: &[u8]) -> Vec<u8> {
     (Ipv4::new()
         .src(src())
         .dst(dst())
-        .proto(IpProtocol::Udp)
+        .ipv4_protocol(Ipv4Protocol::Udp)
         .id(0x2260)
         / Raw::from_bytes(datagram))
     .compile()
@@ -352,7 +352,7 @@ fn udp_options_ocs_absent_is_malformed_and_preserved() {
     let bytes = (Ipv4::new()
         .src(src())
         .dst(dst())
-        .proto(IpProtocol::Udp)
+        .ipv4_protocol(Ipv4Protocol::Udp)
         .id(0x2210)
         / Raw::from_bytes(datagram))
     .compile()
@@ -2467,7 +2467,10 @@ fn udp_length_shorter_than_ip_payload_preserves_surplus_tail() {
     datagram.extend_from_slice(&0u16.to_be_bytes());
     datagram.extend_from_slice(&udp_payload);
     datagram.extend_from_slice(&surplus);
-    let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Udp)
+    let bytes = (Ipv4::new()
+        .src(src())
+        .dst(dst())
+        .ipv4_protocol(Ipv4Protocol::Udp)
         / Raw::from_bytes(datagram))
     .compile()
     .unwrap();
@@ -2493,7 +2496,10 @@ fn udp_length_longer_than_ip_payload_reports_structured_error() {
     datagram.extend_from_slice(&16u16.to_be_bytes());
     datagram.extend_from_slice(&0u16.to_be_bytes());
     datagram.extend_from_slice(&[0xaa, 0xbb, 0xcc]);
-    let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Udp)
+    let bytes = (Ipv4::new()
+        .src(src())
+        .dst(dst())
+        .ipv4_protocol(Ipv4Protocol::Udp)
         / Raw::from_bytes(datagram))
     .compile()
     .unwrap();
@@ -2521,7 +2527,10 @@ fn udp_option_malformed_udp_length_overrun_remains_structured_error() {
     datagram.extend_from_slice(&0u16.to_be_bytes());
     datagram.extend_from_slice(&[0xaa, 0xbb, 0xcc]);
 
-    let ipv4 = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Udp)
+    let ipv4 = (Ipv4::new()
+        .src(src())
+        .dst(dst())
+        .ipv4_protocol(Ipv4Protocol::Udp)
         / Raw::from_bytes(datagram.clone()))
     .compile()
     .unwrap();
@@ -2561,12 +2570,12 @@ fn udp_option_malformed_udp_length_overrun_remains_structured_error() {
 
 #[test]
 fn udp_decode_rejects_short_and_malformed_inputs() {
-    let short = (Ipv4::new().proto(IpProtocol::Udp) / Raw::from_bytes([1, 2, 3, 4]))
+    let short = (Ipv4::new().ipv4_protocol(Ipv4Protocol::Udp) / Raw::from_bytes([1, 2, 3, 4]))
         .compile()
         .unwrap();
     assert!(Packet::decode_from_l3(crate::NetworkLayer::Ipv4, short.as_bytes()).is_err());
 
-    let bad_length = (Ipv4::new().proto(IpProtocol::Udp)
+    let bad_length = (Ipv4::new().ipv4_protocol(Ipv4Protocol::Udp)
         / Raw::from_bytes([0x12, 0x34, 0x00, 0x35, 0x00, 0x07, 0, 0]))
     .compile()
     .unwrap();
