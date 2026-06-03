@@ -376,7 +376,8 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | UDP | `Udp` |
 | UDP surplus options | `UdpOptions`, `UdpOption` |
 | ICMPv4 | `Icmpv4` |
-| ICMPv6 | `Icmpv6` |
+| ICMPv6 | `Icmpv6`, `Icmpv6Body` |
+| ICMPv6 Neighbor Discovery options | `NdpOptions`, `NdpOption` |
 | DNS | `Dns` |
 | DHCP | `Dhcp` |
 | 802.1Q VLAN | `Vlan` |
@@ -471,6 +472,57 @@ id=-, seq=-)`. Unassigned types print numerically, such as `Icmp(type=200,
 code=7, ...)`. `show` lists every typed field — checksum, rest-of-header,
 identifier, sequence number, RFC 4884 length, router fields, and extended-echo
 flags — for field-level inspection workflows.
+
+## ICMPv6 Messages
+
+`Icmpv6` is the fixed ICMPv6 header and the front of an ICMPv6 packet. It carries
+the IANA `Type` codepoint space and uses the same shape as `Icmpv4`: the bytes
+after the fixed header are typed body layers composed with `/`, the checksum is
+auto-filled over the IPv6 pseudo-header at `compile()`, and `summary`, `show`,
+and `decode_from_l3` apply uniformly.
+
+Typed constructors track the
+[ICMPv6 Parameters registry](https://www.iana.org/assignments/icmpv6-parameters/icmpv6-parameters.xhtml):
+
+| Message family | Type(s) | Constructors |
+| --- | --- | --- |
+| Echo (RFC 4443) | 128/129 | `Icmpv6::echo_request()`, `Icmpv6::echo_reply()` |
+| Errors (RFC 4443) | 1–4 | `Icmpv6::destination_unreachable()`, `Icmpv6::packet_too_big()`, `Icmpv6::time_exceeded()`, plus `Icmpv6::new().icmp_type(...)` for parameter problem |
+| Multicast Listener Discovery v1 (RFC 2710) | 130–132 | `Icmpv6::mld_query()`, `Icmpv6::mld_general_query()`, `Icmpv6::mld_report()`, `Icmpv6::mld_done()` |
+| Multicast Listener Discovery v2 (RFC 3810) | 130, 143 | `Icmpv6::mldv2_report()`, `Icmpv6::mldv2_query()`, `Icmpv6::mldv2_general_query()` |
+| Neighbor Discovery (RFC 4861) | 133–137 | `Icmpv6::router_solicitation()`, `Icmpv6::router_advertisement()`, `Icmpv6::neighbor_solicitation()`, `Icmpv6::neighbor_advertisement()`, `Icmpv6::redirect()` |
+| Node Information (RFC 4620, **experimental**) | 139/140 | `Icmpv6::node_information_query()`, `Icmpv6::node_information_response()` |
+| Extended Echo (RFC 8335) | 160/161 | `Icmpv6::extended_echo_request()`, `Icmpv6::extended_echo_reply()` |
+
+The Neighbor Discovery messages carry an ordered list of NDP options as a typed
+TLV layer. Build options through `NdpOption` constructors and collect them in
+`NdpOptions`; `compile()` auto-fills each option's length field (in 8-octet
+units, with padding), and unknown option types round-trip byte-for-byte.
+
+| NDP option | Type | Reference | Constructor |
+| --- | --- | --- | --- |
+| Source Link-Layer Address | 1 | RFC 4861 | `NdpOption::source_link_layer_address(...)` |
+| Target Link-Layer Address | 2 | RFC 4861 | `NdpOption::target_link_layer_address(...)` |
+| Prefix Information | 3 | RFC 4861 | `NdpOption::prefix_information(...)` |
+| Redirected Header | 4 | RFC 4861 | `NdpOption::redirected_header(...)` |
+| MTU | 5 | RFC 4861 | `NdpOption::mtu(...)` |
+| Nonce | 14 | RFC 3971 | `NdpOption::nonce(...)` |
+| Route Information | 24 | RFC 4191 | `NdpOption::route_information(...)` |
+| RDNSS | 25 | RFC 8106 | `NdpOption::rdnss(...)` |
+| RA Flags Extension | 26 | RFC 5175 | `NdpOption::ra_flags_extension(...)` |
+| DNSSL | 31 | RFC 8106 | `NdpOption::dnssl(...)` |
+| Captive Portal | 37 | RFC 8910 | `NdpOption::captive_portal(...)` |
+| PREF64 | 38 | RFC 8781 | `NdpOption::pref64(...)` |
+
+Router Advertisement also exposes the RFC 4191 Default Router Preference (`Prf`)
+through `Icmpv6::router_advertisement_with_preference(...)`. `Icmpv6::body()`
+returns an `Icmpv6Body` view that classifies the decoded message (echo, error,
+the five NDP types, MLD, extended echo, node information) from the header `type`;
+unknown types are preserved as `Icmpv6Body::Unknown` with a trailing `Raw` body.
+
+The codepoint coverage, the experimental status of Node Information, and the
+deferred families (Router Renumbering, Inverse Neighbor Discovery) are detailed
+in [ICMPv6 message coverage](icmpv6-coverage.md).
 
 ## Example Map
 

@@ -117,6 +117,151 @@ When authorization or VM prerequisites are absent, plan with `--dry-run` and
 record a skip artifact rather than faking a live run. The user-facing coverage
 boundary lives in [`docs/arp-rfc-coverage.md`](../../docs/arp-rfc-coverage.md).
 
+## Build IPv6 Neighbor Discovery (NDP)
+
+NDP is the IPv6 analog of ARP (RFC 4861). Its messages are ICMPv6 messages, so
+compose `Ipv6 / Icmpv6::<message>(...)`; the `Icmpv6::router_solicitation`,
+`router_advertisement`, `neighbor_solicitation`, `neighbor_advertisement`, and
+`redirect` builders return the `Icmpv6` header `/` typed body, and `compile()`
+auto-fills the ICMPv6 checksum (over the IPv6 pseudo-header) and every NDP option
+length. NDP options are an ordered TLV list built with `NdpOption` constructors;
+unknown option types round-trip byte-for-byte.
+
+**Set the IPv6 Hop Limit to 255 on every NDP packet.** RFC 4861 section 11.2
+requires NDP messages to be sent with Hop Limit 255, and conformant receivers
+**silently discard** any NDP message whose Hop Limit is not 255 (this is the
+anti-spoofing check). The NDP builders return the ICMPv6 header and body and do
+**not** own the enclosing `Ipv6` layer, so by the crate's honored-overrides rule
+they cannot set the Hop Limit for you — the caller must. This is not optional: a
+Neighbor Solicitation built with the IPv6 default Hop Limit (64) compiles and
+serializes fine but is dropped by a real kernel and never answered. Every NDP
+recipe below sets `.hop_limit(255)`.
+
+Use link-local source addresses (`fe80::/10`) and documentation space
+(`2001:db8::/32`) in generated defaults, and the solicited-node multicast group
+(`ff02::1:ffXX:XXXX`) or all-routers (`ff02::2`) as appropriate.
+
+### Router Advertisement with Prefix Information and MTU
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv6Addr;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let prefix: Ipv6Addr = "2001:db8:1::".parse()?;
+
+    // router_advertisement_with(cur_hop_limit, managed, other, lifetime, body)
+    let body = NdpOptions::new()
+        .push(NdpOption::prefix_information(
+            prefix, 64, /* on_link */ true, /* autonomous */ true,
+            /* valid */ 2_592_000, /* preferred */ 604_800,
+        ))
+        .push(NdpOption::mtu(1500));
+
+    let ra = Ipv6::new()
+        .src("fe80::1".parse::<Ipv6Addr>()?)
+        .dst("ff02::1".parse::<Ipv6Addr>()?) // all-nodes
+        .hop_limit(255) // REQUIRED for NDP
+        / Icmpv6::router_advertisement_with(64, false, false, 1800, body);
+
+    let bytes = ra.compile()?;
+    println!("{}", ra.summary());
+    println!("{}", bytes.hexdump());
+    Ok(())
+}
+```
+
+### Neighbor Solicitation, matching the Neighbor Advertisement
+
+Send an NS to the target's solicited-node multicast group and match the returned
+NA. Keep the live path in a disposable lab (see Live-Lab Sending); use dry-run
+for generated defaults.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv6Addr;
+use std::time::Duration;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let me = MacAddr::from([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+    let target: Ipv6Addr = "2001:db8::20".parse()?;
+    let solicited_node: Ipv6Addr = "ff02::1:ff00:20".parse()?; // ff02::1:ffXX:XXXX
+
+    // NS carrying a Source Link-Layer Address option, addressed to the
+    // solicited-node multicast (33:33:ff:XX:XX:XX at L2 per RFC 2464).
+    let ns = Ethernet::new()
+        .src(me)
+        .dst_str("33:33:ff:00:00:20")?
+        / Ipv6::new()
+            .src("2001:db8::10".parse::<Ipv6Addr>()?)
+            .dst(solicited_node)
+            .hop_limit(255) // REQUIRED: receivers drop NDP with hop limit != 255
+        / Icmpv6::neighbor_solicitation_with_source_link_layer(target, me);
+
+    // Dry-run plan by default; only the lab path actually transmits.
+    let plan = ns.send_dry_run(SendOptions::new().iface("dry-run0").link_layer())?;
+    println!("{}", plan.compiled_packet().hexdump());
+
+    // In a live lab, send/receive and inspect the Neighbor Advertisement:
+    let options = SendRecv::new()
+        .iface("eth0")
+        .link_layer()
+        .dry_run() // drop for a real lab send
+        .timeout(Duration::from_secs(1))
+        .filter("icmp6");
+    let report = ns.send_recv_report(options)?;
+    if let Some(reply) = report.reply() {
+        if let Some(icmpv6) = reply.layer::<Icmpv6>() {
+            if let Icmpv6Body::NeighborAdvertisement {
+                router, solicited, override_flag, ..
+            } = icmpv6.body()
+            {
+                println!("NA solicited={solicited} override={override_flag} router={router}");
+            }
+        }
+        if let Some(na) = reply.layer::<NeighborAdvertisement>() {
+            // Target Link-Layer Address option carries the resolved MAC.
+            for option in na.options_ref().iter() {
+                if let Some(mac) = option.link_layer_address() {
+                    println!("resolved {target} -> {mac}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+For Duplicate Address Detection (DAD) the NS source is the unspecified address
+`::` and it carries **no** Source Link-Layer Address option; a defending host
+answers with an NA. Build it with `Icmpv6::neighbor_solicitation(target)` over an
+`Ipv6` layer whose `src` is `::` (still `.hop_limit(255)`).
+
+### Run the NDP behavior probe
+
+The repo ships three NDP behavior cases that exercise a real kernel through the
+lab/probe runners, modeled on the ARP `who-has` -> `is-at` case:
+
+- `ndp-neighbor-solicitation` — NS -> NA (the reliable kernel analog of ARP)
+- `ndp-router-solicitation` — RS -> RA (needs an RA-emitting router on the target)
+- `ndp-duplicate-address-detection` — NS from `::` -> defending NA
+
+Dry-run is the safety boundary; start there on either VM provider:
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --case ndp-neighbor-solicitation
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --case ndp-duplicate-address-detection
+tools/probe/run --provider virtualbox --dry-run --profile behavior --seed 1052 --case ndp-router-solicitation
+```
+
+NDP probe cases require `link_layer_send`, `link_layer_capture`, and the derived
+`ipv6_multicast` capability, so they plan on QEMU and VirtualBox and skip cleanly
+on endpoints without link-layer access. A real exchange needs
+`--confirm-live-run` plus a provisioned two-endpoint lab session; collect
+artifacts and tear the session down afterward (see Live-Lab Sending and the
+`lab-session` skill). The user-facing NDP/ICMPv6 coverage boundary lives in
+[`docs/icmpv6-coverage.md`](../../docs/icmpv6-coverage.md).
+
 ## Build UDP Options
 
 Generated tools should build UDP options as a separate `UdpOptions` layer after
