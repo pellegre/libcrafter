@@ -20,7 +20,7 @@ fn main() -> ExampleResult<()> {
         / Ipv4::new()
             .src(local_ipv4())
             .dst(remote_ipv4())
-            .protocol(IPPROTO_UDP)
+            .ipv4_protocol(Ipv4Protocol::Udp)
         / Udp::new().sport(53002).dport(9999)
         / Raw::from("vlan example");
     let bytes = packet.compile()?;

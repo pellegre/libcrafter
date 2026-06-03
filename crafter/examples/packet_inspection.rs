@@ -13,7 +13,7 @@ fn main() -> ExampleResult<()> {
     let mut packet = Ipv4::new()
         .src(local_ipv4())
         .dst(remote_ipv4())
-        .protocol(IPPROTO_ICMP)
+        .ipv4_protocol(Ipv4Protocol::Icmpv4)
         / Icmpv4::echo_request().id(0x2202).seq(1)
         / Raw::from("inspect")
         / Raw::from(" me");

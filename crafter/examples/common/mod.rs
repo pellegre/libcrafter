@@ -306,7 +306,7 @@ pub fn example_ethernet_tcp_packet(
             .src(src_ip)
             .dst(dst_ip)
             .id(0x2222)
-            .protocol(IPPROTO_TCP)
+            .ipv4_protocol(Ipv4Protocol::Tcp)
         / Tcp::new()
             .sport(src_port)
             .dport(dst_port)

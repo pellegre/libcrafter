@@ -29,7 +29,7 @@ fn main() -> ExampleResult<()> {
         / Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
-            .protocol(IPPROTO_UDP)
+            .ipv4_protocol(Ipv4Protocol::Udp)
         / Udp::new().sport(DHCP_CLIENT_PORT).dport(DHCP_SERVER_PORT)
         / dhcp;
     let dhcp = packet

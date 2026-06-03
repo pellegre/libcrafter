@@ -57,6 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
         .dst(Ipv4Addr::new(198, 51, 100, 20))
+        .ipv4_protocol(Ipv4Protocol::Icmpv4)
         / Icmpv4::echo_request().id(0x4242).seq(1)
         / Raw::from("hello");
 

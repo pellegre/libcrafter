@@ -682,12 +682,12 @@ mod protocol_registry {
 #[cfg(test)]
 mod decode_dispatch {
     use super::ProtocolRegistry;
-    use crate::{Ethernet, Ipv4, LinkType, NetworkLayer, Packet, Raw, Udp};
+    use crate::{Ethernet, Ipv4, Ipv4Protocol, LinkType, NetworkLayer, Packet, Raw, Udp};
 
     #[test]
     fn default_registry_dispatches_from_ethernet_to_ipv4_udp() {
         let bytes = (Ethernet::new()
-            / Ipv4::new().protocol(crate::IPPROTO_UDP)
+            / Ipv4::new().ipv4_protocol(Ipv4Protocol::Udp)
             / Udp::new().sport(53002).dport(9999)
             / Raw::from("payload"))
         .compile()

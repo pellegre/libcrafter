@@ -13,7 +13,7 @@ fn main() -> ExampleResult<()> {
     let packet = Ipv4::new()
         .src(local_ipv4())
         .dst(remote_ipv4())
-        .protocol(IPPROTO_ICMP)
+        .ipv4_protocol(Ipv4Protocol::Icmpv4)
         / Icmpv4::echo_request().id(0x1234).seq(1)
         / Raw::from("Hello, libcrafter!");
     let compiled = packet.compile()?;

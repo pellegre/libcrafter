@@ -25,7 +25,7 @@ fn main() -> ExampleResult<()> {
             Ipv4::new()
                 .src(local_ipv4())
                 .dst(remote_ipv4())
-                .protocol(IPPROTO_TCP),
+                .ipv4_protocol(Ipv4Protocol::Tcp),
         )
         .push(
             Tcp::new()
@@ -43,7 +43,7 @@ fn main() -> ExampleResult<()> {
         / Ipv4::new()
             .src(local_ipv4())
             .dst(remote_ipv4())
-            .protocol(IPPROTO_TCP)
+            .ipv4_protocol(Ipv4Protocol::Tcp)
         / Tcp::new()
             .sport(49152)
             .dport(80)

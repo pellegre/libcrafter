@@ -3,6 +3,8 @@
 This directory is the authoritative map of the user-facing `crafter` examples.
 Every example uses only public APIs from the `crafter` crate, with
 `crafter::prelude::*` used unless a narrower import keeps the example clearer.
+IPv4 and IPv6 examples use versioned layer names, and known IPv4 protocol-field
+values use `Ipv4Protocol`.
 
 ## Safety Legend
 

@@ -15,7 +15,7 @@ fn main() -> ExampleResult<()> {
         / Ipv4::new()
             .src(Ipv4Addr::LOCALHOST)
             .dst(Ipv4Addr::LOCALHOST)
-            .protocol(IPPROTO_ICMP)
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
         / Icmpv4::echo_request().id(0x1111).seq(1)
         / Raw::from("null-loopback");
     let bytes = packet.compile()?;

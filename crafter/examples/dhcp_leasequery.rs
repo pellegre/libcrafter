@@ -60,7 +60,10 @@ fn main() -> ExampleResult<()> {
 }
 
 fn inspect(label: &str, src: Ipv4Addr, dst: Ipv4Addr, dhcp: Dhcp) -> ExampleResult<()> {
-    let packet = Ipv4::new().src(src).dst(dst).protocol(IPPROTO_UDP)
+    let packet = Ipv4::new()
+        .src(src)
+        .dst(dst)
+        .ipv4_protocol(Ipv4Protocol::Udp)
         / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_SERVER_PORT)
         / dhcp;
     let bytes = packet.compile()?;
