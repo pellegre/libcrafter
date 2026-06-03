@@ -981,6 +981,28 @@ def _normalize_icmpv6_type(value: str) -> str:
         "packet_too_big": "packet_too_big",
         "parameter_problem": "parameter_problem",
         "time_exceeded": "time_exceeded",
+        # NDP (RFC 4861). Scapy's ND classes report descriptive type strings
+        # (e.g. "Neighbor Solicitation"); collapse them onto the spec domain
+        # names so decoded NDP/MLD/extended-echo kinds compare cleanly once the
+        # per-message coverage cases land. Scaffolding for later steps.
+        "router_solicitation": "router_solicitation",
+        "router_advertisement": "router_advertisement",
+        "neighbor_solicitation": "neighbor_solicitation",
+        "neighbor_advertisement": "neighbor_advertisement",
+        "redirect": "redirect",
+        "redirect_message": "redirect",
+        # MLD (RFC 2710 / RFC 3810 / RFC 9777).
+        "mld_query": "mld_query",
+        "multicast_listener_query": "mld_query",
+        "mld_report": "mld_report",
+        "multicast_listener_report": "mld_report",
+        "mld_done": "mld_done",
+        "multicast_listener_done": "mld_done",
+        "mldv2_report": "mldv2_report",
+        "version_2_multicast_listener_report": "mldv2_report",
+        # Extended echo (RFC 8335, types 160/161).
+        "extended_echo_request": "extended_echo_request",
+        "extended_echo_reply": "extended_echo_reply",
     }
     return aliases.get(lowered, lowered)
 
