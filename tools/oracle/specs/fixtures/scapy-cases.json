@@ -963,6 +963,38 @@
       "notes": "libcrafter Icmpv6::redirect (RFC 4861 section 4.5) carrying a Target Link-Layer Address (section 4.6.1) and a Redirected Header option (section 4.6.3) decodes in Scapy as IPv6/ICMPv6ND_Redirect/ICMPv6NDOptDstLLAddr/ICMPv6NDOptRedirectedHdr with the same Reserved word, Target and Destination Addresses, link-layer address, and embedded redirected packet (zero-padded to the 8-octet boundary), byte-for-byte. Mirrors the scapy_to_libcrafter ndp-redirect case."
     },
     {
+      "name": "ndp-ra-prefix-mtu-rdnss",
+      "family": "icmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptPrefixInfo",
+        "ICMPv6NDOptMTU",
+        "ICMPv6NDOptRDNSS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "Oracle fixture case. RFC 4861 section 4.2 Router Advertisement (type 134, code 0) from a link-local router (fe80::/10) to the all-nodes multicast ff02::1, carrying the step-33 'Prefix Information + MTU + RDNSS' option trio in order: Prefix Information (section 4.6.2, prefix 2001:db8:1::/64 with the L and A flags set, valid lifetime 2592000 s, preferred lifetime 604800 s), MTU (section 4.6.4, 1500), and RDNSS (RFC 8106 section 5.1, server 2001:db8:ffff::1, lifetime 900 s). Cur Hop Limit 64, the M (Managed) flag set with O clear and the six Reserved flag bits zero, Router Lifetime 1800 s, Reachable Time and Retrans Timer zero. Scapy materializes IPv6/ICMPv6ND_RA/ICMPv6NDOptPrefixInfo/ICMPv6NDOptMTU/ICMPv6NDOptRDNSS; libcrafter decodes the typed RouterAdvertisement body, the M/O flags from the header, and the ordered NDP option list. All three option types are fixed-width (PI 4 units, MTU 1 unit, RDNSS 1 server -> 3 units) so strict bytes hold in both directions. Same RFC 4191 Prf normalization quirk as ndp-router-advertisement: scapy's ICMPv6ND_RA defaults the RFC 4191 Default Router Preference (Prf) field, which occupies two of RFC 4861's send-as-zero Reserved flag bits, to a non-zero value; the reference RA must be materialized with prf=0 to match libcrafter, which sends those Reserved bits zero per RFC 4861 section 4.2. Byte agreement proved by materializing the same stack in scapy 2.7 and libcrafter and diffing the IPv6-level ICMPv6 bytes: identical (8600f417408007080000000000000000030440c000278d0000093a800000000020010db800010000000000000000000005010000000005dc190300000000038420010db8ffff00000000000000000001). The complementary RA(PrefixInfo+MTU) and RA(Route+RDNSS+DNSSL+MTU) groupings are covered by ndp-router-advertisement and ndp-ra-route-rdnss-dnssl-mtu; the round-trip correctness gate is crafter/tests/icmpv6_ndp.rs."
+    },
+    {
+      "name": "crafter-ndp-ra-prefix-mtu-rdnss",
+      "family": "icmp",
+      "direction": "libcrafter_to_scapy",
+      "root": "l3:ipv6",
+      "expected_stack": [
+        "IPv6",
+        "ICMPv6ND_RA",
+        "ICMPv6NDOptPrefixInfo",
+        "ICMPv6NDOptMTU",
+        "ICMPv6NDOptRDNSS"
+      ],
+      "strict_bytes": true,
+      "status": "implemented",
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying Prefix Information (RFC 4861 section 4.6.2), MTU (section 4.6.4), and RDNSS (RFC 8106 section 5.1) options decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptPrefixInfo/ICMPv6NDOptMTU/ICMPv6NDOptRDNSS with the same Cur Hop Limit, M/O flags, Router Lifetime, prefix/flags/lifetimes, MTU, and DNS server/lifetime, byte-for-byte, and the three-option order preserved. Mirrors the scapy_to_libcrafter ndp-ra-prefix-mtu-rdnss case (built by NdpOption::prefix_information / NdpOption::mtu / NdpOption::rdnss; same RFC 4191 Prf=0 normalization; agreed IPv6-level ICMPv6 bytes 8600f417...0db8ffff00000000000000000001)."
+    },
+    {
       "name": "ndp-ra-route-rdnss-dnssl-mtu",
       "family": "icmp",
       "direction": "scapy_to_libcrafter",
