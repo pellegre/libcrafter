@@ -192,6 +192,12 @@ coverage_cases:
   - crafter-ndp-neighbor-solicitation
   - crafter-ndp-neighbor-advertisement
   - crafter-ndp-redirect
+  # Router Advertisement carrying the Prefix Information + MTU + RDNSS option
+  # trio together (step-33 RA grouping), complementing ndp-router-advertisement
+  # (PrefixInfo+MTU) and ndp-ra-route-rdnss-dnssl-mtu (Route+RDNSS+DNSSL+MTU).
+  # Both directions byte-proved against the scapy ICMPv6NDOpt* reference.
+  - ndp-ra-prefix-mtu-rdnss
+  - crafter-ndp-ra-prefix-mtu-rdnss
   # Standards-track NDP option extensions: Route Information (RFC 4191), RDNSS
   # and DNSSL (RFC 8106), MTU (RFC 4861), PREF64 (RFC 8781), Captive Portal
   # (RFC 8910), and unknown-option preservation (RFC 4861 section 4.6). Byte
