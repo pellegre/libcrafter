@@ -125,6 +125,38 @@ profiles:
       malformed: 4
       pcap: 0
       live: 0
+  # tcp-options: focused offline coverage of TCP option encode/decode behavior.
+  # The generator narrows stack/case/feature selection to the tcp_options feature
+  # when this profile is active (see tools/oracle/engine/generator.py), so a run
+  # such as `offline --profile tcp-options --seed 1 --count 10` deterministically
+  # samples only the TCP option cases declared in
+  # tools/oracle/specs/features/tcp-options.yaml. The comparable option kinds
+  # (MSS, Window Scale, SACK Permitted, SACK, Timestamp, Fast Open, MPTCP
+  # generic, and an unknown valid generic option) compile to byte-identical
+  # option regions across both backends and are compared octet-for-octet. The
+  # preserved-only kinds (User Timeout, TCP-AO, TCP-ENO, Accurate ECN,
+  # experimental ExID) and the malformed-option-length case carry
+  # byte_policy: structured_error: the Scapy reference backend has no faithful
+  # offline build/compare path for them, so they stay declared coverage but are
+  # excluded from offline encode/decode sampling. The crate's own unit,
+  # resilience, and fixture suites assert their preservation and typed errors.
+  - name: tcp-options
+    purpose: focused offline TCP option compile and decode behavior
+    default_count: 10
+    family_weights:
+      - name: ipv4
+        weight: 2
+      - name: ipv6
+        weight: 1
+    payload_length:
+      min: 0
+      max: 16
+    feature_weights:
+      baseline: 10
+      boundary: 6
+      malformed: 4
+      pcap: 0
+      live: 0
 
 backend_support:
   scapy:
