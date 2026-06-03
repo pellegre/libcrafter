@@ -279,6 +279,12 @@ pub(crate) fn icmpv6_type_summary(icmp_type: u8) -> String {
         ICMPV6_PARAMETER_PROBLEM => "parameter-problem(4)".to_string(),
         ICMPV6_ECHO_REQUEST => "echo-request(128)".to_string(),
         ICMPV6_ECHO_REPLY => "echo-reply(129)".to_string(),
+        // MLDv1 message types (RFC 2710, types 130–132); the readable name belongs
+        // with the type, added here once. The codepoint stays visible in
+        // parentheses, matching the echo/error rendering above.
+        ICMPV6_MULTICAST_LISTENER_QUERY => "multicast-listener-query(130)".to_string(),
+        ICMPV6_MULTICAST_LISTENER_REPORT => "multicast-listener-report(131)".to_string(),
+        ICMPV6_MULTICAST_LISTENER_DONE => "multicast-listener-done(132)".to_string(),
         // IPv6 Neighbor Discovery message types (RFC 4861, types 133–137).
         // Steps 16–20 model the bodies that ride under each of these; the
         // readable summary name belongs with the type, so it is added here once

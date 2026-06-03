@@ -53,6 +53,13 @@ pub use self::message::extended_echo::{
     ICMPV6_EXTENDED_ECHO_REPLY_STATE_REACHABLE, ICMPV6_EXTENDED_ECHO_REPLY_STATE_RESERVED,
     ICMPV6_EXTENDED_ECHO_REPLY_STATE_STALE, ICMPV6_EXTENDED_ECHO_REQUEST_L_BIT,
 };
+// MLDv1 (RFC 2710, types 130-132): one body type reused across Query / Report /
+// Done, distinguished by the header `type`. The builders live in
+// `message/mld.rs` (an `impl Icmpv6`, like the NDP builders); re-export the body
+// type and its decoder so the `icmp` root surfaces it and the decode dispatch
+// below reaches it.
+pub(crate) use self::message::mld::decode_multicast_listener_message;
+pub use self::message::mld::MulticastListenerMessage;
 pub(crate) use self::message::ndp::{
     decode_neighbor_advertisement, decode_neighbor_solicitation, decode_redirect,
     decode_router_advertisement, decode_router_solicitation,
@@ -789,6 +796,23 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
     // payload so nothing is dropped and decoding never panics. Later steps add
     // the remaining NDP/MLD/extended-echo bodies here in lockstep with the
     // `Icmpv6Body` classifier in `body.rs`.
+    // RFC 2710 MLDv1 (types 130-132): the Maximum Response Delay and Reserved
+    // fields were decoded with the header above; the trailing body is the 16-byte
+    // Multicast Address. The three types share one body shape, so they share a
+    // decoder. The MLDv1 Query (130) is disambiguated from the MLDv2 Query (added
+    // in step 28) by body length: an MLDv1 body is *exactly* 16 bytes, while an
+    // MLDv2 query body is longer. `decode_multicast_listener_message` enforces the
+    // exact-16-byte shape, so a longer (MLDv2) type-130 body falls through to the
+    // `Raw` tail here for now; step 28 inserts the longer-body MLDv2-query branch.
+    if icmp_type == ICMPV6_MULTICAST_LISTENER_QUERY
+        || icmp_type == ICMPV6_MULTICAST_LISTENER_REPORT
+        || icmp_type == ICMPV6_MULTICAST_LISTENER_DONE
+    {
+        if let Ok(mld) = decode_multicast_listener_message(payload) {
+            return Ok(packet.push(mld));
+        }
+    }
+
     if icmp_type == ICMPV6_ROUTER_SOLICITATION {
         if let Ok(rs) = decode_router_solicitation(payload) {
             return Ok(packet.push(rs));

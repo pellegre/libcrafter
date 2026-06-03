@@ -11,5 +11,6 @@
 //! are added in later steps following the pattern documented in [`ndp`].
 
 pub mod extended_echo;
+pub mod mld;
 pub mod ndp;
 pub mod ndp_option;

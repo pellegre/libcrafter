@@ -49,6 +49,52 @@ pub enum Icmpv6Body {
     /// type-specific fields are reported here, followed by the quoted packet
     /// that triggered the error (carried as trailing layers).
     Error(Icmpv6ErrorBody),
+    /// RFC 2710 section 3 MLDv1 Multicast Listener Query (130): the four
+    /// rest-of-header bytes are the 16-bit Maximum Response Delay (milliseconds)
+    /// and a 16-bit Reserved field; the 128-bit Multicast Address (zero for a
+    /// General Query, the group for a Multicast-Address-Specific Query) rides in a
+    /// trailing
+    /// [`MulticastListenerMessage`](super::message::mld::MulticastListenerMessage)
+    /// layer (the way an echo body's data rides in a trailing [`Raw`]).
+    ///
+    /// The MLDv1 Query shares type 130 with the MLDv2 Query (RFC 3810), which is
+    /// distinguished by a longer body; this header-derived view is the same for
+    /// both, so a later MLDv2 step refines the *trailing body*, not this arm.
+    MulticastListenerQuery {
+        /// Maximum Response Delay in milliseconds (RFC 2710 sec 3.3: the maximum
+        /// delay a responding host may insert before its Report; meaningful only
+        /// on a Query). This is the first half of the rest-of-header.
+        max_response_delay: u16,
+    },
+    /// RFC 2710 section 3 MLDv1 Multicast Listener Report (131): the four
+    /// rest-of-header bytes are the (zero, on a Report) Maximum Response Delay and
+    /// Reserved fields; the 128-bit Multicast Address (the group the sender is
+    /// listening to) rides in a trailing
+    /// [`MulticastListenerMessage`](super::message::mld::MulticastListenerMessage)
+    /// layer. The Multicast Address is in the trailing body, so it is read back
+    /// from the decoded layer rather than from this header-derived view (which
+    /// reports only the rest-of-header fields, mirroring how the NDP arms report
+    /// only their header word and leave the addresses to the trailing body).
+    MulticastListenerReport {
+        /// The Maximum Response Delay field (RFC 2710 sec 3.3: sent as zero in a
+        /// Report, preserved verbatim here so a non-zero value is visible). This
+        /// is the first half of the rest-of-header.
+        max_response_delay: u16,
+    },
+    /// RFC 2710 section 3 MLDv1 Multicast Listener Done (132): the four
+    /// rest-of-header bytes are the (zero, on a Done) Maximum Response Delay and
+    /// Reserved fields; the 128-bit Multicast Address (the group the sender is
+    /// ceasing to listen to — the multicast analogue of an IGMP Leave) rides in a
+    /// trailing
+    /// [`MulticastListenerMessage`](super::message::mld::MulticastListenerMessage)
+    /// layer, read back from the decoded layer rather than from this
+    /// header-derived view.
+    MulticastListenerDone {
+        /// The Maximum Response Delay field (RFC 2710 sec 3.3: sent as zero in a
+        /// Done, preserved verbatim here so a non-zero value is visible). This is
+        /// the first half of the rest-of-header.
+        max_response_delay: u16,
+    },
     /// RFC 4861 section 4.1 Router Solicitation (133): the four rest-of-header
     /// bytes are an unused, send-as-zero Reserved field; the message's NDP
     /// options ride in a trailing
@@ -248,6 +294,27 @@ impl Icmpv6Body {
             ICMPV6_PARAMETER_PROBLEM => Icmpv6Body::Error(Icmpv6ErrorBody::ParameterProblem {
                 pointer: u32::from_be_bytes(rest_of_header),
             }),
+            ICMPV6_MULTICAST_LISTENER_QUERY => Icmpv6Body::MulticastListenerQuery {
+                // RFC 2710 sec 3.3: the first half of the rest-of-header is the
+                // 16-bit Maximum Response Delay (the second half is Reserved). The
+                // Multicast Address lives in the trailing MulticastListenerMessage
+                // layer, not in this header-derived view.
+                max_response_delay: u16::from_be_bytes([rest_of_header[0], rest_of_header[1]]),
+            },
+            ICMPV6_MULTICAST_LISTENER_REPORT => Icmpv6Body::MulticastListenerReport {
+                // RFC 2710 sec 3.3: the Maximum Response Delay is sent as zero in a
+                // Report but is preserved verbatim. The Multicast Address (the
+                // group the sender listens to) lives in the trailing
+                // MulticastListenerMessage layer.
+                max_response_delay: u16::from_be_bytes([rest_of_header[0], rest_of_header[1]]),
+            },
+            ICMPV6_MULTICAST_LISTENER_DONE => Icmpv6Body::MulticastListenerDone {
+                // RFC 2710 sec 3.3: the Maximum Response Delay is sent as zero in a
+                // Done but is preserved verbatim. The Multicast Address (the group
+                // the sender is ceasing to listen to) lives in the trailing
+                // MulticastListenerMessage layer.
+                max_response_delay: u16::from_be_bytes([rest_of_header[0], rest_of_header[1]]),
+            },
             ICMPV6_ROUTER_SOLICITATION => Icmpv6Body::RouterSolicitation {
                 // RFC 4861 sec 4.1: the rest-of-header is the 32-bit Reserved
                 // field. The options live in the trailing RouterSolicitation
@@ -340,6 +407,9 @@ impl Icmpv6Body {
         match self {
             Icmpv6Body::Echo { .. } => "echo",
             Icmpv6Body::Error(_) => "error",
+            Icmpv6Body::MulticastListenerQuery { .. } => "multicast-listener-query",
+            Icmpv6Body::MulticastListenerReport { .. } => "multicast-listener-report",
+            Icmpv6Body::MulticastListenerDone { .. } => "multicast-listener-done",
             Icmpv6Body::RouterSolicitation { .. } => "router-solicitation",
             Icmpv6Body::RouterAdvertisement { .. } => "router-advertisement",
             Icmpv6Body::NeighborSolicitation { .. } => "neighbor-solicitation",
@@ -370,6 +440,15 @@ impl Icmpv6Body {
                     format!("error(parameter-problem, pointer={pointer})")
                 }
             },
+            Icmpv6Body::MulticastListenerQuery { max_response_delay } => {
+                format!("multicast-listener-query(max_response_delay={max_response_delay})")
+            }
+            Icmpv6Body::MulticastListenerReport { max_response_delay } => {
+                format!("multicast-listener-report(max_response_delay={max_response_delay})")
+            }
+            Icmpv6Body::MulticastListenerDone { max_response_delay } => {
+                format!("multicast-listener-done(max_response_delay={max_response_delay})")
+            }
             Icmpv6Body::RouterSolicitation { reserved } => {
                 format!("router-solicitation(reserved=0x{reserved:08x})")
             }
