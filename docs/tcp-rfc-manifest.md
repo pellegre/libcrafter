@@ -118,15 +118,21 @@ itself dictate a field encoding that `crafter` serializes.
 
 ### Guidance only (no `crafter`-serialized field)
 
-- **RFC 1191 — Path MTU Discovery** defines classic IPv4 PMTUD and informs MSS
-  and payload-sizing guidance. `crafter` does not implement PMTUD probing.
-  Source: https://www.rfc-editor.org/rfc/rfc1191.html
-- **RFC 8201 — Path MTU Discovery for IP version 6** defines IPv6 PMTUD and the
-  IPv6 minimum MTU of 1280 octets used in sizing guidance. `crafter` does not
-  implement PMTUD probing. Source:
+- **RFC 1191 — Path MTU Discovery** defines classic IPv4 PMTUD, which sets the
+  IPv4 Don't Fragment bit and learns the path MTU from ICMP "fragmentation
+  needed and DF set" (type 3, code 4) replies. It informs MSS and
+  payload-sizing guidance. `crafter` can build the DF bit (`Ipv4`) and the ICMP
+  message (`Icmp`) but does not implement PMTUD probing. Source:
+  https://www.rfc-editor.org/rfc/rfc1191.html
+- **RFC 8201 — Path MTU Discovery for IP version 6** defines IPv6 PMTUD, which
+  learns the path MTU from ICMPv6 Packet Too Big (type 2) replies, and the IPv6
+  minimum MTU of 1280 octets used in sizing guidance. `crafter` can build the
+  ICMPv6 message (`Icmpv6`) but does not implement PMTUD probing. Source:
   https://www.rfc-editor.org/rfc/rfc8201.html
 - **RFC 8899 — Packetization Layer Path MTU Discovery (PLPMTUD)** defines
-  datagram PLPMTUD and is referenced for sizing guidance only. Source:
+  datagram PLPMTUD, a probe-and-confirm alternative to ICMP-based PMTUD, and is
+  referenced for sizing guidance only. `crafter` provides the packet primitives
+  but no PLPMTUD probe state machine. Source:
   https://www.rfc-editor.org/rfc/rfc8899.html
 
 ## TCP Core Header
@@ -342,18 +348,49 @@ still constructs, classifies, encodes, decodes, and round-trips byte-for-byte.
 ## Segment Sizing And Fragmentation-Adjacent Guidance (Documentation Only)
 
 These facts size correct TCP segments and inform helper documentation. They do
-not introduce a fragmenter, reassembler, fragment cache, or live probe.
+not introduce a fragmenter, reassembler, fragment cache, or live probe. To be
+explicit: **`crafter` does not fragment or reassemble TCP segments, and
+fragmentation implementation is out of scope** for this work. The sizing helpers
+(`effective_mss`, `effective_mss_ipv4`, `effective_mss_ipv6`,
+`max_tcp_payload`, `tcp_header_len`, `option_budget`) and the constants
+`TCP_DEFAULT_IPV4_MSS` (536) and `IPV6_MINIMUM_MTU` (1280) document correct
+sizing; the caller always supplies the path MTU.
 
 - MSS (RFC 9293, option kind 2) advertises the largest segment the sender is
   willing to receive, excluding the TCP and IP headers. RFC 9293 §3.7.1 ties the
-  effective send MSS to the path and to PMTUD.
-- IPv4 PMTUD (RFC 1191) uses the Don't Fragment bit so a sender learns the path
-  MTU instead of relying on fragmentation; this informs IPv4 DF guidance for
-  sized segments.
-- IPv6 has no in-path fragmentation; the minimum link MTU is 1280 octets
-  (RFC 8201), which bounds the minimum payload sizing guidance for IPv6 TCP.
-- PLPMTUD (RFC 8899) is a datagram-layer alternative to ICMP-based PMTUD and is
-  referenced for guidance only.
+  effective send MSS to the path and to PMTUD. `crafter` models the MSS option
+  through `TcpOption::mss`/`maximum_segment_size` and derives a path-bounded
+  effective MSS through `effective_mss`; it never negotiates or enforces it.
+- IPv4 PMTUD (RFC 1191) uses the IPv4 Don't Fragment bit so a sender learns the
+  path MTU instead of relying on in-path fragmentation. `crafter` exposes the DF
+  bit on the IPv4 layer (`Ipv4::dont_fragment(true)`, the
+  `IPV4_FLAG_DONT_FRAGMENT` constant, and `Ipv4::is_dont_fragment()`), so a
+  generated PMTUD tool can build DF-set probes — but `crafter` performs no
+  fragmentation or probing on its own.
+- A router that cannot forward a DF-set IPv4 packet returns ICMP Destination
+  Unreachable with the "fragmentation needed and DF set" code (RFC 1191, ICMP
+  type 3, code 4). `crafter` can build and decode this with the `Icmp` layer:
+  `Icmp::destination_unreachable().code(ICMP_CODE_DU_FRAGMENTATION_NEEDED)`,
+  carrying the next-hop MTU through the quoted-IPv4 body
+  (`mtu_next_hop`/`mtu`, read back via `mtu_next_hop_value`). `crafter` builds
+  and decodes the message; interpreting it to re-size a segment is a generated
+  tool's job, not the crate's.
+- IPv6 has no in-path fragmentation; routers signal an oversize packet with the
+  ICMPv6 Packet Too Big message (RFC 8201 / RFC 4443, ICMPv6 type 2) carrying
+  the reduced MTU. `crafter` can build and decode this with the `Icmpv6` layer:
+  `Icmpv6::packet_too_big().mtu(1280)` (constant `ICMPV6_PACKET_TOO_BIG`).
+  Again, `crafter` builds and decodes the message but does not act on it.
+- The IPv6 minimum link MTU is 1280 octets (RFC 8200 §5 / RFC 8201), which
+  bounds the minimum payload sizing guidance for IPv6 TCP. `effective_mss_ipv6`
+  floors at this minimum (an effective MSS of 1220 octets after the 40-octet
+  IPv6 + 20-octet TCP fixed headers); the `IPV6_MINIMUM_MTU` constant names it.
+- PLPMTUD (RFC 8899) is a packetization-layer alternative to ICMP-based PMTUD
+  that probes with progressively larger packets and confirms delivery at the
+  transport layer instead of relying on ICMP Packet Too Big / fragmentation
+  needed. `crafter` provides the packet primitives a PLPMTUD probe tool would
+  build (sized TCP segments, the DF bit, ICMP/ICMPv6 decode) but implements no
+  probe state machine, search algorithm, or MTU cache; it is referenced for
+  guidance only.
 - The TCP options area is at most 40 octets (Data Offset bound, RFC 9293 §3.1).
   Option-budget helpers document how MSS, Window Scale, SACK-Permitted,
   Timestamps, and other SYN options fit within that 40-octet budget. This is a

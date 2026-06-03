@@ -330,6 +330,54 @@ MTU.
 
 The free functions are exported through `crafter::protocols::transport`.
 
+### PMTUD / PLPMTUD and fragmentation (guidance only)
+
+Path MTU Discovery (PMTUD) and Packetization Layer PMTUD (PLPMTUD) drive how a
+real sender chooses an MSS for a path. `crafter` documents these interactions
+and exposes the packet primitives a generated PMTUD/PLPMTUD tool would build,
+but **`crafter` does not fragment or reassemble TCP segments, and fragmentation
+implementation is out of scope** for the crate. None of the sizing helpers
+fragment, reassemble, or probe a path MTU; the caller always supplies the path
+MTU.
+
+- **MSS.** The MSS option (`TcpOption::mss` / `maximum_segment_size`, kind 2,
+  RFC 9293) advertises the largest segment a peer should send. RFC 9293 §3.7.1
+  ties the *effective* send MSS to the path MTU and PMTUD. Derive a path-bounded
+  effective MSS with `effective_mss(is_ipv6, path_mtu)` (or the
+  `effective_mss_ipv4` / `effective_mss_ipv6` variants); `crafter` never
+  negotiates or enforces it.
+- **IPv4 Don't Fragment (DF).** IPv4 PMTUD (RFC 1191) sets the DF bit so a sender
+  learns the path MTU instead of relying on in-path fragmentation. The `Ipv4`
+  layer exposes it directly: `Ipv4::new().dont_fragment(true)` (constant
+  `IPV4_FLAG_DONT_FRAGMENT`), read back with `Ipv4::is_dont_fragment()`. A
+  generated tool can build DF-set probes; `crafter` performs no fragmentation
+  or probing itself.
+- **ICMP fragmentation-needed.** A router that cannot forward a DF-set IPv4
+  packet returns ICMP Destination Unreachable, code "fragmentation needed and DF
+  set" (RFC 1191, type 3, code 4), carrying the next-hop MTU. Build and decode it
+  with the `Icmp` layer:
+  `Icmp::destination_unreachable().code(ICMP_CODE_DU_FRAGMENTATION_NEEDED)`, with
+  the next-hop MTU on the quoted-IPv4 body (`mtu_next_hop` / `mtu`, read with
+  `mtu_next_hop_value()`).
+- **IPv6 Packet Too Big.** IPv6 has no in-path fragmentation; routers signal an
+  oversize packet with the ICMPv6 Packet Too Big message (RFC 8201, ICMPv6
+  type 2) carrying the reduced MTU. Build and decode it with the `Icmpv6` layer:
+  `Icmpv6::packet_too_big().mtu(1280)` (constant `ICMPV6_PACKET_TOO_BIG`).
+- **IPv6 minimum MTU.** The IPv6 minimum link MTU is 1280 octets
+  (RFC 8200 §5 / RFC 8201). `effective_mss_ipv6` floors at this minimum (an
+  effective MSS of 1220 octets after the IPv6 and TCP fixed headers); the
+  `IPV6_MINIMUM_MTU` constant names it.
+- **PLPMTUD (RFC 8899).** Packetization Layer PMTUD probes with progressively
+  larger packets and confirms delivery at the transport layer instead of relying
+  on ICMP Packet Too Big / fragmentation-needed replies. `crafter` provides the
+  building blocks a PLPMTUD probe tool needs (sized TCP segments, the DF bit,
+  ICMP/ICMPv6 decode) but implements no probe state machine, search, or MTU
+  cache.
+
+These are all illustrative guidance. The interaction is documented, but
+`crafter` neither fragments, reassembles, nor probes; a generated tool composes
+these primitives to do PMTUD/PLPMTUD work.
+
 ## Explicit exclusions
 
 `crafter` stays a packet primitive. It builds and decodes individual TCP
@@ -348,9 +396,12 @@ segments and does **not** implement, and this guide does not authorize:
   reset reaction are the responsibility of a generated tool, not the crate.
 - A scanner, fuzzer, or packet-analyzer workflow.
 
-PMTUD/PLPMTUD (RFC 1191, RFC 8201, RFC 8899) and the Don't Fragment / IPv6
-minimum-MTU facts are modeled as sizing guidance only; `crafter` never probes a
-path MTU. These boundaries mirror the spec's "what not to do" and the manifest's
+PMTUD/PLPMTUD (RFC 1191, RFC 8201, RFC 8899), the IPv4 Don't Fragment bit, ICMP
+fragmentation-needed, IPv6 Packet Too Big, and the IPv6 minimum-MTU facts are
+modeled as sizing guidance only; `crafter` never probes a path MTU, and
+fragmentation implementation is out of scope. See
+[PMTUD / PLPMTUD and fragmentation (guidance only)](#pmtud--plpmtud-and-fragmentation-guidance-only).
+These boundaries mirror the spec's "what not to do" and the manifest's
 [Explicit Exclusions](tcp-rfc-manifest.md#explicit-exclusions).
 
 ## Validation coverage
