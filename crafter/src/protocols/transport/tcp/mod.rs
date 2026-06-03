@@ -40,7 +40,7 @@ pub use self::option::{
 pub use self::segment::Tcp;
 pub use self::sizing::{
     effective_mss, effective_mss_ipv4, effective_mss_ipv6, has_fin, has_syn, max_tcp_payload,
-    option_budget, remaining_option_budget, sequence_space_len, tcp_header_len,
+    option_budget, remaining_option_budget, sequence_space_len, tcp_header_len, TcpOptionBudget,
 };
 
 #[cfg(test)]
