@@ -37,12 +37,14 @@ pub use self::body::{Icmpv6Body, Icmpv6ErrorBody};
 // `protocols::mod.rs` and the prelude) like the other ICMPv6 types.
 mod message;
 pub(crate) use self::message::ndp::{
-    decode_neighbor_solicitation, decode_router_advertisement, decode_router_solicitation,
+    decode_neighbor_advertisement, decode_neighbor_solicitation, decode_router_advertisement,
+    decode_router_solicitation,
 };
 pub use self::message::ndp::{
-    NeighborSolicitation, RouterAdvertisement, RouterSolicitation, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT,
-    ICMPV6_RA_DEFAULT_ROUTER_LIFETIME, ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED,
-    ICMPV6_RA_FLAG_OTHER,
+    NeighborAdvertisement, NeighborSolicitation, RouterAdvertisement, RouterSolicitation,
+    ICMPV6_NA_FLAGS_RESERVED, ICMPV6_NA_FLAG_OVERRIDE, ICMPV6_NA_FLAG_ROUTER,
+    ICMPV6_NA_FLAG_SOLICITED, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT, ICMPV6_RA_DEFAULT_ROUTER_LIFETIME,
+    ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED, ICMPV6_RA_FLAG_OTHER,
 };
 pub use self::message::ndp_option::{
     ndp_option_type_is_known, ndp_option_type_name, NdpOption, NdpOptions,
@@ -565,6 +567,17 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
         }
     }
 
+    // RFC 4861 section 4.4 Neighbor Advertisement: the rest-of-header (the 32-bit
+    // R/S/O flags word with its 29 Reserved bits) was decoded with the header
+    // above; the trailing body is the 128-bit Target Address followed by the NDP
+    // option area. A body too short for the Target Address, or a malformed option
+    // area, keeps the bytes as a single `Raw` payload (no panic, nothing dropped).
+    if icmp_type == ICMPV6_NEIGHBOR_ADVERTISEMENT {
+        if let Ok(na) = decode_neighbor_advertisement(payload) {
+            return Ok(packet.push(na));
+        }
+    }
+
     if !payload.is_empty() {
         packet = packet.push(Raw::from_bytes(payload));
     }
@@ -576,9 +589,15 @@ mod icmpv6 {
     use super::{IcmpKind, Icmpv6, Icmpv6Body, Icmpv6ErrorBody};
     use crate::packet::Layer;
     use crate::protocols::icmp::{
-        ICMPV6_ECHO_REQUEST, ICMPV6_NEIGHBOR_ADVERTISEMENT, ICMPV6_PACKET_TOO_BIG,
-        ICMPV6_PARAMETER_PROBLEM,
+        ICMPV6_ECHO_REQUEST, ICMPV6_PACKET_TOO_BIG, ICMPV6_PARAMETER_PROBLEM,
     };
+
+    // An ICMPv6 `type` that is never modeled with a typed body — used as the
+    // stand-in "unknown type" in `icmpv6_body_preserves_unknown_type`. Type 200
+    // is unassigned in the IANA ICMPv6 type registry and is not implemented by
+    // any NDP/MLD/extended-echo step, so it stays a genuine Unknown-classification
+    // test even as more message types are modeled.
+    const UNMODELED_ICMPV6_TYPE: u8 = 200;
     use crate::{Ipv6, NetworkLayer, Packet, Raw};
     use core::net::Ipv6Addr;
 
@@ -682,19 +701,19 @@ mod icmpv6 {
         );
     }
 
-    // An unrecognized type (here a Neighbor Advertisement, modeled in a later
-    // step) falls through to the extensible `Unknown` variant with its raw
-    // rest-of-header preserved.
+    // An unrecognized type (here type 200, which the IANA ICMPv6 registry leaves
+    // unassigned and no message step models) falls through to the extensible
+    // `Unknown` variant with its raw rest-of-header preserved.
     #[test]
     fn icmpv6_body_preserves_unknown_type() {
         let icmpv6 = Icmpv6::new()
-            .icmp_type(ICMPV6_NEIGHBOR_ADVERTISEMENT)
+            .icmp_type(UNMODELED_ICMPV6_TYPE)
             .rest_of_header([0xde, 0xad, 0xbe, 0xef]);
         let body = icmpv6.body();
         assert_eq!(
             body,
             Icmpv6Body::Unknown {
-                icmp_type: ICMPV6_NEIGHBOR_ADVERTISEMENT,
+                icmp_type: UNMODELED_ICMPV6_TYPE,
                 rest_of_header: [0xde, 0xad, 0xbe, 0xef],
             }
         );

@@ -201,9 +201,10 @@ pub use self::v6::{
 // the `icmp` root so the `protocols::mod.rs` re-exports and the prelude surface
 // them alongside the `Icmpv6` header, like the other ICMPv6 message types.
 pub use self::v6::{
-    NeighborSolicitation, RouterAdvertisement, RouterSolicitation, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT,
-    ICMPV6_RA_DEFAULT_ROUTER_LIFETIME, ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED,
-    ICMPV6_RA_FLAG_OTHER,
+    NeighborAdvertisement, NeighborSolicitation, RouterAdvertisement, RouterSolicitation,
+    ICMPV6_NA_FLAGS_RESERVED, ICMPV6_NA_FLAG_OVERRIDE, ICMPV6_NA_FLAG_ROUTER,
+    ICMPV6_NA_FLAG_SOLICITED, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT, ICMPV6_RA_DEFAULT_ROUTER_LIFETIME,
+    ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED, ICMPV6_RA_FLAG_OTHER,
 };
 // The ICMPv6 (`ICMPV6_*`) codepoint constants live in `v6/constants.rs` and are
 // re-exported through `constants.rs` (which `pub use`s them), so the existing
