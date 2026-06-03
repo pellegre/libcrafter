@@ -88,6 +88,7 @@ _SUPPORTED_FEATURES = {
     "ipv6_fragment_routing",
     "pcap_contracts",
     "pcap_link_types",
+    "tcp_header",
     "tcp_options",
     "udp_options",
 }
