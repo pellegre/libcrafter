@@ -7,6 +7,9 @@ This directory contains user and contributor documentation for the Rust
   style, and helper APIs.
 - [DNS wire coverage](dns.md) describes the supported DNS wire-message
   primitives, planned typed records, and known deferrals.
+- [TCP wire coverage](tcp.md) describes the supported TCP segment construction,
+  typed options, checksums, decode, inspection, and sizing helpers, and links
+  the source-backed [TCP RFC manifest](tcp-rfc-manifest.md).
 - [Examples](examples.md) explains how to build and run the Rust examples.
 - [Oracle validation](validation.md) describes corpus, offline, pcap, and wire
   reference validation.
