@@ -71,6 +71,23 @@ date against RFC Editor, IANA TCP Parameters, and Datatracker).
 | `TcpOption::ExtendedDataOffset` constructors (`extended_data_offset_request`, `extended_data_offset`, `extended_data_offset_ext`) | `tcp.rs` ~208-224 | compatibility-only | Stable public constructors retained alongside new source-backed ExID support. |
 | `TCP_OPTION_EDO`, `TCP_EDO_REQUEST_LEN`, `TCP_EDO_HEADER_LEN`, `TCP_EDO_HEADER_AND_SEGMENT_LEN` constants | `tcp.rs` ~52-60 | compatibility-only | Exported draft constants kept; documented as draft, not RFC-published. |
 
+EDO source status and compatibility rationale: the TCP Extended Data Offset
+(EDO) kind 237 is draft-derived (draft-ietf-tcpm-tcp-edo) and is **not** a
+current IANA Option-Kind assignment — `tcp_option_kind_class(237)` reports
+`Unassigned`. The entire EDO public surface above (`TcpExtendedDataOffset`, the
+`extended_data_offset*` constructors, the `extended_data_offset_value` accessor,
+and the `TCP_OPTION_EDO` / `TCP_EDO_*` constants) is preserved purely for
+**backward compatibility**: downstream tools may already depend on these names,
+so the crate keeps them rather than removing or redefining them. The additive,
+source-backed **current** path is RFC 6994 experimental ExID support (kinds
+253/254, added in step 17 via `TcpOption::Experimental` / `experimental*`); new
+experimental codepoints should use the RFC 6994 ExID options, not the
+draft-derived EDO kind. The preserved EDO API is exercised end-to-end by the
+`tcp_edo_compatibility_public_api` test (tcp/tests.rs), which proves constructors,
+constants, the `ExtendedDataOffset` variant encode/decode, and byte-exact
+round-trip still work. See `docs/tcp-rfc-manifest.md` "Extended Data Offset (EDO)
+Status Reconciliation".
+
 ## Flag constants (`flags.rs` target)
 
 | Item | Current location | Status | Notes |
