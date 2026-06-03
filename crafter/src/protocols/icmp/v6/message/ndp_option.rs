@@ -139,6 +139,14 @@ pub const NDP_MTU_OPTION_LEN: usize = 8;
 /// 1).
 pub const NDP_MTU_OPTION_UNITS: u8 = 1;
 
+/// Width, in octets, of the Reserved area that precedes the embedded original
+/// packet in a Redirected Header option (RFC 4861 sec 4.6.3). The option's first
+/// word is Type(1) | Length(1) | a 16-bit Reserved field, and its second word is
+/// a 32-bit Reserved field; together the two Reserved fields are 6 octets (after
+/// the two-byte Type/Length header), all "MUST be initialized to zero by the
+/// sender and MUST be ignored by the receiver".
+pub const NDP_REDIRECTED_HEADER_RESERVED_LEN: usize = 6;
+
 /// Return the human-readable name for a recognized NDP option type, or `None`
 /// for an unassigned/unrecognized type.
 ///
@@ -484,6 +492,59 @@ impl NdpOption {
         // The MTU is the 32-bit field after the 16-bit Reserved field.
         let word = value.get(2..6)?;
         Some(u32::from_be_bytes([word[0], word[1], word[2], word[3]]))
+    }
+
+    /// Build a Redirected Header option (type 4) carrying as much of the original
+    /// packet that triggered a Redirect as `original_packet` supplies (RFC 4861
+    /// section 4.6.3).
+    ///
+    /// The value (everything after the two-byte Type/Length header) is laid out
+    /// per RFC 4861 section 4.6.3:
+    ///
+    /// ```text
+    /// Reserved (6 octets, sent zero) | IP header + data
+    /// ```
+    ///
+    /// The "IP header + data" is the original datagram (its IPv6 header and as
+    /// much of the payload as fits); RFC 4861 section 4.6.3 truncates it "to
+    /// ensure that the size of the redirect message does not exceed the minimum
+    /// MTU required to support IPv6". `crafter` preserves whatever bytes the
+    /// caller passes verbatim — the embedded portion is opaque, so no decode is
+    /// required — and the framework auto-fills the option `Length` to the next
+    /// 8-octet boundary, zero-padding the embedded bytes to fill the last unit.
+    /// This is a typed constructor over the framework: it produces a
+    /// [`NdpOption::Generic`] whose value bytes are the six Reserved octets
+    /// followed by the embedded packet, so it round-trips through [`NdpOptions`]
+    /// exactly like any other recognized option, and
+    /// [`NdpOption::redirected_header_data`] reads the embedded bytes back.
+    ///
+    /// The 6-octet Reserved area (a 16-bit field in the first word and a 32-bit
+    /// field in the second) is sent zero per RFC 4861 section 4.6.3; to set it on
+    /// purpose, build the option with [`NdpOption::generic`] and a hand-laid value.
+    pub fn redirected_header(original_packet: &[u8]) -> Self {
+        // RFC 4861 sec 4.6.3 value layout (after the Type/Length header):
+        //   Reserved(6, zero) || IP header + data.
+        let mut value =
+            Vec::with_capacity(NDP_REDIRECTED_HEADER_RESERVED_LEN + original_packet.len());
+        value.extend_from_slice(&[0u8; NDP_REDIRECTED_HEADER_RESERVED_LEN]);
+        value.extend_from_slice(original_packet);
+        Self::generic(NDP_OPT_REDIRECTED_HEADER, value)
+    }
+
+    /// Read the embedded "IP header + data" of a Redirected Header option (type
+    /// 4): the bytes after the 6-octet Reserved area (RFC 4861 section 4.6.3).
+    ///
+    /// Returns `None` for any other option, or when the value is too short to hold
+    /// the 6-octet Reserved area. The returned slice is the embedded original
+    /// packet exactly as carried on the wire, including any zero padding the
+    /// option `Length` auto-fill appended to reach the 8-octet boundary — callers
+    /// that need the unpadded original must track its length out of band, since
+    /// RFC 4861 section 4.6.3 does not record the embedded length in the option.
+    pub fn redirected_header_data(&self) -> Option<&[u8]> {
+        if self.option_type() != NDP_OPT_REDIRECTED_HEADER {
+            return None;
+        }
+        self.value().get(NDP_REDIRECTED_HEADER_RESERVED_LEN..)
     }
 
     /// Pin the `Length` field (in units of 8 octets) to an explicit value.
@@ -1212,6 +1273,78 @@ mod tests {
         let mtu_bytes = mtu_wrong.encode().unwrap();
         assert_eq!(mtu_bytes[1], 2);
         assert_eq!(mtu_bytes.len(), 16);
+    }
+
+    // RFC 4861 sec 4.6.3: a Redirected Header option (type 4) carries a 6-octet
+    // Reserved area (sent zero) followed by the embedded original packet; the
+    // option `Length` auto-fills to the next 8-octet boundary, zero-padding the
+    // embedded bytes, and the embedded portion reads back through the typed
+    // accessor after a full encode/decode round-trip.
+    #[test]
+    fn redirected_header_round_trips() {
+        // A small stand-in for the original datagram that triggered the redirect:
+        // a 4-byte slice. Total option = header(2) + Reserved(6) + 4 = 12 bytes,
+        // which rounds up to two 8-octet units (16 bytes), padding the embedded
+        // bytes with 4 zeros.
+        let original = [0x60u8, 0x00, 0x00, 0x00];
+        let opt = NdpOption::redirected_header(&original);
+        assert_eq!(opt.option_type(), NDP_OPT_REDIRECTED_HEADER);
+        assert!(opt.is_known());
+        // The accessor returns the embedded bytes; before encode there is no
+        // padding, so it is exactly the original.
+        assert_eq!(opt.redirected_header_data(), Some(&original[..]));
+
+        let bytes = opt.encode().unwrap();
+        // type(1) + length(1) + Reserved(6) + 4 embedded + 4 padding = 16 bytes
+        // = two 8-octet units.
+        assert_eq!(bytes.len(), 16);
+        assert_eq!(&bytes[0..2], &[NDP_OPT_REDIRECTED_HEADER, 2]);
+        // The 6 Reserved octets are zero.
+        assert_eq!(&bytes[2..8], &[0; NDP_REDIRECTED_HEADER_RESERVED_LEN]);
+        // The embedded original packet, then zero padding to the boundary.
+        assert_eq!(&bytes[8..12], &original);
+        assert_eq!(&bytes[12..16], &[0, 0, 0, 0]);
+
+        let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(consumed, 16);
+        assert_eq!(decoded.option_type(), NDP_OPT_REDIRECTED_HEADER);
+        // The decoded accessor sees the embedded bytes *plus* the auto-fill
+        // padding (RFC 4861 sec 4.6.3 records no embedded length in the option).
+        assert_eq!(
+            decoded.redirected_header_data(),
+            Some(&[0x60, 0x00, 0x00, 0x00, 0, 0, 0, 0][..])
+        );
+        // Re-encode reproduces the original bytes exactly.
+        assert_eq!(decoded.encode().unwrap(), bytes);
+    }
+
+    // An exactly-aligned embedded packet needs no padding: header(2) +
+    // Reserved(6) + 8 = 16 bytes = two units, and the accessor returns the
+    // embedded bytes unchanged with no trailing zeros.
+    #[test]
+    fn redirected_header_aligned_embedded_has_no_padding() {
+        let original = [0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        let opt = NdpOption::redirected_header(&original);
+        let bytes = opt.encode().unwrap();
+        assert_eq!(bytes.len(), 16);
+        assert_eq!(bytes[1], 2);
+        let (decoded, _) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(decoded.redirected_header_data(), Some(&original[..]));
+    }
+
+    // The Redirected Header accessor rejects other option types and a value too
+    // short to hold the 6-octet Reserved area (no false reads, no panic).
+    #[test]
+    fn redirected_header_accessor_rejects_other_options() {
+        assert_eq!(NdpOption::mtu(1500).redirected_header_data(), None);
+        // A type-4 option whose value is shorter than the 6 Reserved octets.
+        assert_eq!(
+            NdpOption::generic(NDP_OPT_REDIRECTED_HEADER, [0, 0, 0]).redirected_header_data(),
+            None
+        );
+        // An empty embedded packet is valid: the accessor returns an empty slice.
+        let empty = NdpOption::redirected_header(&[]);
+        assert_eq!(empty.redirected_header_data(), Some(&[][..]));
     }
 
     // A trailing malformed option after a valid one still surfaces as an error,

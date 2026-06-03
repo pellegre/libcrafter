@@ -37,11 +37,11 @@ pub use self::body::{Icmpv6Body, Icmpv6ErrorBody};
 // `protocols::mod.rs` and the prelude) like the other ICMPv6 types.
 mod message;
 pub(crate) use self::message::ndp::{
-    decode_neighbor_advertisement, decode_neighbor_solicitation, decode_router_advertisement,
-    decode_router_solicitation,
+    decode_neighbor_advertisement, decode_neighbor_solicitation, decode_redirect,
+    decode_router_advertisement, decode_router_solicitation,
 };
 pub use self::message::ndp::{
-    NeighborAdvertisement, NeighborSolicitation, RouterAdvertisement, RouterSolicitation,
+    NeighborAdvertisement, NeighborSolicitation, Redirect, RouterAdvertisement, RouterSolicitation,
     ICMPV6_NA_FLAGS_RESERVED, ICMPV6_NA_FLAG_OVERRIDE, ICMPV6_NA_FLAG_ROUTER,
     ICMPV6_NA_FLAG_SOLICITED, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT, ICMPV6_RA_DEFAULT_ROUTER_LIFETIME,
     ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED, ICMPV6_RA_FLAG_OTHER,
@@ -55,6 +55,7 @@ pub use self::message::ndp_option::{
     NDP_OPT_ROUTE_INFORMATION, NDP_OPT_SOURCE_LINK_LAYER_ADDR, NDP_OPT_TARGET_LINK_LAYER_ADDR,
     NDP_PREFIX_FLAGS_RESERVED, NDP_PREFIX_FLAG_AUTONOMOUS, NDP_PREFIX_FLAG_ON_LINK,
     NDP_PREFIX_INFORMATION_LEN, NDP_PREFIX_INFORMATION_UNITS, NDP_PREFIX_LIFETIME_INFINITY,
+    NDP_REDIRECTED_HEADER_RESERVED_LEN,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -575,6 +576,18 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
     if icmp_type == ICMPV6_NEIGHBOR_ADVERTISEMENT {
         if let Ok(na) = decode_neighbor_advertisement(payload) {
             return Ok(packet.push(na));
+        }
+    }
+
+    // RFC 4861 section 4.5 Redirect: the rest-of-header (the 32-bit Reserved
+    // field) was decoded with the header above; the trailing body is the 128-bit
+    // Target Address, the 128-bit Destination Address, and the NDP option area
+    // (commonly a Target Link-Layer Address and a Redirected Header option). A
+    // body too short for both addresses, or a malformed option area, keeps the
+    // bytes as a single `Raw` payload (no panic, nothing dropped).
+    if icmp_type == ICMPV6_REDIRECT {
+        if let Ok(redirect) = decode_redirect(payload) {
+            return Ok(packet.push(redirect));
         }
     }
 

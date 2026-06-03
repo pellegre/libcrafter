@@ -193,15 +193,18 @@ pub use self::v6::{
     NDP_OPT_ROUTE_INFORMATION, NDP_OPT_SOURCE_LINK_LAYER_ADDR, NDP_OPT_TARGET_LINK_LAYER_ADDR,
     NDP_PREFIX_FLAGS_RESERVED, NDP_PREFIX_FLAG_AUTONOMOUS, NDP_PREFIX_FLAG_ON_LINK,
     NDP_PREFIX_INFORMATION_LEN, NDP_PREFIX_INFORMATION_UNITS, NDP_PREFIX_LIFETIME_INFINITY,
+    NDP_REDIRECTED_HEADER_RESERVED_LEN,
 };
 // The Router Solicitation (RFC 4861 section 4.1), Router Advertisement
-// (RFC 4861 section 4.2), and Neighbor Solicitation (RFC 4861 section 4.3)
+// (RFC 4861 section 4.2), Neighbor Solicitation (RFC 4861 section 4.3), Neighbor
+// Advertisement (RFC 4861 section 4.4), and Redirect (RFC 4861 section 4.5)
 // message bodies — the NDP message bodies — live in `v6/message/ndp.rs`.
-// Re-export them, and the Router Advertisement flag-bit / default constants, at
-// the `icmp` root so the `protocols::mod.rs` re-exports and the prelude surface
-// them alongside the `Icmpv6` header, like the other ICMPv6 message types.
+// Re-export them, and the Router/Neighbor Advertisement flag-bit / default
+// constants, at the `icmp` root so the `protocols::mod.rs` re-exports and the
+// prelude surface them alongside the `Icmpv6` header, like the other ICMPv6
+// message types.
 pub use self::v6::{
-    NeighborAdvertisement, NeighborSolicitation, RouterAdvertisement, RouterSolicitation,
+    NeighborAdvertisement, NeighborSolicitation, Redirect, RouterAdvertisement, RouterSolicitation,
     ICMPV6_NA_FLAGS_RESERVED, ICMPV6_NA_FLAG_OVERRIDE, ICMPV6_NA_FLAG_ROUTER,
     ICMPV6_NA_FLAG_SOLICITED, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT, ICMPV6_RA_DEFAULT_ROUTER_LIFETIME,
     ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED, ICMPV6_RA_FLAG_OTHER,
