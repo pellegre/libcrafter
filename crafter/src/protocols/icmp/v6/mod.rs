@@ -36,8 +36,12 @@ pub use self::body::{Icmpv6Body, Icmpv6ErrorBody};
 // concrete message bodies. Re-exported at the `icmp` root (and onward through
 // `protocols::mod.rs` and the prelude) like the other ICMPv6 types.
 mod message;
-pub(crate) use self::message::ndp::decode_router_solicitation;
-pub use self::message::ndp::RouterSolicitation;
+pub(crate) use self::message::ndp::{decode_router_advertisement, decode_router_solicitation};
+pub use self::message::ndp::{
+    RouterAdvertisement, RouterSolicitation, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT,
+    ICMPV6_RA_DEFAULT_ROUTER_LIFETIME, ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED,
+    ICMPV6_RA_FLAG_OTHER,
+};
 pub use self::message::ndp_option::{
     ndp_option_type_is_known, ndp_option_type_name, NdpOption, NdpOptions,
     NDP_LINK_LAYER_ADDR_ETHERNET_LEN, NDP_OPTION_HEADER_LEN, NDP_OPTION_LENGTH_UNIT,
@@ -531,6 +535,18 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
     if icmp_type == ICMPV6_ROUTER_SOLICITATION {
         if let Ok(rs) = decode_router_solicitation(payload) {
             return Ok(packet.push(rs));
+        }
+    }
+
+    // RFC 4861 section 4.2 Router Advertisement: the rest-of-header (Cur Hop
+    // Limit / M+O flags / Router Lifetime) was decoded with the header above;
+    // the trailing body is the Reachable-Time + Retrans-Timer words and the NDP
+    // option area. A body too short for the two timer words, or a malformed
+    // option area, keeps the bytes as a single `Raw` payload (no panic, nothing
+    // dropped).
+    if icmp_type == ICMPV6_ROUTER_ADVERTISEMENT {
+        if let Ok(ra) = decode_router_advertisement(payload) {
+            return Ok(packet.push(ra));
         }
     }
 

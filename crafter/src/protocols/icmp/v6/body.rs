@@ -61,6 +61,31 @@ pub enum Icmpv6Body {
         /// sent as zero, preserved verbatim here so a non-zero value is visible).
         reserved: u32,
     },
+    /// RFC 4861 section 4.2 Router Advertisement (134): the four rest-of-header
+    /// bytes are the Cur Hop Limit, the M/O flags byte (with six Reserved bits),
+    /// and the Router Lifetime; the Reachable-Time / Retrans-Timer words and the
+    /// NDP options ride in a trailing
+    /// [`RouterAdvertisement`](super::message::ndp::RouterAdvertisement) layer.
+    /// RFC 4862 section 5.2 defines how the M and O flags drive host
+    /// configuration.
+    RouterAdvertisement {
+        /// Cur Hop Limit (RFC 4861 sec 4.2: default hop limit for hosts using
+        /// this router; 0 = unspecified).
+        cur_hop_limit: u8,
+        /// The M (Managed Address Configuration) flag — RFC 4861 sec 4.2 bit
+        /// 0x80; RFC 4862 sec 5.2: select stateful (DHCPv6) address config.
+        managed: bool,
+        /// The O (Other Configuration) flag — RFC 4861 sec 4.2 bit 0x40;
+        /// RFC 4862 sec 5.2: other configuration is available via DHCPv6.
+        other: bool,
+        /// The six Reserved flag bits (RFC 4861 sec 4.2: send-as-zero), preserved
+        /// verbatim so a non-zero value (or a later RFC 5175/4191 assignment) is
+        /// visible. These are the low six bits of the flags byte.
+        reserved_flags: u8,
+        /// Router Lifetime in seconds (RFC 4861 sec 4.2: how long this router is
+        /// a default router; 0 = not a default router).
+        router_lifetime: u16,
+    },
     /// Any ICMPv6 `type` not yet modeled with a typed body. The four
     /// rest-of-header bytes are preserved verbatim and any trailing bytes stay a
     /// [`Raw`] payload, so unknown messages round-trip unchanged.
@@ -136,6 +161,21 @@ impl Icmpv6Body {
                 // layer, not in this header-derived view.
                 reserved: u32::from_be_bytes(rest_of_header),
             },
+            ICMPV6_ROUTER_ADVERTISEMENT => {
+                // RFC 4861 sec 4.2: rest-of-header = Cur Hop Limit (byte 0),
+                // flags byte (byte 1: 0x80 M, 0x40 O, low six bits Reserved),
+                // Router Lifetime (bytes 2..4). The Reachable-Time / Retrans-
+                // Timer words and options live in the trailing
+                // RouterAdvertisement layer, not in this header-derived view.
+                let flags = rest_of_header[1];
+                Icmpv6Body::RouterAdvertisement {
+                    cur_hop_limit: rest_of_header[0],
+                    managed: flags & ICMPV6_RA_FLAG_MANAGED != 0,
+                    other: flags & ICMPV6_RA_FLAG_OTHER != 0,
+                    reserved_flags: flags & ICMPV6_RA_FLAGS_RESERVED,
+                    router_lifetime: u16::from_be_bytes([rest_of_header[2], rest_of_header[3]]),
+                }
+            }
             _ => Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,
@@ -150,6 +190,7 @@ impl Icmpv6Body {
             Icmpv6Body::Echo { .. } => "echo",
             Icmpv6Body::Error(_) => "error",
             Icmpv6Body::RouterSolicitation { .. } => "router-solicitation",
+            Icmpv6Body::RouterAdvertisement { .. } => "router-advertisement",
             Icmpv6Body::Unknown { .. } => "unknown",
         }
     }
@@ -176,6 +217,16 @@ impl Icmpv6Body {
             Icmpv6Body::RouterSolicitation { reserved } => {
                 format!("router-solicitation(reserved=0x{reserved:08x})")
             }
+            Icmpv6Body::RouterAdvertisement {
+                cur_hop_limit,
+                managed,
+                other,
+                reserved_flags,
+                router_lifetime,
+            } => format!(
+                "router-advertisement(cur_hop_limit={cur_hop_limit}, M={managed}, O={other}, \
+                 reserved_flags=0x{reserved_flags:02x}, router_lifetime={router_lifetime})"
+            ),
             Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,
