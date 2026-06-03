@@ -71,7 +71,9 @@ Valid byte fixtures cover:
   `ipv4-icmp-echo-request.bin`,
   `ipv4-icmp-destination-unreachable.hex`
 - IPv4 options and TCP options:
-  `ipv4-options-traceroute-udp-raw.hex`, `ipv4-tcp-syn-options.hex`
+  `ipv4-options-traceroute-udp-raw.hex`, `ipv4-tcp-syn-options.hex`,
+  `ipv4-tcp-syn-rich-options.hex` (MSS, Window Scale, SACK Permitted,
+  Timestamp, RFC 5482 User Timeout, and a classified Generic option)
 - IPv4 UDP DNS query and response:
   `ipv4-udp-dns-query-example-com.bin`,
   `ipv4-udp-dns-response-example-com.hex`
