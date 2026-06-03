@@ -15,6 +15,18 @@ _MATRIX_PROVIDERS = ("hetzner", "qemu", "virtualbox", "docker")
 
 class ProbeProviderDryRunMatrixTest(unittest.TestCase):
     def test_behavior_matrix_summarizes_provider_planning(self) -> None:
+        behavior_count = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
+        # Hetzner has no link-layer substrate, so every DHCP, ARP, and NDP
+        # behavioral case skips for a capability reason; the IPv6 NDP cases
+        # ride the same link-layer requirement as ARP. DNS and UDP unicast
+        # cases stay executable.
+        link_layer_skipped = (
+            _behavior_cases_by_protocol("arp") | _behavior_cases_by_protocol("ndp")
+        )
+        dhcp_skipped = _behavior_cases_by_protocol("dhcp")
+        hetzner_skipped_cases = dhcp_skipped | link_layer_skipped
+        hetzner_skipped = len(hetzner_skipped_cases)
+        hetzner_executable = behavior_count - hetzner_skipped
         with tempfile.TemporaryDirectory() as temp_dir:
             out = Path(temp_dir) / "matrix"
             matrix = provider_matrix.build_provider_matrix(
@@ -22,7 +34,7 @@ class ProbeProviderDryRunMatrixTest(unittest.TestCase):
                 dry_run=True,
                 profile="behavior",
                 seed=1050,
-                count=40,
+                count=behavior_count,
                 out=out,
             )
 
@@ -37,7 +49,7 @@ class ProbeProviderDryRunMatrixTest(unittest.TestCase):
             self.assertEqual(matrix["providers"], list(_MATRIX_PROVIDERS))
             self.assertEqual(matrix["profile"], "behavior")
             self.assertEqual(matrix["seed"], 1050)
-            self.assertEqual(matrix["planned_count"], 40)
+            self.assertEqual(matrix["planned_count"], behavior_count)
             self.assertEqual(
                 matrix["selected_cases"],
                 list(cases.BEHAVIOR_PROFILE_CASE_NAMES),
@@ -51,35 +63,35 @@ class ProbeProviderDryRunMatrixTest(unittest.TestCase):
             self.assertEqual(set(reports), set(_MATRIX_PROVIDERS))
 
             hetzner = reports["hetzner"]
-            self.assertEqual(hetzner["planned_count"], 40)
-            self.assertEqual(hetzner["skipped_count"], 20)
-            self.assertEqual(hetzner["skipped_by_capability"], 20)
+            self.assertEqual(hetzner["planned_count"], behavior_count)
+            self.assertEqual(hetzner["skipped_count"], hetzner_skipped)
+            self.assertEqual(hetzner["skipped_by_capability"], hetzner_skipped)
             self.assertEqual(hetzner["skipped_by_confirmation"], 0)
             self.assertEqual(
                 hetzner["skip_counts_by_reason"],
                 {
-                    capabilities.SKIP_CAPABILITY_UNAVAILABLE: 10,
-                    capabilities.SKIP_REQUIRES_LINK_LAYER: 10,
+                    capabilities.SKIP_CAPABILITY_UNAVAILABLE: len(dhcp_skipped),
+                    capabilities.SKIP_REQUIRES_LINK_LAYER: len(link_layer_skipped),
                 },
             )
             self.assertEqual(
                 {case["case"] for case in hetzner["skipped_cases"]},
-                _behavior_cases_by_protocol("dhcp")
-                | _behavior_cases_by_protocol("arp"),
+                hetzner_skipped_cases,
             )
-            self.assertEqual(len(hetzner["executable_cases"]), 20)
+            self.assertEqual(len(hetzner["executable_cases"]), hetzner_executable)
             hetzner_caps = hetzner["provider_capabilities"]
             self.assertTrue(hetzner_caps["dns_service"])
             self.assertTrue(hetzner_caps["udp_service"])
             self.assertFalse(hetzner_caps["dhcp_service"])
             self.assertFalse(hetzner_caps["arp_resolution"])
+            self.assertFalse(hetzner_caps["ipv6_multicast"])
 
             for provider in ("qemu", "virtualbox", "docker"):
                 report = reports[provider]
                 with self.subTest(provider=provider):
-                    self.assertEqual(report["planned_count"], 40)
+                    self.assertEqual(report["planned_count"], behavior_count)
                     self.assertEqual(report["skipped_count"], 0)
-                    self.assertEqual(report["executable_count"], 40)
+                    self.assertEqual(report["executable_count"], behavior_count)
                     self.assertEqual(report["skip_counts_by_reason"], {})
                     caps = report["provider_capabilities"]
                     self.assertTrue(caps["dns_service"])

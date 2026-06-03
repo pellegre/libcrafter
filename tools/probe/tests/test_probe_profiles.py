@@ -1,8 +1,8 @@
 """Unit coverage for probe sampling profiles.
 
 These tests pin the profile-to-case mapping (smoke stays the legacy set, behavior
-selects the full forty-case DNS/DHCP/ARP/UDP suite) and the deterministic
-seed/count planning the profile feeds into the planner.
+selects the full DNS/DHCP/ARP/NDP/UDP suite) and the deterministic seed/count
+planning the profile feeds into the planner.
 """
 
 from __future__ import annotations
@@ -22,13 +22,23 @@ _LEGACY_CASE_NAMES = (
     "arp-resolution",
 )
 
+# The behavior suite carries ten cases each for DNS, DHCP, ARP, and UDP plus the
+# three IPv6 Neighbor Discovery behavior cases (NS->NA, RS->RA, DAD), ordered
+# dns, dhcp, arp, ndp, udp. Derive the count from the catalog so the suite can
+# grow without re-pinning a literal here.
+_BEHAVIOR_CASE_COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
+_BEHAVIOR_PROTOCOL_COMPOSITION = {"dns": 10, "dhcp": 10, "arp": 10, "ndp": 3, "udp": 10}
+_BEHAVIOR_PROTOCOL_ORDER = (
+    ["dns"] * 10 + ["dhcp"] * 10 + ["arp"] * 10 + ["ndp"] * 3 + ["udp"] * 10
+)
+
 
 def _request(**overrides: object) -> ProbeRunRequest:
     base = {
         "provider": "qemu",
         "profile": "behavior",
         "seed": 7,
-        "count": 40,
+        "count": _BEHAVIOR_CASE_COUNT,
         "case_names": [],
         "dry_run": True,
     }
@@ -37,28 +47,28 @@ def _request(**overrides: object) -> ProbeRunRequest:
 
 
 class ProbeProfileMembershipTest(unittest.TestCase):
-    def test_behavior_profile_selects_forty_behavioral_cases(self) -> None:
+    def test_behavior_profile_selects_full_behavioral_suite(self) -> None:
         names = cases.profile_case_names("behavior")
 
         self.assertIsNotNone(names)
         assert names is not None
-        self.assertEqual(len(names), 40)
-        self.assertEqual(len(set(names)), 40)
+        self.assertEqual(len(names), _BEHAVIOR_CASE_COUNT)
+        self.assertEqual(len(set(names)), _BEHAVIOR_CASE_COUNT)
 
-    def test_behavior_profile_covers_ten_per_protocol(self) -> None:
+    def test_behavior_profile_protocol_composition(self) -> None:
         selected = cases.profile_selected_cases("behavior", [])
         by_protocol: dict[str, int] = {}
         for case in selected:
             protocol = str(case.metadata.get("protocol"))
             by_protocol[protocol] = by_protocol.get(protocol, 0) + 1
 
-        self.assertEqual(by_protocol, {"dns": 10, "dhcp": 10, "arp": 10, "udp": 10})
+        self.assertEqual(by_protocol, _BEHAVIOR_PROTOCOL_COMPOSITION)
 
-    def test_behavior_profile_order_is_dns_dhcp_arp_udp(self) -> None:
+    def test_behavior_profile_order_is_dns_dhcp_arp_ndp_udp(self) -> None:
         selected = cases.profile_selected_cases("behavior", [])
         protocols = [str(case.metadata.get("protocol")) for case in selected]
 
-        self.assertEqual(protocols, ["dns"] * 10 + ["dhcp"] * 10 + ["arp"] * 10 + ["udp"] * 10)
+        self.assertEqual(protocols, _BEHAVIOR_PROTOCOL_ORDER)
         self.assertEqual(
             [case.name for case in selected],
             list(cases.BEHAVIOR_PROFILE_CASE_NAMES),
@@ -131,8 +141,10 @@ class ProbeProfileMembershipTest(unittest.TestCase):
 
 
 class ProbeProfileDefaultCountTest(unittest.TestCase):
-    def test_behavior_profile_default_count_is_forty(self) -> None:
-        self.assertEqual(cases.profile_default_count("behavior"), 40)
+    def test_behavior_profile_default_count_is_full_suite(self) -> None:
+        self.assertEqual(
+            cases.profile_default_count("behavior"), _BEHAVIOR_CASE_COUNT
+        )
         self.assertEqual(
             cases.profile_default_count("behavior"),
             len(cases.BEHAVIOR_PROFILE_CASE_NAMES),
@@ -147,11 +159,11 @@ class ProbeProfileDefaultCountTest(unittest.TestCase):
 
 class ProbeProfilePlanningDeterminismTest(unittest.TestCase):
     def test_full_behavior_count_plans_every_case_once(self) -> None:
-        request = _request(seed=7, count=40)
+        request = _request(seed=7, count=_BEHAVIOR_CASE_COUNT)
         selected = cases.profile_selected_cases(request.profile, request.case_names)
         planned = planning.planned_cases(selected, seed=request.seed, count=request.count)
 
-        self.assertEqual(len(planned), 40)
+        self.assertEqual(len(planned), _BEHAVIOR_CASE_COUNT)
         self.assertEqual(
             {case.name for case in planned},
             set(cases.BEHAVIOR_PROFILE_CASE_NAMES),
@@ -159,8 +171,8 @@ class ProbeProfilePlanningDeterminismTest(unittest.TestCase):
 
     def test_same_seed_and_count_plan_identically(self) -> None:
         selected = cases.profile_selected_cases("behavior", [])
-        first = planning.planned_cases(selected, seed=13, count=40)
-        second = planning.planned_cases(selected, seed=13, count=40)
+        first = planning.planned_cases(selected, seed=13, count=_BEHAVIOR_CASE_COUNT)
+        second = planning.planned_cases(selected, seed=13, count=_BEHAVIOR_CASE_COUNT)
 
         self.assertEqual(
             [case.name for case in first],
@@ -169,8 +181,8 @@ class ProbeProfilePlanningDeterminismTest(unittest.TestCase):
 
     def test_seed_rotates_planned_starting_case(self) -> None:
         selected = cases.profile_selected_cases("behavior", [])
-        zero = planning.planned_cases(selected, seed=0, count=40)
-        shifted = planning.planned_cases(selected, seed=5, count=40)
+        zero = planning.planned_cases(selected, seed=0, count=_BEHAVIOR_CASE_COUNT)
+        shifted = planning.planned_cases(selected, seed=5, count=_BEHAVIOR_CASE_COUNT)
 
         self.assertEqual(zero[0].name, cases.BEHAVIOR_PROFILE_CASE_NAMES[0])
         self.assertEqual(shifted[0].name, cases.BEHAVIOR_PROFILE_CASE_NAMES[5])
@@ -195,7 +207,7 @@ class ProbeProfileCliWiringTest(unittest.TestCase):
         )
         request = cli._request_from_args(args)
 
-        self.assertEqual(request.count, 40)
+        self.assertEqual(request.count, _BEHAVIOR_CASE_COUNT)
         self.assertIs(request.metadata["count_explicit"], False)
 
     def test_cli_explicit_count_overrides_profile_default(self) -> None:

@@ -433,8 +433,30 @@ stacks:
     layers:
       - ipv6
       - icmpv6
+    # ICMPv6 echo/error plus the IPv6 Neighbor Discovery (RFC 4861) and MLD
+    # (RFC 2710 / RFC 3810 / RFC 9777) case ids. These case ids let the live
+    # runner resolve a focused NDP/MLD case
+    # (`tools/oracle/run live --case ndp-neighbor-solicitation`) onto the
+    # ICMPv6 stack. The packet rides next-header 58 over IPv6, so a provider
+    # without IPv6 unicast (Hetzner) marks the case wire-ineligible with the
+    # stable `requires_ipv6` reason and the live run skips it cleanly, the same
+    # IPv6-capability gating every ICMPv6 case already follows; providers that
+    # carry same-segment IPv6 link-layer multicast (QEMU, VirtualBox) plan it.
+    # Byte-exact NDP/MLD interop is pinned by the scapy bidirectional cases in
+    # fixtures/scapy-cases.json and the crafter round-trip tests; this list is
+    # the live-path case registry, not an offline byte-corpus generator.
     coverage_cases:
       - ipv6-icmp
+      - ndp-router-solicitation
+      - ndp-router-advertisement
+      - ndp-neighbor-solicitation
+      - ndp-neighbor-advertisement
+      - ndp-redirect
+      - mldv1-general-query
+      - mldv1-report
+      - mldv1-done
+      - mldv2-general-query
+      - mldv2-report-two-records
   - name: ipv6_fragment_udp
     root: "l3:ipv6"
     layers:
