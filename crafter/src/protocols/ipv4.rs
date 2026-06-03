@@ -110,30 +110,6 @@ impl From<Ipv4Protocol> for u8 {
     }
 }
 
-/// Migration-only compatibility enum for the former generic IPv4 protocol selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum IpProtocol {
-    /// IPv6 hop-by-hop option.
-    HopByHop = 0,
-    /// Internet Control Message Protocol.
-    Icmp = IPPROTO_ICMP,
-    /// Transmission Control Protocol.
-    Tcp = IPPROTO_TCP,
-    /// User Datagram Protocol.
-    Udp = IPPROTO_UDP,
-    /// IPv6 encapsulation.
-    Ipv6 = IPPROTO_IPV6,
-    /// ICMPv6.
-    Icmpv6 = IPPROTO_ICMPV6,
-}
-
-impl From<IpProtocol> for u8 {
-    fn from(value: IpProtocol) -> Self {
-        value as u8
-    }
-}
-
 /// IPv4 route-style option family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Ipv4RouteOptionKind {
@@ -550,11 +526,6 @@ impl Ipv4 {
         self.protocol(protocol.into())
     }
 
-    /// Migration-only compatibility alias for a known protocol number.
-    pub fn proto(self, protocol: IpProtocol) -> Self {
-        self.protocol(protocol.into())
-    }
-
     /// Set the IPv4 header checksum explicitly.
     pub fn checksum(mut self, checksum: u16) -> Self {
         self.checksum.set_user(checksum);
@@ -598,11 +569,6 @@ impl Ipv4 {
     pub fn ipv4_option(mut self, option: Ipv4Option) -> Result<Self> {
         self.options.extend_from_slice(&option.encode()?);
         Ok(self)
-    }
-
-    /// Compatibility alias for appending a typed IPv4 option.
-    pub fn ip_option(self, option: Ipv4Option) -> Result<Self> {
-        self.ipv4_option(option)
     }
 
     /// Replace all IPv4 option bytes.

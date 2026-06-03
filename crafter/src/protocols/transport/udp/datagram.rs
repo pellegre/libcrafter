@@ -4,7 +4,7 @@ use crate::field::Field;
 use crate::packet::{Layer, LayerContext, Packet, Raw, TransportChecksumContext};
 use crate::protocols::dhcp::{Dhcp, DHCP_CLIENT_PORT, DHCP_SERVER_PORT};
 use crate::protocols::dns::Dns;
-use crate::protocols::ip::IPPROTO_UDP;
+use crate::protocols::ipv4::IPPROTO_UDP;
 use crate::registry::ProtocolRegistry;
 
 use super::super::common::{

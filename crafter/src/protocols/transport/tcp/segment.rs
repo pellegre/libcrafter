@@ -3,7 +3,7 @@
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
-use crate::protocols::ip::IPPROTO_TCP;
+use crate::protocols::ipv4::IPPROTO_TCP;
 
 use super::super::common::{
     hex_bytes, impl_layer_div, impl_layer_object, payload_bytes_after, transport_checksum_context,

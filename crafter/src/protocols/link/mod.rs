@@ -9,7 +9,7 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::mac::MacAddr;
 use crate::packet::{IntoPacket, Layer, LayerContext, NetworkLayer, Packet, Raw};
-use crate::protocols::ip::Ipv4;
+use crate::protocols::ipv4::Ipv4;
 use crate::protocols::ipv6::Ipv6;
 use crate::registry::ProtocolRegistry;
 

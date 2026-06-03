@@ -1,7 +1,7 @@
 use crate::checksum::{crc32c, internet_checksum_chunks};
 use crate::error::{CrafterError, Result};
 use crate::packet::{Layer, LayerContext, Packet};
-use crate::protocols::ip::Ipv4;
+use crate::protocols::ipv4::Ipv4;
 use crate::protocols::ipv6::Ipv6;
 
 use super::super::common::{hex_bytes, impl_layer_div, impl_layer_object};
