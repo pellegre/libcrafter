@@ -121,6 +121,19 @@ pub enum Icmpv6Body {
         /// the 32-bit flags word.
         reserved: u32,
     },
+    /// RFC 4861 section 4.5 Redirect (137): the four rest-of-header bytes are an
+    /// unused, send-as-zero Reserved field; the 128-bit Target Address (a better
+    /// first hop), the 128-bit Destination Address (the destination being
+    /// redirected), and the NDP options (commonly a Target Link-Layer Address and
+    /// a Redirected Header carrying the packet that triggered the Redirect) ride in
+    /// a trailing [`Redirect`](super::message::ndp::Redirect) layer. Redirect is
+    /// the IPv6 analogue of the ICMPv4 Redirect: a router tells a host of a better
+    /// first hop for a destination.
+    Redirect {
+        /// The 32-bit Reserved field from the rest-of-header (RFC 4861 sec 4.5:
+        /// sent as zero, preserved verbatim here so a non-zero value is visible).
+        reserved: u32,
+    },
     /// Any ICMPv6 `type` not yet modeled with a typed body. The four
     /// rest-of-header bytes are preserved verbatim and any trailing bytes stay a
     /// [`Raw`] payload, so unknown messages round-trip unchanged.
@@ -231,6 +244,13 @@ impl Icmpv6Body {
                     reserved: u32::from_be_bytes(rest_of_header) & ICMPV6_NA_FLAGS_RESERVED,
                 }
             }
+            ICMPV6_REDIRECT => Icmpv6Body::Redirect {
+                // RFC 4861 sec 4.5: the rest-of-header is the 32-bit Reserved
+                // field. The Target Address, Destination Address, and options
+                // live in the trailing Redirect layer, not in this
+                // header-derived view.
+                reserved: u32::from_be_bytes(rest_of_header),
+            },
             _ => Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,
@@ -248,6 +268,7 @@ impl Icmpv6Body {
             Icmpv6Body::RouterAdvertisement { .. } => "router-advertisement",
             Icmpv6Body::NeighborSolicitation { .. } => "neighbor-solicitation",
             Icmpv6Body::NeighborAdvertisement { .. } => "neighbor-advertisement",
+            Icmpv6Body::Redirect { .. } => "redirect",
             Icmpv6Body::Unknown { .. } => "unknown",
         }
     }
@@ -296,6 +317,9 @@ impl Icmpv6Body {
                 "neighbor-advertisement(R={router}, S={solicited}, O={override_flag}, \
                  reserved=0x{reserved:08x})"
             ),
+            Icmpv6Body::Redirect { reserved } => {
+                format!("redirect(reserved=0x{reserved:08x})")
+            }
             Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,

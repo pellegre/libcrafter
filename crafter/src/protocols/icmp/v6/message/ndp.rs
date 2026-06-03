@@ -968,6 +968,219 @@ pub(crate) fn decode_neighbor_advertisement(bytes: &[u8]) -> Result<NeighborAdve
     })
 }
 
+// --- Redirect (RFC 4861 section 4.5) ---------------------------------------
+
+/// Width, in octets, of each of the two 128-bit IPv6 addresses (Target Address
+/// and Destination Address) that lead a Redirect body (RFC 4861 section 4.5).
+const REDIRECT_ADDRESS_LEN: usize = 16;
+
+/// Combined width, in octets, of the two fixed Redirect addresses (Target
+/// Address + Destination Address) that precede the option area.
+const REDIRECT_BODY_FIXED_LEN: usize = REDIRECT_ADDRESS_LEN * 2;
+
+/// Redirect message body (RFC 4861 section 4.5).
+///
+/// On the wire a Redirect is ICMPv6 `type` 137, `code` 0, a 32-bit Reserved
+/// field (RFC 4861 section 4.5: "This field is unused. It MUST be initialized to
+/// zero by the sender and MUST be ignored by the receiver."), a 128-bit Target
+/// Address — "An IP address that is a better first hop to use for the ICMP
+/// Destination Address ... The Target Address MUST NOT be a multicast address."
+/// — a 128-bit Destination Address — "The IP address of the destination that is
+/// redirected to the target." — then zero or more options, commonly the Target
+/// Link-Layer Address option (RFC 4861 section 4.6.1) and the Redirected Header
+/// option (RFC 4861 section 4.6.3) carrying as much of the packet that triggered
+/// the Redirect as fits.
+///
+/// A router sends a Redirect to inform a host of a better first hop for a
+/// destination (the analogue of an ICMPv4 Redirect, type 5): the Target Address
+/// is the better next hop and the Destination Address is the destination being
+/// redirected. When the target is the destination itself (the destination is in
+/// fact a neighbor), Target Address and Destination Address are equal.
+///
+/// Following the NDP message pattern established by [`RouterSolicitation`], the
+/// 32-bit Reserved field is the [`Icmpv6`] header's four-byte rest-of-header
+/// (set on the header — not in this body — by [`Icmpv6::redirect`]) so the split
+/// matches the wire layout and the way ICMPv4 keeps its rest-of-header fields on
+/// the header. This body carries exactly the part after the fixed 8-byte header:
+/// the 16-byte Target Address, the 16-byte Destination Address, and the ordered
+/// [`NdpOptions`]. The header auto-fills the ICMPv6 checksum over the IPv6
+/// pseudo-header, covering this body's bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Redirect {
+    // `pub(crate)` so the ICMPv6 decode path in `icmp/v6/mod.rs` can construct
+    // the body from wire bytes; the public surface is the builder/accessors.
+    pub(crate) target_address: core::net::Ipv6Addr,
+    pub(crate) destination_address: core::net::Ipv6Addr,
+    pub(crate) options: NdpOptions,
+}
+
+impl Redirect {
+    /// Create a Redirect body advertising `target_address` (the better first hop;
+    /// RFC 4861 section 4.5 requires it MUST NOT be a multicast address) for
+    /// `destination_address` (the destination being redirected) with no options.
+    /// Compose it under an [`Icmpv6`] header (type 137, code 0) — or use
+    /// [`Icmpv6::redirect`], which sets the header type/code and zero Reserved
+    /// word for you.
+    pub fn new(
+        target_address: core::net::Ipv6Addr,
+        destination_address: core::net::Ipv6Addr,
+    ) -> Self {
+        Self {
+            target_address,
+            destination_address,
+            options: NdpOptions::new(),
+        }
+    }
+
+    /// Set the Target Address (RFC 4861 section 4.5: a better first hop for the
+    /// Destination Address; MUST NOT be a multicast address).
+    pub fn target_address(mut self, target_address: core::net::Ipv6Addr) -> Self {
+        self.target_address = target_address;
+        self
+    }
+
+    /// Set the Destination Address (RFC 4861 section 4.5: the destination that is
+    /// redirected to the target).
+    pub fn destination_address(mut self, destination_address: core::net::Ipv6Addr) -> Self {
+        self.destination_address = destination_address;
+        self
+    }
+
+    /// Append an NDP option (RFC 4861 section 4.6), preserving order.
+    ///
+    /// The common options on a Redirect are the Target Link-Layer Address
+    /// (RFC 4861 section 4.6.1), carrying the target's MAC, and the Redirected
+    /// Header (RFC 4861 section 4.6.3), carrying the packet that triggered the
+    /// Redirect; build them with [`NdpOption::target_link_layer_address`] and
+    /// [`NdpOption::redirected_header`].
+    pub fn option(mut self, option: NdpOption) -> Self {
+        self.options.add(option);
+        self
+    }
+
+    /// Replace the whole ordered option list.
+    pub fn options(mut self, options: NdpOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// The Target Address field (the better first hop for the Destination
+    /// Address).
+    pub fn target_address_value(&self) -> core::net::Ipv6Addr {
+        self.target_address
+    }
+
+    /// The Destination Address field (the destination being redirected).
+    pub fn destination_address_value(&self) -> core::net::Ipv6Addr {
+        self.destination_address
+    }
+
+    /// The ordered NDP options carried after the Target and Destination
+    /// Addresses.
+    pub fn options_ref(&self) -> &NdpOptions {
+        &self.options
+    }
+}
+
+impl Layer for Redirect {
+    fn name(&self) -> &'static str {
+        "Redirect"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "Redirect(target={}, destination={}, options={})",
+            self.target_address,
+            self.destination_address,
+            self.options.len()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("target_address", self.target_address.to_string()),
+            ("destination_address", self.destination_address.to_string()),
+            ("option_count", self.options.len().to_string()),
+        ];
+        for (index, option) in self.options.iter().enumerate() {
+            fields.push((option_field_name(index), option.to_string()));
+        }
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        REDIRECT_BODY_FIXED_LEN + self.options.encoded_len().unwrap_or(0)
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.target_address.octets());
+        out.extend_from_slice(&self.destination_address.octets());
+        out.extend_from_slice(&self.options.encode()?);
+        Ok(())
+    }
+
+    impl_layer_object!(Redirect);
+}
+
+impl_layer_div!(Redirect);
+
+impl Icmpv6 {
+    /// Build a Redirect packet (RFC 4861 section 4.5) advertising `target` as a
+    /// better first hop for `destination`.
+    ///
+    /// Returns a [`Packet`] composing the [`Icmpv6`] header (type 137, code 0, the
+    /// four-byte Reserved rest-of-header left zero per RFC 4861 section 4.5) with a
+    /// [`Redirect`] body carrying `target` (the better first hop — RFC 4861
+    /// section 4.5 requires it MUST NOT be a multicast address) and `destination`
+    /// (the destination being redirected) and no options. Attach a Target
+    /// Link-Layer Address option ([`NdpOption::target_link_layer_address`]) and/or
+    /// a Redirected Header option ([`NdpOption::redirected_header`]) by building
+    /// the body explicitly — for example
+    /// `Icmpv6::new().icmp_type(ICMPV6_REDIRECT).code(0) /
+    /// Redirect::new(target, destination).option(...)`. `compile()` auto-fills the
+    /// ICMPv6 checksum over the IPv6 pseudo-header, covering the body's bytes.
+    ///
+    /// When the destination is in fact a neighbor, the target and destination are
+    /// the same address (RFC 4861 section 4.5).
+    pub fn redirect(target: core::net::Ipv6Addr, destination: core::net::Ipv6Addr) -> Packet {
+        Self::redirect_body(Redirect::new(target, destination))
+    }
+
+    /// Compose the Redirect header (type 137, code 0, reserved word zero) with a
+    /// caller-built [`Redirect`] body.
+    fn redirect_body(body: Redirect) -> Packet {
+        Self::new().icmp_type(ICMPV6_REDIRECT).code(0) / body
+    }
+}
+
+/// Decode the body of an ICMPv6 Redirect: the 128-bit Target Address followed by
+/// the 128-bit Destination Address (RFC 4861 section 4.5) and then the NDP option
+/// area. The 32-bit Reserved rest-of-header lives in the header and is decoded
+/// there.
+///
+/// Returns a structured [`CrafterError`] (never a panic) when the body is too
+/// short to hold both addresses, or when an option is malformed (a zero length or
+/// an overrun); the option walk is delegated to [`NdpOptions::decode`].
+pub(crate) fn decode_redirect(bytes: &[u8]) -> Result<Redirect> {
+    if bytes.len() < REDIRECT_BODY_FIXED_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "icmpv6.redirect.addresses",
+            REDIRECT_BODY_FIXED_LEN,
+            bytes.len(),
+        ));
+    }
+    let mut target = [0u8; REDIRECT_ADDRESS_LEN];
+    target.copy_from_slice(&bytes[..REDIRECT_ADDRESS_LEN]);
+    let mut destination = [0u8; REDIRECT_ADDRESS_LEN];
+    destination.copy_from_slice(&bytes[REDIRECT_ADDRESS_LEN..REDIRECT_BODY_FIXED_LEN]);
+    let options = NdpOptions::decode(&bytes[REDIRECT_BODY_FIXED_LEN..])?;
+    Ok(Redirect {
+        target_address: core::net::Ipv6Addr::from(target),
+        destination_address: core::net::Ipv6Addr::from(destination),
+        options,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1912,6 +2125,232 @@ mod tests {
     #[test]
     fn neighbor_advertisement_short_target_is_structured_error() {
         let err = decode_neighbor_advertisement(&[0u8; 8]).unwrap_err();
+        assert!(matches!(err, CrafterError::BufferTooShort { .. }));
+    }
+
+    // The better first hop a Redirect advertises: a link-local router address
+    // (fe80::/10). The destination being redirected is a documentation unicast
+    // address (RFC 3849 2001:db8::/32).
+    fn redirect_target() -> Ipv6Addr {
+        Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0x00ff)
+    }
+
+    fn redirect_destination() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 3, 0, 0, 0, 0, 0x0064)
+    }
+
+    // RFC 4861 sec 4.5 + 4.6.1 + 4.6.3: a Redirect with a Target Link-Layer
+    // Address option and a Redirected Header option carrying a truncated original
+    // datagram compiles to type 137 / code 0, a zero Reserved word, the Target and
+    // Destination Addresses, and the two options, and decodes back to every field
+    // — including the embedded datagram (with its auto-fill padding) — with the
+    // checksum verifying over the IPv6 pseudo-header.
+    #[test]
+    fn redirect_with_redirected_header_round_trips() {
+        use crate::protocols::icmp::{NDP_OPT_REDIRECTED_HEADER, NDP_OPT_TARGET_LINK_LAYER_ADDR};
+
+        let target = redirect_target();
+        let destination = redirect_destination();
+        // A small stand-in for the original datagram that triggered the redirect:
+        // a 12-byte IPv6 header prefix + payload byte slice (opaque bytes, no
+        // decode required). Total Redirected Header option = header(2) +
+        // Reserved(6) + 12 = 20 bytes, rounding up to three 8-octet units (24
+        // bytes) with 4 bytes of zero padding.
+        let original = [
+            0x60, 0x00, 0x00, 0x00, // IPv6 version/TC/flow
+            0x00, 0x04, 0x3a, 0x40, // payload len 4, next header ICMPv6, hop 64
+            0xde, 0xad, 0xbe, 0xef, // start of payload
+        ];
+
+        // Build the Redirect header explicitly so it carries the two options;
+        // `Icmpv6::redirect` is exercised by the defaults test below.
+        let packet = Ipv6::new()
+            .src(redirect_target())
+            .dst(link_local_src())
+            .hlim(255)
+            / (Icmpv6::new().icmp_type(ICMPV6_REDIRECT).code(0)
+                / Redirect::new(target, destination)
+                    .option(NdpOption::target_link_layer_address(doc_mac()))
+                    .option(NdpOption::redirected_header(&original)));
+
+        let compiled = packet.compile().unwrap();
+        let bytes = compiled.as_bytes();
+
+        // ICMPv6 starts at offset 40. type 137, code 0.
+        assert_eq!(bytes[40], ICMPV6_REDIRECT);
+        assert_eq!(bytes[41], 0, "code is 0");
+        // Reserved field (ICMPv6 rest-of-header, bytes 44..48) is zero.
+        assert_eq!(&bytes[44..48], &[0, 0, 0, 0]);
+        // Target Address (bytes 48..64) then Destination Address (bytes 64..80).
+        assert_eq!(&bytes[48..64], &target.octets());
+        assert_eq!(&bytes[64..80], &destination.octets());
+        // TLLA option (one 8-octet unit) at bytes 80..88.
+        assert_eq!(&bytes[80..82], &[NDP_OPT_TARGET_LINK_LAYER_ADDR, 1]);
+        assert_eq!(&bytes[82..88], &doc_mac().octets());
+        // Redirected Header option (three 8-octet units) at bytes 88..112.
+        assert_eq!(&bytes[88..90], &[NDP_OPT_REDIRECTED_HEADER, 3]);
+        // 6 Reserved octets sent zero.
+        assert_eq!(&bytes[90..96], &[0, 0, 0, 0, 0, 0]);
+        // The embedded datagram, then 4 bytes of zero padding to the boundary.
+        assert_eq!(&bytes[96..108], &original);
+        assert_eq!(&bytes[108..112], &[0, 0, 0, 0]);
+        // IPv6(40) + ICMPv6 header(8) + target(16) + dest(16) + TLLA(8) +
+        // Redirected Header(24) = 112.
+        assert_eq!(bytes.len(), 112);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+        let icmpv6 = decoded.layer::<Icmpv6>().unwrap();
+        assert_eq!(icmpv6.icmp_type_value(), ICMPV6_REDIRECT);
+        assert_eq!(icmpv6.code_value(), 0);
+        // The header classifies the message as a Redirect with a zero Reserved
+        // field.
+        assert_eq!(icmpv6.body(), Icmpv6Body::Redirect { reserved: 0 });
+
+        let redirect = decoded.layer::<Redirect>().unwrap();
+        assert_eq!(redirect.target_address_value(), target);
+        assert_eq!(redirect.destination_address_value(), destination);
+        assert_eq!(redirect.options_ref().len(), 2);
+
+        let tlla = &redirect.options_ref().options()[0];
+        assert_eq!(tlla.option_type(), NDP_OPT_TARGET_LINK_LAYER_ADDR);
+        assert_eq!(tlla.link_layer_address(), Some(doc_mac()));
+
+        let rh = &redirect.options_ref().options()[1];
+        assert_eq!(rh.option_type(), NDP_OPT_REDIRECTED_HEADER);
+        // The embedded portion round-trips, including the 4 padding bytes the
+        // 8-octet auto-fill appended (RFC 4861 sec 4.6.3 records no embedded
+        // length in the option).
+        let mut expected_embedded = original.to_vec();
+        expected_embedded.extend_from_slice(&[0, 0, 0, 0]);
+        assert_eq!(rh.redirected_header_data(), Some(&expected_embedded[..]));
+
+        // The whole packet round-trips byte-for-byte (checksum included).
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // The default builder leaves the Reserved word zero and carries no options:
+    // type 137, code 0, a zero Reserved word, the Target and Destination
+    // Addresses, nothing after. When the destination is itself a neighbor the
+    // target and destination are equal (RFC 4861 sec 4.5).
+    #[test]
+    fn redirect_defaults_and_target_equals_destination() {
+        let neighbor = redirect_destination();
+        let packet = Ipv6::new()
+            .src(redirect_target())
+            .dst(link_local_src())
+            .hlim(255)
+            / Icmpv6::redirect(neighbor, neighbor);
+        let compiled = packet.compile().unwrap();
+        let bytes = compiled.as_bytes();
+
+        assert_eq!(bytes[40], ICMPV6_REDIRECT);
+        assert_eq!(bytes[41], 0, "code is 0");
+        assert_eq!(&bytes[44..48], &[0, 0, 0, 0], "reserved word zero");
+        assert_eq!(&bytes[48..64], &neighbor.octets());
+        assert_eq!(&bytes[64..80], &neighbor.octets());
+        // IPv6(40) + ICMPv6 header(8) + target(16) + dest(16), no options.
+        assert_eq!(bytes.len(), 40 + 8 + 16 + 16);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+        let redirect = decoded.layer::<Redirect>().unwrap();
+        assert_eq!(redirect.target_address_value(), neighbor);
+        assert_eq!(redirect.destination_address_value(), neighbor);
+        assert!(redirect.options_ref().is_empty());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    // RFC 4861 sec 4.5 requires the Reserved field be sent as zero, but an agent
+    // can set it (via the header rest-of-header) to a deliberately non-zero value
+    // for a malformed-packet test; that value is honored verbatim through
+    // compile() and survives a decode round-trip in the header's typed body.
+    #[test]
+    fn redirect_explicit_reserved_is_preserved() {
+        let target = redirect_target();
+        let destination = redirect_destination();
+        let packet = Ipv6::new().src(redirect_target()).dst(link_local_src())
+            / (Icmpv6::new()
+                .icmp_type(ICMPV6_REDIRECT)
+                .code(0)
+                .rest_of_header([0xca, 0xfe, 0xf0, 0x0d])
+                / Redirect::new(target, destination));
+        let compiled = packet.compile().unwrap();
+        let bytes = compiled.as_bytes();
+        // The reserved word is the ICMPv6 rest-of-header (bytes 44..48).
+        assert_eq!(&bytes[44..48], &[0xca, 0xfe, 0xf0, 0x0d]);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes).unwrap();
+        assert_eq!(
+            decoded.layer::<Icmpv6>().unwrap().body(),
+            Icmpv6Body::Redirect {
+                reserved: 0xcafe_f00d
+            }
+        );
+        let redirect = decoded.layer::<Redirect>().unwrap();
+        assert_eq!(redirect.target_address_value(), target);
+        assert_eq!(redirect.destination_address_value(), destination);
+    }
+
+    // summary() / show(): the body layer summarizes its own fields (Target and
+    // Destination Addresses and option count), and the header's body-detail field
+    // reports the Redirect classification with its Reserved field.
+    #[test]
+    fn redirect_summary_and_show() {
+        let target = redirect_target();
+        let destination = redirect_destination();
+        let body = Redirect::new(target, destination)
+            .option(NdpOption::target_link_layer_address(doc_mac()));
+        assert_eq!(
+            body.summary(),
+            format!("Redirect(target={target}, destination={destination}, options=1)")
+        );
+
+        let target_field = body
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "target_address")
+            .map(|(_, value)| value)
+            .expect("show() exposes the target address");
+        assert_eq!(target_field, target.to_string());
+
+        let destination_field = body
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "destination_address")
+            .map(|(_, value)| value)
+            .expect("show() exposes the destination address");
+        assert_eq!(destination_field, destination.to_string());
+
+        let option_field = body
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "option[0]")
+            .map(|(_, value)| value)
+            .expect("show() exposes the first option");
+        assert!(option_field.starts_with("Target Link-Layer Address"));
+
+        // The header summarizes from its type; the Redirect name comes from
+        // `icmpv6_type_summary`.
+        let header = Icmpv6::new().icmp_type(ICMPV6_REDIRECT).code(0);
+        assert_eq!(
+            header.summary(),
+            "Icmpv6(type=redirect(137), code=0, id=-, seq=-)"
+        );
+        let body_field = header
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "body")
+            .map(|(_, value)| value)
+            .expect("show() exposes a body field");
+        assert_eq!(body_field, "redirect(reserved=0x00000000)");
+    }
+
+    // A Redirect body truncated below the two 16-byte addresses surfaces a
+    // structured error from the decoder (never a panic); the decode dispatch then
+    // falls back to a single Raw payload so nothing is dropped.
+    #[test]
+    fn redirect_short_addresses_is_structured_error() {
+        // 16 bytes is enough for only one of the two required addresses.
+        let err = decode_redirect(&[0u8; 16]).unwrap_err();
         assert!(matches!(err, CrafterError::BufferTooShort { .. }));
     }
 }

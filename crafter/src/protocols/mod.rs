@@ -82,7 +82,7 @@ pub use icmp::{
     IcmpExtensionInterfaceInfo, IcmpExtensionMpls, IcmpExtensionObject, IcmpInterfaceIpAddress,
     IcmpKind, IcmpLayer, Icmpv4, Icmpv4AddressMask, Icmpv4QuotedIp, Icmpv4RouterAdvertisementEntry,
     Icmpv4Timestamp, Icmpv6, Icmpv6Body, Icmpv6ErrorBody, NdpOption, NdpOptions,
-    NeighborAdvertisement, NeighborSolicitation, RouterAdvertisement, RouterSolicitation,
+    NeighborAdvertisement, NeighborSolicitation, Redirect, RouterAdvertisement, RouterSolicitation,
     ICMPV6_DESTINATION_UNREACHABLE, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST,
     ICMPV6_EXTENDED_ECHO_REPLY, ICMPV6_EXTENDED_ECHO_REQUEST, ICMPV6_INVERSE_ND_ADVERTISEMENT,
     ICMPV6_INVERSE_ND_SOLICITATION, ICMPV6_MLDV2_REPORT, ICMPV6_MULTICAST_LISTENER_DONE,
@@ -141,6 +141,7 @@ pub use icmp::{
     NDP_OPT_ROUTE_INFORMATION, NDP_OPT_SOURCE_LINK_LAYER_ADDR, NDP_OPT_TARGET_LINK_LAYER_ADDR,
     NDP_PREFIX_FLAGS_RESERVED, NDP_PREFIX_FLAG_AUTONOMOUS, NDP_PREFIX_FLAG_ON_LINK,
     NDP_PREFIX_INFORMATION_LEN, NDP_PREFIX_INFORMATION_UNITS, NDP_PREFIX_LIFETIME_INFINITY,
+    NDP_REDIRECTED_HEADER_RESERVED_LEN,
 };
 #[allow(deprecated)]
 pub use icmp::{
