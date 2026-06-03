@@ -1,9 +1,9 @@
 """Guarded live behavior-suite coverage.
 
-The full DNS/DHCP/ARP/UDP behavior suite must stay dry-run safe by default, but
-when a live provider is explicitly selected it must route through the protected
-lab-backed execution path. These tests pin that command contract and the target
-setup pieces required by the supported live cases.
+The full DNS/DHCP/ARP/NDP/UDP behavior suite must stay dry-run safe by default,
+but when a live provider is explicitly selected it must route through the
+protected lab-backed execution path. These tests pin that command contract and
+the target setup pieces required by the supported live cases.
 """
 
 from __future__ import annotations
@@ -14,13 +14,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tools.probe.engine import cli, target_services
+from tools.probe.engine import cases, cli, target_services
 from tools.probe.engine.model import JSONObject, ProbeReport, ProbeRunRequest
 from tools.probe.engine.report import REPO_ROOT
 
 
 SEED = 1051
-COUNT = 40
+# The full behavior suite size, derived from the catalog so the NDP cases (and
+# any future additions) are covered without re-pinning a literal count.
+COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
 
 
 def _behavior_request(*, dry_run: bool) -> ProbeRunRequest:
@@ -67,8 +69,8 @@ class GuardedBehaviorCommandDocsTest(unittest.TestCase):
         docs = (REPO_ROOT / "docs" / "probe.md").read_text(encoding="utf-8")
         self.assertIn("LIBCRAFTER_PROBE_LIVE_PROVIDER", docs)
         self.assertIn('--provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER"', docs)
-        self.assertIn("--confirm-live-run --profile behavior --seed 1051 --count 40", docs)
-        self.assertIn("--provider qemu --dry-run --profile behavior --seed 1051 --count 40", docs)
+        self.assertIn("--confirm-live-run --profile behavior --seed 1051 --count 43", docs)
+        self.assertIn("--provider qemu --dry-run --profile behavior --seed 1051 --count 43", docs)
 
 
 class BehaviorDryRunSetupTest(unittest.TestCase):

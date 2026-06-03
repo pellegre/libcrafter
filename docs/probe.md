@@ -69,12 +69,12 @@ a controlled router.
 
 ### Behavior Profile
 
-The `behavior` profile is the full DNS/DHCP/ARP/UDP behavioral suite. It
-selects forty cases in deterministic DNS, DHCP, ARP, UDP order and defaults
-`--count` to all forty cases when no explicit count is supplied:
+The `behavior` profile is the full DNS/DHCP/ARP/NDP/UDP behavioral suite. It
+selects forty-three cases in deterministic DNS, DHCP, ARP, NDP, UDP order and
+defaults `--count` to all forty-three cases when no explicit count is supplied:
 
 ```sh
-tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 43
 tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --case dns-a-success
 ```
 
@@ -126,6 +126,17 @@ filtered capture:
 - `arp-spa-variation`
 - `arp-broadcast-filtered-capture`
 
+NDP behavior cases use the same private link-layer segment as ARP and validate
+the target kernel's IPv6 Neighbor Discovery responses (RFC 4861): a Neighbor
+Solicitation to the solicited-node multicast group expects a Neighbor
+Advertisement, a Router Solicitation expects a Router Advertisement from a
+configured router, and a Duplicate Address Detection probe sourced from `::`
+expects a defending Neighbor Advertisement:
+
+- `ndp-neighbor-solicitation`
+- `ndp-router-solicitation`
+- `ndp-duplicate-address-detection`
+
 UDP behavior cases use controlled UDP services or target kernel ICMP behavior
 and validate decoded UDP or ICMP responses for peer addresses, ports, payload,
 ordering, checksum status, and surplus option handling:
@@ -155,12 +166,15 @@ the planned datagram, while zero-checksum and surplus-option cases require the
 matching provider capabilities. DHCP cases need IPv4 unicast, controlled
 services, link-layer send/capture, and broadcast. ARP cases need link-layer
 send/capture and broadcast; `arp-unicast-request-reply` and
-`arp-mac-validation` also need provider MAC metadata.
+`arp-mac-validation` also need provider MAC metadata. NDP cases ride the same
+same-segment link-layer multicast substrate as ARP (derived `ipv6_multicast`
+capability = link-layer send/capture plus broadcast), so they plan wherever ARP
+plans and skip wherever ARP skips.
 
 Expected provider behavior:
 
-- Hetzner plans IPv4 unicast DNS and UDP service cases, and skips DHCP and ARP
-  link-layer cases with stable capability reasons.
+- Hetzner plans IPv4 unicast DNS and UDP service cases, and skips DHCP, ARP, and
+  NDP link-layer cases with stable capability reasons.
 - QEMU and VirtualBox private lab sessions are expected to plan the full
   behavior suite when local VM prerequisites are available.
 - Docker private sessions advertise IPv4 unicast, link-layer send/capture,
@@ -174,7 +188,7 @@ Run the dry-run provider matrix to compare planning and skip reasons across
 providers without live traffic:
 
 ```sh
-python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/provider-matrix
+python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 43 --out target/probe/provider-matrix
 ```
 
 ## Target Services
@@ -211,8 +225,8 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider docker --dry-run --profile smoke --seed 1 --count 10
-tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40
-python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/provider-matrix
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 43
+python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 43 --out target/probe/provider-matrix
 tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider virtualbox --dry-run --profile smoke --seed 1 --role stimulus --role target --json
@@ -245,9 +259,9 @@ keeps the default dry-run boundary:
 
 ```sh
 if [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ]; then
-  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile behavior --seed 1051 --count 40 --out target/probe/acceptance/51-live-behavior-suite
+  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile behavior --seed 1051 --count 43 --out target/probe/acceptance/51-live-behavior-suite
 else
-  tools/probe/run --provider qemu --dry-run --profile behavior --seed 1051 --count 40 --out target/probe/acceptance/51-live-behavior-suite-dry-run
+  tools/probe/run --provider qemu --dry-run --profile behavior --seed 1051 --count 43 --out target/probe/acceptance/51-live-behavior-suite-dry-run
 fi
 ```
 
