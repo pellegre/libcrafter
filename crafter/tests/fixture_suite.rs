@@ -673,6 +673,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ipv6-tcp-rich-options",
+        path: "bytes/ipv6-tcp-rich-options.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-tcp-rich-options.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[ExpectedLayer::Ipv6, ExpectedLayer::Tcp, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv6-tcp-rich-options.summary.txt"),
+    },
+    ValidFixtureCase {
         name: "ipv6-fragment-udp-raw",
         path: "bytes/ipv6-fragment-udp-raw.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-fragment-udp-raw.hex")),
@@ -969,7 +978,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv6-udp-options-unknown-unsafe" | "ipv6-udp-options-frag" => {
             &[CoverageFamily::Ipv6UdpOptions]
         }
-        "ipv6-tcp-raw" => &[CoverageFamily::Ipv6Tcp],
+        "ipv6-tcp-raw" | "ipv6-tcp-rich-options" => &[CoverageFamily::Ipv6Tcp],
         "ipv6-fragment-udp-raw" => &[CoverageFamily::Ipv6ExtensionHeader],
         other => panic!("fixture {other} has no coverage-family mapping"),
     }
@@ -2025,6 +2034,55 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(tcp.acknowledgment_number_value(), 0x5060_7080);
             assert_eq!(tcp.flags_value(), TCP_FLAG_ACK | TCP_FLAG_PSH);
             assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"ipv6-tcp");
+        }
+        "ipv6-tcp-rich-options" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0020, 0, 0, 0, 0, 0x0020)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0010, 0, 0, 0, 0, 0x0010)
+            );
+            assert_eq!(ipv6.traffic_class_value(), 0x22);
+            assert_eq!(ipv6.flow_label_value(), 0x13579);
+            assert_eq!(ipv6.next_header_value(), IPPROTO_TCP);
+
+            let tcp = expect_layer::<Tcp>(case, packet);
+            assert_eq!(tcp.source_port_value(), 50_000);
+            assert_eq!(tcp.destination_port_value(), 443);
+            assert_eq!(tcp.sequence_number_value(), 0x1020_3040);
+            assert_eq!(tcp.acknowledgment_number_value(), 0x5060_7080);
+            assert_eq!(tcp.flags_value(), TCP_FLAG_SYN | TCP_FLAG_ACK);
+            // Multiple TCP options decode under IPv6 (whose pseudo-header differs
+            // from IPv4) and survive recompile byte-for-byte: MSS, Window Scale,
+            // SACK Permitted, Timestamp, the RFC 5482 User Timeout typed option
+            // (kind 28), and a classified Generic option (kind 222).
+            assert_eq!(
+                tcp.parsed_options().unwrap_or_else(|err| {
+                    panic!("fixture {} TCP options should parse: {err}", case.path)
+                }),
+                vec![
+                    TcpOption::MaximumSegmentSize(1460),
+                    TcpOption::WindowScale(7),
+                    TcpOption::SackPermitted,
+                    TcpOption::Timestamp {
+                        value: 398_303_815,
+                        echo_reply: 12_345,
+                    },
+                    TcpOption::UserTimeout {
+                        granularity: true,
+                        value: 240,
+                    },
+                    TcpOption::generic(222, vec![0xde, 0xad, 0xbe, 0xef]),
+                    TcpOption::EndOfList,
+                ]
+            );
+            assert_eq!(
+                expect_layer::<Raw>(case, packet).as_bytes(),
+                b"ipv6-tcp-rich"
+            );
         }
         "ipv6-fragment-udp-raw" => {
             let ipv6 = expect_layer::<Ipv6>(case, packet);
