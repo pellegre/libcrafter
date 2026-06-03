@@ -192,11 +192,17 @@ pub use self::v6::{
     NDP_OPT_REDIRECTED_HEADER, NDP_OPT_ROUTE_INFORMATION, NDP_OPT_SOURCE_LINK_LAYER_ADDR,
     NDP_OPT_TARGET_LINK_LAYER_ADDR,
 };
-// The Router Solicitation message body (RFC 4861 section 4.1) — the first NDP
-// message body — lives in `v6/message/ndp.rs`. Re-export it at the `icmp` root so
-// the `protocols::mod.rs` re-exports and the prelude surface it alongside the
-// `Icmpv6` header, like the other ICMPv6 message types.
-pub use self::v6::RouterSolicitation;
+// The Router Solicitation (RFC 4861 section 4.1) and Router Advertisement
+// (RFC 4861 section 4.2) message bodies — the first NDP message bodies — live in
+// `v6/message/ndp.rs`. Re-export them, and the Router Advertisement flag-bit /
+// default constants, at the `icmp` root so the `protocols::mod.rs` re-exports and
+// the prelude surface them alongside the `Icmpv6` header, like the other ICMPv6
+// message types.
+pub use self::v6::{
+    RouterAdvertisement, RouterSolicitation, ICMPV6_RA_DEFAULT_CUR_HOP_LIMIT,
+    ICMPV6_RA_DEFAULT_ROUTER_LIFETIME, ICMPV6_RA_FLAGS_RESERVED, ICMPV6_RA_FLAG_MANAGED,
+    ICMPV6_RA_FLAG_OTHER,
+};
 // The ICMPv6 (`ICMPV6_*`) codepoint constants live in `v6/constants.rs` and are
 // re-exported through `constants.rs` (which `pub use`s them), so the existing
 // `pub use self::constants::*;` above keeps `crate::protocols::icmp::ICMPV6_*`,
