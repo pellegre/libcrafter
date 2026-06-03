@@ -160,7 +160,11 @@ mod tcp {
         // Starting from a raw flag word, the ECN setters only touch their own
         // bit and preserve every explicitly-set raw flag (here SYN | ACK | URG).
         let base = TCP_FLAG_SYN | TCP_FLAG_ACK | TCP_FLAG_URG;
-        let with_ecn = Tcp::new().flags(base).set_cwr(true).set_ece(true).set_ae(true);
+        let with_ecn = Tcp::new()
+            .flags(base)
+            .set_cwr(true)
+            .set_ece(true)
+            .set_ae(true);
         assert_eq!(
             with_ecn.flags_value(),
             base | TCP_FLAG_CWR | TCP_FLAG_ECE | TCP_FLAG_AE
@@ -173,7 +177,8 @@ mod tcp {
         assert_eq!(cleared.flags_value(), base);
         // clear_ecn is equivalent and also leaves the raw flags intact.
         assert_eq!(
-            Tcp::new().flags(base | TCP_FLAG_CWR | TCP_FLAG_ECE | TCP_FLAG_AE)
+            Tcp::new()
+                .flags(base | TCP_FLAG_CWR | TCP_FLAG_ECE | TCP_FLAG_AE)
                 .clear_ecn()
                 .flags_value(),
             base
@@ -217,7 +222,9 @@ mod tcp {
 }
 
 mod tcp_options {
-    use super::super::{Tcp, TcpExtendedDataOffset, TcpOption, TcpSackBlock, TCP_FLAG_ACK, TCP_FLAG_SYN};
+    use super::super::{
+        Tcp, TcpExtendedDataOffset, TcpOption, TcpSackBlock, TCP_FLAG_ACK, TCP_FLAG_SYN,
+    };
     use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
@@ -379,14 +386,8 @@ mod option_classification {
 
         // An unassigned kind (16 is unassigned in the IANA registry, as is the
         // draft-only EDO kind 237).
-        assert_eq!(
-            tcp_option_kind_class(16),
-            TcpOptionKindClass::Unassigned
-        );
-        assert_eq!(
-            tcp_option_kind_class(237),
-            TcpOptionKindClass::Unassigned
-        );
+        assert_eq!(tcp_option_kind_class(16), TcpOptionKindClass::Unassigned);
+        assert_eq!(tcp_option_kind_class(237), TcpOptionKindClass::Unassigned);
         assert!(!tcp_option_kind_is_assigned(16));
         assert!(!tcp_option_kind_is_experimental(16));
 
@@ -503,19 +504,13 @@ mod option_padding {
         // (1) data offset reflects the padded header: 20 + 8 = 28 bytes => 7 words.
         assert_eq!(bytes.as_bytes()[32] >> 4, 7);
         // The option area is padded to the boundary with a zero/EOL byte.
-        assert_eq!(
-            &bytes.as_bytes()[40..48],
-            &[2, 4, 0x05, 0xb4, 3, 3, 7, 0]
-        );
+        assert_eq!(&bytes.as_bytes()[40..48], &[2, 4, 0x05, 0xb4, 3, 3, 7, 0]);
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let decoded_tcp = decoded.layer::<Tcp>().unwrap();
 
         // (2) decode keeps the padding byte in the raw option slice.
-        assert_eq!(
-            decoded_tcp.option_bytes(),
-            &[2, 4, 0x05, 0xb4, 3, 3, 7, 0]
-        );
+        assert_eq!(decoded_tcp.option_bytes(), &[2, 4, 0x05, 0xb4, 3, 3, 7, 0]);
 
         // (3) the iterator stops at the EOL padding byte: it surfaces MSS,
         // Window Scale, and a single EndOfList, then ends.
@@ -530,7 +525,10 @@ mod option_padding {
         );
         // The raw iterator yields exactly these three items and then None.
         let mut iter = decoded_tcp.option_iter();
-        assert_eq!(iter.next().unwrap().unwrap(), TcpOption::MaximumSegmentSize(1460));
+        assert_eq!(
+            iter.next().unwrap().unwrap(),
+            TcpOption::MaximumSegmentSize(1460)
+        );
         assert_eq!(iter.next().unwrap().unwrap(), TcpOption::WindowScale(7));
         assert_eq!(iter.next().unwrap().unwrap(), TcpOption::EndOfList);
         assert!(iter.next().is_none());
@@ -612,9 +610,10 @@ mod unknown_option_roundtrip {
         // Before compile the layer holds exactly the raw option bytes.
         assert_eq!(tcp.option_bytes(), &raw_options);
 
-        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
-            .compile()
-            .unwrap();
+        let bytes =
+            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
+                .compile()
+                .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let decoded_tcp = decoded.layer::<Tcp>().unwrap();
@@ -697,8 +696,7 @@ mod option_errors {
         );
 
         // A second fixed-length option: Timestamp is fixed at 10 bytes.
-        let timestamp_mismatch =
-            decode_error(&[super::super::TCP_OPTION_TIMESTAMP, 4, 0, 0]);
+        let timestamp_mismatch = decode_error(&[super::super::TCP_OPTION_TIMESTAMP, 4, 0, 0]);
         assert!(
             timestamp_mismatch.contains("tcp.option.timestamp"),
             "timestamp fixed-length mismatch must carry tcp.option.timestamp context, got: {timestamp_mismatch}"
@@ -760,7 +758,11 @@ mod experimental_exid_options {
         //    experiment data, and decode back to the same typed option byte-for
         //    byte.
         for (kind, exid, data) in [
-            (TCP_OPTION_EXPERIMENTAL_1, EXID_A, vec![0xDE, 0xAD, 0xBE, 0xEF]),
+            (
+                TCP_OPTION_EXPERIMENTAL_1,
+                EXID_A,
+                vec![0xDE, 0xAD, 0xBE, 0xEF],
+            ),
             (TCP_OPTION_EXPERIMENTAL_2, EXID_B, vec![0x11, 0x22]),
             // Empty experiment data: the minimum-length (4-byte) experimental
             // option carries only the ExID.
@@ -808,11 +810,10 @@ mod experimental_exid_options {
             .dport(443)
             .tcp_option(TcpOption::experimental_1(EXID_A, [0xDE, 0xAD, 0xBE, 0xEF]))
             .unwrap();
-        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
-            / tcp
-            / Raw::from("payload"))
-        .compile()
-        .unwrap();
+        let bytes =
+            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
+                .compile()
+                .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -915,11 +916,10 @@ mod user_timeout_option {
             .dport(80)
             .tcp_option(TcpOption::user_timeout(true, 0x0240))
             .unwrap();
-        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
-            / tcp
-            / Raw::from("payload"))
-        .compile()
-        .unwrap();
+        let bytes =
+            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
+                .compile()
+                .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1022,13 +1022,16 @@ mod authentication_option {
         let tcp = Tcp::new()
             .sport(55555)
             .dport(179)
-            .tcp_option(TcpOption::tcp_authentication(KEY_ID, RNEXT_KEY_ID, mac.clone()))
+            .tcp_option(TcpOption::tcp_authentication(
+                KEY_ID,
+                RNEXT_KEY_ID,
+                mac.clone(),
+            ))
             .unwrap();
-        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
-            / tcp
-            / Raw::from("payload"))
-        .compile()
-        .unwrap();
+        let bytes =
+            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
+                .compile()
+                .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1130,11 +1133,10 @@ mod tcp_eno_option {
             .dport(443)
             .tcp_option(TcpOption::tcp_eno(suboptions.clone()))
             .unwrap();
-        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
-            / tcp
-            / Raw::from("payload"))
-        .compile()
-        .unwrap();
+        let bytes =
+            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
+                .compile()
+                .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = decoded.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1185,7 +1187,9 @@ mod legacy_security_options {
 
         // An arbitrary 16-byte "signature" that `crafter` must round-trip
         // verbatim without interpreting or recomputing it.
-        let signature: Vec<u8> = (0u8..16).map(|i| i.wrapping_mul(17).wrapping_add(3)).collect();
+        let signature: Vec<u8> = (0u8..16)
+            .map(|i| i.wrapping_mul(17).wrapping_add(3))
+            .collect();
 
         // 1. The MD5 option is represented as a byte-preserving Generic option
         //    (kind 19, no typed variant), and decoding the wire bytes yields an
@@ -1222,13 +1226,15 @@ mod legacy_security_options {
         let tcp = Tcp::new()
             .sport(50000)
             .dport(179)
-            .tcp_option(TcpOption::generic(TCP_OPTION_MD5_SIGNATURE, signature.clone()))
+            .tcp_option(TcpOption::generic(
+                TCP_OPTION_MD5_SIGNATURE,
+                signature.clone(),
+            ))
             .unwrap();
-        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
-            / tcp
-            / Raw::from("payload"))
-        .compile()
-        .unwrap();
+        let bytes =
+            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
+                .compile()
+                .unwrap();
 
         let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1355,11 +1361,10 @@ mod accurate_ecn_options {
             .dport(443)
             .tcp_option(TcpOption::accurate_ecn_order_1(counters.clone()))
             .unwrap();
-        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
-            / tcp
-            / Raw::from("payload"))
-        .compile()
-        .unwrap();
+        let bytes =
+            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
+                .compile()
+                .unwrap();
 
         let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1381,8 +1386,7 @@ mod accurate_ecn_options {
         // structured, contextful error rather than a panic or silent blob. (A
         // standalone kind byte with a length byte below the 2-byte framing
         // minimum is rejected by the option iterator with option-length context.)
-        let too_short =
-            TcpOption::decode_all(&[TCP_OPTION_ACCURATE_ECN_ORDER_0, 1]).unwrap_err();
+        let too_short = TcpOption::decode_all(&[TCP_OPTION_ACCURATE_ECN_ORDER_0, 1]).unwrap_err();
         assert!(
             too_short.to_string().contains("tcp.option.length"),
             "AccECN underflow error must carry context, got: {too_short}"
@@ -1393,8 +1397,8 @@ mod accurate_ecn_options {
 
 mod mptcp_accessors {
     use super::super::{
-        Tcp, TcpOption, TCP_OPTION_MPTCP, MPTCP_SUBTYPE_DSS, MPTCP_SUBTYPE_MP_CAPABLE,
-        MPTCP_SUBTYPE_MP_JOIN,
+        Tcp, TcpOption, MPTCP_SUBTYPE_DSS, MPTCP_SUBTYPE_MP_CAPABLE, MPTCP_SUBTYPE_MP_JOIN,
+        TCP_OPTION_MPTCP,
     };
     use crate::{IpProtocol, Ipv4, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
@@ -1491,11 +1495,10 @@ mod mptcp_accessors {
             .dport(443)
             .tcp_option(TcpOption::multipath_tcp(subtype, data.clone()))
             .unwrap();
-        let bytes = (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp)
-            / tcp
-            / Raw::from("payload"))
-        .compile()
-        .unwrap();
+        let bytes =
+            (Ipv4::new().src(src()).dst(dst()).proto(IpProtocol::Tcp) / tcp / Raw::from("payload"))
+                .compile()
+                .unwrap();
 
         let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
@@ -1616,10 +1619,7 @@ mod fast_open_helpers {
             let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
             let options = packet.layer::<Tcp>().unwrap().parsed_options().unwrap();
             assert_eq!(options[0].kind(), TCP_OPTION_FAST_OPEN);
-            assert_eq!(
-                options[0].fast_open_cookie(),
-                expect_cookie.as_deref()
-            );
+            assert_eq!(options[0].fast_open_cookie(), expect_cookie.as_deref());
             assert_eq!(options[0].is_fast_open_cookie_request(), expect_request);
             assert_eq!(packet.compile().unwrap(), bytes);
         }
@@ -1653,7 +1653,10 @@ mod sack_dsack_accessors {
         assert_eq!(one.sack_block_count(), Some(1));
         assert_eq!(one.first_sack_block(), Some(TcpSackBlock::new(1000, 2000)));
         assert_eq!(one.remaining_sack_blocks(), Some(&[][..]));
-        assert_eq!(one.sack_blocks(), Some(&[TcpSackBlock::new(1000, 2000)][..]));
+        assert_eq!(
+            one.sack_blocks(),
+            Some(&[TcpSackBlock::new(1000, 2000)][..])
+        );
 
         // A single block whose right edge is at or below the cumulative ACK is a
         // D-SACK report per RFC 2883 rule (1): it covers data the receiver has
@@ -1693,11 +1696,11 @@ mod sack_dsack_accessors {
         // Serial-number arithmetic (RFC 1982 / RFC 9293) keeps the comparisons
         // correct across the 32-bit sequence-number wrap. A block just below the
         // wrap with a cumulative ACK just above it is still D-SACK by rule (1).
-        let wrapped = TcpOption::sack(vec![TcpSackBlock::new(
-            0xFFFF_F000,
-            0xFFFF_FF00,
-        )]);
-        assert_eq!(wrapped.is_potential_dsack_first_block(0x0000_0100), Some(true));
+        let wrapped = TcpOption::sack(vec![TcpSackBlock::new(0xFFFF_F000, 0xFFFF_FF00)]);
+        assert_eq!(
+            wrapped.is_potential_dsack_first_block(0x0000_0100),
+            Some(true)
+        );
 
         // 3. Malformed SACK lengths surface a structured decode error rather
         //    than panicking or silently dropping the option. A SACK payload must
@@ -1870,10 +1873,19 @@ mod mss_sizing_helpers {
         assert_eq!(max_tcp_payload(1500, IPV4_HEADER_LEN_FOR_MSS, 40), 1440);
         // Saturating for a tiny MTU: headers exceed the MTU -> 0, never an
         // underflow/panic.
-        assert_eq!(max_tcp_payload(20, IPV4_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN), 0);
-        assert_eq!(max_tcp_payload(0, IPV4_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN), 0);
+        assert_eq!(
+            max_tcp_payload(20, IPV4_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN),
+            0
+        );
+        assert_eq!(
+            max_tcp_payload(0, IPV4_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN),
+            0
+        );
         // Exactly headers-sized MTU -> 0 payload, no underflow.
-        assert_eq!(max_tcp_payload(40, IPV4_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN), 0);
+        assert_eq!(
+            max_tcp_payload(40, IPV4_HEADER_LEN_FOR_MSS, TCP_FIXED_HEADER_LEN),
+            0
+        );
 
         // --- Effective MSS guidance: IPv4 (RFC 9293 section 3.7.1, RFC 1122,
         // RFC 879). ---
@@ -1907,9 +1919,15 @@ mod mss_sizing_helpers {
         // --- Version-dispatching entry point agrees with the per-version
         // helpers. ---
         assert_eq!(effective_mss(false, None), effective_mss_ipv4(None));
-        assert_eq!(effective_mss(false, Some(1500)), effective_mss_ipv4(Some(1500)));
+        assert_eq!(
+            effective_mss(false, Some(1500)),
+            effective_mss_ipv4(Some(1500))
+        );
         assert_eq!(effective_mss(true, None), effective_mss_ipv6(None));
-        assert_eq!(effective_mss(true, Some(1500)), effective_mss_ipv6(Some(1500)));
+        assert_eq!(
+            effective_mss(true, Some(1500)),
+            effective_mss_ipv6(Some(1500))
+        );
         assert_eq!(effective_mss(true, None), 1220);
         assert_eq!(effective_mss(false, None), 536);
     }
@@ -1950,10 +1968,7 @@ mod sequence_space_helpers {
         // SYN + payload: payload octets plus the SYN octet.
         assert_eq!(sequence_space_len(TCP_FLAG_SYN, 100), 101);
         // FIN + payload: payload octets plus the FIN octet.
-        assert_eq!(
-            sequence_space_len(TCP_FLAG_FIN | TCP_FLAG_ACK, 50),
-            51
-        );
+        assert_eq!(sequence_space_len(TCP_FLAG_FIN | TCP_FLAG_ACK, 50), 51);
         // SYN+FIN together (deliberately odd, still constructible) is +2.
         assert_eq!(sequence_space_len(TCP_FLAG_SYN | TCP_FLAG_FIN, 0), 2);
 
@@ -2085,9 +2100,7 @@ mod option_budget_builder {
 }
 
 mod common_segment_builders {
-    use super::super::{
-        Tcp, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_RST, TCP_FLAG_SYN,
-    };
+    use super::super::{Tcp, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_RST, TCP_FLAG_SYN};
 
     #[test]
     fn tcp_common_segment_builders_compile_expected_flags() {
@@ -2123,14 +2136,8 @@ mod common_segment_builders {
         // The pure-ACK and FIN/ACK shapes must NOT carry the default SYN bit
         // (the accumulation-leak guard).
         assert_eq!(Tcp::new().ack_segment().flags_value() & TCP_FLAG_SYN, 0);
-        assert_eq!(
-            Tcp::new().rst_ack_segment().flags_value() & TCP_FLAG_SYN,
-            0
-        );
-        assert_eq!(
-            Tcp::new().fin_ack_segment().flags_value() & TCP_FLAG_SYN,
-            0
-        );
+        assert_eq!(Tcp::new().rst_ack_segment().flags_value() & TCP_FLAG_SYN, 0);
+        assert_eq!(Tcp::new().fin_ack_segment().flags_value() & TCP_FLAG_SYN, 0);
 
         // ack_segment sets the ACK control BIT and leaves the acknowledgment
         // NUMBER field at its default, distinct from Tcp::ack() which sets the
@@ -2166,11 +2173,7 @@ mod common_segment_builders {
         // The builders are order-independent with flag ordering relative to
         // other setters: applying the shape after other fields still yields the
         // exact control-bit set (it replaces, not merges).
-        let late_shape = Tcp::new()
-            .sport(1234)
-            .syn()
-            .ack_flag()
-            .fin_ack_segment();
+        let late_shape = Tcp::new().sport(1234).syn().ack_flag().fin_ack_segment();
         assert_eq!(late_shape.flags_value(), TCP_FLAG_FIN | TCP_FLAG_ACK);
         assert_eq!(late_shape.source_port_value(), 1234);
     }
@@ -2410,7 +2413,10 @@ mod ipv6_fragment_adjacent {
         zeroed[16] = 0;
         zeroed[17] = 0;
         let filled = u16::from_be_bytes([tcp_segment[16], tcp_segment[17]]);
-        assert_ne!(filled, 0, "initial-fragment TCP checksum must be auto-filled");
+        assert_ne!(
+            filled, 0,
+            "initial-fragment TCP checksum must be auto-filled"
+        );
         assert_eq!(
             filled,
             ipv6_pseudo_header_checksum(src(), dst(), IPPROTO_TCP, &zeroed),
@@ -2522,8 +2528,14 @@ mod header_error_context {
                     context.contains("tcp") && context.contains("header"),
                     "short header error must name the tcp header, got context {context:?}"
                 );
-                assert_eq!(required, 20, "short header must require the 20-byte minimum");
-                assert_eq!(available, 19, "short header must report the available bytes");
+                assert_eq!(
+                    required, 20,
+                    "short header must require the 20-byte minimum"
+                );
+                assert_eq!(
+                    available, 19,
+                    "short header must report the available bytes"
+                );
             }
             other => panic!("short TCP header expected a buffer-too-short error, got {other:?}"),
         }
@@ -2559,12 +2571,13 @@ mod header_error_context {
                     context.contains("tcp") && context.contains("header"),
                     "data-offset overrun error must name the tcp header, got context {context:?}"
                 );
-                assert_eq!(required, 60, "overrun must require the claimed 60-byte header");
+                assert_eq!(
+                    required, 60,
+                    "overrun must require the claimed 60-byte header"
+                );
                 assert_eq!(available, 20, "overrun must report the available bytes");
             }
-            other => panic!(
-                "data-offset overrun expected a buffer-too-short error, got {other:?}"
-            ),
+            other => panic!("data-offset overrun expected a buffer-too-short error, got {other:?}"),
         }
 
         // 4. Option space larger than allowed: a header carrying more than the
@@ -2660,7 +2673,9 @@ mod inspection_fields {
             .iter()
             .find(|(key, _)| *key == name)
             .map(|(_, value)| value.as_str())
-            .unwrap_or_else(|| panic!("TCP inspection must expose a {name:?} field; got {fields:?}"))
+            .unwrap_or_else(|| {
+                panic!("TCP inspection must expose a {name:?} field; got {fields:?}")
+            })
     }
 
     #[test]
@@ -2747,8 +2762,8 @@ mod inspection_fields {
 mod edo_compatibility {
     use super::super::{
         tcp_option_kind_class, tcp_option_kind_name, Tcp, TcpExtendedDataOffset, TcpOption,
-        TcpOptionKindClass, TCP_EDO_HEADER_AND_SEGMENT_LEN, TCP_EDO_HEADER_LEN, TCP_EDO_REQUEST_LEN,
-        TCP_OPTION_EDO,
+        TcpOptionKindClass, TCP_EDO_HEADER_AND_SEGMENT_LEN, TCP_EDO_HEADER_LEN,
+        TCP_EDO_REQUEST_LEN, TCP_OPTION_EDO,
     };
     use crate::{Ipv4, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
@@ -2832,7 +2847,10 @@ mod edo_compatibility {
             })
         );
         // A non-EDO option returns None from the accessor.
-        assert_eq!(TcpOption::sack_permitted().extended_data_offset_value(), None);
+        assert_eq!(
+            TcpOption::sack_permitted().extended_data_offset_value(),
+            None
+        );
 
         // Every EDO option carries kind 237 and is classified/named consistently
         // through the public kind/classification helpers. EDO is preserved for
@@ -2863,10 +2881,23 @@ mod edo_compatibility {
         );
         assert_eq!(
             header_and_segment_bytes,
-            vec![TCP_OPTION_EDO, TCP_EDO_HEADER_AND_SEGMENT_LEN, 0x00, 0x09, 0x00, 0x64]
+            vec![
+                TCP_OPTION_EDO,
+                TCP_EDO_HEADER_AND_SEGMENT_LEN,
+                0x00,
+                0x09,
+                0x00,
+                0x64
+            ]
         );
-        assert_eq!(TcpOption::decode_all(&request_bytes).unwrap(), vec![request.clone()]);
-        assert_eq!(TcpOption::decode_all(&header_bytes).unwrap(), vec![header.clone()]);
+        assert_eq!(
+            TcpOption::decode_all(&request_bytes).unwrap(),
+            vec![request.clone()]
+        );
+        assert_eq!(
+            TcpOption::decode_all(&header_bytes).unwrap(),
+            vec![header.clone()]
+        );
         assert_eq!(
             TcpOption::decode_all(&header_and_segment_bytes).unwrap(),
             vec![header_and_segment.clone()]
