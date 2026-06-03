@@ -58,8 +58,13 @@ pub use self::message::extended_echo::{
 // `message/mld.rs` (an `impl Icmpv6`, like the NDP builders); re-export the body
 // type and its decoder so the `icmp` root surfaces it and the decode dispatch
 // below reaches it.
-pub(crate) use self::message::mld::decode_multicast_listener_message;
-pub use self::message::mld::MulticastListenerMessage;
+pub(crate) use self::message::mld::{
+    decode_mldv2_query, decode_mldv2_report, decode_multicast_listener_message,
+};
+pub use self::message::mld::{
+    Mldv2Query, Mldv2Report, MulticastAddressRecord, MulticastListenerMessage, MulticastRecordType,
+    MLDV2_QUERY_MIN_BODY_LEN, MLDV2_QUERY_QRV_MASK, MLDV2_QUERY_RESV_MASK, MLDV2_QUERY_S_FLAG,
+};
 pub(crate) use self::message::ndp::{
     decode_neighbor_advertisement, decode_neighbor_solicitation, decode_redirect,
     decode_router_advertisement, decode_router_solicitation,
@@ -796,20 +801,48 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
     // payload so nothing is dropped and decoding never panics. Later steps add
     // the remaining NDP/MLD/extended-echo bodies here in lockstep with the
     // `Icmpv6Body` classifier in `body.rs`.
+    // RFC 3810 section 5.1 MLDv2 Query: a type-130 message reuses the MLDv1 Query
+    // type byte but carries a longer body — the 16-byte Multicast Address plus a
+    // flags/QRV/QQIC/Number-of-Sources run and a Source Address list. The two
+    // versions are disambiguated by body length (the step-27/28 seam): an MLDv2
+    // Query body is at least `MLDV2_QUERY_MIN_BODY_LEN` (20) bytes, while an MLDv1
+    // Query body is *exactly* the 16-byte Multicast Address. Try the MLDv2-query
+    // decode first for a type-130 body that is long enough; an exactly-16-byte
+    // body skips it and falls to the MLDv1 decoder below. A malformed longer body
+    // (e.g. an over-stated Number of Sources) keeps the bytes as a single `Raw`
+    // payload (no panic, nothing dropped).
+    if icmp_type == ICMPV6_MULTICAST_LISTENER_QUERY && payload.len() >= MLDV2_QUERY_MIN_BODY_LEN {
+        if let Ok(query) = decode_mldv2_query(payload) {
+            return Ok(packet.push(query));
+        }
+    }
+
     // RFC 2710 MLDv1 (types 130-132): the Maximum Response Delay and Reserved
     // fields were decoded with the header above; the trailing body is the 16-byte
     // Multicast Address. The three types share one body shape, so they share a
-    // decoder. The MLDv1 Query (130) is disambiguated from the MLDv2 Query (added
-    // in step 28) by body length: an MLDv1 body is *exactly* 16 bytes, while an
-    // MLDv2 query body is longer. `decode_multicast_listener_message` enforces the
-    // exact-16-byte shape, so a longer (MLDv2) type-130 body falls through to the
-    // `Raw` tail here for now; step 28 inserts the longer-body MLDv2-query branch.
+    // decoder. The MLDv1 Query (130) is disambiguated from the MLDv2 Query
+    // (decoded just above) by body length: an MLDv1 body is *exactly* 16 bytes.
+    // `decode_multicast_listener_message` enforces the exact-16-byte shape, so a
+    // longer (MLDv2) type-130 body never reaches here.
     if icmp_type == ICMPV6_MULTICAST_LISTENER_QUERY
         || icmp_type == ICMPV6_MULTICAST_LISTENER_REPORT
         || icmp_type == ICMPV6_MULTICAST_LISTENER_DONE
     {
         if let Ok(mld) = decode_multicast_listener_message(payload) {
             return Ok(packet.push(mld));
+        }
+    }
+
+    // RFC 3810 section 5.2 MLDv2 Version 2 Report (type 143): the 16-bit Reserved
+    // field and the 16-bit Nr of Mcast Address Records were decoded with the
+    // header above; the trailing body is the list of Multicast Address Records.
+    // The record walk recovers the records from their own lengths, so a malformed
+    // record (a short fixed header, an over-stated Number of Sources, or an
+    // over-stated Aux Data Len) keeps the bytes as a single `Raw` payload (no
+    // panic, nothing dropped).
+    if icmp_type == ICMPV6_MLDV2_REPORT {
+        if let Ok(report) = decode_mldv2_report(payload) {
+            return Ok(packet.push(report));
         }
     }
 
