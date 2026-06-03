@@ -141,6 +141,44 @@ pub enum Icmpv6Body {
         /// sent as zero, preserved verbatim here so a non-zero value is visible).
         reserved: u32,
     },
+    /// RFC 8335 section 3 Extended Echo Request (160): the rest-of-header is a
+    /// 16-bit Identifier, an 8-bit Sequence Number, and a flag byte whose
+    /// rightmost bit is the L (Local) bit (the probed interface resides on a proxy
+    /// node). The RFC 4884 ICMP Extension Structure naming the probed interface
+    /// rides in trailing [`IcmpExtension`] / [`IcmpExtensionInterfaceId`] layers
+    /// (the way an echo body's data rides in a trailing [`Raw`]).
+    ExtendedEchoRequest {
+        /// Echo Identifier (first half of the rest-of-header).
+        identifier: u16,
+        /// Echo Sequence Number (byte 2 of the rest-of-header; 8 bits).
+        sequence_number: u8,
+        /// The L (Local) bit (RFC 8335 sec 3: the rightmost bit of the flag
+        /// byte) — the probed interface is on a proxy node.
+        local: bool,
+        /// The seven Reserved bits of the flag byte (RFC 8335 sec 3:
+        /// send-as-zero), preserved verbatim so a non-zero value is visible.
+        reserved_flags: u8,
+    },
+    /// RFC 8335 section 3 Extended Echo Reply (161): the rest-of-header is a
+    /// 16-bit Identifier, an 8-bit Sequence Number, and a flag byte packing the
+    /// State (top 3 bits), 2 Reserved bits, and the A (Active), 4 (IPv4), and 6
+    /// (IPv6) status bits. The reply's `Code` (0-4) reports the query result. The
+    /// reply carries no body of its own.
+    ExtendedEchoReply {
+        /// Echo Identifier (first half of the rest-of-header).
+        identifier: u16,
+        /// Echo Sequence Number (byte 2 of the rest-of-header; 8 bits).
+        sequence_number: u8,
+        /// The State field (RFC 8335 sec 3: the top 3 bits of the flag byte; the
+        /// ARP/Neighbor Cache state of the probed entry).
+        state: u8,
+        /// The A (Active) status bit (RFC 8335 sec 3: 0x04 of the flag byte).
+        active: bool,
+        /// The 4 (IPv4) status bit (RFC 8335 sec 3: 0x02 of the flag byte).
+        ipv4: bool,
+        /// The 6 (IPv6) status bit (RFC 8335 sec 3: 0x01 of the flag byte).
+        ipv6: bool,
+    },
     /// Any ICMPv6 `type` not yet modeled with a typed body. The four
     /// rest-of-header bytes are preserved verbatim and any trailing bytes stay a
     /// [`Raw`] payload, so unknown messages round-trip unchanged.
@@ -262,6 +300,33 @@ impl Icmpv6Body {
                 // header-derived view.
                 reserved: u32::from_be_bytes(rest_of_header),
             },
+            ICMPV6_EXTENDED_ECHO_REQUEST => {
+                // RFC 8335 sec 3: identifier (bytes 0..2), 8-bit sequence number
+                // (byte 2), flag byte (byte 3) with the L-bit at 0x01 and the
+                // upper seven bits Reserved. The RFC 4884 extension structure
+                // rides in trailing layers, not in this header-derived view.
+                let flags = rest_of_header[3];
+                Icmpv6Body::ExtendedEchoRequest {
+                    identifier: u16::from_be_bytes([rest_of_header[0], rest_of_header[1]]),
+                    sequence_number: rest_of_header[2],
+                    local: flags & ICMPV6_EXTENDED_ECHO_REQUEST_L_BIT != 0,
+                    reserved_flags: flags & !ICMPV6_EXTENDED_ECHO_REQUEST_L_BIT,
+                }
+            }
+            ICMPV6_EXTENDED_ECHO_REPLY => {
+                // RFC 8335 sec 3: identifier (bytes 0..2), 8-bit sequence number
+                // (byte 2), flag byte (byte 3) packing State (top 3 bits), 2
+                // Reserved bits, and A (0x04) / 4 (0x02) / 6 (0x01) status bits.
+                let flags = rest_of_header[3];
+                Icmpv6Body::ExtendedEchoReply {
+                    identifier: u16::from_be_bytes([rest_of_header[0], rest_of_header[1]]),
+                    sequence_number: rest_of_header[2],
+                    state: (flags >> 5) & 0x07,
+                    active: flags & ICMPV6_EXTENDED_ECHO_REPLY_ACTIVE != 0,
+                    ipv4: flags & ICMPV6_EXTENDED_ECHO_REPLY_IPV4 != 0,
+                    ipv6: flags & ICMPV6_EXTENDED_ECHO_REPLY_IPV6 != 0,
+                }
+            }
             _ => Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,
@@ -280,6 +345,8 @@ impl Icmpv6Body {
             Icmpv6Body::NeighborSolicitation { .. } => "neighbor-solicitation",
             Icmpv6Body::NeighborAdvertisement { .. } => "neighbor-advertisement",
             Icmpv6Body::Redirect { .. } => "redirect",
+            Icmpv6Body::ExtendedEchoRequest { .. } => "extended-echo-request",
+            Icmpv6Body::ExtendedEchoReply { .. } => "extended-echo-reply",
             Icmpv6Body::Unknown { .. } => "unknown",
         }
     }
@@ -333,6 +400,26 @@ impl Icmpv6Body {
             Icmpv6Body::Redirect { reserved } => {
                 format!("redirect(reserved=0x{reserved:08x})")
             }
+            Icmpv6Body::ExtendedEchoRequest {
+                identifier,
+                sequence_number,
+                local,
+                reserved_flags,
+            } => format!(
+                "extended-echo-request(id=0x{identifier:04x}, seq={sequence_number}, L={local}, \
+                 reserved_flags=0x{reserved_flags:02x})"
+            ),
+            Icmpv6Body::ExtendedEchoReply {
+                identifier,
+                sequence_number,
+                state,
+                active,
+                ipv4,
+                ipv6,
+            } => format!(
+                "extended-echo-reply(id=0x{identifier:04x}, seq={sequence_number}, state={state}, \
+                 A={active}, 4={ipv4}, 6={ipv6})"
+            ),
             Icmpv6Body::Unknown {
                 icmp_type,
                 rest_of_header,
