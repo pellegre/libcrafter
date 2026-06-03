@@ -37,6 +37,7 @@ PROBE_CAPABILITY_NAMES = (
     "link_layer_send",
     "link_layer_capture",
     "broadcast",
+    "ipv6_multicast",
     "provider_mac",
     "repeated_response",
 )
@@ -145,6 +146,15 @@ def probe_capabilities_from_lab_capabilities(
     provider_mac = _capability(substrate, "provider_mac_known", "provider_mac")
     arp_resolution = link_layer_send and link_layer_capture and broadcast
     link_layer_arp = arp_resolution and provider_mac
+    # IPv6 Neighbor Discovery (the IPv6 analog of ARP) addresses solicitations to
+    # the solicited-node / all-routers / all-nodes multicast groups rather than
+    # the broadcast address, but it rides the same same-segment link-layer
+    # substrate ARP uses: a segment that carries broadcast frames carries IPv6
+    # multicast frames too. Derive ``ipv6_multicast`` from link-layer send/capture
+    # plus broadcast so NDP cases plan on providers that carry same-segment L2
+    # traffic (QEMU, VirtualBox) and skip cleanly on providers without an L2
+    # segment (Hetzner) with the stable link-layer reason.
+    ipv6_multicast = link_layer_send and link_layer_capture and broadcast
     dhcp_service = (
         ipv4_unicast
         and controlled_services
@@ -205,6 +215,7 @@ def probe_capabilities_from_lab_capabilities(
         "link_layer_send": link_layer_send,
         "link_layer_capture": link_layer_capture,
         "broadcast": broadcast,
+        "ipv6_multicast": ipv6_multicast,
         "provider_mac": provider_mac,
         "arp_resolution": arp_resolution,
         "link_layer_arp": link_layer_arp,
@@ -243,6 +254,11 @@ def probe_capabilities_from_lab_capabilities(
             "link_layer_send": ["link_layer_send"],
             "link_layer_capture": ["link_layer_capture"],
             "broadcast": ["broadcast"],
+            "ipv6_multicast": [
+                "link_layer_send",
+                "link_layer_capture",
+                "broadcast",
+            ],
             "provider_mac": ["provider_mac_known"],
             "arp_resolution": [
                 "link_layer_send",

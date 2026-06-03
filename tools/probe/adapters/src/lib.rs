@@ -8,7 +8,8 @@
 //! The implementation is split into a shared [`common`] module (request/plan
 //! contracts, dry-run/live dispatch, response and artifact helpers) and one
 //! module per protocol family: [`icmp`], [`tcp`], [`dns`], [`udp`], [`dhcp`],
-//! and [`arp`]. The binary is a thin wrapper that calls [`common::run`].
+//! [`arp`], and [`ndp`] (IPv6 Neighbor Discovery). The binary is a thin wrapper
+//! that calls [`common::run`].
 
 // The `plan_json` builder serializes the full probe-plan contract through a
 // single `json!` literal; the field count pushes the macro past serde_json's
@@ -20,6 +21,7 @@ pub mod common;
 pub mod dhcp;
 pub mod dns;
 pub mod icmp;
+pub mod ndp;
 pub mod tcp;
 pub mod udp;
 
@@ -160,6 +162,21 @@ pub(crate) mod test_support {
             neighbor_flush_cleanup_commands: None,
             ignore_unmatched_arp_replies: None,
             decoy_arp_event: None,
+            ip_version: None,
+            icmpv6_type: None,
+            icmpv6_code: None,
+            source_ipv6: None,
+            destination_ipv6: None,
+            target_ipv6: None,
+            solicited_node_multicast: None,
+            all_routers_multicast: None,
+            source_link_layer_addr: None,
+            omit_source_link_layer_addr: None,
+            dad: None,
+            requires_router_target: None,
+            expected_reply_source_ipv6: None,
+            expected_reply_destination_ipv6: None,
+            ndp_validation: None,
         }
     }
 }

@@ -63,6 +63,10 @@ _CAPABILITY_SKIP_REASONS = {
     "link_layer_send": SKIP_REQUIRES_LINK_LAYER,
     "link_layer_capture": SKIP_REQUIRES_LINK_LAYER,
     "broadcast": SKIP_REQUIRES_BROADCAST,
+    # NDP rides an IPv6 link-layer multicast substrate; a provider that cannot
+    # carry same-segment multicast frames is missing the link layer, so the NDP
+    # cases skip with the shared link-layer reason.
+    "ipv6_multicast": SKIP_REQUIRES_LINK_LAYER,
     "provider_mac": SKIP_REQUIRES_PROVIDER_MAC,
     "privileged_udp_port": SKIP_REQUIRES_PRIVILEGED_PORT,
     "controlled_services": SKIP_REQUIRES_CONTROLLED_SERVICE,
