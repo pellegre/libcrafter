@@ -201,6 +201,53 @@ pub const fn ndp_rdnss_length_units(addresses: usize) -> usize {
     1 + 2 * addresses
 }
 
+/// Width, in octets, of the Bit Fields area that follows the Type/Length header
+/// in an RA Flags Extension option (RFC 5175 sec 4: the option is one 8-octet
+/// unit — a two-byte Type/Length header plus a 6-octet, 48-bit "Bit fields
+/// available for assignment" area, numbered 8..=55, that continues the Router
+/// Advertisement flags byte).
+pub const NDP_RA_FLAGS_EXTENSION_BITS_LEN: usize = 6;
+
+/// Total length, in octets, of an RA Flags Extension option (RFC 5175 sec 4:
+/// Length field 1, i.e. one 8-octet unit = 8 bytes).
+pub const NDP_RA_FLAGS_EXTENSION_LEN: usize = 8;
+
+/// The RA Flags Extension option `Length` field value, in 8-octet units
+/// (RFC 5175 sec 4: 1).
+pub const NDP_RA_FLAGS_EXTENSION_UNITS: u8 = 1;
+
+/// Minimum width, in octets, of the random Nonce field carried by a Nonce option
+/// (RFC 3971 sec 5.3.2: "The length of the random number MUST be at least 6
+/// bytes."). The sender picks the nonce length so that the whole option is a
+/// multiple of 8 octets; with the two-byte Type/Length header a 6-byte nonce
+/// gives exactly one 8-octet unit.
+pub const NDP_NONCE_MIN_LEN: usize = 6;
+
+/// Total length, in octets, of a PREF64 option (RFC 8781 sec 4: Length field 2,
+/// i.e. two 8-octet units = 16 bytes).
+pub const NDP_PREF64_LEN: usize = 16;
+
+/// The PREF64 option `Length` field value, in 8-octet units (RFC 8781 sec 4: 2).
+pub const NDP_PREF64_UNITS: u8 = 2;
+
+/// Width, in octets, of the NAT64 prefix carried by a PREF64 option (RFC 8781
+/// sec 4: "Highest 96 Bits of Prefix", 12 octets / 96 bits).
+pub const NDP_PREF64_PREFIX_LEN: usize = 12;
+
+/// Number of low bits the 13-bit Scaled Lifetime field is shifted left by inside
+/// the PREF64 option's first 16-bit word (RFC 8781 sec 4: the word is Scaled
+/// Lifetime (13 bits) || PLC (3 bits), so the lifetime occupies bits 15..=3 and
+/// the PLC the low 3 bits).
+pub const NDP_PREF64_SCALED_LIFETIME_SHIFT: u8 = 3;
+
+/// Bit mask of the 3-bit PLC (Prefix Length Code) field as it sits in the low
+/// three bits of the PREF64 option's first 16-bit word (RFC 8781 sec 4).
+pub const NDP_PREF64_PLC_MASK: u16 = 0x0007;
+
+/// Maximum value of the 13-bit Scaled Lifetime field carried by a PREF64 option
+/// (RFC 8781 sec 4: a 13-bit unsigned integer, units of 8 seconds).
+pub const NDP_PREF64_SCALED_LIFETIME_MAX: u16 = 0x1fff;
+
 /// IPv6 Route / Default Router Preference (Prf), RFC 4191 sections 2.1 and 2.3.
 ///
 /// The preference is "encoded as a two-bit signed integer" and appears in two
@@ -273,6 +320,90 @@ impl Prf {
     /// extract the `0x18` field and decode it.
     pub const fn from_flag_byte(flags: u8) -> Self {
         Self::from_bits((flags & NDP_PRF_MASK) >> NDP_PRF_SHIFT)
+    }
+}
+
+/// PREF64 Prefix Length Code (PLC), RFC 8781 section 4.
+///
+/// The PREF64 option (type 38) carries a NAT64 prefix whose length is not sent
+/// directly; instead a 3-bit PLC field encodes it. RFC 8781 section 4 defines
+/// six assigned codes and reserves the rest:
+///
+/// ```text
+/// PLC  Prefix length
+/// 0    96 bits
+/// 1    64 bits
+/// 2    56 bits
+/// 3    48 bits
+/// 4    40 bits
+/// 5    32 bits
+/// (6, 7 are reserved)
+/// ```
+///
+/// `crafter` preserves the wire value faithfully: it decodes a reserved code
+/// (6 or 7) to [`Pref64Plc::Reserved`] carrying the raw value rather than
+/// rejecting it, so an agent can inspect a peer that sent a reserved code and
+/// emit one on purpose to exercise a stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Pref64Plc {
+    /// A NAT64 prefix length the registry assigns (RFC 8781 sec 4): one of 96,
+    /// 64, 56, 48, 40, or 32 bits.
+    PrefixLength(u8),
+    /// A reserved PLC code (6 or 7), preserved verbatim with its raw 3-bit value
+    /// so it round-trips (RFC 8781 sec 4: only 0..=5 are assigned).
+    Reserved(u8),
+}
+
+impl Pref64Plc {
+    /// The NAT64 prefix length, in bits, for a recognized PLC code, or `None`
+    /// for a reserved code (RFC 8781 sec 4).
+    pub const fn prefix_length_bits(self) -> Option<u8> {
+        match self {
+            Pref64Plc::PrefixLength(bits) => Some(bits),
+            Pref64Plc::Reserved(_) => None,
+        }
+    }
+
+    /// The raw 3-bit PLC code (0..=7) for this prefix length (RFC 8781 sec 4),
+    /// or `None` for a [`Pref64Plc::PrefixLength`] that is not one of the six
+    /// assigned NAT64 prefix lengths.
+    pub const fn to_plc(self) -> Option<u8> {
+        match self {
+            // RFC 8781 sec 4: 0->96, 1->64, 2->56, 3->48, 4->40, 5->32.
+            Pref64Plc::PrefixLength(96) => Some(0),
+            Pref64Plc::PrefixLength(64) => Some(1),
+            Pref64Plc::PrefixLength(56) => Some(2),
+            Pref64Plc::PrefixLength(48) => Some(3),
+            Pref64Plc::PrefixLength(40) => Some(4),
+            Pref64Plc::PrefixLength(32) => Some(5),
+            Pref64Plc::PrefixLength(_) => None,
+            Pref64Plc::Reserved(code) => Some(code & 0x07),
+        }
+    }
+
+    /// Decode a 3-bit PLC code (only the low three bits are consulted) into a
+    /// [`Pref64Plc`] (RFC 8781 sec 4).
+    pub const fn from_plc(code: u8) -> Self {
+        match code & 0x07 {
+            0 => Pref64Plc::PrefixLength(96),
+            1 => Pref64Plc::PrefixLength(64),
+            2 => Pref64Plc::PrefixLength(56),
+            3 => Pref64Plc::PrefixLength(48),
+            4 => Pref64Plc::PrefixLength(40),
+            5 => Pref64Plc::PrefixLength(32),
+            // 6, 7 are reserved (RFC 8781 sec 4).
+            other => Pref64Plc::Reserved(other),
+        }
+    }
+
+    /// Build a [`Pref64Plc`] from a NAT64 prefix length in bits, mapping one of
+    /// the six RFC 8781 section 4 assigned lengths to its code. A length that is
+    /// not assigned is carried as [`Pref64Plc::PrefixLength`] verbatim; the
+    /// PREF64 constructor then rejects it (or it encodes as a reserved code via
+    /// [`NdpOption::pref64_raw`]).
+    pub const fn from_prefix_length_bits(bits: u8) -> Self {
+        Pref64Plc::PrefixLength(bits)
     }
 }
 
@@ -1026,6 +1157,251 @@ impl NdpOption {
             }
         }
         Some(domains)
+    }
+
+    /// Build an RA Flags Extension option (type 26) carrying the 48-bit Bit
+    /// Fields area that extends the Router Advertisement flags (RFC 5175
+    /// section 4). NDP option family: RaFlagsExtension.
+    ///
+    /// RFC 5175 section 4: the Router Advertisement flags byte has room for only
+    /// eight flags, so this option carries 48 more flag bits "available for
+    /// assignment", numbered 8..=55 (continuing the RA flags). The option is
+    /// exactly one 8-octet unit — a two-byte Type/Length header plus the six
+    /// Bit Fields octets — so the auto-filled `Length` is 1
+    /// ([`NDP_RA_FLAGS_EXTENSION_UNITS`]) and no padding is needed. `crafter`
+    /// treats the Bit Fields area as a six-byte raw bitfield the agent sets and
+    /// inspects directly; no individual extension flags are assigned yet (the
+    /// registry leaves them unallocated), so the caller carries whatever bits it
+    /// needs.
+    ///
+    /// This is a typed constructor over the framework: it produces a
+    /// [`NdpOption::Generic`] whose six value bytes are `bits`, so it round-trips
+    /// through [`NdpOptions`] exactly like any other recognized option, and
+    /// [`NdpOption::ra_flags_extension_bits`] reads the bytes back.
+    pub fn ra_flags_extension(bits: [u8; NDP_RA_FLAGS_EXTENSION_BITS_LEN]) -> Self {
+        // RFC 5175 sec 4 value layout (after the Type/Length header): a 6-octet
+        // Bit Fields area continuing the RA flags.
+        Self::generic(NDP_OPT_RA_FLAGS_EXTENSION, bits.to_vec())
+    }
+
+    /// Read the 48-bit Bit Fields area of an RA Flags Extension option (type 26)
+    /// as a six-byte array, or `None` for any other option or a value too short
+    /// to hold the six octets (RFC 5175 section 4).
+    pub fn ra_flags_extension_bits(&self) -> Option<[u8; NDP_RA_FLAGS_EXTENSION_BITS_LEN]> {
+        if self.option_type() != NDP_OPT_RA_FLAGS_EXTENSION {
+            return None;
+        }
+        let value = self.value();
+        let bits = value.get(..NDP_RA_FLAGS_EXTENSION_BITS_LEN)?;
+        let mut octets = [0u8; NDP_RA_FLAGS_EXTENSION_BITS_LEN];
+        octets.copy_from_slice(bits);
+        Some(octets)
+    }
+
+    /// Build a Nonce option (type 14) carrying the random nonce SEND and RFC 7527
+    /// Enhanced DAD use to detect looped-back solicitations (RFC 3971
+    /// section 5.3.2).
+    ///
+    /// RFC 3971 section 5.3.2: the option is "Type, Length, and Nonce fields"
+    /// and "The length of the random number MUST be at least 6 bytes. The length
+    /// of the random number MUST be selected so that the length of the nonce
+    /// option is a multiple of 8 octets." There is **no** separate nonce-length
+    /// subfield: the option's `Length` (in 8-octet units) governs the whole
+    /// option, and the nonce occupies everything after the two-byte Type/Length
+    /// header.
+    ///
+    /// `crafter` stores the caller's `nonce` bytes verbatim and lets the
+    /// framework auto-fill the option `Length`, zero-padding the value to the
+    /// next 8-octet boundary on [`Self::encode`]. Because RFC 3971 records no
+    /// nonce length separately, [`NdpOption::nonce_value`] returns the **whole**
+    /// value area on decode — including any zero padding the boundary alignment
+    /// appended — so a caller that needs the exact original nonce must track its
+    /// length out of band. `crafter` does not enforce the 6-byte minimum, so an
+    /// agent can emit a deliberately short nonce to exercise a parser.
+    ///
+    /// This is a typed constructor over the framework: it produces a
+    /// [`NdpOption::Generic`] whose value bytes are the nonce, so it round-trips
+    /// through [`NdpOptions`] exactly like any other recognized option.
+    pub fn nonce(nonce: &[u8]) -> Self {
+        // RFC 3971 sec 5.3.2 value layout (after the Type/Length header): the
+        // random Nonce, padded by the framework to the 8-octet boundary.
+        Self::generic(NDP_OPT_NONCE, nonce.to_vec())
+    }
+
+    /// Read the Nonce value carried by a Nonce option (type 14): the whole value
+    /// area after the two-byte Type/Length header (RFC 3971 section 5.3.2).
+    ///
+    /// Returns `None` for any other option. RFC 3971 section 5.3.2 records no
+    /// separate nonce-length field, so the returned slice is the entire value
+    /// area — on a decoded option that includes whatever zero padding the option
+    /// `Length` carried to reach the 8-octet boundary. A caller that needs the
+    /// unpadded nonce must know its length out of band.
+    pub fn nonce_value(&self) -> Option<&[u8]> {
+        if self.option_type() != NDP_OPT_NONCE {
+            return None;
+        }
+        Some(self.value())
+    }
+
+    /// Build a PREF64 option (type 38) advertising a NAT64 prefix and the
+    /// scaled lifetime over which it is valid (RFC 8781 section 4).
+    ///
+    /// The value (everything after the two-byte Type/Length header) is laid out
+    /// per RFC 8781 section 4:
+    ///
+    /// ```text
+    /// Scaled Lifetime (13 bits) | PLC (3 bits) | Highest 96 Bits of Prefix (12 octets)
+    /// ```
+    ///
+    /// With the two-byte header that is exactly 16 bytes — two 8-octet units —
+    /// so the auto-filled `Length` is 2 ([`NDP_PREF64_UNITS`]) and no padding is
+    /// needed. `scaled_lifetime` is a 13-bit unsigned value in units of 8 seconds
+    /// (RFC 8781 sec 4); it is masked to 13 bits ([`NDP_PREF64_SCALED_LIFETIME_MAX`]).
+    /// `prefix_length` is the NAT64 prefix length in bits and MUST be one of the
+    /// six RFC 8781 section 4 lengths (96, 64, 56, 48, 40, 32) — any other value
+    /// returns a structured [`CrafterError`]; use [`NdpOption::pref64_raw`] to
+    /// emit a reserved PLC code on purpose. Only the high 96 bits of `prefix` are
+    /// placed on the wire; the low 32 bits are dropped per the option layout.
+    ///
+    /// This is a typed constructor over the framework: it produces a
+    /// [`NdpOption::Generic`] whose value bytes are the option fields, so it
+    /// round-trips through [`NdpOptions`] exactly like any other recognized
+    /// option, and [`NdpOption::pref64_scaled_lifetime`] /
+    /// [`NdpOption::pref64_prefix_length`] / [`NdpOption::pref64_plc`] /
+    /// [`NdpOption::pref64_prefix`] read each field back.
+    pub fn pref64(scaled_lifetime: u16, prefix_length: u8, prefix: Ipv6Addr) -> Result<Self> {
+        let plc = Pref64Plc::from_prefix_length_bits(prefix_length)
+            .to_plc()
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "ndp.pref64.prefix_length",
+                    "PREF64 prefix length must be one of 96, 64, 56, 48, 40, or 32 bits (RFC 8781 sec 4)",
+                )
+            })?;
+        Ok(Self::pref64_raw(scaled_lifetime, plc, prefix))
+    }
+
+    /// Build a PREF64 option (type 38) with an explicit raw PLC (Prefix Length
+    /// Code) value (RFC 8781 section 4).
+    ///
+    /// This is the honored-overrides escape hatch behind [`NdpOption::pref64`]:
+    /// `plc` is written verbatim into the low three bits of the first 16-bit
+    /// word, so an agent can emit a reserved PLC code (6 or 7) — which RFC 8781
+    /// section 4 does not assign — on purpose for a forward-compatible or
+    /// deliberately malformed packet. `scaled_lifetime` is masked to its 13-bit
+    /// field and `plc` to its 3-bit field; only the high 96 bits of `prefix` are
+    /// carried.
+    pub fn pref64_raw(scaled_lifetime: u16, plc: u8, prefix: Ipv6Addr) -> Self {
+        // RFC 8781 sec 4 value layout (after the Type/Length header): a 16-bit
+        // word of Scaled Lifetime(13) || PLC(3), then the high 96 prefix bits.
+        let word = ((scaled_lifetime & NDP_PREF64_SCALED_LIFETIME_MAX)
+            << NDP_PREF64_SCALED_LIFETIME_SHIFT)
+            | (u16::from(plc) & NDP_PREF64_PLC_MASK);
+        let mut value = Vec::with_capacity(NDP_PREF64_LEN - NDP_OPTION_HEADER_LEN);
+        value.extend_from_slice(&word.to_be_bytes());
+        value.extend_from_slice(&prefix.octets()[..NDP_PREF64_PREFIX_LEN]);
+        Self::generic(NDP_OPT_PREF64, value)
+    }
+
+    /// Read the first 16-bit word (Scaled Lifetime || PLC) of a PREF64 option
+    /// (type 38), or `None` for any other option or a truncated value.
+    fn pref64_word(&self) -> Option<u16> {
+        if self.option_type() != NDP_OPT_PREF64 {
+            return None;
+        }
+        let word = self.value().get(0..2)?;
+        Some(u16::from_be_bytes([word[0], word[1]]))
+    }
+
+    /// Read the 13-bit Scaled Lifetime field (units of 8 seconds) of a PREF64
+    /// option (type 38), or `None` for any other option or a truncated value
+    /// (RFC 8781 section 4).
+    pub fn pref64_scaled_lifetime(&self) -> Option<u16> {
+        self.pref64_word()
+            .map(|word| word >> NDP_PREF64_SCALED_LIFETIME_SHIFT)
+    }
+
+    /// Read the PLC (Prefix Length Code) of a PREF64 option (type 38) as a
+    /// typed [`Pref64Plc`], or `None` for any other option or a truncated value
+    /// (RFC 8781 section 4).
+    pub fn pref64_plc(&self) -> Option<Pref64Plc> {
+        self.pref64_word()
+            .map(|word| Pref64Plc::from_plc((word & NDP_PREF64_PLC_MASK) as u8))
+    }
+
+    /// Read the NAT64 prefix length, in bits, of a PREF64 option (type 38),
+    /// decoded from its PLC (RFC 8781 section 4), or `None` for any other option,
+    /// a truncated value, or a reserved PLC code (6 or 7) that maps to no
+    /// assigned length.
+    pub fn pref64_prefix_length(&self) -> Option<u8> {
+        self.pref64_plc().and_then(Pref64Plc::prefix_length_bits)
+    }
+
+    /// Read the NAT64 prefix carried by a PREF64 option (type 38) as a full
+    /// 128-bit [`Ipv6Addr`], zero-extending the low 32 bits the option does not
+    /// carry (RFC 8781 section 4: only the high 96 bits are on the wire).
+    ///
+    /// Returns `None` for any other option or a value too short to hold the
+    /// 16-bit word plus the 12-octet prefix.
+    pub fn pref64_prefix(&self) -> Option<Ipv6Addr> {
+        if self.option_type() != NDP_OPT_PREF64 {
+            return None;
+        }
+        let value = self.value();
+        // The 96-bit prefix follows the 16-bit Scaled Lifetime/PLC word.
+        let prefix = value.get(2..2 + NDP_PREF64_PREFIX_LEN)?;
+        let mut octets = [0u8; 16];
+        octets[..NDP_PREF64_PREFIX_LEN].copy_from_slice(prefix);
+        Some(Ipv6Addr::from(octets))
+    }
+
+    /// Build a Captive Portal option (type 37) carrying the URI of the captive
+    /// portal API endpoint (RFC 8910 section 2.3). NDP option family:
+    /// CaptivePortal.
+    ///
+    /// RFC 8910 section 2.3: the option carries a UTF-8 URI after the two-byte
+    /// Type/Length header, and "This MUST be padded with NUL (0x00) to make the
+    /// total option length (including the Type and Length fields) a multiple of
+    /// 8 bytes." The URI "is not guaranteed to be null terminated", so a receiver
+    /// recovers it by taking the value area (option length minus the two-byte
+    /// header) and stripping the trailing NUL padding.
+    ///
+    /// `crafter` stores the URI's UTF-8 bytes verbatim and lets the framework
+    /// auto-fill the option `Length`, zero (NUL)-padding the value to the next
+    /// 8-octet boundary on [`Self::encode`]. This is a typed constructor over the
+    /// framework: it produces a [`NdpOption::Generic`] whose value bytes are the
+    /// URI, so it round-trips through [`NdpOptions`] exactly like any other
+    /// recognized option, and [`NdpOption::captive_portal_uri`] reads the URI
+    /// back, stripping the trailing NUL padding.
+    pub fn captive_portal(uri: &str) -> Self {
+        // RFC 8910 sec 2.3 value layout (after the Type/Length header): the
+        // UTF-8 URI, NUL-padded by the framework to the 8-octet boundary.
+        Self::generic(NDP_OPT_CAPTIVE_PORTAL, uri.as_bytes().to_vec())
+    }
+
+    /// Read the captive portal URI carried by a Captive Portal option (type 37),
+    /// stripping the trailing NUL padding (RFC 8910 section 2.3).
+    ///
+    /// Returns `None` for any other option or when the value (after stripping the
+    /// trailing NUL bytes) is not valid UTF-8. RFC 8910 section 2.3 pads the URI
+    /// with NUL (0x00) to the 8-octet boundary and the URI "is not guaranteed to
+    /// be null terminated", so this accessor strips **all** trailing NUL octets —
+    /// which a well-formed URI never contains internally — before decoding the
+    /// remaining bytes as UTF-8.
+    pub fn captive_portal_uri(&self) -> Option<String> {
+        if self.option_type() != NDP_OPT_CAPTIVE_PORTAL {
+            return None;
+        }
+        let value = self.value();
+        // Strip the trailing NUL padding RFC 8910 sec 2.3 appended to reach the
+        // 8-octet boundary; the URI itself contains no interior NUL.
+        let end = value
+            .iter()
+            .rposition(|&b| b != 0)
+            .map_or(0, |last| last + 1);
+        core::str::from_utf8(&value[..end])
+            .ok()
+            .map(|uri| uri.to_string())
     }
 
     /// Pin the `Length` field (in units of 8 octets) to an explicit value.
@@ -2220,5 +2596,317 @@ mod tests {
         let mtu = NdpOption::mtu(1500);
         assert_eq!(mtu.dnssl_lifetime(), None);
         assert_eq!(mtu.dnssl_domains(), None);
+    }
+
+    // RFC 5175 sec 4: an RA Flags Extension option (type 26) carries a 6-octet
+    // (48-bit) Bit Fields area extending the RA flags; it occupies one 8-octet
+    // unit (length 1 / 8 bytes) and the bits read back through the typed accessor
+    // after a full encode/decode round-trip.
+    #[test]
+    fn ra_flags_extension_round_trips() {
+        let bits = [0x80u8, 0x01, 0x02, 0x03, 0x04, 0x05];
+        let opt = NdpOption::ra_flags_extension(bits);
+        assert_eq!(opt.option_type(), NDP_OPT_RA_FLAGS_EXTENSION);
+        assert!(opt.is_known());
+        assert_eq!(opt.ra_flags_extension_bits(), Some(bits));
+
+        let bytes = opt.encode().unwrap();
+        // type(1) + length(1) + 6 Bit Fields octets = 8 bytes = one 8-octet unit.
+        assert_eq!(bytes.len(), NDP_RA_FLAGS_EXTENSION_LEN);
+        assert_eq!(
+            &bytes[0..2],
+            &[NDP_OPT_RA_FLAGS_EXTENSION, NDP_RA_FLAGS_EXTENSION_UNITS]
+        );
+        assert_eq!(&bytes[2..8], &bits);
+
+        let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(consumed, NDP_RA_FLAGS_EXTENSION_LEN);
+        assert_eq!(decoded.option_type(), NDP_OPT_RA_FLAGS_EXTENSION);
+        assert_eq!(decoded.ra_flags_extension_bits(), Some(bits));
+        // Re-encode reproduces the original bytes exactly.
+        assert_eq!(decoded.encode().unwrap(), bytes);
+        // The accessor rejects other option types.
+        assert_eq!(NdpOption::mtu(1500).ra_flags_extension_bits(), None);
+    }
+
+    // RFC 3971 sec 5.3.2: a Nonce option (type 14) carries a variable-width
+    // random nonce after the Type/Length header; the framework auto-fills the
+    // option Length and zero-pads the value to the 8-octet boundary. With a
+    // 6-byte nonce the option is exactly one 8-octet unit and the value reads
+    // back through the typed accessor.
+    #[test]
+    fn nonce_round_trips() {
+        // A 6-byte nonce (RFC 3971 sec 5.3.2 minimum) fills exactly one unit.
+        let nonce = [0xa1u8, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6];
+        let opt = NdpOption::nonce(&nonce);
+        assert_eq!(opt.option_type(), NDP_OPT_NONCE);
+        assert!(opt.is_known());
+        assert_eq!(opt.nonce_value(), Some(&nonce[..]));
+
+        let bytes = opt.encode().unwrap();
+        // type(1) + length(1) + 6-byte nonce = 8 bytes = one 8-octet unit.
+        assert_eq!(bytes.len(), 8);
+        assert_eq!(&bytes[0..2], &[NDP_OPT_NONCE, 1]);
+        assert_eq!(&bytes[2..8], &nonce);
+
+        let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(consumed, 8);
+        assert_eq!(decoded.nonce_value(), Some(&nonce[..]));
+        // Re-encode reproduces the original bytes exactly.
+        assert_eq!(decoded.encode().unwrap(), bytes);
+        // The accessor rejects other option types.
+        assert_eq!(NdpOption::mtu(1500).nonce_value(), None);
+    }
+
+    // RFC 3971 sec 5.3.2: a nonce whose length is not a multiple of 8 (minus the
+    // 2-byte header) is zero-padded by the framework to the next 8-octet boundary;
+    // because the RFC records no separate nonce length, the decoded accessor
+    // returns the whole value area including that padding.
+    #[test]
+    fn nonce_padding_extends_the_value_area() {
+        // An 8-byte nonce: header(2) + 8 = 10 bytes rounds up to 16 (two units),
+        // padding the value with 6 zero octets.
+        let nonce = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let opt = NdpOption::nonce(&nonce);
+        let bytes = opt.encode().unwrap();
+        assert_eq!(bytes.len(), 16);
+        assert_eq!(bytes[1], 2);
+        assert_eq!(&bytes[2..10], &nonce);
+        assert_eq!(&bytes[10..16], &[0; 6]);
+
+        let (decoded, _) = NdpOption::decode_one(&bytes).unwrap();
+        // The decoded value area is the nonce plus the 6 padding octets (RFC 3971
+        // records no separate nonce length, so padding is indistinguishable).
+        assert_eq!(
+            decoded.nonce_value(),
+            Some(&[1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0][..])
+        );
+    }
+
+    // RFC 8781 sec 4: the PLC (Prefix Length Code) maps each 3-bit code to a
+    // NAT64 prefix length and round-trips; reserved codes (6, 7) are preserved.
+    #[test]
+    fn pref64_plc_round_trips() {
+        // RFC 8781 sec 4: 0->96, 1->64, 2->56, 3->48, 4->40, 5->32.
+        let assigned = [(0u8, 96u8), (1, 64), (2, 56), (3, 48), (4, 40), (5, 32)];
+        for (code, bits) in assigned {
+            let plc = Pref64Plc::from_plc(code);
+            assert_eq!(plc, Pref64Plc::PrefixLength(bits));
+            assert_eq!(plc.prefix_length_bits(), Some(bits));
+            assert_eq!(plc.to_plc(), Some(code));
+            assert_eq!(
+                Pref64Plc::from_prefix_length_bits(bits).to_plc(),
+                Some(code)
+            );
+        }
+        // Reserved codes 6 and 7 are preserved verbatim and map to no length.
+        for code in [6u8, 7] {
+            let plc = Pref64Plc::from_plc(code);
+            assert_eq!(plc, Pref64Plc::Reserved(code));
+            assert_eq!(plc.prefix_length_bits(), None);
+            assert_eq!(plc.to_plc(), Some(code));
+        }
+        // A prefix length that is not one of the six assigned values has no code.
+        assert_eq!(Pref64Plc::from_prefix_length_bits(80).to_plc(), None);
+    }
+
+    // RFC 8781 sec 4: a PREF64 option (type 38) carries a 13-bit Scaled Lifetime,
+    // a 3-bit PLC, and the high 96 bits of a NAT64 prefix; it occupies two
+    // 8-octet units (length 2 / 16 bytes) and every field reads back through the
+    // typed accessors after a full encode/decode round-trip.
+    #[test]
+    fn pref64_round_trips() {
+        // The well-known NAT64 prefix 64:ff9b::/96 (RFC 6052), expressed in the
+        // documentation-safe form here as its high 96 bits.
+        let prefix = Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0);
+        // Scaled Lifetime 600 (units of 8 s = 4800 s), PLC for /96.
+        let opt = NdpOption::pref64(600, 96, prefix).unwrap();
+        assert_eq!(opt.option_type(), NDP_OPT_PREF64);
+        assert!(opt.is_known());
+        assert_eq!(opt.pref64_scaled_lifetime(), Some(600));
+        assert_eq!(opt.pref64_plc(), Some(Pref64Plc::PrefixLength(96)));
+        assert_eq!(opt.pref64_prefix_length(), Some(96));
+        assert_eq!(opt.pref64_prefix(), Some(prefix));
+
+        let bytes = opt.encode().unwrap();
+        // type(1) + length(1) + 2-byte word + 12-byte prefix = 16 bytes = two units.
+        assert_eq!(bytes.len(), NDP_PREF64_LEN);
+        assert_eq!(&bytes[0..2], &[NDP_OPT_PREF64, NDP_PREF64_UNITS]);
+        // The 16-bit word is Scaled Lifetime(13)<<3 | PLC(3): 600<<3 | 0 = 4800.
+        assert_eq!(&bytes[2..4], &(600u16 << 3).to_be_bytes());
+        // The high 96 bits of the prefix, then nothing (option is exactly 16 B).
+        assert_eq!(&bytes[4..16], &prefix.octets()[..NDP_PREF64_PREFIX_LEN]);
+
+        let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(consumed, NDP_PREF64_LEN);
+        assert_eq!(decoded.pref64_scaled_lifetime(), Some(600));
+        assert_eq!(decoded.pref64_prefix_length(), Some(96));
+        assert_eq!(decoded.pref64_prefix(), Some(prefix));
+        // Re-encode reproduces the original bytes exactly.
+        assert_eq!(decoded.encode().unwrap(), bytes);
+
+        // Every assigned prefix length round-trips its PLC.
+        for bits in [96u8, 64, 56, 48, 40, 32] {
+            let o = NdpOption::pref64(0, bits, prefix).unwrap();
+            let (d, _) = NdpOption::decode_one(&o.encode().unwrap()).unwrap();
+            assert_eq!(d.pref64_prefix_length(), Some(bits), "PLC for /{bits}");
+        }
+    }
+
+    // RFC 8781 sec 4: pref64() rejects a prefix length that is not one of the six
+    // assigned NAT64 lengths, but pref64_raw() can emit a reserved PLC on purpose
+    // (honored overrides), which decodes back to a reserved code with no length.
+    #[test]
+    fn pref64_rejects_bad_length_but_raw_allows_reserved_plc() {
+        let prefix = Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0);
+        // /80 is not an assigned NAT64 prefix length.
+        assert!(NdpOption::pref64(600, 80, prefix).is_err());
+
+        // The raw constructor emits a reserved PLC (7) verbatim.
+        let opt = NdpOption::pref64_raw(600, 7, prefix);
+        let bytes = opt.encode().unwrap();
+        assert_eq!(bytes[1], NDP_PREF64_UNITS);
+        // Low three bits of the word are the reserved PLC code 7.
+        let word = u16::from_be_bytes([bytes[2], bytes[3]]);
+        assert_eq!(word & NDP_PREF64_PLC_MASK, 7);
+        assert_eq!(word >> NDP_PREF64_SCALED_LIFETIME_SHIFT, 600);
+
+        let (decoded, _) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(decoded.pref64_plc(), Some(Pref64Plc::Reserved(7)));
+        // A reserved PLC maps to no assigned prefix length.
+        assert_eq!(decoded.pref64_prefix_length(), None);
+        assert_eq!(decoded.pref64_scaled_lifetime(), Some(600));
+        // The accessors reject other option types.
+        assert_eq!(NdpOption::mtu(1500).pref64_scaled_lifetime(), None);
+        assert_eq!(NdpOption::mtu(1500).pref64_plc(), None);
+        assert_eq!(NdpOption::mtu(1500).pref64_prefix(), None);
+    }
+
+    // RFC 8910 sec 2.3: a Captive Portal option (type 37) carries a UTF-8 URI
+    // NUL-padded to the 8-octet boundary; the option Length auto-fills, the URI
+    // reads back through the typed accessor with the padding stripped, and a
+    // documentation URI round-trips.
+    #[test]
+    fn captive_portal_round_trips_and_strips_padding() {
+        // RFC 2606 reserves example.com for documentation.
+        let uri = "https://example.com/captive-portal/api";
+        let opt = NdpOption::captive_portal(uri);
+        assert_eq!(opt.option_type(), NDP_OPT_CAPTIVE_PORTAL);
+        assert!(opt.is_known());
+        assert_eq!(opt.captive_portal_uri().as_deref(), Some(uri));
+
+        let bytes = opt.encode().unwrap();
+        assert_eq!(bytes[0], NDP_OPT_CAPTIVE_PORTAL);
+        // The encoded option is a whole number of 8-octet units (RFC 8910 sec
+        // 2.3: padded to a multiple of 8 bytes).
+        assert_eq!(bytes.len() % NDP_OPTION_LENGTH_UNIT, 0);
+        assert_eq!(bytes.len(), bytes[1] as usize * NDP_OPTION_LENGTH_UNIT);
+        // The URI bytes sit right after the Type/Length header.
+        assert_eq!(&bytes[2..2 + uri.len()], uri.as_bytes());
+        // Everything after the URI is NUL padding (RFC 8910 sec 2.3).
+        let padding = &bytes[2 + uri.len()..];
+        assert!(
+            padding.iter().all(|&b| b == 0),
+            "RFC 8910 sec 2.3 pads with NUL, got {padding:?}"
+        );
+
+        let (decoded, consumed) = NdpOption::decode_one(&bytes).unwrap();
+        assert_eq!(consumed, bytes.len());
+        // The accessor strips the trailing NUL padding to recover the URI.
+        assert_eq!(decoded.captive_portal_uri().as_deref(), Some(uri));
+        // Re-encode reproduces the original bytes exactly (padding included).
+        assert_eq!(decoded.encode().unwrap(), bytes);
+        // The accessor rejects other option types.
+        assert_eq!(NdpOption::mtu(1500).captive_portal_uri(), None);
+    }
+
+    // A URI that exactly fills the 8-octet boundary needs no padding, and a short
+    // URI strips back to itself.
+    #[test]
+    fn captive_portal_boundary_and_short_uri() {
+        // 6-byte URI value: header(2) + 6 = 8 bytes = one unit, no padding.
+        let exact = NdpOption::captive_portal("ftp://");
+        let exact_bytes = exact.encode().unwrap();
+        assert_eq!(exact_bytes.len(), 8);
+        assert_eq!(exact_bytes[1], 1);
+        let (d, _) = NdpOption::decode_one(&exact_bytes).unwrap();
+        assert_eq!(d.captive_portal_uri().as_deref(), Some("ftp://"));
+
+        // A very short URI still round-trips through the padding.
+        let short = NdpOption::captive_portal("a");
+        let (d2, _) = NdpOption::decode_one(&short.encode().unwrap()).unwrap();
+        assert_eq!(d2.captive_portal_uri().as_deref(), Some("a"));
+    }
+
+    // SEND certificate options (CGA/RSA/cert) are out of scope; an unrecognized
+    // SEND option type (e.g. CGA, type 11) is preserved verbatim as an
+    // UnknownNdpOption through an NDP option-area round-trip, alongside the
+    // recognized options.
+    #[test]
+    fn unrecognized_send_option_is_preserved_as_unknown() {
+        // RFC 3971 assigns CGA = type 11; `crafter` does not model it, so it must
+        // be preserved verbatim. Build it as an unknown option with arbitrary
+        // (documentation) value bytes.
+        const NDP_OPT_CGA: u8 = 11;
+        assert!(!ndp_option_type_is_known(NDP_OPT_CGA));
+        let cga_bytes = [0xde, 0xad, 0xbe, 0xef, 0x01, 0x02];
+        let cga = NdpOption::unknown(NDP_OPT_CGA, cga_bytes);
+
+        // Sandwich the unknown SEND option between two recognized options so the
+        // walk must keep decoding past it.
+        let nonce = NdpOption::nonce(&[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
+        let portal = NdpOption::captive_portal("https://example.com/cp");
+        let options = NdpOptions::new()
+            .push(nonce.clone())
+            .push(cga.clone())
+            .push(portal.clone());
+
+        let encoded = options.encode().unwrap();
+        let decoded = NdpOptions::decode(&encoded).unwrap();
+        assert_eq!(decoded.len(), 3);
+
+        // Order preserved; the SEND option is the middle one.
+        assert_eq!(decoded.options()[0].option_type(), NDP_OPT_NONCE);
+        assert_eq!(decoded.options()[2].option_type(), NDP_OPT_CAPTIVE_PORTAL);
+
+        // The CGA option round-trips verbatim as an Unknown variant.
+        let mid = &decoded.options()[1];
+        assert_eq!(mid.option_type(), NDP_OPT_CGA);
+        assert!(!mid.is_known());
+        match mid {
+            NdpOption::Unknown { bytes, .. } => {
+                // Value preserved exactly (padded to the 8-octet boundary).
+                assert_eq!(bytes, &cga_bytes);
+            }
+            other => panic!("expected Unknown SEND option, got {other:?}"),
+        }
+        // The other options still decode correctly past the unknown one.
+        assert_eq!(
+            decoded.options()[2].captive_portal_uri().as_deref(),
+            Some("https://example.com/cp")
+        );
+        // Re-encode reproduces the original bytes exactly.
+        assert_eq!(decoded.encode().unwrap(), encoded);
+    }
+
+    // A deliberately-wrong explicit length on one of the new typed options
+    // survives encode untouched (honored overrides) — the same rule as the other
+    // typed options.
+    #[test]
+    fn new_option_explicit_wrong_length_is_preserved() {
+        let prefix = Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0);
+        // A PREF64 option's real length is 2 units; pin it to 4 (out of spec).
+        let wrong = NdpOption::pref64(600, 96, prefix).unwrap().length(4);
+        assert_eq!(wrong.explicit_length(), Some(4));
+        let bytes = wrong.encode().unwrap();
+        assert_eq!(bytes[1], 4, "pinned length survives untouched");
+        assert_eq!(bytes.len(), 32, "pinned length drives the encoded size");
+        assert_eq!(wrong.clear_length().effective_length().unwrap(), 2);
+
+        // Likewise an RA Flags Extension option pinned to a wrong length.
+        let raext = NdpOption::ra_flags_extension([0; 6]).length(3);
+        let raext_bytes = raext.encode().unwrap();
+        assert_eq!(raext_bytes[1], 3);
+        assert_eq!(raext_bytes.len(), 24);
     }
 }
