@@ -2882,3 +2882,112 @@ mod edo_compatibility {
         assert_eq!(decoded.compile().unwrap(), bytes);
     }
 }
+
+mod syn_option_profile {
+    use super::super::{Tcp, TcpOption, TcpSynOptions, TCP_FLAG_SYN};
+    use crate::{Ipv4, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn tcp_syn_option_profile_budget() {
+        // TcpSynOptions is an ergonomic, policy-free profile builder. The caller
+        // opts into each common SYN option explicitly; the builder materializes
+        // the typed options in request order, reports budget fit via the shared
+        // TcpOptionBudget (RFC 9293 section 3.1), and never reorders, deduplicates,
+        // or auto-drops anything.
+
+        // --- A common SYN profile that fits the 40-octet option budget. ---
+        // MSS(4) + Window Scale(3) + SACK-Permitted(2) + Timestamps(10) = 19
+        // encoded option octets, comfortably under the cap.
+        let profile = TcpSynOptions::new()
+            .mss(1460)
+            .window_scale(7)
+            .sack_permitted()
+            .timestamp(0x0102_0304, 0);
+
+        // The options come out in the exact order they were opted into.
+        let options = profile.build();
+        assert_eq!(
+            options,
+            vec![
+                TcpOption::maximum_segment_size(1460),
+                TcpOption::window_scale(7),
+                TcpOption::sack_permitted(),
+                TcpOption::timestamp(0x0102_0304, 0),
+            ]
+        );
+        // options() exposes the same selection by reference.
+        assert_eq!(profile.options(), options.as_slice());
+
+        // The budget report agrees with the 19-octet sum and reports a fit.
+        let budget = profile.budget();
+        assert_eq!(budget.encoded_len(), 19);
+        assert!(budget.fits());
+        assert!(!budget.exceeds());
+        assert!(budget.remaining() > 0);
+        assert!(profile.fits());
+
+        // The produced options build a valid TCP SYN segment end to end: attach
+        // each typed option, compile under IPv4, decode, and confirm the option
+        // list survives byte-for-byte.
+        let mut tcp = Tcp::new().sport(40000).dport(443).flags(TCP_FLAG_SYN);
+        for option in &options {
+            tcp = tcp.tcp_option(option.clone()).unwrap();
+        }
+        let bytes = (Ipv4::new().src(src()).dst(dst()).id(0x5301) / tcp / Raw::from("syn"))
+            .compile()
+            .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let decoded_tcp = decoded.layer::<Tcp>().unwrap();
+        assert_eq!(decoded_tcp.flags_value() & TCP_FLAG_SYN, TCP_FLAG_SYN);
+        // compile() pads the 19-octet option region to a 32-bit boundary with a
+        // single zero byte, which decodes as a trailing EndOfList marker. The
+        // selected options themselves survive byte-for-byte ahead of that pad.
+        let decoded_options = decoded_tcp.parsed_options().unwrap();
+        assert_eq!(&decoded_options[..options.len()], options.as_slice());
+        assert_eq!(decoded_options.last(), Some(&TcpOption::end_of_list()));
+        // Recompiling the decoded packet is byte-identical: the profile produced
+        // a wire-correct segment.
+        assert_eq!(decoded.compile().unwrap(), bytes);
+
+        // build_bytes() yields the same raw option region the segment carries
+        // (before compile() pads it to a 32-bit boundary).
+        let raw = profile.build_bytes().unwrap();
+        assert_eq!(raw.len(), 19);
+        assert_eq!(TcpOption::decode_all(&raw).unwrap(), options);
+
+        // --- An over-budget profile reports exceeds, without dropping options. ---
+        // Many/large options blow past the 40-octet cap: MSS(4) + WScale(3) +
+        // SACK-Permitted(2) + Timestamps(10) = 19, plus a Fast Open cookie (2+16
+        // = 18) and a generic 20-byte option (2+20 = 22) = 59 encoded octets.
+        let over = TcpSynOptions::new()
+            .mss(1460)
+            .window_scale(7)
+            .sack_permitted()
+            .timestamp(1, 0)
+            .fast_open_cookie(vec![0xAB; 16])
+            .option(TcpOption::generic(222, vec![0xCD; 20]));
+        let over_budget = over.budget();
+        assert_eq!(over_budget.encoded_len(), 59);
+        assert!(over_budget.exceeds());
+        assert!(!over_budget.fits());
+        assert!(!over.fits());
+        // Remaining saturates to 0; nothing is dropped — all six options remain.
+        assert_eq!(over_budget.remaining(), 0);
+        assert_eq!(over.build().len(), 6);
+
+        // An empty profile selects nothing: no options, full budget, bare header.
+        let empty = TcpSynOptions::new();
+        assert!(empty.build().is_empty());
+        assert!(empty.build_bytes().unwrap().is_empty());
+        assert!(empty.fits());
+        assert_eq!(empty.budget().encoded_len(), 0);
+    }
+}
