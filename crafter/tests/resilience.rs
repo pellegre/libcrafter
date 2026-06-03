@@ -1433,3 +1433,438 @@ proptest! {
         prop_assert_eq!(compiled.as_bytes(), bytes.as_bytes());
     }
 }
+
+/// Malformed / truncation corpus for the ICMPv6 message families and the NDP
+/// option / MLD record parsers (RFC 4861, RFC 3810/9777, RFC 4443).
+///
+/// `CLAUDE.md` requires that malformed buffers surface as structured
+/// [`CrafterError`]s carrying `context`/`required`/`available` (or a stable
+/// `field`) and that truncation never panics. The new ICMPv6 risk surface — the
+/// NDP option TLV framework (`v6/message/ndp_option.rs`), the MLDv2 records
+/// (`v6/message/mld.rs`), and the `type → typed-body` decode dispatch
+/// (`v6/decode.rs`) — already returns a structured error or falls back to a
+/// `Raw` body on bad input; this module consolidates a corpus that proves it.
+///
+/// Two complementary surfaces are exercised:
+///
+/// - The NDP option framework decoders ([`NdpOption::decode_one`] /
+///   [`NdpOptions::decode`]) are public, so a zero-length option, an option that
+///   overruns the buffer, and a too-short header are asserted to return the exact
+///   structured [`CrafterError`] with its `context` / `required` / `available`
+///   (for [`CrafterError::BufferTooShort`]) or `field` / `reason` (for
+///   [`CrafterError::InvalidFieldValue`]).
+/// - The whole-message decoders (NDP messages, MLDv1/MLDv2) are reached through
+///   the public [`Packet::decode_from_l3`] IPv6 path. Per the decode dispatch in
+///   `v6/decode.rs`, a malformed *known-type* body is swallowed into a `Raw`
+///   fallback (so nothing is dropped and decoding never panics) rather than
+///   surfacing the per-message error to the caller. These cases therefore assert
+///   the clean header-plus-`Raw` fallback and a byte-exact round trip, and — most
+///   importantly — that no input panics (the test harness fails on panic).
+mod icmpv6_malformed_corpus {
+    use core::net::Ipv6Addr;
+
+    use crafter::core::{
+        CrafterError, Icmpv6, Ipv6, MacAddr, MulticastAddressRecord, MulticastRecordType,
+        NdpOption, NdpOptions, NetworkLayer, Packet, Raw, ICMPV6_MLDV2_REPORT,
+        ICMPV6_MULTICAST_LISTENER_QUERY, ICMPV6_NEIGHBOR_ADVERTISEMENT,
+    };
+
+    /// A documentation-space source address (`2001:db8::/32`).
+    fn src() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 1, 0, 0, 0, 0, 0x0010)
+    }
+
+    /// A documentation-space destination address (`2001:db8::/32`).
+    fn dst() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 2, 0, 0, 0, 0, 0x0020)
+    }
+
+    /// A documentation target address being resolved/advertised.
+    fn target() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 1, 0, 0, 0, 0, 0x00ff)
+    }
+
+    /// A documentation multicast group (`ff05::fb`).
+    fn group() -> Ipv6Addr {
+        Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 0x00fb)
+    }
+
+    /// A documentation MAC (`02:00:5e:00:53:01`).
+    fn doc_mac() -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01])
+    }
+
+    /// Compile a raw ICMPv6 message (an 8-byte fixed header followed by `body`)
+    /// onto an IPv6 header, returning the full wire bytes. The checksum field is
+    /// left zero — the decode path under test never validates it.
+    fn ipv6_icmpv6_wire(icmp_type: u8, code: u8, rest_of_header: [u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut icmpv6 = Vec::with_capacity(8 + body.len());
+        icmpv6.push(icmp_type);
+        icmpv6.push(code);
+        icmpv6.extend_from_slice(&[0, 0]); // checksum (not validated on decode)
+        icmpv6.extend_from_slice(&rest_of_header);
+        icmpv6.extend_from_slice(body);
+
+        // An IPv6 base header (next-header 58 = ICMPv6) carrying the ICMPv6 bytes.
+        let mut ip = Vec::with_capacity(40 + icmpv6.len());
+        ip.push(0x60); // version 6, traffic class high nibble
+        ip.extend_from_slice(&[0x00, 0x00, 0x00]); // traffic class / flow label
+        ip.extend_from_slice(&(icmpv6.len() as u16).to_be_bytes()); // payload length
+        ip.push(58); // next header = ICMPv6
+        ip.push(255); // hop limit
+        ip.extend_from_slice(&src().octets());
+        ip.extend_from_slice(&dst().octets());
+        ip.extend_from_slice(&icmpv6);
+        ip
+    }
+
+    /// Decode IPv6 wire bytes through the public registry path. Never panics; the
+    /// harness fails the test if the decoder under test does.
+    fn decode_ipv6(bytes: &[u8]) -> crafter::core::Result<Packet> {
+        Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)
+    }
+
+    /// Decode the bytes and assert the message fell back to the `Icmpv6` header
+    /// plus a single `Raw` body whose bytes are exactly the original message body
+    /// (nothing dropped), and that the decode round-trips byte-for-byte. This is
+    /// the contract `v6/decode.rs` documents for a malformed *known-type* body.
+    fn assert_header_plus_raw_roundtrip(icmp_type: u8, body: &[u8]) {
+        let wire = ipv6_icmpv6_wire(icmp_type, 0, [0, 0, 0, 0], body);
+        let decoded =
+            decode_ipv6(&wire).expect("malformed known-type body still decodes to a stack");
+
+        let icmpv6 = decoded
+            .layer::<Icmpv6>()
+            .expect("ICMPv6 header decodes for a malformed body");
+        assert_eq!(
+            icmpv6.icmp_type_value(),
+            icmp_type,
+            "ICMPv6 type must survive a malformed body"
+        );
+
+        let raw = decoded
+            .layer::<Raw>()
+            .expect("a malformed known-type body is preserved as Raw");
+        assert_eq!(
+            raw.as_bytes(),
+            body,
+            "the Raw fallback must preserve the message body verbatim"
+        );
+
+        let recompiled = decoded
+            .compile()
+            .expect("the header-plus-Raw fallback recompiles");
+        assert_eq!(
+            recompiled.as_bytes(),
+            wire,
+            "a header-plus-Raw fallback must round-trip byte-for-byte"
+        );
+    }
+
+    // --- NDP option framework: structured errors with context/required/available ---
+
+    /// An NDP option whose `Length` field is `0` is invalid (RFC 4861 sec 4.6:
+    /// "The value 0 is invalid"). The framework decoder must reject it with a
+    /// structured [`CrafterError::InvalidFieldValue`] carrying the stable
+    /// `ndp.option.length` field and a non-empty reason — never a panic, and
+    /// never an infinite loop (a zero length would otherwise stall the walk).
+    #[test]
+    fn ndp_option_zero_length_is_structured_error() {
+        // Type 1 (Source Link-Layer Address), Length 0, then six value bytes.
+        let bytes = [1u8, 0, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+
+        match NdpOption::decode_one(&bytes) {
+            Err(CrafterError::InvalidFieldValue { field, reason }) => {
+                assert_eq!(field, "ndp.option.length");
+                assert!(!reason.is_empty(), "zero-length reason must be populated");
+            }
+            other => panic!("zero-length NDP option expected InvalidFieldValue, got {other:?}"),
+        }
+
+        // The same vector through the whole-area walk surfaces the same error
+        // rather than looping forever on a zero-length option.
+        match NdpOptions::decode(&bytes) {
+            Err(CrafterError::InvalidFieldValue { field, .. }) => {
+                assert_eq!(field, "ndp.option.length");
+            }
+            other => {
+                panic!("zero-length NDP option area expected InvalidFieldValue, got {other:?}")
+            }
+        }
+    }
+
+    /// An NDP option whose declared `Length` (in 8-octet units) runs past the end
+    /// of the buffer must surface a structured [`CrafterError::BufferTooShort`]
+    /// whose `context` is `ndp.option.value` and whose `required > available`
+    /// (the declared total exceeds what is present) — never a panic.
+    #[test]
+    fn ndp_option_length_overrun_is_structured_error() {
+        // Type 3 (Prefix Information), Length 4 (declares 32 octets), but only a
+        // 10-byte buffer is present.
+        let bytes = [3u8, 4, 0, 0, 0, 0, 0, 0, 0, 0];
+
+        for result in [
+            NdpOption::decode_one(&bytes).map(|(_, n)| n),
+            NdpOptions::decode(&bytes).map(|_| 0),
+        ] {
+            match result {
+                Err(CrafterError::BufferTooShort {
+                    context,
+                    required,
+                    available,
+                }) => {
+                    assert_eq!(context, "ndp.option.value");
+                    assert_eq!(required, 32, "Length 4 declares 32 octets");
+                    assert_eq!(available, bytes.len());
+                    assert!(
+                        required > available,
+                        "an overrun must require more ({required}) than is available ({available})"
+                    );
+                }
+                other => panic!("overrunning NDP option expected BufferTooShort, got {other:?}"),
+            }
+        }
+    }
+
+    /// An NDP option area that ends mid-header (a single trailing byte, not the
+    /// two-byte Type/Length header) must surface a structured
+    /// [`CrafterError::BufferTooShort`] with the `ndp.option.header` context and
+    /// `required > available` — never a panic.
+    #[test]
+    fn ndp_option_truncated_header_is_structured_error() {
+        let bytes = [1u8]; // a lone type byte, no length byte
+
+        match NdpOption::decode_one(&bytes) {
+            Err(CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            }) => {
+                assert_eq!(context, "ndp.option.header");
+                assert_eq!(required, 2);
+                assert_eq!(available, 1);
+                assert!(required > available);
+            }
+            other => panic!("truncated NDP option header expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// An unknown NDP option type is preserved verbatim as
+    /// [`NdpOption::Unknown`] and round-trips through encode/decode byte-for-byte
+    /// (the spec's unknown-option preservation rule).
+    #[test]
+    fn unknown_ndp_option_round_trips_verbatim() {
+        // Type 253 is unassigned in the IANA NDP option registry; Length 1 means
+        // the whole option is one 8-octet unit (six value bytes).
+        let wire = [253u8, 1, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+
+        let (option, consumed) = NdpOption::decode_one(&wire).expect("unknown option decodes");
+        assert_eq!(consumed, 8);
+        assert!(
+            matches!(option, NdpOption::Unknown { ty: 253, .. }),
+            "an unassigned NDP option type is preserved as Unknown, got {option:?}"
+        );
+        // Re-encoding reproduces the original bytes exactly.
+        assert_eq!(
+            option.encode().expect("unknown option re-encodes"),
+            wire,
+            "an unknown NDP option must round-trip verbatim"
+        );
+
+        // The same holds across the whole-area walk: a known option followed by an
+        // unknown option preserves order and both round-trip.
+        let area = NdpOptions::new()
+            .push(NdpOption::source_link_layer_address(doc_mac()))
+            .push(NdpOption::unknown(
+                253,
+                vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            ));
+        let encoded = area.encode().expect("area encodes");
+        let decoded = NdpOptions::decode(&encoded).expect("area decodes");
+        assert_eq!(
+            decoded.encode().expect("decoded area re-encodes"),
+            encoded,
+            "an option area with an unknown option must round-trip verbatim"
+        );
+        assert!(
+            matches!(decoded.options()[1], NdpOption::Unknown { ty: 253, .. }),
+            "the unknown option keeps its place and type in the ordered list"
+        );
+    }
+
+    // --- Whole-message decode: malformed bodies fall back to Raw, never panic ---
+
+    /// A Router Advertisement truncated mid-option (a valid two-timer-word body
+    /// followed by an NDP option whose declared length overruns the remaining
+    /// bytes) must not panic. The decode dispatch swallows the per-option error
+    /// and preserves the whole body as `Raw`, round-tripping byte-for-byte.
+    #[test]
+    fn router_advertisement_truncated_mid_option_falls_back_to_raw() {
+        // RA body = Reachable Time(4) + Retrans Timer(4) + option area. The option
+        // is type 3 (Prefix Information) declaring Length 4 (32 octets) but only a
+        // few option bytes follow — an overrun the option walk rejects.
+        let mut body = vec![0u8; 8]; // the two timer words
+        body.extend_from_slice(&[3, 4, 0, 0]); // PI option header + 2 value bytes, truncated
+        assert_header_plus_raw_roundtrip(crafter::core::ICMPV6_ROUTER_ADVERTISEMENT, &body);
+    }
+
+    /// A Router Advertisement whose option area is present but not a multiple of
+    /// 8 octets (so the final option's declared length cannot be satisfied) must
+    /// not panic and must fall back to a header-plus-`Raw` round trip.
+    #[test]
+    fn router_advertisement_option_area_not_multiple_of_eight_falls_back_to_raw() {
+        let mut body = vec![0u8; 8]; // the two timer words
+                                     // A well-formed MTU option (type 5, length 1, 8 octets) followed by three
+                                     // stray bytes that cannot form a complete option header+length.
+        body.extend_from_slice(&[5, 1, 0, 0, 0, 0, 0x05, 0xdc]);
+        body.extend_from_slice(&[1, 9, 0xff]); // type 1, length 9 (72 octets) -> overrun
+        assert_header_plus_raw_roundtrip(crafter::core::ICMPV6_ROUTER_ADVERTISEMENT, &body);
+    }
+
+    /// A Router Advertisement whose entire option area is zero bytes long (only
+    /// the two timer words, no options) decodes cleanly to a typed body — there is
+    /// no option to be malformed — proving the empty-option-area boundary is
+    /// handled without panic and that the typed body is produced. This is the
+    /// positive control for the malformed RA cases above: it confirms those cases
+    /// reject genuinely bad input rather than a decoder that always falls back to
+    /// Raw.
+    #[test]
+    fn router_advertisement_zero_length_option_area_decodes_cleanly() {
+        // The builder default carries no options, so the body is exactly the two
+        // timer words — an empty option area.
+        let packet = Ipv6::new().src(src()).dst(dst()).hlim(255) / Icmpv6::router_advertisement();
+        let bytes = packet
+            .compile()
+            .expect("RA with empty option area compiles");
+
+        let decoded = decode_ipv6(bytes.as_bytes()).expect("RA with empty option area decodes");
+        assert!(
+            decoded
+                .layer::<crafter::core::RouterAdvertisement>()
+                .is_some(),
+            "an RA with an empty option area decodes to a typed body, not Raw"
+        );
+        assert_eq!(
+            decoded.compile().expect("recompiles").as_bytes(),
+            bytes.as_bytes(),
+            "an RA with an empty option area round-trips byte-for-byte"
+        );
+    }
+
+    /// A Neighbor Advertisement truncated before its 16-byte Target Address (the
+    /// body is shorter than the required target) must not panic and must fall
+    /// back to the header-plus-`Raw` round trip.
+    #[test]
+    fn neighbor_advertisement_truncated_before_target_falls_back_to_raw() {
+        // Only two trailing bytes where a 16-byte Target Address is required.
+        let body = [0xde, 0xad];
+        assert_header_plus_raw_roundtrip(ICMPV6_NEIGHBOR_ADVERTISEMENT, &body);
+    }
+
+    /// A Neighbor Advertisement with a valid Target Address but an option area
+    /// truncated mid-option must not panic and must fall back to Raw.
+    #[test]
+    fn neighbor_advertisement_truncated_mid_option_falls_back_to_raw() {
+        let mut body = target().octets().to_vec(); // the 16-byte Target Address
+                                                   // A Target Link-Layer Address option (type 2) declaring length 1 (8
+                                                   // octets) but supplying only three of the six value bytes.
+        body.extend_from_slice(&[2, 1, 0x02, 0x00, 0x5e]);
+        assert_header_plus_raw_roundtrip(ICMPV6_NEIGHBOR_ADVERTISEMENT, &body);
+    }
+
+    /// An MLDv2 Report (type 143) whose first record declares a Number of Sources
+    /// that exceeds the buffer must not panic and must fall back to the
+    /// header-plus-`Raw` round trip (the record walk rejects the overrun and the
+    /// dispatch preserves the body verbatim).
+    #[test]
+    fn mldv2_report_record_source_count_overrun_falls_back_to_raw() {
+        // A single Multicast Address Record fixed header (Record Type 1, Aux Data
+        // Len 0, Number of Sources 4) plus the 16-byte multicast address, but no
+        // source addresses actually follow — an over-stated source count.
+        let mut body = vec![1u8, 0]; // record type 1, aux data len 0
+        body.extend_from_slice(&4u16.to_be_bytes()); // number of sources = 4 (none present)
+        body.extend_from_slice(&group().octets()); // the 16-byte multicast address
+        assert_header_plus_raw_roundtrip(ICMPV6_MLDV2_REPORT, &body);
+    }
+
+    /// An MLDv2 Report whose first record declares an Aux Data Len that overruns
+    /// the buffer must not panic and must fall back to Raw.
+    #[test]
+    fn mldv2_report_record_aux_data_len_overrun_falls_back_to_raw() {
+        // Record Type 1, Aux Data Len 8 words (32 octets), Number of Sources 0,
+        // plus the multicast address, but no aux data follows.
+        let mut body = vec![1u8, 8]; // record type 1, aux data len = 8 words
+        body.extend_from_slice(&0u16.to_be_bytes()); // number of sources = 0
+        body.extend_from_slice(&group().octets());
+        assert_header_plus_raw_roundtrip(ICMPV6_MLDV2_REPORT, &body);
+    }
+
+    /// An MLDv2 Query (type 130 with a long body) whose Number of Sources exceeds
+    /// the buffer must not panic and must fall back to Raw. (A long type-130 body
+    /// is routed to the MLDv2-query decoder; an over-stated source count is
+    /// rejected and the body is preserved.)
+    #[test]
+    fn mldv2_query_source_count_overrun_falls_back_to_raw() {
+        // The 20-byte MLDv2 Query fixed body (16-byte multicast address + a
+        // resv/S/QRV byte + QQIC byte + a 16-bit Number of Sources) with the
+        // source count over-stated, plus extra bytes so the body is long enough to
+        // be routed to the MLDv2-query decoder rather than the 16-byte MLDv1 path.
+        let mut body = group().octets().to_vec(); // 16-byte multicast address
+        body.push(0x02); // resv/S/QRV
+        body.push(0x00); // QQIC
+        body.extend_from_slice(&8u16.to_be_bytes()); // number of sources = 8 (none present)
+        body.extend_from_slice(&[0u8; 4]); // four stray bytes (body >= 20 so MLDv2 path)
+        assert_header_plus_raw_roundtrip(ICMPV6_MULTICAST_LISTENER_QUERY, &body);
+    }
+
+    /// An unknown ICMPv6 `type` (200, IANA-unassigned) with trailing bytes keeps
+    /// the `Icmpv6` header and preserves the trailing bytes as a single `Raw`
+    /// body, round-tripping byte-for-byte.
+    #[test]
+    fn unknown_icmpv6_type_with_trailing_bytes_round_trips() {
+        const UNKNOWN_TYPE: u8 = 200;
+        let body = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let wire = ipv6_icmpv6_wire(UNKNOWN_TYPE, 0, [0xde, 0xad, 0xbe, 0xef], &body);
+
+        let decoded = decode_ipv6(&wire).expect("unknown ICMPv6 type decodes to a stack");
+        let icmpv6 = decoded
+            .layer::<Icmpv6>()
+            .expect("ICMPv6 header decodes for an unknown type");
+        assert_eq!(icmpv6.icmp_type_value(), UNKNOWN_TYPE);
+        let raw = decoded
+            .layer::<Raw>()
+            .expect("an unknown ICMPv6 type body is preserved as Raw");
+        assert_eq!(raw.as_bytes(), body);
+        assert_eq!(
+            decoded.compile().expect("recompiles").as_bytes(),
+            wire,
+            "an unknown ICMPv6 type round-trips byte-for-byte"
+        );
+    }
+
+    /// A well-formed MLDv2 Report with two records (one carrying sources) still
+    /// decodes to a typed body and round-trips — the positive control that proves
+    /// the malformed cases above are rejecting genuinely bad input, not a decoder
+    /// that always falls back to Raw.
+    #[test]
+    fn mldv2_report_with_records_decodes_and_round_trips() {
+        let records = vec![
+            MulticastAddressRecord::new(MulticastRecordType::ModeIsInclude, group())
+                .source(src())
+                .source(dst()),
+            MulticastAddressRecord::new(MulticastRecordType::ChangeToExcludeMode, target()),
+        ];
+        let packet = Ipv6::new().src(src()).dst(dst()).hlim(255) / Icmpv6::mldv2_report(records);
+        let bytes = packet.compile().expect("valid MLDv2 report compiles");
+        let decoded = decode_ipv6(bytes.as_bytes()).expect("valid MLDv2 report decodes");
+        assert!(
+            decoded.layer::<crafter::core::Mldv2Report>().is_some(),
+            "a well-formed MLDv2 report decodes to a typed body, not Raw"
+        );
+        assert_eq!(
+            decoded.compile().expect("recompiles").as_bytes(),
+            bytes.as_bytes(),
+            "a well-formed MLDv2 report round-trips byte-for-byte"
+        );
+    }
+}
