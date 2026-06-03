@@ -215,6 +215,117 @@ def _tcp_syn_probe_plan(
     }
 
 
+def _tcp_syn_options_probe_plan(
+    *,
+    case_name: str = "tcp-syn-options",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan the ``tcp-syn-options`` case.
+
+    A TCP SYN to a controlled listener that carries a representative,
+    deterministic option set so the dry-run materializes a TCP segment *with
+    options* and reports the planned sends, captures, and matchers. The option
+    list covers the currently deployed SYN options -- MSS, Window Scale,
+    SACK-Permitted, and Timestamp (RFC 9293 / RFC 7323 / RFC 2018) -- plus one
+    newer typed option, User Timeout (RFC 5482, kind 28), so the stimulus
+    endpoint builds them through the crafter typed ``TcpOption`` API rather than
+    raw bytes. The ``tcp_options`` descriptors are the stable spec the Rust
+    adapter consumes; the wire option bytes are materialized by libcrafter at
+    send time (and reported as ``sent_raw_hex`` in dry-run), never hand-rolled
+    here. Expected SYN/ACK validation (peer, ports, flags, ack) mirrors
+    ``tcp-syn-open``.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    source_port = 61000 + int.from_bytes(digest[0:2], "big") % 4000
+    destination_port = 18000 + int.from_bytes(digest[2:4], "big") % 3000
+    sequence_number = int.from_bytes(digest[4:8], "big")
+    expected_ack = (sequence_number + 1) & 0xFFFF_FFFF
+    # Representative, deterministic SYN option set. Window-scale shift is kept in
+    # the RFC 7323 valid range (0..=14); the MSS rides a documentation-friendly
+    # 1460 typical value; the timestamp value is deterministic with a zero echo
+    # reply (SYN has nothing to echo); user-timeout carries a granularity flag
+    # and a 15-bit value (RFC 5482). The order matches a typical Linux SYN:
+    # MSS, SACK-Permitted, Timestamp, NOP, Window Scale, then User Timeout.
+    window_scale_shift = digest[8] % 15
+    mss_value = 1460
+    timestamp_value = int.from_bytes(digest[9:13], "big")
+    user_timeout_value = 1 + int.from_bytes(digest[13:15], "big") % 0x7FFE
+    tcp_options = [
+        {"kind": "mss", "kind_value": 2, "mss": mss_value},
+        {"kind": "sack_permitted", "kind_value": 4},
+        {
+            "kind": "timestamp",
+            "kind_value": 8,
+            "timestamp_value": timestamp_value,
+            "timestamp_echo_reply": 0,
+        },
+        {"kind": "nop", "kind_value": 1},
+        {
+            "kind": "window_scale",
+            "kind_value": 3,
+            "window_scale_shift": window_scale_shift,
+        },
+        {
+            "kind": "user_timeout",
+            "kind_value": 28,
+            "user_timeout_granularity": False,
+            "user_timeout_value": user_timeout_value,
+        },
+    ]
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "tcp_syn",
+        "expected_response": "tcp_syn_ack",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": destination_port,
+        "tcp_sequence_number": sequence_number,
+        "expected_acknowledgment_number": expected_ack,
+        "window": 64240,
+        # The representative typed option descriptors the stimulus endpoint
+        # builds with the crafter TcpOption API. Materialized option bytes are
+        # reported by libcrafter at send time; they are not hand-encoded here.
+        "tcp_options": tcp_options,
+        "target_service": {
+            "required": True,
+            "kind": "tcp-listener",
+            "port": destination_port,
+        },
+        "stimulus_rst_guard": {
+            "required": True,
+            "source_ipv4": stimulus_ipv4,
+            "destination_ipv4": target_ipv4,
+            "source_port": source_port,
+            "destination_port": destination_port,
+        },
+        "capture_filter": (
+            f"tcp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        ),
+        "validation": {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+            "flags": ["syn", "ack"],
+            "acknowledgment_number": expected_ack,
+            "allow_rst_ack": False,
+        },
+    }
+
+
 def _dns_query_probe_plan(
     *,
     case_name: str = "dns-query",
@@ -5112,6 +5223,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "icmp-echo": _icmp_echo_probe_plan,
     "tcp-syn-open": _tcp_syn_probe_plan,
     "tcp-syn-closed": _tcp_syn_probe_plan,
+    "tcp-syn-options": _tcp_syn_options_probe_plan,
     "dns-query": _dns_query_probe_plan,
     "dns-a-success": _dns_a_success_probe_plan,
     "dns-aaaa-success": _dns_aaaa_success_probe_plan,

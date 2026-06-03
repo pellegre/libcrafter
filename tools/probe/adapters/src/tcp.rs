@@ -1,8 +1,9 @@
-//! TCP probe cases: `tcp-syn-open` (expect SYN/ACK from a listening port) and
-//! `tcp-syn-closed` (expect RST from a closed port).
+//! TCP probe cases: `tcp-syn-open` (expect SYN/ACK from a listening port),
+//! `tcp-syn-closed` (expect RST from a closed port), and `tcp-syn-options` (a
+//! SYN carrying a representative typed option set, expect SYN/ACK).
 
 use crafter::prelude::*;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
@@ -10,7 +11,7 @@ use crate::common::{
     capture_filter, decoded_packet_json, expected_response, failed_outcome, flag_mismatch,
     hex_bytes, observed_response, plan_json, required_str, required_u16, required_u32,
     send_report_json, target_service_json, CandidateValidation, ExampleResult, ProbeOutcome,
-    ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT,
+    ProbePlan, StimulusEndpointRequest, TcpOptionSpec, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT,
     FAILURE_WRONG_FLAGS, FAILURE_WRONG_PEER,
 };
 
@@ -342,13 +343,82 @@ pub fn tcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let destination_port = required_u16(plan.destination_port, "destination_port")?;
     let sequence_number = required_u32(plan.tcp_sequence_number, "tcp_sequence_number")?;
     let window = plan.window.unwrap_or(64240);
-    Ok(Ipv4::new().src(source).dst(destination)
-        / Tcp::new()
-            .sport(source_port)
-            .dport(destination_port)
-            .seq(sequence_number)
-            .flags(TCP_FLAG_SYN)
-            .window(window))
+    let mut tcp = Tcp::new()
+        .sport(source_port)
+        .dport(destination_port)
+        .seq(sequence_number)
+        .flags(TCP_FLAG_SYN)
+        .window(window);
+    // When the plan carries a representative option set (the `tcp-syn-options`
+    // case), build each typed option through the crafter `TcpOption` API and let
+    // `compile()` materialize the wire bytes, data offset, and padding. Plans
+    // without `tcp_options` (tcp-syn-open / tcp-syn-closed) emit a bare SYN
+    // exactly as before.
+    if let Some(specs) = plan.tcp_options.as_deref() {
+        for spec in specs {
+            tcp = tcp.tcp_option(tcp_option_from_spec(spec)?)?;
+        }
+    }
+    Ok(Ipv4::new().src(source).dst(destination) / tcp)
+}
+
+/// Build a typed crafter [`TcpOption`] from one probe-plan option descriptor.
+fn tcp_option_from_spec(spec: &TcpOptionSpec) -> ExampleResult<TcpOption> {
+    let option = match spec.kind.as_str() {
+        "mss" => {
+            let mss = required_field(spec.mss, "tcp_options.mss")?;
+            TcpOption::mss(mss)
+        }
+        "window_scale" => {
+            let shift = required_field(spec.window_scale_shift, "tcp_options.window_scale_shift")?;
+            TcpOption::window_scale(shift)
+        }
+        "sack_permitted" => TcpOption::sack_permitted(),
+        "timestamp" => {
+            let value = required_field(spec.timestamp_value, "tcp_options.timestamp_value")?;
+            let echo = spec.timestamp_echo_reply.unwrap_or(0);
+            TcpOption::timestamp(value, echo)
+        }
+        "user_timeout" => {
+            let granularity = spec.user_timeout_granularity.unwrap_or(false);
+            let value = required_field(spec.user_timeout_value, "tcp_options.user_timeout_value")?;
+            TcpOption::user_timeout(granularity, value)
+        }
+        "nop" => TcpOption::no_operation(),
+        "end_of_list" => TcpOption::end_of_list(),
+        other => {
+            return Err(format!("unsupported tcp option kind {other:?}").into());
+        }
+    };
+    Ok(option)
+}
+
+fn required_field<T>(value: Option<T>, field: &str) -> ExampleResult<T> {
+    value.ok_or_else(|| format!("probe plan missing required field {field}").into())
+}
+
+/// Serialize the plan's TCP option descriptors back into the probe-plan JSON
+/// shape so the report mirrors the representative option set deterministically.
+pub fn tcp_options_json(options: Option<&[TcpOptionSpec]>) -> Value {
+    match options {
+        None => Value::Null,
+        Some(options) => Value::Array(
+            options
+                .iter()
+                .map(|option| {
+                    json!({
+                        "kind": option.kind,
+                        "mss": option.mss,
+                        "window_scale_shift": option.window_scale_shift,
+                        "timestamp_value": option.timestamp_value,
+                        "timestamp_echo_reply": option.timestamp_echo_reply,
+                        "user_timeout_granularity": option.user_timeout_granularity,
+                        "user_timeout_value": option.user_timeout_value,
+                    })
+                })
+                .collect(),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -380,5 +450,114 @@ mod tests {
         assert!(bytes.len() >= 40, "tcp packet too short: {}", bytes.len());
         let tcp = packet.layer::<Tcp>().expect("tcp layer present");
         assert_eq!(tcp.flags_value() & TCP_FLAG_SYN, TCP_FLAG_SYN);
+    }
+
+    #[test]
+    fn tcp_syn_options_packet_materializes_typed_options() {
+        let mut plan = base_plan("tcp-syn-options");
+        plan.source_ipv4 = Some("192.0.2.1".to_string());
+        plan.destination_ipv4 = Some("192.0.2.2".to_string());
+        plan.source_port = Some(61234);
+        plan.destination_port = Some(18080);
+        plan.tcp_sequence_number = Some(0x2000);
+        plan.tcp_options = Some(vec![
+            TcpOptionSpec {
+                kind: "mss".to_string(),
+                mss: Some(1460),
+                window_scale_shift: None,
+                timestamp_value: None,
+                timestamp_echo_reply: None,
+                user_timeout_granularity: None,
+                user_timeout_value: None,
+            },
+            TcpOptionSpec {
+                kind: "sack_permitted".to_string(),
+                mss: None,
+                window_scale_shift: None,
+                timestamp_value: None,
+                timestamp_echo_reply: None,
+                user_timeout_granularity: None,
+                user_timeout_value: None,
+            },
+            TcpOptionSpec {
+                kind: "timestamp".to_string(),
+                mss: None,
+                window_scale_shift: None,
+                timestamp_value: Some(0x1020_3040),
+                timestamp_echo_reply: Some(0),
+                user_timeout_granularity: None,
+                user_timeout_value: None,
+            },
+            TcpOptionSpec {
+                kind: "window_scale".to_string(),
+                mss: None,
+                window_scale_shift: Some(7),
+                timestamp_value: None,
+                timestamp_echo_reply: None,
+                user_timeout_granularity: None,
+                user_timeout_value: None,
+            },
+            TcpOptionSpec {
+                kind: "user_timeout".to_string(),
+                mss: None,
+                window_scale_shift: None,
+                timestamp_value: None,
+                timestamp_echo_reply: None,
+                user_timeout_granularity: Some(false),
+                user_timeout_value: Some(1234),
+            },
+        ]);
+
+        let packet = tcp_packet(&plan).unwrap();
+        let compiled = packet.compile().unwrap();
+        // The option region pushes the TCP header past the bare 20-byte form, so
+        // the IPv4 + TCP header alone exceeds the 40-byte option-less floor.
+        assert!(
+            compiled.len() > 40,
+            "tcp-syn-options packet should carry options: {} bytes",
+            compiled.len()
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes()).unwrap();
+        let tcp = decoded.layer::<Tcp>().expect("decoded tcp layer present");
+        assert_eq!(tcp.flags_value() & TCP_FLAG_SYN, TCP_FLAG_SYN);
+        let options = tcp.parsed_options().unwrap();
+        // MSS, SACK-Permitted, Timestamp, Window Scale, User Timeout all decode
+        // back as typed options (padding/EOL may add a trailing entry).
+        assert!(
+            options.len() >= 5,
+            "expected the representative option set, got {options:?}"
+        );
+        assert!(
+            options
+                .iter()
+                .any(|option| option.maximum_segment_size_value() == Some(1460)),
+            "MSS option should round-trip: {options:?}"
+        );
+        assert!(
+            options.iter().any(|option| option.is_sack_permitted()),
+            "SACK-Permitted option should round-trip: {options:?}"
+        );
+    }
+
+    #[test]
+    fn tcp_syn_options_rejects_unknown_option_kind() {
+        let mut plan = base_plan("tcp-syn-options");
+        plan.source_ipv4 = Some("192.0.2.1".to_string());
+        plan.destination_ipv4 = Some("192.0.2.2".to_string());
+        plan.source_port = Some(61234);
+        plan.destination_port = Some(18080);
+        plan.tcp_sequence_number = Some(0x2000);
+        plan.tcp_options = Some(vec![TcpOptionSpec {
+            kind: "not-a-real-option".to_string(),
+            mss: None,
+            window_scale_shift: None,
+            timestamp_value: None,
+            timestamp_echo_reply: None,
+            user_timeout_granularity: None,
+            user_timeout_value: None,
+        }]);
+        let err = tcp_packet(&plan).unwrap_err().to_string();
+        assert!(err.contains("unsupported tcp option kind"), "got: {err}");
     }
 }

@@ -70,6 +70,7 @@ pub(crate) mod test_support {
             tcp_sequence_number: None,
             expected_acknowledgment_number: None,
             window: None,
+            tcp_options: None,
             query_id: None,
             query_name: None,
             query_type: None,

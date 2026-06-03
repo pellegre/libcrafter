@@ -498,6 +498,19 @@ PROBE_CASES: tuple[ProbeCase, ...] = (
         metadata={"protocol": "tcp", "service": "kernel"},
     ),
     ProbeCase(
+        name="tcp-syn-options",
+        description=(
+            "Send a TCP SYN carrying a representative option set (MSS, Window "
+            "Scale, SACK-Permitted, Timestamp, User Timeout) to a controlled "
+            "listener and validate the SYN/ACK."
+        ),
+        stimulus="tcp_syn",
+        expected_response="tcp_syn_ack",
+        required_capabilities=["tcp_open_port"],
+        endpoint_roles=["stimulus", "target"],
+        metadata={"protocol": "tcp", "service": "controlled_listener"},
+    ),
+    ProbeCase(
         name="dns-query",
         description="Send DNS query to controlled DNS service and validate matching reply.",
         stimulus="dns_query",
@@ -623,6 +636,7 @@ def selected_cases(case_names: Sequence[str]) -> list[ProbeCase]:
 DEFAULT_PROFILE = "smoke"
 SMOKE_PROFILE = "smoke"
 BEHAVIOR_PROFILE = "behavior"
+TCP_SMOKE_PROFILE = "tcp-smoke"
 
 # Legacy default count used by the smoke profile and any profile without an
 # explicit default; preserves the pre-behavior-suite CLI behavior.
@@ -638,6 +652,17 @@ SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "dns-query",
     "ttl-expired",
     "arp-resolution",
+)
+
+# The tcp-smoke profile samples a focused TCP-only set: a SYN carrying a
+# representative option set (MSS/Window Scale/SACK-Permitted/Timestamp/User
+# Timeout), plus the open- and closed-port SYN cases. It lets an agent inspect
+# the intended TCP traffic -- including the materialized options -- before any
+# provider-backed run, without pulling in the DNS/TTL/ARP smoke cases.
+TCP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
+    "tcp-syn-options",
+    "tcp-syn-open",
+    "tcp-syn-closed",
 )
 
 # The behavior profile selects the full DNS/DHCP/ARP/UDP behavioral catalog in a
@@ -662,6 +687,7 @@ BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
 _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     SMOKE_PROFILE: SMOKE_PROFILE_CASE_NAMES,
     BEHAVIOR_PROFILE: BEHAVIOR_PROFILE_CASE_NAMES,
+    TCP_SMOKE_PROFILE: TCP_SMOKE_PROFILE_CASE_NAMES,
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
