@@ -48,6 +48,17 @@ tcp-data-offset-underflow|ipv4|invalid-field-value|tcp.data_offset|4500002800000
 tcp-data-offset-overrun|ipv4|buffer-too-short|tcp header|450000280000000040060000c0000201c0000202003500500000000000000000f002ffff00000000
 tcp-option-length-overrun|tcp-options|buffer-too-short|tcp option|0204aa
 tcp-option-invalid-fixed-length|tcp-options|invalid-field-value|tcp.option.mss|020300
+# Canonical TCP malformed cases (RFC 9293 header / IANA TCP option rules).
+# tcp-invalid-data-offset: data offset nibble 3 (<5 words) is rejected before any
+# field is trusted; tcp-truncated-after-ipv4: a well-formed IPv4 header (total
+# length matches the buffer) encloses a TCP segment cut short of the 20-byte
+# fixed header; tcp-option-length-underflow / tcp-option-overrun /
+# tcp-option-fixed-length-mismatch drive TcpOption::decode_all directly.
+tcp-invalid-data-offset|ipv4|invalid-field-value|tcp.data_offset|450000280000000040060000c0000201c00002021f90005000000001000000023002ffff00000000
+tcp-truncated-after-ipv4|ipv4|buffer-too-short|tcp header|450000240000000040060000c0000201c00002020035005000000000000000005002ffff
+tcp-option-length-underflow|tcp-options|invalid-field-value|tcp.option.length|0301
+tcp-option-overrun|tcp-options|buffer-too-short|tcp option|0304aa
+tcp-option-fixed-length-mismatch|tcp-options|invalid-field-value|tcp.option.timestamp|080900000000000000
 
 icmp-short-header|ipv4|buffer-too-short|icmp header|450000170000000040010000c0000201c0000202080000
 icmpv6-short-header|ipv6|buffer-too-short|icmpv6 header|6000000000033a400000000000000000000000000000000000000000000000000000000000000000800000
