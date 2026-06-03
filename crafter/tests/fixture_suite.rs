@@ -477,6 +477,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: Some("summaries/ipv4-tcp-syn-options.summary.txt"),
     },
     ValidFixtureCase {
+        name: "ipv4-tcp-syn-rich-options",
+        path: "bytes/ipv4-tcp-syn-rich-options.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-tcp-syn-rich-options.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-tcp-syn-rich-options.summary.txt"),
+    },
+    ValidFixtureCase {
         name: "ipv4-udp-dns-query-example-com",
         path: "bytes/ipv4-udp-dns-query-example-com.bin",
         contents: FixtureContents::Bytes(fixture_bytes!(
@@ -941,7 +950,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-icmp-echo-request" => &[CoverageFamily::Ipv4IcmpEcho],
         "ipv4-icmp-destination-unreachable" => &[CoverageFamily::Ipv4IcmpError],
         "ipv4-options-traceroute-udp-raw" => &[CoverageFamily::Ipv4Options],
-        "ipv4-tcp-syn-options" => &[CoverageFamily::Ipv4TcpOptions],
+        "ipv4-tcp-syn-options" | "ipv4-tcp-syn-rich-options" => &[CoverageFamily::Ipv4TcpOptions],
         "ipv4-udp-dns-query-example-com" => &[CoverageFamily::Ipv4UdpDnsQuery],
         "ipv4-udp-dns-response-example-com" => &[CoverageFamily::Ipv4UdpDnsResponse],
         "ipv4-udp-dns-soa-srv-response" => &[CoverageFamily::Ipv4UdpDnsSoaSrv],
@@ -1427,6 +1436,43 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 ]
             );
             assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"syn-options");
+        }
+        "ipv4-tcp-syn-rich-options" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 20));
+            assert_eq!(ipv4.identification_value(), 0x2256);
+            assert_eq!(ipv4.protocol_value(), IPPROTO_TCP);
+
+            let tcp = expect_layer::<Tcp>(case, packet);
+            assert_eq!(tcp.source_port_value(), 44_444);
+            assert_eq!(tcp.destination_port_value(), 443);
+            assert_eq!(tcp.sequence_number_value(), 0x0102_0304);
+            assert_eq!(tcp.flags_value(), TCP_FLAG_SYN);
+            // MSS, Window Scale, SACK Permitted, Timestamp, the RFC 5482 User
+            // Timeout typed option (kind 28), and a classified Generic option
+            // (kind 222) all survive decode and recompile.
+            assert_eq!(
+                tcp.parsed_options().unwrap_or_else(|err| {
+                    panic!("fixture {} TCP options should parse: {err}", case.path)
+                }),
+                vec![
+                    TcpOption::MaximumSegmentSize(1460),
+                    TcpOption::WindowScale(7),
+                    TcpOption::SackPermitted,
+                    TcpOption::Timestamp {
+                        value: 398_303_815,
+                        echo_reply: 12_345,
+                    },
+                    TcpOption::UserTimeout {
+                        granularity: true,
+                        value: 240,
+                    },
+                    TcpOption::generic(222, vec![0xde, 0xad, 0xbe, 0xef]),
+                    TcpOption::EndOfList,
+                ]
+            );
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"syn-rich");
         }
         "ipv4-udp-dns-query-example-com" => {
             let ipv4 = expect_layer::<Ipv4>(case, packet);
