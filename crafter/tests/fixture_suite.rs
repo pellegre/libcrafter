@@ -486,7 +486,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
         expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Raw],
         preserve_exact_bytes: true,
-        summary_path: None,
+        summary_path: Some("summaries/ipv4-options-traceroute-udp-raw.summary.txt"),
     },
     ValidFixtureCase {
         name: "ipv4-tcp-syn-options",
@@ -1509,6 +1509,8 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 vec![
                     Ipv4Option::record_route(4, vec![Ipv4Addr::new(203, 0, 113, 1)]),
                     Ipv4Option::traceroute(0x1234, 1, 0xffff, Ipv4Addr::new(192, 0, 2, 10)),
+                    Ipv4Option::timestamp(9, 0, vec![0x0102_0304]),
+                    Ipv4Option::router_alert(0),
                     Ipv4Option::EndOfList,
                 ]
             );
@@ -2998,6 +3000,35 @@ fn malformed_pcap_fixtures_report_structured_errors() {
             "malformed pcap corpus is missing required case {required}"
         );
     }
+}
+
+#[test]
+fn ipv4_options_fixture_decodes_typed_options() {
+    let case = valid_fixture_case("ipv4-options-traceroute-udp-raw");
+    let bytes = fixture_bytes_for_case(case);
+    let packet = decode_packet(packet_target_for_case(case), &bytes)
+        .expect("IPv4 options fixture should decode");
+    let ipv4 = expect_layer::<Ipv4>(case, &packet);
+    let options = ipv4
+        .parsed_options()
+        .expect("IPv4 options fixture should parse typed options");
+
+    assert_eq!(
+        options,
+        vec![
+            Ipv4Option::record_route(4, vec![Ipv4Addr::new(203, 0, 113, 1)]),
+            Ipv4Option::traceroute(0x1234, 1, 0xffff, Ipv4Addr::new(192, 0, 2, 10)),
+            Ipv4Option::timestamp(9, 0, vec![0x0102_0304]),
+            Ipv4Option::router_alert(0),
+            Ipv4Option::EndOfList,
+        ]
+    );
+    assert_eq!(options[2].timestamp_values(), Some(&[0x0102_0304][..]));
+    assert_eq!(options[2].timestamp_pointer(), Some(9));
+    assert_eq!(options[2].timestamp_overflow(), Some(0));
+    assert_eq!(options[2].timestamp_flag(), Some(0));
+    assert_eq!(options[3].router_alert_value(), Some(0));
+    assert_eq!(packet.compile().unwrap().as_bytes(), bytes.as_slice());
 }
 
 /// Build a deterministic IPv4/UDP/DNS query carrying one EDNS(0) OPT additional
