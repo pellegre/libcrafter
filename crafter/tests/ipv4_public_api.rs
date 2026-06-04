@@ -8,7 +8,7 @@
 use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
-use crafter::protocols::ip::Ipv4ChecksumStatus;
+use crafter::protocols::ipv4::Ipv4ChecksumStatus;
 use crafter::protocols::{Dscp as ProtocolDscp, Ecn as ProtocolEcn};
 use crafter::{Dscp as RootDscp, Ecn as RootEcn};
 

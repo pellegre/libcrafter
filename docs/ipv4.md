@@ -25,7 +25,7 @@ user-facing API built on top of that manifest.
 | Auto-filled fields | Supported | IHL, Total Length, Protocol for ICMP/TCP/UDP stacks, option padding, and header checksum. |
 | Deliberate overrides | Supported | Explicit DS field, Total Length, ID, flags, fragment offset, TTL, Protocol, checksum, addresses, and options are preserved within the header validation model. |
 | DSCP / ECN | Supported | `Dscp`, `Ecn`, `ds_field`, `dscp`, `ecn`, and decode-time getters. |
-| Protocol numbers | Supported | `IpProtocol` variants, `IPPROTO_*` constants, labels in summaries, and `Raw` fallback for unknown or unsupported payloads. |
+| Protocol numbers | Supported | `Ipv4Protocol` variants, `IPPROTO_*` constants, labels in summaries, and `Raw` fallback for unknown or unsupported payloads. |
 | Checksum status | Supported | Header checksum auto-fill on compile; decode records `Ipv4ChecksumStatus`. Invalid checksums remain inspectable. |
 | Options | Supported | Raw options, typed `Ipv4Option` helpers, `Ipv4OptionIter`, `parsed_options`, and option-kind metadata. |
 | Fragment fields | Supported | ID, reserved/DF/MF flags, fragment offset, and `Ipv4FragmentInfo`. No fragment generation or reassembly. |
@@ -133,7 +133,7 @@ always includes `tos`, `dscp`, and `ecn`.
 ## Protocol numbers and Raw fallback
 
 The IPv4 Protocol field can be set as a raw byte or through the common
-`IpProtocol` enum:
+`Ipv4Protocol` enum:
 
 ```rust
 use crafter::prelude::*;
@@ -143,7 +143,7 @@ let tcp_probe = Ipv4::with_addresses(
     Ipv4Addr::new(192, 0, 2, 10),
     Ipv4Addr::new(198, 51, 100, 20),
 )
-.proto(IpProtocol::Tcp)
+.ipv4_protocol(Ipv4Protocol::Tcp)
     / Tcp::new().sport(41000).dport(443).syn();
 
 let opaque = Ipv4::with_addresses(
@@ -158,7 +158,7 @@ Exported protocol constants include `IPPROTO_ICMP`, `IPPROTO_TCP`,
 `IPPROTO_UDP`, `IPPROTO_IPV6`, `IPPROTO_GRE`, `IPPROTO_ESP`, `IPPROTO_AH`,
 `IPPROTO_ICMPV6`, `IPPROTO_OSPF`, `IPPROTO_SCTP`,
 `IPPROTO_EXPERIMENTAL_1`, and `IPPROTO_EXPERIMENTAL_2`. Matching
-`IpProtocol` variants exist for those common values.
+`Ipv4Protocol` variants exist for those common values.
 
 `compile()` can infer `1`, `6`, or `17` from ICMPv4, TCP, or UDP when the
 Protocol field was not set explicitly. It does not infer body encoders for every
