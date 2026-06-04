@@ -50,6 +50,9 @@ const IPV4_MAX_HEADER_LEN: usize = 60;
 const IPV4_MAX_IHL: u8 = 15;
 const IPV4_MAX_FLAGS: u8 = 0b111;
 const IPV4_MAX_FRAGMENT_OFFSET: u16 = 0x1fff;
+const IPV4_DSCP_SHIFT: u8 = 2;
+const IPV4_DSCP_MAX: u8 = 0x3f;
+const IPV4_ECN_MASK: u8 = 0x03;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -84,6 +87,113 @@ macro_rules! impl_layer_div {
             }
         }
     };
+}
+
+/// Six-bit Differentiated Services Code Point from the IPv4 DS field.
+///
+/// RFC 2474 defines the DSCP as the six most significant bits of the
+/// historical IPv4 TOS octet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dscp(u8);
+
+impl Dscp {
+    /// Create a DSCP value when it fits the six-bit wire field.
+    pub const fn new(value: u8) -> Result<Self> {
+        if value <= IPV4_DSCP_MAX {
+            Ok(Self(value))
+        } else {
+            Err(CrafterError::invalid_field_value(
+                "ipv4.dscp",
+                "DSCP must fit in six bits",
+            ))
+        }
+    }
+
+    /// Extract the DSCP bits from a full IPv4 DS/TOS octet.
+    pub const fn from_ds_field(value: u8) -> Self {
+        Self(value >> IPV4_DSCP_SHIFT)
+    }
+
+    /// Raw six-bit DSCP value.
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
+impl TryFrom<u8> for Dscp {
+    type Error = CrafterError;
+
+    fn try_from(value: u8) -> Result<Self> {
+        Self::new(value)
+    }
+}
+
+impl From<Dscp> for u8 {
+    fn from(value: Dscp) -> Self {
+        value.value()
+    }
+}
+
+/// Explicit Congestion Notification value from the IPv4 DS field.
+///
+/// RFC 3168 defines the two least significant bits as Not-ECT, ECT(1),
+/// ECT(0), and CE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum Ecn {
+    /// Not ECN-capable transport.
+    NotEct = 0,
+    /// ECN-capable transport, ECT(1).
+    Ect1 = 1,
+    /// ECN-capable transport, ECT(0).
+    Ect0 = 2,
+    /// Congestion experienced.
+    Ce = 3,
+}
+
+impl Ecn {
+    /// Create an ECN value when it fits the two-bit wire field.
+    pub const fn new(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::NotEct),
+            1 => Ok(Self::Ect1),
+            2 => Ok(Self::Ect0),
+            3 => Ok(Self::Ce),
+            _ => Err(CrafterError::invalid_field_value(
+                "ipv4.ecn",
+                "ECN must fit in two bits",
+            )),
+        }
+    }
+
+    /// Extract the ECN bits from a full IPv4 DS/TOS octet.
+    pub const fn from_ds_field(value: u8) -> Self {
+        match value & IPV4_ECN_MASK {
+            0 => Self::NotEct,
+            1 => Self::Ect1,
+            2 => Self::Ect0,
+            _ => Self::Ce,
+        }
+    }
+
+    /// Raw two-bit ECN value.
+    pub const fn value(self) -> u8 {
+        self as u8
+    }
+}
+
+impl TryFrom<u8> for Ecn {
+    type Error = CrafterError;
+
+    fn try_from(value: u8) -> Result<Self> {
+        Self::new(value)
+    }
+}
+
+impl From<Ecn> for u8 {
+    fn from(value: Ecn) -> Self {
+        value.value()
+    }
 }
 
 /// Common IPv4 protocol numbers.
@@ -446,6 +556,20 @@ impl Ipv4 {
         self
     }
 
+    /// Set the DSCP subfield, preserving the current ECN bits.
+    pub fn dscp(mut self, dscp: Dscp) -> Self {
+        let ecn = self.ecn_value();
+        self.tos.set_user(compose_ds_field(dscp, ecn));
+        self
+    }
+
+    /// Set the ECN subfield, preserving the current DSCP bits.
+    pub fn ecn(mut self, ecn: Ecn) -> Self {
+        let dscp = self.dscp_value();
+        self.tos.set_user(compose_ds_field(dscp, ecn));
+        self
+    }
+
     /// Set the total length field.
     pub fn total_length(mut self, total_length: u16) -> Self {
         self.total_length.set_user(total_length);
@@ -601,6 +725,16 @@ impl Ipv4 {
     /// Type-of-service / DSCP+ECN value.
     pub fn tos_value(&self) -> u8 {
         value_or_copy(&self.tos, 0)
+    }
+
+    /// DSCP subfield of the IPv4 DS/TOS octet.
+    pub fn dscp_value(&self) -> Dscp {
+        Dscp::from_ds_field(self.tos_value())
+    }
+
+    /// ECN subfield of the IPv4 DS/TOS octet.
+    pub fn ecn_value(&self) -> Ecn {
+        Ecn::from_ds_field(self.tos_value())
     }
 
     /// Total length field value when explicitly stored or decoded.
@@ -1228,6 +1362,10 @@ fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
     field.value().copied().unwrap_or(default)
 }
 
+fn compose_ds_field(dscp: Dscp, ecn: Ecn) -> u8 {
+    (dscp.value() << IPV4_DSCP_SHIFT) | ecn.value()
+}
+
 fn protocol_summary(protocol: u8) -> String {
     match protocol {
         0 => "hopopt(0)".to_string(),
@@ -1269,6 +1407,80 @@ fn hex_bytes(bytes: &[u8]) -> String {
     }
 
     output
+}
+
+#[cfg(test)]
+mod ipv4_dscp_ecn {
+    use super::{Dscp, Ecn, Ipv4};
+    use crate::{NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn dscp_constructor_accepts_six_bit_values_and_rejects_overflow() {
+        assert_eq!(Dscp::new(0).unwrap().value(), 0);
+        assert_eq!(Dscp::new(63).unwrap().value(), 63);
+
+        let err = Dscp::new(64).unwrap_err();
+        assert!(err.to_string().contains("ipv4.dscp"));
+    }
+
+    #[test]
+    fn dscp_test_covers_ecn_constructor_values_and_overflow() {
+        assert_eq!(Ecn::new(0).unwrap(), Ecn::NotEct);
+        assert_eq!(Ecn::new(1).unwrap(), Ecn::Ect1);
+        assert_eq!(Ecn::new(2).unwrap(), Ecn::Ect0);
+        assert_eq!(Ecn::new(3).unwrap(), Ecn::Ce);
+
+        let err = Ecn::new(4).unwrap_err();
+        assert!(err.to_string().contains("ipv4.ecn"));
+    }
+
+    #[test]
+    fn dscp_and_ecn_builders_compose_without_changing_tos_alias() {
+        let ip = Ipv4::new().tos(0xa5);
+        assert_eq!(ip.tos_value(), 0xa5);
+        assert_eq!(ip.dscp_value().value(), 0x29);
+        assert_eq!(ip.ecn_value(), Ecn::Ect1);
+
+        let ip = ip.dscp(Dscp::new(46).unwrap());
+        assert_eq!(ip.tos_value(), 0xb9);
+        assert_eq!(ip.dscp_value().value(), 46);
+        assert_eq!(ip.ecn_value(), Ecn::Ect1);
+
+        let ip = ip.ecn(Ecn::Ce);
+        assert_eq!(ip.tos_value(), 0xbb);
+        assert_eq!(ip.dscp_value().value(), 46);
+        assert_eq!(ip.ecn_value(), Ecn::Ce);
+    }
+
+    #[test]
+    fn dscp_and_ecn_round_trip_through_compile_and_decode() {
+        let packet = Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .protocol(253)
+            .dscp(Dscp::new(46).unwrap())
+            .ecn(Ecn::Ce)
+            / Raw::from_bytes([1, 2, 3, 4]);
+
+        let bytes = packet.compile().unwrap();
+        assert_eq!(bytes.as_bytes()[1], 0xbb);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+
+        assert_eq!(ipv4.tos_value(), 0xbb);
+        assert_eq!(ipv4.dscp_value().value(), 46);
+        assert_eq!(ipv4.ecn_value(), Ecn::Ce);
+    }
 }
 
 #[cfg(test)]
