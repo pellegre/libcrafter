@@ -8,6 +8,8 @@
 use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
+use crafter::protocols::{Dscp as ProtocolDscp, Ecn as ProtocolEcn};
+use crafter::{Dscp as RootDscp, Ecn as RootEcn};
 
 const DOC_SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const DOC_DST: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 20);
@@ -235,8 +237,41 @@ fn ipv4_preserves_explicit_compile_overrides_that_fit_wire_fields() -> crafter::
     assert_eq!(read_u16_at(bytes, 6) & 0x1fff, 0x1fff, "fragment offset");
     assert_eq!(bytes[9], 0xff, "protocol");
     assert_eq!(read_u16_at(bytes, 10), 0xffff, "checksum");
-    assert_eq!(compiled.len(), 68, "compiled bytes are not truncated to total length");
+    assert_eq!(
+        compiled.len(),
+        68,
+        "compiled bytes are not truncated to total length"
+    );
     assert_eq!(&bytes[20..60], &[0; 40], "explicit ihl pads header bytes");
+
+    Ok(())
+}
+
+#[test]
+fn dscp_ecn_public_api() -> crafter::Result<()> {
+    let dscp = Dscp::new(46)?;
+    let packet = Ipv4::new()
+        .src(DOC_SRC)
+        .dst(DOC_DST)
+        .ds_field(0xff)
+        .dscp(dscp)
+        .ecn(Ecn::Ce)
+        / Raw::from("api");
+
+    let compiled = packet.compile()?;
+    assert_eq!(compiled.as_bytes()[1], 0xbb);
+    assert_eq!(RootDscp::new(46)?, dscp);
+    assert_eq!(ProtocolDscp::from_ds_field(0xbb), dscp);
+    assert_eq!(u8::from(dscp), 46);
+    assert_eq!(RootEcn::Ce, Ecn::Ce);
+    assert_eq!(ProtocolEcn::from_ds_field(0xbb), Ecn::Ce);
+    assert_eq!(u8::from(Ecn::Ce), 3);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let ipv4 = decoded.layer::<Ipv4>().expect("ipv4 layer");
+    assert_eq!(ipv4.ds_field_value(), 0xbb);
+    assert_eq!(ipv4.dscp_value(), dscp);
+    assert_eq!(ipv4.ecn_value(), Ecn::Ce);
 
     Ok(())
 }
