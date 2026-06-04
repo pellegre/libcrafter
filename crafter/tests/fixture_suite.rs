@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 
 use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsName,
-    DnsRecord, DnsRecordData, EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4, Ipv4Option,
-    Ipv6, Ipv6FragmentHeader, Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder,
-    NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp,
+    DnsRecord, DnsRecordData, Dscp, Ecn, EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4,
+    Ipv4Option, Ipv6, Ipv6FragmentHeader, Layer, LinkType, LinuxSll, MacAddr, NetworkLayer,
+    NullByteOrder, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp,
     UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND,
     BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
     DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
@@ -78,6 +78,7 @@ enum CoverageFamily {
     NullLoopbackIpv6,
     Ipv4IcmpEcho,
     Ipv4IcmpError,
+    Ipv4DscpEcn,
     Ipv4Options,
     Ipv4TcpOptions,
     Ipv4UdpDnsQuery,
@@ -459,6 +460,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ipv4-udp-dscp-ecn-raw",
+        path: "bytes/ipv4-udp-dscp-ecn-raw.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dscp-ecn-raw.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ipv4-options-traceroute-udp-raw",
         path: "bytes/ipv4-options-traceroute-udp-raw.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-options-traceroute-udp-raw.hex")),
@@ -819,6 +829,10 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     (CoverageFamily::Ipv4IcmpEcho, "IPv4 ICMP echo"),
     (CoverageFamily::Ipv4IcmpError, "IPv4 ICMP error message"),
     (
+        CoverageFamily::Ipv4DscpEcn,
+        "IPv4 DSCP and ECN differentiated services field",
+    ),
+    (
         CoverageFamily::Ipv4Options,
         "IPv4 route or traceroute options",
     ),
@@ -958,6 +972,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "null-loopback-ipv6-raw" => &[CoverageFamily::NullLoopbackIpv6],
         "ipv4-icmp-echo-request" => &[CoverageFamily::Ipv4IcmpEcho],
         "ipv4-icmp-destination-unreachable" => &[CoverageFamily::Ipv4IcmpError],
+        "ipv4-udp-dscp-ecn-raw" => &[CoverageFamily::Ipv4DscpEcn],
         "ipv4-options-traceroute-udp-raw" => &[CoverageFamily::Ipv4Options],
         "ipv4-tcp-syn-options" | "ipv4-tcp-syn-rich-options" => &[CoverageFamily::Ipv4TcpOptions],
         "ipv4-udp-dns-query-example-com" => &[CoverageFamily::Ipv4UdpDnsQuery],
@@ -1392,6 +1407,36 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(icmp.kind_value(), Some(IcmpKind::DestinationUnreachable));
             assert_eq!(icmp.code_value(), 3);
             assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"orig-v4");
+        }
+        "ipv4-udp-dscp-ecn-raw" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 20));
+            assert_eq!(ipv4.identification_value(), 0x2260);
+            assert!(ipv4.is_dont_fragment());
+            assert_eq!(ipv4.ttl_value(), 64);
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+            assert_eq!(ipv4.ds_field_value(), 0xbb);
+            assert_eq!(ipv4.tos_value(), 0xbb);
+            assert_eq!(ipv4.dscp_value(), Dscp::new(46).expect("DSCP EF"));
+            assert_eq!(ipv4.ecn_value(), Ecn::Ce);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 53_014);
+            assert_eq!(udp.destination_port_value(), 10_014);
+            assert_eq!(udp.length_value(), Some(UDP_HEADER_LEN as u16 + 7));
+            assert_eq!(udp.checksum_value(), Some(0));
+            assert_eq!(udp.checksum_status(), UdpChecksumStatus::Ipv4NoChecksum);
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"ds-ecn!");
+
+            assert_eq!(
+                packet.summary(),
+                "Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=udp(17)) / Udp(sport=53014, dport=10014, len=15, checksum_status=Ipv4NoChecksum) / Raw(len=7)"
+            );
+            let compiled = packet
+                .compile()
+                .unwrap_or_else(|err| panic!("fixture {} should compile: {err}", case.path));
+            assert_eq!(compiled.as_bytes()[1], 0xbb);
         }
         "ipv4-options-traceroute-udp-raw" => {
             let ipv4 = expect_layer::<Ipv4>(case, packet);
