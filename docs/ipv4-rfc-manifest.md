@@ -202,11 +202,23 @@ are still required before adding body encoders or decoders.
 
 | Area | Source | Behavior |
 | --- | --- | --- |
+| Fragmentation fields | RFC 791 sections 2.3 and 3.1; RFC 6864 sections 4.1-4.3 | Identification, flags, and fragment offset are supported IPv4 header fields. Builders, decode, summaries, and re-encode preserve those field values, including explicit reserved, DF, MF, and offset values that fit the wire fields. |
 | Fragment identity | RFC 791 section 2.3; RFC 6864 sections 4.1-4.3 | Reassembly identity uses source address, destination address, protocol, and Identification. This fact only informs decode and summaries; `crafter` does not implement reassembly. |
 | Atomic datagrams | RFC 6864 sections 4.1-4.3 | For atomic datagrams, the IPv4 ID has no fragmentation/reassembly meaning and may be arbitrary. `crafter` must not invent uniqueness requirements for atomic packet construction. |
-| Non-initial fragments | RFC 791 section 2.3 | A nonzero fragment offset means the payload begins in the middle of the original datagram. Decode should keep payload as `Raw` rather than dispatching to a transport decoder without reassembly context. |
-| Fragment generation | RFC 791 section 2.3 | Fragmentation generation is explicitly out of scope. `crafter` can expose fields needed to build a datagram that already carries fragment metadata, but it must not split payloads into fragments in this work. |
-| Reassembly | RFC 791 section 2.3; RFC 1122 sections 3.2.1.4 and 3.3.2 | Fragment reassembly, fragment caches, timers, overlap policy, and stack delivery of reassembled data are explicitly out of scope. |
+| Non-initial fragments | RFC 791 section 2.3 | A nonzero fragment offset means the payload begins in the middle of the original datagram. Decode keeps payload as `Raw` and does not dispatch to a transport decoder without reassembly context. |
+| Offset-zero MF fragments | RFC 791 section 2.3 | A fragment offset of zero means the payload starts at the original datagram payload. If MF is set and transport decode succeeds, `crafter` may type the transport layer. If the payload is too short, internally inconsistent, unknown, or unsupported, the remaining payload is preserved as `Raw`. |
+| Fragment generation | RFC 791 section 2.3 | IPv4 fragmentation generation is explicitly out of scope. `crafter` can expose fields needed to build a datagram that already carries fragment metadata, but it must not split payloads into fragments in this work. |
+| Reassembly | RFC 791 section 2.3; RFC 1122 sections 3.2.1.4 and 3.3.2 | IPv4 fragment reassembly, fragment caches, timers, overlap policy, and stack delivery of reassembled data are explicitly out of scope. |
+
+Focused tests pin this policy in
+`crafter/tests/ipv4_public_api.rs::fragment_fields_roundtrip_supported_flags_and_offsets`,
+`crafter/tests/ipv4_public_api.rs::fragment_fields_reject_invalid_offset`, and
+the `crafter/src/protocols/ip.rs::ipv4_fragment_info` tests
+`noninitial_fragment_udp_payload_decodes_as_raw_without_udp_layer`,
+`noninitial_fragment_tcp_payload_decodes_as_raw_without_tcp_layer`,
+`initial_fragment_decode_types_complete_udp_header`,
+`initial_fragment_decode_preserves_truncated_udp_header_as_raw`, and
+`initial_fragment_decode_preserves_unknown_protocol_payload_as_raw`.
 
 ## Decode And Compile Guardrails
 

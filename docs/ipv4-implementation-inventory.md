@@ -77,7 +77,7 @@ Date checked: 2026-06-04, against the current worktree and
 | Total-length boundary | `crafter/src/protocols/ip.rs` | implemented | Payload is sliced from header length to IPv4 total length. Bytes after total length are appended as a following `Raw` layer. |
 | Unknown protocols | `crafter/src/registry.rs` | implemented | If no IPv4 protocol binding matches, remaining payload bytes are preserved as `Raw`. |
 | Built-in protocol dispatch | `crafter/src/registry.rs` | partial | Built-ins dispatch ICMP, TCP, and UDP. Application decode can continue from UDP/TCP through registry bindings. The registry does not yet expose IANA labels or richer protocol classification. |
-| Fragment-aware dispatch | `crafter/src/protocols/ip.rs`, `crafter/src/registry.rs` | gap | `decode_ipv4_protocol` receives only the protocol number and payload. It does not know the IPv4 fragment offset or MF flag, so non-initial fragments are not forced to `Raw` before transport decode. |
+| Fragment-aware dispatch | `crafter/src/protocols/ip.rs`, `crafter/src/registry.rs` | implemented | `append_ipv4_payload_with_registry` reads the decoded IPv4 fragment offset and MF flag before calling registry protocol dispatch. Non-initial fragments preserve the payload as `Raw` without transport decode. Offset-zero MF fragments may type the registered transport layer when decode succeeds; if decode fails, the payload is preserved as `Raw`. |
 | Quoted IPv4 in ICMPv4 errors | `crafter/src/protocols/ip.rs`, `crafter/src/protocols/icmp/decode.rs` | implemented | `decode_quoted_ipv4` leniently types parseable quoted IPv4 headers and uses a transport-only registry so truncated ICMP quotes can keep transport headers inspectable without requiring full application payloads. |
 
 ## Checksum Behavior
@@ -112,9 +112,11 @@ Date checked: 2026-06-04, against the current worktree and
 | Fragment offset field | `crafter/src/protocols/ip.rs` | implemented | Builder, alias, getter, compile, decode, and validation for 13-bit range exist. |
 | RFC 6864 atomic datagram semantics | `crafter/src/protocols/ip.rs` | partial | Current helpers expose DF, MF, fragment offset, and `is_fragmented()` for headers that already carry fragment metadata. RFC 6864's atomic datagram test also requires DF=1, so generated tools should use the raw helpers when that distinction matters. No ID meaning is inferred for atomic datagrams. |
 | Global Identification generation | none | out of scope | RFC 6864 leaves non-atomic datagram uniqueness with datagram sources. `crafter` is a packet primitive: it does not maintain per-tuple counters, choose live-safe IDs, rate-limit non-atomic output, or coordinate IDs for reassembly. |
-| Fragment generation | none | out of scope | The manifest excludes automatic fragmentation. No crate fragmenter should be added. |
-| Fragment reassembly | none | out of scope | The manifest excludes reassembly, caches, timers, overlap policy, and stack delivery. No reassembly module should be added. |
-| Non-initial fragment decode policy | `crafter/src/protocols/ip.rs`, `crafter/src/registry.rs` | gap | The manifest requires non-initial IPv4 fragments to keep payload as `Raw`; current dispatch is protocol-only and can attempt transport decode. |
+| Fragment generation | none | out of scope | The manifest excludes IPv4 fragmentation generation. No crate fragmenter should be added; callers may only build datagrams that already carry explicit fragment metadata. |
+| Fragment reassembly | none | out of scope | The manifest excludes IPv4 fragment reassembly, caches, timers, overlap policy, and stack delivery. No reassembly module should be added. |
+| Non-initial fragment decode policy | `crafter/src/protocols/ip.rs`, `crafter/src/registry.rs` | implemented | Non-initial IPv4 fragments (`fragment_offset != 0`) keep payload as `Raw`; transport decoders are not invoked because the payload does not start at the original transport header. Covered by `crafter/src/protocols/ip.rs::ipv4_fragment_info::noninitial_fragment_udp_payload_decodes_as_raw_without_udp_layer` and `noninitial_fragment_tcp_payload_decodes_as_raw_without_tcp_layer`. |
+| Offset-zero MF fragment decode policy | `crafter/src/protocols/ip.rs`, `crafter/src/registry.rs` | implemented | Offset-zero MF fragments may type the transport layer when the registered decoder succeeds, and otherwise preserve the payload as `Raw`. Covered by `initial_fragment_decode_types_complete_udp_header`, `initial_fragment_decode_preserves_truncated_udp_header_as_raw`, and `initial_fragment_decode_preserves_unknown_protocol_payload_as_raw` in `crafter/src/protocols/ip.rs::ipv4_fragment_info`. |
+| Focused fragment-field tests | `crafter/tests/ipv4_public_api.rs`, `crafter/src/protocols/ip.rs` | implemented | `fragment_fields_roundtrip_supported_flags_and_offsets` and `fragment_fields_reject_invalid_offset` cover public field preservation and range validation. `ipv4_fragment_info_round_trips_through_compile_and_decode` covers source-level round-trip of Identification, flags, MF, DF, reserved flag, and fragment offset. |
 
 ## Fixture Coverage
 
@@ -130,7 +132,7 @@ Date checked: 2026-06-04, against the current worktree and
 | IPv4/UDP options fixtures | `crafter/tests/fixtures/bytes/ipv4-udp-options-known.hex`, `crafter/tests/fixtures/bytes/ipv4-udp-options-unknown-safe.hex`, `crafter/tests/fixture_suite.rs` | implemented | Exercise IPv4 as a UDP-options envelope, not IPv4 options. |
 | Link wrappers with IPv4 payloads | `crafter/tests/fixtures/bytes/ethernet-vlan-ipv4-udp-raw.bin`, `crafter/tests/fixtures/bytes/null-loopback-ipv4-udp-raw.hex`, `crafter/tests/fixture_suite.rs` | implemented | Exercise link-layer dispatch into IPv4. |
 | Pcap coverage | `crafter/tests/fixtures/pcaps/raw-ipv4-icmp-echo-request.pcap`, `crafter/tests/fixtures/pcaps/null-loopback-ipv4-udp-raw.pcap`, `crafter/tests/fixture_suite.rs` | implemented | Classic pcap coverage includes RawIp IPv4 and null-loopback IPv4 payloads. |
-| IPv4-specific enrichment fixtures | `crafter/tests/fixtures/bytes/`, `crafter/tests/fixtures/summaries/`, `crafter/tests/fixtures/pcaps/` | gap | Dedicated fixtures are still needed for DSCP/ECN helpers, checksum-status display, unknown protocol labels, total-length trailing bytes, non-initial fragments, Router Alert, Timestamp, and malformed option variants added by later steps. |
+| IPv4-specific enrichment fixtures | `crafter/tests/fixtures/bytes/`, `crafter/tests/fixtures/summaries/`, `crafter/tests/fixtures/pcaps/` | gap | Dedicated fixtures are still needed for DSCP/ECN helpers, checksum-status display, unknown protocol labels, total-length trailing bytes, fragment-field examples beyond the focused tests, Router Alert, Timestamp, and malformed option variants added by later steps. |
 
 ## Malformed Corpus Coverage
 
@@ -175,9 +177,9 @@ Date checked: 2026-06-04, against the current worktree and
 5. **Length and boundary behavior** - add focused tests for explicit total
    length, trailing bytes after total length, option padding, and override
    preservation in `crafter/src/protocols/ip.rs` and `crafter/tests/fixture_suite.rs`.
-6. **Fragment-aware decode** - update `crafter/src/protocols/ip.rs` and likely
-   `crafter/src/registry.rs` so non-initial IPv4 fragments keep payload as
-   `Raw` without transport dispatch.
+6. **Fragment fixture follow-up** - fragment-aware decode is implemented in
+   `crafter/src/protocols/ip.rs`; later fixture steps should add deterministic
+   byte, summary, and pcap coverage for representative fragment-field cases.
 7. **Typed options** - add Router Alert, Timestamp, option metadata, and
    experiment helpers in `crafter/src/protocols/ip.rs`, with malformed corpus
    rows in `crafter/tests/fixtures/malformed/core-decode-corpus.hex`.
