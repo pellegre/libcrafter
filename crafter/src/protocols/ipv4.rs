@@ -1460,7 +1460,7 @@ mod ip_protocol {
         protocol_summary, IpProtocol, Ipv4, IPPROTO_AH, IPPROTO_ESP, IPPROTO_EXPERIMENTAL_1,
         IPPROTO_EXPERIMENTAL_2, IPPROTO_GRE, IPPROTO_OSPF, IPPROTO_SCTP,
     };
-    use crate::{NetworkLayer, Packet, Raw};
+    use crate::{Layer, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -1472,7 +1472,7 @@ mod ip_protocol {
     }
 
     #[test]
-    fn ip_protocol_constants_and_variants_match_manifest_values() {
+    fn protocol_summary_labels_source_backed_ip_protocol_values() {
         let cases = [
             (IpProtocol::Gre, IPPROTO_GRE, "gre(47)"),
             (IpProtocol::Esp, IPPROTO_ESP, "esp(50)"),
@@ -1495,6 +1495,56 @@ mod ip_protocol {
             assert_eq!(u8::from(protocol), value);
             assert_eq!(protocol_summary(value), label);
         }
+    }
+
+    #[test]
+    fn protocol_summary_uses_numeric_fallback_for_unknown_values() {
+        assert_eq!(protocol_summary(252), "252");
+    }
+
+    #[test]
+    fn protocol_summary_labels_appear_in_summary_and_inspection_fields() {
+        let cases = [
+            (IpProtocol::Gre, "gre(47)"),
+            (IpProtocol::Esp, "esp(50)"),
+            (IpProtocol::Ah, "ah(51)"),
+            (IpProtocol::Ospf, "ospf(89)"),
+            (IpProtocol::Sctp, "sctp(132)"),
+            (IpProtocol::Experimental1, "experimental(253)"),
+            (IpProtocol::Experimental2, "experimental(254)"),
+        ];
+
+        for (protocol, label) in cases {
+            let ipv4 = Ipv4::new().src(src()).dst(dst()).proto(protocol);
+
+            assert_eq!(
+                ipv4.summary(),
+                format!("Ipv4(src={}, dst={}, proto={label})", src(), dst())
+            );
+            assert_eq!(
+                ipv4
+                    .inspection_fields()
+                    .iter()
+                    .find(|(name, _)| *name == "protocol")
+                    .map(|(_, value)| value.as_str()),
+                Some(label)
+            );
+        }
+
+        let ipv4 = Ipv4::new().src(src()).dst(dst()).protocol(252);
+
+        assert_eq!(
+            ipv4.summary(),
+            format!("Ipv4(src={}, dst={}, proto=252)", src(), dst())
+        );
+        assert_eq!(
+            ipv4
+                .inspection_fields()
+                .iter()
+                .find(|(name, _)| *name == "protocol")
+                .map(|(_, value)| value.as_str()),
+            Some("252")
+        );
     }
 
     #[test]
