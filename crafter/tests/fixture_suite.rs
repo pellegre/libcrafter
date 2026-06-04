@@ -1447,7 +1447,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
 
             assert_eq!(
                 packet.summary(),
-                "Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=udp(17)) / Udp(sport=53014, dport=10014, len=15, checksum_status=Ipv4NoChecksum) / Raw(len=7)"
+                "Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=udp(17), ds=dscp=46/ecn=CE, flags=DF) / Udp(sport=53014, dport=10014, len=15, checksum_status=Ipv4NoChecksum) / Raw(len=7)"
             );
             let compiled = packet
                 .compile()
@@ -1488,7 +1488,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             );
             assert_eq!(
                 packet.summary(),
-                "Ipv4(src=192.0.2.44, dst=198.51.100.44, proto=udp(17)) / Raw(len=11)"
+                "Ipv4(src=192.0.2.44, dst=198.51.100.44, proto=udp(17), flags=reserved|DF|MF, fragment_offset=291) / Raw(len=11)"
             );
             let compiled = packet
                 .compile()

@@ -397,7 +397,7 @@ fn ipv4_summary_and_show_pin_current_public_inspection() -> crafter::Result<()> 
 
     assert_eq!(
         packet.summary(),
-        "Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=hopopt(0)) / Raw(len=4)"
+        "Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=hopopt(0), ds=dscp=11/ecn=ECT(0), flags=DF) / Raw(len=4)"
     );
 
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, packet.compile()?.as_bytes())?;
@@ -410,6 +410,8 @@ fn ipv4_summary_and_show_pin_current_public_inspection() -> crafter::Result<()> 
             "      version: 4\n",
             "      ihl: 5\n",
             "      tos: 46\n",
+            "      dscp: 11\n",
+            "      ecn: ECT(0)\n",
             "      total_length: 24\n",
             "      id: 0x1234\n",
             "      flags: DF\n",
@@ -417,8 +419,10 @@ fn ipv4_summary_and_show_pin_current_public_inspection() -> crafter::Result<()> 
             "      ttl: 42\n",
             "      protocol: hopopt(0)\n",
             "      checksum: 0x5232\n",
+            "      checksum_status: valid\n",
             "      src: 192.0.2.10\n",
             "      dst: 198.51.100.20\n",
+            "      option_count: 0\n",
             "      options: \n",
             "  [1] Raw\n",
             "      len: 4\n",
@@ -426,6 +430,52 @@ fn ipv4_summary_and_show_pin_current_public_inspection() -> crafter::Result<()> 
             "      text_lossy: \"ipv4\"",
         )
     );
+    Ok(())
+}
+
+#[test]
+fn ipv4_summary_show_enriched_nondefault_inspection_fields() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(DOC_SRC)
+        .dst(DOC_DST)
+        .dscp(Dscp::new(46)?)
+        .ecn(Ecn::Ce)
+        .more_fragments(true)
+        .fragment_offset(7)
+        .ttl(32)
+        .protocol(IPPROTO_UDP)
+        .ipv4_option(Ipv4Option::router_alert(0))?
+        / Raw::from("udp?");
+
+    let compiled = packet.compile()?;
+    let mut bytes = compiled.as_bytes().to_vec();
+    bytes[10] ^= 0xff;
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)?;
+
+    assert_eq!(
+        decoded.summary(),
+        "Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=udp(17), ds=dscp=46/ecn=CE, flags=MF, fragment_offset=7, checksum_status=invalid, options=1) / Raw(len=4)"
+    );
+
+    let show = decoded.show();
+    for expected in [
+        "      tos: 187\n",
+        "      dscp: 46\n",
+        "      ecn: CE\n",
+        "      flags: MF\n",
+        "      fragment_offset: 7\n",
+        "      protocol: udp(17)\n",
+        "      checksum_status: invalid\n",
+        "      option_count: 1\n",
+        "      options: 94 04 00 00\n",
+    ] {
+        assert!(
+            show.contains(expected),
+            "show output should include {expected:?}:\n{show}"
+        );
+    }
+
     Ok(())
 }
 
