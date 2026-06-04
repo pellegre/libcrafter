@@ -13,8 +13,8 @@ const DOC_SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const DOC_DST: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 20);
 
 const EXPECTED_BYTES: &[u8] = &[
-    0x45, 0x2e, 0x00, 0x18, 0x12, 0x34, 0x40, 0x00, 0x2a, 0x00, 0x52, 0x32, 0xc0, 0x00, 0x02,
-    0x0a, 0xc6, 0x33, 0x64, 0x14, b'i', b'p', b'v', b'4',
+    0x45, 0x2e, 0x00, 0x18, 0x12, 0x34, 0x40, 0x00, 0x2a, 0x00, 0x52, 0x32, 0xc0, 0x00, 0x02, 0x0a,
+    0xc6, 0x33, 0x64, 0x14, b'i', b'p', b'v', b'4',
 ];
 
 fn ipv4_raw_packet() -> Packet {
@@ -26,6 +26,29 @@ fn ipv4_raw_packet() -> Packet {
         .dont_fragment(true)
         .ttl(42)
         / Raw::from("ipv4")
+}
+
+fn read_u16_at(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn ones_complement_checksum(bytes: &[u8]) -> u16 {
+    let mut sum = 0u32;
+    let mut chunks = bytes.chunks_exact(2);
+
+    for chunk in &mut chunks {
+        sum += u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
+    }
+
+    if let [last] = chunks.remainder() {
+        sum += (*last as u32) << 8;
+    }
+
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+
+    !(sum as u16)
 }
 
 #[test]
@@ -104,5 +127,83 @@ fn ipv4_summary_and_show_pin_current_public_inspection() -> crafter::Result<()> 
             "      text_lossy: \"ipv4\"",
         )
     );
+    Ok(())
+}
+
+#[test]
+fn ipv4_autofills_header_fields_for_icmp_tcp_udp_stacks() -> crafter::Result<()> {
+    let cases = vec![
+        (
+            "icmp",
+            IPPROTO_ICMP,
+            6,
+            32,
+            Ipv4::new()
+                .src(DOC_SRC)
+                .dst(DOC_DST)
+                .option([IPV4_OPTION_NOP])
+                / Icmpv4::echo_request().id(0x1001).seq(1),
+        ),
+        (
+            "tcp",
+            IPPROTO_TCP,
+            5,
+            40,
+            Ipv4::new().src(DOC_SRC).dst(DOC_DST) / Tcp::new().sport(40000).dport(443).syn(),
+        ),
+        (
+            "udp",
+            IPPROTO_UDP,
+            5,
+            28,
+            Ipv4::new().src(DOC_SRC).dst(DOC_DST) / Udp::new().sport(53000).dport(53),
+        ),
+    ];
+
+    for (name, expected_protocol, expected_ihl, expected_total_length, packet) in cases {
+        let compiled = packet.compile()?;
+        let bytes = compiled.as_bytes();
+        let expected_header_len = expected_ihl as usize * 4;
+
+        assert_eq!(bytes[0] >> 4, 4, "{name} version");
+        assert_eq!(bytes[0] & 0x0f, expected_ihl, "{name} ihl");
+        assert_eq!(
+            read_u16_at(bytes, 2),
+            expected_total_length,
+            "{name} total length"
+        );
+        assert_eq!(compiled.len(), expected_total_length as usize, "{name} len");
+        assert_eq!(bytes[9], expected_protocol, "{name} protocol");
+        assert_eq!(
+            ones_complement_checksum(&bytes[..expected_header_len]),
+            0,
+            "{name} ipv4 header checksum"
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+        let ipv4 = decoded.layer::<Ipv4>().expect("ipv4 layer");
+        assert_eq!(ipv4.ihl_value(), expected_ihl, "{name} decoded ihl");
+        assert_eq!(
+            ipv4.header_len(),
+            expected_header_len,
+            "{name} decoded header length"
+        );
+        assert_eq!(
+            ipv4.total_length_value(),
+            Some(expected_total_length),
+            "{name} decoded total length"
+        );
+        assert_eq!(
+            ipv4.protocol_value(),
+            expected_protocol,
+            "{name} decoded protocol"
+        );
+        assert_eq!(
+            ipv4.checksum_value(),
+            Some(read_u16_at(bytes, 10)),
+            "{name} decoded checksum"
+        );
+    }
+
     Ok(())
 }
