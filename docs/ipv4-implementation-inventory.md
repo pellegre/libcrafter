@@ -48,10 +48,11 @@ Date checked: 2026-06-04, against the current worktree and
 
 | Item | Current location | Status | Notes |
 | --- | --- | --- | --- |
-| Builder defaults | `crafter/src/protocols/ip.rs` | implemented | Defaults are version 4, raw TOS/DS byte 0, identification 1, flags 0, fragment offset 0, TTL 64, protocol 0, source/destination loopback, unset IHL, unset total length, unset checksum, and no options. |
+| Builder defaults | `crafter/src/protocols/ip.rs` | implemented | Defaults are version 4, raw TOS/DS byte 0, deterministic Identification 1, flags 0, fragment offset 0, TTL 64, protocol 0, source/destination loopback, unset IHL, unset total length, unset checksum, and no options. The Identification default is reproducible packet-builder state, not a global IPv4 ID generator. |
 | IHL fill | `crafter/src/protocols/ip.rs` | implemented | When unset, IHL is derived from the fixed header plus option bytes padded to a 32-bit boundary. Explicit IHL changes the compiled header length. |
 | Total length fill | `crafter/src/protocols/ip.rs` | partial | When unset, total length is derived from effective header length plus following layer encoded lengths. Explicit total length is preserved only after validation; values shorter than the effective header are rejected. |
 | Protocol fill | `crafter/src/protocols/ip.rs` | partial | When unset, protocol is inferred from next `Tcp`, `Udp`, or `Icmpv4` layer. Other next layers default to protocol 0 unless explicitly set. |
+| Identification fill | `crafter/src/protocols/ip.rs` | implemented | When unset, compile uses the deterministic builder default value `1`. Explicit `.identification(...)` and `.id(...)` overrides are preserved exactly. The crate does not allocate unique IDs across source/destination/protocol tuples and does not enforce RFC 6864 non-atomic datagram rate or uniqueness requirements. |
 | Checksum fill | `crafter/src/protocols/ip.rs` | implemented | Compile writes zero into the checksum field, computes the IPv4 header checksum, then writes it unless the caller set an explicit checksum. |
 | Option padding | `crafter/src/protocols/ip.rs` | implemented | Raw option bytes are appended and the compiled header is padded with zero bytes to the effective IHL. |
 | Explicit checksum override | `crafter/src/protocols/ip.rs` | implemented | Explicit `checksum`/`chksum` values survive compile, including intentionally invalid checksums. |
@@ -106,9 +107,11 @@ Date checked: 2026-06-04, against the current worktree and
 
 | Item | Current location | Status | Notes |
 | --- | --- | --- | --- |
-| Identification field | `crafter/src/protocols/ip.rs` | implemented | Builder, alias, getter, compile, decode, and inspection support exist. |
+| Identification field | `crafter/src/protocols/ip.rs` | implemented | Builder, `.id(...)` alias, getter, compile, decode, and inspection support exist. The field is exposed and preserved as a 16-bit header value. |
 | Flags field | `crafter/src/protocols/ip.rs` | implemented | Raw flags, reserved bit constant, DF helper/getter, MF helper/getter, compile, decode, and summary formatting exist. |
 | Fragment offset field | `crafter/src/protocols/ip.rs` | implemented | Builder, alias, getter, compile, decode, and validation for 13-bit range exist. |
+| RFC 6864 atomic datagram semantics | `crafter/src/protocols/ip.rs` | partial | Current helpers expose DF, MF, fragment offset, and `is_fragmented()` for headers that already carry fragment metadata. RFC 6864's atomic datagram test also requires DF=1, so generated tools should use the raw helpers when that distinction matters. No ID meaning is inferred for atomic datagrams. |
+| Global Identification generation | none | out of scope | RFC 6864 leaves non-atomic datagram uniqueness with datagram sources. `crafter` is a packet primitive: it does not maintain per-tuple counters, choose live-safe IDs, rate-limit non-atomic output, or coordinate IDs for reassembly. |
 | Fragment generation | none | out of scope | The manifest excludes automatic fragmentation. No crate fragmenter should be added. |
 | Fragment reassembly | none | out of scope | The manifest excludes reassembly, caches, timers, overlap policy, and stack delivery. No reassembly module should be added. |
 | Non-initial fragment decode policy | `crafter/src/protocols/ip.rs`, `crafter/src/registry.rs` | gap | The manifest requires non-initial IPv4 fragments to keep payload as `Raw`; current dispatch is protocol-only and can attempt transport decode. |
