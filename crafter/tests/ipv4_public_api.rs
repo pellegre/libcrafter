@@ -118,6 +118,98 @@ fn assert_ttl_roundtrip(
     Ok(())
 }
 
+fn assert_fragment_fields_roundtrip(
+    name: &str,
+    ipv4: Ipv4,
+    expected_identification: u16,
+    expected_flags: u8,
+    expected_fragment_offset: u16,
+) -> crafter::Result<()> {
+    let payload = format!("fragment-fields-{name}");
+    let packet = ipv4 / Raw::from(payload.as_str());
+    let expected_flags_fragment = ((expected_flags as u16) << 13) | expected_fragment_offset;
+
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+    assert_eq!(
+        read_u16_at(bytes, 4),
+        expected_identification,
+        "{name} wire identification"
+    );
+    assert_eq!(
+        read_u16_at(bytes, 6),
+        expected_flags_fragment,
+        "{name} wire flags and fragment offset"
+    );
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+    let ipv4 = decoded.layer::<Ipv4>().expect("ipv4 layer");
+    let fragment_info = ipv4.fragment_info();
+    let expected_fragmented =
+        expected_flags & IPV4_FLAG_MORE_FRAGMENTS != 0 || expected_fragment_offset != 0;
+
+    assert_eq!(
+        ipv4.identification_value(),
+        expected_identification,
+        "{name} decoded identification"
+    );
+    assert_eq!(ipv4.flags_value(), expected_flags, "{name} decoded flags");
+    assert_eq!(
+        ipv4.fragment_offset_value(),
+        expected_fragment_offset,
+        "{name} decoded fragment offset"
+    );
+    assert_eq!(
+        fragment_info.identification(),
+        expected_identification,
+        "{name} fragment info identification"
+    );
+    assert_eq!(
+        fragment_info.flags(),
+        expected_flags,
+        "{name} fragment info flags"
+    );
+    assert_eq!(
+        fragment_info.fragment_offset(),
+        expected_fragment_offset,
+        "{name} fragment info offset"
+    );
+    assert_eq!(
+        ipv4.is_reserved_flag_set(),
+        expected_flags & IPV4_FLAG_RESERVED != 0,
+        "{name} reserved flag accessor"
+    );
+    assert_eq!(
+        ipv4.is_dont_fragment(),
+        expected_flags & IPV4_FLAG_DONT_FRAGMENT != 0,
+        "{name} DF accessor"
+    );
+    assert_eq!(
+        ipv4.has_more_fragments(),
+        expected_flags & IPV4_FLAG_MORE_FRAGMENTS != 0,
+        "{name} MF accessor"
+    );
+    assert_eq!(
+        ipv4.is_fragmented(),
+        expected_fragmented,
+        "{name} fragmented accessor"
+    );
+    assert_eq!(
+        fragment_info.is_fragmented(),
+        expected_fragmented,
+        "{name} fragment info fragmented accessor"
+    );
+    assert_eq!(
+        decoded.layer::<Raw>().expect("raw layer").as_bytes(),
+        payload.as_bytes(),
+        "{name} raw payload"
+    );
+
+    let recompiled = decoded.compile()?;
+    assert_eq!(recompiled.as_bytes(), bytes, "{name} recompiled bytes");
+    Ok(())
+}
+
 #[test]
 fn ipv4_new_with_raw_compiles_to_current_wire_header() -> crafter::Result<()> {
     let packet = ipv4_raw_packet();
@@ -127,6 +219,93 @@ fn ipv4_new_with_raw_compiles_to_current_wire_header() -> crafter::Result<()> {
     assert_eq!(compiled.len(), 24);
     assert!(!compiled.is_empty());
     Ok(())
+}
+
+#[test]
+fn fragment_fields_roundtrip_supported_flags_and_offsets() -> crafter::Result<()> {
+    assert_fragment_fields_roundtrip(
+        "df-zero-offset",
+        Ipv4::new()
+            .src(DOC_SRC)
+            .dst(DOC_DST)
+            .id(0x1001)
+            .dont_fragment(true)
+            .fragment_offset(0),
+        0x1001,
+        IPV4_FLAG_DONT_FRAGMENT,
+        0,
+    )?;
+
+    assert_fragment_fields_roundtrip(
+        "mf-zero-offset",
+        Ipv4::new()
+            .src(DOC_SRC)
+            .dst(DOC_DST)
+            .id(0x1002)
+            .more_fragments(true)
+            .fragment_offset(0),
+        0x1002,
+        IPV4_FLAG_MORE_FRAGMENTS,
+        0,
+    )?;
+
+    assert_fragment_fields_roundtrip(
+        "reserved-zero-offset",
+        Ipv4::new()
+            .src(DOC_SRC)
+            .dst(DOC_DST)
+            .identification(0x1003)
+            .reserved_flag(true)
+            .frag(0),
+        0x1003,
+        IPV4_FLAG_RESERVED,
+        0,
+    )?;
+
+    assert_fragment_fields_roundtrip(
+        "combined-raw-flags",
+        Ipv4::new()
+            .src(DOC_SRC)
+            .dst(DOC_DST)
+            .id(0x1004)
+            .flags(IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS)
+            .fragment_offset(0x0123),
+        0x1004,
+        IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS,
+        0x0123,
+    )?;
+
+    assert_fragment_fields_roundtrip(
+        "maximum-offset",
+        Ipv4::new()
+            .src(DOC_SRC)
+            .dst(DOC_DST)
+            .id(0x1005)
+            .frag(0x1fff),
+        0x1005,
+        0,
+        0x1fff,
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn fragment_fields_reject_invalid_offset() {
+    let packet = Ipv4::new()
+        .src(DOC_SRC)
+        .dst(DOC_DST)
+        .id(0x1006)
+        .fragment_offset(0x2000)
+        / Raw::from("bad-offset");
+
+    match packet.compile() {
+        Err(CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "ipv4.fragment_offset");
+            assert_eq!(reason, "fragment offset must fit in 13 bits");
+        }
+        other => panic!("invalid fragment offset should be rejected, got {other:?}"),
+    }
 }
 
 #[test]
