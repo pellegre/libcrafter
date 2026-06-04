@@ -2028,6 +2028,30 @@ mod ipv4_checksum {
     }
 
     #[test]
+    fn explicit_ipv4_checksum_is_preserved_with_options() {
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            .id(0x1234)
+            .dont_fragment(true)
+            .proto(IpProtocol::Icmp)
+            .checksum(0xbeef)
+            .option([0x01])
+            .option([0x07, 0x07, 0x04, 0xc0, 0x00, 0x02, 0x01])
+            / Raw::from_bytes(&IPV4_ICMP_FIXTURE[20..]))
+        .compile()
+        .unwrap();
+
+        assert_eq!(bytes.as_bytes()[0], 0x47);
+        assert_eq!(&bytes.as_bytes()[10..12], &[0xbe, 0xef]);
+        assert_eq!(
+            &bytes.as_bytes()[20..28],
+            &[0x01, 0x07, 0x07, 0x04, 0xc0, 0x00, 0x02, 0x01]
+        );
+        assert!(!verify_internet_checksum(&bytes.as_bytes()[..28]));
+    }
+
+    #[test]
     fn decoded_ipv4_checksum_verifies() {
         let decoded =
             crate::Packet::decode_from_l3(crate::NetworkLayer::Ipv4, IPV4_ICMP_FIXTURE).unwrap();
