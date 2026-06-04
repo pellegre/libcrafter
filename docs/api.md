@@ -573,6 +573,7 @@ in [ICMPv6 message coverage](icmpv6-coverage.md).
 | `vlan` | 802.1Q VLAN frame construction, compile, and decode. |
 | `linux_sll` | Linux cooked capture packet construction, compile, and decode. |
 | `null_loopback` | BSD null/loopback link-layer packet construction, compile, and decode. |
+| `ipv4_enrichment` | IPv4 DSCP/ECN helpers, typed options, checksum status, and fragment metadata inspection. |
 | `ipv4_options` | IPv4 option builders with checksum and length auto-fill. |
 | `tcp_options` | TCP option builders, option ordering, and header-length auto-fill. |
 | `ipv6_extensions` | IPv6 routing, segment-routing, and fragment extension header decoding. |

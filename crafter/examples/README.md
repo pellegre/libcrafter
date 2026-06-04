@@ -45,6 +45,7 @@ values use `Ipv4Protocol`.
 | `vlan` | Protocols | Offline | 802.1Q VLAN frame construction, compile, and decode. | `cargo run -p crafter --example vlan` |
 | `linux_sll` | Protocols | Offline | Linux cooked capture packet construction, compile, and decode. | `cargo run -p crafter --example linux_sll` |
 | `null_loopback` | Protocols | Offline | BSD null/loopback link-layer packet construction, compile, and decode. | `cargo run -p crafter --example null_loopback` |
+| `ipv4_enrichment` | Protocols | Offline | IPv4 DSCP/ECN helpers, typed options, checksum status, and fragment metadata inspection. | `cargo run -p crafter --example ipv4_enrichment` |
 | `ipv4_options` | Protocols | Offline | IPv4 option builders with checksum and length auto-fill. | `cargo run -p crafter --example ipv4_options` |
 | `tcp_options` | Protocols | Offline | TCP option builders, option ordering, and header-length auto-fill. | `cargo run -p crafter --example tcp_options` |
 | `ipv6_extensions` | Protocols | Offline | IPv6 routing, segment-routing, and fragment extension header decoding. | `cargo run -p crafter --example ipv6_extensions` |
