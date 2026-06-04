@@ -156,7 +156,7 @@ fn ipv4_summary_and_show_pin_current_public_inspection() -> crafter::Result<()> 
 }
 
 #[test]
-fn ipv4_autofills_header_fields_for_icmp_tcp_udp_stacks() -> crafter::Result<()> {
+fn ipv4_protocol_autofill_for_icmp_tcp_udp_and_raw_stacks() -> crafter::Result<()> {
     let cases = vec![
         (
             "icmp",
@@ -182,6 +182,13 @@ fn ipv4_autofills_header_fields_for_icmp_tcp_udp_stacks() -> crafter::Result<()>
             5,
             28,
             Ipv4::new().src(DOC_SRC).dst(DOC_DST) / Udp::new().sport(53000).dport(53),
+        ),
+        (
+            "raw",
+            0,
+            5,
+            23,
+            Ipv4::new().src(DOC_SRC).dst(DOC_DST) / Raw::from("raw"),
         ),
     ];
 
@@ -234,7 +241,7 @@ fn ipv4_autofills_header_fields_for_icmp_tcp_udp_stacks() -> crafter::Result<()>
 }
 
 #[test]
-fn ipv4_preserves_explicit_compile_overrides_that_fit_wire_fields() -> crafter::Result<()> {
+fn ipv4_protocol_autofill_preserves_explicit_compile_overrides() -> crafter::Result<()> {
     let packet = Ipv4::new()
         .src(DOC_SRC)
         .dst(DOC_DST)
