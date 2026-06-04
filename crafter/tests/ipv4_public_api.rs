@@ -207,3 +207,36 @@ fn ipv4_autofills_header_fields_for_icmp_tcp_udp_stacks() -> crafter::Result<()>
 
     Ok(())
 }
+
+#[test]
+fn ipv4_preserves_explicit_compile_overrides_that_fit_wire_fields() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(DOC_SRC)
+        .dst(DOC_DST)
+        .ihl(15)
+        .tos(0xff)
+        .total_length(0xffff)
+        .identification(0xffff)
+        .flags(0b111)
+        .fragment_offset(0x1fff)
+        .protocol(0xff)
+        .checksum(0xffff)
+        / Udp::new().sport(49152).dport(33434);
+
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(bytes[0] >> 4, 4, "version");
+    assert_eq!(bytes[0] & 0x0f, 15, "ihl");
+    assert_eq!(bytes[1], 0xff, "tos/ds field");
+    assert_eq!(read_u16_at(bytes, 2), 0xffff, "total length");
+    assert_eq!(read_u16_at(bytes, 4), 0xffff, "identification");
+    assert_eq!(bytes[6] >> 5, 0b111, "flags");
+    assert_eq!(read_u16_at(bytes, 6) & 0x1fff, 0x1fff, "fragment offset");
+    assert_eq!(bytes[9], 0xff, "protocol");
+    assert_eq!(read_u16_at(bytes, 10), 0xffff, "checksum");
+    assert_eq!(compiled.len(), 68, "compiled bytes are not truncated to total length");
+    assert_eq!(&bytes[20..60], &[0; 40], "explicit ihl pads header bytes");
+
+    Ok(())
+}
