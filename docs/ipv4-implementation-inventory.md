@@ -57,6 +57,14 @@ Date checked: 2026-06-04, against the current worktree and
 | Explicit checksum override | `crafter/src/protocols/ip.rs` | implemented | Explicit `checksum`/`chksum` values survive compile, including intentionally invalid checksums. |
 | Explicit malformed fields | `crafter/src/protocols/ip.rs` | partial | The current validator rejects non-4 versions, IHL below 5 or above 15, too-long options, flags outside 3 bits, fragment offset outside 13 bits, and total length shorter than the header. The manifest calls for preserving explicit malformed values that fit their wire fields, so later steps need to reconcile these current guardrails with malformed-packet construction requirements. |
 
+## TTL Behavior
+
+| Item | Current location | Status | Notes |
+| --- | --- | --- | --- |
+| TTL source and default | `docs/ipv4-rfc-manifest.md`, `crafter/src/protocols/ip.rs` | implemented | RFC 791 defines TTL as the IPv4 datagram lifetime bound, RFC 1122 requires hosts not to send TTL zero and to make TTL settable, and IANA IPv4 Parameters records the current recommended default TTL as 64. `Ipv4::new()` currently uses TTL 64. |
+| TTL override and preservation | `crafter/src/protocols/ip.rs` | implemented | Builders and getters expose TTL. Compile writes the configured TTL byte and preserves explicit caller values rather than deriving TTL from routing or host stack state. |
+| TTL forwarding semantics | none | out of scope | `crafter` does not implement routing and does not decrement TTL during compile or decode. Route selection, forwarding, gateway TTL expiration, ICMP Time Exceeded generation caused by forwarding, and hop-by-hop checksum recomputation after TTL decrement are not crate primitive responsibilities. |
+
 ## Decode Behavior
 
 | Item | Current location | Status | Notes |

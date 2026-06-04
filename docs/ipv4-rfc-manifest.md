@@ -110,6 +110,21 @@ by itself.
 | Destination Address | 32 bits | RFC 791 sections 2.3 and 3.1; RFC 1122 section 3.2.1.3 | The destination address is a four-octet IPv4 address. Broadcast, multicast, loopback, and special-use routing policy are not implemented by `crafter`; packet bytes remain inspectable. |
 | Options and Padding | Variable, up to IHL | RFC 791 sections 3.1 and 3.2; RFC 1122 section 3.2.1.8; IANA IPv4 Parameters | Options follow the fixed 20-octet header and are padded with zero octets to a 32-bit boundary. EOOL and NOP are one-octet options; other options carry type, length, and data. Decode must report malformed option envelopes with structured context. |
 
+## TTL Defaults And Non-Goals
+
+- **Source facts:** RFC 791 defines TTL as an 8-bit upper bound on IPv4
+  datagram lifetime and describes decrement during internet header processing.
+  RFC 1122 says hosts must not send TTL zero and must expose a way to set TTL.
+  IANA IPv4 Parameters records the current recommended default TTL as 64.
+- **`crafter` default behavior:** `Ipv4::new()` uses TTL 64, matching the IANA
+  recommended default. `compile()` writes the configured or default TTL field
+  value and preserves explicit caller-provided TTL values.
+- **Explicit non-goals:** `crafter` does not implement routing or decrement TTL
+  during compile or decode. Route selection, forwarding, gateway TTL
+  expiration, ICMP Time Exceeded generation caused by forwarding, and hop-by-hop
+  checksum recomputation after TTL decrement are not crate primitive
+  responsibilities.
+
 ## DSCP And ECN Evidence
 
 | Field | Bits in DS/TOS octet | Source | Behavior |
@@ -182,5 +197,5 @@ are still required before adding body encoders or decoders.
 - Bytes after the IPv4 Total Length boundary are outside the datagram and are
   preserved as a following `Raw` layer.
 - Live packet transmission, captures, scanner behavior, router behavior,
-  fragmentation generation, and reassembly remain outside this manifest's
-  implementation scope.
+  routing, TTL decrement, fragmentation generation, and reassembly remain
+  outside this manifest's implementation scope.
