@@ -70,14 +70,19 @@ Valid byte fixtures cover:
 - IPv4 ICMP echo and ICMP error:
   `ipv4-icmp-echo-request.bin`,
   `ipv4-icmp-destination-unreachable.hex`
-- IPv4 DSCP and ECN decode:
+- IPv4 DSCP and ECN decode, including the differentiated-services octet split
+  into DSCP EF and ECN CE:
   `ipv4-udp-dscp-ecn-raw.hex`
-- IPv4 fragmentation fields without reassembly:
+- IPv4 fragment fields without reassembly, including identification, reserved
+  flag, Don't Fragment, More Fragments, and fragment offset:
   `ipv4-fragment-noninitial-raw.hex`
-- IPv4 options and TCP options:
-  `ipv4-options-traceroute-udp-raw.hex`, `ipv4-tcp-syn-options.hex`,
-  `ipv4-tcp-syn-rich-options.hex` (MSS, Window Scale, SACK Permitted,
-  Timestamp, RFC 5482 User Timeout, and a classified Generic option)
+- IPv4 options, including Record Route, Traceroute, Timestamp, and Router
+  Alert:
+  `ipv4-options-traceroute-udp-raw.hex`
+- IPv4 TCP options:
+  `ipv4-tcp-syn-options.hex`, `ipv4-tcp-syn-rich-options.hex` (MSS, Window
+  Scale, SACK Permitted, Timestamp, RFC 5482 User Timeout, and a classified
+  Generic option)
 - IPv4 UDP DNS query and response:
   `ipv4-udp-dns-query-example-com.bin`,
   `ipv4-udp-dns-response-example-com.hex`
@@ -97,9 +102,9 @@ Valid byte fixtures cover:
   `ipv6-udp-options-unknown-unsafe.hex`,
   `ipv6-udp-options-frag.hex`
 
-Summary fixtures cover representative raw, ARP, Linux cooked, IPv4 TCP options,
-IPv6 TCP options, IPv4 DNS response, IPv4 DHCP, UDP options, and IPv6 fragment
-stacks.
+Summary fixtures cover representative raw, ARP, Linux cooked, IPv4 options,
+IPv4 TCP options, IPv6 TCP options, IPv4 DNS response, IPv4 DHCP, UDP options,
+and IPv6 fragment stacks.
 
 Pcap fixtures cover:
 
@@ -110,11 +115,21 @@ Pcap fixtures cover:
 - LinuxSll link type with an ARP payload.
 - NullLoopback link type with an IPv4 UDP payload.
 
+The checked-in pcap fixtures currently exercise link type mapping, timestamps,
+record lengths, and packet decoding for those link types. They do not currently
+include pcap records for IPv4 DSCP/ECN, IPv4 fragment fields, IPv4 options,
+Timestamp, or Router Alert coverage; those cases live in byte and summary
+fixtures unless a matching pcap fixture is added.
+
 Malformed packet fixtures cover short or inconsistent Ethernet, VLAN, ARP,
 Linux cooked, null loopback, IPv4, IPv4 options, IPv6 extension headers, UDP,
 TCP, TCP options, ICMP, ICMPv6, DNS, DHCP, and DHCP option inputs. The random
 resilience tests remain broad panic guards; named malformed fixtures provide the
 deterministic regression coverage.
+
+Malformed IPv4 option cases include below-minimum option lengths, option
+payload overruns, route-option length and pointer errors, malformed Timestamp
+data, and Router Alert bad-length handling.
 
 Malformed pcap fixtures cover unknown magic, unsupported major version, zero
 snapshot length, partial record headers, captured length greater than snaplen,
