@@ -515,6 +515,98 @@ fn ipv4_protocol_autofill_for_icmp_tcp_udp_and_raw_stacks() -> crafter::Result<(
 }
 
 #[test]
+fn option_kind_public_api_reexports_metadata_and_constants() {
+    const PRELUDE_KIND: Ipv4OptionKind = Ipv4OptionKind::new(IPV4_OPTION_ROUTER_ALERT);
+    const PRELUDE_METADATA: (u8, bool, u8, u8) = (
+        PRELUDE_KIND.value(),
+        PRELUDE_KIND.copied(),
+        PRELUDE_KIND.class(),
+        PRELUDE_KIND.number(),
+    );
+    const EXPECTED_OPTION_CONSTANTS: [u8; 6] = [0x44, 0x94, 30, 94, 158, 222];
+
+    assert_eq!(PRELUDE_METADATA, (0x94, true, 0, 20));
+    assert_eq!(
+        [
+            IPV4_OPTION_TIMESTAMP,
+            IPV4_OPTION_ROUTER_ALERT,
+            IPV4_OPTION_EXPERIMENTAL_1,
+            IPV4_OPTION_EXPERIMENTAL_2,
+            IPV4_OPTION_EXPERIMENTAL_3,
+            IPV4_OPTION_EXPERIMENTAL_4,
+        ],
+        EXPECTED_OPTION_CONSTANTS
+    );
+    assert_eq!(
+        [
+            crafter::IPV4_OPTION_TIMESTAMP,
+            crafter::IPV4_OPTION_ROUTER_ALERT,
+            crafter::IPV4_OPTION_EXPERIMENTAL_1,
+            crafter::IPV4_OPTION_EXPERIMENTAL_2,
+            crafter::IPV4_OPTION_EXPERIMENTAL_3,
+            crafter::IPV4_OPTION_EXPERIMENTAL_4,
+        ],
+        EXPECTED_OPTION_CONSTANTS
+    );
+    assert_eq!(
+        [
+            crafter::core::IPV4_OPTION_TIMESTAMP,
+            crafter::core::IPV4_OPTION_ROUTER_ALERT,
+            crafter::core::IPV4_OPTION_EXPERIMENTAL_1,
+            crafter::core::IPV4_OPTION_EXPERIMENTAL_2,
+            crafter::core::IPV4_OPTION_EXPERIMENTAL_3,
+            crafter::core::IPV4_OPTION_EXPERIMENTAL_4,
+        ],
+        EXPECTED_OPTION_CONSTANTS
+    );
+    assert_eq!(
+        [
+            crafter::protocols::IPV4_OPTION_TIMESTAMP,
+            crafter::protocols::IPV4_OPTION_ROUTER_ALERT,
+            crafter::protocols::IPV4_OPTION_EXPERIMENTAL_1,
+            crafter::protocols::IPV4_OPTION_EXPERIMENTAL_2,
+            crafter::protocols::IPV4_OPTION_EXPERIMENTAL_3,
+            crafter::protocols::IPV4_OPTION_EXPERIMENTAL_4,
+        ],
+        EXPECTED_OPTION_CONSTANTS
+    );
+
+    let root_kind = crafter::Ipv4OptionKind::from(crafter::IPV4_OPTION_TIMESTAMP);
+    let core_kind = crafter::core::Ipv4OptionKind::new(crafter::core::IPV4_OPTION_EXPERIMENTAL_4);
+    let protocols_kind =
+        crafter::protocols::Ipv4OptionKind::new(crafter::protocols::IPV4_OPTION_EXPERIMENTAL_3);
+
+    assert_eq!(
+        (
+            root_kind.value(),
+            root_kind.copied(),
+            root_kind.class(),
+            root_kind.number()
+        ),
+        (0x44, false, 2, 4)
+    );
+    assert_eq!(
+        (
+            core_kind.value(),
+            core_kind.copied(),
+            core_kind.class(),
+            core_kind.number()
+        ),
+        (222, true, 2, 30)
+    );
+    assert_eq!(
+        (
+            protocols_kind.value(),
+            protocols_kind.copied(),
+            protocols_kind.class(),
+            protocols_kind.number()
+        ),
+        (158, true, 0, 30)
+    );
+    assert_eq!(u8::from(root_kind), crafter::IPV4_OPTION_TIMESTAMP);
+}
+
+#[test]
 fn ipv4_protocol_autofill_preserves_explicit_compile_overrides() -> crafter::Result<()> {
     let packet = Ipv4::new()
         .src(DOC_SRC)
