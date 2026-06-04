@@ -885,3 +885,169 @@ fn udp_raw_payload_packet_compiles_and_decodes() -> crafter::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn ipv4_public_api_paths_expose_enriched_helpers() -> crafter::Result<()> {
+    let dscp = Dscp::new(46)?;
+    let ecn = Ecn::Ce;
+    let ipv4 = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 44))
+        .dst(Ipv4Addr::new(198, 51, 100, 44))
+        .dscp(dscp)
+        .ecn(ecn)
+        .identification(0x1234)
+        .reserved_flag(true)
+        .dont_fragment(true)
+        .more_fragments(true)
+        .fragment_offset(7)
+        .ipv4_protocol(Ipv4Protocol::Gre);
+
+    assert_eq!(dscp.value(), 46);
+    assert_eq!(Dscp::from_ds_field(0xbb), dscp);
+    assert_eq!(u8::from(dscp), 46);
+    assert_eq!(Ecn::new(3)?, Ecn::Ce);
+    assert_eq!(Ecn::from_ds_field(0xbb), ecn);
+    assert_eq!(u8::from(ecn), 3);
+    assert_eq!(ipv4.ds_field_value(), 0xbb);
+    assert_eq!(ipv4.dscp_value(), dscp);
+    assert_eq!(ipv4.ecn_value(), ecn);
+
+    let fragment: Ipv4FragmentInfo = ipv4.fragment_info();
+    assert_eq!(fragment.identification(), 0x1234);
+    assert_eq!(
+        fragment.flags(),
+        IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS
+    );
+    assert_eq!(fragment.fragment_offset(), 7);
+    assert!(fragment.is_reserved_flag_set());
+    assert!(fragment.is_dont_fragment());
+    assert!(fragment.has_more_fragments());
+    assert!(fragment.is_fragmented());
+    assert!(ipv4.is_reserved_flag_set());
+    assert!(ipv4.is_dont_fragment());
+    assert!(ipv4.has_more_fragments());
+    assert!(ipv4.is_fragmented());
+
+    let compiled = (ipv4 / Raw::from("gre")).compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let decoded_ipv4 = decoded.layer::<Ipv4>().unwrap();
+    assert_eq!(decoded_ipv4.checksum_status(), Ipv4ChecksumStatus::Valid);
+    assert!(decoded_ipv4.summary().contains("proto=gre(47)"));
+
+    let timestamp = Ipv4Option::timestamp(5, 1, [0x0102_0304]);
+    let timestamp_with_addresses =
+        Ipv4Option::timestamp_with_addresses(5, 2, [(Ipv4Addr::new(192, 0, 2, 1), 0x1112_1314)]);
+    let timestamp_prespecified =
+        Ipv4Option::timestamp_prespecified(5, 3, [(Ipv4Addr::new(198, 51, 100, 1), 0x2122_2324)]);
+    let router_alert = Ipv4Option::router_alert(0xbeef);
+    assert_eq!(timestamp.kind(), IPV4_OPTION_TIMESTAMP);
+    assert_eq!(timestamp.timestamp_pointer(), Some(5));
+    assert_eq!(timestamp.timestamp_overflow(), Some(1));
+    assert_eq!(timestamp.timestamp_flag(), Some(0));
+    assert_eq!(timestamp.timestamp_values(), Some(&[0x0102_0304][..]));
+    assert_eq!(timestamp_with_addresses.timestamp_pointer(), Some(5));
+    assert_eq!(timestamp_with_addresses.timestamp_overflow(), Some(2));
+    assert_eq!(timestamp_with_addresses.timestamp_flag(), Some(1));
+    assert_eq!(
+        timestamp_with_addresses.timestamp_address_values(),
+        Some(&[(Ipv4Addr::new(192, 0, 2, 1), 0x1112_1314)][..])
+    );
+    assert_eq!(timestamp_prespecified.timestamp_pointer(), Some(5));
+    assert_eq!(timestamp_prespecified.timestamp_overflow(), Some(3));
+    assert_eq!(timestamp_prespecified.timestamp_flag(), Some(3));
+    assert_eq!(
+        timestamp_prespecified.timestamp_address_values(),
+        Some(&[(Ipv4Addr::new(198, 51, 100, 1), 0x2122_2324)][..])
+    );
+    assert_eq!(router_alert.kind(), IPV4_OPTION_ROUTER_ALERT);
+    assert_eq!(router_alert.router_alert_value(), Some(0xbeef));
+
+    let mut encoded_options = Vec::new();
+    encoded_options.extend(timestamp.encode()?);
+    encoded_options.extend(timestamp_with_addresses.encode()?);
+    encoded_options.extend(timestamp_prespecified.encode()?);
+    encoded_options.extend(router_alert.encode()?);
+    let parsed = Ipv4Option::decode_all(&encoded_options)?;
+    assert_eq!(
+        parsed,
+        vec![
+            timestamp,
+            timestamp_with_addresses,
+            timestamp_prespecified,
+            router_alert
+        ]
+    );
+    assert_eq!(
+        Ipv4OptionIter::new(&encoded_options).collect::<crafter::Result<Vec<_>>>()?,
+        parsed
+    );
+
+    for (value, copied, class, number, experimental) in [
+        (IPV4_OPTION_EOL, false, 0, 0, false),
+        (IPV4_OPTION_NOP, false, 0, 1, false),
+        (IPV4_OPTION_TIMESTAMP, false, 2, 4, false),
+        (IPV4_OPTION_ROUTER_ALERT, true, 0, 20, false),
+        (IPV4_OPTION_EXPERIMENTAL_1, false, 0, 30, true),
+        (IPV4_OPTION_EXPERIMENTAL_2, false, 2, 30, true),
+        (IPV4_OPTION_EXPERIMENTAL_3, true, 0, 30, true),
+        (IPV4_OPTION_EXPERIMENTAL_4, true, 2, 30, true),
+    ] {
+        let kind = Ipv4OptionKind::new(value);
+        assert_eq!(kind.value(), value);
+        assert_eq!(kind.copied(), copied);
+        assert_eq!(kind.class(), class);
+        assert_eq!(kind.number(), number);
+        assert_eq!(kind.is_experimental(), experimental);
+        assert_eq!(u8::from(Ipv4OptionKind::from(value)), value);
+        assert_eq!(
+            kind.experimental_label(),
+            experimental.then_some("RFC3692-style Experiment")
+        );
+    }
+
+    let root_fragment: crafter::Ipv4FragmentInfo = fragment;
+    let core_checksum: crafter::core::Ipv4ChecksumStatus = decoded_ipv4.checksum_status();
+    let protocols_kind =
+        crafter::protocols::Ipv4OptionKind::new(crafter::protocols::IPV4_OPTION_TIMESTAMP);
+    let deep_kind = crafter::protocols::ipv4::Ipv4OptionKind::new(
+        crafter::protocols::ipv4::IPV4_OPTION_ROUTER_ALERT,
+    );
+    let deep_checksum: crafter::protocols::ipv4::Ipv4ChecksumStatus =
+        crafter::protocols::ipv4::Ipv4ChecksumStatus::Valid;
+    let deep_fragment: crafter::protocols::ipv4::Ipv4FragmentInfo = decoded_ipv4.fragment_info();
+
+    assert_eq!(root_fragment, fragment);
+    assert_eq!(core_checksum, Ipv4ChecksumStatus::Valid);
+    assert_eq!(protocols_kind.class(), 2);
+    assert_eq!(deep_kind.number(), 20);
+    assert_eq!(deep_checksum, Ipv4ChecksumStatus::Valid);
+    assert_eq!(deep_fragment.flags(), fragment.flags());
+    assert_eq!(crafter::IPPROTO_GRE, IPPROTO_GRE);
+    assert_eq!(crafter::core::IPPROTO_ESP, IPPROTO_ESP);
+    assert_eq!(crafter::protocols::IPPROTO_AH, IPPROTO_AH);
+    assert_eq!(crafter::protocols::ipv4::IPPROTO_OSPF, IPPROTO_OSPF);
+    assert_eq!(crafter::IPPROTO_SCTP, IPPROTO_SCTP);
+    assert_eq!(
+        crafter::core::IPPROTO_EXPERIMENTAL_1,
+        IPPROTO_EXPERIMENTAL_1
+    );
+    assert_eq!(
+        crafter::protocols::IPPROTO_EXPERIMENTAL_2,
+        IPPROTO_EXPERIMENTAL_2
+    );
+    assert_eq!(u8::from(Ipv4Protocol::Gre), IPPROTO_GRE);
+    assert_eq!(u8::from(Ipv4Protocol::Esp), IPPROTO_ESP);
+    assert_eq!(u8::from(Ipv4Protocol::Ah), IPPROTO_AH);
+    assert_eq!(u8::from(Ipv4Protocol::Ospf), IPPROTO_OSPF);
+    assert_eq!(u8::from(Ipv4Protocol::Sctp), IPPROTO_SCTP);
+    assert_eq!(
+        u8::from(Ipv4Protocol::Experimental1),
+        IPPROTO_EXPERIMENTAL_1
+    );
+    assert_eq!(
+        u8::from(Ipv4Protocol::Experimental2),
+        IPPROTO_EXPERIMENTAL_2
+    );
+
+    Ok(())
+}
