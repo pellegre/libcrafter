@@ -1,192 +1,255 @@
 # IPv4 Implementation Inventory
 
-This inventory maps the current `crafter` IPv4 implementation to the
-source-backed behavior recorded in
-[`docs/ipv4-rfc-manifest.md`](ipv4-rfc-manifest.md). It is a working map for the
-IPv4 enrichment plan: later steps should use it to avoid duplicating existing
-behavior and to target gaps in the right files.
+This is the final handoff inventory for the IPv4 enrichment work. It maps the
+implemented `crafter` IPv4 surface to the source-backed behavior recorded in
+[`docs/ipv4-rfc-manifest.md`](ipv4-rfc-manifest.md), and points future
+maintainers to the validation commands, fixtures, docs, examples, and known
+exclusions.
 
-Current IPv4 behavior is implemented primarily in
-`crafter/src/protocols/ip.rs`, decoded through the protocol registry in
-`crafter/src/registry.rs`, re-exported through `crafter/src/protocols/mod.rs`
-and `crafter/src/lib.rs`, and covered by unit tests in
-`crafter/src/protocols/ip.rs`, integration fixtures in
-`crafter/tests/fixture_suite.rs`, and malformed corpus checks in
-`crafter/tests/resilience.rs`.
+Date checked: 2026-06-04, after the focused IPv4 suite, workspace tests, and
+static release gate steps.
 
-Date checked: 2026-06-04, against the current worktree and
-`docs/ipv4-rfc-manifest.md`.
+Primary implementation paths:
 
-## Status Key
+- `crafter/src/protocols/ip.rs` - IPv4 layer, DSCP/ECN helpers, checksum status,
+  protocol labels, options, fragment metadata, encode/decode tests.
+- `crafter/src/registry.rs` - IPv4 payload dispatch, unknown-protocol `Raw`
+  fallback, fragment-aware dispatch.
+- `crafter/src/protocols/mod.rs` and `crafter/src/lib.rs` - protocol, root,
+  `core`, and `prelude` re-exports.
+- `crafter/tests/ipv4_public_api.rs` - public API behavior through
+  `crafter::prelude::*`.
+- `crafter/tests/fixture_suite.rs` - byte, summary, and pcap fixture assertions.
+- `crafter/tests/resilience.rs` - malformed corpus and random decode panic
+  guards.
+- `tools/oracle/specs/` - offline oracle data for the `ipv4-enrichment` profile.
 
-- **implemented** - the current code already exposes or tests the behavior.
-- **partial** - the current code covers part of the source-backed behavior but
-  later steps need code, tests, fixtures, or docs.
-- **gap** - the source-backed behavior is not currently implemented.
-- **compatibility-only** - a public existing name must be preserved even if new
-  source-backed names are added.
-- **out of scope** - explicitly excluded by the spec and manifest.
+## Implemented Features
 
-## Current API Surface
+The IPv4 layer remains a typed `Packet` layer. It composes with `/`, compiles
+with `compile()`, decodes through `Packet::decode_from_l3`, and stays
+inspectable through `summary()`, `show()`, `hexdump()`, and typed getters.
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| `Ipv4` layer struct | `crafter/src/protocols/ip.rs` | implemented | Holds version, IHL, raw TOS/DS byte, total length, identification, flags, fragment offset, TTL, protocol, checksum, source, destination, and raw option bytes using `Field<T>` for explicit/default/unset tracking where applicable. |
-| Packet composition | `crafter/src/protocols/ip.rs` | implemented | `Ipv4` implements `Layer`, object cloning, and `/` composition, so it fits the `Packet` abstraction. |
-| Constructors | `crafter/src/protocols/ip.rs` | implemented | `Ipv4::new()` and `Ipv4::with_addresses(...)` exist. Defaults are builder conveniences, not host-stack policy. |
-| Field builders | `crafter/src/protocols/ip.rs` | partial | Builders cover `version`, `ihl`, `tos`, `total_length`, `identification`, `flags`, DF, MF, fragment offset, TTL, protocol, checksum, source, destination, and options. DSCP and ECN helpers are not present yet. |
-| Compatibility aliases | `crafter/src/protocols/ip.rs` | compatibility-only | `len`, `id`, `frag`, `proto`, `chksum`, and `ip_option` are public aliases and must remain available. |
-| Field getters | `crafter/src/protocols/ip.rs` | partial | Getters expose raw values for version, IHL, header length, TOS, total length, identification, flags, DF/MF, fragment offset, TTL, protocol, checksum, addresses, raw options, option iterator, and parsed options. DSCP, ECN, checksum-status, and option metadata getters are absent. |
-| Protocol constants | `crafter/src/protocols/ip.rs` | partial | Constants exist for ICMP, TCP, UDP, IPv6 encapsulation, and ICMPv6 only. The IANA protocol-number registry in `docs/ipv4-rfc-manifest.md` authorizes richer labels/constants later. |
-| `IpProtocol` enum | `crafter/src/protocols/ip.rs` | partial | Variants cover Hop-by-Hop, ICMP, TCP, UDP, IPv6 encapsulation, and ICMPv6. No registry-wide enum, classifier, or label helper is public yet. |
-| Flag constants | `crafter/src/protocols/ip.rs` | implemented | `IPV4_FLAG_RESERVED`, `IPV4_FLAG_DONT_FRAGMENT`, and `IPV4_FLAG_MORE_FRAGMENTS` exist. |
-| Option constants | `crafter/src/protocols/ip.rs` | partial | Constants exist for EOL, NOP, Record Route, Timestamp, Traceroute, Loose Source Route, Strict Source Route, Router Alert, and RFC 4727 experiment values. Additional registry metadata may still grow in later steps. |
-| Option types | `crafter/src/protocols/ip.rs` | partial | `Ipv4Option` supports EOL, NOP, Generic, Timestamp, Router Alert, route-style options, and RFC 1393 Traceroute. Experiment values remain generic option payloads; classification lives on `Ipv4OptionKind` rather than a new typed option variant. |
-| Public re-exports | `crafter/src/protocols/mod.rs`, `crafter/src/lib.rs` | implemented | `Ipv4`, `IpProtocol`, `Ipv4Option`, `Ipv4OptionIter`, `Ipv4RouteOptionKind`, current constants, and flags/options are re-exported through protocol, root, core, and prelude surfaces. New helpers must be added to these same paths. |
+Implemented base-header coverage:
 
-## Compile Defaults And Override Behavior
+- Version, IHL, DS field/TOS byte, total length, identification, reserved/DF/MF
+  flags, fragment offset, TTL, protocol, checksum, source, destination, and raw
+  option bytes are exposed through builders and getters.
+- `compile()` fills IHL, total length, ICMPv4/TCP/UDP protocol numbers, option
+  padding, and IPv4 header checksum when those dependent fields are unset.
+- Explicit field values are preserved within the modeled wire constraints,
+  including intentionally unusual DS field values, protocol numbers, checksum
+  words, TTL, flags, fragment offset, and total length values.
+- Compatibility aliases remain available, including `tos`, `len`, `id`, `frag`,
+  `proto`, `chksum`, and `ip_option`.
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| Builder defaults | `crafter/src/protocols/ip.rs` | implemented | Defaults are version 4, raw TOS/DS byte 0, deterministic Identification 1, flags 0, fragment offset 0, TTL 64, protocol 0, source/destination loopback, unset IHL, unset total length, unset checksum, and no options. The Identification default is reproducible packet-builder state, not a global IPv4 ID generator. |
-| IHL fill | `crafter/src/protocols/ip.rs` | implemented | When unset, IHL is derived from the fixed header plus option bytes padded to a 32-bit boundary. Explicit IHL changes the compiled header length. |
-| Total length fill | `crafter/src/protocols/ip.rs` | partial | When unset, total length is derived from effective header length plus following layer encoded lengths. Explicit total length is preserved only after validation; values shorter than the effective header are rejected. |
-| Protocol fill | `crafter/src/protocols/ip.rs` | partial | When unset, protocol is inferred from next `Tcp`, `Udp`, or `Icmpv4` layer. Other next layers default to protocol 0 unless explicitly set. |
-| Identification fill | `crafter/src/protocols/ip.rs` | implemented | When unset, compile uses the deterministic builder default value `1`. Explicit `.identification(...)` and `.id(...)` overrides are preserved exactly. The crate does not allocate unique IDs across source/destination/protocol tuples and does not enforce RFC 6864 non-atomic datagram rate or uniqueness requirements. |
-| Checksum fill | `crafter/src/protocols/ip.rs` | implemented | Compile writes zero into the checksum field, computes the IPv4 header checksum, then writes it unless the caller set an explicit checksum. |
-| Option padding | `crafter/src/protocols/ip.rs` | implemented | Raw option bytes are appended and the compiled header is padded with zero bytes to the effective IHL. |
-| Explicit checksum override | `crafter/src/protocols/ip.rs` | implemented | Explicit `checksum`/`chksum` values survive compile, including intentionally invalid checksums. |
-| Explicit malformed fields | `crafter/src/protocols/ip.rs` | partial | The current validator rejects non-4 versions, IHL below 5 or above 15, too-long options, flags outside 3 bits, fragment offset outside 13 bits, and total length shorter than the header. The manifest calls for preserving explicit malformed values that fit their wire fields, so later steps need to reconcile these current guardrails with malformed-packet construction requirements. |
+Implemented DSCP/ECN coverage:
 
-## TTL Behavior
+- `Dscp` is a six-bit range-checked type and `Ecn` exposes the four RFC 3168
+  ECN states.
+- `Ipv4::ds_field`, `Ipv4::dscp`, and `Ipv4::ecn` compose over the historical
+  TOS octet without changing the other subfield unexpectedly.
+- `ds_field_value`, `tos_value`, `dscp_value`, and `ecn_value` work on built and
+  decoded packets.
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| TTL source and default | `docs/ipv4-rfc-manifest.md`, `crafter/src/protocols/ip.rs` | implemented | RFC 791 defines TTL as the IPv4 datagram lifetime bound, RFC 1122 requires hosts not to send TTL zero and to make TTL settable, and IANA IPv4 Parameters records the current recommended default TTL as 64. `Ipv4::new()` currently uses TTL 64. |
-| TTL override and preservation | `crafter/src/protocols/ip.rs` | implemented | Builders and getters expose TTL. Compile writes the configured TTL byte and preserves explicit caller values rather than deriving TTL from routing or host stack state. |
-| TTL forwarding semantics | none | out of scope | `crafter` does not implement routing and does not decrement TTL during compile or decode. Route selection, forwarding, gateway TTL expiration, ICMP Time Exceeded generation caused by forwarding, and hop-by-hop checksum recomputation after TTL decrement are not crate primitive responsibilities. |
+Implemented protocol-number behavior:
 
-## Decode Behavior
+- IANA-backed common `IPPROTO_*` constants and `IpProtocol` variants are
+  exported for ICMP, TCP, UDP, IPv6 encapsulation, GRE, ESP, AH, ICMPv6, OSPF,
+  SCTP, and experimental/testing values 253 and 254.
+- Summaries and inspection output use richer protocol labels.
+- Unknown, experimental, reserved, or unsupported IPv4 protocol payloads decode
+  as typed `Ipv4` plus `Raw` payload rather than failing the enclosing IPv4
+  datagram.
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| L3 IPv4 entrypoint | `crafter/src/registry.rs`, `crafter/src/protocols/ip.rs` | implemented | `Packet::decode_from_l3(NetworkLayer::Ipv4, ...)` reaches `ProtocolRegistry::decode_ipv4`, then `append_ipv4_packet_with_registry`. |
-| Link-layer IPv4 dispatch | `crafter/src/registry.rs` | implemented | Built-in Ethernet/VLAN/Linux cooked/null-loopback paths dispatch Ethertype or link protocol values to IPv4 decode where appropriate. |
-| Header validation | `crafter/src/protocols/ip.rs` | implemented | Decode returns structured errors for a truncated fixed header, non-4 version, IHL below 5, header truncation, total length shorter than header length, packet truncation, and malformed option envelopes. |
-| Field preservation | `crafter/src/protocols/ip.rs` | implemented | Decoded header fields are stored as user-set field values, including raw TOS/DS byte, total length, ID, flags, fragment offset, TTL, protocol, checksum, addresses, and options. |
-| Total-length boundary | `crafter/src/protocols/ip.rs` | implemented | Payload is sliced from header length to IPv4 total length. Bytes after total length are appended as a following `Raw` layer. |
-| Unknown protocols | `crafter/src/registry.rs` | implemented | If no IPv4 protocol binding matches, remaining payload bytes are preserved as `Raw`. |
-| Built-in protocol dispatch | `crafter/src/registry.rs` | partial | Built-ins dispatch ICMP, TCP, and UDP. Application decode can continue from UDP/TCP through registry bindings. The registry does not yet expose IANA labels or richer protocol classification. |
-| Fragment-aware dispatch | `crafter/src/protocols/ip.rs`, `crafter/src/registry.rs` | implemented | `append_ipv4_payload_with_registry` reads the decoded IPv4 fragment offset and MF flag before calling registry protocol dispatch. Non-initial fragments preserve the payload as `Raw` without transport decode. Offset-zero MF fragments may type the registered transport layer when decode succeeds; if decode fails, the payload is preserved as `Raw`. |
-| Quoted IPv4 in ICMPv4 errors | `crafter/src/protocols/ip.rs`, `crafter/src/protocols/icmp/decode.rs` | implemented | `decode_quoted_ipv4` leniently types parseable quoted IPv4 headers and uses a transport-only registry so truncated ICMP quotes can keep transport headers inspectable without requiring full application payloads. |
+Implemented checksum behavior:
 
-## Checksum Behavior
+- Compile-time IPv4 header checksum fill is implemented.
+- Explicit checksum overrides are preserved, including deliberately invalid
+  checksums.
+- Decode stores `Ipv4ChecksumStatus::{NotChecked, Valid, Invalid}` separately
+  from the checksum word. Invalid checksums remain inspectable and round-trip
+  with the decoded checksum value.
+- `summary()` calls out invalid checksum status; `show()` includes checksum
+  value and status.
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| Compile-time header checksum | `crafter/src/protocols/ip.rs`, `crafter/src/checksum.rs` | implemented | Compile-time checksum fill is in place and covered by unit tests in `crafter/src/protocols/ip.rs`. |
-| Explicit checksum preservation | `crafter/src/protocols/ip.rs` | implemented | Explicit checksums are preserved during compile and can intentionally make the header checksum invalid. |
-| Decode-time checksum value | `crafter/src/protocols/ip.rs` | implemented | Decode stores the checksum word and exposes it through `checksum_value()`. |
-| Decode-time checksum status | `crafter/src/protocols/ip.rs` | gap | There is no `Ipv4` checksum status API, no status field in `summary()` or `show()`, and no stored distinction between valid and invalid decoded headers. Unit tests verify a fixture externally with `verify_internet_checksum`, but the packet remains unable to report status itself. |
+Implemented decode boundaries and malformed handling:
 
-## Options
+- IPv4 decode returns structured `CrafterError` values for truncated fixed
+  headers, invalid version, invalid IHL, header truncation, total length shorter
+  than the header, total length beyond available bytes, and malformed option
+  envelopes.
+- Bytes after the IPv4 total length are preserved as a following `Raw` layer.
+- Quoted IPv4 inside ICMPv4 errors remains inspectable through the lenient quote
+  decoder.
+- Random IPv4-like byte inputs and direct option decode inputs are covered by
+  no-panic resilience tests.
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| Raw option bytes | `crafter/src/protocols/ip.rs` | implemented | Builders can append raw bytes, replace all option bytes, clear option bytes, and return raw option bytes. |
-| Option iterator | `crafter/src/protocols/ip.rs` | implemented | `Ipv4OptionIter` handles EOL, NOP, kind/length options, length underflow, and length overrun without panics. |
-| Generic options | `crafter/src/protocols/ip.rs` | partial | Unknown non-EOL/NOP options decode as `Generic { kind, data }`, preserving bytes after the kind and length. Callers can inspect the kind byte with `Ipv4OptionKind` for copied flag, class, number, and RFC 4727 experiment classification. Broader registry status labels are not exposed yet. |
-| Route options | `crafter/src/protocols/ip.rs` | implemented | Record Route, Loose Source Route, and Strict Source Route encode/decode through `Ipv4RouteOptionKind`, pointer validation, and whole-IPv4-address payload checks. |
-| Traceroute option | `crafter/src/protocols/ip.rs` | implemented | RFC 1393 Traceroute option encodes and decodes the 12-byte layout. |
-| Router Alert | `crafter/src/protocols/ip.rs` | gap | `docs/ipv4-rfc-manifest.md` lists RFC 2113 and IANA Router Alert values, but no typed Router Alert option exists yet. |
-| Timestamp | `crafter/src/protocols/ip.rs` | gap | The manifest records Timestamp as source-backed future work. No typed Timestamp option exists yet. |
-| Experiment option helpers | `crafter/src/protocols/ip.rs` | implemented | RFC 4727 experiment option values are exposed as constants and classified by `Ipv4OptionKind::is_experimental()` / `experimental_label()`. They are inspection helpers only; `Ipv4::new()` does not emit experimental options implicitly. |
-| Malformed option errors | `crafter/src/protocols/ip.rs`, `crafter/tests/resilience.rs` | implemented | Option envelope errors are structured and covered by the malformed corpus, including direct `ipv4-options` decode. |
+Implemented option coverage:
 
-## Fragmentation Fields
+- Raw options, `Ipv4OptionIter`, `parsed_options`, `Ipv4OptionKind`, copied
+  flag/class/number metadata, and RFC 4727 experiment classification are
+  available publicly.
+- Typed options include End of List, No Operation, Generic, Record Route, Loose
+  Source Route, Strict Source Route, RFC 1393 Traceroute, RFC 791 Timestamp
+  modes, and RFC 2113 Router Alert.
+- Unsupported Timestamp flag values preserve bytes as `Generic`.
+- Compile pads options to a 32-bit header boundary, and decode preserves option
+  bytes after End of List for round-trip.
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| Identification field | `crafter/src/protocols/ip.rs` | implemented | Builder, `.id(...)` alias, getter, compile, decode, and inspection support exist. The field is exposed and preserved as a 16-bit header value. |
-| Flags field | `crafter/src/protocols/ip.rs` | implemented | Raw flags, reserved bit constant, DF helper/getter, MF helper/getter, compile, decode, and summary formatting exist. |
-| Fragment offset field | `crafter/src/protocols/ip.rs` | implemented | Builder, alias, getter, compile, decode, and validation for 13-bit range exist. |
-| RFC 6864 atomic datagram semantics | `crafter/src/protocols/ip.rs` | partial | Current helpers expose DF, MF, fragment offset, and `is_fragmented()` for headers that already carry fragment metadata. RFC 6864's atomic datagram test also requires DF=1, so generated tools should use the raw helpers when that distinction matters. No ID meaning is inferred for atomic datagrams. |
-| Global Identification generation | none | out of scope | RFC 6864 leaves non-atomic datagram uniqueness with datagram sources. `crafter` is a packet primitive: it does not maintain per-tuple counters, choose live-safe IDs, rate-limit non-atomic output, or coordinate IDs for reassembly. |
-| Fragment generation | none | out of scope | The manifest excludes IPv4 fragmentation generation. No crate fragmenter should be added; callers may only build datagrams that already carry explicit fragment metadata. |
-| Fragment reassembly | none | out of scope | The manifest excludes IPv4 fragment reassembly, caches, timers, overlap policy, and stack delivery. No reassembly module should be added. |
-| Non-initial fragment decode policy | `crafter/src/protocols/ip.rs`, `crafter/src/registry.rs` | implemented | Non-initial IPv4 fragments (`fragment_offset != 0`) keep payload as `Raw`; transport decoders are not invoked because the payload does not start at the original transport header. Covered by `crafter/src/protocols/ip.rs::ipv4_fragment_info::noninitial_fragment_udp_payload_decodes_as_raw_without_udp_layer` and `noninitial_fragment_tcp_payload_decodes_as_raw_without_tcp_layer`. |
-| Offset-zero MF fragment decode policy | `crafter/src/protocols/ip.rs`, `crafter/src/registry.rs` | implemented | Offset-zero MF fragments may type the transport layer when the registered decoder succeeds, and otherwise preserve the payload as `Raw`. Covered by `initial_fragment_decode_types_complete_udp_header`, `initial_fragment_decode_preserves_truncated_udp_header_as_raw`, and `initial_fragment_decode_preserves_unknown_protocol_payload_as_raw` in `crafter/src/protocols/ip.rs::ipv4_fragment_info`. |
-| Focused fragment-field tests | `crafter/tests/ipv4_public_api.rs`, `crafter/src/protocols/ip.rs` | implemented | `fragment_fields_roundtrip_supported_flags_and_offsets` and `fragment_fields_reject_invalid_offset` cover public field preservation and range validation. `ipv4_fragment_info_round_trips_through_compile_and_decode` covers source-level round-trip of Identification, flags, MF, DF, reserved flag, and fragment offset. |
+Implemented fragmentation field support:
 
-## Fixture Coverage
+- Identification, reserved flag, DF, MF, raw flags, fragment offset, and
+  `Ipv4FragmentInfo` are first-class public fields.
+- `is_fragmented()` is true when MF is set or fragment offset is nonzero.
+- Non-initial fragments (`fragment_offset != 0`) preserve payload as `Raw` and
+  do not invoke transport decoders.
+- Offset-zero MF fragments may type a complete registered transport header; if
+  the registered decode fails, the payload is preserved as `Raw`.
+- Fragmentation field support is implemented, but fragmentation generation and
+  reassembly remain out of scope.
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| Fixture catalog | `crafter/tests/fixture_suite.rs` | implemented | The fixture suite lists IPv4 coverage families and asserts required families are present. |
-| L3 IPv4 ICMP fixture | `crafter/tests/fixtures/bytes/ipv4-icmp-echo-request.bin`, `crafter/tests/fixture_suite.rs` | implemented | Exercises IPv4 decode from L3 with ICMP and raw payload. Also used by IPv4 unit tests in `crafter/src/protocols/ip.rs`. |
-| ICMP error with quoted IPv4 | `crafter/tests/fixtures/bytes/ipv4-icmp-destination-unreachable.hex`, `crafter/tests/fixture_suite.rs` | implemented | Exercises IPv4 plus ICMP error handling and quoted original data behavior. |
-| IPv4 options fixture | `crafter/tests/fixtures/bytes/ipv4-options-traceroute-udp-raw.hex`, `crafter/tests/fixture_suite.rs` | implemented | Exercises route/traceroute option decode plus UDP/raw payload. |
-| IPv4/TCP fixtures | `crafter/tests/fixtures/bytes/ipv4-tcp-syn-options.hex`, `crafter/tests/fixtures/bytes/ipv4-tcp-syn-rich-options.hex`, `crafter/tests/fixture_suite.rs` | implemented | Exercise IPv4 as a TCP envelope with summary snapshots. |
-| IPv4/UDP/DNS fixtures | `crafter/tests/fixtures/bytes/ipv4-udp-dns-*.hex`, `crafter/tests/fixture_suite.rs` | implemented | Exercise IPv4 as a UDP/DNS envelope across queries, responses, DNSSEC, SVCB/HTTPS, EDNS(0), unknown records, and section placement. |
-| IPv4/UDP/DHCP fixture | `crafter/tests/fixtures/bytes/ipv4-udp-dhcp-discover.hex`, `crafter/tests/fixture_suite.rs` | implemented | Exercises IPv4 as a UDP/DHCP envelope. |
-| IPv4/UDP options fixtures | `crafter/tests/fixtures/bytes/ipv4-udp-options-known.hex`, `crafter/tests/fixtures/bytes/ipv4-udp-options-unknown-safe.hex`, `crafter/tests/fixture_suite.rs` | implemented | Exercise IPv4 as a UDP-options envelope, not IPv4 options. |
-| Link wrappers with IPv4 payloads | `crafter/tests/fixtures/bytes/ethernet-vlan-ipv4-udp-raw.bin`, `crafter/tests/fixtures/bytes/null-loopback-ipv4-udp-raw.hex`, `crafter/tests/fixture_suite.rs` | implemented | Exercise link-layer dispatch into IPv4. |
-| Pcap coverage | `crafter/tests/fixtures/pcaps/raw-ipv4-icmp-echo-request.pcap`, `crafter/tests/fixtures/pcaps/null-loopback-ipv4-udp-raw.pcap`, `crafter/tests/fixture_suite.rs` | implemented | Classic pcap coverage includes RawIp IPv4 and null-loopback IPv4 payloads. |
-| IPv4-specific enrichment fixtures | `crafter/tests/fixtures/bytes/`, `crafter/tests/fixtures/summaries/`, `crafter/tests/fixtures/pcaps/` | gap | Dedicated fixtures are still needed for DSCP/ECN helpers, checksum-status display, unknown protocol labels, total-length trailing bytes, fragment-field examples beyond the focused tests, Router Alert, Timestamp, and malformed option variants added by later steps. |
+Implemented docs and examples:
 
-## Malformed Corpus Coverage
+- [`docs/ipv4.md`](ipv4.md) is the user-facing IPv4 guide.
+- [`docs/validation.md`](validation.md) records the offline IPv4 behavioral
+  suite.
+- [`docs/README.md`](README.md), [`docs/api.md`](api.md), and the top-level
+  [`README.md`](../README.md) link the IPv4 guide.
+- `crafter/examples/ipv4_enrichment.rs` demonstrates DSCP/ECN helpers, typed
+  Router Alert, checksum status, and fragment metadata inspection offline.
+- `crafter/examples/ipv4_options.rs` remains the focused IPv4 option builder
+  example.
+- Agent operating guidance lives in `.agents/docs/cookbook.md`.
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| Malformed corpus rows | `crafter/tests/fixtures/malformed/core-decode-corpus.hex` | implemented | Current IPv4 rows cover short IPv4 header, bad version, bad IHL, total length shorter than header, option length overrun through IPv4 decode, and direct option decoder overrun. |
-| Malformed corpus runner | `crafter/tests/resilience.rs` | implemented | The resilience runner maps `ipv4` to `Packet::decode_from_l3(NetworkLayer::Ipv4, ...)` and `ipv4-options` to `Ipv4Option::decode_all(...)`. |
-| Required IPv4 malformed families | `crafter/tests/resilience.rs` | implemented | Required families include short IPv4, bad IPv4 version, bad IPv4 IHL, short IPv4 total length, and IPv4 option overrun. |
-| Additional enrichment malformed cases | `crafter/tests/fixtures/malformed/core-decode-corpus.hex`, `crafter/tests/resilience.rs` | gap | Later steps should add cases for checksum-status inspection if represented as status rather than hard error, malformed typed Router Alert/Timestamp options, total-length trailing-byte preservation, and fragment-dispatch policy where applicable. |
+## Behavioral suite / validation commands
 
-## Public Re-exports
+Focused IPv4 checks:
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| Protocol module exports | `crafter/src/protocols/mod.rs` | implemented | Re-exports current IPv4 layer, protocol enum, option enum/iterator/kind, protocol constants, flag constants, and option constants. |
-| Root crate exports | `crafter/src/lib.rs` | implemented | Re-exports the same current IPv4 names through the root crate and `core`; `prelude` inherits `core`. |
-| New public helpers | `crafter/src/protocols/mod.rs`, `crafter/src/lib.rs` | gap | Future DSCP/ECN helpers, protocol labels/constants, checksum status, and typed option helpers must be re-exported here so generated tools using `crafter::prelude::*` can reach them. |
+```sh
+cargo test -p crafter --test ipv4_public_api
+cargo test -p crafter --test fixture_suite ipv4
+cargo test -p crafter --test resilience ipv4
+cargo test -p crafter --test fixture_suite pcap_fixture_roundtrips
+tools/oracle/run offline --profile ipv4-enrichment --seed 1 --count 12 --root l3:ipv4
+```
 
-## Documentation Gaps
+Broad validation and release gate:
 
-| Item | Current location | Status | Notes |
-| --- | --- | --- | --- |
-| Source manifest | `docs/ipv4-rfc-manifest.md` | implemented | The source-backed authority file exists and should be updated when later behavior depends on additional RFC, IANA, Datatracker, or errata evidence. |
-| IPv4 user guide | `docs/ipv4.md` | gap | No dedicated user-facing IPv4 guide exists yet. Later docs should cover DSCP/ECN, protocol numbers, checksum status, options, fragmentation fields, decode policy, and explicit live/offline boundaries. |
-| Docs index | `docs/README.md` | gap | The docs index does not link an IPv4 guide yet. |
-| API guide | `docs/api.md` | partial | The API guide shows basic `Ipv4` composition and decode, but not the enriched IPv4 behavior planned here. |
-| Repository README | `README.md` | partial | The README mentions IPv4 and IPv4 options in the broad protocol list and basic packet construction, but not the planned enriched IPv4 surface. |
-| Agent cookbook | `.agents/docs/cookbook.md` | out of scope for this file | Operating guidance for generated tools belongs in the agent cookbook, not in user-facing crate docs. |
+```sh
+cargo test --workspace
+.agents/scripts/check-crafter-release --static
+```
 
-## Priority Gap Map For Later Steps
+Useful supporting checks used during the enrichment work:
 
-1. **Public baseline tests** - add tests under `crafter/tests/ipv4_public_api.rs`
-   proving current `prelude`, root, `core`, and `protocols` paths remain usable.
-2. **DSCP and ECN helpers** - update `crafter/src/protocols/ip.rs`, then
-   re-export through `crafter/src/protocols/mod.rs` and `crafter/src/lib.rs`.
-3. **Protocol-number labels and constants** - expand IANA-backed protocol
-   support in `crafter/src/protocols/ip.rs`; update `summary()`/`show()` output
-   and public re-exports.
-4. **Checksum status** - add decode-time status to `Ipv4` in
-   `crafter/src/protocols/ip.rs` and pin it in unit tests, fixture summaries,
-   and docs.
-5. **Length and boundary behavior** - add focused tests for explicit total
-   length, trailing bytes after total length, option padding, and override
-   preservation in `crafter/src/protocols/ip.rs` and `crafter/tests/fixture_suite.rs`.
-6. **Fragment fixture follow-up** - fragment-aware decode is implemented in
-   `crafter/src/protocols/ip.rs`; later fixture steps should add deterministic
-   byte, summary, and pcap coverage for representative fragment-field cases.
-7. **Typed options** - continue option metadata and typed-option follow-up in
-   `crafter/src/protocols/ip.rs`, with malformed corpus rows in
-   `crafter/tests/fixtures/malformed/core-decode-corpus.hex` where new typed
-   payload variants need malformed coverage.
-8. **Fixture and pcap coverage** - add deterministic fixtures and summaries
-   under `crafter/tests/fixtures/bytes/`,
-   `crafter/tests/fixtures/summaries/`, and `crafter/tests/fixtures/pcaps/`,
-   cataloged in `crafter/tests/fixture_suite.rs`.
-9. **User docs** - add `docs/ipv4.md` and link it from `docs/README.md`,
-   `docs/api.md`, and `README.md`, citing `docs/ipv4-rfc-manifest.md`.
+```sh
+cargo fmt --check
+cargo test -p crafter --test fixture_suite
+cargo test -p crafter --test resilience malformed_corpus_reports_structured_errors
+```
+
+## Fixtures, pcaps, and oracle profile
+
+IPv4-specific byte fixtures:
+
+- `crafter/tests/fixtures/bytes/ipv4-icmp-echo-request.bin`
+- `crafter/tests/fixtures/bytes/ipv4-icmp-destination-unreachable.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-dscp-ecn-raw.hex`
+- `crafter/tests/fixtures/bytes/ipv4-fragment-noninitial-raw.hex`
+- `crafter/tests/fixtures/bytes/ipv4-options-traceroute-udp-raw.hex`
+
+IPv4 carrier fixtures for adjacent protocols:
+
+- `crafter/tests/fixtures/bytes/ipv4-tcp-syn-options.hex`
+- `crafter/tests/fixtures/bytes/ipv4-tcp-syn-rich-options.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-dns-query-example-com.bin`
+- `crafter/tests/fixtures/bytes/ipv4-udp-dns-response-example-com.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-dns-soa-srv-response.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-dns-dnssec-response.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-dns-svcb-https-response.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-dns-edns-opt-query.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-dns-raw-unknown-records-response.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-dns-section-placement-response.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-dhcp-discover.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-options-known.hex`
+- `crafter/tests/fixtures/bytes/ipv4-udp-options-unknown-safe.hex`
+
+Link wrapper fixtures with IPv4 payloads:
+
+- `crafter/tests/fixtures/bytes/ethernet-vlan-ipv4-udp-raw.bin`
+- `crafter/tests/fixtures/bytes/null-loopback-ipv4-udp-raw.hex`
+
+Summary fixtures carrying IPv4 coverage:
+
+- `crafter/tests/fixtures/summaries/ipv4-options-traceroute-udp-raw.summary.txt`
+- `crafter/tests/fixtures/summaries/ipv4-tcp-syn-options.summary.txt`
+- `crafter/tests/fixtures/summaries/ipv4-tcp-syn-rich-options.summary.txt`
+- `crafter/tests/fixtures/summaries/ipv4-udp-dns-*.summary.txt`
+- `crafter/tests/fixtures/summaries/ipv4-udp-dhcp-discover.summary.txt`
+- `crafter/tests/fixtures/summaries/ipv4-udp-options-*.summary.txt`
+
+Classic pcap fixtures with IPv4 coverage:
+
+- `crafter/tests/fixtures/pcaps/raw-ipv4-icmp-echo-request.pcap`
+- `crafter/tests/fixtures/pcaps/raw-ipv4-udp-dscp-ecn-raw.pcap`
+- `crafter/tests/fixtures/pcaps/null-loopback-ipv4-udp-raw.pcap`
+
+The RawIp DSCP/ECN pcap is covered by
+`cargo test -p crafter --test fixture_suite pcap_fixture_roundtrips`. Pcap
+records for IPv4 fragment fields, IPv4 options, Timestamp, and Router Alert are
+not currently checked in; those behaviors are covered by byte fixtures, summary
+fixtures, public API tests, and malformed corpus rows instead.
+
+Malformed IPv4 corpus rows live in
+`crafter/tests/fixtures/malformed/core-decode-corpus.hex` and cover:
+
+- `short-ipv4-header`
+- `bad-ipv4-version`
+- `bad-ipv4-ihl`
+- `ipv4-ihl-larger-than-available`
+- `ipv4-total-length-shorter-than-header`
+- `ipv4-total-length-larger-than-available`
+- `ipv4-option-length-overrun`
+- `ipv4-option-length-below-minimum`
+- `ipv4-option-overrun-minimal`
+- `ipv4-option-decoder-overrun`
+- `ipv4-route-option-too-short`
+- `ipv4-route-option-bad-pointer`
+- `ipv4-timestamp-option-malformed-data`
+- `ipv4-router-alert-bad-length`
+
+Oracle coverage:
+
+- `tools/oracle/specs/layers/ipv4.yaml` contains the enriched IPv4 layer fields
+  and coverage cases.
+- `tools/oracle/specs/stacks.yaml` contains the `ipv4_payload` stack used by
+  focused IPv4 sampling.
+- `tools/oracle/specs/profiles.yaml` contains the `ipv4-enrichment` profile.
+- `tools/oracle/specs/README.md` documents the profile.
+- The profile is offline-only and samples DS field, unknown protocol Raw
+  fallback, MF/offset fragment metadata, TTL 255, and supported option cases
+  under `--root l3:ipv4`.
+
+## Out of scope
+
+Fragmentation generation remains out of scope. `crafter` can construct or decode
+IPv4 headers that already carry identification, flags, and fragment offset
+metadata, but it does not split payloads into multiple IPv4 fragments.
+
+Fragment reassembly remains out of scope. There is no fragment cache, timer,
+overlap policy, stack delivery model, or API that combines fragments into a
+transport payload.
+
+Other explicit exclusions:
+
+- No global IPv4 Identification allocator, per-tuple ID tracker, RFC 6864
+  uniqueness/rate policy, or host-stack ID management.
+- No router, forwarding path, TTL decrement behavior, PMTUD state machine,
+  scanner, fuzzer, or full IP stack.
+- No live IPv4 packet exchange in this enrichment suite. Validation is offline,
+  fixture-based, pcap-file based, or oracle dry-run/offline.
+- No automatic transport decode for non-initial fragments. They intentionally
+  remain `Raw` above IPv4.
+- No typed experiment-option payload semantics. RFC 4727 option values are
+  exposed and classified, but experiment option bodies remain generic bytes.
