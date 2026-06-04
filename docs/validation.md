@@ -98,6 +98,26 @@ cargo test -p crafter --test fixture_suite
 cargo test -p crafter --test resilience malformed_corpus_reports_structured_errors
 ```
 
+### IPv4 Coverage
+
+The IPv4 behavioral suite stays offline and uses documentation address space.
+Use these focused checks when touching IPv4 builders, decode behavior, summaries,
+fixtures, malformed coverage, pcap RawIp coverage, or oracle specs:
+
+```sh
+cargo test -p crafter --test ipv4_public_api
+cargo test -p crafter --test fixture_suite ipv4
+cargo test -p crafter --test resilience ipv4
+cargo test -p crafter --test fixture_suite pcap_fixture_roundtrips
+tools/oracle/run offline --profile ipv4-enrichment --seed 1 --count 12 --root l3:ipv4
+.agents/scripts/check-crafter-release --static
+```
+
+The fixture-suite IPv4 filter covers named IPv4 fixture assertions. The pcap
+roundtrip check is the focused RawIp IPv4 DSCP/ECN pcap fixture assertion.
+Keep live IPv4 packet exchange out of this suite unless a separate protected
+provider workflow explicitly asks for it.
+
 ### DNS Coverage
 
 The DNS family has an extensive reference-backed oracle suite that validates packet
