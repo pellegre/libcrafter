@@ -2903,6 +2903,57 @@ mod ipv4_option_padding {
 }
 
 #[cfg(test)]
+mod ipv4_eol_padding {
+    use super::{IpProtocol, Ipv4, Ipv4Option, IPV4_OPTION_EOL, IPV4_OPTION_NOP};
+    use crate::{NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    const EOL_PADDED_OPTIONS: [u8; 4] = [IPV4_OPTION_NOP, IPV4_OPTION_EOL, 0, 0];
+    const PAYLOAD: [u8; 4] = [0xde, 0xad, 0xbe, 0xef];
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn ipv4_eol_padding_option_parser_stops_at_first_eol() -> crate::Result<()> {
+        let parsed = Ipv4Option::decode_all(&EOL_PADDED_OPTIONS)?;
+
+        assert_eq!(parsed, vec![Ipv4Option::NoOperation, Ipv4Option::EndOfList]);
+        Ok(())
+    }
+
+    #[test]
+    fn ipv4_eol_padding_decode_preserves_raw_padding_bytes() -> crate::Result<()> {
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .proto(IpProtocol::Experimental1)
+            .option([IPV4_OPTION_NOP, IPV4_OPTION_EOL])
+            / Raw::from_bytes(PAYLOAD))
+        .compile()?;
+
+        let wire = bytes.as_bytes();
+        assert_eq!(&wire[20..24], &EOL_PADDED_OPTIONS);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, wire)?;
+        let decoded_ip = decoded.layer::<Ipv4>().unwrap();
+
+        assert_eq!(decoded_ip.option_bytes(), &EOL_PADDED_OPTIONS);
+        assert_eq!(
+            decoded_ip.parsed_options()?,
+            vec![Ipv4Option::NoOperation, Ipv4Option::EndOfList]
+        );
+        assert_eq!(decoded.compile()?.as_bytes(), wire);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod ipv4_option_kind {
     use super::{
         Ipv4OptionKind, IPV4_OPTION_EOL, IPV4_OPTION_EXPERIMENTAL_1, IPV4_OPTION_EXPERIMENTAL_2,
