@@ -20,7 +20,8 @@ use crafter::core::{
     DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
     ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
     ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6,
-    IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
+    IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
+    IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
     UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::{PcapError, PcapLinkType, PcapReader, PcapTimestamp, TimestampPrecision};
@@ -79,6 +80,7 @@ enum CoverageFamily {
     Ipv4IcmpEcho,
     Ipv4IcmpError,
     Ipv4DscpEcn,
+    Ipv4Fragment,
     Ipv4Options,
     Ipv4TcpOptions,
     Ipv4UdpDnsQuery,
@@ -469,6 +471,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ipv4-fragment-noninitial-raw",
+        path: "bytes/ipv4-fragment-noninitial-raw.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-fragment-noninitial-raw.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ipv4-options-traceroute-udp-raw",
         path: "bytes/ipv4-options-traceroute-udp-raw.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-options-traceroute-udp-raw.hex")),
@@ -833,6 +844,10 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         "IPv4 DSCP and ECN differentiated services field",
     ),
     (
+        CoverageFamily::Ipv4Fragment,
+        "IPv4 fragmentation fields without reassembly",
+    ),
+    (
         CoverageFamily::Ipv4Options,
         "IPv4 route or traceroute options",
     ),
@@ -973,6 +988,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-icmp-echo-request" => &[CoverageFamily::Ipv4IcmpEcho],
         "ipv4-icmp-destination-unreachable" => &[CoverageFamily::Ipv4IcmpError],
         "ipv4-udp-dscp-ecn-raw" => &[CoverageFamily::Ipv4DscpEcn],
+        "ipv4-fragment-noninitial-raw" => &[CoverageFamily::Ipv4Fragment],
         "ipv4-options-traceroute-udp-raw" => &[CoverageFamily::Ipv4Options],
         "ipv4-tcp-syn-options" | "ipv4-tcp-syn-rich-options" => &[CoverageFamily::Ipv4TcpOptions],
         "ipv4-udp-dns-query-example-com" => &[CoverageFamily::Ipv4UdpDnsQuery],
@@ -1437,6 +1453,47 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 .compile()
                 .unwrap_or_else(|err| panic!("fixture {} should compile: {err}", case.path));
             assert_eq!(compiled.as_bytes()[1], 0xbb);
+        }
+        "ipv4-fragment-noninitial-raw" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 44));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 44));
+            assert_eq!(ipv4.identification_value(), 0x4a6f);
+            assert_eq!(
+                ipv4.flags_value(),
+                IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS
+            );
+            assert!(ipv4.is_reserved_flag_set());
+            assert!(ipv4.is_dont_fragment());
+            assert!(ipv4.has_more_fragments());
+            assert_eq!(ipv4.fragment_offset_value(), 0x0123);
+            assert!(ipv4.is_fragmented());
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+            let fragment_info = ipv4.fragment_info();
+            assert_eq!(fragment_info.identification(), 0x4a6f);
+            assert_eq!(
+                fragment_info.flags(),
+                IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS
+            );
+            assert!(fragment_info.is_reserved_flag_set());
+            assert!(fragment_info.is_dont_fragment());
+            assert!(fragment_info.has_more_fragments());
+            assert_eq!(fragment_info.fragment_offset(), 0x0123);
+            assert!(fragment_info.is_fragmented());
+
+            assert_eq!(
+                expect_layer::<Raw>(case, packet).as_bytes(),
+                b"\xde\xad\xbe\xefnoninit"
+            );
+            assert_eq!(
+                packet.summary(),
+                "Ipv4(src=192.0.2.44, dst=198.51.100.44, proto=udp(17)) / Raw(len=11)"
+            );
+            let compiled = packet
+                .compile()
+                .unwrap_or_else(|err| panic!("fixture {} should compile: {err}", case.path));
+            assert_eq!(compiled.as_bytes(), fixture_bytes_for_case(case).as_slice());
         }
         "ipv4-options-traceroute-udp-raw" => {
             let ipv4 = expect_layer::<Ipv4>(case, packet);
