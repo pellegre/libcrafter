@@ -73,6 +73,73 @@ fn exercise_packet_decode(target: PacketDecodeTarget, bytes: &[u8]) {
     }
 }
 
+fn exercise_ipv4_like_decode(bytes: &[u8]) {
+    exercise_packet_decode(PacketDecodeTarget::L3(NetworkLayer::Ipv4), bytes);
+
+    if let Some(options) = ipv4_declared_option_slice(bytes) {
+        let _ = Ipv4Option::decode_all(options);
+    }
+}
+
+fn ipv4_declared_option_slice(bytes: &[u8]) -> Option<&[u8]> {
+    let first = *bytes.first()?;
+    let header_len = usize::from(first & 0x0f) * 4;
+    if header_len > 20 && bytes.len() >= header_len {
+        Some(&bytes[20..header_len])
+    } else {
+        None
+    }
+}
+
+fn ipv4_like_bytes_strategy() -> impl Strategy<Value = Vec<u8>> {
+    (
+        any::<u8>(),
+        any::<u8>(),
+        any::<u16>(),
+        any::<u16>(),
+        any::<[u8; 2]>(),
+        any::<u8>(),
+        any::<u8>(),
+        prop::collection::vec(any::<u8>(), 0..40),
+        prop::collection::vec(any::<u8>(), 0..96),
+    )
+        .prop_map(
+            |(
+                version_ihl,
+                tos,
+                total_length,
+                identification,
+                flags_offset,
+                ttl,
+                protocol,
+                option_bytes,
+                payload_tail,
+            )| {
+                let ihl_words = usize::from(version_ihl & 0x0f);
+                let option_len = ihl_words.saturating_sub(5) * 4;
+
+                let mut bytes = Vec::with_capacity(20 + option_len + payload_tail.len());
+                bytes.push(version_ihl);
+                bytes.push(tos);
+                bytes.extend_from_slice(&total_length.to_be_bytes());
+                bytes.extend_from_slice(&identification.to_be_bytes());
+                bytes.extend_from_slice(&flags_offset);
+                bytes.push(ttl);
+                bytes.push(protocol);
+                bytes.extend_from_slice(&[0, 0]);
+                bytes.extend_from_slice(&[192, 0, 2, 1]);
+                bytes.extend_from_slice(&[198, 51, 100, 1]);
+
+                bytes.extend(option_bytes.iter().copied().take(option_len));
+                if option_len > option_bytes.len() {
+                    bytes.resize(20 + option_len, 0);
+                }
+                bytes.extend_from_slice(&payload_tail);
+                bytes
+            },
+        )
+}
+
 fn decode_malformed_case(case: &MalformedCase) -> crafter::core::Result<()> {
     if expects_decoded_udp_option_status(case) {
         return decode_malformed_packet_case(case).map(drop);
@@ -1211,7 +1278,10 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(128))]
 
     #[test]
-    fn malformed_random_decode_inputs_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
+    fn malformed_random_decode_inputs_never_panic(
+        bytes in prop::collection::vec(any::<u8>(), 0..512),
+        ipv4_like_bytes in ipv4_like_bytes_strategy(),
+    ) {
         exercise_packet_decode(PacketDecodeTarget::Link(LinkType::Ethernet), &bytes);
         exercise_packet_decode(PacketDecodeTarget::Link(LinkType::LinuxSll), &bytes);
         exercise_packet_decode(PacketDecodeTarget::Link(LinkType::NullLoopback), &bytes);
@@ -1225,6 +1295,8 @@ proptest! {
         if !bytes.is_empty() {
             let _ = decode_dns_name(&bytes, 0);
         }
+
+        exercise_ipv4_like_decode(&ipv4_like_bytes);
     }
 
     #[test]
