@@ -1280,11 +1280,26 @@ fn append_ipv4_payload_with_registry(
         .layer::<Ipv4>()
         .map(Ipv4::fragment_offset_value)
         .unwrap_or_default();
+    let has_more_fragments = packet
+        .layer::<Ipv4>()
+        .map(Ipv4::has_more_fragments)
+        .unwrap_or_default();
 
     if fragment_offset != 0 {
         if !payload.is_empty() {
             packet = packet.push(Raw::from_bytes(payload));
         }
+    } else if has_more_fragments {
+        packet = match registry.decode_ipv4_protocol(packet.clone(), protocol, payload) {
+            Ok(decoded) => decoded,
+            Err(_) => {
+                if payload.is_empty() {
+                    packet
+                } else {
+                    packet.push(Raw::from_bytes(payload))
+                }
+            }
+        };
     } else {
         packet = registry.decode_ipv4_protocol(packet, protocol, payload)?;
     }
@@ -2187,6 +2202,78 @@ mod ipv4_fragment_info {
 
         assert_eq!(ipv4.fragment_offset_value(), 1);
         assert!(decoded.layer::<Tcp>().is_none());
+        assert_eq!(raw_layers.len(), 1);
+        assert_eq!(raw_layers[0].as_bytes(), payload);
+    }
+
+    #[test]
+    fn initial_fragment_decode_types_complete_udp_header() {
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .id(0x4570)
+            .more_fragments(true)
+            / Udp::new().sport(49152).dport(49153))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+        let udp = decoded.layer::<Udp>().unwrap();
+
+        assert_eq!(ipv4.fragment_offset_value(), 0);
+        assert!(ipv4.has_more_fragments());
+        assert!(ipv4.is_fragmented());
+        assert_eq!(udp.source_port_value(), 49152);
+        assert_eq!(udp.destination_port_value(), 49153);
+        assert!(decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn initial_fragment_decode_preserves_truncated_udp_header_as_raw() {
+        let payload = [0x12, 0x34, 0x00, 0x35, 0x00, 0x08, 0x00];
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .id(0x4571)
+            .more_fragments(true)
+            .proto(IpProtocol::Udp)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+        let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+
+        assert_eq!(ipv4.fragment_offset_value(), 0);
+        assert!(ipv4.has_more_fragments());
+        assert!(decoded.layer::<Udp>().is_none());
+        assert_eq!(raw_layers.len(), 1);
+        assert_eq!(raw_layers[0].as_bytes(), payload);
+    }
+
+    #[test]
+    fn initial_fragment_decode_preserves_unknown_protocol_payload_as_raw() {
+        let payload = [0xde, 0xad, 0xbe, 0xef];
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .id(0x4572)
+            .more_fragments(true)
+            .protocol(252)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+        let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+
+        assert_eq!(ipv4.fragment_offset_value(), 0);
+        assert!(ipv4.has_more_fragments());
+        assert_eq!(ipv4.protocol_value(), 252);
+        assert!(decoded.layer::<Udp>().is_none());
         assert_eq!(raw_layers.len(), 1);
         assert_eq!(raw_layers[0].as_bytes(), payload);
     }
