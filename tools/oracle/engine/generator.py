@@ -83,6 +83,7 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
     },
     "icmpv6": {"type", "code", "identifier", "sequence"},
     "ipv4": {
+        "ds_field",
         "src",
         "dst",
         "ttl",
@@ -2021,6 +2022,12 @@ def _sample_ipv4_field(
         return _ipv4_for_domain(ctx, domain, ctx.src_ipv4, dst=False)
     if field_name == "dst":
         return _ipv4_for_domain(ctx, domain, ctx.dst_ipv4, dst=True)
+    if field_name == "ds_field":
+        if domain == "dscp_ef_ecn_not_ect":
+            return 0b10111000
+        if domain == "dscp_cs5_ecn_ect0":
+            return 0b10100010
+        return _integer_domain_value(ctx, domain, field_name, bits=8)
     if field_name == "ttl":
         return _integer_domain_value(ctx, domain, field_name, bits=8)
     if field_name == "protocol":
