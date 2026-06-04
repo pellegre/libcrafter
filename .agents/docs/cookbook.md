@@ -37,6 +37,31 @@ Use documentation addresses such as `192.0.2.0/24`, `198.51.100.0/24`, and
 `2001:db8::/32` in examples and tests. Do not use real targets in generated
 defaults.
 
+## Build IPv4 Datagrams
+
+Keep generated IPv4 tools offline or dry-run by default: compile and hexdump the
+packet, write deterministic pcap fixtures, run oracle `offline` or
+`local-dry-run`, or use `send_dry_run` with an interface such as `dry-run0`.
+IPv4 examples and tests should use documentation ranges `192.0.2.0/24`,
+`198.51.100.0/24`, and `203.0.113.0/24`; real targets belong only in an
+explicitly authorized live-lab path.
+
+Use the DS field helpers instead of hand-shifting the historical TOS octet:
+`Dscp::new(...)`, `Ecn::{NotEct,Ect1,Ect0,Ce}`, `.dscp(...)`, `.ecn(...)`,
+and `.ds_field(...)` cover normal and deliberate raw-byte cases. After decode,
+surface `dscp_value()`, `ecn_value()`, and `ds_field_value()` so callers can see
+which DSCP and ECN state was actually present on the wire.
+
+Expose IPv4 checksum inspection as packet state, not as a decode failure.
+`compile()` fills the header checksum unless the tool set one explicitly, and
+decoded packets report `Ipv4ChecksumStatus` through `checksum_status()` so
+invalid checksums remain inspectable.
+
+Fragment fields are metadata, not a reassembly API. Generated tools may set and
+read identification, reserved/DF/MF flags, `fragment_offset`, and
+`fragment_info()`, but `crafter` does not split payloads into fragments,
+reassemble fragments, or model fragment caches, overlap handling, or timers.
+
 ## Build ARP
 
 ARP is a link-layer (L2) protocol, so wrap the `Arp` layer in an `Ethernet`
