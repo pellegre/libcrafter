@@ -91,6 +91,7 @@ const IPV4_TIMESTAMP_FLAG_ADDRESS_AND_TIMESTAMP: u8 = 1;
 const IPV4_TIMESTAMP_FLAG_PRESPECIFIED_ADDRESS: u8 = 3;
 const IPV4_TIMESTAMP_WORD_LEN: usize = 4;
 const IPV4_TIMESTAMP_ADDRESS_WORD_LEN: usize = 8;
+const IPV4_ROUTER_ALERT_LEN: usize = 4;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -447,6 +448,11 @@ pub enum Ipv4Option {
         /// Prespecified IPv4 address and timestamp pairs carried by the option.
         entries: Vec<(Ipv4Addr, u32)>,
     },
+    /// RFC 2113 Router Alert option.
+    RouterAlert {
+        /// Router Alert value field.
+        value: u16,
+    },
     /// Record-route, loose-source-route, or strict-source-route option.
     Route {
         /// Route option family.
@@ -521,6 +527,11 @@ impl Ipv4Option {
             overflow,
             entries: entries.into(),
         }
+    }
+
+    /// Create an RFC 2113 Router Alert option.
+    pub const fn router_alert(value: u16) -> Self {
+        Self::RouterAlert { value }
     }
 
     /// Create a record-route option.
@@ -612,6 +623,14 @@ impl Ipv4Option {
         }
     }
 
+    /// Router Alert value, if this is a typed Router Alert option.
+    pub const fn router_alert_value(&self) -> Option<u16> {
+        match self {
+            Self::RouterAlert { value } => Some(*value),
+            _ => None,
+        }
+    }
+
     /// Raw option kind byte.
     pub const fn kind(&self) -> u8 {
         match self {
@@ -621,6 +640,7 @@ impl Ipv4Option {
             Self::Timestamp { .. }
             | Self::TimestampWithAddresses { .. }
             | Self::TimestampPrespecified { .. } => IPV4_OPTION_TIMESTAMP,
+            Self::RouterAlert { .. } => IPV4_OPTION_ROUTER_ALERT,
             Self::Route { kind, .. } => kind.kind(),
             Self::Traceroute { .. } => IPV4_OPTION_TRACEROUTE,
         }
@@ -638,6 +658,7 @@ impl Ipv4Option {
             | Self::TimestampPrespecified { entries, .. } => {
                 IPV4_TIMESTAMP_MIN_LEN + entries.len() * IPV4_TIMESTAMP_ADDRESS_WORD_LEN
             }
+            Self::RouterAlert { .. } => IPV4_ROUTER_ALERT_LEN,
             Self::Route { routes, .. } => 3 + routes.len() * 4,
             Self::Traceroute { .. } => 12,
         }
@@ -711,6 +732,11 @@ impl Ipv4Option {
                     bytes.extend_from_slice(&address.octets());
                     bytes.extend_from_slice(&timestamp.to_be_bytes());
                 }
+            }
+            Self::RouterAlert { value } => {
+                bytes.push(IPV4_OPTION_ROUTER_ALERT);
+                bytes.push(IPV4_ROUTER_ALERT_LEN as u8);
+                bytes.extend_from_slice(&value.to_be_bytes());
             }
             Self::Route {
                 kind,
@@ -1716,6 +1742,7 @@ fn decode_ipv4_option(bytes: &[u8]) -> Result<Ipv4Option> {
         | IPV4_OPTION_LOOSE_SOURCE_ROUTE
         | IPV4_OPTION_STRICT_SOURCE_ROUTE => decode_ipv4_route_option(kind, data, bytes.len()),
         IPV4_OPTION_TIMESTAMP => decode_ipv4_timestamp_option(data, bytes.len()),
+        IPV4_OPTION_ROUTER_ALERT => decode_ipv4_router_alert_option(data, bytes.len()),
         IPV4_OPTION_TRACEROUTE => decode_ipv4_traceroute_option(data, bytes.len()),
         _ => Ok(Ipv4Option::Generic {
             kind,
@@ -1836,6 +1863,19 @@ fn decode_ipv4_timestamp_option(data: &[u8], len: usize) -> Result<Ipv4Option> {
             data: data.to_vec(),
         }),
     }
+}
+
+fn decode_ipv4_router_alert_option(data: &[u8], len: usize) -> Result<Ipv4Option> {
+    if len != IPV4_ROUTER_ALERT_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "ipv4.option.length",
+            "router alert option length must be 4 bytes",
+        ));
+    }
+
+    Ok(Ipv4Option::RouterAlert {
+        value: read_u16_be(data)?,
+    })
 }
 
 fn decode_ipv4_traceroute_option(data: &[u8], len: usize) -> Result<Ipv4Option> {
@@ -3049,6 +3089,80 @@ mod ipv4_timestamp_option {
             CrafterError::InvalidFieldValue {
                 field: "ipv4.option.timestamp",
                 reason: "timestamp-only option data must contain whole 32-bit timestamps",
+            }
+        );
+    }
+}
+
+#[cfg(test)]
+mod ipv4_router_alert_option {
+    use super::{IpProtocol, Ipv4, Ipv4Option, IPV4_OPTION_ROUTER_ALERT};
+    use crate::{CrafterError, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn ipv4_router_alert_option_encodes_and_decodes_value_zero() {
+        let option = Ipv4Option::router_alert(0);
+        let encoded = option.encode().unwrap();
+
+        assert_eq!(encoded, vec![IPV4_OPTION_ROUTER_ALERT, 4, 0, 0]);
+        assert_eq!(option.kind(), IPV4_OPTION_ROUTER_ALERT);
+        assert_eq!(option.encoded_len(), 4);
+
+        let decoded = Ipv4Option::decode_all(&encoded).unwrap();
+        assert_eq!(decoded, vec![option.clone()]);
+        assert_eq!(decoded[0].router_alert_value(), Some(0));
+    }
+
+    #[test]
+    fn ipv4_router_alert_option_preserves_unknown_value_numbers() {
+        let option = Ipv4Option::router_alert(0xbeef);
+        let packet = Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .proto(IpProtocol::Experimental1)
+            .ip_option(option.clone())
+            .unwrap()
+            / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(
+            &bytes.as_bytes()[20..24],
+            &[IPV4_OPTION_ROUTER_ALERT, 4, 0xbe, 0xef]
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let decoded_ip = decoded.layer::<Ipv4>().unwrap();
+        let options = decoded_ip.parsed_options().unwrap();
+
+        assert_eq!(options, vec![option.clone()]);
+        assert_eq!(options[0].router_alert_value(), Some(0xbeef));
+        assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn ipv4_router_alert_option_rejects_non_fixed_lengths() {
+        assert_eq!(
+            Ipv4Option::decode_all(&[IPV4_OPTION_ROUTER_ALERT, 3, 0]).unwrap_err(),
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.option.length",
+                reason: "router alert option length must be 4 bytes",
+            }
+        );
+
+        assert_eq!(
+            Ipv4Option::decode_all(&[IPV4_OPTION_ROUTER_ALERT, 5, 0, 0, 0]).unwrap_err(),
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.option.length",
+                reason: "router alert option length must be 4 bytes",
             }
         );
     }
