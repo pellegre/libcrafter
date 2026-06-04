@@ -116,10 +116,10 @@ Pcap fixtures cover:
 - NullLoopback link type with an IPv4 UDP payload.
 
 The checked-in pcap fixtures currently exercise link type mapping, timestamps,
-record lengths, and packet decoding for those link types. They do not currently
-include pcap records for IPv4 DSCP/ECN, IPv4 fragment fields, IPv4 options,
-Timestamp, or Router Alert coverage; those cases live in byte and summary
-fixtures unless a matching pcap fixture is added.
+record lengths, and packet decoding for those link types. They include RawIp
+IPv4 DSCP/ECN coverage, but do not currently include pcap records for IPv4
+fragment fields, IPv4 options, Timestamp, or Router Alert coverage; those cases
+live in byte and summary fixtures unless a matching pcap fixture is added.
 
 Malformed packet fixtures cover short or inconsistent Ethernet, VLAN, ARP,
 Linux cooked, null loopback, IPv4, IPv4 options, IPv6 extension headers, UDP,

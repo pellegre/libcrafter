@@ -769,6 +769,20 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
         }],
     },
     PcapFixtureCase {
+        name: "raw-ipv4-udp-dscp-ecn-raw",
+        path: "pcaps/raw-ipv4-udp-dscp-ecn-raw.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-udp-dscp-ecn-raw.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 21,
+            fractional: 11,
+            fixture_name: "ipv4-udp-dscp-ecn-raw",
+        }],
+    },
+    PcapFixtureCase {
         name: "raw-ipv6-icmp-echo-request",
         path: "pcaps/raw-ipv6-icmp-echo-request.pcap",
         contents: fixture_bytes!("pcaps/raw-ipv6-icmp-echo-request.pcap"),
