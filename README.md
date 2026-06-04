@@ -150,7 +150,7 @@ VirtualBox providers are not part of version 2.0.0.
 | Layer | Coverage |
 | --- | --- |
 | Link | Ethernet, 802.1Q VLAN, Linux cooked capture, null/loopback |
-| Network and control | ARP, IPv4, IPv4 options, IPv6, IPv6 fragment headers, IPv6 routing headers, IPv6 mobile routing headers, IPv6 segment routing headers, ICMPv4 (with `Icmp` deprecated alias), ICMP extensions (RFC 4884), ICMPv6 (echo and errors, IPv6 Neighbor Discovery (RFC 4861) with base and extension options, Multicast Listener Discovery v1/v2, Extended Echo, experimental Node Information) |
+| Network and control | ARP, IPv4 (DSCP/ECN, protocol labels, checksum status, typed options, fragment fields without reassembly; see [docs/ipv4.md](docs/ipv4.md)), IPv6, IPv6 fragment headers, IPv6 routing headers, IPv6 mobile routing headers, IPv6 segment routing headers, ICMPv4 (with `Icmp` deprecated alias), ICMP extensions (RFC 4884), ICMPv6 (echo and errors, IPv6 Neighbor Discovery (RFC 4861) with base and extension options, Multicast Listener Discovery v1/v2, Extended Echo, experimental Node Information) |
 | Transport | TCP, TCP options, UDP, UDP checksums |
 | Application and payload | DNS, DHCPv4 (option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication and leasequery packet fields), raw payloads |
 
@@ -204,6 +204,9 @@ live host IDs, or packet captures from sensitive networks in tracked files.
 
 - [docs/README.md](docs/README.md) is the documentation index.
 - [docs/api.md](docs/api.md) describes the public Rust API shape.
+- [docs/ipv4.md](docs/ipv4.md) describes IPv4 construction, DSCP/ECN,
+  checksum status, typed options, fragment fields, decode policy, and
+  validation coverage.
 - [docs/examples.md](docs/examples.md) lists example commands and workflows.
 - [docs/validation.md](docs/validation.md) describes oracle validation modes
   and CI expectations.

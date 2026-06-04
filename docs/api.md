@@ -394,6 +394,13 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | Null/loopback | `NullLoopback` |
 | Linux cooked capture | `LinuxSll` |
 
+IPv4-specific construction and decode behavior is covered in
+[IPv4 wire coverage](ipv4.md). The `Ipv4` layer exposes DSCP/ECN helpers,
+protocol-number labels and constants, decode-time checksum status, typed IPv4
+options, fragment metadata fields without fragmentation/reassembly, enriched
+`summary()` / `show()` output, and `Raw` fallback for unknown or unsupported
+payloads.
+
 ## ICMPv4 Messages
 
 `Icmpv4` is the fixed ICMPv4 header and the front of an ICMPv4 packet. Data that

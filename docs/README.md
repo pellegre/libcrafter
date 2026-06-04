@@ -5,6 +5,10 @@ This directory contains user and contributor documentation for the Rust
 
 - [API guide](api.md) summarizes the public crate, explicit IPv4/IPv6 packet
   APIs, packet composition style, and helper APIs.
+- [IPv4 wire coverage](ipv4.md) describes IPv4 construction, DSCP/ECN,
+  protocol-number labels, checksum status, typed options, fragment fields
+  without reassembly, decode policy, and validation coverage, and links the
+  source-backed [IPv4 RFC manifest](ipv4-rfc-manifest.md).
 - [DNS wire coverage](dns.md) describes the supported DNS wire-message
   primitives, planned typed records, and known deferrals.
 - [TCP wire coverage](tcp.md) describes the supported TCP segment construction,
