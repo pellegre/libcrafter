@@ -30,6 +30,7 @@ cargo run -p crafter --example send_plan
 cargo run -p crafter --example send_recv_icmp
 cargo run -p crafter --example batch_send_recv
 cargo run -p crafter --example dns_query -- --name example.com
+cargo run -p crafter --example ipv4_enrichment
 cargo run -p crafter --example tcp_options
 ```
 
