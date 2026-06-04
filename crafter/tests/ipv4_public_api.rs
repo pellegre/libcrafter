@@ -35,6 +35,10 @@ fn read_u16_at(bytes: &[u8], offset: usize) -> u16 {
     u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
 }
 
+fn write_u16_at(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+}
+
 fn ones_complement_checksum(bytes: &[u8]) -> u16 {
     let mut sum = 0u32;
     let mut chunks = bytes.chunks_exact(2);
@@ -364,6 +368,101 @@ fn ipv4_protocol_autofill_preserves_explicit_compile_overrides() -> crafter::Res
         "compiled bytes are not truncated to total length"
     );
     assert_eq!(&bytes[20..60], &[0; 40], "explicit ihl pads header bytes");
+
+    Ok(())
+}
+
+#[test]
+fn ipv4_length_boundaries_accept_header_payload_and_trailing_bytes() -> crafter::Result<()> {
+    let header_only =
+        Packet::from_layer(Ipv4::new().src(DOC_SRC).dst(DOC_DST).ttl(32)).compile()?;
+    let header_only_bytes = header_only.as_bytes();
+    assert_eq!(header_only_bytes.len(), 20);
+    assert_eq!(read_u16_at(header_only_bytes, 2), 20);
+
+    let decoded_header_only = Packet::decode_from_l3(NetworkLayer::Ipv4, header_only_bytes)?;
+    assert_eq!(decoded_header_only.len(), 1);
+    let ipv4 = decoded_header_only.layer::<Ipv4>().expect("ipv4 layer");
+    assert_eq!(ipv4.header_len(), 20);
+    assert_eq!(ipv4.total_length_value(), Some(20));
+    assert!(decoded_header_only.layer::<Raw>().is_none());
+    assert_eq!(decoded_header_only.compile()?.as_bytes(), header_only_bytes);
+
+    let with_payload =
+        (Ipv4::new().src(DOC_SRC).dst(DOC_DST).ttl(33) / Raw::from("data")).compile()?;
+    let with_payload_bytes = with_payload.as_bytes();
+    assert_eq!(with_payload_bytes.len(), 24);
+    assert_eq!(read_u16_at(with_payload_bytes, 2), 24);
+
+    let decoded_with_payload = Packet::decode_from_l3(NetworkLayer::Ipv4, with_payload_bytes)?;
+    assert_eq!(decoded_with_payload.len(), 2);
+    let ipv4 = decoded_with_payload.layer::<Ipv4>().expect("ipv4 layer");
+    assert_eq!(ipv4.header_len(), 20);
+    assert_eq!(ipv4.total_length_value(), Some(24));
+    assert_eq!(
+        decoded_with_payload
+            .layer::<Raw>()
+            .expect("raw payload")
+            .as_bytes(),
+        b"data"
+    );
+    assert_eq!(
+        decoded_with_payload.compile()?.as_bytes(),
+        with_payload_bytes
+    );
+
+    let mut with_trailing = with_payload_bytes.to_vec();
+    with_trailing.extend_from_slice(b"tail");
+    let decoded_with_trailing = Packet::decode_from_l3(NetworkLayer::Ipv4, &with_trailing)?;
+    assert_eq!(decoded_with_trailing.len(), 3);
+    let ipv4 = decoded_with_trailing.layer::<Ipv4>().expect("ipv4 layer");
+    assert_eq!(ipv4.header_len(), 20);
+    assert_eq!(ipv4.total_length_value(), Some(24));
+    let raw_layers: Vec<_> = decoded_with_trailing
+        .layers::<Raw>()
+        .map(Raw::as_bytes)
+        .collect();
+    assert_eq!(raw_layers, vec![b"data".as_slice(), b"tail".as_slice()]);
+    assert_eq!(decoded_with_trailing.compile()?.as_bytes(), with_trailing);
+
+    Ok(())
+}
+
+#[test]
+fn ipv4_length_boundaries_reject_inconsistent_total_lengths() -> crafter::Result<()> {
+    let header_only =
+        Packet::from_layer(Ipv4::new().src(DOC_SRC).dst(DOC_DST).ttl(34)).compile()?;
+
+    let mut below_header = header_only.as_bytes().to_vec();
+    write_u16_at(&mut below_header, 2, 19);
+    match Packet::decode_from_l3(NetworkLayer::Ipv4, &below_header) {
+        Err(CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "ipv4.total_length");
+            assert_eq!(
+                reason,
+                "total length must be at least the IPv4 header length"
+            );
+        }
+        other => panic!("total length below header should return InvalidFieldValue, got {other:?}"),
+    }
+
+    let mut larger_than_available = header_only.as_bytes().to_vec();
+    write_u16_at(&mut larger_than_available, 2, 21);
+    match Packet::decode_from_l3(NetworkLayer::Ipv4, &larger_than_available) {
+        Err(CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        }) => {
+            assert_eq!(context, "ipv4 packet");
+            assert_eq!(required, 21);
+            assert_eq!(available, larger_than_available.len());
+            assert!(required > available);
+        }
+        other => {
+            panic!("total length larger than available should return BufferTooShort, got {other:?}")
+        }
+    }
 
     Ok(())
 }
