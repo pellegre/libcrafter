@@ -175,6 +175,27 @@ stacks:
       - vlan-ipv4-udp
       - vlan-boundary-fields
       - crafter-vlan-boundary-fields
+  # ipv4 / payload: offline-only IPv4 header enrichment coverage where the
+  # protocol field intentionally falls back to Raw payload. The focused
+  # ipv4-enrichment profile samples these cases without involving live traffic.
+  - name: ipv4_payload
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - payload
+    coverage_cases:
+      - ipv4-boundary-fields
+      - ipv4-unknown-protocol-raw
+      - ipv4-fragment-mf-offset
+      - ipv4-ttl-255
+      - ipv4-options
+      - ipv4-options-source-route-traceroute
+      - crafter-ipv4-boundary-fields
+      - crafter-ipv4-unknown-protocol-raw
+      - crafter-ipv4-fragment-mf-offset
+      - crafter-ipv4-ttl-255
+      - crafter-ipv4-options
+      - crafter-ipv4-source-route-traceroute
   - name: ipv4_udp_payload
     root: "l3:ipv4"
     layers:

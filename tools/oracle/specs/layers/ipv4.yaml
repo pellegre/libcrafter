@@ -38,6 +38,11 @@ fields:
       - dscp_ef_ecn_not_ect
       - dscp_cs5_ecn_ect0
       - boundary
+    profile_domains:
+      ipv4-enrichment:
+        - dscp_ef_ecn_not_ect
+        - dscp_cs5_ecn_ect0
+        - boundary
   - name: dscp
     type: uint6
     required: false
@@ -91,6 +96,10 @@ fields:
       - 60
       - 64
       - 255
+    profile_domains:
+      ipv4-enrichment:
+        - 1
+        - 255
   - name: protocol
     type: uint8
     required: true
@@ -126,6 +135,11 @@ fields:
       - mf
       - df_mf
       - all
+    profile_domains:
+      ipv4-enrichment:
+        - none
+        - df
+        - mf
   - name: fragment_offset
     type: uint13
     required: true
@@ -134,6 +148,11 @@ fields:
       - 1
       - non_initial
       - boundary
+    profile_domains:
+      ipv4-enrichment:
+        - 0
+        - 1
+        - boundary
   - name: checksum
     type: uint16
     required: true
@@ -156,6 +175,13 @@ fields:
       - router_alert
       - experimental
       - generic
+    profile_domains:
+      ipv4-enrichment:
+        - record_route
+        - loose_source_route
+        - timestamp
+        - traceroute
+        - generic
 
 coverage_cases:
   - ipv4-boundary-fields

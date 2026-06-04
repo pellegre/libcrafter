@@ -339,6 +339,7 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
                     _layer_field_grammar(layer.raw, field.name, field.field_type, field.required, field.domains)
                     for field in layer.fields
                 ],
+                "coverage_cases": list(layer.coverage_cases),
                 "backend_support": {
                     name: {
                         "status": support.status,
@@ -740,6 +741,13 @@ class PacketGenerator:
                 and not _has_tcp_smoke_case(coverage_cases)
             ):
                 continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "ipv4-enrichment"
+                and not _has_ipv4_enrichment_case(coverage_cases, self.grammar)
+            ):
+                continue
             candidates.append(stack)
         return candidates
 
@@ -876,6 +884,10 @@ class PacketGenerator:
         direction: str,
     ) -> str:
         coverage_cases = _string_list(stack.get("coverage_cases", []), "stack.coverage_cases")
+        if feature is None and self.profile == "ipv4-enrichment":
+            # Focused IPv4 profile: restrict to the IPv4 layer's declared
+            # enrichment cases so the run stays data-driven from layers/ipv4.yaml.
+            coverage_cases = _ipv4_enrichment_cases(coverage_cases, self.grammar)
         if feature is None and self.profile == "tcp-header":
             # Focused profile: restrict the stack's own coverage cases to the
             # tcp_header set so case selection never falls through to the other
@@ -938,6 +950,13 @@ class PacketGenerator:
         # tcp-option-* coverage cases (filtered above) so the smoke run stays on
         # TCP behavior. The cross-feature case expansion below is skipped.
         if feature is None and self.profile == "tcp-smoke":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        # ipv4-enrichment profile: the stack was pre-filtered to IPv4 layer
+        # enrichment cases, and cross-feature expansion is skipped so unrelated
+        # features that happen to ride IPv4 stacks cannot enter the sample.
+        if feature is None and self.profile == "ipv4-enrichment":
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1039,6 +1058,10 @@ class PacketGenerator:
             # selection materializes a mix of TCP header and TCP option cases
             # without mixing in unrelated features.
             if self.profile == "tcp-smoke" and name not in ("tcp_header", "tcp_options"):
+                continue
+            # The IPv4 enrichment profile auto-samples only the IPv4 option
+            # feature; all non-option IPv4 layer cases remain plain header cases.
+            if self.profile == "ipv4-enrichment" and name != "ipv4_options":
                 continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")
@@ -2023,24 +2046,32 @@ def _sample_ipv4_field(
     if field_name == "dst":
         return _ipv4_for_domain(ctx, domain, ctx.dst_ipv4, dst=True)
     if field_name == "ds_field":
+        if "boundary-fields" in ctx.case:
+            return 0xFF
         if domain == "dscp_ef_ecn_not_ect":
             return 0b10111000
         if domain == "dscp_cs5_ecn_ect0":
             return 0b10100010
         return _integer_domain_value(ctx, domain, field_name, bits=8)
     if field_name == "ttl":
+        if "ttl-255" in ctx.case:
+            return 255
         return _integer_domain_value(ctx, domain, field_name, bits=8)
     if field_name == "protocol":
         return _ipv4_protocol_for_stack(ctx.stack)
     if field_name == "identification":
         return _integer_domain_value(ctx, domain, field_name, bits=16)
     if field_name == "flags":
+        if "fragment-mf-offset" in ctx.case:
+            return "mf"
         if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcp")):
             return "none"
         if ctx.profile == "smoke":
             return "none"
         return str(domain)
     if field_name == "fragment_offset":
+        if "fragment-mf-offset" in ctx.case:
+            return 1
         if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcp")):
             return 0
         if current_fields.get("flags") == "mf":
@@ -3925,6 +3956,21 @@ def _has_tcp_smoke_case(cases: Sequence[str]) -> bool:
     """
 
     return _has_tcp_header_case(cases) or _has_tcp_options_case(cases)
+
+
+def _ipv4_enrichment_cases(cases: Sequence[str], grammar: Mapping[str, object]) -> list[str]:
+    declared = _layer_coverage_cases(grammar, "ipv4")
+    return [case for case in cases if case in declared]
+
+
+def _has_ipv4_enrichment_case(cases: Sequence[str], grammar: Mapping[str, object]) -> bool:
+    return bool(_ipv4_enrichment_cases(cases, grammar))
+
+
+def _layer_coverage_cases(grammar: Mapping[str, object], layer: str) -> set[str]:
+    layers = _object(grammar.get("layers"), "layers")
+    layer_spec = _object(layers.get(layer), f"layers.{layer}")
+    return set(_string_list(layer_spec.get("coverage_cases", []), f"layers.{layer}.coverage_cases"))
 
 
 # Behavior names of the focused single-option tcp_options cases (tcp-option-*).

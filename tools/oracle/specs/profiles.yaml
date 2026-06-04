@@ -185,6 +185,29 @@ profiles:
       malformed: 0
       pcap: 0
       live: 0
+  # ipv4-enrichment: focused offline coverage of the enriched IPv4 header
+  # domains declared in layers/ipv4.yaml. The generator narrows stack/case and
+  # feature selection to that layer's coverage cases when this profile is active,
+  # so a run such as `offline --profile ipv4-enrichment --seed 1 --count 12
+  # --root l3:ipv4` stays on data-driven IPv4 header behavior: DS field
+  # boundary values, unknown protocol Raw payload fallback, MF+offset fragments,
+  # TTL 255, and supported option encodings. Malformed and live behavior remain
+  # out of scope for this offline dry-run profile.
+  - name: ipv4-enrichment
+    purpose: focused offline IPv4 header enrichment behavior
+    default_count: 12
+    family_weights:
+      - name: ipv4
+        weight: 1
+    payload_length:
+      min: 0
+      max: 32
+    feature_weights:
+      baseline: 10
+      boundary: 10
+      malformed: 0
+      pcap: 0
+      live: 0
 
 backend_support:
   scapy:
