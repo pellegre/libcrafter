@@ -195,7 +195,7 @@ are still required before adding body encoders or decoders.
 | Record Route (RR), Loose Source Route (LSR), Strict Source Route (SSR) | RFC 791 section 3.1; RFC 1122 section 3.2.1.8; IANA IPv4 Parameters | These route options have pointer-address list semantics. `crafter` may preserve and inspect raw or typed forms, but it does not route packets or act as an intermediate hop. |
 | Traceroute (TR) | RFC 1393; IANA IPv4 Parameters | Existing or future Traceroute option behavior must cite RFC 1393 for the option data layout. |
 | Router Alert (RTRALT) | RFC 2113; IANA IPv4 Parameters | Router Alert is option value 148. The Router Alert value registry is separate; value 0 means routers examine the packet. Typed support must cite RFC 2113 and IANA Router Alert values. |
-| Experiment options | RFC 4727; IANA IPv4 Parameters | IPv4 option values 30, 94, 158, and 222 are RFC 3692-style experiment values. Helpers must not ship these as production defaults. |
+| Experiment options | RFC 4727; IANA IPv4 Parameters | IPv4 option values 30, 94, 158, and 222 are RFC 3692-style experiment values. `Ipv4OptionKind` classifies these values for inspection. Helpers must not ship these as production defaults. |
 | Unknown or unsupported options | RFC 1122 section 3.2.1.8; IANA IPv4 Parameters | Unknown options must be preserved enough for inspection. Malformed option lengths must return structured errors and must never panic or loop. |
 
 ## Fragmentation Evidence And Explicit Exclusion

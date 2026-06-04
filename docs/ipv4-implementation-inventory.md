@@ -40,8 +40,8 @@ Date checked: 2026-06-04, against the current worktree and
 | Protocol constants | `crafter/src/protocols/ip.rs` | partial | Constants exist for ICMP, TCP, UDP, IPv6 encapsulation, and ICMPv6 only. The IANA protocol-number registry in `docs/ipv4-rfc-manifest.md` authorizes richer labels/constants later. |
 | `IpProtocol` enum | `crafter/src/protocols/ip.rs` | partial | Variants cover Hop-by-Hop, ICMP, TCP, UDP, IPv6 encapsulation, and ICMPv6. No registry-wide enum, classifier, or label helper is public yet. |
 | Flag constants | `crafter/src/protocols/ip.rs` | implemented | `IPV4_FLAG_RESERVED`, `IPV4_FLAG_DONT_FRAGMENT`, and `IPV4_FLAG_MORE_FRAGMENTS` exist. |
-| Option constants | `crafter/src/protocols/ip.rs` | partial | Constants exist for EOL, NOP, Record Route, Traceroute, Loose Source Route, and Strict Source Route. Timestamp, Router Alert, experiment, and registry metadata constants/helpers are missing. |
-| Option types | `crafter/src/protocols/ip.rs` | partial | `Ipv4Option` supports EOL, NOP, Generic, route-style options, and RFC 1393 Traceroute. Router Alert, Timestamp, copied/class/number metadata, and experiment helpers are not typed yet. |
+| Option constants | `crafter/src/protocols/ip.rs` | partial | Constants exist for EOL, NOP, Record Route, Timestamp, Traceroute, Loose Source Route, Strict Source Route, Router Alert, and RFC 4727 experiment values. Additional registry metadata may still grow in later steps. |
+| Option types | `crafter/src/protocols/ip.rs` | partial | `Ipv4Option` supports EOL, NOP, Generic, Timestamp, Router Alert, route-style options, and RFC 1393 Traceroute. Experiment values remain generic option payloads; classification lives on `Ipv4OptionKind` rather than a new typed option variant. |
 | Public re-exports | `crafter/src/protocols/mod.rs`, `crafter/src/lib.rs` | implemented | `Ipv4`, `IpProtocol`, `Ipv4Option`, `Ipv4OptionIter`, `Ipv4RouteOptionKind`, current constants, and flags/options are re-exported through protocol, root, core, and prelude surfaces. New helpers must be added to these same paths. |
 
 ## Compile Defaults And Override Behavior
@@ -95,12 +95,12 @@ Date checked: 2026-06-04, against the current worktree and
 | --- | --- | --- | --- |
 | Raw option bytes | `crafter/src/protocols/ip.rs` | implemented | Builders can append raw bytes, replace all option bytes, clear option bytes, and return raw option bytes. |
 | Option iterator | `crafter/src/protocols/ip.rs` | implemented | `Ipv4OptionIter` handles EOL, NOP, kind/length options, length underflow, and length overrun without panics. |
-| Generic options | `crafter/src/protocols/ip.rs` | partial | Unknown non-EOL/NOP options decode as `Generic { kind, data }`, preserving bytes after the kind and length. Generic options do not expose copied flag, class, number, registry status, or experiment classification. |
+| Generic options | `crafter/src/protocols/ip.rs` | partial | Unknown non-EOL/NOP options decode as `Generic { kind, data }`, preserving bytes after the kind and length. Callers can inspect the kind byte with `Ipv4OptionKind` for copied flag, class, number, and RFC 4727 experiment classification. Broader registry status labels are not exposed yet. |
 | Route options | `crafter/src/protocols/ip.rs` | implemented | Record Route, Loose Source Route, and Strict Source Route encode/decode through `Ipv4RouteOptionKind`, pointer validation, and whole-IPv4-address payload checks. |
 | Traceroute option | `crafter/src/protocols/ip.rs` | implemented | RFC 1393 Traceroute option encodes and decodes the 12-byte layout. |
 | Router Alert | `crafter/src/protocols/ip.rs` | gap | `docs/ipv4-rfc-manifest.md` lists RFC 2113 and IANA Router Alert values, but no typed Router Alert option exists yet. |
 | Timestamp | `crafter/src/protocols/ip.rs` | gap | The manifest records Timestamp as source-backed future work. No typed Timestamp option exists yet. |
-| Experiment option helpers | `crafter/src/protocols/ip.rs` | gap | RFC 4727 experiment option values are not exposed or classified yet. |
+| Experiment option helpers | `crafter/src/protocols/ip.rs` | implemented | RFC 4727 experiment option values are exposed as constants and classified by `Ipv4OptionKind::is_experimental()` / `experimental_label()`. They are inspection helpers only; `Ipv4::new()` does not emit experimental options implicitly. |
 | Malformed option errors | `crafter/src/protocols/ip.rs`, `crafter/tests/resilience.rs` | implemented | Option envelope errors are structured and covered by the malformed corpus, including direct `ipv4-options` decode. |
 
 ## Fragmentation Fields
@@ -180,9 +180,10 @@ Date checked: 2026-06-04, against the current worktree and
 6. **Fragment fixture follow-up** - fragment-aware decode is implemented in
    `crafter/src/protocols/ip.rs`; later fixture steps should add deterministic
    byte, summary, and pcap coverage for representative fragment-field cases.
-7. **Typed options** - add Router Alert, Timestamp, option metadata, and
-   experiment helpers in `crafter/src/protocols/ip.rs`, with malformed corpus
-   rows in `crafter/tests/fixtures/malformed/core-decode-corpus.hex`.
+7. **Typed options** - continue option metadata and typed-option follow-up in
+   `crafter/src/protocols/ip.rs`, with malformed corpus rows in
+   `crafter/tests/fixtures/malformed/core-decode-corpus.hex` where new typed
+   payload variants need malformed coverage.
 8. **Fixture and pcap coverage** - add deterministic fixtures and summaries
    under `crafter/tests/fixtures/bytes/`,
    `crafter/tests/fixtures/summaries/`, and `crafter/tests/fixtures/pcaps/`,

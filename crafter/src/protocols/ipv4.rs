@@ -371,6 +371,26 @@ impl Ipv4OptionKind {
     pub const fn number(self) -> u8 {
         self.value & IPV4_OPTION_NUMBER_MASK
     }
+
+    /// Return true for the RFC 4727 IPv4 option experiment values.
+    pub const fn is_experimental(self) -> bool {
+        matches!(
+            self.value,
+            IPV4_OPTION_EXPERIMENTAL_1
+                | IPV4_OPTION_EXPERIMENTAL_2
+                | IPV4_OPTION_EXPERIMENTAL_3
+                | IPV4_OPTION_EXPERIMENTAL_4
+        )
+    }
+
+    /// Human-readable RFC 4727 experiment classification, when applicable.
+    pub const fn experimental_label(self) -> Option<&'static str> {
+        if self.is_experimental() {
+            Some("RFC3692-style Experiment")
+        } else {
+            None
+        }
+    }
 }
 
 impl From<u8> for Ipv4OptionKind {
@@ -2844,6 +2864,116 @@ mod ipv4_option_kind {
         const NUMBER: u8 = KIND.number();
 
         assert_eq!((VALUE, COPIED, CLASS, NUMBER), (0x94, true, 0, 20));
+    }
+}
+
+#[cfg(test)]
+mod ipv4_experimental_options {
+    use super::{
+        Ipv4, Ipv4Option, Ipv4OptionKind, IPV4_OPTION_EXPERIMENTAL_1, IPV4_OPTION_EXPERIMENTAL_2,
+        IPV4_OPTION_EXPERIMENTAL_3, IPV4_OPTION_EXPERIMENTAL_4, IPV4_OPTION_RECORD_ROUTE,
+        IPV4_OPTION_ROUTER_ALERT, IPV4_OPTION_TIMESTAMP,
+    };
+    use crate::{NetworkLayer, Packet};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn ipv4_experimental_options_classify_rfc4727_values() {
+        let cases = [
+            (IPV4_OPTION_EXPERIMENTAL_1, false, 0, 30),
+            (IPV4_OPTION_EXPERIMENTAL_2, false, 2, 30),
+            (IPV4_OPTION_EXPERIMENTAL_3, true, 0, 30),
+            (IPV4_OPTION_EXPERIMENTAL_4, true, 2, 30),
+        ];
+
+        for (value, copied, class, number) in cases {
+            let kind = Ipv4OptionKind::new(value);
+
+            assert_eq!(kind.value(), value, "kind {value:#04x}");
+            assert_eq!(kind.copied(), copied, "kind {value:#04x}");
+            assert_eq!(kind.class(), class, "kind {value:#04x}");
+            assert_eq!(kind.number(), number, "kind {value:#04x}");
+            assert!(kind.is_experimental(), "kind {value:#04x}");
+            assert_eq!(
+                kind.experimental_label(),
+                Some("RFC3692-style Experiment"),
+                "kind {value:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn ipv4_experimental_options_leave_standard_values_unclassified() {
+        for value in [
+            IPV4_OPTION_RECORD_ROUTE,
+            IPV4_OPTION_TIMESTAMP,
+            IPV4_OPTION_ROUTER_ALERT,
+        ] {
+            let kind = Ipv4OptionKind::new(value);
+
+            assert!(!kind.is_experimental(), "kind {value:#04x}");
+            assert_eq!(kind.experimental_label(), None, "kind {value:#04x}");
+        }
+    }
+
+    #[test]
+    fn ipv4_experimental_options_decode_as_generic_but_classify_kind() -> crate::Result<()> {
+        let option = Ipv4Option::generic(IPV4_OPTION_EXPERIMENTAL_2, [0xaa, 0xbb]);
+        let encoded = option.encode()?;
+        let decoded = Ipv4Option::decode_all(&encoded)?;
+
+        assert_eq!(encoded, [IPV4_OPTION_EXPERIMENTAL_2, 4, 0xaa, 0xbb]);
+        assert_eq!(decoded, vec![option]);
+
+        let kind = Ipv4OptionKind::new(decoded[0].kind());
+        assert!(kind.is_experimental());
+        assert_eq!(kind.experimental_label(), Some("RFC3692-style Experiment"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn ipv4_experimental_options_default_ipv4_emits_no_experiment_options() -> crate::Result<()> {
+        let compiled = Packet::from_layer(Ipv4::new().src(src()).dst(dst())).compile()?;
+        let bytes = compiled.as_bytes();
+        let header_len = ((bytes[0] & 0x0f) as usize) * 4;
+        let option_bytes = &bytes[20..header_len];
+
+        assert_eq!(header_len, 20);
+        assert!(option_bytes.is_empty());
+        for value in [
+            IPV4_OPTION_EXPERIMENTAL_1,
+            IPV4_OPTION_EXPERIMENTAL_2,
+            IPV4_OPTION_EXPERIMENTAL_3,
+            IPV4_OPTION_EXPERIMENTAL_4,
+        ] {
+            assert!(!option_bytes.contains(&value), "kind {value:#04x}");
+        }
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+        let ipv4 = decoded.layer::<Ipv4>().expect("decoded IPv4 layer");
+        assert!(ipv4.option_bytes().is_empty());
+        assert!(ipv4.parsed_options()?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn ipv4_experimental_options_helpers_are_const_friendly() {
+        const KIND: Ipv4OptionKind = Ipv4OptionKind::new(IPV4_OPTION_EXPERIMENTAL_4);
+        const IS_EXPERIMENTAL: bool = KIND.is_experimental();
+        const LABEL: Option<&'static str> = KIND.experimental_label();
+
+        assert!(IS_EXPERIMENTAL);
+        assert_eq!(LABEL, Some("RFC3692-style Experiment"));
     }
 }
 
