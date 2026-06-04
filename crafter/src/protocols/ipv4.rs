@@ -984,16 +984,26 @@ impl Layer for Ipv4 {
     }
 
     fn summary(&self) -> String {
-        format!(
-            "Ipv4(src={}, dst={}, proto={})",
-            self.source(),
-            self.destination(),
-            protocol_summary(self.protocol_value())
-        )
+        let checksum_status = checksum_status_summary(self.checksum_status());
+        if checksum_status.is_empty() {
+            format!(
+                "Ipv4(src={}, dst={}, proto={})",
+                self.source(),
+                self.destination(),
+                protocol_summary(self.protocol_value())
+            )
+        } else {
+            format!(
+                "Ipv4(src={}, dst={}, proto={}, checksum_status={checksum_status})",
+                self.source(),
+                self.destination(),
+                protocol_summary(self.protocol_value())
+            )
+        }
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut fields = vec![
             ("version", self.version_value().to_string()),
             ("ihl", self.ihl_value().to_string()),
             ("tos", self.tos_value().to_string()),
@@ -1017,7 +1027,14 @@ impl Layer for Ipv4 {
             ("src", self.source().to_string()),
             ("dst", self.destination().to_string()),
             ("options", hex_bytes(&self.options)),
-        ]
+        ];
+
+        let checksum_status = checksum_status_summary(self.checksum_status());
+        if !checksum_status.is_empty() {
+            fields.insert(10, ("checksum_status", checksum_status.to_string()));
+        }
+
+        fields
     }
 
     fn encoded_len(&self) -> usize {
@@ -1302,6 +1319,13 @@ fn decoded_ipv4_checksum_status(header: &[u8]) -> Ipv4ChecksumStatus {
     }
 }
 
+fn checksum_status_summary(status: Ipv4ChecksumStatus) -> &'static str {
+    match status {
+        Ipv4ChecksumStatus::Invalid => "invalid",
+        Ipv4ChecksumStatus::NotChecked | Ipv4ChecksumStatus::Valid => "",
+    }
+}
+
 fn payload_len_after(ctx: LayerContext<'_>) -> usize {
     ctx.packet()
         .iter()
@@ -1552,8 +1576,7 @@ mod ipv4_protocol {
                 format!("Ipv4(src={}, dst={}, proto={label})", src(), dst())
             );
             assert_eq!(
-                ipv4
-                    .inspection_fields()
+                ipv4.inspection_fields()
                     .iter()
                     .find(|(name, _)| *name == "protocol")
                     .map(|(_, value)| value.as_str()),
@@ -1568,8 +1591,7 @@ mod ipv4_protocol {
             format!("Ipv4(src={}, dst={}, proto=252)", src(), dst())
         );
         assert_eq!(
-            ipv4
-                .inspection_fields()
+            ipv4.inspection_fields()
                 .iter()
                 .find(|(name, _)| *name == "protocol")
                 .map(|(_, value)| value.as_str()),

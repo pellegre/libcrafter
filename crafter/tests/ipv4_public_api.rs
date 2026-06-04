@@ -8,6 +8,7 @@
 use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
+use crafter::protocols::ip::Ipv4ChecksumStatus;
 use crafter::protocols::{Dscp as ProtocolDscp, Ecn as ProtocolEcn};
 use crafter::{Dscp as RootDscp, Ecn as RootEcn};
 
@@ -173,6 +174,37 @@ fn ipv4_decode_from_l3_returns_typed_ipv4_and_raw_tail() -> crafter::Result<()> 
     let raw = decoded.layer::<Raw>().expect("raw layer");
     assert_eq!(raw.as_bytes(), b"ipv4");
     assert_eq!(decoded.compile()?.as_bytes(), EXPECTED_BYTES);
+    Ok(())
+}
+
+#[test]
+fn ipv4_checksum_status_invalid_decode_summary_and_show() -> crafter::Result<()> {
+    let mut bytes = EXPECTED_BYTES.to_vec();
+    bytes[10] ^= 0xff;
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)?;
+    let ipv4 = decoded.layer::<Ipv4>().expect("ipv4 layer");
+
+    assert_eq!(ipv4.checksum_value(), Some(read_u16_at(&bytes, 10)));
+    assert_eq!(ipv4.checksum_status(), Ipv4ChecksumStatus::Invalid);
+    assert_eq!(
+        decoded.layer::<Raw>().expect("raw layer").as_bytes(),
+        b"ipv4"
+    );
+
+    let summary = decoded.summary();
+    assert!(
+        summary.contains("checksum_status=invalid"),
+        "summary should expose invalid checksum status:\n{summary}"
+    );
+
+    let show = decoded.show();
+    assert!(
+        show.contains("      checksum_status: invalid\n"),
+        "show output should expose invalid checksum status:\n{show}"
+    );
+
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
     Ok(())
 }
 
