@@ -53,6 +53,29 @@ fn ones_complement_checksum(bytes: &[u8]) -> u16 {
     !(sum as u16)
 }
 
+fn assert_dscp_ecn_roundtrip(
+    name: &str,
+    packet: Packet,
+    expected_ds_field: u8,
+    expected_dscp: Dscp,
+    expected_ecn: Ecn,
+) -> crafter::Result<()> {
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+    assert_eq!(bytes[1], expected_ds_field, "{name} wire ds field");
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+    let ipv4 = decoded.layer::<Ipv4>().expect("ipv4 layer");
+    assert_eq!(ipv4.ds_field_value(), expected_ds_field, "{name} ds field");
+    assert_eq!(ipv4.tos_value(), expected_ds_field, "{name} tos alias");
+    assert_eq!(ipv4.dscp_value(), expected_dscp, "{name} dscp");
+    assert_eq!(ipv4.ecn_value(), expected_ecn, "{name} ecn");
+
+    let recompiled = decoded.compile()?;
+    assert_eq!(recompiled.as_bytes(), bytes, "{name} recompiled bytes");
+    Ok(())
+}
+
 #[test]
 fn ipv4_new_with_raw_compiles_to_current_wire_header() -> crafter::Result<()> {
     let packet = ipv4_raw_packet();
@@ -243,6 +266,70 @@ fn ipv4_preserves_explicit_compile_overrides_that_fit_wire_fields() -> crafter::
         "compiled bytes are not truncated to total length"
     );
     assert_eq!(&bytes[20..60], &[0; 40], "explicit ihl pads header bytes");
+
+    Ok(())
+}
+
+#[test]
+fn dscp_ecn_roundtrip_common_dscp_values() -> crafter::Result<()> {
+    let cases = [
+        ("default", 0),
+        ("cs1", 8),
+        ("af11", 10),
+        ("af21", 18),
+        ("af31", 26),
+        ("af41", 34),
+        ("ef", 46),
+    ];
+
+    for (name, dscp_value) in cases {
+        let dscp = Dscp::new(dscp_value)?;
+        let packet = Ipv4::new()
+            .src(DOC_SRC)
+            .dst(DOC_DST)
+            .ecn(Ecn::Ect0)
+            .dscp(dscp)
+            / Raw::from(name);
+
+        assert_dscp_ecn_roundtrip(name, packet, (dscp_value << 2) | 0x02, dscp, Ecn::Ect0)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn dscp_ecn_roundtrip_all_ecn_codepoints() -> crafter::Result<()> {
+    let dscp = Dscp::new(46)?;
+    let cases = [
+        ("not-ect", Ecn::NotEct, 0),
+        ("ect1", Ecn::Ect1, 1),
+        ("ect0", Ecn::Ect0, 2),
+        ("ce", Ecn::Ce, 3),
+    ];
+
+    for (name, ecn, ecn_value) in cases {
+        let packet = Ipv4::new().src(DOC_SRC).dst(DOC_DST).dscp(dscp).ecn(ecn) / Raw::from(name);
+
+        assert_dscp_ecn_roundtrip(name, packet, (46 << 2) | ecn_value, dscp, ecn)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn dscp_ecn_roundtrip_combined_byte_preservation() -> crafter::Result<()> {
+    for ds_field in [0x00, 0x01, 0x2e, 0xbb, 0xfc, 0xff] {
+        let name = format!("ds-field-0x{ds_field:02x}");
+        let packet = Ipv4::new().src(DOC_SRC).dst(DOC_DST).ds_field(ds_field) / Raw::from("ds");
+
+        assert_dscp_ecn_roundtrip(
+            &name,
+            packet,
+            ds_field,
+            Dscp::from_ds_field(ds_field),
+            Ecn::from_ds_field(ds_field),
+        )?;
+    }
 
     Ok(())
 }
