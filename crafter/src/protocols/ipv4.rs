@@ -221,6 +221,59 @@ pub enum Ipv4ChecksumStatus {
     Invalid,
 }
 
+/// Snapshot of IPv4 fragmentation-related header fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Ipv4FragmentInfo {
+    identification: u16,
+    flags: u8,
+    fragment_offset: u16,
+}
+
+impl Ipv4FragmentInfo {
+    const fn new(identification: u16, flags: u8, fragment_offset: u16) -> Self {
+        Self {
+            identification,
+            flags,
+            fragment_offset,
+        }
+    }
+
+    /// Identification field carried by the IPv4 header.
+    pub const fn identification(self) -> u16 {
+        self.identification
+    }
+
+    /// Raw three-bit IPv4 flags field.
+    pub const fn flags(self) -> u8 {
+        self.flags
+    }
+
+    /// Return true when the reserved IPv4 flag bit is set.
+    pub const fn is_reserved_flag_set(self) -> bool {
+        self.flags & IPV4_FLAG_RESERVED != 0
+    }
+
+    /// Return true when the "don't fragment" flag is set.
+    pub const fn is_dont_fragment(self) -> bool {
+        self.flags & IPV4_FLAG_DONT_FRAGMENT != 0
+    }
+
+    /// Return true when the "more fragments" flag is set.
+    pub const fn has_more_fragments(self) -> bool {
+        self.flags & IPV4_FLAG_MORE_FRAGMENTS != 0
+    }
+
+    /// Fragment offset in 8-byte units.
+    pub const fn fragment_offset(self) -> u16 {
+        self.fragment_offset
+    }
+
+    /// Return true when this header marks a fragmented datagram.
+    pub const fn is_fragmented(self) -> bool {
+        self.has_more_fragments() || self.fragment_offset != 0
+    }
+}
+
 /// Common IPv4 protocol numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -803,19 +856,38 @@ impl Ipv4 {
         value_or_copy(&self.flags, 0)
     }
 
+    /// Inspect the IPv4 fragmentation-related header fields together.
+    pub fn fragment_info(&self) -> Ipv4FragmentInfo {
+        Ipv4FragmentInfo::new(
+            self.identification_value(),
+            self.flags_value(),
+            self.fragment_offset_value(),
+        )
+    }
+
+    /// Return true when the reserved IPv4 flag bit is set.
+    pub fn is_reserved_flag_set(&self) -> bool {
+        self.fragment_info().is_reserved_flag_set()
+    }
+
     /// Return true when the "don't fragment" flag is set.
     pub fn is_dont_fragment(&self) -> bool {
-        self.flags_value() & IPV4_FLAG_DONT_FRAGMENT != 0
+        self.fragment_info().is_dont_fragment()
     }
 
     /// Return true when the "more fragments" flag is set.
     pub fn has_more_fragments(&self) -> bool {
-        self.flags_value() & IPV4_FLAG_MORE_FRAGMENTS != 0
+        self.fragment_info().has_more_fragments()
     }
 
     /// Fragment offset in 8-byte units.
     pub fn fragment_offset_value(&self) -> u16 {
         value_or_copy(&self.fragment_offset, 0)
+    }
+
+    /// Return true when this header marks a fragmented datagram.
+    pub fn is_fragmented(&self) -> bool {
+        self.fragment_info().is_fragmented()
     }
 
     /// Time-to-live value.
@@ -1912,6 +1984,102 @@ mod ipv4_tests {
         assert_eq!(u8::from(Ipv4Protocol::Icmpv4), IPPROTO_ICMP);
         assert_eq!(typed.as_bytes()[9], IPPROTO_ICMPV6);
         assert_eq!(raw.as_bytes()[9], 253);
+    }
+}
+
+#[cfg(test)]
+mod ipv4_fragment_info {
+    use super::{
+        IpProtocol, Ipv4, Ipv4FragmentInfo, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
+        IPV4_FLAG_RESERVED,
+    };
+    use crate::{NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn ipv4_fragment_info_defaults_are_atomic() {
+        let ip = Ipv4::new().src(src()).dst(dst());
+        let info: Ipv4FragmentInfo = ip.fragment_info();
+
+        assert_eq!(info.identification(), 1);
+        assert_eq!(info.flags(), 0);
+        assert_eq!(info.fragment_offset(), 0);
+        assert!(!info.is_reserved_flag_set());
+        assert!(!info.is_dont_fragment());
+        assert!(!info.has_more_fragments());
+        assert!(!info.is_fragmented());
+        assert!(!ip.is_reserved_flag_set());
+        assert!(!ip.is_fragmented());
+    }
+
+    #[test]
+    fn ipv4_fragment_info_exposes_flags_offset_and_fragmented_predicate() {
+        let ip = Ipv4::new()
+            .id(0x4567)
+            .flags(IPV4_FLAG_RESERVED)
+            .dont_fragment(true)
+            .more_fragments(true)
+            .frag(0x0123);
+        let info = ip.fragment_info();
+
+        assert_eq!(info.identification(), 0x4567);
+        assert_eq!(
+            info.flags(),
+            IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS
+        );
+        assert_eq!(info.fragment_offset(), 0x0123);
+        assert!(info.is_reserved_flag_set());
+        assert!(info.is_dont_fragment());
+        assert!(info.has_more_fragments());
+        assert!(info.is_fragmented());
+        assert!(ip.is_reserved_flag_set());
+        assert!(ip.is_dont_fragment());
+        assert!(ip.has_more_fragments());
+        assert!(ip.is_fragmented());
+
+        assert!(!Ipv4::new().dont_fragment(true).is_fragmented());
+        assert!(Ipv4::new().more_fragments(true).is_fragmented());
+        assert!(Ipv4::new().frag(1).is_fragmented());
+    }
+
+    #[test]
+    fn ipv4_fragment_info_round_trips_through_compile_and_decode() {
+        let packet = Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .id(0x4567)
+            .flags(IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS)
+            .frag(0x0123)
+            .proto(IpProtocol::Experimental1)
+            / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(&bytes.as_bytes()[4..6], &0x4567u16.to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[6..8], &0xe123u16.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+        let info = ipv4.fragment_info();
+
+        assert_eq!(info.identification(), 0x4567);
+        assert_eq!(
+            info.flags(),
+            IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS
+        );
+        assert_eq!(info.fragment_offset(), 0x0123);
+        assert!(info.is_reserved_flag_set());
+        assert!(info.is_dont_fragment());
+        assert!(info.has_more_fragments());
+        assert!(info.is_fragmented());
+        assert_eq!(decoded.compile().unwrap(), bytes);
     }
 }
 
