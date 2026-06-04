@@ -2478,7 +2478,7 @@ mod ipv4_tests {
 #[cfg(test)]
 mod ipv4_fragment_info {
     use super::{
-        IpProtocol, Ipv4, Ipv4FragmentInfo, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
+        Ipv4, Ipv4FragmentInfo, Ipv4Protocol, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
         IPV4_FLAG_RESERVED,
     };
     use crate::{NetworkLayer, Packet, Raw, Tcp, Udp};
@@ -2577,7 +2577,7 @@ mod ipv4_fragment_info {
             .id(0x4567)
             .flags(IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS)
             .frag(0x0123)
-            .proto(IpProtocol::Experimental1)
+            .ipv4_protocol(Ipv4Protocol::Experimental1)
             / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
         let bytes = packet.compile().unwrap();
 
@@ -2609,7 +2609,7 @@ mod ipv4_fragment_info {
             .dst(dst())
             .id(0x4568)
             .frag(1)
-            .proto(IpProtocol::Udp)
+            .ipv4_protocol(Ipv4Protocol::Udp)
             / Raw::from_bytes(payload))
         .compile()
         .unwrap();
@@ -2635,7 +2635,7 @@ mod ipv4_fragment_info {
             .dst(dst())
             .id(0x4569)
             .frag(1)
-            .proto(IpProtocol::Tcp)
+            .ipv4_protocol(Ipv4Protocol::Tcp)
             / Raw::from_bytes(payload))
         .compile()
         .unwrap();
@@ -2681,7 +2681,7 @@ mod ipv4_fragment_info {
             .dst(dst())
             .id(0x4571)
             .more_fragments(true)
-            .proto(IpProtocol::Udp)
+            .ipv4_protocol(Ipv4Protocol::Udp)
             / Raw::from_bytes(payload))
         .compile()
         .unwrap();
@@ -2725,7 +2725,7 @@ mod ipv4_fragment_info {
 
 #[cfg(test)]
 mod ipv4_header_length {
-    use super::{IpProtocol, Ipv4, IPV4_OPTION_NOP};
+    use super::{Ipv4, Ipv4Protocol, IPV4_OPTION_NOP};
     use crate::{CrafterError, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
@@ -2742,7 +2742,7 @@ mod ipv4_header_length {
         let ip = Ipv4::new()
             .src(src())
             .dst(dst())
-            .proto(IpProtocol::Experimental1);
+            .ipv4_protocol(Ipv4Protocol::Experimental1);
 
         assert_eq!(ip.ihl_value(), 5);
         assert_eq!(ip.header_len(), 20);
@@ -2767,7 +2767,7 @@ mod ipv4_header_length {
         let ip = Ipv4::new()
             .src(src())
             .dst(dst())
-            .proto(IpProtocol::Experimental1)
+            .ipv4_protocol(Ipv4Protocol::Experimental1)
             .option([IPV4_OPTION_NOP]);
 
         assert_eq!(ip.ihl_value(), 6);
@@ -2794,7 +2794,7 @@ mod ipv4_header_length {
         let ip = Ipv4::new()
             .src(src())
             .dst(dst())
-            .proto(IpProtocol::Experimental1)
+            .ipv4_protocol(Ipv4Protocol::Experimental1)
             .ihl(7);
 
         assert_eq!(ip.ihl_value(), 7);
@@ -2859,7 +2859,7 @@ mod ipv4_header_length {
 
 #[cfg(test)]
 mod ipv4_option_padding {
-    use super::{IpProtocol, Ipv4, Ipv4ChecksumStatus, IPV4_OPTION_NOP};
+    use super::{Ipv4, Ipv4ChecksumStatus, Ipv4Protocol, IPV4_OPTION_NOP};
     use crate::{checksum::verify_internet_checksum, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
@@ -2877,7 +2877,7 @@ mod ipv4_option_padding {
         let bytes = (Ipv4::new()
             .src(src())
             .dst(dst())
-            .proto(IpProtocol::Experimental1)
+            .ipv4_protocol(Ipv4Protocol::Experimental1)
             .option(options)
             / Raw::from_bytes(PAYLOAD))
         .compile()
@@ -2946,7 +2946,7 @@ mod ipv4_option_padding {
 
 #[cfg(test)]
 mod ipv4_eol_padding {
-    use super::{IpProtocol, Ipv4, Ipv4Option, IPV4_OPTION_EOL, IPV4_OPTION_NOP};
+    use super::{Ipv4, Ipv4Option, Ipv4Protocol, IPV4_OPTION_EOL, IPV4_OPTION_NOP};
     use crate::{NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
@@ -2974,7 +2974,7 @@ mod ipv4_eol_padding {
         let bytes = (Ipv4::new()
             .src(src())
             .dst(dst())
-            .proto(IpProtocol::Experimental1)
+            .ipv4_protocol(Ipv4Protocol::Experimental1)
             .option([IPV4_OPTION_NOP, IPV4_OPTION_EOL])
             / Raw::from_bytes(PAYLOAD))
         .compile()?;
@@ -3231,7 +3231,7 @@ mod ip_options {
 
 #[cfg(test)]
 mod ipv4_timestamp_option {
-    use super::{IpProtocol, Ipv4, Ipv4Option, IPV4_OPTION_TIMESTAMP};
+    use super::{Ipv4, Ipv4Option, Ipv4Protocol, IPV4_OPTION_TIMESTAMP};
     use crate::{CrafterError, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
@@ -3285,8 +3285,8 @@ mod ipv4_timestamp_option {
         let packet = Ipv4::new()
             .src(src())
             .dst(dst())
-            .proto(IpProtocol::Experimental1)
-            .ip_option(option.clone())
+            .ipv4_protocol(Ipv4Protocol::Experimental1)
+            .ipv4_option(option.clone())
             .unwrap()
             / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
         let bytes = packet.compile().unwrap();
@@ -3406,7 +3406,7 @@ mod ipv4_timestamp_option {
 
 #[cfg(test)]
 mod ipv4_router_alert_option {
-    use super::{IpProtocol, Ipv4, Ipv4Option, IPV4_OPTION_ROUTER_ALERT};
+    use super::{Ipv4, Ipv4Option, Ipv4Protocol, IPV4_OPTION_ROUTER_ALERT};
     use crate::{CrafterError, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
@@ -3438,8 +3438,8 @@ mod ipv4_router_alert_option {
         let packet = Ipv4::new()
             .src(src())
             .dst(dst())
-            .proto(IpProtocol::Experimental1)
-            .ip_option(option.clone())
+            .ipv4_protocol(Ipv4Protocol::Experimental1)
+            .ipv4_option(option.clone())
             .unwrap()
             / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
         let bytes = packet.compile().unwrap();
@@ -3525,7 +3525,7 @@ mod ipv4_checksum {
             .dst(Ipv4Addr::new(198, 51, 100, 20))
             .id(0x1234)
             .dont_fragment(true)
-            .proto(IpProtocol::Icmp)
+            .ipv4_protocol(Ipv4Protocol::Icmpv4)
             .checksum(0xbeef)
             .option([0x01])
             .option([0x07, 0x07, 0x04, 0xc0, 0x00, 0x02, 0x01])

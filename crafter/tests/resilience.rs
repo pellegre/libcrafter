@@ -1509,7 +1509,7 @@ proptest! {
             .ds_field(ds_field)
             .flags(flags)
             .fragment_offset(fragment_offset)
-            .proto(IpProtocol::Experimental1),
+            .ipv4_protocol(Ipv4Protocol::Experimental1),
             &options,
         );
         let packet = ipv4 / Raw::from(payload.clone());

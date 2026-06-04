@@ -169,15 +169,15 @@ are still required before adding body encoders or decoders.
 
 | Value | IANA keyword | IANA protocol name | IPv6 extension header | `crafter` coverage | Source-backed behavior |
 | ---: | --- | --- | :---: | --- | --- |
-| 0 | HOPOPT | IPv6 Hop-by-Hop Option | Y | Current `IpProtocol::HopByHop`; IPv6 module constant `IPPROTO_IPV6_HOPOPTS` | Assigned by IANA. In IPv4, no body decoder is implied by the enum value; unsupported payload remains `Raw`. |
-| 1 | ICMP | Internet Control Message |  | Current `IPPROTO_ICMP` and `IpProtocol::Icmp` | ICMP for IPv4. Decode may dispatch when the control header is complete and fragment offset is zero. |
-| 6 | TCP | Transmission Control |  | Current `IPPROTO_TCP` and `IpProtocol::Tcp` | TCP. Decode may dispatch only when fragment offset is zero and enough payload exists for a self-consistent TCP header. |
-| 17 | UDP | User Datagram |  | Current `IPPROTO_UDP` and `IpProtocol::Udp` | UDP. Decode may dispatch only when fragment offset is zero and enough payload exists for a self-consistent UDP datagram. |
-| 41 | IPv6 | IPv6 encapsulation |  | Current `IPPROTO_IPV6` and `IpProtocol::Ipv6` | Assigned IPv6-in-IPv4 encapsulation value. Until encapsulated IPv6 dispatch is explicitly implemented, preserve payload as `Raw`. |
+| 0 | HOPOPT | IPv6 Hop-by-Hop Option | Y | Current `Ipv4Protocol::HopByHop`; IPv6 module constant `IPPROTO_IPV6_HOPOPTS` | Assigned by IANA. In IPv4, no body decoder is implied by the enum value; unsupported payload remains `Raw`. |
+| 1 | ICMP | Internet Control Message |  | Current `IPPROTO_ICMP` and `Ipv4Protocol::Icmpv4` | ICMP for IPv4. Decode may dispatch when the control header is complete and fragment offset is zero. |
+| 6 | TCP | Transmission Control |  | Current `IPPROTO_TCP` and `Ipv4Protocol::Tcp` | TCP. Decode may dispatch only when fragment offset is zero and enough payload exists for a self-consistent TCP header. |
+| 17 | UDP | User Datagram |  | Current `IPPROTO_UDP` and `Ipv4Protocol::Udp` | UDP. Decode may dispatch only when fragment offset is zero and enough payload exists for a self-consistent UDP datagram. |
+| 41 | IPv6 | IPv6 encapsulation |  | Current `IPPROTO_IPV6` and `Ipv4Protocol::Ipv6` | Assigned IPv6-in-IPv4 encapsulation value. Until encapsulated IPv6 dispatch is explicitly implemented, preserve payload as `Raw`. |
 | 47 | GRE | Generic Routing Encapsulation |  | Planned protocol constant and label | Assigned GRE value. Adding a constant or label is source-backed; GRE header encode/decode requires GRE-specific evidence. |
 | 50 | ESP | Encap Security Payload | Y | Planned protocol constant and label | Assigned ESP value and also an IPv6 extension header type. Payload remains opaque unless ESP-specific support is added. |
 | 51 | AH | Authentication Header | Y | Planned protocol constant and label | Assigned AH value and also an IPv6 extension header type. Payload remains opaque unless AH-specific support is added. |
-| 58 | IPv6-ICMP | ICMP for IPv6 |  | Current `IPPROTO_ICMPV6` and `IpProtocol::Icmpv6` | Assigned ICMPv6 value. It can identify an IPv4 payload by number, but ICMPv6 body behavior follows ICMPv6 evidence and checksum rules. |
+| 58 | IPv6-ICMP | ICMP for IPv6 |  | Current `IPPROTO_ICMPV6` and `Ipv4Protocol::Icmpv6` | Assigned ICMPv6 value. It can identify an IPv4 payload by number, but ICMPv6 body behavior follows ICMPv6 evidence and checksum rules. |
 | 89 | OSPFIGP | OSPFIGP |  | Planned protocol constant and label | Assigned OSPF IGP value. Adding the number and label is source-backed; OSPF packet support requires OSPF-specific evidence. |
 | 132 | SCTP | Stream Control Transmission Protocol |  | Planned protocol constant and label | Assigned SCTP value. Adding the number and label is source-backed; SCTP chunk encode/decode requires SCTP-specific evidence. |
 | 148-252 | Unassigned | Unassigned |  | No constants planned | Unassigned as of the reviewed IANA registry. Decode must preserve payload as `Raw` unless a future registry update assigns a value. |

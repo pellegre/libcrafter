@@ -54,7 +54,7 @@ Implemented DSCP/ECN coverage:
 
 Implemented protocol-number behavior:
 
-- IANA-backed common `IPPROTO_*` constants and `IpProtocol` variants are
+- IANA-backed common `IPPROTO_*` constants and `Ipv4Protocol` variants are
   exported for ICMP, TCP, UDP, IPv6 encapsulation, GRE, ESP, AH, ICMPv6, OSPF,
   SCTP, and experimental/testing values 253 and 254.
 - Summaries and inspection output use richer protocol labels.

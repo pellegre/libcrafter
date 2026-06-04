@@ -72,6 +72,7 @@ pub use protocols::{
     DhcpOptionSegment, DhcpOptionStatus, DhcpOptionValue, DhcpRelayAgentInfo, DhcpRelaySuboption,
     DhcpRelayVendorSpecific, DhcpReplayDetectionMethod, DhcpState, DhcpStaticRoute, DhcpStatusCode,
     DhcpStatusCodeOption, DhcpUserClass, DhcpVendorClassData, DhcpVendorIdentifyingOption,
+    DhcpVendorSuboption, DhcpVssInfo, Dns, DnsName, DnsQuestion, DnsRecord, DnsRecordData,
     DnsTypeBitmaps, Dot1Q, Dscp, Ecn, EdnsOption, Ethernet, IcmpExtension,
     IcmpExtensionInterfaceId, IcmpExtensionInterfaceInfo, IcmpExtensionMpls, IcmpExtensionObject,
     IcmpInterfaceIpAddress, IcmpKind, IcmpLayer, Icmpv4, Icmpv4AddressMask, Icmpv4QuotedIp,
