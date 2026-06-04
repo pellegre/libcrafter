@@ -120,15 +120,30 @@ by itself.
 
 ## Protocol Number Evidence
 
-| Protocol value or range | Source | Behavior |
-| --- | --- | --- |
-| 0-147 | IANA Assigned Internet Protocol Numbers | Assigned protocol numbers have IANA keywords and labels. Public constants and summaries should use IANA names when added. |
-| 1 | IANA Assigned Internet Protocol Numbers; RFC 792 | ICMP for IPv4. Decode may dispatch when the transport/control header is complete and the fragment offset is zero. |
-| 6 | IANA Assigned Internet Protocol Numbers; RFC 9293 | TCP. Decode may dispatch only when the fragment offset is zero and enough payload exists for a self-consistent TCP header. |
-| 17 | IANA Assigned Internet Protocol Numbers; RFC 768 | UDP. Decode may dispatch only when the fragment offset is zero and enough payload exists for a self-consistent UDP header. |
-| 148-252 | IANA Assigned Internet Protocol Numbers | Unassigned as of the reviewed registry. Decode preserves payload as `Raw` unless later registry updates and decoders are added. |
-| 253-254 | IANA Assigned Internet Protocol Numbers; RFC 3692 | Reserved for experimentation and testing. Helpers must not treat experiment values as production defaults. |
-| 255 | IANA Assigned Internet Protocol Numbers | Reserved. Decode preserves payload as `Raw`. |
+The IANA Assigned Internet Protocol Numbers registry is the current authority
+for IPv4 Protocol field and IPv6 Next Header numeric assignments. The table
+below records values that are currently exported by `crafter` and the planned
+additions named for this enrichment. The IANA keyword and protocol-name columns
+should drive future constants, labels, and summaries; protocol-specific RFCs
+are still required before adding body encoders or decoders.
+
+| Value | IANA keyword | IANA protocol name | IPv6 extension header | `crafter` coverage | Source-backed behavior |
+| ---: | --- | --- | :---: | --- | --- |
+| 0 | HOPOPT | IPv6 Hop-by-Hop Option | Y | Current `IpProtocol::HopByHop`; IPv6 module constant `IPPROTO_IPV6_HOPOPTS` | Assigned by IANA. In IPv4, no body decoder is implied by the enum value; unsupported payload remains `Raw`. |
+| 1 | ICMP | Internet Control Message |  | Current `IPPROTO_ICMP` and `IpProtocol::Icmp` | ICMP for IPv4. Decode may dispatch when the control header is complete and fragment offset is zero. |
+| 6 | TCP | Transmission Control |  | Current `IPPROTO_TCP` and `IpProtocol::Tcp` | TCP. Decode may dispatch only when fragment offset is zero and enough payload exists for a self-consistent TCP header. |
+| 17 | UDP | User Datagram |  | Current `IPPROTO_UDP` and `IpProtocol::Udp` | UDP. Decode may dispatch only when fragment offset is zero and enough payload exists for a self-consistent UDP datagram. |
+| 41 | IPv6 | IPv6 encapsulation |  | Current `IPPROTO_IPV6` and `IpProtocol::Ipv6` | Assigned IPv6-in-IPv4 encapsulation value. Until encapsulated IPv6 dispatch is explicitly implemented, preserve payload as `Raw`. |
+| 47 | GRE | Generic Routing Encapsulation |  | Planned protocol constant and label | Assigned GRE value. Adding a constant or label is source-backed; GRE header encode/decode requires GRE-specific evidence. |
+| 50 | ESP | Encap Security Payload | Y | Planned protocol constant and label | Assigned ESP value and also an IPv6 extension header type. Payload remains opaque unless ESP-specific support is added. |
+| 51 | AH | Authentication Header | Y | Planned protocol constant and label | Assigned AH value and also an IPv6 extension header type. Payload remains opaque unless AH-specific support is added. |
+| 58 | IPv6-ICMP | ICMP for IPv6 |  | Current `IPPROTO_ICMPV6` and `IpProtocol::Icmpv6` | Assigned ICMPv6 value. It can identify an IPv4 payload by number, but ICMPv6 body behavior follows ICMPv6 evidence and checksum rules. |
+| 89 | OSPFIGP | OSPFIGP |  | Planned protocol constant and label | Assigned OSPF IGP value. Adding the number and label is source-backed; OSPF packet support requires OSPF-specific evidence. |
+| 132 | SCTP | Stream Control Transmission Protocol |  | Planned protocol constant and label | Assigned SCTP value. Adding the number and label is source-backed; SCTP chunk encode/decode requires SCTP-specific evidence. |
+| 148-252 | Unassigned | Unassigned |  | No constants planned | Unassigned as of the reviewed IANA registry. Decode must preserve payload as `Raw` unless a future registry update assigns a value. |
+| 253 |  | Use for experimentation and testing | Y | Planned experiment/testing label only | RFC 3692-style experiment value. Helpers must not use it as a production default. |
+| 254 |  | Use for experimentation and testing | Y | Planned experiment/testing label only | RFC 3692-style experiment value. Helpers must not use it as a production default. |
+| 255 |  | Reserved |  | No constant planned | Reserved by IANA. Decode preserves payload as `Raw`. |
 
 ## Option Evidence
 
