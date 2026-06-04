@@ -52,8 +52,9 @@ by itself.
   https://www.rfc-editor.org/rfc/rfc3168.html
 - **RFC 6864 - Updated Specification of the IPv4 ID Field** updates the meaning
   of the IPv4 Identification field, especially the distinction between atomic
-  and non-atomic datagrams and the requirement that ID values are used only for
-  fragmentation and reassembly. Source:
+  and non-atomic datagrams, the requirement that ID values are used only for
+  fragmentation and reassembly, and the remaining uniqueness requirements for
+  non-atomic datagram sources. Source:
   https://www.rfc-editor.org/rfc/rfc6864.html
 
 ### Registry authority
@@ -100,7 +101,7 @@ by itself.
 | Internet Header Length (IHL) | 4 bits | RFC 791 section 3.1 | IHL is the header length in 32-bit words. The minimum valid IPv4 header is 5 words (20 octets); the maximum encodable header is 15 words (60 octets). Compile fills IHL from fixed header plus options plus padding unless explicitly set. |
 | DS field / historical TOS octet | 8 bits | RFC 791 section 3.1; RFC 2474 section 3; RFC 3168 section 5; IANA DSCP registry | The old TOS octet is now interpreted as a six-bit DSCP plus two-bit ECN field. `.tos()` remains a compatibility alias for the full octet; new helpers should use DS field, DSCP, and ECN terminology. |
 | Total Length | 16 bits | RFC 791 section 3.1 | Total Length is the length in octets of IPv4 header plus data. Compile fills it from header and payload length unless explicitly set. Decode must respect the total-length boundary and preserve bytes after that boundary as following `Raw` data. |
-| Identification | 16 bits | RFC 791 sections 2.3 and 3.1; RFC 6864 sections 4.1-4.3 | ID distinguishes fragments of one non-atomic datagram from another. RFC 6864 says the field is meaningful for fragmentation/reassembly and may be arbitrary for atomic datagrams. Compile must preserve explicit IDs. |
+| Identification | 16 bits | RFC 791 sections 2.3 and 3.1; RFC 6864 sections 4.1-4.3 | ID distinguishes fragments of one non-atomic datagram from another. RFC 6864 says the field is meaningful for fragmentation/reassembly and may be arbitrary for atomic datagrams. `crafter` uses a deterministic default ID for reproducible packet construction, preserves explicit IDs, and does not provide global ID generation or uniqueness tracking. |
 | Flags | 3 bits | RFC 791 sections 2.3 and 3.1; RFC 6864 section 4.3 | The flags field contains the reserved bit, Don't Fragment (DF), and More Fragments (MF). DF=1 datagrams must not be fragmented. `crafter` may expose flags and preserve malformed/reserved-bit overrides; it does not fragment packets. |
 | Fragment Offset | 13 bits | RFC 791 sections 2.3 and 3.1 | Fragment Offset gives the fragment position in 8-octet units. Decode may type the IPv4 layer for fragments, but non-initial fragments remain `Raw` above IPv4 because transport headers cannot be interpreted without reassembly. |
 | Time to Live (TTL) | 8 bits | RFC 791 sections 2.4 and 3.1; RFC 1122 section 3.2.1.7; IANA IPv4 Parameters | TTL bounds datagram lifetime and is decremented by nodes that process/forward it. RFC 1122 says hosts must not send TTL zero. IANA records the current recommended default TTL as 64. |
@@ -124,6 +125,30 @@ by itself.
   expiration, ICMP Time Exceeded generation caused by forwarding, and hop-by-hop
   checksum recomputation after TTL decrement are not crate primitive
   responsibilities.
+
+## IPv4 Identification And RFC 6864
+
+- **Source facts:** RFC 6864 defines atomic datagrams as `DF=1`, `MF=0`, and
+  fragment offset `0`; non-atomic datagrams either allow fragmentation
+  (`DF=0`) or already carry fragment metadata (`MF=1` or nonzero fragment
+  offset). RFC 6864 says the Identification field has no meaning for atomic
+  datagrams, may be set to any value in those datagrams, and must be ignored by
+  devices that examine atomic IPv4 headers. For non-atomic datagrams, RFC 6864
+  retains the source requirement not to repeat IPv4 ID values within one MDL for
+  a given source address, destination address, and protocol tuple.
+- **`crafter` default behavior:** `Ipv4::new()` uses deterministic packet
+  builder defaults: Identification `1`, flags `0`, and fragment offset `0`.
+  That default is for reproducible offline construction and tests; it is not a
+  per-source, per-destination, per-protocol ID allocator. `compile()` writes the
+  configured or default Identification value and never attempts global
+  uniqueness management.
+- **Explicit override behavior:** `.identification(...)` and the compatibility
+  `.id(...)` alias set the exact 16-bit field value to compile. Decode preserves
+  the wire Identification value for inspection, summary, and re-encode.
+- **Explicit non-goals:** `crafter` does not generate globally unique IPv4 IDs,
+  maintain fragment caches, enforce RFC 6864 non-atomic source rate limits,
+  perform fragmentation, perform reassembly, or assign reassembly semantics to
+  the Identification field beyond exposing and preserving the header value.
 
 ## DSCP And ECN Evidence
 
