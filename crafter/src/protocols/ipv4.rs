@@ -2816,6 +2816,93 @@ mod ipv4_header_length {
 }
 
 #[cfg(test)]
+mod ipv4_option_padding {
+    use super::{IpProtocol, Ipv4, Ipv4ChecksumStatus, IPV4_OPTION_NOP};
+    use crate::{checksum::verify_internet_checksum, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    const PAYLOAD: [u8; 4] = [0xde, 0xad, 0xbe, 0xef];
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    fn assert_ipv4_option_padding(options: &[u8], padded_options: &[u8]) {
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .proto(IpProtocol::Experimental1)
+            .option(options)
+            / Raw::from_bytes(PAYLOAD))
+        .compile()
+        .unwrap();
+        let wire = bytes.as_bytes();
+        let header_len = 20 + padded_options.len();
+        let total_len = header_len + PAYLOAD.len();
+
+        assert_eq!(wire[0], 0x40 | (header_len / 4) as u8);
+        assert_eq!(&wire[2..4], &(total_len as u16).to_be_bytes());
+        assert_eq!(&wire[20..header_len], padded_options);
+        assert_eq!(&wire[header_len..total_len], &PAYLOAD);
+        assert!(verify_internet_checksum(&wire[..header_len]));
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, wire).unwrap();
+        let decoded_ip = decoded.layer::<Ipv4>().unwrap();
+
+        assert_eq!(decoded_ip.ihl_value(), (header_len / 4) as u8);
+        assert_eq!(decoded_ip.header_len(), header_len);
+        assert_eq!(decoded_ip.total_length_value(), Some(total_len as u16));
+        assert_eq!(decoded_ip.checksum_status(), Ipv4ChecksumStatus::Valid);
+        assert_eq!(decoded_ip.option_bytes(), padded_options);
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &PAYLOAD);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), wire);
+    }
+
+    #[test]
+    fn ipv4_option_padding_one_byte_option_area() {
+        assert_ipv4_option_padding(&[IPV4_OPTION_NOP], &[IPV4_OPTION_NOP, 0, 0, 0]);
+    }
+
+    #[test]
+    fn ipv4_option_padding_two_byte_option_area() {
+        assert_ipv4_option_padding(
+            &[IPV4_OPTION_NOP, IPV4_OPTION_NOP],
+            &[IPV4_OPTION_NOP, IPV4_OPTION_NOP, 0, 0],
+        );
+    }
+
+    #[test]
+    fn ipv4_option_padding_three_byte_option_area() {
+        assert_ipv4_option_padding(
+            &[IPV4_OPTION_NOP, IPV4_OPTION_NOP, IPV4_OPTION_NOP],
+            &[IPV4_OPTION_NOP, IPV4_OPTION_NOP, IPV4_OPTION_NOP, 0],
+        );
+    }
+
+    #[test]
+    fn ipv4_option_padding_already_aligned_option_area() {
+        assert_ipv4_option_padding(
+            &[
+                IPV4_OPTION_NOP,
+                IPV4_OPTION_NOP,
+                IPV4_OPTION_NOP,
+                IPV4_OPTION_NOP,
+            ],
+            &[
+                IPV4_OPTION_NOP,
+                IPV4_OPTION_NOP,
+                IPV4_OPTION_NOP,
+                IPV4_OPTION_NOP,
+            ],
+        );
+    }
+}
+
+#[cfg(test)]
 mod ipv4_option_kind {
     use super::{
         Ipv4OptionKind, IPV4_OPTION_EOL, IPV4_OPTION_EXPERIMENTAL_1, IPV4_OPTION_EXPERIMENTAL_2,
