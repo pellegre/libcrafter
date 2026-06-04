@@ -495,7 +495,7 @@ fn ipv4_layer(plan: &Value) -> ExampleResult<Ipv4> {
         .ttl(u8_value(required(fields, &["ttl"])?)?)
         .flags(ipv4_flags(required(fields, &["flags"])?)?)
         .protocol(ip_protocol(required(fields, &["protocol", "proto"])?)?);
-    if let Some(value) = optional(fields, &["tos"]) {
+    if let Some(value) = optional(fields, &["ds_field", "tos"]) {
         layer = layer.tos(u8_value(value)?);
     }
     if let Some(value) = optional(fields, &["fragment_offset", "frag"]) {

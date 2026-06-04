@@ -1,7 +1,7 @@
 version: 1
 kind: layer
 name: ipv4
-summary: IPv4 header, fragmentation fields, options, and raw protocol fallback.
+summary: IPv4 header, DSCP/ECN, fragmentation fields, options, and raw protocol fallback.
 
 roots:
   - "l3:ipv4"
@@ -30,6 +30,59 @@ fields:
     domains:
       - documentation_ipv4
       - broadcast
+  - name: ds_field
+    type: uint8
+    required: true
+    domains:
+      - 0
+      - dscp_ef_ecn_not_ect
+      - dscp_cs5_ecn_ect0
+      - boundary
+  - name: dscp
+    type: uint6
+    required: false
+    domains:
+      - cs0
+      - cs1
+      - cs2
+      - cs3
+      - cs4
+      - cs5
+      - cs6
+      - cs7
+      - af11
+      - af21
+      - af31
+      - af41
+      - ef
+      - voice_admit
+      - le
+      - nqb
+      - boundary
+  - name: ecn
+    type: uint2
+    required: false
+    domains:
+      - not_ect
+      - ect1
+      - ect0
+      - ce
+  - name: header_length
+    type: uint4
+    required: true
+    domains:
+      - derived
+      - minimum
+      - options
+      - maximum
+  - name: length
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - header_only
+      - with_payload
+      - boundary
   - name: ttl
     type: uint8
     required: true
@@ -42,10 +95,21 @@ fields:
     type: uint8
     required: true
     domains:
+      - hop_by_hop
       - icmp
       - tcp
       - udp
+      - ipv6
+      - gre
+      - esp
+      - ah
+      - icmpv6
+      - ospf
+      - sctp
+      - experimental_1
+      - experimental_2
       - unknown
+      - reserved
   - name: identification
     type: uint16
     required: true
@@ -57,14 +121,26 @@ fields:
     required: true
     domains:
       - none
+      - reserved
       - df
       - mf
+      - df_mf
+      - all
   - name: fragment_offset
     type: uint13
     required: true
     domains:
       - 0
       - 1
+      - non_initial
+      - boundary
+  - name: checksum
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - explicit
+      - explicit_invalid
       - boundary
   - name: options
     type: option_list
@@ -74,8 +150,11 @@ fields:
       - nop
       - record_route
       - loose_source_route
+      - strict_source_route
       - timestamp
       - traceroute
+      - router_alert
+      - experimental
       - generic
 
 coverage_cases:

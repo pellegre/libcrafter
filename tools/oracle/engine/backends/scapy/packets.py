@@ -181,6 +181,7 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
     "icmpv6": {"checksum", "cksum", "code", "id", "identifier", "seq", "sequence", "type"},
     "ipv4": {
         "dst",
+        "ds_field",
         "flags",
         "frag",
         "fragment_offset",
@@ -585,6 +586,8 @@ def _ipv4(fields: Mapping[str, JSONObject], stack: list[str], index: int, scapy_
     }
     if "tos" in ipv4_fields:
         kwargs["tos"] = _int(ipv4_fields.get("tos"), 0)
+    if "ds_field" in ipv4_fields:
+        kwargs["tos"] = _int(ipv4_fields.get("ds_field"), 0)
     if "fragment_offset" in ipv4_fields or "frag" in ipv4_fields:
         kwargs["frag"] = _int(_optional_field(ipv4_fields, "fragment_offset", "frag"), 0)
     if "options" in ipv4_fields:
