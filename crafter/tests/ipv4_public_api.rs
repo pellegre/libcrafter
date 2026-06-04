@@ -750,6 +750,80 @@ fn ipv4_length_boundaries_accept_header_payload_and_trailing_bytes() -> crafter:
 }
 
 #[test]
+fn unknown_protocol_ipv4_non_empty_payload_is_preserved_as_raw() -> crafter::Result<()> {
+    let payload = [0xde, 0xad, 0xbe, 0xef, 0x42];
+    let packet =
+        Ipv4::new().src(DOC_SRC).dst(DOC_DST).ttl(47).protocol(253) / Raw::from_bytes(payload);
+
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+    assert_eq!(bytes[9], 253, "wire protocol");
+    assert_eq!(read_u16_at(bytes, 2), 25, "wire total length");
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+    assert_eq!(decoded.len(), 2);
+    let ipv4 = decoded.layer::<Ipv4>().expect("ipv4 layer");
+    assert_eq!(ipv4.source(), DOC_SRC);
+    assert_eq!(ipv4.destination(), DOC_DST);
+    assert_eq!(ipv4.protocol_value(), 253);
+    assert_eq!(ipv4.total_length_value(), Some(25));
+    assert_eq!(
+        decoded.layer::<Raw>().expect("raw payload").as_bytes(),
+        payload
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn unknown_protocol_ipv4_empty_payload_does_not_synthesize_raw() -> crafter::Result<()> {
+    let packet = Packet::from_layer(Ipv4::new().src(DOC_SRC).dst(DOC_DST).ttl(48).protocol(253));
+
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+    assert_eq!(bytes.len(), 20);
+    assert_eq!(bytes[9], 253, "wire protocol");
+    assert_eq!(read_u16_at(bytes, 2), 20, "wire total length");
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+    assert_eq!(decoded.len(), 1);
+    let ipv4 = decoded.layer::<Ipv4>().expect("ipv4 layer");
+    assert_eq!(ipv4.protocol_value(), 253);
+    assert_eq!(ipv4.total_length_value(), Some(20));
+    assert!(decoded.layer::<Raw>().is_none());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn unknown_protocol_ipv4_trailing_bytes_after_total_length_are_separate_raw_tail(
+) -> crafter::Result<()> {
+    let payload = b"opaque-ipv4";
+    let tail = b"tail-after-total-length";
+    let packet =
+        Ipv4::new().src(DOC_SRC).dst(DOC_DST).ttl(49).protocol(253) / Raw::from_bytes(payload);
+
+    let compiled = packet.compile()?;
+    let mut bytes = compiled.as_bytes().to_vec();
+    assert_eq!(read_u16_at(&bytes, 2), 20 + payload.len() as u16);
+    bytes.extend_from_slice(tail);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)?;
+    assert_eq!(decoded.len(), 3);
+    let ipv4 = decoded.layer::<Ipv4>().expect("ipv4 layer");
+    assert_eq!(ipv4.protocol_value(), 253);
+    assert_eq!(ipv4.total_length_value(), Some(20 + payload.len() as u16));
+
+    let raw_layers: Vec<_> = decoded.layers::<Raw>().map(Raw::as_bytes).collect();
+    assert_eq!(raw_layers, vec![payload.as_slice(), tail.as_slice()]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
 fn ipv4_length_boundaries_reject_inconsistent_total_lengths() -> crafter::Result<()> {
     let header_only =
         Packet::from_layer(Ipv4::new().src(DOC_SRC).dst(DOC_DST).ttl(34)).compile()?;
