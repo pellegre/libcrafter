@@ -72,6 +72,8 @@ Valid byte fixtures cover:
   `ipv4-icmp-destination-unreachable.hex`
 - IPv4 DSCP and ECN decode:
   `ipv4-udp-dscp-ecn-raw.hex`
+- IPv4 fragmentation fields without reassembly:
+  `ipv4-fragment-noninitial-raw.hex`
 - IPv4 options and TCP options:
   `ipv4-options-traceroute-udp-raw.hex`, `ipv4-tcp-syn-options.hex`,
   `ipv4-tcp-syn-rich-options.hex` (MSS, Window Scale, SACK Permitted,
