@@ -697,6 +697,18 @@ impl Ipv4 {
         self
     }
 
+    /// Set or clear the reserved IPv4 flag bit.
+    pub fn reserved_flag(mut self, enabled: bool) -> Self {
+        let mut flags = self.flags_value();
+        if enabled {
+            flags |= IPV4_FLAG_RESERVED;
+        } else {
+            flags &= !IPV4_FLAG_RESERVED;
+        }
+        self.flags.set_user(flags);
+        self
+    }
+
     /// Set or clear the "don't fragment" flag.
     pub fn dont_fragment(mut self, enabled: bool) -> Self {
         let mut flags = self.flags_value();
@@ -2018,6 +2030,37 @@ mod ipv4_fragment_info {
         assert!(!info.is_fragmented());
         assert!(!ip.is_reserved_flag_set());
         assert!(!ip.is_fragmented());
+    }
+
+    #[test]
+    fn ipv4_reserved_flag_builder_sets_only_reserved_flag() {
+        let ip = Ipv4::new()
+            .dont_fragment(true)
+            .more_fragments(true)
+            .reserved_flag(true);
+
+        assert_eq!(
+            ip.flags_value(),
+            IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS
+        );
+        assert!(ip.is_reserved_flag_set());
+        assert!(ip.is_dont_fragment());
+        assert!(ip.has_more_fragments());
+    }
+
+    #[test]
+    fn ipv4_reserved_flag_builder_clears_only_reserved_flag() {
+        let ip = Ipv4::new()
+            .flags(IPV4_FLAG_RESERVED | IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS)
+            .reserved_flag(false);
+
+        assert_eq!(
+            ip.flags_value(),
+            IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS
+        );
+        assert!(!ip.is_reserved_flag_set());
+        assert!(ip.is_dont_fragment());
+        assert!(ip.has_more_fragments());
     }
 
     #[test]
