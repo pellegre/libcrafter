@@ -1916,6 +1916,140 @@ mod ipv4_tests {
 }
 
 #[cfg(test)]
+mod ipv4_header_length {
+    use super::{IpProtocol, Ipv4, IPV4_OPTION_NOP};
+    use crate::{CrafterError, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn ipv4_header_length_defaults_to_minimum_without_options() {
+        let ip = Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .proto(IpProtocol::Experimental1);
+
+        assert_eq!(ip.ihl_value(), 5);
+        assert_eq!(ip.header_len(), 20);
+
+        let bytes = (ip / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]))
+            .compile()
+            .unwrap();
+
+        assert_eq!(bytes.as_bytes()[0], 0x45);
+        assert_eq!(&bytes.as_bytes()[2..4], &(24u16).to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let decoded_ip = decoded.layer::<Ipv4>().unwrap();
+
+        assert_eq!(decoded_ip.ihl_value(), 5);
+        assert_eq!(decoded_ip.header_len(), 20);
+        assert!(decoded_ip.option_bytes().is_empty());
+    }
+
+    #[test]
+    fn ipv4_header_length_pads_options_to_word_boundary() {
+        let ip = Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .proto(IpProtocol::Experimental1)
+            .option([IPV4_OPTION_NOP]);
+
+        assert_eq!(ip.ihl_value(), 6);
+        assert_eq!(ip.header_len(), 24);
+
+        let bytes = (ip / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]))
+            .compile()
+            .unwrap();
+
+        assert_eq!(bytes.as_bytes()[0], 0x46);
+        assert_eq!(&bytes.as_bytes()[2..4], &(28u16).to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[20..24], &[IPV4_OPTION_NOP, 0, 0, 0]);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let decoded_ip = decoded.layer::<Ipv4>().unwrap();
+
+        assert_eq!(decoded_ip.ihl_value(), 6);
+        assert_eq!(decoded_ip.header_len(), 24);
+        assert_eq!(decoded_ip.option_bytes(), &[IPV4_OPTION_NOP, 0, 0, 0]);
+    }
+
+    #[test]
+    fn ipv4_header_length_preserves_explicit_ihl() {
+        let ip = Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .proto(IpProtocol::Experimental1)
+            .ihl(7);
+
+        assert_eq!(ip.ihl_value(), 7);
+        assert_eq!(ip.header_len(), 28);
+
+        let bytes = (ip / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]))
+            .compile()
+            .unwrap();
+
+        assert_eq!(bytes.as_bytes()[0], 0x47);
+        assert_eq!(&bytes.as_bytes()[2..4], &(32u16).to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[20..28], &[0; 8]);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let decoded_ip = decoded.layer::<Ipv4>().unwrap();
+
+        assert_eq!(decoded_ip.ihl_value(), 7);
+        assert_eq!(decoded_ip.header_len(), 28);
+        assert_eq!(decoded_ip.option_bytes(), &[0; 8]);
+    }
+
+    #[test]
+    fn ipv4_header_length_rejects_too_small_ihl_errors() {
+        let error = Packet::new()
+            .push(Ipv4::new().ihl(4))
+            .compile()
+            .unwrap_err();
+        assert_eq!(
+            error,
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.ihl",
+                reason: "internet header length must be at least 5 words",
+            }
+        );
+
+        let error = Packet::new()
+            .push(Ipv4::new().ihl(5).option([IPV4_OPTION_NOP]))
+            .compile()
+            .unwrap_err();
+        assert_eq!(
+            error,
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.ihl",
+                reason: "internet header length is too small for option bytes",
+            }
+        );
+
+        let mut bytes = [0u8; 20];
+        bytes[0] = 0x44;
+        bytes[2..4].copy_from_slice(&(20u16).to_be_bytes());
+
+        let error = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes).unwrap_err();
+        assert_eq!(
+            error,
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.ihl",
+                reason: "internet header length must be at least 5 words",
+            }
+        );
+    }
+}
+
+#[cfg(test)]
 mod ip_options {
     use super::{Ipv4, Ipv4Option, Ipv4Protocol, Ipv4RouteOptionKind, IPV4_OPTION_NOP};
     use crate::{NetworkLayer, Packet, Raw};
