@@ -24,7 +24,10 @@ use crafter::core::{
     IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
     UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
-use crafter::{PcapError, PcapLinkType, PcapReader, PcapTimestamp, TimestampPrecision};
+use crafter::{
+    PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
+    TimestampPrecision,
+};
 use support::fixture_path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2876,6 +2879,118 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
             "pcap fixture {path} must be listed in PCAP_FIXTURES"
         );
     }
+}
+
+#[test]
+fn pcap_fixture_roundtrips() {
+    let case = PCAP_FIXTURES
+        .iter()
+        .find(|case| case.name == "raw-ipv4-udp-dscp-ecn-raw")
+        .expect("raw IPv4 DSCP/ECN pcap fixture should be cataloged");
+    let expected = case.records[0];
+    let expected_fixture = valid_fixture_case(expected.fixture_name);
+    let expected_bytes = fixture_bytes_for_case(expected_fixture);
+    let expected_timestamp = PcapTimestamp::new(
+        expected.seconds,
+        expected.fractional,
+        case.timestamp_precision,
+    )
+    .unwrap_or_else(|err| {
+        panic!(
+            "pcap fixture {} timestamp should be valid: {err}",
+            case.path
+        )
+    });
+
+    let records = PcapReader::from_reader(case.contents)
+        .unwrap_or_else(|err| panic!("pcap fixture {} should parse header: {err}", case.path))
+        .collect_records()
+        .unwrap_or_else(|err| panic!("pcap fixture {} should read records: {err}", case.path));
+    assert_eq!(records.len(), 1);
+
+    let record = &records[0];
+    assert_eq!(record.timestamp(), expected_timestamp);
+    assert_eq!(record.pcap_link_type(), case.pcap_link_type);
+    assert_eq!(record.link_type(), case.link_type);
+    assert_eq!(record.captured_len(), expected_bytes.len() as u32);
+    assert_eq!(record.original_len(), expected_bytes.len() as u32);
+    assert_eq!(record.data(), expected_bytes.as_slice());
+
+    let decoded = record
+        .decode()
+        .unwrap_or_else(|err| panic!("pcap fixture {} should decode: {err}", case.path));
+    assert_packet_surface(expected_fixture, &decoded);
+    assert_fixture_fields(expected_fixture, &decoded);
+    assert_compile_decode_compile(
+        expected_fixture,
+        packet_target_for_case(expected_fixture),
+        &decoded,
+        &expected_bytes,
+    );
+
+    let packets = PcapReader::from_reader(case.contents)
+        .unwrap_or_else(|err| {
+            panic!(
+                "pcap fixture {} should parse header for packets: {err}",
+                case.path
+            )
+        })
+        .collect_packets()
+        .unwrap_or_else(|err| panic!("pcap fixture {} should decode packets: {err}", case.path));
+    assert_eq!(packets.len(), 1);
+    let packet = &packets[0];
+    assert_eq!(packet.timestamp(), expected_timestamp);
+    assert_eq!(packet.original_len(), expected_bytes.len() as u32);
+    assert_eq!(packet.pcap_link_type(), case.pcap_link_type);
+    assert_eq!(packet.link_type(), case.link_type);
+    assert_eq!(packet.data(), expected_bytes.as_slice());
+    assert_fixture_fields(expected_fixture, packet.packet());
+    assert_eq!(
+        packet.packet().compile().unwrap().as_bytes(),
+        expected_bytes.as_slice()
+    );
+
+    let mut rewritten_packet = Vec::new();
+    {
+        let options =
+            PcapWriterOptions::new(case.pcap_link_type).precision(case.timestamp_precision);
+        let mut writer = PcapWriter::from_writer_with_options(&mut rewritten_packet, options)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} packet writer should initialize: {err}",
+                    case.path
+                )
+            });
+        writer
+            .write_packet_with_timestamp(packet.packet(), expected_timestamp)
+            .unwrap_or_else(|err| panic!("pcap fixture {} packet should write: {err}", case.path));
+        writer.flush().unwrap_or_else(|err| {
+            panic!(
+                "pcap fixture {} packet writer should flush: {err}",
+                case.path
+            )
+        });
+    }
+    assert_eq!(rewritten_packet, case.contents);
+
+    let mut rewritten = Vec::new();
+    {
+        let options =
+            PcapWriterOptions::new(case.pcap_link_type).precision(case.timestamp_precision);
+        let mut writer = PcapWriter::from_writer_with_options(&mut rewritten, options)
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} writer should initialize: {err}", case.path)
+            });
+        for record in &records {
+            writer.write_record(record).unwrap_or_else(|err| {
+                panic!("pcap fixture {} record should write: {err}", case.path)
+            });
+        }
+        writer
+            .flush()
+            .unwrap_or_else(|err| panic!("pcap fixture {} writer should flush: {err}", case.path));
+    }
+    assert_eq!(rewritten, case.contents);
 }
 
 #[test]
