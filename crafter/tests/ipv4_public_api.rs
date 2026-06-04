@@ -76,6 +76,43 @@ fn assert_dscp_ecn_roundtrip(
     Ok(())
 }
 
+fn assert_ttl_roundtrip(
+    name: &str,
+    packet: Packet,
+    expected_ttl: u8,
+    expected_raw_len: usize,
+) -> crafter::Result<()> {
+    let expected_summary = format!(
+        "Ipv4(src={DOC_SRC}, dst={DOC_DST}, proto=hopopt(0)) / Raw(len={expected_raw_len})"
+    );
+
+    assert_eq!(packet.summary(), expected_summary, "{name} summary");
+
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+    assert_eq!(bytes[8], expected_ttl, "{name} wire ttl");
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+    let ipv4 = decoded.layer::<Ipv4>().expect("ipv4 layer");
+    assert_eq!(ipv4.ttl_value(), expected_ttl, "{name} decoded ttl");
+    assert_eq!(
+        decoded.summary(),
+        expected_summary,
+        "{name} decoded summary"
+    );
+
+    let show = decoded.show();
+    assert!(
+        show.contains(&format!("      ttl: {expected_ttl}\n")),
+        "{name} show output should include ttl {expected_ttl}:\n{show}"
+    );
+
+    let recompiled = decoded.compile()?;
+    assert_eq!(recompiled.as_bytes(), bytes, "{name} recompiled bytes");
+
+    Ok(())
+}
+
 #[test]
 fn ipv4_new_with_raw_compiles_to_current_wire_header() -> crafter::Result<()> {
     let packet = ipv4_raw_packet();
@@ -84,6 +121,28 @@ fn ipv4_new_with_raw_compiles_to_current_wire_header() -> crafter::Result<()> {
     assert_eq!(compiled.as_bytes(), EXPECTED_BYTES);
     assert_eq!(compiled.len(), 24);
     assert!(!compiled.is_empty());
+    Ok(())
+}
+
+#[test]
+fn ipv4_ttl_default_explicit_zero_decode_summary_and_show() -> crafter::Result<()> {
+    let default_ipv4 = Ipv4::new().src(DOC_SRC).dst(DOC_DST);
+    assert_eq!(default_ipv4.ttl_value(), 64, "default ipv4 ttl");
+    assert_ttl_roundtrip("default", default_ipv4 / Raw::from("ttl-default"), 64, 11)?;
+
+    let cases = [
+        ("zero", 0, "ttl-zero"),
+        ("one", 1, "ttl-one"),
+        ("sixty-four", 64, "ttl-sixty-four"),
+        ("max", 255, "ttl-max"),
+    ];
+
+    for (name, ttl, payload) in cases {
+        let ipv4 = Ipv4::new().src(DOC_SRC).dst(DOC_DST).ttl(ttl);
+        assert_eq!(ipv4.ttl_value(), ttl, "{name} builder ttl");
+        assert_ttl_roundtrip(name, ipv4 / Raw::from(payload), ttl, payload.len())?;
+    }
+
     Ok(())
 }
 
