@@ -22,8 +22,22 @@ pub const IPPROTO_TCP: u8 = 6;
 pub const IPPROTO_UDP: u8 = 17;
 /// IPv4 protocol number for IPv6 encapsulation.
 pub const IPPROTO_IPV6: u8 = 41;
+/// IPv4 protocol number for Generic Routing Encapsulation.
+pub const IPPROTO_GRE: u8 = 47;
+/// IPv4 protocol number for Encapsulating Security Payload.
+pub const IPPROTO_ESP: u8 = 50;
+/// IPv4 protocol number for Authentication Header.
+pub const IPPROTO_AH: u8 = 51;
 /// IPv4 protocol number for ICMPv6.
 pub const IPPROTO_ICMPV6: u8 = 58;
+/// IPv4 protocol number for Open Shortest Path First IGP.
+pub const IPPROTO_OSPF: u8 = 89;
+/// IPv4 protocol number for Stream Control Transmission Protocol.
+pub const IPPROTO_SCTP: u8 = 132;
+/// IPv4 protocol number reserved for experimentation and testing.
+pub const IPPROTO_EXPERIMENTAL_1: u8 = 253;
+/// IPv4 protocol number reserved for experimentation and testing.
+pub const IPPROTO_EXPERIMENTAL_2: u8 = 254;
 
 /// IPv4 "reserved" flag bit.
 pub const IPV4_FLAG_RESERVED: u8 = 0b100;
@@ -210,8 +224,22 @@ pub enum Ipv4Protocol {
     Udp = IPPROTO_UDP,
     /// IPv6 encapsulation.
     Ipv6 = IPPROTO_IPV6,
+    /// Generic Routing Encapsulation.
+    Gre = IPPROTO_GRE,
+    /// Encapsulating Security Payload.
+    Esp = IPPROTO_ESP,
+    /// Authentication Header.
+    Ah = IPPROTO_AH,
     /// ICMPv6.
     Icmpv6 = IPPROTO_ICMPV6,
+    /// Open Shortest Path First IGP.
+    Ospf = IPPROTO_OSPF,
+    /// Stream Control Transmission Protocol.
+    Sctp = IPPROTO_SCTP,
+    /// Experimentation and testing value 1.
+    Experimental1 = IPPROTO_EXPERIMENTAL_1,
+    /// Experimentation and testing value 2.
+    Experimental2 = IPPROTO_EXPERIMENTAL_2,
 }
 
 impl From<Ipv4Protocol> for u8 {
@@ -1383,7 +1411,14 @@ fn protocol_summary(protocol: u8) -> String {
         IPPROTO_TCP => "tcp(6)".to_string(),
         IPPROTO_UDP => "udp(17)".to_string(),
         IPPROTO_IPV6 => "ipv6(41)".to_string(),
+        IPPROTO_GRE => "gre(47)".to_string(),
+        IPPROTO_ESP => "esp(50)".to_string(),
+        IPPROTO_AH => "ah(51)".to_string(),
         IPPROTO_ICMPV6 => "icmpv6(58)".to_string(),
+        IPPROTO_OSPF => "ospf(89)".to_string(),
+        IPPROTO_SCTP => "sctp(132)".to_string(),
+        IPPROTO_EXPERIMENTAL_1 => "experimental(253)".to_string(),
+        IPPROTO_EXPERIMENTAL_2 => "experimental(254)".to_string(),
         value => value.to_string(),
     }
 }
@@ -1417,6 +1452,79 @@ fn hex_bytes(bytes: &[u8]) -> String {
     }
 
     output
+}
+
+#[cfg(test)]
+mod ip_protocol {
+    use super::{
+        protocol_summary, IpProtocol, Ipv4, IPPROTO_AH, IPPROTO_ESP, IPPROTO_EXPERIMENTAL_1,
+        IPPROTO_EXPERIMENTAL_2, IPPROTO_GRE, IPPROTO_OSPF, IPPROTO_SCTP,
+    };
+    use crate::{NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn ip_protocol_constants_and_variants_match_manifest_values() {
+        let cases = [
+            (IpProtocol::Gre, IPPROTO_GRE, "gre(47)"),
+            (IpProtocol::Esp, IPPROTO_ESP, "esp(50)"),
+            (IpProtocol::Ah, IPPROTO_AH, "ah(51)"),
+            (IpProtocol::Ospf, IPPROTO_OSPF, "ospf(89)"),
+            (IpProtocol::Sctp, IPPROTO_SCTP, "sctp(132)"),
+            (
+                IpProtocol::Experimental1,
+                IPPROTO_EXPERIMENTAL_1,
+                "experimental(253)",
+            ),
+            (
+                IpProtocol::Experimental2,
+                IPPROTO_EXPERIMENTAL_2,
+                "experimental(254)",
+            ),
+        ];
+
+        for (protocol, value, label) in cases {
+            assert_eq!(u8::from(protocol), value);
+            assert_eq!(protocol_summary(value), label);
+        }
+    }
+
+    #[test]
+    fn ip_protocol_source_backed_unsupported_values_decode_as_raw_payload() {
+        let cases = [
+            IpProtocol::Gre,
+            IpProtocol::Esp,
+            IpProtocol::Ah,
+            IpProtocol::Ospf,
+            IpProtocol::Sctp,
+            IpProtocol::Experimental1,
+            IpProtocol::Experimental2,
+        ];
+
+        for protocol in cases {
+            let payload = [u8::from(protocol), 0xde, 0xad, 0xbe, 0xef];
+            let bytes = (Ipv4::new().src(src()).dst(dst()).proto(protocol)
+                / Raw::from_bytes(payload))
+            .compile()
+            .unwrap();
+            assert_eq!(bytes.as_bytes()[9], u8::from(protocol));
+
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+            let ipv4 = decoded.layer::<Ipv4>().unwrap();
+            let raw = decoded.layer::<Raw>().unwrap();
+
+            assert_eq!(ipv4.protocol_value(), u8::from(protocol));
+            assert_eq!(raw.as_bytes(), payload);
+        }
+    }
 }
 
 #[cfg(test)]
