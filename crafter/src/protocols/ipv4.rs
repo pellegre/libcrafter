@@ -1349,29 +1349,42 @@ impl Layer for Ipv4 {
     }
 
     fn summary(&self) -> String {
-        let checksum_status = checksum_status_summary(self.checksum_status());
-        if checksum_status.is_empty() {
-            format!(
-                "Ipv4(src={}, dst={}, proto={})",
-                self.source(),
-                self.destination(),
-                protocol_summary(self.protocol_value())
-            )
-        } else {
-            format!(
-                "Ipv4(src={}, dst={}, proto={}, checksum_status={checksum_status})",
-                self.source(),
-                self.destination(),
-                protocol_summary(self.protocol_value())
-            )
+        let mut fields = vec![
+            format!("src={}", self.source()),
+            format!("dst={}", self.destination()),
+            format!("proto={}", protocol_summary(self.protocol_value())),
+        ];
+
+        if self.ds_field_value() != 0 {
+            fields.push(format!(
+                "ds={}",
+                ds_field_summary(self.dscp_value(), self.ecn_value())
+            ));
         }
+        if self.flags_value() != 0 {
+            fields.push(format!("flags={}", flags_summary(self.flags_value())));
+        }
+        if self.fragment_offset_value() != 0 {
+            fields.push(format!("fragment_offset={}", self.fragment_offset_value()));
+        }
+        let checksum_status = checksum_status_summary(self.checksum_status());
+        if !checksum_status.is_empty() {
+            fields.push(format!("checksum_status={checksum_status}"));
+        }
+        if !self.options.is_empty() {
+            fields.push(format!("options={}", option_count_summary(&self.options)));
+        }
+
+        format!("Ipv4({})", fields.join(", "))
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        let mut fields = vec![
+        let fields = vec![
             ("version", self.version_value().to_string()),
             ("ihl", self.ihl_value().to_string()),
             ("tos", self.tos_value().to_string()),
+            ("dscp", dscp_summary(self.dscp_value())),
+            ("ecn", ecn_summary(self.ecn_value()).to_string()),
             (
                 "total_length",
                 self.total_length_value()
@@ -1389,15 +1402,15 @@ impl Layer for Ipv4 {
                     .map(|value| format!("0x{value:04x}"))
                     .unwrap_or_else(|| "auto".to_string()),
             ),
+            (
+                "checksum_status",
+                checksum_status_inspection(self.checksum_status()).to_string(),
+            ),
             ("src", self.source().to_string()),
             ("dst", self.destination().to_string()),
+            ("option_count", option_count_summary(&self.options)),
             ("options", hex_bytes(&self.options)),
         ];
-
-        let checksum_status = checksum_status_summary(self.checksum_status());
-        if !checksum_status.is_empty() {
-            fields.insert(10, ("checksum_status", checksum_status.to_string()));
-        }
 
         fields
     }
@@ -1723,6 +1736,14 @@ fn checksum_status_summary(status: Ipv4ChecksumStatus) -> &'static str {
     }
 }
 
+fn checksum_status_inspection(status: Ipv4ChecksumStatus) -> &'static str {
+    match status {
+        Ipv4ChecksumStatus::NotChecked => "not_checked",
+        Ipv4ChecksumStatus::Valid => "valid",
+        Ipv4ChecksumStatus::Invalid => "invalid",
+    }
+}
+
 fn payload_len_after(ctx: LayerContext<'_>) -> usize {
     ctx.packet()
         .iter()
@@ -1976,6 +1997,23 @@ fn compose_ds_field(dscp: Dscp, ecn: Ecn) -> u8 {
     (dscp.value() << IPV4_DSCP_SHIFT) | ecn.value()
 }
 
+fn ds_field_summary(dscp: Dscp, ecn: Ecn) -> String {
+    format!("dscp={}/ecn={}", dscp.value(), ecn_summary(ecn))
+}
+
+fn dscp_summary(dscp: Dscp) -> String {
+    dscp.value().to_string()
+}
+
+fn ecn_summary(ecn: Ecn) -> &'static str {
+    match ecn {
+        Ecn::NotEct => "Not-ECT",
+        Ecn::Ect1 => "ECT(1)",
+        Ecn::Ect0 => "ECT(0)",
+        Ecn::Ce => "CE",
+    }
+}
+
 fn protocol_summary(protocol: u8) -> String {
     match protocol {
         0 => "hopopt(0)".to_string(),
@@ -2011,6 +2049,10 @@ fn flags_summary(flags: u8) -> String {
     } else {
         names.join("|")
     }
+}
+
+fn option_count_summary(options: &[u8]) -> String {
+    Ipv4OptionIter::new(options).count().to_string()
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
