@@ -556,6 +556,11 @@ impl Ipv4 {
         self
     }
 
+    /// Set the full Differentiated Services field byte.
+    pub fn ds_field(self, ds_field: u8) -> Self {
+        self.tos(ds_field)
+    }
+
     /// Set the DSCP subfield, preserving the current ECN bits.
     pub fn dscp(mut self, dscp: Dscp) -> Self {
         let ecn = self.ecn_value();
@@ -725,6 +730,11 @@ impl Ipv4 {
     /// Type-of-service / DSCP+ECN value.
     pub fn tos_value(&self) -> u8 {
         value_or_copy(&self.tos, 0)
+    }
+
+    /// Full Differentiated Services field byte.
+    pub fn ds_field_value(&self) -> u8 {
+        self.tos_value()
     }
 
     /// DSCP subfield of the IPv4 DS/TOS octet.
@@ -1407,6 +1417,57 @@ fn hex_bytes(bytes: &[u8]) -> String {
     }
 
     output
+}
+
+#[cfg(test)]
+mod ipv4_ds_field {
+    use super::{Dscp, Ecn, Ipv4};
+    use crate::{NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    #[test]
+    fn ipv4_ds_field_builder_sets_full_byte_and_exposes_subfields() {
+        let ip = Ipv4::new().ds_field(0xab);
+
+        assert_eq!(ip.ds_field_value(), 0xab);
+        assert_eq!(ip.tos_value(), 0xab);
+        assert_eq!(ip.dscp_value().value(), 42);
+        assert_eq!(ip.ecn_value(), Ecn::Ce);
+    }
+
+    #[test]
+    fn ipv4_ds_field_alias_composes_with_dscp_and_ecn_builders() {
+        let ip = Ipv4::new()
+            .ds_field(0xab)
+            .dscp(Dscp::new(10).unwrap())
+            .ecn(Ecn::Ect0);
+
+        assert_eq!(ip.ds_field_value(), 0x2a);
+        assert_eq!(ip.tos_value(), 0x2a);
+        assert_eq!(ip.dscp_value().value(), 10);
+        assert_eq!(ip.ecn_value(), Ecn::Ect0);
+    }
+
+    #[test]
+    fn ipv4_ds_field_round_trips_through_compile_and_decode() {
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            .protocol(253)
+            .ds_field(0xb9)
+            / Raw::from_bytes([1, 2, 3, 4]);
+
+        let bytes = packet.compile().unwrap();
+        assert_eq!(bytes.as_bytes()[1], 0xb9);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+
+        assert_eq!(ipv4.ds_field_value(), 0xb9);
+        assert_eq!(ipv4.tos_value(), 0xb9);
+        assert_eq!(ipv4.dscp_value().value(), 46);
+        assert_eq!(ipv4.ecn_value(), Ecn::Ect1);
+    }
 }
 
 #[cfg(test)]
