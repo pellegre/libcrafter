@@ -210,6 +210,17 @@ impl From<Ecn> for u8 {
     }
 }
 
+/// Decode-time validation status for the IPv4 header checksum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ipv4ChecksumStatus {
+    /// Checksum validation was not attempted.
+    NotChecked,
+    /// The decoded IPv4 header checksum validates.
+    Valid,
+    /// The decoded IPv4 header checksum failed validation.
+    Invalid,
+}
+
 /// Common IPv4 protocol numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -536,6 +547,7 @@ pub struct Ipv4 {
     ttl: Field<u8>,
     protocol: Field<u8>,
     checksum: Field<u16>,
+    checksum_status: Ipv4ChecksumStatus,
     source: Field<Ipv4Addr>,
     destination: Field<Ipv4Addr>,
     options: Vec<u8>,
@@ -555,6 +567,7 @@ impl Ipv4 {
             ttl: Field::defaulted(64),
             protocol: Field::defaulted(0),
             checksum: Field::unset(),
+            checksum_status: Ipv4ChecksumStatus::NotChecked,
             source: Field::defaulted(Ipv4Addr::LOCALHOST),
             destination: Field::defaulted(Ipv4Addr::LOCALHOST),
             options: Vec::new(),
@@ -818,6 +831,11 @@ impl Ipv4 {
     /// Header checksum when explicitly stored or decoded.
     pub fn checksum_value(&self) -> Option<u16> {
         self.checksum.value().copied()
+    }
+
+    /// Decode-time IPv4 header checksum validation status.
+    pub const fn checksum_status(&self) -> Ipv4ChecksumStatus {
+        self.checksum_status
     }
 
     /// Source address.
@@ -1121,6 +1139,7 @@ fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
         Vec::new()
     };
     validate_ipv4_options(&options)?;
+    let checksum_status = decoded_ipv4_checksum_status(&bytes[..header_len]);
 
     let ipv4 = Ipv4 {
         version: Field::user(version),
@@ -1133,6 +1152,7 @@ fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
         ttl: Field::user(bytes[8]),
         protocol: Field::user(bytes[9]),
         checksum: Field::user(read_u16_be(&bytes[10..12])?),
+        checksum_status,
         source: Field::user(Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15])),
         destination: Field::user(Ipv4Addr::new(bytes[16], bytes[17], bytes[18], bytes[19])),
         options,
@@ -1222,6 +1242,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
     if validate_ipv4_options(&options).is_err() {
         return None;
     }
+    let checksum_status = decoded_ipv4_checksum_status(&datagram[..header_len]);
 
     let ipv4 = Ipv4 {
         version: Field::user(version),
@@ -1234,6 +1255,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
         ttl: Field::user(datagram[8]),
         protocol: Field::user(datagram[9]),
         checksum: Field::user(read_u16_be(&datagram[10..12]).ok()?),
+        checksum_status,
         source: Field::user(Ipv4Addr::new(
             datagram[12],
             datagram[13],
@@ -1270,6 +1292,14 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
     };
 
     Some((packet, consumed))
+}
+
+fn decoded_ipv4_checksum_status(header: &[u8]) -> Ipv4ChecksumStatus {
+    if ipv4_header_checksum(header) == 0 {
+        Ipv4ChecksumStatus::Valid
+    } else {
+        Ipv4ChecksumStatus::Invalid
+    }
 }
 
 fn payload_len_after(ctx: LayerContext<'_>) -> usize {
@@ -1455,9 +1485,9 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod ip_protocol {
+mod ipv4_protocol {
     use super::{
-        protocol_summary, IpProtocol, Ipv4, IPPROTO_AH, IPPROTO_ESP, IPPROTO_EXPERIMENTAL_1,
+        protocol_summary, Ipv4, Ipv4Protocol, IPPROTO_AH, IPPROTO_ESP, IPPROTO_EXPERIMENTAL_1,
         IPPROTO_EXPERIMENTAL_2, IPPROTO_GRE, IPPROTO_OSPF, IPPROTO_SCTP,
     };
     use crate::{Layer, NetworkLayer, Packet, Raw};
@@ -1474,18 +1504,18 @@ mod ip_protocol {
     #[test]
     fn protocol_summary_labels_source_backed_ip_protocol_values() {
         let cases = [
-            (IpProtocol::Gre, IPPROTO_GRE, "gre(47)"),
-            (IpProtocol::Esp, IPPROTO_ESP, "esp(50)"),
-            (IpProtocol::Ah, IPPROTO_AH, "ah(51)"),
-            (IpProtocol::Ospf, IPPROTO_OSPF, "ospf(89)"),
-            (IpProtocol::Sctp, IPPROTO_SCTP, "sctp(132)"),
+            (Ipv4Protocol::Gre, IPPROTO_GRE, "gre(47)"),
+            (Ipv4Protocol::Esp, IPPROTO_ESP, "esp(50)"),
+            (Ipv4Protocol::Ah, IPPROTO_AH, "ah(51)"),
+            (Ipv4Protocol::Ospf, IPPROTO_OSPF, "ospf(89)"),
+            (Ipv4Protocol::Sctp, IPPROTO_SCTP, "sctp(132)"),
             (
-                IpProtocol::Experimental1,
+                Ipv4Protocol::Experimental1,
                 IPPROTO_EXPERIMENTAL_1,
                 "experimental(253)",
             ),
             (
-                IpProtocol::Experimental2,
+                Ipv4Protocol::Experimental2,
                 IPPROTO_EXPERIMENTAL_2,
                 "experimental(254)",
             ),
@@ -1505,17 +1535,17 @@ mod ip_protocol {
     #[test]
     fn protocol_summary_labels_appear_in_summary_and_inspection_fields() {
         let cases = [
-            (IpProtocol::Gre, "gre(47)"),
-            (IpProtocol::Esp, "esp(50)"),
-            (IpProtocol::Ah, "ah(51)"),
-            (IpProtocol::Ospf, "ospf(89)"),
-            (IpProtocol::Sctp, "sctp(132)"),
-            (IpProtocol::Experimental1, "experimental(253)"),
-            (IpProtocol::Experimental2, "experimental(254)"),
+            (Ipv4Protocol::Gre, "gre(47)"),
+            (Ipv4Protocol::Esp, "esp(50)"),
+            (Ipv4Protocol::Ah, "ah(51)"),
+            (Ipv4Protocol::Ospf, "ospf(89)"),
+            (Ipv4Protocol::Sctp, "sctp(132)"),
+            (Ipv4Protocol::Experimental1, "experimental(253)"),
+            (Ipv4Protocol::Experimental2, "experimental(254)"),
         ];
 
         for (protocol, label) in cases {
-            let ipv4 = Ipv4::new().src(src()).dst(dst()).proto(protocol);
+            let ipv4 = Ipv4::new().src(src()).dst(dst()).ipv4_protocol(protocol);
 
             assert_eq!(
                 ipv4.summary(),
@@ -1550,18 +1580,18 @@ mod ip_protocol {
     #[test]
     fn ip_protocol_source_backed_unsupported_values_decode_as_raw_payload() {
         let cases = [
-            IpProtocol::Gre,
-            IpProtocol::Esp,
-            IpProtocol::Ah,
-            IpProtocol::Ospf,
-            IpProtocol::Sctp,
-            IpProtocol::Experimental1,
-            IpProtocol::Experimental2,
+            Ipv4Protocol::Gre,
+            Ipv4Protocol::Esp,
+            Ipv4Protocol::Ah,
+            Ipv4Protocol::Ospf,
+            Ipv4Protocol::Sctp,
+            Ipv4Protocol::Experimental1,
+            Ipv4Protocol::Experimental2,
         ];
 
         for protocol in cases {
             let payload = [u8::from(protocol), 0xde, 0xad, 0xbe, 0xef];
-            let bytes = (Ipv4::new().src(src()).dst(dst()).proto(protocol)
+            let bytes = (Ipv4::new().src(src()).dst(dst()).ipv4_protocol(protocol)
                 / Raw::from_bytes(payload))
             .compile()
             .unwrap();
@@ -1937,7 +1967,7 @@ mod ip_options {
 
 #[cfg(test)]
 mod ipv4_checksum {
-    use super::{Ipv4, Ipv4Protocol};
+    use super::{Ipv4, Ipv4ChecksumStatus, Ipv4Protocol};
     use crate::{checksum::verify_internet_checksum, Raw};
     use core::net::Ipv4Addr;
 
@@ -1983,5 +2013,29 @@ mod ipv4_checksum {
 
         assert_eq!(ipv4.checksum_value(), Some(0x3c4c));
         assert!(verify_internet_checksum(&IPV4_ICMP_FIXTURE[..20]));
+    }
+
+    #[test]
+    fn ipv4_checksum_status_valid_for_decoded_header() {
+        let decoded =
+            crate::Packet::decode_from_l3(crate::NetworkLayer::Ipv4, IPV4_ICMP_FIXTURE).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+
+        assert_eq!(ipv4.checksum_value(), Some(0x3c4c));
+        assert_eq!(ipv4.checksum_status(), Ipv4ChecksumStatus::Valid);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), IPV4_ICMP_FIXTURE);
+    }
+
+    #[test]
+    fn ipv4_checksum_status_invalid_for_decoded_header_without_rejecting_packet() {
+        let mut bytes = IPV4_ICMP_FIXTURE.to_vec();
+        bytes[10] ^= 0xff;
+
+        let decoded = crate::Packet::decode_from_l3(crate::NetworkLayer::Ipv4, &bytes).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+
+        assert_eq!(ipv4.checksum_value(), Some(0xc34c));
+        assert_eq!(ipv4.checksum_status(), Ipv4ChecksumStatus::Invalid);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
     }
 }
