@@ -17,6 +17,16 @@ die() {
   exit 1
 }
 
+temp_paths=()
+cleanup_temp_paths() {
+  local path
+
+  for path in "${temp_paths[@]}"; do
+    rm -rf "$path"
+  done
+}
+trap cleanup_temp_paths EXIT
+
 run() {
   printf '\n==> %s\n' "$*"
   "$@"
@@ -49,16 +59,22 @@ cargo_offline_flags=(--locked --offline)
 
 inspect_package_contents() {
   local crate_file="$1"
+  local tmp_dir
   local package_members
+  local normalized_members
   local forbidden_members
 
   [[ -f "$crate_file" ]] || die "package archive not found: $crate_file"
 
-  package_members="$(mktemp)"
-  forbidden_members="$(mktemp)"
+  tmp_dir="$(mktemp -d)"
+  temp_paths+=("$tmp_dir")
+  package_members="$tmp_dir/package-members"
+  normalized_members="$tmp_dir/normalized-members"
+  forbidden_members="$tmp_dir/forbidden-members"
 
   run tar -tf "$crate_file"
   tar -tf "$crate_file" >"$package_members"
+  awk '{ sub(/^[^/]+\//, "", $0); print }' "$package_members" >"$normalized_members"
 
   awk '
     {
@@ -81,15 +97,15 @@ inspect_package_contents() {
     die "package contains repo-local execution substrate"
   fi
 
-  if ! awk '{ sub(/^[^/]+\//, "", $0); print }' "$package_members" | grep -Fxq 'Cargo.toml'; then
+  if ! grep -Fxq 'Cargo.toml' "$normalized_members"; then
     die "package archive is missing Cargo.toml"
   fi
 
-  if ! awk '{ sub(/^[^/]+\//, "", $0); print }' "$package_members" | grep -Fxq 'src/lib.rs'; then
+  if ! grep -Fxq 'src/lib.rs' "$normalized_members"; then
     die "package archive is missing src/lib.rs"
   fi
 
-  rm -f "$package_members" "$forbidden_members"
+  rm -rf "$tmp_dir"
 }
 
 create_and_inspect_package() {
