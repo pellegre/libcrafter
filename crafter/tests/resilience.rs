@@ -464,6 +464,39 @@ fn safe_udp_port(seed: u16) -> u16 {
     10_000 + (seed % 50_000)
 }
 
+fn ipv4_options_for_selector(selector: u8) -> Vec<Ipv4Option> {
+    match selector % 5 {
+        0 => Vec::new(),
+        1 => vec![Ipv4Option::no_operation()],
+        2 => vec![Ipv4Option::router_alert(0)],
+        3 => vec![Ipv4Option::timestamp(5, 0, [0x0102_0304])],
+        _ => vec![Ipv4Option::generic(30, [0xab, selector])],
+    }
+}
+
+fn ipv4_with_options(mut ipv4: Ipv4, options: &[Ipv4Option]) -> Ipv4 {
+    for option in options {
+        ipv4 = ipv4
+            .ipv4_option(option.clone())
+            .expect("selected IPv4 option should encode");
+    }
+    ipv4
+}
+
+fn encoded_ipv4_options(options: &[Ipv4Option]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for option in options {
+        bytes.extend(option.encode().expect("selected IPv4 option should encode"));
+    }
+    bytes
+}
+
+fn deterministic_payload(len: usize, seed: u8) -> Vec<u8> {
+    (0..len)
+        .map(|index| seed.wrapping_add(index as u8))
+        .collect()
+}
+
 fn dhcp_client_mac() -> MacAddr {
     MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01])
 }
@@ -1380,6 +1413,75 @@ proptest! {
             .expect("generated IPv4/UDP packet should decode");
         let compiled = decoded.compile().expect("decoded IPv4/UDP packet should compile");
         prop_assert_eq!(compiled.as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn roundtrip_ipv4_header_property(
+        src_host in 1u8..=254,
+        dst_host in 1u8..=254,
+        ds_field in prop::sample::select(&[0x00, 0x03, 0x2e, 0xb8, 0xff]),
+        flags in prop::sample::select(&[0, 1, 2, 3, 4, 5, 7]),
+        fragment_offset in prop::sample::select(&[0, 1, 8, 8191]),
+        option_selector in 0u8..5,
+        payload_len in prop::sample::select(&[0usize, 1, 7, 8, 31, 128, 512, 1024]),
+        payload_seed in any::<u8>(),
+    ) {
+        let options = ipv4_options_for_selector(option_selector);
+        let option_bytes = encoded_ipv4_options(&options);
+        let payload = deterministic_payload(payload_len, payload_seed);
+        let ipv4 = ipv4_with_options(
+            Ipv4::with_addresses(
+                Ipv4Addr::new(192, 0, 2, src_host),
+                Ipv4Addr::new(198, 51, 100, dst_host),
+            )
+            .ds_field(ds_field)
+            .flags(flags)
+            .fragment_offset(fragment_offset)
+            .proto(IpProtocol::Experimental1),
+            &options,
+        );
+        let packet = ipv4 / Raw::from(payload.clone());
+
+        let bytes = packet
+            .compile()
+            .expect("generated IPv4 packet should compile");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .expect("generated IPv4 packet should decode");
+        let compiled = decoded
+            .compile()
+            .expect("decoded IPv4 packet should compile");
+        prop_assert_eq!(compiled.as_bytes(), bytes.as_bytes());
+
+        let decoded_ipv4 = decoded
+            .layer::<Ipv4>()
+            .expect("decoded packet should contain an IPv4 layer");
+        prop_assert_eq!(decoded_ipv4.ds_field_value(), ds_field);
+        prop_assert_eq!(decoded_ipv4.flags_value(), flags);
+        prop_assert_eq!(decoded_ipv4.fragment_offset_value(), fragment_offset);
+        prop_assert_eq!(decoded_ipv4.header_len(), 20 + ((option_bytes.len() + 3) & !3));
+        prop_assert!(decoded_ipv4.option_bytes().starts_with(&option_bytes));
+        prop_assert!(decoded_ipv4.option_bytes()[option_bytes.len()..]
+            .iter()
+            .all(|byte| *byte == 0));
+
+        if !options.is_empty() {
+            let parsed_options = decoded_ipv4
+                .parsed_options()
+                .expect("selected IPv4 options should decode");
+            prop_assert_eq!(&parsed_options[..options.len()], options.as_slice());
+        }
+
+        if payload.is_empty() {
+            prop_assert!(
+                decoded.layer::<Raw>().is_none(),
+                "empty IPv4 payload should not synthesize a Raw layer"
+            );
+        } else {
+            let decoded_raw = decoded
+                .layer::<Raw>()
+                .expect("decoded packet should preserve the raw payload");
+            prop_assert_eq!(decoded_raw.as_bytes(), payload.as_slice());
+        }
     }
 
     #[test]
