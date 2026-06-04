@@ -52,12 +52,24 @@ pub const IPV4_OPTION_EOL: u8 = 0;
 pub const IPV4_OPTION_NOP: u8 = 1;
 /// IPv4 record-route option kind.
 pub const IPV4_OPTION_RECORD_ROUTE: u8 = 7;
+/// IPv4 timestamp option kind.
+pub const IPV4_OPTION_TIMESTAMP: u8 = 0x44;
 /// IPv4 traceroute option kind.
 pub const IPV4_OPTION_TRACEROUTE: u8 = 0x52;
 /// IPv4 loose source-and-record-route option kind.
 pub const IPV4_OPTION_LOOSE_SOURCE_ROUTE: u8 = 0x83;
 /// IPv4 strict source-and-record-route option kind.
 pub const IPV4_OPTION_STRICT_SOURCE_ROUTE: u8 = 0x89;
+/// IPv4 router-alert option kind.
+pub const IPV4_OPTION_ROUTER_ALERT: u8 = 0x94;
+/// IPv4 option kind reserved for experimentation and testing.
+pub const IPV4_OPTION_EXPERIMENTAL_1: u8 = 30;
+/// IPv4 option kind reserved for experimentation and testing.
+pub const IPV4_OPTION_EXPERIMENTAL_2: u8 = 94;
+/// IPv4 option kind reserved for experimentation and testing.
+pub const IPV4_OPTION_EXPERIMENTAL_3: u8 = 158;
+/// IPv4 option kind reserved for experimentation and testing.
+pub const IPV4_OPTION_EXPERIMENTAL_4: u8 = 222;
 
 const IPV4_MIN_HEADER_LEN: usize = 20;
 const IPV4_MAX_HEADER_LEN: usize = 60;
@@ -67,6 +79,10 @@ const IPV4_MAX_FRAGMENT_OFFSET: u16 = 0x1fff;
 const IPV4_DSCP_SHIFT: u8 = 2;
 const IPV4_DSCP_MAX: u8 = 0x3f;
 const IPV4_ECN_MASK: u8 = 0x03;
+const IPV4_OPTION_COPIED_MASK: u8 = 0b1000_0000;
+const IPV4_OPTION_CLASS_MASK: u8 = 0b0110_0000;
+const IPV4_OPTION_CLASS_SHIFT: u8 = 5;
+const IPV4_OPTION_NUMBER_MASK: u8 = 0b0001_1111;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -309,6 +325,54 @@ pub enum Ipv4Protocol {
 impl From<Ipv4Protocol> for u8 {
     fn from(value: Ipv4Protocol) -> Self {
         value as u8
+    }
+}
+
+/// Metadata decoded from one IPv4 option kind byte.
+///
+/// RFC 791 and IANA IPv4 Parameters split the option type byte into a copied
+/// flag, two class bits, and a five-bit option number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Ipv4OptionKind {
+    value: u8,
+}
+
+impl Ipv4OptionKind {
+    /// Split a raw IPv4 option kind byte into inspectable metadata.
+    pub const fn new(value: u8) -> Self {
+        Self { value }
+    }
+
+    /// Raw IPv4 option kind byte.
+    pub const fn value(self) -> u8 {
+        self.value
+    }
+
+    /// Return true when the IPv4 option copied flag is set.
+    pub const fn copied(self) -> bool {
+        self.value & IPV4_OPTION_COPIED_MASK != 0
+    }
+
+    /// Raw two-bit IPv4 option class value.
+    pub const fn class(self) -> u8 {
+        (self.value & IPV4_OPTION_CLASS_MASK) >> IPV4_OPTION_CLASS_SHIFT
+    }
+
+    /// Raw five-bit IPv4 option number value.
+    pub const fn number(self) -> u8 {
+        self.value & IPV4_OPTION_NUMBER_MASK
+    }
+}
+
+impl From<u8> for Ipv4OptionKind {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<Ipv4OptionKind> for u8 {
+    fn from(value: Ipv4OptionKind) -> Self {
+        value.value()
     }
 }
 
@@ -2410,6 +2474,58 @@ mod ipv4_header_length {
                 reason: "internet header length must be at least 5 words",
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod ipv4_option_kind {
+    use super::{
+        Ipv4OptionKind, IPV4_OPTION_EOL, IPV4_OPTION_EXPERIMENTAL_1, IPV4_OPTION_EXPERIMENTAL_2,
+        IPV4_OPTION_EXPERIMENTAL_3, IPV4_OPTION_EXPERIMENTAL_4, IPV4_OPTION_LOOSE_SOURCE_ROUTE,
+        IPV4_OPTION_NOP, IPV4_OPTION_RECORD_ROUTE, IPV4_OPTION_ROUTER_ALERT,
+        IPV4_OPTION_STRICT_SOURCE_ROUTE, IPV4_OPTION_TIMESTAMP, IPV4_OPTION_TRACEROUTE,
+    };
+
+    fn assert_kind(value: u8, copied: bool, class: u8, number: u8) {
+        let kind = Ipv4OptionKind::new(value);
+
+        assert_eq!(kind.value(), value, "kind {value:#04x}");
+        assert_eq!(kind.copied(), copied, "kind {value:#04x}");
+        assert_eq!(kind.class(), class, "kind {value:#04x}");
+        assert_eq!(kind.number(), number, "kind {value:#04x}");
+        assert_eq!(u8::from(kind), value, "kind {value:#04x}");
+        assert_eq!(Ipv4OptionKind::from(value), kind, "kind {value:#04x}");
+    }
+
+    #[test]
+    fn ipv4_option_kind_classifies_standard_option_values() {
+        assert_kind(IPV4_OPTION_EOL, false, 0, 0);
+        assert_kind(IPV4_OPTION_NOP, false, 0, 1);
+        assert_kind(IPV4_OPTION_RECORD_ROUTE, false, 0, 7);
+        assert_kind(IPV4_OPTION_LOOSE_SOURCE_ROUTE, true, 0, 3);
+        assert_kind(IPV4_OPTION_STRICT_SOURCE_ROUTE, true, 0, 9);
+        assert_kind(IPV4_OPTION_TIMESTAMP, false, 2, 4);
+        assert_kind(IPV4_OPTION_ROUTER_ALERT, true, 0, 20);
+        assert_kind(IPV4_OPTION_TRACEROUTE, false, 2, 18);
+    }
+
+    #[test]
+    fn ipv4_option_kind_classifies_experiment_values() {
+        assert_kind(IPV4_OPTION_EXPERIMENTAL_1, false, 0, 30);
+        assert_kind(IPV4_OPTION_EXPERIMENTAL_2, false, 2, 30);
+        assert_kind(IPV4_OPTION_EXPERIMENTAL_3, true, 0, 30);
+        assert_kind(IPV4_OPTION_EXPERIMENTAL_4, true, 2, 30);
+    }
+
+    #[test]
+    fn ipv4_option_kind_accessors_are_const_friendly() {
+        const KIND: Ipv4OptionKind = Ipv4OptionKind::new(IPV4_OPTION_ROUTER_ALERT);
+        const VALUE: u8 = KIND.value();
+        const COPIED: bool = KIND.copied();
+        const CLASS: u8 = KIND.class();
+        const NUMBER: u8 = KIND.number();
+
+        assert_eq!((VALUE, COPIED, CLASS, NUMBER), (0x94, true, 0, 20));
     }
 }
 
