@@ -1276,8 +1276,18 @@ fn append_ipv4_payload_with_registry(
         .layer::<Ipv4>()
         .map(Ipv4::protocol_value)
         .unwrap_or_default();
+    let fragment_offset = packet
+        .layer::<Ipv4>()
+        .map(Ipv4::fragment_offset_value)
+        .unwrap_or_default();
 
-    packet = registry.decode_ipv4_protocol(packet, protocol, payload)?;
+    if fragment_offset != 0 {
+        if !payload.is_empty() {
+            packet = packet.push(Raw::from_bytes(payload));
+        }
+    } else {
+        packet = registry.decode_ipv4_protocol(packet, protocol, payload)?;
+    }
 
     if !rest.is_empty() {
         packet = packet.push(Raw::from_bytes(rest));
@@ -1373,6 +1383,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
     };
 
     let protocol = ipv4.protocol_value();
+    let fragment_offset = ipv4.fragment_offset_value();
     let payload = &datagram[header_len..];
     let mut packet = Packet::new().push(ipv4);
 
@@ -1380,17 +1391,23 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
     // unknown next protocol) keeps the remaining bytes raw-compatible. A
     // transport-only registry is used so a short quoted prefix never trips an
     // application-layer decoder (DNS, DHCP) and discards the typed L4 header.
-    let registry = ProtocolRegistry::transport_only();
-    packet = match registry.decode_ipv4_protocol(packet.clone(), protocol, payload) {
-        Ok(typed) => typed,
-        Err(_) => {
-            if payload.is_empty() {
-                packet
-            } else {
-                packet.push(Raw::from_bytes(payload))
-            }
+    if fragment_offset != 0 {
+        if !payload.is_empty() {
+            packet = packet.push(Raw::from_bytes(payload));
         }
-    };
+    } else {
+        let registry = ProtocolRegistry::transport_only();
+        packet = match registry.decode_ipv4_protocol(packet.clone(), protocol, payload) {
+            Ok(typed) => typed,
+            Err(_) => {
+                if payload.is_empty() {
+                    packet
+                } else {
+                    packet.push(Raw::from_bytes(payload))
+                }
+            }
+        };
+    }
 
     Some((packet, consumed))
 }
@@ -2005,7 +2022,7 @@ mod ipv4_fragment_info {
         IpProtocol, Ipv4, Ipv4FragmentInfo, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
         IPV4_FLAG_RESERVED,
     };
-    use crate::{NetworkLayer, Packet, Raw};
+    use crate::{NetworkLayer, Packet, Raw, Tcp, Udp};
     use core::net::Ipv4Addr;
 
     fn src() -> Ipv4Addr {
@@ -2123,6 +2140,55 @@ mod ipv4_fragment_info {
         assert!(info.has_more_fragments());
         assert!(info.is_fragmented());
         assert_eq!(decoded.compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn noninitial_fragment_udp_payload_decodes_as_raw_without_udp_layer() {
+        let payload = [0x12, 0x34, 0x00, 0x35, 0x00, 0x08, 0x00, 0x00];
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .id(0x4568)
+            .frag(1)
+            .proto(IpProtocol::Udp)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+        let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+
+        assert_eq!(ipv4.fragment_offset_value(), 1);
+        assert!(decoded.layer::<Udp>().is_none());
+        assert_eq!(raw_layers.len(), 1);
+        assert_eq!(raw_layers[0].as_bytes(), payload);
+    }
+
+    #[test]
+    fn noninitial_fragment_tcp_payload_decodes_as_raw_without_tcp_layer() {
+        let payload = [
+            0x12, 0x34, 0x00, 0x50, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x50, 0x02,
+            0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let bytes = (Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .id(0x4569)
+            .frag(1)
+            .proto(IpProtocol::Tcp)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+        let raw_layers = decoded.layers::<Raw>().collect::<Vec<_>>();
+
+        assert_eq!(ipv4.fragment_offset_value(), 1);
+        assert!(decoded.layer::<Tcp>().is_none());
+        assert_eq!(raw_layers.len(), 1);
+        assert_eq!(raw_layers[0].as_bytes(), payload);
     }
 }
 
