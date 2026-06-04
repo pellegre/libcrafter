@@ -19,7 +19,9 @@ short-null-loopback|null-loopback|buffer-too-short|null loopback header|020000
 short-ipv4-header|ipv4|buffer-too-short|ipv4 header|4500001400000000400100007f0000017f0000
 bad-ipv4-version|ipv4|invalid-field-value|ipv4.version|6500001400000000400100007f0000017f000001
 bad-ipv4-ihl|ipv4|invalid-field-value|ipv4.ihl|4400001400000000400100007f0000017f000001
+ipv4-ihl-larger-than-available|ipv4|buffer-too-short|ipv4 header|4700001c00000000400100007f0000017f000001
 ipv4-total-length-shorter-than-header|ipv4|invalid-field-value|ipv4.total_length|4500001000000000400100007f0000017f000001
+ipv4-total-length-larger-than-available|ipv4|buffer-too-short|ipv4 packet|4500001500000000400100007f0000017f000001
 ipv4-option-length-overrun|ipv4|buffer-too-short|ipv4 option|4600001800000000400100007f0000017f00000183070000
 ipv4-option-length-below-minimum|ipv4-options|invalid-field-value|ipv4.option.length|8301
 ipv4-option-overrun-minimal|ipv4-options|buffer-too-short|ipv4 option|8304aa
