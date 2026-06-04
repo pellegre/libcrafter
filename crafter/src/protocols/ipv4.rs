@@ -6,7 +6,7 @@ use core::ops::Div;
 use core::str::FromStr;
 
 use crate::checksum::ipv4_header_checksum;
-use crate::endian::read_u16_be;
+use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
@@ -83,6 +83,14 @@ const IPV4_OPTION_COPIED_MASK: u8 = 0b1000_0000;
 const IPV4_OPTION_CLASS_MASK: u8 = 0b0110_0000;
 const IPV4_OPTION_CLASS_SHIFT: u8 = 5;
 const IPV4_OPTION_NUMBER_MASK: u8 = 0b0001_1111;
+const IPV4_TIMESTAMP_MIN_LEN: usize = 4;
+const IPV4_TIMESTAMP_MAX_LEN: usize = 40;
+const IPV4_TIMESTAMP_POINTER_MIN: u8 = 5;
+const IPV4_TIMESTAMP_FLAG_TIMESTAMPS_ONLY: u8 = 0;
+const IPV4_TIMESTAMP_FLAG_ADDRESS_AND_TIMESTAMP: u8 = 1;
+const IPV4_TIMESTAMP_FLAG_PRESPECIFIED_ADDRESS: u8 = 3;
+const IPV4_TIMESTAMP_WORD_LEN: usize = 4;
+const IPV4_TIMESTAMP_ADDRESS_WORD_LEN: usize = 8;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -412,6 +420,33 @@ pub enum Ipv4Option {
         /// Option payload bytes after kind and length.
         data: Vec<u8>,
     },
+    /// RFC 791 timestamp option containing only timestamp words.
+    Timestamp {
+        /// One-based pointer value.
+        pointer: u8,
+        /// Four-bit overflow counter.
+        overflow: u8,
+        /// Timestamp words carried by the option.
+        timestamps: Vec<u32>,
+    },
+    /// RFC 791 timestamp option with each timestamp preceded by an IPv4 address.
+    TimestampWithAddresses {
+        /// One-based pointer value.
+        pointer: u8,
+        /// Four-bit overflow counter.
+        overflow: u8,
+        /// IPv4 address and timestamp pairs carried by the option.
+        entries: Vec<(Ipv4Addr, u32)>,
+    },
+    /// RFC 791 timestamp option with prespecified IPv4 address slots.
+    TimestampPrespecified {
+        /// One-based pointer value.
+        pointer: u8,
+        /// Four-bit overflow counter.
+        overflow: u8,
+        /// Prespecified IPv4 address and timestamp pairs carried by the option.
+        entries: Vec<(Ipv4Addr, u32)>,
+    },
     /// Record-route, loose-source-route, or strict-source-route option.
     Route {
         /// Route option family.
@@ -450,6 +485,41 @@ impl Ipv4Option {
         Self::Generic {
             kind,
             data: data.into(),
+        }
+    }
+
+    /// Create an RFC 791 timestamp option containing only timestamp words.
+    pub fn timestamp(pointer: u8, overflow: u8, timestamps: impl Into<Vec<u32>>) -> Self {
+        Self::Timestamp {
+            pointer,
+            overflow,
+            timestamps: timestamps.into(),
+        }
+    }
+
+    /// Create an RFC 791 timestamp option with IPv4 address/timestamp pairs.
+    pub fn timestamp_with_addresses(
+        pointer: u8,
+        overflow: u8,
+        entries: impl Into<Vec<(Ipv4Addr, u32)>>,
+    ) -> Self {
+        Self::TimestampWithAddresses {
+            pointer,
+            overflow,
+            entries: entries.into(),
+        }
+    }
+
+    /// Create an RFC 791 timestamp option with prespecified IPv4 address slots.
+    pub fn timestamp_prespecified(
+        pointer: u8,
+        overflow: u8,
+        entries: impl Into<Vec<(Ipv4Addr, u32)>>,
+    ) -> Self {
+        Self::TimestampPrespecified {
+            pointer,
+            overflow,
+            entries: entries.into(),
         }
     }
 
@@ -495,12 +565,62 @@ impl Ipv4Option {
         }
     }
 
+    /// Timestamp option pointer value, if this is a typed timestamp option.
+    pub const fn timestamp_pointer(&self) -> Option<u8> {
+        match self {
+            Self::Timestamp { pointer, .. }
+            | Self::TimestampWithAddresses { pointer, .. }
+            | Self::TimestampPrespecified { pointer, .. } => Some(*pointer),
+            _ => None,
+        }
+    }
+
+    /// Timestamp option overflow counter, if this is a typed timestamp option.
+    pub const fn timestamp_overflow(&self) -> Option<u8> {
+        match self {
+            Self::Timestamp { overflow, .. }
+            | Self::TimestampWithAddresses { overflow, .. }
+            | Self::TimestampPrespecified { overflow, .. } => Some(*overflow),
+            _ => None,
+        }
+    }
+
+    /// RFC 791 timestamp option flag value, if this is a typed timestamp option.
+    pub const fn timestamp_flag(&self) -> Option<u8> {
+        match self {
+            Self::Timestamp { .. } => Some(IPV4_TIMESTAMP_FLAG_TIMESTAMPS_ONLY),
+            Self::TimestampWithAddresses { .. } => Some(IPV4_TIMESTAMP_FLAG_ADDRESS_AND_TIMESTAMP),
+            Self::TimestampPrespecified { .. } => Some(IPV4_TIMESTAMP_FLAG_PRESPECIFIED_ADDRESS),
+            _ => None,
+        }
+    }
+
+    /// Timestamp words for a timestamp-only option.
+    pub fn timestamp_values(&self) -> Option<&[u32]> {
+        match self {
+            Self::Timestamp { timestamps, .. } => Some(timestamps),
+            _ => None,
+        }
+    }
+
+    /// IPv4 address/timestamp pairs for address-carrying timestamp options.
+    pub fn timestamp_address_values(&self) -> Option<&[(Ipv4Addr, u32)]> {
+        match self {
+            Self::TimestampWithAddresses { entries, .. }
+            | Self::TimestampPrespecified { entries, .. } => Some(entries),
+            _ => None,
+        }
+    }
+
     /// Raw option kind byte.
     pub const fn kind(&self) -> u8 {
         match self {
             Self::EndOfList => IPV4_OPTION_EOL,
             Self::NoOperation => IPV4_OPTION_NOP,
             Self::Generic { kind, .. } => *kind,
+            Self::Timestamp { .. }
+            | Self::TimestampWithAddresses { .. }
+            | Self::TimestampPrespecified { .. } => IPV4_OPTION_TIMESTAMP,
             Self::Route { kind, .. } => kind.kind(),
             Self::Traceroute { .. } => IPV4_OPTION_TRACEROUTE,
         }
@@ -511,6 +631,13 @@ impl Ipv4Option {
         match self {
             Self::EndOfList | Self::NoOperation => 1,
             Self::Generic { data, .. } => 2 + data.len(),
+            Self::Timestamp { timestamps, .. } => {
+                IPV4_TIMESTAMP_MIN_LEN + timestamps.len() * IPV4_TIMESTAMP_WORD_LEN
+            }
+            Self::TimestampWithAddresses { entries, .. }
+            | Self::TimestampPrespecified { entries, .. } => {
+                IPV4_TIMESTAMP_MIN_LEN + entries.len() * IPV4_TIMESTAMP_ADDRESS_WORD_LEN
+            }
             Self::Route { routes, .. } => 3 + routes.len() * 4,
             Self::Traceroute { .. } => 12,
         }
@@ -540,6 +667,50 @@ impl Ipv4Option {
                 bytes.push(*kind);
                 bytes.push(len as u8);
                 bytes.extend_from_slice(data);
+            }
+            Self::Timestamp {
+                pointer,
+                overflow,
+                timestamps,
+            } => {
+                validate_ipv4_timestamp(*pointer, *overflow, len)?;
+                bytes.push(IPV4_OPTION_TIMESTAMP);
+                bytes.push(len as u8);
+                bytes.push(*pointer);
+                bytes.push((*overflow << 4) | IPV4_TIMESTAMP_FLAG_TIMESTAMPS_ONLY);
+                for timestamp in timestamps {
+                    bytes.extend_from_slice(&timestamp.to_be_bytes());
+                }
+            }
+            Self::TimestampWithAddresses {
+                pointer,
+                overflow,
+                entries,
+            } => {
+                validate_ipv4_timestamp(*pointer, *overflow, len)?;
+                bytes.push(IPV4_OPTION_TIMESTAMP);
+                bytes.push(len as u8);
+                bytes.push(*pointer);
+                bytes.push((*overflow << 4) | IPV4_TIMESTAMP_FLAG_ADDRESS_AND_TIMESTAMP);
+                for (address, timestamp) in entries {
+                    bytes.extend_from_slice(&address.octets());
+                    bytes.extend_from_slice(&timestamp.to_be_bytes());
+                }
+            }
+            Self::TimestampPrespecified {
+                pointer,
+                overflow,
+                entries,
+            } => {
+                validate_ipv4_timestamp(*pointer, *overflow, len)?;
+                bytes.push(IPV4_OPTION_TIMESTAMP);
+                bytes.push(len as u8);
+                bytes.push(*pointer);
+                bytes.push((*overflow << 4) | IPV4_TIMESTAMP_FLAG_PRESPECIFIED_ADDRESS);
+                for (address, timestamp) in entries {
+                    bytes.extend_from_slice(&address.octets());
+                    bytes.extend_from_slice(&timestamp.to_be_bytes());
+                }
             }
             Self::Route {
                 kind,
@@ -1544,6 +1715,7 @@ fn decode_ipv4_option(bytes: &[u8]) -> Result<Ipv4Option> {
         IPV4_OPTION_RECORD_ROUTE
         | IPV4_OPTION_LOOSE_SOURCE_ROUTE
         | IPV4_OPTION_STRICT_SOURCE_ROUTE => decode_ipv4_route_option(kind, data, bytes.len()),
+        IPV4_OPTION_TIMESTAMP => decode_ipv4_timestamp_option(data, bytes.len()),
         IPV4_OPTION_TRACEROUTE => decode_ipv4_traceroute_option(data, bytes.len()),
         _ => Ok(Ipv4Option::Generic {
             kind,
@@ -1588,6 +1760,84 @@ fn decode_ipv4_route_option(kind: u8, data: &[u8], len: usize) -> Result<Ipv4Opt
     })
 }
 
+fn decode_ipv4_timestamp_option(data: &[u8], len: usize) -> Result<Ipv4Option> {
+    if len < IPV4_TIMESTAMP_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "ipv4.option.length",
+            "timestamp option length must be at least 4 bytes",
+        ));
+    }
+    if len > IPV4_TIMESTAMP_MAX_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "ipv4.option.length",
+            "timestamp option length must be at most 40 bytes",
+        ));
+    }
+
+    let pointer = data[0];
+    let overflow_flags = data[1];
+    let overflow = overflow_flags >> 4;
+    let flag = overflow_flags & 0x0f;
+    let timestamp_data = &data[2..];
+
+    match flag {
+        IPV4_TIMESTAMP_FLAG_TIMESTAMPS_ONLY => {
+            validate_ipv4_timestamp(pointer, overflow, len)?;
+            if timestamp_data.len() % IPV4_TIMESTAMP_WORD_LEN != 0 {
+                return Err(CrafterError::invalid_field_value(
+                    "ipv4.option.timestamp",
+                    "timestamp-only option data must contain whole 32-bit timestamps",
+                ));
+            }
+            let timestamps = timestamp_data
+                .chunks_exact(IPV4_TIMESTAMP_WORD_LEN)
+                .map(read_u32_be)
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Ipv4Option::Timestamp {
+                pointer,
+                overflow,
+                timestamps,
+            })
+        }
+        IPV4_TIMESTAMP_FLAG_ADDRESS_AND_TIMESTAMP | IPV4_TIMESTAMP_FLAG_PRESPECIFIED_ADDRESS => {
+            validate_ipv4_timestamp(pointer, overflow, len)?;
+            if timestamp_data.len() % IPV4_TIMESTAMP_ADDRESS_WORD_LEN != 0 {
+                return Err(CrafterError::invalid_field_value(
+                    "ipv4.option.timestamp",
+                    "address timestamp option data must contain whole IPv4 address/timestamp pairs",
+                ));
+            }
+            let entries = timestamp_data
+                .chunks_exact(IPV4_TIMESTAMP_ADDRESS_WORD_LEN)
+                .map(|chunk| {
+                    Ok((
+                        Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]),
+                        read_u32_be(&chunk[4..8])?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+
+            if flag == IPV4_TIMESTAMP_FLAG_ADDRESS_AND_TIMESTAMP {
+                Ok(Ipv4Option::TimestampWithAddresses {
+                    pointer,
+                    overflow,
+                    entries,
+                })
+            } else {
+                Ok(Ipv4Option::TimestampPrespecified {
+                    pointer,
+                    overflow,
+                    entries,
+                })
+            }
+        }
+        _ => Ok(Ipv4Option::Generic {
+            kind: IPV4_OPTION_TIMESTAMP,
+            data: data.to_vec(),
+        }),
+    }
+}
+
 fn decode_ipv4_traceroute_option(data: &[u8], len: usize) -> Result<Ipv4Option> {
     if len != 12 {
         return Err(CrafterError::invalid_field_value(
@@ -1615,6 +1865,34 @@ fn validate_ipv4_route_pointer(pointer: u8, len: usize) -> Result<()> {
         return Err(CrafterError::invalid_field_value(
             "ipv4.option.pointer",
             "route option pointer must not exceed option length plus one",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_ipv4_timestamp(pointer: u8, overflow: u8, len: usize) -> Result<()> {
+    if len > IPV4_TIMESTAMP_MAX_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "ipv4.option.length",
+            "timestamp option length must be at most 40 bytes",
+        ));
+    }
+    if overflow > 0x0f {
+        return Err(CrafterError::invalid_field_value(
+            "ipv4.option.timestamp.overflow",
+            "timestamp option overflow must fit in four bits",
+        ));
+    }
+    if pointer < IPV4_TIMESTAMP_POINTER_MIN {
+        return Err(CrafterError::invalid_field_value(
+            "ipv4.option.pointer",
+            "timestamp option pointer must be at least 5",
+        ));
+    }
+    if pointer as usize > len + 1 {
+        return Err(CrafterError::invalid_field_value(
+            "ipv4.option.pointer",
+            "timestamp option pointer must not exceed option length plus one",
         ));
     }
     Ok(())
@@ -2598,6 +2876,181 @@ mod ip_options {
         assert_eq!(first, vec![Ipv4Option::NoOperation]);
         assert_eq!(second, first);
         assert_eq!(ip.option_bytes(), &[IPV4_OPTION_NOP]);
+    }
+}
+
+#[cfg(test)]
+mod ipv4_timestamp_option {
+    use super::{IpProtocol, Ipv4, Ipv4Option, IPV4_OPTION_TIMESTAMP};
+    use crate::{CrafterError, NetworkLayer, Packet, Raw};
+    use core::net::Ipv4Addr;
+
+    fn src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn ipv4_timestamp_option_encodes_and_decodes_timestamp_only() {
+        let option = Ipv4Option::timestamp(13, 2, vec![0x0102_0304, 0x8000_0001]);
+        let encoded = option.encode().unwrap();
+
+        assert_eq!(
+            encoded,
+            vec![
+                IPV4_OPTION_TIMESTAMP,
+                12,
+                13,
+                0x20,
+                0x01,
+                0x02,
+                0x03,
+                0x04,
+                0x80,
+                0x00,
+                0x00,
+                0x01,
+            ]
+        );
+
+        let decoded = Ipv4Option::decode_all(&encoded).unwrap();
+        assert_eq!(decoded, vec![option.clone()]);
+        assert_eq!(decoded[0].timestamp_pointer(), Some(13));
+        assert_eq!(decoded[0].timestamp_overflow(), Some(2));
+        assert_eq!(decoded[0].timestamp_flag(), Some(0));
+        assert_eq!(
+            decoded[0].timestamp_values(),
+            Some(&[0x0102_0304, 0x8000_0001][..])
+        );
+        assert_eq!(decoded[0].timestamp_address_values(), None);
+    }
+
+    #[test]
+    fn ipv4_timestamp_option_address_modes_round_trip() {
+        let entries = vec![(src(), 0x0102_0304), (dst(), 0x8000_0002)];
+        let option = Ipv4Option::timestamp_with_addresses(21, 1, entries.clone());
+        let packet = Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .proto(IpProtocol::Experimental1)
+            .ip_option(option.clone())
+            .unwrap()
+            / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(
+            &bytes.as_bytes()[20..40],
+            &[
+                IPV4_OPTION_TIMESTAMP,
+                20,
+                21,
+                0x11,
+                192,
+                0,
+                2,
+                10,
+                0x01,
+                0x02,
+                0x03,
+                0x04,
+                198,
+                51,
+                100,
+                20,
+                0x80,
+                0x00,
+                0x00,
+                0x02,
+            ]
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let decoded_ip = decoded.layer::<Ipv4>().unwrap();
+        let options = decoded_ip.parsed_options().unwrap();
+
+        assert_eq!(options, vec![option.clone()]);
+        assert_eq!(options[0].timestamp_pointer(), Some(21));
+        assert_eq!(options[0].timestamp_overflow(), Some(1));
+        assert_eq!(options[0].timestamp_flag(), Some(1));
+        assert_eq!(options[0].timestamp_address_values(), Some(&entries[..]));
+        assert_eq!(decoded.compile().unwrap(), bytes);
+
+        let prespecified = Ipv4Option::timestamp_prespecified(13, 0, vec![(dst(), 0x0102_0304)]);
+        let prespecified_encoded = prespecified.encode().unwrap();
+        assert_eq!(prespecified_encoded[3], 3);
+        assert_eq!(
+            Ipv4Option::decode_all(&prespecified_encoded).unwrap(),
+            vec![prespecified]
+        );
+    }
+
+    #[test]
+    fn ipv4_timestamp_option_rejects_invalid_constructed_fields() {
+        assert_eq!(
+            Ipv4Option::timestamp(4, 0, Vec::<u32>::new())
+                .encode()
+                .unwrap_err(),
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.option.pointer",
+                reason: "timestamp option pointer must be at least 5",
+            }
+        );
+
+        assert_eq!(
+            Ipv4Option::timestamp(5, 16, Vec::<u32>::new())
+                .encode()
+                .unwrap_err(),
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.option.timestamp.overflow",
+                reason: "timestamp option overflow must fit in four bits",
+            }
+        );
+
+        assert_eq!(
+            Ipv4Option::timestamp(41, 0, vec![0; 10])
+                .encode()
+                .unwrap_err(),
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.option.length",
+                reason: "timestamp option length must be at most 40 bytes",
+            }
+        );
+
+        assert_eq!(
+            Ipv4Option::timestamp(14, 0, vec![0]).encode().unwrap_err(),
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.option.pointer",
+                reason: "timestamp option pointer must not exceed option length plus one",
+            }
+        );
+    }
+
+    #[test]
+    fn ipv4_timestamp_option_decode_falls_back_or_errors_by_variant() {
+        let unsupported = [IPV4_OPTION_TIMESTAMP, 4, 5, 0x02];
+        assert_eq!(
+            Ipv4Option::decode_all(&unsupported).unwrap(),
+            vec![Ipv4Option::generic(IPV4_OPTION_TIMESTAMP, [5, 0x02])]
+        );
+
+        assert_eq!(
+            Ipv4Option::decode_all(&[IPV4_OPTION_TIMESTAMP, 4, 4, 0x00]).unwrap_err(),
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.option.pointer",
+                reason: "timestamp option pointer must be at least 5",
+            }
+        );
+
+        assert_eq!(
+            Ipv4Option::decode_all(&[IPV4_OPTION_TIMESTAMP, 5, 5, 0x00, 0x00]).unwrap_err(),
+            CrafterError::InvalidFieldValue {
+                field: "ipv4.option.timestamp",
+                reason: "timestamp-only option data must contain whole 32-bit timestamps",
+            }
+        );
     }
 }
 
