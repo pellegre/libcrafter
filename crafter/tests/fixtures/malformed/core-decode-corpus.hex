@@ -21,8 +21,13 @@ bad-ipv4-version|ipv4|invalid-field-value|ipv4.version|6500001400000000400100007
 bad-ipv4-ihl|ipv4|invalid-field-value|ipv4.ihl|4400001400000000400100007f0000017f000001
 ipv4-total-length-shorter-than-header|ipv4|invalid-field-value|ipv4.total_length|4500001000000000400100007f0000017f000001
 ipv4-option-length-overrun|ipv4|buffer-too-short|ipv4 option|4600001800000000400100007f0000017f00000183070000
+ipv4-option-length-below-minimum|ipv4-options|invalid-field-value|ipv4.option.length|8301
+ipv4-option-overrun-minimal|ipv4-options|buffer-too-short|ipv4 option|8304aa
 ipv4-option-decoder-overrun|ipv4-options|buffer-too-short|ipv4 option|8307aa
 ipv4-route-option-too-short|ipv4-options|invalid-field-value|ipv4.option.length|0702
+ipv4-route-option-bad-pointer|ipv4-options|invalid-field-value|ipv4.option.pointer|070303
+ipv4-timestamp-option-malformed-data|ipv4-options|invalid-field-value|ipv4.option.timestamp|4405050000
+ipv4-router-alert-bad-length|ipv4-options|invalid-field-value|ipv4.option.length|940300
 
 short-ipv6-base-header|ipv6|buffer-too-short|ipv6 header|6000000000003a40
 bad-ipv6-version|ipv6|invalid-field-value|ipv6.version|4000000000003a400000000000000000000000000000000000000000000000000000000000000000
