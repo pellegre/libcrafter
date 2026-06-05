@@ -152,6 +152,25 @@ known keys; `\DDD` name escapes are flattened by the high-level encode; and malf
 inputs are covered by the crate corpus and `resilience.rs`, not an offline oracle
 comparison. See [DNS wire coverage](dns.md) for the per-record contract.
 
+### IPv6 Enrichment Offline Profile
+
+The `ipv6-enrichment` oracle profile is an offline reproducibility check for
+the enriched IPv6 base and extension-header packet surface. It runs without
+live traffic or provider infrastructure and should keep its artifacts under
+`target/oracle/`:
+
+```sh
+tools/oracle/run offline --profile ipv6-enrichment --seed 2 --count 20 --root l3:ipv6 --out target/oracle/ipv6-enrichment-offline
+tools/oracle/run offline --direction reference_to_libcrafter --profile ipv6-enrichment --seed 3 --count 12 --root l3:ipv6 --out target/oracle/ipv6-enrichment-reference-to-libcrafter
+```
+
+Use the default offline run for the profile-selected comparison set, then use a
+directed run such as `reference_to_libcrafter` or
+`libcrafter_to_reference` when isolating one side's encode/decode behavior.
+Malformed IPv6 extension cases are declared as structured-error coverage, but
+they are not offline byte-compared because malformed extension buffers do not
+have a comparable strict-byte oracle path.
+
 ## Pcap Validation
 
 Pcap validation exercises packet materialization, classic pcap write/read

@@ -66,6 +66,17 @@ backend-specific generation logic. The expected profiles are:
   case is declared coverage but carries `byte_policy: structured_error`, so it is
   excluded from the offline encode/decode pathway (a data offset past the
   available bytes is a structured decode error, not a comparable packet).
+- `ipv6-enrichment`: focused offline IPv6 base and extension-header
+  reproducibility coverage rooted at `l3:ipv6`. It samples strict-byte
+  comparable base, unknown-next-header, Hop-by-Hop, Destination Options,
+  fragment, routing, Segment Routing Header, TCP-chain, and ICMPv6-chain cases
+  in both `reference_to_libcrafter` and `libcrafter_to_reference` directions.
+  Its malformed IPv6 extension cases are declared as
+  `byte_policy: structured_error` and are therefore excluded from offline byte
+  comparison; the oracle reports structured decode-error coverage separately
+  from packet equivalence. Store focused run artifacts below `target/oracle/`,
+  such as `target/oracle/ipv6-enrichment-offline/` and
+  `target/oracle/ipv6-enrichment-reference-to-libcrafter/`.
 
 ## Directions
 
