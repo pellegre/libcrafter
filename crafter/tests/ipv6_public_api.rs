@@ -29,6 +29,10 @@ fn ipv6_payload_length(bytes: &[u8]) -> u16 {
     u16::from_be_bytes([bytes[4], bytes[5]])
 }
 
+fn ipv6_traffic_class(bytes: &[u8]) -> u8 {
+    ((bytes[0] & 0x0f) << 4) | (bytes[1] >> 4)
+}
+
 fn u16_field(bytes: &[u8], offset: usize) -> u16 {
     u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
 }
@@ -285,6 +289,43 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
     assert_eq!(crafter::core::IPV6_SEGMENT_POLICY_INGRESS, 1);
     assert_eq!(crafter::protocols::IPV6_SEGMENT_POLICY_EGRESS, 2);
     assert_eq!(IPV6_SEGMENT_POLICY_SOURCE_ADDRESS, 3);
+}
+
+#[test]
+fn traffic_class_api_sets_and_preserves_dscp_ecn_bits() -> crafter::Result<()> {
+    let dscp_preserves_ecn = Ipv6::new().tc(0b000000_11).dscp(Dscp::ef());
+    assert_eq!(dscp_preserves_ecn.traffic_class_value(), 0b101110_11);
+    assert_eq!(dscp_preserves_ecn.dscp_value(), Dscp::ef());
+    assert_eq!(dscp_preserves_ecn.ecn_value(), Ecn::ce());
+
+    let ecn_preserves_dscp = dscp_preserves_ecn.ecn(Ecn::capable_0());
+    assert_eq!(ecn_preserves_dscp.traffic_class_value(), 0b101110_10);
+    assert_eq!(ecn_preserves_dscp.dscp_value(), Dscp::ef());
+    assert_eq!(ecn_preserves_dscp.ecn_value(), Ecn::ect0());
+
+    let raw_override = ecn_preserves_dscp.tc(0x15);
+    assert_eq!(raw_override.traffic_class_value(), 0x15);
+    assert_eq!(raw_override.dscp_value(), Dscp::new(0x05)?);
+    assert_eq!(raw_override.ecn_value(), Ecn::ect1());
+
+    let compiled = (Ipv6::with_addresses(doc_src(), doc_dst())
+        .dscp(Dscp::ef())
+        .ecn(Ecn::capable_0())
+        .nh(253)
+        / Raw::from("tc"))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+    assert_eq!(ipv6_traffic_class(bytes), 0xba);
+    assert_eq!(bytes[6], 253);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    assert_eq!(ipv6.traffic_class_value(), 0xba);
+    assert_eq!(ipv6.dscp_value(), Dscp::ef());
+    assert_eq!(ipv6.ecn_value(), Ecn::ect0());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
 }
 
 #[test]
