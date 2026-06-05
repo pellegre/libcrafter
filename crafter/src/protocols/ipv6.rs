@@ -362,6 +362,8 @@ impl Layer for Ipv6 {
                 "traffic_class",
                 format!("0x{:02x}", self.traffic_class_value()),
             ),
+            ("dscp", self.dscp_value().value().to_string()),
+            ("ecn", self.ecn_value().value().to_string()),
             ("flow_label", format!("0x{:05x}", self.flow_label_value())),
             (
                 "payload_length",

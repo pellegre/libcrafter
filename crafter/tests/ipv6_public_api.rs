@@ -381,6 +381,49 @@ fn next_header_names_are_public_and_used_in_summaries() {
 }
 
 #[test]
+fn inspection_base_summary_stays_compact_and_show_lists_base_fields() -> crafter::Result<()> {
+    let compiled = (Ipv6::with_addresses(doc_src(), doc_dst())
+        .dscp(Dscp::ef())
+        .ecn(Ecn::ce())
+        .fl(0x12345)
+        .hlim(37)
+        .nh(IPPROTO_IPV6_NO_NEXT)
+        / Raw::from("base"))
+    .compile()?;
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, compiled.as_bytes())?;
+
+    assert_eq!(
+        decoded.summary(),
+        format!(
+            "Ipv6(src={}, dst={}, next=no-next(59)) / Raw(len=4)",
+            doc_src(),
+            doc_dst()
+        )
+    );
+
+    let show = decoded.show();
+    let expected_src = format!("src: {}", doc_src());
+    let expected_dst = format!("dst: {}", doc_dst());
+    for expected in [
+        "version: 6",
+        "traffic_class: 0xbb",
+        "dscp: 46",
+        "ecn: 3",
+        "flow_label: 0x12345",
+        "payload_length: 4",
+        "next_header: no-next(59)",
+        "hop_limit: 37",
+        expected_src.as_str(),
+        expected_dst.as_str(),
+    ] {
+        assert!(show.contains(expected), "{show}");
+    }
+
+    Ok(())
+}
+
+#[test]
 fn next_header_names_no_next_header_decodes_empty_payload_without_raw() -> crafter::Result<()> {
     let compiled = (base_ipv6(45).nh(IPPROTO_IPV6_NO_NEXT) / Raw::new()).compile()?;
     let bytes = compiled.as_bytes();
