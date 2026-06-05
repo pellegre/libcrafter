@@ -44,6 +44,9 @@ class CaseBytePolicyIndexTest(unittest.TestCase):
         self.assertEqual(
             index.get("malformed-dns-pointer-cycle"), "structured_error"
         )
+        self.assertEqual(
+            index.get("malformed-ipv6-extensions"), "structured_error"
+        )
         # Undeclared cases are absent, leaving prior eligibility behavior intact.
         self.assertNotIn("default", index)
 
@@ -73,6 +76,19 @@ class PcapEligibilityBytePolicyTest(unittest.TestCase):
 
     def test_structured_error_case_is_skipped_with_explicit_reason(self) -> None:
         packet = _eligibility_for("malformed-dns-pointer-cycle")
+
+        self.assertFalse(packet.pcap.eligible)
+        self.assertEqual(packet.pcap.reason, SKIP_PCAP_STRUCTURED_ERROR)
+        self.assertIn(SKIP_PCAP_STRUCTURED_ERROR, packet.pcap.skip_reasons)
+        self.assertEqual(packet.pcap.metadata["byte_policy"], "structured_error")
+
+    def test_ipv6_structured_error_case_is_pcap_ineligible(self) -> None:
+        plan = _ipv6_plan("malformed-ipv6-extensions")
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(plan)],
+            case_byte_policies=case_byte_policy_index(),
+        )
 
         self.assertFalse(packet.pcap.eligible)
         self.assertEqual(packet.pcap.reason, SKIP_PCAP_STRUCTURED_ERROR)
@@ -128,6 +144,20 @@ def _dns_plan(case: str, *, root: str | None) -> PacketPlan:
         family="dns",
         case=case,
         metadata=metadata,
+    )
+
+
+def _ipv6_plan(case: str) -> PacketPlan:
+    return PacketPlan(
+        stack=["ipv6", "payload"],
+        fields={"ipv6": {"src": "2001:db8::1", "dst": "2001:db8::2"}},
+        profile="ipv6-enrichment",
+        seed=1,
+        index=0,
+        direction="reference_to_libcrafter",
+        family="ipv6",
+        case=case,
+        metadata={"root": "l3:ipv6"},
     )
 
 

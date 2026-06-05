@@ -748,10 +748,31 @@ class PacketGenerator:
                 and not _has_ipv4_enrichment_case(coverage_cases, self.grammar)
             ):
                 continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "ipv6-enrichment"
+                and not _has_ipv6_enrichment_case(coverage_cases)
+            ):
+                continue
             candidates.append(stack)
         return candidates
 
     def _stack_deck(self, stacks: Sequence[JSONObject]) -> list[JSONObject]:
+        if self.profile == "ipv6-enrichment":
+            deck: list[JSONObject] = []
+            for stack in stacks:
+                coverage_cases = _string_list(
+                    stack.get("coverage_cases", []),
+                    "stack.coverage_cases",
+                )
+                for case in coverage_cases:
+                    if not _is_ipv6_enrichment_case(case):
+                        continue
+                    deck.append({**stack, "coverage_cases": [case]})
+            if deck:
+                return deck
+
         weighted: list[JSONObject] = []
         for stack in stacks:
             weight = self._stack_weight(stack)
@@ -903,6 +924,13 @@ class PacketGenerator:
             # tcp-header-* and tcp-option-* cases so case selection stays on TCP
             # behavior and never falls through to unrelated cases.
             coverage_cases = [case for case in coverage_cases if _has_tcp_smoke_case([case])]
+        if feature is None and self.profile == "ipv6-enrichment":
+            # Focused IPv6 enrichment profile: restrict to stack-declared
+            # base/unknown-next-header and strict-byte extension cases. This
+            # avoids the generic feature expansion below, which is too broad for
+            # extension chains because any ipv6_routing stack can otherwise draw
+            # cases whose terminal layer belongs to a different stack.
+            coverage_cases = [case for case in coverage_cases if _is_ipv6_enrichment_case(case)]
         if feature is not None:
             feature_spec = self._feature_spec(feature)
             feature_cases = _string_list(feature_spec.get("coverage_cases"), "feature.coverage_cases")
@@ -957,6 +985,14 @@ class PacketGenerator:
         # enrichment cases, and cross-feature expansion is skipped so unrelated
         # features that happen to ride IPv4 stacks cannot enter the sample.
         if feature is None and self.profile == "ipv4-enrichment":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        # Focused IPv6 enrichment profile: select only from the stack's declared
+        # enrichment cases. The cross-feature case expansion below intentionally
+        # stays disabled so routing/TCP/ICMPv6 terminal chains remain aligned
+        # with their declared stack shapes.
+        if feature is None and self.profile == "ipv6-enrichment":
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1062,6 +1098,12 @@ class PacketGenerator:
             # The IPv4 enrichment profile auto-samples only the IPv4 option
             # feature; all non-option IPv4 layer cases remain plain header cases.
             if self.profile == "ipv4-enrichment" and name != "ipv4_options":
+                continue
+            # The ipv6-enrichment profile is a focused offline run over the
+            # IPv6 fragment/routing feature plus plain IPv6 base-header cases.
+            # Keep other IPv6-adjacent features (UDP/TCP/pcap/live) out of the
+            # automatic feature sampler for reproducibility.
+            if self.profile == "ipv6-enrichment" and name != "ipv6_fragment_routing":
                 continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")
@@ -1233,6 +1275,16 @@ class PacketGenerator:
                     "fragment_offset": 0,
                     "more_fragments": False,
                     "identification": bounded_int(rng, 0, (1 << 32) - 1),
+                }
+            elif layer == "ipv6_hop_by_hop":
+                sampled = {
+                    "next_header": _ipv6_next_header_for_stack(stack, "ipv6_hop_by_hop"),
+                    "options": _ipv6_extension_options_for_case(layer, case),
+                }
+            elif layer == "ipv6_destination_options":
+                sampled = {
+                    "next_header": _ipv6_next_header_for_stack(stack, "ipv6_destination_options"),
+                    "options": _ipv6_extension_options_for_case(layer, case),
                 }
             elif layer == "ipv6_routing":
                 sampled = {
@@ -2096,6 +2148,27 @@ def _sample_ipv6_field(ctx: _SamplingContext, field_name: str, domain: object) -
     if field_name == "hop_limit":
         return _integer_domain_value(ctx, domain, field_name, bits=8)
     raise ValueError(f"spec error: unsupported ipv6 field sampler: {field_name}")
+
+
+def _ipv6_extension_options_for_case(layer: str, case: str) -> list[JSONObject]:
+    normalized = case.replace("_", "-")
+    if "option-metadata" in normalized:
+        return [
+            {
+                "kind": "unknown",
+                "option_type": 0x22,
+                "data": {"hex": "aabbccdd"},
+            }
+        ]
+    if layer == "ipv6_hop_by_hop":
+        return [
+            {"kind": "router_alert", "value": 0},
+            {"kind": "padn", "total_length": 2},
+        ]
+    return [
+        {"kind": "home_address", "address": "2001:db8::42"},
+        {"kind": "padn", "total_length": 4},
+    ]
 
 
 def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
@@ -3973,6 +4046,42 @@ def _layer_coverage_cases(grammar: Mapping[str, object], layer: str) -> set[str]
     return set(_string_list(layer_spec.get("coverage_cases", []), f"layers.{layer}.coverage_cases"))
 
 
+_IPV6_ENRICHMENT_CASES = frozenset(
+    {
+        "crafter-ipv6-boundary-fields",
+        "crafter-ipv6-fragment-udp",
+        "crafter-ipv6-routing-generic",
+        "crafter-ipv6-routing-icmpv6",
+        "crafter-ipv6-routing-tcp-raw",
+        "crafter-ipv6-segment-routing-udp",
+        "crafter-ipv6-unknown-next-header-raw",
+        "ipv6-boundary-fields",
+        "ipv6-destination-options",
+        "ipv6-extension-chain-tcp-raw",
+        "ipv6-fragment-udp",
+        "ipv6-hop-by-hop-options",
+        "ipv6-mobile-routing",
+        "ipv6-option-metadata",
+        "ipv6-routing-generic",
+        "ipv6-routing-icmpv6",
+        "ipv6-segment-routing-udp",
+        "ipv6-unknown-next-header-raw",
+    }
+)
+
+
+def _is_ipv6_enrichment_case(case: str) -> bool:
+    """Whether ``case`` is sampled by the focused ipv6-enrichment profile."""
+
+    return case.replace("_", "-") in _IPV6_ENRICHMENT_CASES
+
+
+def _has_ipv6_enrichment_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains an ipv6-enrichment coverage case."""
+
+    return any(_is_ipv6_enrichment_case(case) for case in cases)
+
+
 # Behavior names of the focused single-option tcp_options cases (tcp-option-*).
 # These select exactly one option kind so they must not be matched against the
 # broad option-list cases (tcp-options*, tcp-all-flags-reserved-offset), which
@@ -4241,8 +4350,14 @@ def _case_categories(cases: Sequence[str]) -> list[str]:
 def _layers_cover_feature(stack: Sequence[str], feature_layers: Sequence[str]) -> bool:
     stack_set = set(stack)
     feature_set = set(feature_layers)
-    if {"ipv6_fragment", "ipv6_routing"}.issubset(feature_set):
-        return "ipv6" in stack_set and bool(stack_set.intersection({"ipv6_fragment", "ipv6_routing"}))
+    ipv6_extension_layers = {
+        "ipv6_destination_options",
+        "ipv6_fragment",
+        "ipv6_hop_by_hop",
+        "ipv6_routing",
+    }
+    if "ipv6" in feature_set and feature_set.intersection(ipv6_extension_layers):
+        return "ipv6" in stack_set and bool(stack_set.intersection(ipv6_extension_layers))
     if {"ipv4", "ipv6"}.issubset(feature_set):
         return bool(stack_set.intersection(feature_set))
     return all(layer in stack_set for layer in feature_layers)
@@ -4253,7 +4368,17 @@ def _ipv6_extension_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) 
     output: list[str] = []
     for case in cases:
         normalized = case.replace("_", "-")
-        if "ipv6-fragment" in normalized and "ipv6_fragment" in stack_set:
+        if (
+            ("hop-by-hop" in normalized or "option-metadata" in normalized)
+            and "ipv6_hop_by_hop" in stack_set
+        ):
+            output.append(case)
+        elif (
+            ("destination-options" in normalized or "option-metadata" in normalized)
+            and "ipv6_destination_options" in stack_set
+        ):
+            output.append(case)
+        elif "ipv6-fragment" in normalized and "ipv6_fragment" in stack_set:
             output.append(case)
         elif (
             any(token in normalized for token in ("routing", "segment", "mobile", "extension-chain"))
@@ -4301,8 +4426,12 @@ def _ipv4_protocol_for_stack(stack: Sequence[str]) -> str:
 
 def _ipv6_next_header_for_stack(stack: Sequence[str], layer: str) -> str:
     next_layer = _next_layer_after(stack, layer)
+    if next_layer == "ipv6_destination_options":
+        return "destination-options"
     if next_layer == "ipv6_fragment":
         return "fragment"
+    if next_layer == "ipv6_hop_by_hop":
+        return "hop-by-hop"
     if next_layer == "ipv6_routing":
         return "routing"
     if next_layer in {"icmpv6", "tcp", "udp"}:

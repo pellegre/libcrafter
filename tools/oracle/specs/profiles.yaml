@@ -208,6 +208,30 @@ profiles:
       malformed: 0
       pcap: 0
       live: 0
+  # ipv6-enrichment: focused offline coverage for enriched IPv6 base and
+  # extension-header decode/compile behavior. The generator narrows stack and
+  # case selection to the IPv6 base/unknown-next-header cases plus the currently
+  # strict-byte comparable Hop-by-Hop, Destination Options, fragment, routing,
+  # SRH, TCP-chain, and ICMPv6-chain cases. Malformed extension chains carry
+  # byte_policy: structured_error and are therefore explicit
+  # pcap/wire-ineligible cases rather than sampled offline.
+  - name: ipv6-enrichment
+    purpose: focused offline IPv6 base and extension-header enrichment coverage
+    default_count: 20
+    family_weights:
+      - name: ipv6
+        weight: 6
+      - name: udp
+        weight: 2
+    payload_length:
+      min: 0
+      max: 32
+    feature_weights:
+      baseline: 10
+      boundary: 8
+      malformed: 1
+      pcap: 0
+      live: 0
 
 backend_support:
   scapy:

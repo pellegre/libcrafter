@@ -173,10 +173,24 @@ coverage_cases:
 
 supported_cases:
   # Existing generator/backend materializers support these strict-byte IPv6
-  # fragment and routing cases today. Hop-by-Hop and Destination Options now
-  # have Scapy/libcrafter materializers for neutral oracle plans, but the
-  # offline suite only samples stack-grammar-reachable cases. Keep option cases
-  # declared as coverage until a generator stack entry makes them suite-runnable.
+  # options, fragment, and routing cases today. Malformed extension chains stay
+  # declared as structured-error coverage because the offline oracle has no
+  # malformed comparison pathway.
+  - name: ipv6-hop-by-hop-options
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ipv6-destination-options
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ipv6-option-metadata
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
   - name: ipv6-fragment-udp
     directions:
       - reference_to_libcrafter
@@ -188,6 +202,11 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: strict_bytes
   - name: ipv6-mobile-routing
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ipv6-segment-routing-udp
     directions:
       - reference_to_libcrafter
       - libcrafter_to_reference
@@ -212,6 +231,16 @@ supported_cases:
       - reference_to_libcrafter
       - libcrafter_to_reference
     byte_policy: strict_bytes
+  - name: crafter-ipv6-segment-routing-udp
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: malformed-ipv6-extensions
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
 
 backend_support:
   scapy:
