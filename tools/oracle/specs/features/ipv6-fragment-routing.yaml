@@ -5,6 +5,8 @@ summary: IPv6 base-field interpretation, options metadata, fragment status, rout
 
 layers:
   - ipv6
+  - ipv6_hop_by_hop
+  - ipv6_destination_options
   - ipv6_fragment
   - ipv6_routing
 directions:
@@ -171,9 +173,10 @@ coverage_cases:
 
 supported_cases:
   # Existing generator/backend materializers support these strict-byte IPv6
-  # fragment and routing cases today. Hop-by-Hop and Destination Options are
-  # declared above as source-backed coverage, but Step 57 owns their oracle
-  # materializers and should move them into this matrix when they run.
+  # fragment and routing cases today. Hop-by-Hop and Destination Options now
+  # have Scapy/libcrafter materializers for neutral oracle plans, but the
+  # offline suite only samples stack-grammar-reachable cases. Keep option cases
+  # declared as coverage until a generator stack entry makes them suite-runnable.
   - name: ipv6-fragment-udp
     directions:
       - reference_to_libcrafter
@@ -214,6 +217,8 @@ backend_support:
   scapy:
     status: supported
     native_layers:
+      - IPv6ExtHdrHopByHop
+      - IPv6ExtHdrDestOpt
       - IPv6ExtHdrFragment
       - IPv6ExtHdrRouting
       - IPv6ExtHdrSegmentRouting

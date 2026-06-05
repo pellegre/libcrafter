@@ -29,9 +29,19 @@ _IP_PROTOCOLS: dict[str, int] = {
     "udp": 17,
 }
 _IPV6_NEXT_HEADERS: dict[str, int] = {
+    "destination-options": 60,
+    "destination_options": 60,
+    "dstopts": 60,
     "fragment": 44,
+    "hop-by-hop": 0,
+    "hop-by-hop-options": 0,
+    "hop_by_hop": 0,
+    "hop_by_hop_options": 0,
+    "hopopts": 0,
     "routing": 43,
     "icmpv6": 58,
+    "no-next": 59,
+    "no_next": 59,
     "payload": 253,
     "raw": 253,
     "tcp": 6,
@@ -45,7 +55,9 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ethernet": "Ether",
     "icmp": "ICMP",
     "icmpv6": "ICMPv6EchoRequest",
+    "ipv6_destination_options": "IPv6ExtHdrDestOpt",
     "ipv6_fragment": "IPv6ExtHdrFragment",
+    "ipv6_hop_by_hop": "IPv6ExtHdrHopByHop",
     "ipv6_routing": "IPv6ExtHdrRouting",
     "ipv4": "IP",
     "ipv6": "IPv6",
@@ -206,6 +218,13 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "tc",
         "traffic_class",
     },
+    "ipv6_destination_options": {
+        "header_ext_len",
+        "len",
+        "next_header",
+        "nh",
+        "options",
+    },
     "ipv6_fragment": {
         "fragment_offset",
         "identification",
@@ -216,6 +235,13 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "nh",
         "offset",
         "reserved",
+    },
+    "ipv6_hop_by_hop": {
+        "header_ext_len",
+        "len",
+        "next_header",
+        "nh",
+        "options",
     },
     "ipv6_routing": {
         "addresses",
@@ -362,6 +388,10 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _ipv4(fields, stack, index, scapy_all)
     if layer == "ipv6":
         return _ipv6(fields, stack, index, scapy_all)
+    if layer == "ipv6_hop_by_hop":
+        return _ipv6_hop_by_hop(fields, stack, index, scapy_all)
+    if layer == "ipv6_destination_options":
+        return _ipv6_destination_options(fields, stack, index, scapy_all)
     if layer == "ipv6_fragment":
         return _ipv6_fragment(fields, stack, index, scapy_all)
     if layer == "ipv6_routing":
@@ -611,6 +641,141 @@ def _ipv6(fields: Mapping[str, JSONObject], stack: list[str], index: int, scapy_
     if "flow_label" in ipv6_fields or "fl" in ipv6_fields:
         kwargs["fl"] = _int(_optional_field(ipv6_fields, "flow_label", "fl"), 0)
     return scapy_all.IPv6(**kwargs)
+
+
+def _ipv6_hop_by_hop(
+    fields: Mapping[str, JSONObject],
+    stack: list[str],
+    index: int,
+    scapy_all: Any,
+) -> Any:
+    return _ipv6_options_header(
+        fields,
+        layer="ipv6_hop_by_hop",
+        factory=scapy_all.IPv6ExtHdrHopByHop,
+        scapy_all=scapy_all,
+    )
+
+
+def _ipv6_destination_options(
+    fields: Mapping[str, JSONObject],
+    stack: list[str],
+    index: int,
+    scapy_all: Any,
+) -> Any:
+    return _ipv6_options_header(
+        fields,
+        layer="ipv6_destination_options",
+        factory=scapy_all.IPv6ExtHdrDestOpt,
+        scapy_all=scapy_all,
+    )
+
+
+def _ipv6_options_header(
+    fields: Mapping[str, JSONObject],
+    *,
+    layer: str,
+    factory: Any,
+    scapy_all: Any,
+) -> Any:
+    option_fields = _layer_fields(fields, layer)
+    kwargs: dict[str, Any] = {
+        "nh": _protocol_value(
+            _required_field(option_fields, layer, "next_header", "nh"),
+            _IPV6_NEXT_HEADERS,
+        ),
+        # Scapy aligns some known options by inserting PadN ahead of them. The
+        # oracle model is byte-preserving, so plans carry any required padding
+        # explicitly and Scapy's alignment autopad must stay disabled.
+        "autopad": 0,
+        "options": _ipv6_options(_required_field(option_fields, layer, "options"), scapy_all),
+    }
+    if "header_ext_len" in option_fields or "len" in option_fields:
+        kwargs["len"] = _int(_optional_field(option_fields, "header_ext_len", "len"), 0)
+    return factory(**kwargs)
+
+
+def _ipv6_options(value: object, scapy_all: Any) -> list[Any]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError("IPv6 options materialization requires an option list")
+    return [_ipv6_option(item, scapy_all) for item in value]
+
+
+def _ipv6_option(item: object, scapy_all: Any) -> Any:
+    if not isinstance(item, Mapping):
+        raise ValueError(f"IPv6 option entry must be an object, got {item!r}")
+    kind = _ipv6_option_kind(item)
+    if kind == "pad1":
+        return scapy_all.Pad1()
+    if kind == "padn":
+        return scapy_all.PadN(optdata=_ipv6_padn_data(item))
+    if kind == "router_alert":
+        return scapy_all.RouterAlert(value=_int(_required_field(item, "ipv6 option", "value"), 0))
+    if kind == "jumbo_payload":
+        length = _required_field(item, "ipv6 option", "length", "jumbo_payload_length")
+        return scapy_all.Jumbo(jumboplen=_int(length, 0))
+    if kind == "home_address":
+        address = _required_field(item, "ipv6 option", "address", "home_address")
+        return scapy_all.HAO(hoa=_text(address, "::"))
+    option_type = _int(
+        _required_field(item, "ipv6 option", "option_type", "type", "kind"),
+        0,
+    )
+    return scapy_all.HBHOptUnknown(
+        otype=option_type,
+        optdata=_ipv6_option_data(item),
+    )
+
+
+def _ipv6_option_kind(item: Mapping[str, object]) -> str:
+    value = _optional_field(item, "kind", "name")
+    if isinstance(value, str):
+        normalized = value.lower().replace("-", "_")
+        if normalized in {
+            "pad1",
+            "padn",
+            "router_alert",
+            "jumbo_payload",
+            "home_address",
+            "unknown",
+            "generic",
+        }:
+            return normalized
+    option_type = _optional_field(item, "option_type", "type")
+    if option_type is None:
+        return "unknown"
+    option_type_int = _int(option_type, 0)
+    if option_type_int == 0:
+        return "pad1"
+    if option_type_int == 1:
+        return "padn"
+    if option_type_int == 5 and "value" in item:
+        return "router_alert"
+    if option_type_int == 0xC2 and ("length" in item or "jumbo_payload_length" in item):
+        return "jumbo_payload"
+    if option_type_int == 0xC9 and ("address" in item or "home_address" in item):
+        return "home_address"
+    return "unknown"
+
+
+def _ipv6_padn_data(item: Mapping[str, object]) -> bytes:
+    data = _ipv6_option_data(item)
+    if data:
+        return data
+    total_length = _optional_field(item, "total_length", "length")
+    if total_length is None:
+        return b""
+    total = _int(total_length, 0)
+    if total < 2:
+        raise ValueError(f"PadN total length must be at least 2 bytes, got {total}")
+    return b"\x00" * (total - 2)
+
+
+def _ipv6_option_data(item: Mapping[str, object]) -> bytes:
+    data = _optional_field(item, "data", "bytes", "value_hex", "hex")
+    if data is None:
+        return b""
+    return _bytes_field(data)
 
 
 def _ipv6_fragment(
@@ -962,7 +1127,16 @@ def _canonical_stack(stack: list[str]) -> list[str]:
     aliases = {
         "dot1q": "vlan",
         "ether": "ethernet",
+        "hop-by-hop": "ipv6_hop_by_hop",
+        "hop-by-hop-options": "ipv6_hop_by_hop",
+        "hop_by_hop": "ipv6_hop_by_hop",
+        "hop_by_hop_options": "ipv6_hop_by_hop",
         "ip": "ipv4",
+        "ipv6-destination-options": "ipv6_destination_options",
+        "ipv6-hop-by-hop": "ipv6_hop_by_hop",
+        "ipv6-hop-by-hop-options": "ipv6_hop_by_hop",
+        "destination-options": "ipv6_destination_options",
+        "destination_options": "ipv6_destination_options",
         "raw": "payload",
     }
     return [aliases.get(layer.lower(), layer.lower()) for layer in stack]
