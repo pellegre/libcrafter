@@ -11,36 +11,15 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
 use crate::protocols::icmp::Icmpv4;
-use crate::protocols::ip::shared::DSCP_SHIFT;
+use crate::protocols::ip::shared::{ip_protocol_summary as protocol_summary, DSCP_SHIFT};
 use crate::protocols::transport::{Tcp, Udp};
 use crate::registry::ProtocolRegistry;
 
-pub use crate::protocols::ip::shared::{Dscp, Ecn};
-
-/// IPv4 protocol number for ICMP.
-pub const IPPROTO_ICMP: u8 = 1;
-/// IPv4 protocol number for TCP.
-pub const IPPROTO_TCP: u8 = 6;
-/// IPv4 protocol number for UDP.
-pub const IPPROTO_UDP: u8 = 17;
-/// IPv4 protocol number for IPv6 encapsulation.
-pub const IPPROTO_IPV6: u8 = 41;
-/// IPv4 protocol number for Generic Routing Encapsulation.
-pub const IPPROTO_GRE: u8 = 47;
-/// IPv4 protocol number for Encapsulating Security Payload.
-pub const IPPROTO_ESP: u8 = 50;
-/// IPv4 protocol number for Authentication Header.
-pub const IPPROTO_AH: u8 = 51;
-/// IPv4 protocol number for ICMPv6.
-pub const IPPROTO_ICMPV6: u8 = 58;
-/// IPv4 protocol number for Open Shortest Path First IGP.
-pub const IPPROTO_OSPF: u8 = 89;
-/// IPv4 protocol number for Stream Control Transmission Protocol.
-pub const IPPROTO_SCTP: u8 = 132;
-/// IPv4 protocol number reserved for experimentation and testing.
-pub const IPPROTO_EXPERIMENTAL_1: u8 = 253;
-/// IPv4 protocol number reserved for experimentation and testing.
-pub const IPPROTO_EXPERIMENTAL_2: u8 = 254;
+pub use crate::protocols::ip::shared::{
+    Dscp, Ecn, IPPROTO_AH, IPPROTO_ESP, IPPROTO_EXPERIMENTAL_1, IPPROTO_EXPERIMENTAL_2,
+    IPPROTO_GRE, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6, IPPROTO_OSPF, IPPROTO_SCTP,
+    IPPROTO_TCP, IPPROTO_UDP,
+};
 
 /// IPv4 "reserved" flag bit.
 pub const IPV4_FLAG_RESERVED: u8 = 0b100;
@@ -1904,25 +1883,6 @@ fn ecn_summary(ecn: Ecn) -> &'static str {
         Ecn::Ect1 => "ECT(1)",
         Ecn::Ect0 => "ECT(0)",
         Ecn::Ce => "CE",
-    }
-}
-
-fn protocol_summary(protocol: u8) -> String {
-    match protocol {
-        0 => "hopopt(0)".to_string(),
-        IPPROTO_ICMP => "icmp(1)".to_string(),
-        IPPROTO_TCP => "tcp(6)".to_string(),
-        IPPROTO_UDP => "udp(17)".to_string(),
-        IPPROTO_IPV6 => "ipv6(41)".to_string(),
-        IPPROTO_GRE => "gre(47)".to_string(),
-        IPPROTO_ESP => "esp(50)".to_string(),
-        IPPROTO_AH => "ah(51)".to_string(),
-        IPPROTO_ICMPV6 => "icmpv6(58)".to_string(),
-        IPPROTO_OSPF => "ospf(89)".to_string(),
-        IPPROTO_SCTP => "sctp(132)".to_string(),
-        IPPROTO_EXPERIMENTAL_1 => "experimental(253)".to_string(),
-        IPPROTO_EXPERIMENTAL_2 => "experimental(254)".to_string(),
-        value => value.to_string(),
     }
 }
 

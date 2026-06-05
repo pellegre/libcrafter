@@ -10,35 +10,18 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
 use crate::protocols::icmp::Icmpv6;
-use crate::protocols::ip::shared::{Dscp, Ecn, DSCP_SHIFT, ECN_MASK};
-use crate::protocols::ipv4::{IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
+use crate::protocols::ip::shared::{
+    ipv6_next_header_summary as next_header_summary, Dscp, Ecn, DSCP_SHIFT, ECN_MASK,
+    IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
+};
 use crate::protocols::transport::{Tcp, Udp};
 use crate::registry::ProtocolRegistry;
 
-/// IPv6 Hop-by-Hop Options next-header value.
-pub const IPPROTO_IPV6_HOPOPTS: u8 = 0;
-/// IPv6 Routing Header next-header value.
-pub const IPPROTO_IPV6_ROUTE: u8 = 43;
-/// IPv6 Fragment Header next-header value.
-pub const IPPROTO_IPV6_FRAGMENT: u8 = 44;
-/// IPv6 Encapsulating Security Payload next-header value.
-pub const IPPROTO_IPV6_ESP: u8 = 50;
-/// IPv6 Authentication Header next-header value.
-pub const IPPROTO_IPV6_AH: u8 = 51;
-/// IPv6 No Next Header next-header value.
-pub const IPPROTO_IPV6_NO_NEXT: u8 = 59;
-/// IPv6 Destination Options next-header value.
-pub const IPPROTO_IPV6_DSTOPTS: u8 = 60;
-/// IPv6 Mobility Header next-header value.
-pub const IPPROTO_IPV6_MOBILITY: u8 = 135;
-/// IPv6 Host Identity Protocol next-header value.
-pub const IPPROTO_IPV6_HIP: u8 = 139;
-/// IPv6 Shim6 Protocol next-header value.
-pub const IPPROTO_IPV6_SHIM6: u8 = 140;
-/// IPv6 experimental/testing next-header value 1.
-pub const IPPROTO_IPV6_EXPERIMENTAL_1: u8 = 253;
-/// IPv6 experimental/testing next-header value 2.
-pub const IPPROTO_IPV6_EXPERIMENTAL_2: u8 = 254;
+pub use crate::protocols::ip::shared::{
+    IPPROTO_IPV6_AH, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_ESP, IPPROTO_IPV6_EXPERIMENTAL_1,
+    IPPROTO_IPV6_EXPERIMENTAL_2, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HIP, IPPROTO_IPV6_HOPOPTS,
+    IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_NO_NEXT, IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6,
+};
 
 /// IPv6 Pad1 option type shared by Hop-by-Hop and Destination Options headers.
 pub const IPV6_OPTION_PAD1: u8 = 0x00;
@@ -3184,28 +3167,6 @@ fn routing_type_summary(routing_type: u8) -> String {
         },
         Ipv6RoutingTypeStatus::Reserved => format!("reserved({routing_type})"),
         Ipv6RoutingTypeStatus::Unknown => format!("unknown({routing_type})"),
-    }
-}
-
-fn next_header_summary(next_header: u8) -> String {
-    match next_header {
-        IPPROTO_IPV6_HOPOPTS => "hop-by-hop-options(0)".to_string(),
-        IPPROTO_TCP => "tcp(6)".to_string(),
-        IPPROTO_UDP => "udp(17)".to_string(),
-        IPPROTO_IPV6_ROUTE => "routing(43)".to_string(),
-        IPPROTO_IPV6_FRAGMENT => "fragment(44)".to_string(),
-        IPPROTO_IPV6_ESP => "esp(50)".to_string(),
-        IPPROTO_IPV6_AH => "ah(51)".to_string(),
-        IPPROTO_ICMPV6 => "icmpv6(58)".to_string(),
-        IPPROTO_IPV6_NO_NEXT => "no-next(59)".to_string(),
-        IPPROTO_IPV6_DSTOPTS => "destination-options(60)".to_string(),
-        IPPROTO_IPV6_MOBILITY => "mobility(135)".to_string(),
-        IPPROTO_IPV6_HIP => "hip(139)".to_string(),
-        IPPROTO_IPV6_SHIM6 => "shim6(140)".to_string(),
-        IPPROTO_IPV6_EXPERIMENTAL_1 => "experimental-1(253)".to_string(),
-        IPPROTO_IPV6_EXPERIMENTAL_2 => "experimental-2(254)".to_string(),
-        255 => "reserved(255)".to_string(),
-        value => format!("unknown({value})"),
     }
 }
 
