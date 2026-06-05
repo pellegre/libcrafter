@@ -1945,6 +1945,193 @@ fn segment_routing_field_model_is_rfc8754_named_and_byte_preserving() -> crafter
 }
 
 #[test]
+fn segment_routing_segments_one_segment_defaults_and_roundtrip() -> crafter::Result<()> {
+    let segment = Ipv6Addr::new(0x2001, 0x0db8, 0x0036, 0, 0, 0, 0, 0x0001);
+    let payload = b"one";
+    let compiled = (base_ipv6(101)
+        / Ipv6SegmentRoutingHeader::new().segment(segment)
+        / Udp::new().sport(41001).dport(41002)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 35, IPPROTO_IPV6_ROUTE, 101);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 2);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(bytes[43], 0);
+    assert_eq!(bytes[44], 0);
+    assert_eq!(&bytes[48..64], &segment.octets());
+    assert_eq!(u16_field(bytes, 64), 41001);
+    assert_eq!(u16_field(bytes, 66), 41002);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let segment_header = decoded
+        .layer::<Ipv6SegmentRoutingHeader>()
+        .expect("segment routing header");
+    let udp = decoded.layer::<Udp>().expect("udp layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(segment_header.header_ext_len_value(), Some(2));
+    assert_eq!(segment_header.segments_left_value(), 0);
+    assert_eq!(segment_header.last_entry_value(), 0);
+    assert_eq!(segment_header.segment_list(), &[segment]);
+    assert!(segment_header.raw_trailing_data_bytes().is_empty());
+    assert_eq!(udp.source_port_value(), 41001);
+    assert_eq!(udp.destination_port_value(), 41002);
+    assert_eq!(raw.as_bytes(), payload);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn segment_routing_segments_multiple_defaults_and_length() -> crafter::Result<()> {
+    let segments = [
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0036, 0, 0, 0, 0, 0x0010),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0036, 0, 0, 0, 0, 0x0020),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0036, 0, 0, 0, 0, 0x0030),
+    ];
+    let payload = b"multi";
+    let compiled = (base_ipv6(102)
+        / Ipv6SegmentRoutingHeader::new()
+            .segment(segments[0])
+            .segment(segments[1])
+            .segment(segments[2])
+        / Udp::new().sport(42001).dport(42002)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 69, IPPROTO_IPV6_ROUTE, 102);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 6);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(bytes[43], 2);
+    assert_eq!(bytes[44], 2);
+    assert_eq!(&bytes[48..64], &segments[0].octets());
+    assert_eq!(&bytes[64..80], &segments[1].octets());
+    assert_eq!(&bytes[80..96], &segments[2].octets());
+    assert_eq!(u16_field(bytes, 96), 42001);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let segment_header = decoded
+        .layer::<Ipv6SegmentRoutingHeader>()
+        .expect("segment routing header");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(segment_header.header_ext_len_value(), Some(6));
+    assert_eq!(segment_header.segments_left_value(), 2);
+    assert_eq!(segment_header.last_entry_value(), 2);
+    assert_eq!(segment_header.segment_list(), segments.as_slice());
+    assert!(segment_header.raw_trailing_data_bytes().is_empty());
+    assert_eq!(raw.as_bytes(), payload);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn segment_routing_segments_left_and_last_entry_boundaries_are_validated() -> crafter::Result<()> {
+    let segments = [
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0036, 0, 0, 0, 0, 0x0100),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0036, 0, 0, 0, 0, 0x0200),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0036, 0, 0, 0, 0, 0x0300),
+    ];
+    let base_segment_header = Ipv6SegmentRoutingHeader::new()
+        .segment(segments[0])
+        .segment(segments[1])
+        .segment(segments[2]);
+
+    Packet::from_layer(base_segment_header.clone().segments_left(0)).compile()?;
+    Packet::from_layer(base_segment_header.clone().segments_left(2)).compile()?;
+
+    let segments_left_err = Packet::from_layer(base_segment_header.clone().segments_left(3))
+        .compile()
+        .expect_err("segments-left equal to the segment count must be rejected");
+    assert_invalid_field_value_error(
+        "segment routing segments-left out of bounds",
+        segments_left_err,
+        "ipv6.segment.segments_left",
+    );
+
+    let last_entry_err = Packet::from_layer(base_segment_header.last_entry(3))
+        .compile()
+        .expect_err("last-entry equal to the segment count must be rejected");
+    assert_invalid_field_value_error(
+        "segment routing last-entry out of bounds",
+        last_entry_err,
+        "ipv6.segment.last_entry",
+    );
+
+    Ok(())
+}
+
+#[test]
+fn segment_routing_segments_empty_list_is_rejected() {
+    let err = Packet::from_layer(Ipv6SegmentRoutingHeader::new())
+        .compile()
+        .expect_err("RFC 8754 Last Entry requires at least one segment-list entry");
+
+    assert_invalid_field_value_error(
+        "segment routing empty segment list",
+        err,
+        "ipv6.segment.segments",
+    );
+}
+
+#[test]
+fn segment_routing_segments_explicit_header_extension_length_roundtrip() -> crafter::Result<()> {
+    let segment = Ipv6Addr::new(0x2001, 0x0db8, 0x0036, 0, 0, 0, 0, 0x0400);
+    let payload = b"pad";
+    let compiled = (base_ipv6(103)
+        / Ipv6SegmentRoutingHeader::new()
+            .header_ext_len(4)
+            .segment(segment)
+        / Udp::new().sport(43001).dport(43002)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 51, IPPROTO_IPV6_ROUTE, 103);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 4);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(bytes[43], 0);
+    assert_eq!(bytes[44], 0);
+    assert_eq!(&bytes[48..64], &segment.octets());
+    assert!(bytes[64..80].iter().all(|byte| *byte == 0));
+    assert_eq!(u16_field(bytes, 80), 43001);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let segment_header = decoded
+        .layer::<Ipv6SegmentRoutingHeader>()
+        .expect("segment routing header");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(segment_header.header_ext_len_value(), Some(4));
+    assert_eq!(segment_header.segment_list(), &[segment]);
+    assert_eq!(segment_header.raw_trailing_data_bytes(), &[0; 16]);
+    assert_eq!(raw.as_bytes(), payload);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    let too_small = Packet::from_layer(
+        Ipv6SegmentRoutingHeader::new()
+            .header_ext_len(1)
+            .segment(segment),
+    )
+    .compile()
+    .expect_err("explicit SRH header extension length must fit the segment list");
+    assert_invalid_field_value_error(
+        "segment routing explicit header extension length too small",
+        too_small,
+        "ipv6.segment.header_ext_len",
+    );
+
+    Ok(())
+}
+
+#[test]
 fn mobile_routing_api_defaults_status_and_overrides_are_inspectable() -> crafter::Result<()> {
     assert_eq!(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN, 2);
     assert_eq!(IPV6_MOBILE_ROUTING_SEGMENTS_LEFT, 1);
