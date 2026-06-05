@@ -194,6 +194,8 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "arp" => Ok(Box::new(arp_layer(plan)?)),
         "ipv4" => Ok(Box::new(ipv4_layer(plan)?)),
         "ipv6" => Ok(Box::new(ipv6_layer(plan)?)),
+        "ipv6_hop_by_hop" => Ok(Box::new(ipv6_hop_by_hop_layer(plan)?)),
+        "ipv6_destination_options" => Ok(Box::new(ipv6_destination_options_layer(plan)?)),
         "ipv6_fragment" => Ok(Box::new(ipv6_fragment_layer(plan)?)),
         "ipv6_routing" => ipv6_routing_layer(plan),
         "udp" => Ok(Box::new(udp_layer(plan)?)),
@@ -521,6 +523,112 @@ fn ipv6_layer(plan: &Value) -> ExampleResult<Ipv6> {
         layer = layer.fl(u32_value(value)?);
     }
     Ok(layer)
+}
+
+fn ipv6_hop_by_hop_layer(plan: &Value) -> ExampleResult<Ipv6HopByHopOptionsHeader> {
+    let fields = layer_fields(plan, "ipv6_hop_by_hop")?;
+    let mut layer = Ipv6HopByHopOptionsHeader::new()
+        .nh(ipv6_next_header(required(fields, &["next_header", "nh"])?)?)
+        .options(ipv6_options(required(fields, &["options"])?)?);
+    if let Some(value) = optional(fields, &["header_ext_len", "len"]) {
+        layer = layer.header_ext_len(u8_value(value)?);
+    }
+    Ok(layer)
+}
+
+fn ipv6_destination_options_layer(plan: &Value) -> ExampleResult<Ipv6DestinationOptionsHeader> {
+    let fields = layer_fields(plan, "ipv6_destination_options")?;
+    let mut layer = Ipv6DestinationOptionsHeader::new()
+        .nh(ipv6_next_header(required(fields, &["next_header", "nh"])?)?)
+        .options(ipv6_options(required(fields, &["options"])?)?);
+    if let Some(value) = optional(fields, &["header_ext_len", "len"]) {
+        layer = layer.header_ext_len(u8_value(value)?);
+    }
+    Ok(layer)
+}
+
+fn ipv6_options(value: &Value) -> ExampleResult<Vec<Ipv6Option>> {
+    array_values(value)?
+        .iter()
+        .map(ipv6_option)
+        .collect::<ExampleResult<Vec<_>>>()
+}
+
+fn ipv6_option(value: &Value) -> ExampleResult<Ipv6Option> {
+    let item = value
+        .as_object()
+        .ok_or_else(|| format!("IPv6 option entry must be an object, got {value:?}"))?;
+    match ipv6_option_kind(item)?.as_str() {
+        "pad1" => Ok(Ipv6Option::pad1()),
+        "padn" => {
+            if let Some(data) = optional(item, &["data", "bytes", "value_hex", "hex"]) {
+                Ipv6Option::padn_data(option_bytes(data)?).map_err(Into::into)
+            } else if let Some(total) = optional(item, &["total_length", "length"]) {
+                Ipv6Option::padn(usize::try_from(u64_value(total)?)?).map_err(Into::into)
+            } else {
+                Ipv6Option::padn(2).map_err(Into::into)
+            }
+        }
+        "router_alert" => Ok(Ipv6Option::router_alert(u16_value(required(
+            item,
+            &["value"],
+        )?)?)),
+        "jumbo_payload" => Ok(Ipv6Option::jumbo_payload(u32_value(required(
+            item,
+            &["length", "jumbo_payload_length"],
+        )?)?)),
+        "home_address" => Ok(Ipv6Option::home_address_str(text_required(
+            item,
+            &["address", "home_address"],
+        )?)?),
+        _ => {
+            let option_type = u8_value(required(item, &["option_type", "type"])?)?;
+            let data = optional(item, &["data", "bytes", "value_hex", "hex"])
+                .map(option_bytes)
+                .transpose()?
+                .unwrap_or_default();
+            Ipv6Option::generic(option_type, data).map_err(Into::into)
+        }
+    }
+}
+
+fn ipv6_option_kind(item: &Map<String, Value>) -> ExampleResult<String> {
+    if let Some(text) = text_optional(item, &["kind", "name"]) {
+        let normalized = text.to_ascii_lowercase().replace('-', "_");
+        if matches!(
+            normalized.as_str(),
+            "pad1"
+                | "padn"
+                | "router_alert"
+                | "jumbo_payload"
+                | "home_address"
+                | "unknown"
+                | "generic"
+        ) {
+            return Ok(normalized);
+        }
+    }
+    let Some(option_type) = optional(item, &["option_type", "type"]) else {
+        return Ok("unknown".to_string());
+    };
+    let option_type = u8_value(option_type)?;
+    Ok(match option_type {
+        IPV6_OPTION_PAD1 => "pad1",
+        IPV6_OPTION_PADN => "padn",
+        IPV6_OPTION_ROUTER_ALERT if item.contains_key("value") => "router_alert",
+        IPV6_OPTION_JUMBO_PAYLOAD
+            if item.contains_key("length") || item.contains_key("jumbo_payload_length") =>
+        {
+            "jumbo_payload"
+        }
+        IPV6_OPTION_HOME_ADDRESS
+            if item.contains_key("address") || item.contains_key("home_address") =>
+        {
+            "home_address"
+        }
+        _ => "unknown",
+    }
+    .to_string())
 }
 
 fn ipv6_fragment_layer(plan: &Value) -> ExampleResult<Ipv6FragmentHeader> {
@@ -1711,7 +1819,14 @@ fn canonical_layer(layer: &str) -> String {
         "cookedlinux" | "linux_sll" | "linux-cooked" => "linux_cooked".to_string(),
         "dot1q" => "vlan".to_string(),
         "ether" => "ethernet".to_string(),
+        "hop-by-hop" | "hop-by-hop-options" | "hop_by_hop" | "hop_by_hop_options" => {
+            "ipv6_hop_by_hop".to_string()
+        }
         "ip" => "ipv4".to_string(),
+        "ipv6-destination-options" | "destination-options" | "destination_options" => {
+            "ipv6_destination_options".to_string()
+        }
+        "ipv6-hop-by-hop" | "ipv6-hop-by-hop-options" => "ipv6_hop_by_hop".to_string(),
         "loopback" | "null-loopback" => "null_loopback".to_string(),
         "raw" => "payload".to_string(),
         "udpoptions" | "udp-options" => "udp_options".to_string(),
@@ -1788,8 +1903,12 @@ fn ip_protocol(value: &Value) -> ExampleResult<u8> {
 fn ipv6_next_header(value: &Value) -> ExampleResult<u8> {
     if let Some(text) = value.as_str() {
         return match text.to_ascii_lowercase().as_str() {
+            "destination-options" | "destination_options" | "dstopts" => Ok(IPPROTO_IPV6_DSTOPTS),
             "fragment" => Ok(IPPROTO_IPV6_FRAGMENT),
+            "hop-by-hop" | "hop-by-hop-options" | "hop_by_hop" | "hop_by_hop_options"
+            | "hopopts" => Ok(IPPROTO_IPV6_HOPOPTS),
             "icmpv6" => Ok(IPPROTO_ICMPV6),
+            "no-next" | "no_next" => Ok(IPPROTO_IPV6_NO_NEXT),
             "payload" | "raw" | "unknown" => Ok(253),
             "routing" => Ok(IPPROTO_IPV6_ROUTE),
             "tcp" => Ok(IPPROTO_TCP),

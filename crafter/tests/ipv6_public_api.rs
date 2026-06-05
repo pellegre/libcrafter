@@ -39,6 +39,14 @@ fn ipv6_flow_label(bytes: &[u8]) -> u32 {
     u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) & 0x000f_ffff
 }
 
+fn fixture_hex_bytes(text: &str) -> Vec<u8> {
+    text.lines()
+        .map(|line| line.split_once('#').map_or(line, |(bytes, _)| bytes))
+        .flat_map(str::split_whitespace)
+        .map(|byte| u8::from_str_radix(byte, 16).expect("fixture byte must be hex"))
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ExpectedBaseDecodeError {
     BufferTooShort {
@@ -754,6 +762,101 @@ fn extension_inspection_summary_and_show_list_option_headers() -> crafter::Resul
             doc_dst()
         )
     );
+
+    Ok(())
+}
+
+#[test]
+fn oracle_materialized_ipv6_options_fixture_matches_public_api() -> crafter::Result<()> {
+    let expected = fixture_hex_bytes(include_str!(
+        "fixtures/bytes/ipv6-options-hop-destination-udp.hex"
+    ));
+    let src = Ipv6Addr::new(0x2001, 0x0db8, 0x0050, 0, 0, 0, 0, 0x0010);
+    let dst = Ipv6Addr::new(0x2001, 0x0db8, 0x0050, 0, 0, 0, 0, 0x0020);
+    let home = Ipv6Addr::new(0x2001, 0x0db8, 0x0050, 0, 0, 0, 0, 0x0040);
+
+    let packet = Ipv6::with_addresses(src, dst).tc(0x5a).fl(0x50050).hlim(50)
+        / Ipv6HopByHopOptionsHeader::new().options([
+            Ipv6Option::router_alert(IPV6_ROUTER_ALERT_RSVP),
+            Ipv6Option::jumbo_payload(65_536),
+            Ipv6Option::unknown(0x13, [])?,
+            Ipv6Option::pad1(),
+            Ipv6Option::pad1(),
+        ])
+        / Ipv6DestinationOptionsHeader::new().options([
+            Ipv6Option::home_address(home),
+            Ipv6Option::unknown(0x1e, [0xee])?,
+            Ipv6Option::pad1(),
+        ])
+        / Udp::new().sport(55_050).dport(1_050)
+        / Raw::from("opts-v6");
+
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+    assert_eq!(bytes, expected.as_slice());
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    assert_eq!(
+        layer_names,
+        vec![
+            "Ipv6",
+            "Ipv6HopByHopOptionsHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Udp",
+            "Raw"
+        ]
+    );
+
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    assert_eq!(ipv6.source(), src);
+    assert_eq!(ipv6.destination(), dst);
+    assert_eq!(ipv6.traffic_class_value(), 0x5a);
+    assert_eq!(ipv6.flow_label_value(), 0x50050);
+    assert_eq!(ipv6.payload_length_value(), Some(55));
+    assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_HOPOPTS);
+    assert_eq!(ipv6.hop_limit_value(), 50);
+
+    let hop_by_hop = decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    assert_eq!(hop_by_hop.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(hop_by_hop.header_ext_len_value(), Some(1));
+    assert_eq!(
+        hop_by_hop.options_value(),
+        &[
+            Ipv6Option::router_alert(IPV6_ROUTER_ALERT_RSVP),
+            Ipv6Option::jumbo_payload(65_536),
+            Ipv6Option::unknown(0x13, [])?,
+            Ipv6Option::pad1(),
+            Ipv6Option::pad1(),
+        ]
+    );
+
+    let destination_options = decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    assert_eq!(destination_options.next_header_value(), IPPROTO_UDP);
+    assert_eq!(destination_options.header_ext_len_value(), Some(2));
+    assert_eq!(
+        destination_options.options_value(),
+        &[
+            Ipv6Option::home_address(home),
+            Ipv6Option::unknown(0x1e, [0xee])?,
+            Ipv6Option::pad1(),
+        ]
+    );
+
+    let udp = decoded.layer::<Udp>().expect("udp layer");
+    assert_eq!(udp.source_port_value(), 55_050);
+    assert_eq!(udp.destination_port_value(), 1_050);
+    assert_eq!(udp.length_value(), Some(15));
+    assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+    assert_eq!(
+        decoded.layer::<Raw>().expect("raw payload").as_bytes(),
+        b"opts-v6"
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), expected.as_slice());
 
     Ok(())
 }

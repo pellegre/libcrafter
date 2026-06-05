@@ -33,7 +33,9 @@ _LAYER_ALIASES: dict[str, str] = {
     "ICMP": "icmp",
     "IP": "ipv4",
     "IPv6": "ipv6",
+    "IPv6ExtHdrDestOpt": "ipv6_destination_options",
     "IPv6ExtHdrFragment": "ipv6_fragment",
+    "IPv6ExtHdrHopByHop": "ipv6_hop_by_hop",
     "IPv6ExtHdrRouting": "ipv6_routing",
     "IPv6ExtHdrSegmentRouting": "ipv6_routing",
     "Loopback": "null_loopback",
@@ -92,6 +94,9 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "id": "identifier",
         "seq": "sequence",
     },
+    "ipv6_destination_options": {
+        "len": "header_ext_len",
+    },
     "ipv4": {
         "id": "identification",
         "ihl": "header_length",
@@ -101,6 +106,9 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "plen": "payload_length",
         "tc": "traffic_class",
         "version": "version",
+    },
+    "ipv6_hop_by_hop": {
+        "len": "header_ext_len",
     },
     "linux_sll": {
         "lladdrlen": "address_length",
@@ -130,9 +138,15 @@ _ETHERTYPES: dict[str, int] = {
     "vlan": 0x8100,
 }
 _PROTOCOLS: dict[str, int] = {
+    "destination-options": 60,
+    "destination_options": 60,
     "fragment": 44,
+    "hop-by-hop": 0,
+    "hop_by_hop": 0,
     "icmp": 1,
     "icmpv6": 58,
+    "no-next": 59,
+    "no_next": 59,
     "routing": 43,
     "tcp": 6,
     "udp": 17,
