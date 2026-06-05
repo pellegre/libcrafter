@@ -14,6 +14,7 @@ use crafter::core::{
     Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, MacAddr,
     NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
     TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
+    Ipv6FragmentHeaderStatus,
     ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
     DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
     DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
@@ -791,6 +792,33 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         preserve_exact_bytes: true,
         summary_path: Some("summaries/ipv6-fragment-udp-raw.summary.txt"),
     },
+    ValidFixtureCase {
+        name: "ipv6-fragment-atomic-udp-raw",
+        path: "bytes/ipv6-fragment-atomic-udp-raw.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-fragment-atomic-udp-raw.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Ipv6Fragment,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv6-fragment-atomic-udp-raw.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv6-fragment-non-initial-udp-raw",
+        path: "bytes/ipv6-fragment-non-initial-udp-raw.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-fragment-non-initial-udp-raw.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Ipv6Fragment,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv6-fragment-non-initial-udp-raw.summary.txt"),
+    },
 ];
 
 const PCAP_FIXTURES: &[PcapFixtureCase] = &[
@@ -1103,7 +1131,9 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
             &[CoverageFamily::Ipv6UdpOptions]
         }
         "ipv6-tcp-raw" | "ipv6-tcp-rich-options" => &[CoverageFamily::Ipv6Tcp],
-        "ipv6-fragment-udp-raw" => &[CoverageFamily::Ipv6ExtensionHeader],
+        "ipv6-fragment-udp-raw"
+        | "ipv6-fragment-atomic-udp-raw"
+        | "ipv6-fragment-non-initial-udp-raw" => &[CoverageFamily::Ipv6ExtensionHeader],
         other => panic!("fixture {other} has no coverage-family mapping"),
     }
 }
@@ -2531,13 +2561,89 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             let fragment = expect_layer::<Ipv6FragmentHeader>(case, packet);
             assert_eq!(fragment.next_header_value(), IPPROTO_UDP);
             assert_eq!(fragment.fragment_offset_value(), 0);
+            assert_eq!(fragment.fragment_offset_bytes(), 0);
             assert!(fragment.has_more_fragments());
+            assert!(!fragment.is_last_fragment());
+            assert_eq!(
+                fragment.fragment_status(),
+                Ipv6FragmentHeaderStatus::Initial
+            );
+            assert!(fragment.is_initial_fragment());
+            assert!(!fragment.is_atomic_fragment());
+            assert!(!fragment.is_non_initial_fragment());
             assert_eq!(fragment.identification_value(), 0x0102_0304);
 
             let udp = expect_layer::<Udp>(case, packet);
             assert_eq!(udp.source_port_value(), 1234);
             assert_eq!(udp.destination_port_value(), 5678);
             assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"frag-v6");
+        }
+        "ipv6-fragment-atomic-udp-raw" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0010, 0, 0, 0, 0, 0x0052)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0020, 0, 0, 0, 0, 0x0052)
+            );
+            assert_eq!(ipv6.payload_length_value(), Some(25));
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_FRAGMENT);
+
+            let fragment = expect_layer::<Ipv6FragmentHeader>(case, packet);
+            assert_eq!(fragment.next_header_value(), IPPROTO_UDP);
+            assert_eq!(fragment.fragment_offset_value(), 0);
+            assert_eq!(fragment.fragment_offset_bytes(), 0);
+            assert!(!fragment.has_more_fragments());
+            assert!(fragment.is_last_fragment());
+            assert_eq!(fragment.fragment_status(), Ipv6FragmentHeaderStatus::Atomic);
+            assert_eq!(fragment.status(), Ipv6FragmentHeaderStatus::Atomic);
+            assert!(fragment.is_atomic_fragment());
+            assert!(fragment.is_initial_fragment());
+            assert!(!fragment.is_non_initial_fragment());
+            assert_eq!(fragment.identification_value(), 0x6946_0052);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 6946);
+            assert_eq!(udp.destination_port_value(), 6952);
+            assert_eq!(udp.length_value(), Some(17));
+            assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"atomic-v6");
+        }
+        "ipv6-fragment-non-initial-udp-raw" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0010, 0, 0, 0, 0, 0x0053)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0020, 0, 0, 0, 0, 0x0053)
+            );
+            assert_eq!(ipv6.payload_length_value(), Some(26));
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_FRAGMENT);
+
+            let fragment = expect_layer::<Ipv6FragmentHeader>(case, packet);
+            assert_eq!(fragment.next_header_value(), IPPROTO_UDP);
+            assert_eq!(fragment.fragment_offset_value(), 2);
+            assert_eq!(fragment.fragment_offset_bytes(), 16);
+            assert!(!fragment.has_more_fragments());
+            assert!(fragment.is_last_fragment());
+            assert_eq!(
+                fragment.fragment_status(),
+                Ipv6FragmentHeaderStatus::NonInitial
+            );
+            assert!(!fragment.is_atomic_fragment());
+            assert!(!fragment.is_initial_fragment());
+            assert!(fragment.is_non_initial_fragment());
+            assert_eq!(fragment.identification_value(), 0x5200_0002);
+
+            assert!(packet.layer::<Udp>().is_none());
+            assert_eq!(
+                expect_layer::<Raw>(case, packet).as_bytes(),
+                b"\x1b\x5a\x1b\x5b\x00\x12\x37\x27noninit-v6"
+            );
         }
         "dhcp-option-overload-file-sname" => {
             let dhcp = expect_layer::<Dhcp>(case, packet);
@@ -2978,6 +3084,26 @@ fn ipv6_routing_fixtures_decode_compile_and_summarize() {
         "ipv6-routing-generic-unknown-raw",
         "ipv6-mobile-routing-raw",
         "ipv6-segment-routing-raw",
+    ] {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
+    }
+}
+
+#[test]
+fn ipv6_fragment_fixtures_decode_compile_and_summarize() {
+    for name in [
+        "ipv6-fragment-udp-raw",
+        "ipv6-fragment-atomic-udp-raw",
+        "ipv6-fragment-non-initial-udp-raw",
     ] {
         let case = valid_fixture_case(name);
         ensure_fixture_exists(case.path);
