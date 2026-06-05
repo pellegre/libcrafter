@@ -1221,6 +1221,72 @@ fn fragment_api_classifies_atomic_initial_and_non_initial_status() -> crafter::R
 }
 
 #[test]
+fn atomic_fragment_decode_continues_to_terminal_layer_and_roundtrips() -> crafter::Result<()> {
+    let payload = b"rfc6946";
+    let compiled = (base_ipv6(78)
+        / Ipv6FragmentHeader::new()
+            .nh(IPPROTO_UDP)
+            .fragment_offset(0)
+            .more_fragments(false)
+            .identification(0x6946_0001)
+        / Udp::new().sport(6946).dport(6947)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(
+        bytes,
+        (8 + UDP_HEADER_LEN + payload.len()) as u16,
+        IPPROTO_IPV6_FRAGMENT,
+        78,
+    );
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 0);
+    assert_eq!(u16_field(bytes, 42), 0);
+    assert_eq!(&bytes[44..48], &0x6946_0001u32.to_be_bytes());
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let fragment = decoded
+        .layer::<Ipv6FragmentHeader>()
+        .expect("fragment layer");
+    let udp = decoded.layer::<Udp>().expect("udp layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        layer_names,
+        vec!["Ipv6", "Ipv6FragmentHeader", "Udp", "Raw"]
+    );
+    assert_eq!(fragment.next_header_value(), IPPROTO_UDP);
+    assert_eq!(fragment.fragment_offset_value(), 0);
+    assert_eq!(fragment.fragment_offset_bytes(), 0);
+    assert!(!fragment.has_more_fragments());
+    assert!(fragment.is_last_fragment());
+    assert_eq!(fragment.identification_value(), 0x6946_0001);
+    assert_eq!(fragment.fragment_status(), Ipv6FragmentHeaderStatus::Atomic);
+    assert_eq!(fragment.status(), Ipv6FragmentHeaderStatus::Atomic);
+    assert_eq!(fragment.fragment_status_label(), "atomic");
+    assert!(fragment.is_atomic_fragment());
+    assert!(fragment.fragment_status().is_atomic());
+    assert!(fragment.fragment_status().is_initial());
+    assert!(!fragment.fragment_status().is_non_initial());
+    assert_eq!(udp.source_port_value(), 6946);
+    assert_eq!(udp.destination_port_value(), 6947);
+    assert_eq!(
+        udp.length_value(),
+        Some((UDP_HEADER_LEN + payload.len()) as u16)
+    );
+    assert_eq!(raw.as_bytes(), payload);
+
+    let show = decoded.show();
+    assert!(show.contains("fragment_status: atomic"));
+    assert!(show.contains("fragment_offset_bytes: 0"));
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
 fn fragment_boundary_offset_zero_and_max_decode_roundtrip() -> crafter::Result<()> {
     const MAX_FRAGMENT_OFFSET: u16 = 0x1fff;
 
