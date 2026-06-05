@@ -107,7 +107,11 @@ Valid byte fixtures cover:
   `ipv6-tcp-raw.hex`,
   `ipv6-tcp-rich-options.hex` (MSS, Window Scale, SACK Permitted, Timestamp,
   RFC 5482 User Timeout, and a classified Generic option, with IPv6
-  pseudo-header checksum), `ipv6-fragment-udp-raw.hex`
+  pseudo-header checksum), `ipv6-fragment-udp-raw.hex` (initial fragment that
+  decodes the complete UDP header present in the first fragment),
+  `ipv6-fragment-atomic-udp-raw.hex` (atomic fragment that decodes UDP), and
+  `ipv6-fragment-non-initial-udp-raw.hex` (non-initial fragment bytes
+  preserved as Raw without transport reassembly)
 - IPv6 UDP options surplus decode:
   `ipv6-udp-options-unknown-unsafe.hex`,
   `ipv6-udp-options-frag.hex`
