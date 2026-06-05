@@ -320,3 +320,94 @@ fn ipv6_payload_length_short_declaration_splits_trailing_raw_tail() -> crafter::
 
     Ok(())
 }
+
+#[test]
+fn ipv6_payload_boundary_autofills_zero_payload_length() -> crafter::Result<()> {
+    let compiled = (base_ipv6(53).nh(253) / Raw::new()).compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 0, 253, 53);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    assert_decoded_ipv6_base_header(ipv6, 0, 253, 53);
+    assert!(decoded.layer::<Raw>().is_none());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn ipv6_payload_boundary_autofills_one_octet_payload_length() -> crafter::Result<()> {
+    let payload = [0xab];
+    let compiled = (base_ipv6(54).nh(253) / Raw::from_bytes(payload)).compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 1, 253, 54);
+    assert_eq!(&bytes[40..], payload);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+    assert_decoded_ipv6_base_header(ipv6, 1, 253, 54);
+    assert_eq!(raw.as_bytes(), payload);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn ipv6_payload_boundary_autofills_max_base_payload_length() -> crafter::Result<()> {
+    let payload = vec![0xa5; u16::MAX as usize];
+    let compiled = (base_ipv6(55).nh(253) / Raw::from_bytes(&payload)).compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, u16::MAX, 253, 55);
+    assert_eq!(&bytes[40..], payload.as_slice());
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+    assert_decoded_ipv6_base_header(ipv6, u16::MAX, 253, 55);
+    assert_eq!(raw.as_bytes(), payload.as_slice());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn ipv6_payload_boundary_explicit_zero_payload_length_is_preserved() -> crafter::Result<()> {
+    let payload = [0xde, 0xad, 0xbe, 0xef];
+    let compiled = (base_ipv6(56).plen(0).nh(253) / Raw::from_bytes(payload)).compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(ipv6_payload_length(bytes), 0);
+    assert_eq!(bytes[6], 253);
+    assert_eq!(bytes[7], 56);
+    assert_eq!(&bytes[40..], payload);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let raw_layers: Vec<_> = decoded.layers::<Raw>().map(Raw::as_bytes).collect();
+    assert_decoded_ipv6_base_header(ipv6, 0, 253, 56);
+    assert_eq!(raw_layers, vec![&payload[..]]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn ipv6_payload_boundary_oversized_payload_returns_structured_error() {
+    let payload = vec![0x5a; u16::MAX as usize + 1];
+    let err = (base_ipv6(57).nh(253) / Raw::from_bytes(&payload))
+        .compile()
+        .expect_err("oversized IPv6 base payload must fail");
+
+    match err {
+        CrafterError::InvalidFieldValue { field, reason } => {
+            assert_eq!(field, "ipv6.payload_length");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("oversized IPv6 base payload expected InvalidFieldValue, got {other:?}"),
+    }
+}
