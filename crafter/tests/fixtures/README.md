@@ -94,7 +94,9 @@ Valid byte fixtures cover:
 - IPv6 ICMPv6 echo and ICMPv6 error:
   `ipv6-icmp-echo-request.bin`, `ipv6-icmpv6-time-exceeded.hex`
 - IPv6 UDP, TCP, and fragment extension-header stacks:
-  `ipv6-udp-raw.hex`, `ipv6-tcp-raw.hex`,
+  `ipv6-udp-raw.hex`, `ipv6-base-traffic-flow-udp-raw.hex` (base header
+  Traffic Class DSCP/ECN, nonzero Flow Label, and Hop Limit),
+  `ipv6-tcp-raw.hex`,
   `ipv6-tcp-rich-options.hex` (MSS, Window Scale, SACK Permitted, Timestamp,
   RFC 5482 User Timeout, and a classified Generic option, with IPv6
   pseudo-header checksum), `ipv6-fragment-udp-raw.hex`
