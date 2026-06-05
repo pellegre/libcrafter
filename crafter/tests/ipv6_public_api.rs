@@ -33,6 +33,29 @@ fn ipv6_traffic_class(bytes: &[u8]) -> u8 {
     ((bytes[0] & 0x0f) << 4) | (bytes[1] >> 4)
 }
 
+fn assert_traffic_class_roundtrip(
+    ipv6: Ipv6,
+    expected_traffic_class: u8,
+    expected_dscp: Dscp,
+    expected_ecn: Ecn,
+) -> crafter::Result<()> {
+    let compiled = (ipv6.nh(253) / Raw::from("tc")).compile()?;
+    let bytes = compiled.as_bytes();
+    assert_eq!(ipv6_traffic_class(bytes), expected_traffic_class);
+    assert_eq!(bytes[0], 0x60 | (expected_traffic_class >> 4));
+    assert_eq!(bytes[1], expected_traffic_class << 4);
+    assert_eq!(bytes[6], 253);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    assert_eq!(ipv6.traffic_class_value(), expected_traffic_class);
+    assert_eq!(ipv6.dscp_value(), expected_dscp);
+    assert_eq!(ipv6.ecn_value(), expected_ecn);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
 fn u16_field(bytes: &[u8], offset: usize) -> u16 {
     u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
 }
@@ -292,8 +315,80 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
 }
 
 #[test]
-fn traffic_class_api_sets_and_preserves_dscp_ecn_bits() -> crafter::Result<()> {
-    let dscp_preserves_ecn = Ipv6::new().tc(0b000000_11).dscp(Dscp::ef());
+fn traffic_class_default_and_named_dscp_helpers_roundtrip() -> crafter::Result<()> {
+    assert_eq!(Dscp::default(), Dscp::default_forwarding());
+    assert_eq!(Dscp::default_forwarding(), Dscp::cs0());
+    assert_eq!(Ecn::default(), Ecn::not_ect());
+
+    assert_traffic_class_roundtrip(
+        Ipv6::with_addresses(doc_src(), doc_dst()),
+        0x00,
+        Dscp::default_forwarding(),
+        Ecn::not_ect(),
+    )?;
+
+    assert_traffic_class_roundtrip(
+        Ipv6::with_addresses(doc_src(), doc_dst()).dscp(Dscp::ef()),
+        0xb8,
+        Dscp::ef(),
+        Ecn::not_ect(),
+    )?;
+
+    let class_selectors = [
+        Dscp::cs0(),
+        Dscp::cs1(),
+        Dscp::cs2(),
+        Dscp::cs3(),
+        Dscp::cs4(),
+        Dscp::cs5(),
+        Dscp::cs6(),
+        Dscp::cs7(),
+    ];
+    for (selector, dscp) in class_selectors.into_iter().enumerate() {
+        let selector = selector as u8;
+        assert_eq!(dscp.value(), selector << 3);
+        assert_eq!(Dscp::class_selector(selector)?, dscp);
+        assert_traffic_class_roundtrip(
+            Ipv6::with_addresses(doc_src(), doc_dst()).dscp(dscp),
+            dscp.value() << 2,
+            dscp,
+            Ecn::not_ect(),
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn traffic_class_ecn_helpers_roundtrip_and_preserve_dscp() -> crafter::Result<()> {
+    assert_eq!(Ecn::capable_0(), Ecn::ect0());
+    assert_eq!(Ecn::capable_1(), Ecn::ect1());
+
+    let dscp = Dscp::cs5();
+    let cases = [
+        (Ecn::not_ect(), 0b101000_00),
+        (Ecn::ect1(), 0b101000_01),
+        (Ecn::ect0(), 0b101000_10),
+        (Ecn::ce(), 0b101000_11),
+    ];
+
+    for (ecn, expected_traffic_class) in cases {
+        assert_traffic_class_roundtrip(
+            Ipv6::with_addresses(doc_src(), doc_dst())
+                .dscp(dscp)
+                .ecn(ecn),
+            expected_traffic_class,
+            dscp,
+            ecn,
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn traffic_class_api_sets_preserves_and_raw_overrides_bits() -> crafter::Result<()> {
+    let dscp_preserves_ecn = Ipv6::new().traffic_class(0b000000_11).dscp(Dscp::ef());
     assert_eq!(dscp_preserves_ecn.traffic_class_value(), 0b101110_11);
     assert_eq!(dscp_preserves_ecn.dscp_value(), Dscp::ef());
     assert_eq!(dscp_preserves_ecn.ecn_value(), Ecn::ce());
@@ -303,27 +398,47 @@ fn traffic_class_api_sets_and_preserves_dscp_ecn_bits() -> crafter::Result<()> {
     assert_eq!(ecn_preserves_dscp.dscp_value(), Dscp::ef());
     assert_eq!(ecn_preserves_dscp.ecn_value(), Ecn::ect0());
 
-    let raw_override = ecn_preserves_dscp.tc(0x15);
+    let raw_override = ecn_preserves_dscp.traffic_class(0x15);
     assert_eq!(raw_override.traffic_class_value(), 0x15);
     assert_eq!(raw_override.dscp_value(), Dscp::new(0x05)?);
     assert_eq!(raw_override.ecn_value(), Ecn::ect1());
+    assert_traffic_class_roundtrip(raw_override, 0x15, Dscp::new(0x05)?, Ecn::ect1())?;
 
-    let compiled = (Ipv6::with_addresses(doc_src(), doc_dst())
-        .dscp(Dscp::ef())
-        .ecn(Ecn::capable_0())
-        .nh(253)
-        / Raw::from("tc"))
-    .compile()?;
-    let bytes = compiled.as_bytes();
-    assert_eq!(ipv6_traffic_class(bytes), 0xba);
-    assert_eq!(bytes[6], 253);
+    assert_traffic_class_roundtrip(
+        Ipv6::with_addresses(doc_src(), doc_dst())
+            .dscp(Dscp::ef())
+            .ecn(Ecn::capable_0()),
+        0xba,
+        Dscp::ef(),
+        Ecn::ect0(),
+    )?;
 
-    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
-    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
-    assert_eq!(ipv6.traffic_class_value(), 0xba);
-    assert_eq!(ipv6.dscp_value(), Dscp::ef());
-    assert_eq!(ipv6.ecn_value(), Ecn::ect0());
-    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    Ok(())
+}
+
+#[test]
+fn traffic_class_rejects_invalid_dscp_and_accepts_boundaries() -> crafter::Result<()> {
+    let max_dscp = Dscp::new(63)?;
+    assert_eq!(max_dscp.value(), 63);
+    assert!(Dscp::new(64).is_err());
+    assert!(Dscp::try_from(64).is_err());
+    assert_eq!(Dscp::class_selector(7)?, Dscp::cs7());
+    assert!(Dscp::class_selector(8).is_err());
+
+    assert_eq!(Ecn::new(0)?, Ecn::not_ect());
+    assert_eq!(Ecn::new(1)?, Ecn::ect1());
+    assert_eq!(Ecn::new(2)?, Ecn::ect0());
+    assert_eq!(Ecn::new(3)?, Ecn::ce());
+    assert!(Ecn::new(4).is_err());
+
+    assert_traffic_class_roundtrip(
+        Ipv6::with_addresses(doc_src(), doc_dst())
+            .dscp(max_dscp)
+            .ecn(Ecn::ce()),
+        0xff,
+        max_dscp,
+        Ecn::ce(),
+    )?;
 
     Ok(())
 }
