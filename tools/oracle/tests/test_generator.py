@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import unittest
 
-from tools.oracle.engine.generator import generate_plans
+from tools.oracle.engine.generator import case_byte_policy_index, generate_plans
 from tools.oracle.engine.model import PacketPlan
 
 
@@ -184,6 +184,55 @@ class IcmpCommonFieldDeterminismTest(unittest.TestCase):
             self.assertFalse(plan.metadata.get("malformed"), plan.case)
             self.assertNotIn("malformed", plan.feature_tags, plan.case)
             self.assertNotIn("non_strict_reencode", plan.feature_tags, plan.case)
+
+
+class Ipv6EnrichmentProfileTest(unittest.TestCase):
+    def test_first_twenty_cover_focused_ipv6_enrichment_cases(self) -> None:
+        plans = generate_plans(
+            seed=1,
+            profile="ipv6-enrichment",
+            count=20,
+            backend=_BACKEND,
+            root="l3:ipv6",
+        )
+        cases = {plan.case for plan in plans}
+
+        self.assertEqual(len(plans), 20)
+        self.assertTrue(
+            {
+                "ipv6-boundary-fields",
+                "ipv6-unknown-next-header-raw",
+                "ipv6-hop-by-hop-options",
+                "ipv6-destination-options",
+                "ipv6-option-metadata",
+                "ipv6-fragment-udp",
+                "ipv6-routing-generic",
+                "ipv6-mobile-routing",
+                "ipv6-segment-routing-udp",
+                "ipv6-extension-chain-tcp-raw",
+                "ipv6-routing-icmpv6",
+            }.issubset(cases)
+        )
+        for plan in plans:
+            with self.subTest(case=plan.case):
+                self.assertEqual(plan.metadata["root"], "l3:ipv6")
+                self.assertIn(plan.metadata.get("feature"), {None, "ipv6_fragment_routing"})
+                self.assertNotIn("live", plan.feature_tags)
+                self.assertNotIn("pcap", plan.feature_tags)
+                self.assertNotIn("malformed", plan.feature_tags)
+
+    def test_malformed_ipv6_extension_case_is_declared_but_not_sampled(self) -> None:
+        policies = case_byte_policy_index()
+        self.assertEqual(policies.get("malformed-ipv6-extensions"), "structured_error")
+
+        plans = generate_plans(
+            seed=1,
+            profile="ipv6-enrichment",
+            count=20,
+            backend=_BACKEND,
+            root="l3:ipv6",
+        )
+        self.assertNotIn("malformed-ipv6-extensions", {plan.case for plan in plans})
 
 
 if __name__ == "__main__":

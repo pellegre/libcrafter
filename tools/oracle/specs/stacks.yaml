@@ -449,6 +449,16 @@ stacks:
       - udp-options-unknown-unsafe
       - udp-options-unsupported-frag
       - udp-options-surplus-application-boundary
+  - name: ipv6_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - payload
+    coverage_cases:
+      - ipv6-boundary-fields
+      - ipv6-unknown-next-header-raw
+      - crafter-ipv6-boundary-fields
+      - crafter-ipv6-unknown-next-header-raw
   - name: ipv6_icmpv6
     root: "l3:ipv6"
     layers:
@@ -487,6 +497,24 @@ stacks:
       - payload
     coverage_cases:
       - ipv6-fragment-udp
+  - name: ipv6_hop_by_hop_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - ipv6_hop_by_hop
+      - payload
+    coverage_cases:
+      - ipv6-hop-by-hop-options
+      - ipv6-option-metadata
+  - name: ipv6_destination_options_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - ipv6_destination_options
+      - payload
+    coverage_cases:
+      - ipv6-destination-options
+      - ipv6-option-metadata
   - name: ipv6_routing_payload
     root: "l3:ipv6"
     layers:
@@ -496,6 +524,16 @@ stacks:
     coverage_cases:
       - ipv6-routing-generic
       - ipv6-mobile-routing
+  - name: ipv6_routing_udp_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - ipv6_routing
+      - udp
+      - payload
+    coverage_cases:
+      - ipv6-segment-routing-udp
+      - crafter-ipv6-segment-routing-udp
   - name: ipv6_routing_tcp_payload
     root: "l3:ipv6"
     layers:
