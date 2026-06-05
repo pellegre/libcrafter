@@ -9,20 +9,24 @@ use std::path::{Path, PathBuf};
 use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsName,
     DnsRecord, DnsRecordData, Dscp, Ecn, EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4,
-    Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6HopByHopOptionsHeader, Ipv6Option,
-    Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
-    Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus,
-    UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
-    DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
+    Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6HopByHopOptionsHeader,
+    Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option, Ipv6RoutingHeader,
+    Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, MacAddr,
+    NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
+    TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
+    ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
+    DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
     DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
     DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
     DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
     DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
     ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
     ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6,
-    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_TCP, IPPROTO_UDP,
-    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, TCP_FLAG_ACK,
-    TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
+    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT,
+    IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP,
+    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED,
+    IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH,
+    TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::{
     PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
@@ -60,6 +64,9 @@ enum ExpectedLayer {
     Ipv6,
     Ipv6HopByHopOptions,
     Ipv6DestinationOptions,
+    Ipv6Routing,
+    Ipv6MobileRouting,
+    Ipv6SegmentRouting,
     Ipv6Fragment,
     Icmp,
     Icmpv6,
@@ -686,6 +693,45 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: Some("summaries/ipv6-options-hop-destination-udp.summary.txt"),
     },
     ValidFixtureCase {
+        name: "ipv6-routing-generic-unknown-raw",
+        path: "bytes/ipv6-routing-generic-unknown-raw.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-routing-generic-unknown-raw.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Ipv6Routing,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv6-routing-generic-unknown-raw.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv6-mobile-routing-raw",
+        path: "bytes/ipv6-mobile-routing-raw.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-mobile-routing-raw.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Ipv6MobileRouting,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv6-mobile-routing-raw.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv6-segment-routing-raw",
+        path: "bytes/ipv6-segment-routing-raw.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-segment-routing-raw.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Ipv6SegmentRouting,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv6-segment-routing-raw.summary.txt"),
+    },
+    ValidFixtureCase {
         name: "ipv6-udp-options-unknown-unsafe",
         path: "bytes/ipv6-udp-options-unknown-unsafe.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-options-unknown-unsafe.hex")),
@@ -1049,7 +1095,10 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv6-icmp-echo-request" => &[CoverageFamily::Ipv6IcmpEcho],
         "ipv6-icmpv6-time-exceeded" => &[CoverageFamily::Ipv6IcmpError],
         "ipv6-udp-raw" | "ipv6-base-traffic-flow-udp-raw" => &[CoverageFamily::Ipv6Udp],
-        "ipv6-options-hop-destination-udp" => &[CoverageFamily::Ipv6ExtensionHeader],
+        "ipv6-options-hop-destination-udp"
+        | "ipv6-routing-generic-unknown-raw"
+        | "ipv6-mobile-routing-raw"
+        | "ipv6-segment-routing-raw" => &[CoverageFamily::Ipv6ExtensionHeader],
         "ipv6-udp-options-unknown-unsafe" | "ipv6-udp-options-frag" => {
             &[CoverageFamily::Ipv6UdpOptions]
         }
@@ -1221,6 +1270,15 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             }
             ExpectedLayer::Ipv6DestinationOptions => {
                 let _ = expect_layer::<Ipv6DestinationOptionsHeader>(case, packet);
+            }
+            ExpectedLayer::Ipv6Routing => {
+                let _ = expect_layer::<Ipv6RoutingHeader>(case, packet);
+            }
+            ExpectedLayer::Ipv6MobileRouting => {
+                let _ = expect_layer::<Ipv6MobileRoutingHeader>(case, packet);
+            }
+            ExpectedLayer::Ipv6SegmentRouting => {
+                let _ = expect_layer::<Ipv6SegmentRoutingHeader>(case, packet);
             }
             ExpectedLayer::Ipv6Fragment => {
                 let _ = expect_layer::<Ipv6FragmentHeader>(case, packet);
@@ -2197,6 +2255,140 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 "{show}"
             );
         }
+        "ipv6-routing-generic-unknown-raw" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0051, 0, 0, 0, 0, 0x0010)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0051, 0, 0, 0, 0, 0x0020)
+            );
+            assert_eq!(ipv6.traffic_class_value(), 0x31);
+            assert_eq!(ipv6.flow_label_value(), 0x51051);
+            assert_eq!(ipv6.payload_length_value(), Some(21));
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_ROUTE);
+            assert_eq!(ipv6.hop_limit_value(), 51);
+
+            let routing = expect_layer::<Ipv6RoutingHeader>(case, packet);
+            assert_eq!(routing.next_header_value(), IPPROTO_IPV6_EXPERIMENTAL_1);
+            assert_eq!(routing.header_ext_len_value(), Some(1));
+            assert_eq!(routing.routing_type_value(), 99);
+            assert_eq!(routing.routing_type_label(), "Unknown");
+            assert_eq!(
+                routing.routing_type_status(),
+                Ipv6RoutingTypeStatus::Unknown
+            );
+            assert_eq!(routing.segments_left_value(), 2);
+            assert_eq!(
+                routing.type_data_bytes(),
+                &[0x63, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xa0, 0xb0]
+            );
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"route");
+        }
+        "ipv6-mobile-routing-raw" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0052, 0, 0, 0, 0, 0x0010)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0052, 0, 0, 0, 0, 0x0020)
+            );
+            assert_eq!(ipv6.traffic_class_value(), 0x52);
+            assert_eq!(ipv6.flow_label_value(), 0x52052);
+            assert_eq!(ipv6.payload_length_value(), Some(33));
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_ROUTE);
+            assert_eq!(ipv6.hop_limit_value(), 52);
+
+            let mobile = expect_layer::<Ipv6MobileRoutingHeader>(case, packet);
+            assert_eq!(mobile.next_header_value(), IPPROTO_IPV6_EXPERIMENTAL_1);
+            assert_eq!(mobile.header_ext_len_value(), Some(2));
+            assert_eq!(mobile.routing_type_value(), IPV6_ROUTING_TYPE_MOBILE);
+            assert_eq!(
+                mobile.routing_type_status(),
+                Ipv6RoutingTypeStatus::Assigned
+            );
+            assert_eq!(
+                mobile.validity_status(),
+                Ipv6MobileRoutingHeaderStatus::Valid
+            );
+            assert_eq!(mobile.segments_left_value(), 1);
+            assert_eq!(
+                mobile.segments_left_status(),
+                Ipv6MobileRoutingHeaderStatus::Valid
+            );
+            assert_eq!(mobile.reserved_value(), 0);
+            assert_eq!(
+                mobile.reserved_status(),
+                Ipv6MobileRoutingHeaderStatus::Valid
+            );
+            assert_eq!(
+                mobile.home_address_value(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0052, 0, 0, 0, 0, 0x0040)
+            );
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"mobile-v6");
+        }
+        "ipv6-segment-routing-raw" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0053, 0, 0, 0, 0, 0x0010)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0053, 0, 0, 0, 0, 0x0020)
+            );
+            assert_eq!(ipv6.traffic_class_value(), 0x63);
+            assert_eq!(ipv6.flow_label_value(), 0x53053);
+            assert_eq!(ipv6.payload_length_value(), Some(62));
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_ROUTE);
+            assert_eq!(ipv6.hop_limit_value(), 53);
+
+            let segment = expect_layer::<Ipv6SegmentRoutingHeader>(case, packet);
+            assert_eq!(segment.next_header_value(), IPPROTO_IPV6_EXPERIMENTAL_1);
+            assert_eq!(segment.header_ext_len_value(), Some(6));
+            assert_eq!(segment.routing_type_value(), IPV6_ROUTING_TYPE_SEGMENT);
+            assert_eq!(
+                segment.routing_type_status(),
+                Ipv6RoutingTypeStatus::Assigned
+            );
+            assert_eq!(segment.segments_left_value(), 1);
+            assert_eq!(segment.last_entry_value(), 1);
+            assert_eq!(segment.first_segment_value(), 1);
+            assert_eq!(segment.flags_value(), 0xa5);
+            assert!(segment.c_flag_value());
+            assert!(!segment.p_flag_value());
+            assert_eq!(segment.reserved_value(), 2);
+            assert_eq!(segment.tag_value(), 0x5353);
+            assert_eq!(
+                segment.segment_list(),
+                &[
+                    Ipv6Addr::new(0x2001, 0x0db8, 0x0053, 0, 0, 0, 0, 0x0030),
+                    Ipv6Addr::new(0x2001, 0x0db8, 0x0053, 0, 0, 0, 0, 0x0040),
+                ]
+            );
+            assert_eq!(
+                segment.raw_trailing_data_bytes(),
+                &[0x00, 0x01, 0x02, 0x00, 0x00, 0xee, 0x03, 0xaa, 0xbb, 0xcc, 0, 0, 0, 0, 0, 0]
+            );
+            assert_eq!(
+                segment.extra_data_bytes(),
+                segment.raw_trailing_data_bytes()
+            );
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"srh-v6");
+
+            let show = packet.show();
+            assert!(show.contains("last_entry: 1"), "{show}");
+            assert!(show.contains("flags: 0xa5"), "{show}");
+            assert!(show.contains("tag: 0x5353"), "{show}");
+            assert!(
+                show.contains("raw_trailing_data: 00 01 02 00 00 ee 03 aa bb cc 00 00 00 00 00 00"),
+                "{show}"
+            );
+        }
         "ipv6-udp-options-unknown-unsafe" => {
             let ipv6 = expect_layer::<Ipv6>(case, packet);
             assert_eq!(
@@ -2777,6 +2969,26 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
             }
             FixtureDecodeTarget::DhcpOptions => assert_dhcp_option_fixture(case, &bytes),
         }
+    }
+}
+
+#[test]
+fn ipv6_routing_fixtures_decode_compile_and_summarize() {
+    for name in [
+        "ipv6-routing-generic-unknown-raw",
+        "ipv6-mobile-routing-raw",
+        "ipv6-segment-routing-raw",
+    ] {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
     }
 }
 

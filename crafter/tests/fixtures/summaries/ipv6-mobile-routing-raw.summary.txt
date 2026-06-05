@@ -1,0 +1,1 @@
+Ipv6(src=2001:db8:52::10, dst=2001:db8:52::20, next=routing(43)) / Ipv6MobileRoutingHeader(type=Type 2 Mobile IPv6(2), home=2001:db8:52::40, next=experimental-1(253)) / Raw(len=9)
