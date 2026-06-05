@@ -48,7 +48,7 @@ values use `Ipv4Protocol`.
 | `ipv4_enrichment` | Protocols | Offline | IPv4 DSCP/ECN helpers, typed options, checksum status, and fragment metadata inspection. | `cargo run -p crafter --example ipv4_enrichment` |
 | `ipv4_options` | Protocols | Offline | IPv4 option builders with checksum and length auto-fill. | `cargo run -p crafter --example ipv4_options` |
 | `tcp_options` | Protocols | Offline | TCP option builders, option ordering, and header-length auto-fill. | `cargo run -p crafter --example tcp_options` |
-| `ipv6_extensions` | Protocols | Offline | IPv6 routing, segment-routing, and fragment extension header decoding. | `cargo run -p crafter --example ipv6_extensions` |
+| `ipv6_extensions` | Protocols | Offline | IPv6 traffic class, flow label, options, routing, segment-routing, fragment, and raw next-header fallback decoding. | `cargo run -p crafter --example ipv6_extensions` |
 
 Live-gated examples require all three opt-ins before opening live sockets or
 capture handles: `--live`, `--i-understand-isolated-lab`, and
