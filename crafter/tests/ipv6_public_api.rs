@@ -399,6 +399,18 @@ fn assert_decoded_option_header(
     Ok(())
 }
 
+fn assert_decoded_extension_order(
+    bytes: &[u8],
+    expected_layer_names: &[&str],
+) -> crafter::Result<()> {
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+
+    assert_eq!(layer_names.as_slice(), expected_layer_names);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    Ok(())
+}
+
 fn unknown_next_header_values() -> [u8; 3] {
     // IANA Protocol Numbers marks 253/254 experimental and 255 reserved.
     [
@@ -1222,6 +1234,111 @@ fn destination_options_decode_after_routing_chains_to_udp() -> crafter::Result<(
     assert_eq!(decoded.compile()?.as_bytes(), bytes);
 
     Ok(())
+}
+
+#[test]
+fn extension_order_hop_by_hop_before_destination_preserves_user_order() -> crafter::Result<()> {
+    // RFC 8200 recommends extension order, but libcrafter preserves the caller's
+    // composed packet stack instead of silently reordering extension headers.
+    let compiled = (base_ipv6(80)
+        / Ipv6HopByHopOptionsHeader::new().option(Ipv6Option::pad1())
+        / Ipv6DestinationOptionsHeader::new().option(Ipv6Option::generic(0x1e, [0xaa])?)
+        / Udp::new().sport(4100).dport(4101)
+        / Raw::from("hbdst"))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(bytes[6], IPPROTO_IPV6_HOPOPTS);
+    assert_eq!(bytes[40], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(bytes[48], IPPROTO_UDP);
+    assert_decoded_extension_order(
+        bytes,
+        &[
+            "Ipv6",
+            "Ipv6HopByHopOptionsHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Udp",
+            "Raw",
+        ],
+    )
+}
+
+#[test]
+fn extension_order_destination_before_routing_preserves_user_order() -> crafter::Result<()> {
+    let compiled = (base_ipv6(81)
+        / Ipv6DestinationOptionsHeader::new().option(Ipv6Option::generic(0x3e, [0xbb])?)
+        / Ipv6RoutingHeader::new().routing_type(253).segments_left(0)
+        / Udp::new().sport(4200).dport(4201)
+        / Raw::from("dst-route"))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(bytes[6], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(bytes[40], IPPROTO_IPV6_ROUTE);
+    assert_eq!(bytes[48], IPPROTO_UDP);
+    assert_decoded_extension_order(
+        bytes,
+        &[
+            "Ipv6",
+            "Ipv6DestinationOptionsHeader",
+            "Ipv6RoutingHeader",
+            "Udp",
+            "Raw",
+        ],
+    )
+}
+
+#[test]
+fn extension_order_routing_before_destination_preserves_user_order() -> crafter::Result<()> {
+    let compiled = (base_ipv6(82)
+        / Ipv6RoutingHeader::new().routing_type(253).segments_left(0)
+        / Ipv6DestinationOptionsHeader::new().option(Ipv6Option::generic(0x5e, [0xcc])?)
+        / Udp::new().sport(4300).dport(4301)
+        / Raw::from("route-dst"))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(bytes[6], IPPROTO_IPV6_ROUTE);
+    assert_eq!(bytes[40], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(bytes[48], IPPROTO_UDP);
+    assert_decoded_extension_order(
+        bytes,
+        &[
+            "Ipv6",
+            "Ipv6RoutingHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Udp",
+            "Raw",
+        ],
+    )
+}
+
+#[test]
+fn extension_order_unusual_destination_hop_by_hop_routing_preserves_bytes() -> crafter::Result<()> {
+    let compiled = (base_ipv6(83)
+        / Ipv6DestinationOptionsHeader::new().option(Ipv6Option::pad1())
+        / Ipv6HopByHopOptionsHeader::new().option(Ipv6Option::generic(0x7e, [0xdd])?)
+        / Ipv6RoutingHeader::new().routing_type(253).segments_left(0)
+        / Udp::new().sport(4400).dport(4401)
+        / Raw::from("unusual"))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(bytes[6], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(bytes[40], IPPROTO_IPV6_HOPOPTS);
+    assert_eq!(bytes[48], IPPROTO_IPV6_ROUTE);
+    assert_eq!(bytes[56], IPPROTO_UDP);
+    assert_decoded_extension_order(
+        bytes,
+        &[
+            "Ipv6",
+            "Ipv6DestinationOptionsHeader",
+            "Ipv6HopByHopOptionsHeader",
+            "Ipv6RoutingHeader",
+            "Udp",
+            "Raw",
+        ],
+    )
 }
 
 #[test]
