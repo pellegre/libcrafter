@@ -1,162 +1,292 @@
 # IPv6 Implementation Inventory
 
-This inventory maps the current `crafter` IPv6 implementation to the
-source-backed facts recorded in [`docs/ipv6-rfc-manifest.md`](ipv6-rfc-manifest.md).
-It was prepared before behavior edits so later IPv6 enrichment can separate
-existing behavior, coverage gaps, and explicit exclusions.
+This is the final handoff inventory for the IPv6 enrichment work on
+`feature/enrich-ipv6-protocol`. It replaces the earlier gap inventory and
+records the behavior that is now implemented, the source evidence used to back
+it, the validation that passed, and the exclusions that remain intentional.
 
-Date checked: 2026-06-04. The RFC manifest was read first. No live packet
-exchange is required by this inventory.
+Date checked: 2026-06-05. This inventory is offline-only: no live packet
+exchange, raw socket traffic, provider endpoint, or lab session was required.
 
-Each item uses one primary status:
+## Implemented packet behavior
 
-- **Implemented** - current code implements the packet-layer behavior and the
-  behavior is traceable to the manifest.
-- **Partial** - current code implements part of the behavior, but typed fields,
-  registry coverage, validation, docs, or tests are incomplete.
-- **Missing** - source-backed behavior is not represented in the current packet
-  surface.
-- **Compatibility only** - public surface is retained so older callers compile,
-  but it is not source-backed wire behavior.
-- **Obsolete** - current behavior models or defaults to deprecated wire behavior.
-- **Unsupported** - current code deliberately does not implement the behavior.
-- **Ambiguous** - current behavior needs source reconciliation before it should
-  guide code changes.
-- **Out of scope** - explicitly excluded by the manifest and Clew scope.
+The enriched IPv6 implementation now fits the existing `Packet` abstraction:
+typed layers compose with `/`, compile through `compile()`, decode through
+`Packet::decode_from_l3(NetworkLayer::Ipv6, ...)`, and inspect through
+`summary()`, `show()`, and typed getters. Protocol-correct defaults are filled
+when fields are unset, and explicit caller overrides are preserved, including
+malformed values intended for stack testing.
 
-## Current File Map
+Implemented base-header behavior includes:
 
-| Area | Current files | Status | Notes |
-| --- | --- | --- | --- |
-| IPv6 protocol implementation | `crafter/src/protocols/ipv6.rs` | Partial | Contains the base `Ipv6` layer, generic Routing header, Fragment header, Mobile Routing Type 2 header, Segment Routing header, decode chain, summaries, inspection fields, and unit tests. It does not contain Hop-by-Hop Options, Destination Options, option TLVs, Mobility Header protocol 135, or a complete current SRH TLV model. |
-| Common IP protocol constants | `crafter/src/protocols/ip.rs`, `crafter/src/protocols/ipv6.rs` | Partial | `ip.rs` exports TCP, UDP, IPv6 encapsulation, and ICMPv6 protocol values. `ipv6.rs` exports HOPOPT(0), Route(43), Fragment(44), and DSTOPTS(60). Constants for No Next Header(59), ESP(50), AH(51), Mobility Header(135), HIP(139), Shim6(140), and experimental extension values 253/254 are missing. |
-| Decode registry | `crafter/src/registry.rs` | Implemented | Built-ins bind Ethernet IPv6 to `append_ipv6_packet_with_registry`, and bind IPv6 Next Header values 58, 6, and 17 to ICMPv6, TCP, and UDP. Unbound IPv6 next-header payloads are preserved as `Raw` when non-empty. Extension-header traversal for Routing and Fragment is implemented inside `ipv6.rs`, not as registry bindings. |
-| Public exports | `crafter/src/protocols/mod.rs`, `crafter/src/lib.rs` | Partial | Root, `core`, and `prelude` exports include `Ipv6`, `Ipv6FragmentHeader`, `Ipv6RoutingHeader`, `Ipv6MobileRoutingHeader`, `Ipv6SegmentRoutingHeader`, extension constants 0/43/44/60, routing type constants 2/4, and SRH policy constants. Missing surfaces are not exported because they do not exist yet. |
-| Packet abstraction | `crafter/src/packet.rs`, layer impls in `ipv6.rs` | Implemented | IPv6 layers use the existing `Layer`, `/`, `Packet`, `compile`, `decode_from_l3`, `summary`, `show`/inspection-field shape. |
+- The 40-octet IPv6 base header fields: version, Traffic Class, Flow Label,
+  Payload Length, Next Header, Hop Limit, source address, and destination
+  address.
+- Auto-filled Payload Length and Next Header values when unset.
+- Preserved explicit Payload Length and Next Header values when set by the
+  caller.
+- Structured decode errors for short IPv6 buffers, invalid version, declared
+  payload overruns, and extension-header truncation.
+- Preservation of extra bytes after the declared Payload Length as trailing
+  `Raw` data.
+- Traffic Class DSCP/ECN helpers through `Dscp` and `Ecn`, while preserving the
+  raw Traffic Class byte as the authoritative wire value.
+- Flow Label getters and checked helpers for the 20-bit field. Automatic Flow
+  Label generation remains outside the crate.
 
-## Source-Backed Requirement Matrix
+Implemented Next Header behavior includes:
 
-| Requirement | Manifest source | Current location | Status | Notes |
-| --- | --- | --- | --- | --- |
-| 40-octet IPv6 base header: version, Traffic Class, Flow Label, Payload Length, Next Header, Hop Limit, source, destination | RFC 8200 | `Ipv6` in `ipv6.rs` | Implemented | Builders, aliases, getters, `summary`, inspection fields, compile, and decode are present. Decode rejects short headers and bad version. |
-| Protocol-correct auto-fill for payload length and next header | RFC 8200 | `Ipv6::compile`, `layer_ipv6_next_header` | Implemented | Unset payload length is computed from following layers. Unset next header is inferred for Routing, Fragment, TCP, UDP, and ICMPv6. Explicit caller values are preserved. |
-| Traffic Class raw field | RFC 8200 | `Ipv6::traffic_class`, `tc`, `traffic_class_value` | Implemented | Raw 8-bit value is preserved and fixture-tested. |
-| Traffic Class DSCP/ECN helpers | RFC 2474 / RFC 3168 still noted for review in manifest | none | Missing | The manifest says DSCP/ECN semantics require additional source review before helpers beyond raw Traffic Class access. |
-| Flow Label raw field | RFC 8200 | `Ipv6::flow_label`, `fl`, `flow_label_value` | Implemented | Compile validates 20-bit range. Fixtures and oracle vectors cover nonzero and max flow-label values. |
-| Flow Label generation or policy | RFC 6437 still noted for review in manifest | none | Missing | Current behavior preserves explicit values and defaults to zero; no automatic generation policy exists. |
-| Payload Length preservation and truncation errors | RFC 8200 | `decode_ipv6_parts` | Implemented | Declared payload length bounds the payload slice; shorter buffers return structured `buffer_too_short`. Extra bytes after the declared payload are appended as `Raw`. |
-| Jumbogram payload-length-zero invariant and Jumbo Payload option | RFC 2675 | none | Missing | The current `effective_payload_length` rejects payloads over 65535 unless caller sets an explicit 16-bit payload length. There is no Hop-by-Hop Jumbo Payload option or jumbogram invariant support. |
-| Upper-layer pseudo-header context for TCP, UDP, ICMPv6 | RFC 8200 | `Ipv6::transport_checksum_context`; TCP/UDP/ICMPv6 layers | Implemented | IPv6 checksum contexts are exercised by IPv6 TCP, UDP, and ICMPv6 tests/fixtures. |
-| Unknown Next Header preservation | RFC 8200; IANA protocol numbers | `ProtocolRegistry::decode_ipv6_next_header` | Implemented | Unknown/unbound payloads are preserved as `Raw`; unit tests and oracle vectors cover value 253. Empty unknown payloads stay absent rather than adding empty `Raw`. |
-| No Next Header 59 | RFC 8200; IANA protocol numbers | registry raw fallback only | Partial | Value 59 has no named constant, summary label, or explicit test. With zero payload it naturally decodes to no child layer; with nonzero payload it currently follows generic raw fallback. |
-| Extension-header chain traversal and extension order preservation | RFC 8200; RFC 7045 | `append_ipv6_next_with_registry`; `Layer` composition | Partial | Hop-by-Hop(0), Destination Options(60), Routing(43), and Fragment(44) are traversed when typed, including zero-offset Fragment Header continuation. RFC 8200's recommended extension order is guidance for callers; libcrafter does not silently reorder user-composed layers. AH(51), ESP(50), Mobility Header(135), HIP(139), Shim6(140), and experimental next-header values remain unsupported by default and are preserved as `Raw`; explicit custom registry bindings are still invoked after supported extension chains. |
-| Hop-by-Hop Options header | RFC 8200; RFC 9673 ambiguity noted in manifest | constant only | Missing | `IPPROTO_IPV6_HOPOPTS` exists and summaries can name it, but there is no layer, option parser, builder, or chain traversal. |
-| Destination Options header | RFC 8200; RFC 6275 Home Address option | constant only | Missing | `IPPROTO_IPV6_DSTOPTS` exists and summaries can name it, but there is no Destination Options layer or option parser. |
-| IPv6 option TLV action/change bits | RFC 8200; RFC 9673 ambiguity noted in manifest | none | Missing | Pad1, PadN, Jumbo Payload, Router Alert, Home Address, and unknown options have no common TLV representation. |
-| Router Alert option | RFC 2711; IANA deprecates for new protocols | none | Missing | Should be explicit and inspectable only if added; no automatic router-intercept behavior should be added. |
-| Home Address Destination Option | RFC 6275 Section 6.3 | `Ipv6Option::home_address` in `ipv6.rs` | Implemented | Option Type 0xC9 with exact 16-octet IPv6 address data decodes typed; malformed lengths remain `Generic` for byte preservation. This is packet-layer field support only; Mobile IPv6 Binding Cache and state machines remain out of scope. |
-| Generic Routing Header base format | RFC 8200; IANA Routing Types | `Ipv6RoutingHeader` | Implemented | Generic header encodes/decodes next header, Hdr Ext Len, Routing Type, Segments Left, and type-specific data. Unknown type data is preserved. |
-| Routing Header Type 0 deprecation | RFC 5095; IANA Routing Types | `Ipv6RoutingHeader::new` | Obsolete | The generic routing header defaults to routing type 0, which the manifest marks deprecated. Current code can decode and preserve type 0, but generated defaults should not emit it without an explicit caller request. |
-| Mobile IPv6 Type 2 Routing Header | RFC 6275 | `Ipv6MobileRoutingHeader` | Implemented | Type 2 builder/decode preserve next header, length, segments left, reserved field, and home address. Unit tests and oracle vectors cover encode/decode. |
-| Mobility Header protocol 135 | RFC 6275; IANA protocol numbers | `IPPROTO_IPV6_MOBILITY`; registry raw fallback | Unsupported | The Mobility Header next-header value is named for inspection, but there is no Mobility Header layer, no default parser, and no registry binding. Payload bytes are preserved as `Raw` by default; Mobile IPv6 state machines remain out of scope. |
-| Segment Routing Header Routing Type 4 | RFC 8754; RFC 9800 update noted in manifest | `Ipv6SegmentRoutingHeader` | Partial | Fixed fields are aligned with RFC 8754: Routing Type 4, Last Entry, one-octet Flags, Tag, Segment List, and raw trailing data are public and byte-preserving. Compatibility aliases such as `segleft`, `push_ipv6_segment`, first-segment, C/P flags, and extra data still compile. Endpoint behavior and current IANA SRH Flags/TLV semantics are not implemented here. |
-| SRH legacy compatibility fields | Historical libcrafter SRH surface; RFC 8754 current packet format | `Ipv6SegmentRoutingHeader` | Compatibility only | Policy address/flag setters, HMAC key ID, and HMAC bytes remain public so older callers compile and can inspect builder state. They are not emitted as source-backed RFC 8754 fields, do not round-trip through decode, and do not implement SRv6 endpoint behavior, HMAC verification, policy installation, or live SR domain behavior. |
-| SRH segment list preservation | RFC 8754 | `Ipv6SegmentRoutingHeader` | Partial | Segment List entries are exposed as encoded 128-bit IPv6 addresses, starting from the last segment of the SR Policy as described by RFC 8754. Raw trailing data after the segment list is preserved for unsupported TLVs and padding. TLVs are not typed; HMAC verification is not implemented. |
-| SRv6 endpoint behavior | RFC 8754 operational behavior | none | Unsupported | Out of scope. No SID execution, endpoint action, policy installation, HMAC verification, or live SR domain behavior should be added here. |
-| Fragment Header field inspection | RFC 8200; RFC 6946; RFC 7112 | `Ipv6FragmentHeader` | Implemented | Encodes/decodes next header, reserved byte, offset, reserved bits, M flag, and identification; summary/show expose fields. Unit tests and fixtures cover initial fragments and non-initial raw preservation. |
-| Atomic fragment notes | RFC 6946 | `Ipv6FragmentHeader`; `Ipv6FragmentHeaderStatus` | Implemented | Offset zero and M flag false are classified as atomic fragments through status helpers and show inspection. Public tests cover terminal-layer decode continuation and byte-for-byte round trips. This is packet-layer inspection only; no reassembly, queue, fragment cache, or stateful processing is implemented. |
-| First-fragment complete-header-chain validation | RFC 7112 | field exposure only | Partial | The crate exposes fragment offset and extension-chain structure but does not validate oversized header-chain placement across fragments. This remains validation/oracle guidance, not reassembly. |
-| Fragment generation across multiple packets | Manifest scope | none | Out of scope | `crafter` can build one Fragment Header layer but does not split payloads into fragments. Fragmentation generation is out of scope. |
-| IPv6 reassembly or fragment cache | Manifest scope | none | Out of scope | Non-initial fragments are preserved as `Raw`; there is no reassembly, overlap handling, queue, timeout, or fragment cache. |
-| PMTUD probing | RFC 8201 | docs/oracle guidance only | Out of scope | The manifest allows docs, sizing notes, and dry-run oracle profiles. The crate should not perform live PMTUD probing by default. |
-| AH and ESP cryptography | IANA extension-header types; manifest exclusion | `IPPROTO_IPV6_AH`, `IPPROTO_IPV6_ESP`; registry raw fallback | Unsupported | Next Header 51 (AH) and 50 (ESP) payloads are not typed and no crypto, authentication, key management, or verification is implemented. Packet-layer raw preservation does not imply AH/ESP support; custom registry bindings are required for caller-owned decoding. |
-| HIP, Shim6, and experimental next-header values | IANA Assigned Internet Protocol Numbers | `IPPROTO_IPV6_HIP`, `IPPROTO_IPV6_SHIM6`, `IPPROTO_IPV6_EXPERIMENTAL_1`, `IPPROTO_IPV6_EXPERIMENTAL_2`; registry raw fallback | Unsupported | These unsupported values are named for inspection and summary output, but there are no built-in protocol layers or default parsers. Non-empty payloads are preserved as `Raw` unless the caller installs an explicit registry binding. |
-| Malformed/truncated decode behavior | RFC 8200 and extension sources | `decode_ipv6_parts`, `decode_extension_total_len`, `decode_fragment_header`, `decode_segment_routing_header` | Partial | Base IPv6, routing, fragment, and SRH length failures produce structured errors. Hop-by-Hop and Destination Options malformed behavior is missing because those layers are missing. |
+- Named constants and summary labels for Hop-by-Hop Options, Routing,
+  Fragment, ESP, AH, No Next Header, Destination Options, Mobility Header, HIP,
+  Shim6, and the two experimental values 253 and 254.
+- Decode traversal for supported Hop-by-Hop Options, Destination Options,
+  Routing, Fragment, Mobile Type 2 Routing, and Segment Routing Header layers.
+- Registry dispatch after supported extension chains for TCP, UDP, and ICMPv6.
+- `Raw` preservation for unknown or unsupported non-empty Next Header payloads.
+- `IPPROTO_IPV6_NO_NEXT` support for explicit No Next Header values and labels;
+  an empty payload decodes without a child layer, while non-empty bytes follow
+  the raw-preservation policy.
+
+Implemented Hop-by-Hop and Destination Options behavior includes:
+
+- `Ipv6HopByHopOptionsHeader` and `Ipv6DestinationOptionsHeader` typed layers.
+- Shared ordered `Ipv6Option` TLVs for Pad1, PadN, Router Alert, Jumbo Payload,
+  Home Address, and generic or unknown options.
+- Option metadata helpers for the full option type byte, action bits,
+  change-en-route bit, low five-bit option number, encoded length, and option
+  data bytes.
+- Auto-filled option-header `Hdr Ext Len` with 8-octet padding when unset.
+- Structured compile errors when an explicit option-header length is too short
+  for caller-supplied options.
+- Byte-preserving decode of unknown options and malformed known-option lengths
+  as generic options when the declared bytes are contained.
+- Explicit-only Router Alert handling. The crate builds the option bytes but
+  never inserts Router Alert automatically or implements router-intercept
+  behavior.
+- Jumbo Payload option bytes through `Ipv6Option::jumbo_payload`. Full
+  jumbogram transport behavior remains unsupported.
+- Home Address Destination Option bytes through `Ipv6Option::home_address`.
+  Mobile IPv6 control-plane and state-machine behavior remains unsupported.
+
+Implemented routing behavior includes:
+
+- Generic `Ipv6RoutingHeader` build/decode for Next Header, Hdr Ext Len,
+  Routing Type, Segments Left, and raw type-specific data.
+- Source-backed routing type constants and classification helpers for assigned,
+  deprecated, experimental, reserved, and unknown routing types.
+- Mobile IPv6 Routing Header Type 2 through `Ipv6MobileRoutingHeader`, including
+  home address, reserved-field inspection, header-length status, segments-left
+  status, and overall validity status.
+- Segment Routing Header support through `Ipv6SegmentRoutingHeader`, including
+  Routing Type 4, Segments Left, Last Entry, raw Flags, Tag, Segment List
+  addresses, and raw trailing TLV/padding bytes.
+- SRH fixed-field validation for segment-list size, Last Entry, Segments Left,
+  and trailing TLV shape.
+- Compatibility aliases for older SRH builder names where needed, without
+  claiming SRv6 endpoint behavior.
+
+Implemented Fragment Header behavior includes:
+
+- `Ipv6FragmentHeader` build/decode for Next Header, reserved octet, Fragment
+  Offset, reserved fragment bits, M flag, and Identification.
+- `Ipv6FragmentHeaderStatus` classification as `Atomic`, `Initial`, or
+  `NonInitial`.
+- Upper-layer decode continuation for atomic and initial fragments when the
+  complete header chain is present.
+- `Raw` preservation for non-initial fragment payload bytes.
+- Explicit inspection of reserved-field status and fragment offsets without
+  adding any fragment cache or stateful processing.
+
+## Source evidence
+
+The source-backed behavior is anchored in
+[`docs/ipv6-rfc-manifest.md`](ipv6-rfc-manifest.md). That manifest remains the
+authority for future protocol changes and reconciles the implementation with
+RFC 8200, RFC 2474, RFC 3168, RFC 2675, RFC 2711, RFC 5095, RFC 6275, RFC 6946,
+RFC 7045, RFC 7112, RFC 8754, RFC 9673, RFC 9800 notes, and the relevant IANA
+protocol-number and routing-type registries.
+
+Current implementation evidence is in:
+
+- `crafter/src/protocols/ipv6.rs` for the IPv6 base layer, extension layers,
+  option TLVs, routing helpers, fragment classification, decode traversal,
+  summary labels, and unit tests.
+- `crafter/src/protocols/ip.rs` for shared IP constants plus `Dscp` and `Ecn`.
+- `crafter/src/protocols/mod.rs` and `crafter/src/lib.rs` for public exports
+  through root, `core`, `prelude`, and protocol module paths.
+- `crafter/src/registry.rs` for IPv6 child dispatch and raw fallback after the
+  extension-chain traversal.
+- `docs/ipv6.md` for the new user-facing IPv6 wire coverage page.
+- `docs/api.md`, `docs/README.md`, `README.md`, and
+  `crafter/examples/README.md` for links into the IPv6 coverage.
+- `crafter/examples/ipv6_extensions.rs` for offline examples covering Traffic
+  Class helpers, Flow Label, Hop-by-Hop Options, Destination Options, generic
+  routing, SRH, Fragment Header, No Next Header, and unknown raw fallback.
+
+## Behavioral suite and command results
+
+The final IPv6 validation results recorded for this branch were:
+
+- `cargo test -p crafter --test ipv6_public_api` passed with 131 tests.
+- `cargo test -p crafter --test fixture_suite ipv6` passed with 4 tests,
+  including the IPv6 fixture and pcap roundtrip filters.
+- `cargo test -p crafter --test resilience ipv6` passed with 8 tests.
+- `tools/oracle/run offline --profile ipv6-enrichment --seed 1 --count 20 --root l3:ipv6`
+  passed with 20/20 offline oracle comparisons.
+- `cargo test --workspace` passed.
+- `.agents/scripts/check-crafter-release --static` passed.
+
+These commands validate offline behavior only. Live traffic remains opt-in
+through explicit live flags, provider configuration, or lab/wire workflows.
 
 ## Tests
 
-| Coverage | Current files | Status | Notes |
-| --- | --- | --- | --- |
-| Base IPv6 unit tests | `crafter/src/protocols/ipv6.rs` module `ipv6_tests` | Implemented | Covers TCP checksum context, auto-filled payload length/next header, Traffic Class, Flow Label, Hop Limit, explicit base Next Header preservation, short header, bad version, and payload-length mismatch. |
-| Fragment unit tests | `crafter/src/protocols/ipv6.rs` module `ipv6_extensions` | Implemented | Covers Fragment Header chaining to UDP, IPv6 pseudo-header checksum preservation, non-initial fragment raw preservation, unknown next-header raw fallback, and short fragment header error. |
-| Routing unit tests | `crafter/src/protocols/ipv6.rs` module `ipv6_routing_header` | Partial | Covers RFC 8754 SRH fixed-field shape, Mobile Routing Type 2, generic routing unknown type data, and builder rejection for some malformed SRH fields. It does not cover Hop-by-Hop, Destination Options, Home Address option, No Next Header, atomic fragments, or current RFC 8754 TLVs. |
-| Public API path tests | `crafter/tests/public_api.rs` | Missing | Public API tests exercise UDP/TCP exports but do not currently assert IPv6 extension types through root, `core`, `prelude`, and `protocols` paths. |
-| Fixture suite IPv6 base/transport | `crafter/tests/fixture_suite.rs` | Implemented | Catalog covers `ipv6-icmp-echo-request`, `ipv6-icmpv6-time-exceeded`, `ipv6-udp-raw`, `ipv6-udp-options-unknown-unsafe`, `ipv6-udp-options-frag`, `ipv6-tcp-raw`, and `ipv6-tcp-rich-options`. Field assertions cover addresses, Traffic Class, Flow Label, Next Header, Hop Limit, transport fields, checksums, and raw payloads. |
-| Fixture suite IPv6 extension headers | `crafter/tests/fixture_suite.rs` | Partial | Local byte fixtures include `ipv6-fragment-udp-raw` only. There are no committed byte fixtures for generic routing, Mobile Routing Type 2, SRH, Hop-by-Hop Options, Destination Options, Home Address option, No Next Header, or atomic fragments. |
-| Pcap fixtures | `crafter/tests/fixture_suite.rs`, `crafter/tests/fixtures/pcaps/raw-ipv6-icmp-echo-request.pcap` | Implemented | Offline RawIP IPv6 pcap coverage exists for an ICMPv6 echo request. No pcap fixture currently exercises IPv6 extension headers. |
-| Malformed corpus | `crafter/tests/fixtures/malformed/core-decode-corpus.hex`, `crafter/tests/resilience.rs` | Partial | Covers short IPv6 base header, bad version, payload-length mismatch, truncated routing header, truncated fragment header, and malformed SRH length. No malformed Hop-by-Hop or Destination Options cases exist. |
-| ICMPv6/NDP tests over IPv6 | `crafter/tests/icmpv6_ndp.rs`, ICMPv6 module tests | Implemented | These exercise IPv6 as the enclosing layer for ICMPv6, NDP, MLD, and hop-limit-sensitive workflows, but they are not IPv6 extension-header coverage. |
+The focused test coverage now includes:
+
+- `crafter/tests/ipv6_public_api.rs` for public exports, builder aliases,
+  DSCP/ECN helpers, option TLVs, Hop-by-Hop and Destination Options headers,
+  No Next Header constants/labels, routing classification, Fragment Header
+  status, Mobile Type 2 status, SRH fields, and compile/decode round trips.
+- IPv6 unit tests in `crafter/src/protocols/ipv6.rs` for base header
+  compile/decode behavior, payload length handling, extension chaining,
+  routing headers, Fragment Header behavior, option parsing, malformed option
+  handling, and SRH validation.
+- `crafter/tests/fixture_suite.rs` for committed byte, summary, show, and pcap
+  fixtures that pin the public decode surface.
+- `crafter/tests/resilience.rs` for malformed IPv6 base-header, option-header,
+  routing-header, Fragment Header, Mobile Type 2, and SRH structured-error
+  cases, plus unsupported Next Header raw preservation.
+- ICMPv6/NDP and transport tests that exercise IPv6 as the enclosing network
+  layer for checksum and child decode behavior, without broadening IPv6 into a
+  host stack.
 
 ## Fixtures
 
-| Fixture class | Current files | Status | Notes |
-| --- | --- | --- | --- |
-| IPv6 byte fixtures | `crafter/tests/fixtures/bytes/ipv6-*.{bin,hex}` | Partial | Existing fixtures cover ICMPv6, UDP, TCP, UDP options, and one Fragment Header stack. Routing, Mobile Routing, SRH, Hop-by-Hop, Destination Options, Home Address, and No Next Header fixtures are missing. |
-| IPv6 summary fixtures | `crafter/tests/fixtures/summaries/ipv6-*.summary.txt` | Partial | Summaries exist for IPv6 TCP options, IPv6 UDP options, and IPv6 Fragment Header. No summaries exist for routing/mobile/SRH/option-header stacks. |
-| IPv6 pcap fixtures | `crafter/tests/fixtures/pcaps/raw-ipv6-icmp-echo-request.pcap` | Implemented | Covers raw IPv6 pcap decode. Extension-header pcaps are missing. |
-| Fixture documentation | `crafter/tests/fixtures/README.md` | Partial | Documents current IPv6 fixture coverage and malformed IPv6 extension-header entries; it correctly reflects the absence of broader IPv6 option/routing fixtures. |
+Fixtures are committed offline artifacts under `crafter/tests/fixtures/` and
+use documentation address space. Current IPv6 fixture coverage includes:
 
-## Oracle And Probe Specs
+- Base traffic fields:
+  `bytes/ipv6-base-traffic-flow-udp-raw.hex`.
+- Hop-by-Hop and Destination Options:
+  `bytes/ipv6-options-hop-destination-udp.hex`,
+  `summaries/ipv6-options-hop-destination-udp.summary.txt`, and
+  `summaries/ipv6-options-hop-destination-udp-show.summary.txt`.
+- Generic routing, Mobile Type 2, and SRH:
+  `bytes/ipv6-routing-generic-unknown-raw.hex`,
+  `bytes/ipv6-mobile-routing-raw.hex`,
+  `bytes/ipv6-segment-routing-raw.hex`, and their summary fixtures.
+- Fragment Header status fixtures:
+  `bytes/ipv6-fragment-udp-raw.hex`,
+  `bytes/ipv6-fragment-atomic-udp-raw.hex`,
+  `bytes/ipv6-fragment-non-initial-udp-raw.hex`, and their summaries.
+- IPv6 transport fixtures:
+  `bytes/ipv6-udp-raw.hex`,
+  `bytes/ipv6-udp-options-unknown-unsafe.hex`,
+  `bytes/ipv6-udp-options-frag.hex`,
+  `bytes/ipv6-tcp-raw.hex`,
+  `bytes/ipv6-tcp-rich-options.hex`,
+  `bytes/ipv6-icmp-echo-request.bin`, and
+  `bytes/ipv6-icmpv6-time-exceeded.hex`.
+- Raw IPv6 classic-pcap fixtures:
+  `pcaps/raw-ipv6-icmp-echo-request.pcap` and
+  `pcaps/raw-ipv6-base-traffic-flow-udp-raw.pcap`.
+- Malformed decode corpus entries in
+  `malformed/core-decode-corpus.hex` for IPv6 base and extension truncation
+  cases.
 
-| Area | Current files | Status | Notes |
-| --- | --- | --- | --- |
-| IPv6 oracle layer spec | `tools/oracle/specs/layers/ipv6.yaml` | Partial | Declares base IPv6 fields and coverage cases for boundary fields, unknown next-header raw, fragment, generic routing, mobile routing, SRH, routing to TCP, and routing to ICMPv6. It lists `hop_by_hop` as a next-header domain, but there is no Hop-by-Hop layer/materializer support. |
-| IPv6 fragment/routing feature spec | `tools/oracle/specs/features/ipv6-fragment-routing.yaml` | Implemented | Declares fragment, generic routing, mobile routing, SRH, routing-to-TCP, routing-to-ICMPv6, and malformed extension coverage in both Scapy-to-libcrafter and libcrafter-to-reference directions. |
-| Oracle stack registry | `tools/oracle/specs/stacks.yaml` | Implemented | Defines `ipv6_fragment_udp`, `ipv6_routing_payload`, `ipv6_routing_tcp_payload`, and `ipv6_routing_icmpv6` stacks. |
-| Oracle fixture case index | `tools/oracle/specs/fixtures/scapy-cases.json` | Implemented | Marks IPv6 boundary, unknown next-header, fragment, generic routing, mobile routing, SRH, routing-to-TCP, routing-to-ICMPv6, and malformed extension cases as implemented. |
-| Scapy materializer | `tools/oracle/engine/backends/scapy/packets.py` | Partial | Materializes IPv6, Fragment, and generic Routing through Scapy. It has no Hop-by-Hop, Destination Options, Mobility Header, or option-TLV materializer. |
-| libcrafter oracle vectors | `tools/oracle/adapters/src/bin/vectors/cases.rs` | Implemented | Builds libcrafter-originated IPv6 boundary, unknown next-header, fragment, generic routing, mobile routing, SRH, routing-to-TCP, and routing-to-ICMPv6 vectors. |
-| Oracle profiles | `tools/oracle/specs/profiles.yaml` | Partial | Generic smoke/ci/wild/boundary/fuzz profiles include IPv6 weights. There is no dedicated IPv6 extension dry-run profile analogous to focused TCP profiles. |
-| Probe specs and live plans | `tools/probe/**` | Partial | Probe coverage is mostly NDP and live behavior planning, not IPv6 extension-header enrichment. Live packet exchange remains opt-in and is not a prerequisite for this inventory. |
+The pcap roundtrip path is pinned by `fixture_suite` and covers deterministic
+RawIP IPv6 pcap read/write/decode behavior. Tracked fixtures must not contain
+real credentials, provider account data, live host identifiers, public IPs, or
+captures from sensitive networks.
 
-## Examples And Docs
+## Oracle coverage
 
-| Area | Current files | Status | Notes |
-| --- | --- | --- | --- |
-| IPv6 extension example | `crafter/examples/ipv6_extensions.rs`, `crafter/examples/README.md` | Partial | Offline example builds and decodes SRH-like and Fragment Header packets. It does not demonstrate generic routing, Mobile Routing Type 2, Hop-by-Hop Options, Destination Options, Home Address option, No Next Header, or malformed handling. |
-| ICMPv6 echo example | `crafter/examples/icmpv6_echo.rs` | Implemented | Demonstrates IPv6 plus ICMPv6 construction and optional dry-run send/receive. It does not exercise extension headers. |
-| User-facing API docs | `docs/api.md`, `README.md` | Partial | Lists IPv6 and current extension header types, and maps the `ipv6_extensions` example. There is no dedicated user-facing `docs/ipv6.md` that explains base fields, extension chaining, unsupported areas, or source-backed option status. |
-| RFC manifest | `docs/ipv6-rfc-manifest.md` | Implemented | Source-backed manifest exists and should remain the authority for future behavior edits. |
-| Existing TCP/UDP docs with IPv6 notes | `docs/tcp.md`, `docs/tcp-rfc-manifest.md`, `docs/udp-rfc-manifest.md`, `docs/api.md` | Implemented | These correctly state that fragmentation/reassembly is out of scope and that IPv6 checksum or minimum-MTU facts are guidance where relevant. |
+Oracle coverage for the IPv6 enrichment is now a focused offline path:
 
-## Priority Gap List
+- `tools/oracle/specs/profiles.yaml` defines the `ipv6-enrichment` profile with
+  offline sampling and `pcap: 0` / `live: 0` feature weights.
+- `tools/oracle/specs/layers/ipv6.yaml` declares base IPv6 fields, DSCP/ECN,
+  Hop-by-Hop Options, Destination Options, shared IPv6 option metadata,
+  Fragment Header, generic routing, Mobile Type 2, SRH, unknown Next Header,
+  and malformed extension coverage.
+- `tools/oracle/specs/features/ipv6-fragment-routing.yaml` indexes the focused
+  IPv6 extension-header cases.
+- `tools/oracle/specs/stacks.yaml` includes rooted `l3:ipv6` stacks for base
+  IPv6, Hop-by-Hop Options, Destination Options, Fragment Header, routing,
+  TCP-chain, UDP-chain, and ICMPv6-chain cases.
+- `tools/oracle/specs/fixtures/scapy-cases.json` marks both Scapy-originated
+  and libcrafter-originated IPv6 enrichment cases.
+- `tools/oracle/engine/backends/scapy/packets.py` materializes the enriched
+  Scapy reference packets, including Hop-by-Hop Options, Destination Options,
+  Router Alert, Jumbo Payload, Home Address, Fragment Header, generic routing,
+  and SRH.
+- `tools/oracle/engine/backends/scapy/normalize.py` normalizes IPv6 extension
+  chains and option bytes for comparison.
+- `tools/oracle/adapters/src/bin/vectors/cases.rs` materializes the
+  libcrafter-originated IPv6 vectors.
 
-1. **Missing IPv6 option headers** - add Hop-by-Hop Options and Destination
-   Options layers with a shared option TLV representation before adding Jumbo
-   Payload, Router Alert, Home Address, Pad1/PadN, or unknown-option behavior.
-   Status: Missing.
-2. **Missing DSCP/ECN helpers** - raw Traffic Class exists, but DSCP/ECN helpers
-   need RFC 2474/RFC 3168/IANA review before being added. Status: Missing.
-3. **Missing No Next Header surface** - value 59 needs a named constant,
-   summary label, explicit tests, and a policy for nonzero payload bytes.
-   Status: Partial.
-4. **Obsolete Routing Type 0 default** - `Ipv6RoutingHeader::new()` defaults to
-   type 0 even though RFC 5095 deprecates RH0. Later behavior edits should avoid
-   generated defaults that emit RH0 accidentally. Status: Obsolete.
-5. **SRH TLV and flag registry follow-up** - fixed SRH fields now follow RFC
-   8754, but RFC 9800 and the current IANA SRH flags/TLV registries still need
-   review before adding typed TLV or later flag semantics. Status: Partial.
-6. **Mobile IPv6 completion within packet scope** - Type 2 routing is present,
-   but Home Address Destination Option and Mobility Header protocol 135 are
-   missing. Mobile IPv6 state machines remain out of scope. Status: Partial.
-7. **Fixture expansion** - add local byte/summary fixtures for generic routing,
-   mobile routing, SRH, Hop-by-Hop, Destination Options, Home Address, No Next
-   Header, atomic fragments, and malformed option headers. Status: Partial.
-8. **Oracle/profile expansion** - oracle cases already cover routing and
-   fragment paths, but not Hop-by-Hop or Destination Options; a focused IPv6
-   extension dry-run profile would make later validation easier. Status:
-   Partial.
-9. **User docs** - add a dedicated IPv6 protocol doc after behavior settles,
-   with explicit unsupported/out-of-scope sections. Status: Partial.
+Malformed IPv6 extension chains are represented as structured-error coverage,
+not strict-byte offline oracle comparisons. The oracle path remains offline by
+default; provider-backed live validation is a separate, explicitly authorized
+workflow.
 
-## Out-of-Scope Notes
+## Docs and examples
 
-| Item | Status | Notes |
-| --- | --- | --- |
-| IPv6 fragmentation generation | Out of scope | Building one `Ipv6FragmentHeader` layer is supported; splitting payloads into multiple IPv6 fragments is not. |
-| IPv6 reassembly, overlap handling, queues, timers, or fragment cache | Out of scope | Non-initial fragments preserve remaining bytes as `Raw`. No reassembly is implemented or planned in this enrichment step. |
-| PMTUD probing or live Packet Too Big workflow | Out of scope | RFC 8201 guides docs, examples, dry-run profiles, and sizing notes only. |
-| AH/ESP cryptography, keys, authentication, encryption, or verification | Out of scope | Raw preservation of Next Header 50/51 payload bytes must not be described as AH/ESP support. |
-| SRv6 endpoint/SID behavior, HMAC verification, policy installation, live SR domain operation | Out of scope | Packet-layer SRH build/decode/inspect is the only in-scope SRH work. |
-| Mobile IPv6 state machines, binding caches, return routability, home-agent behavior, route optimization workflows | Out of scope | Packet-layer Mobile IPv6 artifacts only: Type 2 Routing Header, Home Address option, and Mobility Header bytes if added later. |
-| Live packet exchange by default | Out of scope | Examples, tests, oracle, and probe defaults must stay offline or dry-run unless explicitly live-gated. |
+User-facing IPv6 documentation now exists at [`docs/ipv6.md`](ipv6.md). It
+documents base-header fields, DSCP/ECN helpers, Flow Label behavior, Payload
+Length and Jumbo Payload caveats, Next Header constants, Hop-by-Hop and
+Destination Options, routing headers, SRH, Fragment Header classification,
+malformed decode policy, fixtures, the `ipv6-enrichment` oracle profile, and
+explicit unsupported behavior.
+
+The `ipv6_extensions` example is offline and demonstrates the enriched API
+without raw sockets or live targets. Other docs point to `docs/ipv6.md` rather
+than duplicating the packet-layer behavior map.
+
+## Unsupported behavior that remains known
+
+The following behaviors are deliberately unsupported by the current IPv6 packet
+primitive:
+
+- Automatic Flow Label generation policy.
+- Automatic extension-header reordering.
+- Automatic Router Alert insertion or router-intercept behavior.
+- Full jumbogram transport semantics, huge payload allocation, automatic
+  jumbogram invariant enforcement, or live jumbogram traffic.
+- AH and ESP cryptography, key management, authentication, encryption, or
+  verification.
+- Mobility Header protocol 135 typed parsing and all Mobile IPv6 state
+  machines, binding caches, return-routability behavior, home-agent behavior,
+  and route-optimization workflows.
+- HIP and Shim6 typed protocol parsers.
+- SRv6 endpoint behavior, SID execution, policy installation, HMAC
+  verification, or live SR domain operation.
+- PMTUD probing or live Packet Too Big workflows.
+- Treating fixtures, examples, oracle runs, or probe defaults as live network
+  authorization.
+
+Unsupported non-empty payloads are still preserved as `Raw` where the enclosing
+IPv6 or extension header is valid. This is byte preservation, not support for
+the unsupported protocol.
+
+## Out of scope fragmentation and reassembly exclusions
+
+IPv6 fragmentation generation and IPv6 reassembly remain explicitly out of
+scope.
+
+`crafter` can build and decode a single `Ipv6FragmentHeader` layer and can
+classify the packet as atomic, initial, or non-initial. It does not split a
+payload into multiple IPv6 fragments, choose fragment sizes, create fragment
+series, repair or reorder fragments, or generate provider-backed fragmented live
+traffic.
+
+`crafter` also does not implement IPv6 reassembly, overlap handling, fragment
+queues, fragment timers, fragment caches, endpoint state, or first-fragment
+complete-header-chain enforcement. Initial and atomic fragments may continue
+upper-layer decode when the complete header chain is present. Non-initial
+fragments preserve remaining bytes as `Raw` because there is no reassembly
+context.
+
+These exclusions are intentional for the 2.x packet primitive. Future generated
+tools may build workflows on top, but the crate remains a protocol-correct
+packet construction and decode library rather than an IPv6 stack.
