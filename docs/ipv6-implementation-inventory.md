@@ -16,6 +16,8 @@ Each item uses one primary status:
   registry coverage, validation, docs, or tests are incomplete.
 - **Missing** - source-backed behavior is not represented in the current packet
   surface.
+- **Compatibility only** - public surface is retained so older callers compile,
+  but it is not source-backed wire behavior.
 - **Obsolete** - current behavior models or defaults to deprecated wire behavior.
 - **Unsupported** - current code deliberately does not implement the behavior.
 - **Ambiguous** - current behavior needs source reconciliation before it should
@@ -57,7 +59,8 @@ Each item uses one primary status:
 | Routing Header Type 0 deprecation | RFC 5095; IANA Routing Types | `Ipv6RoutingHeader::new` | Obsolete | The generic routing header defaults to routing type 0, which the manifest marks deprecated. Current code can decode and preserve type 0, but generated defaults should not emit it without an explicit caller request. |
 | Mobile IPv6 Type 2 Routing Header | RFC 6275 | `Ipv6MobileRoutingHeader` | Implemented | Type 2 builder/decode preserve next header, length, segments left, reserved field, and home address. Unit tests and oracle vectors cover encode/decode. |
 | Mobility Header protocol 135 | RFC 6275; IANA protocol numbers | none | Missing | No `IPPROTO_MOBILITY`, no Mobility Header layer, and no registry binding. Mobile IPv6 state machines remain out of scope. |
-| Segment Routing Header Routing Type 4 | RFC 8754; RFC 9800 update noted in manifest | `Ipv6SegmentRoutingHeader` | Partial | Fixed fields are aligned with RFC 8754: Routing Type 4, Last Entry, one-octet Flags, Tag, Segment List, and raw trailing data are public and byte-preserving. Compatibility aliases such as first-segment, C/P flags, policy fields, HMAC fields, and extra data still compile, but endpoint behavior and current IANA SRH Flags/TLV semantics are not implemented here. |
+| Segment Routing Header Routing Type 4 | RFC 8754; RFC 9800 update noted in manifest | `Ipv6SegmentRoutingHeader` | Partial | Fixed fields are aligned with RFC 8754: Routing Type 4, Last Entry, one-octet Flags, Tag, Segment List, and raw trailing data are public and byte-preserving. Compatibility aliases such as `segleft`, `push_ipv6_segment`, first-segment, C/P flags, and extra data still compile. Endpoint behavior and current IANA SRH Flags/TLV semantics are not implemented here. |
+| SRH legacy compatibility fields | Historical libcrafter SRH surface; RFC 8754 current packet format | `Ipv6SegmentRoutingHeader` | Compatibility only | Policy address/flag setters, HMAC key ID, and HMAC bytes remain public so older callers compile and can inspect builder state. They are not emitted as source-backed RFC 8754 fields, do not round-trip through decode, and do not implement SRv6 endpoint behavior, HMAC verification, policy installation, or live SR domain behavior. |
 | SRH segment list preservation | RFC 8754 | `Ipv6SegmentRoutingHeader` | Partial | Segment List entries are exposed as encoded 128-bit IPv6 addresses, starting from the last segment of the SR Policy as described by RFC 8754. Raw trailing data after the segment list is preserved for unsupported TLVs and padding. TLVs are not typed; HMAC verification is not implemented. |
 | SRv6 endpoint behavior | RFC 8754 operational behavior | none | Unsupported | Out of scope. No SID execution, endpoint action, policy installation, HMAC verification, or live SR domain behavior should be added here. |
 | Fragment Header field inspection | RFC 8200; RFC 6946; RFC 7112 | `Ipv6FragmentHeader` | Implemented | Encodes/decodes next header, reserved byte, offset, reserved bits, M flag, and identification; summary/show expose fields. Unit tests and fixtures cover initial fragments and non-initial raw preservation. |
