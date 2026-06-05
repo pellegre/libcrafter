@@ -2016,6 +2016,219 @@ fn mobile_routing_api_defaults_status_and_overrides_are_inspectable() -> crafter
 }
 
 #[test]
+fn mobile_routing_decode_valid_type2_defaults_and_tcp_roundtrip() -> crafter::Result<()> {
+    let payload = b"mobile-tcp";
+    let hop_limit = 97;
+    let mobile_routing_len = 8 + usize::from(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN) * 8;
+    let compiled = (base_ipv6(hop_limit)
+        / Ipv6MobileRoutingHeader::new().home(doc_home())
+        / Tcp::new()
+            .sport(4242)
+            .dport(443)
+            .seq(0x1122_3344)
+            .ack(0x5566_7788)
+            .flags(TCP_FLAG_ACK)
+            .window(2048)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+    let payload_length = (mobile_routing_len + 20 + payload.len()) as u16;
+
+    assert_ipv6_wire_base_header(bytes, payload_length, IPPROTO_IPV6_ROUTE, hop_limit);
+    assert_eq!(bytes[40], IPPROTO_TCP);
+    assert_eq!(bytes[41], IPV6_MOBILE_ROUTING_HEADER_EXT_LEN);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_MOBILE);
+    assert_eq!(bytes[43], IPV6_MOBILE_ROUTING_SEGMENTS_LEFT);
+    assert_eq!(&bytes[44..48], &IPV6_MOBILE_ROUTING_RESERVED.to_be_bytes());
+    assert_eq!(&bytes[48..64], &doc_home().octets());
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let mobile = decoded
+        .layer::<Ipv6MobileRoutingHeader>()
+        .expect("mobile routing header");
+    let tcp = decoded.layer::<Tcp>().expect("tcp layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        layer_names,
+        vec!["Ipv6", "Ipv6MobileRoutingHeader", "Tcp", "Raw"]
+    );
+    assert_decoded_ipv6_base_header(ipv6, payload_length, IPPROTO_IPV6_ROUTE, hop_limit);
+    assert_eq!(mobile.next_header_value(), IPPROTO_TCP);
+    assert_eq!(
+        mobile.header_ext_len_value(),
+        Some(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN)
+    );
+    assert_eq!(
+        mobile.effective_header_ext_len_value(),
+        IPV6_MOBILE_ROUTING_HEADER_EXT_LEN
+    );
+    assert_eq!(mobile.routing_type_value(), IPV6_ROUTING_TYPE_MOBILE);
+    assert_eq!(mobile.routing_type_label(), "Type 2 Mobile IPv6");
+    assert_eq!(
+        mobile.routing_type_status(),
+        Ipv6RoutingTypeStatus::Assigned
+    );
+    assert_eq!(
+        mobile.segments_left_value(),
+        IPV6_MOBILE_ROUTING_SEGMENTS_LEFT
+    );
+    assert!(!mobile.segments_left_is_defaulted());
+    assert_eq!(
+        mobile.segments_left_status(),
+        Ipv6MobileRoutingHeaderStatus::Valid
+    );
+    assert_eq!(mobile.reserved_value(), IPV6_MOBILE_ROUTING_RESERVED);
+    assert_eq!(
+        mobile.reserved_status(),
+        Ipv6MobileRoutingHeaderStatus::Valid
+    );
+    assert_eq!(mobile.home_address_value(), doc_home());
+    assert_eq!(
+        mobile.validity_status(),
+        Ipv6MobileRoutingHeaderStatus::Valid
+    );
+    assert_eq!(tcp.source_port_value(), 4242);
+    assert_eq!(tcp.destination_port_value(), 443);
+    assert_eq!(tcp.checksum_value(), Some(u16_field(&bytes[64..], 16)));
+    assert_eq!(raw.as_bytes(), payload);
+    assert_transport_checksum_uses_ipv6_context(ipv6, IPPROTO_TCP, &bytes[64..], 16, false);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn mobile_routing_decode_reserved_bytes_and_raw_payload_roundtrip() -> crafter::Result<()> {
+    let reserved = 0xaabb_ccddu32;
+    let payload = b"type2-raw";
+    let hop_limit = 98;
+    let mobile_routing_len = 8 + usize::from(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN) * 8;
+    let compiled = (base_ipv6(hop_limit)
+        / Ipv6MobileRoutingHeader::new()
+            .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+            .reserved(reserved)
+            .home(doc_midpoint())
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+    let payload_length = (mobile_routing_len + payload.len()) as u16;
+
+    assert_ipv6_wire_base_header(bytes, payload_length, IPPROTO_IPV6_ROUTE, hop_limit);
+    assert_eq!(bytes[40], IPPROTO_IPV6_EXPERIMENTAL_1);
+    assert_eq!(bytes[41], IPV6_MOBILE_ROUTING_HEADER_EXT_LEN);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_MOBILE);
+    assert_eq!(bytes[43], IPV6_MOBILE_ROUTING_SEGMENTS_LEFT);
+    assert_eq!(&bytes[44..48], &reserved.to_be_bytes());
+    assert_eq!(&bytes[48..64], &doc_midpoint().octets());
+    assert_eq!(&bytes[64..], payload);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let mobile = decoded
+        .layer::<Ipv6MobileRoutingHeader>()
+        .expect("mobile routing header");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(layer_names, vec!["Ipv6", "Ipv6MobileRoutingHeader", "Raw"]);
+    assert_eq!(mobile.next_header_value(), IPPROTO_IPV6_EXPERIMENTAL_1);
+    assert_eq!(mobile.reserved_value(), reserved);
+    assert!(!mobile.reserved_is_zero());
+    assert_eq!(
+        mobile.reserved_status(),
+        Ipv6MobileRoutingHeaderStatus::NonzeroReserved
+    );
+    assert_eq!(
+        mobile.validity_status(),
+        Ipv6MobileRoutingHeaderStatus::NonzeroReserved
+    );
+    assert_eq!(mobile.home_address_value(), doc_midpoint());
+    assert_eq!(raw.as_bytes(), payload);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn mobile_routing_decode_wrong_length_and_truncation_are_structured() -> crafter::Result<()> {
+    let wrong_length = Ipv6MobileRoutingHeader::new()
+        .header_ext_len(1)
+        .home(doc_home());
+    assert_eq!(
+        wrong_length.header_ext_len_status(),
+        Ipv6MobileRoutingHeaderStatus::InvalidHeaderExtLen
+    );
+    assert_eq!(
+        wrong_length.validity_status(),
+        Ipv6MobileRoutingHeaderStatus::InvalidHeaderExtLen
+    );
+
+    let compile_err = (base_ipv6(99) / wrong_length / Raw::new())
+        .compile()
+        .expect_err("too-small explicit Mobile IPv6 routing length must fail");
+    assert_invalid_field_value_error(
+        "mobile routing explicit length too small",
+        compile_err,
+        "ipv6.mobile.header_ext_len",
+    );
+
+    let wrong_length_wire = [
+        IPPROTO_IPV6_NO_NEXT,
+        1,
+        IPV6_ROUTING_TYPE_MOBILE,
+        IPV6_MOBILE_ROUTING_SEGMENTS_LEFT,
+        0,
+        0,
+        0,
+        0,
+        0x20,
+        0x01,
+        0x0d,
+        0xb8,
+        0,
+        0,
+        0,
+        0,
+    ];
+    let wrong_length_packet =
+        (base_ipv6(100).nh(IPPROTO_IPV6_ROUTE) / Raw::from_bytes(&wrong_length_wire)).compile()?;
+    let decode_err = Packet::decode_from_l3(NetworkLayer::Ipv6, wrong_length_packet.as_bytes())
+        .expect_err("Type 2 routing header length 1 is source-backed invalid");
+    assert_invalid_field_value_error(
+        "mobile routing decoded length too small",
+        decode_err,
+        "ipv6.mobile.header_ext_len",
+    );
+
+    let mut truncated_wire = vec![
+        IPPROTO_TCP,
+        IPV6_MOBILE_ROUTING_HEADER_EXT_LEN,
+        IPV6_ROUTING_TYPE_MOBILE,
+        IPV6_MOBILE_ROUTING_SEGMENTS_LEFT,
+        0,
+        0,
+        0,
+        0,
+    ];
+    truncated_wire.extend_from_slice(&doc_home().octets()[..12]);
+    let truncated_packet =
+        (base_ipv6(101).nh(IPPROTO_IPV6_ROUTE) / Raw::from_bytes(&truncated_wire)).compile()?;
+    let decode_err = Packet::decode_from_l3(NetworkLayer::Ipv6, truncated_packet.as_bytes())
+        .expect_err("declared Type 2 routing header must require all 24 bytes");
+    assert_buffer_too_short_error(
+        "mobile routing truncated header",
+        decode_err,
+        "ipv6 routing header",
+        8 + usize::from(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN) * 8,
+        truncated_wire.len(),
+    );
+
+    Ok(())
+}
+
+#[test]
 fn generic_routing_type_data_lengths_pad_to_extension_header_boundary() -> crafter::Result<()> {
     let cases = [
         (vec![0x11], 0, vec![0x11, 0, 0, 0]),
