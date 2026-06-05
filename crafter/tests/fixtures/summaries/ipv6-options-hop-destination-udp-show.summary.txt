@@ -1,0 +1,30 @@
+Packet(len=95, layers=5)
+  [0] Ipv6
+      version: 6
+      traffic_class: 0x5a
+      dscp: 22
+      ecn: 2
+      flow_label: 0x50050
+      payload_length: 55
+      next_header: hop-by-hop-options(0)
+      hop_limit: 50
+      src: 2001:db8:50::10
+      dst: 2001:db8:50::20
+  [1] Ipv6HopByHopOptionsHeader
+      next_header: destination-options(60)
+      header_ext_len: 1
+      options: Router Alert(0x05,value=RSVP(1)),Jumbo Payload(0xc2,length=65536),Generic(kind=0x13,len=0,act=0,chg=0,rest=0x13,data=empty),0x00,0x00
+  [2] Ipv6DestinationOptionsHeader
+      next_header: udp(17)
+      header_ext_len: 2
+      options: Home Address(0xc9,address=2001:db8:50::40),Generic(kind=0x1e,len=1,act=0,chg=0,rest=0x1e,data=ee),0x00
+  [3] Udp
+      sport: 55050
+      dport: 1050
+      length: 15
+      checksum: 0x810f
+      checksum_status: Valid
+  [4] Raw
+      len: 7
+      bytes: 6f 70 74 73 2d 76 36
+      text_lossy: "opts-v6"

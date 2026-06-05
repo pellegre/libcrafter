@@ -1,0 +1,11 @@
+# IPv6 / Hop-by-Hop Options / Destination Options / UDP / Raw.
+# Source and destination use documentation IPv6 address space.
+# Hop-by-Hop carries Router Alert, Jumbo Payload, a generic unknown option,
+# and Pad1 bytes. Destination Options carries Home Address, a generic
+# unknown option, and Pad1 before the terminal UDP payload.
+65 a5 00 50 00 37 00 32 20 01 0d b8 00 50 00 00
+00 00 00 00 00 00 00 10 20 01 0d b8 00 50 00 00
+00 00 00 00 00 00 00 20 3c 01 05 02 00 01 c2 04
+00 01 00 00 13 00 00 00 11 02 c9 10 20 01 0d b8
+00 50 00 00 00 00 00 00 00 00 00 40 1e 01 ee 00
+d7 0a 04 1a 00 0f 81 0f 6f 70 74 73 2d 76 36

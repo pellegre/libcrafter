@@ -9,20 +9,20 @@ use std::path::{Path, PathBuf};
 use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsName,
     DnsRecord, DnsRecordData, Dscp, Ecn, EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4,
-    Ipv4Option, Ipv6, Ipv6FragmentHeader, Layer, LinkType, LinuxSll, MacAddr, NetworkLayer,
-    NullByteOrder, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp,
-    UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND,
-    BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
-    DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
+    Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6HopByHopOptionsHeader, Ipv6Option,
+    Layer, LinkType, LinuxSll, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
+    Packet, Raw, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus,
+    UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
+    DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
     DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
     DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
     DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
     DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
     ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
     ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6,
-    IPPROTO_IPV6_FRAGMENT, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
-    IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
-    UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
+    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_TCP, IPPROTO_UDP,
+    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, TCP_FLAG_ACK,
+    TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::{
     PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
@@ -58,6 +58,8 @@ enum ExpectedLayer {
     Arp,
     Ipv4,
     Ipv6,
+    Ipv6HopByHopOptions,
+    Ipv6DestinationOptions,
     Ipv6Fragment,
     Icmp,
     Icmpv6,
@@ -669,6 +671,21 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ipv6-options-hop-destination-udp",
+        path: "bytes/ipv6-options-hop-destination-udp.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-options-hop-destination-udp.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Ipv6HopByHopOptions,
+            ExpectedLayer::Ipv6DestinationOptions,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv6-options-hop-destination-udp.summary.txt"),
+    },
+    ValidFixtureCase {
         name: "ipv6-udp-options-unknown-unsafe",
         path: "bytes/ipv6-udp-options-unknown-unsafe.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-options-unknown-unsafe.hex")),
@@ -1032,6 +1049,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv6-icmp-echo-request" => &[CoverageFamily::Ipv6IcmpEcho],
         "ipv6-icmpv6-time-exceeded" => &[CoverageFamily::Ipv6IcmpError],
         "ipv6-udp-raw" | "ipv6-base-traffic-flow-udp-raw" => &[CoverageFamily::Ipv6Udp],
+        "ipv6-options-hop-destination-udp" => &[CoverageFamily::Ipv6ExtensionHeader],
         "ipv6-udp-options-unknown-unsafe" | "ipv6-udp-options-frag" => {
             &[CoverageFamily::Ipv6UdpOptions]
         }
@@ -1197,6 +1215,12 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             }
             ExpectedLayer::Ipv6 => {
                 let _ = expect_layer::<Ipv6>(case, packet);
+            }
+            ExpectedLayer::Ipv6HopByHopOptions => {
+                let _ = expect_layer::<Ipv6HopByHopOptionsHeader>(case, packet);
+            }
+            ExpectedLayer::Ipv6DestinationOptions => {
+                let _ = expect_layer::<Ipv6DestinationOptionsHeader>(case, packet);
             }
             ExpectedLayer::Ipv6Fragment => {
                 let _ = expect_layer::<Ipv6FragmentHeader>(case, packet);
@@ -2111,6 +2135,67 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(udp.length_value(), Some(16));
             assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
             assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"base-v6!");
+        }
+        "ipv6-options-hop-destination-udp" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0050, 0, 0, 0, 0, 0x0010)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0050, 0, 0, 0, 0, 0x0020)
+            );
+            assert_eq!(ipv6.traffic_class_value(), 0x5a);
+            assert_eq!(ipv6.flow_label_value(), 0x50050);
+            assert_eq!(ipv6.payload_length_value(), Some(55));
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_HOPOPTS);
+            assert_eq!(ipv6.hop_limit_value(), 50);
+
+            let hop_by_hop = expect_layer::<Ipv6HopByHopOptionsHeader>(case, packet);
+            assert_eq!(hop_by_hop.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+            assert_eq!(hop_by_hop.header_ext_len_value(), Some(1));
+            assert_eq!(
+                hop_by_hop.options_value(),
+                &[
+                    Ipv6Option::router_alert(1),
+                    Ipv6Option::jumbo_payload(65_536),
+                    Ipv6Option::unknown(0x13, []).unwrap(),
+                    Ipv6Option::pad1(),
+                    Ipv6Option::pad1(),
+                ]
+            );
+
+            let destination_options = expect_layer::<Ipv6DestinationOptionsHeader>(case, packet);
+            assert_eq!(destination_options.next_header_value(), IPPROTO_UDP);
+            assert_eq!(destination_options.header_ext_len_value(), Some(2));
+            assert_eq!(
+                destination_options.options_value(),
+                &[
+                    Ipv6Option::home_address(Ipv6Addr::new(
+                        0x2001, 0x0db8, 0x0050, 0, 0, 0, 0, 0x0040,
+                    )),
+                    Ipv6Option::unknown(0x1e, [0xee]).unwrap(),
+                    Ipv6Option::pad1(),
+                ]
+            );
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 55_050);
+            assert_eq!(udp.destination_port_value(), 1_050);
+            assert_eq!(udp.length_value(), Some(15));
+            assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"opts-v6");
+
+            let show = packet.show();
+            assert!(
+                show.contains("options: Router Alert(0x05,value=RSVP(1)),Jumbo Payload(0xc2,length=65536),Generic(kind=0x13,len=0,act=0,chg=0,rest=0x13,data=empty),0x00,0x00"),
+                "{show}"
+            );
+            assert!(
+                show.contains("options: Home Address(0xc9,address=2001:db8:50::40),Generic(kind=0x1e,len=1,act=0,chg=0,rest=0x1e,data=ee),0x00"),
+                "{show}"
+            );
         }
         "ipv6-udp-options-unknown-unsafe" => {
             let ipv6 = expect_layer::<Ipv6>(case, packet);
@@ -3375,5 +3460,27 @@ fn ethernet_arp_nonstandard_show_matches_snapshot() {
         "ethernet-arp-infiniband-ipv6-nonstandard",
         &packet,
         "summaries/ethernet-arp-infiniband-ipv6-nonstandard-show.summary.txt",
+    );
+}
+
+#[test]
+fn ipv6_options_show_matches_snapshot() {
+    let case = valid_fixture_case("ipv6-options-hop-destination-udp");
+    let bytes = fixture_bytes_for_case(case);
+    let packet = decode_packet(packet_target_for_case(case), bytes.as_slice())
+        .expect("IPv6 options fixture should decode");
+
+    assert_packet_surface(case, &packet);
+    assert_fixture_fields(case, &packet);
+    assert_compile_decode_compile(
+        case,
+        packet_target_for_case(case),
+        &packet,
+        bytes.as_slice(),
+    );
+    assert_show_matches_fixture(
+        "ipv6-options-hop-destination-udp",
+        &packet,
+        "summaries/ipv6-options-hop-destination-udp-show.summary.txt",
     );
 }
