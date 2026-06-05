@@ -1342,6 +1342,261 @@ fn extension_order_unusual_destination_hop_by_hop_routing_preserves_bytes() -> c
 }
 
 #[test]
+fn extension_chaining_full_chain_autofills_each_next_header() -> crafter::Result<()> {
+    let payload = b"chain";
+    let compiled = (base_ipv6(84)
+        / Ipv6HopByHopOptionsHeader::new()
+        / Ipv6DestinationOptionsHeader::new()
+        / Ipv6RoutingHeader::new()
+            .routing_type(253)
+            .segments_left(0)
+            .type_data(vec![0xde, 0xad, 0xbe, 0xef])
+        / Ipv6FragmentHeader::new()
+            .identification(0xfeed_beef)
+            .fragment_offset(0)
+            .more_fragments(false)
+        / Udp::new().sport(4500).dport(4501)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 45, IPPROTO_IPV6_HOPOPTS, 84);
+    assert_eq!(bytes[40], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(bytes[48], IPPROTO_IPV6_ROUTE);
+    assert_eq!(bytes[56], IPPROTO_IPV6_FRAGMENT);
+    assert_eq!(bytes[64], IPPROTO_UDP);
+    assert_eq!(u16_field(bytes, 76), 13);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let hop_by_hop = decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    let destination_options = decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    let routing = decoded.layer::<Ipv6RoutingHeader>().expect("routing layer");
+    let fragment = decoded
+        .layer::<Ipv6FragmentHeader>()
+        .expect("fragment layer");
+    let udp = decoded.layer::<Udp>().expect("udp layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        layer_names,
+        vec![
+            "Ipv6",
+            "Ipv6HopByHopOptionsHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Ipv6RoutingHeader",
+            "Ipv6FragmentHeader",
+            "Udp",
+            "Raw",
+        ]
+    );
+    assert_decoded_ipv6_base_header(ipv6, 45, IPPROTO_IPV6_HOPOPTS, 84);
+    assert_eq!(hop_by_hop.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(hop_by_hop.header_ext_len_value(), Some(0));
+    assert_eq!(destination_options.next_header_value(), IPPROTO_IPV6_ROUTE);
+    assert_eq!(destination_options.header_ext_len_value(), Some(0));
+    assert_eq!(routing.next_header_value(), IPPROTO_IPV6_FRAGMENT);
+    assert_eq!(routing.header_ext_len_value(), Some(0));
+    assert_eq!(routing.routing_type_value(), 253);
+    assert_eq!(routing.segments_left_value(), 0);
+    assert_eq!(routing.type_data_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+    assert_eq!(fragment.next_header_value(), IPPROTO_UDP);
+    assert_eq!(fragment.fragment_offset_value(), 0);
+    assert!(!fragment.has_more_fragments());
+    assert_eq!(fragment.identification_value(), 0xfeed_beef);
+    assert_eq!(udp.source_port_value(), 4500);
+    assert_eq!(udp.destination_port_value(), 4501);
+    assert_eq!(udp.length_value(), Some(13));
+    assert_eq!(raw.as_bytes(), payload);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn extension_chaining_shorter_chains_autofill_next_headers() -> crafter::Result<()> {
+    let option_payload = b"opt";
+    let option_chain = (base_ipv6(85)
+        / Ipv6HopByHopOptionsHeader::new()
+        / Ipv6DestinationOptionsHeader::new()
+        / Udp::new().sport(4600).dport(4601)
+        / Raw::from_bytes(option_payload))
+    .compile()?;
+    let option_bytes = option_chain.as_bytes();
+
+    assert_ipv6_wire_base_header(option_bytes, 27, IPPROTO_IPV6_HOPOPTS, 85);
+    assert_eq!(option_bytes[40], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(option_bytes[48], IPPROTO_UDP);
+
+    let option_decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, option_bytes)?;
+    let option_layer_names: Vec<_> = option_decoded.iter().map(|layer| layer.name()).collect();
+    let option_ipv6 = option_decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let option_hop_by_hop = option_decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    let option_destination = option_decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    let option_udp = option_decoded.layer::<Udp>().expect("udp layer");
+    let option_raw = option_decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        option_layer_names,
+        vec![
+            "Ipv6",
+            "Ipv6HopByHopOptionsHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Udp",
+            "Raw",
+        ]
+    );
+    assert_decoded_ipv6_base_header(option_ipv6, 27, IPPROTO_IPV6_HOPOPTS, 85);
+    assert_eq!(option_hop_by_hop.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(option_destination.next_header_value(), IPPROTO_UDP);
+    assert_eq!(option_udp.source_port_value(), 4600);
+    assert_eq!(option_udp.destination_port_value(), 4601);
+    assert_eq!(option_udp.length_value(), Some(11));
+    assert_eq!(option_raw.as_bytes(), option_payload);
+    assert_eq!(option_decoded.compile()?.as_bytes(), option_bytes);
+
+    let fragment_payload = b"rf";
+    let route_fragment_chain = (base_ipv6(86)
+        / Ipv6RoutingHeader::new()
+            .routing_type(253)
+            .segments_left(0)
+            .type_data(vec![0x10, 0x20, 0x30, 0x40])
+        / Ipv6FragmentHeader::new()
+            .identification(0x0102_0304)
+            .fragment_offset(0)
+            .more_fragments(false)
+        / Udp::new().sport(4700).dport(4701)
+        / Raw::from_bytes(fragment_payload))
+    .compile()?;
+    let route_fragment_bytes = route_fragment_chain.as_bytes();
+
+    assert_ipv6_wire_base_header(route_fragment_bytes, 26, IPPROTO_IPV6_ROUTE, 86);
+    assert_eq!(route_fragment_bytes[40], IPPROTO_IPV6_FRAGMENT);
+    assert_eq!(route_fragment_bytes[48], IPPROTO_UDP);
+
+    let route_fragment_decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, route_fragment_bytes)?;
+    let route_fragment_layer_names: Vec<_> = route_fragment_decoded
+        .iter()
+        .map(|layer| layer.name())
+        .collect();
+    let route_fragment_ipv6 = route_fragment_decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let route_fragment_routing = route_fragment_decoded
+        .layer::<Ipv6RoutingHeader>()
+        .expect("routing layer");
+    let route_fragment_fragment = route_fragment_decoded
+        .layer::<Ipv6FragmentHeader>()
+        .expect("fragment layer");
+    let route_fragment_udp = route_fragment_decoded.layer::<Udp>().expect("udp layer");
+    let route_fragment_raw = route_fragment_decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        route_fragment_layer_names,
+        vec![
+            "Ipv6",
+            "Ipv6RoutingHeader",
+            "Ipv6FragmentHeader",
+            "Udp",
+            "Raw",
+        ]
+    );
+    assert_decoded_ipv6_base_header(route_fragment_ipv6, 26, IPPROTO_IPV6_ROUTE, 86);
+    assert_eq!(
+        route_fragment_routing.next_header_value(),
+        IPPROTO_IPV6_FRAGMENT
+    );
+    assert_eq!(route_fragment_routing.header_ext_len_value(), Some(0));
+    assert_eq!(route_fragment_routing.routing_type_value(), 253);
+    assert_eq!(route_fragment_routing.segments_left_value(), 0);
+    assert_eq!(
+        route_fragment_routing.type_data_bytes(),
+        &[0x10, 0x20, 0x30, 0x40]
+    );
+    assert_eq!(route_fragment_fragment.next_header_value(), IPPROTO_UDP);
+    assert_eq!(route_fragment_fragment.fragment_offset_value(), 0);
+    assert!(!route_fragment_fragment.has_more_fragments());
+    assert_eq!(route_fragment_fragment.identification_value(), 0x0102_0304);
+    assert_eq!(route_fragment_udp.source_port_value(), 4700);
+    assert_eq!(route_fragment_udp.destination_port_value(), 4701);
+    assert_eq!(route_fragment_udp.length_value(), Some(10));
+    assert_eq!(route_fragment_raw.as_bytes(), fragment_payload);
+    assert_eq!(
+        route_fragment_decoded.compile()?.as_bytes(),
+        route_fragment_bytes
+    );
+
+    Ok(())
+}
+
+#[test]
+fn extension_chaining_middle_explicit_next_header_override_is_preserved() -> crafter::Result<()> {
+    let destination_options = Ipv6DestinationOptionsHeader::new().next_header(IPPROTO_IPV6_NO_NEXT);
+    assert_eq!(
+        destination_options.next_header_value(),
+        IPPROTO_IPV6_NO_NEXT
+    );
+
+    let payload = b"override";
+    let compiled = (base_ipv6(87)
+        / Ipv6HopByHopOptionsHeader::new()
+        / destination_options
+        / Ipv6RoutingHeader::new().routing_type(253).segments_left(0)
+        / Ipv6FragmentHeader::new()
+            .identification(0x0a0b_0c0d)
+            .fragment_offset(0)
+            .more_fragments(false)
+        / Udp::new().sport(4800).dport(4801)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 48, IPPROTO_IPV6_HOPOPTS, 87);
+    assert_eq!(bytes[40], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(bytes[48], IPPROTO_IPV6_NO_NEXT);
+    assert_eq!(bytes[56], IPPROTO_IPV6_FRAGMENT);
+    assert_eq!(bytes[64], IPPROTO_UDP);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let hop_by_hop = decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    let destination_options = decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    let raw_tail = decoded.layer::<Raw>().expect("raw tail");
+
+    assert_eq!(
+        layer_names,
+        vec![
+            "Ipv6",
+            "Ipv6HopByHopOptionsHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Raw",
+        ]
+    );
+    assert_decoded_ipv6_base_header(ipv6, 48, IPPROTO_IPV6_HOPOPTS, 87);
+    assert_eq!(hop_by_hop.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(
+        destination_options.next_header_value(),
+        IPPROTO_IPV6_NO_NEXT
+    );
+    assert_eq!(raw_tail.as_bytes(), &bytes[56..]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
 fn destination_options_decode_terminal_unknown_next_header_as_raw() -> crafter::Result<()> {
     let options = vec![
         Ipv6Option::pad1(),
