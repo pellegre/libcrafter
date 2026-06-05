@@ -241,6 +241,47 @@ fn hop_by_hop() -> crafter::Result<()> {
 }
 
 #[test]
+fn destination_options() -> crafter::Result<()> {
+    let src = Ipv6Addr::new(0x2001, 0x0db8, 0x0010, 0, 0, 0, 0, 1);
+    let dst = Ipv6Addr::new(0x2001, 0x0db8, 0x0020, 0, 0, 0, 0, 2);
+
+    let prelude_header: Ipv6DestinationOptionsHeader = Ipv6DestinationOptionsHeader::new()
+        .option(Ipv6Option::generic(0x1e, [0xaa])?)
+        .push_option(Ipv6Option::pad1());
+    let root_header = crafter::Ipv6DestinationOptionsHeader::new()
+        .nh(IPPROTO_IPV6_NO_NEXT)
+        .header_ext_len(1);
+    let core_header = crafter::core::Ipv6DestinationOptionsHeader::new();
+    let protocols_header = crafter::protocols::Ipv6DestinationOptionsHeader::new();
+    let ipv6_module_header = crafter::protocols::ipv6::Ipv6DestinationOptionsHeader::new();
+
+    let packet = crafter::Ipv6::with_addresses(src, dst)
+        / prelude_header.clone()
+        / crafter::Udp::new().sport(12345).dport(33434)
+        / crafter::Raw::from("dst");
+    let compiled = packet.compile()?;
+
+    assert_eq!(compiled.as_bytes()[6], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(compiled.as_bytes()[40], IPPROTO_UDP);
+    assert_eq!(compiled.as_bytes()[41], 0);
+    assert_eq!(
+        &compiled.as_bytes()[42..46],
+        &[0x1e, 1, 0xaa, IPV6_OPTION_PAD1]
+    );
+    assert_eq!(&compiled.as_bytes()[46..48], &[0, 0]);
+
+    assert_eq!(prelude_header.options_value().len(), 2);
+    assert_eq!(prelude_header.options_list()[0].option_type(), 0x1e);
+    assert_eq!(root_header.next_header_value(), IPPROTO_IPV6_NO_NEXT);
+    assert_eq!(root_header.header_ext_len_value(), Some(1));
+    assert_eq!(core_header.encoded_len(), 8);
+    assert_eq!(protocols_header.encoded_len(), 8);
+    assert_eq!(ipv6_module_header.encoded_len(), 8);
+
+    Ok(())
+}
+
+#[test]
 fn udp_public_api_paths_are_usable() -> crafter::Result<()> {
     let prelude_udp: Udp = Udp::new().sport(1111).dport(2222);
     let core_udp = crafter::core::Udp::new().sport(3333).dport(4444);
