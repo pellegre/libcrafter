@@ -1637,6 +1637,179 @@ fn extension_chaining_middle_explicit_next_header_override_is_preserved() -> cra
 }
 
 #[test]
+fn generic_routing_experimental_types_preserve_segments_left_and_padded_type_data(
+) -> crafter::Result<()> {
+    let payload = [0xa0, 0xb0, 0xc0];
+
+    for (index, routing_type) in [253, 254].into_iter().enumerate() {
+        let hop_limit = 88 + index as u8;
+        let segments_left = 1 + index as u8;
+        let following_next_header = if routing_type == 253 {
+            IPPROTO_IPV6_EXPERIMENTAL_2
+        } else {
+            IPPROTO_IPV6_EXPERIMENTAL_1
+        };
+        let type_data = vec![routing_type, 0x10, 0x20, 0x30, 0x40];
+
+        let compiled = (base_ipv6(hop_limit)
+            / Ipv6RoutingHeader::new()
+                .nh(following_next_header)
+                .routing_type(routing_type)
+                .segments_left(segments_left)
+                .type_data(type_data.clone())
+            / Raw::from_bytes(payload))
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, 19, IPPROTO_IPV6_ROUTE, hop_limit);
+        assert_eq!(bytes[40], following_next_header);
+        assert_eq!(bytes[41], 1);
+        assert_eq!(bytes[42], routing_type);
+        assert_eq!(bytes[43], segments_left);
+        assert_eq!(&bytes[44..49], type_data.as_slice());
+        assert!(bytes[49..56].iter().all(|byte| *byte == 0));
+        assert_eq!(&bytes[56..], payload);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+        let routing = decoded.layer::<Ipv6RoutingHeader>().expect("routing layer");
+        let raw = decoded.layer::<Raw>().expect("raw payload");
+
+        let mut expected_type_data = type_data;
+        expected_type_data.extend_from_slice(&[0; 7]);
+
+        assert_eq!(layer_names, vec!["Ipv6", "Ipv6RoutingHeader", "Raw"]);
+        assert_eq!(routing.next_header_value(), following_next_header);
+        assert_eq!(routing.header_ext_len_value(), Some(1));
+        assert_eq!(routing.routing_type_value(), routing_type);
+        assert_eq!(routing.segments_left_value(), segments_left);
+        assert_eq!(routing.type_data_bytes(), expected_type_data.as_slice());
+        assert_eq!(raw.as_bytes(), payload);
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn generic_routing_type_data_lengths_pad_to_extension_header_boundary() -> crafter::Result<()> {
+    let cases = [
+        (vec![0x11], 0, vec![0x11, 0, 0, 0]),
+        (
+            vec![0x21, 0x22, 0x23, 0x24, 0x25],
+            1,
+            vec![0x21, 0x22, 0x23, 0x24, 0x25, 0, 0, 0, 0, 0, 0, 0],
+        ),
+    ];
+
+    for (index, (type_data, expected_header_ext_len, expected_type_data)) in
+        cases.into_iter().enumerate()
+    {
+        let hop_limit = 90 + index as u8;
+        let expected_payload_len = 8 + u16::from(expected_header_ext_len) * 8;
+        let compiled = (base_ipv6(hop_limit)
+            / Ipv6RoutingHeader::new()
+                .nh(IPPROTO_IPV6_NO_NEXT)
+                .routing_type(253)
+                .segments_left(0)
+                .type_data(type_data.clone())
+            / Raw::new())
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, expected_payload_len, IPPROTO_IPV6_ROUTE, hop_limit);
+        assert_eq!(bytes[40], IPPROTO_IPV6_NO_NEXT);
+        assert_eq!(bytes[41], expected_header_ext_len);
+        assert_eq!(bytes[42], 253);
+        assert_eq!(bytes[43], 0);
+        assert_eq!(&bytes[44..44 + type_data.len()], type_data.as_slice());
+        assert!(
+            bytes[44 + type_data.len()..40 + expected_payload_len as usize]
+                .iter()
+                .all(|byte| *byte == 0)
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+        let routing = decoded.layer::<Ipv6RoutingHeader>().expect("routing layer");
+
+        assert_eq!(layer_names, vec!["Ipv6", "Ipv6RoutingHeader"]);
+        assert_eq!(
+            routing.header_ext_len_value(),
+            Some(expected_header_ext_len)
+        );
+        assert_eq!(routing.type_data_bytes(), expected_type_data.as_slice());
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn generic_routing_explicit_header_ext_len_decodes_trailing_type_data_and_roundtrips(
+) -> crafter::Result<()> {
+    let trailing_type_data = [
+        0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae,
+        0xaf,
+    ];
+    let mut bytes = (base_ipv6(92)
+        / Ipv6RoutingHeader::new()
+            .nh(IPPROTO_IPV6_NO_NEXT)
+            .header_ext_len(2)
+            .routing_type(254)
+            .segments_left(3)
+            .type_data(vec![0x90, 0x91, 0x92, 0x93])
+        / Raw::new())
+    .compile()?
+    .into_bytes();
+
+    assert_ipv6_wire_base_header(&bytes, 24, IPPROTO_IPV6_ROUTE, 92);
+    assert_eq!(
+        &bytes[40..48],
+        &[IPPROTO_IPV6_NO_NEXT, 2, 254, 3, 0x90, 0x91, 0x92, 0x93]
+    );
+
+    bytes[48..64].copy_from_slice(&trailing_type_data);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, &bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let routing = decoded.layer::<Ipv6RoutingHeader>().expect("routing layer");
+
+    let mut expected_type_data = vec![0x90, 0x91, 0x92, 0x93];
+    expected_type_data.extend_from_slice(&trailing_type_data);
+
+    assert_eq!(layer_names, vec!["Ipv6", "Ipv6RoutingHeader"]);
+    assert_eq!(routing.next_header_value(), IPPROTO_IPV6_NO_NEXT);
+    assert_eq!(routing.header_ext_len_value(), Some(2));
+    assert_eq!(routing.routing_type_value(), 254);
+    assert_eq!(routing.segments_left_value(), 3);
+    assert_eq!(routing.type_data_bytes(), expected_type_data.as_slice());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+
+    Ok(())
+}
+
+#[test]
+fn generic_routing_explicit_header_ext_len_rejects_type_data_that_does_not_fit() {
+    let err = (base_ipv6(93)
+        / Ipv6RoutingHeader::new()
+            .nh(IPPROTO_IPV6_NO_NEXT)
+            .header_ext_len(0)
+            .routing_type(253)
+            .segments_left(0)
+            .type_data(vec![0, 1, 2, 3, 4])
+        / Raw::new())
+    .compile()
+    .expect_err("type-specific data longer than the explicit routing header must fail");
+
+    assert_invalid_field_value_error(
+        "generic routing explicit length too short",
+        err,
+        "ipv6.routing.type_data",
+    );
+}
+
+#[test]
 fn registry_options_builtin_and_custom_decode_after_option_headers() -> crafter::Result<()> {
     let mut registry = ProtocolRegistry::new();
     let custom_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
