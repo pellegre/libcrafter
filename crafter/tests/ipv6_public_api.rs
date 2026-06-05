@@ -1005,6 +1005,7 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
     let _: Ipv6HopByHopOptionsHeader = Ipv6HopByHopOptionsHeader::new();
     let _: Ipv6RoutingHeader = Ipv6RoutingHeader::new();
     let _: Ipv6FragmentHeader = Ipv6FragmentHeader::new();
+    let _: Ipv6FragmentHeaderStatus = Ipv6FragmentHeaderStatus::Atomic;
     let _: Ipv6MobileRoutingHeader = Ipv6MobileRoutingHeader::new();
     let _: Ipv6SegmentRoutingHeader = Ipv6SegmentRoutingHeader::new();
     let _: Ipv6Option = Ipv6Option::pad1();
@@ -1016,6 +1017,7 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
     let _: crafter::Ipv6HopByHopOptionsHeader = crafter::Ipv6HopByHopOptionsHeader::new();
     let _: crafter::Ipv6RoutingHeader = crafter::Ipv6RoutingHeader::new();
     let _: crafter::Ipv6FragmentHeader = crafter::Ipv6FragmentHeader::new();
+    let _: crafter::Ipv6FragmentHeaderStatus = crafter::Ipv6FragmentHeaderStatus::Initial;
     let _: crafter::Ipv6MobileRoutingHeader = crafter::Ipv6MobileRoutingHeader::new();
     let _: crafter::Ipv6SegmentRoutingHeader = crafter::Ipv6SegmentRoutingHeader::new();
     let _: crafter::Ipv6Option = crafter::Ipv6Option::pad1();
@@ -1029,6 +1031,8 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
         crafter::core::Ipv6HopByHopOptionsHeader::new();
     let _: crafter::core::Ipv6RoutingHeader = crafter::core::Ipv6RoutingHeader::new();
     let _: crafter::core::Ipv6FragmentHeader = crafter::core::Ipv6FragmentHeader::new();
+    let _: crafter::core::Ipv6FragmentHeaderStatus =
+        crafter::core::Ipv6FragmentHeaderStatus::NonInitial;
     let _: crafter::core::Ipv6MobileRoutingHeader = crafter::core::Ipv6MobileRoutingHeader::new();
     let _: crafter::core::Ipv6SegmentRoutingHeader = crafter::core::Ipv6SegmentRoutingHeader::new();
     let _: crafter::core::Ipv6Option = crafter::core::Ipv6Option::pad1();
@@ -1043,6 +1047,8 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
         crafter::protocols::Ipv6HopByHopOptionsHeader::new();
     let _: crafter::protocols::Ipv6RoutingHeader = crafter::protocols::Ipv6RoutingHeader::new();
     let _: crafter::protocols::Ipv6FragmentHeader = crafter::protocols::Ipv6FragmentHeader::new();
+    let _: crafter::protocols::Ipv6FragmentHeaderStatus =
+        crafter::protocols::Ipv6FragmentHeaderStatus::Atomic;
     let _: crafter::protocols::Ipv6MobileRoutingHeader =
         crafter::protocols::Ipv6MobileRoutingHeader::new();
     let _: crafter::protocols::Ipv6SegmentRoutingHeader =
@@ -1065,6 +1071,153 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
     assert_eq!(crafter::core::IPV6_SEGMENT_POLICY_INGRESS, 1);
     assert_eq!(crafter::protocols::IPV6_SEGMENT_POLICY_EGRESS, 2);
     assert_eq!(IPV6_SEGMENT_POLICY_SOURCE_ADDRESS, 3);
+    assert_eq!(
+        ipv6_fragment_header_status_label(Ipv6FragmentHeaderStatus::Atomic),
+        "atomic"
+    );
+    assert_eq!(
+        crafter::core::ipv6_fragment_header_status_label(
+            crafter::core::Ipv6FragmentHeaderStatus::Initial,
+        ),
+        "initial"
+    );
+    assert_eq!(
+        crafter::protocols::ipv6_fragment_header_status_label(
+            crafter::protocols::Ipv6FragmentHeaderStatus::NonInitial,
+        ),
+        "non-initial"
+    );
+}
+
+#[test]
+fn fragment_api_exposes_source_backed_field_helpers() -> crafter::Result<()> {
+    let fragment = Ipv6FragmentHeader::new()
+        .nh(IPPROTO_UDP)
+        .reserved(0xab)
+        .offset(2)
+        .res(0b10)
+        .mflag(true)
+        .id(0x0102_0304);
+
+    assert_eq!(fragment.next_header_value(), IPPROTO_UDP);
+    assert_eq!(fragment.fragment_offset_value(), 2);
+    assert_eq!(fragment.offset_value(), 2);
+    assert_eq!(fragment.fragment_offset_units(), 2);
+    assert_eq!(fragment.fragment_offset_bytes(), 16);
+    assert_eq!(fragment.reserved_value(), 0xab);
+    assert_eq!(fragment.reserved_byte_value(), 0xab);
+    assert_eq!(fragment.res_value(), 0b10);
+    assert_eq!(fragment.reserved_bits_value(), 0b10);
+    assert!(!fragment.reserved_bits_are_zero());
+    assert!(!fragment.reserved_fields_are_zero());
+    assert!(fragment.has_more_fragments());
+    assert!(fragment.more_fragments_value());
+    assert!(fragment.mflag_value());
+    assert!(!fragment.is_last_fragment());
+    assert_eq!(fragment.identification_value(), 0x0102_0304);
+    assert_eq!(fragment.id_value(), 0x0102_0304);
+    assert_eq!(
+        fragment.fragment_status(),
+        Ipv6FragmentHeaderStatus::NonInitial
+    );
+    assert_eq!(fragment.status(), Ipv6FragmentHeaderStatus::NonInitial);
+    assert_eq!(fragment.fragment_status_label(), "non-initial");
+    assert!(!fragment.is_atomic_fragment());
+    assert!(!fragment.is_initial_fragment());
+    assert!(fragment.is_non_initial_fragment());
+
+    let compiled = (base_ipv6(64) / fragment / Raw::from_bytes([1, 2, 3, 4])).compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 12, IPPROTO_IPV6_FRAGMENT, 64);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 0xab);
+    assert_eq!(u16_field(bytes, 42), (2u16 << 3) | (0b10u16 << 1) | 1);
+    assert_eq!(&bytes[44..48], &0x0102_0304u32.to_be_bytes());
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let decoded_fragment = decoded
+        .layer::<Ipv6FragmentHeader>()
+        .expect("fragment layer");
+    let raw = decoded.layer::<Raw>().expect("raw fragment payload");
+
+    assert!(decoded.layer::<Udp>().is_none());
+    assert_eq!(decoded_fragment.reserved_byte_value(), 0xab);
+    assert_eq!(decoded_fragment.reserved_bits_value(), 0b10);
+    assert_eq!(
+        decoded_fragment.fragment_status(),
+        Ipv6FragmentHeaderStatus::NonInitial
+    );
+    assert_eq!(decoded_fragment.fragment_offset_bytes(), 16);
+    assert_eq!(raw.as_bytes(), &[1, 2, 3, 4]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn fragment_api_classifies_atomic_initial_and_non_initial_status() -> crafter::Result<()> {
+    let atomic = Ipv6FragmentHeader::new()
+        .nh(IPPROTO_UDP)
+        .frag(0)
+        .mflag(false)
+        .id(0x1122_3344);
+    assert_eq!(atomic.fragment_status(), Ipv6FragmentHeaderStatus::Atomic);
+    assert_eq!(atomic.fragment_status_label(), "atomic");
+    assert!(atomic.fragment_status().is_atomic());
+    assert!(atomic.fragment_status().is_initial());
+    assert!(!atomic.fragment_status().is_non_initial());
+    assert!(atomic.is_atomic_fragment());
+    assert!(atomic.is_initial_fragment());
+    assert!(!atomic.is_non_initial_fragment());
+    assert!(atomic.is_last_fragment());
+    assert!(atomic.reserved_fields_are_zero());
+
+    let atomic_packet =
+        (base_ipv6(65) / atomic / Udp::new().sport(5300).dport(5301) / Raw::from("atomic"))
+            .compile()?;
+    let atomic_bytes = atomic_packet.as_bytes();
+    let atomic_decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, atomic_bytes)?;
+    let atomic_fragment = atomic_decoded
+        .layer::<Ipv6FragmentHeader>()
+        .expect("fragment layer");
+
+    assert!(atomic_decoded.layer::<Udp>().is_some());
+    assert_eq!(
+        atomic_fragment.fragment_status(),
+        Ipv6FragmentHeaderStatus::Atomic
+    );
+    assert_eq!(atomic_fragment.fragment_offset_units(), 0);
+    assert_eq!(atomic_fragment.fragment_offset_bytes(), 0);
+    assert_eq!(atomic_fragment.id_value(), 0x1122_3344);
+
+    let show = atomic_decoded.show();
+    assert!(show.contains("fragment_status: atomic"));
+    assert!(show.contains("fragment_offset_bytes: 0"));
+    assert!(show.contains("reserved_fields_zero: true"));
+
+    let initial = Ipv6FragmentHeader::new().frag(0).mflag(true);
+    assert_eq!(initial.fragment_status(), Ipv6FragmentHeaderStatus::Initial);
+    assert_eq!(
+        ipv6_fragment_header_status_label(initial.fragment_status()),
+        "initial"
+    );
+    assert!(initial.is_initial_fragment());
+    assert!(!initial.is_atomic_fragment());
+    assert!(!initial.is_last_fragment());
+
+    let non_initial_last = Ipv6FragmentHeader::new().frag(4).mflag(false);
+    assert_eq!(
+        non_initial_last.fragment_status(),
+        Ipv6FragmentHeaderStatus::NonInitial
+    );
+    assert_eq!(non_initial_last.fragment_status_label(), "non-initial");
+    assert_eq!(non_initial_last.fragment_offset_bytes(), 32);
+    assert!(!non_initial_last.is_initial_fragment());
+    assert!(non_initial_last.is_non_initial_fragment());
+    assert!(non_initial_last.is_last_fragment());
+
+    Ok(())
 }
 
 #[test]
