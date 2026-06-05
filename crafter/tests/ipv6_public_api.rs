@@ -242,6 +242,117 @@ fn assert_decoded_ipv6_base_header(
     assert_eq!(ipv6.hop_limit_value(), hop_limit);
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Ipv6OptionHeaderKind {
+    HopByHop,
+    Destination,
+}
+
+impl Ipv6OptionHeaderKind {
+    const ALL: [Self; 2] = [Self::HopByHop, Self::Destination];
+
+    fn outer_next_header(self) -> u8 {
+        match self {
+            Self::HopByHop => IPPROTO_IPV6_HOPOPTS,
+            Self::Destination => IPPROTO_IPV6_DSTOPTS,
+        }
+    }
+
+    fn decode_context(self) -> &'static str {
+        match self {
+            Self::HopByHop => "ipv6 hop-by-hop header",
+            Self::Destination => "ipv6 destination options header",
+        }
+    }
+
+    fn options_error_field(self) -> &'static str {
+        match self {
+            Self::HopByHop => "ipv6.hop_by_hop.options",
+            Self::Destination => "ipv6.destination_options.options",
+        }
+    }
+
+    fn header_ext_len_field(self) -> &'static str {
+        match self {
+            Self::HopByHop => "ipv6.hop_by_hop.header_ext_len",
+            Self::Destination => "ipv6.destination_options.header_ext_len",
+        }
+    }
+}
+
+fn option_header_packet(
+    kind: Ipv6OptionHeaderKind,
+    options: Vec<Ipv6Option>,
+    header_ext_len: Option<u8>,
+    explicit_next_header: Option<u8>,
+    with_udp: bool,
+) -> Packet {
+    match kind {
+        Ipv6OptionHeaderKind::HopByHop => {
+            let mut header = Ipv6HopByHopOptionsHeader::new().options(options);
+            if let Some(header_ext_len) = header_ext_len {
+                header = header.header_ext_len(header_ext_len);
+            }
+            if let Some(next_header) = explicit_next_header {
+                header = header.nh(next_header);
+            }
+
+            if with_udp {
+                base_ipv6(71) / header / Udp::new().sport(1111).dport(2222)
+            } else {
+                base_ipv6(71) / header / Raw::new()
+            }
+        }
+        Ipv6OptionHeaderKind::Destination => {
+            let mut header = Ipv6DestinationOptionsHeader::new().options(options);
+            if let Some(header_ext_len) = header_ext_len {
+                header = header.header_ext_len(header_ext_len);
+            }
+            if let Some(next_header) = explicit_next_header {
+                header = header.nh(next_header);
+            }
+
+            if with_udp {
+                base_ipv6(71) / header / Udp::new().sport(1111).dport(2222)
+            } else {
+                base_ipv6(71) / header / Raw::new()
+            }
+        }
+    }
+}
+
+fn assert_decoded_option_header(
+    bytes: &[u8],
+    kind: Ipv6OptionHeaderKind,
+    expected_header_ext_len: u8,
+    expected_next_header: u8,
+    expected_options: &[Ipv6Option],
+) -> crafter::Result<()> {
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+
+    match kind {
+        Ipv6OptionHeaderKind::HopByHop => {
+            let header = decoded
+                .layer::<Ipv6HopByHopOptionsHeader>()
+                .expect("hop-by-hop options header");
+            assert_eq!(header.header_ext_len_value(), Some(expected_header_ext_len));
+            assert_eq!(header.next_header_value(), expected_next_header);
+            assert_eq!(header.options_value(), expected_options);
+        }
+        Ipv6OptionHeaderKind::Destination => {
+            let header = decoded
+                .layer::<Ipv6DestinationOptionsHeader>()
+                .expect("destination options header");
+            assert_eq!(header.header_ext_len_value(), Some(expected_header_ext_len));
+            assert_eq!(header.next_header_value(), expected_next_header);
+            assert_eq!(header.options_value(), expected_options);
+        }
+    }
+
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    Ok(())
+}
+
 fn unknown_next_header_values() -> [u8; 3] {
     // IANA Protocol Numbers marks 253/254 experimental and 255 reserved.
     [
@@ -1266,6 +1377,229 @@ fn hop_by_hop_decode_reports_option_length_overrun() -> crafter::Result<()> {
             assert_eq!(available, 6);
         }
         other => panic!("overrunning Hop-by-Hop option expected BufferTooShort, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+// RFC 8200 sections 4.2, 4.3, and 4.6 define the shared TLV padding
+// rules and 8-octet Hdr Ext Len units for these option-bearing headers.
+#[test]
+fn option_padding_exact_8_octet_headers_use_deterministic_pad1_bytes() -> crafter::Result<()> {
+    for kind in Ipv6OptionHeaderKind::ALL {
+        let compiled = option_header_packet(kind, Vec::new(), None, None, true).compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, 16, kind.outer_next_header(), 71);
+        assert_eq!(&bytes[40..48], &[IPPROTO_UDP, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(&bytes[48..50], &1111u16.to_be_bytes());
+        assert_eq!(&bytes[50..52], &2222u16.to_be_bytes());
+
+        let expected_options = vec![Ipv6Option::pad1(); 6];
+        assert_decoded_option_header(bytes, kind, 0, IPPROTO_UDP, &expected_options)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn option_padding_pad1_only_padding_is_deterministic() -> crafter::Result<()> {
+    for kind in Ipv6OptionHeaderKind::ALL {
+        let compiled = option_header_packet(
+            kind,
+            vec![Ipv6Option::pad1()],
+            None,
+            Some(IPPROTO_IPV6_NO_NEXT),
+            false,
+        )
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, 8, kind.outer_next_header(), 71);
+        assert_eq!(&bytes[40..48], &[IPPROTO_IPV6_NO_NEXT, 0, 0, 0, 0, 0, 0, 0]);
+
+        let expected_options = vec![Ipv6Option::pad1(); 6];
+        assert_decoded_option_header(bytes, kind, 0, IPPROTO_IPV6_NO_NEXT, &expected_options)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn option_padding_padn_can_exactly_fill_minimum_header() -> crafter::Result<()> {
+    for kind in Ipv6OptionHeaderKind::ALL {
+        let padn = Ipv6Option::padn(6)?;
+        let compiled = option_header_packet(
+            kind,
+            vec![padn.clone()],
+            None,
+            Some(IPPROTO_IPV6_NO_NEXT),
+            false,
+        )
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, 8, kind.outer_next_header(), 71);
+        assert_eq!(
+            &bytes[40..48],
+            &[IPPROTO_IPV6_NO_NEXT, 0, IPV6_OPTION_PADN, 4, 0, 0, 0, 0]
+        );
+        assert_decoded_option_header(bytes, kind, 0, IPPROTO_IPV6_NO_NEXT, &[padn])?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn option_padding_odd_option_lengths_are_zero_padded_to_8_octets() -> crafter::Result<()> {
+    for kind in Ipv6OptionHeaderKind::ALL {
+        let odd = Ipv6Option::generic(0x1e, [0xaa, 0xbb, 0xcc])?;
+        let compiled = option_header_packet(
+            kind,
+            vec![odd.clone()],
+            None,
+            Some(IPPROTO_IPV6_NO_NEXT),
+            false,
+        )
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, 8, kind.outer_next_header(), 71);
+        assert_eq!(
+            &bytes[40..48],
+            &[IPPROTO_IPV6_NO_NEXT, 0, 0x1e, 3, 0xaa, 0xbb, 0xcc, 0]
+        );
+        assert_decoded_option_header(
+            bytes,
+            kind,
+            0,
+            IPPROTO_IPV6_NO_NEXT,
+            &[odd, Ipv6Option::pad1()],
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn option_padding_maximum_header_extension_length_is_supported() -> crafter::Result<()> {
+    for kind in Ipv6OptionHeaderKind::ALL {
+        let compiled = option_header_packet(
+            kind,
+            vec![Ipv6Option::pad1()],
+            Some(u8::MAX),
+            Some(IPPROTO_IPV6_NO_NEXT),
+            false,
+        )
+        .compile()?;
+        let bytes = compiled.as_bytes();
+        let extension = &bytes[40..40 + 2048];
+
+        assert_ipv6_wire_base_header(bytes, 2048, kind.outer_next_header(), 71);
+        assert_eq!(extension[0], IPPROTO_IPV6_NO_NEXT);
+        assert_eq!(extension[1], u8::MAX);
+        assert_eq!(extension[2], IPV6_OPTION_PAD1);
+        assert!(extension[3..].iter().all(|byte| *byte == 0));
+
+        let expected_options = vec![Ipv6Option::pad1(); 2046];
+        assert_decoded_option_header(
+            bytes,
+            kind,
+            u8::MAX,
+            IPPROTO_IPV6_NO_NEXT,
+            &expected_options,
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn option_padding_explicit_too_small_length_reports_structured_error() -> crafter::Result<()> {
+    for kind in Ipv6OptionHeaderKind::ALL {
+        let packet = option_header_packet(
+            kind,
+            vec![Ipv6Option::generic(0x1e, [0, 1, 2, 3, 4])?],
+            Some(0),
+            Some(IPPROTO_IPV6_NO_NEXT),
+            false,
+        );
+
+        match packet.compile().unwrap_err() {
+            CrafterError::InvalidFieldValue { field, reason } => {
+                assert_eq!(field, kind.options_error_field());
+                assert!(!reason.is_empty());
+            }
+            other => {
+                panic!("too-small option header length expected InvalidFieldValue, got {other:?}")
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn option_padding_explicit_larger_length_zero_pads_and_preserves_override() -> crafter::Result<()> {
+    for kind in Ipv6OptionHeaderKind::ALL {
+        let compiled =
+            option_header_packet(kind, vec![Ipv6Option::pad1()], Some(2), None, true).compile()?;
+        let bytes = compiled.as_bytes();
+        let extension = &bytes[40..64];
+
+        assert_ipv6_wire_base_header(bytes, 32, kind.outer_next_header(), 71);
+        assert_eq!(extension[0], IPPROTO_UDP);
+        assert_eq!(extension[1], 2);
+        assert_eq!(extension[2], IPV6_OPTION_PAD1);
+        assert!(extension[3..].iter().all(|byte| *byte == 0));
+        assert_eq!(&bytes[64..66], &1111u16.to_be_bytes());
+        assert_eq!(&bytes[66..68], &2222u16.to_be_bytes());
+
+        let expected_options = vec![Ipv6Option::pad1(); 22];
+        assert_decoded_option_header(bytes, kind, 2, IPPROTO_UDP, &expected_options)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn option_padding_impossible_lengths_report_structured_errors() -> crafter::Result<()> {
+    for kind in Ipv6OptionHeaderKind::ALL {
+        let oversized_option = Ipv6Option::generic(0x1e, vec![0; 255])?;
+        let packet = option_header_packet(
+            kind,
+            vec![oversized_option; 8],
+            None,
+            Some(IPPROTO_IPV6_NO_NEXT),
+            false,
+        );
+
+        match packet.compile().unwrap_err() {
+            CrafterError::InvalidFieldValue { field, reason } => {
+                assert_eq!(field, kind.header_ext_len_field());
+                assert!(!reason.is_empty());
+            }
+            other => panic!("oversized option header expected InvalidFieldValue, got {other:?}"),
+        }
+
+        let declared_max = (base_ipv6(72).nh(kind.outer_next_header())
+            / Raw::from_bytes([IPPROTO_UDP, u8::MAX, 0, 0, 0, 0, 0, 0]))
+        .compile()?;
+
+        match Packet::decode_from_l3(NetworkLayer::Ipv6, declared_max.as_bytes()).unwrap_err() {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, kind.decode_context());
+                assert_eq!(required, 2048);
+                assert_eq!(available, 8);
+            }
+            other => panic!(
+                "impossible declared option header length expected BufferTooShort, got {other:?}"
+            ),
+        }
     }
 
     Ok(())
