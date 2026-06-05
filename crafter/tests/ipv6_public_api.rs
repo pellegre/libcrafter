@@ -2132,6 +2132,140 @@ fn segment_routing_segments_explicit_header_extension_length_roundtrip() -> craf
 }
 
 #[test]
+fn segment_routing_flags_tag_zero_values_are_encoded_and_inspectable() -> crafter::Result<()> {
+    let segment = Ipv6Addr::new(0x2001, 0x0db8, 0x0037, 0, 0, 0, 0, 0x0001);
+    let payload = b"zero";
+    let compiled = (base_ipv6(104)
+        / Ipv6SegmentRoutingHeader::new().segment(segment)
+        / Udp::new().sport(44001).dport(44002)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 36, IPPROTO_IPV6_ROUTE, 104);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 2);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(bytes[43], 0);
+    assert_eq!(bytes[44], 0);
+    assert_eq!(bytes[45], 0x00);
+    assert_eq!(u16_field(bytes, 46), 0x0000);
+    assert_eq!(&bytes[48..64], &segment.octets());
+    assert_eq!(u16_field(bytes, 64), 44001);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let segment_header = decoded
+        .layer::<Ipv6SegmentRoutingHeader>()
+        .expect("segment routing header");
+
+    assert_eq!(segment_header.flags_value(), 0x00);
+    assert_eq!(segment_header.tag_value(), 0x0000);
+    assert!(!segment_header.c_flag_value());
+    assert!(!segment_header.p_flag_value());
+    assert_eq!(segment_header.reserved_value(), 0);
+    assert_eq!(segment_header.segment_list(), &[segment]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    let summary = decoded.summary();
+    assert!(summary.contains("flags=0x00"), "{summary}");
+    assert!(summary.contains("tag=0x0000"), "{summary}");
+    let show = decoded.show();
+    assert!(show.contains("flags: 0x00"), "{show}");
+    assert!(show.contains("tag: 0x0000"), "{show}");
+
+    Ok(())
+}
+
+#[test]
+fn segment_routing_flags_tag_preserve_unknown_bits_and_maximum_tag() -> crafter::Result<()> {
+    let segment = Ipv6Addr::new(0x2001, 0x0db8, 0x0037, 0, 0, 0, 0, 0x0002);
+    let payload = [0xde, 0xad, 0xbe, 0xef];
+    let compiled = (base_ipv6(105)
+        / Ipv6SegmentRoutingHeader::new()
+            .next_header(IPPROTO_IPV6_EXPERIMENTAL_1)
+            .flags(0xff)
+            .tag(u16::MAX)
+            .segment(segment)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 28, IPPROTO_IPV6_ROUTE, 105);
+    assert_eq!(bytes[40], IPPROTO_IPV6_EXPERIMENTAL_1);
+    assert_eq!(bytes[41], 2);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(bytes[43], 0);
+    assert_eq!(bytes[44], 0);
+    assert_eq!(bytes[45], 0xff);
+    assert_eq!(u16_field(bytes, 46), u16::MAX);
+    assert_eq!(&bytes[48..64], &segment.octets());
+    assert_eq!(&bytes[64..68], &payload);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let segment_header = decoded
+        .layer::<Ipv6SegmentRoutingHeader>()
+        .expect("segment routing header");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(segment_header.flags_value(), 0xff);
+    assert!(segment_header.c_flag_value());
+    assert!(segment_header.p_flag_value());
+    assert_eq!(segment_header.reserved_value(), 0x03);
+    assert_eq!(segment_header.tag_value(), u16::MAX);
+    assert_eq!(raw.as_bytes(), payload.as_slice());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    let summary = decoded.summary();
+    assert!(summary.contains("flags=0xff"), "{summary}");
+    assert!(summary.contains("tag=0xffff"), "{summary}");
+    let show = decoded.show();
+    assert!(show.contains("flags: 0xff"), "{show}");
+    assert!(show.contains("tag: 0xffff"), "{show}");
+
+    Ok(())
+}
+
+#[test]
+fn segment_routing_flags_tag_explicit_override_roundtrip() -> crafter::Result<()> {
+    let segment = Ipv6Addr::new(0x2001, 0x0db8, 0x0037, 0, 0, 0, 0, 0x0003);
+    let payload = [0xaa, 0xbb, 0xcc];
+    let compiled = (base_ipv6(106)
+        / Ipv6SegmentRoutingHeader::new()
+            .next_header(IPPROTO_IPV6_EXPERIMENTAL_1)
+            .flags(0x25)
+            .c_flag(true)
+            .pflag(true)
+            .tag(0x8001)
+            .segment(segment)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 27, IPPROTO_IPV6_ROUTE, 106);
+    assert_eq!(bytes[40], IPPROTO_IPV6_EXPERIMENTAL_1);
+    assert_eq!(bytes[45], 0xe5);
+    assert_eq!(u16_field(bytes, 46), 0x8001);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let segment_header = decoded
+        .layer::<Ipv6SegmentRoutingHeader>()
+        .expect("segment routing header");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        segment_header.next_header_value(),
+        IPPROTO_IPV6_EXPERIMENTAL_1
+    );
+    assert_eq!(segment_header.flags_value(), 0xe5);
+    assert_eq!(segment_header.flags_value() & 0x25, 0x25);
+    assert_eq!(segment_header.tag_value(), 0x8001);
+    assert_eq!(raw.as_bytes(), payload.as_slice());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
 fn mobile_routing_api_defaults_status_and_overrides_are_inspectable() -> crafter::Result<()> {
     assert_eq!(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN, 2);
     assert_eq!(IPV6_MOBILE_ROUTING_SEGMENTS_LEFT, 1);

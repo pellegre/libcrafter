@@ -2535,10 +2535,12 @@ impl Layer for Ipv6SegmentRoutingHeader {
 
     fn summary(&self) -> String {
         format!(
-            "Ipv6SegmentRoutingHeader(type={}, segments={}, segleft={}, next={})",
+            "Ipv6SegmentRoutingHeader(type={}, segments={}, segleft={}, flags=0x{:02x}, tag=0x{:04x}, next={})",
             routing_type_summary(self.routing_type_value()),
             self.segments.len(),
             self.segments_left_value(),
+            self.flags_value(),
+            self.tag_value(),
             next_header_summary(self.next_header_value())
         )
     }
