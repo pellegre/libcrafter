@@ -1847,6 +1847,104 @@ fn routing_classification_summary_and_show_label_known_and_unknown_types() -> cr
 }
 
 #[test]
+fn segment_routing_field_model_is_rfc8754_named_and_byte_preserving() -> crafter::Result<()> {
+    let segment_list = [
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0009, 0, 0, 0, 0, 0x0090),
+        doc_midpoint(),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0008, 0, 0, 0, 0, 0x0080),
+    ];
+    let trailing_data = [0x05, 0x02, 0xaa, 0xbb];
+    let packet = base_ipv6(93)
+        / Ipv6SegmentRoutingHeader::new()
+            .segments_left(2)
+            .last_entry(2)
+            .flags(0xa0)
+            .tag(0x04d2)
+            .segment(segment_list[0])
+            .segment(segment_list[1])
+            .segment(segment_list[2])
+            .raw_trailing_data(trailing_data)
+        / Udp::new().sport(12345).dport(33434)
+        / Raw::from("srh");
+
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+    assert_ipv6_wire_base_header(bytes, 75, IPPROTO_IPV6_ROUTE, 93);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 7);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(bytes[43], 2);
+    assert_eq!(bytes[44], 2);
+    assert_eq!(bytes[45], 0xa0);
+    assert_eq!(u16_field(bytes, 46), 0x04d2);
+    assert_eq!(&bytes[48..64], segment_list[0].octets().as_slice());
+    assert_eq!(&bytes[64..80], segment_list[1].octets().as_slice());
+    assert_eq!(&bytes[80..96], segment_list[2].octets().as_slice());
+    assert_eq!(&bytes[96..100], trailing_data.as_slice());
+    assert_eq!(&bytes[100..104], &[0, 0, 0, 0]);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let segment = decoded
+        .layer::<Ipv6SegmentRoutingHeader>()
+        .expect("segment routing header");
+    let udp = decoded.layer::<Udp>().expect("udp layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        layer_names,
+        vec!["Ipv6", "Ipv6SegmentRoutingHeader", "Udp", "Raw"]
+    );
+    assert_eq!(segment.routing_type_value(), IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(segment.routing_type_label(), "Segment Routing Header (SRH)");
+    assert_eq!(segment.segments_left_value(), 2);
+    assert_eq!(segment.last_entry_value(), 2);
+    assert_eq!(segment.first_segment_value(), 2);
+    assert_eq!(segment.flags_value(), 0xa0);
+    assert!(segment.c_flag_value());
+    assert!(!segment.p_flag_value());
+    assert_eq!(segment.reserved_value(), 2);
+    assert_eq!(segment.tag_value(), 0x04d2);
+    assert_eq!(segment.segment_list(), segment_list.as_slice());
+    assert_eq!(segment.segments(), segment.segment_list());
+    assert_eq!(
+        segment.raw_trailing_data_bytes(),
+        &[0x05, 0x02, 0xaa, 0xbb, 0, 0, 0, 0]
+    );
+    assert_eq!(
+        segment.extra_data_bytes(),
+        segment.raw_trailing_data_bytes()
+    );
+    assert_eq!(udp.source_port_value(), 12345);
+    assert_eq!(raw.as_bytes(), b"srh");
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    let compatibility_aliases = Ipv6SegmentRoutingHeader::new()
+        .segment(doc_midpoint())
+        .first_segment(0)
+        .c_flag(true)
+        .pflag(true)
+        .tag(0x1111)
+        .extra_data([0xcc]);
+    assert_eq!(compatibility_aliases.last_entry_value(), 0);
+    assert_eq!(compatibility_aliases.first_segment_value(), 0);
+    assert_eq!(compatibility_aliases.flags_value() & 0xc0, 0xc0);
+    assert_eq!(compatibility_aliases.tag_value(), 0x1111);
+    assert_eq!(compatibility_aliases.raw_trailing_data_bytes(), &[0xcc]);
+
+    let show = decoded.show();
+    assert!(show.contains("last_entry: 2"), "{show}");
+    assert!(show.contains("flags: 0xa0"), "{show}");
+    assert!(show.contains("tag: 0x04d2"), "{show}");
+    assert!(
+        show.contains("raw_trailing_data: 05 02 aa bb 00 00 00 00"),
+        "{show}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn mobile_routing_api_defaults_status_and_overrides_are_inspectable() -> crafter::Result<()> {
     assert_eq!(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN, 2);
     assert_eq!(IPV6_MOBILE_ROUTING_SEGMENTS_LEFT, 1);

@@ -57,8 +57,8 @@ Each item uses one primary status:
 | Routing Header Type 0 deprecation | RFC 5095; IANA Routing Types | `Ipv6RoutingHeader::new` | Obsolete | The generic routing header defaults to routing type 0, which the manifest marks deprecated. Current code can decode and preserve type 0, but generated defaults should not emit it without an explicit caller request. |
 | Mobile IPv6 Type 2 Routing Header | RFC 6275 | `Ipv6MobileRoutingHeader` | Implemented | Type 2 builder/decode preserve next header, length, segments left, reserved field, and home address. Unit tests and oracle vectors cover encode/decode. |
 | Mobility Header protocol 135 | RFC 6275; IANA protocol numbers | none | Missing | No `IPPROTO_MOBILITY`, no Mobility Header layer, and no registry binding. Mobile IPv6 state machines remain out of scope. |
-| Segment Routing Header Routing Type 4 | RFC 8754; RFC 9800 update noted in manifest | `Ipv6SegmentRoutingHeader` | Ambiguous | A typed SRH-like layer exists and is tested, but its fixed C/P/policy/HMAC fields look older or Scapy-shaped rather than a complete RFC 8754 plus current IANA SRH Flags/TLV model. Reconcile before extending behavior. |
-| SRH segment list preservation | RFC 8754 | `Ipv6SegmentRoutingHeader` | Partial | Segment list, segments-left, first-segment/last-entry-like value, and extra bytes are preserved. TLVs are not typed; HMAC is stored as fixed bytes without cryptographic verification. |
+| Segment Routing Header Routing Type 4 | RFC 8754; RFC 9800 update noted in manifest | `Ipv6SegmentRoutingHeader` | Partial | Fixed fields are aligned with RFC 8754: Routing Type 4, Last Entry, one-octet Flags, Tag, Segment List, and raw trailing data are public and byte-preserving. Compatibility aliases such as first-segment, C/P flags, policy fields, HMAC fields, and extra data still compile, but endpoint behavior and current IANA SRH Flags/TLV semantics are not implemented here. |
+| SRH segment list preservation | RFC 8754 | `Ipv6SegmentRoutingHeader` | Partial | Segment List entries are exposed as encoded 128-bit IPv6 addresses, starting from the last segment of the SR Policy as described by RFC 8754. Raw trailing data after the segment list is preserved for unsupported TLVs and padding. TLVs are not typed; HMAC verification is not implemented. |
 | SRv6 endpoint behavior | RFC 8754 operational behavior | none | Unsupported | Out of scope. No SID execution, endpoint action, policy installation, HMAC verification, or live SR domain behavior should be added here. |
 | Fragment Header field inspection | RFC 8200; RFC 6946; RFC 7112 | `Ipv6FragmentHeader` | Implemented | Encodes/decodes next header, reserved byte, offset, reserved bits, M flag, and identification; summary/show expose fields. Unit tests and fixtures cover initial fragments and non-initial raw preservation. |
 | Atomic fragment notes | RFC 6946 | `Ipv6FragmentHeader` fields only | Partial | Offset zero and M flag false can be represented, but there is no explicit helper, summary classification, fixture, or oracle case for atomic fragments. |
@@ -75,7 +75,7 @@ Each item uses one primary status:
 | --- | --- | --- | --- |
 | Base IPv6 unit tests | `crafter/src/protocols/ipv6.rs` module `ipv6_tests` | Implemented | Covers TCP checksum context, auto-filled payload length/next header, Traffic Class, Flow Label, Hop Limit, explicit base Next Header preservation, short header, bad version, and payload-length mismatch. |
 | Fragment unit tests | `crafter/src/protocols/ipv6.rs` module `ipv6_extensions` | Implemented | Covers Fragment Header chaining to UDP, IPv6 pseudo-header checksum preservation, non-initial fragment raw preservation, unknown next-header raw fallback, and short fragment header error. |
-| Routing unit tests | `crafter/src/protocols/ipv6.rs` module `ipv6_routing_header` | Partial | Covers SRH-like example shape, Mobile Routing Type 2, generic routing unknown type data, and builder rejection for some malformed SRH fields. It does not cover Hop-by-Hop, Destination Options, Home Address option, No Next Header, atomic fragments, or current RFC 8754 TLVs. |
+| Routing unit tests | `crafter/src/protocols/ipv6.rs` module `ipv6_routing_header` | Partial | Covers RFC 8754 SRH fixed-field shape, Mobile Routing Type 2, generic routing unknown type data, and builder rejection for some malformed SRH fields. It does not cover Hop-by-Hop, Destination Options, Home Address option, No Next Header, atomic fragments, or current RFC 8754 TLVs. |
 | Public API path tests | `crafter/tests/public_api.rs` | Missing | Public API tests exercise UDP/TCP exports but do not currently assert IPv6 extension types through root, `core`, `prelude`, and `protocols` paths. |
 | Fixture suite IPv6 base/transport | `crafter/tests/fixture_suite.rs` | Implemented | Catalog covers `ipv6-icmp-echo-request`, `ipv6-icmpv6-time-exceeded`, `ipv6-udp-raw`, `ipv6-udp-options-unknown-unsafe`, `ipv6-udp-options-frag`, `ipv6-tcp-raw`, and `ipv6-tcp-rich-options`. Field assertions cover addresses, Traffic Class, Flow Label, Next Header, Hop Limit, transport fields, checksums, and raw payloads. |
 | Fixture suite IPv6 extension headers | `crafter/tests/fixture_suite.rs` | Partial | Local byte fixtures include `ipv6-fragment-udp-raw` only. There are no committed byte fixtures for generic routing, Mobile Routing Type 2, SRH, Hop-by-Hop Options, Destination Options, Home Address option, No Next Header, or atomic fragments. |
@@ -129,9 +129,9 @@ Each item uses one primary status:
 4. **Obsolete Routing Type 0 default** - `Ipv6RoutingHeader::new()` defaults to
    type 0 even though RFC 5095 deprecates RH0. Later behavior edits should avoid
    generated defaults that emit RH0 accidentally. Status: Obsolete.
-5. **SRH source reconciliation** - current SRH-like fields must be checked
-   against RFC 8754, RFC 9800, and current IANA SRH flags/TLV registries before
-   enrichment. Status: Ambiguous.
+5. **SRH TLV and flag registry follow-up** - fixed SRH fields now follow RFC
+   8754, but RFC 9800 and the current IANA SRH flags/TLV registries still need
+   review before adding typed TLV or later flag semantics. Status: Partial.
 6. **Mobile IPv6 completion within packet scope** - Type 2 routing is present,
    but Home Address Destination Option and Mobility Header protocol 135 are
    missing. Mobile IPv6 state machines remain out of scope. Status: Partial.
