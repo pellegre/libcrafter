@@ -43,6 +43,8 @@ pub const IPPROTO_IPV6_EXPERIMENTAL_2: u8 = 254;
 pub const IPV6_OPTION_PAD1: u8 = 0x00;
 /// IPv6 PadN option type shared by Hop-by-Hop and Destination Options headers.
 pub const IPV6_OPTION_PADN: u8 = 0x01;
+/// IPv6 Jumbo Payload option type, defined by RFC 2675 for Hop-by-Hop Options.
+pub const IPV6_OPTION_JUMBO_PAYLOAD: u8 = 0xc2;
 /// IPv6 Router Alert option type. Deprecated by IANA for new protocols.
 pub const IPV6_OPTION_ROUTER_ALERT: u8 = 0x05;
 
@@ -84,6 +86,7 @@ const IPV6_TRAFFIC_CLASS_DSCP_SHIFT: u8 = 2;
 const IPV6_TRAFFIC_CLASS_ECN_MASK: u8 = 0x03;
 const IPV6_OPTION_DATA_MAX_LEN: usize = u8::MAX as usize;
 const IPV6_OPTION_HEADER_LEN: usize = 2;
+const IPV6_JUMBO_PAYLOAD_DATA_LEN: usize = 4;
 const IPV6_ROUTER_ALERT_DATA_LEN: usize = 2;
 const IPV6_OPTION_ACTION_SHIFT: u8 = 6;
 const IPV6_OPTION_CHANGE_EN_ROUTE_MASK: u8 = 0x20;
@@ -209,6 +212,12 @@ pub enum Ipv6Option {
         /// Two-octet Router Alert value field in network byte order.
         value_bytes: [u8; 2],
     },
+    /// Jumbo Payload option. The four value octets are stored in network byte
+    /// order so malformed-packet tests can inspect the exact field bytes.
+    JumboPayload {
+        /// Four-octet Jumbo Payload Length field in network byte order.
+        length_bytes: [u8; 4],
+    },
     /// Unknown or caller-defined option with a standard IPv6 option length
     /// byte. The full 8-bit option type, including action and change bits, is
     /// preserved verbatim.
@@ -271,6 +280,27 @@ impl Ipv6Option {
         }
     }
 
+    /// Create an RFC 2675 Jumbo Payload option with a four-octet length field.
+    ///
+    /// The Jumbo Payload Length is the IPv6 packet payload length excluding
+    /// the IPv6 base header, but including Hop-by-Hop and other extension
+    /// headers.
+    ///
+    /// RFC 2675 requires a valid Jumbo Payload Length to be greater than
+    /// 65,535 and the IPv6 Payload Length field to be zero. This builder
+    /// preserves the caller-supplied value; large-payload generation and
+    /// transport-layer jumbogram semantics are intentionally out of scope.
+    pub const fn jumbo_payload(length: u32) -> Self {
+        Self::JumboPayload {
+            length_bytes: [
+                (length >> 24) as u8,
+                (length >> 16) as u8,
+                (length >> 8) as u8,
+                length as u8,
+            ],
+        }
+    }
+
     /// Create an unknown or caller-defined option.
     pub fn generic(option_type: u8, data: impl Into<Vec<u8>>) -> Result<Self> {
         validate_ipv6_generic_option_type(option_type)?;
@@ -290,6 +320,7 @@ impl Ipv6Option {
             Self::Pad1 => IPV6_OPTION_PAD1,
             Self::PadN { .. } => IPV6_OPTION_PADN,
             Self::RouterAlert { .. } => IPV6_OPTION_ROUTER_ALERT,
+            Self::JumboPayload { .. } => IPV6_OPTION_JUMBO_PAYLOAD,
             Self::Generic { option_type, .. } => *option_type,
         }
     }
@@ -305,6 +336,7 @@ impl Ipv6Option {
             Self::Pad1 => &[],
             Self::PadN { data } | Self::Generic { data, .. } => data,
             Self::RouterAlert { value_bytes } => value_bytes,
+            Self::JumboPayload { length_bytes } => length_bytes,
         }
     }
 
@@ -323,6 +355,19 @@ impl Ipv6Option {
         match self.router_alert_value() {
             Some(value) => Some(ipv6_router_alert_value_label(value)),
             None => None,
+        }
+    }
+
+    /// Jumbo Payload Length when this is a typed Jumbo Payload option.
+    pub const fn jumbo_payload_length(&self) -> Option<u32> {
+        match self {
+            Self::JumboPayload { length_bytes } => Some(
+                ((length_bytes[0] as u32) << 24)
+                    | ((length_bytes[1] as u32) << 16)
+                    | ((length_bytes[2] as u32) << 8)
+                    | length_bytes[3] as u32,
+            ),
+            _ => None,
         }
     }
 
@@ -361,6 +406,7 @@ impl Ipv6Option {
         match self {
             Self::Pad1 => 1,
             Self::RouterAlert { .. } => IPV6_OPTION_HEADER_LEN + IPV6_ROUTER_ALERT_DATA_LEN,
+            Self::JumboPayload { .. } => IPV6_OPTION_HEADER_LEN + IPV6_JUMBO_PAYLOAD_DATA_LEN,
             Self::PadN { data } | Self::Generic { data, .. } => IPV6_OPTION_HEADER_LEN + data.len(),
         }
     }
@@ -381,6 +427,13 @@ impl Ipv6Option {
                     IPV6_ROUTER_ALERT_DATA_LEN as u8,
                 ]);
                 bytes.extend_from_slice(value_bytes);
+            }
+            Self::JumboPayload { length_bytes } => {
+                bytes.extend_from_slice(&[
+                    IPV6_OPTION_JUMBO_PAYLOAD,
+                    IPV6_JUMBO_PAYLOAD_DATA_LEN as u8,
+                ]);
+                bytes.extend_from_slice(length_bytes);
             }
             Self::Generic { option_type, data } => {
                 validate_ipv6_generic_option_type(*option_type)?;
@@ -465,6 +518,12 @@ impl Iterator for Ipv6OptionIter<'_> {
         let data = self.bytes[start + IPV6_OPTION_HEADER_LEN..end].to_vec();
         if option_type == IPV6_OPTION_PADN {
             Some(Ok(Ipv6Option::PadN { data }))
+        } else if option_type == IPV6_OPTION_JUMBO_PAYLOAD
+            && data_len == IPV6_JUMBO_PAYLOAD_DATA_LEN
+        {
+            let mut length_bytes = [0; 4];
+            length_bytes.copy_from_slice(&data);
+            Some(Ok(Ipv6Option::JumboPayload { length_bytes }))
         } else if option_type == IPV6_OPTION_ROUTER_ALERT && data_len == IPV6_ROUTER_ALERT_DATA_LEN
         {
             let mut value_bytes = [0; 2];
@@ -2715,6 +2774,15 @@ fn ipv6_options_summary(options: &[Ipv6Option]) -> String {
 
 fn ipv6_option_summary(option: &Ipv6Option) -> String {
     match option {
+        Ipv6Option::JumboPayload { .. } => {
+            let length = option
+                .jumbo_payload_length()
+                .expect("Jumbo Payload option carries four length bytes");
+            format!(
+                "Jumbo Payload(0x{:02x},length={length})",
+                option.option_type()
+            )
+        }
         Ipv6Option::RouterAlert { .. } => {
             let value = option
                 .router_alert_value()

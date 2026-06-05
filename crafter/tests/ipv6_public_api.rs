@@ -1887,6 +1887,162 @@ fn router_alert_public_paths_exports_are_reachable() {
 }
 
 #[test]
+fn jumbo_payload_option_values_and_malformed_lengths() -> crafter::Result<()> {
+    let jumbo = Ipv6Option::jumbo_payload(65_536);
+
+    assert_eq!(IPV6_OPTION_JUMBO_PAYLOAD, 0xc2);
+    assert_eq!(jumbo.option_type(), IPV6_OPTION_JUMBO_PAYLOAD);
+    assert_eq!(jumbo.kind(), IPV6_OPTION_JUMBO_PAYLOAD);
+    assert_eq!(jumbo.encoded_len(), 6);
+    assert_eq!(jumbo.data(), &[0, 1, 0, 0]);
+    assert_eq!(jumbo.jumbo_payload_length(), Some(65_536));
+    assert_eq!(jumbo.router_alert_value(), None);
+    assert_eq!(jumbo.action_bits(), 3);
+    assert_eq!(
+        jumbo.action(),
+        Ipv6OptionAction::DiscardSendIcmpIfNotMulticast
+    );
+    assert!(!jumbo.change_en_route());
+    assert_eq!(jumbo.rest(), 2);
+    assert_eq!(
+        jumbo.encode()?,
+        vec![IPV6_OPTION_JUMBO_PAYLOAD, 4, 0, 1, 0, 0]
+    );
+    assert_eq!(
+        Ipv6Option::decode_all(&[IPV6_OPTION_JUMBO_PAYLOAD, 4, 0, 1, 0, 0])?,
+        vec![jumbo.clone()]
+    );
+
+    let short = Ipv6Option::decode_all(&[IPV6_OPTION_JUMBO_PAYLOAD, 3, 0, 1, 0])?;
+    assert_eq!(
+        short,
+        vec![Ipv6Option::Generic {
+            option_type: IPV6_OPTION_JUMBO_PAYLOAD,
+            data: vec![0, 1, 0],
+        }]
+    );
+    assert_eq!(short[0].jumbo_payload_length(), None);
+    assert_eq!(
+        short[0].encode()?,
+        vec![IPV6_OPTION_JUMBO_PAYLOAD, 3, 0, 1, 0]
+    );
+
+    let long = Ipv6Option::decode_all(&[IPV6_OPTION_JUMBO_PAYLOAD, 5, 0, 1, 0, 0, 0xab])?;
+    assert_eq!(
+        long,
+        vec![Ipv6Option::Generic {
+            option_type: IPV6_OPTION_JUMBO_PAYLOAD,
+            data: vec![0, 1, 0, 0, 0xab],
+        }]
+    );
+    assert_eq!(long[0].jumbo_payload_length(), None);
+    assert_eq!(
+        long[0].encode()?,
+        vec![IPV6_OPTION_JUMBO_PAYLOAD, 5, 0, 1, 0, 0, 0xab]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn jumbo_payload_hop_by_hop_compile_decode_and_show() -> crafter::Result<()> {
+    let jumbo = Ipv6Option::jumbo_payload(65_536);
+    let compiled = (base_ipv6(64)
+        / Ipv6HopByHopOptionsHeader::new()
+            .nh(IPPROTO_IPV6_NO_NEXT)
+            .option(jumbo.clone())
+        / Raw::new())
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 8, IPPROTO_IPV6_HOPOPTS, 64);
+    assert_eq!(
+        &bytes[40..48],
+        &[
+            IPPROTO_IPV6_NO_NEXT,
+            0,
+            IPV6_OPTION_JUMBO_PAYLOAD,
+            4,
+            0,
+            1,
+            0,
+            0
+        ]
+    );
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let hop_by_hop = decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+
+    assert_eq!(layer_names, vec!["Ipv6", "Ipv6HopByHopOptionsHeader"]);
+    assert_decoded_ipv6_base_header(ipv6, 8, IPPROTO_IPV6_HOPOPTS, 64);
+    assert_eq!(hop_by_hop.next_header_value(), IPPROTO_IPV6_NO_NEXT);
+    assert_eq!(hop_by_hop.header_ext_len_value(), Some(0));
+    assert_eq!(hop_by_hop.options_value(), &[jumbo]);
+
+    let show = decoded.show();
+    assert!(
+        show.contains("options: Jumbo Payload(0xc2,length=65536)"),
+        "{show}"
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn jumbo_payload_explicit_ipv6_payload_length_zero_is_preserved_without_large_generation(
+) -> crafter::Result<()> {
+    // RFC 2675 jumbogram transport behavior, large-payload generation, UDP
+    // length-zero handling, and pseudo-header changes are out of scope here.
+    let compiled = (base_ipv6(70).plen(0)
+        / Ipv6HopByHopOptionsHeader::new()
+            .nh(IPPROTO_IPV6_NO_NEXT)
+            .option(Ipv6Option::jumbo_payload(65_536))
+        / Raw::new())
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(ipv6_payload_length(bytes), 0);
+    assert_eq!(bytes[6], IPPROTO_IPV6_HOPOPTS);
+    assert_eq!(bytes[7], 70);
+    assert_eq!(bytes.len(), 48);
+    assert_eq!(
+        &bytes[40..48],
+        &[
+            IPPROTO_IPV6_NO_NEXT,
+            0,
+            IPV6_OPTION_JUMBO_PAYLOAD,
+            4,
+            0,
+            1,
+            0,
+            0
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn jumbo_payload_public_paths_exports_are_reachable() {
+    let root = crafter::Ipv6Option::jumbo_payload(65_536);
+    let core = crafter::core::Ipv6Option::jumbo_payload(65_537);
+    let protocols = crafter::protocols::Ipv6Option::jumbo_payload(65_538);
+
+    assert_eq!(crafter::IPV6_OPTION_JUMBO_PAYLOAD, 0xc2);
+    assert_eq!(crafter::core::IPV6_OPTION_JUMBO_PAYLOAD, 0xc2);
+    assert_eq!(crafter::protocols::IPV6_OPTION_JUMBO_PAYLOAD, 0xc2);
+    assert_eq!(crafter::protocols::ipv6::IPV6_OPTION_JUMBO_PAYLOAD, 0xc2);
+    assert_eq!(root.jumbo_payload_length(), Some(65_536));
+    assert_eq!(core.jumbo_payload_length(), Some(65_537));
+    assert_eq!(protocols.jumbo_payload_length(), Some(65_538));
+}
+
+#[test]
 fn ipv6_option_pad1_encodes_as_one_byte() -> crafter::Result<()> {
     let option = Ipv6Option::pad1();
 
