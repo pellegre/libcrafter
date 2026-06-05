@@ -157,6 +157,11 @@ VirtualBox providers are not part of version 2.0.0.
 Unknown or unsupported next protocols are preserved as `Raw` payloads when the
 enclosing header is valid.
 
+See [docs/ipv6.md](docs/ipv6.md) for IPv6 base-header, extension-header,
+fixture, and offline oracle coverage details. IPv6 examples and fixtures use
+documentation address space (`2001:db8::/32`) unless a live provider workflow is
+explicitly requested.
+
 ## Examples
 
 Rust examples live under `crafter/examples/` and build against the public
@@ -207,6 +212,8 @@ live host IDs, or packet captures from sensitive networks in tracked files.
 - [docs/ipv4.md](docs/ipv4.md) describes IPv4 construction, DSCP/ECN,
   checksum status, typed options, fragment fields, decode policy, and
   validation coverage.
+- [docs/ipv6.md](docs/ipv6.md) describes IPv6 wire coverage and validation
+  fixtures.
 - [docs/examples.md](docs/examples.md) lists example commands and workflows.
 - [docs/validation.md](docs/validation.md) describes oracle validation modes
   and CI expectations.

@@ -14,6 +14,8 @@ This directory contains user and contributor documentation for the Rust
 - [TCP wire coverage](tcp.md) describes the supported TCP segment construction,
   typed options, checksums, decode, inspection, and sizing helpers, and links
   the source-backed [TCP RFC manifest](tcp-rfc-manifest.md).
+- [IPv6 wire coverage](ipv6.md) describes the supported IPv6 base and extension
+  headers, source-backed manifests, offline fixtures, and oracle coverage.
 - [ICMPv6 message coverage](icmpv6-coverage.md) lists the typed ICMPv6 message
   families and the deferred codepoints (Router Renumbering, Inverse Neighbor
   Discovery) preserved as unknown/`Raw`, with RFC references and reasons.

@@ -401,6 +401,12 @@ options, fragment metadata fields without fragmentation/reassembly, enriched
 `summary()` / `show()` output, and `Raw` fallback for unknown or unsupported
 payloads.
 
+IPv6 base-header and extension-header details live in
+[IPv6 wire coverage](ipv6.md), including source manifests, fixture coverage,
+and the offline `ipv6-enrichment` oracle profile. IPv6 examples should use
+documentation address space (`2001:db8::/32`) and dry-run or offline flows
+unless a provider-backed live workflow is explicitly selected.
+
 ## ICMPv4 Messages
 
 `Icmpv4` is the fixed ICMPv4 header and the front of an ICMPv4 packet. Data that
