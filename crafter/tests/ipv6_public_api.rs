@@ -922,6 +922,216 @@ fn ipv6_option_model() -> crafter::Result<()> {
 }
 
 #[test]
+fn ipv6_option_pad1_encodes_as_one_byte() -> crafter::Result<()> {
+    let option = Ipv6Option::pad1();
+
+    assert_eq!(option.option_type(), IPV6_OPTION_PAD1);
+    assert_eq!(option.encoded_len(), 1);
+    assert_eq!(option.data(), &[]);
+    assert_eq!(option.encode()?, vec![IPV6_OPTION_PAD1]);
+    assert_eq!(
+        Ipv6Option::decode_all(&[IPV6_OPTION_PAD1])?,
+        vec![Ipv6Option::Pad1]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn ipv6_option_padn_total_length_and_data_are_preserved() -> crafter::Result<()> {
+    let zero_data = Ipv6Option::padn(2)?;
+    let zero_filled = Ipv6Option::padn(5)?;
+    let explicit_data = Ipv6Option::padn_data([0xde, 0xad, 0xbe])?;
+
+    assert_eq!(zero_data.encoded_len(), 2);
+    assert_eq!(zero_data.data(), &[]);
+    assert_eq!(zero_data.encode()?, vec![IPV6_OPTION_PADN, 0]);
+
+    assert_eq!(zero_filled.encoded_len(), 5);
+    assert_eq!(zero_filled.data(), &[0, 0, 0]);
+    assert_eq!(zero_filled.encode()?, vec![IPV6_OPTION_PADN, 3, 0, 0, 0]);
+
+    assert_eq!(explicit_data.encoded_len(), 5);
+    assert_eq!(explicit_data.data(), &[0xde, 0xad, 0xbe]);
+    assert_eq!(
+        explicit_data.encode()?,
+        vec![IPV6_OPTION_PADN, 3, 0xde, 0xad, 0xbe]
+    );
+    assert_eq!(
+        Ipv6Option::decode_all(&explicit_data.encode()?)?,
+        vec![explicit_data]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn ipv6_option_generic_action_bits_follow_option_type() -> crafter::Result<()> {
+    let cases = [
+        (0x1e, 0, Ipv6OptionAction::Skip),
+        (0x5e, 1, Ipv6OptionAction::Discard),
+        (0x9e, 2, Ipv6OptionAction::DiscardSendIcmp),
+        (0xde, 3, Ipv6OptionAction::DiscardSendIcmpIfNotMulticast),
+    ];
+
+    for (option_type, action_bits, action) in cases {
+        let option = Ipv6Option::generic(option_type, [0xaa])?;
+
+        assert_eq!(option.action_bits(), action_bits);
+        assert_eq!(option.action(), action);
+        assert_eq!(Ipv6OptionAction::from_bits(action_bits)?, action);
+        assert_eq!(Ipv6OptionAction::from_option_type(option_type), action);
+        assert_eq!(option.rest(), 0x1e);
+        assert_eq!(option.option_number(), 0x1e);
+        assert!(!option.change_en_route());
+    }
+
+    match Ipv6OptionAction::from_bits(4).unwrap_err() {
+        CrafterError::InvalidFieldValue { field, reason } => {
+            assert_eq!(field, "ipv6.option.action");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("oversized action bits expected InvalidFieldValue, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn ipv6_option_change_en_route_bit_is_independent() -> crafter::Result<()> {
+    let unchanged = Ipv6Option::generic(0x1e, [0x01])?;
+    let may_change = Ipv6Option::generic(0x3e, [0x01])?;
+    let discard_and_may_change = Ipv6Option::generic(0x7e, [0x01])?;
+
+    assert!(!unchanged.change_en_route());
+    assert!(!unchanged.may_change_en_route());
+    assert_eq!(unchanged.action(), Ipv6OptionAction::Skip);
+    assert_eq!(unchanged.rest(), 0x1e);
+
+    assert!(may_change.change_en_route());
+    assert!(may_change.may_change_en_route());
+    assert_eq!(may_change.action(), Ipv6OptionAction::Skip);
+    assert_eq!(may_change.rest(), 0x1e);
+
+    assert!(discard_and_may_change.change_en_route());
+    assert_eq!(discard_and_may_change.action(), Ipv6OptionAction::Discard);
+    assert_eq!(discard_and_may_change.rest(), 0x1e);
+
+    Ok(())
+}
+
+#[test]
+fn ipv6_option_zero_length_tlvs_roundtrip() -> crafter::Result<()> {
+    let generic = Ipv6Option::generic(0x1e, [])?;
+    let padn = Ipv6Option::padn_data([])?;
+
+    assert_eq!(generic.encoded_len(), 2);
+    assert_eq!(generic.data(), &[]);
+    assert_eq!(generic.encode()?, vec![0x1e, 0]);
+    assert_eq!(Ipv6Option::decode_all(&[0x1e, 0])?, vec![generic]);
+
+    assert_eq!(padn.encoded_len(), 2);
+    assert_eq!(padn.data(), &[]);
+    assert_eq!(padn.encode()?, vec![IPV6_OPTION_PADN, 0]);
+    assert_eq!(Ipv6Option::decode_all(&[IPV6_OPTION_PADN, 0])?, vec![padn]);
+
+    Ok(())
+}
+
+#[test]
+fn ipv6_option_decode_reports_malformed_length_overrun() {
+    match Ipv6Option::decode_all(&[IPV6_OPTION_PAD1, 0x22, 4, 0xaa]).unwrap_err() {
+        CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        } => {
+            assert_eq!(context, "ipv6.option.data");
+            assert_eq!(required, 7);
+            assert_eq!(available, 4);
+        }
+        other => panic!("overrunning option data expected BufferTooShort, got {other:?}"),
+    }
+
+    let mut iter = Ipv6OptionIter::new(&[IPV6_OPTION_PAD1, 0x22, 4, 0xaa]);
+    assert_eq!(iter.next().unwrap().unwrap(), Ipv6Option::Pad1);
+    match iter.next().unwrap().unwrap_err() {
+        CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        } => {
+            assert_eq!(context, "ipv6.option.data");
+            assert_eq!(required, 7);
+            assert_eq!(available, 4);
+        }
+        other => panic!("overrunning option data expected BufferTooShort, got {other:?}"),
+    }
+    assert!(iter.next().is_none());
+}
+
+#[test]
+fn ipv6_option_decode_encode_roundtrip_preserves_bytes() -> crafter::Result<()> {
+    let encoded = vec![
+        IPV6_OPTION_PAD1,
+        IPV6_OPTION_PADN,
+        3,
+        0xde,
+        0xad,
+        0xbe,
+        0x1e,
+        0,
+        0x7e,
+        2,
+        0xaa,
+        0xbb,
+        IPV6_OPTION_PAD1,
+        0xde,
+        4,
+        0x00,
+        0x01,
+        0x02,
+        0x03,
+    ];
+
+    let decoded = Ipv6Option::decode_all(&encoded)?;
+    assert_eq!(
+        decoded,
+        vec![
+            Ipv6Option::Pad1,
+            Ipv6Option::PadN {
+                data: vec![0xde, 0xad, 0xbe]
+            },
+            Ipv6Option::Generic {
+                option_type: 0x1e,
+                data: vec![]
+            },
+            Ipv6Option::Generic {
+                option_type: 0x7e,
+                data: vec![0xaa, 0xbb]
+            },
+            Ipv6Option::Pad1,
+            Ipv6Option::Generic {
+                option_type: 0xde,
+                data: vec![0x00, 0x01, 0x02, 0x03]
+            },
+        ]
+    );
+    assert_eq!(
+        Ipv6OptionIter::new(&encoded).collect::<crafter::Result<Vec<_>>>()?,
+        decoded
+    );
+
+    let mut roundtrip = Vec::new();
+    for option in &decoded {
+        roundtrip.extend_from_slice(&option.encode()?);
+    }
+    assert_eq!(roundtrip, encoded);
+
+    Ok(())
+}
+
+#[test]
 fn traffic_class_default_and_named_dscp_helpers_roundtrip() -> crafter::Result<()> {
     assert_eq!(Dscp::default(), Dscp::default_forwarding());
     assert_eq!(Dscp::default_forwarding(), Dscp::cs0());
