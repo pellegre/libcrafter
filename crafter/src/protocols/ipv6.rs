@@ -84,6 +84,13 @@ pub const IPV6_ROUTING_TYPE_EXPERIMENTAL_2: u8 = 254;
 /// IPv6 Routing Header type reserved by IANA.
 pub const IPV6_ROUTING_TYPE_RESERVED: u8 = 255;
 
+/// RFC 6275 Type 2 Routing Header `Hdr Ext Len` value.
+pub const IPV6_MOBILE_ROUTING_HEADER_EXT_LEN: u8 = 2;
+/// RFC 6275 Type 2 Routing Header `Segments Left` value on the wire.
+pub const IPV6_MOBILE_ROUTING_SEGMENTS_LEFT: u8 = 1;
+/// RFC 6275 Type 2 Routing Header reserved field value sent by compliant senders.
+pub const IPV6_MOBILE_ROUTING_RESERVED: u32 = 0;
+
 /// Segment-routing policy flag: unset.
 pub const IPV6_SEGMENT_POLICY_UNSET: u8 = 0;
 /// Segment-routing policy flag: ingress router.
@@ -629,6 +636,33 @@ pub enum Ipv6RoutingTypeStatus {
     Reserved,
     /// Value not assigned in the current IANA Routing Types registry.
     Unknown,
+}
+
+/// RFC 6275 packet-field status for a Mobile IPv6 Type 2 Routing Header.
+///
+/// This status checks only source-backed wire fields visible in the packet.
+/// Whether the Home Address is one of the receiving node's home addresses, and
+/// whether it is routable in the current network, require node and routing
+/// context outside `crafter`'s packet-layer scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ipv6MobileRoutingHeaderStatus {
+    /// The fixed Type 2 Routing Header fields match RFC 6275.
+    Valid,
+    /// Routing Type is not 2.
+    InvalidRoutingType,
+    /// Header extension length is not 2.
+    InvalidHeaderExtLen,
+    /// Segments Left is not 1.
+    InvalidSegmentsLeft,
+    /// Reserved field is nonzero.
+    NonzeroReserved,
+}
+
+impl Ipv6MobileRoutingHeaderStatus {
+    /// Whether this status represents an RFC 6275-shaped Type 2 Routing Header.
+    pub const fn is_valid(self) -> bool {
+        matches!(self, Self::Valid)
+    }
 }
 
 /// Source-backed label for an IPv6 Routing Header type.
@@ -1768,8 +1802,8 @@ impl Ipv6MobileRoutingHeader {
             next_header: Field::defaulted(0),
             header_ext_len: Field::unset(),
             routing_type: Field::defaulted(IPV6_ROUTING_TYPE_MOBILE),
-            segments_left: Field::unset(),
-            reserved: Field::defaulted(0),
+            segments_left: Field::defaulted(IPV6_MOBILE_ROUTING_SEGMENTS_LEFT),
+            reserved: Field::defaulted(IPV6_MOBILE_ROUTING_RESERVED),
             home_address: Field::defaulted(Ipv6Addr::LOCALHOST),
         }
     }
@@ -1845,6 +1879,23 @@ impl Ipv6MobileRoutingHeader {
         self.header_ext_len.value().copied()
     }
 
+    /// Header extension length that will be emitted if the header compiles.
+    pub fn effective_header_ext_len_value(&self) -> u8 {
+        self.header_ext_len
+            .value()
+            .copied()
+            .unwrap_or(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN)
+    }
+
+    /// RFC 6275 status of the header extension length field.
+    pub fn header_ext_len_status(&self) -> Ipv6MobileRoutingHeaderStatus {
+        if self.effective_header_ext_len_value() == IPV6_MOBILE_ROUTING_HEADER_EXT_LEN {
+            Ipv6MobileRoutingHeaderStatus::Valid
+        } else {
+            Ipv6MobileRoutingHeaderStatus::InvalidHeaderExtLen
+        }
+    }
+
     /// Routing type.
     pub fn routing_type_value(&self) -> u8 {
         value_or_copy(&self.routing_type, IPV6_ROUTING_TYPE_MOBILE)
@@ -1862,17 +1913,68 @@ impl Ipv6MobileRoutingHeader {
 
     /// Segments-left value.
     pub fn segments_left_value(&self) -> u8 {
-        self.segments_left.value().copied().unwrap_or(1)
+        value_or_copy(&self.segments_left, IPV6_MOBILE_ROUTING_SEGMENTS_LEFT)
+    }
+
+    /// Whether Segments Left is still using the RFC 6275 builder default.
+    pub fn segments_left_is_defaulted(&self) -> bool {
+        !self.segments_left.is_user_set()
+            && self.segments_left_value() == IPV6_MOBILE_ROUTING_SEGMENTS_LEFT
+    }
+
+    /// RFC 6275 status of the Segments Left field.
+    pub fn segments_left_status(&self) -> Ipv6MobileRoutingHeaderStatus {
+        if self.segments_left_value() == IPV6_MOBILE_ROUTING_SEGMENTS_LEFT {
+            Ipv6MobileRoutingHeaderStatus::Valid
+        } else {
+            Ipv6MobileRoutingHeaderStatus::InvalidSegmentsLeft
+        }
     }
 
     /// Reserved field.
     pub fn reserved_value(&self) -> u32 {
-        value_or_copy(&self.reserved, 0)
+        value_or_copy(&self.reserved, IPV6_MOBILE_ROUTING_RESERVED)
+    }
+
+    /// Whether the reserved field is zero as initialized by RFC 6275 senders.
+    pub fn reserved_is_zero(&self) -> bool {
+        self.reserved_value() == IPV6_MOBILE_ROUTING_RESERVED
+    }
+
+    /// RFC 6275 status of the reserved field.
+    pub fn reserved_status(&self) -> Ipv6MobileRoutingHeaderStatus {
+        if self.reserved_is_zero() {
+            Ipv6MobileRoutingHeaderStatus::Valid
+        } else {
+            Ipv6MobileRoutingHeaderStatus::NonzeroReserved
+        }
     }
 
     /// Home address value.
     pub fn home_address_value(&self) -> Ipv6Addr {
         value_or_copy(&self.home_address, Ipv6Addr::LOCALHOST)
+    }
+
+    /// Home address field bytes in network order.
+    pub fn home_address_bytes(&self) -> [u8; 16] {
+        self.home_address_value().octets()
+    }
+
+    /// RFC 6275 packet-field status for this Type 2 Routing Header.
+    pub fn validity_status(&self) -> Ipv6MobileRoutingHeaderStatus {
+        if self.routing_type_value() != IPV6_ROUTING_TYPE_MOBILE {
+            return Ipv6MobileRoutingHeaderStatus::InvalidRoutingType;
+        }
+        if self.effective_header_ext_len_value() != IPV6_MOBILE_ROUTING_HEADER_EXT_LEN {
+            return Ipv6MobileRoutingHeaderStatus::InvalidHeaderExtLen;
+        }
+        if self.segments_left_value() != IPV6_MOBILE_ROUTING_SEGMENTS_LEFT {
+            return Ipv6MobileRoutingHeaderStatus::InvalidSegmentsLeft;
+        }
+        if self.reserved_value() != IPV6_MOBILE_ROUTING_RESERVED {
+            return Ipv6MobileRoutingHeaderStatus::NonzeroReserved;
+        }
+        Ipv6MobileRoutingHeaderStatus::Valid
     }
 
     fn effective_total_len(&self) -> usize {
@@ -1902,12 +2004,6 @@ impl Ipv6MobileRoutingHeader {
             return Err(CrafterError::invalid_field_value(
                 "ipv6.mobile.header_ext_len",
                 "mobile routing header must be at least 24 bytes",
-            ));
-        }
-        if self.routing_type_value() != IPV6_ROUTING_TYPE_MOBILE {
-            return Err(CrafterError::invalid_field_value(
-                "ipv6.mobile.routing_type",
-                "mobile routing header type must be 2",
             ));
         }
         Ok(())
@@ -1951,8 +2047,14 @@ impl Layer for Ipv6MobileRoutingHeader {
                 "routing_type_status",
                 format!("{:?}", self.routing_type_status()),
             ),
+            ("validity_status", format!("{:?}", self.validity_status())),
             ("segments_left", self.segments_left_value().to_string()),
+            (
+                "segments_left_status",
+                format!("{:?}", self.segments_left_status()),
+            ),
             ("reserved", format!("0x{:08x}", self.reserved_value())),
+            ("reserved_status", format!("{:?}", self.reserved_status())),
             ("home_address", self.home_address_value().to_string()),
         ]
     }
