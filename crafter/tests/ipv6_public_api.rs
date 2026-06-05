@@ -99,6 +99,41 @@ fn assert_base_decode_error(
     }
 }
 
+fn assert_buffer_too_short_error(
+    label: &str,
+    error: CrafterError,
+    expected_context: &'static str,
+    expected_required: usize,
+    expected_available: usize,
+) {
+    match error {
+        CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        } => {
+            assert_eq!(context, expected_context, "{label}");
+            assert_eq!(required, expected_required, "{label}");
+            assert_eq!(available, expected_available, "{label}");
+        }
+        other => panic!("{label} expected BufferTooShort, got {other:?}"),
+    }
+}
+
+fn assert_invalid_field_value_error(
+    label: &str,
+    error: CrafterError,
+    expected_field: &'static str,
+) {
+    match error {
+        CrafterError::InvalidFieldValue { field, reason } => {
+            assert_eq!(field, expected_field, "{label}");
+            assert!(!reason.is_empty(), "{label}");
+        }
+        other => panic!("{label} expected InvalidFieldValue, got {other:?}"),
+    }
+}
+
 fn ethernet_ipv6_frame(payload: &[u8]) -> Vec<u8> {
     let mut frame = Vec::with_capacity(14 + payload.len());
     frame.extend_from_slice(&[0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]);
@@ -319,6 +354,17 @@ fn option_header_packet(
             }
         }
     }
+}
+
+fn raw_option_header_packet_bytes(
+    kind: Ipv6OptionHeaderKind,
+    raw_header: impl AsRef<[u8]>,
+) -> crafter::Result<Vec<u8>> {
+    Ok(
+        (base_ipv6(73).nh(kind.outer_next_header()) / Raw::from_bytes(raw_header))
+            .compile()?
+            .into_bytes(),
+    )
 }
 
 fn assert_decoded_option_header(
@@ -1378,6 +1424,115 @@ fn hop_by_hop_decode_reports_option_length_overrun() -> crafter::Result<()> {
             assert_eq!(available, 6);
         }
         other => panic!("overrunning Hop-by-Hop option expected BufferTooShort, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn malformed_options_report_structured_errors_for_hop_by_hop_and_destination() -> crafter::Result<()>
+{
+    assert_buffer_too_short_error(
+        "direct truncated PadN option header",
+        Ipv6Option::decode_all(&[IPV6_OPTION_PADN]).unwrap_err(),
+        "ipv6.option.header",
+        2,
+        1,
+    );
+    assert_buffer_too_short_error(
+        "direct PadN option data overrun",
+        Ipv6Option::decode_all(&[IPV6_OPTION_PADN, 5, 0, 0, 0]).unwrap_err(),
+        "ipv6.option.data",
+        7,
+        5,
+    );
+    assert_invalid_field_value_error(
+        "explicit PadN total length underflow",
+        Ipv6Option::padn(1).unwrap_err(),
+        "ipv6.option.padn.length",
+    );
+    assert_invalid_field_value_error(
+        "oversized PadN option data",
+        Ipv6Option::padn_data(vec![0; 256]).unwrap_err(),
+        "ipv6.option.padn.length",
+    );
+    assert_invalid_field_value_error(
+        "oversized generic option data",
+        Ipv6Option::generic(0x1e, vec![0; 256]).unwrap_err(),
+        "ipv6.option.length",
+    );
+
+    for kind in Ipv6OptionHeaderKind::ALL {
+        let truncated_header =
+            raw_option_header_packet_bytes(kind, [IPPROTO_UDP, 0, IPV6_OPTION_PAD1])?;
+        assert_buffer_too_short_error(
+            "truncated option-bearing extension header",
+            Packet::decode_from_l3(NetworkLayer::Ipv6, &truncated_header).unwrap_err(),
+            kind.decode_context(),
+            8,
+            3,
+        );
+
+        let option_overrun = raw_option_header_packet_bytes(
+            kind,
+            [IPPROTO_UDP, 0, 0x22, 7, 0xaa, 0xbb, 0xcc, 0xdd],
+        )?;
+        assert_buffer_too_short_error(
+            "option length past option header end",
+            Packet::decode_from_l3(NetworkLayer::Ipv6, &option_overrun).unwrap_err(),
+            "ipv6.option.data",
+            9,
+            6,
+        );
+
+        let padn_overrun = raw_option_header_packet_bytes(
+            kind,
+            [IPPROTO_UDP, 0, IPV6_OPTION_PADN, 5, 0, 0, 0, 0],
+        )?;
+        assert_buffer_too_short_error(
+            "PadN length past option header end",
+            Packet::decode_from_l3(NetworkLayer::Ipv6, &padn_overrun).unwrap_err(),
+            "ipv6.option.data",
+            7,
+            6,
+        );
+
+        let declared_too_large =
+            raw_option_header_packet_bytes(kind, [IPPROTO_UDP, u8::MAX, 0, 0, 0, 0, 0, 0])?;
+        assert_buffer_too_short_error(
+            "declared option header length exceeds available payload",
+            Packet::decode_from_l3(NetworkLayer::Ipv6, &declared_too_large).unwrap_err(),
+            kind.decode_context(),
+            2048,
+            8,
+        );
+
+        let explicit_too_small = option_header_packet(
+            kind,
+            vec![Ipv6Option::generic(0x1e, [0, 1, 2, 3, 4])?],
+            Some(0),
+            Some(IPPROTO_IPV6_NO_NEXT),
+            false,
+        );
+        assert_invalid_field_value_error(
+            "explicit option header length too small for options",
+            explicit_too_small.compile().unwrap_err(),
+            kind.options_error_field(),
+        );
+
+        let oversized_option = Ipv6Option::generic(0x1e, vec![0; 255])?;
+        let oversized_collection = option_header_packet(
+            kind,
+            vec![oversized_option; 8],
+            None,
+            Some(IPPROTO_IPV6_NO_NEXT),
+            false,
+        );
+        assert_invalid_field_value_error(
+            "option collection exceeds 8-bit extension length field",
+            oversized_collection.compile().unwrap_err(),
+            kind.header_ext_len_field(),
+        );
     }
 
     Ok(())
