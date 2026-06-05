@@ -395,6 +395,7 @@ fn required_malformed_families() -> &'static [&'static str] {
         "truncated ipv6 routing header",
         "truncated ipv6 fragment header",
         "malformed ipv6 segment routing header",
+        "truncated ipv6 unknown extension header",
         "short udp header",
         "invalid udp length",
         "udp length overrun",
@@ -486,6 +487,9 @@ fn malformed_family(name: &str) -> Option<&'static str> {
         | "ipv6-segment-routing-declared-fields-overrun"
         | "ipv6-segment-routing-tlv-length-overrun" => {
             Some("malformed ipv6 segment routing header")
+        }
+        "truncated-ipv6-unknown-extension-header" => {
+            Some("truncated ipv6 unknown extension header")
         }
         "udp-short-header" => Some("short udp header"),
         "udp-invalid-length" => Some("invalid udp length"),
@@ -1395,6 +1399,7 @@ fn malformed_ipv6_corpus_errors_carry_structured_fields() {
         "truncated ipv6 routing header",
         "truncated ipv6 fragment header",
         "malformed ipv6 segment routing header",
+        "truncated ipv6 unknown extension header",
         "udp length overrun",
         "short icmpv6 header",
     ];
