@@ -96,6 +96,9 @@ Valid byte fixtures cover:
 - IPv6 UDP, TCP, and fragment extension-header stacks:
   `ipv6-udp-raw.hex`, `ipv6-base-traffic-flow-udp-raw.hex` (base header
   Traffic Class DSCP/ECN, nonzero Flow Label, and Hop Limit),
+  `ipv6-options-hop-destination-udp.hex` (Hop-by-Hop Router Alert, Jumbo
+  Payload, unknown option preservation, Destination Options Home Address,
+  padding, and terminal UDP payload),
   `ipv6-tcp-raw.hex`,
   `ipv6-tcp-rich-options.hex` (MSS, Window Scale, SACK Permitted, Timestamp,
   RFC 5482 User Timeout, and a classified Generic option, with IPv6
@@ -106,7 +109,7 @@ Valid byte fixtures cover:
 
 Summary fixtures cover representative raw, ARP, Linux cooked, IPv4 options,
 IPv4 TCP options, IPv6 TCP options, IPv4 DNS response, IPv4 DHCP, UDP options,
-and IPv6 fragment stacks.
+IPv6 option-header stacks, and IPv6 fragment stacks.
 
 Pcap fixtures cover:
 
