@@ -154,22 +154,68 @@ comparison. See [DNS wire coverage](dns.md) for the per-record contract.
 
 ### IPv6 Enrichment Offline Profile
 
-The `ipv6-enrichment` oracle profile is an offline reproducibility check for
-the enriched IPv6 base and extension-header packet surface. It runs without
-live traffic or provider infrastructure and should keep its artifacts under
-`target/oracle/`:
+The `ipv6-enrichment` oracle profile is the focused offline reproducibility
+suite for the enriched IPv6 base and extension-header packet surface. It covers
+base field boundaries, unknown next-header raw preservation, Hop-by-Hop and
+Destination Options, Fragment Header, generic Routing, Mobile Routing Type 2,
+Segment Routing, routed TCP/ICMPv6 chains, and the checksum context carried
+through supported extension chains. It runs without live traffic or provider
+infrastructure and should keep its artifacts under `target/oracle/`.
+
+Run the focused crate checks first. They consume checked-in documentation-space
+fixtures and malformed corpus rows, and they do not need reference backend
+imports or `target/oracle/` artifacts:
+
+```sh
+cargo test -p crafter --test ipv6_public_api
+cargo test -p crafter --test fixture_suite ipv6
+cargo test -p crafter --test fixture_suite pcap_ipv6_roundtrip
+cargo test -p crafter --test resilience ipv6
+```
+
+The fixture filters cover byte-preserving IPv6 base, UDP/TCP/ICMPv6, options,
+routing, fragment, and summary/show checks. The `pcap_ipv6_roundtrip` filter
+pins the RawIP IPv6 pcap fixture path, link type, timestamp, captured bytes,
+decode surface, and compile/decode/compile roundtrip. The resilience filter
+covers curated IPv6 decode surfaces, structured errors for malformed IPv6 base
+and extension buffers, random decode panic guards, unknown-next-header raw
+roundtrips, and extension-chain roundtrips.
+
+Then run the oracle profile with fixed seeds and explicit output directories:
 
 ```sh
 tools/oracle/run offline --profile ipv6-enrichment --seed 2 --count 20 --root l3:ipv6 --out target/oracle/ipv6-enrichment-offline
 tools/oracle/run offline --direction reference_to_libcrafter --profile ipv6-enrichment --seed 3 --count 12 --root l3:ipv6 --out target/oracle/ipv6-enrichment-reference-to-libcrafter
+tools/oracle/run offline --direction libcrafter_to_reference --profile ipv6-enrichment --seed 4 --count 12 --root l3:ipv6 --out target/oracle/ipv6-enrichment-libcrafter-to-reference
 ```
 
 Use the default offline run for the profile-selected comparison set, then use a
 directed run such as `reference_to_libcrafter` or
-`libcrafter_to_reference` when isolating one side's encode/decode behavior.
-Malformed IPv6 extension cases are declared as structured-error coverage, but
-they are not offline byte-compared because malformed extension buffers do not
-have a comparable strict-byte oracle path.
+`libcrafter_to_reference` when isolating one side's encode/decode behavior. Use
+`--seed`, `--count`, and `--index` to make any failure rerunnable. Malformed
+IPv6 extension cases are declared as structured-error coverage, but they are
+not offline byte-compared because malformed extension buffers do not have a
+comparable strict-byte oracle path; keep those checks in `resilience.rs` and
+the malformed fixture corpus.
+
+Provider-backed live exchange is not part of the IPv6 enrichment qualification.
+If live-mode planning needs to be inspected without creating infrastructure,
+start with the local dry-run path and keep the result under `target/oracle/`;
+real provider traffic remains an explicit protected workflow with
+`--confirm-live-run`:
+
+```sh
+tools/oracle/run live --provider local-dry-run --profile ipv6-enrichment --seed 5 --count 10 --root l3:ipv6 --out target/oracle/ipv6-enrichment-live-local-dry-run
+```
+
+For the broader crate and workspace pass around the focused IPv6 suite, run the
+normal crate tests and the workspace preflight before the release gate:
+
+```sh
+cargo test -p crafter
+cargo test --workspace
+.agents/scripts/check-crafter-release --static
+```
 
 ## Pcap Validation
 
@@ -353,6 +399,7 @@ tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count
 tools/probe/run --provider docker --dry-run --profile smoke --seed 1 --count 10 --out target/probe/final-dry-run-docker
 tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/final-behavior-dry-run
 python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/final-provider-matrix
+.agents/scripts/check-crafter-release --static
 ```
 
 Oracle artifacts default below `target/oracle/`, with mode-specific reports
