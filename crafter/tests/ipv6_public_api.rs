@@ -1957,6 +1957,127 @@ fn segment_routing_field_model_is_rfc8754_named_and_byte_preserving() -> crafter
 }
 
 #[test]
+fn segment_routing_compat_legacy_aliases_compile_and_inspect() -> crafter::Result<()> {
+    let hmac = [0x5a; 32];
+    let policy_one = Ipv6Addr::new(0x2001, 0x0db8, 0x0060, 0, 0, 0, 0, 0x0001);
+    let policy_two = "2001:db8:60::2";
+    let trailing_data = [0x00, 0xee, 0x02, 0xaa, 0xbb];
+
+    let routing = Ipv6SegmentRoutingHeader::new()
+        .nh(IPPROTO_UDP)
+        .push_ipv6_segment("2001:db8:3::30")?
+        .push_segment(doc_home())
+        .segleft(1)
+        .first_segment(1)
+        .c_flag(true)
+        .pflag(true)
+        .reserved(2)
+        .tag(0x1234)
+        .policy(0, policy_one, IPV6_SEGMENT_POLICY_INGRESS)?
+        .policy_str(1, policy_two, IPV6_SEGMENT_POLICY_EGRESS)?
+        .policy_flag(2, IPV6_SEGMENT_POLICY_SOURCE_ADDRESS)?
+        .policy_flag4(IPV6_SEGMENT_POLICY_UNSET)
+        .hmac_key_id(9)
+        .hmac(hmac)
+        .extra_data(trailing_data);
+
+    assert_eq!(routing.next_header_value(), IPPROTO_UDP);
+    assert_eq!(routing.segments_left_value(), 1);
+    assert_eq!(routing.last_entry_value(), 1);
+    assert_eq!(routing.first_segment_value(), 1);
+    assert_eq!(routing.flags_value(), 0xe0);
+    assert!(routing.c_flag_value());
+    assert!(routing.p_flag_value());
+    assert_eq!(routing.reserved_value(), 2);
+    assert_eq!(routing.tag_value(), 0x1234);
+    assert_eq!(
+        routing.policy_flags(),
+        [
+            IPV6_SEGMENT_POLICY_INGRESS,
+            IPV6_SEGMENT_POLICY_EGRESS,
+            IPV6_SEGMENT_POLICY_SOURCE_ADDRESS,
+            IPV6_SEGMENT_POLICY_UNSET,
+        ]
+    );
+    assert_eq!(routing.policies()[0], policy_one);
+    assert_eq!(
+        routing.policies()[1],
+        policy_two.parse::<Ipv6Addr>().expect("policy address")
+    );
+    assert_eq!(routing.hmac_key_id_value(), 9);
+    assert_eq!(routing.hmac_bytes(), &hmac);
+    assert_eq!(routing.extra_data_bytes(), trailing_data.as_slice());
+    assert_eq!(
+        routing.raw_trailing_data_bytes(),
+        routing.extra_data_bytes()
+    );
+    assert_eq!(routing.segment_list(), routing.segments());
+
+    let direct_policy_flags = Ipv6SegmentRoutingHeader::new()
+        .segment(doc_midpoint())
+        .policy_flag1(IPV6_SEGMENT_POLICY_INGRESS)
+        .policy_flag2(IPV6_SEGMENT_POLICY_EGRESS)
+        .policy_flag3(IPV6_SEGMENT_POLICY_SOURCE_ADDRESS)
+        .policy_flag4(IPV6_SEGMENT_POLICY_UNSET);
+    assert_eq!(
+        direct_policy_flags.policy_flags(),
+        [
+            IPV6_SEGMENT_POLICY_INGRESS,
+            IPV6_SEGMENT_POLICY_EGRESS,
+            IPV6_SEGMENT_POLICY_SOURCE_ADDRESS,
+            IPV6_SEGMENT_POLICY_UNSET,
+        ]
+    );
+    Packet::from_layer(direct_policy_flags).compile()?;
+
+    let packet =
+        base_ipv6(101) / routing / Udp::new().sport(12345).dport(33434) / Raw::from("compat");
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+    assert_ipv6_wire_base_header(bytes, 62, IPPROTO_IPV6_ROUTE, 101);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 5);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(bytes[43], 1);
+    assert_eq!(bytes[44], 1);
+    assert_eq!(bytes[45], 0xe0);
+    assert_eq!(u16_field(bytes, 46), 0x1234);
+    assert_eq!(&bytes[80..85], trailing_data.as_slice());
+    assert_eq!(&bytes[85..88], &[0, 0, 0]);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let decoded_routing = decoded
+        .layer::<Ipv6SegmentRoutingHeader>()
+        .expect("segment routing header");
+    assert_eq!(decoded_routing.segments_left_value(), 1);
+    assert_eq!(decoded_routing.last_entry_value(), 1);
+    assert_eq!(decoded_routing.first_segment_value(), 1);
+    assert_eq!(decoded_routing.flags_value(), 0xe0);
+    assert_eq!(decoded_routing.tag_value(), 0x1234);
+    assert_eq!(
+        decoded_routing.raw_trailing_data_bytes(),
+        &[0x00, 0xee, 0x02, 0xaa, 0xbb, 0, 0, 0]
+    );
+    assert_eq!(
+        decoded_routing.policy_flags(),
+        [IPV6_SEGMENT_POLICY_UNSET; 4]
+    );
+    assert_eq!(decoded_routing.policies(), &[Ipv6Addr::UNSPECIFIED; 4]);
+    assert_eq!(decoded_routing.hmac_key_id_value(), 0);
+    assert_eq!(decoded_routing.hmac_bytes(), &[0; 32]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    let show = decoded.show();
+    assert!(show.contains("first_segment: 1"), "{show}");
+    assert!(
+        show.contains("extra_data: 00 ee 02 aa bb 00 00 00"),
+        "{show}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn segment_routing_segments_one_segment_defaults_and_roundtrip() -> crafter::Result<()> {
     let segment = Ipv6Addr::new(0x2001, 0x0db8, 0x0036, 0, 0, 0, 0, 0x0001);
     let payload = b"one";
