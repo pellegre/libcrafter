@@ -1221,6 +1221,266 @@ fn fragment_api_classifies_atomic_initial_and_non_initial_status() -> crafter::R
 }
 
 #[test]
+fn fragment_boundary_offset_zero_and_max_decode_roundtrip() -> crafter::Result<()> {
+    const MAX_FRAGMENT_OFFSET: u16 = 0x1fff;
+
+    for (offset, expected_status) in [
+        (0, Ipv6FragmentHeaderStatus::Atomic),
+        (MAX_FRAGMENT_OFFSET, Ipv6FragmentHeaderStatus::NonInitial),
+    ] {
+        let payload = [0xaa, (offset & 0xff) as u8, 0xcc];
+        let compiled = (base_ipv6(70)
+            / Ipv6FragmentHeader::new()
+                .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+                .fragment_offset(offset)
+                .more_fragments(false)
+                .identification(0x1020_3040)
+            / Raw::from_bytes(payload))
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, (8 + payload.len()) as u16, IPPROTO_IPV6_FRAGMENT, 70);
+        assert_eq!(bytes[40], IPPROTO_IPV6_EXPERIMENTAL_1);
+        assert_eq!(bytes[41], 0);
+        assert_eq!(u16_field(bytes, 42), offset << 3);
+        assert_eq!(&bytes[44..48], &0x1020_3040u32.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let fragment = decoded
+            .layer::<Ipv6FragmentHeader>()
+            .expect("fragment layer");
+        let raw = decoded.layer::<Raw>().expect("fragment payload");
+
+        assert_eq!(fragment.fragment_offset_value(), offset);
+        assert_eq!(fragment.fragment_offset_units(), offset);
+        assert_eq!(fragment.fragment_offset_bytes(), u32::from(offset) * 8);
+        assert_eq!(fragment.fragment_status(), expected_status);
+        assert!(fragment.is_last_fragment());
+        assert_eq!(raw.as_bytes(), payload.as_slice());
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn fragment_boundary_offset_overflow_reports_structured_error() {
+    let err = (base_ipv6(71)
+        / Ipv6FragmentHeader::new()
+            .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+            .fragment_offset(0x2000)
+        / Raw::new())
+    .compile()
+    .unwrap_err();
+
+    match err {
+        CrafterError::InvalidFieldValue { field, reason } => {
+            assert_eq!(field, "ipv6.fragment.fragment_offset");
+            assert_eq!(reason, "fragment offset must fit in 13 bits");
+        }
+        other => panic!("fragment offset overflow expected InvalidFieldValue, got {other:?}"),
+    }
+}
+
+#[test]
+fn fragment_boundary_reserved_bits_zero_through_three_roundtrip() -> crafter::Result<()> {
+    for reserved_bits in 0..=3u8 {
+        let payload = [reserved_bits, 0xee];
+        let compiled = (base_ipv6(72)
+            / Ipv6FragmentHeader::new()
+                .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+                .fragment_offset(0)
+                .res(reserved_bits)
+                .more_fragments(false)
+                .identification(0x0102_0300 | u32::from(reserved_bits))
+            / Raw::from_bytes(payload))
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_eq!(bytes[41], 0);
+        assert_eq!(u16_field(bytes, 42), u16::from(reserved_bits) << 1);
+        assert_eq!(
+            &bytes[44..48],
+            &(0x0102_0300u32 | u32::from(reserved_bits)).to_be_bytes()
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let fragment = decoded
+            .layer::<Ipv6FragmentHeader>()
+            .expect("fragment layer");
+        let raw = decoded.layer::<Raw>().expect("fragment payload");
+
+        assert_eq!(fragment.res_value(), reserved_bits);
+        assert_eq!(fragment.reserved_bits_value(), reserved_bits);
+        assert_eq!(fragment.reserved_bits_are_zero(), reserved_bits == 0);
+        assert_eq!(fragment.reserved_fields_are_zero(), reserved_bits == 0);
+        assert_eq!(raw.as_bytes(), payload.as_slice());
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn fragment_boundary_reserved_bits_overflow_reports_structured_error() {
+    let err = (base_ipv6(73)
+        / Ipv6FragmentHeader::new()
+            .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+            .res(4)
+        / Raw::new())
+    .compile()
+    .unwrap_err();
+
+    match err {
+        CrafterError::InvalidFieldValue { field, reason } => {
+            assert_eq!(field, "ipv6.fragment.res");
+            assert_eq!(reason, "fragment reserved bits must fit in two bits");
+        }
+        other => {
+            panic!("fragment reserved bits overflow expected InvalidFieldValue, got {other:?}")
+        }
+    }
+}
+
+#[test]
+fn fragment_boundary_more_fragments_flag_true_and_false_roundtrip() -> crafter::Result<()> {
+    for (more_fragments, expected_status) in [
+        (false, Ipv6FragmentHeaderStatus::Atomic),
+        (true, Ipv6FragmentHeaderStatus::Initial),
+    ] {
+        let payload = [u8::from(more_fragments), 0x44, 0x55];
+        let compiled = (base_ipv6(74)
+            / Ipv6FragmentHeader::new()
+                .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+                .fragment_offset(0)
+                .more_fragments(more_fragments)
+                .identification(0xa0b0_c0d0 | u32::from(more_fragments))
+            / Raw::from_bytes(payload))
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_eq!(u16_field(bytes, 42), u16::from(more_fragments));
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let fragment = decoded
+            .layer::<Ipv6FragmentHeader>()
+            .expect("fragment layer");
+        let raw = decoded.layer::<Raw>().expect("fragment payload");
+
+        assert_eq!(fragment.has_more_fragments(), more_fragments);
+        assert_eq!(fragment.more_fragments_value(), more_fragments);
+        assert_eq!(fragment.mflag_value(), more_fragments);
+        assert_eq!(fragment.is_last_fragment(), !more_fragments);
+        assert_eq!(fragment.fragment_status(), expected_status);
+        assert_eq!(raw.as_bytes(), payload.as_slice());
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn fragment_boundary_identification_min_and_max_roundtrip() -> crafter::Result<()> {
+    for identification in [0, u32::MAX] {
+        let payload = [0x99, (identification & 0xff) as u8];
+        let compiled = (base_ipv6(75)
+            / Ipv6FragmentHeader::new()
+                .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+                .fragment_offset(0)
+                .more_fragments(false)
+                .identification(identification)
+            / Raw::from_bytes(payload))
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_eq!(&bytes[44..48], &identification.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let fragment = decoded
+            .layer::<Ipv6FragmentHeader>()
+            .expect("fragment layer");
+        let raw = decoded.layer::<Raw>().expect("fragment payload");
+
+        assert_eq!(fragment.identification_value(), identification);
+        assert_eq!(fragment.id_value(), identification);
+        assert_eq!(raw.as_bytes(), payload.as_slice());
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn fragment_boundary_explicit_next_header_override_is_preserved() -> crafter::Result<()> {
+    let compiled = (base_ipv6(76)
+        / Ipv6FragmentHeader::new()
+            .nh(IPPROTO_IPV6_EXPERIMENTAL_2)
+            .fragment_offset(0)
+            .more_fragments(false)
+            .identification(0x0bad_cafe)
+        / Udp::new().sport(45000).dport(45001)
+        / Raw::from("override"))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(bytes[6], IPPROTO_IPV6_FRAGMENT);
+    assert_eq!(bytes[40], IPPROTO_IPV6_EXPERIMENTAL_2);
+    assert_eq!(u16_field(bytes, 42), 0);
+    assert_eq!(&bytes[44..48], &0x0bad_cafeu32.to_be_bytes());
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let fragment = decoded
+        .layer::<Ipv6FragmentHeader>()
+        .expect("fragment layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(fragment.next_header_value(), IPPROTO_IPV6_EXPERIMENTAL_2);
+    assert!(decoded.layer::<Udp>().is_none());
+    assert_eq!(raw.as_bytes(), &bytes[48..]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn fragment_boundary_byte_for_byte_roundtrip_preserves_all_fragment_bits() -> crafter::Result<()> {
+    let payload = [0xde, 0xad, 0xbe, 0xef];
+    let compiled = (base_ipv6(77)
+        / Ipv6FragmentHeader::new()
+            .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+            .reserved(0xff)
+            .fragment_offset(0x1fff)
+            .res(0x03)
+            .more_fragments(true)
+            .identification(u32::MAX)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(bytes[40], IPPROTO_IPV6_EXPERIMENTAL_1);
+    assert_eq!(bytes[41], 0xff);
+    assert_eq!(u16_field(bytes, 42), u16::MAX);
+    assert_eq!(&bytes[44..48], &u32::MAX.to_be_bytes());
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let fragment = decoded
+        .layer::<Ipv6FragmentHeader>()
+        .expect("fragment layer");
+    let raw = decoded.layer::<Raw>().expect("fragment payload");
+
+    assert_eq!(fragment.next_header_value(), IPPROTO_IPV6_EXPERIMENTAL_1);
+    assert_eq!(fragment.reserved_byte_value(), 0xff);
+    assert_eq!(fragment.fragment_offset_value(), 0x1fff);
+    assert_eq!(fragment.reserved_bits_value(), 0x03);
+    assert!(fragment.has_more_fragments());
+    assert_eq!(fragment.identification_value(), u32::MAX);
+    assert_eq!(raw.as_bytes(), payload.as_slice());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
 fn hop_by_hop_builder() -> crafter::Result<()> {
     let hop_by_hop = Ipv6HopByHopOptionsHeader::new()
         .option(Ipv6Option::generic(0x1e, [0xaa])?)
