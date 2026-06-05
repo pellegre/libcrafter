@@ -8041,6 +8041,7 @@ def _self_check(args: argparse.Namespace) -> int:
 
 _SUITE_FEATURE_BY_FAMILY = {
     "dns": "dns_behavior",
+    "ipv6": "ipv6_fragment_routing",
 }
 _SUITE_OFFLINE_DIRECTIONS = (
     "reference_to_libcrafter",
