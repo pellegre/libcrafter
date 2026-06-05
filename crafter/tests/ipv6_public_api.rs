@@ -466,6 +466,120 @@ fn assert_transport_checksum_uses_ipv6_context(
     assert_eq!(u16_field(transport, checksum_offset), expected_wire);
 }
 
+const EXTENSION_CHECKSUM_TRANSPORT_OFFSET: usize = 96;
+const EXTENSION_CHECKSUM_PREFIX_PAYLOAD_LEN: usize = EXTENSION_CHECKSUM_TRANSPORT_OFFSET - 40;
+
+fn extension_checksum_prefix(hop_limit: u8, identification: u32) -> Packet {
+    Packet::from_layer(base_ipv6(hop_limit))
+        .push(Ipv6HopByHopOptionsHeader::new().option(Ipv6Option::pad1()))
+        .push(Ipv6DestinationOptionsHeader::new().option(Ipv6Option::pad1()))
+        .push(
+            Ipv6RoutingHeader::new()
+                .routing_type(IPV6_ROUTING_TYPE_EXPERIMENTAL_1)
+                .segments_left(0)
+                .type_data(vec![0xde, 0xad, 0xbe, 0xef]),
+        )
+        .push(Ipv6SegmentRoutingHeader::new().segment(doc_midpoint()))
+        .push(
+            Ipv6FragmentHeader::new()
+                .fragment_offset(0)
+                .more_fragments(true)
+                .identification(identification),
+        )
+}
+
+fn assert_extension_checksum_chain(
+    bytes: &[u8],
+    expected_payload_length: u16,
+    expected_transport_next_header: u8,
+    expected_transport_layer: &str,
+    hop_limit: u8,
+    identification: u32,
+) -> crafter::Result<Packet> {
+    assert_ipv6_wire_base_header(
+        bytes,
+        expected_payload_length,
+        IPPROTO_IPV6_HOPOPTS,
+        hop_limit,
+    );
+    assert_eq!(bytes[40], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(bytes[48], IPPROTO_IPV6_ROUTE);
+    assert_eq!(bytes[56], IPPROTO_IPV6_ROUTE);
+    assert_eq!(bytes[58], IPV6_ROUTING_TYPE_EXPERIMENTAL_1);
+    assert_eq!(bytes[64], IPPROTO_IPV6_FRAGMENT);
+    assert_eq!(bytes[66], IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(bytes[88], expected_transport_next_header);
+    assert_eq!(u16_field(bytes, 90), 1);
+    assert_eq!(&bytes[92..96], &identification.to_be_bytes());
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let hop_by_hop = decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    let destination = decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    let routing = decoded.layer::<Ipv6RoutingHeader>().expect("routing layer");
+    let segment = decoded
+        .layer::<Ipv6SegmentRoutingHeader>()
+        .expect("segment routing layer");
+    let fragment = decoded
+        .layer::<Ipv6FragmentHeader>()
+        .expect("fragment layer");
+
+    assert_eq!(
+        layer_names,
+        vec![
+            "Ipv6",
+            "Ipv6HopByHopOptionsHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Ipv6RoutingHeader",
+            "Ipv6SegmentRoutingHeader",
+            "Ipv6FragmentHeader",
+            expected_transport_layer,
+            "Raw",
+        ]
+    );
+    assert_decoded_ipv6_base_header(
+        ipv6,
+        expected_payload_length,
+        IPPROTO_IPV6_HOPOPTS,
+        hop_limit,
+    );
+    assert_eq!(hop_by_hop.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(hop_by_hop.header_ext_len_value(), Some(0));
+    assert_eq!(destination.next_header_value(), IPPROTO_IPV6_ROUTE);
+    assert_eq!(destination.header_ext_len_value(), Some(0));
+    assert_eq!(routing.next_header_value(), IPPROTO_IPV6_ROUTE);
+    assert_eq!(routing.header_ext_len_value(), Some(0));
+    assert_eq!(
+        routing.routing_type_value(),
+        IPV6_ROUTING_TYPE_EXPERIMENTAL_1
+    );
+    assert_eq!(routing.segments_left_value(), 0);
+    assert_eq!(routing.type_data_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+    assert_eq!(segment.next_header_value(), IPPROTO_IPV6_FRAGMENT);
+    assert_eq!(segment.header_ext_len_value(), Some(2));
+    assert_eq!(segment.routing_type_value(), IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(segment.segments_left_value(), 0);
+    assert_eq!(segment.segment_list(), &[doc_midpoint()]);
+    assert_eq!(fragment.next_header_value(), expected_transport_next_header);
+    assert_eq!(fragment.fragment_offset_value(), 0);
+    assert_eq!(fragment.fragment_offset_bytes(), 0);
+    assert!(fragment.has_more_fragments());
+    assert_eq!(
+        fragment.fragment_status(),
+        Ipv6FragmentHeaderStatus::Initial
+    );
+    assert!(fragment.is_initial_fragment());
+    assert_eq!(fragment.identification_value(), identification);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(decoded)
+}
+
 #[test]
 fn hop_limit_default_and_aliases_are_stable() -> crafter::Result<()> {
     let default_ipv6 = Ipv6::with_addresses(doc_src(), doc_dst()).nh(253);
@@ -922,6 +1036,165 @@ fn ipv6_icmpv6_base_header_roundtrip_autofills_and_checksums() -> crafter::Resul
     assert_eq!(raw.as_bytes(), payload);
     assert_transport_checksum_uses_ipv6_context(ipv6, IPPROTO_ICMPV6, &bytes[40..], 2, false);
     assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn extension_checksum_udp_after_supported_extension_chain_uses_ipv6_context() -> crafter::Result<()>
+{
+    let payload = b"udp-extension";
+    let hop_limit = 120;
+    let identification = 0x4600_0001;
+    let compiled = (extension_checksum_prefix(hop_limit, identification)
+        / Udp::new().sport(0x4600).dport(0x4601)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+    let payload_length =
+        (EXTENSION_CHECKSUM_PREFIX_PAYLOAD_LEN + UDP_HEADER_LEN + payload.len()) as u16;
+
+    let decoded = assert_extension_checksum_chain(
+        bytes,
+        payload_length,
+        IPPROTO_UDP,
+        "Udp",
+        hop_limit,
+        identification,
+    )?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let udp = decoded.layer::<Udp>().expect("udp layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        u16_field(bytes, EXTENSION_CHECKSUM_TRANSPORT_OFFSET),
+        0x4600
+    );
+    assert_eq!(
+        u16_field(bytes, EXTENSION_CHECKSUM_TRANSPORT_OFFSET + 2),
+        0x4601
+    );
+    assert_eq!(udp.source_port_value(), 0x4600);
+    assert_eq!(udp.destination_port_value(), 0x4601);
+    assert_eq!(
+        udp.length_value(),
+        Some((UDP_HEADER_LEN + payload.len()) as u16)
+    );
+    assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+    assert_eq!(raw.as_bytes(), payload);
+    assert_transport_checksum_uses_ipv6_context(
+        ipv6,
+        IPPROTO_UDP,
+        &bytes[EXTENSION_CHECKSUM_TRANSPORT_OFFSET..],
+        6,
+        true,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn extension_checksum_tcp_after_supported_extension_chain_uses_ipv6_context() -> crafter::Result<()>
+{
+    let payload = b"tcp-extension";
+    let hop_limit = 121;
+    let identification = 0x4600_0002;
+    let compiled = (extension_checksum_prefix(hop_limit, identification)
+        / Tcp::new()
+            .sport(0x4610)
+            .dport(443)
+            .seq(0x1122_3344)
+            .ack(0x5566_7788)
+            .flags(TCP_FLAG_ACK)
+            .window(0x2000)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+    let payload_length = (EXTENSION_CHECKSUM_PREFIX_PAYLOAD_LEN + 20 + payload.len()) as u16;
+
+    let decoded = assert_extension_checksum_chain(
+        bytes,
+        payload_length,
+        IPPROTO_TCP,
+        "Tcp",
+        hop_limit,
+        identification,
+    )?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let tcp = decoded.layer::<Tcp>().expect("tcp layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        u16_field(bytes, EXTENSION_CHECKSUM_TRANSPORT_OFFSET),
+        0x4610
+    );
+    assert_eq!(
+        u16_field(bytes, EXTENSION_CHECKSUM_TRANSPORT_OFFSET + 2),
+        443
+    );
+    assert_eq!(tcp.source_port_value(), 0x4610);
+    assert_eq!(tcp.destination_port_value(), 443);
+    assert_eq!(tcp.sequence_number_value(), 0x1122_3344);
+    assert_eq!(tcp.acknowledgment_number_value(), 0x5566_7788);
+    assert_eq!(tcp.data_offset_value(), 5);
+    assert_eq!(tcp.flags_value(), TCP_FLAG_ACK);
+    assert_eq!(tcp.window_value(), 0x2000);
+    assert_eq!(
+        tcp.checksum_value(),
+        Some(u16_field(&bytes[EXTENSION_CHECKSUM_TRANSPORT_OFFSET..], 16))
+    );
+    assert_eq!(raw.as_bytes(), payload);
+    assert_transport_checksum_uses_ipv6_context(
+        ipv6,
+        IPPROTO_TCP,
+        &bytes[EXTENSION_CHECKSUM_TRANSPORT_OFFSET..],
+        16,
+        false,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn extension_checksum_icmpv6_after_supported_extension_chain_uses_ipv6_context(
+) -> crafter::Result<()> {
+    let payload = b"icmpv6-extension";
+    let hop_limit = 122;
+    let identification = 0x4600_0003;
+    let compiled = (extension_checksum_prefix(hop_limit, identification)
+        / Icmpv6::echo_request().id(0x4620).seq(9)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+    let payload_length = (EXTENSION_CHECKSUM_PREFIX_PAYLOAD_LEN + 8 + payload.len()) as u16;
+
+    let decoded = assert_extension_checksum_chain(
+        bytes,
+        payload_length,
+        IPPROTO_ICMPV6,
+        "Icmpv6",
+        hop_limit,
+        identification,
+    )?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let icmpv6 = decoded.layer::<Icmpv6>().expect("icmpv6 layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(icmpv6.kind_value(), Some(IcmpKind::EchoRequest));
+    assert_eq!(icmpv6.identifier_value(), Some(0x4620));
+    assert_eq!(icmpv6.sequence_number_value(), Some(9));
+    assert_eq!(
+        icmpv6.checksum_value(),
+        Some(u16_field(&bytes[EXTENSION_CHECKSUM_TRANSPORT_OFFSET..], 2))
+    );
+    assert_eq!(raw.as_bytes(), payload);
+    assert_transport_checksum_uses_ipv6_context(
+        ipv6,
+        IPPROTO_ICMPV6,
+        &bytes[EXTENSION_CHECKSUM_TRANSPORT_OFFSET..],
+        2,
+        false,
+    );
 
     Ok(())
 }
