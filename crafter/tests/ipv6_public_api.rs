@@ -33,6 +33,20 @@ fn ipv6_traffic_class(bytes: &[u8]) -> u8 {
     ((bytes[0] & 0x0f) << 4) | (bytes[1] >> 4)
 }
 
+fn ipv6_flow_label(bytes: &[u8]) -> u32 {
+    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) & 0x000f_ffff
+}
+
+fn assert_flow_label_error(err: CrafterError) {
+    match err {
+        CrafterError::InvalidFieldValue { field, reason } => {
+            assert_eq!(field, "ipv6.flow_label");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("flow label overflow expected InvalidFieldValue, got {other:?}"),
+    }
+}
+
 fn assert_traffic_class_roundtrip(
     ipv6: Ipv6,
     expected_traffic_class: u8,
@@ -357,6 +371,48 @@ fn traffic_class_default_and_named_dscp_helpers_roundtrip() -> crafter::Result<(
     }
 
     Ok(())
+}
+
+#[test]
+fn flow_label_checked_helper_accepts_zero_one_and_maximum() -> crafter::Result<()> {
+    for expected_flow_label in [0, 1, 0x000f_ffff] {
+        let ipv6 = Ipv6::with_addresses(doc_src(), doc_dst())
+            .try_flow_label(expected_flow_label)?
+            .nh(253);
+        assert_eq!(ipv6.flow_label_value(), expected_flow_label);
+
+        let compiled = (ipv6 / Raw::from("flow")).compile()?;
+        let bytes = compiled.as_bytes();
+        assert_eq!(ipv6_flow_label(bytes), expected_flow_label);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+        assert_eq!(ipv6.flow_label_value(), expected_flow_label);
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn flow_label_checked_helper_rejects_overflow_with_structured_error() {
+    let err = Ipv6::new()
+        .try_flow_label(0x0010_0000)
+        .expect_err("overflowing IPv6 flow label must fail");
+
+    assert_flow_label_error(err);
+}
+
+#[test]
+fn flow_label_raw_override_overflow_fails_at_compile_time() {
+    let raw_override = Ipv6::new().fl(0x0010_0000);
+    assert_eq!(raw_override.flow_label_value(), 0x0010_0000);
+
+    let err = (raw_override.nh(253) / Raw::new())
+        .compile()
+        .expect_err("raw IPv6 flow label overflow must fail at compile time");
+
+    assert_flow_label_error(err);
 }
 
 #[test]

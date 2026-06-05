@@ -156,6 +156,13 @@ impl Ipv6 {
         self
     }
 
+    /// Set the flow label after validating that it fits the IPv6 20-bit field.
+    pub fn try_flow_label(mut self, flow_label: u32) -> Result<Self> {
+        validate_flow_label(flow_label)?;
+        self.flow_label.set_user(flow_label);
+        Ok(self)
+    }
+
     /// Compatibility alias for flow label.
     pub fn fl(self, flow_label: u32) -> Self {
         self.flow_label(flow_label)
@@ -296,15 +303,20 @@ impl Ipv6 {
                 "IPv6 layer version must be 6",
             ));
         }
-        if self.flow_label_value() > IPV6_MAX_FLOW_LABEL {
-            return Err(CrafterError::invalid_field_value(
-                "ipv6.flow_label",
-                "flow label must fit in 20 bits",
-            ));
-        }
+        validate_flow_label(self.flow_label_value())?;
         self.effective_payload_length(payload_len)?;
         Ok(())
     }
+}
+
+fn validate_flow_label(flow_label: u32) -> Result<()> {
+    if flow_label > IPV6_MAX_FLOW_LABEL {
+        return Err(CrafterError::invalid_field_value(
+            "ipv6.flow_label",
+            "flow label must fit in 20 bits",
+        ));
+    }
+    Ok(())
 }
 
 impl Default for Ipv6 {
