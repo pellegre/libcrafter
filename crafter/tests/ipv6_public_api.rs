@@ -2266,6 +2266,91 @@ fn segment_routing_flags_tag_explicit_override_roundtrip() -> crafter::Result<()
 }
 
 #[test]
+fn segment_routing_tlv_raw_optional_data_roundtrip() -> crafter::Result<()> {
+    let segment = Ipv6Addr::new(0x2001, 0x0db8, 0x0038, 0, 0, 0, 0, 0x0001);
+    let optional_data = [
+        0x00, // SRH Pad1-shaped byte.
+        0x01, 0x02, 0x00, 0x00, // SRH PadN-shaped TLV.
+        0xee, 0x03, 0xaa, 0xbb, 0xcc, // Unknown odd-length TLV-shaped data.
+    ];
+    let expected_trailing_data = [
+        0x00, 0x01, 0x02, 0x00, 0x00, 0xee, 0x03, 0xaa, 0xbb, 0xcc, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
+    ];
+    let payload = b"tlv";
+    let compiled = (base_ipv6(107)
+        / Ipv6SegmentRoutingHeader::new()
+            .segment(segment)
+            .raw_trailing_data(optional_data)
+        / Udp::new().sport(45001).dport(45002)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 51, IPPROTO_IPV6_ROUTE, 107);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 4);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_SEGMENT);
+    assert_eq!(bytes[43], 0);
+    assert_eq!(bytes[44], 0);
+    assert_eq!(&bytes[48..64], &segment.octets());
+    assert_eq!(&bytes[64..74], &optional_data);
+    assert_eq!(&bytes[74..80], &[0; 6]);
+    assert_eq!(u16_field(bytes, 80), 45001);
+    assert_eq!(u16_field(bytes, 82), 45002);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let segment_header = decoded
+        .layer::<Ipv6SegmentRoutingHeader>()
+        .expect("segment routing header");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(segment_header.header_ext_len_value(), Some(4));
+    assert_eq!(segment_header.segment_list(), &[segment]);
+    assert_eq!(
+        segment_header.raw_trailing_data_bytes(),
+        expected_trailing_data.as_slice()
+    );
+    assert_eq!(
+        segment_header.extra_data_bytes(),
+        segment_header.raw_trailing_data_bytes()
+    );
+    assert_eq!(raw.as_bytes(), payload);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    let show = decoded.show();
+    assert!(
+        show.contains("raw_trailing_data: 00 01 02 00 00 ee 03 aa bb cc 00 00 00 00 00 00"),
+        "{show}"
+    );
+    assert!(
+        show.contains("extra_data: 00 01 02 00 00 ee 03 aa bb cc 00 00 00 00 00 00"),
+        "{show}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn segment_routing_tlv_explicit_header_length_must_fit_raw_optional_data() {
+    let segment = Ipv6Addr::new(0x2001, 0x0db8, 0x0038, 0, 0, 0, 0, 0x0002);
+    let err = Packet::from_layer(
+        Ipv6SegmentRoutingHeader::new()
+            .header_ext_len(3)
+            .segment(segment)
+            .raw_trailing_data([0xee, 0x03, 0xaa, 0xbb, 0xcc, 0x00, 0x01, 0x02, 0x00]),
+    )
+    .compile()
+    .expect_err("explicit SRH header length must fit raw optional data");
+
+    assert_invalid_field_value_error(
+        "segment routing raw optional data too large for explicit length",
+        err,
+        "ipv6.segment.header_ext_len",
+    );
+}
+
+#[test]
 fn mobile_routing_api_defaults_status_and_overrides_are_inspectable() -> crafter::Result<()> {
     assert_eq!(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN, 2);
     assert_eq!(IPV6_MOBILE_ROUTING_SEGMENTS_LEFT, 1);
