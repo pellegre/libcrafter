@@ -2319,6 +2319,130 @@ fn ipv6_option_change_en_route_bit_is_independent() -> crafter::Result<()> {
 }
 
 #[test]
+fn unknown_options_hop_by_hop_and_destination_preserve_bytes_and_metadata() -> crafter::Result<()> {
+    #[derive(Clone, Copy)]
+    struct UnknownOptionCase {
+        option_type: u8,
+        data: &'static [u8],
+        action_bits: u8,
+        action: Ipv6OptionAction,
+        change_en_route: bool,
+        rest: u8,
+        summary: &'static str,
+    }
+
+    // RFC 8200 Section 4.2 defines the option type high two bits as the
+    // unknown-option action, the next bit as the change-en-route bit, and the
+    // low five bits as the option-number space named "rest" by IANA.
+    let cases = [
+        UnknownOptionCase {
+            option_type: 0x13,
+            data: &[0xde, 0xad],
+            action_bits: 0,
+            action: Ipv6OptionAction::Skip,
+            change_en_route: false,
+            rest: 0x13,
+            summary: "Generic(kind=0x13,len=2,act=0,chg=0,rest=0x13,data=de ad)",
+        },
+        UnknownOptionCase {
+            option_type: 0x73,
+            data: &[0xbe, 0xef, 0x01],
+            action_bits: 1,
+            action: Ipv6OptionAction::Discard,
+            change_en_route: true,
+            rest: 0x13,
+            summary: "Generic(kind=0x73,len=3,act=1,chg=1,rest=0x13,data=be ef 01)",
+        },
+        UnknownOptionCase {
+            option_type: 0x9e,
+            data: &[],
+            action_bits: 2,
+            action: Ipv6OptionAction::DiscardSendIcmp,
+            change_en_route: false,
+            rest: 0x1e,
+            summary: "Generic(kind=0x9e,len=0,act=2,chg=0,rest=0x1e,data=empty)",
+        },
+        UnknownOptionCase {
+            option_type: 0xfe,
+            data: &[0xca, 0xfe, 0x80],
+            action_bits: 3,
+            action: Ipv6OptionAction::DiscardSendIcmpIfNotMulticast,
+            change_en_route: true,
+            rest: 0x1e,
+            summary: "Generic(kind=0xfe,len=3,act=3,chg=1,rest=0x1e,data=ca fe 80)",
+        },
+    ];
+
+    let mut raw_options = Vec::new();
+    let mut options = Vec::new();
+    for case in cases {
+        let option = Ipv6Option::unknown(case.option_type, case.data.to_vec())?;
+        raw_options.extend_from_slice(&option.encode()?);
+        options.push(option);
+    }
+
+    for kind in Ipv6OptionHeaderKind::ALL {
+        let compiled = option_header_packet(
+            kind,
+            options.clone(),
+            None,
+            Some(IPPROTO_IPV6_NO_NEXT),
+            false,
+        )
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, 24, kind.outer_next_header(), 71);
+        assert_eq!(bytes[40], IPPROTO_IPV6_NO_NEXT);
+        assert_eq!(bytes[41], 2);
+        assert_eq!(&bytes[42..58], raw_options.as_slice());
+        assert_eq!(&bytes[58..64], &[0, 0, 0, 0, 0, 0]);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let decoded_options = match kind {
+            Ipv6OptionHeaderKind::HopByHop => decoded
+                .layer::<Ipv6HopByHopOptionsHeader>()
+                .expect("hop-by-hop options header")
+                .options_value(),
+            Ipv6OptionHeaderKind::Destination => decoded
+                .layer::<Ipv6DestinationOptionsHeader>()
+                .expect("destination options header")
+                .options_value(),
+        };
+
+        let mut expected_options = options.clone();
+        expected_options.extend(std::iter::repeat_with(Ipv6Option::pad1).take(6));
+        assert_eq!(decoded_options, expected_options.as_slice());
+
+        for (option, case) in decoded_options.iter().zip(cases) {
+            assert_eq!(option.option_type(), case.option_type);
+            assert_eq!(option.kind(), case.option_type);
+            assert_eq!(option.data(), case.data);
+            assert_eq!(option.action_bits(), case.action_bits);
+            assert_eq!(option.action(), case.action);
+            assert_eq!(option.change_en_route(), case.change_en_route);
+            assert_eq!(option.may_change_en_route(), case.change_en_route);
+            assert_eq!(option.rest(), case.rest);
+            assert_eq!(option.option_number(), case.rest);
+            assert_eq!(
+                option.encode()?,
+                Ipv6Option::unknown(case.option_type, case.data)?.encode()?
+            );
+        }
+
+        let summary = decoded.summary();
+        let show = decoded.show();
+        for case in cases {
+            assert!(summary.contains(case.summary), "{summary}");
+            assert!(show.contains(case.summary), "{show}");
+        }
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
+
+    Ok(())
+}
+
+#[test]
 fn ipv6_option_zero_length_tlvs_roundtrip() -> crafter::Result<()> {
     let generic = Ipv6Option::generic(0x1e, [])?;
     let padn = Ipv6Option::padn_data([])?;

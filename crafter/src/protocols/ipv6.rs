@@ -1066,7 +1066,7 @@ impl Layer for Ipv6HopByHopOptionsHeader {
     fn summary(&self) -> String {
         format!(
             "Ipv6HopByHopOptionsHeader(options={}, next={})",
-            self.options.len(),
+            ipv6_options_summary(&self.options),
             next_header_summary(self.next_header_value())
         )
     }
@@ -1243,7 +1243,7 @@ impl Layer for Ipv6DestinationOptionsHeader {
     fn summary(&self) -> String {
         format!(
             "Ipv6DestinationOptionsHeader(options={}, next={})",
-            self.options.len(),
+            ipv6_options_summary(&self.options),
             next_header_summary(self.next_header_value())
         )
     }
@@ -2812,6 +2812,10 @@ fn ipv6_list_summary(addresses: &[Ipv6Addr]) -> String {
 }
 
 fn ipv6_options_summary(options: &[Ipv6Option]) -> String {
+    if options.is_empty() {
+        return "none".to_string();
+    }
+
     options
         .iter()
         .map(ipv6_option_summary)
@@ -2847,6 +2851,21 @@ fn ipv6_option_summary(option: &Ipv6Option) -> String {
             format!(
                 "Home Address(0x{:02x},address={address})",
                 option.option_type()
+            )
+        }
+        Ipv6Option::Generic { option_type, data } => {
+            let data_summary = if data.is_empty() {
+                "empty".to_string()
+            } else {
+                hex_bytes(data)
+            };
+
+            format!(
+                "Generic(kind=0x{option_type:02x},len={},act={},chg={},rest=0x{:02x},data={data_summary})",
+                data.len(),
+                option.action_bits(),
+                u8::from(option.change_en_route()),
+                option.rest(),
             )
         }
         _ => format!("0x{:02x}", option.option_type()),
