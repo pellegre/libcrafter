@@ -47,6 +47,8 @@ pub const IPV6_OPTION_PADN: u8 = 0x01;
 pub const IPV6_OPTION_JUMBO_PAYLOAD: u8 = 0xc2;
 /// IPv6 Router Alert option type. Deprecated by IANA for new protocols.
 pub const IPV6_OPTION_ROUTER_ALERT: u8 = 0x05;
+/// IPv6 Home Address option type, defined by RFC 6275 for Destination Options.
+pub const IPV6_OPTION_HOME_ADDRESS: u8 = 0xc9;
 
 /// IPv6 Router Alert value: Multicast Listener Discovery.
 pub const IPV6_ROUTER_ALERT_MLD: u16 = 0;
@@ -88,6 +90,7 @@ const IPV6_OPTION_DATA_MAX_LEN: usize = u8::MAX as usize;
 const IPV6_OPTION_HEADER_LEN: usize = 2;
 const IPV6_JUMBO_PAYLOAD_DATA_LEN: usize = 4;
 const IPV6_ROUTER_ALERT_DATA_LEN: usize = 2;
+const IPV6_HOME_ADDRESS_DATA_LEN: usize = 16;
 const IPV6_OPTION_ACTION_SHIFT: u8 = 6;
 const IPV6_OPTION_CHANGE_EN_ROUTE_MASK: u8 = 0x20;
 const IPV6_OPTION_NUMBER_MASK: u8 = 0x1f;
@@ -218,6 +221,12 @@ pub enum Ipv6Option {
         /// Four-octet Jumbo Payload Length field in network byte order.
         length_bytes: [u8; 4],
     },
+    /// Home Address option. The sixteen address octets are stored in network
+    /// byte order so option data remains directly inspectable.
+    HomeAddress {
+        /// IPv6 Home Address option data field.
+        address_bytes: [u8; 16],
+    },
     /// Unknown or caller-defined option with a standard IPv6 option length
     /// byte. The full 8-bit option type, including action and change bits, is
     /// preserved verbatim.
@@ -301,6 +310,21 @@ impl Ipv6Option {
         }
     }
 
+    /// Create an RFC 6275 Home Address option for a Destination Options header.
+    ///
+    /// The packet-layer option only stores and emits the address field. Mobile
+    /// IPv6 Binding Cache state machines and placement policy are out of scope.
+    pub fn home_address(address: Ipv6Addr) -> Self {
+        Self::HomeAddress {
+            address_bytes: address.octets(),
+        }
+    }
+
+    /// Create a Home Address option from text.
+    pub fn home_address_str(address: &str) -> Result<Self> {
+        Ok(Self::home_address(parse_ipv6(address)?))
+    }
+
     /// Create an unknown or caller-defined option.
     pub fn generic(option_type: u8, data: impl Into<Vec<u8>>) -> Result<Self> {
         validate_ipv6_generic_option_type(option_type)?;
@@ -321,6 +345,7 @@ impl Ipv6Option {
             Self::PadN { .. } => IPV6_OPTION_PADN,
             Self::RouterAlert { .. } => IPV6_OPTION_ROUTER_ALERT,
             Self::JumboPayload { .. } => IPV6_OPTION_JUMBO_PAYLOAD,
+            Self::HomeAddress { .. } => IPV6_OPTION_HOME_ADDRESS,
             Self::Generic { option_type, .. } => *option_type,
         }
     }
@@ -337,6 +362,7 @@ impl Ipv6Option {
             Self::PadN { data } | Self::Generic { data, .. } => data,
             Self::RouterAlert { value_bytes } => value_bytes,
             Self::JumboPayload { length_bytes } => length_bytes,
+            Self::HomeAddress { address_bytes } => address_bytes,
         }
     }
 
@@ -367,6 +393,14 @@ impl Ipv6Option {
                     | ((length_bytes[2] as u32) << 8)
                     | length_bytes[3] as u32,
             ),
+            _ => None,
+        }
+    }
+
+    /// Home Address value when this is a typed Home Address option.
+    pub fn home_address_value(&self) -> Option<Ipv6Addr> {
+        match self {
+            Self::HomeAddress { address_bytes } => Some(Ipv6Addr::from(*address_bytes)),
             _ => None,
         }
     }
@@ -407,6 +441,7 @@ impl Ipv6Option {
             Self::Pad1 => 1,
             Self::RouterAlert { .. } => IPV6_OPTION_HEADER_LEN + IPV6_ROUTER_ALERT_DATA_LEN,
             Self::JumboPayload { .. } => IPV6_OPTION_HEADER_LEN + IPV6_JUMBO_PAYLOAD_DATA_LEN,
+            Self::HomeAddress { .. } => IPV6_OPTION_HEADER_LEN + IPV6_HOME_ADDRESS_DATA_LEN,
             Self::PadN { data } | Self::Generic { data, .. } => IPV6_OPTION_HEADER_LEN + data.len(),
         }
     }
@@ -434,6 +469,13 @@ impl Ipv6Option {
                     IPV6_JUMBO_PAYLOAD_DATA_LEN as u8,
                 ]);
                 bytes.extend_from_slice(length_bytes);
+            }
+            Self::HomeAddress { address_bytes } => {
+                bytes.extend_from_slice(&[
+                    IPV6_OPTION_HOME_ADDRESS,
+                    IPV6_HOME_ADDRESS_DATA_LEN as u8,
+                ]);
+                bytes.extend_from_slice(address_bytes);
             }
             Self::Generic { option_type, data } => {
                 validate_ipv6_generic_option_type(*option_type)?;
@@ -529,6 +571,11 @@ impl Iterator for Ipv6OptionIter<'_> {
             let mut value_bytes = [0; 2];
             value_bytes.copy_from_slice(&data);
             Some(Ok(Ipv6Option::RouterAlert { value_bytes }))
+        } else if option_type == IPV6_OPTION_HOME_ADDRESS && data_len == IPV6_HOME_ADDRESS_DATA_LEN
+        {
+            let mut address_bytes = [0; 16];
+            address_bytes.copy_from_slice(&data);
+            Some(Ok(Ipv6Option::HomeAddress { address_bytes }))
         } else {
             Some(Ok(Ipv6Option::Generic { option_type, data }))
         }
@@ -2791,6 +2838,15 @@ fn ipv6_option_summary(option: &Ipv6Option) -> String {
                 "Router Alert(0x{:02x},value={})",
                 option.option_type(),
                 ipv6_router_alert_value_summary(value)
+            )
+        }
+        Ipv6Option::HomeAddress { .. } => {
+            let address = option
+                .home_address_value()
+                .expect("Home Address option carries sixteen address bytes");
+            format!(
+                "Home Address(0x{:02x},address={address})",
+                option.option_type()
             )
         }
         _ => format!("0x{:02x}", option.option_type()),

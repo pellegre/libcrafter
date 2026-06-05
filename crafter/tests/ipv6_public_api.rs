@@ -948,6 +948,7 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
     assert_eq!(crafter::protocols::IPPROTO_IPV6_DSTOPTS, 60);
     assert_eq!(IPV6_OPTION_PAD1, 0);
     assert_eq!(crafter::IPV6_OPTION_PADN, 1);
+    assert_eq!(crafter::IPV6_OPTION_HOME_ADDRESS, 0xc9);
     assert_eq!(IPV6_ROUTING_TYPE_MOBILE, 2);
     assert_eq!(crafter::IPV6_ROUTING_TYPE_SEGMENT, 4);
     assert_eq!(IPV6_SEGMENT_POLICY_UNSET, 0);
@@ -1884,6 +1885,182 @@ fn router_alert_public_paths_exports_are_reachable() {
         crafter::protocols::ipv6_router_alert_value_label(IPV6_ROUTER_ALERT_MLD),
         "MLD"
     );
+}
+
+#[test]
+fn home_address_option_values_action_bits_and_malformed_lengths() -> crafter::Result<()> {
+    let home = doc_home();
+    let home_bytes = home.octets();
+    let option = Ipv6Option::home_address(home);
+    let mut expected = vec![IPV6_OPTION_HOME_ADDRESS, 16];
+    expected.extend_from_slice(&home_bytes);
+
+    assert_eq!(IPV6_OPTION_HOME_ADDRESS, 0xc9);
+    assert_eq!(option.option_type(), IPV6_OPTION_HOME_ADDRESS);
+    assert_eq!(option.kind(), IPV6_OPTION_HOME_ADDRESS);
+    assert_eq!(option.encoded_len(), 18);
+    assert_eq!(option.data(), home_bytes.as_slice());
+    assert_eq!(option.home_address_value(), Some(home));
+    assert_eq!(option.router_alert_value(), None);
+    assert_eq!(option.jumbo_payload_length(), None);
+    assert_eq!(option.action_bits(), 3);
+    assert_eq!(
+        option.action(),
+        Ipv6OptionAction::DiscardSendIcmpIfNotMulticast
+    );
+    assert!(!option.change_en_route());
+    assert!(!option.may_change_en_route());
+    assert_eq!(option.rest(), 9);
+    assert_eq!(option.option_number(), 9);
+    assert_eq!(option.encode()?, expected);
+    assert_eq!(Ipv6Option::decode_all(&expected)?, vec![option.clone()]);
+    assert_eq!(
+        Ipv6Option::home_address_str("2001:db8:4::40")?.home_address_value(),
+        Some(home)
+    );
+
+    let short_data = home_bytes[..15].to_vec();
+    let mut short_encoded = vec![IPV6_OPTION_HOME_ADDRESS, 15];
+    short_encoded.extend_from_slice(&short_data);
+    let short = Ipv6Option::decode_all(&short_encoded)?;
+    assert_eq!(
+        short,
+        vec![Ipv6Option::Generic {
+            option_type: IPV6_OPTION_HOME_ADDRESS,
+            data: short_data.clone(),
+        }]
+    );
+    assert_eq!(short[0].home_address_value(), None);
+    assert_eq!(short[0].data(), short_data.as_slice());
+    assert_eq!(short[0].encode()?, short_encoded);
+
+    let mut long_data = home_bytes.to_vec();
+    long_data.push(0xab);
+    let mut long_encoded = vec![IPV6_OPTION_HOME_ADDRESS, 17];
+    long_encoded.extend_from_slice(&long_data);
+    let long = Ipv6Option::decode_all(&long_encoded)?;
+    assert_eq!(
+        long,
+        vec![Ipv6Option::Generic {
+            option_type: IPV6_OPTION_HOME_ADDRESS,
+            data: long_data.clone(),
+        }]
+    );
+    assert_eq!(long[0].home_address_value(), None);
+    assert_eq!(long[0].data(), long_data.as_slice());
+    assert_eq!(long[0].encode()?, long_encoded);
+
+    Ok(())
+}
+
+#[test]
+fn home_address_option_destination_options_compile_decode_show_and_preserve_bytes(
+) -> crafter::Result<()> {
+    // RFC 6275 Section 6.3 defines the Home Address option as Destination
+    // Options option type 0xc9 with a 16-octet IPv6 address data field.
+    let home = doc_home();
+    let home_bytes = home.octets();
+    let home_address = Ipv6Option::home_address(home);
+    let packet = base_ipv6(64)
+        / Ipv6DestinationOptionsHeader::new().option(home_address.clone())
+        / Udp::new().sport(12345).dport(33434)
+        / Raw::from("hoa!");
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 36, IPPROTO_IPV6_DSTOPTS, 64);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 2);
+    assert_eq!(bytes[42], IPV6_OPTION_HOME_ADDRESS);
+    assert_eq!(bytes[43], 16);
+    assert_eq!(&bytes[44..60], home_bytes.as_slice());
+    assert_eq!(&bytes[60..64], &[0, 0, 0, 0]);
+    assert_eq!(&bytes[64..66], &12345u16.to_be_bytes());
+    assert_eq!(&bytes[66..68], &33434u16.to_be_bytes());
+    assert_eq!(&bytes[68..70], &12u16.to_be_bytes());
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let dstopts = decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    let expected_options = vec![
+        home_address,
+        Ipv6Option::pad1(),
+        Ipv6Option::pad1(),
+        Ipv6Option::pad1(),
+        Ipv6Option::pad1(),
+    ];
+
+    assert_eq!(dstopts.next_header_value(), IPPROTO_UDP);
+    assert_eq!(dstopts.header_ext_len_value(), Some(2));
+    assert_eq!(dstopts.options_value(), expected_options.as_slice());
+
+    let show = decoded.show();
+    assert!(
+        show.contains("options: Home Address(0xc9,address=2001:db8:4::40),0x00,0x00,0x00,0x00"),
+        "{show}"
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn home_address_option_destination_options_preserves_malformed_length_as_generic(
+) -> crafter::Result<()> {
+    let data = doc_home().octets()[..15].to_vec();
+    let malformed = Ipv6Option::generic(IPV6_OPTION_HOME_ADDRESS, data.clone())?;
+    let compiled = (base_ipv6(64)
+        / Ipv6DestinationOptionsHeader::new()
+            .nh(IPPROTO_IPV6_NO_NEXT)
+            .option(malformed.clone())
+        / Raw::new())
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 24, IPPROTO_IPV6_DSTOPTS, 64);
+    assert_eq!(bytes[40], IPPROTO_IPV6_NO_NEXT);
+    assert_eq!(bytes[41], 2);
+    assert_eq!(bytes[42], IPV6_OPTION_HOME_ADDRESS);
+    assert_eq!(bytes[43], 15);
+    assert_eq!(&bytes[44..59], data.as_slice());
+    assert_eq!(&bytes[59..64], &[0, 0, 0, 0, 0]);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let dstopts = decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    let expected_options = vec![
+        malformed,
+        Ipv6Option::pad1(),
+        Ipv6Option::pad1(),
+        Ipv6Option::pad1(),
+        Ipv6Option::pad1(),
+        Ipv6Option::pad1(),
+    ];
+
+    assert_eq!(dstopts.options_value(), expected_options.as_slice());
+    assert_eq!(dstopts.options_value()[0].home_address_value(), None);
+    assert_eq!(dstopts.options_value()[0].data(), data.as_slice());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn home_address_option_public_paths_exports_are_reachable() {
+    let root = crafter::Ipv6Option::home_address(doc_home());
+    let core = crafter::core::Ipv6Option::home_address(doc_home());
+    let protocols = crafter::protocols::Ipv6Option::home_address(doc_home());
+
+    assert_eq!(IPV6_OPTION_HOME_ADDRESS, 0xc9);
+    assert_eq!(crafter::IPV6_OPTION_HOME_ADDRESS, 0xc9);
+    assert_eq!(crafter::core::IPV6_OPTION_HOME_ADDRESS, 0xc9);
+    assert_eq!(crafter::protocols::IPV6_OPTION_HOME_ADDRESS, 0xc9);
+    assert_eq!(crafter::protocols::ipv6::IPV6_OPTION_HOME_ADDRESS, 0xc9);
+    assert_eq!(root.home_address_value(), Some(doc_home()));
+    assert_eq!(core.home_address_value(), Some(doc_home()));
+    assert_eq!(protocols.home_address_value(), Some(doc_home()));
 }
 
 #[test]
