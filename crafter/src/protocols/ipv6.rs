@@ -10,7 +10,7 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
 use crate::protocols::icmp::Icmpv6;
-use crate::protocols::ipv4::{IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
+use crate::protocols::ipv4::{Dscp, Ecn, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
 use crate::protocols::transport::{Tcp, Udp};
 use crate::registry::ProtocolRegistry;
 
@@ -46,6 +46,8 @@ const IPV6_MAX_FLOW_LABEL: u32 = 0x000f_ffff;
 const IPV6_MAX_HEADER_EXT_LEN: usize = 8 + u8::MAX as usize * 8;
 const IPV6_MAX_FRAGMENT_OFFSET: u16 = 0x1fff;
 const IPV6_SEGMENT_HMAC_LEN: usize = 32;
+const IPV6_TRAFFIC_CLASS_DSCP_SHIFT: u8 = 2;
+const IPV6_TRAFFIC_CLASS_ECN_MASK: u8 = 0x03;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -132,6 +134,22 @@ impl Ipv6 {
         self.traffic_class(traffic_class)
     }
 
+    /// Set the DSCP bits in the traffic class field, preserving the ECN bits.
+    pub fn dscp(mut self, dscp: Dscp) -> Self {
+        let traffic_class = (dscp.value() << IPV6_TRAFFIC_CLASS_DSCP_SHIFT)
+            | (self.traffic_class_value() & IPV6_TRAFFIC_CLASS_ECN_MASK);
+        self.traffic_class.set_user(traffic_class);
+        self
+    }
+
+    /// Set the ECN bits in the traffic class field, preserving the DSCP bits.
+    pub fn ecn(mut self, ecn: Ecn) -> Self {
+        let traffic_class =
+            (self.traffic_class_value() & !IPV6_TRAFFIC_CLASS_ECN_MASK) | ecn.value();
+        self.traffic_class.set_user(traffic_class);
+        self
+    }
+
     /// Set the flow label.
     pub fn flow_label(mut self, flow_label: u32) -> Self {
         self.flow_label.set_user(flow_label);
@@ -206,6 +224,16 @@ impl Ipv6 {
     /// Traffic class value.
     pub fn traffic_class_value(&self) -> u8 {
         value_or_copy(&self.traffic_class, 0)
+    }
+
+    /// DSCP value carried in the upper six traffic class bits.
+    pub fn dscp_value(&self) -> Dscp {
+        Dscp::from_u6(self.traffic_class_value() >> IPV6_TRAFFIC_CLASS_DSCP_SHIFT)
+    }
+
+    /// ECN value carried in the lower two traffic class bits.
+    pub fn ecn_value(&self) -> Ecn {
+        Ecn::from_u2(self.traffic_class_value() & IPV6_TRAFFIC_CLASS_ECN_MASK)
     }
 
     /// Flow label value.

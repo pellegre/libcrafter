@@ -148,6 +148,10 @@ impl Dscp {
         }
     }
 
+    pub(crate) const fn from_u6(value: u8) -> Self {
+        Self(value)
+    }
+
     /// Extract the DSCP bits from a full IPv4 DS/TOS octet.
     pub const fn from_ds_field(value: u8) -> Self {
         Self(value >> IPV4_DSCP_SHIFT)
@@ -156,6 +160,74 @@ impl Dscp {
     /// Raw six-bit DSCP value.
     pub const fn value(self) -> u8 {
         self.0
+    }
+
+    /// Default Forwarding / Class Selector 0 codepoint (CS0, 0).
+    pub const fn default_forwarding() -> Self {
+        Self::cs0()
+    }
+
+    /// Class Selector 0 codepoint (CS0, 0).
+    pub const fn cs0() -> Self {
+        Self::from_u6(0)
+    }
+
+    /// Class Selector 1 codepoint (CS1, 8).
+    pub const fn cs1() -> Self {
+        Self::from_u6(8)
+    }
+
+    /// Class Selector 2 codepoint (CS2, 16).
+    pub const fn cs2() -> Self {
+        Self::from_u6(16)
+    }
+
+    /// Class Selector 3 codepoint (CS3, 24).
+    pub const fn cs3() -> Self {
+        Self::from_u6(24)
+    }
+
+    /// Class Selector 4 codepoint (CS4, 32).
+    pub const fn cs4() -> Self {
+        Self::from_u6(32)
+    }
+
+    /// Class Selector 5 codepoint (CS5, 40).
+    pub const fn cs5() -> Self {
+        Self::from_u6(40)
+    }
+
+    /// Class Selector 6 codepoint (CS6, 48).
+    pub const fn cs6() -> Self {
+        Self::from_u6(48)
+    }
+
+    /// Class Selector 7 codepoint (CS7, 56).
+    pub const fn cs7() -> Self {
+        Self::from_u6(56)
+    }
+
+    /// Create an RFC 2474 Class Selector codepoint from a selector 0..=7.
+    pub const fn class_selector(selector: u8) -> Result<Self> {
+        if selector <= 7 {
+            Ok(Self(selector << 3))
+        } else {
+            Err(CrafterError::invalid_field_value(
+                "ip.dscp.class_selector",
+                "Class Selector must be in the range 0..=7",
+            ))
+        }
+    }
+
+    /// Expedited Forwarding codepoint (EF, 46).
+    pub const fn ef() -> Self {
+        Self::from_u6(46)
+    }
+}
+
+impl Default for Dscp {
+    fn default() -> Self {
+        Self::default_forwarding()
     }
 }
 
@@ -205,8 +277,7 @@ impl Ecn {
         }
     }
 
-    /// Extract the ECN bits from a full IPv4 DS/TOS octet.
-    pub const fn from_ds_field(value: u8) -> Self {
+    pub(crate) const fn from_u2(value: u8) -> Self {
         match value & IPV4_ECN_MASK {
             0 => Self::NotEct,
             1 => Self::Ect1,
@@ -215,9 +286,50 @@ impl Ecn {
         }
     }
 
+    /// Extract the ECN bits from a full IPv4 DS/TOS octet.
+    pub const fn from_ds_field(value: u8) -> Self {
+        Self::from_u2(value)
+    }
+
     /// Raw two-bit ECN value.
     pub const fn value(self) -> u8 {
         self as u8
+    }
+
+    /// Not ECN-Capable Transport (Not-ECT, 0b00).
+    pub const fn not_ect() -> Self {
+        Self::NotEct
+    }
+
+    /// ECN-Capable Transport codepoint ECT(1), 0b01.
+    pub const fn ect1() -> Self {
+        Self::Ect1
+    }
+
+    /// ECN-Capable Transport codepoint ECT(0), 0b10.
+    pub const fn ect0() -> Self {
+        Self::Ect0
+    }
+
+    /// Alias for ECN-Capable Transport codepoint ECT(0).
+    pub const fn capable_0() -> Self {
+        Self::Ect0
+    }
+
+    /// Alias for ECN-Capable Transport codepoint ECT(1).
+    pub const fn capable_1() -> Self {
+        Self::Ect1
+    }
+
+    /// Congestion Experienced (CE, 0b11).
+    pub const fn ce() -> Self {
+        Self::Ce
+    }
+}
+
+impl Default for Ecn {
+    fn default() -> Self {
+        Self::NotEct
     }
 }
 

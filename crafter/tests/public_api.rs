@@ -98,6 +98,46 @@ fn public_module_paths_expose_representative_items() -> crafter::Result<()> {
 }
 
 #[test]
+fn dscp_and_ecn_helpers_are_public_and_raw_safe() -> crafter::Result<()> {
+    let prelude_dscp: Dscp = Dscp::ef();
+    let root_dscp = crafter::Dscp::new(46)?;
+    let core_dscp = crafter::core::Dscp::cs1();
+    let protocols_dscp = crafter::protocols::Dscp::class_selector(7)?;
+    let ip_dscp = crafter::protocols::ipv4::Dscp::cs0();
+
+    assert_eq!(prelude_dscp, root_dscp);
+    assert_eq!(prelude_dscp.value(), 46);
+    assert_eq!(core_dscp.value(), 8);
+    assert_eq!(protocols_dscp, crafter::Dscp::cs7());
+    assert_eq!(ip_dscp, Dscp::default_forwarding());
+    assert_eq!(u8::from(Dscp::new(63)?), 63);
+    assert!(Dscp::new(64).is_err());
+    assert!(Dscp::class_selector(8).is_err());
+
+    let prelude_ecn: Ecn = Ecn::capable_0();
+    let root_ecn = crafter::Ecn::new(2)?;
+    let core_ecn = crafter::core::Ecn::ect1();
+    let protocols_ecn = crafter::protocols::Ecn::ce();
+    let ip_ecn = crafter::protocols::ipv4::Ecn::not_ect();
+
+    assert_eq!(prelude_ecn, root_ecn);
+    assert_eq!(prelude_ecn, Ecn::ect0());
+    assert_eq!(prelude_ecn.value(), 2);
+    assert_eq!(core_ecn.value(), 1);
+    assert_eq!(protocols_ecn.value(), 3);
+    assert_eq!(ip_ecn.value(), 0);
+    assert_eq!(u8::from(Ecn::new(3)?), 3);
+    assert!(Ecn::new(4).is_err());
+
+    let ipv6 = Ipv6::new().dscp(Dscp::ef()).ecn(Ecn::capable_0());
+    assert_eq!(ipv6.traffic_class_value(), 0xba);
+    assert_eq!(ipv6.dscp_value(), Dscp::ef());
+    assert_eq!(ipv6.ecn_value(), Ecn::ect0());
+
+    Ok(())
+}
+
+#[test]
 fn udp_public_api_paths_are_usable() -> crafter::Result<()> {
     let prelude_udp: Udp = Udp::new().sport(1111).dport(2222);
     let core_udp = crafter::core::Udp::new().sport(3333).dport(4444);
