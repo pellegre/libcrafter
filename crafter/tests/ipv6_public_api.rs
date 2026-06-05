@@ -593,6 +593,46 @@ fn inspection_base_summary_stays_compact_and_show_lists_base_fields() -> crafter
 }
 
 #[test]
+fn extension_inspection_summary_and_show_list_option_headers() -> crafter::Result<()> {
+    let compiled = (base_ipv6(64)
+        / Ipv6HopByHopOptionsHeader::new().options([
+            Ipv6Option::router_alert(IPV6_ROUTER_ALERT_RSVP),
+            Ipv6Option::jumbo_payload(65_536),
+            Ipv6Option::unknown(0x13, [])?,
+        ])
+        / Ipv6DestinationOptionsHeader::new()
+            .nh(IPPROTO_IPV6_NO_NEXT)
+            .options([Ipv6Option::home_address(doc_home()), Ipv6Option::padn(2)?])
+        / Raw::new())
+    .compile()?;
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, compiled.as_bytes())?;
+
+    let hop_by_hop_options = "Router Alert(0x05,value=RSVP(1)),Jumbo Payload(0xc2,length=65536),Generic(kind=0x13,len=0,act=0,chg=0,rest=0x13,data=empty),0x00,0x00";
+    let destination_options = "Home Address(0xc9,address=2001:db8:4::40),0x01,0x00,0x00";
+
+    assert_eq!(
+        decoded.summary(),
+        format!(
+            "Ipv6(src={}, dst={}, next=hop-by-hop-options(0)) / Ipv6HopByHopOptionsHeader(options={hop_by_hop_options}, next=destination-options(60)) / Ipv6DestinationOptionsHeader(options={destination_options}, next=no-next(59))",
+            doc_src(),
+            doc_dst()
+        )
+    );
+
+    assert_eq!(
+        decoded.show(),
+        format!(
+            "Packet(len=80, layers=3)\n  [0] Ipv6\n      version: 6\n      traffic_class: 0x2a\n      dscp: 10\n      ecn: 2\n      flow_label: 0x12345\n      payload_length: 40\n      next_header: hop-by-hop-options(0)\n      hop_limit: 64\n      src: {}\n      dst: {}\n  [1] Ipv6HopByHopOptionsHeader\n      next_header: destination-options(60)\n      header_ext_len: 1\n      options: {hop_by_hop_options}\n  [2] Ipv6DestinationOptionsHeader\n      next_header: no-next(59)\n      header_ext_len: 2\n      options: {destination_options}",
+            doc_src(),
+            doc_dst()
+        )
+    );
+
+    Ok(())
+}
+
+#[test]
 fn next_header_names_no_next_header_decodes_empty_payload_without_raw() -> crafter::Result<()> {
     let compiled = (base_ipv6(45).nh(IPPROTO_IPV6_NO_NEXT) / Raw::new()).compile()?;
     let bytes = compiled.as_bytes();
