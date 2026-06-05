@@ -5,10 +5,15 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crafter::core::{
     decode_dns_name, scan_dhcp_option_segments, Arp, CrafterError, Dhcp, DhcpOption,
-    DhcpOptionArea, Dns, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv4Protocol, Ipv6, LinkType,
+    DhcpOptionArea, Dns, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv4Protocol, Ipv6,
+    Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6HopByHopOptionsHeader,
+    Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, LinkType,
     LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
     Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
-    TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
+    IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2,
+    IPPROTO_IPV6_HIP, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6, IPPROTO_UDP,
+    IPV6_ROUTING_TYPE_EXPERIMENTAL_1, IPV6_ROUTING_TYPE_EXPERIMENTAL_2, IPV6_ROUTING_TYPE_MOBILE,
+    IPV6_ROUTING_TYPE_NIMROD, IPV6_ROUTING_TYPE_RH0, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
 };
 use proptest::prelude::*;
 
@@ -632,6 +637,195 @@ fn segment_routing_malformed_linux_sll_frame(ipv6_packet: &[u8]) -> Vec<u8> {
     .to_vec()
 }
 
+fn doc_ipv6_resilience_addr(subnet: u16, host: u16) -> Ipv6Addr {
+    Ipv6Addr::new(0x2001, 0x0db8, subnet, 0, 0, 0, 0, host)
+}
+
+fn ipv6_resilience_base(hop_limit: u8) -> Ipv6 {
+    Ipv6::with_addresses(
+        doc_ipv6_resilience_addr(0x0048, 0x0001),
+        doc_ipv6_resilience_addr(0x0048, 0x0002),
+    )
+    .traffic_class(0x2a)
+    .flow_label(0x04800)
+    .hop_limit(hop_limit)
+}
+
+fn ipv6_routing_payload_packet(route_payload: &[u8]) -> Vec<u8> {
+    (ipv6_resilience_base(48).next_header(IPPROTO_IPV6_ROUTE) / Raw::from_bytes(route_payload))
+        .compile()
+        .expect("malformed IPv6 routing envelope should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn assert_ipv6_roundtrip_inspectable(label: &str, packet: Packet) -> crafter::core::Result<()> {
+    let bytes = packet
+        .compile()
+        .unwrap_or_else(|err| panic!("{label} should compile: {err}"));
+    let decoded = decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6), bytes.as_bytes())
+        .unwrap_or_else(|err| panic!("{label} should decode: {err}"));
+    assert!(
+        !decoded.summary().is_empty(),
+        "{label} summary should be inspectable"
+    );
+    assert!(
+        !decoded.show().is_empty(),
+        "{label} show output should be inspectable"
+    );
+    let recompiled = decoded
+        .compile()
+        .unwrap_or_else(|err| panic!("{label} decoded packet should compile: {err}"));
+    assert_eq!(
+        recompiled.as_bytes(),
+        bytes.as_bytes(),
+        "{label} decode/compile changed stable bytes"
+    );
+    Ok(())
+}
+
+#[test]
+fn ipv6_curated_resilience_decode_surfaces_are_inspectable() -> crafter::core::Result<()> {
+    let segment = doc_ipv6_resilience_addr(0x0048, 0x0030);
+    let home = doc_ipv6_resilience_addr(0x0048, 0x0040);
+
+    let cases = vec![
+        (
+            "base-udp",
+            ipv6_resilience_base(49)
+                / Udp::new().source_port(49_001).destination_port(49_002)
+                / Raw::from("ipv6-base"),
+        ),
+        (
+            "hop-by-hop-and-destination-options",
+            ipv6_resilience_base(50)
+                / Ipv6HopByHopOptionsHeader::new()
+                    .option(Ipv6Option::pad1())
+                    .option(Ipv6Option::generic(0x1e, [0xaa, 0xbb])?)
+                / Ipv6DestinationOptionsHeader::new()
+                    .option(Ipv6Option::home_address(home))
+                    .option(Ipv6Option::pad1())
+                / Udp::new().source_port(50_001).destination_port(50_002)
+                / Raw::from("ipv6-options"),
+        ),
+        (
+            "generic-routing",
+            ipv6_resilience_base(51)
+                / Ipv6RoutingHeader::new()
+                    .next_header(IPPROTO_IPV6_EXPERIMENTAL_1)
+                    .routing_type(IPV6_ROUTING_TYPE_EXPERIMENTAL_1)
+                    .segments_left(0)
+                    .type_data([0xde, 0xad, 0xbe, 0xef])
+                / Raw::from("ipv6-generic-routing"),
+        ),
+        (
+            "mobile-routing",
+            ipv6_resilience_base(52)
+                / Ipv6MobileRoutingHeader::new()
+                    .next_header(IPPROTO_IPV6_EXPERIMENTAL_1)
+                    .home_address(home)
+                / Raw::from("ipv6-mobile-routing"),
+        ),
+        (
+            "segment-routing",
+            ipv6_resilience_base(53)
+                / Ipv6SegmentRoutingHeader::new()
+                    .next_header(IPPROTO_IPV6_EXPERIMENTAL_1)
+                    .segment(segment)
+                    .flags(0xa0)
+                    .tag(0x4801)
+                    .raw_trailing_data([0x00, 0x05, 0x02, 0xaa, 0xbb])
+                / Raw::from("ipv6-segment-routing"),
+        ),
+        (
+            "atomic-fragment",
+            ipv6_resilience_base(54)
+                / Ipv6FragmentHeader::new()
+                    .next_header(IPPROTO_UDP)
+                    .fragment_offset(0)
+                    .more_fragments(false)
+                    .identification(0x4800_0001)
+                / Udp::new().source_port(54_001).destination_port(54_002)
+                / Raw::from("ipv6-atomic-fragment"),
+        ),
+        (
+            "non-initial-fragment",
+            ipv6_resilience_base(55)
+                / Ipv6FragmentHeader::new()
+                    .next_header(IPPROTO_UDP)
+                    .fragment_offset(3)
+                    .more_fragments(true)
+                    .identification(0x4800_0002)
+                / Raw::from_bytes(&[0x12, 0x34, 0x56, 0x78, 0xaa, 0xbb, 0xcc, 0xdd]),
+        ),
+        (
+            "extension-chain",
+            ipv6_resilience_base(56)
+                / Ipv6HopByHopOptionsHeader::new().option(Ipv6Option::pad1())
+                / Ipv6DestinationOptionsHeader::new().option(Ipv6Option::generic(0x3e, [0xcc])?)
+                / Ipv6RoutingHeader::new()
+                    .routing_type(IPV6_ROUTING_TYPE_EXPERIMENTAL_2)
+                    .segments_left(0)
+                    .type_data([0x48, 0x00, 0x00, 0x01])
+                / Ipv6SegmentRoutingHeader::new().segment(segment)
+                / Ipv6FragmentHeader::new()
+                    .fragment_offset(0)
+                    .more_fragments(false)
+                    .identification(0x4800_0003)
+                / Udp::new().source_port(56_001).destination_port(56_002)
+                / Raw::from("ipv6-extension-chain"),
+        ),
+    ];
+
+    for (label, packet) in cases {
+        assert_ipv6_roundtrip_inspectable(label, packet)?;
+    }
+
+    for (label, next_header) in [
+        ("unknown-ah", IPPROTO_IPV6_AH),
+        ("unknown-esp", IPPROTO_IPV6_ESP),
+        ("unknown-mobility", IPPROTO_IPV6_MOBILITY),
+        ("unknown-hip", IPPROTO_IPV6_HIP),
+        ("unknown-shim6", IPPROTO_IPV6_SHIM6),
+        ("unknown-experimental-1", IPPROTO_IPV6_EXPERIMENTAL_1),
+        ("unknown-experimental-2", IPPROTO_IPV6_EXPERIMENTAL_2),
+        ("unknown-reserved-255", 255),
+    ] {
+        assert_ipv6_roundtrip_inspectable(
+            label,
+            ipv6_resilience_base(57).next_header(next_header)
+                / Raw::from(format!("{label}-payload")),
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn malformed_ipv6_mobile_routing_reports_structured_error() {
+    let route_payload = [
+        IPPROTO_IPV6_EXPERIMENTAL_1,
+        0,
+        IPV6_ROUTING_TYPE_MOBILE,
+        1,
+        0,
+        0,
+        0,
+        0,
+    ];
+    let bytes = ipv6_routing_payload_packet(&route_payload);
+    match decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6), &bytes) {
+        Err(CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "ipv6.mobile.header_ext_len");
+            assert!(
+                !reason.is_empty(),
+                "mobile routing malformed error should carry a reason"
+            );
+        }
+        other => panic!("malformed IPv6 mobile routing expected structured error, got {other:?}"),
+    }
+}
+
 /// Malformed DHCP option payloads whose typed views are only decoded lazily
 /// through the `Dhcp` accessors (the structural `Dhcp::decode` preserves them
 /// as raw `Generic` segments). Each accessor must surface a structured
@@ -1078,6 +1272,10 @@ fn is_arp_malformed_case(case: &MalformedCase) -> bool {
     matches!(case.target, DecodeTarget::Ethernet) && case.name.contains("arp")
 }
 
+fn is_ipv6_malformed_case(case: &MalformedCase) -> bool {
+    matches!(case.target, DecodeTarget::Ipv6)
+}
+
 fn is_ipv6_options_malformed_case(case: &MalformedCase) -> bool {
     matches!(
         malformed_family(case.name),
@@ -1167,6 +1365,96 @@ fn malformed_arp_corpus_errors_carry_structured_fields() {
             }
             other => panic!(
                 "malformed ARP case {} returned an unexpected error {other:?}",
+                case.name
+            ),
+        }
+    }
+}
+
+#[test]
+fn malformed_ipv6_corpus_errors_carry_structured_fields() {
+    let cases = malformed_cases();
+    let ipv6_cases = cases
+        .iter()
+        .filter(|case| is_ipv6_malformed_case(case))
+        .collect::<Vec<_>>();
+    assert!(
+        !ipv6_cases.is_empty(),
+        "malformed corpus must carry IPv6 vectors"
+    );
+
+    let ipv6_required_families = [
+        "short ipv6 base",
+        "bad ipv6 version",
+        "ipv6 payload length mismatch",
+        "truncated ipv6 hop-by-hop options header",
+        "truncated ipv6 destination options header",
+        "ipv6 option length overrun",
+        "ipv6 padn option overrun",
+        "ipv6 declared options header overrun",
+        "truncated ipv6 routing header",
+        "truncated ipv6 fragment header",
+        "malformed ipv6 segment routing header",
+        "udp length overrun",
+        "short icmpv6 header",
+    ];
+    let covered = ipv6_cases
+        .iter()
+        .filter_map(|case| malformed_family(case.name))
+        .collect::<std::collections::HashSet<_>>();
+    for family in ipv6_required_families {
+        assert!(
+            covered.contains(family),
+            "malformed IPv6 corpus missing structured-field coverage for {family}"
+        );
+    }
+
+    for case in ipv6_cases {
+        let Err(error) = decode_malformed_case(case) else {
+            panic!(
+                "malformed IPv6 corpus case {} unexpectedly decoded",
+                case.name
+            );
+        };
+        assert_error_matches(case, error.clone());
+        let ExpectedOutcome::Error(expected_error) = case.expected_outcome else {
+            panic!(
+                "malformed IPv6 case {} expected structured error outcome",
+                case.name
+            );
+        };
+        match error {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(
+                    context, expected_error.context_or_field,
+                    "malformed IPv6 case {} carried an unexpected buffer context",
+                    case.name
+                );
+                assert!(
+                    required > available,
+                    "malformed IPv6 case {} BufferTooShort must require more ({required}) \
+                     than is available ({available})",
+                    case.name
+                );
+            }
+            CrafterError::InvalidFieldValue { field, reason } => {
+                assert_eq!(
+                    field, expected_error.context_or_field,
+                    "malformed IPv6 case {} carried an unexpected invalid field",
+                    case.name
+                );
+                assert!(
+                    !reason.is_empty(),
+                    "malformed IPv6 case {} InvalidFieldValue must carry a non-empty reason",
+                    case.name
+                );
+            }
+            other => panic!(
+                "malformed IPv6 case {} returned an unexpected error {other:?}",
                 case.name
             ),
         }
@@ -1532,6 +1820,112 @@ proptest! {
         }
 
         exercise_ipv4_like_decode(&ipv4_like_bytes);
+    }
+
+    #[test]
+    fn ipv6_random_decode_inputs_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
+        exercise_packet_decode(PacketDecodeTarget::L3(NetworkLayer::Ipv6), &bytes);
+    }
+
+    #[test]
+    fn ipv6_unknown_next_header_raw_roundtrip_property(
+        next_header in prop::sample::select(vec![
+            IPPROTO_IPV6_AH,
+            IPPROTO_IPV6_ESP,
+            IPPROTO_IPV6_MOBILITY,
+            IPPROTO_IPV6_HIP,
+            IPPROTO_IPV6_SHIM6,
+            IPPROTO_IPV6_EXPERIMENTAL_1,
+            IPPROTO_IPV6_EXPERIMENTAL_2,
+            255,
+        ]),
+        traffic_class in any::<u8>(),
+        flow_label in 0u32..=0x000f_ffff,
+        hop_limit in any::<u8>(),
+        payload in prop::collection::vec(any::<u8>(), 0..128),
+    ) {
+        let packet = ipv6_resilience_base(hop_limit)
+            .traffic_class(traffic_class)
+            .flow_label(flow_label)
+            .next_header(next_header)
+            / Raw::from(payload);
+        let bytes = packet
+            .compile()
+            .expect("generated IPv6 unknown-next-header packet should compile");
+
+        exercise_packet_decode(PacketDecodeTarget::L3(NetworkLayer::Ipv6), bytes.as_bytes());
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes())
+            .expect("generated IPv6 unknown-next-header packet should decode");
+        let compiled = decoded
+            .compile()
+            .expect("decoded IPv6 unknown-next-header packet should compile");
+        prop_assert_eq!(compiled.as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn ipv6_extension_chain_roundtrip_property(
+        traffic_class in any::<u8>(),
+        flow_label in 0u32..=0x000f_ffff,
+        hop_limit in any::<u8>(),
+        hop_option_seed in any::<u8>(),
+        hop_option_len in 0usize..=8,
+        destination_option_seed in any::<u8>(),
+        destination_option_len in 0usize..=8,
+        routing_type in prop::sample::select(vec![
+            IPV6_ROUTING_TYPE_RH0,
+            IPV6_ROUTING_TYPE_NIMROD,
+            IPV6_ROUTING_TYPE_EXPERIMENTAL_1,
+            IPV6_ROUTING_TYPE_EXPERIMENTAL_2,
+        ]),
+        routing_data_seed in any::<u8>(),
+        routing_data_len in 0usize..=16,
+        fragment_offset in 0u16..=16,
+        more_fragments in any::<bool>(),
+        identification in any::<u32>(),
+        payload in prop::collection::vec(any::<u8>(), 0..96),
+    ) {
+        let generated_bytes = |seed: u8, len: usize| -> Vec<u8> {
+            (0..len).map(|i| seed.wrapping_add(i as u8)).collect()
+        };
+        let hop_option_data = generated_bytes(hop_option_seed, hop_option_len);
+        let destination_option_data =
+            generated_bytes(destination_option_seed, destination_option_len);
+        let routing_data = generated_bytes(routing_data_seed, routing_data_len);
+
+        let packet = ipv6_resilience_base(hop_limit)
+            .traffic_class(traffic_class)
+            .flow_label(flow_label)
+            / Ipv6HopByHopOptionsHeader::new()
+                .option(Ipv6Option::pad1())
+                .option(
+                    Ipv6Option::generic(0x1e, hop_option_data)
+                        .expect("bounded Hop-by-Hop option should build"),
+                )
+            / Ipv6DestinationOptionsHeader::new().option(
+                Ipv6Option::generic(0x3e, destination_option_data)
+                    .expect("bounded Destination option should build"),
+            )
+            / Ipv6RoutingHeader::new()
+                .routing_type(routing_type)
+                .segments_left(0)
+                .type_data(routing_data)
+            / Ipv6FragmentHeader::new()
+                .next_header(IPPROTO_IPV6_EXPERIMENTAL_1)
+                .fragment_offset(fragment_offset)
+                .more_fragments(more_fragments)
+                .identification(identification)
+            / Raw::from(payload);
+
+        let bytes = packet
+            .compile()
+            .expect("generated IPv6 extension chain should compile");
+        exercise_packet_decode(PacketDecodeTarget::L3(NetworkLayer::Ipv6), bytes.as_bytes());
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes())
+            .expect("generated IPv6 extension chain should decode");
+        let compiled = decoded
+            .compile()
+            .expect("decoded IPv6 extension chain should compile");
+        prop_assert_eq!(compiled.as_bytes(), bytes.as_bytes());
     }
 
     #[test]
