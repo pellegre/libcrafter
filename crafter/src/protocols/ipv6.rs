@@ -61,10 +61,28 @@ pub const IPV6_ROUTER_ALERT_RESERVED: u16 = 3;
 /// IPv6 Router Alert value: MPLS OAM, deprecated in the IANA registry.
 pub const IPV6_ROUTER_ALERT_MPLS_OAM: u16 = 69;
 
+/// IPv6 Routing Header Type 0 source route, also called RH0. Deprecated by RFC 5095.
+pub const IPV6_ROUTING_TYPE_SOURCE_ROUTE: u8 = 0;
+/// Compatibility alias for the deprecated Type 0 Routing Header.
+pub const IPV6_ROUTING_TYPE_RH0: u8 = IPV6_ROUTING_TYPE_SOURCE_ROUTE;
+/// IPv6 Routing Header type for Nimrod, deprecated in the IANA registry.
+pub const IPV6_ROUTING_TYPE_NIMROD: u8 = 1;
 /// IPv6 Routing Header type for mobile IPv6 home-address routing.
 pub const IPV6_ROUTING_TYPE_MOBILE: u8 = 2;
+/// IPv6 Routing Header type for RPL source routing.
+pub const IPV6_ROUTING_TYPE_RPL: u8 = 3;
 /// IPv6 Routing Header type for segment routing.
 pub const IPV6_ROUTING_TYPE_SEGMENT: u8 = 4;
+/// IPv6 Routing Header type for CRH-16.
+pub const IPV6_ROUTING_TYPE_CRH16: u8 = 5;
+/// IPv6 Routing Header type for CRH-32.
+pub const IPV6_ROUTING_TYPE_CRH32: u8 = 6;
+/// IPv6 Routing Header type for RFC3692-style experiment 1.
+pub const IPV6_ROUTING_TYPE_EXPERIMENTAL_1: u8 = 253;
+/// IPv6 Routing Header type for RFC3692-style experiment 2.
+pub const IPV6_ROUTING_TYPE_EXPERIMENTAL_2: u8 = 254;
+/// IPv6 Routing Header type reserved by IANA.
+pub const IPV6_ROUTING_TYPE_RESERVED: u8 = 255;
 
 /// Segment-routing policy flag: unset.
 pub const IPV6_SEGMENT_POLICY_UNSET: u8 = 0;
@@ -595,6 +613,55 @@ pub const fn ipv6_router_alert_value_label(value: u16) -> &'static str {
         IPV6_ROUTER_ALERT_MPLS_OAM => "MPLS OAM (DEPRECATED)",
         70..=65502 => "Unassigned",
         65503..=65535 => "Reserved",
+    }
+}
+
+/// Source-backed status for an IPv6 Routing Header type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ipv6RoutingTypeStatus {
+    /// Assigned routing type that is not marked deprecated or reserved here.
+    Assigned,
+    /// Assigned routing type marked deprecated by IANA or RFC guidance.
+    Deprecated,
+    /// RFC3692-style experiment/testing value.
+    Experimental,
+    /// IANA-reserved value.
+    Reserved,
+    /// Value not assigned in the current IANA Routing Types registry.
+    Unknown,
+}
+
+/// Source-backed label for an IPv6 Routing Header type.
+pub const fn ipv6_routing_type_label(routing_type: u8) -> &'static str {
+    match routing_type {
+        IPV6_ROUTING_TYPE_RH0 => "RH0 Source Route",
+        IPV6_ROUTING_TYPE_NIMROD => "Nimrod",
+        IPV6_ROUTING_TYPE_MOBILE => "Type 2 Mobile IPv6",
+        IPV6_ROUTING_TYPE_RPL => "RPL Source Route Header",
+        IPV6_ROUTING_TYPE_SEGMENT => "Segment Routing Header (SRH)",
+        IPV6_ROUTING_TYPE_CRH16 => "CRH-16",
+        IPV6_ROUTING_TYPE_CRH32 => "CRH-32",
+        IPV6_ROUTING_TYPE_EXPERIMENTAL_1 => "RFC3692 experiment 1",
+        IPV6_ROUTING_TYPE_EXPERIMENTAL_2 => "RFC3692 experiment 2",
+        IPV6_ROUTING_TYPE_RESERVED => "Reserved",
+        _ => "Unknown",
+    }
+}
+
+/// Source-backed status for an IPv6 Routing Header type.
+pub const fn ipv6_routing_type_status(routing_type: u8) -> Ipv6RoutingTypeStatus {
+    match routing_type {
+        IPV6_ROUTING_TYPE_RH0 | IPV6_ROUTING_TYPE_NIMROD => Ipv6RoutingTypeStatus::Deprecated,
+        IPV6_ROUTING_TYPE_MOBILE
+        | IPV6_ROUTING_TYPE_RPL
+        | IPV6_ROUTING_TYPE_SEGMENT
+        | IPV6_ROUTING_TYPE_CRH16
+        | IPV6_ROUTING_TYPE_CRH32 => Ipv6RoutingTypeStatus::Assigned,
+        IPV6_ROUTING_TYPE_EXPERIMENTAL_1 | IPV6_ROUTING_TYPE_EXPERIMENTAL_2 => {
+            Ipv6RoutingTypeStatus::Experimental
+        }
+        IPV6_ROUTING_TYPE_RESERVED => Ipv6RoutingTypeStatus::Reserved,
+        _ => Ipv6RoutingTypeStatus::Unknown,
     }
 }
 
@@ -1372,6 +1439,16 @@ impl Ipv6RoutingHeader {
         value_or_copy(&self.routing_type, 0)
     }
 
+    /// Routing type label from the IANA IPv6 Routing Types registry.
+    pub fn routing_type_label(&self) -> &'static str {
+        ipv6_routing_type_label(self.routing_type_value())
+    }
+
+    /// Routing type status from the IANA IPv6 Routing Types registry and RFC 5095.
+    pub fn routing_type_status(&self) -> Ipv6RoutingTypeStatus {
+        ipv6_routing_type_status(self.routing_type_value())
+    }
+
     /// Segments-left value.
     pub fn segments_left_value(&self) -> u8 {
         value_or_copy(&self.segments_left, 0)
@@ -1429,7 +1506,7 @@ impl Layer for Ipv6RoutingHeader {
     fn summary(&self) -> String {
         format!(
             "Ipv6RoutingHeader(type={}, segleft={}, next={})",
-            self.routing_type_value(),
+            routing_type_summary(self.routing_type_value()),
             self.segments_left_value(),
             next_header_summary(self.next_header_value())
         )
@@ -1444,7 +1521,14 @@ impl Layer for Ipv6RoutingHeader {
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "auto".to_string()),
             ),
-            ("routing_type", self.routing_type_value().to_string()),
+            (
+                "routing_type",
+                routing_type_summary(self.routing_type_value()),
+            ),
+            (
+                "routing_type_status",
+                format!("{:?}", self.routing_type_status()),
+            ),
             ("segments_left", self.segments_left_value().to_string()),
             ("type_data", hex_bytes(&self.type_data)),
         ]
@@ -1766,6 +1850,16 @@ impl Ipv6MobileRoutingHeader {
         value_or_copy(&self.routing_type, IPV6_ROUTING_TYPE_MOBILE)
     }
 
+    /// Routing type label from the IANA IPv6 Routing Types registry.
+    pub fn routing_type_label(&self) -> &'static str {
+        ipv6_routing_type_label(self.routing_type_value())
+    }
+
+    /// Routing type status from the IANA IPv6 Routing Types registry.
+    pub fn routing_type_status(&self) -> Ipv6RoutingTypeStatus {
+        ipv6_routing_type_status(self.routing_type_value())
+    }
+
     /// Segments-left value.
     pub fn segments_left_value(&self) -> u8 {
         self.segments_left.value().copied().unwrap_or(1)
@@ -1833,7 +1927,8 @@ impl Layer for Ipv6MobileRoutingHeader {
 
     fn summary(&self) -> String {
         format!(
-            "Ipv6MobileRoutingHeader(home={}, next={})",
+            "Ipv6MobileRoutingHeader(type={}, home={}, next={})",
+            routing_type_summary(self.routing_type_value()),
             self.home_address_value(),
             next_header_summary(self.next_header_value())
         )
@@ -1848,7 +1943,14 @@ impl Layer for Ipv6MobileRoutingHeader {
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "auto".to_string()),
             ),
-            ("routing_type", self.routing_type_value().to_string()),
+            (
+                "routing_type",
+                routing_type_summary(self.routing_type_value()),
+            ),
+            (
+                "routing_type_status",
+                format!("{:?}", self.routing_type_status()),
+            ),
             ("segments_left", self.segments_left_value().to_string()),
             ("reserved", format!("0x{:08x}", self.reserved_value())),
             ("home_address", self.home_address_value().to_string()),
@@ -2083,6 +2185,16 @@ impl Ipv6SegmentRoutingHeader {
         value_or_copy(&self.routing_type, IPV6_ROUTING_TYPE_SEGMENT)
     }
 
+    /// Routing type label from the IANA IPv6 Routing Types registry.
+    pub fn routing_type_label(&self) -> &'static str {
+        ipv6_routing_type_label(self.routing_type_value())
+    }
+
+    /// Routing type status from the IANA IPv6 Routing Types registry.
+    pub fn routing_type_status(&self) -> Ipv6RoutingTypeStatus {
+        ipv6_routing_type_status(self.routing_type_value())
+    }
+
     /// Segments-left value.
     pub fn segments_left_value(&self) -> u8 {
         self.segments_left
@@ -2291,7 +2403,8 @@ impl Layer for Ipv6SegmentRoutingHeader {
 
     fn summary(&self) -> String {
         format!(
-            "Ipv6SegmentRoutingHeader(segments={}, segleft={}, next={})",
+            "Ipv6SegmentRoutingHeader(type={}, segments={}, segleft={}, next={})",
+            routing_type_summary(self.routing_type_value()),
             self.segments.len(),
             self.segments_left_value(),
             next_header_summary(self.next_header_value())
@@ -2307,7 +2420,14 @@ impl Layer for Ipv6SegmentRoutingHeader {
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "auto".to_string()),
             ),
-            ("routing_type", self.routing_type_value().to_string()),
+            (
+                "routing_type",
+                routing_type_summary(self.routing_type_value()),
+            ),
+            (
+                "routing_type_status",
+                format!("{:?}", self.routing_type_status()),
+            ),
             ("segments_left", self.segments_left_value().to_string()),
             ("first_segment", self.first_segment_value().to_string()),
             ("c_flag", self.c_flag_value().to_string()),
@@ -2766,6 +2886,27 @@ fn parse_ipv6(input: &str) -> Result<Ipv6Addr> {
 
 fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
     field.value().copied().unwrap_or(default)
+}
+
+fn routing_type_summary(routing_type: u8) -> String {
+    match ipv6_routing_type_status(routing_type) {
+        Ipv6RoutingTypeStatus::Assigned => {
+            format!("{}({routing_type})", ipv6_routing_type_label(routing_type))
+        }
+        Ipv6RoutingTypeStatus::Deprecated => {
+            format!(
+                "{} (deprecated)({routing_type})",
+                ipv6_routing_type_label(routing_type)
+            )
+        }
+        Ipv6RoutingTypeStatus::Experimental => match routing_type {
+            IPV6_ROUTING_TYPE_EXPERIMENTAL_1 => "experimental-1(253)".to_string(),
+            IPV6_ROUTING_TYPE_EXPERIMENTAL_2 => "experimental-2(254)".to_string(),
+            value => format!("experimental({value})"),
+        },
+        Ipv6RoutingTypeStatus::Reserved => format!("reserved({routing_type})"),
+        Ipv6RoutingTypeStatus::Unknown => format!("unknown({routing_type})"),
+    }
 }
 
 fn next_header_summary(next_header: u8) -> String {

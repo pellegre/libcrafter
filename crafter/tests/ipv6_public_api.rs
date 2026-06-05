@@ -1692,6 +1692,161 @@ fn generic_routing_experimental_types_preserve_segments_left_and_padded_type_dat
 }
 
 #[test]
+fn routing_classification_helpers_and_public_exports_are_source_backed() {
+    assert_eq!(IPV6_ROUTING_TYPE_SOURCE_ROUTE, 0);
+    assert_eq!(IPV6_ROUTING_TYPE_RH0, IPV6_ROUTING_TYPE_SOURCE_ROUTE);
+    assert_eq!(IPV6_ROUTING_TYPE_NIMROD, 1);
+    assert_eq!(IPV6_ROUTING_TYPE_MOBILE, 2);
+    assert_eq!(IPV6_ROUTING_TYPE_RPL, 3);
+    assert_eq!(IPV6_ROUTING_TYPE_SEGMENT, 4);
+    assert_eq!(IPV6_ROUTING_TYPE_CRH16, 5);
+    assert_eq!(IPV6_ROUTING_TYPE_CRH32, 6);
+    assert_eq!(IPV6_ROUTING_TYPE_EXPERIMENTAL_1, 253);
+    assert_eq!(IPV6_ROUTING_TYPE_EXPERIMENTAL_2, 254);
+    assert_eq!(IPV6_ROUTING_TYPE_RESERVED, 255);
+
+    assert_eq!(
+        ipv6_routing_type_label(IPV6_ROUTING_TYPE_RH0),
+        "RH0 Source Route"
+    );
+    assert_eq!(
+        ipv6_routing_type_status(IPV6_ROUTING_TYPE_RH0),
+        Ipv6RoutingTypeStatus::Deprecated
+    );
+    assert_eq!(
+        ipv6_routing_type_label(IPV6_ROUTING_TYPE_MOBILE),
+        "Type 2 Mobile IPv6"
+    );
+    assert_eq!(
+        ipv6_routing_type_status(IPV6_ROUTING_TYPE_MOBILE),
+        Ipv6RoutingTypeStatus::Assigned
+    );
+    assert_eq!(
+        ipv6_routing_type_label(IPV6_ROUTING_TYPE_SEGMENT),
+        "Segment Routing Header (SRH)"
+    );
+    assert_eq!(
+        ipv6_routing_type_status(IPV6_ROUTING_TYPE_SEGMENT),
+        Ipv6RoutingTypeStatus::Assigned
+    );
+    assert_eq!(
+        ipv6_routing_type_status(IPV6_ROUTING_TYPE_EXPERIMENTAL_1),
+        Ipv6RoutingTypeStatus::Experimental
+    );
+    assert_eq!(
+        ipv6_routing_type_status(IPV6_ROUTING_TYPE_RESERVED),
+        Ipv6RoutingTypeStatus::Reserved
+    );
+    assert_eq!(ipv6_routing_type_label(99), "Unknown");
+    assert_eq!(ipv6_routing_type_status(99), Ipv6RoutingTypeStatus::Unknown);
+
+    assert_eq!(
+        crafter::ipv6_routing_type_status(crafter::IPV6_ROUTING_TYPE_RH0),
+        crafter::Ipv6RoutingTypeStatus::Deprecated
+    );
+    assert_eq!(
+        crafter::core::ipv6_routing_type_label(crafter::core::IPV6_ROUTING_TYPE_MOBILE),
+        "Type 2 Mobile IPv6"
+    );
+    assert_eq!(
+        crafter::protocols::ipv6_routing_type_status(crafter::protocols::IPV6_ROUTING_TYPE_SEGMENT),
+        crafter::protocols::Ipv6RoutingTypeStatus::Assigned
+    );
+}
+
+#[test]
+fn routing_classification_rh0_is_deprecated_but_byte_preserving() -> crafter::Result<()> {
+    let payload = [0x55, 0x66, 0x77];
+    let type_data = [0xaa, 0xbb, 0xcc, 0xdd];
+    let compiled = (base_ipv6(94)
+        / Ipv6RoutingHeader::new()
+            .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+            .routing_type(IPV6_ROUTING_TYPE_RH0)
+            .segments_left(1)
+            .type_data(type_data)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 11, IPPROTO_IPV6_ROUTE, 94);
+    assert_eq!(bytes[40], IPPROTO_IPV6_EXPERIMENTAL_1);
+    assert_eq!(bytes[41], 0);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_RH0);
+    assert_eq!(bytes[43], 1);
+    assert_eq!(&bytes[44..48], &type_data);
+    assert_eq!(&bytes[48..], &payload);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let routing = decoded.layer::<Ipv6RoutingHeader>().expect("routing layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(layer_names, vec!["Ipv6", "Ipv6RoutingHeader", "Raw"]);
+    assert_eq!(routing.routing_type_value(), IPV6_ROUTING_TYPE_RH0);
+    assert_eq!(routing.routing_type_label(), "RH0 Source Route");
+    assert_eq!(
+        routing.routing_type_status(),
+        Ipv6RoutingTypeStatus::Deprecated
+    );
+    assert_eq!(routing.segments_left_value(), 1);
+    assert_eq!(routing.type_data_bytes(), type_data.as_slice());
+    assert_eq!(raw.as_bytes(), payload);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    let summary = decoded.summary();
+    let show = decoded.show();
+    assert!(
+        summary.contains("RH0 Source Route (deprecated)(0)"),
+        "{summary}"
+    );
+    assert!(
+        show.contains("routing_type: RH0 Source Route (deprecated)(0)"),
+        "{show}"
+    );
+    assert!(show.contains("routing_type_status: Deprecated"), "{show}");
+
+    Ok(())
+}
+
+#[test]
+fn routing_classification_summary_and_show_label_known_and_unknown_types() -> crafter::Result<()> {
+    let unknown = Packet::from_layer(Ipv6RoutingHeader::new().routing_type(99));
+    let mobile = Packet::from_layer(Ipv6MobileRoutingHeader::new().home(doc_home()));
+    let segment = Packet::from_layer(Ipv6SegmentRoutingHeader::new().segment(doc_midpoint()));
+
+    assert!(unknown.summary().contains("type=unknown(99)"));
+    assert!(unknown.show().contains("routing_type_status: Unknown"));
+
+    assert_eq!(
+        mobile
+            .layer::<Ipv6MobileRoutingHeader>()
+            .expect("mobile routing header")
+            .routing_type_status(),
+        Ipv6RoutingTypeStatus::Assigned
+    );
+    assert!(mobile.summary().contains("Type 2 Mobile IPv6(2)"));
+    assert!(mobile
+        .show()
+        .contains("routing_type: Type 2 Mobile IPv6(2)"));
+
+    assert_eq!(
+        segment
+            .layer::<Ipv6SegmentRoutingHeader>()
+            .expect("segment routing header")
+            .routing_type_label(),
+        "Segment Routing Header (SRH)"
+    );
+    assert!(segment
+        .summary()
+        .contains("Segment Routing Header (SRH)(4)"));
+    assert!(segment
+        .show()
+        .contains("routing_type: Segment Routing Header (SRH)(4)"));
+
+    Ok(())
+}
+
+#[test]
 fn generic_routing_type_data_lengths_pad_to_extension_header_boundary() -> crafter::Result<()> {
     let cases = [
         (vec![0x11], 0, vec![0x11, 0, 0, 0]),
