@@ -286,3 +286,37 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
     assert_eq!(crafter::protocols::IPV6_SEGMENT_POLICY_EGRESS, 2);
     assert_eq!(IPV6_SEGMENT_POLICY_SOURCE_ADDRESS, 3);
 }
+
+#[test]
+fn ipv6_payload_length_override_is_emitted_unchanged() -> crafter::Result<()> {
+    let payload = [0xde, 0xad, 0xbe, 0xef];
+    let compiled = (base_ipv6(51).plen(2).nh(253) / Raw::from_bytes(payload)).compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(ipv6_payload_length(bytes), 2);
+    assert_eq!(bytes[6], 253);
+    assert_eq!(bytes[7], 51);
+    assert_eq!(&bytes[40..], payload);
+    assert_eq!(bytes.len(), 40 + payload.len());
+
+    Ok(())
+}
+
+#[test]
+fn ipv6_payload_length_short_declaration_splits_trailing_raw_tail() -> crafter::Result<()> {
+    let payload = [0xde, 0xad, 0xbe, 0xef];
+    let compiled = (base_ipv6(52).plen(2).nh(253) / Raw::from_bytes(payload)).compile()?;
+    let bytes = compiled.as_bytes();
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let raw_layers: Vec<_> = decoded.layers::<Raw>().map(Raw::as_bytes).collect();
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+
+    assert_decoded_ipv6_base_header(ipv6, 2, 253, 52);
+    assert_eq!(raw_layers, vec![&payload[..2], &payload[2..]]);
+    assert_eq!(layer_names, vec!["Ipv6", "Raw", "Raw"]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
