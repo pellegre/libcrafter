@@ -711,6 +711,8 @@ fn prelude_builds_ipv6_base_and_current_extension_headers() -> crafter::Result<(
         .tc(0x5a)
         .fl(0x12345)
         .hlim(48);
+    let hop_by_hop: Ipv6HopByHopOptionsHeader =
+        Ipv6HopByHopOptionsHeader::new().option(Ipv6Option::pad1());
     let routing: Ipv6RoutingHeader = Ipv6RoutingHeader::new()
         .routing_type(253)
         .segleft(0)
@@ -726,6 +728,11 @@ fn prelude_builds_ipv6_base_and_current_extension_headers() -> crafter::Result<(
         .policy(0, doc_src(), IPV6_SEGMENT_POLICY_SOURCE_ADDRESS)?;
 
     let base_packet = (ipv6 / Raw::from("base")).compile()?;
+    let hop_by_hop_packet = (Ipv6::with_addresses(doc_src(), doc_dst())
+        / hop_by_hop
+        / Udp::new().sport(12345).dport(33434)
+        / Raw::from("hop"))
+    .compile()?;
     let routing_packet =
         (Ipv6::with_addresses(doc_src(), doc_dst()) / routing / Raw::from("routing")).compile()?;
     let fragment_packet = (Ipv6::with_addresses(doc_src(), doc_dst())
@@ -741,6 +748,8 @@ fn prelude_builds_ipv6_base_and_current_extension_headers() -> crafter::Result<(
 
     assert_eq!(base_packet.as_bytes()[0] >> 4, 6);
     assert_eq!(base_packet.as_bytes()[6], IPPROTO_IPV6_HOPOPTS);
+    assert_eq!(hop_by_hop_packet.as_bytes()[6], IPPROTO_IPV6_HOPOPTS);
+    assert_eq!(hop_by_hop_packet.as_bytes()[40], IPPROTO_UDP);
     assert_eq!(routing_packet.as_bytes()[6], IPPROTO_IPV6_ROUTE);
     assert_eq!(routing_packet.as_bytes()[42], 253);
     assert_eq!(fragment_packet.as_bytes()[6], IPPROTO_IPV6_FRAGMENT);
@@ -759,6 +768,7 @@ fn prelude_builds_ipv6_base_and_current_extension_headers() -> crafter::Result<(
 #[test]
 fn ipv6_exports_remain_reachable_through_public_paths() {
     let _: Ipv6 = Ipv6::new();
+    let _: Ipv6HopByHopOptionsHeader = Ipv6HopByHopOptionsHeader::new();
     let _: Ipv6RoutingHeader = Ipv6RoutingHeader::new();
     let _: Ipv6FragmentHeader = Ipv6FragmentHeader::new();
     let _: Ipv6MobileRoutingHeader = Ipv6MobileRoutingHeader::new();
@@ -768,6 +778,7 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
     let _: Ipv6OptionIter<'_> = Ipv6OptionIter::new(&[IPV6_OPTION_PAD1]);
 
     let _: crafter::Ipv6 = crafter::Ipv6::new();
+    let _: crafter::Ipv6HopByHopOptionsHeader = crafter::Ipv6HopByHopOptionsHeader::new();
     let _: crafter::Ipv6RoutingHeader = crafter::Ipv6RoutingHeader::new();
     let _: crafter::Ipv6FragmentHeader = crafter::Ipv6FragmentHeader::new();
     let _: crafter::Ipv6MobileRoutingHeader = crafter::Ipv6MobileRoutingHeader::new();
@@ -777,6 +788,8 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
     let _: crafter::Ipv6OptionIter<'_> = crafter::Ipv6OptionIter::new(&[crafter::IPV6_OPTION_PAD1]);
 
     let _: crafter::core::Ipv6 = crafter::core::Ipv6::new();
+    let _: crafter::core::Ipv6HopByHopOptionsHeader =
+        crafter::core::Ipv6HopByHopOptionsHeader::new();
     let _: crafter::core::Ipv6RoutingHeader = crafter::core::Ipv6RoutingHeader::new();
     let _: crafter::core::Ipv6FragmentHeader = crafter::core::Ipv6FragmentHeader::new();
     let _: crafter::core::Ipv6MobileRoutingHeader = crafter::core::Ipv6MobileRoutingHeader::new();
@@ -787,6 +800,8 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
         crafter::core::Ipv6OptionIter::new(&[crafter::core::IPV6_OPTION_PAD1]);
 
     let _: crafter::protocols::Ipv6 = crafter::protocols::Ipv6::new();
+    let _: crafter::protocols::Ipv6HopByHopOptionsHeader =
+        crafter::protocols::Ipv6HopByHopOptionsHeader::new();
     let _: crafter::protocols::Ipv6RoutingHeader = crafter::protocols::Ipv6RoutingHeader::new();
     let _: crafter::protocols::Ipv6FragmentHeader = crafter::protocols::Ipv6FragmentHeader::new();
     let _: crafter::protocols::Ipv6MobileRoutingHeader =
@@ -810,6 +825,61 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
     assert_eq!(crafter::core::IPV6_SEGMENT_POLICY_INGRESS, 1);
     assert_eq!(crafter::protocols::IPV6_SEGMENT_POLICY_EGRESS, 2);
     assert_eq!(IPV6_SEGMENT_POLICY_SOURCE_ADDRESS, 3);
+}
+
+#[test]
+fn hop_by_hop_builder() -> crafter::Result<()> {
+    let hop_by_hop = Ipv6HopByHopOptionsHeader::new()
+        .option(Ipv6Option::generic(0x1e, [0xaa])?)
+        .option(Ipv6Option::pad1())
+        .option(Ipv6Option::generic(0x3e, [0xbb, 0xcc])?);
+    let packet = base_ipv6(64)
+        / hop_by_hop.clone()
+        / Udp::new().sport(12345).dport(33434)
+        / Raw::from("hbh!");
+    let bytes = packet.compile()?;
+
+    assert_eq!(bytes.as_bytes()[6], IPPROTO_IPV6_HOPOPTS);
+    assert_eq!(ipv6_payload_length(bytes.as_bytes()), 28);
+    assert_eq!(hop_by_hop.encoded_len(), 16);
+    assert_eq!(hop_by_hop.header_ext_len_value(), None);
+    assert_eq!(
+        hop_by_hop.options_value(),
+        &[
+            Ipv6Option::generic(0x1e, [0xaa])?,
+            Ipv6Option::pad1(),
+            Ipv6Option::generic(0x3e, [0xbb, 0xcc])?
+        ]
+    );
+
+    let hbh = &bytes.as_bytes()[40..56];
+    assert_eq!(hbh[0], IPPROTO_UDP);
+    assert_eq!(hbh[1], 1);
+    assert_eq!(
+        &hbh[2..10],
+        &[0x1e, 1, 0xaa, IPV6_OPTION_PAD1, 0x3e, 2, 0xbb, 0xcc]
+    );
+    assert_eq!(&hbh[10..16], &[0, 0, 0, 0, 0, 0]);
+
+    let udp = &bytes.as_bytes()[56..64];
+    assert_eq!(&udp[0..2], &12345u16.to_be_bytes());
+    assert_eq!(&udp[2..4], &33434u16.to_be_bytes());
+    assert_eq!(&udp[4..6], &12u16.to_be_bytes());
+
+    let explicit = (base_ipv6(32)
+        / Ipv6HopByHopOptionsHeader::new()
+            .nh(IPPROTO_IPV6_NO_NEXT)
+            .header_ext_len(2)
+            .option(Ipv6Option::pad1())
+        / Udp::new().sport(1111).dport(2222))
+    .compile()?;
+
+    assert_eq!(explicit.as_bytes()[6], IPPROTO_IPV6_HOPOPTS);
+    assert_eq!(explicit.as_bytes()[40], IPPROTO_IPV6_NO_NEXT);
+    assert_eq!(explicit.as_bytes()[41], 2);
+    assert_eq!(ipv6_payload_length(explicit.as_bytes()), 32);
+
+    Ok(())
 }
 
 #[test]
